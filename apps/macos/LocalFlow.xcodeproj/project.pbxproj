@@ -1,0 +1,783 @@
+// !$*UTF8*$!
+{
+  "classes" = {
+  };
+  "objectVersion" = "56";
+  "archiveVersion" = "1";
+  "objects" = {
+    "B8C6129B4C6D46CDB21FA498" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Core/Observability/DictationBenchmark.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "9CF172EC74224B18B4FD2B9F" = { "isa" = "PBXBuildFile"; "fileRef" = "B8C6129B4C6D46CDB21FA498"; };
+    "CD5B607F263F423AAF9A64D5" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/UnsavedResultTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "54AA48CE1F3544E398E5DB71" = { "isa" = "PBXBuildFile"; "fileRef" = "CD5B607F263F423AAF9A64D5"; };
+    "6A09329B13FD435FB532553A" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/ResourceLifecycleTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "663F02B70BF34AC4A1A536A7" = { "isa" = "PBXBuildFile"; "fileRef" = "6A09329B13FD435FB532553A"; };
+    "D824AE408C514119B6A6BF56" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/ModelCooldownTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "97EC0E98DB3B45CB905299AB" = { "isa" = "PBXBuildFile"; "fileRef" = "D824AE408C514119B6A6BF56"; };
+    "99BD0C6E55E0C12AE14D2C4E" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Core/Observability/ResourceRecorder.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "8A43EDB9DBE810E63171F2AA" = { "isa" = "PBXBuildFile"; "fileRef" = "99BD0C6E55E0C12AE14D2C4E"; };
+    "959D59D97FCDF0B5C9CFA698" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/ResourceRecorderTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "AD6663A0DB6C9F011C8EB5A5" = { "isa" = "PBXBuildFile"; "fileRef" = "959D59D97FCDF0B5C9CFA698"; };
+    "DD4F347F0D1A61B8D51989FF" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/NativePresentationTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "FE30F45E1E40DE3A6AAB501B" = { "isa" = "PBXBuildFile"; "fileRef" = "DD4F347F0D1A61B8D51989FF"; };
+    "D862568E5DD5371D2EEEE815" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/App/MainWindowRouter.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "7A7AC909389E1AFBAB20811C" = { "isa" = "PBXBuildFile"; "fileRef" = "D862568E5DD5371D2EEEE815"; };
+    "EFD834EF4BC6BEBC4C0A335B" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Dictation/DictationView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "75170D649973071812A85764" = { "isa" = "PBXBuildFile"; "fileRef" = "EFD834EF4BC6BEBC4C0A335B"; };
+    "87ABAA30AE1CD66CF3EA9281" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Settings/AppPreferences.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "C475958B2DE249FF0C67635A" = { "isa" = "PBXBuildFile"; "fileRef" = "87ABAA30AE1CD66CF3EA9281"; };
+    "F2A74472A8E597E8F5EE514D" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Settings/OnboardingCoordinator.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "FF2402ADD7B1FA0113E6F2D5" = { "isa" = "PBXBuildFile"; "fileRef" = "F2A74472A8E597E8F5EE514D"; };
+    "6167DC7C13E26200A2D80EE2" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Settings/OnboardingView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "4F49AEEB8F523D10AAE10190" = { "isa" = "PBXBuildFile"; "fileRef" = "6167DC7C13E26200A2D80EE2"; };
+    "9FAD8D969C87380740EB834A" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Settings/SettingsView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "6DE8FA4886E703AEF0DB39D4" = { "isa" = "PBXBuildFile"; "fileRef" = "9FAD8D969C87380740EB834A"; };
+    "77E82E80C8BE92C3312FA2F1" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Settings/SettingsViewModel.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "51A47327CAA743DE28E6325A" = { "isa" = "PBXBuildFile"; "fileRef" = "77E82E80C8BE92C3312FA2F1"; };
+    "548E5BBCB4475CC5BB5B1AAE" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Transcriptions/ExplicitInsertionCoordinator.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "4576B252742EB2515D84F05B" = { "isa" = "PBXBuildFile"; "fileRef" = "548E5BBCB4475CC5BB5B1AAE"; };
+    "D19DD04769AE836EDF2D5C14" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Transcriptions/HistoryView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "FD1E9E4A84A4361FCFC46A2B" = { "isa" = "PBXBuildFile"; "fileRef" = "D19DD04769AE836EDF2D5C14"; };
+    "5D6EFE214F642BE14A77630C" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Transcriptions/HistoryViewModel.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "A49DD00925B69BD8B2508C6F" = { "isa" = "PBXBuildFile"; "fileRef" = "5D6EFE214F642BE14A77630C"; };
+    "74F3D04E911AAD53F6F8FE8E" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/Features/Transcriptions/InsertionConfirmationPanel.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "82D0EE79A42138A3B3D93AF1" = { "isa" = "PBXBuildFile"; "fileRef" = "74F3D04E911AAD53F6F8FE8E"; };
+    "95D9C849052245D6CB767627" = { "isa" = "PBXFileReference"; "path" = "LocalFlow/UI/Appearance.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "2BCA4832D2CA32059A2D4778" = { "isa" = "PBXBuildFile"; "fileRef" = "95D9C849052245D6CB767627"; };
+    "22511C4352699DBEB81BA94B" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/AppPreferencesTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "306A9F445EDB4B3A24806D0F" = { "isa" = "PBXBuildFile"; "fileRef" = "22511C4352699DBEB81BA94B"; };
+    "3B289335F283ADCDED8B7E31" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/ExplicitInsertionTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "0CE004F7B17160F554C209FD" = { "isa" = "PBXBuildFile"; "fileRef" = "3B289335F283ADCDED8B7E31"; };
+    "98C60CF7DB11FB86FF08B78F" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/HistoryQueryTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "DFC319D138AC0A100239A55D" = { "isa" = "PBXBuildFile"; "fileRef" = "98C60CF7DB11FB86FF08B78F"; };
+    "77E4D1C58D0ACF839BEA60FD" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/HistoryViewModelTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "BC0DC43656EBAD97F4A36AD8" = { "isa" = "PBXBuildFile"; "fileRef" = "77E4D1C58D0ACF839BEA60FD"; };
+    "3182323B516283D0722288BF" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/MainWindowRouterTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "D64A27D4F7FD244A85FF7395" = { "isa" = "PBXBuildFile"; "fileRef" = "3182323B516283D0722288BF"; };
+    "CC752C6B5F9C8086F6626A95" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/OnboardingTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "7B012D6C5008487C5C0BED61" = { "isa" = "PBXBuildFile"; "fileRef" = "CC752C6B5F9C8086F6626A95"; };
+    "A46AC4E6915FA5484E91D5A4" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/SettingsTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+    "CF5FB6E9DC12DBC0C6F85205" = { "isa" = "PBXBuildFile"; "fileRef" = "A46AC4E6915FA5484E91D5A4"; };
+    "F00000000000000000000001" = {
+      "isa" = "PBXFileReference";
+      "path" = "LocalFlow/Resources/Sotto-LICENSE.txt";
+      "lastKnownFileType" = "text";
+      "sourceTree" = "SOURCE_ROOT";
+    };
+    "F00000000000000000000002" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "F00000000000000000000001";
+    };
+    "D02982B7E3F3F228164C730B" = {
+      "path" = "LocalFlowTests/StorageRecoveryTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "3387E3B3663A26A852D26968" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "D02982B7E3F3F228164C730B";
+    };
+    "B39D810ED26769C416B5924D" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "C6D311FCC7625CE3BDF0A154";
+    };
+    "D62700A851699EC26DB00474" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "CDE55DF214D6FC84CEC431F9";
+    };
+    "C0000000000000000000000A" = {
+      "isa" = "XCRemoteSwiftPackageReference";
+      "repositoryURL" = "https://github.com/groue/GRDB.swift.git";
+      "requirement" = {
+        "kind" = "exactVersion";
+        "version" = "7.10.0";
+      };
+    };
+    "B0000000000000000000006B" = {
+      "isa" = "XCBuildConfiguration";
+      "buildSettings" = {
+        "GENERATE_INFOPLIST_FILE" = "YES";
+        "TEST_HOST" = "$(BUILT_PRODUCTS_DIR)/LocalFlow.app/Contents/MacOS/LocalFlow";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "org.localflow.LocalFlowTests";
+        "SWIFT_VERSION" = "6.0";
+        "MACOSX_DEPLOYMENT_TARGET" = "14.0";
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+        "BUNDLE_LOADER" = "$(TEST_HOST)";
+      };
+      "name" = "Debug";
+    };
+    "19FDD787D53EF451ACBC4A6B" = {
+      "path" = "LocalFlow/Features/Dictation/IndicatorPanel.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "B00000000000000000000066" = {
+      "path" = "LocalFlowTests.xctest";
+      "isa" = "PBXFileReference";
+      "includeInIndex" = "0";
+      "explicitFileType" = "wrapper.cfbundle";
+      "sourceTree" = "BUILT_PRODUCTS_DIR";
+    };
+    "1DE7F804D6CBCCB865B1BE2F" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "3BA032211C05E0808B439EC2";
+    };
+    "3BA032211C05E0808B439EC2" = {
+      "path" = "LocalFlow/Core/Audio/AppInstanceLock.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "2E7BF18ED83B0628A0BAF86C" = {
+      "path" = "LocalFlow/Features/Dictation/DictationSession.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "B000000000000000000000D1" = {
+      "isa" = "XCConfigurationList";
+      "defaultConfigurationIsVisible" = "0";
+      "defaultConfigurationName" = "Release";
+      "buildConfigurations" = ("B000000000000000000000CF", "B000000000000000000000D0");
+    };
+    "DF12A0C76A1F42E414269F4A" = {
+      "path" = "LocalFlow/Features/Dictation/ControlMailbox.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "B000000000000000000000CC" = {
+      "isa" = "PBXSourcesBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ("B000000000000000000000CB");
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "5B6128699FF1BA87358BBD24" = {
+      "path" = "LocalFlow/Core/Transcription/FluidAudioEngine.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A00000000000000000000004" = {
+      "isa" = "PBXGroup";
+      "name" = "Products";
+      "children" = ("A00000000000000000000009", "B00000000000000000000066", "B000000000000000000000CA");
+      "sourceTree" = "<group>";
+    };
+    "D018614B649DDA0BB3B17B8F" = {
+      "path" = "LocalFlowTests/AudioSpoolTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "CC4B2A0C2A23D9B8AF9F524A" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "FC2391731F05E183E65D02B7";
+    };
+    "C92D0CBDC47F66DF86E4EAAD" = {
+      "path" = "LocalFlow/Features/Dictation/ShortcutController.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "0D8097F83F83C4119EF76729" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "4CB623C90724792A3F7F74C7";
+    };
+    "B0000000000000000000006A" = {
+      "isa" = "PBXTargetDependency";
+      "target" = "A00000000000000000000005";
+      "targetProxy" = "B00000000000000000000069";
+    };
+    "FC2391731F05E183E65D02B7" = {
+      "path" = "LocalFlow/Core/Audio/AudioCaptureService.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "B00000000000000000000065" = {
+      "path" = "LocalFlowTests/AppConfigurationTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "D50ACBA86B81E046836D0F3B" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "19FDD787D53EF451ACBC4A6B";
+    };
+    "E2EE79343740E1C9A3B02282" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "E5D2BAA9676314A329903493";
+    };
+    "01DE08AB5FFC4B83A1231EB4" = {
+      "path" = "LocalFlow/Core/Storage/TranscriptionStore.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "B000000000000000000000D0" = {
+      "isa" = "XCBuildConfiguration";
+      "buildSettings" = {
+        "GENERATE_INFOPLIST_FILE" = "YES";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-O";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "org.localflow.LocalFlowUITests";
+        "SWIFT_VERSION" = "6.0";
+        "MACOSX_DEPLOYMENT_TARGET" = "14.0";
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+        "TEST_TARGET_NAME" = "LocalFlow";
+      };
+      "name" = "Release";
+    };
+    "A0000000000000000000000E" = {
+      "isa" = "XCBuildConfiguration";
+      "buildSettings" = {
+        "GENERATE_INFOPLIST_FILE" = "NO";
+        "ENABLE_HARDENED_RUNTIME" = "YES";
+        "CODE_SIGN_ENTITLEMENTS" = "LocalFlow/LocalFlow.entitlements";
+        "COMBINE_HIDPI_IMAGES" = "YES";
+        "SWIFT_OBJC_BRIDGING_HEADER" = "LocalFlow/Core/Audio/AudioCaptureRing.h";
+        "INFOPLIST_FILE" = "LocalFlow/Info.plist";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "org.localflow.LocalFlow";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-O";
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+      };
+      "name" = "Release";
+    };
+    "F393490BCB5BE0FD25E8D594" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "B5C914525BEE38280FCEA496";
+    };
+    "A00000000000000000000009" = {
+      "path" = "LocalFlow.app";
+      "isa" = "PBXFileReference";
+      "includeInIndex" = "0";
+      "explicitFileType" = "wrapper.application";
+      "sourceTree" = "BUILT_PRODUCTS_DIR";
+    };
+    "A00000000000000000000003" = {
+      "isa" = "PBXGroup";
+      "sourceTree" = "<group>";
+      "children" = ("B8C6129B4C6D46CDB21FA498", "CD5B607F263F423AAF9A64D5", "6A09329B13FD435FB532553A", "D824AE408C514119B6A6BF56", "959D59D97FCDF0B5C9CFA698", "99BD0C6E55E0C12AE14D2C4E", "DD4F347F0D1A61B8D51989FF", "A46AC4E6915FA5484E91D5A4", "CC752C6B5F9C8086F6626A95", "3182323B516283D0722288BF", "77E4D1C58D0ACF839BEA60FD", "98C60CF7DB11FB86FF08B78F", "3B289335F283ADCDED8B7E31", "22511C4352699DBEB81BA94B", "95D9C849052245D6CB767627", "74F3D04E911AAD53F6F8FE8E", "5D6EFE214F642BE14A77630C", "D19DD04769AE836EDF2D5C14", "548E5BBCB4475CC5BB5B1AAE", "77E82E80C8BE92C3312FA2F1", "9FAD8D969C87380740EB834A", "6167DC7C13E26200A2D80EE2", "F2A74472A8E597E8F5EE514D", "87ABAA30AE1CD66CF3EA9281", "EFD834EF4BC6BEBC4C0A335B", "D862568E5DD5371D2EEEE815", "A00000000000000000000008", "A00000000000000000000004", "B00000000000000000000065", "B000000000000000000000C9", "38E78341C5F8C5DA23D24DC7", "5B866763FD23744F00E954DE", "DF12A0C76A1F42E414269F4A", "D018614B649DDA0BB3B17B8F", "5D2E88D7BA9F5B0C9DDB1B6B", "F719E0AC8506B0E710E3C6C7", "958A0992EC278D30720D9136", "D1401147D6C2269171F33923", "264898CDB842ADB05AD474D6", "01DE08AB5FFC4B83A1231EB4", "0AD30A008B15A05B59A11836", "06C4DE332572E7B2B7178AF4", "E5D2BAA9676314A329903493", "FC2391731F05E183E65D02B7", "B5C914525BEE38280FCEA496", "BDEC1A2FA9CF02CCCFA1EADA", "2D71169A0A254024B98A7B25", "8BA899A9C7F88B1F670918A0", "5B6128699FF1BA87358BBD24", "3226C03E33A6E62D73158E17", "C92D0CBDC47F66DF86E4EAAD", "E3D4660C85C7E007DF631408", "3FFE11751C92CCB56A9E0268", "CDE55DF214D6FC84CEC431F9", "C6D311FCC7625CE3BDF0A154", "3645B89B49E85D8CD2557328", "0AEE8151BA4531506E18C862", "EEF41DA4E39708F927D8A644", "41BD5BB1040470B3E02D8BBF", "7045D71FC94533EFAB7F35F7", "2E7BF18ED83B0628A0BAF86C", "19FDD787D53EF451ACBC4A6B", "BE04A0D8986C69F48E7D8E4D", "4CB623C90724792A3F7F74C7", "DD57D3D309ECA0B0C7A9FA59", "3BA032211C05E0808B439EC2", "D02982B7E3F3F228164C730B");
+    };
+    "B000000000000000000000CB" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "B000000000000000000000C9";
+    };
+    "C0000000000000000000001E" = {
+      "isa" = "PBXFrameworksBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ("C00000000000000000000003", "C0000000000000000000000C");
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "D5D5B94F56937461D5CD3138" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "3FFE11751C92CCB56A9E0268";
+    };
+    "D1401147D6C2269171F33923" = {
+      "path" = "LocalFlow/Core/Storage/HistoryMigrations.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "E55D985103627E05978DE6D8" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "5B6128699FF1BA87358BBD24";
+    };
+    "2560E0755A0AD2B45EF3BA50" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "EEF41DA4E39708F927D8A644";
+    };
+    "C00000000000000000000003" = {
+      "isa" = "PBXBuildFile";
+      "productRef" = "C00000000000000000000002";
+    };
+    "B00000000000000000000064" = {
+      "productType" = "com.apple.product-type.bundle.unit-test";
+      "productReference" = "B00000000000000000000066";
+      "buildConfigurationList" = "B0000000000000000000006D";
+      "productName" = "LocalFlowTests";
+      "isa" = "PBXNativeTarget";
+      "buildPhases" = ("B00000000000000000000068");
+      "dependencies" = ("B0000000000000000000006A");
+      "name" = "LocalFlowTests";
+      "buildRules" = ();
+    };
+    "0AD30A008B15A05B59A11836" = {
+      "path" = "LocalFlowTests/TranscriptionStoreTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "C0A98F39AA9D0637DF182234" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "0AD30A008B15A05B59A11836";
+    };
+    "753F73ECBE82EBA80125DB37" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "C92D0CBDC47F66DF86E4EAAD";
+    };
+    "F41FCCB41BA1F8AB24B81572" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "7045D71FC94533EFAB7F35F7";
+    };
+    "5B866763FD23744F00E954DE" = {
+      "path" = "LocalFlow/Core/DictationBoundaries.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "0AEE8151BA4531506E18C862" = {
+      "path" = "LocalFlowTests/WindowedTranscriptionTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "8BA899A9C7F88B1F670918A0" = {
+      "path" = "LocalFlow/Core/Models/ModelProvisioner.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A0000000000000000000000D" = {
+      "isa" = "XCBuildConfiguration";
+      "buildSettings" = {
+        "GENERATE_INFOPLIST_FILE" = "NO";
+        "SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
+        "ENABLE_HARDENED_RUNTIME" = "YES";
+        "COMBINE_HIDPI_IMAGES" = "YES";
+        "CODE_SIGN_ENTITLEMENTS" = "LocalFlow/LocalFlow.entitlements";
+        "SWIFT_OBJC_BRIDGING_HEADER" = "LocalFlow/Core/Audio/AudioCaptureRing.h";
+        "INFOPLIST_FILE" = "LocalFlow/Info.plist";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "org.localflow.LocalFlow";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+      };
+      "name" = "Debug";
+    };
+    "CDE55DF214D6FC84CEC431F9" = {
+      "path" = "LocalFlowTests/RuntimeCompatibilityTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A00000000000000000000008" = {
+      "path" = "LocalFlow/App/LocalFlowApp.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A00000000000000000000002" = {
+      "isa" = "XCConfigurationList";
+      "defaultConfigurationIsVisible" = "0";
+      "defaultConfigurationName" = "Release";
+      "buildConfigurations" = ("A00000000000000000000006", "A00000000000000000000007");
+    };
+    "B000000000000000000000CA" = {
+      "path" = "LocalFlowUITests.xctest";
+      "isa" = "PBXFileReference";
+      "includeInIndex" = "0";
+      "explicitFileType" = "wrapper.cfbundle";
+      "sourceTree" = "BUILT_PRODUCTS_DIR";
+    };
+    "6B7C62B4830EB59C0C2FB8A4" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "5D2E88D7BA9F5B0C9DDB1B6B";
+    };
+    "C8991DCE803551DBC8A1505D" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "0AEE8151BA4531506E18C862";
+    };
+    "EB753A8F27A5A97EEDE578E5" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "D1401147D6C2269171F33923";
+    };
+    "A9CB5301C6B78BE5CBE653D3" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "DF12A0C76A1F42E414269F4A";
+    };
+    "38E78341C5F8C5DA23D24DC7" = {
+      "path" = "LocalFlow/Core/Audio/AudioSpool.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "3C77BCA351AFC593E364B1E0" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "3645B89B49E85D8CD2557328";
+    };
+    "C00000000000000000000002" = {
+      "isa" = "XCSwiftPackageProductDependency";
+      "package" = "C00000000000000000000001";
+      "productName" = "FluidAudio";
+    };
+    "B00000000000000000000069" = {
+      "isa" = "PBXContainerItemProxy";
+      "containerPortal" = "A00000000000000000000001";
+      "remoteGlobalIDString" = "A00000000000000000000005";
+      "remoteInfo" = "LocalFlow";
+      "proxyType" = "1";
+    };
+    "41D311A605520FC7B8B9A980" = {
+      "isa" = "PBXResourcesBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ("0FF67CC822E4B49AA2F91CE5", "F00000000000000000000002");
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "3645B89B49E85D8CD2557328" = {
+      "path" = "LocalFlowTests/TextInsertionTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "F719E0AC8506B0E710E3C6C7" = {
+      "path" = "LocalFlowTests/ModelOwnershipTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "3E2B3C4DB773CA6C50CB67E1" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "01DE08AB5FFC4B83A1231EB4";
+    };
+    "0FF67CC822E4B49AA2F91CE5" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "BE04A0D8986C69F48E7D8E4D";
+    };
+    "E3D4660C85C7E007DF631408" = {
+      "path" = "LocalFlow/Features/Settings/ShortcutPreference.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "00FF61E104EA0E1BF8764686" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "F719E0AC8506B0E710E3C6C7";
+    };
+    "A0000000000000000000000C" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "A00000000000000000000008";
+    };
+    "A00000000000000000000007" = {
+      "isa" = "XCBuildConfiguration";
+      "buildSettings" = {
+        "SWIFT_VERSION" = "6.0";
+        "ENABLE_TESTABILITY" = "NO";
+        "ARCHS" = "arm64";
+        "MACOSX_DEPLOYMENT_TARGET" = "14.0";
+        "CLANG_ENABLE_MODULES" = "YES";
+        "SDKROOT" = "macosx";
+      };
+      "name" = "Release";
+    };
+    "B000000000000000000000CF" = {
+      "isa" = "XCBuildConfiguration";
+      "buildSettings" = {
+        "GENERATE_INFOPLIST_FILE" = "YES";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "org.localflow.LocalFlowUITests";
+        "SWIFT_VERSION" = "6.0";
+        "MACOSX_DEPLOYMENT_TARGET" = "14.0";
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+        "TEST_TARGET_NAME" = "LocalFlow";
+      };
+      "name" = "Debug";
+    };
+    "23E8882309F1C5576FD95DA8" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "41BD5BB1040470B3E02D8BBF";
+    };
+    "CFFBD1BF8121B53F09766505" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "264898CDB842ADB05AD474D6";
+    };
+    "45C088E1C164E7FAB29696B2" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "E3D4660C85C7E007DF631408";
+    };
+    "7045D71FC94533EFAB7F35F7" = {
+      "path" = "LocalFlow/Features/Dictation/DictationIndicator.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A00000000000000000000001" = {
+      "buildConfigurationList" = "A00000000000000000000002";
+      "packageReferences" = ("C00000000000000000000001", "C0000000000000000000000A");
+      "targets" = ("A00000000000000000000005", "B00000000000000000000064", "B000000000000000000000C8");
+      "developmentRegion" = "en";
+      "knownRegions" = ("en", "Base");
+      "isa" = "PBXProject";
+      "compatibilityVersion" = "Xcode 14.0";
+      "productRefGroup" = "A00000000000000000000004";
+      "projectDirPath" = "";
+      "attributes" = {
+        "LastUpgradeCheck" = "2640";
+      };
+      "hasScannedForEncodings" = "0";
+      "projectRoot" = "";
+      "mainGroup" = "A00000000000000000000003";
+    };
+    "91EA7CA21E929945F162BC34" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "3226C03E33A6E62D73158E17";
+    };
+    "699D8EE508C68FF81C0A151F" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "2D71169A0A254024B98A7B25";
+    };
+    "EEF41DA4E39708F927D8A644" = {
+      "path" = "LocalFlow/App/AppServices.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "C6D311FCC7625CE3BDF0A154" = {
+      "path" = "LocalFlowTests/ShortcutControllerTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "E5D2BAA9676314A329903493" = {
+      "path" = "LocalFlow/Core/Audio/AudioCaptureRing.c";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.c.c";
+      "sourceTree" = "<group>";
+    };
+    "BE04A0D8986C69F48E7D8E4D" = {
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "text.json";
+      "path" = "LocalFlow/Resources/Models/parakeet-v3.json";
+      "sourceTree" = "<group>";
+    };
+    "244C33B729C284D203250CD4" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "DD57D3D309ECA0B0C7A9FA59";
+    };
+    "C0000000000000000000000C" = {
+      "isa" = "PBXBuildFile";
+      "productRef" = "C0000000000000000000000B";
+    };
+    "B0000000000000000000006D" = {
+      "isa" = "XCConfigurationList";
+      "defaultConfigurationIsVisible" = "0";
+      "defaultConfigurationName" = "Release";
+      "buildConfigurations" = ("B0000000000000000000006B", "B0000000000000000000006C");
+    };
+    "06C4DE332572E7B2B7178AF4" = {
+      "path" = "LocalFlowTests/AudioCaptureTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "B00000000000000000000068" = {
+      "isa" = "PBXSourcesBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ("54AA48CE1F3544E398E5DB71", "663F02B70BF34AC4A1A536A7", "97EC0E98DB3B45CB905299AB", "AD6663A0DB6C9F011C8EB5A5", "FE30F45E1E40DE3A6AAB501B", "CF5FB6E9DC12DBC0C6F85205", "7B012D6C5008487C5C0BED61", "D64A27D4F7FD244A85FF7395", "BC0DC43656EBAD97F4A36AD8", "DFC319D138AC0A100239A55D", "0CE004F7B17160F554C209FD", "306A9F445EDB4B3A24806D0F", "B00000000000000000000067", "A01FB93A3758318695FC5969", "6B7C62B4830EB59C0C2FB8A4", "00FF61E104EA0E1BF8764686", "C0A98F39AA9D0637DF182234", "2D8C2BABAC21B5B95E628561", "D5D5B94F56937461D5CD3138", "D62700A851699EC26DB00474", "B39D810ED26769C416B5924D", "3C77BCA351AFC593E364B1E0", "C8991DCE803551DBC8A1505D", "0D8097F83F83C4119EF76729", "244C33B729C284D203250CD4", "3387E3B3663A26A852D26968");
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "BDEC1A2FA9CF02CCCFA1EADA" = {
+      "path" = "LocalFlow/Core/Insertion/TextInsertionService.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "2EBCC515BD3B8E7D28C7D14B" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "BDEC1A2FA9CF02CCCFA1EADA";
+    };
+    "C00000000000000000000001" = {
+      "isa" = "XCRemoteSwiftPackageReference";
+      "requirement" = {
+        "kind" = "exactVersion";
+        "version" = "0.15.7";
+      };
+      "repositoryURL" = "https://github.com/FluidInference/FluidAudio.git";
+      "traits" = ();
+    };
+    "B5C914525BEE38280FCEA496" = {
+      "path" = "LocalFlow/Core/Insertion/CapturedTarget.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "5D2E88D7BA9F5B0C9DDB1B6B" = {
+      "path" = "LocalFlowTests/ControlMailboxTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A0000000000000000000000B" = {
+      "isa" = "PBXSourcesBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ("9CF172EC74224B18B4FD2B9F", "8A43EDB9DBE810E63171F2AA", "2BCA4832D2CA32059A2D4778", "82D0EE79A42138A3B3D93AF1", "A49DD00925B69BD8B2508C6F", "FD1E9E4A84A4361FCFC46A2B", "4576B252742EB2515D84F05B", "51A47327CAA743DE28E6325A", "6DE8FA4886E703AEF0DB39D4", "4F49AEEB8F523D10AAE10190", "FF2402ADD7B1FA0113E6F2D5", "C475958B2DE249FF0C67635A", "75170D649973071812A85764", "7A7AC909389E1AFBAB20811C", "A0000000000000000000000C", "2D27329694F34C82CA69665D", "3116A2B32F1FD14DAF588159", "A9CB5301C6B78BE5CBE653D3", "951F3381FB5F472ED061C060", "EB753A8F27A5A97EEDE578E5", "CFFBD1BF8121B53F09766505", "3E2B3C4DB773CA6C50CB67E1", "E2EE79343740E1C9A3B02282", "CC4B2A0C2A23D9B8AF9F524A", "F393490BCB5BE0FD25E8D594", "2EBCC515BD3B8E7D28C7D14B", "699D8EE508C68FF81C0A151F", "C4E680D929F59294F0B3792D", "E55D985103627E05978DE6D8", "91EA7CA21E929945F162BC34", "753F73ECBE82EBA80125DB37", "45C088E1C164E7FAB29696B2", "2560E0755A0AD2B45EF3BA50", "23E8882309F1C5576FD95DA8", "F41FCCB41BA1F8AB24B81572", "666118006D9D4D32768F1207", "D50ACBA86B81E046836D0F3B", "1DE7F804D6CBCCB865B1BE2F");
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "A00000000000000000000006" = {
+      "isa" = "XCBuildConfiguration";
+      "buildSettings" = {
+        "SWIFT_VERSION" = "6.0";
+        "ENABLE_TESTABILITY" = "YES";
+        "ARCHS" = "arm64";
+        "MACOSX_DEPLOYMENT_TARGET" = "14.0";
+        "CLANG_ENABLE_MODULES" = "YES";
+        "SDKROOT" = "macosx";
+      };
+      "name" = "Debug";
+    };
+    "B000000000000000000000CE" = {
+      "isa" = "PBXTargetDependency";
+      "target" = "A00000000000000000000005";
+      "targetProxy" = "B000000000000000000000CD";
+    };
+    "B000000000000000000000C9" = {
+      "path" = "LocalFlowUITests/PlatformProbeTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "C4E680D929F59294F0B3792D" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "8BA899A9C7F88B1F670918A0";
+    };
+    "2D27329694F34C82CA69665D" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "38E78341C5F8C5DA23D24DC7";
+    };
+    "951F3381FB5F472ED061C060" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "958A0992EC278D30720D9136";
+    };
+    "2D71169A0A254024B98A7B25" = {
+      "path" = "LocalFlow/Core/Models/ModelDescriptor.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A01FB93A3758318695FC5969" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "D018614B649DDA0BB3B17B8F";
+    };
+    "C0000000000000000000000B" = {
+      "isa" = "XCSwiftPackageProductDependency";
+      "package" = "C0000000000000000000000A";
+      "productName" = "GRDB";
+    };
+    "B0000000000000000000006C" = {
+      "isa" = "XCBuildConfiguration";
+      "buildSettings" = {
+        "GENERATE_INFOPLIST_FILE" = "YES";
+        "TEST_HOST" = "$(BUILT_PRODUCTS_DIR)/LocalFlow.app/Contents/MacOS/LocalFlow";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-O";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "org.localflow.LocalFlowTests";
+        "SWIFT_VERSION" = "6.0";
+        "MACOSX_DEPLOYMENT_TARGET" = "14.0";
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+        "BUNDLE_LOADER" = "$(TEST_HOST)";
+      };
+      "name" = "Release";
+    };
+    "958A0992EC278D30720D9136" = {
+      "path" = "LocalFlow/Core/Models/ModelLifecycleCoordinator.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "B00000000000000000000067" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "B00000000000000000000065";
+    };
+    "666118006D9D4D32768F1207" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "2E7BF18ED83B0628A0BAF86C";
+    };
+    "3FFE11751C92CCB56A9E0268" = {
+      "path" = "LocalFlowTests/ModelProvisionerTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "2D8C2BABAC21B5B95E628561" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "06C4DE332572E7B2B7178AF4";
+    };
+    "264898CDB842ADB05AD474D6" = {
+      "path" = "LocalFlow/Core/Storage/TranscriptionEntry.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "3116A2B32F1FD14DAF588159" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "5B866763FD23744F00E954DE";
+    };
+    "3226C03E33A6E62D73158E17" = {
+      "path" = "LocalFlow/Core/Transcription/WindowedTranscriber.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "41BD5BB1040470B3E02D8BBF" = {
+      "path" = "LocalFlow/Features/Dictation/DictationCoordinator.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A0000000000000000000000A" = {
+      "isa" = "XCConfigurationList";
+      "defaultConfigurationIsVisible" = "0";
+      "defaultConfigurationName" = "Release";
+      "buildConfigurations" = ("A0000000000000000000000D", "A0000000000000000000000E");
+    };
+    "4CB623C90724792A3F7F74C7" = {
+      "path" = "LocalFlowTests/DictationCoordinatorTests.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "A00000000000000000000005" = {
+      "productType" = "com.apple.product-type.application";
+      "productReference" = "A00000000000000000000009";
+      "buildConfigurationList" = "A0000000000000000000000A";
+      "packageProductDependencies" = ("C00000000000000000000002", "C0000000000000000000000B");
+      "productName" = "LocalFlow";
+      "isa" = "PBXNativeTarget";
+      "buildPhases" = ("A0000000000000000000000B", "C0000000000000000000001E", "41D311A605520FC7B8B9A980");
+      "dependencies" = ();
+      "name" = "LocalFlow";
+      "buildRules" = ();
+    };
+    "B000000000000000000000CD" = {
+      "isa" = "PBXContainerItemProxy";
+      "containerPortal" = "A00000000000000000000001";
+      "remoteGlobalIDString" = "A00000000000000000000005";
+      "remoteInfo" = "LocalFlow";
+      "proxyType" = "1";
+    };
+    "DD57D3D309ECA0B0C7A9FA59" = {
+      "path" = "LocalFlowTests/Support/BoundaryFakes.swift";
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "sourcecode.swift";
+      "sourceTree" = "<group>";
+    };
+    "B000000000000000000000C8" = {
+      "productType" = "com.apple.product-type.bundle.ui-testing";
+      "productReference" = "B000000000000000000000CA";
+      "buildConfigurationList" = "B000000000000000000000D1";
+      "productName" = "LocalFlowUITests";
+      "isa" = "PBXNativeTarget";
+      "buildPhases" = ("B000000000000000000000CC");
+      "dependencies" = ("B000000000000000000000CE");
+      "name" = "LocalFlowUITests";
+      "buildRules" = ();
+    };
+  };
+  "rootObject" = "A00000000000000000000001";
+}

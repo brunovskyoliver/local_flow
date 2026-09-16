@@ -1,0 +1,6 @@
+openapi: 3.1.0
+info:
+  title: LocalFlow API
+  version: 0.0.0
+  description: Design scaffold. No endpoints are implemented or committed for Feature 001.
+paths: {}

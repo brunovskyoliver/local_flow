@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/davis7dotsh/sotto",
+  "commit": "c1d5f0bbaff19a1559621943dff49ba89b4a96a0",
+  "license": "MIT",
+  "import": "git archive HEAD; submodule contents excluded",
+  "submodules": {
+    "vendor/whisper.cpp": "371b5a7561823ab2bb32142d2751e35e7534727b",
+    "vendor/llama.cpp": "b95502ba9aa0eb73a2f4fc8878d7fbe6a847a0b9"
+  },
+  "purpose": "Pinned source for native view reuse. Not an application target or runtime dependency."
+}

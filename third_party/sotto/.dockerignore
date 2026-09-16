@@ -1,0 +1,16 @@
+.git
+**/.git
+.build
+.local
+.swiftpm
+build
+.env
+.env.*
+**/*.gguf
+**/*.safetensors
+**/*.wav
+**/*.aiff
+**/*.bin
+**/*.p12
+**/*.pfx
+**/.DS_Store

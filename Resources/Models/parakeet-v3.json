@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "modelID": "FluidInference/parakeet-tdt-0.6b-v3-coreml",
+  "sourceRevision": "7dd20fe6b1797d35f5e3307e8b1732d9a178edfe",
+  "sdkCompatibility": "FluidAudio 0.15.7; macOS 14+",
+  "automaticLanguage": true,
+  "license": "cc-by-4.0",
+  "complete": false,
+  "files": []
+}

@@ -1,0 +1,22 @@
+.build/
+build/
+.DS_Store
+.swiftpm/
+*.xcuserstate
+*.xcuserdatad/
+*.wav
+*.aiff
+*.bin
+!vendor/**
+
+# Personal development notes and local-only release archives
+.local/
+__pycache__/
+
+# Local credentials and model artifacts
+.env
+.env.*
+*.p12
+*.pfx
+*.gguf
+*.safetensors
