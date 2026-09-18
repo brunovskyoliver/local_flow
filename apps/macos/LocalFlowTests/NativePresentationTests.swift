@@ -173,4 +173,30 @@ final class RewriteIndicatorPresentationTests: XCTestCase {
     XCTAssertFalse(limit.canRetry)
     XCTAssertNotEqual(notice.id, limit.id, "a new notice re-announces")
   }
+
+  /// Feature 004 (T036): the menu bar glyph and label per meeting state. The
+  /// recording glyph wins over attention; without a meeting nothing changes.
+  func testMenuBarGlyphReflectsMeetingState() {
+    XCTAssertEqual(
+      MenuBarGlyph.resolve(needsAttention: false, meetingState: nil).symbol, "waveform")
+    XCTAssertEqual(
+      MenuBarGlyph.resolve(needsAttention: false, meetingState: nil).label, "LocalFlow")
+    XCTAssertEqual(
+      MenuBarGlyph.resolve(needsAttention: true, meetingState: nil).symbol, "exclamationmark.circle"
+    )
+    XCTAssertEqual(
+      MenuBarGlyph.resolve(needsAttention: true, meetingState: .recording).symbol,
+      "record.circle.fill")
+    XCTAssertEqual(
+      MenuBarGlyph.resolve(needsAttention: false, meetingState: .recording).label,
+      "LocalFlow: meeting recording")
+    XCTAssertEqual(
+      MenuBarGlyph.resolve(needsAttention: false, meetingState: .paused).symbol, "pause.circle.fill"
+    )
+    for state in [MeetingState.completed, .interrupted, .failed, .finalizing, .preparing] {
+      XCTAssertEqual(
+        MenuBarGlyph.resolve(needsAttention: false, meetingState: state).symbol, "waveform",
+        "\(state)")
+    }
+  }
 }

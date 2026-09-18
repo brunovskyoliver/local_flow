@@ -25,6 +25,13 @@ final class AppServices {
   private(set) var explicitInsertion: ExplicitInsertionCoordinator?
   private(set) var reviewingInsertion = false
   private(set) var coordinator: DictationCoordinator?
+  // Feature 004: meetings. The coordinator exists before dictation is wired so the
+  // exclusivity guard is in place from the first shortcut press.
+  private(set) var meetingCoordinator: MeetingCoordinator?
+  private(set) var meetingLibrary: MeetingLibraryViewModel?
+  @ObservationIgnored private(set) var meetingStore: MeetingStore?
+  @ObservationIgnored private(set) var meetingStorageRoot: MeetingStorageRoot?
+  @ObservationIgnored private let reconciliationGate = MeetingReconciliationGate()
   private(set) var setupStatus = "Starting…"
   private(set) var isReadyToTerminate = false
   private(set) var modelInstalled = false
@@ -178,6 +185,7 @@ final class AppServices {
         })
       self.lifecycle = lifecycle
       await lifecycle.setKeepLoaded(preferences.keepModelReady && allowsPreferenceWarmup)
+      startMeetings(base: base, history: paths.1)
       let insertion = TextInsertionService()
       let vocabulary = VocabularyStore(history: paths.1)
       // Always wired: whether a dictation is rewritten is read from the per-attempt
@@ -205,6 +213,14 @@ final class AppServices {
             build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)),
         vocabulary: vocabulary, rewriter: rewriteCoordinator)
       self.coordinator = coordinator
+      // FR-027: dictation is refused while a meeting is active; with no meeting the
+      // guard returns nil and the dictation path is the Feature 003 path.
+      coordinator.admissionGuard = { [weak self] in
+        self?.meetingCoordinator?.isActive == true ? MeetingErrorMessage.meetingInProgress : nil
+      }
+      coordinator.admissionRefused = { [weak self] reason in
+        self?.showMeetingNotice(reason)
+      }
       coordinator.rewriteNoticeChanged = { [weak self, weak coordinator] notice in
         guard let self else { return }
         self.panel.showActionNotice(notice, targetPoint: coordinator?.targetDisplayPoint) {
@@ -316,6 +332,66 @@ final class AppServices {
         await runBenchmark(coordinator: coordinator, lifecycle: lifecycle)
       }
     } catch { setupStatus = "Setup could not finish. Check app storage and the model manifest." }
+  }
+
+  /// Meeting storage, store, launch reconciliation (detached, never awaited by
+  /// launch) and the coordinator. Start Meeting stays disabled until the
+  /// reconciler reports completion.
+  private func startMeetings(base: URL, history: TranscriptionStore) {
+    let options = MeetingRuntimeOptions.current
+    let root = MeetingStorageRoot(
+      url: options.storageRootOverride ?? base.appendingPathComponent("Meetings", isDirectory: true)
+    )
+    let store = MeetingStore(history: history, root: root)
+    meetingStore = store
+    meetingStorageRoot = root
+    let recorder = recorder
+    let gate = reconciliationGate
+    let reconciler = MeetingReconciler(
+      store: store, root: root, recorder: recorder, clock: SystemMeetingClock())
+    Task.detached(priority: .utility) {
+      let summary = await reconciler.run()
+      await MainActor.run {
+        gate.complete(summary)
+        self.meetingCoordinator?.markReconciliationComplete()
+        if let text = summary.noticeText { self.showMeetingNotice(text) }
+        Task { await self.meetingLibrary?.refresh() }
+      }
+    }
+    let coordinator = MeetingCoordinator(
+      dependencies: .init(
+        store: store, writer: FileSegmentWriter(root: root), permissions: .live,
+        clock: SystemMeetingClock(), recorder: recorder, storageRoot: root,
+        sourceFactory: { kind -> any MeetingAudioSourcing in
+          kind == .microphone ? MicrophoneMeetingSource() : SystemAudioMeetingSource()
+        },
+        isDictationBusy: { [weak self] in self?.coordinator?.busy == true },
+        reconciliationGate: { await gate.wait() }, options: options))
+    meetingCoordinator = coordinator
+    meetingLibrary = MeetingLibraryViewModel(store: store) { [weak coordinator] in
+      coordinator?.activeMeetingID
+    }
+  }
+
+  /// One action notice through the indicator panel; the action opens Meetings.
+  private func showMeetingNotice(_ text: String) {
+    let notice = RewriteActionNotice(dictationID: UUID(), message: text, canRetry: false)
+    panel.showActionNotice(notice, targetPoint: coordinator?.targetDisplayPoint) { [weak self] in
+      self?.router.selection = .meetings
+    }
+  }
+
+  /// Notes for a library meeting; the active meeting's editor lives on the coordinator.
+  func makeNotesEditor(for detail: MeetingDetail) -> MeetingNotesEditor {
+    MeetingNotesEditor(
+      meetingID: detail.meeting.id, store: meetingStore!, clock: SystemMeetingClock(),
+      text: detail.notes.text, revision: detail.notes.revision)
+  }
+
+  /// Window close: notes are saved before the editor goes away; capture is untouched.
+  func flushMeetingNotes() {
+    guard let editor = meetingCoordinator?.notesEditor else { return }
+    Task { await editor.flush() }
   }
 
   /// Opt-in resource run. It drives the same coordinator the shortcut drives and
@@ -744,6 +820,11 @@ final class AppServices {
     measurementTask?.cancel()
     measurementTask = nil
     Task {
+      // A meeting in progress is stopped and persisted; notes are flushed first.
+      if let meetingCoordinator {
+        await meetingCoordinator.notesEditor?.flush()
+        if meetingCoordinator.isActive { await meetingCoordinator.stop() }
+      }
       do {
         try await lifecycle?.shutdownIfIdle()
       } catch {
@@ -776,4 +857,38 @@ private final class DisplayOptionsObserver {
     }
   }
   deinit { if let token { center.removeObserver(token) } }
+}
+
+/// Feature 004 runtime switches, read once from the process environment and
+/// arguments next to `LOCALFLOW_RESOURCE_RECORDING`. Both default off. The
+/// storage-root override exists for acceptance runs on a disk image and is
+/// ignored unless it is an absolute path; the slow-finalize flag only exists in
+/// debug builds so a force quit can land between the two track finalizations.
+struct MeetingRuntimeOptions: Equatable, Sendable {
+  static let rootVariable = "LOCALFLOW_MEETING_ROOT"
+  static let slowFinalizeFlag = "--debug-slow-finalize"
+  /// The slow-finalize hook only exists in debug builds.
+  static var slowFinalizeSupported: Bool {
+    #if DEBUG
+      true
+    #else
+      false
+    #endif
+  }
+  var storageRootOverride: URL?
+  var debugSlowFinalize = false
+
+  static func parse(environment: [String: String], arguments: [String]) -> MeetingRuntimeOptions {
+    var options = MeetingRuntimeOptions()
+    if let root = environment[rootVariable], root.hasPrefix("/"), !root.contains("\0") {
+      options.storageRootOverride = URL(fileURLWithPath: root, isDirectory: true)
+    }
+    options.debugSlowFinalize = slowFinalizeSupported && arguments.contains(slowFinalizeFlag)
+    return options
+  }
+
+  static var current: MeetingRuntimeOptions {
+    parse(
+      environment: ProcessInfo.processInfo.environment, arguments: CommandLine.arguments)
+  }
 }

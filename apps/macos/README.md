@@ -102,3 +102,11 @@ export if records were lost or overwritten. Closing writes a bounded completion
 footer with loss and overwrite counts; a missing footer means an incomplete run.
 This sampler is not the planned
 20-cycle benchmark driver and does not establish resource acceptance.
+
+## Meetings
+
+The Meetings page (before Transcriptions) records the microphone and system audio as two separate AAC-LC tracks, with pause/resume, notes, a paged library, per-track playback, launch recovery and confirmed deletion. It needs two permissions, requested only from Start Meeting: Microphone and Screen & System Audio Recording (System Settings > Privacy & Security). No model is loaded and nothing leaves the Mac. Dictation is refused while a meeting is active and Start Meeting is refused while a dictation is busy.
+
+- `LOCALFLOW_MEETING_ROOT=/absolute/path` overrides the meeting storage root (for acceptance runs on a disk image); relative values are ignored.
+- `--debug-slow-finalize` (debug builds only) sleeps 10 s between the two track finalizations so a force quit can land during `finalizing`.
+- Acceptance records live under `specs/004-meeting-capture-foundation/acceptance/` (`codec-recoverability.md`, `baseline.md`, `recovery.md`, `storage-failure.md`, `long-run-memory.md`, `privacy.md`, `fr-028-traceability.md`).

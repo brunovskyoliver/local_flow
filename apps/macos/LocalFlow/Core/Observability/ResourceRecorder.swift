@@ -13,9 +13,12 @@ final class ResourceRecorder: @unchecked Sendable {
       recovery, failed
     case modelUnloaded, modelLoading, modelActive, modelCooling, modelReleasing
     case baseline, settled, captureOnly
+    // Feature 004: RSS samples while a meeting is active.
+    case meetingRecording, meetingPaused, meetingFinalizing
   }
   enum QueueSource: String, Codable, Sendable {
     case unavailable, controlMailbox, audioRaw, audioNormalized
+    case meetingMicrophone, meetingSystem
   }
   enum Conditions: String, Codable, Sendable {
     case development, offlineAcceptance, captureOnly
@@ -36,20 +39,32 @@ final class ResourceRecorder: @unchecked Sendable {
     case rewriteRequestBytes, rewriteResponseBytes
     case rewriteInputScalars, rewriteAttemptOrdinal
     case rewriteOutcome, rewriteFallback, rewriteShieldFailure, rewritePreAdmissionRefusal
+    // Meeting capture (Feature 004): durations of start, capture init and
+    // finalization; per-track bytes and queue depth; counters keyed only by a
+    // track kind, a state name or an outcome kind (`meetingKey`).
+    case meetingStartDuration, meetingCaptureInitDuration, meetingFinalizationDuration
+    case meetingBytesWritten, meetingSegmentBytes
+    case meetingTransition, meetingMicQueueDepth, meetingSystemQueueDepth, meetingDroppedFrames
+    case meetingWriteFailure, meetingEncoderFailure, meetingPauseCount, meetingResumeCount
+    case meetingRecoveryOutcome
 
     var kind: Kind {
       switch self {
       case .recognitionDuration, .assemblyDuration, .normalizationDuration, .persistenceDuration,
         .endToEndDuration, .modelLoadDuration, .modelReleaseDuration, .rewriteTotalDuration,
         .rewriteFirstByteDuration, .rewriteNetworkDuration, .rewriteBackendFirstTokenDuration,
-        .rewriteBackendDuration:
+        .rewriteBackendDuration, .meetingStartDuration, .meetingCaptureInitDuration,
+        .meetingFinalizationDuration:
         return .duration
       case .rawTextBytes, .assembledTextBytes, .normalizedTextBytes, .metadataBytes,
-        .rewriteRequestBytes, .rewriteResponseBytes:
+        .rewriteRequestBytes, .rewriteResponseBytes, .meetingBytesWritten, .meetingSegmentBytes:
         return .bytes
       case .windowCount, .completionReasonCount, .appliedRuleCount, .appliedEntryCount,
         .rewriteInputScalars, .rewriteAttemptOrdinal, .rewriteOutcome, .rewriteFallback,
-        .rewriteShieldFailure, .rewritePreAdmissionRefusal:
+        .rewriteShieldFailure, .rewritePreAdmissionRefusal, .meetingTransition,
+        .meetingMicQueueDepth, .meetingSystemQueueDepth, .meetingDroppedFrames,
+        .meetingWriteFailure, .meetingEncoderFailure, .meetingPauseCount, .meetingResumeCount,
+        .meetingRecoveryOutcome:
         return .count
       }
     }
@@ -61,12 +76,30 @@ final class ResourceRecorder: @unchecked Sendable {
       switch self {
       case .rewriteInputScalars: return UInt32(RewriteBounds.maximumInputScalars)
       case .rewriteAttemptOrdinal: return UInt32(RewriteAttempt.maximumPerDictation)
-      case .rewriteOutcome, .rewriteFallback, .rewriteShieldFailure, .rewritePreAdmissionRefusal:
+      case .rewriteOutcome, .rewriteFallback, .rewriteShieldFailure, .rewritePreAdmissionRefusal,
+        .meetingTransition, .meetingWriteFailure, .meetingEncoderFailure, .meetingPauseCount,
+        .meetingResumeCount, .meetingRecoveryOutcome:
         return 1
+      case .meetingMicQueueDepth, .meetingSystemQueueDepth: return 32
+      case .meetingDroppedFrames: return UInt32.max
       default: return ResourceRecorder.maximumItemCount
       }
     }
+    /// Largest byte value; segment files can exceed the quality-detail ceiling.
+    var payloadLimit: UInt64 {
+      switch self {
+      case .meetingBytesWritten, .meetingSegmentBytes: return 1 << 32
+      default: return ResourceRecorder.maximumPayloadBytes
+      }
+    }
     var isRewrite: Bool { rawValue.hasPrefix("rewrite") }
+    var isMeeting: Bool { rawValue.hasPrefix("meeting") }
+    static let allMeetingCases: [Metric] = [
+      .meetingStartDuration, .meetingCaptureInitDuration, .meetingFinalizationDuration,
+      .meetingBytesWritten, .meetingSegmentBytes, .meetingTransition, .meetingMicQueueDepth,
+      .meetingSystemQueueDepth, .meetingDroppedFrames, .meetingWriteFailure,
+      .meetingEncoderFailure, .meetingPauseCount, .meetingResumeCount, .meetingRecoveryOutcome,
+    ]
     var isRefusal: Bool { self == .rewritePreAdmissionRefusal }
   }
   enum Failure: Error, Equatable { case invalidIdentity, invalidLimit, unavailable, incomplete }
@@ -141,6 +174,8 @@ final class ResourceRecorder: @unchecked Sendable {
     let identity: String?
     let outcome: String?
     let refusal: RewriteFailureCategory?
+    // Meeting dimension: a track kind, a state name or an outcome kind only.
+    let meetingKey: String?
   }
 
   private let identity: Identity
@@ -235,7 +270,7 @@ final class ResourceRecorder: @unchecked Sendable {
     queueDepth: UInt32? = nil, queueCapacity: UInt32? = nil, queueHighWater: UInt32? = nil,
     durationNanoseconds: UInt64? = nil, metric: Metric? = nil, payloadBytes: UInt64? = nil,
     itemCount: UInt32? = nil, bucket: RewriteInputBucket? = nil, rewriteIdentity: String? = nil,
-    outcome: String? = nil, refusal: RewriteFailureCategory? = nil
+    outcome: String? = nil, refusal: RewriteFailureCategory? = nil, meetingKey: String? = nil
   ) -> Bool {
     // A metric names exactly one bounded measurement of its own kind; a value
     // without a metric, or a metric with the wrong kind of value, is counted as
@@ -247,7 +282,7 @@ final class ResourceRecorder: @unchecked Sendable {
       case .bytes:
         valid =
           durationNanoseconds == nil && itemCount == nil
-          && payloadBytes.map { $0 <= Self.maximumPayloadBytes } == true
+          && payloadBytes.map { $0 <= metric.payloadLimit } == true
       case .count:
         valid =
           durationNanoseconds == nil && payloadBytes == nil
@@ -267,6 +302,13 @@ final class ResourceRecorder: @unchecked Sendable {
     let rewrite = metric?.isRewrite == true
     if bucket != nil || rewriteIdentity != nil || outcome != nil || refusal != nil {
       guard rewrite else {
+        OSAtomicIncrement64Barrier(&loss)
+        return false
+      }
+    }
+    // A meeting key is a closed-set token and belongs to meeting metrics only.
+    if let meetingKey {
+      guard metric?.isMeeting == true, Self.isValidMeetingKey(meetingKey) else {
         OSAtomicIncrement64Barrier(&loss)
         return false
       }
@@ -318,7 +360,7 @@ final class ResourceRecorder: @unchecked Sendable {
       queueHighWater: queueHighWater,
       durationNanoseconds: durationNanoseconds, metric: metric, payloadBytes: payloadBytes,
       itemCount: itemCount, bucket: bucket, identity: rewriteIdentity, outcome: outcome,
-      refusal: refusal)
+      refusal: refusal, meetingKey: meetingKey)
     tail = (tail + 1) % Self.pendingCapacity
     count += 1
     ringLock.unlock()
@@ -427,6 +469,13 @@ final class ResourceRecorder: @unchecked Sendable {
           || [45, 95, 46, 43, 58, 47].contains($0)
       }
   }
+  /// Track kinds, lifecycle state names and reconciliation outcome kinds.
+  static let meetingKeys: Set<String> =
+    Set(MeetingTrackKind.allCases.map(\.rawValue))
+    .union(MeetingState.allCases.map(\.rawValue))
+    .union(MeetingRecoveryOutcomeKind.allCases.map(\.rawValue))
+  static func isValidMeetingKey(_ key: String) -> Bool { meetingKeys.contains(key) }
+
   static func isValidOutcome(_ outcome: String) -> Bool {
     outcome == "succeeded" || outcome == "cancelled"
       || RewriteFailureCategory(rawValue: outcome)?.isPersistable == true
@@ -483,6 +532,47 @@ final class ResourceRecorder: @unchecked Sendable {
     if refusals.isEmpty { lines.append("  none") }
     for (reason, count) in refusals.sorted(by: { $0.key < $1.key }) {
       lines.append("  \(reason): \(count)")
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  /// Meeting-phase RSS series per phase (median, peak, sample count), each
+  /// "unmeasured" under five samples, plus per-metric counts. Content-free by
+  /// construction: the input lines carry no text fields.
+  static func meetingReport(files: [URL]) throws -> String {
+    var rss: [Phase: [UInt64]] = [:]
+    var metrics: [String: Int] = [:]
+    for file in files {
+      guard let data = try? Data(contentsOf: file) else { continue }
+      for line in data.split(separator: 10) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+          let phaseName = object["phase"] as? String, let phase = Phase(rawValue: phaseName)
+        else { continue }
+        if let metric = object["metric"] as? String, metric.hasPrefix("meeting") {
+          metrics[metric, default: 0] += 1
+        }
+        if [.meetingRecording, .meetingPaused, .meetingFinalizing].contains(phase),
+          let bytes = object["rssBytes"] as? Double
+        {
+          rss[phase, default: []].append(UInt64(bytes))
+        }
+      }
+    }
+    var lines: [String] = ["meeting RSS by phase"]
+    for phase in [Phase.meetingRecording, .meetingPaused, .meetingFinalizing] {
+      let samples = (rss[phase] ?? []).sorted()
+      if samples.count < 5 {
+        lines.append("  \(phase.rawValue): unmeasured (fewer than 5 samples, n=\(samples.count))")
+      } else {
+        let median = samples[samples.count / 2] / 1_048_576
+        let peak = samples[samples.count - 1] / 1_048_576
+        lines.append("  \(phase.rawValue): n=\(samples.count) median=\(median)MB peak=\(peak)MB")
+      }
+    }
+    lines.append("meeting metrics")
+    if metrics.isEmpty { lines.append("  none") }
+    for (name, count) in metrics.sorted(by: { $0.key < $1.key }) {
+      lines.append("  \(name): \(count)")
     }
     return lines.joined(separator: "\n")
   }

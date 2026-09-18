@@ -47,6 +47,32 @@ final class DictationCoordinatorTests: XCTestCase {
     XCTAssertEqual(detail.normalizedHash, TranscriptionQualityDetail.hash(entry.text))
   }
 
+  /// FR-027 (Feature 004): with a meeting active the admission guard refuses
+  /// `begin()` with "Meeting in progress" and no session starts; with the guard
+  /// unset (the default) the dependencies and call sequence are the Feature 003
+  /// ones. The capture fake records that no start was attempted while refused.
+  func testMeetingGuardRefusesDictationAndAbsentGuardLeavesTheFlowUnchanged() async throws {
+    let capture = FakeCapture()
+    let coordinator = try makeCoordinator(capture: capture)
+    var refusals: [String] = []
+    coordinator.admissionRefused = { refusals.append($0) }
+    coordinator.admissionGuard = { MeetingErrorMessage.meetingInProgress }
+    coordinator.begin()
+    XCTAssertFalse(coordinator.busy)
+    XCTAssertEqual(coordinator.state, .idle)
+    XCTAssertEqual(refusals, ["Meeting in progress"])
+    let startsWhileRefused = await capture.starts
+    XCTAssertEqual(startsWhileRefused, 0)
+    coordinator.admissionGuard = nil
+    coordinator.begin()
+    try await waitUntil { coordinator.state == .recording }
+    coordinator.release()
+    try await waitUntil { !coordinator.busy }
+    let starts = await capture.starts
+    XCTAssertEqual(starts, 1)
+    XCTAssertEqual(refusals.count, 1, "no refusal without a meeting")
+  }
+
   /// The other half of the Phase 3 checkpoint: the dependency absent entirely.
   /// Every other test in this suite runs it wired, rewriting off (T026).
   func testNilRewriterKeepsTheOriginalFlow() async throws {

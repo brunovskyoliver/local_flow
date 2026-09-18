@@ -178,6 +178,143 @@ enum HistoryMigrations {
           .references("rewrite_attempts", onDelete: .setNull)
       }
     }
+    migrator.registerMigration("meetings-v5") { db in
+      // Feature 004: six tables, cascades, closed value sets. No earlier table changes.
+      let states = MeetingState.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      let activeStates = MeetingState.allCases.filter(\.isActive).map { "'\($0.rawValue)'" }
+        .joined(separator: ",")
+      let reasons = MeetingFailureReason.allCases.map { "'\($0.rawValue)'" }
+        .joined(separator: ",")
+      try db.create(table: "meetings") { t in
+        t.column("id", .text).notNull().primaryKey()
+        t.column("state", .text).notNull().check(sql: "state IN (\(states))")
+        t.column("title", .text)
+          .check(sql: "title IS NULL OR length(cast(title AS blob)) BETWEEN 1 AND 256")
+        t.column("created_at", .integer).notNull()
+        t.column("started_at", .integer)
+        t.column("stopped_at", .integer)
+        t.column("completed_at", .integer)
+        t.column("wall_clock_ms", .integer).notNull().defaults(to: 0).check(
+          sql: "wall_clock_ms >= 0")
+        t.column("recorded_ms", .integer).notNull().defaults(to: 0).check(sql: "recorded_ms >= 0")
+        t.column("finalization_stage", .text)
+          .check(
+            sql:
+              "finalization_stage IS NULL OR finalization_stage IN ('none','mic','system','both')")
+        t.column("failure_reason", .text)
+          .check(sql: "failure_reason IS NULL OR failure_reason IN (\(reasons))")
+        t.column("failure_detail", .text)
+          .check(sql: "failure_detail IS NULL OR length(cast(failure_detail AS blob)) <= 512")
+        t.column("updated_at", .integer).notNull()
+        t.column("revision", .integer).notNull().defaults(to: 0).check(sql: "revision >= 0")
+        t.check(sql: "failure_reason IS NULL OR state IN ('interrupted','failed')")
+      }
+      try db.execute(
+        sql: "CREATE INDEX meetings_created_at_id ON meetings(created_at DESC, id DESC)")
+      try db.execute(
+        sql: "CREATE INDEX meetings_active ON meetings(state) WHERE state IN (\(activeStates))")
+      try db.create(table: "meeting_tracks") { t in
+        t.column("id", .text).notNull().primaryKey()
+        t.column("meeting_id", .text).notNull().references("meetings", onDelete: .cascade)
+        t.column("type", .text).notNull().check(sql: "type IN ('microphone','system')")
+        t.column("codec", .text).notNull().check(sql: "codec = 'aac_lc'")
+        t.column("container", .text).notNull().check(sql: "container = 'adts'")
+        t.column("sample_rate", .integer).notNull().check(sql: "sample_rate > 0")
+        t.column("channel_count", .integer).notNull().check(sql: "channel_count IN (1,2)")
+        t.column("bitrate", .integer).notNull().check(sql: "bitrate > 0")
+        t.column("health", .text).notNull()
+          .check(sql: "health IN ('healthy','failed','finalized','unrecoverable')")
+        t.column("failure_reason", .text)
+          .check(sql: "failure_reason IS NULL OR failure_reason IN (\(reasons))")
+        t.column("failed_at", .integer)
+        t.column("total_duration_ms", .integer).notNull().defaults(to: 0)
+          .check(sql: "total_duration_ms >= 0")
+        t.column("total_bytes", .integer).notNull().defaults(to: 0).check(sql: "total_bytes >= 0")
+        t.column("duration_warning", .integer).notNull().defaults(to: 0)
+          .check(sql: "duration_warning IN (0,1)")
+        t.column("dropped_frames", .integer).notNull().defaults(to: 0)
+          .check(sql: "dropped_frames >= 0")
+        t.check(sql: "(failure_reason IS NOT NULL) = (health IN ('failed','unrecoverable'))")
+      }
+      try db.execute(
+        sql: "CREATE UNIQUE INDEX meeting_tracks_meeting_type ON meeting_tracks(meeting_id, type)")
+      try db.create(table: "meeting_segments") { t in
+        t.column("id", .text).notNull().primaryKey()
+        t.column("track_id", .text).notNull().references("meeting_tracks", onDelete: .cascade)
+        t.column("sequence", .integer).notNull().check(sql: "sequence >= 1")
+        t.column("relative_path", .text).notNull()
+          .check(sql: "length(cast(relative_path AS blob)) BETWEEN 1 AND 255")
+        t.column("state", .text).notNull().check(
+          sql: "state IN ('open','finalized','unrecoverable')")
+        t.column("start_offset_ms", .integer).notNull().check(sql: "start_offset_ms >= 0")
+        t.column("duration_ms", .integer).notNull().defaults(to: 0).check(sql: "duration_ms >= 0")
+        t.column("byte_size", .integer).notNull().defaults(to: 0).check(sql: "byte_size >= 0")
+        t.column("started_at", .integer).notNull()
+        t.column("host_start_ns", .integer).notNull().check(sql: "host_start_ns >= 0")
+        t.column("open_reason", .text).notNull()
+          .check(sql: "open_reason IN ('start','resume','device_changed')")
+        t.column("close_reason", .text)
+          .check(
+            sql:
+              "close_reason IS NULL OR close_reason IN ('pause','system_sleep','stop','source_failed','storage_failed','device_changed','recovered')"
+          )
+        t.column("dropped_frames", .integer).notNull().defaults(to: 0)
+          .check(sql: "dropped_frames >= 0")
+        t.column("recovery_note", .text)
+          .check(sql: "recovery_note IS NULL OR length(cast(recovery_note AS blob)) <= 512")
+        t.column("failure_reason", .text)
+          .check(sql: "failure_reason IS NULL OR failure_reason IN (\(reasons))")
+        t.check(sql: "(failure_reason IS NOT NULL) = (state = 'unrecoverable')")
+      }
+      try db.execute(
+        sql:
+          "CREATE UNIQUE INDEX meeting_segments_track_sequence ON meeting_segments(track_id, sequence)"
+      )
+      try db.create(table: "meeting_pauses") { t in
+        t.column("id", .text).notNull().primaryKey()
+        t.column("meeting_id", .text).notNull().references("meetings", onDelete: .cascade)
+        t.column("started_at", .integer).notNull()
+        t.column("ended_at", .integer).check(sql: "ended_at IS NULL OR ended_at >= started_at")
+        t.column("reason", .text).notNull().check(sql: "reason IN ('user','system_sleep')")
+        t.column("closed_by", .text)
+          .check(sql: "closed_by IS NULL OR closed_by IN ('resume','stop','reconciliation')")
+        t.check(sql: "(ended_at IS NULL) = (closed_by IS NULL)")
+      }
+      try db.execute(
+        sql:
+          "CREATE UNIQUE INDEX meeting_pauses_open ON meeting_pauses(meeting_id) WHERE ended_at IS NULL"
+      )
+      try db.create(table: "meeting_notes") { t in
+        t.column("meeting_id", .text).notNull().primaryKey()
+          .references("meetings", onDelete: .cascade)
+        t.column("text", .text).notNull().check(sql: "length(cast(text AS blob)) <= 1048576")
+        t.column("author", .text).notNull().check(sql: "author = 'user'")
+        t.column("updated_at", .integer).notNull()
+        t.column("revision", .integer).notNull().defaults(to: 0).check(sql: "revision >= 0")
+      }
+      try db.create(table: "meeting_recovery_outcomes") { t in
+        t.column("id", .text).notNull().primaryKey()
+        t.column("meeting_id", .text).notNull().references("meetings", onDelete: .cascade)
+        t.column("ran_at", .integer).notNull()
+        t.column("found_state", .text).notNull().check(sql: "found_state IN (\(states))")
+        t.column("found_stage", .text)
+          .check(sql: "found_stage IS NULL OR found_stage IN ('none','mic','system','both')")
+        t.column("segments_recovered", .integer).notNull().defaults(to: 0)
+          .check(sql: "segments_recovered >= 0")
+        t.column("segments_unrecoverable", .integer).notNull().defaults(to: 0)
+          .check(sql: "segments_unrecoverable >= 0")
+        t.column("segments_missing", .integer).notNull().defaults(to: 0)
+          .check(sql: "segments_missing >= 0")
+        t.column("pause_closed", .integer).notNull().defaults(to: 0)
+          .check(sql: "pause_closed IN (0,1)")
+        t.column("bytes_truncated", .integer).notNull().defaults(to: 0)
+          .check(sql: "bytes_truncated >= 0")
+        t.column("summary", .text).notNull().check(sql: "length(cast(summary AS blob)) <= 512")
+      }
+      try db.execute(
+        sql:
+          "CREATE INDEX meeting_recovery_outcomes_meeting ON meeting_recovery_outcomes(meeting_id)")
+    }
     return migrator
   }
 }

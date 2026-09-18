@@ -278,6 +278,101 @@ final class ResourceRecorderTests: XCTestCase {
     XCTAssertTrue(rendered.contains("concurrency_limit: 2"), rendered)
   }
 
+  /// Feature 004 metrics carry only typed kinds and a closed-set `meetingKey`
+  /// (track kind, state name or outcome kind); any other string dimension, a
+  /// key on a non-meeting metric, or an out-of-range value is loss. Every new
+  /// metric is exercised so the content-free assertion covers all of them.
+  func testMeetingMetricsAreContentFreeAndKeyedOnlyByClosedSets() async throws {
+    let directory = directory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let recorder = try ResourceRecorder(directory: directory, identity: identity())
+    XCTAssertFalse(
+      recorder.record(
+        phase: .meetingRecording, metric: .meetingTransition, itemCount: 1,
+        meetingKey: "My standup title"), "free text is refused")
+    XCTAssertFalse(
+      recorder.record(
+        phase: .meetingRecording, metric: .meetingBytesWritten, payloadBytes: 10,
+        meetingKey: "Meetings/abc/mic-0001.aac"), "paths are refused")
+    XCTAssertFalse(
+      recorder.record(phase: .idle, metric: .windowCount, itemCount: 1, meetingKey: "microphone"),
+      "keys belong to meeting metrics only")
+    XCTAssertFalse(
+      recorder.record(
+        phase: .meetingRecording, metric: .meetingMicQueueDepth, itemCount: 33,
+        meetingKey: "microphone"), "queue depth is bounded by the ring")
+    XCTAssertFalse(
+      recorder.record(
+        phase: .meetingRecording, metric: .meetingSegmentBytes, payloadBytes: 1 << 33,
+        meetingKey: "system"))
+    let lossy = await recorder.flush()
+    XCTAssertEqual(lossy.lostSamples, 5)
+
+    let queue = DispatchQueue(label: "metrics-test-held")
+    queue.suspend()
+    let clean = try ResourceRecorder(
+      directory: directory.appendingPathComponent("clean"), identity: identity(), writerQueue: queue
+    )
+    let meetingMetrics: [ResourceRecorder.Metric] = [
+      .meetingStartDuration, .meetingCaptureInitDuration, .meetingFinalizationDuration,
+      .meetingBytesWritten, .meetingSegmentBytes, .meetingTransition, .meetingMicQueueDepth,
+      .meetingSystemQueueDepth, .meetingDroppedFrames, .meetingWriteFailure,
+      .meetingEncoderFailure, .meetingPauseCount, .meetingResumeCount, .meetingRecoveryOutcome,
+    ]
+    XCTAssertEqual(
+      Set(ResourceRecorder.Metric.allMeetingCases), Set(meetingMetrics),
+      "every meeting metric is listed")
+    for metric in meetingMetrics {
+      let key: String
+      switch metric {
+      case .meetingTransition: key = "recording"
+      case .meetingRecoveryOutcome: key = "recovered"
+      case .meetingSystemQueueDepth: key = "system"
+      default: key = "microphone"
+      }
+      let accepted: Bool
+      switch metric.kind {
+      case .duration:
+        accepted = clean.record(
+          phase: .meetingRecording, durationNanoseconds: 5, metric: metric, meetingKey: key)
+      case .bytes:
+        accepted = clean.record(
+          phase: .meetingRecording, metric: metric, payloadBytes: 1 << 30, meetingKey: key)
+      case .count:
+        accepted = clean.record(
+          phase: .meetingRecording, metric: metric, itemCount: 1, meetingKey: key)
+      }
+      XCTAssertTrue(accepted, "\(metric)")
+    }
+    XCTAssertTrue(
+      clean.record(
+        phase: .meetingRecording, metric: .meetingDroppedFrames, itemCount: 4_000_000,
+        meetingKey: "system"), "dropped frames are not bounded by the collection cap")
+    XCTAssertTrue(clean.record(phase: .meetingPaused, rssBytes: 1))
+    XCTAssertTrue(clean.record(phase: .meetingFinalizing, rssBytes: 1))
+    XCTAssertTrue(
+      clean.record(
+        phase: .meetingRecording, queueSource: .meetingSystem, queueDepth: 3, queueCapacity: 32,
+        queueHighWater: 5, metric: .meetingSystemQueueDepth, itemCount: 3, meetingKey: "system"))
+    queue.resume()
+    let report = try await clean.close()
+    XCTAssertTrue(report.complete)
+    XCTAssertEqual(report.samplesWritten, UInt64(meetingMetrics.count + 4))
+    for line in try Data(contentsOf: report.files[0]).split(separator: 10) {
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+      for forbidden in ["text", "title", "path", "notes", "audio", "error"] {
+        XCTAssertNil(object[forbidden])
+      }
+      for (field, value) in object
+      where !["metric", "phase", "queueSource", "kind", "build", "model"].contains(field) {
+        guard let string = value as? String else { continue }
+        XCTAssertTrue(
+          ResourceRecorder.isValidMeetingKey(string), "\(field)=\(string) is not a closed-set token"
+        )
+      }
+    }
+  }
+
   private func completion(in files: [URL]) throws -> [String: Any] {
     var found: [[String: Any]] = []
     for file in files {

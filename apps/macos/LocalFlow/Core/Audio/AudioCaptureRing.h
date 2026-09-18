@@ -21,5 +21,12 @@ int32_t LFAudioRingFailure(const LFAudioRing *ring);
 // blocks the realtime producer and never reveals audio content.
 uint32_t LFAudioRingCapacity(void);
 uint32_t LFAudioRingHighWater(const LFAudioRing *ring);
+// Meeting mode (Feature 004): a push that does not fit is dropped whole and
+// counted instead of latching overflow, so admission stays open. Default off;
+// the dictation ring keeps its latch-and-stop behaviour.
+void LFAudioRingSetDropOnOverflow(LFAudioRing *ring, bool enabled);
+uint64_t LFAudioRingDroppedFrames(const LFAudioRing *ring);
+// Slots currently queued (head - tail); a bounded measurement, never blocking.
+uint32_t LFAudioRingOccupancy(const LFAudioRing *ring);
 uint64_t LFAudioCaptureNow(void);
 #endif

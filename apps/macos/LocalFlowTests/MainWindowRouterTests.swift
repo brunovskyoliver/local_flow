@@ -143,4 +143,18 @@ final class MainWindowRouterTests: XCTestCase {
     XCTAssertEqual(window.identifier?.rawValue, "localflow.main")
     XCTAssertEqual(router.selection, .settings)
   }
+
+  /// Feature 004 adds the Meetings page before Transcriptions; the default
+  /// route and the other pages are unchanged.
+  @MainActor
+  func testMeetingsPageIsListedFirstAndRoutable() {
+    XCTAssertEqual(
+      LocalFlowPage.allCases, [.meetings, .history, .dictionary, .settings])
+    XCTAssertEqual(LocalFlowPage.meetings.rawValue, "Meetings")
+    XCTAssertEqual(LocalFlowPage.meetings.symbol, "waveform.badge.mic")
+    let router = MainWindowRouter(setActivationPolicy: { _ in }, activate: {})
+    XCTAssertEqual(router.selection, .history, "the default route is unchanged")
+    router.open(.meetings) {}
+    XCTAssertEqual(router.selection, .meetings)
+  }
 }

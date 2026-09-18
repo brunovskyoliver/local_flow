@@ -198,9 +198,9 @@ final class TranscriptionStoreTests: XCTestCase {
       "localflow-full-\(UUID().uuidString).sqlite")
     defer { try? FileManager.default.removeItem(at: url) }
     // Limit SQLite itself instead of filling the host disk. The bound leaves room
-    // for the schema (including the rewrite-v4 table and indexes) plus one 64 KiB
-    // entry, but not two.
-    let store = try TranscriptionStore(path: url.path, maximumDatabaseBytes: 160 * 1024)
+    // for the schema (including the rewrite-v4 and meetings-v5 tables and indexes)
+    // plus one 64 KiB entry, but not two.
+    let store = try TranscriptionStore(path: url.path, maximumDatabaseBytes: 224 * 1024)
     let first = try entry(text: String(repeating: "a", count: 65_536))
     _ = try await store.commit(reservation: try await store.reserve(), entry: first)
     let before = try usage(at: url)

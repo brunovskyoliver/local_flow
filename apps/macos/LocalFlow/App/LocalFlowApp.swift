@@ -18,8 +18,11 @@ struct LocalFlowApp: App {
     MenuBarExtra {
       LocalFlowMenu(services: services)
     } label: {
-      Image(systemName: services.needsAttention ? "exclamationmark.circle" : "waveform")
-        .accessibilityLabel(services.needsAttention ? "LocalFlow needs attention" : "LocalFlow")
+      let glyph = MenuBarGlyph.resolve(
+        needsAttention: services.needsAttention,
+        meetingState: services.meetingCoordinator?.status?.state)
+      Image(systemName: glyph.symbol)
+        .accessibilityLabel(glyph.label)
         .onAppear { appDelegate.services = services }
     }
     Window("LocalFlow", id: "main") {
@@ -90,8 +93,55 @@ private struct LocalFlowMenu: View {
     if services.coordinator?.busy == true {
       Button("Cancel") { services.coordinator?.cancel() }
     }
+    if let meetings = services.meetingCoordinator {
+      Divider()
+      MeetingMenuItems(coordinator: meetings, router: services.router)
+    }
     Divider()
     Button("Quit LocalFlow") { services.quit() }.keyboardShortcut("q")
+  }
+}
+
+/// Menu bar glyph: the recording glyph while a meeting records, the pause glyph
+/// while paused, attention or the waveform otherwise.
+enum MenuBarGlyph {
+  static func resolve(needsAttention: Bool, meetingState: MeetingState?) -> (
+    symbol: String, label: String
+  ) {
+    switch meetingState {
+    case .recording: return ("record.circle.fill", "LocalFlow: meeting recording")
+    case .paused: return ("pause.circle.fill", "LocalFlow: meeting paused")
+    default:
+      return needsAttention
+        ? ("exclamationmark.circle", "LocalFlow needs attention") : ("waveform", "LocalFlow")
+    }
+  }
+}
+
+/// Start / Pause / Resume / Stop for the menu bar. Start while a meeting is
+/// active shows the active meeting instead of creating a second one.
+struct MeetingMenuItems: View {
+  let coordinator: MeetingCoordinator
+  let router: MainWindowRouter
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    switch coordinator.status?.state {
+    case .recording:
+      Button("Pause Meeting") { Task { await coordinator.pause(reason: .user) } }
+      Button("Stop Meeting") { Task { await coordinator.stop() } }
+    case .paused:
+      Button("Resume Meeting") { Task { await coordinator.resume() } }
+      Button("Stop Meeting") { Task { await coordinator.stop() } }
+    case .preparing, .created, .finalizing:
+      Text("Meeting \(coordinator.status?.state.badgeText.lowercased() ?? "")…")
+    default:
+      Button("Start Meeting") {
+        router.open(.meetings) { openWindow(id: "main") }
+        if coordinator.canStart { Task { await coordinator.start() } }
+      }
+      .disabled(!coordinator.canStart)
+    }
   }
 }
 
@@ -130,6 +180,7 @@ private struct LocalFlowWindowView: View {
     .foregroundStyle(SottoPalette.ink)
     .tint(SottoPalette.accent)
     .onExitCommand { services.coordinator?.cancel() }
+    .onDisappear { services.flushMeetingNotes() }
     .task { await services.observeSettingsWhileVisible() }
     .onChange(of: services.preferences.appearance) { _, _ in services.applyAppearance() }
     .sheet(
@@ -195,6 +246,18 @@ private struct LocalFlowWindowView: View {
 
   @ViewBuilder private var destination: some View {
     switch services.router.selection {
+    case .meetings:
+      if let meetings = services.meetingCoordinator, let library = services.meetingLibrary,
+        let root = services.meetingStorageRoot
+      {
+        MeetingLibraryView(
+          coordinator: meetings, model: library, storageRoot: root,
+          notesEditorFactory: { services.makeNotesEditor(for: $0) })
+      } else {
+        ContentUnavailableView(
+          "Meetings unavailable", systemImage: "externaldrive.badge.exclamationmark",
+          description: Text(services.setupStatus))
+      }
     case .history:
       if let history = services.historyModel, let coordinator = services.coordinator {
         HistoryView(

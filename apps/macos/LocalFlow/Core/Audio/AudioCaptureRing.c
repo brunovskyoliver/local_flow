@@ -22,6 +22,8 @@ struct LFAudioRing {
     _Atomic unsigned high;
     _Atomic unsigned accepting;
     _Atomic int failure;
+    _Atomic int dropOnOverflow;
+    _Atomic uint64_t dropped;
     uint32_t channels;
     struct LFSlot slots[LF_SLOTS];
 };
@@ -40,6 +42,8 @@ LFAudioRing *LFAudioRingCreate(uint32_t channels, double sampleRate) {
     atomic_init(&ring->high, 0);
     atomic_init(&ring->accepting, 1);
     atomic_init(&ring->failure, 0);
+    atomic_init(&ring->dropOnOverflow, 0);
+    atomic_init(&ring->dropped, 0);
     ring->channels = channels;
     return ring;
 }
@@ -77,7 +81,15 @@ bool LFAudioRingPush(LFAudioRing *ring, const AudioBufferList *buffers, uint32_t
     // Reserve every required slot before copying, then publish the whole callback.
     // Memory and work remain bounded by the preallocated ring; never truncate audio.
     unsigned needed = (frames + LF_FRAMES - 1) / LF_FRAMES;
-    if (needed > LF_SLOTS - (head - tail)) { fail(ring, 1); goto done; }
+    if (needed > LF_SLOTS - (head - tail)) {
+        if (atomic_load_explicit(&ring->dropOnOverflow, memory_order_relaxed)) {
+            // Drop the whole callback and count it; the latch is untouched.
+            atomic_fetch_add_explicit(&ring->dropped, frames, memory_order_relaxed);
+            goto done;
+        }
+        fail(ring, 1);
+        goto done;
+    }
     for (unsigned index = 0, offset = 0; index < needed; ++index) {
         uint32_t count = frames - offset;
         if (count > LF_FRAMES) count = LF_FRAMES;
@@ -143,4 +155,20 @@ uint32_t LFAudioRingCapacity(void) { return LF_SLOTS; }
 uint32_t LFAudioRingHighWater(const LFAudioRing *ring) {
     if (!ring) return 0;
     return (uint32_t)atomic_load_explicit(&ring->high, memory_order_relaxed);
+}
+
+void LFAudioRingSetDropOnOverflow(LFAudioRing *ring, bool enabled) {
+    if (ring) atomic_store(&ring->dropOnOverflow, enabled ? 1 : 0);
+}
+
+uint64_t LFAudioRingDroppedFrames(const LFAudioRing *ring) {
+    if (!ring) return 0;
+    return atomic_load_explicit(&ring->dropped, memory_order_relaxed);
+}
+
+uint32_t LFAudioRingOccupancy(const LFAudioRing *ring) {
+    if (!ring) return 0;
+    unsigned head = atomic_load_explicit(&ring->head, memory_order_acquire);
+    unsigned tail = atomic_load_explicit(&ring->tail, memory_order_acquire);
+    return (uint32_t)(head - tail);
 }

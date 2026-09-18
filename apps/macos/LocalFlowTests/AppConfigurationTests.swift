@@ -87,3 +87,31 @@ final class AppConfigurationTests: XCTestCase {
   }
 
 }
+
+final class MeetingRuntimeOptionsTests: XCTestCase {
+  func testBothOptionsDefaultOff() {
+    let options = MeetingRuntimeOptions.parse(environment: [:], arguments: ["LocalFlow"])
+    XCTAssertNil(options.storageRootOverride)
+    XCTAssertFalse(options.debugSlowFinalize)
+  }
+
+  func testRootOverrideIsIgnoredUnlessAbsolute() {
+    for relative in ["Meetings", "./Meetings", "~/Meetings", ""] {
+      let options = MeetingRuntimeOptions.parse(
+        environment: [MeetingRuntimeOptions.rootVariable: relative], arguments: [])
+      XCTAssertNil(options.storageRootOverride, relative)
+    }
+    let absolute = MeetingRuntimeOptions.parse(
+      environment: [MeetingRuntimeOptions.rootVariable: "/Volumes/Spike/Meetings"], arguments: [])
+    XCTAssertEqual(absolute.storageRootOverride?.path, "/Volumes/Spike/Meetings")
+  }
+
+  func testSlowFinalizeIsAnExplicitDebugArgument() {
+    let options = MeetingRuntimeOptions.parse(
+      environment: [:], arguments: ["LocalFlow", MeetingRuntimeOptions.slowFinalizeFlag])
+    XCTAssertEqual(options.debugSlowFinalize, MeetingRuntimeOptions.slowFinalizeSupported)
+    XCTAssertFalse(
+      MeetingRuntimeOptions.parse(environment: [:], arguments: ["LocalFlow", "--debug-slow"])
+        .debugSlowFinalize)
+  }
+}

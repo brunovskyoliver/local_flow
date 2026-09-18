@@ -86,6 +86,11 @@ final class DictationCoordinator {
   var rewriteNoticeChanged: ((RewriteActionNotice?) -> Void)?
   /// Retry from the notice; wired by the app to the history retry flow.
   var rewriteRetryRequested: ((UUID) -> Void)?
+  /// Feature 004 exclusivity: returns a refusal text while a meeting is active.
+  /// Nil (the default) leaves the dictation path exactly as before.
+  var admissionGuard: (@MainActor () -> String?)?
+  /// Fires with the guard's text when `begin()` was refused by it.
+  var admissionRefused: ((String) -> Void)?
   @ObservationIgnored private var pendingRewriteAttemptID: UUID?
   @ObservationIgnored private var bypassRewriteRequested = false
 
@@ -140,6 +145,10 @@ final class DictationCoordinator {
 
   func begin(mode: RewriteMode? = nil) {
     guard canBegin else { return }
+    if let reason = admissionGuard?() {
+      admissionRefused?(reason)
+      return
+    }
     // The previous rewrite keeps running under its own attempt identity.
     // Its dictation task may finish only into history once this tag changes.
     controlConsumer?.cancel()
