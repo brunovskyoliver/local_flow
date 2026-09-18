@@ -73,6 +73,37 @@ final class DictationCoordinatorTests: XCTestCase {
     XCTAssertEqual(refusals.count, 1, "no refusal without a meeting")
   }
 
+  /// Feature 005 (US5): a finalization holding the lease refuses dictation with the
+  /// transcript notice; the meeting guard keeps precedence; no guard admits.
+  func testFinalizingGuardRefusesDictationUntilFinalizationEnds() async throws {
+    XCTAssertEqual(
+      AppServices.dictationAdmissionReason(meetingActive: true, finalizing: true),
+      MeetingErrorMessage.meetingInProgress)
+    XCTAssertEqual(
+      AppServices.dictationAdmissionReason(meetingActive: false, finalizing: true),
+      TranscriptErrorMessage.finalizing)
+    XCTAssertNil(AppServices.dictationAdmissionReason(meetingActive: false, finalizing: false))
+    let capture = FakeCapture()
+    let coordinator = try makeCoordinator(capture: capture)
+    var refusals: [String] = []
+    var finalizing = true
+    coordinator.admissionRefused = { refusals.append($0) }
+    coordinator.admissionGuard = {
+      AppServices.dictationAdmissionReason(meetingActive: false, finalizing: finalizing)
+    }
+    coordinator.begin()
+    XCTAssertFalse(coordinator.busy)
+    XCTAssertEqual(refusals, ["Meeting transcript is finalizing. Wait for it to finish."])
+    finalizing = false
+    coordinator.begin()
+    try await waitUntil { coordinator.state == .recording }
+    coordinator.release()
+    try await waitUntil { !coordinator.busy }
+    let starts = await capture.starts
+    XCTAssertEqual(starts, 1)
+    XCTAssertEqual(refusals.count, 1)
+  }
+
   /// The other half of the Phase 3 checkpoint: the dependency absent entirely.
   /// Every other test in this suite runs it wired, rewriting off (T026).
   func testNilRewriterKeepsTheOriginalFlow() async throws {

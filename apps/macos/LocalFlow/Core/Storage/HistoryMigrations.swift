@@ -315,6 +315,69 @@ enum HistoryMigrations {
         sql:
           "CREATE INDEX meeting_recovery_outcomes_meeting ON meeting_recovery_outcomes(meeting_id)")
     }
+    migrator.registerMigration("transcripts-v6") { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE meeting_transcriptions (
+            meeting_id TEXT PRIMARY KEY NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            state TEXT NOT NULL CHECK(state IN ('not_requested','pending','live','finalizing','final','failed','interrupted')),
+            live_requested INTEGER NOT NULL CHECK(live_requested IN (0,1)),
+            live_state TEXT CHECK(live_state IN ('live','catching_up','degraded','suspended','stopped')),
+            pass_id TEXT, pass_kind TEXT CHECK(pass_kind IN ('live','final')),
+            engine TEXT, model_id TEXT, model_revision TEXT,
+            model_manifest_hash TEXT CHECK(model_manifest_hash IS NULL OR (length(model_manifest_hash)=64 AND model_manifest_hash NOT GLOB '*[^0-9a-fA-F]*')),
+            pipeline_version TEXT CHECK(length(CAST(pipeline_version AS BLOB))<=256), planner_version TEXT,
+            vocabulary_revision INTEGER CHECK(vocabulary_revision>=0),
+            vocabulary_hash TEXT CHECK(vocabulary_hash IS NULL OR (length(vocabulary_hash)=64 AND vocabulary_hash NOT GLOB '*[^0-9a-fA-F]*')),
+            analysis_descriptor_json TEXT CHECK(length(CAST(analysis_descriptor_json AS BLOB))<=16384),
+            started_at INTEGER, live_started_at INTEGER, finalization_started_at INTEGER, finalized_at INTEGER,
+            progress_sequence INTEGER CHECK(progress_sequence>=1), progress_sample INTEGER CHECK(progress_sample>=0),
+            covered_ms INTEGER NOT NULL DEFAULT 0 CHECK(covered_ms>=0),
+            recorded_ms_at_pass INTEGER NOT NULL DEFAULT 0 CHECK(recorded_ms_at_pass>=0),
+            replaced_provisional_count INTEGER NOT NULL DEFAULT 0 CHECK(replaced_provisional_count>=0),
+            model_reload_count INTEGER NOT NULL DEFAULT 0 CHECK(model_reload_count>=0),
+            failure_category TEXT CHECK(failure_category IN ('model_unavailable','model_provisioning','model_load_failure','audio_decode_failure','analysis_stream_failure','runtime_failure','finalization_interrupted','persistence_failure','persistence_capacity')),
+            failure_detail TEXT CHECK(length(CAST(failure_detail AS BLOB))<=512),
+            segment_count INTEGER NOT NULL DEFAULT 0 CHECK(segment_count>=0),
+            text_bytes INTEGER NOT NULL DEFAULT 0 CHECK(text_bytes>=0),
+            updated_at INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0),
+            CHECK(live_state IS NULL OR state='live'),
+            CHECK((failure_category IS NOT NULL)=(state IN ('failed','interrupted')))
+          );
+          CREATE INDEX meeting_transcriptions_active ON meeting_transcriptions(state) WHERE state IN ('pending','live','finalizing');
+          CREATE TABLE transcript_segments (
+            id TEXT PRIMARY KEY NOT NULL, meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            pass_id TEXT NOT NULL, finality TEXT NOT NULL CHECK(finality IN ('provisional','final')),
+            ordinal INTEGER NOT NULL CHECK(ordinal>=0), stretch_sequence INTEGER NOT NULL CHECK(stretch_sequence>=1),
+            start_ms INTEGER NOT NULL CHECK(start_ms>=0), end_ms INTEGER NOT NULL CHECK(end_ms>start_ms),
+            window_index INTEGER NOT NULL CHECK(window_index>=0), timing_basis TEXT NOT NULL CHECK(timing_basis IN ('word','window')),
+            raw_text TEXT NOT NULL CHECK(length(CAST(raw_text AS BLOB))<=4096),
+            assembled_text TEXT NOT NULL CHECK(length(CAST(assembled_text AS BLOB))<=4096),
+            normalized_text TEXT NOT NULL CHECK(length(CAST(normalized_text AS BLOB))<=4096),
+            engine TEXT NOT NULL, model_id TEXT NOT NULL, model_revision TEXT NOT NULL,
+            pipeline_version TEXT NOT NULL CHECK(length(CAST(pipeline_version AS BLOB))<=256),
+            analysis_tracks TEXT NOT NULL CHECK(analysis_tracks IN ('mic','system','both')),
+            speaker TEXT NOT NULL DEFAULT 'unassigned' CHECK(speaker='unassigned'), created_at INTEGER NOT NULL,
+            UNIQUE(meeting_id,pass_id,ordinal)
+          );
+          CREATE INDEX transcript_segments_page ON transcript_segments(meeting_id,finality,ordinal);
+          CREATE INDEX transcript_segments_pass ON transcript_segments(pass_id);
+          CREATE TABLE transcript_live_gaps (
+            id TEXT PRIMARY KEY NOT NULL, meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            pass_id TEXT NOT NULL, stretch_sequence INTEGER NOT NULL CHECK(stretch_sequence>=1),
+            start_ms INTEGER NOT NULL CHECK(start_ms>=0), end_ms INTEGER NOT NULL CHECK(end_ms>start_ms),
+            reason TEXT NOT NULL CHECK(reason IN ('backpressure','suspended','tap_overflow','pause_drain','stop_drain','model_reload')),
+            covered_by_final INTEGER NOT NULL DEFAULT 0 CHECK(covered_by_final IN (0,1)), created_at INTEGER NOT NULL
+          );
+          CREATE TABLE transcript_usage (
+            id INTEGER PRIMARY KEY CHECK(id=1), text_bytes INTEGER NOT NULL CHECK(text_bytes>=0),
+            segment_rows INTEGER NOT NULL CHECK(segment_rows>=0), schema_version INTEGER NOT NULL CHECK(schema_version=1)
+          );
+          INSERT INTO transcript_usage VALUES(1,0,0,1);
+          INSERT INTO meeting_transcriptions(meeting_id,state,live_requested,updated_at)
+            SELECT id,'not_requested',0,updated_at FROM meetings;
+          """)
+    }
     return migrator
   }
 }

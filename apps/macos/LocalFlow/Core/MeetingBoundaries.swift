@@ -164,6 +164,7 @@ protocol SegmentWriting: Sendable {
 /// Side effects applied inside the same write transaction as a state change.
 enum MeetingTransitionEffect: Sendable, Equatable {
   case insertTracks([MeetingTrack])
+  case insertTranscription(liveRequested: Bool)
   case setStartedAt(Int64)
   case setStoppedAt(Int64)
   case setCompletedAt(Int64)
@@ -227,4 +228,17 @@ protocol MeetingStoring: Sendable {
   func activeStateRows() async throws -> [Meeting]
   func recordOutcome(_ outcome: RecoveryOutcome) async throws
   func deleteConfirmed(id: UUID, revision: Int64) async throws -> DeletionOutcome
+}
+
+struct MeetingStartOptions: Sendable, Equatable {
+  var transcription: Bool
+  init(
+    transcription: Bool = UserDefaults.standard.object(forKey: "meetingTranscriptionEnabled")
+      as? Bool ?? true
+  ) {
+    self.transcription = transcription
+  }
+  @MainActor init(preferences: AppPreferences) {
+    transcription = preferences.meetingTranscriptionEnabled
+  }
 }

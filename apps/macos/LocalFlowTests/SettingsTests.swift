@@ -3,6 +3,13 @@ import XCTest
 @testable import LocalFlow
 
 final class SettingsTests: XCTestCase {
+  @MainActor func testMeetingTranscriptionSettingExplainsRecordingIndependence() {
+    XCTAssertEqual(SettingsView.meetingTranscriptionTitle, "Transcribe meetings while recording")
+    XCTAssertEqual(
+      SettingsView.meetingTranscriptionCaption,
+      "Uses the local speech model. Recording never depends on it.")
+  }
+
   func testManualLoadCoolsAndRejectsUnloadWhileLeased() async throws {
     let runtime = ProbeRuntime()
     let lifecycle = ModelLifecycleCoordinator { runtime }

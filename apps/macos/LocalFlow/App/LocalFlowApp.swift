@@ -95,7 +95,8 @@ private struct LocalFlowMenu: View {
     }
     if let meetings = services.meetingCoordinator {
       Divider()
-      MeetingMenuItems(coordinator: meetings, router: services.router)
+      MeetingMenuItems(
+        coordinator: meetings, router: services.router, preferences: services.preferences)
     }
     Divider()
     Button("Quit LocalFlow") { services.quit() }.keyboardShortcut("q")
@@ -123,6 +124,7 @@ enum MenuBarGlyph {
 struct MeetingMenuItems: View {
   let coordinator: MeetingCoordinator
   let router: MainWindowRouter
+  let preferences: AppPreferences
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
@@ -138,7 +140,9 @@ struct MeetingMenuItems: View {
     default:
       Button("Start Meeting") {
         router.open(.meetings) { openWindow(id: "main") }
-        if coordinator.canStart { Task { await coordinator.start() } }
+        if coordinator.canStart {
+          Task { await coordinator.start(options: .init(preferences: preferences)) }
+        }
       }
       .disabled(!coordinator.canStart)
     }
@@ -252,6 +256,7 @@ private struct LocalFlowWindowView: View {
       {
         MeetingLibraryView(
           coordinator: meetings, model: library, storageRoot: root,
+          preferences: services.preferences, transcriptStore: services.transcriptStore,
           notesEditorFactory: { services.makeNotesEditor(for: $0) })
       } else {
         ContentUnavailableView(

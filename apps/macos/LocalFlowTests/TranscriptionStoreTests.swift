@@ -197,12 +197,16 @@ final class TranscriptionStoreTests: XCTestCase {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "localflow-full-\(UUID().uuidString).sqlite")
     defer { try? FileManager.default.removeItem(at: url) }
-    // Limit SQLite itself instead of filling the host disk. The bound leaves room
-    // for the schema (including the rewrite-v4 and meetings-v5 tables and indexes)
-    // plus one 64 KiB entry, but not two.
-    let store = try TranscriptionStore(path: url.path, maximumDatabaseBytes: 224 * 1024)
+    // Freeze the page limit after the schema and first entry fit. This keeps the
+    // failure test independent of schema growth while leaving no room for a second
+    // 64 KiB entry. Deletion must still free enough pages to retry that same write.
+    let store = try TranscriptionStore(path: url.path)
     let first = try entry(text: String(repeating: "a", count: 65_536))
     _ = try await store.commit(reservation: try await store.reserve(), entry: first)
+    try await store.database.write { db in
+      let pages = try XCTUnwrap(Int.fetchOne(db, sql: "PRAGMA page_count"))
+      XCTAssertEqual(try Int.fetchOne(db, sql: "PRAGMA max_page_count=\(pages)"), pages)
+    }
     let before = try usage(at: url)
     let reservation = try await store.reserve()
     let second = try entry(text: String(repeating: "b", count: 65_536))

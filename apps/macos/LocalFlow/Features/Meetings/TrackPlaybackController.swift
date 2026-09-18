@@ -35,6 +35,10 @@ final class TrackPlaybackController {
   @ObservationIgnored private var endObserver: NSObjectProtocol?
 
   var hasPlayableAudio: Bool { !queued.isEmpty }
+  /// The queued segment the position lies in; nil until something is loaded.
+  var currentSegment: QueuedSegment? {
+    queued.last { $0.offsetMs <= positionMs }
+  }
 
   func load(track: MeetingTrackDetail, root: MeetingStorageRoot) {
     unload()
@@ -112,6 +116,23 @@ final class TrackPlaybackController {
     positionMs = 0
   }
 
+  /// Best-effort seek on the concatenated track timeline (Feature 005 transcript
+  /// timestamps). Ignored when nothing is playable; clamped to the loaded duration.
+  @discardableResult
+  func seek(toMs target: Int64) -> Bool {
+    guard let player, hasPlayableAudio, durationMs > 0 else { return false }
+    let clamped = max(0, min(target, durationMs - 1))
+    guard let entry = queued.last(where: { $0.offsetMs <= clamped }) else { return false }
+    let wasPlaying = isPlaying
+    player.pause()
+    rebuildQueue(startingAt: entry)
+    let within = clamped - entry.offsetMs
+    player.seek(to: CMTime(value: within, timescale: 1_000))
+    positionMs = clamped
+    if wasPlaying { player.play() }
+    return true
+  }
+
   func unload() {
     stopObserving()
     player?.pause()
@@ -143,12 +164,13 @@ final class TrackPlaybackController {
     rebuildQueue()
   }
 
-  /// The queue consumes items; rebuild it from the same read-only assets.
-  private func rebuildQueue() {
+  /// The queue consumes items; rebuild it from the same read-only assets,
+  /// optionally starting at a later segment.
+  private func rebuildQueue(startingAt start: QueuedSegment? = nil) {
     guard let player else { return }
     player.removeAllItems()
     var newItems: [ObjectIdentifier: QueuedSegment] = [:]
-    for entry in queued {
+    for entry in queued where start == nil || entry.offsetMs >= start!.offsetMs {
       guard let url = openedURLs.first(where: { $0.path.hasSuffix(entry.segment.relativePath) })
       else {
         continue

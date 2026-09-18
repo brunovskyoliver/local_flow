@@ -277,7 +277,9 @@ actor MeetingStore: MeetingStoring {
       var sql = """
         SELECT m.id, m.title, m.created_at, m.state, m.recorded_ms, m.revision,
           EXISTS(SELECT 1 FROM meeting_tracks t WHERE t.meeting_id = m.id
-                 AND t.health IN ('failed','unrecoverable')) AS warning
+                 AND t.health IN ('failed','unrecoverable')) AS warning,
+          (SELECT x.state FROM meeting_transcriptions x WHERE x.meeting_id = m.id)
+            AS transcript_state
         FROM meetings m
         """
       var arguments: StatementArguments = []
@@ -294,7 +296,9 @@ actor MeetingStore: MeetingStoring {
         return MeetingSummary(
           id: id, title: row["title"], createdAt: row["created_at"], state: state,
           recordedMs: row["recorded_ms"], hasTrackWarning: (row["warning"] as Int) == 1,
-          revision: row["revision"])
+          revision: row["revision"],
+          transcriptState: (row["transcript_state"] as String?).flatMap(
+            TranscriptState.init(rawValue:)))
       }
     }
   }
@@ -456,6 +460,10 @@ actor MeetingStore: MeetingStoring {
       guard let meeting = try Self.fetchMeeting(id, db: db), meeting.revision == revision else {
         throw Error.staleRevision
       }
+      try db.execute(
+        sql:
+          "UPDATE transcript_usage SET text_bytes=text_bytes-COALESCE((SELECT text_bytes FROM meeting_transcriptions WHERE meeting_id=?),0), segment_rows=segment_rows-COALESCE((SELECT segment_count FROM meeting_transcriptions WHERE meeting_id=?),0) WHERE id=1",
+        arguments: [id.uuidString, id.uuidString])
       try db.execute(sql: "DELETE FROM meetings WHERE id=?", arguments: [id.uuidString])
     }
     logger.notice("Meeting deleted")
@@ -471,6 +479,19 @@ actor MeetingStore: MeetingStoring {
     _ effect: MeetingTransitionEffect, meetingID: UUID?, now: Int64, db: Database
   ) throws {
     switch effect {
+    case .insertTranscription(let liveRequested):
+      guard let meetingID else { throw Error.missingMeeting }
+      guard
+        try String.fetchOne(
+          db, sql: "SELECT state FROM meetings WHERE id=?", arguments: [meetingID.uuidString])
+          == "preparing"
+      else { throw Error.missingRow }
+      try db.execute(
+        sql:
+          "INSERT INTO meeting_transcriptions(meeting_id,state,live_requested,updated_at) VALUES(?,?,?,?)",
+        arguments: [
+          meetingID.uuidString, liveRequested ? "pending" : "not_requested", liveRequested, now,
+        ])
     case .insertTracks(let tracks):
       try insertTracks(tracks, db: db)
     case .setStartedAt(let value):

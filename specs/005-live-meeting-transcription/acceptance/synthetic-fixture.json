@@ -1,0 +1,362 @@
+{
+  "attribution": "Alexis Conneau et al., FLEURS (2022), Google",
+  "audio_seconds_before_aac": 600,
+  "changes": "Alternate en/sk clips in index order, repeat, insert 0.5s pauses (2s every fifth turn), trim at 600s; encode 48kHz dual-mono AAC-LC 128kbit/s ADTS.",
+  "classification": "synthetic_concatenation",
+  "dataset": {
+    "attribution": "Alexis Conneau et al., FLEURS: Few-shot Learning Evaluation of Universal Representations of Speech (2022), Google.",
+    "license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "name": "Google FLEURS",
+    "revision": "70bb2e84b976b7e960aa89f1c648e09c59f894dd",
+    "source_url": "https://huggingface.co/datasets/google/fleurs"
+  },
+  "ffmpeg": "ffmpeg version 8.0 Copyright (c) 2000-2025 the FFmpeg developers",
+  "files": {
+    "synthetic-meeting-600s.aac": "f101cb39a33a6889c5060d89c786199958ec16d80121b62933a5e3648d8e7c77",
+    "synthetic-meeting-600s.wav": "df6615f325438bec35cd051d4af6a5b63e5d0fc8b0e20a89395a7904806a2845"
+  },
+  "fixture": "synthetic-meeting-600s",
+  "license": "CC-BY-4.0 https://creativecommons.org/licenses/by/4.0/",
+  "limitations": "Unrelated repeated utterances, no real turn-taking, overlap, echo or separate mic/system capture. Throughput only.",
+  "sample_rate_before_aac": 16000,
+  "source_manifest": "fixtures/audio/manifest.json",
+  "turns": [
+    {
+      "end_sample": 168960,
+      "source_id": "en-01",
+      "source_sha256": "b438b60eb4e9fddbcaa303e27070c2458c3daac42f0b08d5d8622c47335d24f7",
+      "start_sample": 0
+    },
+    {
+      "end_sample": 358400,
+      "source_id": "sk-01",
+      "source_sha256": "0b6bfde1cb2a0eb0ce0c296dcc852260a9a32c562cdb9e2bb9e03fb63c8cdbe3",
+      "start_sample": 200960
+    },
+    {
+      "end_sample": 506560,
+      "source_id": "en-02",
+      "source_sha256": "fd99727983733f9771077fe1a030fcc44ea7e16be1e9396cff525db2886a8f0f",
+      "start_sample": 366400
+    },
+    {
+      "end_sample": 782400,
+      "source_id": "sk-02",
+      "source_sha256": "d1fc81eac17cbc1bd3980fad15c6b6e570bec330deb8cfea4b618c6d63a0e988",
+      "start_sample": 514560
+    },
+    {
+      "end_sample": 973760,
+      "source_id": "en-03",
+      "source_sha256": "b4aea90be63667ffe68bd0c67fcc11b6a5bc334a4566df8153c074b37e2760d6",
+      "start_sample": 790400
+    },
+    {
+      "end_sample": 1178560,
+      "source_id": "sk-03",
+      "source_sha256": "c12206d03419bc40a835a85b9bfaa50eba487bfb05cefd28a2dddaca76a2c0e8",
+      "start_sample": 981760
+    },
+    {
+      "end_sample": 1302720,
+      "source_id": "en-04",
+      "source_sha256": "1a2230cb99ec7ed59df1ad0cf43020b093c6536f9b4ca02636b8daa9c4577229",
+      "start_sample": 1210560
+    },
+    {
+      "end_sample": 1491200,
+      "source_id": "sk-04",
+      "source_sha256": "15dacffdaa1f0eaee3a99e64b505baa5d3c5b7747fec62036ebaf8ad9a0e2628",
+      "start_sample": 1310720
+    },
+    {
+      "end_sample": 1568320,
+      "source_id": "en-05",
+      "source_sha256": "5fda1c914915f9fcd856b11739eb88570deb747c0a492c841255f13383d00e82",
+      "start_sample": 1499200
+    },
+    {
+      "end_sample": 1804800,
+      "source_id": "sk-05",
+      "source_sha256": "83844804663cfdf644f3eaddeea546d0ca019671ad99c9ee759de01db08c7360",
+      "start_sample": 1576320
+    },
+    {
+      "end_sample": 1995520,
+      "source_id": "en-06",
+      "source_sha256": "c15df2cdf2811dde17f6086317a9aeb0f2cb4a9967204c6beac2cd87fadfb93b",
+      "start_sample": 1812800
+    },
+    {
+      "end_sample": 2194560,
+      "source_id": "sk-06",
+      "source_sha256": "f10a400bad65f56157872672a1a0bb46587e11989c394450bc66e70969e7131d",
+      "start_sample": 2027520
+    },
+    {
+      "end_sample": 2375360,
+      "source_id": "en-07",
+      "source_sha256": "b804e68fee5b002c5a6942a4dbefe4dba14b3f816e07404c80ee508527ecf956",
+      "start_sample": 2202560
+    },
+    {
+      "end_sample": 2477440,
+      "source_id": "sk-07",
+      "source_sha256": "d9d618e0dea7e741655c5a911c5d6731db1973979887866ec430494bb0b99d82",
+      "start_sample": 2383360
+    },
+    {
+      "end_sample": 2596800,
+      "source_id": "en-08",
+      "source_sha256": "eecacd023023857f4a8fb8b86a5815a06c972ac49584d34fec14d71640a9c684",
+      "start_sample": 2485440
+    },
+    {
+      "end_sample": 2722880,
+      "source_id": "sk-08",
+      "source_sha256": "441811e2e4efa1fbb1ac0bbb7422731ad45a952e6239191cc0df0139ccec0dd9",
+      "start_sample": 2604800
+    },
+    {
+      "end_sample": 2931520,
+      "source_id": "en-09",
+      "source_sha256": "409f227a6a0d463314a5b138931d658c69377b1684a134f2459aa698eb0fc8cd",
+      "start_sample": 2754880
+    },
+    {
+      "end_sample": 3132480,
+      "source_id": "sk-09",
+      "source_sha256": "c76031292e4c4cff0fe327e0e801917b7db58f37617c90da9d73ac108448d0c6",
+      "start_sample": 2939520
+    },
+    {
+      "end_sample": 3298880,
+      "source_id": "en-10",
+      "source_sha256": "3f988cc9edf80f64bcb387e5d6353604fd7ef7b3d5016b495fc6f09a18847b2f",
+      "start_sample": 3140480
+    },
+    {
+      "end_sample": 3445120,
+      "source_id": "sk-10",
+      "source_sha256": "aad00e871fdd93b696afb8a09d7ddc8f9c32f43236511e9c422f58a6ce5050ed",
+      "start_sample": 3306880
+    },
+    {
+      "end_sample": 3622080,
+      "source_id": "en-01",
+      "source_sha256": "b438b60eb4e9fddbcaa303e27070c2458c3daac42f0b08d5d8622c47335d24f7",
+      "start_sample": 3453120
+    },
+    {
+      "end_sample": 3811520,
+      "source_id": "sk-01",
+      "source_sha256": "0b6bfde1cb2a0eb0ce0c296dcc852260a9a32c562cdb9e2bb9e03fb63c8cdbe3",
+      "start_sample": 3654080
+    },
+    {
+      "end_sample": 3959680,
+      "source_id": "en-02",
+      "source_sha256": "fd99727983733f9771077fe1a030fcc44ea7e16be1e9396cff525db2886a8f0f",
+      "start_sample": 3819520
+    },
+    {
+      "end_sample": 4235520,
+      "source_id": "sk-02",
+      "source_sha256": "d1fc81eac17cbc1bd3980fad15c6b6e570bec330deb8cfea4b618c6d63a0e988",
+      "start_sample": 3967680
+    },
+    {
+      "end_sample": 4426880,
+      "source_id": "en-03",
+      "source_sha256": "b4aea90be63667ffe68bd0c67fcc11b6a5bc334a4566df8153c074b37e2760d6",
+      "start_sample": 4243520
+    },
+    {
+      "end_sample": 4631680,
+      "source_id": "sk-03",
+      "source_sha256": "c12206d03419bc40a835a85b9bfaa50eba487bfb05cefd28a2dddaca76a2c0e8",
+      "start_sample": 4434880
+    },
+    {
+      "end_sample": 4755840,
+      "source_id": "en-04",
+      "source_sha256": "1a2230cb99ec7ed59df1ad0cf43020b093c6536f9b4ca02636b8daa9c4577229",
+      "start_sample": 4663680
+    },
+    {
+      "end_sample": 4944320,
+      "source_id": "sk-04",
+      "source_sha256": "15dacffdaa1f0eaee3a99e64b505baa5d3c5b7747fec62036ebaf8ad9a0e2628",
+      "start_sample": 4763840
+    },
+    {
+      "end_sample": 5021440,
+      "source_id": "en-05",
+      "source_sha256": "5fda1c914915f9fcd856b11739eb88570deb747c0a492c841255f13383d00e82",
+      "start_sample": 4952320
+    },
+    {
+      "end_sample": 5257920,
+      "source_id": "sk-05",
+      "source_sha256": "83844804663cfdf644f3eaddeea546d0ca019671ad99c9ee759de01db08c7360",
+      "start_sample": 5029440
+    },
+    {
+      "end_sample": 5448640,
+      "source_id": "en-06",
+      "source_sha256": "c15df2cdf2811dde17f6086317a9aeb0f2cb4a9967204c6beac2cd87fadfb93b",
+      "start_sample": 5265920
+    },
+    {
+      "end_sample": 5647680,
+      "source_id": "sk-06",
+      "source_sha256": "f10a400bad65f56157872672a1a0bb46587e11989c394450bc66e70969e7131d",
+      "start_sample": 5480640
+    },
+    {
+      "end_sample": 5828480,
+      "source_id": "en-07",
+      "source_sha256": "b804e68fee5b002c5a6942a4dbefe4dba14b3f816e07404c80ee508527ecf956",
+      "start_sample": 5655680
+    },
+    {
+      "end_sample": 5930560,
+      "source_id": "sk-07",
+      "source_sha256": "d9d618e0dea7e741655c5a911c5d6731db1973979887866ec430494bb0b99d82",
+      "start_sample": 5836480
+    },
+    {
+      "end_sample": 6049920,
+      "source_id": "en-08",
+      "source_sha256": "eecacd023023857f4a8fb8b86a5815a06c972ac49584d34fec14d71640a9c684",
+      "start_sample": 5938560
+    },
+    {
+      "end_sample": 6176000,
+      "source_id": "sk-08",
+      "source_sha256": "441811e2e4efa1fbb1ac0bbb7422731ad45a952e6239191cc0df0139ccec0dd9",
+      "start_sample": 6057920
+    },
+    {
+      "end_sample": 6384640,
+      "source_id": "en-09",
+      "source_sha256": "409f227a6a0d463314a5b138931d658c69377b1684a134f2459aa698eb0fc8cd",
+      "start_sample": 6208000
+    },
+    {
+      "end_sample": 6585600,
+      "source_id": "sk-09",
+      "source_sha256": "c76031292e4c4cff0fe327e0e801917b7db58f37617c90da9d73ac108448d0c6",
+      "start_sample": 6392640
+    },
+    {
+      "end_sample": 6752000,
+      "source_id": "en-10",
+      "source_sha256": "3f988cc9edf80f64bcb387e5d6353604fd7ef7b3d5016b495fc6f09a18847b2f",
+      "start_sample": 6593600
+    },
+    {
+      "end_sample": 6898240,
+      "source_id": "sk-10",
+      "source_sha256": "aad00e871fdd93b696afb8a09d7ddc8f9c32f43236511e9c422f58a6ce5050ed",
+      "start_sample": 6760000
+    },
+    {
+      "end_sample": 7075200,
+      "source_id": "en-01",
+      "source_sha256": "b438b60eb4e9fddbcaa303e27070c2458c3daac42f0b08d5d8622c47335d24f7",
+      "start_sample": 6906240
+    },
+    {
+      "end_sample": 7264640,
+      "source_id": "sk-01",
+      "source_sha256": "0b6bfde1cb2a0eb0ce0c296dcc852260a9a32c562cdb9e2bb9e03fb63c8cdbe3",
+      "start_sample": 7107200
+    },
+    {
+      "end_sample": 7412800,
+      "source_id": "en-02",
+      "source_sha256": "fd99727983733f9771077fe1a030fcc44ea7e16be1e9396cff525db2886a8f0f",
+      "start_sample": 7272640
+    },
+    {
+      "end_sample": 7688640,
+      "source_id": "sk-02",
+      "source_sha256": "d1fc81eac17cbc1bd3980fad15c6b6e570bec330deb8cfea4b618c6d63a0e988",
+      "start_sample": 7420800
+    },
+    {
+      "end_sample": 7880000,
+      "source_id": "en-03",
+      "source_sha256": "b4aea90be63667ffe68bd0c67fcc11b6a5bc334a4566df8153c074b37e2760d6",
+      "start_sample": 7696640
+    },
+    {
+      "end_sample": 8084800,
+      "source_id": "sk-03",
+      "source_sha256": "c12206d03419bc40a835a85b9bfaa50eba487bfb05cefd28a2dddaca76a2c0e8",
+      "start_sample": 7888000
+    },
+    {
+      "end_sample": 8208960,
+      "source_id": "en-04",
+      "source_sha256": "1a2230cb99ec7ed59df1ad0cf43020b093c6536f9b4ca02636b8daa9c4577229",
+      "start_sample": 8116800
+    },
+    {
+      "end_sample": 8397440,
+      "source_id": "sk-04",
+      "source_sha256": "15dacffdaa1f0eaee3a99e64b505baa5d3c5b7747fec62036ebaf8ad9a0e2628",
+      "start_sample": 8216960
+    },
+    {
+      "end_sample": 8474560,
+      "source_id": "en-05",
+      "source_sha256": "5fda1c914915f9fcd856b11739eb88570deb747c0a492c841255f13383d00e82",
+      "start_sample": 8405440
+    },
+    {
+      "end_sample": 8711040,
+      "source_id": "sk-05",
+      "source_sha256": "83844804663cfdf644f3eaddeea546d0ca019671ad99c9ee759de01db08c7360",
+      "start_sample": 8482560
+    },
+    {
+      "end_sample": 8901760,
+      "source_id": "en-06",
+      "source_sha256": "c15df2cdf2811dde17f6086317a9aeb0f2cb4a9967204c6beac2cd87fadfb93b",
+      "start_sample": 8719040
+    },
+    {
+      "end_sample": 9100800,
+      "source_id": "sk-06",
+      "source_sha256": "f10a400bad65f56157872672a1a0bb46587e11989c394450bc66e70969e7131d",
+      "start_sample": 8933760
+    },
+    {
+      "end_sample": 9281600,
+      "source_id": "en-07",
+      "source_sha256": "b804e68fee5b002c5a6942a4dbefe4dba14b3f816e07404c80ee508527ecf956",
+      "start_sample": 9108800
+    },
+    {
+      "end_sample": 9383680,
+      "source_id": "sk-07",
+      "source_sha256": "d9d618e0dea7e741655c5a911c5d6731db1973979887866ec430494bb0b99d82",
+      "start_sample": 9289600
+    },
+    {
+      "end_sample": 9503040,
+      "source_id": "en-08",
+      "source_sha256": "eecacd023023857f4a8fb8b86a5815a06c972ac49584d34fec14d71640a9c684",
+      "start_sample": 9391680
+    },
+    {
+      "end_sample": 9600000,
+      "source_id": "sk-08",
+      "source_sha256": "441811e2e4efa1fbb1ac0bbb7422731ad45a952e6239191cc0df0139ccec0dd9",
+      "start_sample": 9511040
+    }
+  ]
+}

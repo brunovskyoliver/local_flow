@@ -23,6 +23,7 @@ final class MeetingLibraryViewModel {
   @ObservationIgnored private let store: any MeetingStoring
   @ObservationIgnored private let activeMeetingID: @MainActor () -> UUID?
   @ObservationIgnored private var generation = 0
+  var willDelete: (@MainActor (UUID) async -> Void)?
 
   init(store: any MeetingStoring, activeMeetingID: @escaping @MainActor () -> UUID? = { nil }) {
     self.store = store
@@ -129,6 +130,7 @@ final class MeetingLibraryViewModel {
   @discardableResult
   func delete(_ id: UUID, revision: Int64) async -> DeletionOutcome? {
     do {
+      await willDelete?(id)
       let outcome = try await store.deleteConfirmed(id: id, revision: revision)
       if outcome.complete {
         deletionPending.remove(id)

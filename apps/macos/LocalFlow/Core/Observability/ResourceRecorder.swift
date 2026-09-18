@@ -15,6 +15,7 @@ final class ResourceRecorder: @unchecked Sendable {
     case baseline, settled, captureOnly
     // Feature 004: RSS samples while a meeting is active.
     case meetingRecording, meetingPaused, meetingFinalizing
+    case transcriptLive, transcriptFinalizing
   }
   enum QueueSource: String, Codable, Sendable {
     case unavailable, controlMailbox, audioRaw, audioNormalized
@@ -48,13 +49,20 @@ final class ResourceRecorder: @unchecked Sendable {
     case meetingWriteFailure, meetingEncoderFailure, meetingPauseCount, meetingResumeCount
     case meetingRecoveryOutcome
 
+    case transcriptLiveLatency, transcriptAnalysisQueueDepth, transcriptRecognitionQueueDepth
+    case transcriptSegmentsProvisional, transcriptSegmentsFinal, transcriptBackpressureEvent
+    case transcriptLiveGapMs, transcriptFinalizationDuration, transcriptRealTimeFactor
+    case transcriptPersistenceBatchDuration, transcriptModelReload, transcriptFailure,
+      transcriptTransition
+
     var kind: Kind {
       switch self {
       case .recognitionDuration, .assemblyDuration, .normalizationDuration, .persistenceDuration,
         .endToEndDuration, .modelLoadDuration, .modelReleaseDuration, .rewriteTotalDuration,
         .rewriteFirstByteDuration, .rewriteNetworkDuration, .rewriteBackendFirstTokenDuration,
         .rewriteBackendDuration, .meetingStartDuration, .meetingCaptureInitDuration,
-        .meetingFinalizationDuration:
+        .meetingFinalizationDuration, .transcriptLiveLatency, .transcriptFinalizationDuration,
+        .transcriptRealTimeFactor, .transcriptPersistenceBatchDuration:
         return .duration
       case .rawTextBytes, .assembledTextBytes, .normalizedTextBytes, .metadataBytes,
         .rewriteRequestBytes, .rewriteResponseBytes, .meetingBytesWritten, .meetingSegmentBytes:
@@ -64,7 +72,9 @@ final class ResourceRecorder: @unchecked Sendable {
         .rewriteShieldFailure, .rewritePreAdmissionRefusal, .meetingTransition,
         .meetingMicQueueDepth, .meetingSystemQueueDepth, .meetingDroppedFrames,
         .meetingWriteFailure, .meetingEncoderFailure, .meetingPauseCount, .meetingResumeCount,
-        .meetingRecoveryOutcome:
+        .meetingRecoveryOutcome, .transcriptAnalysisQueueDepth, .transcriptRecognitionQueueDepth,
+        .transcriptSegmentsProvisional, .transcriptSegmentsFinal, .transcriptBackpressureEvent,
+        .transcriptLiveGapMs, .transcriptModelReload, .transcriptFailure, .transcriptTransition:
         return .count
       }
     }
@@ -74,6 +84,12 @@ final class ResourceRecorder: @unchecked Sendable {
     /// attempt cap for ordinals, one for counters, the collection cap otherwise.
     var itemLimit: UInt32 {
       switch self {
+      case .transcriptAnalysisQueueDepth: return 480_000
+      case .transcriptRecognitionQueueDepth, .transcriptBackpressureEvent, .transcriptModelReload,
+        .transcriptFailure, .transcriptTransition:
+        return 1
+      case .transcriptSegmentsProvisional, .transcriptSegmentsFinal: return 20_000
+      case .transcriptLiveGapMs: return UInt32.max
       case .rewriteInputScalars: return UInt32(RewriteBounds.maximumInputScalars)
       case .rewriteAttemptOrdinal: return UInt32(RewriteAttempt.maximumPerDictation)
       case .rewriteOutcome, .rewriteFallback, .rewriteShieldFailure, .rewritePreAdmissionRefusal,
@@ -93,6 +109,14 @@ final class ResourceRecorder: @unchecked Sendable {
       }
     }
     var isRewrite: Bool { rawValue.hasPrefix("rewrite") }
+    var isTranscript: Bool { rawValue.hasPrefix("transcript") }
+    static let allTranscriptCases: [Metric] = [
+      .transcriptLiveLatency, .transcriptAnalysisQueueDepth, .transcriptRecognitionQueueDepth,
+      .transcriptSegmentsProvisional, .transcriptSegmentsFinal, .transcriptBackpressureEvent,
+      .transcriptLiveGapMs, .transcriptFinalizationDuration, .transcriptRealTimeFactor,
+      .transcriptPersistenceBatchDuration, .transcriptModelReload, .transcriptFailure,
+      .transcriptTransition,
+    ]
     var isMeeting: Bool { rawValue.hasPrefix("meeting") }
     static let allMeetingCases: [Metric] = [
       .meetingStartDuration, .meetingCaptureInitDuration, .meetingFinalizationDuration,
@@ -308,7 +332,11 @@ final class ResourceRecorder: @unchecked Sendable {
     }
     // A meeting key is a closed-set token and belongs to meeting metrics only.
     if let meetingKey {
-      guard metric?.isMeeting == true, Self.isValidMeetingKey(meetingKey) else {
+      let validKey =
+        metric?.isTranscript == true
+        ? Self.transcriptKeys.contains(meetingKey)
+        : metric?.isMeeting == true && Self.isValidMeetingKey(meetingKey)
+      guard validKey else {
         OSAtomicIncrement64Barrier(&loss)
         return false
       }
@@ -474,6 +502,10 @@ final class ResourceRecorder: @unchecked Sendable {
     Set(MeetingTrackKind.allCases.map(\.rawValue))
     .union(MeetingState.allCases.map(\.rawValue))
     .union(MeetingRecoveryOutcomeKind.allCases.map(\.rawValue))
+  static let transcriptKeys: Set<String> = Set(TranscriptState.allCases.map(\.rawValue))
+    .union(LiveState.allCases.map(\.rawValue))
+    .union(TranscriptFailureCategory.allCases.map(\.rawValue))
+    .union(LiveGapReason.allCases.map(\.rawValue))
   static func isValidMeetingKey(_ key: String) -> Bool { meetingKeys.contains(key) }
 
   static func isValidOutcome(_ outcome: String) -> Bool {

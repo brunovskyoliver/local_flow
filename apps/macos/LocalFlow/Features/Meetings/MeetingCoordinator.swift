@@ -29,6 +29,7 @@ final class MeetingCoordinator {
     var reconciliationGate: @Sendable () async -> Void = {}
     var sleepCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
     var options = MeetingRuntimeOptions()
+    var transcription: (any MeetingTranscriptionObserving)?
   }
 
   static let pollInterval: Duration = .milliseconds(250)
@@ -121,7 +122,7 @@ final class MeetingCoordinator {
 
   // MARK: - Start
 
-  func start() async -> StartOutcome {
+  func start(options: MeetingStartOptions = .init()) async -> StartOutcome {
     guard !busy else { return .refused("Meeting is busy") }
     if let id = activeMeetingID { return .alreadyActive(id) }
     guard !deps.isDictationBusy() else { return refuse(MeetingErrorMessage.dictationInProgress) }
@@ -170,12 +171,18 @@ final class MeetingCoordinator {
           bitrate: kind.bitrate)
       }
       trackIDs = Dictionary(uniqueKeysWithValues: tracks.map { ($0.kind, $0.id) })
+      var preparing: [MeetingTransitionEffect] = [.insertTracks(tracks)]
+      if let observer = deps.transcription {
+        let initial = await observer.meetingWillStart(id: created.id, options: options)
+        preparing.append(.insertTranscription(liveRequested: initial == .pending))
+      }
       var current = try await deps.store.transition(
-        id: created.id, to: .preparing, now: now, effects: [.insertTracks(tracks)])
+        id: created.id, to: .preparing, now: now, effects: preparing)
       recordTransition(.preparing)
       meeting = current
       status = MeetingStatus(
         id: created.id, state: .preparing, storageWarning: warning, createdAt: created.createdAt)
+      status?.transcriptionRequested = deps.transcription != nil && options.transcription
       refusal = nil
       refusalPermission = nil
       failedTracks = [:]
@@ -254,9 +261,11 @@ final class MeetingCoordinator {
       failedTracks = startFailures
       stretchStartedAt = recordingAt
       for runtime in runtimes.values { await runtime.worker.start() }
+      await installAnalysisTaps()
       notesEditor = MeetingNotesEditor(meetingID: created.id, store: deps.store, clock: deps.clock)
       var published = MeetingStatus(
         id: created.id, state: .recording, storageWarning: warning, createdAt: created.createdAt)
+      published.transcriptionRequested = deps.transcription != nil && options.transcription
       for kind in MeetingTrackKind.allCases {
         published[kind] =
           runtimes[kind] != nil
@@ -316,6 +325,7 @@ final class MeetingCoordinator {
       let updated = try await deps.store.transition(
         id: meeting.id, to: .paused, now: now, effects: effects)
       recordTransition(.paused)
+      deps.transcription?.meetingDidPause(id: meeting.id)
       self.meeting = updated
       recordedBase += max(0, now - stretchStartedAt)
       runtimes = [:]
@@ -398,6 +408,7 @@ final class MeetingCoordinator {
       for (kind, reason) in failures { failedTracks[kind] = reason }
       stretchStartedAt = now
       for runtime in runtimes.values { await runtime.worker.start() }
+      await installAnalysisTaps()
       var published = status!
       published.state = .recording
       published.pauseReason = nil
@@ -440,6 +451,7 @@ final class MeetingCoordinator {
       let finalizing = try await deps.store.transition(
         id: meeting.id, to: .finalizing, now: now, effects: effects)
       recordTransition(.finalizing)
+      deps.transcription?.meetingDidStop(id: meeting.id)
       self.meeting = finalizing
       var published = status!
       published.state = .finalizing
@@ -527,6 +539,7 @@ final class MeetingCoordinator {
       {
         current = updated
         recordTransition(.finalizing)
+        deps.transcription?.meetingDidStop(id: meeting.id)
       }
     }
     var failedKinds = trackFailures
@@ -614,6 +627,7 @@ final class MeetingCoordinator {
       runtimes[kind] = updated
       sequences[kind] = sequence
       await worker.start()
+      await installAnalysisTaps()
       version += 1
     } catch {
       runtimes[kind] = nil
@@ -710,6 +724,28 @@ final class MeetingCoordinator {
     }
   }
 
+  var transcriptionCoordinator: MeetingTranscriptionCoordinator? {
+    deps.transcription as? MeetingTranscriptionCoordinator
+  }
+
+  func meetingWillDelete(id: UUID) async {
+    await deps.transcription?.meetingWillDelete(id: id)
+  }
+
+  private func installAnalysisTaps() async {
+    guard let id = meeting?.id, let observer = deps.transcription,
+      let sequence = runtimes.values.map({ $0.segment.sequence }).max()
+    else { return }
+    // A device change can roll just one durable track. Until track sequences
+    // align again, no shared analysis stretch can claim correct source timing.
+    let aligned = Set(runtimes.values.map { $0.segment.sequence }).count == 1
+    let formats = aligned ? runtimes.mapValues(\.format) : [:]
+    let taps = observer.stretchDidStart(meetingID: id, sequence: sequence, tracks: formats)
+    for (kind, runtime) in runtimes {
+      await runtime.worker.setAnalysisSink(taps?[kind])
+    }
+  }
+
   private func makeWorker(
     kind: MeetingTrackKind, segment: MeetingSegment, handle: SegmentHandle, ring: MeetingSampleRing,
     encoder: MeetingTrackEncoder
@@ -756,6 +792,14 @@ final class MeetingCoordinator {
     status = published
     version += 1
     runtimes = [:]
+    if let observer = deps.transcription {
+      let store = deps.store
+      Task {
+        if let detail = try? await store.detail(id: meeting.id) {
+          observer.meetingDidComplete(id: meeting.id, detail: detail)
+        }
+      }
+    }
   }
 
   private func releaseAll() async {

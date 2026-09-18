@@ -12,6 +12,10 @@ struct SettingsView: View {
   private enum FocusTarget: Hashable { case page }
   @FocusState private var focusTarget: FocusTarget?
 
+  static let meetingTranscriptionTitle = "Transcribe meetings while recording"
+  static let meetingTranscriptionCaption =
+    "Uses the local speech model. Recording never depends on it."
+
   var body: some View {
     PrototypePage {
       VStack(alignment: .leading, spacing: 0) {
@@ -50,6 +54,14 @@ struct SettingsView: View {
           SettingsRow("Languages") {
             Text("Slovak & English · Auto").font(.system(size: 12)).foregroundStyle(
               SottoPalette.muted)
+          }
+        }
+        sectionTitle("Meetings")
+        settingsGroup {
+          SettingsRow(Self.meetingTranscriptionTitle, detail: Self.meetingTranscriptionCaption) {
+            Toggle(Self.meetingTranscriptionTitle, isOn: $preferences.meetingTranscriptionEnabled)
+              .labelsHidden().toggleStyle(.switch)
+              .accessibilityIdentifier("settings.meetingTranscriptionEnabled")
           }
         }
         rewriteSection

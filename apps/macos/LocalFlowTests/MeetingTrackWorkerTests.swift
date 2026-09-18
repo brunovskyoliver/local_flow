@@ -182,6 +182,91 @@ final class MeetingTrackWorkerTests: XCTestCase {
     XCTAssertEqual(rig.writer.finalized.count, 1)
   }
 
+  func testFullAnalysisTapDoesNotChangeEncodedBytesOrHeartbeats() async throws {
+    func run(tap: MeetingAnalysisTap?) async throws -> ([UInt8], Int, [HeartbeatSnapshot]) {
+      let clock = FakeMeetingClock()
+      let ring = try MeetingSampleRing(channels: 1, sampleRate: 48_000)
+      let writer = FakeSegmentWriter()
+      let handle = try writer.open(meetingID: UUID(), kind: .microphone, sequence: 1)
+      let log = HeartbeatLog()
+      let worker = try MeetingTrackWorker(
+        kind: .microphone, segmentID: UUID(), handle: handle, ring: ring,
+        encoder: MeetingTrackEncoder(
+          kind: .microphone, sourceFormat: .init(sampleRate: 48_000, channels: 1)),
+        writer: writer, clock: clock, recorder: nil, heartbeat: { log.append($0) })
+      await worker.setAnalysisSink(tap)
+      await worker.start()
+      for _ in 0..<40 {
+        XCTAssertTrue(ring.push(interleaved: Array(repeating: 0.1, count: 4_096), frames: 4_096))
+        _ = await worker.tick()
+        await clock.advance(by: .milliseconds(125))
+      }
+      _ = await worker.tick()
+      _ = await worker.finalize()
+      return (
+        writer.bytes(.microphone), writer.syncCount(.microphone),
+        log.all.map {
+          HeartbeatSnapshot(duration: $0.durationMs, bytes: $0.byteSize, dropped: $0.droppedFrames)
+        }
+      )
+    }
+    let tap = try MeetingAnalysisTap(
+      kind: .microphone, format: .init(sampleRate: 48_000, channels: 1))
+    let baseline = try await run(tap: nil)
+    let tapped = try await run(tap: tap)
+    XCTAssertEqual(baseline.0, tapped.0)
+    XCTAssertEqual(baseline.1, tapped.1)
+    XCTAssertEqual(baseline.2, tapped.2)
+    XCTAssertFalse(baseline.2.isEmpty)
+    XCTAssertGreaterThan(tap.droppedFrames, 0)
+    let before = tap.ring.occupancy
+    tap.detach()
+    _ = try await run(tap: tap)
+    XCTAssertEqual(tap.ring.occupancy, before)
+  }
+
+  func testThirtyMinutesWithUndrainedTapMatchesRecordingOnly() async throws {
+    func run(tap: MeetingAnalysisTap?) async throws -> ([Int], Int, Int) {
+      let clock = FakeMeetingClock()
+      let format = MeetingSourceFormat(sampleRate: 48_000, channels: 1)
+      let ring = try MeetingSampleRing(format: format)
+      let writer = FakeSegmentWriter()
+      let handle = try writer.open(meetingID: UUID(), kind: .microphone, sequence: 1)
+      let encoder = FailingEncoder(
+        inner: try MeetingTrackEncoder(kind: .microphone, sourceFormat: format))
+      let worker = try MeetingTrackWorker(
+        kind: .microphone, segmentID: UUID(), handle: handle,
+        ring: ring, encoder: encoder, writer: writer, clock: clock, recorder: nil,
+        heartbeat: { _ in })
+      await worker.setAnalysisSink(tap)
+      await worker.start()
+      let samples = Array(repeating: Float(0.1), count: 4_096)
+      // 21,094 blocks cover 1,800.021 seconds of source audio.
+      for block in 0..<21_094 {
+        XCTAssertTrue(ring.push(interleaved: samples, frames: 4_096))
+        if block % 32 == 31 { _ = await worker.tick() }
+      }
+      _ = await worker.finalize()
+      return (encoder.blockSizes, writer.bytes(.microphone).count, encoder.encodedFrameCount)
+    }
+    let tap = try MeetingAnalysisTap(
+      kind: .microphone, format: .init(sampleRate: 48_000, channels: 1))
+    let baseline = try await run(tap: nil)
+    let observed = try await run(tap: tap)
+    XCTAssertEqual(observed.0, baseline.0)
+    XCTAssertEqual(observed.1, baseline.1)
+    XCTAssertEqual(observed.2, baseline.2)
+    XCTAssertEqual(observed.0.count, 21_094)
+    XCTAssertEqual(tap.ring.occupancy, MeetingSampleRing.slotCapacity)
+    XCTAssertEqual(tap.droppedFrames, Int64(21_094 - MeetingSampleRing.slotCapacity) * 4_096)
+  }
+
+  private struct HeartbeatSnapshot: Equatable {
+    let duration: Int64
+    let bytes: Int64
+    let dropped: Int64
+  }
+
   // MARK: US3 bounded memory
 
   /// Thirty simulated minutes at 12 blocks per 10 ms wake (about 12× real time):

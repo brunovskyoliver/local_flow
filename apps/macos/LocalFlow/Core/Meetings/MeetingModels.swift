@@ -161,6 +161,8 @@ struct MeetingSummary: Sendable, Equatable, Identifiable {
   /// Any track is `failed` or `unrecoverable`.
   let hasTrackWarning: Bool
   let revision: Int64
+  /// Feature 005: the transcription row's state, nil for meetings without one.
+  var transcriptState: TranscriptState? = nil
 
   var displayTitle: String { title ?? fallbackTitle(createdAt: createdAt) }
 }
@@ -196,6 +198,7 @@ struct MeetingStatus: Sendable, Equatable {
   let id: UUID
   var title: String?
   var state: MeetingState
+  var transcriptionRequested: Bool = false
   var recordedElapsed: Duration = .zero
   var microphone: TrackStatus = .notStarted
   var system: TrackStatus = .notStarted

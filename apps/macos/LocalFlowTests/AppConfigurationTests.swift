@@ -89,6 +89,59 @@ final class AppConfigurationTests: XCTestCase {
 }
 
 final class MeetingRuntimeOptionsTests: XCTestCase {
+  func testTranscriptionOptionsDefaultOff() {
+    let options = MeetingRuntimeOptions.parse(environment: [:], arguments: ["LocalFlow"])
+    XCTAssertNil(options.debugSlowRecognition)
+    XCTAssertNil(options.debugFailRecognition)
+    XCTAssertFalse(options.debugFailPersistence)
+    XCTAssertNil(options.debugSeedTranscript)
+  }
+
+  func testTranscriptionArgumentsAreEnabledOnlyInDebugBuilds() {
+    let options = MeetingRuntimeOptions.parse(
+      environment: [:],
+      arguments: [
+        "LocalFlow", "--debug-slow-recognition", "3.5", "--debug-fail-recognition", "5",
+        "--debug-fail-persistence", "--debug-seed-transcript", "12000",
+      ])
+    if MeetingRuntimeOptions.slowFinalizeSupported {
+      XCTAssertEqual(options.debugSlowRecognition, 3.5)
+      XCTAssertEqual(options.debugFailRecognition, 5)
+      XCTAssertTrue(options.debugFailPersistence)
+      XCTAssertEqual(options.debugSeedTranscript, 12_000)
+    } else {
+      XCTAssertNil(options.debugSlowRecognition)
+      XCTAssertNil(options.debugFailRecognition)
+      XCTAssertFalse(options.debugFailPersistence)
+      XCTAssertNil(options.debugSeedTranscript)
+    }
+  }
+
+  func testInvalidTranscriptionArgumentsAreIgnored() {
+    for value in ["no", "", "0", "-1", "nan", "inf", "1e999", "--debug-fail-persistence"] {
+      let options = MeetingRuntimeOptions.parse(
+        environment: [:],
+        arguments: [
+          "--debug-slow-recognition", value, "--debug-fail-recognition", value,
+          "--debug-seed-transcript", value,
+        ])
+      XCTAssertNil(options.debugSlowRecognition, value)
+      XCTAssertNil(options.debugFailRecognition, value)
+      XCTAssertNil(options.debugSeedTranscript, value)
+    }
+    for flag in ["--debug-slow-recognition", "--debug-fail-recognition", "--debug-seed-transcript"]
+    {
+      XCTAssertEqual(
+        MeetingRuntimeOptions.parse(environment: [:], arguments: [flag]),
+        MeetingRuntimeOptions())
+    }
+    let fractionalCounts = MeetingRuntimeOptions.parse(
+      environment: [:],
+      arguments: ["--debug-fail-recognition", "1.5", "--debug-seed-transcript", "2.5"])
+    XCTAssertNil(fractionalCounts.debugFailRecognition)
+    XCTAssertNil(fractionalCounts.debugSeedTranscript)
+  }
+
   func testBothOptionsDefaultOff() {
     let options = MeetingRuntimeOptions.parse(environment: [:], arguments: ["LocalFlow"])
     XCTAssertNil(options.storageRootOverride)

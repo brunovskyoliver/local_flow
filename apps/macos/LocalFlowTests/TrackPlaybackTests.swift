@@ -119,6 +119,40 @@ final class TrackPlaybackTests: XCTestCase {
     XCTAssertFalse(text.contains("forUpdating"))
   }
 
+  /// Feature 005 (US7): a transcript timestamp seeks the microphone track, best effort.
+  func testSeekLandsInsideTheRecordedDurationAndIsIgnoredWithoutPlayableAudio() async throws {
+    let first = try ADTSFixtures.encodedTone(blocks: 12)
+    let second = try ADTSFixtures.encodedTone(blocks: 6)
+    let s1 = segment(1, state: .finalized, durationMs: 1_024)
+    let s2 = segment(2, state: .finalized, durationMs: 512)
+    try ADTSFixtures.write(first, to: root.resolve(relativePath: s1.relativePath)!)
+    try ADTSFixtures.write(second, to: root.resolve(relativePath: s2.relativePath)!)
+    let controller = TrackPlaybackController()
+    XCTAssertFalse(controller.seek(toMs: 500), "nothing loaded")
+    XCTAssertEqual(controller.positionMs, 0)
+    controller.load(track: track([s1, s2]), root: root)
+    XCTAssertTrue(controller.seek(toMs: 1_200))
+    XCTAssertEqual(controller.positionMs, 1_200)
+    XCTAssertEqual(controller.currentSegment?.segment.sequence, 2)
+    XCTAssertTrue(controller.seek(toMs: 300))
+    XCTAssertEqual(controller.positionMs, 300)
+    XCTAssertEqual(controller.currentSegment?.segment.sequence, 1)
+    XCTAssertTrue(controller.seek(toMs: 99_000), "clamped to the end")
+    XCTAssertEqual(controller.positionMs, controller.durationMs - 1)
+    XCTAssertTrue(controller.seek(toMs: -5))
+    XCTAssertEqual(controller.positionMs, 0)
+    controller.play()
+    XCTAssertTrue(controller.seek(toMs: 1_100), "seeking while playing keeps playing")
+    XCTAssertTrue(controller.isPlaying)
+    controller.stop()
+    let empty = TrackPlaybackController()
+    empty.load(
+      track: track([segment(1, state: .unrecoverable, durationMs: 0, reason: .fileMissing)]),
+      root: root)
+    XCTAssertFalse(empty.seek(toMs: 10))
+    XCTAssertEqual(empty.positionMs, 0)
+  }
+
   func testTrackWithNoPlayableSegmentsReportsNoPlayableAudio() {
     let controller = TrackPlaybackController()
     controller.load(

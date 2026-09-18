@@ -6,6 +6,10 @@ struct MeetingLibraryView: View {
   let coordinator: MeetingCoordinator
   let model: MeetingLibraryViewModel
   let storageRoot: MeetingStorageRoot
+  let preferences: AppPreferences
+  /// Feature 005: transcript rows for the detail pane; nil hides the section.
+  var transcriptStore: (any TranscriptStoring)? = nil
+  @State private var transcribe = true
   /// Editor for a library meeting's notes; created per selection by the caller.
   let notesEditorFactory: (MeetingDetail) -> MeetingNotesEditor
 
@@ -18,10 +22,17 @@ struct MeetingLibraryView: View {
         HStack {
           Text("Meetings").font(.system(size: 20, weight: .semibold))
           Spacer()
-          Button("Start Meeting") { Task { await coordinator.start() } }
-            .buttonStyle(.borderedProminent)
+          Toggle("Transcribe", isOn: $transcribe)
+            .toggleStyle(.checkbox)
             .disabled(!coordinator.canStart)
-            .accessibilityIdentifier("meeting.start")
+            .accessibilityIdentifier("meeting.transcribe")
+          Button("Start Meeting") {
+            let options = MeetingStartOptions(transcription: transcribe)
+            Task { await coordinator.start(options: options) }
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(!coordinator.canStart)
+          .accessibilityIdentifier("meeting.start")
         }
         if let notice = model.notice {
           Label(notice, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
@@ -64,12 +75,17 @@ struct MeetingLibraryView: View {
           detail: detail, model: model, storageRoot: storageRoot,
           notesEditor: notesEditorFactory(detail),
           liveEditor: coordinator.activeMeetingID == detail.meeting.id
-            ? coordinator.notesEditor : nil
+            ? coordinator.notesEditor : nil,
+          transcriptStore: transcriptStore, transcription: coordinator.transcriptionCoordinator
         )
         .frame(minWidth: 380)
       }
     }
-    .task { await model.refresh() }
+    .task {
+      transcribe = preferences.meetingTranscriptionEnabled
+      await model.refresh()
+    }
+    .onChange(of: preferences.meetingTranscriptionEnabled) { _, value in transcribe = value }
     .onChange(of: coordinator.version) { _, _ in Task { await model.refresh() } }
   }
 }
@@ -89,6 +105,14 @@ struct MeetingRowView: View {
         .font(.system(size: 12))
       }
       Spacer()
+      if let glyph = Self.transcriptGlyph(row.transcriptState) {
+        Image(systemName: glyph)
+          .foregroundStyle(row.transcriptState == .final ? Color.secondary : Color.orange)
+          .accessibilityLabel(
+            row.transcriptState == .final ? "Transcript available" : "Transcript needs attention"
+          )
+          .accessibilityIdentifier("meeting.transcript.glyph")
+      }
       if row.hasTrackWarning {
         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
           .accessibilityLabel("A track failed or could not be recovered")
@@ -104,6 +128,15 @@ struct MeetingRowView: View {
         .accessibilityIdentifier("meeting.badge")
     }
     .padding(.vertical, 4)
+  }
+
+  /// A transcript glyph for `final`, a warning glyph for `failed`/`interrupted`.
+  static func transcriptGlyph(_ state: TranscriptState?) -> String? {
+    switch state {
+    case .final: "text.quote"
+    case .failed, .interrupted: "text.badge.xmark"
+    default: nil
+    }
   }
 
   private var badgeColor: Color {

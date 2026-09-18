@@ -75,6 +75,7 @@ actor MeetingTrackWorker {
   private let clock: any MeetingClock
   private let recorder: ResourceRecorder?
   private let heartbeat: @Sendable (Heartbeat) async -> Void
+  private var analysisSink: MeetingAnalysisTap?
   private let input: AVAudioPCMBuffer
   private var bytesWritten: Int64 = 0
   private var bytesSinceHeartbeat: Int64 = 0
@@ -103,6 +104,11 @@ actor MeetingTrackWorker {
     lastSync = clock.nowMilliseconds
     queue = DispatchSerialQueue(
       label: "org.localflow.meeting-\(kind.rawValue)", qos: .userInitiated)
+  }
+
+  func setAnalysisSink(_ sink: MeetingAnalysisTap?) {
+    analysisSink?.detach()
+    analysisSink = sink
   }
 
   var totalBytes: Int64 { bytesWritten }
@@ -181,6 +187,7 @@ actor MeetingTrackWorker {
 
   private func drainOnce() throws {
     try ring.drain(maxSlots: Self.maximumSlotsPerTick, into: input) { block in
+      analysisSink?.push(block)
       var frames = try encoder.encode(block: block)
       try append(frames)
       // A full output block means the converter may hold more; drain it in

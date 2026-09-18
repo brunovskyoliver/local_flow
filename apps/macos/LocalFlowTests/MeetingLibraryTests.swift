@@ -12,7 +12,9 @@ final class MeetingLibraryTests: XCTestCase {
   override func tearDown() async throws { fixture.cleanup() }
 
   /// Terminal meetings, oldest first in creation order.
-  private func seedCompleted(_ count: Int, title: (Int) -> String? = { _ in nil }) async throws
+  private func seedCompleted(
+    _ count: Int, transcription: Bool = false, title: (Int) -> String? = { _ in nil }
+  ) async throws
     -> [UUID]
   {
     var ids: [UUID] = []
@@ -28,7 +30,9 @@ final class MeetingLibraryTests: XCTestCase {
           id: UUID(), meetingID: created.id, kind: .system, channelCount: 2, bitrate: 96_000),
       ]
       try await store.transition(
-        id: created.id, to: .preparing, now: t0, effects: [.insertTracks(tracks)])
+        id: created.id, to: .preparing, now: t0,
+        effects: [.insertTracks(tracks)]
+          + (transcription ? [.insertTranscription(liveRequested: true)] : []))
       try await store.transition(
         id: created.id, to: .recording, now: t0 + 1, effects: [.setStartedAt(t0 + 1)])
       try await store.transition(
@@ -117,6 +121,39 @@ final class MeetingLibraryTests: XCTestCase {
     XCTAssertEqual(
       MeetingErrorMessage.text(for: failed.track.failureReason!),
       "The microphone disconnected. The meeting continued with system audio.")
+  }
+
+  /// Feature 005 (US7): rows carry the transcript state for the glyphs.
+  func testRowsCarryTranscriptStateForTheGlyphs() async throws {
+    _ = try await seedCompleted(4)
+    let transcripts = TranscriptStore(database: fixture.history.database)
+    let model = MeetingLibraryViewModel(store: store)
+    await model.refresh()
+    XCTAssertEqual(
+      model.rows.map(\.transcriptState), [nil, nil, nil, nil],
+      "meetings recorded before Feature 005 have no transcription row")
+    // Meetings started with a transcription row carry its state.
+    let later = try await seedCompleted(3, transcription: true)
+    let pass = UUID()
+    try await transcripts.transition(
+      meetingID: later[0], to: .live, now: t0, effects: [.setPass(id: pass, kind: .live)])
+    try await transcripts.transition(
+      meetingID: later[0], to: .failed, now: t0,
+      effects: [.setFailure(category: .runtimeFailure, detail: nil)])
+    try await transcripts.transition(
+      meetingID: later[1], to: .finalizing, now: t0, effects: [.setPass(id: pass, kind: .final)])
+    _ = try await transcripts.completeFinalPass(
+      meetingID: later[1], passID: pass, descriptor: .init(source: .decodedTracks), coveredMs: 0,
+      now: t0)
+    await model.refresh()
+    XCTAssertEqual(model.rows.first { $0.id == later[0] }?.transcriptState, .failed)
+    XCTAssertEqual(model.rows.first { $0.id == later[1] }?.transcriptState, .final)
+    XCTAssertEqual(model.rows.first { $0.id == later[2] }?.transcriptState, .pending)
+    XCTAssertEqual(MeetingRowView.transcriptGlyph(.final), "text.quote")
+    XCTAssertEqual(MeetingRowView.transcriptGlyph(.failed), "text.badge.xmark")
+    XCTAssertEqual(MeetingRowView.transcriptGlyph(.interrupted), "text.badge.xmark")
+    XCTAssertNil(MeetingRowView.transcriptGlyph(.pending))
+    XCTAssertNil(MeetingRowView.transcriptGlyph(nil))
   }
 
   func testActiveMeetingIsPinnedAtTheTop() async throws {

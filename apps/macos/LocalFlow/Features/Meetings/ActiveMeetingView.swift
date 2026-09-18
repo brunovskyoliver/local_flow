@@ -38,6 +38,12 @@ struct ActiveMeetingView: View {
             if let kind = coordinator.refusalPermission { settingsButton(kind) }
           }
         }
+        if let transcription = coordinator.transcriptionCoordinator,
+          transcription.status?.meetingID == status.id
+            || (transcription.status == nil && status.transcriptionRequested)
+        {
+          TranscriptSectionView(coordinator: transcription)
+        }
         controls(status)
         if status.state.isActive {
           titleField(status)

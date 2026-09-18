@@ -4,6 +4,34 @@ import XCTest
 @testable import LocalFlow
 
 final class ResourceRecorderTests: XCTestCase {
+  func testTranscriptMetricsAcceptOnlyClosedTranscriptKeys() throws {
+    let capture = try RecorderCapture.make()
+    defer { capture.cleanup() }
+    let recorder = capture.recorder
+    for metric in ResourceRecorder.Metric.allTranscriptCases {
+      for key in ["private transcript words", "Meetings/file.aac", "microphone"] {
+        let accepted: Bool
+        if metric.kind == .duration {
+          accepted = recorder.record(
+            phase: .transcriptLive, durationNanoseconds: 1, metric: metric, meetingKey: key)
+        } else {
+          accepted = recorder.record(
+            phase: .transcriptLive, metric: metric, itemCount: 1, meetingKey: key)
+        }
+        XCTAssertFalse(accepted)
+      }
+      let accepted: Bool
+      if metric.kind == .duration {
+        accepted = recorder.record(
+          phase: .transcriptLive, durationNanoseconds: 1, metric: metric, meetingKey: "live")
+      } else {
+        accepted = recorder.record(
+          phase: .transcriptLive, metric: metric, itemCount: 1, meetingKey: "live")
+      }
+      XCTAssertTrue(accepted)
+    }
+  }
+
   private func identity() throws -> ResourceRecorder.Identity {
     try .init(
       build: "test-build", model: "parakeet-v3", hardware: "test-host", os: "test-os",

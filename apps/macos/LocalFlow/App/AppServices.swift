@@ -4,6 +4,7 @@ import ApplicationServices
 import Foundation
 import OSLog
 import Observation
+import os
 
 @MainActor @Observable
 final class AppServices {
@@ -28,6 +29,8 @@ final class AppServices {
   // Feature 004: meetings. The coordinator exists before dictation is wired so the
   // exclusivity guard is in place from the first shortcut press.
   private(set) var meetingCoordinator: MeetingCoordinator?
+  private(set) var meetingTranscription: MeetingTranscriptionCoordinator?
+  @ObservationIgnored private(set) var transcriptStore: TranscriptStore?
   private(set) var meetingLibrary: MeetingLibraryViewModel?
   @ObservationIgnored private(set) var meetingStore: MeetingStore?
   @ObservationIgnored private(set) var meetingStorageRoot: MeetingStorageRoot?
@@ -181,13 +184,30 @@ final class AppServices {
             await self?.invalidateModelVerification()
             throw error
           }
-          return try await FluidAudioEngineFactory(descriptor: local).makeRuntime()
+          var runtime: any TranscriptionRuntime = try await FluidAudioEngineFactory(
+            descriptor: local
+          ).makeRuntime()
+          #if DEBUG
+            if let factor = MeetingRuntimeOptions.current.debugSlowRecognition {
+              runtime = SlowRecognitionRuntime(
+                runtime: runtime, factor: factor, clock: SystemMeetingClock())
+            }
+            if let count = MeetingRuntimeOptions.current.debugFailRecognition {
+              runtime = FailingRecognitionRuntime(runtime: runtime, failingCall: count)
+            }
+          #endif
+          return runtime
         })
       self.lifecycle = lifecycle
       await lifecycle.setKeepLoaded(preferences.keepModelReady && allowsPreferenceWarmup)
-      startMeetings(base: base, history: paths.1)
-      let insertion = TextInsertionService()
       let vocabulary = VocabularyStore(history: paths.1)
+      let transcriptIdentity = try TranscriptionPipelineIdentity(
+        descriptor: descriptor, manifestHash: TranscriptionQualityDetail.hash(descriptorData),
+        build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+      startMeetings(
+        base: base, history: paths.1, lifecycle: lifecycle,
+        vocabulary: vocabulary, identity: transcriptIdentity)
+      let insertion = TextInsertionService()
       // Always wired: whether a dictation is rewritten is read from the per-attempt
       // settings snapshot, so the Settings toggle applies without relaunch.
       let rewriteCoordinator = RewriteCoordinator(
@@ -216,7 +236,9 @@ final class AppServices {
       // FR-027: dictation is refused while a meeting is active; with no meeting the
       // guard returns nil and the dictation path is the Feature 003 path.
       coordinator.admissionGuard = { [weak self] in
-        self?.meetingCoordinator?.isActive == true ? MeetingErrorMessage.meetingInProgress : nil
+        Self.dictationAdmissionReason(
+          meetingActive: self?.meetingCoordinator?.isActive == true,
+          finalizing: self?.meetingTranscription?.isFinalizing == true)
       }
       coordinator.admissionRefused = { [weak self] reason in
         self?.showMeetingNotice(reason)
@@ -337,7 +359,11 @@ final class AppServices {
   /// Meeting storage, store, launch reconciliation (detached, never awaited by
   /// launch) and the coordinator. Start Meeting stays disabled until the
   /// reconciler reports completion.
-  private func startMeetings(base: URL, history: TranscriptionStore) {
+  private func startMeetings(
+    base: URL, history: TranscriptionStore,
+    lifecycle: ModelLifecycleCoordinator, vocabulary: VocabularyStore,
+    identity: TranscriptionPipelineIdentity
+  ) {
     let options = MeetingRuntimeOptions.current
     let root = MeetingStorageRoot(
       url: options.storageRootOverride ?? base.appendingPathComponent("Meetings", isDirectory: true)
@@ -346,16 +372,46 @@ final class AppServices {
     meetingStore = store
     meetingStorageRoot = root
     let recorder = recorder
+    let clock = SystemMeetingClock()
+    let transcripts = TranscriptStore(database: history.database)
+    transcriptStore = transcripts
+    var liveStore: any TranscriptStoring = transcripts
+    #if DEBUG
+      if options.debugFailPersistence { liveStore = FailingPersistenceStore(base: transcripts) }
+    #endif
+    let finalizer = MeetingFinalizer(
+      store: transcripts, meetings: store, storageRoot: root, lifecycle: lifecycle,
+      vocabulary: vocabulary, identity: identity, clock: clock, recorder: recorder)
+    let transcription = MeetingTranscriptionCoordinator(
+      store: liveStore, lifecycle: lifecycle, vocabulary: vocabulary,
+      identity: identity, clock: clock, recorder: recorder, finalizer: finalizer)
+    transcription.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
+    meetingTranscription = transcription
     let gate = reconciliationGate
     let reconciler = MeetingReconciler(
       store: store, root: root, recorder: recorder, clock: SystemMeetingClock())
+    let transcriptReconciler = TranscriptReconciler(
+      store: transcripts, meetings: store, clock: clock, recorder: recorder)
     Task.detached(priority: .utility) {
       let summary = await reconciler.run()
+      // Transcript rows are reconciled after the meeting rows they depend on,
+      // on the same task; interrupted finalizations resume once Start is enabled.
+      let transcriptSummary = await transcriptReconciler.run()
       await MainActor.run {
         gate.complete(summary)
         self.meetingCoordinator?.markReconciliationComplete()
+        transcription.resumeFinalizations(transcriptSummary.resume)
         if let text = summary.noticeText { self.showMeetingNotice(text) }
+        if let text = transcriptSummary.noticeText { self.showMeetingNotice(text) }
         Task { await self.meetingLibrary?.refresh() }
+        #if DEBUG
+          if let count = options.debugSeedTranscript {
+            Task {
+              await self.seedSyntheticTranscript(
+                count: count, store: store, transcripts: transcripts)
+            }
+          }
+        #endif
       }
     }
     let coordinator = MeetingCoordinator(
@@ -366,11 +422,22 @@ final class AppServices {
           kind == .microphone ? MicrophoneMeetingSource() : SystemAudioMeetingSource()
         },
         isDictationBusy: { [weak self] in self?.coordinator?.busy == true },
-        reconciliationGate: { await gate.wait() }, options: options))
+        reconciliationGate: { await gate.wait() }, options: options, transcription: transcription))
     meetingCoordinator = coordinator
     meetingLibrary = MeetingLibraryViewModel(store: store) { [weak coordinator] in
       coordinator?.activeMeetingID
     }
+    meetingLibrary?.willDelete = { [weak coordinator] id in
+      await coordinator?.meetingWillDelete(id: id)
+    }
+  }
+
+  /// FR-027 plus Feature 005: an active meeting refuses dictation first; a
+  /// finalization holding the model lease refuses with the transcript notice.
+  static func dictationAdmissionReason(meetingActive: Bool, finalizing: Bool) -> String? {
+    if meetingActive { return MeetingErrorMessage.meetingInProgress }
+    if finalizing { return TranscriptErrorMessage.finalizing }
+    return nil
   }
 
   /// One action notice through the indicator panel; the action opens Meetings.
@@ -825,6 +892,7 @@ final class AppServices {
         await meetingCoordinator.notesEditor?.flush()
         if meetingCoordinator.isActive { await meetingCoordinator.stop() }
       }
+      await meetingTranscription?.shutdown()
       do {
         try await lifecycle?.shutdownIfIdle()
       } catch {
@@ -859,11 +927,9 @@ private final class DisplayOptionsObserver {
   deinit { if let token { center.removeObserver(token) } }
 }
 
-/// Feature 004 runtime switches, read once from the process environment and
-/// arguments next to `LOCALFLOW_RESOURCE_RECORDING`. Both default off. The
-/// storage-root override exists for acceptance runs on a disk image and is
-/// ignored unless it is an absolute path; the slow-finalize flag only exists in
-/// debug builds so a force quit can land between the two track finalizations.
+/// Meeting acceptance switches, read once beside `LOCALFLOW_RESOURCE_RECORDING`.
+/// All default off. Fault injection and transcript seeding are parsed only in
+/// debug builds; the storage-root override requires an absolute path.
 struct MeetingRuntimeOptions: Equatable, Sendable {
   static let rootVariable = "LOCALFLOW_MEETING_ROOT"
   static let slowFinalizeFlag = "--debug-slow-finalize"
@@ -877,6 +943,10 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
   }
   var storageRootOverride: URL?
   var debugSlowFinalize = false
+  var debugSlowRecognition: Double?
+  var debugFailRecognition: Int?
+  var debugFailPersistence = false
+  var debugSeedTranscript: Int?
 
   static func parse(environment: [String: String], arguments: [String]) -> MeetingRuntimeOptions {
     var options = MeetingRuntimeOptions()
@@ -884,6 +954,26 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
       options.storageRootOverride = URL(fileURLWithPath: root, isDirectory: true)
     }
     options.debugSlowFinalize = slowFinalizeSupported && arguments.contains(slowFinalizeFlag)
+    #if DEBUG
+      func value(after flag: String) -> String? {
+        guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else {
+          return nil
+        }
+        return arguments[index + 1]
+      }
+      if let raw = value(after: "--debug-slow-recognition"), let factor = Double(raw),
+        factor.isFinite, factor > 0
+      {
+        options.debugSlowRecognition = factor
+      }
+      if let raw = value(after: "--debug-fail-recognition"), let count = Int(raw), count > 0 {
+        options.debugFailRecognition = count
+      }
+      options.debugFailPersistence = arguments.contains("--debug-fail-persistence")
+      if let raw = value(after: "--debug-seed-transcript"), let count = Int(raw), count > 0 {
+        options.debugSeedTranscript = count
+      }
+    #endif
     return options
   }
 
@@ -892,3 +982,163 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
       environment: ProcessInfo.processInfo.environment, arguments: CommandLine.arguments)
   }
 }
+
+#if DEBUG
+  extension AppServices {
+    /// `--debug-seed-transcript <n>`: synthetic final rows on the newest completed
+    /// meeting, for the paging check in the quickstart. Debug builds only.
+    fileprivate func seedSyntheticTranscript(
+      count: Int, store: MeetingStore, transcripts: TranscriptStore
+    ) async {
+      do {
+        let page = try await store.page(before: nil, limit: MeetingStore.pageLimit)
+        guard let target = page.first(where: { $0.state == .completed }),
+          var row = try await transcripts.transcription(meetingID: target.id)
+        else { return }
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        if row.state == .notRequested {
+          row = try await transcripts.transition(
+            meetingID: target.id, to: .pending, now: now, effects: [])
+        }
+        guard row.state != .live, row.state != .finalizing else { return }
+        let pass = UUID()
+        let bounded = min(max(1, count), 20_000)
+        let covered = Int64(bounded) * 1_000
+        _ = try await transcripts.transition(
+          meetingID: target.id, to: .finalizing, now: now,
+          effects: [.setPass(id: pass, kind: .final), .setTimestamps(recordedMsAtPass: covered)])
+        var ordinal = 0
+        while ordinal < bounded {
+          let batch = (ordinal..<min(bounded, ordinal + 50)).map { index in
+            TranscriptSegmentDraft(
+              finality: .final, ordinal: index, stretchSequence: 1,
+              startMs: Int64(index) * 1_000, endMs: Int64(index) * 1_000 + 900,
+              coveredMs: covered, windowIndex: index / 15, timingBasis: .window,
+              rawText: "segment \(index)", assembledText: "segment \(index)",
+              normalizedText: "Segment \(index)", pipelineVersion: "debug_seed",
+              analysisTracks: .both)
+          }
+          _ = try await transcripts.appendSegments(
+            meetingID: target.id, passID: pass, drafts: batch,
+            progress: .init(sequence: 1, sample: Int64(batch.last!.endMs) * 16), now: now)
+          ordinal += batch.count
+        }
+        _ = try await transcripts.completeFinalPass(
+          meetingID: target.id, passID: pass,
+          descriptor: .init(
+            source: .decodedTracks, contributingTracks: [.mic, .system],
+            stretches: [.init(sequence: 1, lengthMs: covered, tracks: .both)]),
+          coveredMs: covered, now: now)
+        await meetingLibrary?.refresh()
+        showMeetingNotice("Seeded \(bounded) transcript segments")
+      } catch {
+        showMeetingNotice("Transcript seeding failed")
+      }
+    }
+  }
+
+  /// `--debug-fail-recognition <n>`: the nth inference of this launch throws.
+  struct FailingRecognitionRuntime: TranscriptionRuntime {
+    let runtime: any TranscriptionRuntime
+    let failingCall: Int
+    private static let calls = OSAllocatedUnfairLock(initialState: 0)
+    func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+      let call = Self.calls.withLock { state -> Int in
+        state += 1
+        return state
+      }
+      if call == failingCall { throw DictationFailure.invalidResult }
+      return try await runtime.transcribe(samples)
+    }
+    func shutdown() async { await runtime.shutdown() }
+  }
+
+  /// `--debug-fail-persistence`: live batch writes fail; the final pass writes.
+  final class FailingPersistenceStore: TranscriptStoring {
+    let base: TranscriptStore
+    init(base: TranscriptStore) { self.base = base }
+    func transcription(meetingID: UUID) async throws -> MeetingTranscription? {
+      try await base.transcription(meetingID: meetingID)
+    }
+    func transition(
+      meetingID: UUID, to: TranscriptState, now: Int64, effects: [TranscriptTransitionEffect]
+    ) async throws -> MeetingTranscription {
+      try await base.transition(meetingID: meetingID, to: to, now: now, effects: effects)
+    }
+    func setLiveState(meetingID: UUID, liveState: LiveState?, now: Int64) async throws {
+      try await base.setLiveState(meetingID: meetingID, liveState: liveState, now: now)
+    }
+    func updateLiveMetadata(
+      meetingID: UUID, descriptor: AnalysisStreamDescriptor, incrementModelReloads: Bool,
+      now: Int64
+    ) async throws -> MeetingTranscription {
+      try await base.updateLiveMetadata(
+        meetingID: meetingID, descriptor: descriptor,
+        incrementModelReloads: incrementModelReloads, now: now)
+    }
+    func appendSegments(
+      meetingID: UUID, passID: UUID, drafts: [TranscriptSegmentDraft],
+      progress: FinalizationProgress?, now: Int64
+    ) async throws -> Int {
+      if try await base.transcription(meetingID: meetingID)?.passKind == .live {
+        throw TranscriptStore.Error.damagedDatabase
+      }
+      return try await base.appendSegments(
+        meetingID: meetingID, passID: passID, drafts: drafts, progress: progress, now: now)
+    }
+    func appendGap(_ gap: LiveGap) async throws { try await base.appendGap(gap) }
+    func completeFinalPass(
+      meetingID: UUID, passID: UUID, descriptor: AnalysisStreamDescriptor, coveredMs: Int64,
+      now: Int64
+    ) async throws -> MeetingTranscription {
+      try await base.completeFinalPass(
+        meetingID: meetingID, passID: passID, descriptor: descriptor, coveredMs: coveredMs,
+        now: now)
+    }
+    func discardPass(meetingID: UUID, passID: UUID) async throws {
+      try await base.discardPass(meetingID: meetingID, passID: passID)
+    }
+    func restartFinalPass(
+      meetingID: UUID, passID: UUID, now: Int64, effects: [TranscriptTransitionEffect]
+    ) async throws -> MeetingTranscription {
+      try await base.restartFinalPass(
+        meetingID: meetingID, passID: passID, now: now, effects: effects)
+    }
+    func passSegmentCount(meetingID: UUID, passID: UUID) async throws -> Int {
+      try await base.passSegmentCount(meetingID: meetingID, passID: passID)
+    }
+    func page(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
+      async throws -> [TranscriptSegment]
+    {
+      try await base.page(meetingID: meetingID, finality: finality, after: ordinal, limit: limit)
+    }
+    func gaps(meetingID: UUID) async throws -> [LiveGap] {
+      try await base.gaps(meetingID: meetingID)
+    }
+    func activeRows(limit: Int) async throws -> [MeetingTranscription] {
+      try await base.activeRows(limit: limit)
+    }
+    func recover(row: MeetingTranscription, to: TranscriptState, outcome: RecoveryOutcome)
+      async throws
+    {
+      try await base.recover(row: row, to: to, outcome: outcome)
+    }
+    func recordOutcome(_ outcome: RecoveryOutcome) async throws {
+      try await base.recordOutcome(outcome)
+    }
+    func usage() async throws -> TranscriptUsage { try await base.usage() }
+  }
+
+  /// Test-only delay remains inside lifecycle-owned inference and cancellation.
+  struct SlowRecognitionRuntime: TranscriptionRuntime {
+    let runtime: any TranscriptionRuntime
+    let factor: Double
+    let clock: any MeetingClock
+    func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+      try await clock.sleep(for: .seconds(factor * Double(samples.count) / 16_000))
+      try Task.checkCancellation()
+      return try await runtime.transcribe(samples)
+    }
+    func shutdown() async { await runtime.shutdown() }
+  }
+#endif

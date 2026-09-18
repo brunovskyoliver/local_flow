@@ -5,6 +5,180 @@ import XCTest
 
 @MainActor
 final class MeetingCoordinatorTests: XCTestCase {
+  final class FakeMeetingTranscriptionObserver: MeetingTranscriptionObserving {
+    var calls: [String] = []
+    var taps: [[MeetingTrackKind: MeetingAnalysisTap]] = []
+    var requested = false
+    func meetingWillStart(id: UUID, options: MeetingStartOptions) async -> TranscriptState {
+      calls.append("willStart")
+      requested = options.transcription
+      return requested ? .pending : .notRequested
+    }
+    func stretchDidStart(
+      meetingID: UUID, sequence: Int, tracks: [MeetingTrackKind: MeetingSourceFormat]
+    ) -> [MeetingTrackKind: MeetingAnalysisTap]? {
+      calls.append("stretch:\(sequence)")
+      guard requested else { return nil }
+      let result = tracks.compactMapValues { format in
+        try? MeetingAnalysisTap(kind: .microphone, format: format)
+      }
+      taps.append(result)
+      return result
+    }
+    func meetingDidPause(id: UUID) { calls.append("pause") }
+    func meetingDidStop(id: UUID) { calls.append("stop") }
+    func meetingDidComplete(id: UUID, detail: MeetingDetail) { calls.append("complete") }
+    func meetingWillDelete(id: UUID) async { calls.append("delete") }
+  }
+
+  func testTranscriptionObserverHooksAndStartOption() async throws {
+    let observer = FakeMeetingTranscriptionObserver()
+    let rig = try makeRig(transcription: observer)
+    let result = await rig.coordinator.start(options: .init(transcription: true))
+    guard case .started(let id) = result else { return XCTFail("Start failed") }
+    XCTAssertTrue(rig.coordinator.status?.transcriptionRequested == true)
+    XCTAssertEqual(observer.calls, ["willStart", "stretch:1"])
+    let transcriptStore = TranscriptStore(database: rig.fixture.store.database)
+    let row = try await transcriptStore.transcription(meetingID: id)
+    XCTAssertEqual(row?.state, .pending)
+    rig.microphone.push(blocks: 2)
+    await rig.advance(seconds: 1)
+    XCTAssertGreaterThan(observer.taps[0][.microphone]?.ring.occupancy ?? 0, 0)
+    await rig.coordinator.pause(reason: .user)
+    XCTAssertEqual(observer.calls.last, "pause")
+    await rig.coordinator.resume()
+    XCTAssertEqual(observer.calls.last, "stretch:2")
+    XCTAssertFalse(observer.taps[0][.microphone] === observer.taps[1][.microphone])
+    await rig.coordinator.stop()
+    for _ in 0..<100 where !observer.calls.contains("complete") { await Task.yield() }
+    XCTAssertEqual(
+      observer.calls, ["willStart", "stretch:1", "pause", "stretch:2", "stop", "complete"])
+    await rig.coordinator.meetingWillDelete(id: id)
+    XCTAssertEqual(observer.calls.last, "delete")
+    let detail = try await rig.detail(id)
+    XCTAssertEqual(detail.meeting.state, .completed)
+  }
+
+  func testDisabledStartOptionKeepsRecordingIndependent() async throws {
+    let lifecycle = ModelLifecycleCoordinator { FakeTranscriptionRuntime() }
+    var transcription: MeetingTranscriptionCoordinator!
+    let rig = try makeRig(transcriptionFactory: { store, clock in
+      transcription = MeetingTranscriptionCoordinator(
+        store: TranscriptStore(database: store.database), lifecycle: lifecycle, clock: clock)
+      return transcription
+    })
+    guard case .started(let id) = await rig.coordinator.start(options: .init(transcription: false))
+    else {
+      return XCTFail("Start failed")
+    }
+    XCTAssertFalse(rig.coordinator.status?.transcriptionRequested ?? true)
+    for _ in 0..<2 {
+      rig.microphone.push(blocks: 12)
+      rig.system.push(blocks: 12)
+      await rig.advance(seconds: 1)
+      await rig.coordinator.pause(reason: .user)
+      await rig.coordinator.resume()
+    }
+    await rig.coordinator.stop()
+    await transcription.shutdown()
+    let model = await lifecycle.snapshot()
+    XCTAssertFalse(model.loaded)
+    XCTAssertEqual(transcription.status?.state, .notRequested)
+    let row = try await TranscriptStore(database: rig.fixture.store.database).transcription(
+      meetingID: id)
+    XCTAssertEqual(row?.state, .notRequested)
+    XCTAssertEqual(row?.segmentCount, 0)
+    XCTAssertGreaterThan(rig.writer.bytes(.microphone).count, 0)
+    XCTAssertGreaterThan(rig.writer.bytes(.system).count, 0)
+    let detail = try await rig.detail(id)
+    XCTAssertEqual(detail.meeting.state, .completed)
+  }
+
+  func testTwoMinutesOfLivePCMCommitsTextWhileRecordingFilesGrow() async throws {
+    let runtime = FakeTranscriptionRuntime()
+    let lifecycle = ModelLifecycleCoordinator { runtime }
+    var transcription: MeetingTranscriptionCoordinator!
+    let rig = try makeRig(transcriptionFactory: { store, clock in
+      transcription = MeetingTranscriptionCoordinator(
+        store: TranscriptStore(database: store.database), lifecycle: lifecycle, clock: clock)
+      return transcription
+    })
+    guard case .started(let id) = await rig.coordinator.start() else {
+      return XCTFail("Start failed")
+    }
+    for _ in 0..<500 where transcription.status?.state != .live {
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    XCTAssertEqual(transcription.status?.state, .live)
+    var previousBytes = 0
+    // 1,410 blocks at 4,096 / 48,000 seconds supplies just over two minutes per track.
+    for block in 0..<1_410 {
+      rig.microphone.push(blocks: 1)
+      rig.system.push(blocks: 1)
+      await rig.clock.advance(by: .milliseconds(100))
+      if block % 200 == 199 {
+        XCTAssertEqual(rig.coordinator.status?.state, .recording)
+        let bytes = rig.writer.bytes(.microphone).count
+        XCTAssertGreaterThan(bytes, previousBytes)
+        previousBytes = bytes
+      }
+    }
+    await rig.clock.advance(by: .seconds(2))
+    for _ in 0..<500 where (transcription.status?.provisionalCount ?? 0) < 15 {
+      await transcription.tick()
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    let store = TranscriptStore(database: rig.fixture.store.database)
+    let segments = try await store.page(
+      meetingID: id, finality: .provisional, after: nil, limit: 200)
+    XCTAssertGreaterThanOrEqual(segments.count, 15)
+    XCTAssertEqual(transcription.status?.provisionalCount, segments.count)
+    XCTAssertEqual(rig.coordinator.status?.state, .recording)
+    XCTAssertEqual(rig.writer.bytes(.system).isEmpty, false)
+    await rig.coordinator.stop()
+    await transcription.meetingWillDelete(id: id)
+  }
+
+  func testLiveRuntimeFailureLeavesRecordingAndBothTracksRunning() async throws {
+    let lifecycle = ModelLifecycleCoordinator { FakeTranscriptionRuntime(failureOnCall: 1) }
+    var transcription: MeetingTranscriptionCoordinator!
+    let rig = try makeRig(transcriptionFactory: { store, clock in
+      transcription = MeetingTranscriptionCoordinator(
+        store: TranscriptStore(database: store.database), lifecycle: lifecycle, clock: clock)
+      return transcription
+    })
+    defer { rig.cleanup() }
+    guard case .started(let id) = await rig.coordinator.start() else {
+      return XCTFail("Start failed")
+    }
+    for _ in 0..<500 where transcription.status?.state != .live {
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    for _ in 0..<200 {
+      rig.microphone.push(blocks: 1)
+      rig.system.push(blocks: 1)
+      await rig.clock.advance(by: .milliseconds(100))
+      await transcription.tick()
+    }
+    for _ in 0..<500 where transcription.status?.state != .failed {
+      await transcription.tick()
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    XCTAssertEqual(transcription.status?.failure, .runtimeFailure)
+    let micBefore = rig.writer.bytes(.microphone).count
+    let systemBefore = rig.writer.bytes(.system).count
+    rig.microphone.push(blocks: 12)
+    rig.system.push(blocks: 12)
+    await rig.advance(seconds: 1)
+    XCTAssertEqual(rig.coordinator.status?.state, .recording)
+    XCTAssertGreaterThan(rig.writer.bytes(.microphone).count, micBefore)
+    XCTAssertGreaterThan(rig.writer.bytes(.system).count, systemBefore)
+    await rig.coordinator.stop()
+    await transcription.shutdown()
+    let detail = try await rig.detail(id)
+    XCTAssertEqual(detail.meeting.state, .completed)
+  }
+
   /// Forwards to the real store and can hold a transition until a gate opens.
   final class GatedStore: MeetingStoring, @unchecked Sendable {
     let inner: MeetingStore
@@ -162,7 +336,10 @@ final class MeetingCoordinatorTests: XCTestCase {
 
   private func makeRig(
     freeSpace: Int64 = 50_000_000_000, options: MeetingRuntimeOptions = .init(),
-    dictationBusy: @escaping @MainActor () -> Bool = { false }, realFiles: Bool = true
+    dictationBusy: @escaping @MainActor () -> Bool = { false }, realFiles: Bool = true,
+    transcription: (any MeetingTranscriptionObserving)? = nil,
+    transcriptionFactory: ((MeetingStore, FakeMeetingClock) -> any MeetingTranscriptionObserving)? =
+      nil
   ) throws -> Rig {
     let clock = FakeMeetingClock()
     let fixture = try MeetingTestStore.make()
@@ -181,7 +358,8 @@ final class MeetingCoordinatorTests: XCTestCase {
         store: store, writer: writer, permissions: permissions.permissions, clock: clock,
         recorder: capture.recorder, storageRoot: fixture.root,
         sourceFactory: { kind in kind == .microphone ? microphone : system },
-        isDictationBusy: dictationBusy, sleepCenter: center, options: options))
+        isDictationBusy: dictationBusy, sleepCenter: center, options: options,
+        transcription: transcriptionFactory?(fixture.store, clock) ?? transcription))
     let rig = Rig(
       clock: clock, fixture: fixture, store: store, writer: writer, microphone: microphone,
       system: system, permissions: permissions, capture: capture, center: center,

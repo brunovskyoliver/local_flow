@@ -1,4 +1,5 @@
 import Darwin
+import GRDB
 import XCTest
 
 @testable import LocalFlow
@@ -176,4 +177,80 @@ final class MeetingDeletionTests: XCTestCase {
     XCTAssertTrue(outcome.complete)
     XCTAssertEqual(try rowCounts(victim.meeting.id)[0], 0)
   }
+  func testTranscriptCascadeAdjustsUsageAndPreservesOtherMeetingFilesAndRows() async throws {
+    let transcripts = TranscriptStore(database: fixture.history.database)
+    try await fixture.history.database.write { db in
+      try db.execute(
+        sql:
+          "INSERT INTO vocabulary_entries(id,canonical_text,aliases_json,enabled) VALUES ('retained','LocalFlow','[]',1)"
+      )
+    }
+    let vocabularyBefore = try await fixture.history.database.read { db in
+      try Row.fetchAll(db, sql: "SELECT * FROM vocabulary_entries ORDER BY id")
+    }
+    let descriptorURL = fixture.directory.appendingPathComponent("model-descriptor.json")
+    try Data("{\"fixture\":\"installed model\"}".utf8).write(to: descriptorURL)
+    let descriptorHash = try sha256(of: descriptorURL)
+
+    let victim = try await TranscriptMeetingFixture.make(in: fixture)
+    let keep = try await TranscriptMeetingFixture.make(in: fixture, startedAt: t0 + 100_000)
+    for id in [victim.meetingID, keep.meetingID] {
+      let pass = UUID()
+      try await transcripts.transition(
+        meetingID: id, to: .live, now: t0,
+        effects: [.setPass(id: pass, kind: .live)])
+      _ = try await transcripts.appendSegments(
+        meetingID: id, passID: pass,
+        drafts: [
+          .init(
+            ordinal: 0, stretchSequence: 1, startMs: 0, endMs: 100, coveredMs: 200,
+            windowIndex: 0, timingBasis: .window, rawText: "raw", assembledText: "raw",
+            normalizedText: "Raw", analysisTracks: .mic)
+        ], progress: nil, now: t0)
+      try await transcripts.appendGap(
+        .init(
+          meetingID: id, passID: pass, stretchSequence: 1,
+          startMs: 100, endMs: 200, reason: .suspended, createdAt: t0))
+    }
+    let keepRow = try await transcripts.transcription(meetingID: keep.meetingID)
+    let keepSegments = try await transcripts.page(
+      meetingID: keep.meetingID, finality: .provisional, after: nil, limit: 200)
+    let keepGaps = try await transcripts.gaps(meetingID: keep.meetingID)
+    let digests = try keep.fileDigests()
+    let victimMeeting = try await store.meeting(id: victim.meetingID)
+    let outcome = try await store.deleteConfirmed(
+      id: victim.meetingID, revision: XCTUnwrap(victimMeeting).revision)
+    XCTAssertTrue(outcome.complete)
+    for table in ["meeting_transcriptions", "transcript_segments", "transcript_live_gaps"] {
+      let count = try await fixture.history.database.read { db in
+        try Int.fetchOne(
+          db, sql: "SELECT COUNT(*) FROM \(table) WHERE meeting_id=?",
+          arguments: [victim.meetingID.uuidString])!
+      }
+      XCTAssertEqual(count, 0)
+    }
+    let usage = try await transcripts.usage()
+    XCTAssertEqual(usage.segmentRows, keepRow?.segmentCount)
+    XCTAssertEqual(usage.textBytes, keepRow?.textBytes)
+    let afterRow = try await transcripts.transcription(meetingID: keep.meetingID)
+    let afterSegments = try await transcripts.page(
+      meetingID: keep.meetingID, finality: .provisional, after: nil, limit: 200)
+    let afterGaps = try await transcripts.gaps(meetingID: keep.meetingID)
+    XCTAssertEqual(afterRow, keepRow)
+    XCTAssertEqual(afterSegments, keepSegments)
+    XCTAssertEqual(afterGaps, keepGaps)
+    XCTAssertEqual(try keep.fileDigests(), digests)
+    let keepMeeting = try await store.meeting(id: keep.meetingID)
+    _ = try await store.deleteConfirmed(
+      id: keep.meetingID, revision: XCTUnwrap(keepMeeting).revision)
+    let empty = try await transcripts.usage()
+    XCTAssertEqual(empty, .init(textBytes: 0, segmentRows: 0))
+    let vocabularyAfter = try await fixture.history.database.read { db in
+      try Row.fetchAll(db, sql: "SELECT * FROM vocabulary_entries ORDER BY id")
+    }
+    XCTAssertEqual(vocabularyAfter, vocabularyBefore)
+    XCTAssertEqual(try sha256(of: descriptorURL), descriptorHash)
+
+  }
+
 }

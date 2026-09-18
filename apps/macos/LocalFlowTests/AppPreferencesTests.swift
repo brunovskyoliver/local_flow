@@ -4,6 +4,20 @@ import XCTest
 @testable import LocalFlow
 
 final class AppPreferencesTests: XCTestCase {
+  @MainActor func testMeetingTranscriptionDefaultsAndPersists() {
+    let suite = "LocalFlow-meetings-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertTrue(preferences.meetingTranscriptionEnabled)
+    preferences.meetingTranscriptionEnabled = false
+    XCTAssertFalse(defaults.bool(forKey: "meetingTranscriptionEnabled"))
+    XCTAssertFalse(AppPreferences(defaults: defaults).meetingTranscriptionEnabled)
+    XCTAssertFalse(MeetingStartOptions(preferences: preferences).transcription)
+    preferences.meetingTranscriptionEnabled = true
+    XCTAssertTrue(MeetingStartOptions(preferences: preferences).transcription)
+  }
+
   @MainActor func testRewriteModeDefaultsPersistenceAndUnknownValue() {
     let suite = "LocalFlow-mode-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!

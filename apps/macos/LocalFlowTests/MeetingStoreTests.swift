@@ -122,7 +122,7 @@ final class MeetingStoreTests: XCTestCase {
       let cascades = try Int.fetchOne(
         db,
         sql:
-          "SELECT count(*) FROM sqlite_master WHERE type='table' AND name LIKE 'meeting_%' AND sql LIKE '%ON DELETE CASCADE%'"
+          "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('meeting_tracks','meeting_segments','meeting_pauses','meeting_notes','meeting_recovery_outcomes') AND sql LIKE '%ON DELETE CASCADE%'"
       )
       XCTAssertEqual(cascades, 5)
     }
@@ -134,12 +134,15 @@ final class MeetingStoreTests: XCTestCase {
       let old = try TranscriptionStore(path: path)
       try await old.database.write { db in
         for table in [
+          "transcript_live_gaps", "transcript_segments", "meeting_transcriptions",
+          "transcript_usage",
           "meeting_recovery_outcomes", "meeting_notes", "meeting_pauses", "meeting_segments",
           "meeting_tracks", "meetings",
         ] {
           try db.drop(table: table)
         }
-        try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'meetings-v5'")
+        try db.execute(
+          sql: "DELETE FROM grdb_migrations WHERE identifier IN ('meetings-v5','transcripts-v6')")
       }
     }
     let reopened = try TranscriptionStore(path: path)
@@ -606,4 +609,50 @@ final class MeetingStoreTests: XCTestCase {
     let retry = try await store.deleteConfirmed(id: meeting.id, revision: 0)
     XCTAssertTrue(retry.complete)
   }
+  func testTranscriptPreparationRollbackAndDeletionUsage() async throws {
+    let created = try await store.create(now: now)
+    do {
+      try await store.transition(
+        id: created.id, to: .preparing, now: now,
+        effects: [
+          .insertTranscription(liveRequested: true), .insertTranscription(liveRequested: true),
+        ])
+      XCTFail("Duplicate transcript insertion must roll back preparation")
+    } catch {}
+    let transcripts = TranscriptStore(database: fixture.history.database)
+    let absent = try await transcripts.transcription(meetingID: created.id)
+    XCTAssertNil(absent)
+    let original = try await store.meeting(id: created.id)
+    XCTAssertEqual(original?.state, .created)
+    try await store.transition(
+      id: created.id, to: .preparing, now: now, effects: [.insertTranscription(liveRequested: true)]
+    )
+    let pass = UUID()
+    try await transcripts.transition(
+      meetingID: created.id, to: .live, now: now, effects: [.setPass(id: pass, kind: .live)])
+    let draft = TranscriptSegmentDraft(
+      ordinal: 0, stretchSequence: 1, startMs: 0, endMs: 10, coveredMs: 10, windowIndex: 0,
+      timingBasis: .window, rawText: "a", assembledText: "a", normalizedText: "a",
+      analysisTracks: .mic)
+    _ = try await transcripts.appendSegments(
+      meetingID: created.id, passID: pass, drafts: [draft], progress: nil, now: now)
+    try await transcripts.appendGap(
+      .init(
+        meetingID: created.id, passID: pass, stretchSequence: 1, startMs: 10, endMs: 20,
+        reason: .stopDrain, createdAt: now))
+    let failed = try await store.transition(
+      id: created.id, to: .failed, now: now, effects: [.failure(.storageWriteFailed, detail: nil)])
+    let deletion = try await store.deleteConfirmed(id: created.id, revision: failed.revision)
+    XCTAssertTrue(deletion.rowDeleted)
+    let usage = try await transcripts.usage()
+    XCTAssertEqual(usage, .init(textBytes: 0, segmentRows: 0))
+    let deleted = try await transcripts.transcription(meetingID: created.id)
+    XCTAssertNil(deleted)
+    let gaps = try await transcripts.gaps(meetingID: created.id)
+    XCTAssertTrue(gaps.isEmpty)
+    let segments = try await transcripts.page(
+      meetingID: created.id, finality: .provisional, after: nil, limit: 200)
+    XCTAssertTrue(segments.isEmpty)
+  }
+
 }

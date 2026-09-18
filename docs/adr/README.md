@@ -16,3 +16,4 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0013: Rewrite protocol v1](0013-rewrite-protocol-v1.md)
 - [0014: No background text replacement](0014-no-background-text-replacement.md)
 - [0015: ADTS AAC-LC segment files with a database-authoritative manifest](0015-adts-aac-segments.md)
+- [0016: Live preview and durable-audio transcription passes](0016-meeting-transcription-passes.md)

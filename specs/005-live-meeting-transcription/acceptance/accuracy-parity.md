@@ -1,0 +1,3 @@
+# Finalization accuracy parity
+
+Status: pending (T092, SC-009). Run the Feature 002 consented/licensed quality fixture sets through the production finalization path in synthetic meeting stretch files. Record fixture and audio hashes, build, model, pipeline, vocabulary and planner identities, then compare WER by set with [Feature 002 results](../../002-transcription-quality/acceptance/quality-results.md). The gate is within one absolute percentage point of dictation WER. Carry forward the mixed-language fixture limitation; synthetic unrelated bilingual utterances do not establish conversational switching accuracy. No finalization WER was measured by this update.

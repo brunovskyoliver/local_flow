@@ -41,3 +41,8 @@ fixtures/quality/manifest.json
 *.ogg
 *.flac
 *.parquet
+
+# Swift package workspace and Go build artifacts
+*.swiftpm/
+*.exe
+vendor/
