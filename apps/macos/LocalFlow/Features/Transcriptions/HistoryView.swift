@@ -5,8 +5,9 @@ import SwiftUI
 struct HistoryView: View {
   @Environment(\.prototypeCompact) private var compact
   @Bindable var model: HistoryViewModel
-  let copy: (TranscriptionEntry) -> Void
-  let insert: (TranscriptionEntry) -> Void
+  let copy: (String) -> Void
+  /// A nil attempt inserts the saved transcript; an attempt inserts its output.
+  let insert: (TranscriptionEntry, RewriteAttempt?) -> Void
   let dismissRecovery: (TranscriptionEntry) async throws -> Void
   let delete: (TranscriptionEntry) async throws -> Void
   var globalBusy = false
@@ -36,6 +37,30 @@ struct HistoryView: View {
             Button("Retry") { model.refresh() }
           }.padding(.top, 20)
         }
+        if model.detailEntryID != nil {
+          VStack(alignment: .leading, spacing: 14) {
+            HStack {
+              Text("Transcription details").font(.headline)
+              Spacer()
+              Button("Close details") { model.clearDetail() }
+                .accessibilityIdentifier("history.detail.close")
+            }
+            if model.isDetailLoading {
+              ProgressView("Loading processing details…")
+            } else if let error = model.detailError {
+              Text(error).foregroundStyle(SottoPalette.warning)
+              Button("Retry details") { model.retryDetail() }
+            } else if let envelope = model.detailEnvelope {
+              TranscriptionDetailView(
+                envelope: envelope, model: model, copy: copy,
+                insert: { insert(envelope.entry, $0) }
+              ).id(envelope.entry.id)
+            }
+          }
+          .padding(16)
+          .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(SottoPalette.line))
+          .padding(.vertical, 16)
+        }
         if model.entries.isEmpty && !model.isLoading {
           VStack(spacing: 8) {
             Text(model.isNoMatches ? "No matching transcriptions." : "No transcriptions yet.")
@@ -51,7 +76,8 @@ struct HistoryView: View {
                 ForEach(group.entries) { entry in
                   HistoryRow(
                     entry: entry, busy: actionBusy || globalBusy,
-                    copy: { copy(entry) }, insert: { insert(entry) },
+                    copy: { copy(entry.text) }, insert: { insert(entry, nil) },
+                    detail: { model.showDetail(entry) },
                     dismissRecovery: { perform { try await dismissRecovery(entry) } },
                     delete: {
                       model.selectedEntry = entry
@@ -80,6 +106,7 @@ struct HistoryView: View {
       }
     }
     .task { model.refresh() }
+    .onDisappear { model.clearDetail() }
     .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
       model.regroup()
     }
@@ -89,7 +116,10 @@ struct HistoryView: View {
     .confirmationDialog("Delete this dictation?", isPresented: deletionPresented) {
       if let entry = model.selectedEntry {
         Button("Delete dictation", role: .destructive) {
-          perform { try await delete(entry) }
+          perform {
+            try await delete(entry)
+            model.didDelete(entry.id)
+          }
         }
       }
       Button("Cancel", role: .cancel) { model.selectedEntry = nil }
@@ -136,13 +166,9 @@ private struct HistoryRow: View {
   let busy: Bool
   let copy: () -> Void
   let insert: () -> Void
+  let detail: () -> Void
   let dismissRecovery: () -> Void
   let delete: () -> Void
-
-  @State private var hovering = false
-  private enum Action: Hashable { case copy, insert, dismiss, delete }
-  @FocusState private var keyboardFocused: Action?
-  @AccessibilityFocusState private var accessibilityFocused: Action?
 
   var body: some View {
     HStack(alignment: .top, spacing: 14) {
@@ -153,45 +179,35 @@ private struct HistoryRow: View {
       .font(.system(size: 12)).monospacedDigit().foregroundStyle(SottoPalette.muted)
       .frame(width: compact ? 55 : 76, alignment: .leading).padding(.top, 4)
       VStack(alignment: .leading, spacing: 0) {
-        if entry.qualityLabel != nil || entry.recoveryLabel != nil {
+        if entry.qualityLabel != nil || entry.recoveryLabel != nil || entry.rewriteLabel != nil {
           HStack(spacing: 5) {
             if let quality = entry.qualityLabel { badge(quality) }
             if let recovery = entry.recoveryLabel { badge(recovery) }
+            if let rewrite = entry.rewriteLabel { badge(rewrite) }
           }.padding(.bottom, 8)
         }
         Text(entry.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
           .font(.system(size: 14)).fixedSize(horizontal: false, vertical: true).lineSpacing(6)
         HStack(spacing: 5) {
           Button("Copy", action: copy)
-            .focused($keyboardFocused, equals: .copy)
-            .accessibilityFocused($accessibilityFocused, equals: .copy)
           Button(entry.deliveryState == .confirmed ? "Insert again…" : "Insert…", action: insert)
-            .focused($keyboardFocused, equals: .insert)
-            .accessibilityFocused($accessibilityFocused, equals: .insert)
             .disabled(busy || entry.deliveryState == .attempting)
+          Button("Details", action: detail)
+            .accessibilityIdentifier("history.row.details")
           if entry.recoveryState == .needsReview {
             Button("Dismiss recovery", action: dismissRecovery)
-              .focused($keyboardFocused, equals: .dismiss)
-              .accessibilityFocused($accessibilityFocused, equals: .dismiss)
               .disabled(busy || entry.deliveryState == .attempting)
           }
           Spacer(minLength: 0)
           Button("Delete…", role: .destructive, action: delete)
-            .focused($keyboardFocused, equals: .delete)
-            .accessibilityFocused($accessibilityFocused, equals: .delete)
             .disabled(busy || entry.deliveryState == .attempting)
         }
         .buttonStyle(HistoryActionStyle())
-        .opacity(
-          hovering || keyboardFocused != nil || accessibilityFocused != nil
-            || entry.recoveryState == .needsReview
-            ? 1 : 0
-        )
         .padding(.top, 9)
       }
     }
     .padding(.vertical, compact ? 16 : 21).padding(.horizontal, compact ? 12 : 20)
-    .contentShape(Rectangle()).onHover { hovering = $0 }
+    .contentShape(Rectangle())
     .accessibilityElement(children: .contain)
   }
 

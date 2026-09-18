@@ -24,6 +24,14 @@ public actor TextInsertionService {
     await adapter.validate(target)
   }
 
+  /// Bounded read for correction learning; never runs while an insertion attempt is active.
+  public func readText(on target: CapturedTarget, location: Int, length: Int) async throws
+    -> String
+  {
+    guard activeAttempt == nil else { throw TargetIssue.unsupported }
+    return try await adapter.readText(on: target, location: location, length: length)
+  }
+
   public func insertOnce(
     attemptID: UUID, target: CapturedTarget, text: String
   ) async -> InsertionOutcome {

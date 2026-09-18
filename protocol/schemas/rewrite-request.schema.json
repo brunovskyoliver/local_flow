@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localflow.org/schemas/rewrite-request.schema.json",
+  "title": "LocalFlow rewrite request v1",
+  "description": "Body of POST /v1/rewrite. No other field is permitted; servers reject unknown fields with invalid_request. Byte limits (text <= 65,536 UTF-8 bytes, body <= 262,144 bytes) are enforced before parsing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "mode",
+    "text",
+    "language_hints",
+    "stream_deltas"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Attempt id, unique per attempt; echoed in every event."
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "polished",
+        "concise"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "description": "1 to 20,000 Unicode scalars, not blank, at most 65,536 UTF-8 bytes."
+    },
+    "language_hints": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 35,
+        "pattern": "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$"
+      },
+      "description": "Advisory BCP-47 tags; never a translation request."
+    },
+    "stream_deltas": {
+      "type": "boolean"
+    }
+  }
+}

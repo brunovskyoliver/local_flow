@@ -173,6 +173,17 @@ public final class ControlMailbox: @unchecked Sendable {
     return true
   }
 
+  /// During rewriting, cancellation applies to the saved text's rewrite only.
+  /// Consume it so it cannot later cancel faithful fallback insertion.
+  public func takeRewriteCancellation(for tag: Tag) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard activeTag == tag, cancelRequested || stopReason == .cancel else { return false }
+    cancelRequested = false
+    if stopReason == .cancel { stopReason = .keyRelease }
+    return true
+  }
+
   public func consumeFlags(for tag: Tag) -> Flags {
     lock.lock()
     defer { lock.unlock() }

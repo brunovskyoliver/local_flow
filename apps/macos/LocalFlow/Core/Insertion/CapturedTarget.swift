@@ -56,6 +56,17 @@ public protocol TextAccessibilityAdapter: Sendable {
   func validate(_ target: CapturedTarget) async -> TargetValidation
   func setSelectedText(_ text: String, on target: CapturedTarget) async throws -> AXDispatchResult
   func readback(_ text: String, on target: CapturedTarget) async throws -> String
+  /// Reads up to `length` UTF-16 units starting at `location` while the target stays focused.
+  /// Used only by opt-in correction learning after a confirmed insertion.
+  func readText(on target: CapturedTarget, location: Int, length: Int) async throws -> String
+}
+
+extension TextAccessibilityAdapter {
+  public func readText(on target: CapturedTarget, location: Int, length: Int) async throws
+    -> String
+  {
+    throw TargetIssue.unsupported
+  }
 }
 
 public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
@@ -182,6 +193,50 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
       if attempt < 49 { try await Task.sleep(for: .milliseconds(10)) }
     }
     throw TargetIssue.unsupported
+  }
+
+  public func readText(on target: CapturedTarget, location: Int, length: Int) async throws
+    -> String
+  {
+    guard AXIsProcessTrusted() else { throw TargetIssue.accessibilityDenied }
+    // Selection changes recreate the focused element in web views; the field is the same
+    // as long as its application is still frontmost and the element still answers.
+    guard let frontmost = NSWorkspace.shared.frontmostApplication,
+      frontmost.processIdentifier == target.processIdentifier,
+      frontmost.launchDate == target.launchDate
+    else { throw TargetIssue.focusChanged }
+    guard location >= 0, length > 0, length <= 8_192, location <= Int.max - length else {
+      throw TargetIssue.unsupported
+    }
+    if let value = Self.string(in: target.element, location: location, length: length) {
+      return value
+    }
+    guard let element = focusedElement(), !CFEqual(element, target.element),
+      let value = Self.string(in: element, location: location, length: length)
+    else { throw TargetIssue.unsupported }
+    return value
+  }
+
+  /// Clamps to the field's length where the app reports it, then reads the range.
+  private static func string(in element: AXUIElement, location: Int, length: Int) -> String? {
+    var clamped = length
+    var countRaw: CFTypeRef?
+    if AXUIElementCopyAttributeValue(
+      element, kAXNumberOfCharactersAttribute as CFString, &countRaw) == .success,
+      let total = countRaw as? Int
+    {
+      guard total > location else { return nil }
+      clamped = min(length, total - location)
+    }
+    var range = CFRange(location: location, length: clamped)
+    guard let rangeValue = AXValueCreate(.cfRange, &range) else { return nil }
+    var raw: CFTypeRef?
+    let status = AXUIElementCopyParameterizedAttributeValue(
+      element, kAXStringForRangeParameterizedAttribute as CFString, rangeValue, &raw)
+    guard status == .success, let value = raw as? String, value.utf8.count <= 64 * 1024 else {
+      return nil
+    }
+    return value
   }
 
   private func readbackOnce(_ text: String, on target: CapturedTarget) throws -> String {

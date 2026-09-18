@@ -1,5 +1,10 @@
 import Foundation
 
+enum ModelCapability: String, Codable, Equatable, Sendable {
+  case speechRecognition = "speech_recognition"
+  case voiceActivityDetection = "voice_activity_detection"
+}
+
 struct ModelFileDescriptor: Codable, Equatable, Sendable {
   let path: String
   let size: Int64
@@ -13,9 +18,14 @@ struct ModelDescriptor: Codable, Equatable, Sendable {
   let sourceRevision: String
   let sdkCompatibility: String
   let automaticLanguage: Bool
+  /// Nil is the schema-v1 ASR default retained for the immutable Feature 001 manifest.
+  /// Every non-ASR descriptor must state its capability explicitly.
+  var capability: ModelCapability? = nil
   let license: String
   let files: [ModelFileDescriptor]
   let complete: Bool
+
+  var effectiveCapability: ModelCapability { capability ?? .speechRecognition }
 
   func validate() throws {
     guard complete, !files.isEmpty else { throw ModelProvisioner.Error.incompleteManifest }
@@ -26,6 +36,8 @@ struct ModelDescriptor: Codable, Equatable, Sendable {
     guard schemaVersion == Self.currentSchemaVersion,
       boundedText(modelID, maximum: 1_024), boundedText(sdkCompatibility, maximum: 1_024),
       boundedText(license, maximum: 4_096),
+      effectiveCapability == .speechRecognition || capability != nil,
+      effectiveCapability == .speechRecognition ? automaticLanguage : !automaticLanguage,
       sourceRevision.utf8.count == 40,
       sourceRevision.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
       files.count <= ModelProvisioner.maxFiles
@@ -61,6 +73,39 @@ struct ModelDescriptor: Codable, Equatable, Sendable {
     guard try JSONEncoder().encode(self).count <= ModelProvisioner.maxManifestBytes else {
       throw ModelProvisioner.Error.invalidManifest
     }
+  }
+}
+
+extension ModelDescriptor {
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion, modelID, sourceRevision, sdkCompatibility, automaticLanguage, capability,
+      license, files, complete
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+    modelID = try values.decode(String.self, forKey: .modelID)
+    sourceRevision = try values.decode(String.self, forKey: .sourceRevision)
+    sdkCompatibility = try values.decode(String.self, forKey: .sdkCompatibility)
+    automaticLanguage = try values.decode(Bool.self, forKey: .automaticLanguage)
+    capability = try values.decodeIfPresent(ModelCapability.self, forKey: .capability)
+    license = try values.decode(String.self, forKey: .license)
+    files = try values.decode([ModelFileDescriptor].self, forKey: .files)
+    complete = try values.decode(Bool.self, forKey: .complete)
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(schemaVersion, forKey: .schemaVersion)
+    try values.encode(modelID, forKey: .modelID)
+    try values.encode(sourceRevision, forKey: .sourceRevision)
+    try values.encode(sdkCompatibility, forKey: .sdkCompatibility)
+    try values.encode(automaticLanguage, forKey: .automaticLanguage)
+    try values.encodeIfPresent(capability, forKey: .capability)
+    try values.encode(license, forKey: .license)
+    try values.encode(files, forKey: .files)
+    try values.encode(complete, forKey: .complete)
   }
 }
 

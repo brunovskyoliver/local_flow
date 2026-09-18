@@ -9,6 +9,7 @@ struct TranscriptionToken: Sendable, Equatable {
 struct TranscriptionWindow: Sendable {
   let text: String
   let tokens: [TranscriptionToken]
+  var evidence: RecognitionEvidence? = nil
 }
 
 protocol TranscriptionRuntime: Sendable {
@@ -65,14 +66,37 @@ extension AudioCaptureService: AudioCapturing {
 protocol TextInserting: Sendable {
   func captureTarget() async -> CapturedTarget?
   func insertOnce(attemptID: UUID, target: CapturedTarget, text: String) async -> InsertionOutcome
+  func readText(on target: CapturedTarget, location: Int, length: Int) async throws -> String
+}
+extension TextInserting {
+  func readText(on target: CapturedTarget, location: Int, length: Int) async throws -> String {
+    throw TargetIssue.unsupported
+  }
 }
 extension TextInsertionService: TextInserting {}
+
+/// One immutable result travels through save/retry; summaries never contain the detail.
+struct TranscriptionEnvelope: Sendable {
+  let entry: TranscriptionEntry
+  let detail: TranscriptionQualityDetail?
+
+  func validate() throws {
+    guard let detail else { return }
+    try detail.validate(normalizedText: entry.text)
+    guard !detail.incomplete || entry.quality != .complete else {
+      throw TranscriptionQualityDetail.Failure.invalidMetadata
+    }
+  }
+}
 
 protocol TranscriptionStoring: Sendable {
   func verifyWritable() async throws
   func hasRecovery() async throws -> Bool
   func reserve(maxBytes: Int) async throws -> TranscriptionStore.Reservation
   func commit(reservation: TranscriptionStore.Reservation, entry: TranscriptionEntry) async throws
+    -> TranscriptionEntry
+  func commit(reservation: TranscriptionStore.Reservation, envelope: TranscriptionEnvelope)
+    async throws
     -> TranscriptionEntry
   func releaseReservation(_ reservation: TranscriptionStore.Reservation) async
   func recent(limit: Int) async throws -> [TranscriptionEntry]
@@ -81,17 +105,114 @@ protocol TranscriptionStoring: Sendable {
   func recordOutcome(
     id: UUID, revision: Int64, attemptID: UUID, outcome: TranscriptionStore.Outcome
   ) async throws -> TranscriptionEntry
+  /// Same as above plus which text was delivered; one transaction.
+  func recordOutcome(
+    id: UUID, revision: Int64, attemptID: UUID, outcome: TranscriptionStore.Outcome,
+    delivery: RewriteDelivery
+  ) async throws -> TranscriptionEntry
   func dismissRecovery(id: UUID, revision: Int64) async throws -> TranscriptionEntry
   func deleteConfirmed(id: UUID, revision: Int64) async throws
 }
 
 extension TranscriptionStore: TranscriptionStoring {}
+
+/// Attempt persistence for server-assisted rewriting. `begin` is the admission
+/// step: it throws `attempt_limit`, `concurrency_limit` or `capacity_exceeded`
+/// as `RewriteFailure` without writing anything.
+protocol RewriteAttemptStoring: Sendable {
+  func begin(_ admission: RewriteAdmission) async throws -> RewriteAttempt
+  func recordResult(id: UUID, result: RewriteResult, spans: RewriteSpans) async throws
+    -> RewriteAttempt
+  func recordFailure(id: UUID, category: RewriteFailureCategory, spans: RewriteSpans) async throws
+    -> RewriteAttempt
+  func recordCancelled(id: UUID, spans: RewriteSpans) async throws -> RewriteAttempt
+  func markStale(id: UUID) async throws
+  func attempts(for transcriptionID: UUID) async throws -> [RewriteAttempt]
+  @discardableResult func cancelPendingOnStartup() async throws -> Int
+  func recordDelivered(attemptID: UUID) async throws
+}
+extension TranscriptionStore: RewriteAttemptStoring {}
+
+/// The rewrite credential, keyed by endpoint origin. Production is the Keychain;
+/// the value is read only when a request is built, never into a snapshot.
+protocol RewriteCredentialStoring: Sendable {
+  func read(origin: String) throws -> String?
+  func write(origin: String, secret: String) throws
+  func remove(origin: String) throws
+  /// Presence without the value.
+  func exists(origin: String) -> Bool
+}
+extension RewriteCredentialStore: RewriteCredentialStoring {}
+
+/// Result of the admission sequence (`data-model.md`, "Admission"). Only
+/// `admitted` has persisted anything.
+enum RewriteAdmissionResult: Sendable, Equatable {
+  /// Rewriting off, Exact mode or blank text: no category, no notice, no row.
+  case notEligible
+  /// A pre-admission refusal: no row, no request, one content-free counter.
+  case refused(RewriteFailureCategory)
+  case admitted(RewriteAttempt)
+}
+
+/// Terminal outcome of one attempt as the dictation flow consumes it.
+enum RewriteOutcome: Sendable, Equatable {
+  case rewritten(text: String, attempt: RewriteAttempt)
+  case fallback(faithful: String, category: RewriteFailureCategory)
+  case cancelled(faithful: String)
+  case refused(RewriteFailureCategory)
+  case notEligible
+}
+
+/// The dictation flow's view of rewriting. Production wires one
+/// `RewriteCoordinator` unconditionally; nil is a test-only configuration that
+/// reproduces the Feature 002 flow exactly.
+@MainActor
+protocol RewriteRequesting: AnyObject {
+  /// Runs the admission sequence with a fresh settings snapshot. Returns after
+  /// `begin` has persisted the pending row, or without any side effect.
+  func admit(
+    dictation: UUID, text: String, mode: RewriteMode?, committed: ContinuousClock.Instant,
+    context: RewriteNotice.Context
+  ) async -> RewriteAdmissionResult
+  /// Awaits the admitted attempt's terminal state.
+  func complete(attemptID: UUID) async -> RewriteOutcome
+  /// Re-runs admission for an existing dictation with a fresh snapshot. With
+  /// `origin: .history` the attempt completes into the store and inserts nothing.
+  func retry(
+    dictation: UUID, faithfulText: String, mode: RewriteMode, origin: RewriteNotice.Context,
+    onAdmitted: (@MainActor (RewriteAttempt) -> Void)?
+  ) async -> RewriteOutcome
+  /// Cancels a pending attempt; later bytes are recorded stale and dropped.
+  func cancel(attemptID: UUID)
+}
+
+/// Server transport. The stream yields `firstByte`, decoded events, then
+/// `completed`; it throws `RewriteFailure` (or `CancellationError`) otherwise.
+/// The per-request timeout is enforced inside the transport.
+protocol RewriteTransporting: Sendable {
+  func rewrite(request: RewriteRequest, endpoint: RewriteEndpoint, timeout: Duration)
+    -> AsyncThrowingStream<RewriteTransportItem, Error>
+  func health(endpoint: RewriteEndpoint) async throws -> HealthResponse
+  /// Release idle resources; the next request recreates them.
+  func invalidate()
+}
+
+/// Read once at admission; a failure blocks the session instead of changing its meaning.
+protocol VocabularyProviding: Sendable {
+  func snapshot() async throws -> VocabularySnapshot
+}
+extension VocabularyStore: VocabularyProviding {}
+
+/// Explicit empty identity for callers without a store.
+struct EmptyVocabularyProvider: VocabularyProviding {
+  func snapshot() async throws -> VocabularySnapshot { .empty }
+}
 extension TranscriptionStoring {
   func hasRecovery() async throws -> Bool {
     try await recent().contains { $0.recoveryState == .needsReview }
   }
   func reserve() async throws -> TranscriptionStore.Reservation {
-    try await reserve(maxBytes: 65_536)
+    try await reserve(maxBytes: TranscriptionStore.reservationBytes)
   }
   func recent() async throws -> [TranscriptionEntry] { try await recent(limit: 20) }
 }
@@ -156,6 +277,14 @@ enum DictationErrorMessage {
       case .invalidResult: return "The speech model returned an invalid result."
       case .staleLease: return "The speech model session expired. Try again."
       case .cancelled: return "The operation was cancelled."
+      }
+    }
+    if let failure = error as? VocabularyEditError {
+      switch failure.code {
+      case .damaged:
+        return "Preferred spellings could not be loaded. Repair or delete entries in Settings."
+      case .staleRevision: return failure.message
+      default: return "Preferred spelling rejected: \(failure.message)"
       }
     }
     if error is CancellationError { return "The operation was cancelled." }

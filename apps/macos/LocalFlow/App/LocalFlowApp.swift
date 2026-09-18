@@ -199,13 +199,21 @@ private struct LocalFlowWindowView: View {
       if let history = services.historyModel, let coordinator = services.coordinator {
         HistoryView(
           model: history,
-          copy: { coordinator.copy($0.text) },
-          insert: { services.reviewInsertion($0) },
+          copy: { coordinator.copy($0) },
+          insert: { services.reviewInsertion($0, attempt: $1) },
           dismissRecovery: { try await coordinator.dismissOrThrow($0) },
           delete: { try await coordinator.deleteOrThrow($0) }, globalBusy: coordinator.busy)
       } else {
         ContentUnavailableView(
           "Transcriptions unavailable", systemImage: "externaldrive.badge.exclamationmark",
+          description: Text(services.setupStatus))
+      }
+    case .dictionary:
+      if let vocabulary = services.vocabularyModel {
+        DictionaryView(model: vocabulary)
+      } else {
+        ContentUnavailableView(
+          "Dictionary unavailable", systemImage: "externaldrive.badge.exclamationmark",
           description: Text(services.setupStatus))
       }
     case .settings:
@@ -225,7 +233,9 @@ private struct InsertionReviewView: View {
         Label(warning, systemImage: "exclamationmark.triangle")
       }
       ScrollView {
-        Text(entry.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        // The reviewed text is the saved transcript or a chosen rewrite.
+        Text(insertion.reviewText).textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
       .frame(maxHeight: 300)
       Text(

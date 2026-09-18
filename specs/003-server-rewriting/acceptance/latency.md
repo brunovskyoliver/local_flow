@@ -1,0 +1,7 @@
+# App rewrite latency
+
+Date: 2026-09-17. Hardware: Mac17,2 (Apple M5), 32 GiB. macOS 26.6.2 (25G83). Working tree based on `4680c54d526750fbbc73d06b35ae09003d808d5a`, with uncommitted Features 002/003 changes. HTTP measurements use a freshly built flowd 0.2.0 (Go 1.23.4); no app build participates. Backend: separately running MTPLX 2.11.3 at `127.0.0.1:8000/v1`, model `youssofal-qwen3.5-4b-mtplx-optimized-speed`. Clean prompt 5, Polished 3, Concise 3; protocol 1; shield 1 when on, 0 when off. Loopback HTTP, separate app/backend credentials, backend timeout 20 s and first-token timeout 5 s. The backend was already serving requests; cold-start state was not measured. The planned 9B model was not served. Raw outputs remain in private ignored directories.
+
+SC-011: unmeasured. The owner left signed-app exercises pending. No 20-short/20-ordinary app run or complete app resource export was collected. Short acceptance (median ≤1.5 s), short optimization target (≤1.0 s), and ordinary acceptance (p95 ≤3.0 s) therefore have no verdict. Long: unmeasured, no gate.
+
+The corpus runner measured HTTP request duration and server spans in its private summary files. Those timings exclude faithful commit, app persistence and insertion handoff; the runner's numeric gate fields do not establish SC-011. Groups below five samples, including the long bucket per mode, remain unmeasured. The configured timeout is a ceiling, not measured latency.

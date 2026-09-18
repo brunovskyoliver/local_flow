@@ -8,6 +8,9 @@ struct SettingsView: View {
   @State private var recorder: ShortcutRecorder?
   @State private var recordingError: String?
   @State private var confirmingDownload = false
+  @State private var editingCredential = false
+  private enum FocusTarget: Hashable { case page }
+  @FocusState private var focusTarget: FocusTarget?
 
   var body: some View {
     PrototypePage {
@@ -34,11 +37,22 @@ struct SettingsView: View {
             .labelsHidden().frame(width: 110).accessibilityIdentifier("settings.appearance")
           }
           separator
+          SettingsRow(
+            "Learn corrections",
+            detail:
+              "After LocalFlow inserts a dictation, it watches that text for 90 seconds. Corrections to likely names, technical terms, or spellings can be learned for future dictations. Ordinary grammar and wording edits are ignored. Only the inserted text is compared; correction text is not kept unless added to your Dictionary."
+          ) {
+            Toggle("Learn corrections", isOn: $preferences.learnCorrections)
+              .labelsHidden().toggleStyle(.switch)
+              .accessibilityIdentifier("settings.learnCorrections")
+          }
+          separator
           SettingsRow("Languages") {
             Text("Slovak & English · Auto").font(.system(size: 12)).foregroundStyle(
               SottoPalette.muted)
           }
         }
+        rewriteSection
         modelSection
         permissionsSection
         if let recordingError {
@@ -50,12 +64,204 @@ struct SettingsView: View {
         }
       }
     }
+    // Give the page a neutral focus destination instead of selecting its first text field.
+    .focusable()
+    .focusEffectDisabled()
+    .focused($focusTarget, equals: .page)
+    .defaultFocus($focusTarget, .page, priority: .userInitiated)
+    .background {
+      Color.clear.contentShape(Rectangle()).onTapGesture { focusTarget = .page }
+    }
+    .onExitCommand { focusTarget = .page }
     .buttonStyle(PrototypeButtonStyle())
     .task { await model.refresh() }
     .onDisappear {
+      model.closeRewriteSettings()
       recorder?.stop()
       recorder = nil
     }
+  }
+
+  var rewriteSection: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      sectionTitle("Rewriting")
+      if let warning = model.rewriteWarning {
+        Text(warning).font(.system(size: 12)).foregroundStyle(SottoPalette.warning)
+          .fixedSize(horizontal: false, vertical: true).padding(.bottom, 12)
+          .accessibilityIdentifier("settings.rewriteWarning")
+      }
+      settingsGroup {
+        SettingsRow(
+          "Enable rewriting",
+          detail: model.rewriteBlockedReason
+            ?? "Polish dictation with your server. Keep the original if it fails."
+        ) {
+          Toggle("Enable rewriting", isOn: $model.rewriteEnabled)
+            .labelsHidden().toggleStyle(.switch)
+            .disabled(model.rewriteBlockedReason != nil && !model.rewriteEnabled)
+            .accessibilityIdentifier("settings.rewriteEnabled")
+        }
+        separator
+        SettingsRow("Default mode") {
+          Picker("Default mode", selection: $model.rewriteMode) {
+            ForEach(RewriteMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
+          }
+          .labelsHidden().frame(width: 120)
+          .accessibilityIdentifier("settings.rewriteDefaultMode")
+          .help(SettingsViewModel.rewriteModeDefinition(model.rewriteMode))
+          .accessibilityHint(SettingsViewModel.rewriteModeDefinition(model.rewriteMode))
+        }
+        separator
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Server URL").font(.system(size: 12, weight: .medium))
+            .foregroundStyle(SottoPalette.muted)
+          RewriteInputSurface(symbol: "link") {
+            TextField("http://127.0.0.1:8080", text: $model.rewriteEndpoint)
+              .accessibilityLabel("Rewrite server endpoint")
+              .accessibilityIdentifier("settings.rewriteEndpoint")
+          }
+        }.padding(.top, 18).padding(.bottom, 14)
+        rewriteCredentialControls
+        if model.showsInsecureOverride {
+          separator
+          SettingsRow("Allow unencrypted connection") {
+            Toggle(
+              "Allow unencrypted connection to this server (insecure)",
+              isOn: $model.rewriteInsecureOverride
+            )
+            .labelsHidden().toggleStyle(.switch)
+            .accessibilityIdentifier("settings.rewriteInsecureOverride")
+          }
+        }
+        separator
+        SettingsRow("Connection", detail: model.connectionResult?.statusText) {
+          Button(model.connectionTesting ? "Testing…" : "Test connection") {
+            Task { await model.testConnection() }
+          }
+          .disabled(model.connectionTesting || model.rewriteSettings?.isEndpointValid != true)
+          .accessibilityIdentifier("settings.rewriteTestConnection")
+        }
+        separator
+        DisclosureGroup("Advanced") {
+          SettingsRow("Timeout") {
+            Stepper(value: $model.rewriteTimeout, in: 5...60) {
+              Text("\(model.rewriteTimeout) seconds").monospacedDigit()
+            }
+            .accessibilityLabel("Rewrite timeout in seconds")
+            .accessibilityIdentifier("settings.rewriteTimeout")
+          }
+          if let result = model.connectionResult, result.category == .connected {
+            Text(result.identityText).font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+              .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+              .padding(.bottom, 12)
+              .accessibilityIdentifier("settings.rewriteIdentity")
+          }
+          #if DEBUG
+            if model.connectionResult != nil {
+              DisclosureGroup("Developer diagnostics") {
+                Text(model.rewriteDiagnostics).font(.system(size: 11, design: .monospaced))
+                  .textSelection(.enabled).padding(.vertical, 8)
+              }.padding(.bottom, 8)
+            }
+          #endif
+        }
+        .font(.system(size: 12)).foregroundStyle(SottoPalette.muted).padding(.vertical, 14)
+      }
+      Text(model.rewriteBypassNote).font(.system(size: 12))
+        .foregroundStyle(SottoPalette.muted).padding(.top, 10)
+    }
+    .onChange(of: model.rewriteSettings?.endpointOrigin) { _, _ in
+      editingCredential = false
+    }
+    .onChange(of: model.rewriteWarning, initial: true) { _, warning in
+      if let warning, let application = NSApp {
+        NSAccessibility.post(
+          element: application, notification: .announcementRequested,
+          userInfo: [
+            .announcement: warning, .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+          ])
+      }
+    }
+  }
+
+  private var rewriteCredentialControls: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("Server secret").font(.system(size: 12, weight: .medium))
+        Spacer()
+        if model.credentialPresent {
+          Label("Saved in Keychain", systemImage: "checkmark.shield")
+            .font(.system(size: 11))
+        }
+      }.foregroundStyle(SottoPalette.muted)
+
+      if model.credentialPresent && !editingCredential {
+        HStack(spacing: 8) {
+          RewriteInputSurface(symbol: "key") {
+            Text("••••••••••••").tracking(2)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .accessibilityLabel("Server secret saved")
+          }
+          Button("Edit") { editingCredential = true }
+            .accessibilityLabel("Edit rewrite server credential")
+        }
+      } else {
+        HStack(spacing: 8) {
+          RewriteInputSurface(symbol: "key") {
+            Group {
+              if model.credentialRevealed {
+                TextField("Enter server secret", text: $model.credentialDraft)
+              } else {
+                SecureField("Enter server secret", text: $model.credentialDraft)
+              }
+            }
+            .accessibilityLabel("Rewrite server credential")
+            .accessibilityIdentifier("settings.rewriteCredential")
+            .onSubmit { saveRewriteCredential() }
+          }
+          Button("Save", action: saveRewriteCredential)
+            .disabled(
+              model.credentialDraft.isEmpty || model.rewriteSettings?.isEndpointValid != true
+            )
+            .accessibilityLabel("Set rewrite server credential")
+        }
+        if model.credentialPresent {
+          HStack(spacing: 12) {
+            Button(model.credentialRevealed ? "Hide saved secret" : "Reveal saved secret") {
+              if model.credentialRevealed {
+                model.hideRewriteCredential()
+              } else {
+                model.revealRewriteCredential()
+              }
+            }
+            .accessibilityLabel(
+              model.credentialRevealed
+                ? "Hide rewrite server credential" : "Reveal rewrite server credential")
+            Spacer()
+            Button("Remove", role: .destructive) {
+              model.removeRewriteCredential()
+              if model.credentialError == nil { editingCredential = false }
+            }
+            .accessibilityLabel("Remove rewrite server credential")
+            Button("Cancel") {
+              model.hideRewriteCredential()
+              editingCredential = false
+            }
+          }.buttonStyle(.borderless).font(.system(size: 12))
+        }
+      }
+      if let error = model.credentialError {
+        Text(error).font(.system(size: 12)).foregroundStyle(SottoPalette.warning)
+      }
+    }.padding(.bottom, 18)
+  }
+
+  private func saveRewriteCredential() {
+    guard !model.credentialDraft.isEmpty, model.rewriteSettings?.isEndpointValid == true else {
+      return
+    }
+    model.setRewriteCredential()
+    if model.credentialError == nil { editingCredential = false }
   }
 
   var modelSection: some View {
@@ -224,5 +430,35 @@ private struct SettingsRow<Control: View>: View {
       Spacer(minLength: 0)
       control.fixedSize()
     }.padding(.vertical, 19)
+  }
+}
+
+/// Shared inset styling keeps server fields aligned and gives keyboard focus a visible outline.
+private struct RewriteInputSurface<Content: View>: View {
+  let symbol: String
+  @ViewBuilder var content: Content
+  @FocusState private var containsFocus: Bool
+
+  var body: some View {
+    HStack(spacing: 10) {
+      Image(systemName: symbol)
+        .foregroundStyle(SottoPalette.muted)
+        .frame(width: 16)
+        .accessibilityHidden(true)
+      content
+        .textFieldStyle(.plain)
+        .font(.system(size: 13))
+        .autocorrectionDisabled()
+        .focused($containsFocus)
+    }
+    .padding(.horizontal, 12)
+    .frame(minHeight: 40)
+    .background(SottoPalette.surface, in: RoundedRectangle(cornerRadius: 8))
+    .overlay {
+      RoundedRectangle(cornerRadius: 8)
+        .strokeBorder(
+          containsFocus ? SottoPalette.accent : SottoPalette.line,
+          lineWidth: containsFocus ? 2 : 1)
+    }
   }
 }

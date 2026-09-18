@@ -37,6 +37,16 @@ private actor FaultingStore: TranscriptionStoring {
     return try await base.commit(reservation: reservation, entry: entry)
   }
 
+  func commit(reservation: TranscriptionStore.Reservation, envelope: TranscriptionEnvelope)
+    async throws -> TranscriptionEntry
+  {
+    if failCommit {
+      failCommit = false
+      throw TranscriptionStore.Error.databaseLimitExceeded
+    }
+    return try await base.commit(reservation: reservation, envelope: envelope)
+  }
+
   func releaseReservation(_ reservation: TranscriptionStore.Reservation) async {
     await base.releaseReservation(reservation)
   }
@@ -57,6 +67,12 @@ private actor FaultingStore: TranscriptionStoring {
     return try await base.beginAttempt(id: id, revision: revision)
   }
 
+  func recordOutcome(
+    id: UUID, revision: Int64, attemptID: UUID, outcome: TranscriptionStore.Outcome,
+    delivery: RewriteDelivery
+  ) async throws -> TranscriptionEntry {
+    try await recordOutcome(id: id, revision: revision, attemptID: attemptID, outcome: outcome)
+  }
   func recordOutcome(
     id: UUID, revision: Int64, attemptID: UUID, outcome: TranscriptionStore.Outcome
   ) async throws -> TranscriptionEntry {
@@ -167,6 +183,22 @@ final class StorageRecoveryTests: XCTestCase {
     let resolved = try XCTUnwrap(resolvedRows.first)
     XCTAssertEqual(resolved.deliveryState, .confirmed)
     XCTAssertEqual(resolved.recoveryState, .resolved)
+  }
+
+  func testDurableEnvelopeSurvivesInterruptedDeliveryAndRestart() async throws {
+    let root = makeRoot(name: "envelope-restart")
+    let path = root.appendingPathComponent("history.sqlite").path
+    let store = try TranscriptionStore(path: path)
+    let envelope = try makeQualityEnvelope()
+    let saved = try await store.commit(reservation: try await store.reserve(), envelope: envelope)
+    _ = try await store.beginAttempt(id: saved.id, revision: saved.revision)
+    let restarted = try TranscriptionStore(path: path)
+    let recovered = try await restarted.get(saved.id)
+    let detail = try await restarted.qualityDetail(saved.id)
+    XCTAssertEqual(recovered?.deliveryState, .uncertain)
+    XCTAssertEqual(recovered?.recoveryState, .needsReview)
+    XCTAssertEqual(detail?.contentHash, envelope.detail?.contentHash)
+    XCTAssertEqual(try detail?.serialized(), try envelope.detail?.serialized())
   }
 
   private func makeCoordinator(store: any TranscriptionStoring, insertion: FakeInsertion)

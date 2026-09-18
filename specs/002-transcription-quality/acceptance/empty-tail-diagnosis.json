@@ -1,0 +1,43 @@
+{
+  "fixture": "public-da85b5ebc08e9db2f3ec",
+  "manifest_sha256": "10b9873c6b3f05fcb1b22a96a014a08c7a7f60566e8176ad2b799a1adbbd988b",
+  "sample_start": 207763,
+  "sample_count": 55277,
+  "sdk_revision": "41540ea237350afe5117a082b5c28eda642d0612",
+  "probes": {
+    "trace": {
+      "bounds": "bounds start=0 encoder=45 actual=44",
+      "joint_decisions": 26,
+      "blank_decisions": 26,
+      "end": "end tokens=0 frame=44",
+      "trace_sha256": "206f3547719be0c9af1ed844f1fc3be667b81a805fd87dfc84b5cbe029670c7e"
+    },
+    "unit-step": {
+      "bounds": "bounds start=0 encoder=45 actual=44",
+      "joint_decisions": 44,
+      "blank_decisions": 44,
+      "end": "end tokens=0 frame=44",
+      "trace_sha256": "1e9db3cc8cd29a5454e02717a74f2e8526337eabf1ce187ad588d459f30bbff3"
+    },
+    "cpu": {
+      "bounds": "bounds start=0 encoder=45 actual=44",
+      "joint_decisions": 20,
+      "blank_decisions": 20,
+      "end": "end tokens=0 frame=44",
+      "trace_sha256": "aa8a6cea77539a3bb78675871560ea0d6518f8aef8d9eea1a41f3ef6b77b2e0e"
+    },
+    "probability": {
+      "bounds": "bounds start=0 encoder=45 actual=44",
+      "joint_decisions": 26,
+      "blank_decisions": 26,
+      "end": "end tokens=0 frame=44",
+      "trace_sha256": "dda64941e58ca0ebca8bd23419bc470eb8628f1e5d6ee8ef088c7a6e70706d53",
+      "finite_probabilities": 26,
+      "minimum_probability": 0.4453125,
+      "maximum_probability": 1.0
+    }
+  },
+  "probe_patch_sha256": "1cb81329738d4eb6d569be079f91d6b67d14092a6ee3c83f28599d9160d793b9",
+  "production_correction": false,
+  "adoption_gate_passed": false
+}

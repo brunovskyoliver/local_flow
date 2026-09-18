@@ -9,8 +9,8 @@ final class ResourceRecorder: @unchecked Sendable {
   static let maximumFileBytes = 5 * 1024 * 1024
 
   enum Phase: String, Codable, Sendable {
-    case idle, preparing, recording, transcribing, persisting, inserting, cancelling, recovery,
-      failed
+    case idle, preparing, recording, transcribing, persisting, rewriting, inserting, cancelling,
+      recovery, failed
     case modelUnloaded, modelLoading, modelActive, modelCooling, modelReleasing
     case baseline, settled, captureOnly
   }
@@ -19,6 +19,55 @@ final class ResourceRecorder: @unchecked Sendable {
   }
   enum Conditions: String, Codable, Sendable {
     case development, offlineAcceptance, captureOnly
+  }
+  /// Per-dictation processing metrics. Durations describe one stage, byte
+  /// sizes describe one stored representation and counts describe one bounded
+  /// collection. Nothing here can carry text, IDs of vocabulary entries or paths.
+  enum Metric: String, Codable, Sendable {
+    case recognitionDuration, assemblyDuration, normalizationDuration, persistenceDuration
+    case endToEndDuration, modelLoadDuration, modelReleaseDuration
+    case rawTextBytes, assembledTextBytes, normalizedTextBytes, metadataBytes
+    case windowCount, completionReasonCount, appliedRuleCount, appliedEntryCount
+    // Server-assisted rewriting: one set per terminal attempt, grouped by the
+    // input-length bucket and the backend/model/prompt/shield identity. Pre-
+    // admission refusals carry a reason and bucket only.
+    case rewriteTotalDuration, rewriteFirstByteDuration, rewriteNetworkDuration
+    case rewriteBackendFirstTokenDuration, rewriteBackendDuration
+    case rewriteRequestBytes, rewriteResponseBytes
+    case rewriteInputScalars, rewriteAttemptOrdinal
+    case rewriteOutcome, rewriteFallback, rewriteShieldFailure, rewritePreAdmissionRefusal
+
+    var kind: Kind {
+      switch self {
+      case .recognitionDuration, .assemblyDuration, .normalizationDuration, .persistenceDuration,
+        .endToEndDuration, .modelLoadDuration, .modelReleaseDuration, .rewriteTotalDuration,
+        .rewriteFirstByteDuration, .rewriteNetworkDuration, .rewriteBackendFirstTokenDuration,
+        .rewriteBackendDuration:
+        return .duration
+      case .rawTextBytes, .assembledTextBytes, .normalizedTextBytes, .metadataBytes,
+        .rewriteRequestBytes, .rewriteResponseBytes:
+        return .bytes
+      case .windowCount, .completionReasonCount, .appliedRuleCount, .appliedEntryCount,
+        .rewriteInputScalars, .rewriteAttemptOrdinal, .rewriteOutcome, .rewriteFallback,
+        .rewriteShieldFailure, .rewritePreAdmissionRefusal:
+        return .count
+      }
+    }
+    enum Kind { case duration, bytes, count }
+
+    /// Largest count this metric can name; the input bound for scalars, the
+    /// attempt cap for ordinals, one for counters, the collection cap otherwise.
+    var itemLimit: UInt32 {
+      switch self {
+      case .rewriteInputScalars: return UInt32(RewriteBounds.maximumInputScalars)
+      case .rewriteAttemptOrdinal: return UInt32(RewriteAttempt.maximumPerDictation)
+      case .rewriteOutcome, .rewriteFallback, .rewriteShieldFailure, .rewritePreAdmissionRefusal:
+        return 1
+      default: return ResourceRecorder.maximumItemCount
+      }
+    }
+    var isRewrite: Bool { rawValue.hasPrefix("rewrite") }
+    var isRefusal: Bool { self == .rewritePreAdmissionRefusal }
   }
   enum Failure: Error, Equatable { case invalidIdentity, invalidLimit, unavailable, incomplete }
 
@@ -84,6 +133,14 @@ final class ResourceRecorder: @unchecked Sendable {
     let queueCapacity: UInt32?
     let queueHighWater: UInt32?
     let durationNanoseconds: UInt64?
+    let metric: Metric?
+    let payloadBytes: UInt64?
+    let itemCount: UInt32?
+    // Rewrite dimensions: typed bucket, bounded identity key, typed outcome or reason.
+    let bucket: RewriteInputBucket?
+    let identity: String?
+    let outcome: String?
+    let refusal: RewriteFailureCategory?
   }
 
   private let identity: Identity
@@ -100,8 +157,8 @@ final class ResourceRecorder: @unchecked Sendable {
   private var tail = 0
   private var count = 0
   private var accepting = true
-  // Darwin atomics support the macOS 14 deployment target. They count try-lock
-  // contention without forcing a producer to wait for the ring or writer.
+  // Darwin atomics support the macOS 14 deployment target. They count rejected
+  // values and bounded-ring overflow without taking the writer lock.
   private var loss: Int64 = 0
   // Writer-queue confined state.
   private var activeFile = 0
@@ -112,6 +169,12 @@ final class ResourceRecorder: @unchecked Sendable {
   private var overwrittenSamples: UInt64 = 0
   private var writeFailed = false
   private var closed = false
+  /// Largest count any bounded processing collection can reach (vocabulary entry IDs).
+  static let maximumItemCount: UInt32 = 512
+  /// Largest single stored representation (quality detail serialization ceiling).
+  static let maximumPayloadBytes: UInt64 = 262_144
+  /// Identity keys are `model+pN+sM`; model ids are bounded by the protocol.
+  static let maximumIdentityBytes = 160
 
   init(
     directory: URL, identity: Identity, fileLimit: Int = maximumFileBytes,
@@ -170,8 +233,56 @@ final class ResourceRecorder: @unchecked Sendable {
     phase: Phase, cycleID: UUID? = nil, rssBytes: UInt64? = nil,
     queueSource: QueueSource = .unavailable,
     queueDepth: UInt32? = nil, queueCapacity: UInt32? = nil, queueHighWater: UInt32? = nil,
-    durationNanoseconds: UInt64? = nil
+    durationNanoseconds: UInt64? = nil, metric: Metric? = nil, payloadBytes: UInt64? = nil,
+    itemCount: UInt32? = nil, bucket: RewriteInputBucket? = nil, rewriteIdentity: String? = nil,
+    outcome: String? = nil, refusal: RewriteFailureCategory? = nil
   ) -> Bool {
+    // A metric names exactly one bounded measurement of its own kind; a value
+    // without a metric, or a metric with the wrong kind of value, is counted as
+    // loss so an export can never hide an unlabeled or out-of-range figure.
+    if let metric {
+      let valid: Bool
+      switch metric.kind {
+      case .duration: valid = durationNanoseconds != nil && payloadBytes == nil && itemCount == nil
+      case .bytes:
+        valid =
+          durationNanoseconds == nil && itemCount == nil
+          && payloadBytes.map { $0 <= Self.maximumPayloadBytes } == true
+      case .count:
+        valid =
+          durationNanoseconds == nil && payloadBytes == nil
+          && itemCount.map { $0 <= metric.itemLimit } == true
+      }
+      guard valid else {
+        OSAtomicIncrement64Barrier(&loss)
+        return false
+      }
+    } else if payloadBytes != nil || itemCount != nil {
+      OSAtomicIncrement64Barrier(&loss)
+      return false
+    }
+    // Rewrite dimensions belong to rewrite metrics only. A refusal carries its
+    // reason and bucket and never an identity; every other rewrite sample carries
+    // a bucket and a bounded identity key. Outcomes are typed raw values.
+    let rewrite = metric?.isRewrite == true
+    if bucket != nil || rewriteIdentity != nil || outcome != nil || refusal != nil {
+      guard rewrite else {
+        OSAtomicIncrement64Barrier(&loss)
+        return false
+      }
+    }
+    if rewrite {
+      let identityValid = rewriteIdentity.map(Self.isValidIdentityKey) ?? false
+      let outcomeValid = outcome.map(Self.isValidOutcome) ?? true
+      let shapeValid =
+        metric?.isRefusal == true
+        ? (refusal != nil && bucket != nil && rewriteIdentity == nil && outcome == nil)
+        : (refusal == nil && bucket != nil && identityValid && outcomeValid)
+      guard shapeValid else {
+        OSAtomicIncrement64Barrier(&loss)
+        return false
+      }
+    }
     if let queueDepth, let queueCapacity, let queueHighWater {
       guard queueSource != .unavailable, queueDepth <= queueHighWater,
         queueHighWater <= queueCapacity
@@ -185,10 +296,11 @@ final class ResourceRecorder: @unchecked Sendable {
       OSAtomicIncrement64Barrier(&loss)
       return false
     }
-    guard ringLock.try() else {
-      OSAtomicIncrement64Barrier(&loss)
-      return false
-    }
+    // Resource records are emitted from the main actor and lifecycle callbacks,
+    // never from the realtime audio producer. Waiting for this short critical
+    // section avoids turning ordinary writer contention into a false incomplete
+    // benchmark export.
+    ringLock.lock()
     guard accepting else {
       ringLock.unlock()
       return false
@@ -204,12 +316,175 @@ final class ResourceRecorder: @unchecked Sendable {
       rssBytes: rssBytes,
       queueSource: queueSource, queueDepth: queueDepth, queueCapacity: queueCapacity,
       queueHighWater: queueHighWater,
-      durationNanoseconds: durationNanoseconds)
+      durationNanoseconds: durationNanoseconds, metric: metric, payloadBytes: payloadBytes,
+      itemCount: itemCount, bucket: bucket, identity: rewriteIdentity, outcome: outcome,
+      refusal: refusal)
     tail = (tail + 1) % Self.pendingCapacity
     count += 1
     ringLock.unlock()
     signal.add(data: 1)
     return true
+  }
+
+  /// One sample per available measurement. Absent stage timings are omitted,
+  /// never written as zero; sizes and counts are already bounded by the detail
+  /// schema, so a rejected sample here indicates a caller bug and counts as loss.
+  func record(processing metrics: ProcessingMetrics, phase: Phase = .idle) {
+    let cycle = metrics.sessionID
+    let durations: [(Metric, UInt64?)] = [
+      (.recognitionDuration, metrics.recognitionNanoseconds),
+      (.assemblyDuration, metrics.assemblyNanoseconds),
+      (.normalizationDuration, metrics.normalizationNanoseconds),
+      (.persistenceDuration, metrics.persistenceNanoseconds),
+      (.endToEndDuration, metrics.endToEndNanoseconds),
+    ]
+    for (metric, value) in durations {
+      guard let value else { continue }
+      record(phase: phase, cycleID: cycle, durationNanoseconds: value, metric: metric)
+    }
+    let sizes: [(Metric, Int)] = [
+      (.rawTextBytes, metrics.rawTextBytes), (.assembledTextBytes, metrics.assembledTextBytes),
+      (.normalizedTextBytes, metrics.normalizedTextBytes), (.metadataBytes, metrics.metadataBytes),
+    ]
+    for (metric, value) in sizes {
+      record(phase: phase, cycleID: cycle, metric: metric, payloadBytes: UInt64(max(0, value)))
+    }
+    let counts: [(Metric, Int)] = [
+      (.windowCount, metrics.windowCount),
+      (.completionReasonCount, metrics.completionReasonCount),
+      (.appliedRuleCount, metrics.appliedRuleCount),
+      (.appliedEntryCount, metrics.appliedEntryCount),
+    ]
+    for (metric, value) in counts {
+      record(
+        phase: phase, cycleID: cycle, metric: metric,
+        itemCount: UInt32(clamping: max(0, value)))
+    }
+  }
+
+  /// One sample per available rewrite measurement for a terminal attempt.
+  /// Absent spans are omitted, never zero. Nothing here can carry text.
+  func record(rewrite record: RewriteMetricRecord, phase: Phase = .idle) {
+    let cycle = record.transcriptionID
+    let bucket = record.bucket
+    let identity = record.identityKey
+    let durations: [(Metric, Int?)] = [
+      (.rewriteTotalDuration, record.totalMilliseconds),
+      (.rewriteFirstByteDuration, record.firstByteMilliseconds),
+      (.rewriteNetworkDuration, record.networkMilliseconds),
+      (.rewriteBackendFirstTokenDuration, record.backendFirstTokenMilliseconds),
+      (.rewriteBackendDuration, record.backendMilliseconds),
+    ]
+    for (metric, value) in durations {
+      guard let value, value >= 0 else { continue }
+      self.record(
+        phase: phase, cycleID: cycle, durationNanoseconds: UInt64(value) * 1_000_000,
+        metric: metric, bucket: bucket, rewriteIdentity: identity)
+    }
+    let sizes: [(Metric, Int?)] = [
+      (.rewriteRequestBytes, record.requestBytes), (.rewriteResponseBytes, record.responseBytes),
+    ]
+    for (metric, value) in sizes {
+      guard let value else { continue }
+      self.record(
+        phase: phase, cycleID: cycle, metric: metric, payloadBytes: UInt64(max(0, value)),
+        bucket: bucket, rewriteIdentity: identity)
+    }
+    self.record(
+      phase: phase, cycleID: cycle, metric: .rewriteInputScalars,
+      itemCount: UInt32(clamping: max(0, record.inputScalars)), bucket: bucket,
+      rewriteIdentity: identity)
+    self.record(
+      phase: phase, cycleID: cycle, metric: .rewriteAttemptOrdinal,
+      itemCount: UInt32(clamping: max(0, record.ordinal)), bucket: bucket,
+      rewriteIdentity: identity)
+    self.record(
+      phase: phase, cycleID: cycle, metric: .rewriteOutcome, itemCount: 1, bucket: bucket,
+      rewriteIdentity: identity, outcome: record.outcome)
+    if record.fallbackUsed {
+      self.record(
+        phase: phase, cycleID: cycle, metric: .rewriteFallback, itemCount: 1, bucket: bucket,
+        rewriteIdentity: identity, outcome: record.outcome)
+    }
+    if record.shieldFailure {
+      self.record(
+        phase: phase, cycleID: cycle, metric: .rewriteShieldFailure, itemCount: 1, bucket: bucket,
+        rewriteIdentity: identity)
+    }
+  }
+
+  /// Pre-admission refusals: a counter with reason and bucket, no span, no identity.
+  func record(refusal: RewriteFailureCategory, bucket: RewriteInputBucket, phase: Phase = .idle) {
+    record(
+      phase: phase, metric: .rewritePreAdmissionRefusal, itemCount: 1, bucket: bucket,
+      refusal: refusal)
+  }
+
+  static func isValidIdentityKey(_ key: String) -> Bool {
+    !key.isEmpty && key.utf8.count <= maximumIdentityBytes && !key.contains("..")
+      && key.utf8.allSatisfy {
+        (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+          || [45, 95, 46, 43, 58, 47].contains($0)
+      }
+  }
+  static func isValidOutcome(_ outcome: String) -> Bool {
+    outcome == "succeeded" || outcome == "cancelled"
+      || RewriteFailureCategory(rawValue: outcome)?.isPersistable == true
+  }
+
+  /// Reads exported lines and renders rewrite latency per bucket and identity
+  /// (unmeasured under five samples) plus refusal counts per reason.
+  static func rewriteReport(files: [URL]) throws -> String {
+    var samples: [RewriteLatencySample] = []
+    var refusals: [String: Int] = [:]
+    var spans: [String: [ResourceRecorder.Metric: Int]] = [:]
+    var keys: [String: (RewriteInputBucket, String)] = [:]
+    var order: [String] = []
+    for file in files {
+      guard let data = try? Data(contentsOf: file) else { continue }
+      for line in data.split(separator: 10) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+          let metricName = object["metric"] as? String, let metric = Metric(rawValue: metricName),
+          metric.isRewrite
+        else { continue }
+        if metric.isRefusal {
+          refusals[object["refusal"] as? String ?? "unknown", default: 0] += 1
+          continue
+        }
+        guard let cycle = object["cycleID"] as? String,
+          let bucketName = object["bucket"] as? String,
+          let bucket = RewriteInputBucket(rawValue: bucketName),
+          let identity = object["identity"] as? String, metric.kind == .duration,
+          let nanoseconds = object["durationNanoseconds"] as? Double
+        else { continue }
+        let key = "\(cycle)|\(bucket.rawValue)|\(identity)"
+        if keys[key] == nil {
+          keys[key] = (bucket, identity)
+          order.append(key)
+        }
+        spans[key, default: [:]][metric] = Int(nanoseconds / 1_000_000)
+      }
+    }
+    for key in order {
+      guard let (bucket, identity) = keys[key], let total = spans[key]?[.rewriteTotalDuration]
+      else {
+        continue
+      }
+      samples.append(
+        RewriteLatencySample(
+          bucket: bucket, identity: identity, totalMilliseconds: total,
+          firstByteMilliseconds: spans[key]?[.rewriteFirstByteDuration],
+          networkMilliseconds: spans[key]?[.rewriteNetworkDuration],
+          backendFirstTokenMilliseconds: spans[key]?[.rewriteBackendFirstTokenDuration],
+          backendMilliseconds: spans[key]?[.rewriteBackendDuration]))
+    }
+    var lines = [RewriteLatencyReport.render(samples)]
+    lines.append("pre-admission refusals by reason")
+    if refusals.isEmpty { lines.append("  none") }
+    for (reason, count) in refusals.sorted(by: { $0.key < $1.key }) {
+      lines.append("  \(reason): \(count)")
+    }
+    return lines.joined(separator: "\n")
   }
 
   func flush() async -> Report {
@@ -390,4 +665,24 @@ final class ResourceRecorder: @unchecked Sendable {
       }
     }
   }
+}
+
+/// Content-free record of one terminal rewrite attempt for `ResourceRecorder`.
+struct RewriteMetricRecord: Sendable, Equatable {
+  let transcriptionID: UUID
+  let bucket: RewriteInputBucket
+  let identityKey: String
+  let ordinal: Int
+  let inputScalars: Int
+  let requestBytes: Int?
+  let responseBytes: Int?
+  let totalMilliseconds: Int?
+  let firstByteMilliseconds: Int?
+  let networkMilliseconds: Int?
+  let backendFirstTokenMilliseconds: Int?
+  let backendMilliseconds: Int?
+  /// `succeeded`, `cancelled` or a persisted failure category raw value.
+  let outcome: String
+  let fallbackUsed: Bool
+  let shieldFailure: Bool
 }

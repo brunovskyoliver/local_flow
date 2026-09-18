@@ -31,6 +31,22 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     case failure
   }
 
+  /// Mirrors the newest rewrite attempt; legacy rows read `notRequested`.
+  public enum RewriteState: String, Sendable, Codable {
+    case notRequested = "not_requested"
+    case pending, succeeded, failed, cancelled
+    case timedOut = "timed_out"
+    init(_ state: RewriteAttemptState) {
+      switch state {
+      case .pending: self = .pending
+      case .succeeded: self = .succeeded
+      case .failed: self = .failed
+      case .cancelled: self = .cancelled
+      case .timedOut: self = .timedOut
+      }
+    }
+  }
+
   public let id: UUID
   public let text: String
   public let createdAtMilliseconds: Int64
@@ -42,6 +58,12 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
   public let attemptID: UUID?
   public let attemptStartedAtMilliseconds: Int64?
   public let revision: Int64
+  /// Association only. Loading a summary never loads the raw windows or provenance.
+  public let hasQualityDetail: Bool
+  public let rewriteState: RewriteState
+  public let deliveredSource: DeliveredSource?
+  public let deliveredRewriteAttemptID: UUID?
+  public static let legacyDetailMessage = "Legacy: raw output and processing metadata unavailable"
 
   public init(
     id: UUID,
@@ -54,7 +76,11 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     targetBundleID: String? = nil,
     attemptID: UUID? = nil,
     attemptStartedAtMilliseconds: Int64? = nil,
-    revision: Int64 = 0
+    revision: Int64 = 0,
+    hasQualityDetail: Bool = false,
+    rewriteState: RewriteState = .notRequested,
+    deliveredSource: DeliveredSource? = nil,
+    deliveredRewriteAttemptID: UUID? = nil
   ) throws {
     let bytes = text.data(using: .utf8)?.count ?? Int.max
     guard !text.isEmpty, bytes <= TranscriptionStore.maximumTextBytes else {
@@ -75,5 +101,9 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     self.attemptID = attemptID
     self.attemptStartedAtMilliseconds = attemptStartedAtMilliseconds
     self.revision = revision
+    self.hasQualityDetail = hasQualityDetail
+    self.rewriteState = rewriteState
+    self.deliveredSource = deliveredSource
+    self.deliveredRewriteAttemptID = deliveredRewriteAttemptID
   }
 }

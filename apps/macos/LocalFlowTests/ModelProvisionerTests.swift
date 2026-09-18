@@ -214,6 +214,25 @@ final class ModelProvisionerTests: XCTestCase {
     }
   }
 
+  func testCapabilitiesKeepVADSeparateFromLegacyASR() throws {
+    let legacy = descriptor(for: Data([1]))
+    XCTAssertNil(legacy.capability)
+    XCTAssertEqual(legacy.effectiveCapability, .speechRecognition)
+    try legacy.validate()
+
+    let vad = ModelDescriptor(
+      schemaVersion: 1, modelID: "test/vad", sourceRevision: String(repeating: "a", count: 40),
+      sdkCompatibility: "test", automaticLanguage: false,
+      capability: .voiceActivityDetection, license: "test",
+      files: legacy.files, complete: true)
+    try vad.validate()
+    XCTAssertEqual(vad.effectiveCapability, .voiceActivityDetection)
+
+    var ambiguous = vad
+    ambiguous.capability = nil
+    XCTAssertThrowsError(try ambiguous.validate())
+  }
+
   func testManifestRejectsPathAliasesControlCharactersAndExcessBytes() {
     let hash = String(repeating: "a", count: 64)
     for path in [

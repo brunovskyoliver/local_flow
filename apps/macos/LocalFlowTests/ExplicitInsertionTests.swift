@@ -66,6 +66,39 @@ final class ExplicitInsertionTests: XCTestCase {
     XCTAssertFalse(dictation.busy)
   }
 
+  /// T026 (SC-001): explicit insertion never reaches the rewrite transport, with
+  /// the coordinator wired as `AppServices` wires it and rewriting switched on.
+  /// History's own rewrite entry points arrive in US5.
+  func testExplicitInsertionNeverCallsTheRewriteTransport() async throws {
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try TranscriptionStore(path: root.appendingPathComponent("history.sqlite").path)
+    let insertion = FakeInsertion(store: store)
+    let rig = RewriteRig(store: store, enabled: true, failOnAnyCall: true)
+    defer { rig.removeSuite() }
+    let dictation = DictationCoordinator(
+      store: store, lifecycle: ModelLifecycleCoordinator { FakeRuntime() },
+      capture: FakeCapture(), insertion: insertion, spoolRoot: root, rewriter: rig.coordinator)
+    let flow = ExplicitInsertionCoordinator(
+      store: store, insertion: insertion, dictation: dictation, presentsPanel: false)
+    let reservation = try await store.reserve()
+    let entry = try await store.commit(
+      reservation: reservation,
+      entry: TranscriptionEntry(
+        id: UUID(), text: "Saved text", createdAtMilliseconds: 0,
+        quality: .complete, stopReason: .keyRelease))
+    XCTAssertTrue(flow.beginReview(entry))
+    flow.armSelection()
+    flow.selectTarget()
+    try await waitUntil { flow.phase == .confirming }
+    flow.confirm()
+    try await waitUntil { flow.phase == .idle }
+    XCTAssertEqual(insertion.dispatchCount, 1)
+    XCTAssertEqual(rig.callCount, 0)
+    let attempts = try await store.attempts(for: entry.id)
+    XCTAssertTrue(attempts.isEmpty)
+  }
+
   func testStaleReviewedRevisionNeverDispatches() async throws {
     let root = try makeSpoolRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -319,6 +352,138 @@ final class ExplicitInsertionTests: XCTestCase {
     }
     XCTFail("Timed out waiting for explicit insertion")
   }
+
+  // MARK: US5 (T048): inserting a chosen text through the same review flow.
+
+  func testInsertingARewriteAttemptRecordsTheRewriteDelivery() async throws {
+    try await insertRewrite(failOutcome: false)
+  }
+
+  func testRewriteDeliverySurvivesFailedAcknowledgmentWithoutAnotherInsertion() async throws {
+    try await insertRewrite(failOutcome: true)
+  }
+
+  private func insertRewrite(failOutcome: Bool) async throws {
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try TranscriptionStore(path: root.appendingPathComponent("history.sqlite").path)
+    let insertion = FakeInsertion(store: store)
+    let faultingStore = ExplicitFaultingStore(base: store, failOutcome: failOutcome)
+    let dictation = DictationCoordinator(
+      store: faultingStore, lifecycle: ModelLifecycleCoordinator { FakeRuntime() },
+      capture: FakeCapture(), insertion: insertion, spoolRoot: root)
+    let flow = ExplicitInsertionCoordinator(
+      store: faultingStore, insertion: insertion, dictation: dictation, presentsPanel: false)
+    let entry = try await store.commit(
+      reservation: try await store.reserve(),
+      entry: TranscriptionEntry(
+        id: UUID(), text: "move it to monday", createdAtMilliseconds: 0,
+        quality: .complete, stopReason: .keyRelease))
+    let admitted = try await store.begin(
+      RewriteAdmission(
+        transcriptionID: entry.id, mode: .polished, inputText: entry.text,
+        endpointOrigin: "http://127.0.0.1:8080", insecureOverride: false))
+    let attempt = try await store.recordResult(
+      id: admitted.id,
+      result: RewriteResult(
+        text: "Please move it to Monday.", unchanged: false, serverName: "flowd",
+        serverVersion: "0.2.0", backendKind: "openai-compatible", backendModel: "qwen2.5-3b",
+        promptVersion: 1, shieldVersion: 1, serverQueueMilliseconds: nil,
+        backendFirstTokenMilliseconds: nil, backendMilliseconds: nil),
+      spans: RewriteSpans(durationMilliseconds: 800))
+
+    XCTAssertTrue(flow.beginReview(entry, attempt: attempt))
+    XCTAssertEqual(flow.reviewText, "Please move it to Monday.")
+    flow.armSelection()
+    flow.selectTarget()
+    try await waitUntil { flow.phase == .confirming }
+    flow.confirm()
+    try await waitUntil { flow.phase == .idle }
+    if failOutcome {
+      XCTAssertTrue(dictation.storageBlocked)
+      await dictation.retryStorage()
+      XCTAssertFalse(dictation.storageBlocked)
+    }
+    XCTAssertEqual(insertion.insertedTexts, ["Please move it to Monday."])
+    let saved = try await store.get(entry.id)
+    XCTAssertEqual(saved?.deliveryState, .confirmed)
+    XCTAssertEqual(saved?.deliveredSource, .rewrite)
+    XCTAssertEqual(saved?.deliveredRewriteAttemptID, attempt.id)
+    let attempts = try await store.attempts(for: entry.id)
+    XCTAssertEqual(attempts.first?.delivered, true)
+  }
+
+  func testInsertingTheFaithfulTextClearsTheAttemptReference() async throws {
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try TranscriptionStore(path: root.appendingPathComponent("history.sqlite").path)
+    let insertion = FakeInsertion(store: store)
+    let dictation = DictationCoordinator(
+      store: store, lifecycle: ModelLifecycleCoordinator { FakeRuntime() },
+      capture: FakeCapture(), insertion: insertion, spoolRoot: root)
+    let flow = ExplicitInsertionCoordinator(
+      store: store, insertion: insertion, dictation: dictation, presentsPanel: false)
+    let entry = try await store.commit(
+      reservation: try await store.reserve(),
+      entry: TranscriptionEntry(
+        id: UUID(), text: "move it to monday", createdAtMilliseconds: 0,
+        quality: .complete, stopReason: .keyRelease))
+    let admitted = try await store.begin(
+      RewriteAdmission(
+        transcriptionID: entry.id, mode: .clean, inputText: entry.text,
+        endpointOrigin: "http://127.0.0.1:8080", insecureOverride: false))
+    let attempt = try await store.recordResult(
+      id: admitted.id,
+      result: RewriteResult(
+        text: "Move it to Monday.", unchanged: false, serverName: "flowd",
+        serverVersion: "0.2.0", backendKind: "openai-compatible", backendModel: "qwen2.5-3b",
+        promptVersion: 1, shieldVersion: 1, serverQueueMilliseconds: nil,
+        backendFirstTokenMilliseconds: nil, backendMilliseconds: nil),
+      spans: RewriteSpans(durationMilliseconds: 800))
+    // The rewrite is delivered first, then the faithful transcript replaces it.
+    let first = try await store.beginAttempt(id: entry.id, revision: entry.revision)
+    let afterRewrite = try await store.recordOutcome(
+      id: entry.id, revision: first.entry.revision, attemptID: first.id, outcome: .confirmed,
+      delivery: RewriteDelivery(source: .rewrite, attemptID: attempt.id, durationMilliseconds: 1))
+    XCTAssertEqual(afterRewrite.deliveredRewriteAttemptID, attempt.id)
+
+    XCTAssertTrue(flow.beginReview(afterRewrite))
+    XCTAssertEqual(flow.reviewText, "move it to monday")
+    flow.armSelection()
+    flow.selectTarget()
+    try await waitUntil { flow.phase == .confirming }
+    flow.confirm()
+    try await waitUntil { flow.phase == .idle }
+    XCTAssertEqual(insertion.insertedTexts.last, "move it to monday")
+    let saved = try await store.get(entry.id)
+    XCTAssertEqual(saved?.deliveredSource, .faithful)
+    XCTAssertNil(saved?.deliveredRewriteAttemptID)
+  }
+
+  func testAPendingAttemptCannotBeReviewedForInsertion() async throws {
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try TranscriptionStore(path: root.appendingPathComponent("history.sqlite").path)
+    let insertion = FakeInsertion(store: store)
+    let dictation = DictationCoordinator(
+      store: store, lifecycle: ModelLifecycleCoordinator { FakeRuntime() },
+      capture: FakeCapture(), insertion: insertion, spoolRoot: root)
+    let flow = ExplicitInsertionCoordinator(
+      store: store, insertion: insertion, dictation: dictation, presentsPanel: false)
+    let entry = try await store.commit(
+      reservation: try await store.reserve(),
+      entry: TranscriptionEntry(
+        id: UUID(), text: "move it to monday", createdAtMilliseconds: 0,
+        quality: .complete, stopReason: .keyRelease))
+    let pending = try await store.begin(
+      RewriteAdmission(
+        transcriptionID: entry.id, mode: .clean, inputText: entry.text,
+        endpointOrigin: "http://127.0.0.1:8080", insecureOverride: false))
+    XCTAssertFalse(flow.beginReview(entry, attempt: pending))
+    XCTAssertEqual(flow.phase, .idle)
+    XCTAssertEqual(insertion.dispatchCount, 0)
+  }
+
 }
 
 private actor ExplicitFaultingStore: TranscriptionStoring {
@@ -340,6 +505,12 @@ private actor ExplicitFaultingStore: TranscriptionStoring {
   {
     try await base.commit(reservation: reservation, entry: entry)
   }
+  func commit(reservation: TranscriptionStore.Reservation, envelope: TranscriptionEnvelope)
+    async throws -> TranscriptionEntry
+  {
+    return try await base.commit(reservation: reservation, envelope: envelope)
+  }
+
   func releaseReservation(_ reservation: TranscriptionStore.Reservation) async {
     await base.releaseReservation(reservation)
   }
@@ -352,6 +523,17 @@ private actor ExplicitFaultingStore: TranscriptionStoring {
     await enteredBegin.openGate()
     await beginGate?.wait()
     return attempt
+  }
+  func recordOutcome(
+    id: UUID, revision: Int64, attemptID: UUID, outcome: TranscriptionStore.Outcome,
+    delivery: RewriteDelivery
+  ) async throws -> TranscriptionEntry {
+    if failOutcome {
+      failOutcome = false
+      throw TranscriptionStore.Error.databaseLimitExceeded
+    }
+    return try await base.recordOutcome(
+      id: id, revision: revision, attemptID: attemptID, outcome: outcome, delivery: delivery)
   }
   func recordOutcome(
     id: UUID, revision: Int64, attemptID: UUID,
@@ -398,4 +580,5 @@ private actor SelectionStub: TextInserting {
     XCTFail("Ineligible selection must never dispatch")
     return .notInserted(.unsupported)
   }
+
 }

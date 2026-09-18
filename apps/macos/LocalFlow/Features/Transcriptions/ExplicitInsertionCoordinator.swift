@@ -16,6 +16,10 @@ final class ExplicitInsertionCoordinator {
   @ObservationIgnored private let presentsPanel: Bool
   @ObservationIgnored private var panel: InsertionConfirmationPanel?
   @ObservationIgnored private var target: CapturedTarget?
+  /// The chosen text and what it came from: the faithful transcript or one attempt.
+  @ObservationIgnored private var chosen: (text: String, delivery: RewriteDelivery) = (
+    "", .faithful
+  )
   @ObservationIgnored private var operation: Task<Void, Never>?
   @ObservationIgnored private var selectionDeadline: Task<Void, Never>?
   @ObservationIgnored private var capturingTarget = false
@@ -50,8 +54,28 @@ final class ExplicitInsertionCoordinator {
     self.presentsPanel = presentsPanel
   }
 
+  /// Reviews a specific rewrite attempt's output instead of the saved text.
+  /// The target selection and confirmation flow are the same.
+  @discardableResult
+  func beginReview(_ entry: TranscriptionEntry, attempt: RewriteAttempt) -> Bool {
+    guard attempt.transcriptionID == entry.id, let text = attempt.deliverableText else {
+      return false
+    }
+    return beginReview(
+      entry, text: text,
+      delivery: RewriteDelivery(
+        source: .rewrite, attemptID: attempt.id, durationMilliseconds: nil))
+  }
+
   @discardableResult
   func beginReview(_ entry: TranscriptionEntry) -> Bool {
+    beginReview(entry, text: entry.text, delivery: .faithful)
+  }
+
+  @discardableResult
+  private func beginReview(
+    _ entry: TranscriptionEntry, text: String, delivery: RewriteDelivery
+  ) -> Bool {
     guard phase == .idle,
       dictation.acquireExplicitInsertion(cancel: { [weak self] in self?.cancel() })
     else { return false }
@@ -59,10 +83,14 @@ final class ExplicitInsertionCoordinator {
     cancelled = false
     selectionExpired = false
     self.entry = entry
+    chosen = (text, delivery)
     message = "Review the text, then choose a destination."
     phase = .reviewing
     return true
   }
+
+  /// The text this review will insert: the saved transcript or a chosen rewrite.
+  var reviewText: String { chosen.text }
 
   func armSelection() {
     guard phase == .reviewing else { return }
@@ -130,7 +158,7 @@ final class ExplicitInsertionCoordinator {
         } else {
           // insertOnce revalidates process, element, window, selection and context.
           result = await self.insertion.insertOnce(
-            attemptID: attempt.id, target: target, text: attempt.entry.text)
+            attemptID: attempt.id, target: target, text: self.chosen.text)
         }
         let outcome: TranscriptionStore.Outcome
         switch result {
@@ -141,11 +169,11 @@ final class ExplicitInsertionCoordinator {
         do {
           _ = try await self.store.recordOutcome(
             id: entry.id, revision: attempt.entry.revision,
-            attemptID: attempt.id, outcome: outcome)
+            attemptID: attempt.id, outcome: outcome, delivery: self.chosen.delivery)
         } catch {
           self.dictation.preserveExplicitOutcome(
             id: entry.id, revision: attempt.entry.revision,
-            attempt: attempt.id, outcome: outcome)
+            attempt: attempt.id, outcome: outcome, delivery: self.chosen.delivery)
           self.finish("Delivery status could not be saved. Retry storage before continuing.")
           return
         }
@@ -189,6 +217,7 @@ final class ExplicitInsertionCoordinator {
   private func finish(_ message: String) {
     generation = UUID()
     entry = nil
+    chosen = ("", .faithful)
     target = nil
     operation = nil
     selectionDeadline?.cancel()

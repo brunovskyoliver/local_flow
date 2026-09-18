@@ -258,6 +258,8 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
         emitError("The requested language is not supported.", *id);
         return;
     }
+    const bool benchmarkEvidence = request.contains("benchmarkEvidence") && request["benchmarkEvidence"].is_boolean()
+        && request["benchmarkEvidence"].get<bool>();
     const auto vocabulary = vocabularyTerms(request);
     if (const auto failure = std::get_if<std::string>(&vocabulary)) {
         emitError(*failure, *id);
@@ -272,10 +274,17 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
         return;
     }
     auto &audio = std::get<Audio>(loaded);
+    const std::unique_ptr<whisper_state, decltype(&whisper_free_state)> benchmarkState(
+        benchmarkEvidence ? whisper_init_state(context) : nullptr, whisper_free_state);
+    if (benchmarkEvidence && !benchmarkState) {
+        emitError("Local transcription state allocation failed. Try recording again.", *id);
+        return;
+    }
     Progress progress{*id};
     reportProgress(nullptr, nullptr, 0, &progress);
     std::string text;
     std::string detectedLanguage = *language;
+    std::optional<float> detectedLanguageProbability;
     if (!audio.silent) {
         // A small CPU-only Silero pass rejects fan noise, tones, and other
         // nonspeech that Whisper can otherwise turn into invented sentences.
@@ -298,9 +307,23 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
         // off quiet word boundaries or short pauses inside a sentence.
     }
     if (!audio.silent) {
+        if (benchmarkEvidence && *language == "auto") {
+            std::vector<float> languageProbabilities(whisper_lang_max_id() + 1, 0.0f);
+            if (whisper_pcm_to_mel_with_state(
+                    context, benchmarkState.get(), audio.samples.data(), static_cast<int>(audio.samples.size()), threads)
+                == 0) {
+                const auto detected = whisper_lang_auto_detect_with_state(
+                    context, benchmarkState.get(), 0, threads, languageProbabilities.data());
+                if (detected >= 0 && detected <= whisper_lang_max_id()) {
+                    detectedLanguageProbability = languageProbabilities[detected];
+                }
+            }
+        }
         auto parameters = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH);
         parameters.n_threads = threads;
-        parameters.no_context = true; // Never leak one dictation into the next.
+        parameters.no_context = !benchmarkEvidence;
+        // Production requests isolate dictations. The opt-in benchmark request
+        // keeps whisper.cpp's rolling context across its internal long-form seeks.
         // Keep timestamp tokens during decoding: disabling them can omit whole
         // passages when vocabulary hints are present. Segment text below still
         // returns plain text, without exposing timestamps to the client.
@@ -323,23 +346,76 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
         parameters.progress_callback = reportProgress;
         parameters.progress_callback_user_data = &progress;
 
-        if (whisper_full(context, parameters, audio.samples.data(), static_cast<int>(audio.samples.size())) != 0) {
+        const auto fullResult = benchmarkEvidence
+            ? whisper_full_with_state(context, benchmarkState.get(), parameters, audio.samples.data(), static_cast<int>(audio.samples.size()))
+            : whisper_full(context, parameters, audio.samples.data(), static_cast<int>(audio.samples.size()));
+        if (fullResult != 0) {
             emitError("Local transcription failed. Try recording again.", *id);
             return;
         }
-        const auto lang = whisper_lang_str(whisper_full_lang_id(context));
+        const auto lang = benchmarkEvidence ? whisper_lang_str(whisper_full_lang_id_from_state(benchmarkState.get()))
+                                             : whisper_lang_str(whisper_full_lang_id(context));
         if (lang) detectedLanguage = lang;
-        for (int i = 0; i < whisper_full_n_segments(context); ++i) {
-            if (whisper_full_get_segment_no_speech_prob(context, i) > parameters.no_speech_thold) continue;
+        json nativeSegments = json::array();
+        const auto segmentCount = benchmarkEvidence ? whisper_full_n_segments_from_state(benchmarkState.get())
+                                                    : whisper_full_n_segments(context);
+        for (int i = 0; i < segmentCount; ++i) {
+            const auto noSpeechProbability = benchmarkEvidence
+                ? whisper_full_get_segment_no_speech_prob_from_state(benchmarkState.get(), i)
+                : whisper_full_get_segment_no_speech_prob(context, i);
+            if (noSpeechProbability > parameters.no_speech_thold) continue;
             // Whisper owns punctuation and word spacing. Only trim the outside.
-            text += whisper_full_get_segment_text(context, i);
+            const auto segmentText = std::string(benchmarkEvidence
+                    ? whisper_full_get_segment_text_from_state(benchmarkState.get(), i)
+                    : whisper_full_get_segment_text(context, i));
+            text += segmentText;
+            if (benchmarkEvidence) {
+                nativeSegments.push_back({
+                    {"startSeconds", (benchmarkEvidence ? whisper_full_get_segment_t0_from_state(benchmarkState.get(), i)
+                                                            : whisper_full_get_segment_t0(context, i)) / 100.0},
+                    {"endSeconds", (benchmarkEvidence ? whisper_full_get_segment_t1_from_state(benchmarkState.get(), i)
+                                                          : whisper_full_get_segment_t1(context, i)) / 100.0},
+                    {"text", segmentText},
+                    {"noSpeechProbability", noSpeechProbability}});
+            }
         }
+        if (!benchmarkEvidence) {
+            reportProgress(nullptr, nullptr, 100, &progress);
+            emit({{"type", "result"}, {"id", *id}, {"text", trim(std::move(text))},
+                  {"duration", audio.duration}, {"elapsed", std::chrono::duration<double>(Clock::now() - start).count()},
+                  {"language", detectedLanguage}, {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
+                  {"tokenCount", hints.tokens.size()}, {"tokenBudget", hints.tokenBudget}});
+            return;
+        }
+        reportProgress(nullptr, nullptr, 100, &progress);
+        json result = {
+            {"type", "result"}, {"id", *id}, {"text", trim(std::move(text))},
+            {"duration", audio.duration},
+            {"elapsed", std::chrono::duration<double>(Clock::now() - start).count()},
+            {"language", detectedLanguage}, {"segments", nativeSegments},
+            {"segmentation", "whisper_full_internal_30s_seek_segments_v1"},
+            {"context", "rolling_internal_prompt_reset_between_requests"},
+            {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
+            {"tokenCount", hints.tokens.size()}, {"tokenBudget", hints.tokenBudget}};
+        if (detectedLanguageProbability) result["languageProbability"] = *detectedLanguageProbability;
+        emit(result);
+        return;
     }
     reportProgress(nullptr, nullptr, 100, &progress);
-    emit({{"type", "result"}, {"id", *id}, {"text", trim(std::move(text))},
-          {"duration", audio.duration}, {"elapsed", std::chrono::duration<double>(Clock::now() - start).count()},
-          {"language", detectedLanguage}, {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
-          {"tokenCount", hints.tokens.size()}, {"tokenBudget", hints.tokenBudget}});
+    if (benchmarkEvidence) {
+        emit({{"type", "result"}, {"id", *id}, {"text", trim(std::move(text))},
+              {"duration", audio.duration}, {"elapsed", std::chrono::duration<double>(Clock::now() - start).count()},
+              {"language", detectedLanguage}, {"segments", json::array()},
+              {"segmentation", "whisper_full_internal_30s_seek_segments_v1"},
+              {"context", "rolling_internal_prompt_reset_between_requests"},
+              {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
+              {"tokenCount", hints.tokens.size()}, {"tokenBudget", hints.tokenBudget}});
+    } else {
+        emit({{"type", "result"}, {"id", *id}, {"text", trim(std::move(text))},
+              {"duration", audio.duration}, {"elapsed", std::chrono::duration<double>(Clock::now() - start).count()},
+              {"language", detectedLanguage}, {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
+              {"tokenCount", hints.tokens.size()}, {"tokenBudget", hints.tokenBudget}});
+    }
 }
 
 } // namespace

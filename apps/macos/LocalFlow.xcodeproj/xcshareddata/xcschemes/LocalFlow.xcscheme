@@ -18,6 +18,23 @@
     <BuildableProductRunnable runnableDebuggingMode="0">
       <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="A00000000000000000000005" BuildableName="LocalFlow.app" BlueprintName="LocalFlow" ReferencedContainer="container:LocalFlow.xcodeproj" />
     </BuildableProductRunnable>
+    <EnvironmentVariables>
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_BENCHMARK_OUTPUT" value="/Users/oliver/Programming/local-flow/build/whisper-fair-20260917/large-v3-reset" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_SHORT_ROOT" value="/Users/oliver/Programming/local-flow/build/quality-public-v2" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_LONG_ROOT" value="/Users/oliver/Programming/local-flow/build/quality-public-long-v1" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_HELPER" value="/Users/oliver/Programming/local-flow/third_party/sotto/.build/benchmark-native/Engine/sotto-engine" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_MODEL" value="/Users/oliver/Programming/local-flow/build/model-downloads/ggml-large-v3.bin" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_VAD_MODEL" value="/Users/oliver/Programming/local-flow/third_party/sotto/.build/models/silero-vad.bin" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_MODEL_ID" value="whisper-large-v3" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_MODEL_REVISION" value="5359861c739e955e79d9a303bcbc70fb988958b1" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_MODEL_SHA256" value="64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_RUNTIME_REVISION" value="371b5a7561823ab2bb32142d2751e35e7534727b" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_MODES" value="auto,sk,en" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_WHISPER_INCLUDE_BASELINE" value="0" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_QUALITY_HARDWARE" value="Mac17,2" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_QUALITY_POWER" value="Now drawing from Battery Power" isEnabled="YES" />
+      <EnvironmentVariable key="LOCALFLOW_MODEL_PROBE_ROOT" value="/Users/oliver/Programming/local-flow/build/model-downloads/parakeet-v3-7dd20fe6b1797d35f5e3307e8b1732d9a178edfe" isEnabled="YES" />
+    </EnvironmentVariables>
   </LaunchAction>
   <AnalyzeAction buildConfiguration="Debug" />
   <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES" />

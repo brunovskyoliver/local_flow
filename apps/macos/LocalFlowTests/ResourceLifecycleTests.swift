@@ -202,6 +202,16 @@ final class ResourceLifecycleTests: XCTestCase {
       XCTAssertEqual(row.controlQueueCapacity, UInt32(ControlMailbox.capacity))
       XCTAssertLessThanOrEqual(row.controlQueuePeak, row.controlQueueCapacity)
       XCTAssertGreaterThan(row.recordNanoseconds, 0, "Cycle \(row.index) recorded no phase time")
+      XCTAssertGreaterThan(row.endToEndNanoseconds, row.recordNanoseconds)
+      let processing = try XCTUnwrap(row.processing, "Cycle \(row.index) has no stage figures")
+      XCTAssertEqual(processing.windowCount, 1)
+      XCTAssertNotNil(processing.recognitionNanoseconds)
+      XCTAssertNotNil(processing.assemblyNanoseconds)
+      XCTAssertNotNil(processing.normalizationNanoseconds)
+      XCTAssertNotNil(processing.persistenceNanoseconds)
+      XCTAssertGreaterThan(processing.metadataBytes, 0)
+      XCTAssertGreaterThan(processing.normalizedTextBytes, 0)
+      XCTAssertLessThanOrEqual(processing.endToEndNanoseconds, row.endToEndNanoseconds)
     }
     XCTAssertEqual(report.rows.filter(\.rapidReuse).count, 1)
     XCTAssertEqual(report.slopeMegabytesPerCycle, 0, accuracy: 0.001)
@@ -283,7 +293,9 @@ final class ResourceLifecycleTests: XCTestCase {
       _ = try await benchmark.run(configuration)
       XCTFail("A lossy export must fail the run")
     } catch {
-      XCTAssertEqual(error as? DictationBenchmark.Failure, .incompleteExport)
+      XCTAssertEqual(
+        error as? DictationBenchmark.Failure,
+        .incompleteExport(lostSamples: 1, overwrittenSamples: 0, writeFailed: false))
     }
   }
 

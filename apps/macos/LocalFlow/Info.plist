@@ -11,5 +11,10 @@
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 <key>LSUIElement</key><true/>
+<!-- The rewrite endpoint is a single user-chosen self-hosted origin. Plain HTTP is allowed at the
+     transport layer because the client enforces the credential and per-origin insecure-override
+     policy itself (FR-016a); NSAllowsLocalNetworking alone is re-checked against the owner's
+     overlay-network address in the connection-test walkthrough. -->
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 <key>NSMicrophoneUsageDescription</key><string>LocalFlow uses the microphone for local dictation.</string>
 </dict></plist>

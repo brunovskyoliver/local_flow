@@ -1,0 +1,2121 @@
+{
+ "schema_version": 1,
+ "kind": "authored_contract_cases",
+ "contract": "transcription-pipeline-v1",
+ "review_status": "authored_spec_review_not_human_acceptance",
+ "sample_rate": 16000,
+ "timing_tolerance_seconds": 0.16,
+ "cases": [
+  {
+   "id": "english-overlap",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Please open the server",
+     "tokens": [
+      {
+       "text": "Please",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 11.91,
+       "end_seconds": 12.11
+      },
+      {
+       "text": "open",
+       "utf8_start": 7,
+       "utf8_end": 11,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "the",
+       "utf8_start": 12,
+       "utf8_end": 15,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 16,
+       "utf8_end": 22,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server now.",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "now.",
+       "utf8_start": 7,
+       "utf8_end": 11,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "506c65617365206f70656e2074686520736572766572",
+     "736572766572206e6f772e"
+    ],
+    "assembled_text": "Please open the server now.",
+    "assembled_words": [
+     "Please",
+     "open",
+     "the",
+     "server",
+     "now."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "slovak-overlap",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Prosím otvor tento server",
+     "tokens": [
+      {
+       "text": "Prosím",
+       "utf8_start": 0,
+       "utf8_end": 7,
+       "start_seconds": 11.91,
+       "end_seconds": 12.11
+      },
+      {
+       "text": "otvor",
+       "utf8_start": 8,
+       "utf8_end": 13,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "tento",
+       "utf8_start": 14,
+       "utf8_end": 19,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 20,
+       "utf8_end": 26,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server teraz.",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "teraz.",
+       "utf8_start": 7,
+       "utf8_end": 13,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "50726f73c3ad6d206f74766f722074656e746f20736572766572",
+     "73657276657220746572617a2e"
+    ],
+    "assembled_text": "Prosím otvor tento server teraz.",
+    "assembled_words": [
+     "Prosím",
+     "otvor",
+     "tento",
+     "server",
+     "teraz."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "sk-en",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Otvor tento server",
+     "tokens": [
+      {
+       "text": "Otvor",
+       "utf8_start": 0,
+       "utf8_end": 5,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "tento",
+       "utf8_start": 6,
+       "utf8_end": 11,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 12,
+       "utf8_end": 18,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server and check logs.",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "and",
+       "utf8_start": 7,
+       "utf8_end": 10,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      },
+      {
+       "text": "check",
+       "utf8_start": 11,
+       "utf8_end": 16,
+       "start_seconds": 0.7,
+       "end_seconds": 0.9
+      },
+      {
+       "text": "logs.",
+       "utf8_start": 17,
+       "utf8_end": 22,
+       "start_seconds": 1.05,
+       "end_seconds": 1.25
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4f74766f722074656e746f20736572766572",
+     "73657276657220616e6420636865636b206c6f67732e"
+    ],
+    "assembled_text": "Otvor tento server and check logs.",
+    "assembled_words": [
+     "Otvor",
+     "tento",
+     "server",
+     "and",
+     "check",
+     "logs."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "en-sk",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Please open server",
+     "tokens": [
+      {
+       "text": "Please",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "open",
+       "utf8_start": 7,
+       "utf8_end": 11,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 12,
+       "utf8_end": 18,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server a skontroluj stav.",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "a",
+       "utf8_start": 7,
+       "utf8_end": 8,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      },
+      {
+       "text": "skontroluj",
+       "utf8_start": 9,
+       "utf8_end": 19,
+       "start_seconds": 0.7,
+       "end_seconds": 0.9
+      },
+      {
+       "text": "stav.",
+       "utf8_start": 20,
+       "utf8_end": 25,
+       "start_seconds": 1.05,
+       "end_seconds": 1.25
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "506c65617365206f70656e20736572766572",
+     "736572766572206120736b6f6e74726f6c756a20737461762e"
+    ],
+    "assembled_text": "Please open server a skontroluj stav.",
+    "assembled_words": [
+     "Please",
+     "open",
+     "server",
+     "a",
+     "skontroluj",
+     "stav."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "phrase",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Please check the new server",
+     "tokens": [
+      {
+       "text": "Please",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "check",
+       "utf8_start": 7,
+       "utf8_end": 12,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "the",
+       "utf8_start": 13,
+       "utf8_end": 16,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      },
+      {
+       "text": "new",
+       "utf8_start": 17,
+       "utf8_end": 20,
+       "start_seconds": 13.31,
+       "end_seconds": 13.51
+      },
+      {
+       "text": "server",
+       "utf8_start": 21,
+       "utf8_end": 27,
+       "start_seconds": 13.66,
+       "end_seconds": 13.86
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "the new server now.",
+     "tokens": [
+      {
+       "text": "the",
+       "utf8_start": 0,
+       "utf8_end": 3,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "new",
+       "utf8_start": 4,
+       "utf8_end": 7,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      },
+      {
+       "text": "server",
+       "utf8_start": 8,
+       "utf8_end": 14,
+       "start_seconds": 0.7,
+       "end_seconds": 0.9
+      },
+      {
+       "text": "now.",
+       "utf8_start": 15,
+       "utf8_end": 19,
+       "start_seconds": 1.05,
+       "end_seconds": 1.25
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "506c6561736520636865636b20746865206e657720736572766572",
+     "746865206e657720736572766572206e6f772e"
+    ],
+    "assembled_text": "Please check the new server now.",
+    "assembled_words": [
+     "Please",
+     "check",
+     "the",
+     "new",
+     "server",
+     "now."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "punctuation",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Hello, world!",
+     "tokens": [
+      {
+       "text": "Hello,",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "world!",
+       "utf8_start": 7,
+       "utf8_end": 13,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "world! Next task.",
+     "tokens": [
+      {
+       "text": "world!",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "Next",
+       "utf8_start": 7,
+       "utf8_end": 11,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      },
+      {
+       "text": "task.",
+       "utf8_start": 12,
+       "utf8_end": 17,
+       "start_seconds": 0.7,
+       "end_seconds": 0.9
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "48656c6c6f2c20776f726c6421",
+     "776f726c6421204e657874207461736b2e"
+    ],
+    "assembled_text": "Hello, world! Next task.",
+    "assembled_words": [
+     "Hello,",
+     "world!",
+     "Next",
+     "task."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "capitalization-conflict",
+   "tags": [
+    "uncertain"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Open Server",
+     "tokens": [
+      {
+       "text": "Open",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "Server",
+       "utf8_start": 5,
+       "utf8_end": 11,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server now",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "now",
+       "utf8_start": 7,
+       "utf8_end": 10,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4f70656e20536572766572",
+     "736572766572206e6f77"
+    ],
+    "assembled_text": "Open Server server now",
+    "assembled_words": [
+     "Open",
+     "Server",
+     "server",
+     "now"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "punctuation-conflict",
+   "tags": [
+    "uncertain"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Hello world,",
+     "tokens": [
+      {
+       "text": "Hello",
+       "utf8_start": 0,
+       "utf8_end": 5,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "world,",
+       "utf8_start": 6,
+       "utf8_end": 12,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "world. Next",
+     "tokens": [
+      {
+       "text": "world.",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "Next",
+       "utf8_start": 7,
+       "utf8_end": 11,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "48656c6c6f20776f726c642c",
+     "776f726c642e204e657874"
+    ],
+    "assembled_text": "Hello world, world. Next",
+    "assembled_words": [
+     "Hello",
+     "world,",
+     "world.",
+     "Next"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "technical",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Use PostgreSQL 17",
+     "tokens": [
+      {
+       "text": "Use",
+       "utf8_start": 0,
+       "utf8_end": 3,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "PostgreSQL",
+       "utf8_start": 4,
+       "utf8_end": 14,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      },
+      {
+       "text": "17",
+       "utf8_start": 15,
+       "utf8_end": 17,
+       "start_seconds": 13.31,
+       "end_seconds": 13.51
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "PostgreSQL 17 with Odoo 19",
+     "tokens": [
+      {
+       "text": "PostgreSQL",
+       "utf8_start": 0,
+       "utf8_end": 10,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "17",
+       "utf8_start": 11,
+       "utf8_end": 13,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      },
+      {
+       "text": "with",
+       "utf8_start": 14,
+       "utf8_end": 18,
+       "start_seconds": 0.7,
+       "end_seconds": 0.9
+      },
+      {
+       "text": "Odoo",
+       "utf8_start": 19,
+       "utf8_end": 23,
+       "start_seconds": 1.05,
+       "end_seconds": 1.25
+      },
+      {
+       "text": "19",
+       "utf8_start": 24,
+       "utf8_end": 26,
+       "start_seconds": 1.4,
+       "end_seconds": 1.6
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "55736520506f737467726553514c203137",
+     "506f737467726553514c2031372077697468204f646f6f203139"
+    ],
+    "assembled_text": "Use PostgreSQL 17 with Odoo 19",
+    "assembled_words": [
+     "Use",
+     "PostgreSQL",
+     "17",
+     "with",
+     "Odoo",
+     "19"
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "ip",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Connect to 172.19.223.20",
+     "tokens": [
+      {
+       "text": "Connect",
+       "utf8_start": 0,
+       "utf8_end": 7,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "to",
+       "utf8_start": 8,
+       "utf8_end": 10,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "172.19.223.20",
+       "utf8_start": 11,
+       "utf8_end": 24,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "172.19.223.20 then 172.29.2.185",
+     "tokens": [
+      {
+       "text": "172.19.223.20",
+       "utf8_start": 0,
+       "utf8_end": 13,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "then",
+       "utf8_start": 14,
+       "utf8_end": 18,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      },
+      {
+       "text": "172.29.2.185",
+       "utf8_start": 19,
+       "utf8_end": 31,
+       "start_seconds": 0.7,
+       "end_seconds": 0.9
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "436f6e6e65637420746f203137322e31392e3232332e3230",
+     "3137322e31392e3232332e3230207468656e203137322e32392e322e313835"
+    ],
+    "assembled_text": "Connect to 172.19.223.20 then 172.29.2.185",
+    "assembled_words": [
+     "Connect",
+     "to",
+     "172.19.223.20",
+     "then",
+     "172.29.2.185"
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "adjacent",
+   "tags": [
+    "adjacent"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "First sentence.",
+     "tokens": [
+      {
+       "text": "First",
+       "utf8_start": 0,
+       "utf8_end": 5,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "sentence.",
+       "utf8_start": 6,
+       "utf8_end": 15,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 239360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Next sentence.",
+     "tokens": [
+      {
+       "text": "Next",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "sentence.",
+       "utf8_start": 5,
+       "utf8_end": 14,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "46697273742073656e74656e63652e",
+     "4e6578742073656e74656e63652e"
+    ],
+    "assembled_text": "First sentence. Next sentence.",
+    "assembled_words": [
+     "First",
+     "sentence.",
+     "Next",
+     "sentence."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "no-overlap",
+   "tags": [
+    "uncertain"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Keep every word",
+     "tokens": [
+      {
+       "text": "Keep",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "every",
+       "utf8_start": 5,
+       "utf8_end": 10,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "word",
+       "utf8_start": 11,
+       "utf8_end": 15,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Nothing matches here",
+     "tokens": [
+      {
+       "text": "Nothing",
+       "utf8_start": 0,
+       "utf8_end": 7,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "matches",
+       "utf8_start": 8,
+       "utf8_end": 15,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      },
+      {
+       "text": "here",
+       "utf8_start": 16,
+       "utf8_end": 20,
+       "start_seconds": 0.7,
+       "end_seconds": 0.9
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4b65657020657665727920776f7264",
+     "4e6f7468696e67206d6174636865732068657265"
+    ],
+    "assembled_text": "Keep every word Nothing matches here",
+    "assembled_words": [
+     "Keep",
+     "every",
+     "word",
+     "Nothing",
+     "matches",
+     "here"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "legitimate-no-no",
+   "tags": [
+    "adjacent"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "no",
+     "tokens": [
+      {
+       "text": "no",
+       "utf8_start": 0,
+       "utf8_end": 2,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 239360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "no",
+     "tokens": [
+      {
+       "text": "no",
+       "utf8_start": 0,
+       "utf8_end": 2,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "6e6f",
+     "6e6f"
+    ],
+    "assembled_text": "no no",
+    "assembled_words": [
+     "no",
+     "no"
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "repeated-phrase",
+   "tags": [
+    "adjacent"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "check again",
+     "tokens": [
+      {
+       "text": "check",
+       "utf8_start": 0,
+       "utf8_end": 5,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "again",
+       "utf8_start": 6,
+       "utf8_end": 11,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 239360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "check again",
+     "tokens": [
+      {
+       "text": "check",
+       "utf8_start": 0,
+       "utf8_end": 5,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "again",
+       "utf8_start": 6,
+       "utf8_end": 11,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "636865636b20616761696e",
+     "636865636b20616761696e"
+    ],
+    "assembled_text": "check again check again",
+    "assembled_words": [
+     "check",
+     "again",
+     "check",
+     "again"
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "conflicting-suffix",
+   "tags": [
+    "uncertain"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "the server failed",
+     "tokens": [
+      {
+       "text": "the",
+       "utf8_start": 0,
+       "utf8_end": 3,
+       "start_seconds": 12.26,
+       "end_seconds": 12.46
+      },
+      {
+       "text": "server",
+       "utf8_start": 4,
+       "utf8_end": 10,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "failed",
+       "utf8_start": 11,
+       "utf8_end": 17,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server recovered",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "recovered",
+       "utf8_start": 7,
+       "utf8_end": 16,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "74686520736572766572206661696c6564",
+     "736572766572207265636f7665726564"
+    ],
+    "assembled_text": "the server failed server recovered",
+    "assembled_words": [
+     "the",
+     "server",
+     "failed",
+     "server",
+     "recovered"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "partial-word",
+   "tags": [
+    "uncertain"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Use Postgres",
+     "tokens": [
+      {
+       "text": "Use",
+       "utf8_start": 0,
+       "utf8_end": 3,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "Postgres",
+       "utf8_start": 4,
+       "utf8_end": 12,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "PostgreSQL 17",
+     "tokens": [
+      {
+       "text": "PostgreSQL",
+       "utf8_start": 0,
+       "utf8_end": 10,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "17",
+       "utf8_start": 11,
+       "utf8_end": 13,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "55736520506f737467726573",
+     "506f737467726553514c203137"
+    ],
+    "assembled_text": "Use Postgres PostgreSQL 17",
+    "assembled_words": [
+     "Use",
+     "Postgres",
+     "PostgreSQL",
+     "17"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "competing-anchors",
+   "tags": [
+    "uncertain"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "no no",
+     "tokens": [
+      {
+       "text": "no",
+       "utf8_start": 0,
+       "utf8_end": 2,
+       "start_seconds": 12.96,
+       "end_seconds": 13.1
+      },
+      {
+       "text": "no",
+       "utf8_start": 3,
+       "utf8_end": 5,
+       "start_seconds": 12.96,
+       "end_seconds": 13.1
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "no now",
+     "tokens": [
+      {
+       "text": "no",
+       "utf8_start": 0,
+       "utf8_end": 2,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "now",
+       "utf8_start": 3,
+       "utf8_end": 6,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "6e6f206e6f",
+     "6e6f206e6f77"
+    ],
+    "assembled_text": "no no no now",
+    "assembled_words": [
+     "no",
+     "no",
+     "no",
+     "now"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "missing-timing",
+   "tags": [
+    "uncertain",
+    "missing_timing"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Keep server",
+     "tokens": [
+      {
+       "text": "Keep",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 5,
+       "utf8_end": 11,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server now",
+     "tokens": null
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4b65657020736572766572",
+     "736572766572206e6f77"
+    ],
+    "assembled_text": "Keep server server now",
+    "assembled_words": [
+     "Keep",
+     "server",
+     "server",
+     "now"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "empty-timing",
+   "tags": [
+    "uncertain",
+    "empty_timing"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Keep server",
+     "tokens": [
+      {
+       "text": "Keep",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 5,
+       "utf8_end": 11,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server now",
+     "tokens": []
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4b65657020736572766572",
+     "736572766572206e6f77"
+    ],
+    "assembled_text": "Keep server server now",
+    "assembled_words": [
+     "Keep",
+     "server",
+     "server",
+     "now"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "out-of-order",
+   "tags": [
+    "uncertain",
+    "out_of_order"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Keep server",
+     "tokens": [
+      {
+       "text": "Keep",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 5,
+       "utf8_end": 11,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server now",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 1.0,
+       "end_seconds": 1.2
+      },
+      {
+       "text": "now",
+       "utf8_start": 7,
+       "utf8_end": 10,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4b65657020736572766572",
+     "736572766572206e6f77"
+    ],
+    "assembled_text": "Keep server server now",
+    "assembled_words": [
+     "Keep",
+     "server",
+     "server",
+     "now"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "gap",
+   "tags": [
+    "uncertain",
+    "gap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Keep server",
+     "tokens": [
+      {
+       "text": "Keep",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 5,
+       "utf8_end": 11,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 300000,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server now",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "now",
+       "utf8_start": 7,
+       "utf8_end": 10,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4b65657020736572766572",
+     "736572766572206e6f77"
+    ],
+    "assembled_text": "Keep server server now",
+    "assembled_words": [
+     "Keep",
+     "server",
+     "server",
+     "now"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "sequence",
+   "tags": [
+    "uncertain",
+    "sequence"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Keep server",
+     "tokens": [
+      {
+       "text": "Keep",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 5,
+       "utf8_end": 11,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 3,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "server now",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "now",
+       "utf8_start": 7,
+       "utf8_end": 10,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4b65657020736572766572",
+     "736572766572206e6f77"
+    ],
+    "assembled_text": "Keep server server now",
+    "assembled_words": [
+     "Keep",
+     "server",
+     "server",
+     "now"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "padding-only",
+   "tags": [
+    "uncertain",
+    "padding_only"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Keep server",
+     "tokens": [
+      {
+       "text": "Keep",
+       "utf8_start": 0,
+       "utf8_end": 4,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "server",
+       "utf8_start": 5,
+       "utf8_end": 11,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 100,
+     "padded_sample_count": 4800,
+     "text": "server now",
+     "tokens": [
+      {
+       "text": "server",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "now",
+       "utf8_start": 7,
+       "utf8_end": 10,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "4b65657020736572766572",
+     "736572766572206e6f77"
+    ],
+    "assembled_text": "Keep server server now",
+    "assembled_words": [
+     "Keep",
+     "server",
+     "server",
+     "now"
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Retain both recovered fragments; evidence cannot justify deleting any text."
+  },
+  {
+   "id": "nfc-source-preserved",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "Počuj č",
+     "tokens": [
+      {
+       "text": "Počuj",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 12.61,
+       "end_seconds": 12.81
+      },
+      {
+       "text": "č",
+       "utf8_start": 7,
+       "utf8_end": 10,
+       "start_seconds": 12.96,
+       "end_seconds": 13.16
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "č teraz",
+     "tokens": [
+      {
+       "text": "č",
+       "utf8_start": 0,
+       "utf8_end": 2,
+       "start_seconds": 0.0,
+       "end_seconds": 0.2
+      },
+      {
+       "text": "teraz",
+       "utf8_start": 3,
+       "utf8_end": 8,
+       "start_seconds": 0.35,
+       "end_seconds": 0.55
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "506fc48d756a2063cc8c",
+     "c48d20746572617a"
+    ],
+    "assembled_text": "Počuj č teraz",
+    "assembled_words": [
+     "Počuj",
+     "č",
+     "teraz"
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Discard only a unique NFC-equivalent span with matching times and punctuation."
+  },
+  {
+   "id": "edge-punctuation-overlap",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "ochota daňových.",
+     "tokens": [
+      {
+       "text": "ochota",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 13.0,
+       "end_seconds": 13.4
+      },
+      {
+       "text": "daňových.",
+       "utf8_start": 7,
+       "utf8_end": 18,
+       "start_seconds": 14.4,
+       "end_seconds": 14.88
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 43520,
+     "padded_sample_count": 43520,
+     "text": "ochota daňových systémov.",
+     "tokens": [
+      {
+       "text": "ochota",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.08,
+       "end_seconds": 0.48
+      },
+      {
+       "text": "daňových",
+       "utf8_start": 7,
+       "utf8_end": 17,
+       "start_seconds": 1.48,
+       "end_seconds": 1.88
+      },
+      {
+       "text": "systémov.",
+       "utf8_start": 18,
+       "utf8_end": 28,
+       "start_seconds": 2.0,
+       "end_seconds": 2.6
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "6f63686f7461206461c5886f76c3bd63682e",
+     "6f63686f7461206461c5886f76c3bd63682073797374c3a96d6f762e"
+    ],
+    "assembled_text": "ochota daňových. systémov.",
+    "assembled_words": [
+     "ochota",
+     "daňových.",
+     "systémov."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Observed public_sk_longer boundary: after a unique timed anchor the final overlapping word differs only by chunk-edge punctuation. Received bytes of the earlier window are retained and the re-recognized span is not repeated."
+  },
+  {
+   "id": "conflicting-edge-token",
+   "tags": [
+    "uncertain"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "ochota daňových.",
+     "tokens": [
+      {
+       "text": "ochota",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 13.0,
+       "end_seconds": 13.4
+      },
+      {
+       "text": "daňových.",
+       "utf8_start": 7,
+       "utf8_end": 18,
+       "start_seconds": 14.4,
+       "end_seconds": 14.88
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 43520,
+     "padded_sample_count": 43520,
+     "text": "ochota daňové systémov.",
+     "tokens": [
+      {
+       "text": "ochota",
+       "utf8_start": 0,
+       "utf8_end": 6,
+       "start_seconds": 0.08,
+       "end_seconds": 0.48
+      },
+      {
+       "text": "daňové",
+       "utf8_start": 7,
+       "utf8_end": 15,
+       "start_seconds": 1.48,
+       "end_seconds": 1.88
+      },
+      {
+       "text": "systémov.",
+       "utf8_start": 16,
+       "utf8_end": 26,
+       "start_seconds": 2.0,
+       "end_seconds": 2.6
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "6f63686f7461206461c5886f76c3bd63682e",
+     "6f63686f7461206461c5886f76c3a92073797374c3a96d6f762e"
+    ],
+    "assembled_text": "ochota daňových. ochota daňové systémov.",
+    "assembled_words": [
+     "ochota",
+     "daňových.",
+     "ochota",
+     "daňové",
+     "systémov."
+    ],
+    "incomplete": true,
+    "reasons": [
+     "uncertain_join"
+    ],
+    "automatic_insertion_allowed": false
+   },
+   "rationale": "Observed public_sk_longer boundary: a unique timed anchor exists but the two windows disagree on the final overlapping word beyond punctuation. Evidence is insufficient, so both fragments are retained."
+  },
+  {
+   "id": "onset-anchored-drifting-ends",
+   "tags": [
+    "unique_overlap"
+   ],
+   "windows": [
+    {
+     "sequence": 0,
+     "sample_start": 0,
+     "sample_count": 239360,
+     "padded_sample_count": 239360,
+     "text": "našich nedokonalých",
+     "tokens": [
+      {
+       "text": "našich",
+       "utf8_start": 0,
+       "utf8_end": 7,
+       "start_seconds": 13.52,
+       "end_seconds": 13.76
+      },
+      {
+       "text": "nedokonalých",
+       "utf8_start": 8,
+       "utf8_end": 21,
+       "start_seconds": 13.84,
+       "end_seconds": 14.4
+      }
+     ]
+    },
+    {
+     "sequence": 1,
+     "sample_start": 207360,
+     "sample_count": 43520,
+     "padded_sample_count": 43520,
+     "text": "našich nedokonalých systémov.",
+     "tokens": [
+      {
+       "text": "našich",
+       "utf8_start": 0,
+       "utf8_end": 7,
+       "start_seconds": 0.72,
+       "end_seconds": 1.04
+      },
+      {
+       "text": "nedokonalých",
+       "utf8_start": 8,
+       "utf8_end": 21,
+       "start_seconds": 1.04,
+       "end_seconds": 1.68
+      },
+      {
+       "text": "systémov.",
+       "utf8_start": 22,
+       "utf8_end": 32,
+       "start_seconds": 2.16,
+       "end_seconds": 2.72
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "raw_utf8_hex": [
+     "6e61c5a1696368206e65646f6b6f6e616cc3bd6368",
+     "6e61c5a1696368206e65646f6b6f6e616cc3bd63682073797374c3a96d6f762e"
+    ],
+    "assembled_text": "našich nedokonalých systémov.",
+    "assembled_words": [
+     "našich",
+     "nedokonalých",
+     "systémov."
+    ],
+    "incomplete": false,
+    "reasons": [],
+    "automatic_insertion_allowed": true
+   },
+   "rationale": "Observed public_sk_longer boundary: word onsets agree inside the unchanged 160 ms bound while word ends drift by 240 ms across the chunk edge. Onset agreement plus exact token identity is the proof; requiring end agreement would reject a true overlap."
+  }
+ ]
+}

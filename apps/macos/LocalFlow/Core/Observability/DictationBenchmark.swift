@@ -27,7 +27,7 @@ final class DictationBenchmark {
     case releaseTimedOut(cycle: Int)
     case sessionFailed(cycle: Int)
     case notReady
-    case incompleteExport
+    case incompleteExport(lostSamples: UInt64, overwrittenSamples: UInt64, writeFailed: Bool)
   }
 
   struct CycleRow: Sendable, Codable {
@@ -45,6 +45,11 @@ final class DictationBenchmark {
     let audioQueueCapacity: UInt32?
     let recordingPeakBytes: UInt64
     let settledBytes: UInt64
+    /// begin() to the session's terminal transition, before cooldown or settling.
+    let endToEndNanoseconds: UInt64
+    /// Stage timings and stored-representation sizes from the coordinator, when
+    /// the session reached recognition. A capture-only cycle has none.
+    let processing: ProcessingMetrics?
     var settledMegabytes: Double { Double(settledBytes) / 1_000_000 }
   }
 
@@ -123,7 +128,11 @@ final class DictationBenchmark {
     }
     if let recorder {
       let report = await recorder.flush()
-      guard report.complete else { throw Failure.incompleteExport }
+      guard report.complete else {
+        throw Failure.incompleteExport(
+          lostSamples: report.lostSamples, overwrittenSamples: report.overwrittenSamples,
+          writeFailed: report.writeFailed)
+      }
     }
     return Report(
       modelID: identity.modelID, sourceRevision: identity.sourceRevision,
@@ -161,6 +170,12 @@ final class DictationBenchmark {
     let audioPeak = await coordinator.captureQueueOccupancy()
     if configuration.captureOnly { coordinator.cancel() } else { coordinator.release() }
     try await waitUntil(cycle: index) { !self.coordinator.busy }
+    let endToEnd = DispatchTime.now().uptimeNanoseconds &- started
+    // Only this cycle's session may supply processing figures; a stale record
+    // from an earlier cycle is not evidence for this row.
+    let processing = coordinator.lastProcessingMetrics.flatMap {
+      $0.sessionID == coordinator.controlTag?.sessionID ? $0 : nil
+    }
     if let current = sample() { peakBytes = max(peakBytes, current) }
     guard coordinator.state != .failed else { throw Failure.sessionFailed(cycle: index) }
     timings[lastState, default: 0] += DispatchTime.now().uptimeNanoseconds &- lastChange
@@ -192,11 +207,21 @@ final class DictationBenchmark {
         phase: .settled)
     }
 
+    let phase: ResourceRecorder.Phase = configuration.captureOnly ? .captureOnly : .settled
     recorder?.record(
-      phase: configuration.captureOnly ? .captureOnly : .settled, cycleID: cycleID,
+      phase: phase, cycleID: cycleID,
       rssBytes: settled, queueSource: .controlMailbox, queueDepth: controlPeak.depth,
       queueCapacity: controlPeak.capacity, queueHighWater: controlPeak.highWater,
       durationNanoseconds: DispatchTime.now().uptimeNanoseconds &- started)
+    if let audioPeak {
+      recorder?.record(
+        phase: phase, cycleID: cycleID, queueSource: .audioRaw, queueDepth: audioPeak.highWater,
+        queueCapacity: audioPeak.capacity, queueHighWater: audioPeak.highWater)
+    }
+    // Per-stage figures reach the recorder through the coordinator's own
+    // processingMeasured hook; the row keeps a copy so one JSON result is enough.
+    recorder?.record(
+      phase: phase, cycleID: cycleID, durationNanoseconds: endToEnd, metric: .endToEndDuration)
 
     return CycleRow(
       index: index, cycleID: cycleID, captureOnly: configuration.captureOnly, rapidReuse: rapid,
@@ -204,7 +229,8 @@ final class DictationBenchmark {
       transcribeNanoseconds: timings[.transcribing] ?? 0, releaseNanoseconds: releaseNanoseconds,
       controlQueuePeak: controlPeak.highWater, controlQueueCapacity: controlPeak.capacity,
       audioQueuePeak: audioPeak?.highWater, audioQueueCapacity: audioPeak?.capacity,
-      recordingPeakBytes: peakBytes, settledBytes: settled)
+      recordingPeakBytes: peakBytes, settledBytes: settled,
+      endToEndNanoseconds: endToEnd, processing: processing)
   }
 
   /// The runtime must be gone before the unloaded sample is taken, or the row

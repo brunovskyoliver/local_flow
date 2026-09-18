@@ -59,6 +59,13 @@ struct ShortcutPreference: Codable, Equatable {
     }
   }
 
+  /// Shift is the rewrite-bypass gesture (FR-012); a binding that already uses
+  /// it keeps its meaning and the gesture is unavailable.
+  var includesShift: Bool {
+    modifiers & UInt32(shiftKey) != 0
+      || (deviceModifiers ?? 0) & UInt64(NX_DEVICELSHIFTKEYMASK | NX_DEVICERSHIFTKEYMASK) != 0
+  }
+
   static let fnModifier: UInt32 = 1 << 23
   static let allowedModifiers = UInt32(cmdKey | controlKey | optionKey | shiftKey) | fnModifier
   static let modifierKeyCodes: Set<UInt32> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]

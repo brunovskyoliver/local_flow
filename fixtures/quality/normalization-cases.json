@@ -1,0 +1,1099 @@
+{
+  "schema_version": 1,
+  "kind": "authored_contract_cases",
+  "contract": "normalization-vocabulary-v1",
+  "review_status": "authored_spec_review_not_human_acceptance",
+  "notes": [
+    "N005 and N006 are identity. No spoken number/date inference. Entity changes require explicit vocabulary.",
+    "Human verdicts remain null. Invalid snapshots are rejected before normalization."
+  ],
+  "cases": [
+    {
+      "id": "ascii-whitespace",
+      "input": " \tHello  world \t",
+      "vocabulary": [],
+      "expected": {
+        "text": "Hello world",
+        "applied_rule_ids": [
+          "N003"
+        ],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N003"
+      ]
+    },
+    {
+      "id": "line-endings",
+      "input": "a\r\nb\rc",
+      "vocabulary": [],
+      "expected": {
+        "text": "a\nb\nc",
+        "applied_rule_ids": [
+          "N002"
+        ],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N002"
+      ]
+    },
+    {
+      "id": "line-edge-spaces",
+      "input": " a \n b ",
+      "vocabulary": [],
+      "expected": {
+        "text": "a\nb",
+        "applied_rule_ids": [
+          "N003"
+        ],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N003"
+      ]
+    },
+    {
+      "id": "nfc-slovak",
+      "input": "čas",
+      "vocabulary": [],
+      "expected": {
+        "text": "čas",
+        "applied_rule_ids": [
+          "N001"
+        ],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001"
+      ]
+    },
+    {
+      "id": "comma-slovak",
+      "input": "ahoj , svet",
+      "vocabulary": [],
+      "expected": {
+        "text": "ahoj, svet",
+        "applied_rule_ids": [
+          "N004"
+        ],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N004"
+      ]
+    },
+    {
+      "id": "comma-english",
+      "input": "hello , world",
+      "vocabulary": [],
+      "expected": {
+        "text": "hello, world",
+        "applied_rule_ids": [
+          "N004"
+        ],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N004"
+      ]
+    },
+    {
+      "id": "mixed",
+      "input": "Prosím , check logs",
+      "vocabulary": [],
+      "expected": {
+        "text": "Prosím, check logs",
+        "applied_rule_ids": [
+          "N004"
+        ],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N004"
+      ]
+    },
+    {
+      "id": "capitalization-identity",
+      "input": "hello. next sentence. NASA",
+      "vocabulary": [],
+      "expected": {
+        "text": "hello. next sentence. NASA",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N005",
+        "N006"
+      ]
+    },
+    {
+      "id": "duplicate-identity",
+      "input": "the the server",
+      "vocabulary": [],
+      "expected": {
+        "text": "the the server",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N005",
+        "N006"
+      ]
+    },
+    {
+      "id": "legitimate-repetition",
+      "input": "no no",
+      "vocabulary": [],
+      "expected": {
+        "text": "no no",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N005",
+        "N006"
+      ]
+    },
+    {
+      "id": "artifact-identity",
+      "input": "[blank_audio] <|endoftext|>",
+      "vocabulary": [],
+      "expected": {
+        "text": "[blank_audio] <|endoftext|>",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N005",
+        "N006"
+      ]
+    },
+    {
+      "id": "diacritics",
+      "input": "ľščťžýáíéôäň",
+      "vocabulary": [],
+      "expected": {
+        "text": "ľščťžýáíéôäň",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "nbsp",
+      "input": "hello world",
+      "vocabulary": [],
+      "expected": {
+        "text": "hello world",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "compatibility",
+      "input": "ＡＢＣ",
+      "vocabulary": [],
+      "expected": {
+        "text": "ＡＢＣ",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "decimal",
+      "input": "1 , 5",
+      "vocabulary": [],
+      "expected": {
+        "text": "1 , 5",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "punctuation",
+      "input": "hello ! world ; next",
+      "vocabulary": [],
+      "expected": {
+        "text": "hello ! world ; next",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "identifier",
+      "input": "foo_bar PostgreSQL17 /tmp/a https://a.b x@y.sk `a , b`",
+      "vocabulary": [],
+      "expected": {
+        "text": "foo_bar PostgreSQL17 /tmp/a https://a.b x@y.sk `a , b`",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "unexpected-control",
+      "input": "a\u0001b",
+      "vocabulary": [],
+      "expected": {
+        "text": "a\u0001b",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": "unexpected_control",
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "date-identity",
+      "input": "16 September 2026",
+      "vocabulary": [],
+      "expected": {
+        "text": "16 September 2026",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "time-identity",
+      "input": "14:30",
+      "vocabulary": [],
+      "expected": {
+        "text": "14:30",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "ambiguous-date",
+      "input": "09/10/26",
+      "vocabulary": [],
+      "expected": {
+        "text": "09/10/26",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "spoken-number-identity",
+      "input": "one seven two dot nineteen",
+      "vocabulary": [],
+      "expected": {
+        "text": "one seven two dot nineteen",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "technical-preserved",
+      "input": "PostgreSQL 17 Odoo 19 Cisco NCS55A1 macOS 26 M5 172.19.223.20 172.29.2.185",
+      "vocabulary": [],
+      "expected": {
+        "text": "PostgreSQL 17 Odoo 19 Cisco NCS55A1 macOS 26 M5 172.19.223.20 172.29.2.185",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N001",
+        "N002",
+        "N003",
+        "N004"
+      ]
+    },
+    {
+      "id": "postgres",
+      "input": "postgresql 17",
+      "vocabulary": [
+        {
+          "id": "postgres",
+          "canonical": "PostgreSQL 17",
+          "aliases": [],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "PostgreSQL 17",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "postgres"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "odoo",
+      "input": "odoo 19",
+      "vocabulary": [
+        {
+          "id": "odoo",
+          "canonical": "Odoo 19",
+          "aliases": [],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "Odoo 19",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "odoo"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "cisco",
+      "input": "cisco ncs55a1",
+      "vocabulary": [
+        {
+          "id": "cisco",
+          "canonical": "Cisco NCS55A1",
+          "aliases": [],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "Cisco NCS55A1",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "cisco"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "macos",
+      "input": "macos 26",
+      "vocabulary": [
+        {
+          "id": "macos",
+          "canonical": "macOS 26",
+          "aliases": [],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "macOS 26",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "macos"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "chip",
+      "input": "m5",
+      "vocabulary": [
+        {
+          "id": "chip",
+          "canonical": "M5",
+          "aliases": [],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "M5",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "chip"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "ip-one",
+      "input": "host alpha",
+      "vocabulary": [
+        {
+          "id": "ip-one",
+          "canonical": "172.19.223.20",
+          "aliases": [
+            "host alpha"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "172.19.223.20",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "ip-one"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "ip-two",
+      "input": "host beta",
+      "vocabulary": [
+        {
+          "id": "ip-two",
+          "canonical": "172.29.2.185",
+          "aliases": [
+            "host beta"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "172.29.2.185",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "ip-two"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "date",
+      "input": "release date",
+      "vocabulary": [
+        {
+          "id": "date",
+          "canonical": "16 September 2026",
+          "aliases": [
+            "release date"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "16 September 2026",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "date"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "time",
+      "input": "meeting time",
+      "vocabulary": [
+        {
+          "id": "time",
+          "canonical": "14:30",
+          "aliases": [
+            "meeting time"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "14:30",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "time"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "alias-substring",
+      "input": "local flower",
+      "vocabulary": [
+        {
+          "id": "lf",
+          "canonical": "LocalFlow",
+          "aliases": [
+            "local flow"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "local flower",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "protected-substring",
+      "input": "https://localflow.dev foo_localflow",
+      "vocabulary": [
+        {
+          "id": "lf",
+          "canonical": "LocalFlow",
+          "aliases": [],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "https://localflow.dev foo_localflow",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "adjacent-replacements",
+      "input": "local flow local flow",
+      "vocabulary": [
+        {
+          "id": "lf",
+          "canonical": "LocalFlow",
+          "aliases": [
+            "local flow"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "LocalFlow LocalFlow",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "lf"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "overlapping-aliases",
+      "input": "a b c",
+      "vocabulary": [
+        {
+          "id": "x",
+          "canonical": "X",
+          "aliases": [
+            "a b"
+          ],
+          "enabled": true
+        },
+        {
+          "id": "y",
+          "canonical": "Y",
+          "aliases": [
+            "b c"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "a b c",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": "ambiguous_vocabulary",
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "conflicting-keys",
+      "input": "shared",
+      "vocabulary": [
+        {
+          "id": "x",
+          "canonical": "X",
+          "aliases": [
+            "shared"
+          ],
+          "enabled": true
+        },
+        {
+          "id": "y",
+          "canonical": "Y",
+          "aliases": [
+            "SHARED"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "shared",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "reject_conflicting_source",
+        "idempotent": null
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "target-chain",
+      "input": "a",
+      "vocabulary": [
+        {
+          "id": "b",
+          "canonical": "b",
+          "aliases": [
+            "a"
+          ],
+          "enabled": true
+        },
+        {
+          "id": "c",
+          "canonical": "c",
+          "aliases": [
+            "b"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "a",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "reject_target_chain",
+        "idempotent": null
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "cycle-rejected",
+      "input": "a",
+      "vocabulary": [
+        {
+          "id": "a",
+          "canonical": "a",
+          "aliases": [
+            "b"
+          ],
+          "enabled": true
+        },
+        {
+          "id": "b",
+          "canonical": "b",
+          "aliases": [
+            "a"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "a",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "reject_conflicting_source",
+        "idempotent": null
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "expansion-capacity",
+      "input": "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x",
+      "vocabulary": [
+        {
+          "id": "expand",
+          "canonical": "expanded",
+          "aliases": [
+            "x"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": "normalization_capacity",
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "adjacent-distinct-replacements",
+      "input": "alpha beta",
+      "vocabulary": [
+        {
+          "id": "a",
+          "canonical": "A",
+          "aliases": [
+            "alpha"
+          ],
+          "enabled": true
+        },
+        {
+          "id": "b",
+          "canonical": "B",
+          "aliases": [
+            "beta"
+          ],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "A B",
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "applied_entry_ids": [
+          "a",
+          "b"
+        ],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "quoted-comma",
+      "input": "\"hello , world\"",
+      "vocabulary": [],
+      "expected": {
+        "text": "\"hello , world\"",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "N004"
+      ]
+    },
+    {
+      "id": "diacritics-not-folded",
+      "input": "cislo",
+      "vocabulary": [
+        {
+          "id": "number",
+          "canonical": "číslo",
+          "aliases": [],
+          "enabled": true
+        }
+      ],
+      "expected": {
+        "text": "cislo",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "disabled-entry",
+      "input": "local flow",
+      "vocabulary": [
+        {
+          "id": "lf",
+          "canonical": "LocalFlow",
+          "aliases": [
+            "local flow"
+          ],
+          "enabled": false
+        }
+      ],
+      "expected": {
+        "text": "local flow",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "valid",
+        "idempotent": true
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    },
+    {
+      "id": "disabled-conflict",
+      "input": "shared",
+      "vocabulary": [
+        {
+          "id": "x",
+          "canonical": "X",
+          "aliases": [
+            "shared"
+          ],
+          "enabled": true
+        },
+        {
+          "id": "y",
+          "canonical": "Y",
+          "aliases": [
+            "shared"
+          ],
+          "enabled": false
+        }
+      ],
+      "expected": {
+        "text": "shared",
+        "applied_rule_ids": [],
+        "applied_entry_ids": [],
+        "reason": null,
+        "snapshot_validation": "reject_conflicting_source",
+        "idempotent": null
+      },
+      "human_meaning_verdict": null,
+      "covers_rule_ids": [
+        "V001"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localflow.org/schemas/rewrite-event.schema.json",
+  "title": "LocalFlow rewrite event v1",
+  "description": "One NDJSON line of the POST /v1/rewrite response. Order: zero or one accepted, any number of progress and (when requested) delta, then exactly one result or error. Each line is at most 8,192 bytes except result, whose text may reach 65,536 bytes.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/accepted"
+    },
+    {
+      "$ref": "#/$defs/progress"
+    },
+    {
+      "$ref": "#/$defs/delta"
+    },
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/error"
+    }
+  ],
+  "$defs": {
+    "request_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "identity_string": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "request_id"
+      ],
+      "properties": {
+        "event": {
+          "const": "accepted"
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        }
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "request_id",
+        "generated_chars"
+      ],
+      "properties": {
+        "event": {
+          "const": "progress"
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "generated_chars": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "request_id",
+        "text"
+      ],
+      "properties": {
+        "event": {
+          "const": "delta"
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 8000
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "event",
+        "schema_version",
+        "request_id",
+        "mode",
+        "text",
+        "unchanged",
+        "server",
+        "backend",
+        "prompt_version",
+        "shield",
+        "timing"
+      ],
+      "properties": {
+        "event": {
+          "const": "result"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "clean",
+            "polished",
+            "concise"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536,
+          "description": "Rewritten text after server-side validation; at most min(4 x input bytes, 65,536) UTF-8 bytes; contains no placeholder glyph."
+        },
+        "unchanged": {
+          "type": "boolean",
+          "description": "Advisory; the client recomputes it by comparison."
+        },
+        "server": {
+          "type": "object",
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/identity_string"
+            },
+            "version": {
+              "$ref": "#/$defs/identity_string"
+            }
+          }
+        },
+        "backend": {
+          "type": "object",
+          "required": [
+            "kind",
+            "model"
+          ],
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/identity_string"
+            },
+            "model": {
+              "$ref": "#/$defs/identity_string"
+            }
+          }
+        },
+        "prompt_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "shield": {
+          "type": "object",
+          "required": [
+            "version",
+            "placeholders",
+            "restored"
+          ],
+          "properties": {
+            "version": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "placeholders": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "restored": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "timing": {
+          "type": "object",
+          "description": "A span the server cannot measure is omitted, never zero.",
+          "properties": {
+            "queue_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "backend_first_token_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "backend_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "request_id",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "event": {
+          "const": "error"
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "invalid_request",
+            "unsupported_version",
+            "unauthorized",
+            "too_large",
+            "backend_unavailable",
+            "backend_timeout",
+            "backend_first_token_timeout",
+            "backend_error",
+            "output_too_large",
+            "shield_restore_failed",
+            "server_busy"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Plain language for display; never echoes the input."
+        }
+      }
+    }
+  }
+}

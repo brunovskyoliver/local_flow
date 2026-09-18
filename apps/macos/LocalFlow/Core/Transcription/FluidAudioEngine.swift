@@ -6,6 +6,7 @@ import Foundation
 /// The lifecycle coordinator owns the returned runtime and is the only caller of this factory.
 struct FluidAudioEngineFactory: Sendable {
   let descriptor: LocalModelDescriptor
+  var evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil
 
   func makeRuntime() async throws -> any TranscriptionRuntime {
     try descriptor.descriptor.validate()
@@ -39,27 +40,45 @@ struct FluidAudioEngineFactory: Sendable {
       vocabulary: vocabulary, version: .v3)
     let manager = AsrManager(
       config: ASRConfig(sampleRate: 16_000, parallelChunkConcurrency: 1), models: models)
-    return FluidAudioRuntime(manager: manager)
+    return FluidAudioRuntime(manager: manager, evidenceObserver: evidenceObserver)
   }
 }
 
 actor FluidAudioRuntime: TranscriptionRuntime {
   private let manager: AsrManager
 
-  init(manager: AsrManager) { self.manager = manager }
+  private let evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)?
+
+  init(
+    manager: AsrManager,
+    evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil
+  ) {
+    self.manager = manager
+    self.evidenceObserver = evidenceObserver
+  }
 
   func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
     let actualCount = samples.count
     let bounded = try Self.paddedWindow(samples)
     var decoderState = TdtDecoderState.make(decoderLayers: AsrModelVersion.v3.decoderLayers)
     let result = try await manager.transcribe(bounded, decoderState: &decoderState, language: nil)
-    guard (result.tokenTimings?.count ?? 0) <= 16_384 else { throw DictationFailure.invalidResult }
+    guard result.text.utf8.count <= 65_536, (result.tokenTimings?.count ?? 0) <= 16_384,
+      (result.tokenTimings ?? []).reduce(0, { min(65_537, $0 + min(65_537, $1.token.utf8.count)) })
+        <= 65_536
+    else { throw DictationFailure.invalidResult }
+    let evidence = RecognitionEvidence(
+      text: result.text, samples: actualCount, paddedSamples: bounded.count,
+      timingsAvailable: result.tokenTimings != nil,
+      tokens: (result.tokenTimings ?? []).map {
+        .init(text: $0.token, start: .init($0.startTime), end: .init($0.endTime))
+      })
+    try await evidenceObserver?(evidence)
     let timings = try buildWordTimings(from: result.tokenTimings ?? []).map { timing in
       try Self.clampedToken(
         text: timing.word, start: timing.startTime, end: timing.endTime, sampleCount: actualCount)
     }
     guard result.text.utf8.count <= 65_536 else { throw DictationFailure.invalidResult }
-    return TranscriptionWindow(text: result.text, tokens: Array(timings))
+    return TranscriptionWindow(text: result.text, tokens: Array(timings), evidence: evidence)
   }
 
   nonisolated static func clampedToken(text: String, start: Double, end: Double, sampleCount: Int)
@@ -83,4 +102,28 @@ actor FluidAudioRuntime: TranscriptionRuntime {
   func shutdown() async {
     await manager.cleanup()
   }
+}
+
+/// Immutable SDK evidence, captured before word building/clamping.
+struct RecognitionEvidence: Codable, Sendable {
+  struct Timing: Codable, Sendable {
+    let value: Double?
+    let invalid: String?
+    init(_ value: Double) {
+      self.value = value.isFinite ? value : nil
+      invalid =
+        value.isFinite
+        ? nil : (value.isNaN ? "nan" : (value > 0 ? "positive_infinity" : "negative_infinity"))
+    }
+  }
+  struct Token: Codable, Sendable {
+    let text: String
+    let start: Timing
+    let end: Timing
+  }
+  let text: String
+  let samples: Int
+  let paddedSamples: Int
+  let timingsAvailable: Bool
+  let tokens: [Token]
 }

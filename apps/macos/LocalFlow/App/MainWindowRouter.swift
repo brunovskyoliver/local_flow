@@ -4,12 +4,14 @@ import SwiftUI
 
 enum LocalFlowPage: String, CaseIterable, Identifiable {
   case history = "Transcriptions"
+  case dictionary = "Dictionary"
   case settings = "Settings"
 
   var id: Self { self }
   var symbol: String {
     switch self {
     case .history: "list.bullet.rectangle"
+    case .dictionary: "character.book.closed"
     case .settings: "gearshape"
     }
   }

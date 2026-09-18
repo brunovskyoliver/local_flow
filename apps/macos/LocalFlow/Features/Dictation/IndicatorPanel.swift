@@ -6,14 +6,27 @@ import SwiftUI
 private final class IndicatorPresentation {
   var state: DictationSession.State = .idle
   var level: Float = 0
+  var notice: LearnedNotice?
+  var actionNotice: RewriteActionNotice?
   @ObservationIgnored var cancel: () -> Void = {}
+  @ObservationIgnored var undo: () -> Void = {}
+  @ObservationIgnored var action: () -> Void = {}
 }
 
 private struct IndicatorHost: View {
   let presentation: IndicatorPresentation
   var body: some View {
-    DictationIndicator(
-      state: presentation.state, level: presentation.level, cancel: presentation.cancel)
+    if IndicatorPanel.showsPanel(presentation.state) {
+      DictationIndicator(
+        state: presentation.state, level: presentation.level, cancel: presentation.cancel)
+    } else if let notice = presentation.notice {
+      LearnedNoticeView(notice: notice, undo: presentation.undo).id(notice.entryID)
+    } else if let notice = presentation.actionNotice {
+      ActionNoticeView(
+        message: notice.message, actionTitle: notice.canRetry ? "Retry" : nil,
+        actionIdentifier: "rewrite.notice.retry", action: presentation.action
+      ).id(notice.id)
+    }
   }
 }
 
@@ -102,12 +115,62 @@ final class IndicatorPanel: NSPanel {
     presentation.state = state
     if let message = Self.announcement(from: previous, to: state) { announce(message) }
     guard Self.showsPanel(state) else {
-      orderOut(nil)
+      if presentation.notice != nil {
+        present(width: LearnedNoticeView.width)
+      } else if presentation.actionNotice != nil {
+        present(width: ActionNoticeView.width)
+      } else {
+        orderOut(nil)
+      }
       return
     }
     self.targetPoint = targetPoint
     presentation.level = level.isFinite ? min(1, max(0, level)) : 0
     presentation.cancel = cancel
+    present(width: 153)
+  }
+
+  /// The learned-correction bubble uses the same panel; dictation states take precedence.
+  func showNotice(_ notice: LearnedNotice?, targetPoint: NSPoint? = nil, undo: @escaping () -> Void)
+  {
+    let previous = presentation.notice
+    presentation.notice = notice
+    presentation.undo = undo
+    guard !Self.showsPanel(presentation.state) else { return }
+    guard let notice else {
+      if presentation.actionNotice != nil {
+        present(width: ActionNoticeView.width)
+      } else {
+        orderOut(nil)
+      }
+      return
+    }
+    if previous?.entryID != notice.entryID { announce("Added \(notice.canonical) to dictionary.") }
+    if let targetPoint { self.targetPoint = targetPoint }
+    present(width: LearnedNoticeView.width)
+  }
+
+  /// A rewrite notice with one action (Retry). The learned-correction bubble
+  /// and dictation states take precedence; the message is announced once.
+  func showActionNotice(
+    _ notice: RewriteActionNotice?, targetPoint: NSPoint? = nil, action: @escaping () -> Void
+  ) {
+    let previous = presentation.actionNotice
+    presentation.actionNotice = notice
+    presentation.action = action
+    if let notice, previous?.id != notice.id { announce(notice.message) }
+    guard !Self.showsPanel(presentation.state), presentation.notice == nil else { return }
+    guard let notice else {
+      orderOut(nil)
+      return
+    }
+    _ = notice
+    if let targetPoint { self.targetPoint = targetPoint }
+    present(width: ActionNoticeView.width)
+  }
+
+  private func present(width: CGFloat) {
+    if frame.width != width { setContentSize(NSSize(width: width, height: 38)) }
     observeGeometryChanges()
     reposition()
     if !isVisible { orderFrontRegardless() }
@@ -117,6 +180,8 @@ final class IndicatorPanel: NSPanel {
     geometryObservers = nil
     targetPoint = nil
     presentation.cancel = {}
+    presentation.undo = {}
+    presentation.action = {}
     super.orderOut(sender)
   }
 
@@ -145,15 +210,17 @@ final class IndicatorPanel: NSPanel {
       NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) }
       ?? NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
       ?? NSScreen.main
-    if let screen { setFrameOrigin(Self.origin(in: screen.visibleFrame)) }
+    if let screen { setFrameOrigin(Self.origin(in: screen.visibleFrame, width: frame.width)) }
   }
 
-  static func origin(in visibleFrame: NSRect) -> NSPoint {
-    NSPoint(x: visibleFrame.midX - 59, y: visibleFrame.minY + 20)
+  /// Centers the 118-point waveform; wider content centers itself the same way.
+  static func origin(in visibleFrame: NSRect, width: CGFloat = 153) -> NSPoint {
+    NSPoint(x: visibleFrame.midX - 59 - max(0, width - 153) / 2, y: visibleFrame.minY + 20)
   }
 
   static func showsPanel(_ state: DictationSession.State) -> Bool {
-    [.preparing, .recording, .transcribing, .persisting, .inserting, .cancelling].contains(state)
+    [.preparing, .recording, .transcribing, .persisting, .rewriting, .inserting, .cancelling]
+      .contains(state)
   }
 
   static func announcement(
@@ -166,6 +233,7 @@ final class IndicatorPanel: NSPanel {
     case .recording: return "Recording."
     case .transcribing: return "Transcribing. Microphone off."
     case .persisting: return "Saving dictation."
+    case .rewriting: return "Rewriting text. Microphone off."
     case .inserting: return "Inserting saved text."
     case .cancelling: return "Cancelling dictation."
     case .recovery: return "Text saved for review."

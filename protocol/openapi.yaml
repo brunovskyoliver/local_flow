@@ -1,6 +1,174 @@
 openapi: 3.1.0
 info:
   title: LocalFlow API
-  version: 0.0.0
-  description: Design scaffold. No endpoints are implemented or committed for Feature 001.
-paths: {}
+  version: 0.1.0
+  description: >-
+    LocalFlow rewrite protocol v1 (Feature 003). Meeting and summary schemas remain
+    provisional design shapes without paths. Breaking changes to the rewrite shape
+    require schema_version 2.
+paths:
+  /v1/rewrite/health:
+    get:
+      summary: Rewrite service health and identity
+      description: >-
+        Content-free. Serves the client's connection test. The server probes its backend
+        with a bounded, cached check (at most once per 5 seconds).
+      security:
+        - bearer: []
+        - {}
+      responses:
+        "200":
+          description: Service present
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewriteHealth"
+        "401":
+          $ref: "#/components/responses/RewriteError"
+        "403":
+          $ref: "#/components/responses/RewriteError"
+        "503":
+          $ref: "#/components/responses/RewriteError"
+  /v1/rewrite:
+    post:
+      summary: Rewrite one dictation transcript
+      description: >-
+        Request bodies over 262,144 bytes are rejected with 413 before parsing. The
+        response is newline-delimited JSON; each line is one rewrite event. Order: zero
+        or one accepted, any number of progress and (if stream_deltas) delta, then
+        exactly one result or error, then end of stream. Lines are at most 8,192 bytes
+        except result, whose text may reach 65,536 bytes.
+      security:
+        - bearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/rewrite-request.schema.json"
+      responses:
+        "200":
+          description: Event stream
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "./schemas/rewrite-event.schema.json"
+        "400":
+          description: invalid_request or unsupported_version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewriteErrorBody"
+        "401":
+          $ref: "#/components/responses/RewriteError"
+        "403":
+          $ref: "#/components/responses/RewriteError"
+        "413":
+          description: too_large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewriteErrorBody"
+        "429":
+          description: server_busy (concurrency limit reached; no queueing)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewriteErrorBody"
+        "503":
+          description: backend_unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewriteErrorBody"
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Sent whenever the client has a credential stored for the endpoint origin.
+  responses:
+    RewriteError:
+      description: Error with a bounded JSON body where possible
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RewriteErrorBody"
+  schemas:
+    RewriteErrorBody:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_request
+                - unsupported_version
+                - unauthorized
+                - too_large
+                - backend_unavailable
+                - backend_timeout
+                - backend_first_token_timeout
+                - backend_error
+                - output_too_large
+                - shield_restore_failed
+                - server_busy
+            message:
+              type: string
+              maxLength: 512
+    RewriteHealth:
+      type: object
+      required:
+        - schema_version
+        - service
+        - protocol_versions
+        - server
+        - modes
+        - backend
+        - prompt_versions
+        - shield_version
+      properties:
+        schema_version:
+          const: 1
+        service:
+          const: localflow-rewrite
+        protocol_versions:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+        server:
+          type: object
+          required: [name, version]
+          properties:
+            name: { type: string, maxLength: 128 }
+            version: { type: string, maxLength: 128 }
+        modes:
+          type: array
+          items:
+            type: string
+            enum: [clean, polished, concise]
+        backend:
+          type: object
+          required: [state, kind, model]
+          properties:
+            state:
+              type: string
+              enum: [ready, loading, unavailable]
+            kind: { type: string, maxLength: 128 }
+            model: { type: string, maxLength: 128 }
+        prompt_versions:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 1
+        shield_version:
+          type: integer
+          minimum: 0
+          description: 0 when shielding is off.

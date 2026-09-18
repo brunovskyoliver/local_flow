@@ -138,6 +138,146 @@ final class ResourceRecorderTests: XCTestCase {
       XCTFail("Invalid metrics invalidate export")
     } catch { XCTAssertEqual(error as? ResourceRecorder.Failure, .incomplete) }
   }
+  /// Processing metrics are labeled durations, sizes and counts only. A
+  /// mislabeled or oversized value is loss, and the exported lines contain no
+  /// field that could hold recognized text or vocabulary content.
+  func testProcessingMetricsAreLabeledBoundedAndContentFree() async throws {
+    let directory = directory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let recorder = try ResourceRecorder(directory: directory, identity: identity())
+    XCTAssertFalse(recorder.record(phase: .idle, payloadBytes: 12), "bytes need a metric")
+    XCTAssertFalse(
+      recorder.record(phase: .idle, durationNanoseconds: 5, metric: .metadataBytes),
+      "a byte metric cannot carry a duration")
+    XCTAssertFalse(
+      recorder.record(
+        phase: .idle, metric: .metadataBytes,
+        payloadBytes: ResourceRecorder.maximumPayloadBytes + 1))
+    XCTAssertFalse(
+      recorder.record(
+        phase: .idle, metric: .windowCount, itemCount: ResourceRecorder.maximumItemCount + 1))
+    let lossy = await recorder.flush()
+    XCTAssertEqual(lossy.lostSamples, 4)
+
+    // The writer may be held while recording. The bounded ring accepts the
+    // values without performing disk I/O on the producer.
+    let queue = DispatchQueue(label: "metrics-test-held")
+    queue.suspend()
+    let clean = try ResourceRecorder(
+      directory: directory.appendingPathComponent("clean"), identity: identity(), writerQueue: queue
+    )
+    let result = TranscriptionResult(text: "x", incomplete: false)
+    let metrics = ProcessingMetrics(
+      sessionID: UUID(), inputSamples: 16_000, result: result, persistenceNanoseconds: 7,
+      endToEndNanoseconds: 9)
+    clean.record(processing: metrics)
+    XCTAssertTrue(
+      clean.record(
+        phase: .modelLoading, durationNanoseconds: 3, metric: .modelLoadDuration))
+    queue.resume()
+    let report = try await clean.close()
+    XCTAssertTrue(report.complete)
+    // Two durations (persistence, end to end; no stage timings without detail),
+    // four sizes, four counts and the model load line.
+    XCTAssertEqual(report.samplesWritten, 11)
+    var metricsSeen: [String] = []
+    for line in try Data(contentsOf: report.files[0]).split(separator: 10) {
+      XCTAssertLessThanOrEqual(line.count + 1, ResourceRecorder.maximumRecordBytes)
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+      for forbidden in ["text", "entryIDs", "ruleIDs", "target", "path", "error"] {
+        XCTAssertNil(object[forbidden])
+      }
+      if let metric = object["metric"] as? String { metricsSeen.append(metric) }
+    }
+    XCTAssertEqual(
+      metricsSeen.sorted(),
+      [
+        "appliedEntryCount", "appliedRuleCount", "assembledTextBytes", "completionReasonCount",
+        "endToEndDuration", "metadataBytes", "modelLoadDuration", "normalizedTextBytes",
+        "persistenceDuration", "rawTextBytes", "windowCount",
+      ])
+  }
+
+  /// Rewrite metrics carry a typed bucket, a bounded identity key and a typed
+  /// outcome; refusals carry a reason and bucket only. The report groups by
+  /// identity, prints "unmeasured" below five samples and counts refusals.
+  func testRewriteMetricsGroupByIdentityAndRefusalsCountPerReason() async throws {
+    let directory = directory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let recorder = try ResourceRecorder(directory: directory, identity: identity())
+    XCTAssertFalse(
+      recorder.record(phase: .idle, durationNanoseconds: 5, metric: .rewriteTotalDuration),
+      "rewrite spans need a bucket and identity")
+    XCTAssertFalse(
+      recorder.record(
+        phase: .idle, durationNanoseconds: 5, metric: .rewriteTotalDuration, bucket: .short,
+        rewriteIdentity: "some transcript words"), "identity keys are bounded tokens")
+    XCTAssertFalse(
+      recorder.record(
+        phase: .idle, metric: .rewritePreAdmissionRefusal, itemCount: 1, bucket: .short,
+        rewriteIdentity: "m+p1+s1", refusal: .attemptLimit), "refusals carry no identity")
+    XCTAssertFalse(
+      recorder.record(phase: .idle, metric: .windowCount, itemCount: 1, bucket: .short),
+      "rewrite dimensions belong to rewrite metrics only")
+    XCTAssertFalse(
+      recorder.record(
+        phase: .idle, metric: .rewriteOutcome, itemCount: 1, bucket: .short,
+        rewriteIdentity: "m+p1+s1", outcome: "attempt_limit"), "outcomes are post-admission only")
+    XCTAssertFalse(
+      recorder.record(
+        phase: .idle, metric: .rewriteInputScalars, itemCount: 20_001, bucket: .short,
+        rewriteIdentity: "m+p1+s1"))
+    let lossy = await recorder.flush()
+    XCTAssertEqual(lossy.lostSamples, 6)
+
+    let queue = DispatchQueue(label: "metrics-test-held")
+    queue.suspend()
+    let clean = try ResourceRecorder(
+      directory: directory.appendingPathComponent("clean"), identity: identity(), writerQueue: queue
+    )
+    func record(
+      _ total: Int, identity: String, bucket: RewriteInputBucket, outcome: String = "succeeded"
+    ) {
+      clean.record(
+        rewrite: RewriteMetricRecord(
+          transcriptionID: UUID(), bucket: bucket, identityKey: identity, ordinal: 1,
+          inputScalars: 40, requestBytes: 200, responseBytes: 300, totalMilliseconds: total,
+          firstByteMilliseconds: total / 4, networkMilliseconds: total - 50,
+          backendFirstTokenMilliseconds: total / 5, backendMilliseconds: total * 3 / 4,
+          outcome: outcome, fallbackUsed: outcome != "succeeded", shieldFailure: false))
+    }
+    for total in [900, 950, 1_000, 1_050, 1_100] {
+      record(total, identity: "qwen+p1+s1", bucket: .short)
+    }
+    for total in [1_800, 1_900] { record(total, identity: "llama+p1+s0", bucket: .short) }
+    record(700, identity: "qwen+p1+s1", bucket: .ordinary, outcome: "timeout")
+    clean.record(refusal: .concurrencyLimit, bucket: .short)
+    clean.record(refusal: .concurrencyLimit, bucket: .ordinary)
+    clean.record(refusal: .attemptLimit, bucket: .long)
+    queue.resume()
+    let report = try await clean.close()
+    XCTAssertTrue(report.complete)
+    // 8 attempts x (5 durations + 2 sizes + 2 counts + outcome) + 1 fallback + 3 refusals.
+    XCTAssertEqual(report.samplesWritten, 8 * 10 + 1 + 3)
+    for line in try Data(contentsOf: report.files[0]).split(separator: 10) {
+      XCTAssertLessThanOrEqual(line.count + 1, ResourceRecorder.maximumRecordBytes)
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+      for forbidden in ["text", "inputText", "outputText", "credential", "endpoint", "error"] {
+        XCTAssertNil(object[forbidden])
+      }
+    }
+    let rendered = try ResourceRecorder.rewriteReport(files: report.files)
+    XCTAssertTrue(rendered.contains("short llama+p1+s0 n=2"), rendered)
+    XCTAssertTrue(rendered.contains("unmeasured (fewer than 5 samples)"), rendered)
+    XCTAssertTrue(rendered.contains("short qwen+p1+s1 n=5"), rendered)
+    XCTAssertTrue(rendered.contains("total median=1000 p95=1100"), rendered)
+    XCTAssertTrue(rendered.contains("short gate (median <= 1500): PASS"), rendered)
+    XCTAssertTrue(rendered.contains("short target (median <= 1000): ACHIEVED"), rendered)
+    XCTAssertTrue(rendered.contains("ordinary qwen+p1+s1 n=1"), rendered)
+    XCTAssertTrue(rendered.contains("attempt_limit: 1"), rendered)
+    XCTAssertTrue(rendered.contains("concurrency_limit: 2"), rendered)
+  }
+
   private func completion(in files: [URL]) throws -> [String: Any] {
     var found: [[String: Any]] = []
     for file in files {

@@ -4,6 +4,21 @@ import XCTest
 @testable import LocalFlow
 
 final class AppPreferencesTests: XCTestCase {
+  @MainActor func testRewriteModeDefaultsPersistenceAndUnknownValue() {
+    let suite = "LocalFlow-mode-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    XCTAssertEqual(AppPreferences(defaults: defaults).rewriteDefaultMode, .clean)
+    for mode in RewriteMode.allCases {
+      let preferences = AppPreferences(defaults: defaults)
+      preferences.rewriteDefaultMode = mode
+      XCTAssertEqual(AppPreferences(defaults: defaults).rewriteDefaultMode, mode)
+      XCTAssertFalse(SettingsViewModel.rewriteModeDefinition(mode).isEmpty)
+    }
+    defaults.set("future-mode", forKey: "rewriteDefaultMode")
+    XCTAssertEqual(AppPreferences(defaults: defaults).rewriteDefaultMode, .clean)
+  }
+
   @MainActor func testAppearanceAndSetupSurviveRelaunch() {
     let suite = "LocalFlow-preferences-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!

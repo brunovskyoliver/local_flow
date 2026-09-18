@@ -1,0 +1,5 @@
+# Client rewrite memory
+
+Date: 2026-09-17. Hardware: Mac17,2 (Apple M5), 32 GiB. macOS 26.6.2 (25G83). Working tree based on `4680c54d526750fbbc73d06b35ae09003d808d5a`, with uncommitted Features 002/003 changes. HTTP measurements use a freshly built flowd 0.2.0 (Go 1.23.4); no app build participates. Backend: separately running MTPLX 2.11.3 at `127.0.0.1:8000/v1`, model `youssofal-qwen3.5-4b-mtplx-optimized-speed`. Clean prompt 5, Polished 3, Concise 3; protocol 1; shield 1 when on, 0 when off. Loopback HTTP, separate app/backend credentials, backend timeout 20 s and first-token timeout 5 s. The backend was already serving requests; cold-start state was not measured. The planned 9B model was not served. Raw outputs remain in private ignored directories.
+
+SC-009 / FR-019: unmeasured. Both signed-app 20-cycle runs (rewriting off and on), the unloaded baseline, recording-only overhead comparison and vmmap inspection remain pending at the owner's request. No max(5 MB, 5%) comparison is possible. The separately measured flowd RSS in [server-memory.md](server-memory.md) does not establish any client budget.

@@ -1,10 +1,151 @@
 import AVFoundation
 import CryptoKit
+import FluidAudio
 import XCTest
 
 @testable import LocalFlow
 
 final class RuntimeCompatibilityTests: XCTestCase {
+  /// Opt-in regression reproducer. Frozen speech stays local; assertions contain no transcript.
+  func testOptInEmptyTailRecognition() async throws {
+    let env = ProcessInfo.processInfo.environment
+    guard let model = env["LOCALFLOW_EMPTY_TAIL_MODEL"],
+      let corpus = env["LOCALFLOW_EMPTY_TAIL_CORPUS"]
+    else { throw XCTSkip("Set the explicit empty-tail model and corpus variables.") }
+    let corpusURL = URL(fileURLWithPath: corpus)
+    let manifestURL = corpusURL.appendingPathComponent("manifest.json")
+    XCTAssertEqual(
+      try QualityArtifacts.hashFile(manifestURL),
+      "10b9873c6b3f05fcb1b22a96a014a08c7a7f60566e8176ad2b799a1adbbd988b")
+    let manifest = try QualityArtifacts.read(QualityManifest.self, from: manifestURL)
+    let fixture = try XCTUnwrap(manifest.fixtures.first { $0.id == "public-da85b5ebc08e9db2f3ec" })
+    let audioURL = try fixture.audioURL(root: corpusURL)
+    XCTAssertEqual(try QualityArtifacts.hashFile(audioURL), fixture.sha256)
+    let file = try AVAudioFile(
+      forReading: audioURL, commonFormat: .pcmFormatFloat32, interleaved: false)
+    XCTAssertEqual(file.length, 263_040)
+    func samples(start: Int, count: Int) throws -> [Float] {
+      file.framePosition = AVAudioFramePosition(start)
+      let buffer = try XCTUnwrap(
+        AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(count)))
+      try file.read(into: buffer, frameCount: AVAudioFrameCount(count))
+      XCTAssertEqual(Int(buffer.frameLength), count)
+      return Array(
+        UnsafeBufferPointer(start: try XCTUnwrap(buffer.floatChannelData?[0]), count: count))
+    }
+    let descriptorURL = try XCTUnwrap(
+      Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
+    let descriptor = try JSONDecoder().decode(
+      ModelDescriptor.self, from: Data(contentsOf: descriptorURL))
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provisioner = ModelProvisioner(
+      descriptor: descriptor, rootURL: root.appendingPathComponent("model"))
+    _ = try await provisioner.install(from: URL(fileURLWithPath: model))
+    let lifecycle = ModelLifecycleCoordinator {
+      try await FluidAudioEngineFactory(descriptor: provisioner.verifiedLocalDescriptor())
+        .makeRuntime()
+    }
+    let lease = try await lifecycle.acquire(session: UUID())
+    do {
+      if env["LOCALFLOW_EMPTY_TAIL_FRESH"] != "1" {
+        let first = try await lifecycle.transcribe(
+          lease, samples: samples(start: 0, count: 207_763))
+        XCTAssertFalse(first.text.isEmpty)
+      }
+      let tail = try await lifecycle.transcribe(
+        lease, samples: samples(start: 207_763, count: 55_277))
+      XCTAssertFalse(tail.text.isEmpty, "Frozen speech-containing tail returned empty recognition")
+      try await lifecycle.finish(lease)
+      await lifecycle.releaseIfIdle(generation: lease.generation)
+    } catch {
+      await lifecycle.cancelAndJoin(lease)
+      throw error
+    }
+  }
+
+  /// Explicit network opt-in. Exercises the same bounded, hashed provisioner used by ASR while
+  /// keeping the VAD capability in its own descriptor and installation directory.
+  func testOptInProvisionVADModel() async throws {
+    guard let path = ProcessInfo.processInfo.environment["LOCALFLOW_VAD_PROVISION_OUTPUT"],
+      !path.isEmpty
+    else { throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_VAD_PROVISION_OUTPUT explicitly.") }
+    let descriptorURL = try XCTUnwrap(
+      Bundle.main.url(forResource: "silero-vad", withExtension: "json"))
+    let descriptor = try JSONDecoder().decode(
+      ModelDescriptor.self, from: Data(contentsOf: descriptorURL))
+    XCTAssertEqual(descriptor.effectiveCapability, .voiceActivityDetection)
+    let provisioner = ModelProvisioner(
+      descriptor: descriptor, rootURL: URL(fileURLWithPath: path, isDirectory: true))
+    let local = try await provisioner.download()
+    XCTAssertEqual(local.descriptor, descriptor)
+    _ = try await provisioner.verifiedLocalDescriptor()
+  }
+
+  func testOptInVADResourceProbe() async throws {
+    let env = ProcessInfo.processInfo.environment
+    let keys = [
+      "LOCALFLOW_MODEL_PROBE_ROOT", "LOCALFLOW_VAD_MODEL_ROOT", "LOCALFLOW_VAD_RESOURCE_OUTPUT",
+    ]
+    guard keys.allSatisfy({ !(env[$0] ?? "").isEmpty }) else {
+      throw XCTSkip("Set all three TEST_RUNNER_LOCALFLOW VAD resource variables.")
+    }
+    let asrURL = try XCTUnwrap(Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
+    let vadURL = try XCTUnwrap(Bundle.main.url(forResource: "silero-vad", withExtension: "json"))
+    let asr = try JSONDecoder().decode(ModelDescriptor.self, from: Data(contentsOf: asrURL))
+    let vad = try JSONDecoder().decode(ModelDescriptor.self, from: Data(contentsOf: vadURL))
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let asrProvisioner = ModelProvisioner(
+      descriptor: asr, rootURL: root.appendingPathComponent("asr"))
+    _ = try await asrProvisioner.install(from: URL(fileURLWithPath: env[keys[0]]!))
+    let lifecycle = ModelLifecycleCoordinator {
+      let local = try await asrProvisioner.verifiedLocalDescriptor()
+      return try await FluidAudioEngineFactory(
+        descriptor: local
+      ).makeRuntime()
+    }
+    let baseline = try XCTUnwrap(ResourceRecorder.residentBytes())
+    let lease = try await lifecycle.acquire(session: UUID())
+    let asrActive = try XCTUnwrap(ResourceRecorder.residentBytes())
+    let vadBase = root.appendingPathComponent("vad", isDirectory: true)
+    let vadProvisioner = ModelProvisioner(
+      descriptor: vad, rootURL: vadBase.appendingPathComponent("Models/silero-vad"))
+    _ = try await vadProvisioner.install(from: URL(fileURLWithPath: env[keys[1]]!))
+    ModelHub.offlineMode = true
+    defer { ModelHub.offlineMode = false }
+    let clock = ContinuousClock()
+    let started = clock.now
+    let manager = try await VadManager(config: VadConfig(), modelDirectory: vadBase)
+    let loaded = clock.now
+    _ = try await manager.process([Float](repeating: 0.001, count: VadManager.chunkSize))
+    let exercised = try XCTUnwrap(ResourceRecorder.residentBytes())
+    await lifecycle.cancelAndJoin(lease)
+    let duration = started.duration(to: loaded).components
+    let loadSeconds = Double(duration.seconds) + Double(duration.attoseconds) * 1e-18
+    let body: [String: Any] = [
+      "schema_version": 1,
+      "vad_capability": vad.effectiveCapability.rawValue,
+      "vad_model_id": vad.modelID,
+      "vad_revision": vad.sourceRevision,
+      "vad_descriptor_sha256": try QualityArtifacts.hashFile(vadURL),
+      "vad_artifact_bytes": vad.files.reduce(Int64(0)) { $0 + $1.size },
+      "baseline_rss_bytes": baseline,
+      "asr_active_rss_bytes": asrActive,
+      "asr_plus_vad_rss_bytes": exercised,
+      "vad_rss_increment_while_asr_active_bytes": exercised >= asrActive
+        ? exercised - asrActive : 0,
+      "vad_load_seconds": loadSeconds,
+      "offline_mode_during_load": true,
+      "hardware": env["LOCALFLOW_QUALITY_HARDWARE"] ?? "unknown_not_supplied",
+      "os": ProcessInfo.processInfo.operatingSystemVersionString,
+    ]
+    let data = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+    try QualityArtifacts.write(
+      data, to: URL(fileURLWithPath: env[keys[2]]!), replace: false,
+      limit: QualityArtifacts.small)
+  }
+
   /// Explicit opt-in only. Uses locally supplied weights and generated silence;
   /// ordinary repository checks must never load or download a speech model.
   func testOptInPinnedRuntimeLoadsDecodesAndReleases() async throws {
@@ -169,8 +310,9 @@ final class RuntimeCompatibilityTests: XCTestCase {
         let lease = try await lifecycle.acquire(session: UUID())
         lastLease = lease
         do {
-          let result = await WindowedTranscriber(lifecycle: lifecycle).transcribe(
-            spool: spool, lease: lease, sampleCount: samples)
+          let result = await WindowedTranscriber(lifecycle: lifecycle, profile: .historical)
+            .transcribe(
+              spool: spool, lease: lease, sampleCount: samples)
           outputs.append(
             SpeechOutput(
               id: fixture.id, text: result.text, incomplete: result.incomplete, samples: samples,
@@ -208,6 +350,60 @@ final class RuntimeCompatibilityTests: XCTestCase {
     } catch {
       try? handle.close()
       throw error
+    }
+  }
+
+  /// Explicitly provisioned inputs only. All speech stays in the private run directory.
+  func testOptInQualityFixtures() async throws {
+    let env = ProcessInfo.processInfo.environment
+    let keys = [
+      "LOCALFLOW_MODEL_PROBE_ROOT", "LOCALFLOW_SPEECH_FIXTURE_ROOT", "LOCALFLOW_SPEECH_MANIFEST",
+      "LOCALFLOW_QUALITY_OUTPUT",
+    ]
+    guard keys.allSatisfy({ !(env[$0] ?? "").isEmpty }) else {
+      throw XCTSkip("Set all four TEST_RUNNER_LOCALFLOW quality input/output variables.")
+    }
+    do {
+      let descriptorURL = try XCTUnwrap(
+        Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
+      let descriptor = try JSONDecoder().decode(
+        ModelDescriptor.self, from: Data(contentsOf: descriptorURL))
+      let root = try makeSpoolRoot()
+      defer { try? FileManager.default.removeItem(at: root) }
+      let provisioner = ModelProvisioner(
+        descriptor: descriptor, rootURL: root.appendingPathComponent("model"))
+      _ = try await provisioner.install(from: URL(fileURLWithPath: env[keys[0]]!))
+      let recorder = QualityEvidenceRecorder()
+      let lifecycle = ModelLifecycleCoordinator {
+        let local = try await provisioner.verifiedLocalDescriptor()
+        return try await FluidAudioEngineFactory(
+          descriptor: local,
+          evidenceObserver: { evidence in
+            try await recorder.append(evidence)
+          }
+        ).makeRuntime()
+      }
+      let config = [
+        "engine": "FluidAudio", "sdk": "0.15.7", "model_revision": descriptor.sourceRevision,
+        "model_descriptor_sha256": try QualityArtifacts.hashFile(descriptorURL),
+        "language": "automatic_no_hint", "window_samples": "239360", "overlap_samples": "32000",
+        "padding_minimum": "4800", "assembly": "historical_window_assembly",
+        "normalization": "unavailable_historical_stage_absent",
+        "vocabulary": "unavailable_historical_stage_absent",
+        "os": ProcessInfo.processInfo.operatingSystemVersionString,
+        "hardware": env["LOCALFLOW_QUALITY_HARDWARE"] ?? "unknown_not_supplied",
+        "power": env["LOCALFLOW_QUALITY_POWER"] ?? "unknown_not_supplied",
+        "build": env["LOCALFLOW_QUALITY_BUILD"] ?? "unknown_not_supplied",
+        "dirty": env["LOCALFLOW_QUALITY_DIRTY"] ?? "unknown_not_supplied",
+        "resource_protocol": "not_measured",
+      ]
+      try await QualityEvaluationRunner(lifecycle: lifecycle, recorder: recorder).run(
+        manifestURL: URL(fileURLWithPath: env[keys[2]]!),
+        fixtureRoot: URL(fileURLWithPath: env[keys[1]]!),
+        output: URL(fileURLWithPath: env[keys[3]]!), config: config)
+    } catch {
+      // Error descriptions from audio/JSON APIs may contain paths or transcript snippets.
+      XCTFail("quality_evaluation_failed; inspect private inputs and ledger")
     }
   }
 
@@ -278,4 +474,144 @@ private actor RecordingSpeechRuntime: TranscriptionRuntime {
   }
 
   func shutdown() async { await runtime.shutdown() }
+}
+
+extension RuntimeCompatibilityTests {
+  /// Opt-in chunk-geometry experiment. Requires a provisioned ASR model; the silence probe
+  /// additionally requires a provisioned FluidAudio VAD directory. Nothing is downloaded.
+  func testOptInChunkGeometryExperiment() async throws {
+    let env = ProcessInfo.processInfo.environment
+    let keys = [
+      "LOCALFLOW_MODEL_PROBE_ROOT", "LOCALFLOW_SPEECH_FIXTURE_ROOT", "LOCALFLOW_SPEECH_MANIFEST",
+      "LOCALFLOW_CHUNK_OUTPUT", "LOCALFLOW_CHUNK_STRATEGY",
+    ]
+    guard keys.allSatisfy({ !(env[$0] ?? "").isEmpty }) else {
+      throw XCTSkip("Set all five TEST_RUNNER_LOCALFLOW chunk experiment variables.")
+    }
+    do {
+      let overlap = Int(env["LOCALFLOW_CHUNK_OVERLAP"] ?? "32000") ?? 32_000
+      let search = Int(env["LOCALFLOW_CHUNK_SEARCH_START"] ?? "0") ?? 0
+      let threshold = Float(env["LOCALFLOW_CHUNK_VAD_THRESHOLD"] ?? "0.2") ?? 0.2
+      let descriptorURL = try XCTUnwrap(
+        Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
+      let descriptor = try JSONDecoder().decode(
+        ModelDescriptor.self, from: Data(contentsOf: descriptorURL))
+      let root = try makeSpoolRoot()
+      defer { try? FileManager.default.removeItem(at: root) }
+      let provisioner = ModelProvisioner(
+        descriptor: descriptor, rootURL: root.appendingPathComponent("model"))
+      _ = try await provisioner.install(from: URL(fileURLWithPath: env[keys[0]]!))
+      let recorder = ChunkEvidenceRecorder()
+      let lifecycle = ModelLifecycleCoordinator {
+        let local = try await provisioner.verifiedLocalDescriptor()
+        return try await FluidAudioEngineFactory(
+          descriptor: local,
+          evidenceObserver: { evidence in
+            try await recorder.append(evidence)
+          }
+        ).makeRuntime()
+      }
+      // The production pipeline is fixed contiguous geometry plus the empty-vocabulary
+      // normalizer; it is scored as a fourth strategy without changing the earlier three.
+      let normalize = env["LOCALFLOW_CHUNK_NORMALIZE"] == "1"
+      var experiment = QualityChunkExperiment(
+        lifecycle: lifecycle, recorder: recorder,
+        strategy: .init(
+          id: env[keys[4]]!, overlapSamples: overlap, silenceSearchStart: search,
+          maximumSpeechProbability: env[keys[4]] == "vad-preferred" ? threshold : nil,
+          normalize: normalize))
+      var vadIdentity = "unused"
+      if search > 0 {
+        let directory = try XCTUnwrap(env["LOCALFLOW_VAD_MODEL_ROOT"])
+        let vadDescriptorURL = try XCTUnwrap(
+          Bundle.main.url(forResource: "silero-vad", withExtension: "json"))
+        let vadDescriptor = try JSONDecoder().decode(
+          ModelDescriptor.self, from: Data(contentsOf: vadDescriptorURL))
+        try vadDescriptor.validate()
+        let vadBase = root.appendingPathComponent("vad", isDirectory: true)
+        let vadProvisioner = ModelProvisioner(
+          descriptor: vadDescriptor,
+          rootURL: vadBase.appendingPathComponent("Models/silero-vad", isDirectory: true))
+        _ = try await vadProvisioner.install(from: URL(fileURLWithPath: directory))
+        _ = try await vadProvisioner.verifiedLocalDescriptor()
+        ModelHub.offlineMode = true
+        defer { ModelHub.offlineMode = false }
+        let manager = try await VadManager(config: VadConfig(), modelDirectory: vadBase)
+        vadIdentity = "fluidaudio_silero_vad_256ms@" + vadDescriptor.sourceRevision
+        // `threshold` keeps the last region chunk under a fixed probability; `minimum` takes the
+        // quietest region chunk regardless of level and never falls back.
+        let mode = env["LOCALFLOW_CHUNK_VAD_MODE"] ?? "threshold"
+        experiment.silence = { samples, start in
+          // One bounded region only; the probe never sees more than a single chunk of audio.
+          let results = try await manager.process(samples)
+          var chosen: (index: Int, probability: Float)?
+          if mode == "minimum" {
+            var best = Float.infinity
+            for (index, result) in results.enumerated() where result.probability <= best {
+              best = result.probability
+              chosen = (index, result.probability)
+            }
+          } else {
+            for (index, result) in results.enumerated() where result.probability <= threshold {
+              chosen = (index, result.probability)
+            }
+          }
+          guard let chosen else { return nil }
+          let index = chosen.index
+          let base = index * VadManager.chunkSize
+          guard mode == "minimum-refined" else {
+            return .init(
+              sample: start + base + VadManager.chunkSize / 2,
+              speechProbability: chosen.probability)
+          }
+          // Refine inside the chosen 256 ms region to the quietest 32 ms sub-window.
+          let step = 512
+          var best = Float.infinity
+          var offset = VadManager.chunkSize / 2
+          var cursor = base
+          while cursor + step <= min(base + VadManager.chunkSize, samples.count) {
+            var energy: Float = 0
+            for sample in samples[cursor..<(cursor + step)] { energy += sample * sample }
+            if energy < best {
+              best = energy
+              offset = cursor - base + step / 2
+            }
+            cursor += step
+          }
+          return .init(
+            sample: start + base + offset, speechProbability: chosen.probability)
+        }
+      }
+      let config = [
+        "engine": "FluidAudio", "sdk": "0.15.7", "model_revision": descriptor.sourceRevision,
+        "model_descriptor_sha256": try QualityArtifacts.hashFile(descriptorURL),
+        "language": "automatic_no_hint",
+        "window_samples": String(ChunkPlanner.maximumSamples),
+        "overlap_samples": String(overlap), "padding_minimum": "4800",
+        "chunk_strategy": env[keys[4]]!, "silence_search_start": String(search),
+        "silence_probe": vadIdentity,
+        "silence_threshold": search > 0 ? String(threshold) : "unused",
+        "vad_candidate_criterion": env[keys[4]] == "vad-preferred"
+          ? "speech_probability_lte_0.2_else_nominal" : "minimum_probability_unconditional",
+        "silence_mode": search > 0 ? (env["LOCALFLOW_CHUNK_VAD_MODE"] ?? "threshold") : "unused",
+        "assembly": TranscriptAssembler.version,
+        "normalization": normalize ? TranscriptNormalizer.version : "unavailable_not_requested",
+        "vocabulary": normalize
+          ? "empty_snapshot_" + TranscriptionQualityDetail.emptyVocabularyHash
+          : "unavailable_not_requested",
+        "os": ProcessInfo.processInfo.operatingSystemVersionString,
+        "hardware": env["LOCALFLOW_QUALITY_HARDWARE"] ?? "unknown_not_supplied",
+        "power": env["LOCALFLOW_QUALITY_POWER"] ?? "unknown_not_supplied",
+        "build": env["LOCALFLOW_QUALITY_BUILD"] ?? "unknown_not_supplied",
+        "dirty": env["LOCALFLOW_QUALITY_DIRTY"] ?? "unknown_not_supplied",
+        "resource_protocol": "not_measured",
+      ]
+      try await experiment.run(
+        manifestURL: URL(fileURLWithPath: env[keys[2]]!),
+        fixtureRoot: URL(fileURLWithPath: env[keys[1]]!),
+        output: URL(fileURLWithPath: env[keys[3]]!), config: config)
+    } catch {
+      XCTFail("chunk_experiment_failed; inspect private inputs and ledger")
+    }
+  }
 }

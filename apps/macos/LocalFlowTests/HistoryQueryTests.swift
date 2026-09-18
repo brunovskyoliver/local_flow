@@ -20,6 +20,105 @@ final class HistoryQueryTests: XCTestCase {
     return try await store.commit(reservation: try await store.reserve(), entry: entry)
   }
 
+  func testSearchUsesNormalizedParentAndSelectedStagesSurviveRestart() async throws {
+    let (store, url) = try makeStore()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let source = try makeQualityEnvelope(raw: "raw_only e\u{301}", text: "assembled_only")
+    let base = try XCTUnwrap(source.detail)
+    let detail = try TranscriptionQualityDetail(
+      rawWindows: base.rawWindows, assembledText: base.assembledText,
+      normalizedText: "normalized_only",
+      assemblyVersion: "test-assembly", normalizationVersion: "test-normalization",
+      provenance: base.provenance)
+    let entry = try TranscriptionEntry(
+      id: source.entry.id, text: "normalized_only",
+      createdAtMilliseconds: 1, quality: .complete, stopReason: .keyRelease)
+    let saved = try await store.commit(
+      reservation: try await store.reserve(),
+      envelope: .init(entry: entry, detail: detail))
+    let restarted = try TranscriptionStore(path: url.path)
+    for query in ["raw_only", "assembled_only"] {
+      let page = try await restarted.page(query: query)
+      XCTAssertTrue(page.entries.isEmpty)
+    }
+    let page = try await restarted.page(query: "normalized_only")
+    XCTAssertEqual(page.entries.map(\.text), ["normalized_only"])
+    let selected = try await restarted.selectedEnvelope(saved.id)
+    XCTAssertEqual(selected.detail?.contentHash, detail.contentHash)
+    XCTAssertEqual(
+      selected.detail?.rawWindows.first?.text.utf8.map { $0 },
+      base.rawWindows.first?.text.utf8.map { $0 })
+    XCTAssertEqual(selected.detail?.assembledText, "assembled_only")
+    let cancelled = Task { try await restarted.selectedEnvelope(saved.id) }
+    cancelled.cancel()
+    do {
+      _ = try await cancelled.value
+      XCTFail("Cancelled detail read succeeded")
+    } catch is CancellationError {}
+    try await restarted.deleteConfirmed(id: saved.id, revision: saved.revision)
+    do {
+      _ = try await restarted.selectedEnvelope(saved.id)
+      XCTFail("Deleted detail returned")
+    } catch { XCTAssertEqual(error as? TranscriptionStore.Error, .missingEntry) }
+  }
+
+  func testRawDetailPreservesReceivedOrderOverlapAndInvalidTimingLabel() async throws {
+    let (store, url) = try makeStore()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let source = try makeQualityEnvelope(text: "repeated words remain")
+    let base = try XCTUnwrap(source.detail)
+    let windows: [TranscriptionQualityDetail.RawWindow] = [
+      .init(
+        sequence: 0, sampleStart: 0, sampleCount: 12_000, paddedSampleCount: 12_000,
+        text: "first repeated", timings: nil, timingValidation: .unavailable),
+      .init(
+        sequence: 1, sampleStart: 8_000, sampleCount: 8_000, paddedSampleCount: 8_000,
+        text: "repeated second",
+        timings: [.init(text: "repeated", start: .init(.nan), end: .init(0.5))],
+        timingValidation: .invalid),
+    ]
+    let detail = try TranscriptionQualityDetail(
+      rawWindows: windows, assembledText: base.assembledText,
+      normalizedText: source.entry.text, assemblyVersion: "test-assembly",
+      normalizationVersion: "identity-v1",
+      provenance: base.provenance)
+    let saved = try await store.commit(
+      reservation: try await store.reserve(),
+      envelope: .init(entry: source.entry, detail: detail))
+    let selected = try await store.selectedEnvelope(saved.id)
+    XCTAssertEqual(selected.detail?.rawWindows.map(\.text), ["first repeated", "repeated second"])
+    XCTAssertEqual(
+      selected.detail?.rawWindows.map(\.historyLabel),
+      ["Window 1 · samples 0–12000", "Window 2 · samples 8000–16000"])
+    XCTAssertEqual(selected.detail?.rawWindows.last?.timingValidation, .invalid)
+    XCTAssertEqual(selected.detail?.rawWindows.last?.timings?.first?.start.invalid, .nan)
+  }
+
+  func testOversizedStoredDetailIsRejectedWithoutReturningAnEnvelope() async throws {
+    let (store, url) = try makeStore()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let source = try makeQualityEnvelope()
+    let saved = try await store.commit(reservation: try await store.reserve(), envelope: source)
+    let database = try DatabaseQueue(path: url.path)
+    try await database.write { db in
+      // Simulate external corruption; normal writes already enforce the schema's byte cap.
+      try db.execute(sql: "PRAGMA ignore_check_constraints=ON")
+      defer { try? db.execute(sql: "PRAGMA ignore_check_constraints=OFF") }
+      try db.execute(
+        sql: "UPDATE transcription_quality SET detail_json=? WHERE transcription_id=?",
+        arguments: [
+          String(repeating: "x", count: TranscriptionQualityDetail.maximumSerializedBytes + 1),
+          saved.id.uuidString,
+        ])
+    }
+    do {
+      _ = try await store.selectedEnvelope(saved.id)
+      XCTFail("Oversized detail returned")
+    } catch { XCTAssertEqual(error as? TranscriptionStore.Error, .damagedDatabase) }
+    let summary = try await store.get(saved.id)
+    XCTAssertEqual(summary?.text, source.entry.text)
+  }
+
   func testTimestampTiesRoundTripAndWatermarkExcludesNewerRows() async throws {
     let (store, url) = try makeStore()
     defer { try? FileManager.default.removeItem(at: url) }

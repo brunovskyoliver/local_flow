@@ -1,0 +1,2053 @@
+{
+  "corpus_version": 1,
+  "items": [
+    {
+      "id": "en-01",
+      "language": "en",
+      "category": "dictation",
+      "text": "Peter can you please move the Odoo deployment to Monday because Friday we have network maintenance",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Peter"
+        },
+        {
+          "class": "identifier",
+          "value": "Odoo"
+        },
+        {
+          "class": "date",
+          "value": "Monday"
+        },
+        {
+          "class": "date",
+          "value": "Friday"
+        }
+      ],
+      "facts": [
+        {
+          "type": "ownership",
+          "owner": "Peter",
+          "action_keywords": [
+            "move",
+            "deployment"
+          ]
+        },
+        {
+          "type": "deadline",
+          "when": "Monday"
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural written English, keeping Peter, Odoo, Monday, Friday and the network maintenance reason; do not summarize."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-02",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Na Proxmoxe potrebujeme update-núť ten VM a potom checknúť NetBird configuration.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Proxmox"
+        },
+        {
+          "class": "identifier",
+          "value": "VM"
+        },
+        {
+          "class": "identifier",
+          "value": "NetBird"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-03",
+      "language": "en",
+      "category": "dictation",
+      "text": "I will not restart the production server.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "negation",
+          "markers": [
+            "not"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-04",
+      "language": "en",
+      "category": "dictation",
+      "text": "Anna will deploy. Peter will review.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Anna"
+        },
+        {
+          "class": "identifier",
+          "value": "Peter"
+        }
+      ],
+      "facts": [
+        {
+          "type": "ownership",
+          "owner": "Anna",
+          "action_keywords": [
+            "deploy"
+          ]
+        },
+        {
+          "type": "ownership",
+          "owner": "Peter",
+          "action_keywords": [
+            "review"
+          ]
+        },
+        {
+          "type": "commitment",
+          "count": 2
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-05",
+      "language": "en",
+      "category": "dictation",
+      "text": "Please send 15 units and keep 15 units here.",
+      "protected": [
+        {
+          "class": "number",
+          "value": "15"
+        }
+      ],
+      "facts": [
+        {
+          "type": "quantity",
+          "value": "15"
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-06",
+      "language": "en",
+      "category": "dictation",
+      "text": "The invoice is €120.50 and the budget is USD 500.",
+      "protected": [
+        {
+          "class": "currency",
+          "value": "€120.50"
+        },
+        {
+          "class": "currency",
+          "value": "USD 500"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-07",
+      "language": "en",
+      "category": "dictation",
+      "text": "The maintenance starts on 2026-10-02 at 09:30.",
+      "protected": [
+        {
+          "class": "date",
+          "value": "2026-10-02"
+        },
+        {
+          "class": "time",
+          "value": "09:30"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-08",
+      "language": "en",
+      "category": "dictation",
+      "text": "Please open https://example.com/status and email ops@example.com.",
+      "protected": [
+        {
+          "class": "url",
+          "value": "https://example.com/status"
+        },
+        {
+          "class": "email",
+          "value": "ops@example.com"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-09",
+      "language": "en",
+      "category": "dictation",
+      "text": "The config is in /etc/localflow/config.json and we need v1.2.3.",
+      "protected": [
+        {
+          "class": "path",
+          "value": "/etc/localflow/config.json"
+        },
+        {
+          "class": "version",
+          "value": "v1.2.3"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-10",
+      "language": "en",
+      "category": "dictation",
+      "text": "Before you approve the deployment, please check that the staging backup has completed, that Anna has reviewed the migration, and that the customer support team has received the maintenance notice.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Anna"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-11",
+      "language": "en",
+      "category": "dictation",
+      "text": "I will prepare the release notes after the tests finish. Please keep the existing configuration until the team has checked the new endpoint and confirmed that the rollback instructions still work.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "commitment",
+          "count": 2
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-12",
+      "language": "en",
+      "category": "dictation",
+      "text": "Do not delete the archive after copying the report, because the finance team still needs the original files for its review and we have not yet confirmed the new retention policy.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "negation",
+          "markers": [
+            "not"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-13",
+      "language": "en",
+      "category": "dictation",
+      "text": "Peter will check the deployment before lunch. Anna will review the documentation after the backup completes, and the operations team will wait for both checks before opening the service to everyone.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Peter"
+        },
+        {
+          "class": "identifier",
+          "value": "Anna"
+        }
+      ],
+      "facts": [
+        {
+          "type": "ownership",
+          "owner": "Peter",
+          "action_keywords": [
+            "check"
+          ]
+        },
+        {
+          "type": "ownership",
+          "owner": "Anna",
+          "action_keywords": [
+            "review"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-14",
+      "language": "en",
+      "category": "dictation",
+      "text": "We need 24 seats for the workshop, but please reserve 6 of those for the support team and leave the remaining seats available until the training coordinator confirms the final attendance list.",
+      "protected": [
+        {
+          "class": "number",
+          "value": "24"
+        },
+        {
+          "class": "number",
+          "value": "6"
+        }
+      ],
+      "facts": [
+        {
+          "type": "quantity",
+          "value": "24"
+        },
+        {
+          "type": "quantity",
+          "value": "6"
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-15",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Peter prosím pošli správu v pondelok.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Peter"
+        },
+        {
+          "class": "date",
+          "value": "pondelok"
+        }
+      ],
+      "facts": [
+        {
+          "type": "deadline",
+          "when": "pondelok"
+        },
+        {
+          "type": "ownership",
+          "owner": "Peter",
+          "action_keywords": [
+            "pošli"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-16",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Nemôžem nasadiť zmenu bez zálohy.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "negation",
+          "span": "nemôžem"
+        },
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-17",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Pošlem správu. Urobím zálohu.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "commitment",
+          "count": 2
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-18",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Prosím objednaj 15 kusov a ďalších 15 nechaj v sklade.",
+      "protected": [
+        {
+          "class": "number",
+          "value": "15"
+        }
+      ],
+      "facts": [
+        {
+          "type": "quantity",
+          "value": "15"
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-19",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Faktúra je na 250 EUR a platbu pošli zajtra.",
+      "protected": [
+        {
+          "class": "currency",
+          "value": "250 EUR"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-20",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Stretnutie bude 2026-11-04 o 14:45.",
+      "protected": [
+        {
+          "class": "date",
+          "value": "2026-11-04"
+        },
+        {
+          "class": "time",
+          "value": "14:45"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-21",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Správu pošli na podpora@example.com a otvor https://example.com/pomoc.",
+      "protected": [
+        {
+          "class": "email",
+          "value": "podpora@example.com"
+        },
+        {
+          "class": "url",
+          "value": "https://example.com/pomoc"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-22",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Súbor je v /tmp/zaloha.txt a verzia je v2.4.1.",
+      "protected": [
+        {
+          "class": "path",
+          "value": "/tmp/zaloha.txt"
+        },
+        {
+          "class": "version",
+          "value": "v2.4.1"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-23",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Server má adresu 192.168.1.20 a patrí do siete pre testovanie.",
+      "protected": [
+        {
+          "class": "ip",
+          "value": "192.168.1.20"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-24",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Anna skontroluje správu a Peter pripraví zálohu.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Anna"
+        },
+        {
+          "class": "identifier",
+          "value": "Peter"
+        }
+      ],
+      "facts": [
+        {
+          "type": "ownership",
+          "owner": "Anna",
+          "action_keywords": [
+            "skontroluje"
+          ]
+        },
+        {
+          "type": "ownership",
+          "owner": "Peter",
+          "action_keywords": [
+            "pripraví"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-25",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Pred nasadením prosím skontroluj, či je záloha hotová a či tím podpory dostal správu o plánovanej údržbe, pretože zákazníci potrebujú vedieť, kedy bude služba znovu dostupná a kto im pomôže.",
+      "protected": [],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-26",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Prosím ponechaj pôvodné nastavenia, kým dokončíme kontrolu novej verzie a overíme postup obnovy, aby sme pri chybe vedeli bezpečne vrátiť službu do pôvodného stavu bez straty údajov našich zákazníkov.",
+      "protected": [],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-27",
+      "language": "sk",
+      "category": "dictation",
+      "text": "V piatok dokončíme kontrolu dokumentácie a v pondelok otvoríme prístup pre celý tím, ale až po potvrdení, že sa záloha dá obnoviť a všetky dôležité súbory sú na správnom mieste.",
+      "protected": [
+        {
+          "class": "date",
+          "value": "piatok"
+        },
+        {
+          "class": "date",
+          "value": "pondelok"
+        }
+      ],
+      "facts": [
+        {
+          "type": "deadline",
+          "when": "pondelok"
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-28",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Prosím check the backup na Proxmox serveri.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Proxmox"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-29",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Môžeš update the configuration a potom pošli správu.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-30",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Na serveri potrebujeme check the deployment pre Odoo.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "Odoo"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-31",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Prosím check the endpoint na 10.10.0.8 pred nasadením.",
+      "protected": [
+        {
+          "class": "ip",
+          "value": "10.10.0.8"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-32",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Môžeš check the log v /var/log/flowd.log prosím.",
+      "protected": [
+        {
+          "class": "path",
+          "value": "/var/log/flowd.log"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-33",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Prosím update the release na v3.0.2 až po zálohe.",
+      "protected": [
+        {
+          "class": "version",
+          "value": "v3.0.2"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-34",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Pošli the report na dev@example.com prosím.",
+      "protected": [
+        {
+          "class": "email",
+          "value": "dev@example.com"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-35",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Prosím check the status na https://example.net/health a pošli správu.",
+      "protected": [
+        {
+          "class": "url",
+          "value": "https://example.net/health"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-36",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Na NetBird potrebujeme check the configuration a potom update the deployment, ale prosím počkaj na potvrdenie od tímu podpory, pretože zákazníci ešte používajú pôvodnú službu a potrebujú dostať správu o zmene.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "NetBird"
+        }
+      ],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "mixed-37",
+      "language": "mixed",
+      "category": "technical",
+      "text": "Prosím check the backup predtým, než spustíme update the deployment na testovacom serveri, a potom pošli správu celému tímu, aby všetci vedeli, ktoré nastavenia treba overiť pred ďalšou plánovanou zmenou.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "language_mix",
+          "expected": [
+            "sk",
+            "en"
+          ]
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-38",
+      "language": "en",
+      "category": "dictation",
+      "text": "Please keep the API_KEY identifier unchanged in the example.",
+      "protected": [
+        {
+          "class": "identifier",
+          "value": "API_KEY"
+        }
+      ],
+      "facts": [],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "sk-39",
+      "language": "sk",
+      "category": "dictation",
+      "text": "Nikdy neposielaj heslo v správe.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "negation",
+          "span": "nikdy neposielaj"
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    },
+    {
+      "id": "en-40",
+      "language": "en",
+      "category": "dictation",
+      "text": "Please prepare the deployment checklist before the planning meeting. Include the backup status, the test results, the rollback instructions, and the person responsible for each check. I will review the checklist after lunch and send my comments to the team. Keep the existing maintenance window until everyone confirms that the new timing works for their customers. If a check fails, leave the service on the current version and record the failure in the release notes. We need the full record so the next engineer can understand what happened without repeating the investigation or guessing which step was completed.",
+      "protected": [],
+      "facts": [
+        {
+          "type": "commitment",
+          "count": 2
+        }
+      ],
+      "review": {
+        "clean": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Fix grammar, punctuation and obvious fillers; keep wording."
+        },
+        "polished": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Use natural professional sentences."
+        },
+        "concise": {
+          "names": "Preserve every name and identifier.",
+          "negation": "Preserve polarity.",
+          "ownership": "Keep each action with its owner.",
+          "commitments": "Keep every commitment and deadline.",
+          "language_mix": "Preserve the input languages and diacritics.",
+          "not_summarized": "Keep all factual and actionable content.",
+          "no_invented_content": "Add no facts.",
+          "style": "Remove repetition and clutter."
+        }
+      }
+    }
+  ]
+}

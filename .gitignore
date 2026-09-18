@@ -26,3 +26,18 @@ __pycache__/
 *.pyc
 *.test
 *.out
+
+# Private evaluation evidence (including text and human reviews)
+fixtures/quality/private/
+quality-runs/
+fixtures/rewrite/private/
+build/rewrite-quality-*/
+
+# A frozen quality manifest contains private verbatim references.
+fixtures/quality/manifest.json
+
+# Third-party corpus audio and archives stay local
+*.mp3
+*.ogg
+*.flac
+*.parquet

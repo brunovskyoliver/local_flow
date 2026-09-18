@@ -55,6 +55,12 @@ final class ShortcutController {
     case permissionDenied, accessibilityRequired, unavailable, conflict, invalidBinding
   }
   var onEvent: ((ShortcutHoldState.Event) -> Void)?
+  /// True when the most recent `.released` was emitted with Shift physically
+  /// held and Shift is not part of the binding: skip rewriting for that one
+  /// dictation (FR-012). Read by the release handler, reset on the next press.
+  private(set) var releaseBypassedRewrite = false
+  /// False when Shift belongs to the configured shortcut; Settings says so.
+  var bypassGestureAvailable: Bool { !preference.includesShift }
   var onCancel: (() -> Void)?
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "shortcut")
   private var cancellation = ShortcutCancellationState()
@@ -66,6 +72,7 @@ final class ShortcutController {
   private var preference = ShortcutPreference()
   private var priorityActive = false
   private var consumedKey = false
+  private var shiftHeld = false
 
   private let flagsState: (CGEventSourceStateID) -> CGEventFlags
   private let keyState: (CGEventSourceStateID, CGKeyCode) -> Bool
@@ -162,6 +169,10 @@ final class ShortcutController {
   /// Returns true only for events belonging to this binding. No key text is read.
   @discardableResult
   func receive(_ type: CGEventType, _ event: CGEvent) -> Bool {
+    // Shift is transparent to matching unless the binding uses it, so holding it
+    // neither cancels nor ends the hold; it is read at release instead.
+    shiftHeld = bypassGestureAvailable && event.flags.contains(.maskShift)
+    let event = bypassGestureAvailable ? Self.withoutShift(event) : event
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
       cancelHeldSession(
         reason: type == .tapDisabledByTimeout ? "event tap timeout" : "event tap disabled")
@@ -218,8 +229,21 @@ final class ShortcutController {
     if type == .keyDown { emit(hold.cancel()) }
     return false
   }
+  private static let shiftBits =
+    UInt64(NX_DEVICELSHIFTKEYMASK | NX_DEVICERSHIFTKEYMASK) | CGEventFlags.maskShift.rawValue
+  private static func withoutShift(_ event: CGEvent) -> CGEvent {
+    guard event.flags.rawValue & shiftBits != 0, let copy = event.copy() else { return event }
+    copy.flags = CGEventFlags(rawValue: event.flags.rawValue & ~shiftBits)
+    return copy
+  }
+  private static func withoutShift(_ flags: CGEventFlags) -> CGEventFlags {
+    CGEventFlags(rawValue: flags.rawValue & ~shiftBits)
+  }
+
   private func emit(_ event: ShortcutHoldState.Event?) {
     guard let event else { return }
+    if event == .pressed { releaseBypassedRewrite = false }
+    if event == .released { releaseBypassedRewrite = shiftHeld }
     logger.notice("Shortcut event: \(String(describing: event), privacy: .public)")
     if event == .pressed { cancellation.pressed() }
     if event == .cancelled { _ = cancellation.cancel() }
@@ -232,7 +256,8 @@ final class ShortcutController {
     guard hold.isHeld else { return }
     // The session tap consumes our binding, so combined session state can say
     // "released" while the physical key is still held. Query before filtering.
-    let flags = flagsState(.hidSystemState)
+    var flags = flagsState(.hidSystemState)
+    if bypassGestureAvailable { flags = Self.withoutShift(flags) }
     let down: Bool
     if preference.kind == .fnGlobe {
       down = flags.contains(.maskSecondaryFn)

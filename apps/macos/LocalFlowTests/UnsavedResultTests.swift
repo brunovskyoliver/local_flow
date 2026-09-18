@@ -24,6 +24,14 @@ private actor UnsavableStore: TranscriptionStoring {
     guard allowCommit else { throw TranscriptionStore.Error.databaseLimitExceeded }
     return try await base.commit(reservation: reservation, entry: entry)
   }
+  func commit(reservation: TranscriptionStore.Reservation, envelope: TranscriptionEnvelope)
+    async throws -> TranscriptionEntry
+  {
+    commitAttempts += 1
+    guard allowCommit else { throw TranscriptionStore.Error.databaseLimitExceeded }
+    return try await base.commit(reservation: reservation, envelope: envelope)
+  }
+
   func releaseReservation(_ reservation: TranscriptionStore.Reservation) async {
     await base.releaseReservation(reservation)
   }
@@ -33,6 +41,12 @@ private actor UnsavableStore: TranscriptionStoring {
   func get(_ id: UUID) async throws -> TranscriptionEntry? { try await base.get(id) }
   func beginAttempt(id: UUID, revision: Int64) async throws -> TranscriptionStore.Attempt {
     try await base.beginAttempt(id: id, revision: revision)
+  }
+  func recordOutcome(
+    id: UUID, revision: Int64, attemptID: UUID, outcome: TranscriptionStore.Outcome,
+    delivery: RewriteDelivery
+  ) async throws -> TranscriptionEntry {
+    try await recordOutcome(id: id, revision: revision, attemptID: attemptID, outcome: outcome)
   }
   func recordOutcome(
     id: UUID, revision: Int64, attemptID: UUID, outcome: TranscriptionStore.Outcome
@@ -110,9 +124,14 @@ final class UnsavedResultTests: XCTestCase {
     XCTAssertEqual(coordinator.unsaved, unsaved, "Copy must leave the unsaved result in place")
     XCTAssertFalse(coordinator.canBegin)
 
+    let beforeDetail = try XCTUnwrap(coordinator.unsavedEnvelope?.detail)
+    XCTAssertEqual(beforeDetail.normalizationVersion, TranscriptNormalizer.version)
     await store.permitCommit()
     await coordinator.retrySave()
     XCTAssertNil(coordinator.unsaved)
+    let retriedDetail = try await real.qualityDetail(unsaved.id)
+    XCTAssertEqual(retriedDetail?.contentHash, beforeDetail.contentHash)
+    XCTAssertEqual(retriedDetail?.rawWindows.first?.text, beforeDetail.rawWindows.first?.text)
     let rows = try await real.recent(limit: 20)
     XCTAssertEqual(rows.count, 1, "Retry reuses the reserved row instead of adding another")
     XCTAssertEqual(rows.first?.id, unsaved.id)
@@ -179,6 +198,70 @@ final class UnsavedResultTests: XCTestCase {
       explicit.warnings.contains { $0.contains("already be in the destination") },
       "Dismissal resolves review, not the uncertain delivery")
     explicit.cancel()
+  }
+
+  func testFullEnvelopeSurvivesRepeatedFailureAndRetriesExactlyOnceWithoutInsertion() async throws {
+    let real = try makeStore()
+    let store = UnsavableStore(real)
+    let authored = try makeQualityEnvelope(raw: "e\u{301} raw", reasons: [.init(.uncertainJoin)])
+    let transcriber = FakeDictationTranscriber(
+      result: .init(text: authored.entry.text, incomplete: false, detail: authored.detail))
+    let capture = FakeCapture()
+    let insertion = FakeInsertion()
+    let coordinator = DictationCoordinator(
+      store: store, lifecycle: ModelLifecycleCoordinator { FakeRuntime() },
+      capture: capture, insertion: insertion, spoolRoot: makeRoot(name: "spool"),
+      transcriber: transcriber)
+    coordinator.begin()
+    try await waitUntil { coordinator.state == .recording }
+    coordinator.release()
+    try await waitUntil { !coordinator.busy }
+    let envelope = try XCTUnwrap(coordinator.unsavedEnvelope)
+    let hash = try XCTUnwrap(envelope.detail).contentHash
+    XCTAssertEqual(
+      envelope.entry.quality, .incomplete,
+      "detail reasons are sticky even if an outer flag says complete")
+    XCTAssertEqual(hash, authored.detail?.contentHash)
+    await coordinator.retrySave()
+    XCTAssertEqual(coordinator.unsavedEnvelope?.detail?.contentHash, hash)
+    coordinator.begin()
+    XCTAssertFalse(coordinator.canBegin)
+    let starts = await capture.starts
+    XCTAssertEqual(starts, 1)
+    await store.permitCommit()
+    async let first: Void = coordinator.retrySave()
+    async let second: Void = coordinator.retrySave()
+    _ = await (first, second)
+    XCTAssertNil(coordinator.unsavedEnvelope)
+    let rows = try await real.recent()
+    XCTAssertEqual(rows.count, 1)
+    let restored = try await real.qualityDetail(envelope.entry.id)
+    XCTAssertEqual(restored?.contentHash, hash)
+    XCTAssertEqual(insertion.dispatchCount, 0)
+    let attempts = await store.commitAttempts
+    XCTAssertEqual(
+      attempts, 3, "two failures and one successful retry; concurrent retry is ignored")
+  }
+
+  func testDiscardReleasesFullEnvelopeAndReservation() async throws {
+    let real = try makeStore()
+    let store = UnsavableStore(real)
+    let authored = try makeQualityEnvelope()
+    let coordinator = DictationCoordinator(
+      store: store, lifecycle: ModelLifecycleCoordinator { FakeRuntime() },
+      capture: FakeCapture(), insertion: FakeInsertion(), spoolRoot: makeRoot(name: "spool"),
+      transcriber: FakeDictationTranscriber(
+        result: .init(text: authored.entry.text, incomplete: false, detail: authored.detail)))
+    coordinator.begin()
+    try await waitUntil { coordinator.state == .recording }
+    coordinator.release()
+    try await waitUntil { !coordinator.busy }
+    XCTAssertNotNil(coordinator.unsavedEnvelope?.detail)
+    await coordinator.discardUnsaved()
+    XCTAssertNil(coordinator.unsavedEnvelope)
+    let reservation = try await real.reserve()
+    await real.releaseReservation(reservation)
+    XCTAssertTrue(coordinator.canBegin)
   }
 
   private func makeCoordinator(

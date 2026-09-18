@@ -61,6 +61,32 @@ final class HistoryViewModelTests: XCTestCase {
     XCTAssertTrue(model.isNoMatches)
   }
 
+  /// T026 (SC-001): browsing history never reaches the rewrite transport. The
+  /// history-side rewrite affordances themselves arrive in US5.
+  func testHistoryBrowsingNeverCallsTheRewriteTransport() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "history-rewrite-guard-\(UUID()).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = try TranscriptionStore(path: url.path)
+    let rig = RewriteRig(store: store, enabled: true, failOnAnyCall: true)
+    defer { rig.removeSuite() }
+    for index in 0..<3 {
+      let entry = try TranscriptionEntry(
+        id: UUID(), text: "text \(index)", createdAtMilliseconds: Int64(index),
+        quality: .complete, stopReason: .keyRelease)
+      _ = try await store.commit(reservation: try await store.reserve(), entry: entry)
+    }
+    let model = HistoryViewModel(store: store)
+    model.refresh()
+    try await waitForQuery(model)
+    model.selectedEntry = model.entries.first
+    model.searchText = "text"
+    try await waitForQuery(model)
+    XCTAssertEqual(model.entries.count, 3)
+    XCTAssertEqual(rig.callCount, 0)
+    XCTAssertTrue(model.entries.allSatisfy { $0.rewriteState == .notRequested })
+  }
+
   func testIndependentBadgesAndCalendarRegrouping() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-date-\(UUID()).sqlite")
@@ -217,6 +243,96 @@ final class HistoryViewModelTests: XCTestCase {
     }
   }
 
+  func testSelectedDetailReplacementCloseAndDeletion() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "detail-vm-\(UUID()).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = try TranscriptionStore(path: url.path)
+    let first = try makeQualityEnvelope(raw: "raw first", text: "First")
+    let second = try makeQualityEnvelope(raw: "raw second", text: "Second")
+    let a = try await store.commit(reservation: try await store.reserve(), envelope: first)
+    let b = try await store.commit(reservation: try await store.reserve(), envelope: second)
+    let gate = DetailLoadGate(store: store)
+    let model = HistoryViewModel(store: store, detailLoader: { id in try await gate.load(id) })
+    model.showDetail(a)
+    while await gate.startedCount == 0 { await Task.yield() }
+    model.showDetail(b)
+    XCTAssertNil(model.detailEnvelope)
+    XCTAssertEqual(model.detailEntryID, b.id)
+    await gate.release()
+    try await waitForDetail(model)
+    XCTAssertEqual(model.detailEnvelope?.entry.id, b.id)
+    XCTAssertEqual(model.detailEnvelope?.detail?.rawWindows.first?.text, "raw second")
+    let peak = await gate.peak
+    XCTAssertEqual(peak, 1, "Replacement must join the cancelled load before starting another")
+    model.clearDetail()
+    XCTAssertNil(model.detailEnvelope)
+    XCTAssertNil(model.detailEntryID)
+    model.showDetail(a)
+    try await waitForDetail(model)
+    try await store.deleteConfirmed(id: a.id, revision: a.revision)
+    model.didDelete(a.id)
+    XCTAssertNil(model.detailEnvelope)
+    XCTAssertNil(model.detailEntryID)
+  }
+
+  func testLegacyDetailAndCloseDuringLoad() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "legacy-vm-\(UUID()).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = try TranscriptionStore(path: url.path)
+    let entry = try TranscriptionEntry(
+      id: UUID(), text: "legacy", createdAtMilliseconds: 1,
+      quality: .complete, stopReason: .keyRelease)
+    let saved = try await store.commit(reservation: try await store.reserve(), entry: entry)
+    let model = HistoryViewModel(store: store)
+    model.showDetail(saved)
+    try await waitForDetail(model)
+    XCTAssertEqual(model.detailEnvelope?.entry.text, "legacy")
+    XCTAssertNil(model.detailEnvelope?.detail)
+    let gate = DetailLoadGate(store: store)
+    let delayed = HistoryViewModel(store: store, detailLoader: { id in try await gate.load(id) })
+    delayed.showDetail(saved)
+    while await gate.startedCount == 0 { await Task.yield() }
+    delayed.clearDetail()
+    await gate.release()
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertNil(delayed.detailEnvelope)
+    XCTAssertNil(delayed.detailEntryID)
+    XCTAssertNil(delayed.detailError)
+  }
+
+  func testRefreshUpdatesDeliveryWithoutReprocessingAndClearsExternalDeletion() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "detail-refresh-\(UUID()).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = try TranscriptionStore(path: url.path)
+    let source = try makeQualityEnvelope(text: " preserved  historical spacing ")
+    let saved = try await store.commit(reservation: try await store.reserve(), envelope: source)
+    let model = HistoryViewModel(store: store)
+    model.showDetail(saved)
+    try await waitForDetail(model)
+    let dismissed = try await store.dismissRecovery(id: saved.id, revision: saved.revision)
+    model.refresh()
+    try await waitForDetail(model)
+    XCTAssertEqual(model.detailEnvelope?.entry.recoveryState, .resolved)
+    XCTAssertEqual(model.detailEnvelope?.entry.text, source.entry.text)
+    XCTAssertEqual(model.detailEnvelope?.detail?.contentHash, source.detail?.contentHash)
+    try await store.deleteConfirmed(id: dismissed.id, revision: dismissed.revision)
+    model.refresh()
+    try await waitForDetail(model)
+    XCTAssertNil(model.detailEnvelope)
+    XCTAssertNil(model.detailEntryID)
+  }
+
+  private func waitForDetail(_ model: HistoryViewModel) async throws {
+    for _ in 0..<200 {
+      if !model.isDetailLoading { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTFail("Detail load did not settle")
+  }
+
   private func makeCoordinator(store: TranscriptionStore) -> DictationCoordinator {
     let root = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent("LocalFlowHistoryVM-\(UUID().uuidString)", isDirectory: true)
@@ -226,5 +342,27 @@ final class HistoryViewModelTests: XCTestCase {
     return DictationCoordinator(
       store: store, lifecycle: ModelLifecycleCoordinator { FakeRuntime() },
       capture: FakeCapture(), insertion: FakeInsertion(), spoolRoot: root)
+  }
+}
+
+private actor DetailLoadGate {
+  let store: TranscriptionStore
+  var startedCount = 0
+  var active = 0
+  var peak = 0
+  var continuation: CheckedContinuation<Void, Never>?
+  init(store: TranscriptionStore) { self.store = store }
+  func load(_ id: UUID) async throws -> TranscriptionEnvelope {
+    startedCount += 1
+    active += 1
+    peak = max(peak, active)
+    defer { active -= 1 }
+    // Deliberately ignore cancellation until released, like an in-flight database read.
+    if startedCount == 1 { await withCheckedContinuation { continuation = $0 } }
+    return try await store.selectedEnvelope(id)
+  }
+  func release() {
+    continuation?.resume()
+    continuation = nil
   }
 }

@@ -12,3 +12,6 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0008: ScreenCaptureKit for meeting/system audio](0008-native-meeting-capture.md)
 - [0009: Structured LLM schemas](0009-structured-llm-schemas.md)
 - [0010: Reuse Sotto UI with local speech](0010-sotto-ui-local-speech.md)
+
+- [0013: Rewrite protocol v1](0013-rewrite-protocol-v1.md)
+- [0014: No background text replacement](0014-no-background-text-replacement.md)

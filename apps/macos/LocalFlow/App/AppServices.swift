@@ -14,8 +14,14 @@ final class AppServices {
     liveReadiness: { [weak self] in await self?.settingsSnapshot() ?? .init() })
   @ObservationIgnored lazy var settings = SettingsViewModel(
     observe: { [weak self] in await self?.settingsSnapshot() ?? .init() },
-    perform: { [weak self] action in try await self?.performSetting(action) })
+    perform: { [weak self] action in try await self?.performSetting(action) },
+    preferences: preferences, rewriteCredentials: rewriteCredentials,
+    rewriteTransport: RewriteClient(credentials: rewriteCredentials))
   private(set) var historyModel: HistoryViewModel?
+  private(set) var vocabularyModel: VocabularyViewModel?
+  @ObservationIgnored private var learner: CorrectionLearner?
+  @ObservationIgnored private let rewriteCredentials = RewriteCredentialStore()
+  @ObservationIgnored private(set) var rewriteCoordinator: RewriteCoordinator?
   private(set) var explicitInsertion: ExplicitInsertionCoordinator?
   private(set) var reviewingInsertion = false
   private(set) var coordinator: DictationCoordinator?
@@ -92,13 +98,16 @@ final class AppServices {
         let cleanup = try AudioSpool(rootDirectory: base.appendingPathComponent("TemporaryAudio"))
         try cleanup.cleanup()
         let store = try TranscriptionStore(path: base.appendingPathComponent("history.sqlite").path)
+        // A rewrite left pending by the previous run is interrupted, never resumed.
+        try await store.cancelPendingOnStartup()
         return (base, store, instanceLock)
       }.value
       instanceLock = paths.2
       guard let url = Bundle.main.url(forResource: "parakeet-v3", withExtension: "json") else {
         throw DictationFailure.modelUnavailable
       }
-      let descriptor = try JSONDecoder().decode(ModelDescriptor.self, from: Data(contentsOf: url))
+      let descriptorData = try Data(contentsOf: url)
+      let descriptor = try JSONDecoder().decode(ModelDescriptor.self, from: descriptorData)
       modelDescriptor = descriptor
       modelLocation = base.appendingPathComponent("Models/parakeet-v3")
       if ProcessInfo.processInfo.environment["LOCALFLOW_RESOURCE_RECORDING"] == "1" {
@@ -143,6 +152,17 @@ final class AppServices {
           case .releasing: phase = .modelReleasing
           }
           recorder?.record(phase: phase, durationNanoseconds: duration)
+          // A completed load or release also lands in the metric series, so
+          // stage timings and lifecycle timings read from one labeled stream.
+          let metric: ResourceRecorder.Metric?
+          switch state {
+          case .preparing: metric = .modelLoadDuration
+          case .releasing: metric = .modelReleaseDuration
+          default: metric = nil
+          }
+          if duration > 0, let metric {
+            recorder?.record(phase: phase, durationNanoseconds: duration, metric: metric)
+          }
         },
         factory: { [weak self] in
           let local: LocalModelDescriptor
@@ -159,12 +179,69 @@ final class AppServices {
       self.lifecycle = lifecycle
       await lifecycle.setKeepLoaded(preferences.keepModelReady && allowsPreferenceWarmup)
       let insertion = TextInsertionService()
+      let vocabulary = VocabularyStore(history: paths.1)
+      // Always wired: whether a dictation is rewritten is read from the per-attempt
+      // settings snapshot, so the Settings toggle applies without relaunch.
+      let rewriteCoordinator = RewriteCoordinator(
+        preferences: preferences, credentials: rewriteCredentials,
+        transport: RewriteClient(credentials: rewriteCredentials), store: paths.1)
+      self.rewriteCoordinator = rewriteCoordinator
+      rewriteCoordinator.metricRecorded = { [weak self] metric in
+        switch metric {
+        case .attempt(let record): self?.recorder?.record(rewrite: record)
+        case .refusal(let reason, let bucket):
+          self?.recorder?.record(refusal: reason, bucket: bucket)
+        }
+      }
       let coordinator = DictationCoordinator(
         store: paths.1, lifecycle: lifecycle,
         capture: AudioCaptureService(), insertion: insertion,
-        spoolRoot: paths.0.appendingPathComponent("TemporaryAudio"))
+        spoolRoot: paths.0.appendingPathComponent("TemporaryAudio"),
+        transcriber: WindowedTranscriber(
+          lifecycle: lifecycle,
+          identity: try TranscriptionPipelineIdentity(
+            descriptor: descriptor,
+            manifestHash: TranscriptionQualityDetail.hash(descriptorData),
+            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)),
+        vocabulary: vocabulary, rewriter: rewriteCoordinator)
       self.coordinator = coordinator
-      historyModel = HistoryViewModel(store: paths.1)
+      coordinator.rewriteNoticeChanged = { [weak self, weak coordinator] notice in
+        guard let self else { return }
+        self.panel.showActionNotice(notice, targetPoint: coordinator?.targetDisplayPoint) {
+          coordinator?.retryRewrite()
+        }
+      }
+      coordinator.rewriteRetryRequested = { [weak self, weak rewriteCoordinator] id in
+        Task {
+          guard let rewriteCoordinator, let entry = try? await paths.1.get(id) else { return }
+          _ = await rewriteCoordinator.retry(
+            dictation: id, faithfulText: entry.text,
+            mode: rewriteCoordinator.snapshot().mode, origin: .history)
+          self?.historyModel?.refresh()
+        }
+      }
+      let vocabularyModel = VocabularyViewModel(store: vocabulary)
+      self.vocabularyModel = vocabularyModel
+      let learner = CorrectionLearner(
+        reader: insertion, store: vocabulary,
+        isEnabled: { [weak self] in self?.preferences.learnCorrections ?? false })
+      self.learner = learner
+      learner.noticeChanged = { [weak self, weak learner] notice in
+        guard let self else { return }
+        self.panel.showNotice(notice, targetPoint: self.coordinator?.targetDisplayPoint) {
+          Task { await learner?.undo() }
+        }
+        if notice == nil { vocabularyModel.reload() }
+      }
+      learner.stopped = { [weak vocabularyModel] reason in
+        Logger(subsystem: "org.localflow.LocalFlow", category: "dictionary").notice(
+          "Correction observation stopped: \(reason.rawValue, privacy: .public)")
+        if reason == .learned { vocabularyModel?.reload() }
+      }
+      coordinator.insertionConfirmed = { [weak learner] text, target in
+        learner?.observe(inserted: text, target: target)
+      }
+      historyModel = HistoryViewModel(store: paths.1, rewriter: rewriteCoordinator)
       coordinator.historyChanged = { [weak self] in self?.historyModel?.refresh() }
       let explicit = ExplicitInsertionCoordinator(
         store: paths.1, insertion: insertion, dictation: coordinator)
@@ -179,13 +256,19 @@ final class AppServices {
           self?.onboarding.recordSuccessfulDictation(id: entry.id)
         }
       }
-      coordinator.sessionStarted = { [weak self] id in self?.onboarding.dictationStarted(id: id) }
+      coordinator.sessionStarted = { [weak self] id in
+        self?.learner?.cancel()
+        self?.onboarding.dictationStarted(id: id)
+      }
+      coordinator.processingMeasured = { [weak self] metrics in
+        self?.recorder?.record(processing: metrics)
+      }
       coordinator.stateChanged = { [weak self, weak coordinator] state in
         guard let self, let coordinator else { return }
         self.recordTransition(state, cycleID: coordinator.controlTag?.sessionID)
         self.shortcut.setSessionActive(
-          [.preparing, .recording, .transcribing, .persisting, .inserting, .cancelling].contains(
-            state))
+          [.preparing, .recording, .transcribing, .persisting, .rewriting, .inserting, .cancelling]
+            .contains(state))
         self.panel.update(
           state: state, level: coordinator.level, targetPoint: coordinator.targetDisplayPoint
         ) { [weak coordinator] in
@@ -207,7 +290,8 @@ final class AppServices {
             coordinator?.begin()
           }
           self?.shortcut.setSessionActive(coordinator?.busy == true)
-        case .released: coordinator?.release()
+        case .released:
+          coordinator?.release(bypassRewrite: self?.shortcut.releaseBypassedRewrite == true)
         case .cancelled: coordinator?.cancel()
         }
       }
@@ -373,10 +457,13 @@ final class AppServices {
     }
   }
 
-  func reviewInsertion(_ entry: TranscriptionEntry) {
-    if !installing, !modelCommandInProgress, explicitInsertion?.beginReview(entry) == true {
-      reviewingInsertion = true
-    }
+  /// A nil attempt reviews the saved transcript; an attempt reviews its output.
+  func reviewInsertion(_ entry: TranscriptionEntry, attempt: RewriteAttempt? = nil) {
+    guard !installing, !modelCommandInProgress else { return }
+    let began =
+      attempt.map { explicitInsertion?.beginReview(entry, attempt: $0) == true }
+      ?? (explicitInsertion?.beginReview(entry) == true)
+    if began { reviewingInsertion = true }
   }
 
   func closeInsertionReview() {
@@ -388,6 +475,8 @@ final class AppServices {
     var snapshot = SettingsViewModel.Snapshot()
     snapshot.modelInstalled = modelInstalled
     snapshot.keepModelReady = preferences.keepModelReady
+    snapshot.rewriteBlockedReason = SettingsViewModel.rewriteBlockedReason(
+      for: RewriteSettings.capture(preferences: preferences, credentialStore: rewriteCredentials))
     snapshot.modelIdentity = modelDescriptor?.modelID
     snapshot.modelVersion = modelDescriptor?.sourceRevision
     snapshot.downloadBytes = modelDescriptor.map { $0.files.reduce(Int64(0)) { $0 + $1.size } }

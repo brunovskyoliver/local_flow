@@ -3,6 +3,57 @@ import Foundation
 import OSLog
 import Observation
 
+/// Content-free processing measurements for one session. Every field is a
+/// duration, a byte size or a count of an already-bounded collection; nothing
+/// here identifies speech, vocabulary entries, targets or files.
+struct ProcessingMetrics: Sendable, Codable, Equatable {
+  let sessionID: UUID
+  let inputSamples: Int
+  let windowCount: Int
+  let recognitionNanoseconds: UInt64?
+  let assemblyNanoseconds: UInt64?
+  let normalizationNanoseconds: UInt64?
+  let persistenceNanoseconds: UInt64?
+  /// From admission to the terminal transition, including insertion and cleanup.
+  let endToEndNanoseconds: UInt64
+  let rawTextBytes: Int
+  let assembledTextBytes: Int
+  let normalizedTextBytes: Int
+  /// Serialized quality-detail bytes; zero when the session produced no detail.
+  let metadataBytes: Int
+  let completionReasonCount: Int
+  let appliedRuleCount: Int
+  let appliedEntryCount: Int
+  let incomplete: Bool
+
+  init(
+    sessionID: UUID, inputSamples: Int, result: TranscriptionResult,
+    persistenceNanoseconds: UInt64?, endToEndNanoseconds: UInt64
+  ) {
+    func nanoseconds(_ seconds: Double?) -> UInt64? {
+      guard let seconds, seconds.isFinite, seconds >= 0 else { return nil }
+      return UInt64(min(seconds, 1e9) * 1_000_000_000)
+    }
+    let detail = result.detail
+    self.sessionID = sessionID
+    self.inputSamples = inputSamples
+    windowCount = result.rawWindows.count
+    recognitionNanoseconds = nanoseconds(detail?.provenance.stageDurations["recognition"])
+    assemblyNanoseconds = nanoseconds(detail?.provenance.stageDurations["assembly"])
+    normalizationNanoseconds = nanoseconds(detail?.provenance.stageDurations["normalization"])
+    self.persistenceNanoseconds = persistenceNanoseconds
+    self.endToEndNanoseconds = endToEndNanoseconds
+    rawTextBytes = result.rawWindows.reduce(0) { $0 + $1.text.utf8.count }
+    assembledTextBytes = detail?.assembledText.utf8.count ?? 0
+    normalizedTextBytes = result.text.utf8.count
+    metadataBytes = detail.map { $0.payloadBytes == Int.max ? 0 : $0.payloadBytes } ?? 0
+    completionReasonCount = result.completionReasons.count
+    appliedRuleCount = detail?.appliedRuleIDs.count ?? 0
+    appliedEntryCount = detail?.appliedEntryIDs.count ?? 0
+    incomplete = result.incomplete
+  }
+}
+
 /// Serial presentation/session decisions; IO and inference belong to injected services.
 @MainActor @Observable
 final class DictationCoordinator {
@@ -12,22 +63,39 @@ final class DictationCoordinator {
   private(set) var targetDisplayPoint: NSPoint?
   private(set) var history: [TranscriptionEntry] = []
   @ObservationIgnored private var previewEnabled = false
-  private(set) var unsaved: TranscriptionEntry?
+  private(set) var unsavedEnvelope: TranscriptionEnvelope?
+  var unsaved: TranscriptionEntry? { unsavedEnvelope?.entry }
   private(set) var busy = false
   private(set) var storageBlocked = false
   private(set) var capacityBlocked = false
   private(set) var hasRecovery = false
-  @ObservationIgnored private var pendingOutcome: (UUID, Int64, UUID, TranscriptionStore.Outcome)?
+  @ObservationIgnored private var pendingOutcome:
+    (UUID, Int64, UUID, TranscriptionStore.Outcome, RewriteDelivery)?
   var successfulDictation: ((TranscriptionEntry) -> Void)?
   var historyChanged: (() -> Void)?
   var sessionStarted: ((UUID) -> Void)?
+  /// Fires once automatic insertion is confirmed, with the inserted text and its target.
+  var insertionConfirmed: ((String, CapturedTarget) -> Void)?
   @ObservationIgnored private var explicitCancellation: (() -> Void)?
   var stateChanged: ((DictationSession.State) -> Void)?
+  /// Fires once per session that reached recognition, after its terminal transition.
+  var processingMeasured: ((ProcessingMetrics) -> Void)?
+  @ObservationIgnored private(set) var lastProcessingMetrics: ProcessingMetrics?
+  /// Bounded notice shown after a rewrite fell back, was refused or was cancelled.
+  private(set) var rewriteNotice: RewriteActionNotice?
+  var rewriteNoticeChanged: ((RewriteActionNotice?) -> Void)?
+  /// Retry from the notice; wired by the app to the history retry flow.
+  var rewriteRetryRequested: ((UUID) -> Void)?
+  @ObservationIgnored private var pendingRewriteAttemptID: UUID?
+  @ObservationIgnored private var bypassRewriteRequested = false
 
   @ObservationIgnored private let store: any TranscriptionStoring
+  @ObservationIgnored private let vocabulary: any VocabularyProviding
   @ObservationIgnored private let lifecycle: ModelLifecycleCoordinator
+  @ObservationIgnored private let transcriber: any DictationTranscribing
   @ObservationIgnored private let capture: any AudioCapturing
   @ObservationIgnored private let insertion: any TextInserting
+  @ObservationIgnored private let rewriter: (any RewriteRequesting)?
   @ObservationIgnored private let spoolRoot: URL
   @ObservationIgnored private var operation: Task<Void, Never>?
   @ObservationIgnored private var controlConsumer: Task<Void, Never>?
@@ -45,10 +113,16 @@ final class DictationCoordinator {
   init(
     store: any TranscriptionStoring, lifecycle: ModelLifecycleCoordinator,
     capture: any AudioCapturing, insertion: any TextInserting, spoolRoot: URL,
-    mailbox: ControlMailbox = ControlMailbox()
+    mailbox: ControlMailbox = ControlMailbox(),
+    transcriber: (any DictationTranscribing)? = nil,
+    vocabulary: (any VocabularyProviding)? = nil,
+    rewriter: (any RewriteRequesting)? = nil
   ) {
     self.store = store
+    self.rewriter = rewriter
+    self.vocabulary = vocabulary ?? EmptyVocabularyProvider()
     self.lifecycle = lifecycle
+    self.transcriber = transcriber ?? WindowedTranscriber(lifecycle: lifecycle)
     self.capture = capture
     self.insertion = insertion
     self.spoolRoot = spoolRoot
@@ -60,11 +134,17 @@ final class DictationCoordinator {
   func captureQueueOccupancy() async -> QueueOccupancy? { await capture.queueOccupancy() }
 
   var canBegin: Bool {
-    !busy && unsaved == nil && !cleanupBlocked && !storageBlocked && !capacityBlocked
+    (!busy || state == .rewriting) && unsaved == nil && !cleanupBlocked && !storageBlocked
+      && !capacityBlocked
   }
 
-  func begin() {
+  func begin(mode: RewriteMode? = nil) {
     guard canBegin else { return }
+    // The previous rewrite keeps running under its own attempt identity.
+    // Its dictation task may finish only into history once this tag changes.
+    controlConsumer?.cancel()
+    pendingRewriteAttemptID = nil
+    bypassRewriteRequested = false
     busy = true
     stopRequested = false
     recordingStarted = false
@@ -74,6 +154,7 @@ final class DictationCoordinator {
     controlGeneration &+= 1
     let tag = ControlMailbox.Tag(sessionID: UUID(), generation: controlGeneration)
     controlTag = tag
+    setRewriteNotice(nil)
     sessionStarted?(tag.sessionID)
     mailbox.begin(tag)
     mailbox.tryEnqueue(.init(tag: tag, value: .begin))
@@ -86,10 +167,11 @@ final class DictationCoordinator {
         try? await ContinuousClock().sleep(for: .milliseconds(34))
       }
     }
-    operation = Task { await run(tag: tag) }
+    operation = Task { await run(tag: tag, mode: mode) }
   }
-  func release() {
+  func release(bypassRewrite: Bool = false) {
     guard busy, let tag = controlTag else { return }
+    if bypassRewrite { bypassRewriteRequested = true }
     mailbox.requestStop(.keyRelease, for: tag)
   }
   func cancel() {
@@ -97,8 +179,27 @@ final class DictationCoordinator {
       explicitCancellation()
       return
     }
+    // During rewriting, Escape and the indicator button cancel the rewrite only;
+    // the saved transcript is then inserted as usual.
+    if state == .rewriting, let pendingRewriteAttemptID {
+      rewriter?.cancel(attemptID: pendingRewriteAttemptID)
+      return
+    }
     guard busy, let tag = controlTag else { return }
     mailbox.requestCancel(for: tag)
+  }
+
+  func retryRewrite() {
+    guard let notice = rewriteNotice else { return }
+    setRewriteNotice(nil)
+    rewriteRetryRequested?(notice.dictationID)
+  }
+
+  func dismissRewriteNotice() { setRewriteNotice(nil) }
+
+  private func setRewriteNotice(_ notice: RewriteActionNotice?) {
+    rewriteNotice = notice
+    rewriteNoticeChanged?(notice)
   }
 
   private func consumeControls() {
@@ -108,6 +209,12 @@ final class DictationCoordinator {
       guard let event = mailbox.dequeue() else { break }
       guard event.tag == tag else { continue }
       if case .stop(let reason) = event.value { mailbox.requestStop(reason, for: tag) }
+    }
+    if state == .rewriting, let pendingRewriteAttemptID,
+      mailbox.takeRewriteCancellation(for: tag)
+    {
+      rewriter?.cancel(attemptID: pendingRewriteAttemptID)
+      return
     }
     let flags = mailbox.consumeFlags(for: tag)
     if let reason = flags.stop {
@@ -136,23 +243,38 @@ final class DictationCoordinator {
     stateChanged?(value)
   }
 
-  private func run(tag: ControlMailbox.Tag) async {
+  private func run(tag: ControlMailbox.Tag, mode: RewriteMode?) async {
     var session = DictationSession(id: tag.sessionID)
+    let admitted = DispatchTime.now().uptimeNanoseconds
+    var recognized: (result: TranscriptionResult, samples: Int)?
+    var persistenceNanoseconds: UInt64?
     defer {
-      consumeControls()
-      mailbox.requestTerminal(
-        controlOverflow || state == .failed ? .failed : (cancelled ? .cancelled : .completed),
-        for: tag)
-      controlConsumer?.cancel()
-      controlConsumer = nil
-      if controlOverflow {
-        status =
-          "Dictation stopped because control delivery overflowed. Any saved text needs review."
-        transition(.failed)
+      if let recognized {
+        let metrics = ProcessingMetrics(
+          sessionID: session.id, inputSamples: recognized.samples, result: recognized.result,
+          persistenceNanoseconds: persistenceNanoseconds,
+          endToEndNanoseconds: DispatchTime.now().uptimeNanoseconds &- admitted)
+        lastProcessingMetrics = metrics
+        processingMeasured?(metrics)
       }
-      busy = false
-      operation = nil
-      level = 0
+    }
+    defer {
+      if controlTag == tag {
+        consumeControls()
+        mailbox.requestTerminal(
+          controlOverflow || state == .failed ? .failed : (cancelled ? .cancelled : .completed),
+          for: tag)
+        controlConsumer?.cancel()
+        controlConsumer = nil
+        if controlOverflow {
+          status =
+            "Dictation stopped because control delivery overflowed. Any saved text needs review."
+          transition(.failed)
+        }
+        busy = false
+        operation = nil
+        level = 0
+      }
     }
     var failureStage = "checking storage"
     do {
@@ -163,6 +285,10 @@ final class DictationCoordinator {
       session.reservation = try await store.reserve()
       consumeControls()
       try Task.checkCancellation()
+      guard !stopRequested else { throw DictationFailure.cancelled }
+      failureStage = "loading preferred spellings"
+      session.vocabulary = try await vocabulary.snapshot()
+      consumeControls()
       guard !stopRequested else { throw DictationFailure.cancelled }
       transition(.preparing)
       status = "Preparing speech model…"
@@ -210,7 +336,9 @@ final class DictationCoordinator {
         "Capture stopped: \(String(describing: audio.reason), privacy: .public); samples=\(audio.sampleCount)"
       )
       switch audio.reason {
-      case .keyRelease: session.stopReason = .keyRelease
+      case .keyRelease:
+        session.stopReason = .keyRelease
+        session.bypassRewrite = bypassRewriteRequested
       case .durationLimit:
         session.stopReason = .durationLimit
         session.quality = .durationLimited
@@ -260,15 +388,19 @@ final class DictationCoordinator {
       transition(cancelled ? .cancelling : .transcribing)
       status = cancelled ? "Cancelling…" : "Transcribing locally…"
       failureStage = "transcribing audio"
-      let result = await WindowedTranscriber(lifecycle: lifecycle).transcribe(
-        spool: audio.spool, lease: session.lease!, sampleCount: audio.sampleCount)
+      let result = await transcriber.transcribe(
+        spool: audio.spool, lease: session.lease!, sampleCount: audio.sampleCount
+      ).normalizedForDelivery(vocabulary: session.vocabulary ?? .empty)
+      recognized = (result, audio.sampleCount)
       consumeControls()
       session.text = result.text
       if controlOverflow { session.stopReason = .overflow }
       if let reason = requestedStop, reason != .keyRelease, reason != .durationLimit {
         session.quality = .incomplete
       }
-      if result.incomplete || cancelled { session.quality = .incomplete }
+      if result.incomplete || result.detail?.incomplete == true || cancelled {
+        session.quality = .incomplete
+      }
       if !session.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         failureStage = "saving the transcription"
         transition(.persisting)
@@ -277,33 +409,110 @@ final class DictationCoordinator {
           createdAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1000),
           quality: session.quality, stopReason: session.stopReason,
           targetBundleID: session.target?.bundleIdentifier)
+        var terminalReasons = result.completionReasons
+        if cancelled { terminalReasons.append(.init(.cancelled)) }
+        if session.stopReason == .durationLimit { terminalReasons.append(.init(.durationLimit)) }
+        if session.stopReason != .keyRelease && session.stopReason != .durationLimit && !cancelled {
+          terminalReasons.append(.init(.captureFailure))
+        }
+        if result.incomplete && result.detail?.incomplete == false {
+          terminalReasons.append(.init(.failed))
+        }
+        let detail = try result.detail?.addingCompletionReasons(
+          terminalReasons, normalizedText: entry.text)
+        let envelope = TranscriptionEnvelope(entry: entry, detail: detail)
         let saved: TranscriptionEntry
+        let persistStarted = DispatchTime.now().uptimeNanoseconds
         do {
-          saved = try await store.commit(reservation: session.reservation!, entry: entry)
+          saved = try await store.commit(reservation: session.reservation!, envelope: envelope)
+          persistenceNanoseconds = DispatchTime.now().uptimeNanoseconds &- persistStarted
           session.reservation = nil
           successfulDictation?(saved)
         } catch {
-          unsaved = entry
+          unsavedEnvelope = envelope
           unsavedReservation = session.reservation
           session.reservation = nil
           throw error
         }
+        let committedAt = ContinuousClock.now
         consumeControls()
         if allowsAutomaticInsertion, session.quality == .complete,
           session.stopReason == .keyRelease,
           let target = session.target
         {
+          // The faithful transcript is saved and the ASR lease is released before
+          // any request. Rewriting decides per attempt from a fresh snapshot; a
+          // refusal or failure inserts the saved text with a notice.
+          var textToInsert = saved.text
+          var delivery = RewriteDelivery.faithful
+          var notice: RewriteActionNotice?
+          // A bypassed session is an eligibility outcome: admission is never
+          // reached, so there is no row, no notice and no refusal metric.
+          if let rewriter, !session.bypassRewrite {
+            if let lease = session.lease {
+              try await lifecycle.finish(lease)
+              session.lease = nil
+            }
+            failureStage = "rewriting saved text"
+            let admission = await rewriter.admit(
+              dictation: saved.id, text: saved.text, mode: mode, committed: committedAt,
+              context: .live)
+            switch admission {
+            case .notEligible: break
+            case .refused(let reason):
+              notice = RewriteActionNotice(
+                dictationID: saved.id, message: RewriteNotice.text(for: reason, context: .live),
+                canRetry: reason != .attemptLimit)
+            case .admitted(let attempt):
+              // Release all local capture resources before another dictation can
+              // begin. The rewrite task owns only its bounded text snapshot.
+              if let spool = session.audio {
+                try await Task.detached { try spool.cleanup() }.value
+                session.audio = nil
+              }
+              if let reservation = session.reservation {
+                await store.releaseReservation(reservation)
+                session.reservation = nil
+              }
+              pendingRewriteAttemptID = attempt.id
+              transition(.rewriting)
+              status = "Rewriting…"
+              let outcome = await rewriter.complete(attemptID: attempt.id)
+              guard controlTag == tag else { return }
+              pendingRewriteAttemptID = nil
+              switch outcome {
+              case .rewritten(let text, let delivered):
+                textToInsert = text
+                delivery = RewriteDelivery(
+                  source: .rewrite, attemptID: delivered.id, durationMilliseconds: nil)
+              case .fallback(_, let category):
+                notice = RewriteActionNotice(
+                  dictationID: saved.id, message: RewriteNotice.text(for: category, context: .live),
+                  canRetry: true)
+              case .cancelled:
+                notice = RewriteActionNotice(
+                  dictationID: saved.id, message: RewriteNotice.cancelled(context: .live),
+                  canRetry: true)
+              case .refused(let reason):
+                notice = RewriteActionNotice(
+                  dictationID: saved.id, message: RewriteNotice.text(for: reason, context: .live),
+                  canRetry: reason != .attemptLimit)
+              case .notEligible: break
+              }
+            }
+          }
           failureStage = "inserting saved text"
           transition(.inserting)
           storageBlocked = true
           let attempt = try await store.beginAttempt(id: saved.id, revision: saved.revision)
           consumeControls()
           let result: InsertionOutcome
+          let handedOff = ContinuousClock.now
           if !allowsAutomaticInsertion {
             result = .notInserted(.unsupported)
           } else {
             result = await insertion.insertOnce(
-              attemptID: attempt.id, target: target, text: saved.text)
+              attemptID: attempt.id, target: target, text: textToInsert)
           }
           let outcome: TranscriptionStore.Outcome
           switch result {
@@ -311,12 +520,19 @@ final class DictationCoordinator {
           case .notInserted: outcome = .notInserted
           case .uncertain: outcome = .uncertain
           }
-          pendingOutcome = (saved.id, attempt.entry.revision, attempt.id, outcome)
+          if delivery.source == .rewrite {
+            delivery = RewriteDelivery(
+              source: .rewrite, attemptID: delivery.attemptID,
+              durationMilliseconds: RewriteInstants.milliseconds(from: committedAt, to: handedOff))
+          }
+          pendingOutcome = (saved.id, attempt.entry.revision, attempt.id, outcome, delivery)
           _ = try await store.recordOutcome(
             id: saved.id, revision: attempt.entry.revision,
-            attemptID: attempt.id, outcome: outcome)
+            attemptID: attempt.id, outcome: outcome, delivery: delivery)
           pendingOutcome = nil
           storageBlocked = false
+          if let notice { setRewriteNotice(notice) }
+          if outcome == .confirmed { insertionConfirmed?(textToInsert, target) }
           status = outcome == .confirmed ? "Ready" : "Text saved. Open LocalFlow to copy it."
           transition(outcome == .confirmed ? .idle : .recovery)
         } else {
@@ -420,12 +636,14 @@ final class DictationCoordinator {
     NSPasteboard.general.setString(text, forType: .string)
   }
   func retrySave() async {
-    guard !busy, let unsaved, let reservation = unsavedReservation else { return }
+    guard !busy, let envelope = unsavedEnvelope, let reservation = unsavedReservation else {
+      return
+    }
     busy = true
     defer { busy = false }
     do {
-      _ = try await store.commit(reservation: reservation, entry: unsaved)
-      self.unsaved = nil
+      _ = try await store.commit(reservation: reservation, envelope: envelope)
+      self.unsavedEnvelope = nil
       unsavedReservation = nil
       status = "Text saved for review."
       transition(.recovery)
@@ -438,7 +656,7 @@ final class DictationCoordinator {
     defer { busy = false }
     if let reservation = unsavedReservation { await store.releaseReservation(reservation) }
     unsavedReservation = nil
-    unsaved = nil
+    unsavedEnvelope = nil
     status = "Unsaved text discarded."
   }
   func retryStorage() async {
@@ -446,9 +664,9 @@ final class DictationCoordinator {
     busy = true
     defer { busy = false }
     do {
-      if let (id, revision, attempt, outcome) = pendingOutcome {
+      if let (id, revision, attempt, outcome, delivery) = pendingOutcome {
         _ = try await store.recordOutcome(
-          id: id, revision: revision, attemptID: attempt, outcome: outcome)
+          id: id, revision: revision, attemptID: attempt, outcome: outcome, delivery: delivery)
       } else {
         try await store.verifyWritable()
       }
@@ -473,9 +691,10 @@ final class DictationCoordinator {
   }
 
   func preserveExplicitOutcome(
-    id: UUID, revision: Int64, attempt: UUID, outcome: TranscriptionStore.Outcome
+    id: UUID, revision: Int64, attempt: UUID, outcome: TranscriptionStore.Outcome,
+    delivery: RewriteDelivery = .faithful
   ) {
-    pendingOutcome = (id, revision, attempt, outcome)
+    pendingOutcome = (id, revision, attempt, outcome, delivery)
     storageBlocked = true
   }
 

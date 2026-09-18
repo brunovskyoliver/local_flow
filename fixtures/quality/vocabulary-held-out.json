@@ -1,0 +1,426 @@
+{
+  "schema_version": 1,
+  "kind": "held_out_vocabulary_cases",
+  "contract": "normalization-vocabulary-v1",
+  "review_status": "authored_held_out_not_human_acceptance",
+  "notes": [
+    "Held-out occurrences are separate from fixtures/quality/normalization-cases.json and were authored after V001 was implemented, then run once.",
+    "Reference and output hashes are SHA-256 over exact UTF-8 bytes. Human meaning verdicts remain null until a reviewer records them against these hashes.",
+    "These cases establish spelling replacement only; they say nothing about acoustic recognition."
+  ],
+  "vocabulary": [
+    {
+      "id": "localflow",
+      "canonical": "LocalFlow",
+      "aliases": [
+        "local flow",
+        "lokal flow"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "parakeet",
+      "canonical": "Parakeet v3",
+      "aliases": [
+        "parakeet three",
+        "parakeet version three"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "kosice",
+      "canonical": "Košice",
+      "aliases": [
+        "kosice"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "grdb",
+      "canonical": "GRDB",
+      "aliases": [],
+      "enabled": true
+    },
+    {
+      "id": "dateon",
+      "canonical": "Dateon",
+      "aliases": [
+        "date on"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "swiftui",
+      "canonical": "SwiftUI",
+      "aliases": [
+        "swift ui",
+        "swift you eye"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "ncs",
+      "canonical": "NCS55A1",
+      "aliases": [
+        "ncs fifty five a one"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "zilina",
+      "canonical": "Žilina",
+      "aliases": [],
+      "enabled": true
+    },
+    {
+      "id": "vlan",
+      "canonical": "VLAN 120",
+      "aliases": [
+        "vlan one twenty"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "disabled-cisco",
+      "canonical": "Cisco",
+      "aliases": [
+        "sisko"
+      ],
+      "enabled": false
+    }
+  ],
+  "cases": [
+    {
+      "id": "held-01",
+      "description": "case: canonical case fix",
+      "input": "spustil som localflow na macu",
+      "expected": {
+        "text": "spustil som LocalFlow na macu",
+        "applied_entry_ids": [
+          "localflow"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "798ad207ae5cc52d72ae4e78dfac42502f9ccba6f9e95cb200c9bff53d2c28ed",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-02",
+      "description": "alias: two-word English alias",
+      "input": "open local flow settings",
+      "expected": {
+        "text": "open LocalFlow settings",
+        "applied_entry_ids": [
+          "localflow"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "1e3ace68b65477868b0389b20bf15ad3ec0f34a6fc36dae5cd982dd35427f070",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-03",
+      "description": "alias: Slovak-accented alias",
+      "input": "otvor lokal flow prosím",
+      "expected": {
+        "text": "otvor LocalFlow prosím",
+        "applied_entry_ids": [
+          "localflow"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "e68ffad4d4d202c206c95b0b8b13a962d7218156cb2127ec5387e8fea51a388b",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-04",
+      "description": "alias: number word alias",
+      "input": "používame parakeet three offline",
+      "expected": {
+        "text": "používame Parakeet v3 offline",
+        "applied_entry_ids": [
+          "parakeet"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "029aafa55c37199318fb9116822e1c272077b60b9acdc13871db4f818b91270c",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-05",
+      "description": "alias: longer alias with same target",
+      "input": "parakeet version three je rýchly",
+      "expected": {
+        "text": "Parakeet v3 je rýchly",
+        "applied_entry_ids": [
+          "parakeet"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "522b5bbd0186c2ac9bd554d01ca8a9393995ed09a37a5c7a2ffaa4f4da55400c",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-06",
+      "description": "alias: restores diacritics from ASCII alias",
+      "input": "cesta z kosice do bratislavy",
+      "expected": {
+        "text": "cesta z Košice do bratislavy",
+        "applied_entry_ids": [
+          "kosice"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "6421318e1845191c112266bc586e271ca9c830a70d041e84b034a1b34e5b5165",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-07",
+      "description": "case: acronym uppercase",
+      "input": "ukladáme to cez grdb.",
+      "expected": {
+        "text": "ukladáme to cez GRDB.",
+        "applied_entry_ids": [
+          "grdb"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "1e31cbb18f4b1651253a129ddd24b9307fa8d9ed245fe8962aa4fe4308ac0617",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-08",
+      "description": "alias: split word rejoined",
+      "input": "firma date on sídli v žiline",
+      "expected": {
+        "text": "firma Dateon sídli v žiline",
+        "applied_entry_ids": [
+          "dateon"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "8e7b91dabf50873306812074bd340edba971c3f6dda73c0ab1c32d22c565de87",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-09",
+      "description": "alias: phonetic spelled-out alias",
+      "input": "ovládanie je v swift you eye, nie v appkit",
+      "expected": {
+        "text": "ovládanie je v SwiftUI, nie v appkit",
+        "applied_entry_ids": [
+          "swiftui"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "4f72eac8e4c589ecbadd3e6df683093de307d689cfc28de41ea69668090eadfa",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-10",
+      "description": "alias: identifier from spoken words",
+      "input": "router ncs fifty five a one reštartuj",
+      "expected": {
+        "text": "router NCS55A1 reštartuj",
+        "applied_entry_ids": [
+          "ncs"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "925f1574d24b401c15c4ec46a939aa0ed72028c86d21a70ff18a3d1acb311d0f",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-11",
+      "description": "case: canonical with combining input",
+      "input": "ZILINA a žilina sú rovnaké",
+      "expected": {
+        "text": "ZILINA a Žilina sú rovnaké",
+        "applied_entry_ids": [
+          "zilina"
+        ],
+        "applied_rule_ids": [
+          "V001",
+          "N001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "f0229ad8007f33e631e0c4b084212840c95079c5ee861311cb68b1f37da04ed7",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-12",
+      "description": "alias: term followed by comma and sentence end",
+      "input": "nastav vlan one twenty, potom vlan one twenty.",
+      "expected": {
+        "text": "nastav VLAN 120, potom VLAN 120.",
+        "applied_entry_ids": [
+          "vlan"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "4f7fc7dfa9f641328043cd7a6ba433fe8d77183f229ab0a7ad6dddf3edc4c97b",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-13",
+      "description": "mixed: two entries in one sentence",
+      "input": "local flow používa grdb a swift ui",
+      "expected": {
+        "text": "LocalFlow používa GRDB a SwiftUI",
+        "applied_entry_ids": [
+          "grdb",
+          "localflow",
+          "swiftui"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "d710435944c045b7d954e4f77b603d26a2457d3ab5ba31ad0b638e3aa0b6c2d3",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "held-14",
+      "description": "case: canonical containing a number token corrected as a whole term",
+      "input": "vlan 120 je už kanonický",
+      "expected": {
+        "text": "VLAN 120 je už kanonický",
+        "applied_entry_ids": [
+          "vlan"
+        ],
+        "applied_rule_ids": [
+          "V001"
+        ],
+        "reason": null
+      },
+      "reference_hash": "365b828381fc1b2162e6d6e002b5200806697c9572b973a6fe5639457f39c5ca",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "neg-01",
+      "description": "negative: substring inside a longer word",
+      "input": "localflowers kvitnú",
+      "expected": {
+        "text": "localflowers kvitnú",
+        "applied_entry_ids": [],
+        "applied_rule_ids": [],
+        "reason": null
+      },
+      "reference_hash": "dbdbdb9f279e559d84b258d8df274febc67bc813892d94af9bec4eda8deffdd8",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "neg-02",
+      "description": "negative: alias broken by punctuation",
+      "input": "local, flow",
+      "expected": {
+        "text": "local, flow",
+        "applied_entry_ids": [],
+        "applied_rule_ids": [],
+        "reason": null
+      },
+      "reference_hash": "4fa373343a931c4a22c877e9bcee695041c0bc633ecf43ee50d80caf63a612f7",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "neg-03",
+      "description": "negative: identifier span protected",
+      "input": "https://localflow.dev/grdb je adresa",
+      "expected": {
+        "text": "https://localflow.dev/grdb je adresa",
+        "applied_entry_ids": [],
+        "applied_rule_ids": [],
+        "reason": null
+      },
+      "reference_hash": "00f388abd7187f4f1bcb7deb171e5dda807fb83a38ab067dece5fef918fdd070",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "neg-04",
+      "description": "negative: accent-insensitive folding is not used",
+      "input": "zilina bez dĺžňa ostáva",
+      "expected": {
+        "text": "zilina bez dĺžňa ostáva",
+        "applied_entry_ids": [],
+        "applied_rule_ids": [],
+        "reason": null
+      },
+      "reference_hash": "aa00719bb102696799dc1edaececf39b5a3acbd7c6e7f8fb035089e3d2514dc1",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "neg-05",
+      "description": "negative: disabled entry does not match",
+      "input": "sisko ostáva sisko",
+      "expected": {
+        "text": "sisko ostáva sisko",
+        "applied_entry_ids": [],
+        "applied_rule_ids": [],
+        "reason": null
+      },
+      "reference_hash": "c2bae6daf50ba38d29793f203d84462015e319b70b03c594e4e50cceba274678",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "neg-06",
+      "description": "negative: underscore boundary",
+      "input": "grdb_store ostáva",
+      "expected": {
+        "text": "grdb_store ostáva",
+        "applied_entry_ids": [],
+        "applied_rule_ids": [],
+        "reason": null
+      },
+      "reference_hash": "076e9928a91dc4bf3e7f513763467fd87168d805d7a00f0cf97ccc823138c398",
+      "human_meaning_verdict": null
+    },
+    {
+      "id": "neg-07",
+      "description": "negative: different number is not the configured term",
+      "input": "vlan 121 ostáva",
+      "expected": {
+        "text": "vlan 121 ostáva",
+        "applied_entry_ids": [],
+        "applied_rule_ids": [],
+        "reason": null
+      },
+      "reference_hash": "01d61bfa904d5b2c39b172eff31876a42deb4b7fc7871cc162bb9a51e15caf4d",
+      "human_meaning_verdict": null
+    }
+  ]
+}

@@ -194,6 +194,79 @@ extension ShortcutControllerTests {
     XCTAssertEqual(events, [.pressed, .released])
   }
 
+  // MARK: US6 (T052): Shift on release marks the dictation local-only.
+
+  @MainActor func testShiftHeldAtReleaseReportsTheRewriteBypass() throws {
+    let controller = ShortcutController(
+      preference: ShortcutPreference(kind: .keyCombination, keyCode: 18, modifiers: UInt32(cmdKey)))
+    var events: [ShortcutHoldState.Event] = []
+    controller.onEvent = { events.append($0) }
+    XCTAssertTrue(controller.bypassGestureAvailable)
+    let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 18, keyDown: true))
+    event.flags = .maskCommand
+    XCTAssertTrue(controller.receive(.keyDown, event))
+    XCTAssertFalse(controller.releaseBypassedRewrite)
+    // Shift arrives mid-hold: it neither cancels the session nor ends the hold.
+    event.flags = [.maskCommand, .maskShift]
+    XCTAssertFalse(controller.receive(.flagsChanged, event))
+    XCTAssertEqual(events, [.pressed])
+    let up = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 18, keyDown: false))
+    up.flags = [.maskCommand, .maskShift]
+    XCTAssertTrue(controller.receive(.keyUp, up))
+    XCTAssertEqual(events, [.pressed, .released])
+    XCTAssertTrue(controller.releaseBypassedRewrite)
+  }
+
+  @MainActor func testReleaseWithoutShiftDoesNotBypassAndThePressPathIsUnchanged() throws {
+    let controller = ShortcutController(
+      preference: ShortcutPreference(kind: .keyCombination, keyCode: 18, modifiers: UInt32(cmdKey)))
+    var events: [ShortcutHoldState.Event] = []
+    controller.onEvent = { events.append($0) }
+    let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 18, keyDown: true))
+    event.flags = [.maskCommand, .maskShift]
+    XCTAssertTrue(controller.receive(.keyDown, event), "Shift never blocks the press")
+    let up = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 18, keyDown: false))
+    up.flags = .maskCommand
+    XCTAssertTrue(controller.receive(.keyUp, up))
+    XCTAssertEqual(events, [.pressed, .released])
+    XCTAssertFalse(controller.releaseBypassedRewrite)
+  }
+
+  @MainActor func testShiftInTheBindingMakesTheGestureUnavailable() throws {
+    let controller = ShortcutController(
+      preference: ShortcutPreference(
+        kind: .keyCombination, keyCode: 18, modifiers: UInt32(cmdKey | shiftKey)))
+    var events: [ShortcutHoldState.Event] = []
+    controller.onEvent = { events.append($0) }
+    XCTAssertFalse(controller.bypassGestureAvailable)
+    let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 18, keyDown: true))
+    event.flags = [.maskCommand, .maskShift]
+    XCTAssertTrue(controller.receive(.keyDown, event))
+    let up = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 18, keyDown: false))
+    up.flags = [.maskCommand, .maskShift]
+    XCTAssertTrue(controller.receive(.keyUp, up))
+    XCTAssertEqual(events, [.pressed, .released])
+    XCTAssertFalse(controller.releaseBypassedRewrite)
+  }
+
+  @MainActor func testModifierOnlyShortcutIsNotCancelledByShift() throws {
+    let controller = ShortcutController(
+      preference: ShortcutPreference(kind: .modifierOnly, modifiers: UInt32(controlKey | optionKey))
+    )
+    var events: [ShortcutHoldState.Event] = []
+    controller.onEvent = { events.append($0) }
+    let event = try XCTUnwrap(CGEvent(source: nil))
+    event.flags = [.maskControl, .maskAlternate]
+    XCTAssertTrue(controller.receive(.flagsChanged, event))
+    event.flags = [.maskControl, .maskAlternate, .maskShift]
+    XCTAssertTrue(controller.receive(.flagsChanged, event))
+    XCTAssertEqual(events, [.pressed], "Shift is transparent, so nothing is cancelled")
+    event.flags = .maskShift
+    XCTAssertTrue(controller.receive(.flagsChanged, event))
+    XCTAssertEqual(events, [.pressed, .released])
+    XCTAssertTrue(controller.releaseBypassedRewrite)
+  }
+
   func testShortcutValidationAndPersistenceCoverNewBindings() throws {
     for value in [
       ShortcutPreference(kind: .keyCombination, keyCode: 96, modifiers: 0),
