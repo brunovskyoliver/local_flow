@@ -176,4 +176,67 @@ final class MeetingLibraryTests: XCTestCase {
     XCTAssertNil(model.detail)
     XCTAssertEqual(model.detailNotice, "This meeting no longer exists.")
   }
+  func testSourceLabelsDoNotInventIdentitiesForMixedAudio() {
+    XCTAssertEqual(AnalysisTracks.mic.sourceLabel, "You")
+    XCTAssertEqual(AnalysisTracks.system.sourceLabel, "Others")
+    XCTAssertEqual(AnalysisTracks.both.sourceLabel, "Unassigned")
+    XCTAssertTrue(AnalysisTracks.both.sourceExplanation.contains("speaker unknown"))
+    XCTAssertTrue(AnalysisTracks.system.sourceExplanation.contains("multiple people"))
+  }
+
+  func testPreviewDoesNotChangeOpenNoteAndDeleteClearsPreview() async throws {
+    let ids = try await seedCompleted(2)
+    let model = MeetingLibraryViewModel(store: store)
+    await model.refresh()
+    await model.open(ids[0])
+    await model.preview(ids[1])
+    XCTAssertEqual(model.selectedID, ids[0])
+    XCTAssertEqual(model.detail?.meeting.id, ids[0])
+    XCTAssertEqual(model.preview?.meeting.id, ids[1])
+    let revision = try XCTUnwrap(model.preview?.meeting.revision)
+    _ = await model.delete(ids[1], revision: revision)
+    XCTAssertNil(model.preview)
+    XCTAssertNil(model.previewID)
+    XCTAssertEqual(model.selectedID, ids[0])
+  }
+
+  func testSlowPreviewCannotReplaceNewerPreview() async throws {
+    let ids = try await seedCompleted(2)
+    let firstResult = try await store.detail(id: ids[0])
+    let secondResult = try await store.detail(id: ids[1])
+    let gate = Gate()
+    let fake = MeetingNotesEditorTests.NotesStore()
+    fake.detailLoader = { id in
+      if id == ids[0] {
+        await gate.wait()
+        return firstResult
+      }
+      return secondResult
+    }
+    let model = MeetingLibraryViewModel(store: fake)
+    let slow = Task { await model.preview(ids[0]) }
+    for _ in 0..<100 where model.previewID != ids[0] { await Task.yield() }
+    XCTAssertEqual(model.previewID, ids[0])
+    await model.preview(ids[1])
+    await gate.openGate()
+    await slow.value
+    XCTAssertEqual(model.previewID, ids[1])
+    XCTAssertEqual(model.preview?.meeting.id, ids[1])
+    XCTAssertNil(model.selectedID)
+  }
+
+  func testPendingTitleEditStaysWithItsNoteAfterNavigation() async throws {
+    let ids = try await seedCompleted(2) { "Note \($0)" }
+    let model = MeetingLibraryViewModel(store: store)
+    await model.open(ids[0])
+    let target = try XCTUnwrap(model.detail?.meeting)
+    await model.open(ids[1])
+    await model.setTitle("Edited first note", for: target)
+    let first = try await store.meeting(id: ids[0])
+    let second = try await store.meeting(id: ids[1])
+    XCTAssertEqual(first?.title, "Edited first note")
+    XCTAssertEqual(second?.title, "Note 1")
+    XCTAssertEqual(model.selectedID, ids[1])
+  }
+
 }

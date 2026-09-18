@@ -3,7 +3,7 @@ import Observation
 import SwiftUI
 
 enum LocalFlowPage: String, CaseIterable, Identifiable {
-  case meetings = "Meetings"
+  case meetings = "Notetaker"
   case history = "Transcriptions"
   case dictionary = "Dictionary"
   case settings = "Settings"
@@ -11,7 +11,7 @@ enum LocalFlowPage: String, CaseIterable, Identifiable {
   var id: Self { self }
   var symbol: String {
     switch self {
-    case .meetings: "waveform.badge.mic"
+    case .meetings: "record.circle"
     case .history: "list.bullet.rectangle"
     case .dictionary: "character.book.closed"
     case .settings: "gearshape"

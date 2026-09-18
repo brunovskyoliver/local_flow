@@ -3,7 +3,25 @@ import Foundation
 enum SegmentFinality: String, Codable, Sendable { case provisional, final }
 enum TranscriptPassKind: String, Codable, Sendable { case live, final }
 enum TimingBasis: String, Codable, Sendable { case word, window }
-enum AnalysisTracks: String, Codable, Sendable { case mic, system, both }
+enum AnalysisTracks: String, Codable, Sendable {
+  case mic, system, both
+
+  /// Capture provenance only. A mixed stream cannot identify who spoke.
+  var sourceLabel: String {
+    switch self {
+    case .mic: "You"
+    case .system: "Others"
+    case .both: "Unassigned"
+    }
+  }
+  var sourceExplanation: String {
+    switch self {
+    case .mic: "Microphone audio"
+    case .system: "System audio; may include multiple people"
+    case .both: "Mixed microphone and system audio; speaker unknown"
+    }
+  }
+}
 enum LiveGapReason: String, CaseIterable, Codable, Sendable {
   case backpressure, suspended
   case tapOverflow = "tap_overflow"

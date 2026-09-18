@@ -14,6 +14,7 @@ final class MeetingNotesEditorTests: XCTestCase {
     var staleOnce = false
     var storedRevision: Int64 = 0
     var storedText = ""
+    var detailLoader: (@Sendable (UUID) async throws -> MeetingDetail?)?
     let gate: Gate?
     init(gate: Gate? = nil) { self.gate = gate }
 
@@ -80,7 +81,7 @@ final class MeetingNotesEditorTests: XCTestCase {
     { 0 }
     func setFinalizationStage(meetingID: UUID, stage: FinalizationStage, now: Int64) async throws {}
     func page(before: MeetingCursor?, limit: Int) async throws -> [MeetingSummary] { [] }
-    func detail(id: UUID) async throws -> MeetingDetail? { nil }
+    func detail(id: UUID) async throws -> MeetingDetail? { try await detailLoader?(id) }
     func activeStateRows() async throws -> [Meeting] { [] }
     func recordOutcome(_ outcome: RecoveryOutcome) async throws {}
     func deleteConfirmed(id: UUID, revision: Int64) async throws -> DeletionOutcome {

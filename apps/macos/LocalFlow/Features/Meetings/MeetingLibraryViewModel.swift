@@ -18,6 +18,10 @@ final class MeetingLibraryViewModel {
   private(set) var selectedID: UUID?
   private(set) var detail: MeetingDetail?
   private(set) var detailNotice: String?
+  private(set) var previewID: UUID?
+  private(set) var preview: MeetingDetail?
+  private(set) var previewNotice: String?
+  @ObservationIgnored private var previewGeneration = 0
   private(set) var deletionPending: Set<UUID> = []
   private(set) var pendingPaths: [UUID: [String]] = [:]
   @ObservationIgnored private let store: any MeetingStoring
@@ -82,6 +86,24 @@ final class MeetingLibraryViewModel {
     }
   }
 
+  func preview(_ id: UUID?) async {
+    previewGeneration += 1
+    let request = previewGeneration
+    previewID = id
+    preview = nil
+    previewNotice = nil
+    guard let id else { return }
+    do {
+      let loaded = try await store.detail(id: id)
+      guard request == previewGeneration, !Task.isCancelled else { return }
+      preview = loaded
+      if loaded == nil { previewNotice = "This note no longer exists." }
+    } catch {
+      guard request == previewGeneration, !Task.isCancelled else { return }
+      previewNotice = "The overview could not be loaded."
+    }
+  }
+
   func open(_ id: UUID) async {
     selectedID = id
     await reloadDetail()
@@ -96,7 +118,9 @@ final class MeetingLibraryViewModel {
   func reloadDetail() async {
     guard let selectedID else { return }
     do {
-      guard let loaded = try await store.detail(id: selectedID) else {
+      let result = try await store.detail(id: selectedID)
+      guard self.selectedID == selectedID else { return }
+      guard let loaded = result else {
         detail = nil
         detailNotice = "This meeting no longer exists."
         return
@@ -104,15 +128,15 @@ final class MeetingLibraryViewModel {
       detail = loaded
       detailNotice = nil
     } catch {
+      guard self.selectedID == selectedID else { return }
       detailNotice = "Meeting details could not be loaded."
     }
   }
 
-  func setTitle(_ title: String) async {
-    guard let detail else { return }
+  func setTitle(_ title: String, for meeting: Meeting) async {
     do {
       _ = try await store.setTitle(
-        meetingID: detail.meeting.id, title: title, revision: detail.meeting.revision,
+        meetingID: meeting.id, title: title, revision: meeting.revision,
         now: Int64(Date().timeIntervalSince1970 * 1_000))
       await reloadDetail()
       await refresh()
@@ -136,6 +160,7 @@ final class MeetingLibraryViewModel {
         deletionPending.remove(id)
         pendingPaths[id] = nil
         if selectedID == id { closeDetail() }
+        if previewID == id { await preview(nil) }
         await refresh()
       } else {
         deletionPending.insert(id)

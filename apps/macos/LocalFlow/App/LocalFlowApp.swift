@@ -233,6 +233,26 @@ private struct LocalFlowWindowView: View {
         }
       }
       Spacer()
+      if let meetings = services.meetingCoordinator, let status = meetings.status,
+        meetings.isActive
+      {
+        Button {
+          services.router.selection = .meetings
+          if let library = services.meetingLibrary { Task { await library.open(status.id) } }
+        } label: {
+          VStack(alignment: .leading, spacing: 8) {
+            Text(status.title ?? "Untitled note").font(.system(size: 13, weight: .medium))
+              .lineLimit(1)
+            LiveRecordingBadge(status: status, size: 12)
+          }
+          .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+          .background(SottoPalette.tint, in: RoundedRectangle(cornerRadius: 8))
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("navigation.activeNote")
+        .padding(.bottom, 16)
+      }
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 6) {
           Circle().fill(SottoPalette.muted).frame(width: 6, height: 6)

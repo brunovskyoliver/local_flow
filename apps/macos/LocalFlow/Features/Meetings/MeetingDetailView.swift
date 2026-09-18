@@ -1,10 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Detail for one meeting (FR-016/FR-017): title editor, state and reason,
-/// timestamps and durations, pauses, per-track cards with every FR-015 field
-/// and a segment list, per-track playback, the Feature 005 transcript, notes,
-/// recovery outcomes, Delete.
+/// A note reader with a persistent draft, paged transcript and an inline playback footer.
 struct MeetingDetailView: View {
   let detail: MeetingDetail
   let model: MeetingLibraryViewModel
@@ -16,47 +13,86 @@ struct MeetingDetailView: View {
   /// Feature 005: the transcript rows and the coordinator that finalizes them.
   var transcriptStore: (any TranscriptStoring)? = nil
   var transcription: MeetingTranscriptionCoordinator? = nil
+  var coordinator: MeetingCoordinator? = nil
+  var initialTab: NoteDetailTab = .thoughts
+  @State private var tab: NoteDetailTab = .thoughts
+  @State private var retainedEditor: MeetingNotesEditor?
+  @State private var explainingSharing = false
+  @State private var transcriptSearch = false
+  @State private var transcriptQuery = ""
+  @State private var leaving = false
+  @FocusState private var titleFocused: Bool
   @State private var titleDraft = ""
   @State private var confirmingDelete = false
-  @State private var confirmingRetranscribe = false
   @State private var microphonePlayback = TrackPlaybackController()
   @State private var systemPlayback = TrackPlaybackController()
+  /// The track the footer player is showing; nil until Playback or "Play from here" loads one.
+  @State private var playingKind: MeetingTrackKind?
   @State private var pager: TranscriptPager?
-  @State private var showingDiagnostics = false
 
   private var meeting: Meeting { detail.meeting }
-  private var editor: MeetingNotesEditor { liveEditor ?? notesEditor }
+  private var editor: MeetingNotesEditor { liveEditor ?? retainedEditor ?? notesEditor }
+  /// The coordinator's status while this note is the one being recorded.
+  private var liveStatus: MeetingStatus? {
+    guard let coordinator, coordinator.activeMeetingID == meeting.id else { return nil }
+    return coordinator.status
+  }
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
+    VStack(spacing: 0) {
+      toolbar.padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 16)
+      VStack(alignment: .leading, spacing: 0) {
         header
-        if let notice = model.detailNotice {
-          HStack {
-            Label(notice, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
-            if model.isDeletionPending(meeting.id) {
-              Button("Retry") {
-                Task { await model.delete(meeting.id, revision: meeting.revision) }
-              }
-            }
+        HStack(spacing: 20) {
+          ForEach(NoteDetailTab.allCases) { item in
+            NoteTab(title: item.rawValue, selected: tab == item) { tab = item }
           }
         }
-        metadata
-        if !detail.pauses.isEmpty { pauses }
-        ForEach(detail.tracks) { track in
-          trackCard(track)
-        }
-        if transcriptStore != nil { transcriptSection }
-        MeetingNotesEditorView(editor: editor)
-        if !detail.outcomes.isEmpty { outcomes }
-        if meeting.state.isTerminal {
-          Button("Delete Meeting…", role: .destructive) { confirmingDelete = true }
-            .accessibilityIdentifier("meeting.delete")
-        }
       }
-      .padding(20)
+      .frame(maxWidth: NotetakerStyle.readingWidth)
+      .padding(.horizontal, 30).frame(maxWidth: .infinity)
+      NotetakerStyle.rule.frame(height: 1).frame(maxWidth: 860)
+      if let notice = model.detailNotice {
+        HStack {
+          Text(notice).foregroundStyle(.red)
+          if model.isDeletionPending(meeting.id) {
+            Button("Retry deletion") {
+              Task { await model.delete(meeting.id, revision: meeting.revision) }
+            }
+          }
+        }.font(.caption).padding(12)
+      }
+      ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+          switch tab {
+          case .thoughts: thoughts
+          case .transcript: transcriptSection
+          case .summary: summary
+          }
+        }
+        .frame(maxWidth: NotetakerStyle.readingWidth, alignment: .leading)
+        .padding(.horizontal, 30).padding(.top, 20).padding(.bottom, 24)
+        .frame(maxWidth: .infinity)
+      }
+      .scrollIndicators(.hidden)
+      footer.frame(maxWidth: NotetakerStyle.readingWidth)
+        .padding(.horizontal, 30).padding(.top, 12).padding(.bottom, 20)
     }
-    .onAppear { titleDraft = meeting.title ?? "" }
+    .font(.system(size: 13))
+    .foregroundStyle(SottoPalette.ink)
+    .alert("Note sharing is not available yet", isPresented: $explainingSharing) {
+      Button("OK", role: .cancel) {}
+    } message: {
+      Text("This recording and your thoughts are stored on this Mac. No link has been created.")
+    }
+    .onAppear {
+      titleDraft = meeting.title ?? ""
+      retainedEditor = notesEditor
+      tab = initialTab
+    }
+    .onChange(of: titleFocused) { old, focused in
+      if old && !focused { saveTitle() }
+    }
     .onChange(of: meeting.id) { _, _ in
       titleDraft = meeting.title ?? ""
       stopPlayback()
@@ -70,13 +106,6 @@ struct MeetingDetailView: View {
     .onChange(of: transcription?.status) { _, status in
       guard let status, status.meetingID == meeting.id, let pager else { return }
       Task { await pager.apply(status: status) }
-    }
-    .confirmationDialog(
-      "Replace the final transcript by transcribing the recording again?",
-      isPresented: $confirmingRetranscribe
-    ) {
-      Button("Re-transcribe") { requestFinalization() }
-      Button("Cancel", role: .cancel) {}
     }
     .onDisappear {
       stopPlayback()
@@ -94,142 +123,188 @@ struct MeetingDetailView: View {
     }
   }
 
-  private var header: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        TextField("Title (optional)", text: $titleDraft)
-          .textFieldStyle(.roundedBorder)
-          .font(.system(size: 16, weight: .semibold))
-          .onSubmit { Task { await model.setTitle(titleDraft) } }
-          .accessibilityIdentifier("meeting.title")
-        Text(meeting.state.badgeText).font(.system(size: 12, weight: .semibold))
-          .foregroundStyle(.secondary)
+  private var toolbar: some View {
+    HStack(spacing: 4) {
+      NoteIconButton(symbol: "chevron.left", label: "Back to past notes") {
+        Task {
+          leaving = true
+          await editor.flush()
+          if !editor.isDirty {
+            model.closeDetail()
+          }
+          leaving = false
+        }
       }
+      .background(SottoPalette.button, in: .rect(cornerRadius: 6))
+      .disabled(leaving)
+      Spacer()
+      NoteOverflowMenu(canDelete: meeting.state.isTerminal) { confirmingDelete = true }
+      Button {
+        explainingSharing = true
+      } label: {
+        Label("Share", systemImage: "square.and.arrow.up")
+      }.buttonStyle(PrototypeButtonStyle())
+      NoteIconButton(symbol: "link", label: "Copy note link") { explainingSharing = true }
+        .background(SottoPalette.button, in: .rect(cornerRadius: 5))
+      NoteIconButton(symbol: "chevron.left", label: "Previous note") { navigateNote(offset: -1) }
+        .disabled(adjacentNote(offset: -1) == nil || leaving)
+      NoteIconButton(symbol: "chevron.right", label: "Next note") { navigateNote(offset: 1) }
+        .disabled(adjacentNote(offset: 1) == nil || leaving)
+    }.frame(maxWidth: 860)
+  }
+
+  private func adjacentNote(offset: Int) -> UUID? {
+    guard let index = model.rows.firstIndex(where: { $0.id == meeting.id }),
+      model.rows.indices.contains(index + offset)
+    else { return nil }
+    return model.rows[index + offset].id
+  }
+
+  private func navigateNote(offset: Int) {
+    guard let id = adjacentNote(offset: offset) else { return }
+    Task {
+      leaving = true
+      await editor.flush()
+      if !editor.isDirty { await model.open(id) }
+      leaving = false
+    }
+  }
+
+  private var header: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      TextField(liveStatus == nil ? meeting.displayTitle : "New note", text: $titleDraft, axis: .vertical)
+        .textFieldStyle(.plain)
+        .font(.system(size: 26, weight: .bold))
+        .lineLimit(1...3)
+        .focused($titleFocused)
+        .onSubmit { saveTitle() }
+        .accessibilityLabel("Note title")
+        .accessibilityIdentifier("meeting.title")
+      Text(MeetingRowView.dateText(meeting.createdAt))
+        .font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
       if let reason = meeting.failureReason {
         Text(MeetingErrorMessage.text(for: reason)).font(.callout).foregroundStyle(.red)
           .accessibilityIdentifier("meeting.reason")
       }
-    }
+    }.padding(.bottom, 4)
   }
 
-  private var metadata: some View {
-    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
-      row("Created", MeetingRowView.dateText(meeting.createdAt))
-      row("Started", meeting.startedAt.map(MeetingRowView.dateText) ?? "—")
-      row("Stopped", meeting.stoppedAt.map(MeetingRowView.dateText) ?? "—")
-      row("Completed", meeting.completedAt.map(MeetingRowView.dateText) ?? "—")
-      row("Recorded", meetingDurationText(meeting.recordedMs))
-      row("Wall clock", meetingDurationText(meeting.wallClockMs))
-      row("Finalization stage", meeting.finalizationStage?.rawValue ?? "—")
-    }
-    .font(.system(size: 12))
+  private func saveTitle() {
+    guard titleDraft != (meeting.title ?? "") else { return }
+    let target = meeting
+    let title = titleDraft
+    Task { await model.setTitle(title, for: target) }
   }
 
-  private var pauses: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("Pauses").font(.system(size: 13, weight: .semibold))
-      ForEach(detail.pauses) { pause in
-        HStack(spacing: 8) {
-          Text(pause.reason == .systemSleep ? "System sleep" : "User")
-          Text(MeetingRowView.dateText(pause.startedAt)).foregroundStyle(.secondary)
-          Text("→").foregroundStyle(.secondary)
-          Text(pause.endedAt.map(MeetingRowView.dateText) ?? "open").foregroundStyle(.secondary)
-          if let closedBy = pause.closedBy {
-            Text("(\(closedBy.rawValue))").foregroundStyle(.secondary)
-          }
-        }
+  private var thoughts: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Capture your thoughts here.").foregroundStyle(SottoPalette.muted)
         .font(.system(size: 12))
+      TextEditor(text: Binding(get: { editor.text }, set: { editor.text = $0 }))
+        .font(.system(size: 14)).lineSpacing(6)
+        .scrollContentBackground(.hidden)
+        .hideScrollers()
+        .frame(minHeight: 330)
+        .accessibilityLabel("My thoughts")
+      if let notice = editor.notice {
+        HStack {
+          Text(notice).foregroundStyle(.red)
+          Button("Retry save") { Task { await editor.flush() } }
+        }
+      } else if editor.saveState == .saving || editor.saveState == .saved {
+        Text(editor.isDirty ? "Saving…" : "Saved").font(.caption).foregroundStyle(
+          SottoPalette.muted)
       }
     }
   }
 
-  private func trackCard(_ track: MeetingTrackDetail) -> some View {
-    let playback = track.track.kind == .microphone ? microphonePlayback : systemPlayback
-    return VStack(alignment: .leading, spacing: 8) {
+  private var summary: some View {
+    VStack(alignment: .leading, spacing: 24) {
       HStack {
-        Image(systemName: track.track.kind == .microphone ? "mic.fill" : "speaker.wave.2.fill")
-        Text(track.track.kind.displayName).font(.system(size: 13, weight: .semibold))
+        Label("SUMMARY", systemImage: "lightbulb").font(.system(size: 10, weight: .medium))
+          .tracking(0.8)
         Spacer()
-        Text(track.track.health.rawValue).font(.caption).foregroundStyle(
-          healthColor(track.track.health)
-        )
-        .accessibilityIdentifier("meeting.track.health.\(track.track.kind.rawValue)")
-      }
-      if let reason = track.track.failureReason {
-        Text(MeetingErrorMessage.text(for: reason, track: track.track.kind)).font(.caption)
-          .foregroundStyle(.red)
-        if let failedAt = track.track.failedAt {
-          Text("Failed at \(MeetingRowView.dateText(failedAt))").font(.caption).foregroundStyle(
-            .secondary)
-        }
-      }
-      Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 3) {
-        row("Codec", "\(track.track.codec) / \(track.track.container)")
-        row("Sample rate", "\(track.track.sampleRate) Hz")
-        row("Channels", "\(track.track.channelCount)")
-        row("Bitrate", "\(track.track.bitrate / 1_000) kbit/s")
-        row("Duration", meetingDurationText(track.track.totalDurationMs))
-        row(
-          "Bytes",
-          ByteCountFormatter.string(fromByteCount: track.track.totalBytes, countStyle: .file))
-        row("Dropped frames", "\(track.track.droppedFrames)")
-        if track.track.durationWarning { row("Duration warning", "differs from recorded duration") }
-      }
-      .font(.system(size: 12))
-      playbackControls(track, playback)
-      ForEach(track.segments) { segment in
-        HStack(spacing: 8) {
-          Text("#\(segment.sequence)").monospacedDigit()
-          Text(segment.state.rawValue)
-          Text(meetingDurationText(segment.durationMs)).monospacedDigit()
-          Text(ByteCountFormatter.string(fromByteCount: segment.byteSize, countStyle: .file))
-          Text(
-            segment.openReason.rawValue + (segment.closeReason.map { " → " + $0.rawValue } ?? ""))
-          if let note = segment.recoveryNote { Text(note).foregroundStyle(.secondary) }
-          if segment.state == .unrecoverable {
-            Text(MeetingErrorMessage.notPlayable(segment.failureReason ?? .unrecoverableMedia))
-              .foregroundStyle(.red)
-          }
-        }
-        .font(.system(size: 11))
-      }
-    }
-    .padding(12)
-    .background(SottoPalette.tint, in: RoundedRectangle(cornerRadius: 10))
-  }
-
-  @ViewBuilder private func playbackControls(
-    _ track: MeetingTrackDetail, _ playback: TrackPlaybackController
-  ) -> some View {
-    HStack(spacing: 8) {
-      Button(playback.isPlaying ? "Pause" : "Play") {
-        if playback.queued.isEmpty { playback.load(track: track, root: storageRoot) }
-        if playback.isPlaying { playback.pause() } else { playback.play() }
-      }
-      .disabled(!meeting.state.isTerminal)
-      Button("Stop") { playback.stop() }.disabled(!playback.isPlaying && playback.positionMs == 0)
+      }.foregroundStyle(SottoPalette.muted).padding(12)
+        .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
+      Text("No summary yet").font(.system(size: 16, weight: .semibold))
       Text(
-        playback.queued.isEmpty
-          ? meetingDurationText(0) + " / " + meetingDurationText(track.track.totalDurationMs)
-          : playback.positionText
+        "Meeting summaries are not available yet. Your transcript and thoughts are saved with this note."
       )
-      .font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
-      if let notice = playback.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
-    }
-    ForEach(playback.skipped, id: \.self) { skipped in
-      Text(skipped).font(.caption).foregroundStyle(.secondary)
+      .foregroundStyle(SottoPalette.muted).lineSpacing(7)
+      Button("Read transcript") { tab = .transcript }.buttonStyle(.plain)
     }
   }
 
-  private var outcomes: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("Recovery").font(.system(size: 13, weight: .semibold))
-      ForEach(detail.outcomes) { outcome in
-        Text(
-          "\(MeetingRowView.dateText(outcome.ranAt)): found \(outcome.foundState.rawValue)\(outcome.foundStage.map { " (stage \($0.rawValue))" } ?? ""), recovered \(outcome.segmentsRecovered), unrecoverable \(outcome.segmentsUnrecoverable), missing \(outcome.segmentsMissing), \(outcome.bytesTruncated) bytes truncated\(outcome.pauseClosed ? ", pause closed" : "")"
-        )
-        .font(.system(size: 12))
-        .accessibilityIdentifier("meeting.outcome")
+  private var footer: some View {
+    VStack(spacing: 10) {
+      if tab == .thoughts {
+        Text("My thoughts are private to this Mac.").font(.system(size: 10)).foregroundStyle(
+          SottoPalette.muted)
+      }
+      HStack(spacing: 8) {
+        if let coordinator, let liveStatus {
+          if liveStatus.state == .paused {
+            Button {
+              Task { await coordinator.resume() }
+            } label: {
+              Label("Resume", systemImage: "play.fill")
+            }.buttonStyle(PrototypeButtonStyle())
+          } else if liveStatus.state == .recording {
+            Button {
+              Task { await coordinator.pause(reason: .user) }
+            } label: {
+              Label("Pause", systemImage: "pause.fill")
+            }.buttonStyle(PrototypeButtonStyle())
+          }
+          Button {
+            Task { await coordinator.stop() }
+          } label: {
+            Label {
+              Text("Stop")
+            } icon: {
+              Image(systemName: "stop.fill").foregroundStyle(.green)
+            }
+          }
+          .buttonStyle(PrototypeButtonStyle())
+          .accessibilityIdentifier("meeting.stop")
+        } else {
+          footerPlayer
+        }
+        NoteUnavailableBar()
+      }
+    }
+  }
+
+  /// The loaded track's controller, or the microphone one before anything is loaded.
+  private var playback: TrackPlaybackController {
+    playingKind == .system ? systemPlayback : microphonePlayback
+  }
+
+  /// Play / pause the recording in place; the microphone track wins, system audio is the fallback.
+  @ViewBuilder private var footerPlayer: some View {
+    let track = detail.track(.microphone) ?? detail.track(.system)
+    Button {
+      if playingKind == nil, let track {
+        playingKind = track.track.kind
+        playback.load(track: track, root: storageRoot)
+      }
+      if playback.isPlaying { playback.pause() } else { playback.play() }
+    } label: {
+      Label(
+        playback.isPlaying ? "Pause" : "Playback",
+        systemImage: playback.isPlaying ? "pause.circle" : "play.circle")
+    }
+    .buttonStyle(PrototypeButtonStyle())
+    .disabled(!meeting.state.isTerminal || track == nil)
+    .accessibilityIdentifier("meeting.playback")
+    if playingKind != nil {
+      Text(playback.positionText).font(.system(size: 12)).monospacedDigit()
+        .foregroundStyle(SottoPalette.muted)
+      Button("Stop") {
+        stopPlayback()
+      }.buttonStyle(PrototypeButtonStyle())
+      if let notice = playback.notice {
+        Text(notice).font(.caption).foregroundStyle(SottoPalette.muted).lineLimit(1)
       }
     }
   }
@@ -242,79 +317,110 @@ struct MeetingDetailView: View {
     return status
   }
   private var transcriptRow: MeetingTranscription? { transcriptStatus?.metadata ?? pager?.row }
-  private var canSeek: Bool {
-    meeting.state.isTerminal
-      && detail.track(.microphone)?.segments.contains { $0.state == .finalized } == true
+  private func canSeek(_ segment: TranscriptSegment) -> Bool {
+    let kind: MeetingTrackKind = segment.draft.analysisTracks == .system ? .system : .microphone
+    return meeting.state.isTerminal
+      && detail.track(kind)?.segments.contains { $0.state == .finalized } == true
   }
 
   private var transcriptSection: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 16) {
       HStack(spacing: 8) {
-        Text("Transcript").font(.system(size: 13, weight: .semibold))
-        Text(transcriptBadgeText)
-          .font(.system(size: 11, weight: .semibold))
-          .padding(.horizontal, 8).padding(.vertical, 3)
-          .background(Color.secondary.opacity(0.14), in: Capsule())
-          .accessibilityIdentifier("meeting.transcript.badge")
+        Label(
+          meetingDurationText(liveStatus?.recordedElapsedMs ?? meeting.recordedMs),
+          systemImage: "clock"
+        )
+        .font(.system(size: 10, weight: .medium)).monospacedDigit()
+        if liveStatus == nil {
+          Text("· " + transcriptBadgeText).font(.system(size: 10, weight: .medium))
+        }
         Spacer()
-        transcriptActions
-      }
-      if let row = transcriptRow {
-        if row.state == .final {
-          Text(
-            "Covers \(meetingDurationText(row.coveredMs)) of \(meetingDurationText(meeting.recordedMs)) recorded"
-          )
-          .font(.caption).foregroundStyle(.secondary)
-          .accessibilityIdentifier("meeting.transcript.coverage")
+        NoteIconButton(symbol: "magnifyingglass", label: "Search loaded transcript") {
+          transcriptSearch.toggle()
         }
-        if let category = row.failureCategory {
-          Text(
-            TranscriptErrorMessage.message(
-              for: category, keptCount: row.segmentCount,
-              resumesAutomatically: row.state == .finalizing)
-          )
-          .font(.callout).foregroundStyle(.red)
-          .accessibilityIdentifier("meeting.transcript.failure")
-        }
-      }
-      if let notice = pager?.notice { Text(notice).font(.caption).foregroundStyle(.red) }
-      if let pager, !pager.segments.isEmpty {
-        LazyVStack(alignment: .leading, spacing: 8) {
-          if pager.hasPrevious {
-            Button("Show earlier") { Task { await pager.loadPrevious() } }.font(.caption)
+        if let pager, !pager.segments.isEmpty {
+          NoteIconButton(symbol: "square.on.square", label: "Copy loaded transcript") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(pager.copyText(), forType: .string)
           }
-          ForEach(pager.segments) { segment in
-            TranscriptSegmentRow(
-              segment: segment, provisional: segment.finality == .provisional,
-              longTimestamps: true, selected: pager.selection.contains(segment.id),
-              onTimestamp: canSeek ? { seek(to: segment.startMs) } : nil,
-              onSelect: { pager.toggleSelection(segment.id) }
-            )
-            .onAppear {
-              if segment.id == pager.segments.last?.id { Task { await pager.loadNext() } }
-            }
+        }
+      }
+      .foregroundStyle(SottoPalette.muted).padding(.horizontal, 12).padding(.vertical, 5)
+      .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
+      if transcriptSearch {
+        TextField("Search loaded transcript", text: $transcriptQuery)
+          .textFieldStyle(.plain).padding(10)
+          .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
+      }
+      Text("Labels follow the audio source. Mixed audio remains unassigned.")
+        .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+      if let row = transcriptRow, let category = row.failureCategory {
+        Text(
+          TranscriptErrorMessage.message(
+            for: category, keptCount: row.segmentCount,
+            resumesAutomatically: row.state == .finalizing)
+        )
+        .foregroundStyle(.red)
+      }
+      if let notice = pager?.notice { Text(notice).foregroundStyle(.red) }
+      if liveStatus != nil {
+        liveTranscript
+      } else if let pager, !pager.segments.isEmpty {
+        let segments = pager.segments.filter {
+          transcriptQuery.isEmpty || $0.normalizedText.localizedStandardContains(transcriptQuery)
+        }
+        LazyVStack(alignment: .leading, spacing: 3) {
+          if pager.hasPrevious {
+            Button("Show earlier") { Task { await pager.loadPrevious() } }.padding(.bottom, 10)
+          }
+          ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+            NoteTranscriptBubble(
+              segment: segment,
+              showSource: index == 0
+                || segments[index - 1].draft.analysisTracks != segment.draft.analysisTracks,
+              selected: pager.selection.contains(segment.id),
+              select: { pager.toggleSelection(segment.id) },
+              seek: canSeek(segment) ? { seek(to: segment) } : nil)
+          }
+          if segments.isEmpty {
+            Text("No matches in the loaded transcript.").foregroundStyle(SottoPalette.muted)
           }
           if pager.hasNext {
-            Button("Show more") { Task { await pager.loadNext() } }.font(.caption)
+            Button("Show more") { Task { await pager.loadNext() } }.padding(.top, 12)
           }
-        }
-        .font(.system(size: 13))
-        .padding(8)
-        .background(SottoPalette.surface, in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityIdentifier("meeting.transcript.list")
-        Text("\(pager.count) segments · \(pager.residentCount) loaded")
-          .font(.caption2).foregroundStyle(.secondary)
+        }.accessibilityIdentifier("meeting.transcript.list")
+      } else {
+        Text("Your transcript will appear here.").foregroundStyle(SottoPalette.muted).padding(
+          .vertical, 20)
       }
-      if let row = transcriptRow, row.state != .notRequested {
-        DisclosureGroup("Diagnostics", isExpanded: $showingDiagnostics) {
-          diagnostics(row)
-        }
-        .font(.system(size: 12))
-      }
+      if liveStatus == nil { transcriptActions.font(.caption).buttonStyle(.borderless) }
+    }.accessibilityIdentifier("meeting.transcript")
+  }
+
+  /// Provisional segments straight from the coordinator while recording; the pager only
+  /// reads the store once the transcript changes state.
+  @ViewBuilder private var liveTranscript: some View {
+    let segments = (transcription?.liveModel.segments ?? []).filter {
+      transcriptQuery.isEmpty || $0.normalizedText.localizedStandardContains(transcriptQuery)
     }
-    .padding(12)
-    .background(SottoPalette.tint, in: RoundedRectangle(cornerRadius: 10))
-    .accessibilityIdentifier("meeting.transcript")
+    if segments.isEmpty {
+      Text(
+        liveStatus?.transcriptionRequested == false
+          ? "Transcription is off for this note." : "Listening…"
+      )
+        .italic().foregroundStyle(SottoPalette.muted)
+        .frame(maxWidth: .infinity).padding(.vertical, 20)
+    } else {
+      LazyVStack(alignment: .leading, spacing: 3) {
+        ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+          NoteTranscriptBubble(
+            segment: segment,
+            showSource: index == 0
+              || segments[index - 1].draft.analysisTracks != segment.draft.analysisTracks,
+            selected: false, select: {})
+        }
+      }.accessibilityIdentifier("meeting.transcript.list")
+    }
   }
 
   private var transcriptBadgeText: String {
@@ -322,17 +428,10 @@ struct MeetingDetailView: View {
     return TranscriptBadge.text(for: pager?.row)
   }
 
+  /// Only the actions that get a transcript started; a final transcript has none.
   @ViewBuilder private var transcriptActions: some View {
     let state = transcriptRow?.state ?? .notRequested
     let enabled = transcription != nil && meeting.state.isTerminal && transcriptRow != nil
-    if let pager, !pager.segments.isEmpty {
-      Button(pager.selection.isEmpty ? "Copy" : "Copy selected") {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(pager.copyText(), forType: .string)
-      }
-      .accessibilityIdentifier("meeting.transcript.copy")
-    }
     switch state {
     case .notRequested:
       Button("Transcribe") { requestFinalization() }.disabled(!enabled)
@@ -340,10 +439,7 @@ struct MeetingDetailView: View {
     case .failed, .interrupted:
       Button("Retry") { requestFinalization() }.disabled(!enabled)
         .accessibilityIdentifier("meeting.transcript.retry")
-    case .final:
-      Button("Re-transcribe") { confirmingRetranscribe = true }.disabled(!enabled)
-        .accessibilityIdentifier("meeting.transcript.retranscribe")
-    case .pending, .live, .finalizing:
+    case .final, .pending, .live, .finalizing:
       EmptyView()
     }
   }
@@ -353,59 +449,69 @@ struct MeetingDetailView: View {
     transcription?.requestFinalization(meetingID: meeting.id, revision: row.revision)
   }
 
-  private func seek(to milliseconds: Int64) {
-    guard let track = detail.track(.microphone) else { return }
-    if microphonePlayback.queued.isEmpty {
-      microphonePlayback.load(track: track, root: storageRoot)
-    }
-    microphonePlayback.seek(toMs: milliseconds)
-  }
-
-  private func diagnostics(_ row: MeetingTranscription) -> some View {
-    let gaps = pager?.gaps ?? []
-    let gapMs = gaps.reduce(Int64(0)) { $0 + ($1.endMs - $1.startMs) }
-    return Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 3) {
-      self.row("Engine", row.engine ?? "—")
-      self.row(
-        "Model", [row.modelID, row.modelRevision].compactMap { $0 }.joined(separator: " / "))
-      self.row("Pipeline", row.pipelineVersion ?? "—")
-      self.row("Planner", row.plannerVersion ?? "—")
-      self.row(
-        "Vocabulary",
-        row.vocabularyRevision.map {
-          "revision \($0) · \(String((row.vocabularyHash ?? "").prefix(8)))"
-        }
-          ?? "—")
-      self.row(
-        "Analysis",
-        row.analysisDescriptor.map {
-          "\($0.version) · \($0.contributingTracks.map(\.rawValue).joined(separator: "+"))"
-        } ?? "—")
-      self.row("Replaced provisional", "\(row.replacedProvisionalCount)")
-      self.row("Live gaps", "\(gaps.count) · \(meetingDurationText(gapMs))")
-      self.row("Model reloads", "\(row.modelReloadCount)")
-      self.row("Pass", row.passID?.uuidString ?? "—")
-    }
-    .accessibilityIdentifier("meeting.transcript.diagnostics")
-  }
-
-  private func row(_ label: String, _ value: String) -> some View {
-    GridRow {
-      Text(label).foregroundStyle(.secondary)
-      Text(value)
-    }
-  }
-
-  private func healthColor(_ health: TrackHealth) -> Color {
-    switch health {
-    case .healthy: .green
-    case .finalized: .secondary
-    case .failed, .unrecoverable: .red
-    }
+  private func seek(to segment: TranscriptSegment) {
+    let kind: MeetingTrackKind = segment.draft.analysisTracks == .system ? .system : .microphone
+    guard let track = detail.track(kind) else { return }
+    if playingKind != kind { stopPlayback() }
+    playingKind = kind
+    let playback = kind == .system ? systemPlayback : microphonePlayback
+    if playback.queued.isEmpty { playback.load(track: track, root: storageRoot) }
+    playback.seek(toMs: segment.startMs)
+    playback.play()
   }
 
   private func stopPlayback() {
     microphonePlayback.unload()
     systemPlayback.unload()
+    playingKind = nil
+  }
+}
+
+enum NoteDetailTab: String, CaseIterable, Identifiable {
+  case thoughts = "My thoughts"
+  case transcript = "Transcript"
+  case summary = "+ Summary"
+  var id: Self { self }
+}
+
+struct NoteTranscriptBubble: View {
+  let segment: TranscriptSegment
+  let showSource: Bool
+  let selected: Bool
+  let select: () -> Void
+  var seek: (() -> Void)?
+
+  private var sourceColor: Color {
+    switch segment.draft.analysisTracks {
+    case .mic: .purple
+    case .system: .orange
+    case .both: SottoPalette.muted
+    }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 5) {
+      if showSource {
+        Text(segment.draft.analysisTracks.sourceLabel)
+          .font(.system(size: 12, weight: .medium)).foregroundStyle(sourceColor)
+          .padding(.top, 14)
+          .help(segment.draft.analysisTracks.sourceExplanation)
+      }
+      Text(segment.normalizedText)
+        .font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
+        .padding(.horizontal, 11).padding(.vertical, 8)
+        .background(selected ? SottoPalette.tint : SottoPalette.canvas, in: .rect(cornerRadius: 10))
+        .contextMenu {
+          Button(selected ? "Deselect segment" : "Select segment", action: select)
+          if let seek { Button("Play from here", action: seek) }
+        }
+        .accessibilityAction(named: selected ? "Deselect segment" : "Select segment", select)
+      if segment.finality == .provisional {
+        Text("Provisional").font(.system(size: 10)).foregroundStyle(SottoPalette.muted)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(segment.draft.analysisTracks.sourceExplanation)
   }
 }

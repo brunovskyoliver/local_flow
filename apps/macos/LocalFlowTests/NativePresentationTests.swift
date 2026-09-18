@@ -118,21 +118,140 @@ final class NativePresentationTests: XCTestCase {
   }
 
   @MainActor
+  func testRenderNotetaker() async throws {
+    guard let path = ProcessInfo.processInfo.environment["LOCALFLOW_UI_CAPTURE_DIR"] else {
+      throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_UI_CAPTURE_DIR for native render artifacts.")
+    }
+    let output = URL(fileURLWithPath: path, isDirectory: true)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    let fixture = try MeetingTestStore.make()
+    defer { fixture.cleanup() }
+    let now = Int64(Date().timeIntervalSince1970 * 1_000)
+    var ids: [UUID] = []
+    for (index, title) in [
+      "Product design review", "Hardware evaluation", "Release planning", "Team catch-up",
+    ].enumerated() {
+      let time = now - Int64(index + 1) * 86_400_000
+      let meeting = try await fixture.store.create(now: time)
+      ids.append(meeting.id)
+      _ = try await fixture.store.setTitle(
+        meetingID: meeting.id, title: title, revision: 0, now: time)
+      try await fixture.store.transition(id: meeting.id, to: .preparing, now: time, effects: [])
+      try await fixture.store.transition(
+        id: meeting.id, to: .recording, now: time, effects: [.setStartedAt(time)])
+      try await fixture.store.transition(
+        id: meeting.id, to: .finalizing, now: time + 600_000,
+        effects: [.setStoppedAt(time + 600_000)])
+      try await fixture.store.transition(
+        id: meeting.id, to: .completed, now: time + 600_001,
+        effects: [.setCompletedAt(time + 600_001)])
+    }
+    let clock = FakeMeetingClock()
+    let coordinator = MeetingCoordinator(
+      dependencies: .init(
+        store: fixture.store, writer: FakeSegmentWriter(root: fixture.root),
+        permissions: MeetingCoordinatorTests.PermissionState().permissions,
+        clock: clock, recorder: nil, storageRoot: fixture.root,
+        sourceFactory: { kind in
+          FakeMeetingAudioSource(
+            kind: kind, format: .init(sampleRate: 48_000, channels: 1), clock: clock)
+        }))
+    coordinator.markReconciliationComplete()
+    let suite = "Notetaker-render-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    let model = MeetingLibraryViewModel(store: fixture.store)
+    await model.refresh()
+    await model.preview(ids[0])
+    let makeEditor: (MeetingDetail) -> MeetingNotesEditor = { detail in
+      MeetingNotesEditor(
+        meetingID: detail.meeting.id, store: fixture.store, clock: SystemMeetingClock(),
+        text: detail.notes.text, revision: detail.notes.revision)
+    }
+    let transcripts = FakeTranscriptStore()
+    await transcripts.seed(ids[0])
+    let pass = UUID()
+    _ = try await transcripts.transition(
+      meetingID: ids[0], to: .finalizing, now: now, effects: [.setPass(id: pass, kind: .final)])
+    let lines: [(AnalysisTracks, String)] = [
+      (
+        .system,
+        "Let's walk through the new recording view and make sure the important details are easy to find."
+      ),
+      (
+        .system,
+        "The notes list should stay quiet. We can show more context when you hover over a recording."
+      ),
+      (
+        .mic,
+        "I agree. The transcript needs a clear reading column, with enough space between speaker changes."
+      ),
+      (
+        .system,
+        "We should also keep playback within reach without putting all of the technical information on the main screen."
+      ),
+      (
+        .both,
+        "This section contains mixed microphone and system audio. The speaker remains unassigned."
+      ),
+      (.mic, "Let's review the compact layout before we finish."),
+    ]
+    let drafts = lines.enumerated().map { index, line in
+      TranscriptSegmentDraft(
+        finality: .final, ordinal: index, stretchSequence: 1, startMs: Int64(index * 10_000),
+        endMs: Int64(index * 10_000 + 9_000), coveredMs: 600_000, windowIndex: index,
+        timingBasis: .window, rawText: line.1, assembledText: line.1, normalizedText: line.1,
+        analysisTracks: line.0)
+    }
+    _ = try await transcripts.appendSegments(
+      meetingID: ids[0], passID: pass, drafts: drafts, progress: nil, now: now)
+    _ = try await transcripts.completeFinalPass(
+      meetingID: ids[0], passID: pass, descriptor: .init(source: .decodedTracks),
+      coveredMs: 600_000, now: now)
+    for (name, appearance, scheme, width) in [
+      ("wide-light", NSAppearance.Name.aqua, ColorScheme.light, CGFloat(1440)),
+      ("compact-light", .aqua, .light, CGFloat(680)),
+      ("wide-dark", .darkAqua, .dark, CGFloat(1440)),
+    ] {
+      model.closeDetail()
+      try await render(
+        MeetingLibraryView(
+          coordinator: coordinator, model: model, storageRoot: fixture.root,
+          preferences: preferences, transcriptStore: transcripts, notesEditorFactory: makeEditor),
+        to: output.appendingPathComponent("notetaker-list-\(name).png"), appearance: appearance,
+        scheme: scheme, height: 850, width: width)
+      await model.open(ids[0])
+      let detail = try XCTUnwrap(model.detail)
+      for tab in NoteDetailTab.allCases {
+        try await render(
+          MeetingDetailView(
+            detail: detail, model: model, storageRoot: fixture.root,
+            notesEditor: makeEditor(detail), liveEditor: nil, transcriptStore: transcripts,
+            initialTab: tab), to: output.appendingPathComponent("notetaker-\(tab.id)-\(name).png"),
+          appearance: appearance, scheme: scheme, height: 850, width: width)
+      }
+    }
+  }
+
+  @MainActor
   private func render<V: View>(
     _ view: V, to url: URL, appearance: NSAppearance.Name, scheme: ColorScheme,
-    height: CGFloat = 650
+    height: CGFloat = 650, width: CGFloat = 670
   ) async throws {
     let host = NSHostingView(
-      rootView: view.frame(width: 670, height: height).background(SottoPalette.surface).environment(
-        \.colorScheme, scheme))
+      rootView: view.frame(width: width, height: height).background(SottoPalette.surface)
+        .environment(
+          \.colorScheme, scheme))
     let window = NSWindow(
-      contentRect: NSRect(x: -2000, y: -2000, width: 670, height: height), styleMask: [.borderless],
+      contentRect: NSRect(x: -2000, y: -2000, width: width, height: height),
+      styleMask: [.borderless],
       backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.appearance = NSAppearance(named: appearance)
     window.contentView = host
     defer { window.close() }
-    host.frame = NSRect(x: 0, y: 0, width: 670, height: height)
+    host.frame = NSRect(x: 0, y: 0, width: width, height: height)
     host.layoutSubtreeIfNeeded()
     try await Task.sleep(for: .milliseconds(200))
     host.layoutSubtreeIfNeeded()

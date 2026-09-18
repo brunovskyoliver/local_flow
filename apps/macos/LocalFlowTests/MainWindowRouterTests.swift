@@ -150,8 +150,8 @@ final class MainWindowRouterTests: XCTestCase {
   func testMeetingsPageIsListedFirstAndRoutable() {
     XCTAssertEqual(
       LocalFlowPage.allCases, [.meetings, .history, .dictionary, .settings])
-    XCTAssertEqual(LocalFlowPage.meetings.rawValue, "Meetings")
-    XCTAssertEqual(LocalFlowPage.meetings.symbol, "waveform.badge.mic")
+    XCTAssertEqual(LocalFlowPage.meetings.rawValue, "Notetaker")
+    XCTAssertEqual(LocalFlowPage.meetings.symbol, "record.circle")
     let router = MainWindowRouter(setActivationPolicy: { _ in }, activate: {})
     XCTAssertEqual(router.selection, .history, "the default route is unchanged")
     router.open(.meetings) {}
