@@ -633,7 +633,8 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
   }
 
   func latestRun(meetingID: UUID) async throws -> AnalysisRun? {
-    lock.withLock { runRows[meetingID]?.sorted { $0.createdAt > $1.createdAt }.first }
+    // Runs append in admission order; a frozen test clock ties `createdAt`.
+    lock.withLock { runRows[meetingID]?.last }
   }
 
   func markAutoRestarted(meetingID: UUID, now: Int64) async throws {

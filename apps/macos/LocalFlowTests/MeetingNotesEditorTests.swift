@@ -230,6 +230,32 @@ final class MeetingNotesEditorTests: XCTestCase {
     XCTAssertEqual(store.saves.map(\.text), ["ok"])
   }
 
+  /// T046: a paragraph still hashing the same publishes its range; the notice
+  /// stays clear.
+  func testRevealMatchingParagraphPublishesItsRange() {
+    let (editor, _, _) = makeEditor()
+    let text = "first\n\nsecond para\nmore of two\n\nthird"
+    editor.text = text
+    let paragraphs = NoteParagraphs.split(text)
+    editor.reveal(paragraph: 2, hash: EvidenceVersion.hash(paragraph: paragraphs[1].text))
+    XCTAssertEqual(editor.revealRange.map { String(text[$0]) }, "second para\nmore of two")
+    XCTAssertNil(editor.notice)
+    editor.clearReveal()
+    XCTAssertNil(editor.revealRange)
+  }
+
+  /// T046: an edited or deleted paragraph reports "This note has changed".
+  func testRevealChangedParagraphShowsNotice() {
+    let (editor, _, _) = makeEditor()
+    editor.text = "alpha\n\nbeta"
+    editor.reveal(paragraph: 2, hash: EvidenceVersion.hash(paragraph: "beta, edited"))
+    XCTAssertNil(editor.revealRange)
+    XCTAssertEqual(editor.notice, "This note has changed")
+    // An ordinal beyond the paragraph count fails the same way.
+    editor.reveal(paragraph: 9, hash: EvidenceVersion.hash(paragraph: "alpha"))
+    XCTAssertEqual(editor.notice, "This note has changed")
+  }
+
   func testEditorReferencesNoNetworkSymbolAndLogsNoText() throws {
     var root = URL(fileURLWithPath: #filePath)
     for _ in 0..<2 { root.deleteLastPathComponent() }

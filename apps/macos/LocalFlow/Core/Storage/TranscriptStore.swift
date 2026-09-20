@@ -357,6 +357,16 @@ actor TranscriptStore: TranscriptStoring {
       ).map(Self.segment)
     }
   }
+  /// The final ordinal of one segment id, for View-source jumps; one index read.
+  func ordinal(meetingID: UUID, segmentID: UUID) async throws -> Int? {
+    try await database.read { db in
+      try Int.fetchOne(
+        db,
+        sql:
+          "SELECT ordinal FROM transcript_segments WHERE meeting_id=? AND id=? AND finality='final'",
+        arguments: [meetingID.uuidString, segmentID.uuidString])
+    }
+  }
   /// One page with each row's effective label (`manual ?? auto`, mapped to the display
   /// root) from the accepted run. Labels apply only to final rows of the pass the run
   /// aligned against, and only while that pass is the transcript's current pass.

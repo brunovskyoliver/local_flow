@@ -44,6 +44,8 @@ protocol TranscriptStoring: Sendable {
     async throws -> [LabeledSegment]
   /// The accepted run's speakers, or nil when there is no current result.
   func acceptedSpeakers(meetingID: UUID) async throws -> AcceptedSpeakers?
+  /// The final-pass ordinal of one segment; nil when no such row exists.
+  func ordinal(meetingID: UUID, segmentID: UUID) async throws -> Int?
   func gaps(meetingID: UUID) async throws -> [LiveGap]
   func activeRows(limit: Int) async throws -> [MeetingTranscription]
   /// Commits the recovery transition and its outcome together.
@@ -78,6 +80,17 @@ extension TranscriptStoring {
     }
   }
   func acceptedSpeakers(meetingID: UUID) async throws -> AcceptedSpeakers? { nil }
+  /// Stores without an id index walk final pages; `TranscriptStore` answers directly.
+  func ordinal(meetingID: UUID, segmentID: UUID) async throws -> Int? {
+    var after: Int? = nil
+    while true {
+      let rows = try await page(
+        meetingID: meetingID, finality: .final, after: after, limit: 200)
+      if let hit = rows.first(where: { $0.id == segmentID }) { return hit.ordinal }
+      guard rows.count == 200 else { return nil }
+      after = rows.last?.ordinal
+    }
+  }
 }
 
 // Test doubles may use the ordinary operations; the SQLite store overrides this

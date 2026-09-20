@@ -103,6 +103,84 @@ final class SummaryModelTests: XCTestCase {
     XCTAssertTrue(line.hasSuffix("· AI-generated"), line)
   }
 
+  // MARK: T047 — View source
+
+  /// A segment reference requests the Transcript tab's segment — the first
+  /// segment wins over any note references on the same item — and the item's
+  /// attribution names the segment's speaker.
+  func testOpenSourceOnSegmentReferenceRequestsTranscriptTab() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, _, _, speakers) = try await makeModel(fixture: fixture)
+    let martin = UUID(uuidString: "aaaa0002-0000-4000-8000-000000000002")!
+    let oliver = UUID(uuidString: "aaaa0001-0000-4000-8000-000000000001")!
+    await speakers.setSummaries([
+      SpeakerSummary(
+        id: martin, source: .remote, labelOrdinal: 2, colorIndex: 5,
+        displayName: "Martin K.", inRoom: false, speechMs: 1_000),
+      SpeakerSummary(
+        id: oliver, source: .remote, labelOrdinal: 1, colorIndex: 3,
+        displayName: nil, inRoom: false, speechMs: 1_000,
+        identity: SpeakerIdentity(
+          state: .confirmed, origin: .userConfirmation,
+          knownSpeakerID: UUID(), knownSpeakerName: "Oliver B.")),
+    ])
+    var requests: [SummaryModel.SourceRequest] = []
+    model.onOpenSource = { requests.append($0) }
+    await model.refresh()
+    let read = try XCTUnwrap(model.readModel)
+
+    // The decision's sources are [segment aaaa…001, note:1]; the segment wins.
+    let decision = try XCTUnwrap(read.decisions.first)
+    model.openSource(for: decision)
+    XCTAssertEqual(requests, [.segment(oliver)])
+    XCTAssertEqual(decision.speakerAttribution, "Oliver B.")
+
+    // Action item 1's only source is segment aaaa…002.
+    let first = try XCTUnwrap(read.actionItems.first)
+    model.openSource(for: first)
+    XCTAssertEqual(requests.last, .segment(martin))
+    XCTAssertEqual(first.speakerAttribution, "Martin K.")
+  }
+
+  /// A note-only item requests My thoughts with the paragraph ordinal and
+  /// hash, and carries no speaker attribution (FR-025).
+  func testOpenSourceOnNoteReferenceRequestsThoughtsTab() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, store, _, _) = try await makeModel(fixture: fixture)
+    let note = try XCTUnwrap(fixture.notes.first)
+    let noteOnly = ValidatedAnalysis(
+      language: .en,
+      summary: ValidatedSummary(
+        text: "Notes only.", sources: [], wholeMeeting: true),
+      topics: [],
+      decisions: [
+        ValidatedItem(
+          kind: .decision, text: "Customer asked for Monday",
+          sources: [.note(ordinal: note.ordinal, hash: note.hash)])
+      ],
+      actionItems: [], nextSteps: [], openQuestions: [], risks: [])
+    let run = try await store.admit(
+      meetingID: fixture.id, trigger: .manual,
+      evidence: EvidenceVersion(hex: String(repeating: "b", count: 64)),
+      passID: UUID(), policy: AnalysisPolicy(), now: 2)
+    _ = try await store.start(runID: run.id, now: 3)
+    _ = try await store.adopt(
+      runID: run.id, result: noteOnly, counts: ValidationCounts(),
+      identity: RunIdentity(
+        serverVersion: "0.3.0", backendKind: "k", backendModel: "m",
+        promptVersions: "full=1", pipelineVersion: "analysis_v1"),
+      now: 4)
+
+    var requests: [SummaryModel.SourceRequest] = []
+    model.onOpenSource = { requests.append($0) }
+    await model.refresh()
+    let item = try XCTUnwrap(model.readModel?.decisions.first)
+    model.openSource(for: item)
+    XCTAssertEqual(requests, [.note(ordinal: note.ordinal, hash: note.hash)])
+    XCTAssertNil(
+      item.speakerAttribution, "note content is never attributed to a speaker")
+  }
+
   // MARK: Helpers
 
   /// Runs the analyzer on `fixture` (unless `run` is false) against the

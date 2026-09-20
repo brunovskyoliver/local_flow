@@ -40,6 +40,8 @@ final class TranscriptPager {
   private(set) var evictedFirstOrdinals: [Int] = []
   /// Rows the running final pass has written so far; 0 outside `finalizing`.
   private(set) var finalPassCount = 0
+  /// The segment a View-source jump highlighted; the view clears it after the flash.
+  private(set) var highlightedSegmentID: UUID?
   private var lastPageWasFull = false
   private let store: any TranscriptStoring
   /// Feature 010: the confirm control's store; nil keeps the 007 pager.
@@ -139,6 +141,29 @@ final class TranscriptPager {
   }
 
   func reload() async { await loadFirst() }
+
+  /// FR-011 source navigation: publishes the segment for the highlight and ensures
+  /// its page is resident. The page holding the ordinal replaces the resident pages;
+  /// an id no final row owns publishes nothing and leaves the transcript alone.
+  func reveal(segmentID: UUID) async {
+    guard finality == .final else { return }
+    if segments.contains(where: { $0.id == segmentID }) {
+      highlightedSegmentID = segmentID
+      return
+    }
+    guard let ordinal = try? await store.ordinal(meetingID: meetingID, segmentID: segmentID)
+    else { return }
+    // The page starts at the target: it lands at the top of the loaded window.
+    guard let page = await fetch(after: ordinal - 1), !page.segments.isEmpty else { return }
+    pages = [page]
+    evictedFirstOrdinals = []
+    selection = []
+    lastPageWasFull = page.segments.count == Self.pageSize
+    highlightedSegmentID = page.segments.contains(where: { $0.id == segmentID })
+      ? segmentID : nil
+  }
+
+  func clearHighlight() { highlightedSegmentID = nil }
 
   /// After a segment correction or a merge: the resident rows stay where they are and
   /// only their labels are read again, so one corrected row relabels alone (FR-026).

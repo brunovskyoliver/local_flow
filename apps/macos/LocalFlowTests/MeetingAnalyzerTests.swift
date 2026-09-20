@@ -224,6 +224,42 @@ final class MeetingAnalyzerTests: XCTestCase {
 
   // MARK: Helpers
 
+  // MARK: T045 — fabricated and foreign sources
+
+  /// A `source_ref` that names no segment of this meeting's final pass fails
+  /// the run `source_validation`; no content row is written and the prior
+  /// accepted analysis stays byte-identical.
+  func testFabricatedAndCrossMeetingSourcesFailAndPreserveAccepted() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport()
+    let valid = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
+    let fabricated = try IntelligenceFixtures.response("fabricated-segment")[.full]![0]
+    let foreign = try IntelligenceFixtures.response("cross-meeting-segment")[.full]![0]
+    transport.script(.full, [
+      .lines(.init(value: valid)), .lines(.init(value: fabricated)),
+      .lines(.init(value: foreign)),
+    ])
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let first = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(first.state, .succeeded)
+    let accepted = try await store.readModel(meetingID: fixture.id)
+
+    let second = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(second.state, .failed)
+    XCTAssertEqual(second.failureCategory, .sourceValidation)
+
+    let third = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(third.state, .failed)
+    XCTAssertEqual(third.failureCategory, .sourceValidation)
+
+    // The accepted analysis is byte-identical; neither failed run wrote content.
+    let preserved = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(preserved, accepted)
+  }
+
   private func makeAnalyzer(
     reader: FakeEvidenceReader,
     store: FakeAnalysisStore,

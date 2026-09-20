@@ -277,7 +277,7 @@ actor AnalysisStore: AnalysisStoring {
       try Row.fetchAll(
         db,
         sql:
-          "SELECT * FROM analysis_runs WHERE meeting_id=? ORDER BY created_at DESC, id DESC LIMIT ?",
+          "SELECT * FROM analysis_runs WHERE meeting_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?",
         arguments: [meetingID.uuidString, max(1, limit)]
       ).compactMap(Self.run)
     }

@@ -200,16 +200,16 @@ struct SummaryTabView: View {
       .accessibilityIdentifier("meeting.summary.actionItems")
     }
     if !read.nextSteps.isEmpty {
-      Section(title: "Next steps") { ItemRows(read.nextSteps) }
+      Section(title: "Next steps") { ItemRows(items: read.nextSteps, model: model) }
     }
     if !read.decisions.isEmpty {
-      Section(title: "Decisions") { ItemRows(read.decisions) }
+      Section(title: "Decisions") { ItemRows(items: read.decisions, model: model) }
     }
     if !read.openQuestions.isEmpty {
-      Section(title: "Open questions") { ItemRows(read.openQuestions) }
+      Section(title: "Open questions") { ItemRows(items: read.openQuestions, model: model) }
     }
     if !read.risks.isEmpty {
-      Section(title: "Risks / blockers") { ItemRows(read.risks) }
+      Section(title: "Risks / blockers") { ItemRows(items: read.risks, model: model) }
     }
   }
 
@@ -227,14 +227,20 @@ struct SummaryTabView: View {
 
   private struct ItemRows: View {
     let items: [ItemReadModel]
-    init(_ items: [ItemReadModel]) { self.items = items }
+    let model: SummaryModel
     var body: some View {
       ForEach(items) { item in
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(item.text).lineSpacing(5)
+          // FR-025: segment-sourced items may name their speaker; a note-only
+          // item has no attribution by construction.
+          if let attribution = item.speakerAttribution {
+            Text("— \(attribution)").foregroundStyle(SottoPalette.muted)
+              .font(.system(size: 11))
+          }
           Spacer(minLength: 4)
           if !item.edits.isEmpty { EditedTag() }
-          SourceButton(sources: item.sources)
+          SourceButton(item: item, model: model)
         }
         .accessibilityIdentifier(
           "meeting.summary.item.\(item.kind.rawValue).\(item.ordinal)")
@@ -242,15 +248,28 @@ struct SummaryTabView: View {
     }
   }
 
-  /// The trailing "View source" affordance; navigation lands with T050.
+  /// The trailing "View source" control: Transcript + segment for segment
+  /// references, My thoughts + paragraph for note references.
   private struct SourceButton: View {
     let sources: [SourceRef]
+    let action: () -> Void
+    init(item: ItemReadModel, model: SummaryModel) {
+      sources = item.sources
+      action = { model.openSource(for: item) }
+    }
+    init(item: ActionItemReadModel, model: SummaryModel) {
+      sources = item.sources
+      action = { model.openSource(for: item) }
+    }
     var body: some View {
       if !sources.isEmpty {
-        Image(systemName: "arrow.up.right.square")
-          .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
-          .help("View source")
-          .accessibilityLabel("View source")
+        Button(action: action) {
+          Image(systemName: "arrow.up.right.square")
+            .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+        }
+        .buttonStyle(.plain)
+        .help("View source")
+        .accessibilityLabel("View source")
       }
     }
   }
@@ -286,7 +305,7 @@ struct SummaryTabView: View {
         OwnerChip(owner: item.owner)
         DueLabel(item: item)
         if !item.edits.isEmpty { EditedTag() }
-        SourceButton(sources: item.sources)
+        SourceButton(item: item, model: model)
       }
       .accessibilityIdentifier(
         "meeting.summary.item.\(AnalysisItemKind.actionItem.rawValue).\(item.ordinal)")

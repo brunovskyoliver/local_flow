@@ -654,3 +654,53 @@ final class SpeakerPaletteTests: XCTestCase {
     XCTAssertEqual(SpeakerPalette.overlapping, "Overlapping")
   }
 }
+
+@MainActor
+final class TranscriptPagerRevealTests: XCTestCase {
+  private func makePager(count: Int, state: TranscriptState = .final) async -> (
+    TranscriptPager, FakeTranscriptStore, UUID
+  ) {
+    let store = FakeTranscriptStore()
+    let meeting = UUID()
+    let pass = UUID()
+    await store.seed(meeting)
+    var row = await store.transcription(meetingID: meeting)!
+    row.state = state
+    row.passID = pass
+    row.passKind = .final
+    await store.setRow(row)
+    await store.seedSegments(meeting, passID: pass, finality: .final, count: count)
+    return (TranscriptPager(meetingID: meeting, store: store), store, meeting)
+  }
+
+  /// T046: a resident segment highlights without a refetch; a non-resident one
+  /// loads the page holding its ordinal.
+  func testRevealLoadsTheHoldingPageAndPublishesTheSegment() async throws {
+    let (pager, store, meeting) = await makePager(count: 5_000)
+    await pager.loadFirst()
+    let resident = pager.segments[42]
+    await pager.reveal(segmentID: resident.id)
+    XCTAssertEqual(pager.highlightedSegmentID, resident.id)
+
+    let rows = await store.page(meetingID: meeting, finality: .final, after: 3_099, limit: 1)
+    let target = try XCTUnwrap(rows.first)
+    let before = pager.segments.map(\.ordinal)
+    XCTAssertFalse(before.contains(target.ordinal))
+    await pager.reveal(segmentID: target.id)
+    XCTAssertEqual(pager.highlightedSegmentID, target.id)
+    XCTAssertTrue(pager.segments.contains(where: { $0.id == target.id }))
+    XCTAssertEqual(pager.segments.first?.ordinal, 3_100)
+    pager.clearHighlight()
+    XCTAssertNil(pager.highlightedSegmentID)
+  }
+
+  /// T046: an id no final row owns publishes nothing and leaves pages alone.
+  func testRevealUnknownIDPublishesNothing() async throws {
+    let (pager, _, _) = await makePager(count: 5)
+    await pager.loadFirst()
+    await pager.reveal(segmentID: UUID())
+    XCTAssertNil(pager.highlightedSegmentID)
+    XCTAssertEqual(pager.segments.count, 5)
+    XCTAssertNil(pager.notice)
+  }
+}

@@ -17,20 +17,28 @@ enum AnalysisValidator {
 
     let summary = ValidatedSummary(
       text: result.summary.text,
-      sources: try resolveSources(result.summary.sources, evidence: evidence),
+      sources: try resolveSources(result.summary.sources, evidence: evidence, policy: policy),
       wholeMeeting: result.summary.wholeMeeting)
-    let topics = result.topics.map { topic in
+    let topics = try result.topics.map { topic in
       ValidatedTopic(
         title: topic.title, summary: topic.summary, bullets: topic.bullets,
-        sources: (try? resolveSources(topic.sources, evidence: evidence)) ?? [])
+        sources: try resolveSources(topic.sources, evidence: evidence, policy: policy))
     }
-    var decisions = result.decisions.map { item($0, kind: .decision, evidence: evidence) }
-    var actionItems = result.actionItems.map { actionItem($0, evidence: evidence) }
-    var nextSteps = result.nextSteps.map { item($0, kind: .nextStep, evidence: evidence) }
-    var openQuestions = result.openQuestions.map {
-      item($0, kind: .openQuestion, evidence: evidence)
+    var decisions = try result.decisions.map {
+      try item($0, kind: .decision, evidence: evidence, policy: policy)
     }
-    var risks = result.risks.map { item($0, kind: .risk, evidence: evidence) }
+    var actionItems = try result.actionItems.map {
+      try actionItem($0, evidence: evidence, policy: policy)
+    }
+    var nextSteps = try result.nextSteps.map {
+      try item($0, kind: .nextStep, evidence: evidence, policy: policy)
+    }
+    var openQuestions = try result.openQuestions.map {
+      try item($0, kind: .openQuestion, evidence: evidence, policy: policy)
+    }
+    var risks = try result.risks.map {
+      try item($0, kind: .risk, evidence: evidence, policy: policy)
+    }
 
     checkIdentity(items: &actionItems, evidence: evidence, counts: &counts)
     resolveDueDates(items: &actionItems, evidence: evidence)
@@ -70,19 +78,32 @@ enum AnalysisValidator {
     }
   }
 
-  // MARK: 2. Sources (stub — T048 adds the membership and note-hash checks)
+  // MARK: 2. Sources
 
-  private static func resolveSources(_ refs: [WireSourceRef], evidence: AnalysisEvidence)
-    throws -> [SourceRef]
-  {
-    refs.map { ref in
+  /// Every segment id must be in this meeting's final pass and every note
+  /// ordinal must resolve to a current paragraph; the resolved note ref
+  /// carries that paragraph's hash so a later "This note has changed" check
+  /// is exact. Over ten references or an unknown id fails the run
+  /// `source_validation` — a fabricated or foreign source is never adopted.
+  private static func resolveSources(
+    _ refs: [WireSourceRef], evidence: AnalysisEvidence, policy: AnalysisPolicy
+  ) throws -> [SourceRef] {
+    guard refs.count <= policy.sourcesPerItem else {
+      throw AnalysisFailure(.sourceValidation, detail: "too_many_sources")
+    }
+    return try refs.map { ref in
       switch ref.kind {
       case .segment:
-        return .segment(UUID(uuidString: ref.id) ?? UUID())
+        guard let id = UUID(uuidString: ref.id), evidence.segmentIDs.contains(id) else {
+          throw AnalysisFailure(.sourceValidation, detail: "unknown_segment")
+        }
+        return .segment(id)
       case .note:
         let ordinal = Int(ref.id.dropFirst(5)) ?? 0
-        let hash = evidence.notes.first(where: { $0.ordinal == ordinal })?.hash ?? ""
-        return .note(ordinal: ordinal, hash: hash)
+        guard let paragraph = evidence.notes.first(where: { $0.ordinal == ordinal }) else {
+          throw AnalysisFailure(.sourceValidation, detail: "unknown_note")
+        }
+        return .note(ordinal: ordinal, hash: paragraph.hash)
       }
     }
   }
@@ -165,21 +186,30 @@ enum AnalysisValidator {
 
   // MARK: Conversion helpers
 
-  private static func item(_ wire: WireItem, kind: AnalysisItemKind, evidence: AnalysisEvidence)
-    -> ValidatedItem
-  {
-    ValidatedItem(
-      kind: kind, text: wire.text, evidenceClass: wire.evidenceClass,
-      sources: (try? resolveSources(wire.sources, evidence: evidence)) ?? [])
+  /// The five item kinds need at least one source (contract table row 2).
+  private static func item(
+    _ wire: WireItem, kind: AnalysisItemKind, evidence: AnalysisEvidence,
+    policy: AnalysisPolicy
+  ) throws -> ValidatedItem {
+    let sources = try resolveSources(wire.sources, evidence: evidence, policy: policy)
+    guard !sources.isEmpty else {
+      throw AnalysisFailure(.sourceValidation, detail: "missing_source")
+    }
+    return ValidatedItem(
+      kind: kind, text: wire.text, evidenceClass: wire.evidenceClass, sources: sources)
   }
 
-  private static func actionItem(_ wire: WireActionItem, evidence: AnalysisEvidence)
-    -> ValidatedActionItem
-  {
-    ValidatedActionItem(
+  private static func actionItem(
+    _ wire: WireActionItem, evidence: AnalysisEvidence, policy: AnalysisPolicy
+  ) throws -> ValidatedActionItem {
+    let sources = try resolveSources(wire.sources, evidence: evidence, policy: policy)
+    guard !sources.isEmpty else {
+      throw AnalysisFailure(.sourceValidation, detail: "missing_source")
+    }
+    return ValidatedActionItem(
       text: wire.text, owner: owner(wire.owner, evidence: evidence),
-      ownershipState: wire.ownershipState, due: due(wire.due, evidence: evidence),
-      sources: (try? resolveSources(wire.sources, evidence: evidence)) ?? [])
+      ownershipState: wire.ownershipState,
+      due: try due(wire.due, evidence: evidence, policy: policy), sources: sources)
   }
 
   private static func owner(_ wire: WireOwner, evidence: AnalysisEvidence) -> ValidatedOwner {
@@ -199,9 +229,13 @@ enum AnalysisValidator {
     }
   }
 
-  private static func due(_ wire: WireDue, evidence: AnalysisEvidence) -> ValidatedDue {
+  private static func due(
+    _ wire: WireDue, evidence: AnalysisEvidence, policy: AnalysisPolicy
+  ) throws -> ValidatedDue {
     ValidatedDue(
       state: wire.state, date: wire.date, original: wire.original,
-      source: wire.source.flatMap { try? resolveSources([$0], evidence: evidence).first })
+      source: try wire.source.map {
+        try resolveSources([$0], evidence: evidence, policy: policy).first!
+      })
   }
 }

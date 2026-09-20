@@ -20,6 +20,10 @@ final class MeetingNotesEditor {
   private(set) var notice: String?
   private(set) var revision: Int64
   private(set) var saveCount = 0
+  /// The paragraph a View-source jump selected, plus the text it indexes into
+  /// — the view applies it only while `revealText == text`, then clears both.
+  private(set) var revealRange: Range<String.Index>?
+  private(set) var revealText: String?
   private var stored: String
   private var current: String
   @ObservationIgnored private let store: any MeetingStoring
@@ -65,6 +69,29 @@ final class MeetingNotesEditor {
     }
     scheduleDebounce()
     if forcedTask == nil { scheduleForced() }
+  }
+
+  /// FR-011 source navigation: the paragraph still hashing to `hash` publishes its
+  /// range for the view to select and scroll to. A moved, edited, or deleted
+  /// paragraph reports "This note has changed" instead — the stored hash, not the
+  /// ordinal, decides what still matches.
+  func reveal(paragraph ordinal: Int, hash: String) {
+    guard let slice = NoteParagraphs.split(current).first(where: { $0.ordinal == ordinal }),
+      EvidenceVersion.hash(paragraph: slice.text) == hash
+    else {
+      revealRange = nil
+      revealText = nil
+      notice = "This note has changed"
+      return
+    }
+    notice = nil
+    revealRange = slice.range
+    revealText = current
+  }
+
+  func clearReveal() {
+    revealRange = nil
+    revealText = nil
   }
 
   /// Saves immediately when dirty and returns once the save has returned.

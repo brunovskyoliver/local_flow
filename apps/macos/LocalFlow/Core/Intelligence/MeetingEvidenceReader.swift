@@ -99,26 +99,9 @@ actor MeetingEvidenceReader: MeetingEvidenceReading {
   /// numbered from 1, each paragraph SHA-256 hashed (research R7).
   func notes(meetingID: UUID) async throws -> [NoteParagraph] {
     guard let notes = try await meetings.notes(meetingID: meetingID) else { return [] }
-    var paragraphs: [String] = []
-    var current: [String] = []
-    for line in notes.text.components(separatedBy: "\n") {
-      if line.trimmingCharacters(in: .whitespaces).isEmpty {
-        if !current.isEmpty {
-          paragraphs.append(
-            current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
-          current = []
-        }
-      } else {
-        current.append(line)
-      }
-    }
-    if !current.isEmpty {
-      paragraphs.append(
-        current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-    return paragraphs.enumerated().map { index, text in
+    return NoteParagraphs.split(notes.text).map {
       NoteParagraph(
-        ordinal: index + 1, text: text, hash: EvidenceVersion.hash(paragraph: text))
+        ordinal: $0.ordinal, text: $0.text, hash: EvidenceVersion.hash(paragraph: $0.text))
     }
   }
 
@@ -143,5 +126,46 @@ actor MeetingEvidenceReader: MeetingEvidenceReading {
         return (id, row["display_name"])
       }
     }
+  }
+}
+
+/// One paragraph of note text: the blank-line-delimited slice the reader hashes
+/// and the editor selects. `range` spans the paragraph's untrimmed lines inside
+/// the source text, so a reveal can select it without re-finding the offset.
+struct NoteParagraphSlice: Sendable {
+  var ordinal: Int
+  var text: String
+  var range: Range<String.Index>
+}
+
+/// The one paragraph splitter shared by evidence collection and the notes
+/// editor's View-source jump, so ordinals and hashes never diverge.
+enum NoteParagraphs {
+  static func split(_ text: String) -> [NoteParagraphSlice] {
+    var out: [NoteParagraphSlice] = []
+    var lines: [(range: Range<String.Index>, text: String)] = []
+    func flush() {
+      guard let first = lines.first, let last = lines.last else { return }
+      let joined = lines.map(\.text).joined(separator: "\n")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      out.append(
+        NoteParagraphSlice(
+          ordinal: out.count + 1, text: joined,
+          range: first.range.lowerBound..<last.range.upperBound))
+      lines = []
+    }
+    var start = text.startIndex
+    while start < text.endIndex {
+      let end = text[start...].firstIndex(of: "\n") ?? text.endIndex
+      let line = String(text[start..<end])
+      if line.trimmingCharacters(in: .whitespaces).isEmpty {
+        flush()
+      } else {
+        lines.append((start..<end, line))
+      }
+      start = end == text.endIndex ? end : text.index(after: end)
+    }
+    flush()
+    return out
   }
 }

@@ -79,20 +79,35 @@ struct MeetingDetailView: View {
           }
         }.font(.caption).padding(12)
       }
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-          switch tab {
-          case .thoughts: thoughts
-          case .transcript: transcriptSection
-          case .summary: summary
+      ScrollViewReader { proxy in
+        ScrollView {
+          VStack(alignment: .leading, spacing: 16) {
+            switch tab {
+            case .thoughts: thoughts
+            case .transcript: transcriptSection
+            case .summary: summary
+            }
+          }
+          .frame(maxWidth: NotetakerStyle.readingWidth, alignment: .leading)
+          .padding(.horizontal, 30).padding(.top, 20).padding(.bottom, 24)
+          .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .hideScrollers()
+        .onChange(of: pager?.highlightedSegmentID) { _, id in
+          // Feature 011: a View-source jump lands here — scroll to the segment,
+          // then end the two-second highlight.
+          guard let id else { return }
+          Task { @MainActor in
+            await Task.yield()
+            withAnimation { proxy.scrollTo(id, anchor: .center) }
+          }
+          Task {
+            try? await Task.sleep(for: .seconds(2))
+            pager?.clearHighlight()
           }
         }
-        .frame(maxWidth: NotetakerStyle.readingWidth, alignment: .leading)
-        .padding(.horizontal, 30).padding(.top, 20).padding(.bottom, 24)
-        .frame(maxWidth: .infinity)
       }
-      .scrollIndicators(.hidden)
-      .hideScrollers()
       footer.frame(maxWidth: NotetakerStyle.readingWidth)
         .padding(.horizontal, 30).padding(.top, 12).padding(.bottom, 20)
     }
@@ -116,7 +131,20 @@ struct MeetingDetailView: View {
       stopPlayback()
     }
     .task(id: meeting.id) {
-      summaryModel = summaryModelFactory?(meeting.id)
+      let created = summaryModelFactory?(meeting.id)
+      // Feature 011 (T050): View source switches the tab, then the pager or the
+      // notes editor reveals the referenced row.
+      created?.onOpenSource = { request in
+        switch request {
+        case .segment(let id):
+          tab = .transcript
+          Task { await pager?.reveal(segmentID: id) }
+        case .note(let ordinal, let hash):
+          tab = .thoughts
+          editor.reveal(paragraph: ordinal, hash: hash)
+        }
+      }
+      summaryModel = created
       guard let transcriptStore else { return }
       let loaded = TranscriptPager(
         meetingID: meeting.id, store: transcriptStore,
@@ -288,12 +316,13 @@ struct MeetingDetailView: View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Capture your thoughts here.").foregroundStyle(SottoPalette.muted)
         .font(.system(size: 12))
-      TextEditor(text: Binding(get: { editor.text }, set: { editor.text = $0 }))
-        .font(.system(size: 14)).lineSpacing(6)
-        .scrollContentBackground(.hidden)
-        .hideScrollers()
-        .frame(minHeight: 330)
-        .accessibilityLabel("My thoughts")
+      SelectableTextEditor(
+        text: Binding(get: { editor.text }, set: { editor.text = $0 }),
+        selection: editor.revealText == editor.text ? editor.revealRange : nil,
+        onSelect: { editor.clearReveal() }
+      )
+      .frame(minHeight: 330)
+      .accessibilityLabel("My thoughts")
       if let notice = editor.notice {
         HStack {
           Text(notice).foregroundStyle(.red)
@@ -482,6 +511,7 @@ struct MeetingDetailView: View {
             NoteTranscriptBubble(
               segment: segment,
               showSource: pager.startsGroup(at: index, in: segments),
+              highlighted: pager.highlightedSegmentID == segment.id,
               speaker: pager.label(for: segment.id),
               speakerChoices: speakerChoices,
               selected: pager.selection.contains(segment.id),
@@ -490,6 +520,7 @@ struct MeetingDetailView: View {
               changeSpeaker: pager.speakers == nil
                 ? nil : { correctSpeaker(segment, to: $0) },
               confirmIdentity: showsIdentification ? { confirmIdentity(segment) } : nil)
+            .id(segment.id)
           }
           if segments.isEmpty {
             Text("No matches in the loaded transcript.").foregroundStyle(SottoPalette.muted)
@@ -804,6 +835,8 @@ struct NoteTranscriptBubble: View {
 
   let segment: TranscriptSegment
   let showSource: Bool
+  /// Feature 011: the 2-second flash after a View-source jump.
+  var highlighted = false
   /// Feature 007: the speaker label; nil keeps the Feature 006 source label.
   var speaker: SegmentLabel? = nil
   /// Change speaker ▸ targets; the menu also offers Unknown and New speaker.
@@ -856,7 +889,11 @@ struct NoteTranscriptBubble: View {
       Text(segment.normalizedText)
         .font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
         .padding(.horizontal, 11).padding(.vertical, 8)
-        .background(selected ? SottoPalette.tint : SottoPalette.canvas, in: .rect(cornerRadius: 10))
+        .background(
+          highlighted
+            ? SottoPalette.accent.opacity(0.2)
+            : selected ? SottoPalette.tint : SottoPalette.canvas,
+          in: .rect(cornerRadius: 10))
         .contextMenu {
           Button(selected ? "Deselect segment" : "Select segment", action: select)
           if let seek { Button("Play from here", action: seek) }
@@ -883,5 +920,72 @@ struct NoteTranscriptBubble: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .contain)
     .accessibilityLabel(speaker?.text ?? segment.draft.analysisTracks.sourceExplanation)
+  }
+}
+
+/// The thoughts editor's AppKit surface: `NSTextView` wrapped for macOS 14 —
+/// SwiftUI `TextEditor` only gained a selection binding in macOS 15 — so a
+/// View-source jump can select and scroll to a note paragraph (T050). Text
+/// edits flow back through the same binding the old `TextEditor` used, so the
+/// editor's debounce saves are unchanged.
+private struct SelectableTextEditor: NSViewRepresentable {
+  @Binding var text: String
+  /// A pending paragraph selection; `onSelect` clears it after it is applied.
+  var selection: Range<String.Index>?
+  var onSelect: () -> Void
+
+  func makeNSView(context: Context) -> NSScrollView {
+    let scroll = NSTextView.scrollableTextView()
+    scroll.hasVerticalScroller = false
+    let textView = scroll.documentView as! NSTextView
+    textView.isRichText = false
+    textView.allowsUndo = true
+    textView.font = .systemFont(ofSize: 14)
+    textView.textContainerInset = NSSize(width: 0, height: 4)
+    textView.delegate = context.coordinator
+    context.coordinator.set(text, in: textView)
+    return scroll
+  }
+
+  func updateNSView(_ nsView: NSScrollView, context: Context) {
+    let textView = nsView.documentView as! NSTextView
+    if textView.string != text {
+      context.coordinator.updating = true
+      context.coordinator.set(text, in: textView)
+      context.coordinator.updating = false
+    }
+    if let selection {
+      let range = NSRange(selection, in: text)
+      textView.setSelectedRange(range)
+      textView.scrollRangeToVisible(range)
+      // Clearing the pending selection mutates the editor; defer past the update.
+      DispatchQueue.main.async { onSelect() }
+    }
+  }
+
+  func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+
+  final class Coordinator: NSObject, NSTextViewDelegate {
+    var text: Binding<String>
+    var updating = false
+
+    init(text: Binding<String>) { self.text = text }
+
+    /// Assigns text and reapplies the 6-pt line spacing the SwiftUI editor had.
+    func set(_ value: String, in textView: NSTextView) {
+      textView.string = value
+      textView.font = .systemFont(ofSize: 14)
+      let style = NSMutableParagraphStyle()
+      style.lineSpacing = 6
+      textView.textStorage?.addAttribute(
+        .paragraphStyle, value: style,
+        range: NSRange(location: 0, length: textView.string.utf16.count))
+      textView.typingAttributes[.paragraphStyle] = style
+    }
+
+    func textDidChange(_ notification: Notification) {
+      guard !updating, let view = notification.object as? NSTextView else { return }
+      text.wrappedValue = view.string
+    }
   }
 }

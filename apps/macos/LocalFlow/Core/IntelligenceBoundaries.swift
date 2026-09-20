@@ -361,6 +361,9 @@ struct ItemReadModel: Sendable, Equatable, Identifiable {
   var text: String
   var aiText: String
   var sources: [SourceRef]
+  /// The display label of the first segment source's speaker; nil when every
+  /// source is a note — note content is never attributed to a speaker (FR-025).
+  var speakerAttribution: String?
   var edits: Set<OverlayField> = []
 }
 
@@ -378,6 +381,9 @@ struct ActionItemReadModel: Sendable, Equatable, Identifiable {
   var dueState: DueState
   var status: AnalysisItemStatus
   var sources: [SourceRef]
+  /// The display label of the first segment source's speaker; nil when every
+  /// source is a note — note content is never attributed to a speaker (FR-025).
+  var speakerAttribution: String?
   var edits: Set<OverlayField> = []
 }
 
