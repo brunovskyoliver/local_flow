@@ -1,4 +1,5 @@
-// flowd serves optional text rewriting. Inference runs in a separate process.
+// flowd serves optional text rewriting and meeting analysis. Inference runs in
+// a separate process; flowd owns no model weights.
 package main
 
 import (
@@ -17,8 +18,9 @@ import (
 	"syscall"
 	"time"
 
+	"localflow/server/internal/analysis"
+	"localflow/server/internal/backend"
 	"localflow/server/internal/rewrite"
-	"localflow/server/internal/rewrite/backend"
 )
 
 type configuration struct {
@@ -27,11 +29,14 @@ type configuration struct {
 	shield   bool
 	versions []int
 	token    string
+	analysis analysis.Limits
+	dumpDir  string
 }
 
 func parse(args []string, getenv func(string) string, output io.Writer) (configuration, error) {
 	var c configuration
-	fs := flag.NewFlagSet("flowd rewrite", flag.ContinueOnError)
+	c.analysis = analysis.DefaultLimits()
+	fs := flag.NewFlagSet("flowd serve", flag.ContinueOnError)
 	fs.SetOutput(output)
 	fs.StringVar(&c.listen, "listen", "127.0.0.1:8080", "HTTP listen address")
 	fs.StringVar(&c.backend.BaseURL, "backend", "http://127.0.0.1:8000/v1", "OpenAI-compatible API base URL, including /v1")
@@ -41,6 +46,17 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.DurationVar(&c.backend.DebugDelay, "debug-delay", 0, "delay inference for acceptance tests")
 	fs.DurationVar(&c.backend.FirstTokenTimeout, "first-token-timeout", 5*time.Second, "backend first-token deadline")
 	fs.DurationVar(&c.backend.Timeout, "backend-timeout", 20*time.Second, "total backend deadline")
+	fs.BoolVar(&c.analysis.Enabled, "analysis", true, "serve the meeting analysis endpoints")
+	fs.IntVar(&c.analysis.Concurrency, "analysis-concurrency", 1, "analysis admission slots")
+	fs.IntVar(&c.analysis.InputBytes, "analysis-input-bytes", 98304, "max summed segment/notes/partials text bytes per request")
+	fs.IntVar(&c.analysis.OutputTokensChunk, "analysis-output-tokens-chunk", 2048, "backend max_tokens for chunk requests")
+	fs.IntVar(&c.analysis.OutputTokensFull, "analysis-output-tokens", 3072, "backend max_tokens for full and synthesis requests")
+	fs.IntVar(&c.analysis.ContextTokens, "analysis-context-tokens", 32768, "usable backend context tokens")
+	fs.DurationVar(&c.analysis.Timeout, "analysis-timeout", 120*time.Second, "backend deadline per analysis request")
+	fs.DurationVar(&c.analysis.FirstTokenTimeout, "analysis-first-token-timeout", 15*time.Second, "backend first-token deadline for analysis")
+	fs.DurationVar(&c.analysis.QueueWait, "analysis-queue-wait", 30*time.Second, "rewrite-first gate window")
+	fs.BoolVar(&c.analysis.Preempt, "analysis-preempt", true, "cancel an in-flight analysis call when a rewrite arrives")
+	fs.StringVar(&c.dumpDir, "analysis-dump-requests", "", "debug builds only: write each analysis request body to this directory")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -60,6 +76,9 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	}
 	if c.backend.FirstTokenTimeout <= 0 || c.backend.Timeout <= 0 || c.backend.Timeout > 5*time.Minute || c.backend.FirstTokenTimeout > 5*time.Minute || c.backend.DebugDelay < 0 || c.backend.DebugDelay > 5*time.Minute {
 		return c, errors.New("timeouts must be positive and at most five minutes; debug delay may be zero")
+	}
+	if c.dumpDir != "" && !analysis.DebugBuild {
+		return c, errors.New("--analysis-dump-requests requires a build with -tags localflow_debug")
 	}
 	c.token = getenv("LOCALFLOW_REWRITE_TOKEN")
 	c.backend.Token = getenv("LOCALFLOW_BACKEND_TOKEN")
@@ -85,11 +104,11 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 }
 func run(ctx context.Context, args []string, getenv func(string) string, output io.Writer) error {
 	if len(args) == 0 {
-		fmt.Fprintf(output, "LocalFlow flowd %s\nUsage: flowd rewrite [flags]\n", rewrite.ServerVersion)
+		fmt.Fprintf(output, "LocalFlow flowd %s\nUsage: flowd serve [flags]  (alias: flowd rewrite)\n", rewrite.ServerVersion)
 		return nil
 	}
-	if args[0] != "rewrite" {
-		return errors.New("unknown subcommand; use flowd rewrite")
+	if args[0] != "serve" && args[0] != "rewrite" {
+		return errors.New("unknown subcommand; use flowd serve")
 	}
 	c, err := parse(args[1:], getenv, output)
 	if errors.Is(err, flag.ErrHelp) {
@@ -104,8 +123,20 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 	}
 	defer adapter.Close()
 	logger := log.New(output, "flowd ", log.LstdFlags)
-	h := rewrite.NewHandler(rewrite.HandlerConfig{Backend: adapter, Token: c.token, Shield: c.shield, ProtocolVersions: c.versions, Logger: logger})
-	server := &http.Server{Addr: c.listen, Handler: h, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: c.backend.Timeout + 10*time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384, BaseContext: func(net.Listener) context.Context { return ctx }}
+	gate := analysis.NewGate(c.analysis.QueueWait, c.analysis.Preempt)
+	rewriteHandler := rewrite.NewHandler(rewrite.HandlerConfig{Backend: adapter, Token: c.token, Shield: c.shield, ProtocolVersions: c.versions, Logger: logger, Gate: gate})
+	mux := http.NewServeMux()
+	mux.Handle("/v1/rewrite", rewriteHandler)
+	mux.Handle("/v1/rewrite/health", rewriteHandler)
+	if c.analysis.Enabled {
+		analysisHandler := analysis.NewHandler(analysis.HandlerConfig{
+			Backend: adapter, Token: c.token, ProtocolVersions: c.versions,
+			Limits: c.analysis, Gate: gate, Logger: logger, DumpDir: c.dumpDir,
+		})
+		mux.Handle("/v1/analysis/meeting", analysisHandler)
+		mux.Handle("/v1/analysis/health", analysisHandler)
+	}
+	server := &http.Server{Addr: c.listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: c.analysis.Timeout + 10*time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384, BaseContext: func(net.Listener) context.Context { return ctx }}
 	listener, err := net.Listen("tcp", c.listen)
 	if err != nil {
 		return errors.New("could not open listener")

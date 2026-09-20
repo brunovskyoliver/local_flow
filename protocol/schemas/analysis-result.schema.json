@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localflow.org/schemas/analysis-result.schema.json",
+  "title": "LocalFlow meeting analysis result v1",
+  "description": "The analysis object of a result event of POST /v1/analysis/meeting. Identical shape for full, chunk and synthesis; chunk results carry partial: true and the partial caps (half of the section caps, enforced by the implementations). The encoded result line is at most 98,304 bytes. Text limits are UTF-8 byte lengths enforced by the implementations; character bounds here are a coarse upper bound.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "meeting_id",
+    "partial",
+    "language",
+    "summary",
+    "topics",
+    "decisions",
+    "action_items",
+    "next_steps",
+    "open_questions",
+    "risks"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "meeting_id": { "type": "string", "format": "uuid" },
+    "partial": { "type": "boolean" },
+    "language": { "type": "string", "enum": ["sk", "en", "mixed"] },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "sources", "whole_meeting"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "sources": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/source" }
+        },
+        "whole_meeting": { "type": "boolean" }
+      }
+    },
+    "topics": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "summary", "bullets", "sources"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "summary": { "type": "string", "maxLength": 2000 },
+          "bullets": {
+            "type": "array",
+            "maxItems": 12,
+            "items": { "type": "string", "maxLength": 500 }
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 10,
+            "items": { "$ref": "#/$defs/source" }
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/evidencedItem" }
+    },
+    "action_items": {
+      "type": "array",
+      "maxItems": 60,
+      "items": { "$ref": "#/$defs/actionItem" }
+    },
+    "next_steps": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/plainItem" }
+    },
+    "open_questions": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/evidencedItem" }
+    },
+    "risks": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/evidencedItem" }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["segment", "note"] },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "A segment UUID or a note:<n> paragraph id; unique within one sources list."
+        }
+      }
+    },
+    "plainItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "sources"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/source" }
+        }
+      }
+    },
+    "evidencedItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "sources"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "evidence_class": { "type": "string", "enum": ["explicit", "implied"] },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/source" }
+        }
+      }
+    },
+    "actionItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "owner", "ownership_state", "due", "sources"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "owner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["participant", "mentioned", "none"]
+            },
+            "speaker_id": { "type": "string", "format": "uuid" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 80 }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "kind": { "const": "participant" } } },
+              "then": { "required": ["speaker_id"], "not": { "required": ["name"] } }
+            },
+            {
+              "if": { "properties": { "kind": { "const": "mentioned" } } },
+              "then": { "required": ["name"], "not": { "required": ["speaker_id"] } }
+            },
+            {
+              "if": { "properties": { "kind": { "const": "none" } } },
+              "then": {
+                "not": { "anyOf": [{ "required": ["speaker_id"] }, { "required": ["name"] }] }
+              }
+            }
+          ]
+        },
+        "ownership_state": {
+          "type": "string",
+          "enum": ["explicit", "supported", "unresolved"]
+        },
+        "due": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state"],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "explicit_absolute",
+                "explicit_relative_resolved",
+                "unresolved",
+                "absent"
+              ]
+            },
+            "date": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+            },
+            "original": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "source": { "$ref": "#/$defs/source" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "state": {
+                    "enum": ["explicit_absolute", "explicit_relative_resolved"]
+                  }
+                }
+              },
+              "then": { "required": ["date", "original", "source"] }
+            },
+            {
+              "if": { "properties": { "state": { "const": "unresolved" } } },
+              "then": {
+                "required": ["original", "source"],
+                "not": { "required": ["date"] }
+              }
+            },
+            {
+              "if": { "properties": { "state": { "const": "absent" } } },
+              "then": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["date"] },
+                    { "required": ["original"] },
+                    { "required": ["source"] }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/source" }
+        }
+      }
+    }
+  }
+}

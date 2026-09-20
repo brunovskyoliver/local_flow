@@ -19,6 +19,8 @@ struct RewriteEndpoint: Sendable, Equatable {
 
   var rewriteURL: URL { url.appendingPathComponent("v1/rewrite") }
   var healthURL: URL { url.appendingPathComponent("v1/rewrite/health") }
+  var analysisURL: URL { url.appendingPathComponent("v1/analysis/meeting") }
+  var analysisHealthURL: URL { url.appendingPathComponent("v1/analysis/health") }
 }
 
 /// What the transport yields while a response streams in. `firstByte` arrives

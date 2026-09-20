@@ -38,8 +38,19 @@ func TestStreamingAndProbe(t *testing.T) {
 			if info.State != "ready" || info.Model != "test" {
 				t.Fatal(info)
 			}
-			result, err := a.Generate(context.Background(), Input{System: "instructions", Text: "input", MaxOutputBytes: 100, JSONSchema: info.JSONSchema})
-			if err != nil || result.Text != f.Text || result.FirstTokenMS == nil {
+			var schema map[string]any
+			if info.JSONSchema {
+				schema = map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "rewrite_text", "strict": true, "schema": map[string]any{"type": "string"}}}
+			}
+			result, err := a.Generate(context.Background(), Input{System: "instructions", Text: "input", MaxOutputBytes: 100, ResponseSchema: schema})
+			want := f.Text
+			if constrained {
+				// The fake wraps the text in a JSON string; unwrapping is the
+				// caller's job (the rewrite handler does it).
+				encoded, _ := json.Marshal(f.Text)
+				want = string(encoded)
+			}
+			if err != nil || result.Text != want || result.FirstTokenMS == nil {
 				t.Fatal(result, err)
 			}
 			request := <-f.Requests

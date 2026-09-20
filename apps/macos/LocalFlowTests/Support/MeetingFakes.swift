@@ -425,6 +425,7 @@ func makeMeetingTestRoot() throws -> URL {
 struct MeetingTestStore {
   let history: TranscriptionStore
   let store: MeetingStore
+  let analysis: AnalysisStore
   let root: MeetingStorageRoot
   let directory: URL
 
@@ -435,8 +436,8 @@ struct MeetingTestStore {
     let root = MeetingStorageRoot(
       url: directory.appendingPathComponent("Meetings", isDirectory: true))
     return MeetingTestStore(
-      history: history, store: MeetingStore(history: history, root: root), root: root,
-      directory: directory)
+      history: history, store: MeetingStore(history: history, root: root),
+      analysis: AnalysisStore(history: history), root: root, directory: directory)
   }
 
   func cleanup() { try? FileManager.default.removeItem(at: directory) }

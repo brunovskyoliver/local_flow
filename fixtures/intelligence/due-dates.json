@@ -1,0 +1,67 @@
+{
+  "schema": "intelligence-fixture-v1",
+  "id": "22222222-2222-4222-8222-222222222222",
+  "title": "Due dates",
+  "started_at": "2026-09-20T09:00:00+02:00",
+  "duration_ms": 300000,
+  "time_zone": "Europe/Bratislava",
+  "expected_language": "en",
+  "participants": [
+    {
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "certainty": "confirmed",
+      "origin": "user_confirmation",
+      "known_speaker_id": "bbbb0001-0000-4000-8000-000000000001",
+      "name": "Oliver Brunovský"
+    },
+    {
+      "speaker_id": "aaaa0002-0000-4000-8000-000000000002",
+      "certainty": "local_name",
+      "origin": "none",
+      "name": "Martin"
+    }
+  ],
+  "segments": [
+    {
+      "id": "aaaa0011-0000-4000-8000-000000000011",
+      "ordinal": 0,
+      "start_ms": 0,
+      "end_ms": 3000,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "We will deploy on Monday."
+    },
+    {
+      "id": "aaaa0012-0000-4000-8000-000000000012",
+      "ordinal": 1,
+      "start_ms": 3000,
+      "end_ms": 6500,
+      "speaker_id": "aaaa0002-0000-4000-8000-000000000002",
+      "normalized_text": "We could maybe deploy Monday."
+    },
+    {
+      "id": "aaaa0013-0000-4000-8000-000000000013",
+      "ordinal": 2,
+      "start_ms": 6500,
+      "end_ms": 9200,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "I'll send it tomorrow."
+    },
+    {
+      "id": "aaaa0014-0000-4000-8000-000000000014",
+      "ordinal": 3,
+      "start_ms": 9200,
+      "end_ms": 11800,
+      "speaker_id": "aaaa0002-0000-4000-8000-000000000002",
+      "normalized_text": "I'll send it soon."
+    },
+    {
+      "id": "aaaa0015-0000-4000-8000-000000000015",
+      "ordinal": 4,
+      "start_ms": 11800,
+      "end_ms": 15000,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "Someone needs to send the report."
+    }
+  ],
+  "notes": ""
+}

@@ -82,6 +82,78 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RewriteErrorBody"
+  /v1/analysis/health:
+    get:
+      summary: Analysis service health and identity
+      description: >-
+        Content-free. The client refuses the service when service is not
+        localflow-analysis or result_schema_version is not 1. limits and caps are
+        server bounds; the client lowers its budget to the smaller value and never
+        raises a cap above its compiled defaults.
+      security:
+        - bearer: []
+        - {}
+      responses:
+        "200":
+          description: Service present
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisHealth"
+        "401":
+          $ref: "#/components/responses/RewriteError"
+        "403":
+          $ref: "#/components/responses/RewriteError"
+        "404":
+          description: server without the analysis service; the client maps it to server_unavailable
+  /v1/analysis/meeting:
+    post:
+      summary: Analyze one finished meeting
+      description: >-
+        Request bodies over 262,144 bytes are rejected with 413 before parsing.
+        The response is newline-delimited JSON; each line is one analysis event
+        (accepted, progress, result or error). Each line is at most 98,304 bytes;
+        the client stops reading beyond that and records oversized_response.
+        Every request carries priority "background"; the rewrite-first gate may
+        cancel an in-flight generation with code preempted.
+      security:
+        - bearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/analysis-request.schema.json"
+      responses:
+        "200":
+          description: Event stream
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "./schemas/analysis-event.schema.json"
+        "400":
+          description: invalid_request or unsupported_version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisErrorBody"
+        "401":
+          $ref: "#/components/responses/RewriteError"
+        "403":
+          $ref: "#/components/responses/RewriteError"
+        "413":
+          description: too_large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisErrorBody"
+        "429":
+          description: server_busy (the single analysis slot is taken)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisErrorBody"
 components:
   securitySchemes:
     bearer:
@@ -172,3 +244,94 @@ components:
           type: integer
           minimum: 0
           description: 0 when shielding is off.
+    AnalysisErrorBody:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - unauthorized
+                - invalid_request
+                - too_large
+                - unsupported_version
+                - server_busy
+                - queue_timeout
+                - preempted
+                - backend_unavailable
+                - backend_timeout
+                - backend_first_token_timeout
+                - backend_error
+                - output_too_large
+                - output_invalid
+                - source_validation
+            message:
+              type: string
+              maxLength: 512
+    AnalysisHealth:
+      type: object
+      required:
+        - schema_version
+        - service
+        - protocol_versions
+        - server
+        - backend
+        - prompt_versions
+        - result_schema_version
+        - limits
+        - caps
+      properties:
+        schema_version:
+          const: 1
+        service:
+          const: localflow-analysis
+        protocol_versions:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+        server:
+          type: object
+          required: [name, version]
+          properties:
+            name: { type: string, maxLength: 128 }
+            version: { type: string, maxLength: 128 }
+        backend:
+          type: object
+          required: [state, kind, model, json_schema]
+          properties:
+            state:
+              type: string
+              enum: [ready, loading, unavailable]
+            kind: { type: string, maxLength: 128 }
+            model: { type: string, maxLength: 128 }
+            json_schema: { type: boolean }
+        prompt_versions:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 1
+        result_schema_version:
+          const: 1
+        limits:
+          type: object
+          properties:
+            input_bytes: { type: integer, minimum: 1 }
+            output_bytes: { type: integer, minimum: 1 }
+            context_tokens: { type: integer, minimum: 1 }
+            concurrency: { type: integer, minimum: 1 }
+        caps:
+          type: object
+          properties:
+            sources_per_item: { type: integer, minimum: 1 }
+            topics: { type: integer, minimum: 0 }
+            decisions: { type: integer, minimum: 0 }
+            action_items: { type: integer, minimum: 0 }
+            next_steps: { type: integer, minimum: 0 }
+            open_questions: { type: integer, minimum: 0 }
+            risks: { type: integer, minimum: 0 }

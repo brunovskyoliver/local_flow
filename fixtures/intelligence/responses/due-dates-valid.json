@@ -1,0 +1,131 @@
+{
+  "schema": "intelligence-response-v1",
+  "streams": {
+    "full": [
+      [
+        {
+          "schema_version": 1,
+          "type": "accepted",
+          "request_id": "*",
+          "server": {
+            "name": "flowd",
+            "version": "0.3.0"
+          }
+        },
+        {
+          "schema_version": 1,
+          "type": "result",
+          "request_id": "*",
+          "run_id": "*",
+          "stage": "full",
+          "server": {
+            "name": "flowd",
+            "version": "0.3.0"
+          },
+          "backend": {
+            "kind": "openai-compatible",
+            "model": "test-model"
+          },
+          "prompt_version": 1,
+          "pipeline_version": "analysis_v1",
+          "timing": {
+            "queue_ms": 12,
+            "first_token_ms": 640,
+            "backend_ms": 18400
+          },
+          "preemptions": 0,
+          "analysis": {
+            "schema_version": 1,
+            "meeting_id": "*",
+            "partial": false,
+            "language": "*",
+            "summary": {
+              "text": "The team settled the Monday deployment and split the preparation work.",
+              "sources": [],
+              "whole_meeting": true
+            },
+            "topics": [],
+            "decisions": [
+              {
+                "text": "We will deploy on Monday",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0011-0000-4000-8000-000000000011"
+                  }
+                ]
+              }
+            ],
+            "action_items": [
+              {
+                "text": "Send it",
+                "owner": {
+                  "kind": "participant",
+                  "speaker_id": "aaaa0001-0000-4000-8000-000000000001"
+                },
+                "ownership_state": "explicit",
+                "due": {
+                  "state": "explicit_relative_resolved",
+                  "date": "2026-09-21",
+                  "original": "tomorrow",
+                  "source": {
+                    "kind": "segment",
+                    "id": "aaaa0013-0000-4000-8000-000000000013"
+                  }
+                },
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0013-0000-4000-8000-000000000013"
+                  }
+                ]
+              },
+              {
+                "text": "Send it",
+                "owner": {
+                  "kind": "participant",
+                  "speaker_id": "aaaa0002-0000-4000-8000-000000000002"
+                },
+                "ownership_state": "explicit",
+                "due": {
+                  "state": "unresolved",
+                  "original": "soon",
+                  "source": {
+                    "kind": "segment",
+                    "id": "aaaa0014-0000-4000-8000-000000000014"
+                  }
+                },
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0014-0000-4000-8000-000000000014"
+                  }
+                ]
+              },
+              {
+                "text": "Send the report",
+                "owner": {
+                  "kind": "none"
+                },
+                "ownership_state": "unresolved",
+                "due": {
+                  "state": "absent"
+                },
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0015-0000-4000-8000-000000000015"
+                  }
+                ]
+              }
+            ],
+            "next_steps": [],
+            "open_questions": [],
+            "risks": []
+          }
+        }
+      ]
+    ]
+  }
+}

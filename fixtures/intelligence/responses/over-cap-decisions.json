@@ -1,0 +1,469 @@
+{
+  "schema": "intelligence-response-v1",
+  "streams": {
+    "full": [
+      [
+        {
+          "schema_version": 1,
+          "type": "accepted",
+          "request_id": "*",
+          "server": {
+            "name": "flowd",
+            "version": "0.3.0"
+          }
+        },
+        {
+          "schema_version": 1,
+          "type": "result",
+          "request_id": "*",
+          "run_id": "*",
+          "stage": "full",
+          "server": {
+            "name": "flowd",
+            "version": "0.3.0"
+          },
+          "backend": {
+            "kind": "openai-compatible",
+            "model": "test-model"
+          },
+          "prompt_version": 1,
+          "pipeline_version": "analysis_v1",
+          "timing": {
+            "queue_ms": 12,
+            "first_token_ms": 640,
+            "backend_ms": 18400
+          },
+          "preemptions": 0,
+          "analysis": {
+            "schema_version": 1,
+            "meeting_id": "*",
+            "partial": false,
+            "language": "*",
+            "summary": {
+              "text": "The team settled the Monday deployment and split the preparation work.",
+              "sources": [],
+              "whole_meeting": true
+            },
+            "topics": [],
+            "decisions": [
+              {
+                "text": "Decision 0",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 1",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 2",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 3",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 4",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 5",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 6",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 7",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 8",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 9",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 10",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 11",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 12",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 13",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 14",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 15",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 16",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 17",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 18",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 19",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 20",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 21",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 22",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 23",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 24",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 25",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 26",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 27",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 28",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 29",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 30",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 31",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 32",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 33",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 34",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 35",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 36",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 37",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 38",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 39",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              },
+              {
+                "text": "Decision 40",
+                "evidence_class": "explicit",
+                "sources": [
+                  {
+                    "kind": "segment",
+                    "id": "aaaa0001-0000-4000-8000-000000000001"
+                  }
+                ]
+              }
+            ],
+            "action_items": [],
+            "next_steps": [],
+            "open_questions": [],
+            "risks": []
+          }
+        }
+      ]
+    ]
+  }
+}

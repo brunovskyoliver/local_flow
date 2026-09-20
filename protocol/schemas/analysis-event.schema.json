@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localflow.org/schemas/analysis-event.schema.json",
+  "title": "LocalFlow meeting analysis event v1",
+  "description": "One NDJSON line of the POST /v1/analysis/meeting response stream. Order: one accepted, any number of progress, then exactly one result or error. Every line is at most 98,304 bytes. Per-type required fields beyond type and schema_version are enforced by the implementations; unknown fields are rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "type", "request_id"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "type": {
+      "type": "string",
+      "enum": ["accepted", "progress", "result", "error"]
+    },
+    "request_id": { "type": "string", "format": "uuid" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "stage": { "type": "string", "enum": ["full", "chunk", "synthesis"] },
+    "chars": { "type": "integer", "minimum": 0 },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 128 },
+        "version": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "model"],
+      "properties": {
+        "kind": { "type": "string", "maxLength": 128 },
+        "model": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "prompt_version": { "type": "integer", "minimum": 0 },
+    "pipeline_version": { "type": "string", "maxLength": 128 },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "queue_ms": { "type": "integer", "minimum": 0 },
+        "first_token_ms": { "type": "integer", "minimum": 0 },
+        "backend_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "preemptions": { "type": "integer", "minimum": 0 },
+    "analysis": { "$ref": "./analysis-result.schema.json" },
+    "code": {
+      "type": "string",
+      "enum": [
+        "unauthorized",
+        "invalid_request",
+        "too_large",
+        "unsupported_version",
+        "server_busy",
+        "queue_timeout",
+        "preempted",
+        "backend_unavailable",
+        "backend_timeout",
+        "backend_first_token_timeout",
+        "backend_error",
+        "output_too_large",
+        "output_invalid",
+        "source_validation"
+      ]
+    },
+    "message": { "type": "string", "maxLength": 512 }
+  }
+}

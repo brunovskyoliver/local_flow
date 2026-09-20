@@ -134,6 +134,8 @@ final class MeetingStoreTests: XCTestCase {
       let old = try TranscriptionStore(path: path)
       try await old.database.write { db in
         for table in [
+          "analysis_overlays", "analysis_sources", "analysis_items", "analysis_topics",
+          "analysis_summaries", "meeting_analysis", "analysis_runs",
           "rejected_candidates", "match_candidates", "identity_assignments",
           "meeting_identification", "identification_runs", "voice_samples", "known_speakers",
           "speaker_corrections", "speaker_assignments", "speaker_turns", "meeting_speakers",
@@ -147,7 +149,7 @@ final class MeetingStoreTests: XCTestCase {
         }
         try db.execute(
           sql:
-            "DELETE FROM grdb_migrations WHERE identifier IN ('meetings-v5','transcripts-v6','speakers-v7','identities-v8')"
+            "DELETE FROM grdb_migrations WHERE identifier IN ('meetings-v5','transcripts-v6','speakers-v7','identities-v8','intelligence-v9')"
         )
       }
     }
@@ -241,6 +243,30 @@ final class MeetingStoreTests: XCTestCase {
     _ = try? await store.create(now: now + 1)
     let rows = try await fixture.history.database.read { db in
       try Int.fetchOne(db, sql: "SELECT count(*) FROM meeting_identification")
+    }
+    XCTAssertEqual(rows, 1)
+  }
+
+  /// Feature 011 (T021): the `meeting_analysis` row is created in the same
+  /// transaction as the meeting, with no run pointers.
+  func testCreateInsertsTheAnalysisRowWithTheMeeting() async throws {
+    let meeting = try await store.create(now: now)
+    let now = now
+    try await fixture.history.database.read { db in
+      let row = try XCTUnwrap(
+        Row.fetchOne(
+          db, sql: "SELECT * FROM meeting_analysis WHERE meeting_id=?",
+          arguments: [meeting.id.uuidString]))
+      XCTAssertNil(row["accepted_run_id"] as String?)
+      XCTAssertNil(row["current_run_id"] as String?)
+      XCTAssertNil(row["accepted_evidence_version"] as String?)
+      XCTAssertNil(row["auto_restarted_at"] as Int64?)
+      XCTAssertEqual(row["updated_at"] as Int64?, now)
+      XCTAssertEqual(row["revision"] as Int64?, 0)
+    }
+    _ = try? await store.create(now: now + 1)
+    let rows = try await fixture.history.database.read { db in
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM meeting_analysis")
     }
     XCTAssertEqual(rows, 1)
   }

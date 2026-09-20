@@ -1,0 +1,45 @@
+{
+  "schema": "intelligence-fixture-v1",
+  "id": "66666666-6666-4666-8666-666666666666",
+  "title": "Plánovanie",
+  "started_at": "2026-09-20T09:00:00+02:00",
+  "duration_ms": 120000,
+  "time_zone": "Europe/Bratislava",
+  "expected_language": "sk",
+  "participants": [
+    {
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "certainty": "confirmed",
+      "origin": "user_confirmation",
+      "known_speaker_id": "bbbb0001-0000-4000-8000-000000000001",
+      "name": "Oliver Brunovský"
+    }
+  ],
+  "segments": [
+    {
+      "id": "aaaa0021-0000-4000-8000-000000000021",
+      "ordinal": 0,
+      "start_ms": 0,
+      "end_ms": 3000,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "Zajtra pošlem zákazníkovi zmluvu."
+    },
+    {
+      "id": "aaaa0022-0000-4000-8000-000000000022",
+      "ordinal": 1,
+      "start_ms": 3000,
+      "end_ms": 6200,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "V pondelok nasadíme novú verziu na server."
+    },
+    {
+      "id": "aaaa0023-0000-4000-8000-000000000023",
+      "ordinal": 2,
+      "start_ms": 6200,
+      "end_ms": 9400,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "Martin pripraví zálohu databázy ešte predtým."
+    }
+  ],
+  "notes": ""
+}

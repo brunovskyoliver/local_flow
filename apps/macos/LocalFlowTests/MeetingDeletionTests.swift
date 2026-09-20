@@ -368,4 +368,87 @@ final class MeetingDeletionTests: XCTestCase {
     XCTAssertEqual(samples.count, 1, "FR-031: the sample stays, provenance-unavailable")
     XCTAssertTrue(samples[0].provenanceUnavailable)
   }
+
+  /// Feature 011 (T022, FR-052): a meeting holding an accepted analysis, matched
+  /// and orphaned overlays and several run rows leaves nothing behind; another
+  /// meeting's analysis rows are untouched.
+  func testDeletionCascadesThroughEveryAnalysisTable() async throws {
+    let analysis = fixture.analysis
+    let now = t0
+    func seedAnalysis(for id: UUID) async throws -> UUID {
+      let evidence = EvidenceVersion(hex: String(repeating: "c", count: 64))
+      let identity = RunIdentity(
+        serverVersion: "0.2.0", backendKind: "openai", backendModel: "test",
+        promptVersions: "full=3", pipelineVersion: AnalysisPolicy.pipelineVersion)
+      let run = try await analysis.admit(
+        meetingID: id, trigger: .manual, evidence: evidence, passID: UUID(),
+        policy: AnalysisPolicy(), now: now)
+      _ = try await analysis.start(runID: run.id, now: now + 1)
+      let source = SourceRef.note(ordinal: 1, hash: String(repeating: "d", count: 64))
+      try await analysis.adopt(
+        runID: run.id,
+        result: ValidatedAnalysis(
+          language: .en,
+          summary: ValidatedSummary(text: "s", sources: [source], wholeMeeting: true),
+          topics: [], decisions: [
+            ValidatedItem(kind: .decision, text: "d", sources: [source])
+          ], actionItems: [], nextSteps: [], openQuestions: [], risks: []),
+        counts: ValidationCounts(itemCount: 1), identity: identity, now: now + 2)
+      return run.id
+    }
+
+    let first = try await seedRecovered(at: t0)
+    let id = first.meeting.id
+    let runID = try await seedAnalysis(for: id)
+    let item = try await analysis.readModel(meetingID: id)!.items[0]
+    try await analysis.setOverlay(
+      meetingID: id, target: .item(item.id), field: .decisionText, value: .text("edit"),
+      snapshot: OverlaySnapshot(itemText: "d", sourceKey: "n:1"), now: t0 + 3)
+    // An orphaned overlay plus extra terminal run rows.
+    let t0 = self.t0
+    try await fixture.history.database.write { db in
+      try db.execute(
+        sql: """
+          INSERT INTO analysis_overlays (id, meeting_id, item_id, target_kind, item_kind, field,
+            user_value, created_at, updated_at, orphaned_at)
+          VALUES (?, ?, NULL, 'item', 'decision', 'decision_text', 'gone', ?, ?, ?)
+          """, arguments: [UUID().uuidString, id.uuidString, t0 + 4, t0 + 4, t0 + 4])
+    }
+    for i: Int64 in 0..<3 {
+      let extra = try await analysis.admit(
+        meetingID: id, trigger: .retry,
+        evidence: EvidenceVersion(hex: String(repeating: "e", count: 64)), passID: UUID(),
+        policy: AnalysisPolicy(), now: t0 + 10 + i)
+      _ = try await analysis.start(runID: extra.id, now: t0 + 11 + i)
+      try await analysis.fail(
+        runID: extra.id, category: .timeout, detail: nil, now: t0 + 12 + i)
+    }
+
+    // A second meeting with its own analysis must be untouched.
+    let second = try await seedRecovered(at: t0 + 1_000)
+    let otherID = second.meeting.id
+    _ = try await seedAnalysis(for: otherID)
+
+    let stored = try await store.meeting(id: id)
+    let revision = try XCTUnwrap(stored).revision
+    let outcome = try await store.deleteConfirmed(id: id, revision: revision)
+    XCTAssertTrue(outcome.rowDeleted)
+
+    for table in [
+      "analysis_runs", "meeting_analysis", "analysis_summaries", "analysis_topics",
+      "analysis_items", "analysis_sources", "analysis_overlays",
+    ] {
+      let count = try await fixture.history.database.read { db in
+        try Int.fetchOne(
+          db, sql: "SELECT COUNT(*) FROM \(table) WHERE meeting_id=?", arguments: [id.uuidString])!
+      }
+      XCTAssertEqual(count, 0, table)
+    }
+    // The other meeting's accepted analysis and run row survive.
+    let other = try await analysis.readModel(meetingID: otherID)
+    XCTAssertEqual(other?.items.count, 1)
+    let otherRuns = try await analysis.runs(meetingID: otherID, limit: 10)
+    XCTAssertEqual(otherRuns.count, 1)
+    _ = runID
+  }
 }

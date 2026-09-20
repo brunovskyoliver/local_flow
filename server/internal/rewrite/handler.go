@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"localflow/server/internal/rewrite/backend"
+	"localflow/server/internal/backend"
 	"localflow/server/internal/rewrite/prompts"
 	entityshield "localflow/server/internal/rewrite/shield"
 )
@@ -25,12 +25,22 @@ type BackendAdapter interface {
 	Probe(context.Context) backend.Info
 	Generate(context.Context, backend.Input) (backend.Completion, error)
 }
+
+// PriorityGate lets the rewrite handler announce itself to the analysis
+// rewrite-first gate without importing the analysis package.
+type PriorityGate interface {
+	RewriteStart() func()
+}
+
 type HandlerConfig struct {
 	Backend          BackendAdapter
 	Token            string
 	Shield           bool
 	ProtocolVersions []int
 	Logger           *log.Logger
+	// Gate, when set, counts this handler's in-flight rewrites and preempts
+	// analysis work.
+	Gate PriorityGate
 }
 type Handler struct {
 	config         HandlerConfig
@@ -142,6 +152,10 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 429, CodeServerBusy)
 		return
 	}
+	if h.config.Gate != nil {
+		release := h.config.Gate.RewriteStart()
+		defer release()
+	}
 	// The slot also bounds simultaneous request-body decoding and shielding.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(10 * time.Second))
 	req, err := DecodeRequest(r.Body)
@@ -225,7 +239,13 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lastProgress := time.Now()
-	completion, err := h.config.Backend.Generate(ctx, backend.Input{System: template.Text, Text: input, MaxOutputBytes: req.MaxOutputBytes(), JSONSchema: info.JSONSchema, Progress: func(chars int) error {
+	system := template.Text
+	var responseSchema map[string]any
+	if info.JSONSchema {
+		responseSchema = prompts.ResponseFormat()
+		system += prompts.ConstrainedInstruction
+	}
+	completion, err := h.config.Backend.Generate(ctx, backend.Input{System: system, Text: input, MaxOutputBytes: req.MaxOutputBytes(), ResponseSchema: responseSchema, Progress: func(chars int) error {
 		if time.Since(lastProgress) < ProgressInterval {
 			return nil
 		}
@@ -256,6 +276,14 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := completion.Text
+	if info.JSONSchema {
+		var decoded string
+		if json.Unmarshal([]byte(text), &decoded) != nil {
+			fail(CodeBackendError)
+			return
+		}
+		text = decoded
+	}
 	if strings.TrimSpace(text) == "" {
 		fail(CodeBackendError)
 		return

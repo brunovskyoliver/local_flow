@@ -632,6 +632,169 @@ enum HistoryMigrations {
             SELECT id, updated_at FROM meetings;
           """)
     }
+    // Feature 011: seven analysis tables; no 001–010 table is altered. Run rows
+    // are content-free (no summary or item text); content rows cascade from
+    // `analysis_runs`; overlays survive a regeneration through set-null.
+    migrator.registerMigration("intelligence-v9") { db in
+      let hex64 = "length(%@)=64 AND %@ NOT GLOB '*[^0-9a-f]*'"
+      let ev = String(format: hex64, "evidence_version", "evidence_version")
+      let aev = String(format: hex64, "accepted_evidence_version", "accepted_evidence_version")
+      let nh = String(format: hex64, "note_hash", "note_hash")
+      let categories = AnalysisFailureCategory.allCases.map { "'\($0.rawValue)'" }
+        .joined(separator: ",")
+      let states = AnalysisRunState.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      let triggers = AnalysisTrigger.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      let languages = AnalysisLanguage.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      let itemKinds = AnalysisItemKind.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      let ownerCertainties = ["confirmed", "recognized", "local_name", "local_user"]
+        .map { "'\($0)'" }.joined(separator: ",")
+      let ownerKinds = ["participant", "mentioned", "none"].map { "'\($0)'" }
+        .joined(separator: ",")
+      let ownershipStates = ["explicit", "supported", "unresolved"].map { "'\($0)'" }
+        .joined(separator: ",")
+      let dueStates = ["explicit_absolute", "explicit_relative_resolved", "unresolved", "absent"]
+        .map { "'\($0)'" }.joined(separator: ",")
+      let overlayFields = OverlayField.allCases.map { "'\($0.rawValue)'" }
+        .joined(separator: ",")
+      let counters = [
+        "chunk_count", "request_count", "retry_count", "preemption_count", "input_bytes",
+        "output_bytes", "item_count", "dropped_literal_count", "dropped_unsupported_count",
+        "identity_downgrade_count", "unresolved_owner_count", "duration_ms",
+      ]
+      try db.execute(
+        sql: """
+          CREATE TABLE analysis_runs (
+            id TEXT PRIMARY KEY NOT NULL,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            state TEXT NOT NULL CHECK(state IN (\(states))),
+            "trigger" TEXT NOT NULL CHECK("trigger" IN (\(triggers))),
+            evidence_version TEXT NOT NULL CHECK(\(ev)),
+            transcript_pass_id TEXT,
+            server_version TEXT CHECK(server_version IS NULL OR length(CAST(server_version AS BLOB))<=64),
+            protocol_version INTEGER NOT NULL CHECK(protocol_version=1),
+            schema_version INTEGER NOT NULL CHECK(schema_version=1),
+            backend_kind TEXT CHECK(backend_kind IS NULL OR length(CAST(backend_kind AS BLOB))<=128),
+            backend_model TEXT CHECK(backend_model IS NULL OR length(CAST(backend_model AS BLOB))<=128),
+            prompt_versions TEXT CHECK(prompt_versions IS NULL OR length(CAST(prompt_versions AS BLOB))<=128),
+            pipeline_version TEXT CHECK(pipeline_version IS NULL OR length(CAST(pipeline_version AS BLOB))<=64),
+            language_policy TEXT CHECK(language_policy IS NULL OR language_policy IN (\(languages))),
+            request_config_json TEXT CHECK(request_config_json IS NULL OR length(CAST(request_config_json AS BLOB))<=2048),
+            created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
+            failure_category TEXT CHECK(failure_category IS NULL OR failure_category IN (\(categories))),
+            failure_detail TEXT CHECK(failure_detail IS NULL OR length(CAST(failure_detail AS BLOB))<=512),
+            \(counters.map { "\($0) INTEGER NOT NULL DEFAULT 0 CHECK(\($0)>=0)" }.joined(separator: ", ")),
+            CHECK((failure_category IS NOT NULL) = (state IN ('failed','timed_out','interrupted')))
+          );
+          CREATE INDEX analysis_runs_meeting ON analysis_runs(meeting_id, created_at);
+          CREATE UNIQUE INDEX analysis_runs_active ON analysis_runs(meeting_id)
+            WHERE state IN ('pending','running');
+          CREATE TABLE meeting_analysis (
+            meeting_id TEXT PRIMARY KEY NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            accepted_run_id TEXT REFERENCES analysis_runs(id) ON DELETE SET NULL,
+            current_run_id TEXT REFERENCES analysis_runs(id) ON DELETE SET NULL,
+            accepted_evidence_version TEXT CHECK(accepted_evidence_version IS NULL OR \(aev)),
+            auto_restarted_at INTEGER,
+            updated_at INTEGER NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0)
+          );
+          CREATE TABLE analysis_summaries (
+            run_id TEXT PRIMARY KEY NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            text TEXT NOT NULL CHECK(length(CAST(text AS BLOB)) BETWEEN 1 AND 4000),
+            language TEXT NOT NULL CHECK(language IN (\(languages))),
+            whole_meeting INTEGER NOT NULL CHECK(whole_meeting IN (0,1))
+          );
+          CREATE TABLE analysis_topics (
+            id TEXT PRIMARY KEY NOT NULL,
+            run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            ordinal INTEGER NOT NULL CHECK(ordinal>=0),
+            title TEXT NOT NULL CHECK(length(CAST(title AS BLOB)) BETWEEN 1 AND 200),
+            summary TEXT NOT NULL CHECK(length(CAST(summary AS BLOB))<=2000),
+            bullets_json TEXT NOT NULL CHECK(length(CAST(bullets_json AS BLOB))<=8192),
+            UNIQUE(run_id, ordinal)
+          );
+          CREATE TABLE analysis_items (
+            id TEXT PRIMARY KEY NOT NULL,
+            run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK(kind IN (\(itemKinds))),
+            ordinal INTEGER NOT NULL CHECK(ordinal>=0),
+            text TEXT NOT NULL CHECK(length(CAST(text AS BLOB)) BETWEEN 1 AND 1000),
+            evidence_class TEXT CHECK(evidence_class IS NULL OR evidence_class IN ('explicit','implied')),
+            topic_id TEXT REFERENCES analysis_topics(id) ON DELETE SET NULL,
+            owner_kind TEXT CHECK(owner_kind IS NULL OR owner_kind IN (\(ownerKinds))),
+            owner_speaker_id TEXT REFERENCES meeting_speakers(id) ON DELETE SET NULL,
+            owner_known_speaker_id TEXT REFERENCES known_speakers(id) ON DELETE SET NULL,
+            owner_name TEXT CHECK(owner_name IS NULL OR length(CAST(owner_name AS BLOB)) BETWEEN 1 AND 80),
+            owner_certainty TEXT CHECK(owner_certainty IS NULL OR owner_certainty IN (\(ownerCertainties))),
+            ownership_state TEXT CHECK(ownership_state IS NULL OR ownership_state IN (\(ownershipStates))),
+            due_state TEXT CHECK(due_state IS NULL OR due_state IN (\(dueStates))),
+            due_date TEXT CHECK(due_date IS NULL OR due_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+            due_original TEXT CHECK(due_original IS NULL OR length(CAST(due_original AS BLOB))<=80),
+            due_source_segment_id TEXT,
+            due_source_note_ordinal INTEGER CHECK(due_source_note_ordinal IS NULL OR due_source_note_ordinal>=1),
+            UNIQUE(run_id, kind, ordinal),
+            CHECK(kind<>'action_item' OR (
+              owner_kind IS NOT NULL AND ownership_state IS NOT NULL AND due_state IS NOT NULL)),
+            CHECK(kind='action_item' OR (
+              owner_kind IS NULL AND owner_speaker_id IS NULL AND owner_known_speaker_id IS NULL
+              AND owner_name IS NULL AND owner_certainty IS NULL AND ownership_state IS NULL
+              AND due_state IS NULL AND due_date IS NULL AND due_original IS NULL
+              AND due_source_segment_id IS NULL AND due_source_note_ordinal IS NULL)),
+            CHECK((owner_kind='participant') = (owner_speaker_id IS NOT NULL)),
+            CHECK(owner_known_speaker_id IS NULL OR owner_kind='participant'),
+            CHECK((owner_name IS NULL) = (owner_kind IS NULL OR owner_kind<>'mentioned')),
+            CHECK((owner_certainty IS NULL) = (owner_kind IS NULL OR owner_kind<>'participant')),
+            CHECK(owner_kind IS NULL OR owner_kind<>'mentioned' OR ownership_state IN ('supported','unresolved')),
+            CHECK(owner_kind IS NULL OR owner_kind<>'none' OR ownership_state='unresolved'),
+            CHECK((due_date IS NOT NULL) = (due_state IN ('explicit_absolute','explicit_relative_resolved'))),
+            CHECK((due_original IS NULL) = (due_state IS NULL OR due_state='absent')),
+            CHECK((due_state='absent') = (due_source_segment_id IS NULL AND due_source_note_ordinal IS NULL)),
+            CHECK(due_source_segment_id IS NULL OR due_source_note_ordinal IS NULL)
+          );
+          CREATE TABLE analysis_sources (
+            run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            target_kind TEXT NOT NULL CHECK(target_kind IN ('summary','topic','item')),
+            target_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(ordinal>=0),
+            source_kind TEXT NOT NULL CHECK(source_kind IN ('segment','note')),
+            segment_id TEXT REFERENCES transcript_segments(id) ON DELETE CASCADE,
+            note_ordinal INTEGER CHECK(note_ordinal IS NULL OR note_ordinal>=1),
+            note_hash TEXT CHECK(note_hash IS NULL OR \(nh)),
+            PRIMARY KEY(target_kind, target_id, ordinal),
+            CHECK((source_kind='segment') = (segment_id IS NOT NULL)),
+            CHECK((source_kind='note') = (note_ordinal IS NOT NULL)),
+            CHECK((note_hash IS NOT NULL) = (source_kind='note'))
+          ) WITHOUT ROWID;
+          CREATE INDEX analysis_sources_run ON analysis_sources(run_id);
+          CREATE TABLE analysis_overlays (
+            id TEXT PRIMARY KEY NOT NULL,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            item_id TEXT REFERENCES analysis_items(id) ON DELETE SET NULL,
+            target_kind TEXT NOT NULL CHECK(target_kind IN ('summary','item')),
+            item_kind TEXT CHECK(item_kind IS NULL OR item_kind IN (\(itemKinds))),
+            field TEXT NOT NULL CHECK(field IN (\(overlayFields))),
+            user_value TEXT NOT NULL CHECK(length(CAST(user_value AS BLOB))<=4000),
+            ai_value_snapshot TEXT CHECK(ai_value_snapshot IS NULL OR length(CAST(ai_value_snapshot AS BLOB))<=4000),
+            item_text_snapshot TEXT CHECK(item_text_snapshot IS NULL OR length(CAST(item_text_snapshot AS BLOB))<=1000),
+            source_key TEXT CHECK(source_key IS NULL OR length(CAST(source_key AS BLOB))<=1024),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            orphaned_at INTEGER,
+            CHECK(target_kind='summary' OR item_kind IS NOT NULL),
+            CHECK(target_kind='item' OR (item_kind IS NULL AND item_id IS NULL))
+          );
+          CREATE UNIQUE INDEX analysis_overlays_item_field ON analysis_overlays(item_id, field)
+            WHERE item_id IS NOT NULL;
+          CREATE UNIQUE INDEX analysis_overlays_summary ON analysis_overlays(meeting_id)
+            WHERE target_kind='summary';
+          CREATE INDEX analysis_overlays_meeting ON analysis_overlays(meeting_id);
+          INSERT INTO meeting_analysis(meeting_id, updated_at, revision)
+            SELECT id, updated_at, 0 FROM meetings;
+          """)
+    }
     return migrator
   }
 }

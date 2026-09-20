@@ -1,0 +1,21 @@
+{
+  "schema": "intelligence-response-v1",
+  "streams": {
+    "full": [
+      [
+        {
+          "schema_version": 1,
+          "type": "accepted",
+          "request_id": "*",
+          "server": {
+            "name": "flowd",
+            "version": "0.3.0"
+          }
+        },
+        {
+          "$raw": "this is not json {"
+        }
+      ]
+    ]
+  }
+}

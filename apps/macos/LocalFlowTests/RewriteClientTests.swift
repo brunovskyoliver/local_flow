@@ -625,3 +625,161 @@ extension RewriteClientTests {
     }
   }
 }
+
+// MARK: - Analysis transport (T030)
+
+extension RewriteClientTests {
+  private func makeAnalysisClient(
+    credential: String? = nil, clock: any DictationClock = SystemDictationClock()
+  ) -> AnalysisClient {
+    let store = FakeRewriteCredentialStore()
+    if let credential { try? store.write(origin: endpoint.origin, secret: credential) }
+    return AnalysisClient(credentials: store, clock: clock) { configuration in
+      configuration.protocolClasses = [RewriteStubURLProtocol.self]
+    }
+  }
+
+  private func analysisHealth(
+    service: String = "localflow-analysis", resultSchema: Int? = 1
+  ) -> Data {
+    let version = resultSchema.map { "\($0)" } ?? "null"
+    return Data(
+      #"{"schema_version":1,"service":"\#(service)","protocol_versions":[1],"server":{"name":"flowd","version":"0.3.0"},"stages":["full","chunk","synthesis"],"backend":{"state":"ready","kind":"openai-compatible","model":"qwen","json_schema":true},"prompt_versions":{"full":1,"chunk":1,"synthesis":1},"result_schema_version":\#(version),"limits":{"input_bytes":98304,"output_bytes":98304,"context_tokens":32768,"concurrency":1},"caps":{"sources_per_item":10,"topics":10,"decisions":10,"action_items":15,"next_steps":15,"open_questions":15,"risks":15}}"#
+        .utf8)
+  }
+
+  private func analysisProbe(_ script: RewriteStubURLProtocol.Script) async -> (
+    health: AnalysisHealth?, failure: AnalysisFailureCategory?, detail: String?
+  ) {
+    RewriteStubURLProtocol.reset()
+    RewriteStubURLProtocol.script(script, path: "/v1/analysis/health")
+    do {
+      return (try await makeAnalysisClient(credential: "c").health(endpoint: endpoint), nil, nil)
+    } catch let failure as AnalysisFailure {
+      return (nil, failure.category, failure.detail)
+    } catch {
+      return (nil, nil, "\(error)")
+    }
+  }
+
+  func testAnalysisHealthMapsEveryObservation() async throws {
+    let json = ["Content-Type": "application/json"]
+
+    let (ok, _, _) = await analysisProbe(.init(headers: json, chunks: [analysisHealth()]))
+    let health = try XCTUnwrap(ok)
+    XCTAssertEqual(health.service, "localflow-analysis")
+    XCTAssertEqual(health.resultSchemaVersion, 1)
+    XCTAssertEqual(health.limits?.inputBytes, 98_304)
+    XCTAssertEqual(health.caps?.actionItems, 15)
+    XCTAssertEqual(
+      RewriteStubURLProtocol.seenRequests.first?.value(forHTTPHeaderField: "Authorization"),
+      "Bearer c")
+    XCTAssertEqual(RewriteStubURLProtocol.seenRequests.first?.url?.path, "/v1/analysis/health")
+
+    // A flowd without the analysis service → server_unavailable + fixed message.
+    let missing = await analysisProbe(.init(status: 404, headers: json, chunks: []))
+    XCTAssertEqual(missing.failure, .serverUnavailable)
+    XCTAssertEqual(missing.detail, AnalysisClient.unavailableMessage)
+    let other = await analysisProbe(
+      .init(headers: json, chunks: [analysisHealth(service: "something-else")]))
+    XCTAssertEqual(other.failure, .serverUnavailable)
+    XCTAssertEqual(other.detail, AnalysisClient.unavailableMessage)
+    let html = await analysisProbe(
+      .init(headers: ["Content-Type": "text/html"], chunks: [Data("<html>".utf8)]))
+    XCTAssertEqual(html.failure, .serverUnavailable)
+
+    // A mismatched result schema → unsupported_version.
+    let version = await analysisProbe(
+      .init(headers: json, chunks: [analysisHealth(resultSchema: 2)]))
+    XCTAssertEqual(version.failure, .unsupportedVersion)
+    let absent = await analysisProbe(
+      .init(headers: json, chunks: [analysisHealth(resultSchema: nil)]))
+    XCTAssertEqual(absent.failure, .unsupportedVersion)
+
+    // The shared status mappings still apply.
+    let unauthorized = await analysisProbe(.init(status: 401, headers: json, chunks: []))
+    XCTAssertEqual(unauthorized.failure, .authenticationFailed)
+    let busy = await analysisProbe(.init(status: 503, headers: json, chunks: []))
+    XCTAssertEqual(busy.failure, .backendUnavailable)
+    let unreachable = await analysisProbe(.init(transportError: .cannotConnectToHost))
+    XCTAssertEqual(unreachable.failure, .serverUnreachable)
+  }
+
+  /// The analysis mapping must not have disturbed the rewrite mapping.
+  func testRewriteHealthUnchangedByAnalysisClient() async throws {
+    let json = ["Content-Type": "application/json"]
+    let (client, _) = makeClient(credential: "c")
+    let body = Data(
+      #"{"schema_version":1,"service":"localflow-rewrite","protocol_versions":[1],"server":{"name":"flowd","version":"0.2.0"},"modes":["clean"],"backend":{"state":"ready","kind":"openai-compatible","model":"qwen"},"prompt_versions":{"clean":1},"shield_version":1}"#
+        .utf8)
+    RewriteStubURLProtocol.script(.init(headers: json, chunks: [body]), path: "/v1/rewrite/health")
+    let health = try await client.health(endpoint: endpoint)
+    XCTAssertEqual(RewriteConnectionCategory.evaluate(health), .connected)
+    XCTAssertEqual(RewriteStubURLProtocol.seenRequests.first?.url?.path, "/v1/rewrite/health")
+  }
+
+  func testAnalysisStreamStopsAtByteCap() async throws {
+    let client = makeAnalysisClient()
+    let accepted = Data(
+      #"{"type":"accepted","schema_version":1,"request_id":"r1"}"#.utf8) + Data("\n".utf8)
+    let oversized = Data(String(repeating: "x", count: 98_304).utf8)
+    RewriteStubURLProtocol.script(
+      .init(chunks: [accepted, oversized]), path: "/v1/analysis/meeting")
+    var outcome: (items: [AnalysisTransportItem], error: Error?) = ([], nil)
+    do {
+      for try await item in client.analyze(
+        request: analysisRequest(), endpoint: endpoint, timeout: .seconds(20))
+      { outcome.items.append(item) }
+    } catch { outcome.error = error }
+    XCTAssertEqual(
+      (outcome.error as? AnalysisFailure)?.category, .oversizedResponse)
+    XCTAssertEqual(
+      RewriteStubURLProtocol.seenRequests.first?.url?.path, "/v1/analysis/meeting")
+    XCTAssertEqual(
+      RewriteStubURLProtocol.seenRequests.first?.value(forHTTPHeaderField: "Accept"),
+      "application/x-ndjson")
+  }
+
+  func testAnalysisStreamYieldsEventsAndCompletion() async throws {
+    let client = makeAnalysisClient()
+    let lines = [
+      #"{"type":"accepted","schema_version":1,"request_id":"r1","server":{"name":"flowd","version":"0.3.0"}}"#,
+      #"{"type":"progress","schema_version":1,"request_id":"r1","stage":"full","chars":12}"#,
+    ].map { Data($0.utf8) + Data("\n".utf8) }
+    RewriteStubURLProtocol.script(.init(chunks: lines), path: "/v1/analysis/meeting")
+    var items: [AnalysisTransportItem] = []
+    for try await item in client.analyze(
+      request: analysisRequest(), endpoint: endpoint, timeout: .seconds(20))
+    { items.append(item) }
+    XCTAssertEqual(items.first, .firstByte)
+    guard case .event(.accepted) = items[1] else { return XCTFail("accepted expected") }
+    guard case .event(.progress(_, let stage, let chars)) = items[2] else {
+      return XCTFail("progress expected")
+    }
+    XCTAssertEqual(stage, "full")
+    XCTAssertEqual(chars, 12)
+    guard case .completed = items.last else { return XCTFail("completed expected last") }
+  }
+
+  func testAnalysisSessionIsEphemeralAndInvalidatable() async throws {
+    let client = makeAnalysisClient()
+    XCTAssertFalse(client.hasSession)
+    RewriteStubURLProtocol.script(
+      .init(chunks: [analysisHealth()]), path: "/v1/analysis/health")
+    _ = try await client.health(endpoint: endpoint)
+    XCTAssertTrue(client.hasSession)
+    client.invalidate()
+    XCTAssertFalse(client.hasSession)
+  }
+
+  private func analysisRequest() -> AnalysisRequest {
+    AnalysisRequest(
+      requestID: UUID(), runID: UUID(), stage: .full, chunk: nil,
+      meeting: AnalysisRequest.Meeting(
+        id: UUID(), title: "Test", startedAt: "2026-09-20T09:00:00Z",
+        durationMs: 60_000, timeZone: "UTC",
+        languagePolicy: AnalysisRequest.LanguagePolicyValue(
+          output: .en, preserveTerms: true)),
+      participants: [], segments: [], notes: [], partials: nil)
+  }
+}

@@ -397,6 +397,7 @@ final class TranscriptStoreTests: XCTestCase {
       let old = try TranscriptionStore(path: path)
       try await old.database.write { db in
         for table in [
+          "analysis_sources",
           "transcript_live_gaps", "transcript_segments", "meeting_transcriptions",
           "transcript_usage",
         ] { try db.drop(table: table) }

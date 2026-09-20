@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"localflow/server/internal/rewrite/backend"
+	"localflow/server/internal/backend"
 )
 
 const testID = "6F9619FF-8B86-D011-B42D-00C04FC964FF"

@@ -8,6 +8,7 @@ swift format lint --strict --recursive apps/macos/LocalFlow apps/macos/LocalFlow
 for script in scripts/*.sh .specify/scripts/bash/*.sh; do bash -n "$script"; done
 ./scripts/check-transcript-imports.sh
 ./scripts/check-identification-imports.sh
+./scripts/check-intelligence-imports.sh
 python3 scripts/validate-foundation.py
 python3 scripts/test-dictation-accuracy.py
 python3 scripts/test-transcription-quality.py

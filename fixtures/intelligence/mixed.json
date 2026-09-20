@@ -1,0 +1,72 @@
+{
+  "schema": "intelligence-fixture-v1",
+  "id": "88888888-8888-4888-8888-888888888888",
+  "title": "Deployment a backup",
+  "started_at": "2026-09-20T09:00:00+02:00",
+  "duration_ms": 18000,
+  "time_zone": "Europe/Bratislava",
+  "expected_language": "mixed",
+  "expected_terms": [
+    "deployment",
+    "backup",
+    "M6"
+  ],
+  "participants": [
+    {
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "certainty": "confirmed",
+      "origin": "user_confirmation",
+      "known_speaker_id": "bbbb0001-0000-4000-8000-000000000001",
+      "name": "Oliver Brunovský"
+    },
+    {
+      "speaker_id": "aaaa0002-0000-4000-8000-000000000002",
+      "certainty": "local_name",
+      "origin": "none",
+      "name": "Martin"
+    }
+  ],
+  "segments": [
+    {
+      "id": "aaaa0041-0000-4000-8000-000000000041",
+      "ordinal": 0,
+      "start_ms": 0,
+      "end_ms": 3400,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "Deployment posunieme na pondelok,Martin pripraví backup."
+    },
+    {
+      "id": "aaaa0042-0000-4000-8000-000000000042",
+      "ordinal": 1,
+      "start_ms": 3400,
+      "end_ms": 7600,
+      "speaker_id": "aaaa0002-0000-4000-8000-000000000002",
+      "normalized_text": "The deployment window moves to Monday and Martin prepares the database backup overnight."
+    },
+    {
+      "id": "aaaa0043-0000-4000-8000-000000000043",
+      "ordinal": 2,
+      "start_ms": 7600,
+      "end_ms": 11000,
+      "speaker_id": "aaaa0002-0000-4000-8000-000000000002",
+      "normalized_text": "Backup databázy bude hotový do piatku."
+    },
+    {
+      "id": "aaaa0044-0000-4000-8000-000000000044",
+      "ordinal": 3,
+      "start_ms": 11000,
+      "end_ms": 14800,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "Server M6 stays in production over the weekend, no failover needed."
+    },
+    {
+      "id": "aaaa0045-0000-4000-8000-000000000045",
+      "ordinal": 4,
+      "start_ms": 14800,
+      "end_ms": 18000,
+      "speaker_id": "aaaa0001-0000-4000-8000-000000000001",
+      "normalized_text": "Server M6 ostáva v prevádzke cez víkend."
+    }
+  ],
+  "notes": ""
+}

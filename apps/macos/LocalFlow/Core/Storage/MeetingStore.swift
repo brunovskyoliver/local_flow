@@ -613,8 +613,9 @@ actor MeetingStore: MeetingStoring {
       arguments: [now, meetingID.uuidString])
   }
 
-  /// Feature 007: one `meeting_diarization` row per meeting, created with it; Feature
-  /// 010 adds its `meeting_identification` row in the same transaction.
+  /// Feature 007: one `meeting_diarization` row per meeting, created with it;
+  /// Features 010 and 011 add their `meeting_identification` and
+  /// `meeting_analysis` rows in the same transaction.
   private static func insertDiarization(_ id: UUID, now: Int64, db: Database) throws {
     try db.execute(
       sql:
@@ -622,6 +623,10 @@ actor MeetingStore: MeetingStoring {
       arguments: [id.uuidString, now])
     try db.execute(
       sql: "INSERT INTO meeting_identification (meeting_id, updated_at) VALUES (?, ?)",
+      arguments: [id.uuidString, now])
+    try db.execute(
+      sql:
+        "INSERT INTO meeting_analysis (meeting_id, updated_at, revision) VALUES (?, ?, 0)",
       arguments: [id.uuidString, now])
   }
 

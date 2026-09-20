@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"localflow/server/internal/rewrite/prompts"
 )
 
 var (
@@ -43,9 +41,12 @@ type Info struct {
 	JSONSchema   bool
 }
 type Input struct {
-	System, Text   string
-	MaxOutputBytes int
-	JSONSchema     bool
+	System, Text    string
+	MaxOutputBytes  int
+	MaxOutputTokens int
+	// ResponseSchema is sent as the OpenAI `response_format` value when set; the
+	// caller also decides whether to append a constrained-output instruction.
+	ResponseSchema map[string]any
 	Progress       func(int) error
 }
 type Completion struct {
@@ -178,13 +179,14 @@ func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) 
 			return Completion{}, context.Cause(ctx)
 		}
 	}
-	system := in.System
 	payload := map[string]any{"model": a.config.Model, "stream": true, "temperature": 0}
-	if in.JSONSchema {
-		payload["response_format"] = prompts.ResponseFormat()
-		system += prompts.ConstrainedInstruction
+	if in.ResponseSchema != nil {
+		payload["response_format"] = in.ResponseSchema
 	}
-	payload["messages"] = []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": in.Text}}
+	if in.MaxOutputTokens > 0 {
+		payload["max_tokens"] = in.MaxOutputTokens
+	}
+	payload["messages"] = []map[string]string{{"role": "system", "content": in.System}, {"role": "user", "content": in.Text}}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Completion{}, ErrBackend
@@ -288,13 +290,6 @@ func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) 
 		return Completion{}, failure(ctx, ErrBackend)
 	}
 	result.Text = string(output.bytes)
-	if in.JSONSchema {
-		var decoded string
-		if json.Unmarshal(output.bytes, &decoded) != nil {
-			return Completion{}, ErrBackend
-		}
-		result.Text = decoded
-	}
 	result.DurationMS = int(time.Since(start).Milliseconds())
 	return result, nil
 }
