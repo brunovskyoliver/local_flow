@@ -155,6 +155,30 @@ private actor GatedInsertionAdapter: TextAccessibilityAdapter {
 }
 
 extension TextInsertionTests {
+  func testConfirmationRangeAnchorsOnCaretAfterTyping() throws {
+    typealias Adapter = SystemTextAccessibilityAdapter
+    // Slate captured the caret at 1 (after a zero-width placeholder); the first keystroke
+    // removed that character, so 20 delivered units end at caret 20, not 21.
+    let shifted = try XCTUnwrap(
+      Adapter.confirmationRange(length: 20, selection: CFRange(location: 20, length: 0)))
+    XCTAssertEqual(shifted.location, 0)
+    XCTAssertEqual(shifted.length, 20)
+    // Ordinary fields: text captured at 7 ends at caret 27.
+    let plain = try XCTUnwrap(
+      Adapter.confirmationRange(length: 20, selection: CFRange(location: 27, length: 0)))
+    XCTAssertEqual(plain.location, 7)
+    // Editors that keep the delivered text selected confirm from that selection.
+    let selected = try XCTUnwrap(
+      Adapter.confirmationRange(length: 20, selection: CFRange(location: 7, length: 20)))
+    XCTAssertEqual(selected.location, 7)
+    XCTAssertEqual(selected.length, 20)
+    // A caret before the text could have landed, a partial selection or bad input is rejected.
+    XCTAssertNil(Adapter.confirmationRange(length: 20, selection: CFRange(location: 19, length: 0)))
+    XCTAssertNil(Adapter.confirmationRange(length: 20, selection: CFRange(location: 7, length: 5)))
+    XCTAssertNil(Adapter.confirmationRange(length: 0, selection: CFRange(location: 7, length: 0)))
+    XCTAssertNil(Adapter.confirmationRange(length: 20, selection: CFRange(location: -1, length: 0)))
+  }
+
   func testUnicodeChunksPreserveSlovakAndSurrogatePairsWithinBound() {
     let text = String(repeating: "Žltý kôň 🐴 ", count: 12)
     let parts = UnicodeTextDelivery.chunks(text)

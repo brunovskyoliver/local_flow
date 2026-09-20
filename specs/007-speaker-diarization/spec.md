@@ -151,7 +151,8 @@ Copy produces plain text in which each speaker change starts with that speaker's
 
 - Meeting with no remote speech (system track silent): the result contains only the local speaker and the count is 1.
 - Meeting with no microphone speech, or a missing or failed microphone track: only remote clusters are produced and no local speaker is invented.
-- Local voice echo or bleed in system audio: not fully solved. Such speech may form or join a remote cluster, or be marked ambiguous. Enough evidence (source track per turn and per cluster) is kept for the future identification feature to detect it.
+- A cluster with almost no speech (a backchannel during overlap, a goodbye at the end): it is folded into its track's closest substantial cluster when the voices match, otherwise its segments show Unknown; it never appears as a speaker of its own (research R5, `MinorClusterFold`).
+- Remote voice echo in the microphone (speakers instead of headphones): the run measures the acoustic echo gain and lag from the two tracks and removes echo-explained spans from the microphone turns before alignment (research R5, `EchoGate`). A headphone meeting is left unchanged. Local voice bleed in system audio is not handled: such speech may form or join a remote cluster, or be marked ambiguous. Enough evidence (source track per turn and per cluster) is kept for the future identification feature to detect it.
 - Several people sharing the Mac microphone in a room: they appear as "You" by default, and the user can turn on the in-room toggle (FR-009) to diarize the microphone.
 - A single speaker split into many clusters, or two similar voices merged into one: handled with the correction tools in User Story 5.
 - Paused meetings: speaker turns must use the meeting's recorded timeline, the same one the transcript uses, and never span a pause gap.
@@ -252,7 +253,7 @@ Copy produces plain text in which each speaker change starts with that speaker's
 
 - The initial engine is the local diarization capability of the on-device audio library LocalFlow already ships for speech recognition. The engine sits behind an app-owned boundary (prepare, diarize, cancel, release) so the meeting domain does not depend on its types. The final choice is confirmed in planning.
 - Diarization is diarization only. Clusters, names and corrections are meeting-local. No voice profile, and no embedding that outlives a run, is created. Seeding the future identification feature from confirmed names will require explicit user confirmation in that feature.
-- Remote system audio and the microphone are diarized separately. There is no combined cross-track reconciliation pass beyond keeping source evidence for later echo handling.
+- Remote system audio and the microphone are diarized separately. The only cross-track step is the energy-based echo gate on microphone turns; there is no cross-track cluster reconciliation.
 - Overlapping or ambiguous segments appear as one row labeled Overlapping or Unknown. Split multi-speaker rows are out of scope.
 - The acceptance range is 2–6 total speakers. The design is for the 8-hour maximum from Feature 005, and measured acceptance uses 60 minutes, matching Features 004 and 005.
 - The local speaker is labeled "You" by default. Once named, it shows "Name (You)". With the in-room toggle on, local speakers show "Local N" until named.

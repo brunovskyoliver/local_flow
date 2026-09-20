@@ -267,6 +267,66 @@ final class CarryOverAdoptionTests: XCTestCase {
     XCTAssertEqual(stored?.state, .succeeded, "a review notice never blocks adoption")
   }
 
+  /// Feature 010 (T057): a manual identity row follows the safe name map with its
+  /// rejected pairs; an unmapped one is a review notice; automatic rows are recomputed.
+  func testManualIdentityRowsFollowSafeMappingsAndAutomaticRowsAreNotCarried() async throws {
+    let meeting = try await meeting()
+    let identities = IdentityStore(
+      database: fixture.history.database, identity: IdentificationTestSupport.identity)
+    let tomas = try await identities.createKnownSpeaker(name: "Tomáš", isLocalUser: false, now: 1)
+    let lukas = try await identities.createKnownSpeaker(name: "Lukáš", isLocalUser: false, now: 2)
+    let first = try await adopt(
+      meeting, a: 0..<3_000, b: 3_000..<6_000, local: 0..<6_000, now: 10)
+    // A: confirmed by the user, with Lukáš rejected. B: an automatic match.
+    try await identities.link(
+      meetingID: meeting.id, speakerID: first.a, to: tomas.id, origin: .userConfirmation, now: 20)
+    try await identities.reject(
+      meetingID: meeting.id, speakerID: first.a, candidate: lukas.id, keepUnknown: false, now: 21)
+    let run = try await identities.admit(
+      meetingID: meeting.id, trigger: .manual, identity: IdentificationTestSupport.identity,
+      policy: "tiers_v1@wespeaker_resnet34lm_256/11111111", now: 22)
+    _ = try await identities.start(runID: run.id, now: 23)
+    let candidate = IdentityMatcher.Candidate(
+      knownSpeakerID: lukas.id, score: 0.9, tier: .recognized, reasons: [], sampleCount: 3,
+      supportCount: 3)
+    _ = try await identities.complete(
+      runID: run.id,
+      decisions: [
+        first.b!: .init(state: .recognized, best: candidate, second: nil, candidates: [candidate])
+      ], now: 24)
+    // The rerun finds A again and B not at all.
+    let second = try await adopt(meeting, a: 0..<3_000, local: 0..<6_000, now: 30)
+    let carried = try await identities.identities(meetingID: meeting.id)
+    XCTAssertEqual(carried[second.a]?.knownSpeakerID, tomas.id)
+    XCTAssertEqual(carried[second.a]?.origin, .userConfirmation)
+    let rejected = try await identities.rejectedCandidates(meetingID: meeting.id)
+    XCTAssertEqual(rejected[second.a], [lukas.id])
+    let automatic = try await fixture.history.database.read { db in
+      try Int.fetchOne(
+        db,
+        sql:
+          "SELECT count(*) FROM identity_assignments a JOIN meeting_speakers s ON s.id=a.meeting_speaker_id WHERE s.run_id=? AND a.origin='automatic_match'",
+        arguments: [second.run.id.uuidString])
+    }
+    XCTAssertEqual(automatic, 0, "Automatic rows are never carried")
+    let notices = try await store.reviewNotices(meetingID: meeting.id)
+    XCTAssertEqual(notices.map(\.name), ["Lukáš"], "The name copied on recognition is flagged")
+    // A manual row whose cluster vanished, with no name of its own, is flagged by identity.
+    let third = try await adopt(meeting, a: 0..<3_000, local: 0..<6_000, now: 40)
+    try await identities.link(
+      meetingID: meeting.id, speakerID: third.local!, to: lukas.id, origin: .manualProfileSelection,
+      now: 41)
+    try await fixture.history.database.write { db in
+      try db.execute(
+        sql: "UPDATE meeting_speakers SET display_name=NULL WHERE id=?",
+        arguments: [third.local!.uuidString])
+    }
+    _ = try await adopt(meeting, a: 0..<3_000, now: 50)
+    let flagged = try await store.reviewNotices(meetingID: meeting.id)
+    XCTAssertTrue(flagged.map(\.name).contains("Lukáš"))
+    XCTAssertEqual(flagged.filter { $0.name == "Lukáš" }.count, 2)
+  }
+
   func testAMergeCarriesOnlyWhenBothMembersMapToDifferentClusters() async throws {
     let meeting = try await meeting()
     let first = try await adopt(meeting, a: 0..<3_000, b: 3_000..<6_000, now: 10)

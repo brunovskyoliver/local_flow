@@ -91,6 +91,84 @@ final class ResourceRecorderTests: XCTestCase {
     }
   }
 
+  /// Feature 010 (T043): every identification metric and phase is recorded; the failure
+  /// category is the only key; no name, vector, time range, text or meeting id enters.
+  func testIdentificationMetricsAreContentFreeAndKeyedOnlyByCategory() async throws {
+    let capture = try RecorderCapture.make()
+    defer { capture.cleanup() }
+    let recorder = capture.recorder
+    let phases: [ResourceRecorder.Phase] = [
+      .identifying, .embedderLoading, .embedderActive, .embedderReleasing,
+    ]
+    XCTAssertEqual(
+      phases.map(\.rawValue),
+      [
+        "identifying", "modelLoading(identification)", "modelActive(identification)",
+        "modelReleasing(identification)",
+      ])
+    for phase in phases { XCTAssertTrue(recorder.record(phase: phase, durationNanoseconds: 1)) }
+    XCTAssertEqual(ResourceRecorder.Metric.allIdentificationCases.count, 13)
+    for metric in ResourceRecorder.Metric.allIdentificationCases {
+      XCTAssertTrue(metric.isIdentification, "\(metric)")
+      let accepted: Bool
+      switch metric.kind {
+      case .duration:
+        accepted = recorder.record(phase: .identifying, durationNanoseconds: 5, metric: metric)
+      case .bytes:
+        accepted = recorder.record(phase: .identifying, metric: metric, payloadBytes: 1)
+      case .count:
+        accepted = recorder.record(
+          phase: .identifying, metric: metric, itemCount: 1,
+          meetingKey: metric == .identificationFailure ? "audio_missing" : nil)
+      }
+      XCTAssertTrue(accepted, "\(metric)")
+      for key in ["Tomáš", "6200-13800", "Meetings/file.aac", UUID().uuidString, "audio_missing"]
+      where metric != .identificationFailure {
+        let keyed: Bool
+        if metric.kind == .duration {
+          keyed = recorder.record(
+            phase: .identifying, durationNanoseconds: 5, metric: metric, meetingKey: key)
+        } else {
+          keyed = recorder.record(
+            phase: .identifying, metric: metric, itemCount: 1, meetingKey: key)
+        }
+        XCTAssertFalse(keyed, "\(metric) took key \(key)")
+      }
+    }
+    XCTAssertFalse(
+      recorder.record(
+        phase: .identifying, metric: .identificationFailure, itemCount: 1,
+        meetingKey: "Tomáš Novák"))
+    XCTAssertFalse(
+      recorder.record(
+        phase: .identifying, metric: .identificationFailure, itemCount: 2,
+        meetingKey: "audio_missing"), "a failure is one event")
+    XCTAssertTrue(
+      recorder.record(
+        phase: .identifying, metric: .identificationComparisons,
+        itemCount: UInt32(IdentityStore.candidatesPerRun)))
+    XCTAssertFalse(
+      recorder.record(
+        phase: .identifying, metric: .identificationComparisons,
+        itemCount: UInt32(IdentityStore.candidatesPerRun) + 1))
+    XCTAssertTrue(recorder.record(phase: .identifying, rssBytes: 1))
+    let report = await recorder.flush()
+    for line in try Data(contentsOf: report.files[0]).split(separator: 10) {
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+      for forbidden in [
+        "text", "name", "quote", "embedding", "vector", "path", "audio", "error", "start", "end",
+        "meetingID", "speaker",
+      ] {
+        XCTAssertNil(object[forbidden])
+      }
+      if let key = object["meetingKey"] as? String {
+        XCTAssertTrue(
+          ResourceRecorder.diarizationKeys.contains(key)
+            || ResourceRecorder.identificationKeys.contains(key), key)
+      }
+    }
+  }
+
   private func identity() throws -> ResourceRecorder.Identity {
     try .init(
       build: "test-build", model: "parakeet-v3", hardware: "test-host", os: "test-os",

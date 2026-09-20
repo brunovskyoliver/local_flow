@@ -349,6 +349,38 @@ final class MeetingDiarizerTests: XCTestCase {
     XCTAssertEqual(after, before)
   }
 
+  func testMinorClustersFoldIntoTheirVoiceOrDetachBeforeAlignment() async throws {
+    // One system voice for 300 ms, a 10 ms cluster close to it (cos 0.8) and a 10 ms
+    // orthogonal one; both are under 5% of the voice.
+    var near = DiarizationScripts.centroid(axis: 0)
+    near[0] = 0.8
+    near[1] = 0.6
+    let window = DiarizationScripts.window(
+      [(0, 0, 0.3), (1, 0.3, 0.31), (2, 0.31, 0.32)],
+      centroids: [
+        0: DiarizationScripts.centroid(axis: 0), 1: near, 2: DiarizationScripts.centroid(axis: 2),
+      ])
+    let runtime = FakeDiarizationRuntime(scripts: [window])
+    await runtime.noSpeech(onWindow: 2)
+    let (diarizer, _) = makeDiarizer(runtime)
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: meeting.meetingID, segments: [(0, 300), (300, 310), (310, 320)])
+    _ = try await diarizer.admit(
+      meetingID: meeting.meetingID, trigger: .manual, expectedRevision: nil)
+    let outcome = await diarizer.run(meetingID: meeting.meetingID)
+    guard case .succeeded(let run) = outcome else { return XCTFail("\(outcome)") }
+    XCTAssertEqual(run.inferredSpeakerCount, 1)
+    let stored = try await turns(run.id)
+    XCTAssertEqual(stored.count, 3)
+    XCTAssertEqual(stored.filter { $0.speakerID == nil }.map(\.startMs), [310])
+    XCTAssertEqual(Set(stored.compactMap(\.speakerID)).count, 1)
+    let shown = try await labels(meeting.meetingID)
+    XCTAssertEqual(shown, ["Speaker 1", "Speaker 1", "Unknown"])
+    let summaries = try await speakers.speakerSummaries(meetingID: meeting.meetingID)
+    XCTAssertEqual(summaries.map(\.speechMs), [310])
+  }
+
   func testTurnsBeyondTheClusterCapacityAreOverflowAndAlignToUnknown() async throws {
     // 65 orthogonal voices in one system window: the 65th has no run cluster left.
     let voices = DiarizationConstants.clustersPerTrack + 1

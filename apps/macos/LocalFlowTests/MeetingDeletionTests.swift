@@ -298,4 +298,74 @@ final class MeetingDeletionTests: XCTestCase {
       XCTAssertEqual(count, 0, table)
     }
   }
+
+  /// Feature 010 (T072): `SpeakerIdentificationCoordinator.meetingWillDelete` runs before
+  /// the row goes, joins the active run, and the cascade leaves no identity rows.
+  func testDeletionCancelsIdentificationBeforeTheRowIsDeletedAndLeavesNoIdentityRows()
+    async throws
+  {
+    let transcripts = TranscriptStore(database: fixture.history.database)
+    let speakers = SpeakerStore(database: fixture.history.database)
+    let identities = IdentityStore(
+      database: fixture.history.database, identity: IdentificationTestSupport.identity)
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(microphone: .blocks(200), system: .blocks(200))])
+    let id = meeting.meetingID
+    let clusters = try await IdentificationTestSupport.acceptedDiarization(
+      fixture, transcripts: transcripts, speakers: speakers, meetingID: id,
+      stretchLengths: [200 * TranscriptMeetingFixture.blockMs]
+    ).clusters
+    let tomas = try await identities.createKnownSpeaker(name: "Tomáš", isLocalUser: false, now: 1)
+    _ = try await identities.addSamples(
+      knownSpeakerID: tomas.id,
+      drafts: [
+        IdentificationTestSupport.draft(
+          vector: VoiceVectors.unit(axis: 1), meetingID: id, speakerID: clusters[1])
+      ], consent: .remember, now: 2)
+    try await identities.reject(
+      meetingID: id, speakerID: clusters[1], candidate: tomas.id, keepUnknown: true, now: 3)
+    let runtime = FakeVoiceEmbeddingRuntime(scripts: [VoiceVectors.unit(axis: 1)])
+    let gate = PreparationGate()
+    await runtime.hold(gate)
+    let lifecycle = ModelLifecycleCoordinator(
+      voiceEmbeddingFactory: { runtime }, factory: { FakeTranscriptionRuntime() })
+    let identification = SpeakerIdentificationCoordinator(
+      identifier: MeetingIdentifier(
+        store: identities, speakers: speakers, transcripts: transcripts, meetings: store,
+        storageRoot: root, lifecycle: lifecycle, identity: IdentificationTestSupport.identity),
+      enrollment: EnrollmentJob(
+        store: identities, speakers: speakers, transcripts: transcripts, meetings: store,
+        storageRoot: root, lifecycle: lifecycle, identity: IdentificationTestSupport.identity),
+      store: identities, enabled: { true })
+    await identification.requestRun(meetingID: id, trigger: .manual)
+    await gate.waitUntilStarted()
+    let library = MeetingLibraryViewModel(store: store)
+    var order: [String] = []
+    library.willDelete = { id in
+      await identification.meetingWillDelete(id: id)
+      let exists = try? await self.store.meeting(id: id)
+      order.append(exists == nil ? "row gone" : "joined before delete")
+    }
+    let stored = try await store.meeting(id: id)
+    let revision = try XCTUnwrap(stored).revision
+    let deletion = Task { await library.delete(id, revision: revision) }
+    try await Task.sleep(for: .milliseconds(20))
+    await gate.open()
+    let outcome = await deletion.value
+    XCTAssertEqual(outcome?.complete, true)
+    XCTAssertEqual(order, ["joined before delete"])
+    XCTAssertNil(identification.activeMeetingID)
+    for table in [
+      "meeting_identification", "identification_runs", "identity_assignments",
+      "match_candidates", "rejected_candidates",
+    ] {
+      let count = try await fixture.history.database.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table)")!
+      }
+      XCTAssertEqual(count, 0, table)
+    }
+    let samples = try await identities.samples(knownSpeakerID: tomas.id)
+    XCTAssertEqual(samples.count, 1, "FR-031: the sample stays, provenance-unavailable")
+    XCTAssertTrue(samples[0].provenanceUnavailable)
+  }
 }

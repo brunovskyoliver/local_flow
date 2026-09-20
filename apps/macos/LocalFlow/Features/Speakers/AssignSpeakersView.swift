@@ -95,10 +95,10 @@ struct AssignSpeakersView: View {
           .buttonStyle(AssignSpeakersButtonStyle(prominent: false))
           .keyboardShortcut(.cancelAction)
           .accessibilityIdentifier("meeting.speakers.cancel")
-        Button("Save names", action: save)
+        Button(model.enrollmentCompleted ? "Done" : "Save names", action: save)
           .buttonStyle(AssignSpeakersButtonStyle(prominent: true))
           .keyboardShortcut(.defaultAction)
-          .disabled(!model.canSave)
+          .disabled(!model.canSave && !model.enrollmentCompleted)
           .accessibilityIdentifier("meeting.speakers.save")
       }
       .padding(.horizontal, 28).padding(.vertical, 18)
@@ -106,11 +106,15 @@ struct AssignSpeakersView: View {
   }
 
   private func save() {
+    if model.enrollmentCompleted {
+      saved()
+      close()
+      return
+    }
     Task {
-      if await model.save() {
-        saved()
-        close()
-      }
+      let closes = await model.save()
+      saved()
+      if closes { close() }
     }
   }
 
@@ -170,6 +174,9 @@ struct AssignSpeakersView: View {
         }
       }
       nameField(section, position: position)
+      if let block = model.identityBlock(for: section.id) {
+        identityBlock(block, section: section)
+      }
       if let error = section.error {
         Text(error).font(.system(size: 12)).foregroundStyle(.red)
       } else if let other = model.duplicate(of: section.id) {
@@ -210,6 +217,159 @@ struct AssignSpeakersView: View {
         suggestionList(for: section.id).offset(y: Self.fieldHeight + 6)
       }
     }
+  }
+
+  // MARK: Identity (Feature 010, contracts/ui.md)
+
+  @ViewBuilder
+  private func identityBlock(
+    _ block: AssignSpeakersModel.IdentityBlock, section: AssignSpeakersModel.Section
+  )
+    -> some View
+  {
+    VStack(alignment: .leading, spacing: 8) {
+      if let local = block.localState {
+        switch local {
+        case .offer:
+          if section.identityAction == .rememberLocal {
+            Text("Your voice will be remembered from this Mac's microphone.")
+              .font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+          } else {
+            Button("Remember my voice") { model.setIdentityAction(.rememberLocal, for: section.id) }
+              .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
+              .accessibilityIdentifier("identity.rememberLocal")
+          }
+        case .remembered:
+          Text("Your voice is remembered").font(.system(size: 12))
+            .foregroundStyle(SottoPalette.muted)
+        }
+      } else {
+        HStack(spacing: 8) {
+          Text(block.matchState).font(.system(size: 12, weight: .medium))
+            .foregroundStyle(block.needsChoice ? .orange : SottoPalette.muted)
+            .accessibilityIdentifier("identity.matchState")
+          if !block.picker.isEmpty, !block.needsChoice {
+            pickerMenu(block.picker, section: section, title: "Known speakers…")
+              .accessibilityIdentifier("identity.picker")
+          }
+        }
+        if block.needsChoice {
+          mergedChoice(block, section: section)
+        } else if block.showsSuggestionActions {
+          suggestionActions(block, section: section)
+        }
+        if let duplicate = block.duplicateOf {
+          duplicateChoice(duplicate, section: section)
+        } else if block.showsRemember {
+          rememberRow(section)
+        }
+        if block.showsAlsoRemember {
+          Toggle(
+            "Also remember this voice sample",
+            isOn: Binding(
+              get: { section.alsoRemember },
+              set: { model.setAlsoRemember($0, for: section.id) })
+          )
+          .toggleStyle(.checkbox).font(.system(size: 12))
+          .accessibilityIdentifier("identity.alsoRemember")
+        }
+      }
+      if let result = section.enrollmentResult {
+        Text(result).font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+          .accessibilityIdentifier("identity.enrollmentResult")
+      }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("identity.block")
+  }
+
+  private func rememberRow(_ section: AssignSpeakersModel.Section) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 10) {
+        Text(AssignSpeakersModel.rememberQuestion).font(.system(size: 13, weight: .medium))
+        Button("Remember") { model.setIdentityAction(.remember, for: section.id) }
+          .buttonStyle(AssignSpeakersButtonStyle(prominent: section.identityAction == .remember))
+          .accessibilityIdentifier("identity.remember")
+        Button("Not now") { model.setIdentityAction(.notNow, for: section.id) }
+          .buttonStyle(AssignSpeakersButtonStyle(prominent: false))
+          .opacity(section.identityAction == .notNow ? 1 : 0.7)
+          .accessibilityIdentifier("identity.notNow")
+      }
+      Text(AssignSpeakersModel.rememberSentence).font(.system(size: 12))
+        .foregroundStyle(SottoPalette.muted).fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("identity.rememberSentence")
+    }
+  }
+
+  private func duplicateChoice(_ known: KnownSpeakerRow, section: AssignSpeakersModel.Section)
+    -> some View
+  {
+    HStack(spacing: 10) {
+      Text("Is this \(known.name) you already remember?").font(.system(size: 13, weight: .medium))
+      Button("Same person") {
+        model.setIdentityAction(.rememberSamePerson(known.id), for: section.id)
+      }
+      .buttonStyle(AssignSpeakersButtonStyle(prominent: true))
+      .accessibilityIdentifier("identity.samePerson")
+      Button("Someone new") { model.setIdentityAction(.rememberNew, for: section.id) }
+        .buttonStyle(AssignSpeakersButtonStyle(prominent: false))
+        .accessibilityIdentifier("identity.someoneNew")
+    }
+  }
+
+  private func suggestionActions(
+    _ block: AssignSpeakersModel.IdentityBlock, section: AssignSpeakersModel.Section
+  ) -> some View {
+    HStack(spacing: 10) {
+      Button("Confirm") { model.setIdentityAction(.confirm, for: section.id) }
+        .buttonStyle(AssignSpeakersButtonStyle(prominent: section.identityAction == .confirm))
+        .accessibilityIdentifier("identity.confirm")
+      pickerMenu(block.picker, section: section, title: "Choose another…")
+        .accessibilityIdentifier("identity.chooseAnother")
+      Button("Keep Unknown") { model.setIdentityAction(.keepUnknown, for: section.id) }
+        .buttonStyle(AssignSpeakersButtonStyle(prominent: section.identityAction == .keepUnknown))
+        .accessibilityIdentifier("identity.keepUnknown")
+    }
+  }
+
+  private func mergedChoice(
+    _ block: AssignSpeakersModel.IdentityBlock, section: AssignSpeakersModel.Section
+  ) -> some View {
+    HStack(spacing: 10) {
+      Menu("Choose a known speaker…") {
+        ForEach(block.picker) { known in
+          Button(known.name) {
+            model.setIdentityAction(.resolveMerged(.knownSpeaker(known.id)), for: section.id)
+          }
+        }
+      }
+      .menuStyle(.borderlessButton).fixedSize()
+      .accessibilityIdentifier("identity.mergedPicker")
+      Button("Keep Unknown") {
+        model.setIdentityAction(.resolveMerged(.keepUnknown), for: section.id)
+      }
+      .buttonStyle(AssignSpeakersButtonStyle(prominent: false))
+      .accessibilityIdentifier("identity.mergedKeepUnknown")
+    }
+  }
+
+  /// The known-speaker menu: name, sample count and the re-enrollment tag; never scores.
+  private func pickerMenu(
+    _ known: [KnownSpeakerRow], section: AssignSpeakersModel.Section, title: String
+  ) -> some View {
+    Menu(title) {
+      ForEach(known) { row in
+        Button(pickerTitle(row)) { model.pickKnownSpeaker(row.id, for: section.id) }
+      }
+    }
+    .menuStyle(.borderlessButton).fixedSize().font(.system(size: 12))
+  }
+
+  private func pickerTitle(_ row: KnownSpeakerRow) -> String {
+    let samples =
+      row.activeSampleCount == 1 ? "1 voice sample" : "\(row.activeSampleCount) voice samples"
+    let tag = row.state == .needsReenrollment ? " · needs re-enrollment" : ""
+    return "\(row.name) — \(samples)\(tag)"
   }
 
   /// Recent and matching names under the field, floating like a menu.

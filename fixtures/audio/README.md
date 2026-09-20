@@ -65,3 +65,30 @@ Feature 004 tracks (microphone and system) plus an RTTM file where ground truth 
 
 Accuracy numbers (DER, confusion, missed speech, false alarm) are reported only for
 meetings with RTTM.
+
+## Feature 010 speaker identification calibration corpus
+
+Used by `IdentificationCalibrationHarness` (XCTest, skipped unless
+`LOCALFLOW_CALIBRATION_ROOT` names the corpus root) and recorded in
+`specs/010-persistent-speaker-identification/acceptance/calibration.md`. The corpus
+stays outside git: keep it under `build/identification-corpus/` or any private path and
+point `LOCALFLOW_CALIBRATION_ROOT` at it. Never commit the audio, the manifest's speaker
+names or any derived vector.
+
+- **Speakers.** At least 8 consenting speakers, each in at least 3 separate recordings
+  made on different days or different devices (laptop microphone, headset, phone through
+  a call), so same-person comparisons cover channel drift. Consent is recorded outside
+  the repository per speaker; the manifest carries only opaque speaker ids.
+- **Recordings.** Each recording is a Feature 004 meeting directory: `mic-0001.aac` and/or
+  `system-0001.aac` (ADTS AAC-LC), plus the meeting's accepted diarization output so the
+  harness can select regions the way the app does. The Feature 007 synthetic RTTM
+  meetings above are included as different-person material with exact ground truth.
+- **Manifest.** `manifest.json` at the root maps each recording directory to the speaker
+  id of every remote cluster (`{"recordings": [{"path": "…", "clusters": {"0": "spk_a"}}]}`).
+  A cluster with no entry is scored as an unknown speaker for the SC-003 false-suggest rate.
+- **Harness output.** The harness enrolls each speaker from one recording through
+  `VoiceRegionSelector` and the real embedder, queries every other cluster, and writes the
+  same-person and different-person score distributions, false-accept and miss rates at
+  candidate `τ_high` / `τ_medium`, margin sensitivity and score spread by region length,
+  with hardware, macOS, build, model revision and policy version, in the shape
+  `acceptance/calibration.md` expects.

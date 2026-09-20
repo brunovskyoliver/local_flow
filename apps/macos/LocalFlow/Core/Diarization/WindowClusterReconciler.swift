@@ -37,6 +37,12 @@ struct WindowClusterReconciler: Sendable {
 
   var clusterCount: Int { clusters.count }
 
+  /// Run-cluster centroids by key, for the minor-cluster fold at the end of the run.
+  var centroids: [Int: [Double]] {
+    Dictionary(
+      uniqueKeysWithValues: clusters.compactMap { run in run.centroid.map { (run.key, $0) } })
+  }
+
   /// `nextKey` is the run-wide key counter, so keys stay unique across tracks.
   mutating func reconcile(_ window: DiarizationWindowResult, nextKey: inout Int) -> Result {
     var durations: [Int: Double] = [:]

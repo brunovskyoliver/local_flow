@@ -39,6 +39,10 @@ struct AnalysisStreamDescriptor: Codable, Sendable, Equatable {
     let lengthMs: Int64
     let tracks: AnalysisTracks
   }
+  /// How the tracks reached the recognizer: one mixed stream, or each track on its own.
+  enum Layout: Sendable {
+    case mixed, perTrack
+  }
   let version: String
   let sampleRate: Int
   let channels: Int
@@ -48,13 +52,13 @@ struct AnalysisStreamDescriptor: Codable, Sendable, Equatable {
   private(set) var stretches: [Stretch]
   private(set) var stretchesTruncated: Bool
   init(
-    source: Source, contributingTracks: [AnalysisTracks] = [], stretches: [Stretch] = [],
-    stretchesTruncated: Bool = false
+    source: Source, layout: Layout = .mixed, contributingTracks: [AnalysisTracks] = [],
+    stretches: [Stretch] = [], stretchesTruncated: Bool = false
   ) {
-    version = "mixed_mono_16k_v1"
+    version = layout == .mixed ? "mixed_mono_16k_v1" : "per_track_16k_v1"
     sampleRate = 16_000
     channels = 1
-    mixRule = "mean_0.5"
+    mixRule = layout == .mixed ? "mean_0.5" : "none"
     self.source = source
     self.contributingTracks = contributingTracks
     self.stretches = Array(stretches.prefix(200))

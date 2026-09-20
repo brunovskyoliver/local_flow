@@ -327,3 +327,50 @@ private actor CooldownGatedRuntime: TranscriptionRuntime {
   }
   func shutdown() async { await gate.wait() }
 }
+
+// MARK: Feature 010 identification workload (T008)
+
+extension ModelCooldownTests {
+  func testIdentificationFinishReleasesWithoutCooldown() async throws {
+    let clock = ManualClock()
+    let factory = FakeVoiceEmbeddingFactory()
+    let coordinator = ModelLifecycleCoordinator(
+      clock: clock, voiceEmbeddingFactory: { try await factory.make() },
+      factory: { ProbeRuntime() })
+    let lease = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+    try await coordinator.finish(lease)
+    let state = await coordinator.state
+    XCTAssertEqual(state, .unloaded, "Released at finish, not after 30 seconds")
+    let shutdowns = await factory.runtime.shutdownCount
+    XCTAssertEqual(shutdowns, 1)
+    let deadlines = await clock.requested
+    XCTAssertTrue(deadlines.isEmpty)
+  }
+
+  func testKeepModelReadyPreparesSpeechAgainAfterIdentification() async throws {
+    let clock = ManualClock()
+    let built = Counter()
+    let factory = FakeVoiceEmbeddingFactory()
+    let coordinator = ModelLifecycleCoordinator(
+      clock: clock, voiceEmbeddingFactory: { try await factory.make() },
+      factory: {
+        _ = await built.increment()
+        return ProbeRuntime()
+      })
+    await coordinator.setKeepLoaded(true)
+    try await coordinator.loadIfIdle()
+    let lease = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+    let during = await coordinator.snapshot()
+    XCTAssertFalse(during.loaded, "Retention does not license co-residency")
+    try await coordinator.finish(lease)
+    for _ in 0..<1000 {
+      if await coordinator.snapshot().loaded { break }
+      await Task.yield()
+    }
+    let after = await coordinator.snapshot()
+    XCTAssertTrue(after.loaded)
+    XCTAssertEqual(after.state, .cooling)
+    let count = await built.value
+    XCTAssertEqual(count, 2)
+  }
+}

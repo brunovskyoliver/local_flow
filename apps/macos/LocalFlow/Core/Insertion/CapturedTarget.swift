@@ -239,24 +239,25 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     return value
   }
 
+  /// Where the delivered text must be readable, given the target's current selection.
+  /// Editors such as Slate hold a zero-width placeholder character in an empty field and
+  /// drop it on the first keystroke, shifting every offset captured before typing. The
+  /// caret reported after typing is the only stable anchor: the text must end at a
+  /// collapsed caret, or remain selected in full where the editor selects what it received.
+  static func confirmationRange(length: Int, selection: CFRange) -> CFRange? {
+    guard length > 0, selection.location >= 0, selection.length >= 0 else { return nil }
+    if selection.length == 0 {
+      guard selection.location >= length else { return nil }
+      return CFRange(location: selection.location - length, length: length)
+    }
+    guard selection.length == length else { return nil }
+    return selection
+  }
+
   private func readbackOnce(_ text: String, on target: CapturedTarget) throws -> String {
     let length = text.utf16.count
-    guard length <= 65_536, target.selectedRange.location >= 0,
-      target.selectedRange.location <= Int.max - length
-    else { throw TargetIssue.unsupported }
+    guard length <= 65_536 else { throw TargetIssue.unsupported }
     guard matchesFocusedIdentity(target) else { throw TargetIssue.focusChanged }
-    var range = target.selectedRange
-    range.length = length
-    guard let rangeValue = AXValueCreate(.cfRange, &range) else {
-      throw TargetIssue.unsupported
-    }
-    var raw: CFTypeRef?
-    let status = AXUIElementCopyParameterizedAttributeValue(
-      target.element, kAXStringForRangeParameterizedAttribute as CFString,
-      rangeValue, &raw)
-    guard status == .success, let value = raw as? String, value.utf8.count <= 64 * 1024 else {
-      throw TargetIssue.unsupported
-    }
     var selectedRangeValue: CFTypeRef?
     guard
       AXUIElementCopyAttributeValue(
@@ -268,12 +269,20 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     guard AXValueGetValue(selectedRangeValue as! AXValue, .cfRange, &selectedRange) else {
       throw TargetIssue.unsupported
     }
-    let collapsed =
-      selectedRange.location == range.location + range.length && selectedRange.length == 0
-    let remainsSelected =
-      selectedRange.location == range.location && selectedRange.length == range.length
+    guard var range = Self.confirmationRange(length: length, selection: selectedRange) else {
+      throw TargetIssue.selectionChanged
+    }
+    guard let rangeValue = AXValueCreate(.cfRange, &range) else {
+      throw TargetIssue.unsupported
+    }
+    var raw: CFTypeRef?
+    let status = AXUIElementCopyParameterizedAttributeValue(
+      target.element, kAXStringForRangeParameterizedAttribute as CFString,
+      rangeValue, &raw)
+    guard status == .success, let value = raw as? String, value.utf8.count <= 64 * 1024 else {
+      throw TargetIssue.unsupported
+    }
     guard matchesFocusedIdentity(target) else { throw TargetIssue.focusChanged }
-    guard collapsed || remainsSelected else { throw TargetIssue.selectionChanged }
     return value
   }
 

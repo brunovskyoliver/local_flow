@@ -142,7 +142,8 @@ final class SpeakerStoreTests: XCTestCase {
           arguments: [id.uuidString, "completed", 1, 5 + index])
       }
     }
-    try HistoryMigrations.migrator().migrate(database)
+    // Feature 010 adds its identity tables in `identities-v8`; this checks the 007 schema.
+    try HistoryMigrations.migrator().migrate(database, upTo: "speakers-v7")
     try database.read { db in
       let rows = try Row.fetchAll(
         db, sql: "SELECT * FROM meeting_diarization ORDER BY updated_at")
@@ -472,6 +473,46 @@ final class SpeakerStoreTests: XCTestCase {
     XCTAssertEqual(seen, (4...11).map { Int64($0) * 1_000 })
   }
 
+  func testFoldMovesTurnsToTheTargetOrDetachesThemAndDropsTheMinorSpeaker() async throws {
+    let meeting = try await meeting()
+    let run = try await running(meeting)
+    let (remote, local) = try await window(run)
+    let minor = SpeakerDraft(id: UUID(), clusterKey: 2, track: .system, reconciliation: .confident)
+    let stray = SpeakerDraft(id: UUID(), clusterKey: 3, track: .system, reconciliation: .confident)
+    try await store.appendWindow(
+      runID: run.id, speakers: [minor, stray],
+      turns: [
+        TurnDraft(speakerID: minor.id, track: .system, startMs: 4_000, endMs: 4_500, quality: nil),
+        TurnDraft(speakerID: stray.id, track: .system, startMs: 5_000, endMs: 5_200, quality: nil),
+      ], audioMs: 3_000)
+    // A target that is itself folded, a foreign target and a self-fold write nothing.
+    for invalid: [UUID: UUID?] in [
+      [minor.id: remote, remote: local], [minor.id: UUID()], [minor.id: minor.id],
+    ] {
+      do {
+        try await store.fold(runID: run.id, speakers: invalid)
+        XCTFail("Invalid fold accepted")
+      } catch { XCTAssertNotNil(error as? SpeakerStore.Error) }
+    }
+    try await store.fold(runID: run.id, speakers: [minor.id: remote, stray.id: nil])
+    let turns = try await store.turns(runID: run.id, overlapping: 0..<10_000, after: nil, limit: 10)
+    XCTAssertEqual(turns.count, 5)
+    XCTAssertEqual(turns.first { $0.startMs == 4_000 }?.speakerID, remote)
+    XCTAssertNil(turns.first { $0.startMs == 5_000 }?.speakerID)
+    let rows = try await count("meeting_speakers", run: run.id)
+    XCTAssertEqual(rows, 2)
+    let completed = try await store.complete(
+      runID: run.id, assignments: assignments(meeting, speaker: remote), now: 20)
+    XCTAssertEqual(completed.inferredSpeakerCount, 2)
+    let summaries = try await store.speakerSummaries(meetingID: meeting.id)
+    XCTAssertEqual(summaries.first { $0.id == remote }?.speechMs, 2_000)
+    try await store.fold(runID: run.id, speakers: [:])
+    do {
+      try await store.fold(runID: run.id, speakers: [remote: nil])
+      XCTFail("Fold after adoption accepted")
+    } catch { XCTAssertNotNil(error as? SpeakerStore.Error) }
+  }
+
   // MARK: Naming (T047)
 
   private func names(_ run: UUID) async throws -> [String?] {
@@ -794,5 +835,68 @@ final class SpeakerStoreTests: XCTestCase {
         meetingID: meeting.id, segmentID: meeting.segments[0], to: .speaker(UUID()), now: 33)
       XCTFail("assigned a speaker of another meeting")
     } catch { XCTAssertEqual(error as? SpeakerStore.Error, .missingRow) }
+  }
+
+  // MARK: Feature 010 (T033, T057)
+
+  /// Summaries carry each root's effective identity and whether a sample could be
+  /// taken; unmerge clears the root's merged resolution and never touches `self` rows.
+  func testSummariesCarryIdentitiesAndUnmergeClearsTheMergedResolutionOnly() async throws {
+    let meeting = try await meeting()
+    _ = try await accepted(meeting)
+    let identities = IdentityStore(
+      database: fixture.history.database, identity: IdentificationTestSupport.identity)
+    let tomas = try await identities.createKnownSpeaker(name: "Tomáš", isLocalUser: false, now: 1)
+    let lukas = try await identities.createKnownSpeaker(name: "Lukáš", isLocalUser: false, now: 2)
+    let ids = try await store.speakerSummaries(meetingID: meeting.id).map(\.id)
+    let (remote, local) = (ids[0], ids[1])
+    var summaries = try await store.speakerSummaries(meetingID: meeting.id)
+    XCTAssertEqual(summaries[0].identity?.state, .unknown)
+    XCTAssertEqual(summaries[0].identity?.sampleOfferAvailable, false, "A 1.5 s turn is too short")
+    try await identities.link(
+      meetingID: meeting.id, speakerID: remote, to: tomas.id, origin: .manualProfileSelection,
+      now: 10)
+    try await identities.link(
+      meetingID: meeting.id, speakerID: local, to: lukas.id, origin: .manualProfileSelection,
+      now: 11)
+    summaries = try await store.speakerSummaries(meetingID: meeting.id)
+    XCTAssertEqual(summaries.first { $0.id == remote }?.identity?.knownSpeakerName, "Tomáš")
+    XCTAssertEqual(summaries.first { $0.id == remote }?.identity?.state, .confirmed)
+    XCTAssertEqual(summaries.first { $0.id == remote }?.displayName, "Tomáš")
+    // Merge two different identities: the root needs a choice; resolve, then undo.
+    try await store.merge(meetingID: meeting.id, speakerID: local, into: remote, now: 20)
+    summaries = try await store.speakerSummaries(meetingID: meeting.id)
+    XCTAssertEqual(summaries.map(\.id), [remote])
+    XCTAssertEqual(summaries[0].identity?.needsChoice, true)
+    try await identities.resolveMerged(
+      meetingID: meeting.id, rootID: remote, to: .knownSpeaker(lukas.id), now: 21)
+    summaries = try await store.speakerSummaries(meetingID: meeting.id)
+    XCTAssertEqual(summaries[0].identity?.knownSpeakerID, lukas.id)
+    let selfRows = try await fixture.history.database.read { db in
+      try Row.fetchAll(
+        db,
+        sql:
+          "SELECT meeting_speaker_id, known_speaker_id, origin FROM identity_assignments WHERE scope='self' ORDER BY created_at"
+      ).map { "\($0["meeting_speaker_id"] as String):\($0["known_speaker_id"] as String)" }
+    }
+    XCTAssertEqual(
+      selfRows,
+      ["\(remote.uuidString):\(tomas.id.uuidString)", "\(local.uuidString):\(lukas.id.uuidString)"])
+    try await store.unmerge(meetingID: meeting.id, speakerID: local, now: 22)
+    let merged = try await fixture.history.database.read { db in
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM identity_assignments WHERE scope='merged'")
+    }
+    XCTAssertEqual(merged, 0, "unmerge clears the merged resolution")
+    let after = try await fixture.history.database.read { db in
+      try Row.fetchAll(
+        db,
+        sql:
+          "SELECT meeting_speaker_id, known_speaker_id, origin FROM identity_assignments WHERE scope='self' ORDER BY created_at"
+      ).map { "\($0["meeting_speaker_id"] as String):\($0["known_speaker_id"] as String)" }
+    }
+    XCTAssertEqual(after, selfRows, "self rows are never modified by merge or unmerge")
+    summaries = try await store.speakerSummaries(meetingID: meeting.id)
+    XCTAssertEqual(summaries.first { $0.id == remote }?.identity?.knownSpeakerID, tomas.id)
+    XCTAssertEqual(summaries.first { $0.id == local }?.identity?.knownSpeakerID, lukas.id)
   }
 }

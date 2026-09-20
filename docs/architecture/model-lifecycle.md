@@ -69,3 +69,27 @@ window, final pieces are at most 15 seconds. Maximum work is 11 requests and
 360 seconds of input including retries. Reject repetition in both pieces and
 the combined result. The main window geometry and persisted resume boundaries
 remain unchanged, so already successful windows can resume safely.
+
+## Speaker identification (Feature 010)
+
+`ModelWorkload.speakerIdentification` is the fourth workload. The runtime is
+`FluidAudioVoiceEmbedder`, built by `FluidAudioVoiceEmbedderFactory` over the same
+provisioned diarization files (WeSpeaker ResNet34-LM, 256-d) through FluidAudio's
+single-speaker offline pipeline; no new model, manifest or download path exists. The
+coordinator gains a `voiceEmbeddingFactory`, a resident `.embedding` case and one
+inference entry, `embed(_:region:)`, which admits one 3–20 s region at a time and checks
+the request and the result bounds before and after the runtime sees them.
+
+Ordering: `SpeakerDiarizationCoordinator` publishes `diarizationDidAdopt` only after the
+diarization lease has finished and the adoption transaction has committed;
+`SpeakerIdentificationCoordinator` then queues an automatic run that acquires its own
+lease. A workload switch releases the resident runtime first, so the diarizer and the
+embedder are never resident together. Speech workloads preempt an identification lease
+exactly as they preempt diarization (the in-flight region is joined, the run goes back to
+`pending` and restarts from its first region); an identification acquire never preempts
+and throws `busy` while any owner exists. `finish` releases the embedder at once with no
+cooldown, at run end, failure, cancellation and preemption; Keep model ready re-prepares
+ASR afterwards. Observed phases: `modelLoading(identification)`,
+`modelActive(identification)`, `modelReleasing(identification)`; `identifying` samples
+RSS every 10 s during a run or an enrollment. See
+[ADR 0020](../adr/0020-persistent-speaker-identification.md).

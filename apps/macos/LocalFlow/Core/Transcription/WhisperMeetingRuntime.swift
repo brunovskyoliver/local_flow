@@ -154,6 +154,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
       withJSONObject: [
         "type": "transcribe", "id": id,
         "path": file.path, "language": "auto", "meetingTranscription": true,
+        "silenceSkipping": true,
       ] as [String: Any])
     data.append(10)
     try input.fileHandleForWriting.write(contentsOf: data)
@@ -168,7 +169,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
       else { throw Failure.protocolFailure }
       let duration = Double(samples.count) / 16_000
       let decodedDuration = Double(padded.count) / 16_000
-      var tokens: [TranscriptionToken] = []
+      var native: [TranscriptionToken] = []
       var validTiming = true
       var textBytes = 0
       for segment in segments {
@@ -179,15 +180,96 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
         else { throw Failure.protocolFailure }
         textBytes += value.utf8.count
         guard textBytes <= 65_536 else { throw Failure.protocolFailure }
-        if start >= 0, end >= start, start <= decodedDuration, end <= decodedDuration + 0.1 {
-          tokens.append(.init(text: value, start: min(start, duration), end: min(end, duration)))
+        if start >= 0, end >= start, start <= duration, end <= decodedDuration + Self.timingSlack {
+          // Whisper can place a final segment slightly beyond its input (observed
+          // +0.52 s); the text is still the window's, so clamp rather than discard.
+          native.append(.init(text: value, start: min(start, duration), end: min(end, duration)))
         } else {
-          // Whisper can place a final segment beyond its input (observed +0.52 s).
-          // Keep validated text, but let assembly use the known audio-window bounds.
+          // Timing that is nowhere near the input is not evidence. Keep the text and
+          // let assembly use the known audio-window bounds.
           validTiming = false
         }
       }
-      return TranscriptionWindow(text: text, tokens: validTiming ? tokens : [])
+      guard validTiming else { return TranscriptionWindow(text: text, tokens: []) }
+      // A segment the audio does not back is the decoder filling silence.
+      let backed = Self.speechBacked(native, samples: samples)
+      if backed.count < native.count {
+        let rebuilt = backed.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        return TranscriptionWindow(text: rebuilt, tokens: Self.words(backed))
+      }
+      return TranscriptionWindow(text: text, tokens: Self.words(native))
+    }
+  }
+
+  /// Frames under this level, after the pass's level normalization, are silence.
+  static let silenceFloorDB: Float = -50
+  /// A segment needs this share of its 100 ms frames above the floor to be kept.
+  static let minimumSpeechFraction = 0.2
+
+  /// Keeps the native segments whose span holds speech energy. A muted echo span or
+  /// the other side's silence comes back from whisper as a stock phrase ("Ďakujem za
+  /// pozornosť.") placed over the quiet; content-free, the energy alone decides.
+  static func speechBacked(_ segments: [TranscriptionToken], samples: [Float])
+    -> [TranscriptionToken]
+  {
+    guard !segments.isEmpty else { return segments }
+    let frameSamples = 1_600
+    let frames = (samples.count + frameSamples - 1) / frameSamples
+    var loud = [Bool](repeating: false, count: frames)
+    samples.withUnsafeBufferPointer { buffer in
+      for frame in 0..<frames {
+        let start = frame * frameSamples
+        let end = min(buffer.count, start + frameSamples)
+        var sum = 0.0
+        for index in start..<end { sum += Double(buffer[index] * buffer[index]) }
+        loud[frame] = Float(10 * log10(sum / Double(end - start) + 1e-10)) > silenceFloorDB
+      }
+    }
+    return segments.filter { segment in
+      let first = max(0, min(frames - 1, Int(segment.start * 10)))
+      let last = max(first, min(frames - 1, Int((segment.end * 10).rounded(.up)) - 1))
+      let span = first...last
+      let count = span.reduce(0) { $0 + (loud[$1] ? 1 : 0) }
+      return Double(count) >= minimumSpeechFraction * Double(span.count)
+    }
+  }
+
+  /// How far past its input a native segment may end and still be clamped.
+  static let timingSlack = 2.0
+
+  /// Native whisper segments carry their token spacing: a segment starts with the
+  /// space before its first word, and a segment boundary can fall inside a word.
+  /// The source mapper anchors each token to the trimmed window text at a word
+  /// boundary, so join mid-word splits and trim the outside; the text itself is
+  /// left to whisper. Segment times are made strictly increasing (a zero-length or
+  /// slightly overlapping segment would otherwise cost the whole window its timing).
+  static func words(_ segments: [TranscriptionToken]) -> [TranscriptionToken] {
+    var result: [TranscriptionToken] = []
+    var pending: TranscriptionToken?
+    for segment in segments {
+      guard let current = pending else {
+        pending = segment
+        continue
+      }
+      let boundary =
+        current.text.last?.isWhitespace == true || segment.text.first?.isWhitespace == true
+        || segment.text.isEmpty || current.text.isEmpty
+      if boundary {
+        result.append(current)
+        pending = segment
+      } else {
+        pending = .init(text: current.text + segment.text, start: current.start, end: segment.end)
+      }
+    }
+    if let pending { result.append(pending) }
+    var reach = 0.0
+    return result.compactMap { token in
+      let text = token.text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !text.isEmpty else { return nil }
+      let start = max(token.start, reach)
+      let end = max(token.end, start + 0.01)
+      reach = end
+      return .init(text: text, start: start, end: end)
     }
   }
 

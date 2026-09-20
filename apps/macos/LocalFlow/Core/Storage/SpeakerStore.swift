@@ -236,6 +236,34 @@ actor SpeakerStore: SpeakerStoring {
     }
   }
 
+  /// `MinorClusterFold` decisions, in one write. Targets must be other engine speakers
+  /// of the same run; a turn keeps its track and times.
+  func fold(runID: UUID, speakers: [UUID: UUID?]) throws {
+    guard !speakers.isEmpty else { return }
+    try write { db in
+      guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRow }
+      guard run.state == .running else {
+        throw Error.invalidTransition(from: run.state, to: .running)
+      }
+      let owned = Set(
+        try String.fetchAll(
+          db, sql: "SELECT id FROM meeting_speakers WHERE run_id=?", arguments: [runID.uuidString]))
+      for (source, target) in speakers {
+        guard owned.contains(source.uuidString), source != target,
+          target.map({ owned.contains($0.uuidString) && speakers[$0] == nil }) ?? true
+        else { throw Error.invalidDraft("fold") }
+      }
+      for (source, target) in speakers.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+        try db.execute(
+          sql: "UPDATE speaker_turns SET speaker_id=? WHERE run_id=? AND speaker_id=?",
+          arguments: [target?.uuidString, runID.uuidString, source.uuidString])
+        try db.execute(
+          sql: "DELETE FROM meeting_speakers WHERE id=? AND run_id=?",
+          arguments: [source.uuidString, runID.uuidString])
+      }
+    }
+  }
+
   /// Adoption, all or nothing (FR-030): assignments, speaker statistics, colors and
   /// ordinals, overlap flags, supersession of the previous result and the pointers.
   func complete(runID: UUID, assignments: [AssignmentDraft], now: Int64) throws -> DiarizationRun {
@@ -410,12 +438,15 @@ actor SpeakerStore: SpeakerStoring {
             inRoom: run.inRoom, speechMs: row["speech_ms"]))
       }
       let candidates = try Self.quoteCandidates(run.id, db: db)
+      // Feature 010: the effective identity per root, from the same read.
+      let identities = try IdentityStore.identities(meetingID, db: db)
       for index in summaries.indices {
         let id = summaries[index].id
         summaries[index].quotes = QuoteSelector.select(candidates[id] ?? []).map(\.text)
         summaries[index].includes = (members[id] ?? []).sorted {
           ($0.source.rawValue, $0.labelOrdinal) < ($1.source.rawValue, $1.labelOrdinal)
         }
+        summaries[index].identity = identities[id]
       }
       return summaries
     }
@@ -496,6 +527,8 @@ actor SpeakerStore: SpeakerStoring {
       try db.execute(
         sql: "UPDATE meeting_speakers SET merged_into=NULL WHERE id=?",
         arguments: [speakerID.uuidString])
+      // Feature 010 (R11): the root's merged resolution goes; both `self` rows apply again.
+      try IdentityStore.clearMerged(target, db: db)
       try db.execute(
         sql: """
           UPDATE speaker_corrections SET undone_at=? WHERE id=(
@@ -727,6 +760,11 @@ actor SpeakerStore: SpeakerStoring {
           now: now)
       }
     }
+    // Feature 010 (R7): manual identity rows and rejected pairs follow the same map;
+    // automatic rows go with the superseded clusters and the next run recomputes them.
+    try IdentityStore.carryManualIdentities(
+      old: old.map(\.id), mapping: mapping, meetingID: run.meetingID, runID: run.id,
+      namedOld: Set(old.filter { $0.name != nil }.map(\.id)), now: now, db: db)
     // Segment corrections: same pass, and a target that is Unknown, manual or mapped.
     let corrections = try Row.fetchAll(
       db,
@@ -803,7 +841,7 @@ actor SpeakerStore: SpeakerStoring {
   }
 
   /// The 10,000-correction ceiling: refused before anything is written.
-  private static func reserveCorrections(_ count: Int, meetingID: UUID, db: Database) throws {
+  static func reserveCorrections(_ count: Int, meetingID: UUID, db: Database) throws {
     let existing =
       try Int.fetchOne(
         db, sql: "SELECT count(*) FROM speaker_corrections WHERE meeting_id=?",
@@ -811,7 +849,7 @@ actor SpeakerStore: SpeakerStoring {
     guard existing + count <= correctionsPerMeeting else { throw Error.correctionCapacity }
   }
 
-  private static func insertCorrection(
+  static func insertCorrection(
     _ db: Database, meetingID: UUID, runID: UUID, kind: String, speakerID: UUID?,
     targetID: UUID? = nil, segmentID: UUID? = nil, previous: String? = nil, new: String? = nil,
     review: Bool = false, now: Int64
@@ -888,7 +926,7 @@ actor SpeakerStore: SpeakerStoring {
     return candidates
   }
 
-  private static func acceptedRun(_ meetingID: UUID, db: Database) throws -> DiarizationRun? {
+  static func acceptedRun(_ meetingID: UUID, db: Database) throws -> DiarizationRun? {
     try fetchDiarization(meetingID, db: db)?.acceptedRunID.flatMap { try fetchRun($0, db: db) }
   }
 

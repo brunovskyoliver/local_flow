@@ -78,7 +78,8 @@ final class IndicatorPanel: NSPanel {
   private let animated: Bool
   private var targetPoint: NSPoint?
   private var geometryObservers: IndicatorGeometryObservers?
-  private var contentSize = NSSize(width: IndicatorPanel.indicatorWidth, height: IndicatorPanel.height)
+  private var contentSize = NSSize(
+    width: IndicatorPanel.indicatorWidth, height: IndicatorPanel.height)
   private var hiding = false
   /// True while the main window is focused: background work is on screen there already.
   var suppressesBackgroundNotice = false {

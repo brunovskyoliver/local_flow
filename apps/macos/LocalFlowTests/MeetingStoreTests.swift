@@ -134,6 +134,8 @@ final class MeetingStoreTests: XCTestCase {
       let old = try TranscriptionStore(path: path)
       try await old.database.write { db in
         for table in [
+          "rejected_candidates", "match_candidates", "identity_assignments",
+          "meeting_identification", "identification_runs", "voice_samples", "known_speakers",
           "speaker_corrections", "speaker_assignments", "speaker_turns", "meeting_speakers",
           "meeting_diarization", "diarization_runs",
           "transcript_live_gaps", "transcript_segments", "meeting_transcriptions",
@@ -145,7 +147,7 @@ final class MeetingStoreTests: XCTestCase {
         }
         try db.execute(
           sql:
-            "DELETE FROM grdb_migrations WHERE identifier IN ('meetings-v5','transcripts-v6','speakers-v7')"
+            "DELETE FROM grdb_migrations WHERE identifier IN ('meetings-v5','transcripts-v6','speakers-v7','identities-v8')"
         )
       }
     }
@@ -218,6 +220,27 @@ final class MeetingStoreTests: XCTestCase {
     _ = try? await store.create(now: now + 1)
     let rows = try await fixture.history.database.read { db in
       try Int.fetchOne(db, sql: "SELECT count(*) FROM meeting_diarization")
+    }
+    XCTAssertEqual(rows, 1)
+  }
+
+  /// Feature 010 (T017): the `meeting_identification` row is created in the same
+  /// transaction as the meeting, with no run pointers.
+  func testCreateInsertsTheIdentificationRowWithTheMeeting() async throws {
+    let meeting = try await store.create(now: now)
+    let now = now
+    try await fixture.history.database.read { db in
+      let row = try XCTUnwrap(
+        Row.fetchOne(
+          db, sql: "SELECT * FROM meeting_identification WHERE meeting_id=?",
+          arguments: [meeting.id.uuidString]))
+      XCTAssertNil(row["accepted_run_id"] as String?)
+      XCTAssertNil(row["current_run_id"] as String?)
+      XCTAssertEqual(row["updated_at"] as Int64?, now)
+    }
+    _ = try? await store.create(now: now + 1)
+    let rows = try await fixture.history.database.read { db in
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM meeting_identification")
     }
     XCTAssertEqual(rows, 1)
   }

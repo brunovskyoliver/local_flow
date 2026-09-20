@@ -11,6 +11,66 @@ final class SettingsTests: XCTestCase {
     )
   }
 
+  /// Feature 010 (T072): the global toggle defaults on with its detail text, and with
+  /// the toggle off the sheet is the 007 sheet and the coordinator admits nothing.
+  @MainActor func testSpeakerIdentificationToggleDefaultsOnAndOffShortCircuitsEverything()
+    async throws
+  {
+    XCTAssertEqual(
+      SettingsView.speakerIdentificationTitle, "Remember and recognize speakers across meetings")
+    XCTAssertEqual(
+      SettingsView.speakerIdentificationCaption,
+      "Nothing is stored until you choose Remember for a voice.")
+    let suite = "LocalFlow-identification-settings-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertTrue(preferences.speakerIdentificationEnabled)
+    preferences.speakerIdentificationEnabled = false
+    // The sheet: no identity block at all (SC-010).
+    let summary = SpeakerSummary(
+      id: UUID(), source: .remote, labelOrdinal: 1, colorIndex: 0, displayName: nil,
+      inRoom: false, speechMs: 5_000)
+    let sheet = AssignSpeakersModel(
+      meetingID: UUID(), store: FakeSpeakerStore(summaries: [summary]),
+      identityStore: FakeIdentityStore(),
+      identificationEnabled: preferences.speakerIdentificationEnabled,
+      enroll: { _ in .stored(1) })
+    await sheet.load()
+    sheet.setDraft("Ana", for: summary.id)
+    XCTAssertNil(sheet.identityBlock(for: summary.id))
+    XCTAssertFalse(sheet.showsIdentity)
+    // The coordinator: no run, no enrollment, no store call.
+    let store = FakeIdentityStore()
+    let fixture = try MeetingTestStore.make()
+    defer { fixture.cleanup() }
+    let lifecycle = ModelLifecycleCoordinator(factory: { FakeTranscriptionRuntime() })
+    let transcripts = TranscriptStore(database: fixture.history.database)
+    let speakers = SpeakerStore(database: fixture.history.database)
+    let coordinator = SpeakerIdentificationCoordinator(
+      identifier: MeetingIdentifier(
+        store: store, speakers: speakers, transcripts: transcripts, meetings: fixture.store,
+        storageRoot: fixture.root, lifecycle: lifecycle,
+        identity: IdentificationTestSupport.identity),
+      enrollment: EnrollmentJob(
+        store: store, speakers: speakers, transcripts: transcripts, meetings: fixture.store,
+        storageRoot: fixture.root, lifecycle: lifecycle,
+        identity: IdentificationTestSupport.identity),
+      store: store, enabled: { preferences.speakerIdentificationEnabled })
+    let meetingID = UUID()
+    await store.setMeeting(meetingID)
+    coordinator.diarizationDidAdopt(meetingID: meetingID)
+    await coordinator.requestRun(meetingID: meetingID, trigger: .manual)
+    let outcome = await coordinator.enroll(
+      EnrollmentRequest(
+        meetingID: meetingID, rootID: UUID(), target: .newProfile(name: "Ana"),
+        origin: .newProfileCreated, consent: .remember, track: .system))
+    XCTAssertEqual(outcome, .disabled)
+    try await Task.sleep(for: .milliseconds(30))
+    let calls = await store.calls
+    XCTAssertEqual(calls, [])
+  }
+
   @MainActor func testMeetingModelReadinessDoesNotBorrowDictationInstallation() {
     var snapshot = SettingsViewModel.Snapshot()
     snapshot.modelInstalled = true

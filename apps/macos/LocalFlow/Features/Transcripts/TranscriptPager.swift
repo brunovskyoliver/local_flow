@@ -33,16 +33,27 @@ final class TranscriptPager {
   private(set) var speakers: AcceptedSpeakers?
   /// Bumped whenever the accepted result changes; the first page reloads with it.
   private(set) var labelsRevision = 0
+  /// Feature 010: bumped whenever the effective identities change (adoption or a
+  /// confirmation); the resident labels reload with it.
+  private(set) var identityRevision = 0
   /// First ordinal of every evicted page, in eviction order (bounded for diagnostics).
   private(set) var evictedFirstOrdinals: [Int] = []
   /// Rows the running final pass has written so far; 0 outside `finalizing`.
   private(set) var finalPassCount = 0
   private var lastPageWasFull = false
   private let store: any TranscriptStoring
+  /// Feature 010: the confirm control's store; nil keeps the 007 pager.
+  private let identityStore: (any IdentityStoring)?
+  private let clock: any MeetingClock
 
-  init(meetingID: UUID, store: any TranscriptStoring) {
+  init(
+    meetingID: UUID, store: any TranscriptStoring, identityStore: (any IdentityStoring)? = nil,
+    clock: any MeetingClock = SystemMeetingClock()
+  ) {
     self.meetingID = meetingID
     self.store = store
+    self.identityStore = identityStore
+    self.clock = clock
   }
 
   var segments: [TranscriptSegment] { pages.flatMap(\.segments) }
@@ -143,6 +154,32 @@ final class TranscriptPager {
     labelsRevision += 1
   }
 
+  /// Feature 010: an identification adoption or a confirmation changed the effective
+  /// identities. The first page reloads so two results never mix.
+  func applyIdentities() async {
+    identityRevision += 1
+    await loadFirst()
+  }
+
+  /// FR-040: the subtle checkmark on a "Name?" row. One `link` with
+  /// `user_confirmation`, no sample request, then the labels reload. Returns false
+  /// when refused.
+  @discardableResult
+  func confirmIdentity(root: UUID, knownSpeakerID: UUID) async -> Bool {
+    guard let identityStore else { return false }
+    do {
+      try await identityStore.link(
+        meetingID: meetingID, speakerID: root, to: knownSpeakerID, origin: .userConfirmation,
+        now: clock.nowMilliseconds)
+    } catch {
+      notice = "The speaker could not be confirmed."
+      return false
+    }
+    await refreshLabels()
+    identityRevision += 1
+    return true
+  }
+
   /// A diarization status for this meeting: a different accepted result (or none)
   /// bumps `labelsRevision` and reloads the first page.
   func applyLabels() async {
@@ -200,7 +237,8 @@ final class TranscriptPager {
     }
     finalPassCount = 0
     if let row, row.state == .finalizing, let passID = row.passID {
-      finalPassCount = (try? await store.passSegmentCount(meetingID: meetingID, passID: passID)) ?? 0
+      finalPassCount =
+        (try? await store.passSegmentCount(meetingID: meetingID, passID: passID)) ?? 0
     }
     finality = previewingFinalPass ? .final : Self.finality(for: row)
     await refreshSpeakers()

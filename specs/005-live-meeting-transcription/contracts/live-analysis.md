@@ -106,11 +106,11 @@ Holds the previous window (`TranscriptAssembler.Window` with text and mapped tok
 
 `assembly_version` = `"\(TranscriptAssembler.version)/\(geometry)"`.
 
-## `TranscriptSegmenter` (`segmenter_gap0.8_punct_v1`)
+## `TranscriptSegmenter` (`segmenter_gap0.8_punct_words_v2`)
 
 ```swift
 struct TranscriptSegmenter: Sendable {
-  static let version = "segmenter_gap0.8_punct_v1"
+  static let version = "segmenter_gap0.8_punct_words_v2"
   static let gapSeconds = 0.8
   static let minimumWordsBeforePunctuationCut = 3
   static let maximumWords = 40

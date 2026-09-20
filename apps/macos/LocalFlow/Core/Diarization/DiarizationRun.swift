@@ -85,6 +85,18 @@ enum DiarizationPipelineVersion {
   static let reconciler = "xwin_cos_greedy_v1"
   static let maxBytes = 256
 
+  static var echoGate: String {
+    "echo_lag\(EchoGate.maxLagFrames * Int(EchoGate.frameMs) / 1_000)s"
+      + "_p\(Int(EchoGate.gainPercentile * 100))_k\(Int(EchoGate.marginDB))"
+      + "_min\(EchoGate.minPieceMs)_v1"
+  }
+
+  static var minorFold: String {
+    "minor\(MinorClusterFold.minorSpeechMs / 1_000)s"
+      + "_\(Int(MinorClusterFold.minorFraction * 100))pct"
+      + "_cos\(decimal(MinorClusterFold.foldSimilarity))_v1"
+  }
+
   static var window: String {
     "win\(DiarizationConstants.windowSamples / DiarizationConstants.sampleRate)s_v1"
   }
@@ -92,12 +104,12 @@ enum DiarizationPipelineVersion {
   static var aligner: String {
     "align_dom\(decimal(DiarizationConstants.alignDominant))"
       + "_ratio\(decimal(DiarizationConstants.alignRatio))"
-      + "_ovl\(decimal(DiarizationConstants.alignOverlap))_v1"
+      + "_ovl\(decimal(DiarizationConstants.alignOverlap))_bytrack_v2"
   }
 
-  /// e.g. `offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v1+align_dom0.60_ratio2_ovl0.20_v1`
+  /// e.g. `offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v1+echo_lag1s_p20_k12_min300_v1+minor10s_5pct_cos0.60_v1+align_dom0.60_ratio2_ovl0.20_bytrack_v2`
   static var current: String {
-    let value = [engine, window, reconciler, aligner].joined(separator: "+")
+    let value = [engine, window, reconciler, echoGate, minorFold, aligner].joined(separator: "+")
     precondition(value.utf8.count <= maxBytes)
     return value
   }
@@ -238,6 +250,8 @@ struct SegmentLabel: Sendable, Equatable {
   let colorIndex: Int?
   /// FR-026: the row carries a manual correction ("Edited" marker).
   var edited: Bool = false
+  /// Feature 010 (FR-040): how the root's identity renders; nil without a result.
+  var identity: SegmentIdentity? = nil
 }
 
 struct LabeledSegment: Sendable, Equatable {
@@ -261,6 +275,8 @@ struct SpeakerSummary: Sendable, Equatable, Identifiable {
   var quotes: [String] = []
   /// Speakers merged into this root ("Includes Speaker N"), in label order (FR-025).
   var includes: [MergedSpeaker] = []
+  /// Feature 010: the root's effective identity; nil when the root has no assignment.
+  var identity: SpeakerIdentity? = nil
 
   /// "You", "Local N" or "Speaker N", whatever the name.
   var anonymousLabel: String {

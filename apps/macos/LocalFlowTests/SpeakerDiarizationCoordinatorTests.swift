@@ -389,4 +389,69 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
     let visible = try await transcripts.acceptedSpeakers(meetingID: id)
     XCTAssertEqual(visible?.runID, rerun?.id)
   }
+
+  // MARK: Feature 010 (T041): adoption is published after the lease finished
+
+  @MainActor
+  private final class ObservingIdentification: IdentificationObserving {
+    var adopted: [UUID] = []
+    var leasedAtAdoption: [Bool] = []
+    var acceptedAtAdoption: [UUID?] = []
+    let lifecycle: ModelLifecycleCoordinator
+    let store: SpeakerStore
+    init(lifecycle: ModelLifecycleCoordinator, store: SpeakerStore) {
+      self.lifecycle = lifecycle
+      self.store = store
+    }
+    func diarizationDidAdopt(meetingID: UUID) {
+      adopted.append(meetingID)
+      Task {
+        let snapshot = await lifecycle.snapshot()
+        let accepted = try? await store.diarization(meetingID: meetingID)?.acceptedRunID
+        await MainActor.run {
+          leasedAtAdoption.append(snapshot.leased)
+          acceptedAtAdoption.append(accepted)
+        }
+      }
+    }
+    func meetingWillDelete(id: UUID) async {}
+  }
+
+  func testDiarizationDidAdoptIsPublishedAfterTheLeaseFinishedAndNotOnFailureOrCancel()
+    async throws
+  {
+    let runtime = FakeDiarizationRuntime(scripts: [DiarizationScripts.window([(0, 0, 0.1)])])
+    let coordinator = makeCoordinator(runtime)
+    let observer = ObservingIdentification(lifecycle: lifecycle, store: speakers)
+    coordinator.identification = observer
+    let id = try await finalMeeting()
+    await coordinator.requestRun(meetingID: id, revision: nil, trigger: .manual)
+    await settled(id, coordinator)
+    await DiarizationTestSupport.eventually { observer.leasedAtAdoption.count == 1 }
+    XCTAssertEqual(observer.adopted, [id])
+    XCTAssertEqual(observer.leasedAtAdoption, [false], "The diarizer's lease had finished")
+    let accepted = try await speakers.diarization(meetingID: id)?.acceptedRunID
+    XCTAssertNotNil(accepted)
+    XCTAssertEqual(observer.acceptedAtAdoption, [accepted], "Adoption had committed")
+    // A failed run publishes nothing.
+    await runtime.failWindow(3)
+    let failing = try await finalMeeting(startedAt: 1_800_000_000_000)
+    await coordinator.requestRun(meetingID: failing, revision: nil, trigger: .manual)
+    await settled(failing, coordinator)
+    let failed = await state(failing)
+    XCTAssertEqual(failed, .failed)
+    XCTAssertEqual(observer.adopted, [id])
+    // A cancelled run publishes nothing.
+    let gate = PreparationGate()
+    await runtime.hold(gate)
+    let cancelled = try await finalMeeting(startedAt: 1_900_000_000_000)
+    await coordinator.requestRun(meetingID: cancelled, revision: nil, trigger: .manual)
+    await gate.waitUntilStarted()
+    let cancelling = Task { await coordinator.cancel(meetingID: cancelled) }
+    try await Task.sleep(for: .milliseconds(20))
+    await gate.open()
+    await cancelling.value
+    await settled(cancelled, coordinator)
+    XCTAssertEqual(observer.adopted, [id])
+  }
 }

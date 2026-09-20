@@ -293,6 +293,7 @@ private struct LocalFlowWindowView: View {
           coordinator: meetings, model: library, storageRoot: root,
           preferences: services.preferences, transcriptStore: services.transcriptStore,
           diarization: services.speakerDiarization,
+          identification: services.speakerIdentification,
           notesEditorFactory: { services.makeNotesEditor(for: $0) })
       } else {
         ContentUnavailableView(
@@ -321,7 +322,9 @@ private struct LocalFlowWindowView: View {
           description: Text(services.setupStatus))
       }
     case .settings:
-      SettingsView(model: services.settings, preferences: services.preferences)
+      SettingsView(
+        model: services.settings, preferences: services.preferences,
+        knownSpeakers: services.knownSpeakers)
     }
   }
 }

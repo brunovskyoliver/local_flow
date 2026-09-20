@@ -7,6 +7,7 @@ struct MeetingLibraryView: View {
   let preferences: AppPreferences
   var transcriptStore: (any TranscriptStoring)? = nil
   var diarization: SpeakerDiarizationCoordinator? = nil
+  var identification: SpeakerIdentificationCoordinator? = nil
   let notesEditorFactory: (MeetingDetail) -> MeetingNotesEditor
   @State private var transcribe = true
   @State private var hoveredID: UUID?
@@ -28,7 +29,8 @@ struct MeetingLibraryView: View {
           liveEditor: coordinator.activeMeetingID == detail.meeting.id
             ? coordinator.notesEditor : nil,
           transcriptStore: transcriptStore, transcription: coordinator.transcriptionCoordinator,
-          coordinator: coordinator, diarization: diarization, initialTab: model.openTab
+          coordinator: coordinator, diarization: diarization, identification: identification,
+          identificationEnabled: preferences.speakerIdentificationEnabled, initialTab: model.openTab
         ).id(detail.meeting.id)
       } else {
         GeometryReader { geometry in

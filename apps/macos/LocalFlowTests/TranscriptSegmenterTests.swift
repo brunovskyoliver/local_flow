@@ -33,6 +33,21 @@ final class TranscriptSegmenterTests: XCTestCase {
       segmenter.segments(window: window(Array(repeating: "word", count: 45)), base: base).count, 2)
   }
 
+  /// Feature 009 tokens are native whisper.cpp phrases; the word rules count the
+  /// words inside them, so one three-word phrase ending in a period already cuts,
+  /// and eight 6-word phrases split at the cap rather than running to 40 phrases.
+  func testPhraseTokensCountTheirWords() {
+    let segmenter = TranscriptSegmenter()
+    XCTAssertEqual(TranscriptSegmenter.version, "segmenter_gap0.8_punct_words_v2")
+    let phrases = segmenter.segments(
+      window: window(["One two three.", "four five", "six seven eight."]), base: base)
+    XCTAssertEqual(phrases.map(\.rawText), ["One two three.", "four five six seven eight."])
+    let capped = segmenter.segments(
+      window: window(Array(repeating: "a b c d e f", count: 8)), base: base)
+    XCTAssertEqual(capped.count, 2)
+    XCTAssertEqual(capped[0].rawText.split(separator: " ").count, 42)
+  }
+
   func testMissingTimingsFallbackEmptyAndExactUnicodeBytes() {
     let segmenter = TranscriptSegmenter()
     let fallback = segmenter.segments(

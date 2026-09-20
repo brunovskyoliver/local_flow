@@ -581,3 +581,189 @@ extension ModelOwnershipTests {
     XCTAssertFalse(after.installing)
   }
 }
+
+// MARK: Feature 010 identification workload (T008)
+
+extension ModelOwnershipTests {
+  private static var region: VoiceRegionRequest {
+    VoiceRegionRequest(samples: [Float](repeating: 0.1, count: VoiceRegionRequest.minSamples))
+  }
+
+  func testWorkloadSwitchReleasesTheDiarizerBeforeTheEmbedderPrepares() async throws {
+    let diarizer = FakeDiarizationFactory()
+    let embedder = FakeVoiceEmbeddingFactory()
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await diarizer.make() },
+      voiceEmbeddingFactory: {
+        // Never co-resident: the diarizer is already shut down here.
+        let shutdowns = await diarizer.runtime.shutdownCount
+        XCTAssertEqual(shutdowns, 1)
+        return try await embedder.make()
+      }, factory: { ProbeRuntime() })
+    let diarization = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    try await coordinator.finish(diarization)
+    let lease = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+    XCTAssertEqual(lease.workload, .speakerIdentification)
+    let made = await embedder.makeCount
+    XCTAssertEqual(made, 1)
+    let active = await coordinator.snapshot()
+    XCTAssertFalse(active.loaded, "The speech model is not resident during identification")
+    do {
+      _ = try await coordinator.embed(lease, region: Self.region)
+      XCTFail("No script: the fake throws noSpeech, which passes through unchanged")
+    } catch { XCTAssertEqual(error as? VoiceEmbeddingFailure, .noSpeech) }
+    try await coordinator.finish(lease)
+    let released = await coordinator.state
+    XCTAssertEqual(released, .unloaded)
+  }
+
+  func testIdentificationAcquireIsRefusedWhileAnyLeaseIsHeldOrInstalling() async throws {
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await FakeDiarizationFactory().make() },
+      voiceEmbeddingFactory: { try await FakeVoiceEmbeddingFactory().make() },
+      factory: { ProbeRuntime() })
+    let asr = try await coordinator.acquire(session: UUID())
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+      XCTFail("Identification must not preempt speech recognition")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    try await coordinator.finish(asr)
+    let diarization = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+      XCTFail("Identification must not preempt diarization")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    try await coordinator.finish(diarization)
+    let identification = try await coordinator.acquire(
+      session: UUID(), workload: .speakerIdentification)
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+      XCTFail("A second identification lease must be refused")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .diarization)
+      XCTFail("Diarization never preempts identification")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    try await coordinator.finish(identification)
+
+    let gate = PreparationGate()
+    let install = Task { try await coordinator.installModel { await gate.wait() } }
+    await gate.waitUntilStarted()
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+      XCTFail("Installation excludes identification")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    await gate.open()
+    try await install.value
+  }
+
+  func testSpeechRecognitionPreemptsIdentificationAndJoinsTheInFlightRegion() async throws {
+    let gate = PreparationGate()
+    let runtime = FakeVoiceEmbeddingRuntime(scripts: [VoiceVectors.unit(axis: 0)])
+    await runtime.hold(gate)
+    let factory = FakeVoiceEmbeddingFactory(runtime: runtime)
+    let speech = ProbeRuntime()
+    let coordinator = ModelLifecycleCoordinator(
+      voiceEmbeddingFactory: { try await factory.make() }, factory: { speech })
+    let lease = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+    let request = Self.region
+    let region = Task { try await coordinator.embed(lease, region: request) }
+    await gate.waitUntilStarted()
+    let asr = Task { try await coordinator.acquire(session: UUID()) }
+    for _ in 0..<1000 {
+      if await coordinator.state == .releasing { break }
+      await Task.yield()
+    }
+    let releasing = await coordinator.state
+    XCTAssertEqual(releasing, .releasing, "Preemption waits for the in-flight region")
+    let shutdownsWhileRunning = await runtime.shutdownCount
+    XCTAssertEqual(shutdownsWhileRunning, 0)
+    await gate.open()
+    let speechLease = try await asr.value
+    XCTAssertEqual(speechLease.workload, .speechRecognition)
+    do {
+      _ = try await region.value
+      XCTFail("A preempted region must not return a result")
+    } catch { XCTAssertEqual(error as? DictationFailure, .cancelled) }
+    let shutdowns = await runtime.shutdownCount
+    XCTAssertEqual(shutdowns, 1)
+    do {
+      _ = try await coordinator.embed(lease, region: Self.region)
+      XCTFail("The revoked lease is stale")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    do {
+      try await coordinator.finish(lease)
+      XCTFail("The revoked lease cannot finish")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    await coordinator.cancelAndJoin(speechLease)
+  }
+
+  func testEmbedIsBoundToTheIdentificationWorkload() async throws {
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await FakeDiarizationFactory().make() },
+      voiceEmbeddingFactory: { try await FakeVoiceEmbeddingFactory().make() },
+      factory: { ProbeRuntime() })
+    let diarization = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    do {
+      _ = try await coordinator.embed(diarization, region: Self.region)
+      XCTFail("A diarization lease cannot embed")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    try await coordinator.finish(diarization)
+    let identification = try await coordinator.acquire(
+      session: UUID(), workload: .speakerIdentification)
+    do {
+      _ = try await coordinator.diarize(
+        identification, window: .init(samples: [0], numSpeakers: nil))
+      XCTFail("An identification lease cannot diarize")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    do {
+      _ = try await coordinator.transcribe(identification, samples: [0])
+      XCTFail("An identification lease cannot transcribe")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    try await coordinator.finish(identification)
+  }
+
+  func testEmbedValidatesBoundsAndRunsOneRegionAtATime() async throws {
+    let gate = PreparationGate()
+    let runtime = FakeVoiceEmbeddingRuntime(scripts: [[Float](repeating: 0.5, count: 4)])
+    let factory = FakeVoiceEmbeddingFactory(runtime: runtime)
+    let coordinator = ModelLifecycleCoordinator(
+      voiceEmbeddingFactory: { try await factory.make() }, factory: { ProbeRuntime() })
+    let lease = try await coordinator.acquire(session: UUID(), workload: .speakerIdentification)
+    let invalid: [VoiceRegionRequest] = [
+      .init(samples: []),
+      .init(samples: [Float](repeating: 0, count: VoiceRegionRequest.minSamples - 1)),
+      .init(samples: [Float](repeating: 0, count: VoiceRegionRequest.maxSamples + 1)),
+      .init(samples: [Float](repeating: .nan, count: VoiceRegionRequest.minSamples)),
+    ]
+    for request in invalid {
+      do {
+        _ = try await coordinator.embed(lease, region: request)
+        XCTFail("Out-of-bounds request accepted")
+      } catch { XCTAssertEqual(error as? DictationFailure, .invalidAudio) }
+    }
+    let requests = await runtime.requests
+    XCTAssertTrue(requests.isEmpty, "Invalid requests never reach the runtime")
+    // A 4-value vector is not a valid embedding.
+    do {
+      _ = try await coordinator.embed(lease, region: Self.region)
+      XCTFail("An invalid result must be refused")
+    } catch { XCTAssertEqual(error as? DictationFailure, .invalidResult) }
+    await runtime.setScripts([VoiceVectors.unit(axis: 3)])
+    await runtime.hold(gate)
+    let request = Self.region
+    let first = Task { try await coordinator.embed(lease, region: request) }
+    await gate.waitUntilStarted()
+    do {
+      _ = try await coordinator.embed(lease, region: Self.region)
+      XCTFail("A second concurrent region must be refused")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    await gate.open()
+    let result = try await first.value
+    XCTAssertEqual(result.vector, VoiceVectors.unit(axis: 3))
+    XCTAssertEqual(result.speechSeconds, 3, accuracy: 0.001)
+    let recorded = await runtime.requests
+    XCTAssertEqual(recorded, [VoiceRegionRequest.minSamples, VoiceRegionRequest.minSamples])
+    try await coordinator.finish(lease)
+  }
+}

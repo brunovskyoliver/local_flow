@@ -28,6 +28,18 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertFalse(AppPreferences(defaults: defaults).meetingDiarizationEnabled)
   }
 
+  /// Feature 010 (FR-038): on by default under `settings.speakerIdentificationEnabled`.
+  @MainActor func testSpeakerIdentificationDefaultsOnAndPersists() {
+    let suite = "LocalFlow-identification-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertTrue(preferences.speakerIdentificationEnabled)
+    preferences.speakerIdentificationEnabled = false
+    XCTAssertFalse(AppPreferences(defaults: defaults).speakerIdentificationEnabled)
+    XCTAssertEqual(defaults.object(forKey: "settings.speakerIdentificationEnabled") as? Bool, false)
+  }
+
   @MainActor func testRewriteModeDefaultsPersistenceAndUnknownValue() {
     let suite = "LocalFlow-mode-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!

@@ -787,3 +787,184 @@ extension RuntimeCompatibilityTests {
     }
   }
 }
+
+// MARK: Feature 010 voice embedder loading (T011)
+
+extension RuntimeCompatibilityTests {
+  private func embedderManifest() throws -> ModelDescriptor {
+    let url = try XCTUnwrap(
+      Bundle.main.url(forResource: "speaker-diarization-offline", withExtension: "json"))
+    return try JSONDecoder().decode(ModelDescriptor.self, from: Data(contentsOf: url))
+  }
+
+  private func expectEmbedderFailure(
+    _ expected: IdentificationFailureCategory, _ factory: FluidAudioVoiceEmbedderFactory
+  ) async {
+    do {
+      _ = try await factory.makeRuntime()
+      XCTFail("Expected \(expected)")
+    } catch { XCTAssertEqual(error as? IdentificationFailureCategory, expected) }
+  }
+
+  func testEmbedderRefusesToLoadWhenOfflineModeIsOff() async throws {
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = LocalModelDescriptor(
+      descriptor: try embedderManifest(),
+      rootURL: FluidAudioDiarizerFactory.installRoot(models: root))
+    var factory = FluidAudioVoiceEmbedderFactory(descriptor: local)
+    factory.offlineMode = { false }
+    await expectEmbedderFailure(.modelUnavailable, factory)
+  }
+
+  func testEmbedderOnMacOS14IsUnsupportedAndLoadsNothing() async throws {
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = LocalModelDescriptor(
+      descriptor: try embedderManifest(),
+      rootURL: FluidAudioDiarizerFactory.installRoot(models: root))
+    var factory = FluidAudioVoiceEmbedderFactory(descriptor: local)
+    factory.offlineMode = { true }
+    factory.operatingSystem = OperatingSystemVersion(
+      majorVersion: 14, minorVersion: 7, patchVersion: 0)
+    await expectEmbedderFailure(.osUnsupported, factory)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: local.rootURL.path))
+  }
+
+  func testMissingEmbedderFilesFailAsModelUnavailableWithoutDownloading() async throws {
+    guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15 else {
+      throw XCTSkip("Identification loads only on macOS 15 or later.")
+    }
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let install = FluidAudioDiarizerFactory.installRoot(models: root)
+    try FileManager.default.createDirectory(at: install, withIntermediateDirectories: true)
+    let local = LocalModelDescriptor(descriptor: try embedderManifest(), rootURL: install)
+    let previous = ModelHub.offlineMode
+    ModelHub.offlineMode = true
+    defer { ModelHub.offlineMode = previous }
+    await expectEmbedderFailure(
+      .modelUnavailable, FluidAudioVoiceEmbedderFactory(descriptor: local))
+    let contents = try FileManager.default.contentsOfDirectory(atPath: install.path)
+    XCTAssertTrue(contents.isEmpty, "Nothing was fetched into the model directory")
+  }
+
+  func testEmbedderIdentityMatchesTheManifest() throws {
+    let manifest = try embedderManifest()
+    let hash = String(repeating: "c", count: 64)
+    let identity = FluidAudioVoiceEmbedderFactory.identity(descriptor: manifest, manifestHash: hash)
+    XCTAssertEqual(identity.engine, "wespeaker_resnet34lm_256")
+    XCTAssertEqual(identity.modelID, manifest.modelID)
+    XCTAssertEqual(identity.modelID, FluidAudioDiarizerFactory.modelID)
+    XCTAssertEqual(identity.modelRevision, manifest.sourceRevision)
+    XCTAssertEqual(identity.modelRevision, FluidAudioDiarizerFactory.revision)
+    XCTAssertEqual(identity.manifestHash, hash)
+    XCTAssertEqual(identity.dimension, 256)
+    XCTAssertTrue(identity.isValid)
+    XCTAssertNotNil(IdentificationThresholds.current(for: identity))
+    XCTAssertEqual(
+      IdentificationThresholds.current(for: identity)?.policyVersion,
+      "tiers_v1@wespeaker_resnet34lm_256/\(manifest.sourceRevision.prefix(8))")
+  }
+
+  func testEmbedderReducesTheDominantClusterToADurationWeightedUnitVector() throws {
+    let result = DiarizationResult(
+      segments: [
+        .init(
+          speakerId: "S1", embedding: [], startTimeSeconds: 0, endTimeSeconds: 3, qualityScore: 0.9),
+        .init(
+          speakerId: "S2", embedding: [], startTimeSeconds: 3, endTimeSeconds: 4, qualityScore: 0.9),
+      ],
+      chunkEmbeddings: [
+        .init(
+          speakerId: "S1", chunkIndex: 0, speakerIndex: 0, startTimeSeconds: 0, endTimeSeconds: 2,
+          embedding256: VoiceVectors.unit(axis: 0)),
+        .init(
+          speakerId: "S1", chunkIndex: 1, speakerIndex: 0, startTimeSeconds: 2, endTimeSeconds: 3,
+          embedding256: VoiceVectors.unit(axis: 1)),
+        .init(
+          speakerId: "S2", chunkIndex: 2, speakerIndex: 1, startTimeSeconds: 3, endTimeSeconds: 4,
+          embedding256: VoiceVectors.unit(axis: 7)),
+      ])
+    let embedding = try XCTUnwrap(FluidAudioVoiceEmbedder.reduce(result))
+    XCTAssertTrue(embedding.isValid)
+    XCTAssertEqual(embedding.speechSeconds, 3, accuracy: 1e-9)
+    // (2, 1, 0…) normalized: the second cluster's chunk does not enter.
+    XCTAssertEqual(Double(embedding.vector[0]), 2 / 5.0.squareRoot(), accuracy: 1e-6)
+    XCTAssertEqual(Double(embedding.vector[1]), 1 / 5.0.squareRoot(), accuracy: 1e-6)
+    XCTAssertEqual(embedding.vector[7], 0)
+    XCTAssertNil(FluidAudioVoiceEmbedder.reduce(DiarizationResult(segments: [])))
+    XCTAssertNil(
+      FluidAudioVoiceEmbedder.reduce(
+        DiarizationResult(segments: [
+          .init(
+            speakerId: "S1", embedding: [], startTimeSeconds: 0, endTimeSeconds: 1, qualityScore: 1)
+        ])), "Speech without an embedding is no sample")
+  }
+
+  /// Opt-in: set TEST_RUNNER_LOCALFLOW_DIARIZATION_MODEL_SOURCE to a directory holding the
+  /// pinned files. The embedder loads from the provisioned diarization directory offline.
+  func testOptInEmbedderLoadsFromTheProvisionedLayoutOffline() async throws {
+    guard let source = ProcessInfo.processInfo.environment["LOCALFLOW_DIARIZATION_MODEL_SOURCE"],
+      !source.isEmpty
+    else { throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_DIARIZATION_MODEL_SOURCE explicitly.") }
+    guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15 else {
+      throw XCTSkip("Identification loads only on macOS 15 or later.")
+    }
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provisioner = ModelProvisioner(
+      descriptor: try embedderManifest(),
+      rootURL: FluidAudioDiarizerFactory.installRoot(models: root))
+    _ = try await provisioner.install(from: URL(fileURLWithPath: source, isDirectory: true))
+    let previous = ModelHub.offlineMode
+    ModelHub.offlineMode = true
+    defer { ModelHub.offlineMode = previous }
+    let lifecycle = ModelLifecycleCoordinator(
+      voiceEmbeddingFactory: {
+        try await FluidAudioVoiceEmbedderFactory(
+          descriptor: provisioner.verifiedLocalDescriptor()
+        ).makeRuntime()
+      }, factory: { throw DictationFailure.modelUnavailable })
+    let lease = try await lifecycle.acquire(session: UUID(), workload: .speakerIdentification)
+    do {
+      var tone = [Float](repeating: 0, count: 16_000 * 6)
+      for index in tone.indices { tone[index] = Float(sin(Double(index) * 0.08)) * 0.3 }
+      do {
+        let embedding = try await lifecycle.embed(lease, region: .init(samples: tone))
+        XCTAssertTrue(embedding.isValid)
+      } catch VoiceEmbeddingFailure.noSpeech {
+        // A tone is not speech; the region is counted as rejected, never as an error.
+      }
+      try await lifecycle.finish(lease)
+    } catch {
+      await lifecycle.cancelAndJoin(lease)
+      throw error
+    }
+    let state = await lifecycle.state
+    XCTAssertEqual(state, .unloaded)
+  }
+
+  /// FR-034/FR-036 (T090): nothing under the identification module names a networking
+  /// symbol; the embedder loads from the verified local layout only.
+  func testIdentificationSourcesReferenceNoNetworkingSymbols() throws {
+    let root = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("LocalFlow")
+    let directory = root.appendingPathComponent("Core/Identification")
+    var sources = [
+      root.appendingPathComponent("Core/IdentificationBoundaries.swift"),
+      root.appendingPathComponent("Core/Storage/IdentityStore.swift"),
+    ]
+    let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+    sources += names.filter { $0.hasSuffix(".swift") }.map(directory.appendingPathComponent)
+    XCTAssertGreaterThan(sources.count, 8)
+    let forbidden = ["URLSession", "import Network", "NWConnection", "URLRequest", "CFNetwork"]
+    for source in sources {
+      let text = try String(contentsOf: source, encoding: .utf8)
+      for symbol in forbidden {
+        XCTAssertFalse(text.contains(symbol), "\(source.lastPathComponent) references \(symbol)")
+      }
+    }
+  }
+}

@@ -8,7 +8,7 @@ struct StreamPosition: Sendable {
 }
 
 struct TranscriptSegmenter: Sendable {
-  static let version = "segmenter_gap0.8_punct_v1"
+  static let version = "segmenter_gap0.8_punct_words_v2"
   static let gapSeconds = 0.8
   static let minimumWordsBeforePunctuationCut = 3
   static let maximumWords = 40
@@ -90,8 +90,11 @@ struct TranscriptSegmenter: Sendable {
     }
     if valid, let tokens {
       var first = 0
+      // A token is a word for word-timed engines and a native phrase for whisper.cpp,
+      // so the word rules count whitespace-separated words, not tokens.
+      var count = 0
       for index in tokens.indices {
-        let count = index - first + 1
+        count += max(1, tokens[index].text.split(whereSeparator: \.isWhitespace).count)
         let hasNext = index + 1 < tokens.count
         let nextWouldOverflow =
           hasNext && tokens[index + 1].utf8End - tokens[first].utf8Start > 4_096
@@ -115,6 +118,7 @@ struct TranscriptSegmenter: Sendable {
               start + Int64(min(Double(end - start), max(0, tokens[index].endSeconds * 1_000)))))
           append(text, from: from, to: to, basis: .word)
           first = index + 1
+          count = 0
         }
       }
     } else {

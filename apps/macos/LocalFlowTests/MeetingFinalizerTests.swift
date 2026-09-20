@@ -773,6 +773,53 @@ final class MeetingFinalizerTests: XCTestCase {
     XCTAssertEqual(state, .unloaded)
   }
 
+  func testTurboRecognizesEachTrackAloneLevelledAndMergesRowsByTime() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(microphone: .blocks(180), system: .blocks(180))])
+    // The microphone lane is read first, so call 1 is the microphone window.
+    let runtime = FakeTranscriptionRuntime(windows: [
+      .init(
+        text: "Ahoj. Dobre.",
+        tokens: [.init(text: "Ahoj.", start: 0, end: 1), .init(text: "Dobre.", start: 4, end: 5)]),
+      .init(
+        text: "Čau. Fajn.",
+        tokens: [.init(text: "Čau.", start: 2, end: 3), .init(text: "Fajn.", start: 6, end: 7)]),
+    ])
+    let lifecycle = ModelLifecycleCoordinator(
+      meetingFactory: { runtime }, factory: { ProbeRuntime() })
+    let finalizer = MeetingFinalizer(
+      store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: lifecycle,
+      configuration: .turbo)
+    let outcome = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    let counts = await runtime.sampleCounts
+    XCTAssertEqual(counts.count, 2, "one request per track, nothing mixed")
+    XCTAssertEqual(counts[0], counts[1])
+    // The 0.4 tone (−11 dBFS) arrives at the −20 dBFS speech level.
+    let received = await runtime.received
+    for samples in received {
+      let rms = 10 * log10f(samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count))
+      XCTAssertEqual(rms, -20, accuracy: 1)
+    }
+    XCTAssertEqual(outcome.row.state, .final)
+    XCTAssertEqual(outcome.row.plannerVersion, "per_track_fixed1920000_turbo_level_v2")
+    XCTAssertEqual(
+      outcome.row.pipelineVersion?.hasPrefix(
+        "per_track_fixed1920000_turbo_level_v2+level_p90_m20_v1+echo_lag1s_p20_k12_min300_v1+"),
+      true)
+    XCTAssertEqual(outcome.row.analysisDescriptor?.version, "per_track_16k_v1")
+    XCTAssertEqual(outcome.row.analysisDescriptor?.mixRule, "none")
+    XCTAssertEqual(outcome.row.analysisDescriptor?.contributingTracks, [.mic, .system])
+    XCTAssertEqual(outcome.row.analysisDescriptor?.stretches.map(\.tracks), [.both])
+    let rows = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 10)
+    XCTAssertEqual(rows.map(\.ordinal), [0, 1, 2, 3])
+    XCTAssertEqual(rows.map(\.normalizedText), ["Ahoj.", "Čau.", "Dobre.", "Fajn."])
+    XCTAssertEqual(rows.map(\.draft.analysisTracks), [.mic, .system, .mic, .system])
+    XCTAssertEqual(rows.map(\.startMs), [0, 2_000, 4_000, 6_000])
+    XCTAssertEqual(rows.map(\.draft.windowIndex), [0, 0, 0, 0])
+  }
+
   func testMissingTurboPreservesPreviouslyFinalTranscript() async throws {
     let meeting = try await TranscriptMeetingFixture.make(in: fixture)
     let runtime = FakeTranscriptionRuntime(windows: [

@@ -22,6 +22,12 @@ final class ResourceRecorder: @unchecked Sendable {
     case diarizerActive = "modelActive(diarization)"
     case diarizerReleasing = "modelReleasing(diarization)"
     case diarizing
+    // Feature 010: the voice embedder's phases; `identifying` samples RSS during a run
+    // or an enrollment.
+    case embedderLoading = "modelLoading(identification)"
+    case embedderActive = "modelActive(identification)"
+    case embedderReleasing = "modelReleasing(identification)"
+    case identifying
   }
   enum QueueSource: String, Codable, Sendable {
     case unavailable, controlMailbox, audioRaw, audioNormalized
@@ -68,7 +74,18 @@ final class ResourceRecorder: @unchecked Sendable {
     case diarizationOverlapTurnCount, diarizationUnknownCount, diarizationAmbiguousCount
     case diarizationReconciledMatches, diarizationReconciledNew, diarizationReconciledUncertain
     case diarizationOverflowTurns, diarizationPreemption, diarizationFailure
+    /// Microphone turn milliseconds the echo gate removed, and its profiling time.
+    case diarizationEchoGatedMs, diarizationEchoProfileDuration
+    /// Run clusters folded into another or detached for having almost no speech.
+    case diarizationMinorClusterCount
     case speakerRenameCount, speakerMergeCount, speakerUnmergeCount, speakerSegmentCorrectionCount
+    // Speaker identification (Feature 010, FR-037): counts and durations per run or
+    // enrollment. A failure is keyed by its category only.
+    case identificationModelLoadDuration, identificationModelReleaseDuration
+    case identificationDuration, identificationRegionsExtracted, identificationRegionsRejected
+    case identificationComparisons, identificationRecognized, identificationSuggested
+    case identificationUnknown, identificationConfirmations, identificationCorrections
+    case identificationFailure, enrollmentSamplesStored
 
     var kind: Kind {
       switch self {
@@ -79,7 +96,9 @@ final class ResourceRecorder: @unchecked Sendable {
         .meetingFinalizationDuration, .transcriptLiveLatency, .transcriptFinalizationDuration,
         .transcriptRealTimeFactor, .transcriptPersistenceBatchDuration,
         .diarizationModelLoadDuration, .diarizationModelReleaseDuration, .diarizationDuration,
-        .diarizationRealTimeFactor:
+        .diarizationRealTimeFactor, .diarizationEchoProfileDuration,
+        .identificationModelLoadDuration, .identificationModelReleaseDuration,
+        .identificationDuration:
         return .duration
       case .rawTextBytes, .assembledTextBytes, .normalizedTextBytes, .metadataBytes,
         .rewriteRequestBytes, .rewriteResponseBytes, .meetingBytesWritten, .meetingSegmentBytes:
@@ -96,8 +115,12 @@ final class ResourceRecorder: @unchecked Sendable {
         .diarizationTurnCount, .diarizationOverlapTurnCount, .diarizationUnknownCount,
         .diarizationAmbiguousCount, .diarizationReconciledMatches, .diarizationReconciledNew,
         .diarizationReconciledUncertain, .diarizationOverflowTurns, .diarizationPreemption,
-        .diarizationFailure, .speakerRenameCount, .speakerMergeCount, .speakerUnmergeCount,
-        .speakerSegmentCorrectionCount:
+        .diarizationFailure, .diarizationEchoGatedMs, .diarizationMinorClusterCount,
+        .speakerRenameCount, .speakerMergeCount,
+        .speakerUnmergeCount, .speakerSegmentCorrectionCount, .identificationRegionsExtracted,
+        .identificationRegionsRejected, .identificationComparisons, .identificationRecognized,
+        .identificationSuggested, .identificationUnknown, .identificationConfirmations,
+        .identificationCorrections, .identificationFailure, .enrollmentSamplesStored:
         return .count
       }
     }
@@ -121,7 +144,7 @@ final class ResourceRecorder: @unchecked Sendable {
         return 1
       case .meetingMicQueueDepth, .meetingSystemQueueDepth: return 32
       case .meetingDroppedFrames: return UInt32.max
-      case .diarizationAudioMs: return UInt32.max
+      case .diarizationAudioMs, .diarizationEchoGatedMs: return UInt32.max
       case .diarizationTurnCount, .diarizationOverlapTurnCount, .diarizationReconciledMatches,
         .diarizationReconciledNew, .diarizationReconciledUncertain, .diarizationOverflowTurns:
         return UInt32(DiarizationConstants.turnsPerRun)
@@ -130,6 +153,13 @@ final class ResourceRecorder: @unchecked Sendable {
       case .speakerRenameCount, .speakerMergeCount, .speakerUnmergeCount,
         .speakerSegmentCorrectionCount:
         return UInt32(SpeakerStore.correctionsPerMeeting)
+      case .identificationFailure, .identificationConfirmations, .identificationCorrections:
+        return 1
+      case .identificationComparisons: return UInt32(IdentityStore.candidatesPerRun)
+      case .identificationRegionsExtracted, .identificationRegionsRejected,
+        .identificationRecognized, .identificationSuggested, .identificationUnknown,
+        .enrollmentSamplesStored:
+        return 20_000
       default: return ResourceRecorder.maximumItemCount
       }
     }
@@ -158,13 +188,25 @@ final class ResourceRecorder: @unchecked Sendable {
     ]
     var isRefusal: Bool { self == .rewritePreAdmissionRefusal }
     var isDiarization: Bool { rawValue.hasPrefix("diarization") || rawValue.hasPrefix("speaker") }
+    var isIdentification: Bool {
+      rawValue.hasPrefix("identification") || rawValue.hasPrefix("enrollment")
+    }
+    static let allIdentificationCases: [Metric] = [
+      .identificationModelLoadDuration, .identificationModelReleaseDuration,
+      .identificationDuration, .identificationRegionsExtracted, .identificationRegionsRejected,
+      .identificationComparisons, .identificationRecognized, .identificationSuggested,
+      .identificationUnknown, .identificationConfirmations, .identificationCorrections,
+      .identificationFailure, .enrollmentSamplesStored,
+    ]
     static let allDiarizationCases: [Metric] = [
       .diarizationModelLoadDuration, .diarizationModelReleaseDuration, .diarizationDuration,
       .diarizationRealTimeFactor, .diarizationAudioMs, .diarizationWindowCount,
       .diarizationSpeakerCount, .diarizationTurnCount, .diarizationOverlapTurnCount,
       .diarizationUnknownCount, .diarizationAmbiguousCount, .diarizationReconciledMatches,
       .diarizationReconciledNew, .diarizationReconciledUncertain, .diarizationOverflowTurns,
-      .diarizationPreemption, .diarizationFailure, .speakerRenameCount, .speakerMergeCount,
+      .diarizationPreemption, .diarizationFailure, .diarizationEchoGatedMs,
+      .diarizationEchoProfileDuration, .diarizationMinorClusterCount, .speakerRenameCount,
+      .speakerMergeCount,
       .speakerUnmergeCount, .speakerSegmentCorrectionCount,
     ]
   }
@@ -379,6 +421,8 @@ final class ResourceRecorder: @unchecked Sendable {
           Self.transcriptKeys.contains(meetingKey)
         } else if metric == .diarizationFailure {
           Self.diarizationKeys.contains(meetingKey)
+        } else if metric == .identificationFailure {
+          Self.identificationKeys.contains(meetingKey)
         } else {
           metric?.isMeeting == true && Self.isValidMeetingKey(meetingKey)
         }
@@ -555,6 +599,8 @@ final class ResourceRecorder: @unchecked Sendable {
   /// The failure category is the only diarization dimension.
   static let diarizationKeys: Set<String> = Set(
     DiarizationFailureCategory.allCases.map(\.rawValue))
+  static let identificationKeys: Set<String> = Set(
+    IdentificationFailureCategory.allCases.map(\.rawValue))
   static func isValidMeetingKey(_ key: String) -> Bool { meetingKeys.contains(key) }
 
   static func isValidOutcome(_ outcome: String) -> Bool {

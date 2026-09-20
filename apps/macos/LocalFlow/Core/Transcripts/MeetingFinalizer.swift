@@ -24,19 +24,27 @@ actor MeetingFinalizer {
     let windowSamples: Int
     let geometry: String
     let workload: ModelWorkload
+    /// Per track: each track is decoded, levelled and recognized on its own, the
+    /// microphone with speaker echo of the remote side muted; rows of a window are
+    /// merged by time. Mixed: one `0.5·mic + 0.5·system` stream (Feature 005).
+    let layout: AnalysisStreamDescriptor.Layout
 
-    private init(windowSamples: Int, geometry: String, workload: ModelWorkload) {
+    private init(
+      windowSamples: Int, geometry: String, workload: ModelWorkload,
+      layout: AnalysisStreamDescriptor.Layout
+    ) {
       self.windowSamples = windowSamples
       self.geometry = geometry
       self.workload = workload
+      self.layout = layout
     }
 
     static let parakeet = Configuration(
       windowSamples: 239_360, geometry: "contiguous_fixed239360_preserve_v1",
-      workload: .speechRecognition)
+      workload: .speechRecognition, layout: .mixed)
     static let turbo = Configuration(
-      windowSamples: 1_920_000, geometry: "contiguous_fixed1920000_turbo_preserve_v1",
-      workload: .meetingTranscription)
+      windowSamples: 1_920_000, geometry: "per_track_fixed1920000_turbo_level_v2",
+      workload: .meetingTranscription, layout: .perTrack)
   }
 
   static let geometry = "contiguous_fixed239360_preserve_v1"
@@ -78,7 +86,7 @@ actor MeetingFinalizer {
     self.vocabulary = vocabulary
     self.identity = identity
     self.configuration = configuration
-    self.window = [Float](repeating: 0, count: configuration.windowSamples)
+    windows[.both] = [Float](repeating: 0, count: configuration.windowSamples)
     self.clock = clock
     self.recorder = recorder
     self.logSink = logSink
@@ -234,13 +242,17 @@ actor MeetingFinalizer {
     var context = PassContext(
       meetingID: meetingID, passID: admission.passID, lease: lease,
       segmenter: TranscriptSegmenter(vocabulary: snapshot), resume: admission.resume,
-      totalMs: Self.totalMs(detail), progress: progress, startedAt: clock.monotonicNanoseconds)
+      totalMs: Self.totalMs(detail), progress: progress, startedAt: clock.monotonicNanoseconds,
+      descriptor: .init(source: .decodedTracks, layout: configuration.layout))
     context.lastFlush = context.startedAt
     do {
       context.ordinal =
         admission.resume == nil
         ? 0 : try await store.passSegmentCount(meetingID: meetingID, passID: admission.passID)
       let pages = (stretchCount + Self.workListPage - 1) / Self.workListPage
+      if configuration.layout == .perTrack {
+        try await profileEcho(detail: detail, pages: pages, context: &context)
+      }
       for page in 0..<pages {
         for item in Self.workItems(detail: detail, page: page) {
           try Task.checkCancellation()
@@ -350,10 +362,14 @@ actor MeetingFinalizer {
       manifestHash: provenance.modelManifestHash ?? String(repeating: "0", count: 64))
   }
   private var pipelineVersion: String {
-    [
-      configuration.geometry, TranscriptAssembler.version, TranscriptSegmenter.version,
-      TranscriptNormalizer.version,
-    ].joined(separator: "+")
+    let front =
+      configuration.layout == .perTrack
+      ? [configuration.geometry, TrackLevelNormalizer.version, EchoGate.version]
+      : [configuration.geometry]
+    let back = [
+      TranscriptAssembler.version, TranscriptSegmenter.version, TranscriptNormalizer.version,
+    ]
+    return (front + back).joined(separator: "+")
   }
 
   private func fail(
@@ -393,9 +409,9 @@ actor MeetingFinalizer {
     let totalMs: Int64
     let progress: (@Sendable (Double) -> Void)?
     let startedAt: UInt64
+    var descriptor: AnalysisStreamDescriptor
     var ordinal = 0
     var baseMs: Int64 = 0
-    var descriptor = AnalysisStreamDescriptor(source: .decodedTracks)
     var contributing: Set<AnalysisTracks> = []
     /// Drafts waiting for a batch, each tagged with the progress its window completes.
     var pending: [(draft: TranscriptSegmentDraft, progress: FinalizationProgress)] = []
@@ -405,11 +421,88 @@ actor MeetingFinalizer {
     var windowCount = 0
     var recognitionNanoseconds: UInt64 = 0
     var audioSamples = 0
+    /// Per track: frame energies per stretch until the echo gate is calibrated, then
+    /// only while the gate is on; each stretch's frames go once it is transcribed.
+    var echoProfile = EchoGate.Profile()
+    var echo: EchoGate.Calibration?
+    var echoMutedMs: Int64 = 0
     var coveredMs: Int64 { descriptor.stretches.reduce(0) { $0 + $1.lengthMs } }
   }
 
-  /// One window buffer for the whole pass; refilled in place.
-  private var window: [Float]
+  /// One window buffer per lane for the whole pass, refilled in place: `.both` for the
+  /// mixed layout, `.mic` and `.system` per track.
+  private var windows: [AnalysisTracks: [Float]] = [:]
+
+  /// One recognizer input stream of a stretch: the mixed stream, or one track.
+  private struct Lane {
+    let tag: AnalysisTracks
+    var stretch: StretchState
+    var assembler: MeetingWindowAssembler
+    /// Echo-explained spans on the stretch timeline, microphone lane only.
+    var echo: [Range<Int64>] = []
+    var ended = false
+  }
+
+  /// Per track: each window's drafts per lane until every lane has passed it, so rows
+  /// of both tracks interleave by time and ordinals stay chronological.
+  private struct WindowMerge {
+    struct Entry {
+      var drafts: [TranscriptSegmentDraft]
+      var endSample: Int
+    }
+    var entries: [Int: [AnalysisTracks: Entry]] = [:]
+  }
+
+  // MARK: Echo profile
+
+  /// Decodes both tracks of every stretch into 100 ms frame energies and calibrates
+  /// the echo gate, so the microphone lane can mute the remote voice that reached it
+  /// through speakers. Decode failures here are the failures the windows would hit.
+  private func profileEcho(detail: MeetingDetail, pages: Int, context: inout PassContext)
+    async throws
+  {
+    var profile = EchoGate.Profile()
+    pagesLoop: for page in 0..<pages {
+      for item in Self.workItems(detail: detail, page: page) {
+        try Task.checkCancellation()
+        // Stretch-relative timeline: the lanes mute by sample offset inside the stretch.
+        var stretch = EchoGate.Stretch(baseMs: 0, microphone: [], system: [])
+        for track in item.tracks {
+          guard let url = storageRoot.resolve(relativePath: track.relativePath),
+            FileManager.default.fileExists(atPath: url.path)
+          else { continue }
+          var accumulator = EchoGate.FrameAccumulator()
+          do {
+            try await MeetingTrackDecoder.decode(url: url, kind: track.kind) { emissions in
+              for emission in emissions { accumulator.append(emission.samples) }
+            }
+          } catch let failure as MeetingTrackDecoder.Failure {
+            throw PassFailure(category: .audioDecodeFailure, detail: failure.detail)
+          }
+          let energies = accumulator.finish()
+          if track.kind == .microphone {
+            stretch.microphone = energies
+          } else {
+            stretch.system = energies
+          }
+        }
+        profile.stretches[item.sequence] = stretch
+        guard profile.frames <= EchoGate.frameCapacity else { break pagesLoop }
+      }
+    }
+    let frames = profile.frames
+    context.echo = EchoGate.calibrate(profile)
+    context.echoProfile = context.echo == nil ? .init() : profile
+    if let gate = context.echo {
+      logSink(
+        "final pass echo gate on lag=\(gate.lagFrames * Int(EchoGate.frameMs))ms gain=\(String(format: "%.1f", gate.gainDB))dB corr=\(String(format: "%.2f", gate.correlation))"
+      )
+    } else {
+      logSink("final pass echo gate off frames=\(frames)")
+    }
+  }
+
+  // MARK: Stretches
 
   private func processStretch(_ item: FinalizationWorkItem, context: inout PassContext)
     async throws
@@ -439,16 +532,38 @@ actor MeetingFinalizer {
       else { throw PassFailure(category: .analysisStreamFailure, detail: "buffer") }
       buffers[kind] = buffer
     }
-    let mixer = try AnalysisStreamMixer(decoding: formats)
-    var stretch = StretchState(sequence: item.sequence, resume: context.resume)
-    var assembler = MeetingWindowAssembler(
-      geometry: configuration.geometry, maximumWindowSamples: configuration.windowSamples)
+    // Mixed: one mixer over both tracks. Per track: one single-track mixer each, so
+    // nothing is summed and each lane keeps its own timeline.
+    var mixers: [AnalysisTracks: AnalysisStreamMixer] = [:]
+    var lanes: [AnalysisTracks: Lane] = [:]
+    let echo =
+      context.echo.flatMap { calibration in
+        context.echoProfile.stretches.removeValue(forKey: item.sequence).map {
+          EchoGate.echoRanges($0, calibration: calibration)
+        }
+      } ?? []
+    switch configuration.layout {
+    case .mixed:
+      mixers[.both] = try AnalysisStreamMixer(decoding: formats)
+      lanes[.both] = makeLane(.both, sequence: item.sequence, context: context)
+    case .perTrack:
+      for (kind, format) in formats {
+        let tag = Self.tag(kind)
+        mixers[tag] = try AnalysisStreamMixer(decoding: [kind: format])
+        var lane = makeLane(tag, sequence: item.sequence, context: context)
+        if kind == .microphone { lane.echo = echo }
+        lanes[tag] = lane
+      }
+    }
+    var merge = WindowMerge()
     var ended: Set<MeetingTrackKind> = []
     while ended.count < readers.count {
       for kind in [MeetingTrackKind.microphone, .system] {
         guard let reader = readers[kind], let buffer = buffers[kind], !ended.contains(kind) else {
           continue
         }
+        let tag = configuration.layout == .mixed ? AnalysisTracks.both : Self.tag(kind)
+        guard let mixer = mixers[tag] else { continue }
         buffer.frameLength = 0
         // ADTS files report their length; a read at the end throws instead of
         // returning zero frames, so the position decides when a track has ended.
@@ -462,6 +577,16 @@ actor MeetingFinalizer {
         guard buffer.frameLength > 0 else {
           ended.insert(kind)
           mixer.markEnded(kind)
+          if configuration.layout == .perTrack {
+            // This lane is done: its tail window goes now, and merged windows follow.
+            try await pump(
+              try mixer.flush(), tag: tag, lanes: &lanes, merge: &merge, context: &context)
+            if lanes[tag]!.stretch.fill > 0 {
+              try await transcribeWindow(&lanes[tag]!, merge: &merge, context: &context)
+            }
+            lanes[tag]!.ended = true
+            try await emitMerged(&merge, lanes: lanes, context: &context)
+          }
           continue
         }
         var attempts = 0
@@ -470,18 +595,21 @@ actor MeetingFinalizer {
           guard attempts <= 4 else {
             throw PassFailure(category: .analysisStreamFailure, detail: "staging")
           }
-          try await feed(
-            try mixer.tick(), stretch: &stretch, assembler: &assembler, context: &context)
+          try await pump(
+            try mixer.tick(), tag: tag, lanes: &lanes, merge: &merge, context: &context)
         }
+        try await pump(try mixer.tick(), tag: tag, lanes: &lanes, merge: &merge, context: &context)
       }
-      try await feed(try mixer.tick(), stretch: &stretch, assembler: &assembler, context: &context)
     }
-    try await feed(try mixer.flush(), stretch: &stretch, assembler: &assembler, context: &context)
-    if stretch.fill > 0 {
-      try await transcribeWindow(&stretch, assembler: &assembler, context: &context)
+    if configuration.layout == .mixed, let mixer = mixers[.both] {
+      try await pump(try mixer.flush(), tag: .both, lanes: &lanes, merge: &merge, context: &context)
+      if lanes[.both]!.stretch.fill > 0 {
+        try await transcribeWindow(&lanes[.both]!, merge: &merge, context: &context)
+      }
     }
-    let tracks = mixer.descriptor.contributingTracks
-    let lengthMs = Int64(stretch.position) * 1_000 / 16_000
+    var tracks: Set<AnalysisTracks> = []
+    for mixer in mixers.values { tracks.formUnion(mixer.descriptor.contributingTracks) }
+    let lengthMs = Int64(lanes.values.map(\.stretch.position).max() ?? 0) * 1_000 / 16_000
     context.descriptor.appendStretch(
       .init(
         sequence: item.sequence, lengthMs: lengthMs,
@@ -490,6 +618,31 @@ actor MeetingFinalizer {
     context.baseMs += lengthMs
     // A stretch end always leaves progress behind, even when it produced no text.
     try await flush(&context, force: true)
+  }
+
+  /// Feeds one lane and, per track, releases the windows every lane has passed.
+  private func pump(
+    _ emissions: [AnalysisStreamMixer.Emission], tag: AnalysisTracks,
+    lanes: inout [AnalysisTracks: Lane], merge: inout WindowMerge, context: inout PassContext
+  ) async throws {
+    try await feed(emissions, lane: &lanes[tag]!, merge: &merge, context: &context)
+    if configuration.layout == .perTrack {
+      try await emitMerged(&merge, lanes: lanes, context: &context)
+    }
+  }
+
+  private static func tag(_ kind: MeetingTrackKind) -> AnalysisTracks {
+    kind == .microphone ? .mic : .system
+  }
+
+  private func makeLane(_ tag: AnalysisTracks, sequence: Int, context: PassContext) -> Lane {
+    if windows[tag] == nil {
+      windows[tag] = [Float](repeating: 0, count: configuration.windowSamples)
+    }
+    return Lane(
+      tag: tag, stretch: StretchState(sequence: sequence, resume: context.resume),
+      assembler: MeetingWindowAssembler(
+        geometry: configuration.geometry, maximumWindowSamples: configuration.windowSamples))
   }
 
   private struct StretchState {
@@ -509,49 +662,57 @@ actor MeetingFinalizer {
   }
 
   private func feed(
-    _ emissions: [AnalysisStreamMixer.Emission], stretch: inout StretchState,
-    assembler: inout MeetingWindowAssembler, context: inout PassContext
+    _ emissions: [AnalysisStreamMixer.Emission], lane: inout Lane, merge: inout WindowMerge,
+    context: inout PassContext
   ) async throws {
     for emission in emissions {
       var offset = 0
       while offset < emission.samples.count {
-        let room = configuration.windowSamples - stretch.fill
+        let room = configuration.windowSamples - lane.stretch.fill
         let count = min(room, emission.samples.count - offset)
-        window.withUnsafeMutableBufferPointer { target in
+        let fill = lane.stretch.fill
+        windows[lane.tag]!.withUnsafeMutableBufferPointer { target in
           emission.samples.withUnsafeBufferPointer { source in
-            for index in 0..<count { target[stretch.fill + index] = source[offset + index] }
+            for index in 0..<count { target[fill + index] = source[offset + index] }
           }
         }
-        stretch.fill += count
-        stretch.position += count
-        stretch.tracks.insert(emission.tracks)
+        lane.stretch.fill += count
+        lane.stretch.position += count
+        lane.stretch.tracks.insert(emission.tracks)
         offset += count
-        if stretch.fill == configuration.windowSamples {
-          try await transcribeWindow(&stretch, assembler: &assembler, context: &context)
+        if lane.stretch.fill == configuration.windowSamples {
+          try await transcribeWindow(&lane, merge: &merge, context: &context)
         }
       }
     }
   }
 
   private func transcribeWindow(
-    _ stretch: inout StretchState, assembler: inout MeetingWindowAssembler,
-    context: inout PassContext
+    _ lane: inout Lane, merge: inout WindowMerge, context: inout PassContext
   ) async throws {
-    let count = stretch.fill
-    let start = stretch.windowStart
+    let count = lane.stretch.fill
+    let start = lane.stretch.windowStart
+    let index = lane.stretch.windowIndex
     defer {
-      stretch.fill = 0
-      stretch.windowStart = start + count
-      stretch.windowIndex += 1
-      stretch.tracks = []
+      lane.stretch.fill = 0
+      lane.stretch.windowStart = start + count
+      lane.stretch.windowIndex += 1
+      lane.stretch.tracks = []
       if context.totalMs > 0 {
-        let covered = context.baseMs + Int64(stretch.position) * 1_000 / 16_000
+        let covered = context.baseMs + Int64(lane.stretch.position) * 1_000 / 16_000
         context.progress?(min(1, Double(covered) / Double(context.totalMs)))
       }
     }
-    guard !stretch.skip(start) else { return }
+    guard !lane.stretch.skip(start) else { return }
     try Task.checkCancellation()
-    let samples = count == window.count ? window : Array(window.prefix(count))
+    var samples = Array(windows[lane.tag]!.prefix(count))
+    if configuration.layout == .perTrack {
+      if lane.tag == .mic, !lane.echo.isEmpty {
+        context.echoMutedMs += EchoGate.mute(
+          &samples, startMs: Int64(start) * 1_000 / 16_000, echo: lane.echo)
+      }
+      TrackLevelNormalizer.normalize(&samples)
+    }
     let began = clock.monotonicNanoseconds
     let result: TranscriptionWindow
     let lifecycle = lifecycle
@@ -575,18 +736,22 @@ actor MeetingFinalizer {
     }
     context.recognitionNanoseconds &+= clock.monotonicNanoseconds &- began
     context.audioSamples += count
-    let tracks: AnalysisTracks =
-      stretch.tracks.count > 1 ? .both : stretch.tracks.first ?? .both
-    let assembled = assembler.append(
+    let tracks: AnalysisTracks
+    if lane.tag == .both {
+      tracks = lane.stretch.tracks.count > 1 ? .both : lane.stretch.tracks.first ?? .both
+    } else {
+      tracks = lane.tag
+    }
+    let assembled = lane.assembler.append(
       window: .init(
-        sequence: stretch.windowIndex, sampleStart: start, sampleCount: count,
+        sequence: index, sampleStart: start, sampleCount: count,
         paddedSampleCount: max(4_800, count), text: result.text,
         tokens: TranscriptSourceMapper.map(text: result.text, words: result.tokens)))
     var drafts = context.segmenter.segments(
       window: assembled,
       base: .init(
-        stretchSequence: stretch.sequence, stretchBaseMs: context.baseMs, tracks: tracks,
-        ordinal: context.ordinal))
+        stretchSequence: lane.stretch.sequence, stretchBaseMs: context.baseMs, tracks: tracks,
+        ordinal: lane.tag == .both ? context.ordinal : 0))
     let model = modelIdentity
     for index in drafts.indices {
       drafts[index].finality = .final
@@ -595,12 +760,42 @@ actor MeetingFinalizer {
       drafts[index].modelRevision = model.revision
       drafts[index].pipelineVersion = pipelineVersion
     }
-    context.ordinal += drafts.count
-    let progress = FinalizationProgress(sequence: stretch.sequence, sample: Int64(start + count))
-    context.pending += drafts.map { ($0, progress) }
-    context.completedProgress = progress
     context.windowCount += 1
-    try await flush(&context, force: false)
+    if lane.tag == .both {
+      context.ordinal += drafts.count
+      let progress = FinalizationProgress(
+        sequence: lane.stretch.sequence, sample: Int64(start + count))
+      context.pending += drafts.map { ($0, progress) }
+      context.completedProgress = progress
+      try await flush(&context, force: false)
+    } else {
+      merge.entries[index, default: [:]][lane.tag] = .init(drafts: drafts, endSample: start + count)
+    }
+  }
+
+  /// Emits every merged window all lanes have passed, in window order. A window's
+  /// progress is the furthest lane's end, so a resume skips it on both tracks.
+  private func emitMerged(
+    _ merge: inout WindowMerge, lanes: [AnalysisTracks: Lane], context: inout PassContext
+  ) async throws {
+    for index in merge.entries.keys.sorted() {
+      let passed = lanes.values.allSatisfy { $0.ended || $0.stretch.windowIndex > index }
+      guard passed, let entries = merge.entries.removeValue(forKey: index) else { return }
+      let sequence = lanes.values.first?.stretch.sequence ?? 0
+      var drafts = entries.values.flatMap(\.drafts)
+      drafts.sort {
+        if $0.startMs != $1.startMs { return $0.startMs < $1.startMs }
+        if $0.endMs != $1.endMs { return $0.endMs < $1.endMs }
+        return $0.analysisTracks == .mic && $1.analysisTracks != .mic
+      }
+      for offset in drafts.indices { drafts[offset].ordinal = context.ordinal + offset }
+      context.ordinal += drafts.count
+      let progress = FinalizationProgress(
+        sequence: sequence, sample: Int64(entries.values.map(\.endSample).max() ?? 0))
+      context.pending += drafts.map { ($0, progress) }
+      context.completedProgress = progress
+      try await flush(&context, force: false)
+    }
   }
 
   /// Batches of ≤ 50 drafts, or 2 s of clock time, one transaction each; progress
@@ -721,7 +916,7 @@ actor MeetingFinalizer {
     }
     let windows = context.windowCount
     logSink(
-      "finalization complete windows=\(windows) segments=\(row.segmentCount) replaced=\(row.replacedProvisionalCount) gaps=\(gaps.count) covered=\(coveredCount) coveredMs=\(coveredMs)"
+      "finalization complete windows=\(windows) segments=\(row.segmentCount) replaced=\(row.replacedProvisionalCount) gaps=\(gaps.count) covered=\(coveredCount) coveredMs=\(coveredMs) echoMutedMs=\(context.echoMutedMs)"
     )
     return Outcome(
       row: row, windowCount: context.windowCount, totalGapCount: gaps.count,

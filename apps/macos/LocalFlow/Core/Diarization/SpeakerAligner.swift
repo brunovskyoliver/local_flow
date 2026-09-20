@@ -1,7 +1,8 @@
 import Foundation
 
-/// `align_dom0.60_ratio2_ovl0.20_v1` (research R6). Labels a transcript segment from
-/// speaker turns and times only; it never sees text (FR-001, FR-013).
+/// `align_dom0.60_ratio2_ovl0.20_bytrack_v2` (research R6). Labels a transcript segment
+/// from speaker turns and times only; it never sees text (FR-001, FR-013). The caller
+/// passes only the turns of the segment's own track when the row came from one track.
 enum SpeakerAligner {
   static var version: String { DiarizationPipelineVersion.aligner }
 
@@ -9,6 +10,7 @@ enum SpeakerAligner {
   /// toward no speaker.
   struct Turn: Sendable, Equatable {
     let speaker: Int?
+    var track: MeetingTrackKind = .microphone
     let startMs: Int64
     let endMs: Int64
   }

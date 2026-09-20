@@ -47,8 +47,12 @@ final class TranscriptPagerPagingTests: XCTestCase {
     row.passID = pass
     row.passKind = state == .final || state == .finalizing ? .final : .live
     await store.setRow(row)
+    // A finalizing row's provisional rows belong to the earlier live pass; the final
+    // pass has written nothing yet, so the pager still previews the provisional rows.
+    let segmentPass = state == .finalizing ? UUID() : pass
     await store.seedSegments(
-      meeting, passID: pass, finality: state == .final ? .final : .provisional, count: count)
+      meeting, passID: segmentPass, finality: state == .final ? .final : .provisional,
+      count: count)
     return (TranscriptPager(meetingID: meeting, store: store), store, meeting)
   }
 
@@ -494,6 +498,129 @@ final class TranscriptPagerLabelTests: XCTestCase {
     XCTAssertEqual(pager.segments.count, 1)
     XCTAssertNil(pager.speakers)
     XCTAssertNil(pager.label(for: pager.segments[0].id))
+  }
+
+  // MARK: Feature 010 identity labels (T042, T058)
+
+  /// A remote root with an accepted run, plus one local "You" root, both covering rows.
+  private func acceptTwoRoots(_ meetingID: UUID, pass: UUID) async throws -> (
+    remote: UUID, local: UUID
+  ) {
+    let run = try await speakers.admit(
+      meetingID: meetingID, transcriptPassID: pass, trigger: .manual,
+      identity: DiarizationTestSupport.identity, expectedRevision: nil, now: 10)
+    _ = try await speakers.start(runID: run.id, now: 10)
+    let remote = SpeakerDraft(id: UUID(), clusterKey: 0, track: .system, reconciliation: .confident)
+    let local = SpeakerDraft(
+      id: UUID(), clusterKey: 1, track: .microphone, reconciliation: .confident)
+    try await speakers.appendWindow(
+      runID: run.id, speakers: [remote, local],
+      turns: [
+        .init(speakerID: remote.id, track: .system, startMs: 0, endMs: 2_000, quality: nil),
+        .init(speakerID: local.id, track: .microphone, startMs: 2_000, endMs: 4_000, quality: nil),
+      ], audioMs: 4_000)
+    let rows = try await transcripts.page(
+      meetingID: meetingID, finality: .final, after: nil, limit: 200)
+    let assignments = rows.enumerated().map { index, row in
+      let speaker = index < 2 ? remote.id : local.id
+      return AssignmentDraft(
+        segmentID: row.id, kind: .speaker, speakerID: speaker, topSpeakerID: speaker,
+        secondSpeakerID: nil, topCoverage: 1, secondCoverage: 0)
+    }
+    _ = try await speakers.complete(runID: run.id, assignments: assignments, now: 10)
+    return (remote.id, local.id)
+  }
+
+  private func identityStore() -> IdentityStore {
+    IdentityStore(database: fixture.history.database, identity: IdentificationTestSupport.identity)
+  }
+
+  private func adopt(
+    _ store: IdentityStore, meetingID: UUID, root: UUID, known: UUID, state: IdentityState,
+    now: Int64
+  ) async throws {
+    let run = try await store.admit(
+      meetingID: meetingID, trigger: .manual, identity: IdentificationTestSupport.identity,
+      policy: "tiers_v1@wespeaker_resnet34lm_256/11111111", now: now)
+    _ = try await store.start(runID: run.id, now: now)
+    let candidate = IdentityMatcher.Candidate(
+      knownSpeakerID: known, score: 0.8, tier: state == .recognized ? .recognized : .possible,
+      reasons: [], sampleCount: 3, supportCount: 3)
+    let decision = IdentityMatcher.Decision(
+      state: state, best: state == .unknown ? nil : candidate, second: nil, candidates: [candidate])
+    _ = try await store.complete(runID: run.id, decisions: [root: decision], now: now)
+  }
+
+  func testRowsCarryNamedSuggestedAndUnknownIdentitiesAndYouIsUnchanged() async throws {
+    let (id, pass) = try await meeting(segments: 4)
+    let roots = try await acceptTwoRoots(id, pass: pass)
+    let store = identityStore()
+    let tomas = try await store.createKnownSpeaker(name: "Tomáš", isLocalUser: false, now: 1)
+    let pager = TranscriptPager(meetingID: id, store: transcripts, identityStore: store)
+    await pager.loadFirst()
+    // No row: the 007 label with `.unknown`.
+    var label = try XCTUnwrap(pager.label(for: pager.segments[0].id))
+    XCTAssertEqual(label.text, "Speaker 1")
+    XCTAssertEqual(label.identity, .unknown)
+    XCTAssertEqual(pager.label(for: pager.segments[2].id)?.text, "You")
+    XCTAssertNil(pager.label(for: pager.segments[2].id)?.identity, "\"You\" stays track-origin")
+    // Possible: "Name?" with the suggestion.
+    try await adopt(
+      store, meetingID: id, root: roots.remote, known: tomas.id, state: .possible, now: 20)
+    let before = pager.identityRevision
+    await pager.applyIdentities()
+    XCTAssertEqual(pager.identityRevision, before + 1)
+    label = try XCTUnwrap(pager.label(for: pager.segments[0].id))
+    XCTAssertEqual(label.text, "Tomáš?")
+    XCTAssertEqual(label.identity, .suggested(name: "Tomáš", knownSpeakerID: tomas.id))
+    XCTAssertEqual(label.colorIndex, 0, "The speaker color stays")
+    // Recognized: the name, no question mark, and no score anywhere in the read model.
+    try await adopt(
+      store, meetingID: id, root: roots.remote, known: tomas.id, state: .recognized, now: 30)
+    await pager.applyIdentities()
+    label = try XCTUnwrap(pager.label(for: pager.segments[0].id))
+    XCTAssertEqual(label.text, "Tomáš")
+    XCTAssertEqual(label.identity, .named)
+    let mirror = Mirror(reflecting: label)
+    XCTAssertFalse(mirror.children.contains { $0.label?.lowercased().contains("score") == true })
+    // Rejected-to-Unknown: the 007 label again.
+    try await store.reject(
+      meetingID: id, speakerID: roots.remote, candidate: tomas.id, keepUnknown: true, now: 40)
+    await pager.applyIdentities()
+    label = try XCTUnwrap(pager.label(for: pager.segments[0].id))
+    XCTAssertEqual(label.text, "Tomáš", "The copied name is meeting metadata")
+    XCTAssertEqual(label.identity, .unknown)
+    XCTAssertEqual(pager.label(for: pager.segments[2].id)?.text, "You")
+  }
+
+  func testConfirmingFromTheTranscriptLinksOnceWithNoSampleAndBumpsTheRevision() async throws {
+    let (id, pass) = try await meeting(segments: 2)
+    let roots = try await acceptTwoRoots(id, pass: pass)
+    let store = identityStore()
+    let tomas = try await store.createKnownSpeaker(name: "Tomáš", isLocalUser: false, now: 1)
+    try await adopt(
+      store, meetingID: id, root: roots.remote, known: tomas.id, state: .possible, now: 20)
+    let pager = TranscriptPager(meetingID: id, store: transcripts, identityStore: store)
+    await pager.loadFirst()
+    guard case .suggested(_, let known)? = pager.label(for: pager.segments[0].id)?.identity else {
+      return XCTFail("The row exposes the confirm action")
+    }
+    let before = pager.identityRevision
+    let confirmed = await pager.confirmIdentity(root: roots.remote, knownSpeakerID: known)
+    XCTAssertTrue(confirmed)
+    XCTAssertEqual(pager.identityRevision, before + 1)
+    XCTAssertEqual(pager.label(for: pager.segments[0].id)?.identity, .named)
+    XCTAssertEqual(pager.label(for: pager.segments[0].id)?.text, "Tomáš")
+    let identities = try await store.identities(meetingID: id)
+    XCTAssertEqual(identities[roots.remote]?.origin, .userConfirmation)
+    let samples = try await fixture.history.database.read { db in
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM voice_samples")
+    }
+    XCTAssertEqual(samples, 0, "No sample request")
+    // A pager without an identity store (the 007 pager) refuses.
+    let plain = TranscriptPager(meetingID: id, store: transcripts)
+    let refused = await plain.confirmIdentity(root: roots.remote, knownSpeakerID: known)
+    XCTAssertFalse(refused)
   }
 }
 

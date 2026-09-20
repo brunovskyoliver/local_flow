@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -242,7 +243,7 @@ VocabularyHints selectVocabulary(whisper_context *context, const std::vector<std
     return hints;
 }
 
-void transcribe(whisper_context *context, whisper_vad_context *vad, int threads, const json &request) {
+void transcribe(whisper_context *context, whisper_vad_context *vad, const std::string &vadModelPath, int threads, const json &request) {
     const auto id = stringField(request, "id");
     if (!id || id->empty() || id->size() > 256) {
         emitError("A transcription request needs a nonempty id (up to 256 bytes).");
@@ -258,11 +259,18 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
         emitError("The requested language is not supported.", *id);
         return;
     }
+    const bool meetingTranscription =
+        request.contains("meetingTranscription") && request["meetingTranscription"].is_boolean()
+        && request["meetingTranscription"].get<bool>();
+    // Meeting tracks recognized on their own carry long silences (the other side
+    // talking); whisper.cpp's VAD mode decodes only the speech spans and maps the
+    // timestamps back, so the decoder never sees a silent chunk to fill.
+    const bool silenceSkipping =
+        request.contains("silenceSkipping") && request["silenceSkipping"].is_boolean()
+        && request["silenceSkipping"].get<bool>();
     const bool benchmarkEvidence =
         (request.contains("benchmarkEvidence") && request["benchmarkEvidence"].is_boolean()
-         && request["benchmarkEvidence"].get<bool>()) ||
-        (request.contains("meetingTranscription") && request["meetingTranscription"].is_boolean()
-         && request["meetingTranscription"].get<bool>());
+         && request["benchmarkEvidence"].get<bool>()) || meetingTranscription;
     const auto vocabulary = vocabularyTerms(request);
     if (const auto failure = std::get_if<std::string>(&vocabulary)) {
         emitError(*failure, *id);
@@ -346,12 +354,84 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
         parameters.temperature_inc = 0; // Deterministic, bounded dictation latency.
         parameters.beam_search.beam_size = 5;
         parameters.no_speech_thold = 0.6f;
+        if (meetingTranscription) {
+            // Offline meeting windows can afford whisper's fallback ladder: a chunk whose
+            // decode is low-entropy (a repeated phrase) or low-probability is retried at
+            // rising temperatures, which is what stops "České všichni. České všichni. …"
+            // from filling a window. Dictation keeps the deterministic single decode.
+            parameters.temperature_inc = 0.2f;
+            parameters.entropy_thold = 2.4f;
+            parameters.logprob_thold = -1.0f;
+        }
+        if (silenceSkipping) {
+            parameters.vad = true;
+            parameters.vad_model_path = vadModelPath.c_str();
+            parameters.vad_params = whisper_vad_default_params();
+        }
         parameters.progress_callback = reportProgress;
         parameters.progress_callback_user_data = &progress;
 
-        const auto fullResult = benchmarkEvidence
-            ? whisper_full_with_state(context, benchmarkState.get(), parameters, audio.samples.data(), static_cast<int>(audio.samples.size()))
-            : whisper_full(context, parameters, audio.samples.data(), static_cast<int>(audio.samples.size()));
+        auto decode = [&](const whisper_full_params &current) {
+            return benchmarkEvidence
+                ? whisper_full_with_state(context, benchmarkState.get(), current, audio.samples.data(), static_cast<int>(audio.samples.size()))
+                : whisper_full(context, current, audio.samples.data(), static_cast<int>(audio.samples.size()));
+        };
+        // whisper.cpp's entropy check counts timestamp tokens, which are all distinct,
+        // so a chunk that emits the same phrase with rising timestamps passes it. Three
+        // identical consecutive segments are that loop; the window is decoded again
+        // sampled from 0.4 up, which is a different search and stays deterministic
+        // (the state's generator is seeded).
+        auto hasSegmentLoop = [&]() {
+            const auto count = benchmarkEvidence ? whisper_full_n_segments_from_state(benchmarkState.get())
+                                                 : whisper_full_n_segments(context);
+            int run = 1;
+            std::string previous;
+            for (int i = 0; i < count; ++i) {
+                std::string current(benchmarkEvidence ? whisper_full_get_segment_text_from_state(benchmarkState.get(), i)
+                                                      : whisper_full_get_segment_text(context, i));
+                while (!current.empty() && std::isspace(static_cast<unsigned char>(current.back()))) current.pop_back();
+                while (!current.empty() && std::isspace(static_cast<unsigned char>(current.front()))) current.erase(current.begin());
+                if (!current.empty() && current == previous) {
+                    if (++run >= 3) return true;
+                } else {
+                    run = 1;
+                }
+                previous = current;
+            }
+            return false;
+        };
+        int loopRetries = 0;
+        auto fullResult = decode(parameters);
+        if (fullResult == 0 && meetingTranscription && hasSegmentLoop()) {
+            auto sampled = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+            sampled.n_threads = parameters.n_threads;
+            sampled.no_context = parameters.no_context;
+            sampled.no_timestamps = parameters.no_timestamps;
+            sampled.translate = parameters.translate;
+            sampled.print_special = false;
+            sampled.print_progress = false;
+            sampled.print_realtime = false;
+            sampled.print_timestamps = false;
+            sampled.suppress_blank = parameters.suppress_blank;
+            sampled.suppress_nst = parameters.suppress_nst;
+            sampled.language = parameters.language;
+            sampled.prompt_tokens = parameters.prompt_tokens;
+            sampled.prompt_n_tokens = parameters.prompt_n_tokens;
+            sampled.carry_initial_prompt = parameters.carry_initial_prompt;
+            sampled.temperature = 0.4f;
+            sampled.temperature_inc = 0.2f;
+            sampled.entropy_thold = parameters.entropy_thold;
+            sampled.logprob_thold = parameters.logprob_thold;
+            sampled.no_speech_thold = parameters.no_speech_thold;
+            sampled.greedy.best_of = 5;
+            sampled.vad = parameters.vad;
+            sampled.vad_model_path = parameters.vad_model_path;
+            sampled.vad_params = parameters.vad_params;
+            sampled.progress_callback = reportProgress;
+            sampled.progress_callback_user_data = &progress;
+            loopRetries = 1;
+            fullResult = decode(sampled);
+        }
         if (fullResult != 0) {
             emitError("Local transcription failed. Try recording again.", *id);
             return;
@@ -398,6 +478,8 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
             {"language", detectedLanguage}, {"segments", nativeSegments},
             {"segmentation", "whisper_full_internal_30s_seek_segments_v1"},
             {"context", "rolling_internal_prompt_reset_between_requests"},
+            {"decoding", std::string(meetingTranscription ? "beam5_fallback_t0.2_e2.4_lp-1.0_loop_t0.4" : "beam5_greedy_t0") + (silenceSkipping ? "_vad" : "")},
+            {"loopRetries", loopRetries},
             {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
             {"tokenCount", hints.tokens.size()}, {"tokenBudget", hints.tokenBudget}};
         if (detectedLanguageProbability) result["languageProbability"] = *detectedLanguageProbability;
@@ -411,6 +493,7 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
               {"language", detectedLanguage}, {"segments", json::array()},
               {"segmentation", "whisper_full_internal_30s_seek_segments_v1"},
               {"context", "rolling_internal_prompt_reset_between_requests"},
+            {"decoding", std::string(meetingTranscription ? "beam5_fallback_t0.2_e2.4_lp-1.0_loop_t0.4" : "beam5_greedy_t0") + (silenceSkipping ? "_vad" : "")},
               {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
               {"tokenCount", hints.tokens.size()}, {"tokenBudget", hints.tokenBudget}});
     } else {
@@ -498,7 +581,7 @@ int main(int argc, char **argv) {
             emitError("Unknown request type.", stringField(request, "id").value_or(""));
             continue;
         }
-        transcribe(context.get(), vad.get(), threads, request);
+        transcribe(context.get(), vad.get(), vadModel, threads, request);
     }
     if (!std::cin.eof()) {
         emitError("The request exceeds the 1 MB limit.");

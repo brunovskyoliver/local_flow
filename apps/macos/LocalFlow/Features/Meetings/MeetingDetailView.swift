@@ -16,6 +16,9 @@ struct MeetingDetailView: View {
   var coordinator: MeetingCoordinator? = nil
   /// Feature 007: speaker labels for the finalized transcript.
   var diarization: SpeakerDiarizationCoordinator? = nil
+  /// Feature 010: persistent identities; nil or the setting off keeps the 007 view.
+  var identification: SpeakerIdentificationCoordinator? = nil
+  var identificationEnabled = false
   var initialTab: NoteDetailTab = .thoughts
   @State private var tab: NoteDetailTab = .thoughts
   @State private var retainedEditor: MeetingNotesEditor?
@@ -32,6 +35,14 @@ struct MeetingDetailView: View {
   @State private var playingKind: MeetingTrackKind?
   @State private var pager: TranscriptPager?
   @State private var assigningSpeakers: AssignSpeakersModel?
+  /// FR-023a: the one-time "Look for this voice in past meetings?" prompt.
+  @State private var pastSearchPrompt: PastSearchPrompt?
+
+  struct PastSearchPrompt: Equatable {
+    let knownSpeakerID: UUID
+    let name: String
+    let meetingCount: Int
+  }
 
   private var meeting: Meeting { detail.meeting }
   private var editor: MeetingNotesEditor { liveEditor ?? retainedEditor ?? notesEditor }
@@ -103,10 +114,23 @@ struct MeetingDetailView: View {
     }
     .task(id: meeting.id) {
       guard let transcriptStore else { return }
-      let loaded = TranscriptPager(meetingID: meeting.id, store: transcriptStore)
+      let loaded = TranscriptPager(
+        meetingID: meeting.id, store: transcriptStore,
+        identityStore: showsIdentification ? identification?.store : nil)
       pager = loaded
       await loaded.loadFirst()
       await diarization?.observe(meetingID: meeting.id)
+      await identification?.observe(meetingID: meeting.id)
+      identification?.enrollmentDidStore = { [weak identification] id, name in
+        guard let identification else { return }
+        Task { @MainActor in
+          let count = try? await identification.store.meetingsWithUnknownRemoteSpeakers(
+            limit: SpeakerIdentificationCoordinator.pastSearchCapacity
+          ).count
+          pastSearchPrompt = PastSearchPrompt(
+            knownSpeakerID: id, name: name, meetingCount: count ?? 0)
+        }
+      }
     }
     .onChange(of: transcription?.status) { _, status in
       guard let status, status.meetingID == meeting.id, let pager else { return }
@@ -118,6 +142,10 @@ struct MeetingDetailView: View {
     .onChange(of: speakerStatus) { _, _ in
       guard let pager else { return }
       Task { await pager.applyLabels() }
+    }
+    .onChange(of: identificationStatus?.identityRevision) { _, _ in
+      guard let pager, showsIdentification else { return }
+      Task { await pager.applyIdentities() }
     }
     .task(id: finalizingPollKey) {
       // The final pass writes in batches; every few seconds the newest rows load.
@@ -135,7 +163,10 @@ struct MeetingDetailView: View {
       if let assigning = assigningSpeakers {
         AssignSpeakersView(
           model: assigning,
-          saved: { diarization?.namesDidChange(meetingID: assigning.meetingID) },
+          saved: {
+            diarization?.namesDidChange(meetingID: assigning.meetingID)
+            identification?.identitiesDidChange(meetingID: assigning.meetingID)
+          },
           structureChanged: { Task { await pager?.refreshLabels() } },
           close: { assigningSpeakers = nil }
         )
@@ -416,6 +447,8 @@ struct MeetingDetailView: View {
           .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
       }
       if showsSpeakerControls { speakerStatusLine }
+      if showsIdentification { identificationStatusLine }
+      if let prompt = pastSearchPrompt { pastSearchPromptRow(prompt) }
       if let row = transcriptRow, let category = row.failureCategory {
         Text(
           TranscriptErrorMessage.message(
@@ -444,7 +477,8 @@ struct MeetingDetailView: View {
               select: { pager.toggleSelection(segment.id) },
               seek: canSeek(segment) ? { seek(to: segment) } : nil,
               changeSpeaker: pager.speakers == nil
-                ? nil : { correctSpeaker(segment, to: $0) })
+                ? nil : { correctSpeaker(segment, to: $0) },
+              confirmIdentity: showsIdentification ? { confirmIdentity(segment) } : nil)
           }
           if segments.isEmpty {
             Text("No matches in the loaded transcript.").foregroundStyle(SottoPalette.muted)
@@ -526,12 +560,21 @@ struct MeetingDetailView: View {
   private var speakersMenu: some View {
     let active = speakerStatus?.state == .pending || speakerStatus?.state == .running
     let failed = speakerStatus?.state == .failed || speakerStatus?.state == .interrupted
+    let identifying =
+      identificationStatus?.state == .pending || identificationStatus?.state == .running
     return Menu {
-      Button("Assign speakers…") {
-        guard let diarization else { return }
-        assigningSpeakers = AssignSpeakersModel(meetingID: meeting.id, store: diarization.store)
+      Button("Assign speakers…", action: openAssignSpeakers)
+        .disabled(pager?.speakers == nil)
+      if showsIdentification {
+        Button("Rerun identification") { requestIdentification(.manual) }
+          .disabled(pager?.speakers == nil || identifying)
+          .accessibilityIdentifier("speakers.rerunIdentification")
+        if identifying {
+          Button("Cancel identification") {
+            Task { await identification?.cancel(meetingID: meeting.id) }
+          }
+        }
       }
-      .disabled(pager?.speakers == nil)
       Toggle(
         "In-room meeting",
         isOn: Binding(
@@ -570,6 +613,103 @@ struct MeetingDetailView: View {
     Task { await diarization?.requestRun(meetingID: id, revision: nil, trigger: trigger) }
   }
 
+  private func openAssignSpeakers() {
+    guard let diarization else { return }
+    guard showsIdentification, let coordinator = identification else {
+      assigningSpeakers = AssignSpeakersModel(meetingID: meeting.id, store: diarization.store)
+      return
+    }
+    assigningSpeakers = AssignSpeakersModel(
+      meetingID: meeting.id, store: diarization.store, identityStore: coordinator.store,
+      identificationEnabled: true,
+      enroll: { request in await coordinator.enroll(request) })
+  }
+
+  // MARK: Identification (Feature 010)
+
+  private var showsIdentification: Bool {
+    identification != nil && identificationEnabled && showsSpeakerControls
+  }
+
+  private var identificationStatus: IdentificationStatus? {
+    guard let status = identification?.status, status.meetingID == meeting.id else { return nil }
+    return status
+  }
+
+  /// contracts/ui.md: after the 007 status, "Identifying speakers… n%", the failure with
+  /// Retry, or the past search with Cancel.
+  @ViewBuilder private var identificationStatusLine: some View {
+    Group {
+      if let search = identificationStatus?.pastSearch {
+        HStack(spacing: 8) {
+          Text("Looking for \(search.name) in past meetings (\(search.remaining) left)")
+          Button("Cancel") { identification?.cancelPastSearch() }.buttonStyle(.borderless)
+        }
+      } else {
+        switch identificationStatus?.state {
+        case .pending?:
+          Text("Waiting to identify speakers…")
+        case .running?:
+          Text(
+            "Identifying speakers… \(Int(((identificationStatus?.progress ?? 0) * 100).rounded()))%"
+          )
+        case .failed?, .interrupted?:
+          let category = identificationStatus?.failure ?? .interrupted
+          HStack(spacing: 8) {
+            Text("Identification failed: \(IdentificationFailureMessage.message(for: category))")
+              .foregroundStyle(.red)
+            if IdentificationFailureMessage.isRetryable(category) {
+              Button("Retry") { requestIdentification(.retry) }.buttonStyle(.borderless)
+            }
+          }
+        default:
+          if identificationStatus?.enrolling == true { Text("Storing voice sample…") }
+        }
+      }
+    }
+    .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+    .accessibilityIdentifier("meeting.identification.status")
+  }
+
+  /// FR-023a: shown once after an enrollment stored a sample.
+  private func pastSearchPromptRow(_ prompt: PastSearchPrompt) -> some View {
+    HStack(spacing: 10) {
+      Text(
+        "Look for this voice in past meetings? \(prompt.meetingCount) \(prompt.meetingCount == 1 ? "meeting" : "meetings") would be checked."
+      )
+      .font(.system(size: 12))
+      Button("Look") {
+        let id = prompt.knownSpeakerID
+        pastSearchPrompt = nil
+        Task { _ = await identification?.startPastSearch(knownSpeakerID: id) }
+      }
+      .buttonStyle(.borderless).accessibilityIdentifier("identity.pastSearch")
+      Button("Not now") { pastSearchPrompt = nil }.buttonStyle(.borderless)
+    }
+    .padding(10)
+    .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
+    .accessibilityIdentifier("identity.pastSearchPrompt")
+  }
+
+  private func requestIdentification(_ trigger: IdentificationTrigger) {
+    let id = meeting.id
+    Task { await identification?.requestRun(meetingID: id, trigger: trigger) }
+  }
+
+  /// FR-040: the checkmark on a "Name?" row confirms the suggestion with no sample.
+  private func confirmIdentity(_ segment: TranscriptSegment) {
+    guard let pager, let label = pager.label(for: segment.id),
+      case .speaker(let root) = label.kind,
+      case .suggested(_, let known)? = label.identity
+    else { return }
+    let id = meeting.id
+    Task {
+      if await pager.confirmIdentity(root: root, knownSpeakerID: known) {
+        identification?.identitiesDidChange(meetingID: id)
+      }
+    }
+  }
+
   /// Change speaker ▸ entries: every display root of the current result, in label order.
   private var speakerChoices: [NoteTranscriptBubble.SpeakerChoice] {
     (pager?.speakers?.speakers ?? []).filter { $0.mergedInto == nil }
@@ -602,7 +742,8 @@ struct MeetingDetailView: View {
     let identifier: String
     switch row.state {
     case .notRequested: (title, identifier) = ("Transcribe", "meeting.transcript.transcribe")
-    case .failed, .interrupted: (title, identifier) = ("Retry transcription", "meeting.transcript.retry")
+    case .failed, .interrupted:
+      (title, identifier) = ("Retry transcription", "meeting.transcript.retry")
     case .final: (title, identifier) = ("Re-transcribe", "meeting.transcript.retranscribe")
     case .pending, .live, .finalizing: return nil
     }
@@ -661,6 +802,8 @@ struct NoteTranscriptBubble: View {
   var seek: (() -> Void)?
   /// Present when the row has a current result to correct (FR-026).
   var changeSpeaker: ((SegmentCorrection) -> Void)? = nil
+  /// Feature 010 (FR-040): the subtle checkmark on a "Name?" row.
+  var confirmIdentity: (() -> Void)? = nil
 
   private var sourceColor: Color {
     switch segment.draft.analysisTracks {
@@ -678,9 +821,20 @@ struct NoteTranscriptBubble: View {
             .fill(speaker.colorIndex.map(SpeakerPalette.color) ?? SottoPalette.muted)
             .frame(width: 8, height: 8)
           Text(speaker.text).font(.system(size: 12, weight: .medium))
+            .foregroundStyle(
+              speaker.colorIndex.map(SpeakerPalette.color) ?? SottoPalette.ink)
+          if let confirmIdentity, case .suggested? = speaker.identity {
+            Button(action: confirmIdentity) {
+              Image(systemName: "checkmark.circle").font(.system(size: 11))
+            }
+            .buttonStyle(.plain).foregroundStyle(SottoPalette.muted)
+            .help("Confirm this speaker")
+            .accessibilityLabel("Confirm speaker \(speaker.text)")
+            .accessibilityIdentifier("speaker.confirm")
+          }
         }
         .padding(.top, 14)
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Speaker: \(speaker.text)")
       } else if showSource {
         Text(segment.draft.analysisTracks.sourceLabel)

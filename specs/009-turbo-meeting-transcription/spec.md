@@ -28,6 +28,7 @@ Silence, very short trailing audio, multilingual speech, repeated hallucinations
 - FR-004: Final processing MUST use bounded audio windows, bounded output and one heavy model at a time. Cancellation MUST release model resources and remove temporary audio.
 - FR-005: Pass identity MUST distinguish Turbo from older passes and incompatible window geometry.
 - FR-006: Obvious consecutive phrase loops MUST trigger a bounded shorter-window retry; unrecovered loops MUST fail visibly instead of being silently accepted or deleted.
+- FR-008: The final pass MUST recognize each durable track on its own, with the tracks' levels normalized before recognition and the remote side's speaker echo muted in the microphone track when the meeting shows echo. Each final row MUST record the track it came from, and rows of both tracks MUST appear in chronological order. The live pass keeps the mixed stream.
 - FR-007: Packaging MUST include the native helper and required license notices, with pinned model integrity metadata.
 
 ### Key entities

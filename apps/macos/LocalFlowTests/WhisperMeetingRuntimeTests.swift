@@ -98,11 +98,25 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
     await runtime.shutdown()
   }
 
+  func testSlightlyOverrunningFinalSegmentIsClampedToTheInput() async throws {
+    let (root, model, helper) = try fixture(
+      body: """
+        print(json.dumps({'type':'result', 'id':request['id'], 'text':'Preserved meeting text.',
+          'segments':[{'text':' Preserved meeting text.', 'startSeconds':90.52, 'endSeconds':120.52}]}), flush=True)
+        """)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+    let result = try await runtime.transcribe(Array(repeating: 0.1, count: 120 * 16_000))
+    XCTAssertEqual(result.text, "Preserved meeting text.")
+    XCTAssertEqual(result.tokens, [.init(text: "Preserved meeting text.", start: 90.52, end: 120)])
+    await runtime.shutdown()
+  }
+
   func testOutOfRangeNativeTimingPreservesTextWithWindowFallback() async throws {
     let (root, model, helper) = try fixture(
       body: """
         print(json.dumps({'type':'result', 'id':request['id'], 'text':'Preserved meeting text.',
-          'segments':[{'text':'Preserved meeting text.', 'startSeconds':90.52, 'endSeconds':120.52}]}), flush=True)
+          'segments':[{'text':' Preserved meeting text.', 'startSeconds':121.0, 'endSeconds':124.0}]}), flush=True)
         """)
     defer { try? FileManager.default.removeItem(at: root) }
     let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
@@ -111,6 +125,49 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
     XCTAssertTrue(
       result.tokens.isEmpty, "Invalid native timing must not become invented word timing")
     await runtime.shutdown()
+  }
+
+  /// whisper.cpp segments keep the space before their first token and can split a
+  /// word; the source mapper needs trimmed, whole-word tokens over the trimmed text.
+  func testNativeSegmentSpacingAndMidWordSplitsMapOntoTheWindowText() async throws {
+    let (root, model, helper) = try fixture(
+      body: """
+        print(json.dumps({'type':'result', 'id':request['id'], 'text':'Ahoj. Ahoj, Oliver. Nazdar.',
+          'segments':[{'text':' Ahoj.', 'startSeconds':0.0, 'endSeconds':0.5},
+                      {'text':' Ahoj, Oli', 'startSeconds':0.9, 'endSeconds':1.4},
+                      {'text':'ver.', 'startSeconds':1.4, 'endSeconds':1.8},
+                      {'text':' ', 'startSeconds':1.8, 'endSeconds':1.9},
+                      {'text':' Nazdar.', 'startSeconds':2.0, 'endSeconds':2.5}]}), flush=True)
+        """)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+    let result = try await runtime.transcribe(Array(repeating: 0.1, count: 3 * 16_000))
+    XCTAssertEqual(
+      result.tokens,
+      [
+        .init(text: "Ahoj.", start: 0, end: 0.5),
+        .init(text: "Ahoj, Oliver.", start: 0.9, end: 1.8),
+        .init(text: "Nazdar.", start: 2.0, end: 2.5),
+      ])
+    let mapped = try XCTUnwrap(TranscriptSourceMapper.map(text: result.text, words: result.tokens))
+    XCTAssertEqual(mapped.map(\.utf8Start), [0, 6, 20])
+    await runtime.shutdown()
+  }
+
+  func testZeroLengthAndOverlappingNativeSegmentsBecomeStrictlyIncreasing() {
+    let words = WhisperMeetingRuntime.words([
+      .init(text: " Super.", start: 1.0, end: 1.0),
+      .init(text: " Okej.", start: 0.9, end: 1.5),
+      .init(text: " Ahoj.", start: 1.5, end: 2.0),
+    ])
+    XCTAssertEqual(
+      words,
+      [
+        .init(text: "Super.", start: 1.0, end: 1.01),
+        .init(text: "Okej.", start: 1.01, end: 1.5),
+        .init(text: "Ahoj.", start: 1.5, end: 2.0),
+      ])
+    XCTAssertEqual(WhisperMeetingRuntime.words([]), [])
   }
 
   func testSilenceAndOneSampleTailArePaddedAndRemainEmpty() async throws {
@@ -269,5 +326,24 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
       schemaVersion: 1, modelID: "test", sourceRevision: String(repeating: "a", count: 40),
       sdkCompatibility: "test", automaticLanguage: true, license: "MIT", files: [], complete: true)
     return (root, .init(descriptor: descriptor, rootURL: root), helper)
+  }
+
+  func testSegmentsWithoutSpeechEnergyUnderThemAreDropped() {
+    // 6 s: tone for 0–2 s, silence 2–5 s, tone 5–6 s.
+    var samples = [Float](repeating: 0, count: 96_000)
+    for index in 0..<32_000 { samples[index] = 0.1 * sinf(Float(index) * 0.2) }
+    for index in 80_000..<96_000 { samples[index] = 0.1 * sinf(Float(index) * 0.2) }
+    let segments: [TranscriptionToken] = [
+      .init(text: " Ahoj.", start: 0, end: 2),
+      .init(text: " Ďakujem za pozornosť.", start: 2.2, end: 4.8),
+      // Straddles speech and silence: 1 s of 3 s is loud, so it stays.
+      .init(text: " Dobre.", start: 4, end: 7),
+    ]
+    let kept = WhisperMeetingRuntime.speechBacked(segments, samples: samples)
+    XCTAssertEqual(kept.map(\.text), [" Ahoj.", " Dobre."])
+    XCTAssertEqual(WhisperMeetingRuntime.speechBacked([], samples: samples), [])
+    // Silence everywhere drops everything; a segment past the audio counts as silent.
+    let quiet = [Float](repeating: 0, count: 16_000)
+    XCTAssertEqual(WhisperMeetingRuntime.speechBacked(segments, samples: quiet), [])
   }
 }

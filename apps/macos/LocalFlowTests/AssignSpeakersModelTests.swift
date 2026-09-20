@@ -207,3 +207,408 @@ final class AssignSpeakersModelTests: XCTestCase {
   }
 }
 
+// MARK: - Feature 010: the identity block (T028, T054, T066, T086)
+
+@MainActor
+final class AssignSpeakersIdentityModelTests: XCTestCase {
+  private let meetingID = UUID()
+  private let you = UUID()
+  private let first = UUID()
+  private let second = UUID()
+  private let tomas = UUID()
+  private let lukas = UUID()
+  private let me = UUID()
+
+  private func known(includeLocal: Bool = false) -> [KnownSpeakerRow] {
+    var rows = [
+      KnownSpeakerRow(
+        id: tomas, name: "Tomáš Novák", activeSampleCount: 3, recognitionEnabled: true,
+        state: .active, isLocalUser: false, revision: 0, createdAt: 1),
+      KnownSpeakerRow(
+        id: lukas, name: "Lukáš Kocman", activeSampleCount: 0, recognitionEnabled: true,
+        state: .needsReenrollment, isLocalUser: false, revision: 0, createdAt: 2),
+    ]
+    if includeLocal {
+      rows.append(
+        KnownSpeakerRow(
+          id: me, name: "Me", activeSampleCount: 2, recognitionEnabled: true, state: .active,
+          isLocalUser: true, revision: 0, createdAt: 3))
+    }
+    return rows
+  }
+
+  private func summaries(
+    firstIdentity: SpeakerIdentity? = nil, secondIdentity: SpeakerIdentity? = nil,
+    firstName: String? = nil
+  ) -> [SpeakerSummary] {
+    var one = SpeakerSummary(
+      id: first, source: .remote, labelOrdinal: 1, colorIndex: 0, displayName: firstName,
+      inRoom: false, speechMs: 5_000)
+    one.identity = firstIdentity
+    var two = SpeakerSummary(
+      id: second, source: .remote, labelOrdinal: 2, colorIndex: 2, displayName: nil,
+      inRoom: false, speechMs: 3_000)
+    two.identity = secondIdentity
+    return [
+      one,
+      SpeakerSummary(
+        id: you, source: .local, labelOrdinal: 1, colorIndex: 1, displayName: nil, inRoom: false,
+        speechMs: 4_000), two,
+    ]
+  }
+
+  private var possible: SpeakerIdentity {
+    SpeakerIdentity(
+      state: .possible, origin: .automaticMatch, knownSpeakerID: tomas,
+      knownSpeakerName: "Tomáš Novák",
+      secondCandidate: IdentityCandidateRef(id: lukas, name: "Lukáš Kocman"),
+      sampleOfferAvailable: true)
+  }
+
+  private func model(
+    _ summaries: [SpeakerSummary], identityStore: FakeIdentityStore, enabled: Bool = true,
+    enroll: (@MainActor (EnrollmentRequest) async -> EnrollmentOutcome)? = nil
+  ) async -> (AssignSpeakersModel, FakeSpeakerStore) {
+    let store = FakeSpeakerStore(summaries: summaries)
+    let model = AssignSpeakersModel(
+      meetingID: meetingID, store: store, identityStore: identityStore,
+      identificationEnabled: enabled, enroll: enroll, clock: FakeMeetingClock())
+    await model.load()
+    return (model, store)
+  }
+
+  // MARK: T028
+
+  func testANewTypedNameOffersRememberWithTheExactSentence() async throws {
+    let (model, _) = await model(summaries(), identityStore: FakeIdentityStore(known: known()))
+    XCTAssertFalse(try XCTUnwrap(model.identityBlock(for: first)).showsRemember, "No name yet")
+    model.setDraft("Ana", for: first)
+    let block = try XCTUnwrap(model.identityBlock(for: first))
+    XCTAssertTrue(block.showsRemember)
+    XCTAssertEqual(block.matchState, "Unknown")
+    XCTAssertFalse(block.showsSuggestionActions)
+    XCTAssertFalse(block.showsAlsoRemember)
+    XCTAssertEqual(AssignSpeakersModel.rememberQuestion, "Remember this voice for future meetings?")
+    XCTAssertEqual(
+      AssignSpeakersModel.rememberSentence,
+      "LocalFlow will store data that can recognize this voice in future meetings on this Mac. It stays on this Mac and you can delete it in Settings › Known speakers."
+    )
+  }
+
+  func testRememberAndNotNowAreDraftsCommittedOnlyOnSaveInSectionOrder() async throws {
+    let identities = FakeIdentityStore(known: known())
+    var requests: [EnrollmentRequest] = []
+    let (model, store) = await model(
+      summaries(), identityStore: identities,
+      enroll: { request in
+        requests.append(request)
+        return request.rootID == self.first ? .stored(2) : .noUsableSample
+      })
+    model.setDraft("Ana", for: first)
+    model.setIdentityAction(.remember, for: first)
+    model.setDraft("Ben", for: second)
+    model.setIdentityAction(.remember, for: second)
+    let calls = await identities.calls
+    XCTAssertTrue(calls.allSatisfy { $0.name == "knownSpeakers" }, "Drafts write nothing")
+    XCTAssertTrue(requests.isEmpty)
+    // Choosing neither on a third section equals Not now.
+    let closes = await model.save()
+    XCTAssertFalse(closes, "Enrollment results stay on screen until Done")
+    let saved = await store.savedNames
+    XCTAssertEqual(saved.count, 1)
+    XCTAssertEqual(requests.map(\.rootID), [first, second], "One request per section, in order")
+    XCTAssertEqual(requests.map(\.target), [.newProfile(name: "Ana"), .newProfile(name: "Ben")])
+    XCTAssertEqual(requests.map(\.consent), [.remember, .remember])
+    XCTAssertEqual(requests.map(\.origin), [.newProfileCreated, .newProfileCreated])
+    XCTAssertEqual(model.sections[1].enrollmentResult, "2 samples stored")
+    XCTAssertEqual(model.sections[2].enrollmentResult, AssignSpeakersModel.noSampleText)
+    XCTAssertTrue(model.enrollmentCompleted)
+  }
+
+  func testNotNowAndNoChoiceEnrollNothing() async throws {
+    let identities = FakeIdentityStore(known: known())
+    let (model, _) = await model(
+      summaries(), identityStore: identities,
+      enroll: { _ in
+        XCTFail("Nothing to enroll")
+        return .disabled
+      })
+    model.setDraft("Ana", for: first)
+    model.setIdentityAction(.notNow, for: first)
+    model.setDraft("Ben", for: second)
+    let closes = await model.save()
+    XCTAssertTrue(closes)
+    let calls = await identities.calls
+    XCTAssertEqual(calls.filter { $0.name != "knownSpeakers" }, [])
+  }
+
+  func testTheEnrollmentResultLineShowsStoringThenTheOutcome() async throws {
+    let identities = FakeIdentityStore(known: known())
+    var observed: [String?] = []
+    var capture: AssignSpeakersModel?
+    let (model, _) = await model(
+      summaries(), identityStore: identities,
+      enroll: { _ in
+        observed.append(capture?.sections[1].enrollmentResult)
+        return .stored(1)
+      })
+    capture = model
+    model.setDraft("Ana", for: first)
+    model.setIdentityAction(.remember, for: first)
+    _ = await model.save()
+    XCTAssertEqual(observed, [AssignSpeakersModel.storingText])
+    XCTAssertEqual(model.sections[1].enrollmentResult, "1 sample stored")
+  }
+
+  func testEnrollingTakesThreeInteractions() async throws {
+    // SC-011: name, Remember, Save.
+    var requests = 0
+    let (model, _) = await model(
+      summaries(), identityStore: FakeIdentityStore(known: known()),
+      enroll: { _ in
+        requests += 1
+        return .stored(1)
+      })
+    model.setDraft("Ana", for: first)  // 1
+    model.setIdentityAction(.remember, for: first)  // 2
+    _ = await model.save()  // 3
+    XCTAssertEqual(requests, 1)
+  }
+
+  func testWithTheSettingOffTheSheetIsThe007Sheet() async throws {
+    let (model, _) = await model(
+      summaries(firstIdentity: possible), identityStore: FakeIdentityStore(known: known()),
+      enabled: false)
+    XCTAssertFalse(model.showsIdentity)
+    model.setDraft("Ana", for: first)
+    XCTAssertNil(model.identityBlock(for: first))
+    XCTAssertNil(model.identityBlock(for: you))
+    XCTAssertTrue(model.knownSpeakers.isEmpty)
+    XCTAssertTrue(model.canSave)
+    let plain = AssignSpeakersModel(
+      meetingID: meetingID, store: FakeSpeakerStore(summaries: summaries()))
+    await plain.load()
+    XCTAssertFalse(plain.showsIdentity)
+    XCTAssertNil(plain.identityBlock(for: first))
+  }
+
+  func testCancelDiscardsEveryIdentityDraft() async throws {
+    let identities = FakeIdentityStore(known: known())
+    let (model, _) = await model(
+      summaries(firstIdentity: possible), identityStore: identities,
+      enroll: { _ in .stored(1) })
+    model.setIdentityAction(.confirm, for: first)
+    model.setAlsoRemember(true, for: first)
+    model.setDraft("Ben", for: second)
+    model.setIdentityAction(.remember, for: second)
+    // Closing drops the model: a fresh one starts from the stored state.
+    let (fresh, _) = await self.model(summaries(firstIdentity: possible), identityStore: identities)
+    XCTAssertEqual(fresh.sections.map(\.identityAction), [.none, .none, .none])
+    XCTAssertEqual(fresh.sections.map(\.alsoRemember), [false, false, false])
+    let calls = await identities.calls
+    XCTAssertEqual(calls.filter { $0.name != "knownSpeakers" }, [])
+  }
+
+  // MARK: T054
+
+  func testAPossibleSectionShowsConfirmChooseAnotherAndKeepUnknown() async throws {
+    let (model, _) = await model(
+      summaries(firstIdentity: possible), identityStore: FakeIdentityStore(known: known()))
+    let block = try XCTUnwrap(model.identityBlock(for: first))
+    XCTAssertEqual(block.matchState, "Possible match: Tomáš Novák?")
+    XCTAssertTrue(block.showsSuggestionActions)
+    XCTAssertFalse(block.showsRemember)
+    XCTAssertFalse(block.showsAlsoRemember, "Off and hidden until an action needs it")
+    XCTAssertEqual(block.picker.map(\.id), [lukas, tomas], "The runner-up is listed first")
+  }
+
+  func testConfirmDraftsUserConfirmationAndOnlyTheToggleRequestsSamples() async throws {
+    let identities = FakeIdentityStore(known: known())
+    var requests: [EnrollmentRequest] = []
+    let (model, _) = await model(
+      summaries(firstIdentity: possible), identityStore: identities,
+      enroll: { request in
+        requests.append(request)
+        return .stored(1)
+      })
+    model.setIdentityAction(.confirm, for: first)
+    XCTAssertEqual(model.sections[1].alsoRemember, false, "FR-008: off by default")
+    XCTAssertTrue(try XCTUnwrap(model.identityBlock(for: first)).showsAlsoRemember)
+    let closes = await model.save()
+    XCTAssertTrue(closes)
+    let calls = await identities.calls
+    XCTAssertEqual(calls.last?.name, "link:user_confirmation")
+    XCTAssertEqual(calls.last?.ids, [meetingID, first, tomas])
+    XCTAssertTrue(requests.isEmpty, "No sample without the toggle")
+    // With the toggle on, one `also_remember` request follows the link.
+    let (again, _) = await self.model(
+      summaries(firstIdentity: possible), identityStore: identities,
+      enroll: { request in
+        requests.append(request)
+        return .stored(1)
+      })
+    again.setIdentityAction(.confirm, for: first)
+    again.setAlsoRemember(true, for: first)
+    _ = await again.save()
+    XCTAssertEqual(requests.count, 1)
+    XCTAssertEqual(requests.first?.consent, .alsoRemember)
+    XCTAssertEqual(requests.first?.target, .existing(knownSpeakerID: tomas))
+    XCTAssertEqual(requests.first?.origin, .userConfirmation)
+  }
+
+  func testAlsoRememberIsHiddenWithoutAnEligibleRegion() async throws {
+    var identity = possible
+    identity.sampleOfferAvailable = false
+    let (model, _) = await model(
+      summaries(firstIdentity: identity), identityStore: FakeIdentityStore(known: known()))
+    model.setIdentityAction(.confirm, for: first)
+    XCTAssertFalse(try XCTUnwrap(model.identityBlock(for: first)).showsAlsoRemember)
+  }
+
+  func testKeepUnknownDraftsTheRejection() async throws {
+    let identities = FakeIdentityStore(known: known())
+    let (model, _) = await model(summaries(firstIdentity: possible), identityStore: identities)
+    model.setIdentityAction(.keepUnknown, for: first)
+    _ = await model.save()
+    let calls = await identities.calls
+    XCTAssertEqual(calls.last?.name, "reject:true")
+    XCTAssertEqual(calls.last?.ids, [meetingID, first, tomas])
+  }
+
+  func testChooseAnotherIsACorrectionWithTheRunnerUpFirst() async throws {
+    let identities = FakeIdentityStore(known: known())
+    var requests: [EnrollmentRequest] = []
+    let (model, _) = await model(
+      summaries(firstIdentity: possible), identityStore: identities,
+      enroll: { request in
+        requests.append(request)
+        return .stored(1)
+      })
+    model.pickKnownSpeaker(lukas, for: first)
+    XCTAssertEqual(model.sections[1].draft, "Lukáš Kocman", "Picking fills the name field")
+    XCTAssertEqual(model.sections[1].identityAction, .chooseAnother(lukas))
+    model.setAlsoRemember(true, for: first)
+    _ = await model.save()
+    let calls = await identities.calls
+    XCTAssertEqual(calls.last?.name, "link:manual_correction")
+    XCTAssertEqual(calls.last?.ids, [meetingID, first, lukas])
+    XCTAssertEqual(requests.map(\.origin), [.manualCorrection])
+    XCTAssertEqual(requests.map(\.consent), [.alsoRemember])
+  }
+
+  func testAMergedConflictShowsChooseAnIdentityAndBlocksSaveUntilResolved() async throws {
+    var conflict = SpeakerIdentity(state: .unknown, origin: .keptUnknown)
+    conflict.needsChoice = true
+    let identities = FakeIdentityStore(known: known())
+    let (model, _) = await model(summaries(firstIdentity: conflict), identityStore: identities)
+    let block = try XCTUnwrap(model.identityBlock(for: first))
+    XCTAssertEqual(block.matchState, "Choose an identity")
+    XCTAssertTrue(block.needsChoice)
+    XCTAssertFalse(block.showsRemember)
+    XCTAssertFalse(model.canSave)
+    model.setIdentityAction(.resolveMerged(.knownSpeaker(tomas)), for: first)
+    XCTAssertTrue(model.canSave)
+    _ = await model.save()
+    let calls = await identities.calls
+    XCTAssertEqual(calls.last?.name, "resolveMerged:known")
+    XCTAssertEqual(calls.last?.ids, [meetingID, first, tomas])
+  }
+
+  // MARK: T066
+
+  func testThePickerListsKnownSpeakersByNameWithSampleCountsAndNoLocalProfile() async throws {
+    let (model, _) = await model(
+      summaries(), identityStore: FakeIdentityStore(known: known(includeLocal: true)))
+    let block = try XCTUnwrap(model.identityBlock(for: first))
+    XCTAssertEqual(block.picker.map(\.name), ["Lukáš Kocman", "Tomáš Novák"])
+    XCTAssertEqual(block.picker.map(\.activeSampleCount), [0, 3])
+    XCTAssertEqual(block.picker.map(\.state), [.needsReenrollment, .active])
+    XCTAssertFalse(block.picker.contains { $0.isLocalUser })
+  }
+
+  func testPickingLinksWithManualProfileSelectionAndShowsNoRememberRow() async throws {
+    let identities = FakeIdentityStore(known: known())
+    let (model, _) = await model(
+      summaries(), identityStore: identities, enroll: { _ in .stored(1) })
+    model.pickKnownSpeaker(lukas, for: second)
+    XCTAssertEqual(model.sections[2].draft, "Lukáš Kocman")
+    XCTAssertEqual(model.sections[2].identityAction, .pick(lukas))
+    XCTAssertFalse(try XCTUnwrap(model.identityBlock(for: second)).showsRemember)
+    let closes = await model.save()
+    XCTAssertTrue(closes)
+    let calls = await identities.calls
+    XCTAssertEqual(calls.last?.name, "link:manual_profile_selection")
+    XCTAssertEqual(calls.last?.ids, [meetingID, second, lukas])
+    let known = await identities.known
+    XCTAssertEqual(known.count, 2, "No profile created")
+    // Retyping over the picked name cancels the pick and offers Remember again.
+    model.setDraft("Lukáš K.", for: second)
+    XCTAssertEqual(model.sections[2].identityAction, .none)
+    XCTAssertTrue(try XCTUnwrap(model.identityBlock(for: second)).showsRemember)
+  }
+
+  func testTypingAnExistingNameAndChoosingRememberAsksSamePersonOrSomeoneNew() async throws {
+    let identities = FakeIdentityStore(known: known())
+    var requests: [EnrollmentRequest] = []
+    let (model, _) = await model(
+      summaries(), identityStore: identities,
+      enroll: { request in
+        requests.append(request)
+        return .stored(1)
+      })
+    model.setDraft("Tomáš Novák", for: second)
+    model.setIdentityAction(.remember, for: second)
+    let block = try XCTUnwrap(model.identityBlock(for: second))
+    XCTAssertEqual(block.duplicateOf?.id, tomas)
+    XCTAssertFalse(model.canSave, "The choice must be made")
+    // Case matters: a different case is a new name.
+    model.setDraft("tomáš novák", for: second)
+    XCTAssertNil(try XCTUnwrap(model.identityBlock(for: second)).duplicateOf)
+    model.setDraft("Tomáš Novák", for: second)
+    model.setIdentityAction(.rememberSamePerson(tomas), for: second)
+    XCTAssertTrue(model.canSave)
+    _ = await model.save()
+    let calls = await identities.calls
+    XCTAssertEqual(calls.last?.name, "link:manual_profile_selection")
+    XCTAssertTrue(requests.isEmpty)
+    // Someone new creates a second profile.
+    let (again, _) = await self.model(
+      summaries(), identityStore: identities,
+      enroll: { request in
+        requests.append(request)
+        return .stored(1)
+      })
+    again.setDraft("Tomáš Novák", for: second)
+    again.setIdentityAction(.rememberNew, for: second)
+    XCTAssertTrue(again.canSave)
+    _ = await again.save()
+    XCTAssertEqual(requests.map(\.target), [.newProfile(name: "Tomáš Novák")])
+  }
+
+  // MARK: T086
+
+  func testTheLocalSectionOffersRememberMyVoiceUntilALocalProfileExists() async throws {
+    let (offer, _) = await model(summaries(), identityStore: FakeIdentityStore(known: known()))
+    XCTAssertEqual(try XCTUnwrap(offer.identityBlock(for: you)).localState, .offer)
+    XCTAssertTrue(try XCTUnwrap(offer.identityBlock(for: you)).picker.isEmpty)
+    var requests: [EnrollmentRequest] = []
+    let (model, _) = await model(
+      summaries(), identityStore: FakeIdentityStore(known: known()),
+      enroll: { request in
+        requests.append(request)
+        return .stored(1)
+      })
+    model.setIdentityAction(.rememberLocal, for: you)
+    _ = await model.save()
+    XCTAssertEqual(requests.count, 1)
+    XCTAssertEqual(requests.first?.isLocalUser, true)
+    XCTAssertEqual(requests.first?.track, .microphone)
+    XCTAssertEqual(requests.first?.consent, .localEnroll)
+    XCTAssertEqual(requests.first?.rootID, you)
+    let (remembered, _) = await self.model(
+      summaries(), identityStore: FakeIdentityStore(known: known(includeLocal: true)))
+    XCTAssertEqual(try XCTUnwrap(remembered.identityBlock(for: you)).localState, .remembered)
+    XCTAssertFalse(
+      try XCTUnwrap(remembered.identityBlock(for: first)).picker.contains { $0.id == me })
+  }
+}

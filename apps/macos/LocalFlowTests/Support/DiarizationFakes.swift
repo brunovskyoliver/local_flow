@@ -257,6 +257,7 @@ actor FakeSpeakerStore: SpeakerStoring {
   func appendWindow(runID: UUID, speakers: [SpeakerDraft], turns: [TurnDraft], audioMs: Int64)
     throws
   { throw Unsupported() }
+  func fold(runID: UUID, speakers: [UUID: UUID?]) throws { throw Unsupported() }
   func complete(runID: UUID, assignments: [AssignmentDraft], now: Int64) throws -> DiarizationRun {
     throw Unsupported()
   }
@@ -291,6 +292,9 @@ actor FailingSpeakerStore: SpeakerStoring {
   {
     if let appendWindowError { throw appendWindowError }
     try await store.appendWindow(runID: runID, speakers: speakers, turns: turns, audioMs: audioMs)
+  }
+  func fold(runID: UUID, speakers: [UUID: UUID?]) async throws {
+    try await store.fold(runID: runID, speakers: speakers)
   }
   func complete(runID: UUID, assignments: [AssignmentDraft], now: Int64) async throws
     -> DiarizationRun

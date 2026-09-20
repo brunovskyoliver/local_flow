@@ -22,3 +22,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0018: Independent capture progress and overflow timeline preservation](0018-capture-progress-and-timeline.md)
 
 - [0019: Turbo meeting transcription](0019-turbo-meeting-transcription.md)
+
+- [0020: Persistent speaker identification on the provisioned diarization embeddings](0020-persistent-speaker-identification.md)

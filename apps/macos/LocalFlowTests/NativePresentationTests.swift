@@ -234,6 +234,100 @@ final class NativePresentationTests: XCTestCase {
     }
   }
 
+  /// Feature 010 (T076): the sheet with a Recognized, a Possible, an Unknown and a
+  /// merged-conflict section, and Settings with three known speakers (one needing
+  /// re-enrollment, one with a deleted-source sample), at the three 007 sizes.
+  @MainActor func testRenderIdentityBlockAndKnownSpeakers() async throws {
+    guard let path = ProcessInfo.processInfo.environment["LOCALFLOW_UI_CAPTURE_DIR"] else {
+      throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_UI_CAPTURE_DIR for native render artifacts.")
+    }
+    let output = URL(fileURLWithPath: path, isDirectory: true)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    let tomas = UUID()
+    let lukas = UUID()
+    let known = [
+      KnownSpeakerRow(
+        id: tomas, name: "Tomáš Novák", activeSampleCount: 4, recognitionEnabled: true,
+        state: .active, isLocalUser: false, revision: 0, createdAt: 1),
+      KnownSpeakerRow(
+        id: lukas, name: "Lukáš Kocman", activeSampleCount: 0, recognitionEnabled: true,
+        state: .needsReenrollment, isLocalUser: false, revision: 0, createdAt: 2),
+      KnownSpeakerRow(
+        id: UUID(), name: "Ana Horváth", activeSampleCount: 2, recognitionEnabled: false,
+        state: .active, isLocalUser: false, revision: 0, createdAt: 3),
+    ]
+    let identities = FakeIdentityStore(known: known)
+    await identities.setSamples(
+      [
+        VoiceSampleRow(
+          id: UUID(), sourceTitle: "Product design review", sourceDate: 1_757_600_000_000,
+          provenanceUnavailable: false, speechMs: 12_000, qualityLabel: .good,
+          createdAt: 1_757_600_000_000),
+        VoiceSampleRow(
+          id: UUID(), sourceTitle: nil, sourceDate: 1_757_000_000_000, provenanceUnavailable: true,
+          speechMs: 5_000, qualityLabel: .fair, createdAt: 1_757_000_000_000),
+      ], for: known[2].id)
+    func summary(
+      _ ordinal: Int, color: Int, name: String?, identity: SpeakerIdentity?,
+      includes: [MergedSpeaker] = []
+    ) -> SpeakerSummary {
+      var row = SpeakerSummary(
+        id: UUID(), source: .remote, labelOrdinal: ordinal, colorIndex: color, displayName: name,
+        inRoom: false, speechMs: 5_000, quotes: ["Let's walk through the numbers first."],
+        includes: includes)
+      row.identity = identity
+      return row
+    }
+    var conflict = SpeakerIdentity(state: .unknown, origin: .keptUnknown)
+    conflict.needsChoice = true
+    let summaries = [
+      SpeakerSummary(
+        id: UUID(), source: .local, labelOrdinal: 1, colorIndex: 1, displayName: nil, inRoom: false,
+        speechMs: 4_000),
+      summary(
+        1, color: 0, name: "Tomáš Novák",
+        identity: SpeakerIdentity(
+          state: .recognized, origin: .automaticMatch, knownSpeakerID: tomas,
+          knownSpeakerName: "Tomáš Novák", sampleOfferAvailable: true)),
+      summary(
+        2, color: 2, name: nil,
+        identity: SpeakerIdentity(
+          state: .possible, origin: .automaticMatch, knownSpeakerID: lukas,
+          knownSpeakerName: "Lukáš Kocman", sampleOfferAvailable: true)),
+      summary(3, color: 3, name: nil, identity: SpeakerIdentity.unknown),
+      summary(
+        4, color: 4, name: nil, identity: conflict,
+        includes: [MergedSpeaker(id: UUID(), source: .remote, labelOrdinal: 5, inRoom: false)]),
+    ]
+    let sheet = AssignSpeakersModel(
+      meetingID: UUID(), store: FakeSpeakerStore(summaries: summaries), identityStore: identities,
+      identificationEnabled: true, enroll: { _ in .stored(1) })
+    await sheet.load()
+    let suite = "LocalFlow-identity-render-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    let settings = SettingsViewModel(observe: { SettingsViewModel.Snapshot() }, perform: { _ in })
+    await settings.refresh()
+    let knownModel = KnownSpeakersModel(store: identities)
+    await knownModel.load()
+    await knownModel.toggleSamples(known[2].id)
+    for (name, appearance, scheme, width) in [
+      ("wide-light", NSAppearance.Name.aqua, ColorScheme.light, CGFloat(1440)),
+      ("compact-light", .aqua, .light, CGFloat(680)),
+      ("wide-dark", .darkAqua, .dark, CGFloat(1440)),
+    ] {
+      try await render(
+        AssignSpeakersView(model: sheet, saved: {}),
+        to: output.appendingPathComponent("identity-sheet-\(name).png"), appearance: appearance,
+        scheme: scheme, height: 900, width: width)
+      try await render(
+        SettingsView(model: settings, preferences: preferences, knownSpeakers: knownModel),
+        to: output.appendingPathComponent("known-speakers-\(name).png"), appearance: appearance,
+        scheme: scheme, height: 1_400, width: width)
+    }
+  }
+
   @MainActor
   private func render<V: View>(
     _ view: V, to url: URL, appearance: NSAppearance.Name, scheme: ColorScheme,

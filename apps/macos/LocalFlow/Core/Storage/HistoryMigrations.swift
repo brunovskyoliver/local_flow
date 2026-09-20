@@ -493,6 +493,145 @@ enum HistoryMigrations {
             SELECT id, 0, updated_at, 0 FROM meetings;
           """)
     }
+    // Feature 010: identity tables only; no 004–007 table is altered. Vectors are 1 KB
+    // BLOBs (dimension × 4 bytes, little-endian Float32). Every meeting-scoped table
+    // cascades from `meetings`; every per-cluster table from `meeting_speakers`.
+    migrator.registerMigration("identities-v8") { db in
+      let hex64 = "length(model_manifest_hash)=64 AND model_manifest_hash NOT GLOB '*[^0-9a-f]*'"
+      let name = """
+        length(display_name) BETWEEN 1 AND 80 AND display_name = trim(display_name)
+        AND display_name NOT GLOB ('*[' || char(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,127) || ']*')
+        """
+      let categories = IdentificationFailureCategory.allCases.map { "'\($0.rawValue)'" }
+        .joined(separator: ",")
+      let triggers = IdentificationTrigger.allCases.map { "'\($0.rawValue)'" }
+        .joined(separator: ",")
+      let states = IdentityState.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      let origins = IdentityOrigin.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      let consents = SampleConsent.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      let tiers = CandidateTier.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      try db.execute(
+        sql: """
+          CREATE TABLE known_speakers (
+            id TEXT PRIMARY KEY NOT NULL,
+            display_name TEXT NOT NULL CHECK(\(name)),
+            is_local_user INTEGER NOT NULL DEFAULT 0 CHECK(is_local_user IN (0,1)),
+            recognition_enabled INTEGER NOT NULL DEFAULT 1 CHECK(recognition_enabled IN (0,1)),
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0)
+          );
+          CREATE UNIQUE INDEX known_speakers_local_user ON known_speakers(is_local_user)
+            WHERE is_local_user = 1;
+          CREATE TABLE voice_samples (
+            id TEXT PRIMARY KEY NOT NULL,
+            known_speaker_id TEXT NOT NULL REFERENCES known_speakers(id) ON DELETE CASCADE,
+            engine TEXT NOT NULL, model_id TEXT NOT NULL, model_revision TEXT NOT NULL,
+            model_manifest_hash TEXT NOT NULL CHECK(\(hex64)),
+            dimension INTEGER NOT NULL CHECK(dimension BETWEEN 1 AND 4096),
+            pipeline_version TEXT NOT NULL CHECK(length(CAST(pipeline_version AS BLOB)) BETWEEN 1 AND 256),
+            vector BLOB NOT NULL CHECK(length(vector) = dimension * 4),
+            quality_label TEXT NOT NULL CHECK(quality_label IN ('good','fair')),
+            quality_score REAL NOT NULL CHECK(quality_score BETWEEN 0 AND 1),
+            engine_quality REAL,
+            speech_ms INTEGER NOT NULL CHECK(speech_ms>0),
+            track TEXT NOT NULL CHECK(track IN ('microphone','system')),
+            start_ms INTEGER NOT NULL CHECK(start_ms>=0),
+            end_ms INTEGER NOT NULL CHECK(end_ms>start_ms),
+            source_meeting_id TEXT REFERENCES meetings(id) ON DELETE SET NULL,
+            source_speaker_id TEXT REFERENCES meeting_speakers(id) ON DELETE SET NULL,
+            consent TEXT NOT NULL CHECK(consent IN (\(consents))),
+            active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+            created_at INTEGER NOT NULL,
+            retired_at INTEGER,
+            CHECK((retired_at IS NOT NULL) = (active = 0))
+          );
+          CREATE INDEX voice_samples_speaker_active ON voice_samples(known_speaker_id, active);
+          CREATE INDEX voice_samples_source_meeting ON voice_samples(source_meeting_id);
+          CREATE INDEX voice_samples_source_speaker ON voice_samples(source_speaker_id);
+          CREATE TABLE identification_runs (
+            id TEXT PRIMARY KEY NOT NULL,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            diarization_run_id TEXT NOT NULL REFERENCES diarization_runs(id) ON DELETE CASCADE,
+            state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','interrupted','superseded')),
+            "trigger" TEXT NOT NULL CHECK("trigger" IN (\(triggers))),
+            engine TEXT NOT NULL, model_id TEXT NOT NULL, model_revision TEXT NOT NULL,
+            model_manifest_hash TEXT NOT NULL CHECK(\(hex64)),
+            dimension INTEGER NOT NULL CHECK(dimension BETWEEN 1 AND 4096),
+            pipeline_version TEXT NOT NULL CHECK(length(CAST(pipeline_version AS BLOB)) BETWEEN 1 AND 256),
+            threshold_policy TEXT NOT NULL CHECK(length(CAST(threshold_policy AS BLOB)) BETWEEN 1 AND 128),
+            created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
+            failure_category TEXT CHECK(failure_category IS NULL OR failure_category IN (\(categories))),
+            failure_detail TEXT CHECK(failure_detail IS NULL OR length(CAST(failure_detail AS BLOB))<=512),
+            cluster_count INTEGER NOT NULL DEFAULT 0 CHECK(cluster_count>=0),
+            candidate_count INTEGER NOT NULL DEFAULT 0 CHECK(candidate_count>=0),
+            region_count INTEGER NOT NULL DEFAULT 0 CHECK(region_count>=0),
+            rejected_region_count INTEGER NOT NULL DEFAULT 0 CHECK(rejected_region_count>=0),
+            comparison_count INTEGER NOT NULL DEFAULT 0 CHECK(comparison_count>=0),
+            recognized_count INTEGER NOT NULL DEFAULT 0 CHECK(recognized_count>=0),
+            suggested_count INTEGER NOT NULL DEFAULT 0 CHECK(suggested_count>=0),
+            unknown_count INTEGER NOT NULL DEFAULT 0 CHECK(unknown_count>=0),
+            preserved_manual_count INTEGER NOT NULL DEFAULT 0 CHECK(preserved_manual_count>=0),
+            preemption_count INTEGER NOT NULL DEFAULT 0 CHECK(preemption_count>=0),
+            CHECK((failure_category IS NOT NULL) = (state IN ('failed','interrupted')))
+          );
+          CREATE INDEX identification_runs_meeting ON identification_runs(meeting_id, created_at);
+          CREATE UNIQUE INDEX identification_runs_active ON identification_runs(meeting_id)
+            WHERE state IN ('pending','running');
+          CREATE TABLE meeting_identification (
+            meeting_id TEXT PRIMARY KEY NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            accepted_run_id TEXT REFERENCES identification_runs(id) ON DELETE SET NULL,
+            current_run_id TEXT REFERENCES identification_runs(id) ON DELETE SET NULL,
+            updated_at INTEGER NOT NULL
+          );
+          CREATE TABLE identity_assignments (
+            id TEXT PRIMARY KEY NOT NULL,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            meeting_speaker_id TEXT NOT NULL REFERENCES meeting_speakers(id) ON DELETE CASCADE,
+            scope TEXT NOT NULL CHECK(scope IN ('self','merged')),
+            known_speaker_id TEXT REFERENCES known_speakers(id) ON DELETE CASCADE,
+            state TEXT NOT NULL CHECK(state IN (\(states))),
+            origin TEXT NOT NULL CHECK(origin IN (\(origins))),
+            run_id TEXT REFERENCES identification_runs(id) ON DELETE SET NULL,
+            score REAL CHECK(score IS NULL OR score BETWEEN -1 AND 1),
+            engine TEXT, model_id TEXT, model_revision TEXT, threshold_policy TEXT,
+            second_known_speaker_id TEXT REFERENCES known_speakers(id) ON DELETE SET NULL,
+            confirmed_at INTEGER, corrected_at INTEGER,
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            UNIQUE(meeting_speaker_id, scope),
+            CHECK((state IN ('recognized','possible','confirmed')) = (known_speaker_id IS NOT NULL)),
+            CHECK(state NOT IN ('recognized','possible') OR origin = 'automatic_match'),
+            CHECK(state <> 'confirmed' OR origin IN ('user_confirmation','manual_profile_selection','new_profile_created','manual_correction')),
+            CHECK(state <> 'rejected_unknown' OR origin = 'kept_unknown'),
+            CHECK((confirmed_at IS NOT NULL) = (state = 'confirmed')),
+            CHECK(state NOT IN ('recognized','possible') OR (score IS NOT NULL AND run_id IS NOT NULL)),
+            CHECK(score IS NULL OR (engine IS NOT NULL AND model_id IS NOT NULL AND model_revision IS NOT NULL AND threshold_policy IS NOT NULL))
+          );
+          CREATE INDEX identity_assignments_known ON identity_assignments(known_speaker_id);
+          CREATE INDEX identity_assignments_meeting ON identity_assignments(meeting_id);
+          CREATE TABLE match_candidates (
+            run_id TEXT NOT NULL REFERENCES identification_runs(id) ON DELETE CASCADE,
+            meeting_speaker_id TEXT NOT NULL REFERENCES meeting_speakers(id) ON DELETE CASCADE,
+            known_speaker_id TEXT NOT NULL REFERENCES known_speakers(id) ON DELETE CASCADE,
+            score REAL NOT NULL CHECK(score BETWEEN -1 AND 1),
+            tier TEXT NOT NULL CHECK(tier IN (\(tiers))),
+            reasons TEXT NOT NULL DEFAULT '' CHECK(length(CAST(reasons AS BLOB))<=128),
+            sample_count INTEGER NOT NULL DEFAULT 0 CHECK(sample_count>=0),
+            support_count INTEGER NOT NULL DEFAULT 0 CHECK(support_count>=0),
+            PRIMARY KEY(run_id, meeting_speaker_id, known_speaker_id)
+          ) WITHOUT ROWID;
+          CREATE INDEX match_candidates_known ON match_candidates(known_speaker_id);
+          CREATE INDEX match_candidates_speaker ON match_candidates(meeting_speaker_id);
+          CREATE TABLE rejected_candidates (
+            meeting_speaker_id TEXT NOT NULL REFERENCES meeting_speakers(id) ON DELETE CASCADE,
+            known_speaker_id TEXT NOT NULL REFERENCES known_speakers(id) ON DELETE CASCADE,
+            rejected_at INTEGER NOT NULL,
+            PRIMARY KEY(meeting_speaker_id, known_speaker_id)
+          ) WITHOUT ROWID;
+          CREATE INDEX rejected_candidates_known ON rejected_candidates(known_speaker_id);
+          INSERT INTO meeting_identification(meeting_id, updated_at)
+            SELECT id, updated_at FROM meetings;
+          """)
+    }
     return migrator
   }
 }

@@ -4,6 +4,11 @@ import Foundation
 
 enum ModelWorkload: String, Sendable, Equatable {
   case speechRecognition, meetingTranscription, diarization
+  /// Feature 010: the voice embedder. Preempted by speech like diarization; never preempts.
+  case speakerIdentification
+
+  /// Live and final speech recognition; these preempt the two speaker workloads.
+  var isSpeech: Bool { self == .speechRecognition || self == .meetingTranscription }
 }
 
 struct DiarizationWindowRequest: Sendable, Equatable {
@@ -59,6 +64,9 @@ protocol SpeakerStoring: Sendable {
   func start(runID: UUID, now: Int64) async throws -> DiarizationRun
   func appendWindow(runID: UUID, speakers: [SpeakerDraft], turns: [TurnDraft], audioMs: Int64)
     async throws
+  /// Folds minor clusters before adoption: each key's turns move to the target
+  /// speaker (nil detaches them) and the minor speaker row goes.
+  func fold(runID: UUID, speakers: [UUID: UUID?]) async throws
   func complete(runID: UUID, assignments: [AssignmentDraft], now: Int64) async throws
     -> DiarizationRun
   func fail(runID: UUID, category: DiarizationFailureCategory, detail: String?, now: Int64)

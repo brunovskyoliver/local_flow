@@ -4,8 +4,10 @@ import OSLog
 
 /// One diarization run over a finalized meeting (contracts/diarization-pipeline.md "Run
 /// pipeline"). Each track is decoded on its own through the Feature 005 mixer into one
-/// reusable 10-minute window, diarized, reconciled and persisted window by window. The
-/// lease is finished before alignment. Transcript rows, notes and audio are only read.
+/// reusable 10-minute window, diarized, reconciled and persisted window by window. A
+/// decode-only pass first profiles both tracks' frame energies so `EchoGate` can drop
+/// the remote side's speaker echo from the microphone turns. The lease is finished
+/// before alignment. Transcript rows, notes and audio are only read.
 actor MeetingDiarizer {
   enum AdmissionError: Swift.Error, Equatable {
     case meetingActive, transcriptNotFinal, missingMeeting
@@ -107,6 +109,17 @@ actor MeetingDiarizer {
     var created = 0
     var uncertain = 0
     let startedNs: UInt64
+    /// Frame energies per stretch until the echo gate is calibrated; each stretch's
+    /// frames are released once its microphone pass has its echo ranges.
+    var echoProfile = EchoGate.Profile()
+    var echo: EchoGate.Calibration?
+    var echoGatedMs: Int64 = 0
+    /// Per run cluster key, for the minor-cluster fold: track, gated speech and the
+    /// reconciler's centroid once its track is done.
+    var tracks: [Int: MeetingTrackKind] = [:]
+    var speechMs: [Int: Int64] = [:]
+    var centroids: [Int: [Double]] = [:]
+    var minorClusters = 0
   }
 
   /// Runs the meeting's pending run to a terminal state. `progress` gets
@@ -168,6 +181,7 @@ actor MeetingDiarizer {
       let pages =
         (MeetingFinalizer.stretchCount(detail: detail) + MeetingFinalizer.workListPage - 1)
         / MeetingFinalizer.workListPage
+      try await profileEcho(detail: detail, pages: pages, base: base, context: &context)
       // System first, then microphone (research R5).
       for kind in [MeetingTrackKind.system, .microphone] {
         var reconciler = WindowClusterReconciler()
@@ -176,12 +190,20 @@ actor MeetingDiarizer {
           for item in MeetingFinalizer.workItems(detail: detail, page: page) {
             guard let track = item.tracks.first(where: { $0.kind == kind }) else { continue }
             let stretch = base[item.sequence] ?? (item.baseMs, nil)
+            var echo: [Range<Int64>] = []
+            if kind == .microphone, let calibration = context.echo,
+              let profile = context.echoProfile.stretches.removeValue(forKey: item.sequence)
+            {
+              echo = EchoGate.echoRanges(profile, calibration: calibration)
+            }
             try await diarizeStretch(
               track, baseMs: stretch.0, lengthMs: stretch.1, numSpeakers: numSpeakers,
-              reconciler: &reconciler, context: &context)
+              echo: echo, reconciler: &reconciler, context: &context)
           }
         }
+        context.centroids.merge(reconciler.centroids) { _, new in new }
       }
+      try await foldMinorClusters(context: &context)
       try await lifecycle.finish(lease)
     } catch {
       return await end(context.run.id, lease: lease, error: error)
@@ -221,6 +243,7 @@ actor MeetingDiarizer {
       (.diarizationAudioMs, Int(clamping: run.audioMs)), (.diarizationWindowCount, run.windowCount),
       (.diarizationSpeakerCount, run.inferredSpeakerCount),
       (.diarizationTurnCount, run.turnCount),
+      (.diarizationMinorClusterCount, context.minorClusters),
       (.diarizationOverlapTurnCount, run.overlapTurnCount),
       (.diarizationUnknownCount, run.unknownCount),
       (.diarizationAmbiguousCount, run.ambiguousCount),
@@ -228,65 +251,87 @@ actor MeetingDiarizer {
       (.diarizationReconciledNew, context.created),
       (.diarizationReconciledUncertain, context.uncertain),
       (.diarizationOverflowTurns, run.overflowTurns),
+      (.diarizationEchoGatedMs, Int(clamping: context.echoGatedMs)),
     ]
     for (metric, value) in counts {
       recorder.record(phase: .diarizing, metric: metric, itemCount: UInt32(clamping: max(0, value)))
     }
   }
 
+  // MARK: Echo profile
+
+  /// Decodes both tracks of every stretch into 100 ms frame energies and calibrates
+  /// the echo gate. Decode failures here are the same failures the windows would hit.
+  private func profileEcho(
+    detail: MeetingDetail, pages: Int, base: [Int: (Int64, Int64?)], context: inout Context
+  ) async throws {
+    let began = clock.monotonicNanoseconds
+    var profile = EchoGate.Profile()
+    pagesLoop: for page in 0..<pages {
+      for item in MeetingFinalizer.workItems(detail: detail, page: page) {
+        try Task.checkCancellation()
+        let baseMs = base[item.sequence]?.0 ?? item.baseMs
+        var stretch = EchoGate.Stretch(baseMs: baseMs, microphone: [], system: [])
+        for track in item.tracks {
+          var accumulator = EchoGate.FrameAccumulator()
+          try await decode(track) { emissions in
+            for emission in emissions { accumulator.append(emission.samples) }
+          }
+          let energies = accumulator.finish()
+          if track.kind == .microphone {
+            stretch.microphone = energies
+          } else {
+            stretch.system = energies
+          }
+        }
+        profile.stretches[item.sequence] = stretch
+        // Past the per-track capacity the gate stays off; the run itself is unaffected.
+        guard profile.frames <= EchoGate.frameCapacity else { break pagesLoop }
+      }
+    }
+    let frames = profile.frames
+    let gate = EchoGate.calibrate(profile)
+    context.echoProfile = gate == nil ? .init() : profile
+    context.echo = gate
+    if let gate = context.echo {
+      logger.notice(
+        "echo gate on lag=\(gate.lagFrames * Int(EchoGate.frameMs))ms gain=\(gate.gainDB, format: .fixed(precision: 1))dB corr=\(gate.correlation, format: .fixed(precision: 2))"
+      )
+    } else {
+      logger.notice("echo gate off frames=\(frames)")
+    }
+    recorder?.record(
+      phase: .diarizing, durationNanoseconds: clock.monotonicNanoseconds &- began,
+      metric: .diarizationEchoProfileDuration)
+  }
+
   // MARK: Windows
 
-  private func diarizeStretch(
-    _ track: FinalizationWorkItem.Track, baseMs: Int64, lengthMs: Int64?, numSpeakers: Int?,
-    reconciler: inout WindowClusterReconciler, context: inout Context
+  /// One track file through the shared decode path as 16 kHz mono emissions.
+  private func decode(
+    _ track: FinalizationWorkItem.Track,
+    sink: ([AnalysisStreamMixer.Emission]) async throws -> Void
   ) async throws {
     guard let url = storageRoot.resolve(relativePath: track.relativePath),
       FileManager.default.fileExists(atPath: url.path)
     else { return }
-    let reader: AVAudioFile
-    do { reader = try AVAudioFile(forReading: url) } catch {
-      throw Failure(.audioDecodeFailure, "open")
-    }
-    let format = reader.processingFormat
-    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: Self.decodeFrames) else {
-      throw Failure(.audioDecodeFailure, "buffer")
-    }
-    let mixer: AnalysisStreamMixer
     do {
-      mixer = try AnalysisStreamMixer(
-        decoding: [
-          track.kind: .init(sampleRate: format.sampleRate, channels: Int(format.channelCount))
-        ])
-    } catch { throw Failure(.audioDecodeFailure, "format") }
-    var stretch = StretchWindow(baseMs: baseMs, lengthMs: lengthMs, numSpeakers: numSpeakers)
-    do {
-      while true {
-        buffer.frameLength = 0
-        // ADTS files report their length; a read at the end throws.
-        if reader.framePosition < reader.length {
-          do {
-            try reader.read(into: buffer, frameCount: Self.decodeFrames)
-          } catch { throw Failure(.audioDecodeFailure, "read") }
-        }
-        guard buffer.frameLength > 0 else { break }
-        var attempts = 0
-        while try !mixer.append(buffer, kind: track.kind) {
-          attempts += 1
-          guard attempts <= 4 else { throw Failure(.audioDecodeFailure, "staging") }
-          try await feed(
-            try mixer.tick(), stretch: &stretch, track: track.kind,
-            reconciler: &reconciler, context: &context)
-        }
-        try await feed(
-          try mixer.tick(), stretch: &stretch, track: track.kind,
-          reconciler: &reconciler, context: &context)
-      }
-      mixer.markEnded(track.kind)
+      try await MeetingTrackDecoder.decode(url: url, kind: track.kind, sink: sink)
+    } catch let failure as MeetingTrackDecoder.Failure {
+      throw Failure(.audioDecodeFailure, failure.detail)
+    }
+  }
+
+  private func diarizeStretch(
+    _ track: FinalizationWorkItem.Track, baseMs: Int64, lengthMs: Int64?, numSpeakers: Int?,
+    echo: [Range<Int64>], reconciler: inout WindowClusterReconciler, context: inout Context
+  ) async throws {
+    var stretch = StretchWindow(
+      baseMs: baseMs, lengthMs: lengthMs, numSpeakers: numSpeakers, echo: echo)
+    try await decode(track) { emissions in
       try await feed(
-        try mixer.flush(), stretch: &stretch, track: track.kind,
-        reconciler: &reconciler, context: &context)
-    } catch is AnalysisStreamMixer.Failure {
-      throw Failure(.audioDecodeFailure, "convert")
+        emissions, stretch: &stretch, track: track.kind, reconciler: &reconciler,
+        context: &context)
     }
     if stretch.fill > 0 {
       try await diarizeWindow(
@@ -299,6 +344,8 @@ actor MeetingDiarizer {
     /// The transcript's length for this stretch; nil clamps to the decoded length.
     let lengthMs: Int64?
     let numSpeakers: Int?
+    /// Echo-explained spans of this stretch, for microphone turns.
+    let echo: [Range<Int64>]
     var fill = 0
     var windowStart = 0
   }
@@ -372,13 +419,21 @@ actor MeetingDiarizer {
         .init(id: id, clusterKey: created.key, track: track, reconciliation: created.reconciliation)
       )
     }
-    let turns = result.turns.compactMap { turn -> TurnDraft? in
+    let raw = result.turns.compactMap { turn -> TurnDraft? in
       let start = min(max(offsetMs + Int64((turn.startSeconds * 1_000).rounded()), offsetMs), endMs)
       let end = min(max(offsetMs + Int64((turn.endSeconds * 1_000).rounded()), offsetMs), endMs)
       guard start < end else { return nil }
       return TurnDraft(
         speakerID: mapping.keys[turn.cluster].flatMap { context.ids[$0] }, track: track,
         startMs: start, endMs: end, quality: turn.quality)
+    }
+    let turns = EchoGate.apply(raw, echo: stretch.echo)
+    context.echoGatedMs +=
+      raw.reduce(0) { $0 + $1.endMs - $1.startMs } - turns.reduce(0) { $0 + $1.endMs - $1.startMs }
+    for draft in drafts { context.tracks[draft.clusterKey] = track }
+    for turn in turns {
+      guard let id = turn.speakerID, let key = context.keys[id] else { continue }
+      context.speechMs[key, default: 0] += turn.endMs - turn.startMs
     }
     do {
       try await speakers.appendWindow(
@@ -396,6 +451,44 @@ actor MeetingDiarizer {
       try await transcripts.transcription(meetingID: context.run.meetingID)?.passID
         == context.run.transcriptPassID
     else { throw Failure(.transcriptChanged) }
+  }
+
+  // MARK: Minor clusters
+
+  /// Applies `MinorClusterFold` to the run's clusters and forgets the folded keys, so
+  /// alignment only ever names surviving speakers.
+  private func foldMinorClusters(context: inout Context) async throws {
+    let clusters = context.ids.keys.sorted().compactMap { key -> MinorClusterFold.Cluster? in
+      guard let track = context.tracks[key] else { return nil }
+      return .init(
+        key: key, track: track, speechMs: context.speechMs[key] ?? 0,
+        centroid: context.centroids[key])
+    }
+    let choices = MinorClusterFold.decide(clusters)
+    guard !choices.isEmpty else { return }
+    var folds: [UUID: UUID?] = [:]
+    for choice in choices {
+      guard let id = context.ids[choice.key] else { continue }
+      switch choice.decision {
+      case .fold(let target): folds[id] = context.ids[target]
+      case .detach: folds[id] = .some(nil)
+      }
+      let similarity = choice.similarity.map { String(format: "%.2f", $0) } ?? "none"
+      let speech = context.speechMs[choice.key] ?? 0
+      let outcome = choice.decision == .detach ? "detached" : "folded"
+      logger.notice(
+        "minor cluster key=\(choice.key) speech=\(speech)ms \(outcome) cos=\(similarity)")
+    }
+    do {
+      try await speakers.fold(runID: context.run.id, speakers: folds)
+    } catch {
+      throw Failure(.persistenceFailure)
+    }
+    for choice in choices {
+      guard let id = context.ids.removeValue(forKey: choice.key) else { continue }
+      context.keys.removeValue(forKey: id)
+    }
+    context.minorClusters = choices.count
   }
 
   // MARK: Alignment
@@ -419,14 +512,19 @@ actor MeetingDiarizer {
           runID: context.run.id, overlapping: range, after: cursor, limit: Self.turnPage)
         turns += batch.map {
           .init(
-            speaker: $0.speakerID.flatMap { context.keys[$0] }, startMs: $0.startMs, endMs: $0.endMs
-          )
+            speaker: $0.speakerID.flatMap { context.keys[$0] }, track: $0.track,
+            startMs: $0.startMs, endMs: $0.endMs)
         }
         guard batch.count == Self.turnPage, let tail = batch.last else { break }
         cursor = TurnCursor(startMs: tail.startMs, id: tail.id)
       }
-      let aligned = SpeakerAligner.align(
-        segments.map { .init(startMs: $0.startMs, endMs: $0.endMs) }, turns: turns)
+      // A row transcribed from one track (Feature 009 per-track pass) is labeled from
+      // that track's turns alone; a mixed row sees every turn.
+      let aligned = segments.map { segment in
+        SpeakerAligner.assign(
+          .init(startMs: segment.startMs, endMs: segment.endMs),
+          turns: Self.turns(turns, for: segment.draft.analysisTracks))
+      }
       for (segment, result) in zip(segments, aligned) {
         assignments.append(
           .init(
@@ -439,6 +537,16 @@ actor MeetingDiarizer {
       if page.count < Self.alignmentPage { break }
     }
     return assignments
+  }
+
+  static func turns(_ turns: [SpeakerAligner.Turn], for tracks: AnalysisTracks)
+    -> [SpeakerAligner.Turn]
+  {
+    switch tracks {
+    case .both: turns
+    case .mic: turns.filter { $0.track == .microphone }
+    case .system: turns.filter { $0.track == .system }
+    }
   }
 
   // MARK: Endings

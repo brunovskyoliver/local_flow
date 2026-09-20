@@ -33,6 +33,11 @@ final class AppServices {
   // Feature 007: speaker labels.
   private(set) var speakerDiarization: SpeakerDiarizationCoordinator?
   @ObservationIgnored private(set) var speakerStore: SpeakerStore?
+  // Feature 010: persistent speaker identification.
+  private(set) var speakerIdentification: SpeakerIdentificationCoordinator?
+  private(set) var knownSpeakers: KnownSpeakersModel?
+  @ObservationIgnored private(set) var identityStore: IdentityStore?
+  @ObservationIgnored private var voiceModelIdentity: VoiceModelIdentity?
   private(set) var meetingModelInstalled = false
   private(set) var meetingModelInstalling = false
   @ObservationIgnored private var meetingModelProvisioner: ModelProvisioner?
@@ -182,6 +187,11 @@ final class AppServices {
         manifestHash: diarizationManifest.map { TranscriptionQualityDetail.hash($0) }
           ?? String(repeating: "0", count: 64),
         pipelineVersion: DiarizationPipelineVersion.current)
+      // Feature 010: the voice embedder reuses the diarization files (ADR 0020).
+      voiceModelIdentity = FluidAudioVoiceEmbedderFactory.identity(
+        descriptor: diarizationDescriptor,
+        manifestHash: diarizationManifest.map { TranscriptionQualityDetail.hash($0) }
+          ?? String(repeating: "0", count: 64))
       guard
         let meetingManifestURL = Bundle.main.url(
           forResource: "whisper-large-v3-turbo", withExtension: "json")
@@ -201,13 +211,20 @@ final class AppServices {
             )
           }
           let diarization = workload == .diarization
+          let identification = workload == .speakerIdentification
           let phase: ResourceRecorder.Phase
           switch state {
           case .unloaded: phase = .modelUnloaded
-          case .preparing: phase = diarization ? .diarizerLoading : .modelLoading
-          case .active: phase = diarization ? .diarizerActive : .modelActive
+          case .preparing:
+            phase =
+              identification ? .embedderLoading : diarization ? .diarizerLoading : .modelLoading
+          case .active:
+            phase = identification ? .embedderActive : diarization ? .diarizerActive : .modelActive
           case .cooling: phase = .modelCooling
-          case .releasing: phase = diarization ? .diarizerReleasing : .modelReleasing
+          case .releasing:
+            phase =
+              identification
+              ? .embedderReleasing : diarization ? .diarizerReleasing : .modelReleasing
           }
           recorder?.record(phase: phase, durationNanoseconds: duration)
           // A completed load or release also lands in the metric series, so
@@ -215,9 +232,15 @@ final class AppServices {
           let metric: ResourceRecorder.Metric?
           switch state {
           case .preparing:
-            metric = diarization ? .diarizationModelLoadDuration : .modelLoadDuration
+            metric =
+              identification
+              ? .identificationModelLoadDuration
+              : diarization ? .diarizationModelLoadDuration : .modelLoadDuration
           case .releasing:
-            metric = diarization ? .diarizationModelReleaseDuration : .modelReleaseDuration
+            metric =
+              identification
+              ? .identificationModelReleaseDuration
+              : diarization ? .diarizationModelReleaseDuration : .modelReleaseDuration
           default: metric = nil
           }
           if duration > 0, let metric {
@@ -249,6 +272,20 @@ final class AppServices {
             }
           #endif
           return runtime
+        },
+        voiceEmbeddingFactory: {
+          guard let diarizationProvisioner else {
+            throw IdentificationFailureCategory.modelUnavailable
+          }
+          let local: LocalModelDescriptor
+          do {
+            local = try await diarizationProvisioner.verifiedLocalDescriptor()
+          } catch is CancellationError {
+            throw CancellationError()
+          } catch {
+            throw IdentificationFailureCategory.modelUnavailable
+          }
+          return try await FluidAudioVoiceEmbedderFactory(descriptor: local).makeRuntime()
         },
         meetingFactory: { [weak self] in
           let local: LocalModelDescriptor
@@ -512,6 +549,30 @@ final class AppServices {
     transcription.diarization = diarization
     speakerDiarization = diarization
     let diarizationReconciler = DiarizationReconciler(store: speakers, clock: clock)
+    // Feature 010: identification after diarization, on the same lifecycle owner.
+    let voiceIdentity =
+      voiceModelIdentity
+      ?? FluidAudioVoiceEmbedderFactory.identity(
+        descriptor: nil, manifestHash: String(repeating: "0", count: 64))
+    let identities = IdentityStore(history: history, identity: voiceIdentity, recorder: recorder)
+    identityStore = identities
+    knownSpeakers = KnownSpeakersModel(store: identities, clock: clock)
+    let identification = SpeakerIdentificationCoordinator(
+      identifier: MeetingIdentifier(
+        store: identities, speakers: speakers, transcripts: transcripts, meetings: store,
+        storageRoot: root, lifecycle: lifecycle, identity: voiceIdentity, clock: clock,
+        recorder: recorder),
+      enrollment: EnrollmentJob(
+        store: identities, speakers: speakers, transcripts: transcripts, meetings: store,
+        storageRoot: root, lifecycle: lifecycle, identity: voiceIdentity, clock: clock,
+        recorder: recorder),
+      store: identities,
+      enabled: { [weak self] in self?.preferences.speakerIdentificationEnabled ?? false },
+      recorder: recorder)
+    identification.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
+    diarization.identification = identification
+    speakerIdentification = identification
+    let identificationReconciler = IdentificationReconciler(store: identities, clock: clock)
     let gate = reconciliationGate
     let reconciler = MeetingReconciler(
       store: store, root: root, recorder: recorder, clock: SystemMeetingClock())
@@ -524,6 +585,7 @@ final class AppServices {
       let transcriptSummary = await transcriptReconciler.run()
       // Speaker runs depend on final transcripts, so they are reconciled last.
       let diarizationSummary = await diarizationReconciler.run()
+      let identificationSummary = await identificationReconciler.run()
       await MainActor.run {
         gate.complete(summary)
         self.meetingCoordinator?.markReconciliationComplete()
@@ -531,6 +593,7 @@ final class AppServices {
         self.resumedFinalizations.formUnion(transcriptSummary.resume)
         transcription.resumeFinalizations(transcriptSummary.resume)
         diarization.resume(diarizationSummary.resume)
+        identification.resume(identificationSummary.resume)
         if let text = summary.noticeText { self.showMeetingNotice(text) }
         var remainder = transcriptSummary
         remainder.resume = []
@@ -565,8 +628,9 @@ final class AppServices {
     meetingLibrary = MeetingLibraryViewModel(store: store) { [weak coordinator] in
       coordinator?.activeMeetingID
     }
-    meetingLibrary?.willDelete = { [weak coordinator, weak diarization] id in
+    meetingLibrary?.willDelete = { [weak coordinator, weak diarization, weak identification] id in
       await diarization?.meetingWillDelete(id: id)
+      await identification?.meetingWillDelete(id: id)
       await coordinator?.meetingWillDelete(id: id)
     }
     observeBackgroundWork()
@@ -1192,6 +1256,7 @@ final class AppServices {
       }
       // A running diarization is cancelled at quit and interrupted at the next launch.
       await speakerDiarization?.shutdown()
+      await speakerIdentification?.shutdown()
       await meetingTranscription?.shutdown()
       do {
         try await lifecycle?.shutdownIfIdle()

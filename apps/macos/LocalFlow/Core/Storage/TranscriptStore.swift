@@ -365,7 +365,9 @@ actor TranscriptStore: TranscriptStoring {
     async throws -> [LabeledSegment]
   {
     try await database.read { db in
-      try Row.fetchAll(
+      // Feature 010: the effective identity per display root, from the same read.
+      let identities = try IdentityStore.identities(meetingID, db: db)
+      return try Row.fetchAll(
         db,
         sql: """
           SELECT s.*, r.id AS label_run, r.in_room AS label_in_room, COALESCE(a.manual_kind, a.auto_kind) AS label_kind,
@@ -388,7 +390,7 @@ actor TranscriptStore: TranscriptStoring {
         ]
       ).map { row in
         LabeledSegment(
-          segment: try Self.segment(row), label: Self.label(row),
+          segment: try Self.segment(row), label: Self.label(row, identities: identities),
           runID: (row["label_run"] as String?).flatMap(UUID.init(uuidString:)))
       }
     }
@@ -439,7 +441,9 @@ actor TranscriptStore: TranscriptStoring {
     }
   }
 
-  private static func label(_ row: Row) -> SegmentLabel? {
+  private static func label(_ row: Row, identities: [UUID: SpeakerIdentity] = [:])
+    -> SegmentLabel?
+  {
     let edited: Bool = row["label_edited"] ?? false
     switch row["label_kind"] as String? {
     case "unknown":
@@ -452,12 +456,27 @@ actor TranscriptStore: TranscriptStoring {
         let source = (row["label_source"] as String?).flatMap(SpeakerSource.init(rawValue:)),
         let ordinal = row["label_ordinal"] as Int?
       else { return nil }
+      var text = SpeakerPalette.text(
+        source: source, ordinal: ordinal, name: row["label_name"],
+        inRoom: row["label_in_room"] ?? false)
+      // FR-040: "Name" for confirmed and recognized (the name is already the display
+      // name), "Name?" for a Possible match, the 007 label otherwise. "You" stays.
+      var identity: SegmentIdentity? = source == .remote ? .unknown : nil
+      if source == .remote, let effective = identities[root] {
+        switch effective.state {
+        case .confirmed, .recognized:
+          identity = effective.knownSpeakerID == nil ? .unknown : .named
+        case .possible:
+          if let name = effective.knownSpeakerName, let known = effective.knownSpeakerID {
+            identity = .suggested(name: name, knownSpeakerID: known)
+            text = "\(name)?"
+          }
+        case .rejectedUnknown, .unknown: identity = .unknown
+        }
+      }
       return SegmentLabel(
-        kind: .speaker(root: root),
-        text: SpeakerPalette.text(
-          source: source, ordinal: ordinal, name: row["label_name"],
-          inRoom: row["label_in_room"] ?? false),
-        colorIndex: row["label_color"], edited: edited)
+        kind: .speaker(root: root), text: text, colorIndex: row["label_color"], edited: edited,
+        identity: identity)
     default: return nil
     }
   }

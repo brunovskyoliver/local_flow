@@ -19,10 +19,10 @@ final class SpeakerAlignerTests: XCTestCase {
   }
 
   func testVersionMatchesThePipelineString() {
-    XCTAssertEqual(SpeakerAligner.version, "align_dom0.60_ratio2_ovl0.20_v1")
+    XCTAssertEqual(SpeakerAligner.version, "align_dom0.60_ratio2_ovl0.20_bytrack_v2")
     XCTAssertEqual(
       DiarizationPipelineVersion.current,
-      "offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v1+align_dom0.60_ratio2_ovl0.20_v1"
+      "offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v1+echo_lag1s_p20_k12_min300_v1+minor10s_5pct_cos0.60_v1+align_dom0.60_ratio2_ovl0.20_bytrack_v2"
     )
   }
 
@@ -70,6 +70,19 @@ final class SpeakerAlignerTests: XCTestCase {
       XCTAssertEqual(result.topCoverage, row.c1, accuracy: 1e-12, row.name)
       XCTAssertEqual(result.secondCoverage, row.c2, accuracy: 1e-12, row.name)
     }
+  }
+
+  func testTurnsOfOneTrackFilterByTheRowsSource() {
+    let turns = [
+      Turn(speaker: 0, track: .system, startMs: 0, endMs: 1_000),
+      Turn(speaker: 1, track: .microphone, startMs: 0, endMs: 1_000),
+    ]
+    XCTAssertEqual(MeetingDiarizer.turns(turns, for: .both), turns)
+    XCTAssertEqual(MeetingDiarizer.turns(turns, for: .mic).map(\.speaker), [1])
+    XCTAssertEqual(MeetingDiarizer.turns(turns, for: .system).map(\.speaker), [0])
+    // Full overlap on a mixed row is Overlapping; on a per-track row it is that track's speaker.
+    XCTAssertEqual(assign(turns).kind, .ambiguous)
+    XCTAssertEqual(assign(MeetingDiarizer.turns(turns, for: .mic)).speaker, 1)
   }
 
   func testExactThresholdEdges() {

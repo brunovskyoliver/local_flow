@@ -413,4 +413,51 @@ final class TranscriptStoreTests: XCTestCase {
     XCTAssertEqual(count, 0)
   }
 
+  /// Feature 010 (T090): the Feature 006 page (export) path and the Feature 007 labeled
+  /// page read none of the identity tables' vectors; the plain page touches none at all.
+  func testExportAndCopyPathsReadNoIdentityVectorsOrScores() async throws {
+    let fixture = try MeetingTestStore.make()
+    defer { fixture.cleanup() }
+    let store = TranscriptStore(database: fixture.history.database)
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
+    try await DiarizationTestSupport.finalTranscript(
+      store, meetingID: meeting.meetingID, segments: [(0, 100), (100, 200)])
+    let trace = TraceLog()
+    try await fixture.history.database.write { db in
+      db.trace { event in trace.append(event.description) }
+    }
+    _ = try await store.page(meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    let plain = trace.drain()
+    XCTAssertFalse(plain.isEmpty)
+    for statement in plain {
+      for table in [
+        "voice_samples", "known_speakers", "identity_assignments", "match_candidates",
+        "rejected_candidates", "identification_runs",
+      ] {
+        XCTAssertFalse(statement.contains(table), "export path reads \(table)")
+      }
+    }
+    let labeled = try await store.labeledPage(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    for statement in trace.drain() {
+      XCTAssertFalse(statement.contains("voice_samples"), "labels never read vectors")
+      XCTAssertFalse(statement.contains("match_candidates"), "labels never read scores")
+    }
+    for row in labeled {
+      let mirror = Mirror(reflecting: row.label as Any)
+      XCTAssertFalse(mirror.children.contains { $0.label?.lowercased().contains("score") == true })
+    }
+  }
+}
+
+private final class TraceLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var statements: [String] = []
+  func append(_ statement: String) { lock.withLock { statements.append(statement) } }
+  func drain() -> [String] {
+    lock.withLock {
+      defer { statements.removeAll() }
+      return statements
+    }
+  }
 }

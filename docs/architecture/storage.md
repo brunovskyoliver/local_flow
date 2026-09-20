@@ -39,3 +39,43 @@ Migration `speakers-v7` adds `meeting_diarization` (one row per meeting, created
 A meeting has at most one `pending`/`running` run (partial unique index) and one accepted run. Adoption (`complete`) inserts the assignments, computes speech totals, colors and ordinals, carries names and corrections over from the previous accepted run, marks it `superseded`, deletes its turns and assignments and swaps the pointers, all in one transaction. Failure, interruption and preemption delete only the run's own rows; Cancel and meeting deletion remove the run row. The accepted run is never touched by a failed rerun.
 
 Capacities: 64 clusters per track and run (later turns are stored with no speaker and counted as overflow), 100,000 turns per run, 20,000 turns per window and 10,000 corrections per meeting. A window past the turn cap fails the run as `persistence_capacity`; a save past the correction cap is refused with nothing written. `ON DELETE CASCADE` runs from `meetings` to every table and from `transcript_segments` to `speaker_assignments`, so meeting deletion and `discardPass` remove speaker rows with their parents. Names are metadata on `meeting_speakers`; merges set `merged_into` (depth 1); segment corrections set the `manual_*` columns beside the untouched automatic assignment. Manual "new speaker" rows have `run_id` NULL and survive reruns. See [the data model](../../specs/007-speaker-diarization/data-model.md).
+
+## Speaker identities (Feature 010)
+
+Migration `identities-v8` adds `known_speakers`, `voice_samples`, `meeting_identification`
+(one row per meeting, created for every existing meeting and with each new one),
+`identification_runs`, `identity_assignments`, `match_candidates` and
+`rejected_candidates`; no 004–007 table changes. `IdentityStore` owns every write on the
+shared history `DatabaseQueue`, one transaction per operation.
+
+Vectors are 1,024-byte `BLOB`s (256 little-endian Float32, L2-normalized) in
+`voice_samples`, each with its engine, model id, revision, manifest hash, dimension,
+pipeline version, quality label and score, track, time range, source meeting and cluster
+(`ON DELETE SET NULL`), the consent that created it (`remember`, `also_remember`,
+`local_enroll`) and its creation date. A speaker holds at most 10 active and 10 retired
+samples per model identity; `retire_qd_v1` retires the lowest quality-and-diversity
+scores inside the insert transaction. Samples of another engine, model, revision or
+dimension are stored but never compared.
+
+A meeting has at most one `pending`/`running` identification run (partial unique index)
+and one accepted run, admitted against the accepted diarization run. Adoption is one
+transaction: `self` rows for decided roots are inserted or replaced only where the
+existing row's origin is `automatic_match`, manual rows (`user_confirmation`,
+`manual_profile_selection`, `new_profile_created`, `manual_correction`, `kept_unknown`)
+are counted as preserved, a rejected pair is never re-suggested, the previous run is
+`superseded` and its `match_candidates` deleted. Failure, interruption and preemption
+delete only the run's own candidate rows; Cancel and meeting deletion remove the run row.
+Launch reconciliation (`IdentificationReconciler`) marks `running` runs `interrupted` and
+hands `pending` ones back to the queue without reading audio.
+
+Deletion matrix: deleting a known speaker copies its name onto every `confirmed` or
+`recognized` meeting speaker that lacks one, deletes its assignment, candidate, rejected
+and sample rows, then the profile; transcript text, turns and audio are untouched.
+Deleting a meeting cascades every identity table and nulls the provenance of its samples,
+which stay active. Renaming a known speaker copies the new name to every linked
+`confirmed`/`recognized` meeting speaker in batches of 500 inside one transaction; typed
+names with no link are untouched. Merges write a `merged` scope row on the display root
+(`MergedIdentityRule`); unmerge deletes it and never touches `self` rows. A diarization
+rerun carries manual identity rows and rejected pairs along the safe name map and lists
+the rest as review notices. See
+[the data model](../../specs/010-persistent-speaker-identification/data-model.md).

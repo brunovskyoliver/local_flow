@@ -27,6 +27,8 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   private(set) var activeMeetingID: UUID?
   var queuedCount: Int { queue.count }
   var noticePublished: (@MainActor (String) -> Void)?
+  /// Feature 010 (FR-022): told after the lease has finished and adoption committed.
+  @ObservationIgnored weak var identification: (any IdentificationObserving)?
 
   @ObservationIgnored private let diarizer: MeetingDiarizer
   /// Also the Assign speakers sheet's store.
@@ -229,6 +231,8 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
       if automaticEnabled() { await enqueue(id, trigger: .automatic, revision: nil) }
     case .succeeded:
       if status?.meetingID == id { status?.labelsRevision += 1 }
+      // The diarizer's lease finished before adoption; identification may start now.
+      identification?.diarizationDidAdopt(meetingID: id)
     case .failed, .cancelled, .nothingToRun: break
     }
     cancelled.remove(id)

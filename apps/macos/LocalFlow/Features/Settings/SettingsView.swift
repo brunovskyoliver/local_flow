@@ -5,6 +5,8 @@ import SwiftUI
 struct SettingsView: View {
   @Bindable var model: SettingsViewModel
   @Bindable var preferences: AppPreferences
+  /// Feature 010: nil before the identity store exists.
+  var knownSpeakers: KnownSpeakersModel? = nil
   @State private var recorder: ShortcutRecorder?
   @State private var recordingError: String?
   @State private var confirmingDownload = false
@@ -16,6 +18,9 @@ struct SettingsView: View {
   static let meetingTranscriptionCaption =
     "Parakeet provides live previews. Whisper Turbo produces the final transcript. Recording never depends on either model."
   static let meetingDiarizationTitle = "Label speakers automatically after transcription"
+  static let speakerIdentificationTitle = "Remember and recognize speakers across meetings"
+  static let speakerIdentificationCaption =
+    "Nothing is stored until you choose Remember for a voice."
 
   var body: some View {
     PrototypePage {
@@ -98,6 +103,16 @@ struct SettingsView: View {
             .disabled(model.snapshot.speakerModelInstalling || model.performing)
             .accessibilityIdentifier("settings.speakerModel")
           }
+          separator
+          SettingsRow(Self.speakerIdentificationTitle, detail: Self.speakerIdentificationCaption) {
+            Toggle(Self.speakerIdentificationTitle, isOn: $preferences.speakerIdentificationEnabled)
+              .labelsHidden().toggleStyle(.switch)
+              .accessibilityIdentifier("settings.speakerIdentificationEnabled")
+          }
+        }
+        if let knownSpeakers {
+          sectionTitle("Known speakers")
+          settingsGroup { KnownSpeakersView(model: knownSpeakers) }
         }
         rewriteSection
         modelSection

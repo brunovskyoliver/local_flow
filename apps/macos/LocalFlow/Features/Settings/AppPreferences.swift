@@ -37,6 +37,13 @@ final class AppPreferences {
   var meetingDiarizationEnabled: Bool {
     didSet { defaults.set(meetingDiarizationEnabled, forKey: "meetingDiarizationEnabled") }
   }
+  /// Feature 010 (FR-038): remember and recognize speakers across meetings. On by
+  /// default; nothing is stored until the user chooses Remember for a voice.
+  var speakerIdentificationEnabled: Bool {
+    didSet {
+      defaults.set(speakerIdentificationEnabled, forKey: "settings.speakerIdentificationEnabled")
+    }
+  }
   private(set) var setupVersion: Int
   var onboardingComplete: Bool { setupVersion >= Self.currentSetupVersion }
 
@@ -81,6 +88,8 @@ final class AppPreferences {
       defaults.object(forKey: "meetingTranscriptionEnabled") as? Bool ?? true
     meetingDiarizationEnabled =
       defaults.object(forKey: "meetingDiarizationEnabled") as? Bool ?? true
+    speakerIdentificationEnabled =
+      defaults.object(forKey: "settings.speakerIdentificationEnabled") as? Bool ?? true
     appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
     keepModelReady = defaults.bool(forKey: "keepModelReady")
     learnCorrections = defaults.bool(forKey: "learnCorrections")
