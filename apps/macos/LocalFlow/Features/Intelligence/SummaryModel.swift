@@ -63,6 +63,9 @@ final class SummaryModel {
   private let identities: any IdentityStoring
   private let analyzer: MeetingAnalyzer
   private let transcripts: any MeetingEvidenceReading
+  /// The last `speakerSummaries` page `load()` resolved owners against; the
+  /// suggestion-accept path finds the profile-linked root here.
+  private var speakerSummaries: [SpeakerSummary] = []
 
   init(
     meetingID: UUID, coordinator: MeetingIntelligenceCoordinator,
@@ -132,6 +135,24 @@ final class SummaryModel {
     await load()
   }
 
+  /// Accepting "might be <known speaker>?" writes one owner overlay
+  /// (`contracts/ui.md` "Editing", FR-014a): `{"kind":"participant",…}` pointing
+  /// at the meeting speaker linked to that profile — or at the profile id
+  /// itself when no participant is linked, which the read model resolves
+  /// against `known_speakers`. Nothing in spec 010 tables changes.
+  func acceptSuggestion(item: ActionItemReadModel) async {
+    guard case .mentioned(_, let suggestion) = item.owner, let suggestion else { return }
+    let rootID =
+      speakerSummaries.first { $0.identity?.knownSpeakerID == suggestion.id }?.id
+      ?? suggestion.id
+    try? await store.setOverlay(
+      meetingID: meetingID, target: .item(item.id), field: .owner,
+      value: .owner(.participant(rootID)),
+      snapshot: OverlaySnapshot(aiValue: Self.ownerText(item.aiOwner), itemText: item.aiText),
+      now: Self.nowMilliseconds)
+    await load()
+  }
+
   /// "Remove all edits" in the overflow menu.
   func removeAllEdits() async {
     try? await store.removeAllOverlays(meetingID: meetingID)
@@ -186,6 +207,7 @@ final class SummaryModel {
       return
     }
     let summaries = (try? await speakers.speakerSummaries(meetingID: meetingID)) ?? []
+    speakerSummaries = summaries
     let known = (try? await identities.knownSpeakers()) ?? []
     var participants: [UUID: ParticipantDisplay] = [:]
     for root in summaries {
@@ -253,6 +275,13 @@ final class SummaryModel {
     switch owner {
     case .participant(let speakerID, _, _):
       guard let participant = participants[speakerID] else {
+        // An owner overlay may hold a known-speaker id — an accepted "might
+        // be" suggestion with no linked participant in the meeting (FR-014a).
+        if let profile = knownSpeakers.first(where: { $0.id == speakerID }) {
+          return .participant(
+            name: profile.name, colorIndex: Self.profileColorIndex(speakerID),
+            certainty: .localName)
+        }
         return .unresolved(label: "Owner unresolved")
       }
       guard participant.certainty.mayBeNamed else {
@@ -262,14 +291,32 @@ final class SummaryModel {
         name: participant.name, colorIndex: participant.colorIndex,
         certainty: participant.certainty)
     case .mentioned(let name):
+      // Local-only match, case- and diacritic-insensitive; the suggestion is
+      // never sent to flowd and changes nothing until the user accepts it.
       let suggestion = knownSpeakers.first {
-        $0.name.compare(name, options: .caseInsensitive) == .orderedSame
+        $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive])
+          == .orderedSame
       }
       return .mentioned(
         name: name,
         suggestion: suggestion.map { KnownSpeakerRef(id: $0.id, name: $0.name) })
     case .some(.none), nil:
       return .unresolved(label: "Owner unresolved")
+    }
+  }
+
+  /// A deterministic palette index for a profile-linked owner with no meeting
+  /// speaker — stable across launches, unlike `hashValue`.
+  private static func profileColorIndex(_ id: UUID) -> Int {
+    withUnsafeBytes(of: id.uuid) { $0.reduce(0) { $0 &+ Int($1) } } % 8
+  }
+
+  /// The overlay snapshot's `aiValue` for an owner edit: the AI label, never
+  /// an id.
+  private static func ownerText(_ owner: OwnerLabel) -> String {
+    switch owner {
+    case .participant(let name, _, _), .mentioned(let name, _): return name
+    case .unresolved(let label): return label
     }
   }
 
@@ -327,14 +374,16 @@ final class SummaryModel {
       let resolvedOwner: ValidatedOwner?
       if let editedOwner {
         switch editedOwner {
-        case .participant(let id): resolvedOwner = .participant(speakerID: id, knownSpeakerID: nil, certainty: .localName)
+        case .participant(let id):
+          resolvedOwner = .participant(speakerID: id, knownSpeakerID: nil, certainty: .localName)
         case .mentioned(let name): resolvedOwner = .mentioned(name: name)
         case .none: resolvedOwner = .none
         }
       } else {
         resolvedOwner = item.owner
       }
-      let ownerLabel = owner(resolvedOwner, participants: participants, knownSpeakers: knownSpeakers)
+      let ownerLabel = owner(
+        resolvedOwner, participants: participants, knownSpeakers: knownSpeakers)
       let aiOwnerLabel = owner(item.owner, participants: participants, knownSpeakers: knownSpeakers)
       let dueDate = editedDue ?? item.due?.date
       let status = editedStatus ?? .open
@@ -357,7 +406,7 @@ final class SummaryModel {
 
     let words =
       (summaryText + " " + stored.topics.map(\.summary).joined(separator: " ") + " "
-        + stored.items.map(\.text).joined(separator: " "))
+      + stored.items.map(\.text).joined(separator: " "))
       .split { $0 == " " || $0 == "\n" }.count
 
     return MeetingAnalysisReadModel(

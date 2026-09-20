@@ -179,8 +179,9 @@ struct MeetingAnalyzer: Sendable {
       guard
         Self.compute(
           meetingID: meetingID, passID: admission.passID, snapshot: fresh,
-          language: admission.language, policy: admission.policy)
-          .hex == admission.run.evidenceVersion
+          language: admission.language, policy: admission.policy
+        )
+        .hex == admission.run.evidenceVersion
       else {
         throw AnalysisFailure(.sourceValidation, detail: "evidence_changed")
       }
@@ -224,6 +225,9 @@ struct MeetingAnalyzer: Sendable {
   struct Snapshot {
     var segments: [EvidenceSegment]
     var participants: [EvidenceParticipant]
+    /// Local-only: the validator's mentioned-owner downgrade compares against
+    /// these; they never enter the request.
+    var possibleCandidateNames: Set<String> = []
     var notes: [NoteParagraph]
 
     func evidence(meetingID: UUID) -> AnalysisEvidence {
@@ -231,7 +235,8 @@ struct MeetingAnalyzer: Sendable {
         meetingID: meetingID,
         segmentIDs: Set(segments.map(\.id)),
         segmentText: Dictionary(uniqueKeysWithValues: segments.map { ($0.id, $0.text) }),
-        notes: notes, participants: participants)
+        notes: notes, participants: participants,
+        possibleCandidateNames: possibleCandidateNames)
     }
   }
 
@@ -254,6 +259,7 @@ struct MeetingAnalyzer: Sendable {
     }
     return try await Snapshot(
       segments: segments, participants: evidence.participants(meetingID: meetingID),
+      possibleCandidateNames: evidence.possibleCandidateNames(meetingID: meetingID),
       notes: evidence.notes(meetingID: meetingID))
   }
 
@@ -283,23 +289,30 @@ struct MeetingAnalyzer: Sendable {
         id: meetingID,
         title: String(decoding: title.utf8.prefix(AnalysisBounds.maxTitleBytes), as: UTF8.self),
         startedAt: rfc3339(ms: startedMs), durationMs: durationMs,
-        timeZone: String(decoding: TimeZone.current.identifier.utf8.prefix(AnalysisBounds.maxTimeZoneBytes), as: UTF8.self),
+        timeZone: String(
+          decoding: TimeZone.current.identifier.utf8.prefix(AnalysisBounds.maxTimeZoneBytes),
+          as: UTF8.self),
         languagePolicy: LanguagePolicy.requestValue(output: language)),
       participants: snapshot.participants.map { participant in
         AnalysisRequest.Participant(
           speakerID: participant.speakerID, certainty: participant.certainty,
-          origin: String(decoding: participant.origin.utf8.prefix(AnalysisBounds.maxOriginBytes), as: UTF8.self),
+          origin: String(
+            decoding: participant.origin.utf8.prefix(AnalysisBounds.maxOriginBytes), as: UTF8.self),
           knownSpeakerID: participant.knownSpeakerID,
           name: participant.certainty.mayBeNamed
             ? participant.name.map {
-              String(decoding: $0.utf8.prefix(AnalysisBounds.maxParticipantNameBytes), as: UTF8.self)
+              String(
+                decoding: $0.utf8.prefix(AnalysisBounds.maxParticipantNameBytes), as: UTF8.self)
             }
             : nil)
       },
       segments: snapshot.segments.map { segment in
         AnalysisRequest.Segment(
           id: segment.id, startMs: segment.startMs, endMs: segment.endMs,
-          speakerID: { if case .speaker(let id) = segment.speaker { return id }; return nil }(),
+          speakerID: {
+            if case .speaker(let id) = segment.speaker { return id }
+            return nil
+          }(),
           text: segment.text)
       },
       notes: snapshot.notes.map { AnalysisRequest.Note(ordinal: $0.ordinal, text: $0.text) },

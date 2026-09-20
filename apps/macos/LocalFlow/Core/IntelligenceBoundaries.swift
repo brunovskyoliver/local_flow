@@ -85,8 +85,12 @@ struct WireSourceRef: Sendable, Equatable, Hashable, Encodable {
   let kind: Kind
   let id: String
 
-  static func segment(_ id: UUID) -> WireSourceRef { WireSourceRef(kind: .segment, id: id.uuidString) }
-  static func note(_ ordinal: Int) -> WireSourceRef { WireSourceRef(kind: .note, id: "note:\(ordinal)") }
+  static func segment(_ id: UUID) -> WireSourceRef {
+    WireSourceRef(kind: .segment, id: id.uuidString)
+  }
+  static func note(_ ordinal: Int) -> WireSourceRef {
+    WireSourceRef(kind: .note, id: "note:\(ordinal)")
+  }
 }
 
 // MARK: - Validated and stored analysis
@@ -322,7 +326,9 @@ struct AnalysisProgress: Sendable, Equatable {
 struct AnalysisStatus: Sendable, Equatable {
   enum State: String, Sendable, Equatable {
     case notRequested = "not_requested"
-    case pending, running, succeeded, failed, cancelled, timedOut = "timed_out", interrupted
+    case pending, running, succeeded, failed, cancelled
+    case timedOut = "timed_out"
+    case interrupted
   }
   let meetingID: UUID
   var state: State = .notRequested
@@ -484,6 +490,9 @@ protocol MeetingEvidenceReading: Sendable {
   func segmentPage(meetingID: UUID, passID: UUID, after ordinal: Int?, limit: Int)
     async throws -> [EvidenceSegment]
   func participants(meetingID: UUID) async throws -> [EvidenceParticipant]
+  /// Candidate names of Possible matches, for the validator's mentioned-owner
+  /// downgrade. They stay local: never in a request, never on screen.
+  func possibleCandidateNames(meetingID: UUID) async throws -> Set<String>
   func notes(meetingID: UUID) async throws -> [NoteParagraph]
   func transcription(meetingID: UUID) async throws -> MeetingTranscription?
   func meeting(id: UUID) async throws -> Meeting?

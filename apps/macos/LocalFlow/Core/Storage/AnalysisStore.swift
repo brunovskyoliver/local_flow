@@ -24,9 +24,10 @@ actor AnalysisStore: AnalysisStoring {
 
   /// The overlay re-match function injected into `adopt`
   /// (`OverlayMatcher.match` by default).
-  typealias OverlayMatching = @Sendable ([AnalysisOverlay], [StoredItem]) -> (
-    matched: [UUID: UUID], orphaned: Set<UUID>
-  )
+  typealias OverlayMatching =
+    @Sendable ([AnalysisOverlay], [StoredItem]) -> (
+      matched: [UUID: UUID], orphaned: Set<UUID>
+    )
 
   static let runRowCap = 20
   static let overlayCap = 500
@@ -200,8 +201,9 @@ actor AnalysisStore: AnalysisStoring {
         try db.execute(
           sql: "UPDATE analysis_runs SET state='superseded' WHERE id=? AND state='succeeded'",
           arguments: [previous.uuidString])
-        for table in ["analysis_summaries", "analysis_topics", "analysis_items", "analysis_sources"]
-        {
+        for table in [
+          "analysis_summaries", "analysis_topics", "analysis_items", "analysis_sources",
+        ] {
           try db.execute(
             sql: "DELETE FROM \(table) WHERE run_id=?", arguments: [previous.uuidString])
         }
@@ -219,7 +221,8 @@ actor AnalysisStore: AnalysisStoring {
       }
       for overlayID in orphaned {
         try db.execute(
-          sql: "UPDATE analysis_overlays SET item_id=NULL, orphaned_at=COALESCE(orphaned_at, ?), updated_at=? WHERE id=?",
+          sql:
+            "UPDATE analysis_overlays SET item_id=NULL, orphaned_at=COALESCE(orphaned_at, ?), updated_at=? WHERE id=?",
           arguments: [now, now, overlayID.uuidString])
       }
 
@@ -308,7 +311,8 @@ actor AnalysisStore: AnalysisStoring {
         StoredSummary(
           text: row["text"], language: run.languagePolicy ?? .en,
           wholeMeeting: (row["whole_meeting"] as Int) == 1,
-          sources: (try? Self.fetchSources(runID: accepted, kind: "summary", target: accepted.uuidString, db: db)) ?? [])
+          sources: (try? Self.fetchSources(
+            runID: accepted, kind: "summary", target: accepted.uuidString, db: db)) ?? [])
       }
       let topics = try Row.fetchAll(
         db, sql: "SELECT * FROM analysis_topics WHERE run_id=? ORDER BY ordinal",
@@ -316,16 +320,19 @@ actor AnalysisStore: AnalysisStoring {
       ).compactMap { row -> StoredTopic? in
         guard let id = UUID(uuidString: row["id"]) else { return nil }
         let bullets =
-          (try? JSONDecoder().decode([String].self, from: Data((row["bullets_json"] as String).utf8)))
+          (try? JSONDecoder().decode(
+            [String].self, from: Data((row["bullets_json"] as String).utf8)))
           ?? []
         return StoredTopic(
           id: id, ordinal: row["ordinal"], title: row["title"], summary: row["summary"],
           bullets: bullets,
-          sources: (try? Self.fetchSources(runID: accepted, kind: "topic", target: id.uuidString, db: db)) ?? [])
+          sources: (try? Self.fetchSources(
+            runID: accepted, kind: "topic", target: id.uuidString, db: db)) ?? [])
       }
       let items = try Self.fetchItems(runID: accepted, db: db)
       let overlays = try Self.fetchOverlays(meetingID, db: db)
-      return StoredAnalysis(run: run, summary: summary, topics: topics, items: items, overlays: overlays)
+      return StoredAnalysis(
+        run: run, summary: summary, topics: topics, items: items, overlays: overlays)
     }
   }
 
@@ -358,9 +365,10 @@ actor AnalysisStore: AnalysisStoring {
         arguments: itemID != nil
           ? [itemID!.uuidString, field.rawValue] : [meetingID.uuidString, field.rawValue])
       if existing == nil {
-        let count = try Int.fetchOne(
-          db, sql: "SELECT COUNT(*) FROM analysis_overlays WHERE meeting_id=?",
-          arguments: [meetingID.uuidString]) ?? 0
+        let count =
+          try Int.fetchOne(
+            db, sql: "SELECT COUNT(*) FROM analysis_overlays WHERE meeting_id=?",
+            arguments: [meetingID.uuidString]) ?? 0
         guard count < Self.overlayCap else {
           throw AnalysisFailure(.persistenceCapacity, detail: "overlay_cap")
         }
@@ -435,9 +443,10 @@ actor AnalysisStore: AnalysisStoring {
 
   /// Deletes the oldest non-accepted run rows until at most `runRowCap` remain.
   private static func pruneRuns(_ meetingID: UUID, keeping runID: UUID, db: Database) throws {
-    let count = try Int.fetchOne(
-      db, sql: "SELECT COUNT(*) FROM analysis_runs WHERE meeting_id=?",
-      arguments: [meetingID.uuidString]) ?? 0
+    let count =
+      try Int.fetchOne(
+        db, sql: "SELECT COUNT(*) FROM analysis_runs WHERE meeting_id=?",
+        arguments: [meetingID.uuidString]) ?? 0
     let excess = count - runRowCap
     guard excess > 0 else { return }
     try db.execute(
@@ -450,7 +459,9 @@ actor AnalysisStore: AnalysisStoring {
 
   /// Inserts summary, topics, items and sources for a newly accepted run. The
   /// 10-per-target source cap is enforced before insert.
-  private static func insertContent(run: AnalysisRun, result: ValidatedAnalysis, now: Int64, db: Database)
+  private static func insertContent(
+    run: AnalysisRun, result: ValidatedAnalysis, now: Int64, db: Database
+  )
     throws
   {
     let meeting = run.meetingID.uuidString
@@ -527,8 +538,9 @@ actor AnalysisStore: AnalysisStoring {
     case action(ValidatedActionItem)
   }
 
-  private static func itemGroups(of result: ValidatedAnalysis) -> [(AnalysisItemKind, [InsertedItem])]
-  {
+  private static func itemGroups(of result: ValidatedAnalysis) -> [(
+    AnalysisItemKind, [InsertedItem]
+  )] {
     [
       (.decision, result.decisions.map(InsertedItem.plain)),
       (.actionItem, result.actionItems.map(InsertedItem.action)),
@@ -652,7 +664,9 @@ actor AnalysisStore: AnalysisStoring {
     ).compactMap { row -> SourceRef? in
       if row["source_kind"] as String == "segment",
         let id = (row["segment_id"] as String?).flatMap(UUID.init(uuidString:))
-      { return .segment(id) }
+      {
+        return .segment(id)
+      }
       if row["source_kind"] as String == "note", let ordinal = row["note_ordinal"] as Int? {
         return .note(ordinal: ordinal, hash: (row["note_hash"] as String?) ?? "")
       }

@@ -1646,7 +1646,8 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
             speakerID: draft.id, track: draft.track, startMs: Int64(index) * 100,
             endMs: Int64(index) * 100 + covered / Int64(max(1, drafts.count)), quality: nil)
         }
-        try await speakers.appendWindow(runID: run.id, speakers: drafts, turns: turns, audioMs: covered)
+        try await speakers.appendWindow(
+          runID: run.id, speakers: drafts, turns: turns, audioMs: covered)
         let rows = try await transcripts.page(
           meetingID: meetingID, finality: .final, after: nil, limit: 20_000)
         var speakerByOrdinal: [Int: UUID] = [:]
@@ -1669,7 +1670,8 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
           switch participant.certainty {
           case "confirmed", "local_user":
             let known = try await identities.createKnownSpeaker(
-              name: participant.name ?? "Speaker", isLocalUser: participant.certainty == "local_user",
+              name: participant.name ?? "Speaker",
+              isLocalUser: participant.certainty == "local_user",
               now: now)
             try await identities.link(
               meetingID: meetingID, speakerID: participant.speakerID, to: known.id,
@@ -1715,7 +1717,8 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
             meetingID: meetingID, trigger: .manual, identity: voiceIdentity,
             policy: "debug_seed", now: now)
           _ = try await identities.start(runID: identificationRun.id, now: now)
-          try await identities.appendCandidates(runID: identificationRun.id, rows: automaticCandidates)
+          try await identities.appendCandidates(
+            runID: identificationRun.id, rows: automaticCandidates)
           _ = try await identities.complete(
             runID: identificationRun.id, decisions: automatic, now: now)
         }
@@ -1809,7 +1812,8 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
     /// The four-hour fixture is generated, matching the test helper's shape.
     private static func fourHourFixture() -> IntelligenceSeedFixture {
       var fixture = IntelligenceSeedFixture(
-        durationMs: 4 * 3_600_000, participants: [
+        durationMs: 4 * 3_600_000,
+        participants: [
           .init(speakerID: UUID(), certainty: "local_name", name: "Ana")
         ], segments: [], notes: "Long budget review with several topic switches.")
       var offset: Int64 = 0

@@ -299,10 +299,13 @@ struct SummaryTabView: View {
         Text(item.text)
           .strikethrough(item.status == .dismissed)
           .foregroundStyle(
-            item.status == .dismissed ? SottoPalette.muted : SottoPalette.ink)
+            item.status == .dismissed ? SottoPalette.muted : SottoPalette.ink
+          )
           .lineSpacing(5)
         Spacer(minLength: 4)
-        OwnerChip(owner: item.owner)
+        OwnerChip(owner: item.owner) {
+          Task { await model.acceptSuggestion(item: item) }
+        }
         DueLabel(item: item)
         if !item.edits.isEmpty { EditedTag() }
         SourceButton(item: item, model: model)
@@ -318,6 +321,7 @@ struct SummaryTabView: View {
   /// for mentioned names, dashed for unresolved — color is never the only cue.
   struct OwnerChip: View {
     let owner: OwnerLabel
+    var onAcceptSuggestion: (() -> Void)? = nil
 
     var body: some View {
       switch owner {
@@ -330,17 +334,27 @@ struct SummaryTabView: View {
         .background(SottoPalette.button, in: .capsule)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("meeting.summary.owner")
-        .accessibilityValue(Self.value(certainty))
-      case .mentioned(let name, _):
-        VStack(alignment: .leading, spacing: 1) {
-          Text(name)
-          Text("mentioned").font(.system(size: 9)).foregroundStyle(SottoPalette.muted)
+        .accessibilityValue(Self.accessibilityValue(owner))
+      case .mentioned(let name, let suggestion):
+        HStack(spacing: 6) {
+          VStack(alignment: .leading, spacing: 1) {
+            Text(name)
+            Text("mentioned").font(.system(size: 9)).foregroundStyle(SottoPalette.muted)
+          }
+          .font(.system(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
+          .overlay { Capsule().stroke(SottoPalette.line) }
+          .accessibilityElement(children: .combine)
+          .accessibilityIdentifier("meeting.summary.owner")
+          .accessibilityValue(Self.accessibilityValue(owner))
+          if let suggestion {
+            HStack(spacing: 4) {
+              Text("might be \(suggestion.name)?")
+              Button("Accept") { onAcceptSuggestion?() }
+                .accessibilityIdentifier("meeting.summary.owner.accept")
+            }
+            .font(.system(size: 9)).foregroundStyle(SottoPalette.muted)
+          }
         }
-        .font(.system(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
-        .overlay { Capsule().stroke(SottoPalette.line) }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("meeting.summary.owner")
-        .accessibilityValue("mentioned name")
       case .unresolved(let label):
         Text(label)
           .font(.system(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
@@ -350,7 +364,17 @@ struct SummaryTabView: View {
           }
           .foregroundStyle(SottoPalette.muted)
           .accessibilityIdentifier("meeting.summary.owner")
-          .accessibilityValue("owner unresolved")
+          .accessibilityValue(Self.accessibilityValue(owner))
+      }
+    }
+
+    /// The contract's `accessibilityValue` column, shared by the chip body and
+    /// the T054 tests.
+    static func accessibilityValue(_ owner: OwnerLabel) -> String {
+      switch owner {
+      case .participant(_, _, let certainty): return value(certainty)
+      case .mentioned: return "mentioned name"
+      case .unresolved: return "owner unresolved"
       }
     }
 

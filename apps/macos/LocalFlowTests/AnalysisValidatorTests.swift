@@ -105,8 +105,10 @@ final class AnalysisValidatorTests: XCTestCase {
   private func evidenceWithNotes() -> AnalysisEvidence {
     var evidence = evidence()
     evidence.notes = [
-      NoteParagraph(ordinal: 1, text: "First note.", hash: EvidenceVersion.hash(paragraph: "First note.")),
-      NoteParagraph(ordinal: 2, text: "Second note.", hash: EvidenceVersion.hash(paragraph: "Second note.")),
+      NoteParagraph(
+        ordinal: 1, text: "First note.", hash: EvidenceVersion.hash(paragraph: "First note.")),
+      NoteParagraph(
+        ordinal: 2, text: "Second note.", hash: EvidenceVersion.hash(paragraph: "Second note.")),
     ]
     return evidence
   }
@@ -214,5 +216,145 @@ final class AnalysisValidatorTests: XCTestCase {
     guard case .note(let ordinal, _)? = validated.decisions.first?.sources.first
     else { return XCTFail("expected a note source") }
     XCTAssertEqual(ordinal, 2)
+  }
+}
+
+extension AnalysisValidatorTests {
+  // MARK: T052 — identity step
+
+  private func action(
+    _ text: String, owner: WireOwner,
+    ownership: OwnershipState = .explicit, sources: [WireSourceRef]
+  ) -> WireActionItem {
+    WireActionItem(
+      text: text, owner: owner, ownershipState: ownership,
+      due: WireDue(state: .absent), sources: sources)
+  }
+
+  /// confirmed / recognized / local_name / local_user keep the owner and the
+  /// certainty (spec US3 identity table, rows 1–4).
+  func testPermittedCertaintiesKeepParticipantOwner() throws {
+    for certainty in [ParticipantCertainty.confirmed, .recognized, .localName, .localUser] {
+      let speaker = UUID()
+      var evidence = evidence()
+      evidence.participants = [
+        EvidenceParticipant(
+          speakerID: speaker, certainty: certainty, origin: "automatic_match",
+          knownSpeakerID: UUID(), name: "Named")
+      ]
+      let result = result(actionItems: [
+        action(
+          "Do it", owner: WireOwner(kind: .participant, speakerID: speaker),
+          sources: [.segment(segA)])
+      ])
+      let (validated, counts) = try AnalysisValidator.validate(
+        result: result, against: evidence, policy: policy)
+      let item = try XCTUnwrap(validated.actionItems.first)
+      guard case .participant(let id, let known, let kept) = item.owner
+      else { return XCTFail("certainty \(certainty): owner lost") }
+      XCTAssertEqual(id, speaker)
+      XCTAssertNotNil(known)
+      XCTAssertEqual(kept, certainty)
+      XCTAssertEqual(item.ownershipState, .explicit)
+      XCTAssertEqual(counts.identityDowngradeCount, 0)
+      XCTAssertEqual(counts.unresolvedOwnerCount, 0)
+    }
+  }
+
+  /// possible / unknown drop to none + unresolved and count
+  /// `identity_downgrade` (spec US3 identity table, rows 5–6) — and the run
+  /// does not fail.
+  func testUncertainParticipantsDowngrade() throws {
+    for certainty in [ParticipantCertainty.possible, .unknown] {
+      let speaker = UUID()
+      var evidence = evidence()
+      evidence.participants = [
+        EvidenceParticipant(
+          speakerID: speaker, certainty: certainty, origin: "possible",
+          knownSpeakerID: nil, name: nil)
+      ]
+      let result = result(actionItems: [
+        action(
+          "Do it", owner: WireOwner(kind: .participant, speakerID: speaker),
+          sources: [.segment(segA)])
+      ])
+      let (validated, counts) = try AnalysisValidator.validate(
+        result: result, against: evidence, policy: policy)
+      let item = try XCTUnwrap(validated.actionItems.first)
+      XCTAssertEqual(item.owner, .none)
+      XCTAssertEqual(item.ownershipState, .unresolved)
+      XCTAssertEqual(counts.identityDowngradeCount, 1)
+      XCTAssertEqual(counts.unresolvedOwnerCount, 1)
+    }
+  }
+
+  /// A participant owner whose id is not in the evidence set becomes
+  /// unresolved without counting an identity downgrade.
+  func testUnknownParticipantOwnerUnresolved() throws {
+    let result = result(actionItems: [
+      action(
+        "Do it", owner: WireOwner(kind: .participant, speakerID: UUID()),
+        sources: [.segment(segA)])
+    ])
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: result, against: evidence(), policy: policy)
+    let item = try XCTUnwrap(validated.actionItems.first)
+    XCTAssertEqual(item.owner, ValidatedOwner.none)
+    XCTAssertEqual(item.ownershipState, .unresolved)
+    XCTAssertEqual(counts.identityDowngradeCount, 0)
+    XCTAssertEqual(counts.unresolvedOwnerCount, 1)
+  }
+
+  /// A `mentioned` owner equal — case- and diacritic-insensitive — to a
+  /// Possible-match candidate name downgrades (spec US3).
+  func testMentionedMatchingCandidateDowngrades() throws {
+    var evidence = evidence()
+    evidence.possibleCandidateNames = ["Tomáš Juríček"]
+    let result = result(actionItems: [
+      action(
+        "Do it", owner: WireOwner(kind: .mentioned, name: "tomas juricek"),
+        sources: [.segment(segA)])
+    ])
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: result, against: evidence, policy: policy)
+    let item = try XCTUnwrap(validated.actionItems.first)
+    XCTAssertEqual(item.owner, .none)
+    XCTAssertEqual(item.ownershipState, .unresolved)
+    XCTAssertEqual(counts.identityDowngradeCount, 1)
+    XCTAssertEqual(counts.unresolvedOwnerCount, 1)
+  }
+
+  /// A `mentioned` owner claiming `explicit` is capped at `supported` — the
+  /// model cannot assert explicit ownership over a name it heard.
+  func testMentionedExplicitCapsAtSupported() throws {
+    let result = result(actionItems: [
+      action(
+        "Do it", owner: WireOwner(kind: .mentioned, name: "Someone New"),
+        ownership: .explicit, sources: [.segment(segA)])
+    ])
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: result, against: evidence(), policy: policy)
+    let item = try XCTUnwrap(validated.actionItems.first)
+    XCTAssertEqual(item.owner, .mentioned(name: "Someone New"))
+    XCTAssertEqual(item.ownershipState, .supported)
+    XCTAssertEqual(counts.identityDowngradeCount, 0)
+    XCTAssertEqual(counts.unresolvedOwnerCount, 0)
+  }
+
+  /// A mentioned name matching no candidate stays verbatim.
+  func testMentionedWithoutCandidateStaysVerbatim() throws {
+    var evidence = evidence()
+    evidence.possibleCandidateNames = ["Katarína"]
+    let result = result(actionItems: [
+      action(
+        "Do it", owner: WireOwner(kind: .mentioned, name: "Ingrid"),
+        ownership: .supported, sources: [.segment(segA)])
+    ])
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: result, against: evidence, policy: policy)
+    let item = try XCTUnwrap(validated.actionItems.first)
+    XCTAssertEqual(item.owner, .mentioned(name: "Ingrid"))
+    XCTAssertEqual(item.ownershipState, .supported)
+    XCTAssertEqual(counts.identityDowngradeCount, 0)
   }
 }

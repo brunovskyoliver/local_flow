@@ -92,18 +92,17 @@ func serve(t *testing.T, b *fakeBackend, token string) *httptest.Server {
 	return server
 }
 
-func post(t *testing.T, url string, body []byte, token string) (int, []map[string]any, http.Header) {
-	t.Helper()
+func doPost(url string, body []byte, token string) (int, []map[string]any, http.Header, error) {
 	req, err := http.NewRequest("POST", url+"/v1/analysis/meeting", bytes.NewReader(body))
 	if err != nil {
-		t.Fatal(err)
+		return 0, nil, nil, err
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
@@ -117,7 +116,16 @@ func post(t *testing.T, url string, body []byte, token string) (int, []map[strin
 			lines = append(lines, event)
 		}
 	}
-	return resp.StatusCode, lines, resp.Header
+	return resp.StatusCode, lines, resp.Header, nil
+}
+
+func post(t *testing.T, url string, body []byte, token string) (int, []map[string]any, http.Header) {
+	t.Helper()
+	status, lines, header, err := doPost(url, body, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status, lines, header
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -202,7 +210,11 @@ func TestServerBusy(t *testing.T) {
 	b := newFakeBackend()
 	b.block = make(chan struct{})
 	server := serve(t, b, "")
-	go post(t, server.URL, requestBody(t), "")
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := doPost(server.URL, requestBody(t), "")
+		done <- err
+	}()
 	select {
 	case <-b.requests:
 	case <-time.After(2 * time.Second):
@@ -213,6 +225,9 @@ func TestServerBusy(t *testing.T) {
 		t.Fatalf("want 429, got %d", status)
 	}
 	close(b.block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestBackendFailures(t *testing.T) {

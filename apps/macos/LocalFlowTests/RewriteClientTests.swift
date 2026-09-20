@@ -720,8 +720,9 @@ extension RewriteClientTests {
 
   func testAnalysisStreamStopsAtByteCap() async throws {
     let client = makeAnalysisClient()
-    let accepted = Data(
-      #"{"type":"accepted","schema_version":1,"request_id":"r1"}"#.utf8) + Data("\n".utf8)
+    let accepted =
+      Data(
+        #"{"type":"accepted","schema_version":1,"request_id":"r1"}"#.utf8) + Data("\n".utf8)
     let oversized = Data(String(repeating: "x", count: 98_304).utf8)
     RewriteStubURLProtocol.script(
       .init(chunks: [accepted, oversized]), path: "/v1/analysis/meeting")

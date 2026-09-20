@@ -98,7 +98,8 @@ struct AnalysisPolicy: Sendable, Equatable {
       ("dropped_share_den", maxDroppedShareDenominator),
     ]
     let body = pairs.map { "\"\($0)\":\($1)" }.joined(separator: ",")
-    return "{\"policy\":\"\(Self.version)\",\"chunking\":\"\(Self.chunkingVersion)\",\"overlay\":\"\(Self.overlayMatchVersion)\",\(body)}"
+    return
+      "{\"policy\":\"\(Self.version)\",\"chunking\":\"\(Self.chunkingVersion)\",\"overlay\":\"\(Self.overlayMatchVersion)\",\(body)}"
   }
 
   /// The health `limits`/`caps` minima: the client lowers its budget to the
@@ -126,6 +127,9 @@ struct AnalysisPolicy: Sendable, Equatable {
 }
 
 enum AnalysisSection: String, Sendable, Equatable, CaseIterable {
-  case topics, decisions, actionItems = "action_items"
-  case nextSteps = "next_steps", openQuestions = "open_questions", risks
+  case topics, decisions
+  case actionItems = "action_items"
+  case nextSteps = "next_steps"
+  case openQuestions = "open_questions"
+  case risks
 }

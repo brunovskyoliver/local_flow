@@ -63,10 +63,12 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
       IntelligenceFixtures.response("deployment-valid")[.full]?.first)
     let gate = PreparationGate()
     let (coordinator, store, transport, _) = try makeCoordinator(fixture: fixture)
-    transport.script(.full, [
-      .hold(gate, lines: FakeAnalysisTransport.Lines(value: batch)),
-      .lines(FakeAnalysisTransport.Lines(value: batch)),
-    ])
+    transport.script(
+      .full,
+      [
+        .hold(gate, lines: FakeAnalysisTransport.Lines(value: batch)),
+        .lines(FakeAnalysisTransport.Lines(value: batch)),
+      ])
     coordinator.generate(meetingID: fixture.id)
     await gate.waitUntilStarted()
 
@@ -92,10 +94,12 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
       IntelligenceFixtures.response("deployment-valid")[.full]?.first)
     let gate = PreparationGate()
     let (coordinator, store, transport, _) = try makeCoordinator(fixture: fixture)
-    transport.script(.full, [
-      .hold(gate, lines: FakeAnalysisTransport.Lines(value: batch)),
-      .lines(FakeAnalysisTransport.Lines(value: batch)),
-    ])
+    transport.script(
+      .full,
+      [
+        .hold(gate, lines: FakeAnalysisTransport.Lines(value: batch)),
+        .lines(FakeAnalysisTransport.Lines(value: batch)),
+      ])
     var notices: [String] = []
     coordinator.noticePublished = { notices.append($0) }
 
@@ -120,10 +124,12 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
       IntelligenceFixtures.response("deployment-valid")[.full]?.first)
     let gate = PreparationGate()
     let (coordinator, store, transport, _) = try makeCoordinator(fixture: fixture)
-    transport.script(.full, [
-      .hold(gate, lines: FakeAnalysisTransport.Lines(value: batch)),
-      .lines(FakeAnalysisTransport.Lines(value: batch)),
-    ])
+    transport.script(
+      .full,
+      [
+        .hold(gate, lines: FakeAnalysisTransport.Lines(value: batch)),
+        .lines(FakeAnalysisTransport.Lines(value: batch)),
+      ])
     coordinator.generate(meetingID: fixture.id)
     await gate.waitUntilStarted()
 

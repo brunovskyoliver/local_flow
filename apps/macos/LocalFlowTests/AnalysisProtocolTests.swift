@@ -10,7 +10,10 @@ final class AnalysisProtocolTests: XCTestCase {
   // MARK: Request encoding
 
   func testRequestEncodesExactKeySet() throws {
-    let meetingID = UUID(), runID = UUID(), requestID = UUID(), speakerID = UUID()
+    let meetingID = UUID()
+    let runID = UUID()
+    let requestID = UUID()
+    let speakerID = UUID()
     let request = AnalysisRequest(
       requestID: requestID, runID: runID, stage: .full, chunk: nil,
       meeting: AnalysisRequest.Meeting(
@@ -30,7 +33,8 @@ final class AnalysisProtocolTests: XCTestCase {
     let object = try XCTUnwrap(
       JSONSerialization.jsonObject(with: data) as? [String: Any])
     XCTAssertEqual(
-      Set(object.keys), [
+      Set(object.keys),
+      [
         "schema_version", "request_id", "run_id", "priority", "stage", "meeting",
         "participants", "segments", "notes",
       ])

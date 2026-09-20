@@ -159,7 +159,8 @@ final class TranscriptPager {
     evictedFirstOrdinals = []
     selection = []
     lastPageWasFull = page.segments.count == Self.pageSize
-    highlightedSegmentID = page.segments.contains(where: { $0.id == segmentID })
+    highlightedSegmentID =
+      page.segments.contains(where: { $0.id == segmentID })
       ? segmentID : nil
   }
 

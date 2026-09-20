@@ -99,7 +99,7 @@ final class AnalysisStoreTests: XCTestCase {
     XCTAssertEqual(run.state, .pending)
     let pointer = try await store.analysis(meetingID: id)
     XCTAssertEqual(pointer?.currentRunID, run.id)
-    await XCTAssertThrowsErrorAsync(
+    await assertThrowsErrorAsync(
       try await store.admit(
         meetingID: id, trigger: .manual, evidence: evidence, passID: UUID(),
         policy: AnalysisPolicy(), now: now)
@@ -114,7 +114,7 @@ final class AnalysisStoreTests: XCTestCase {
       meetingID: id, trigger: .manual, evidence: evidence, passID: UUID(),
       policy: AnalysisPolicy(), now: now)
     // pending → succeeded is not allowed.
-    await XCTAssertThrowsErrorAsync(
+    await assertThrowsErrorAsync(
       try await store.adopt(
         runID: run.id, result: validated(), counts: ValidationCounts(), identity: identity,
         now: now)
@@ -124,7 +124,8 @@ final class AnalysisStoreTests: XCTestCase {
     XCTAssertEqual(started.state, .running)
     XCTAssertEqual(started.startedAt, now + 10)
 
-    try await store.recordRequest(runID: run.id, inputBytes: 100, outputBytes: 50, retried: true, preempted: true)
+    try await store.recordRequest(
+      runID: run.id, inputBytes: 100, outputBytes: 50, retried: true, preempted: true)
     let recorded = try await store.latestRun(meetingID: id)
     XCTAssertEqual(recorded?.requestCount, 1)
     XCTAssertEqual(recorded?.retryCount, 1)
@@ -133,7 +134,7 @@ final class AnalysisStoreTests: XCTestCase {
     XCTAssertEqual(recorded?.outputBytes, 50)
 
     // A second active run still cannot be admitted while this one runs.
-    await XCTAssertThrowsErrorAsync(
+    await assertThrowsErrorAsync(
       try await store.admit(
         meetingID: id, trigger: .manual, evidence: evidence, passID: UUID(),
         policy: AnalysisPolicy(), now: now)
@@ -144,7 +145,8 @@ final class AnalysisStoreTests: XCTestCase {
     let id = try await meeting()
 
     let failed = try await runningRun(in: id, at: now)
-    try await store.fail(runID: failed.id, category: .backendTimeout, detail: "backend_timeout", now: now + 5)
+    try await store.fail(
+      runID: failed.id, category: .backendTimeout, detail: "backend_timeout", now: now + 5)
     var run = try await store.latestRun(meetingID: id)
     XCTAssertEqual(run?.state, .failed)
     XCTAssertEqual(run?.failureCategory, .backendTimeout)
@@ -175,10 +177,11 @@ final class AnalysisStoreTests: XCTestCase {
     XCTAssertEqual(itemRows, 0)
 
     // Nothing may write to a terminal run.
-    await XCTAssertThrowsErrorAsync(
-      try await store.recordRequest(runID: failed.id, inputBytes: 1, outputBytes: 1, retried: false, preempted: false)
+    await assertThrowsErrorAsync(
+      try await store.recordRequest(
+        runID: failed.id, inputBytes: 1, outputBytes: 1, retried: false, preempted: false)
     )
-    await XCTAssertThrowsErrorAsync(
+    await assertThrowsErrorAsync(
       try await store.fail(runID: failed.id, category: .timeout, detail: nil, now: now))
   }
 
@@ -207,8 +210,9 @@ final class AnalysisStoreTests: XCTestCase {
     XCTAssertEqual(sourceRows, 7)
 
     // A late write for the accepted run is refused.
-    await XCTAssertThrowsErrorAsync(
-      try await store.recordRequest(runID: run.id, inputBytes: 1, outputBytes: 1, retried: false, preempted: false)
+    await assertThrowsErrorAsync(
+      try await store.recordRequest(
+        runID: run.id, inputBytes: 1, outputBytes: 1, retried: false, preempted: false)
     )
   }
 
@@ -249,7 +253,7 @@ final class AnalysisStoreTests: XCTestCase {
     try await store.cancel(runID: first.id, now: now + 5)
     let second = try await runningRun(in: id)
     // `first` is no longer running: adopt on it must refuse.
-    await XCTAssertThrowsErrorAsync(
+    await assertThrowsErrorAsync(
       try await store.adopt(
         runID: first.id, result: validated(), counts: ValidationCounts(), identity: identity,
         now: now)
@@ -332,7 +336,7 @@ final class AnalysisStoreTests: XCTestCase {
             """, arguments: [UUID().uuidString, id.uuidString, now, now])
       }
     }
-    await XCTAssertThrowsErrorAsync(
+    await assertThrowsErrorAsync(
       try await store.setOverlay(
         meetingID: id, target: .item(UUID()), field: .decisionText, value: .text("x"),
         snapshot: OverlaySnapshot(), now: now)
@@ -376,7 +380,9 @@ final class AnalysisStoreTests: XCTestCase {
     let rematched = overlays.first { $0.field == .decisionText }
     let orphaned = overlays.first { $0.field == .status }
     XCTAssertEqual(rematched?.value, .text("keep me"))
-    let newDecision = try await store.readModel(meetingID: id)!.items.first { $0.kind == .decision }!
+    let newDecision = try await store.readModel(meetingID: id)!.items.first {
+      $0.kind == .decision
+    }!
     XCTAssertEqual(rematched?.itemID, newDecision.id)
     XCTAssertNil(rematched?.orphanedAt)
     XCTAssertNotNil(orphaned?.orphanedAt)
@@ -424,7 +430,7 @@ final class AnalysisStoreTests: XCTestCase {
 }
 
 /// `XCTAssertThrowsError` for async calls.
-func XCTAssertThrowsErrorAsync<T>(
+func assertThrowsErrorAsync<T>(
   _ expression: @autoclosure () async throws -> T,
   _ message: String = "", file: StaticString = #filePath, line: UInt = #line,
   _ handler: (Error) -> Void = { _ in }

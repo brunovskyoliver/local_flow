@@ -95,6 +95,19 @@ actor MeetingEvidenceReader: MeetingEvidenceReading {
     }
   }
 
+  /// The Possible-match candidate names, for the validator's mentioned-owner
+  /// downgrade only — a `mentioned` owner equal to one is a known speaker the
+  /// model had no right to name, so it drops to `none` (T055). Read locally;
+  /// never part of a request.
+  func possibleCandidateNames(meetingID: UUID) async throws -> Set<String> {
+    let map = try await identities.identities(meetingID: meetingID)
+    return Set(
+      map.values.lazy
+        .filter { $0.state == .possible }
+        .compactMap(\.knownSpeakerName)
+        .filter { !$0.isEmpty })
+  }
+
   /// `meeting_notes.text` split at blank lines: trimmed, empties dropped,
   /// numbered from 1, each paragraph SHA-256 hashed (research R7).
   func notes(meetingID: UUID) async throws -> [NoteParagraph] {

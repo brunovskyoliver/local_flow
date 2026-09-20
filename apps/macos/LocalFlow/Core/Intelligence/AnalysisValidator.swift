@@ -40,10 +40,11 @@ enum AnalysisValidator {
       try item($0, kind: .risk, evidence: evidence, policy: policy)
     }
 
-    checkIdentity(items: &actionItems, evidence: evidence, counts: &counts)
+    checkIdentity(items: &actionItems, evidence: evidence, policy: policy, counts: &counts)
     resolveDueDates(items: &actionItems, evidence: evidence)
     checkProtectedLiterals(
-      summary: summary, topics: topics, items: decisions + nextSteps + openQuestions + risks
+      summary: summary, topics: topics,
+      items: decisions + nextSteps + openQuestions + risks
         + actionItems.map { ValidatedItem(kind: .actionItem, text: $0.text, sources: $0.sources) },
       evidence: evidence, counts: &counts)
     checkSupport(
@@ -108,12 +109,49 @@ enum AnalysisValidator {
     }
   }
 
-  // MARK: 3. Identity (stub — T051+ adds the Possible-candidate name rule)
+  // MARK: 3. Identity (T055)
 
+  /// The named-owner rule applied a second time, on the result (spec US3):
+  /// a `participant` owner whose certainty is not in `permittedCertainties`
+  /// drops to `none`/`unresolved` and counts `identity_downgrade`; a
+  /// `mentioned` owner equal — case- and diacritic-insensitive — to a
+  /// Possible-match candidate name does the same; a `mentioned` owner claimed
+  /// `explicit` is capped at `supported`; every `.none` owner counts
+  /// `unresolved_owner`. This step never fails the run.
   private static func checkIdentity(
     items: inout [ValidatedActionItem], evidence: AnalysisEvidence,
-    counts: inout ValidationCounts
-  ) {}
+    policy: AnalysisPolicy, counts: inout ValidationCounts
+  ) {
+    for index in items.indices {
+      var downgraded = false
+      switch items[index].owner {
+      case .participant(_, _, let certainty):
+        if !policy.permittedCertainties.contains(certainty) {
+          items[index].owner = .none
+          downgraded = true
+        }
+      case .mentioned(let name):
+        if evidence.possibleCandidateNames.contains(where: {
+          $0.compare(name, options: [.caseInsensitive, .diacriticInsensitive])
+            == .orderedSame
+        }) {
+          items[index].owner = .none
+          downgraded = true
+        } else if items[index].ownershipState == .explicit {
+          items[index].ownershipState = .supported
+        }
+      case .none:
+        break
+      }
+      if downgraded { counts.identityDowngradeCount += 1 }
+      // `none` ⇒ `unresolved` (data-model CHECK): also an owner that was
+      // already `.none` on the wire, or one whose speaker left the evidence.
+      if case .none = items[index].owner {
+        items[index].ownershipState = .unresolved
+        counts.unresolvedOwnerCount += 1
+      }
+    }
+  }
 
   // MARK: 4. Due dates (stub — T057+ adds resolution and the vague-term rule)
 
@@ -215,9 +253,10 @@ enum AnalysisValidator {
   private static func owner(_ wire: WireOwner, evidence: AnalysisEvidence) -> ValidatedOwner {
     switch wire.kind {
     case .participant:
+      // The certainty the evidence holds, preserved: the identity step applies
+      // `permittedCertainties` and counts the downgrade.
       guard let speakerID = wire.speakerID,
-        let participant = evidence.participants.first(where: { $0.speakerID == speakerID }),
-        participant.certainty.mayBeNamed
+        let participant = evidence.participants.first(where: { $0.speakerID == speakerID })
       else { return .none }
       return .participant(
         speakerID: speakerID, knownSpeakerID: participant.knownSpeakerID,

@@ -114,7 +114,9 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
     }
   }
 
-  private func buildRequest(_ request: AnalysisRequest, endpoint: RewriteEndpoint, timeout: Duration)
+  private func buildRequest(
+    _ request: AnalysisRequest, endpoint: RewriteEndpoint, timeout: Duration
+  )
     throws -> (URLRequest, Int)
   {
     var urlRequest = URLRequest(url: endpoint.analysisURL)

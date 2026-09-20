@@ -247,41 +247,42 @@ final class NativePresentationTests: XCTestCase {
     let endpoint: @MainActor @Sendable () -> RewriteEndpoint? = {
       RewriteEndpoint(url: URL(string: "http://127.0.0.1:8765")!, origin: "test")
     }
-    let makeStack: () -> (
-      SummaryModel, MeetingIntelligenceCoordinator, MeetingAnalyzer,
-      FakeEvidenceReader, FakeAnalysisStore, FakeAnalysisTransport
-    ) = {
-      let reader = FakeEvidenceReader(fixture: fixture)
-      let store = FakeAnalysisStore()
-      let transport = FakeAnalysisTransport()
-      let analyzer = MeetingAnalyzer(
-        evidence: reader, transport: transport, store: store, endpoint: endpoint,
-        settings: { nil })
-      let coordinator = MeetingIntelligenceCoordinator(
-        analyzer: analyzer, store: store, automaticEnabled: { false })
-      let martin = UUID(uuidString: "aaaa0002-0000-4000-8000-000000000002")!
-      let peter = UUID(uuidString: "aaaa0003-0000-4000-8000-000000000003")!
-      let oliver = UUID(uuidString: "aaaa0001-0000-4000-8000-000000000001")!
-      let speakers = FakeSpeakerStore(summaries: [
-        SpeakerSummary(
-          id: oliver, source: .remote, labelOrdinal: 1, colorIndex: 3,
-          displayName: nil, inRoom: false, speechMs: 1_000,
-          identity: SpeakerIdentity(
-            state: .confirmed, origin: .userConfirmation, knownSpeakerID: UUID(),
-            knownSpeakerName: "Oliver Brunovský")),
-        SpeakerSummary(
-          id: martin, source: .remote, labelOrdinal: 2, colorIndex: 5,
-          displayName: "Martin", inRoom: false, speechMs: 1_000),
-        SpeakerSummary(
-          id: peter, source: .remote, labelOrdinal: 3, colorIndex: 1,
-          displayName: "Peter", inRoom: false, speechMs: 1_000),
-      ])
-      let model = SummaryModel(
-        meetingID: fixture.id, coordinator: coordinator, store: store,
-        speakers: speakers, identities: FakeIdentityStore(), analyzer: analyzer,
-        transcripts: reader)
-      return (model, coordinator, analyzer, reader, store, transport)
-    }
+    let makeStack:
+      () -> (
+        SummaryModel, MeetingIntelligenceCoordinator, MeetingAnalyzer,
+        FakeEvidenceReader, FakeAnalysisStore, FakeAnalysisTransport
+      ) = {
+        let reader = FakeEvidenceReader(fixture: fixture)
+        let store = FakeAnalysisStore()
+        let transport = FakeAnalysisTransport()
+        let analyzer = MeetingAnalyzer(
+          evidence: reader, transport: transport, store: store, endpoint: endpoint,
+          settings: { nil })
+        let coordinator = MeetingIntelligenceCoordinator(
+          analyzer: analyzer, store: store, automaticEnabled: { false })
+        let martin = UUID(uuidString: "aaaa0002-0000-4000-8000-000000000002")!
+        let peter = UUID(uuidString: "aaaa0003-0000-4000-8000-000000000003")!
+        let oliver = UUID(uuidString: "aaaa0001-0000-4000-8000-000000000001")!
+        let speakers = FakeSpeakerStore(summaries: [
+          SpeakerSummary(
+            id: oliver, source: .remote, labelOrdinal: 1, colorIndex: 3,
+            displayName: nil, inRoom: false, speechMs: 1_000,
+            identity: SpeakerIdentity(
+              state: .confirmed, origin: .userConfirmation, knownSpeakerID: UUID(),
+              knownSpeakerName: "Oliver Brunovský")),
+          SpeakerSummary(
+            id: martin, source: .remote, labelOrdinal: 2, colorIndex: 5,
+            displayName: "Martin", inRoom: false, speechMs: 1_000),
+          SpeakerSummary(
+            id: peter, source: .remote, labelOrdinal: 3, colorIndex: 1,
+            displayName: "Peter", inRoom: false, speechMs: 1_000),
+        ])
+        let model = SummaryModel(
+          meetingID: fixture.id, coordinator: coordinator, store: store,
+          speakers: speakers, identities: FakeIdentityStore(), analyzer: analyzer,
+          transcripts: reader)
+        return (model, coordinator, analyzer, reader, store, transport)
+      }
 
     // Empty: eligible, nothing generated yet.
     var (model, _, _, _, _, _) = makeStack()

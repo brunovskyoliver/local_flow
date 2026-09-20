@@ -17,7 +17,8 @@ final class SettingsTests: XCTestCase {
     XCTAssertEqual(SettingsView.meetingSummariesTitle, "Summarize meetings automatically")
     XCTAssertEqual(
       SettingsView.meetingSummariesCaption,
-      "Uses the server configured under Rewriting. Transcript text, confirmed speaker names and your notes are sent; audio never leaves this Mac.")
+      "Uses the server configured under Rewriting. Transcript text, confirmed speaker names and your notes are sent; audio never leaves this Mac."
+    )
     let suite = "LocalFlow-summaries-settings-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }

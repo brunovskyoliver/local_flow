@@ -519,7 +519,8 @@ struct MeetingDetailView: View {
               seek: canSeek(segment) ? { seek(to: segment) } : nil,
               changeSpeaker: pager.speakers == nil
                 ? nil : { correctSpeaker(segment, to: $0) },
-              confirmIdentity: showsIdentification ? { confirmIdentity(segment) } : nil)
+              confirmIdentity: showsIdentification ? { confirmIdentity(segment) } : nil
+            )
             .id(segment.id)
           }
           if segments.isEmpty {
@@ -893,7 +894,8 @@ struct NoteTranscriptBubble: View {
           highlighted
             ? SottoPalette.accent.opacity(0.2)
             : selected ? SottoPalette.tint : SottoPalette.canvas,
-          in: .rect(cornerRadius: 10))
+          in: .rect(cornerRadius: 10)
+        )
         .contextMenu {
           Button(selected ? "Deselect segment" : "Select segment", action: select)
           if let seek { Button("Play from here", action: seek) }

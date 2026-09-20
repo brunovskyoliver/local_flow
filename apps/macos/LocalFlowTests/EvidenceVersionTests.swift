@@ -53,8 +53,9 @@ final class EvidenceVersionTests: XCTestCase {
       ],
       [
         participant(speakerA, certainty: .localUser, origin: "none", isLocalUser: true),
-        participant(speakerB, certainty: .confirmed, origin: "user_confirmation",
-                    knownSpeakerID: knownKat, name: "Kat"),
+        participant(
+          speakerB, certainty: .confirmed, origin: "user_confirmation",
+          knownSpeakerID: knownKat, name: "Kat"),
       ],
       [note(1, "Roadmap agreed"), note(2, "Budget question")]
     )

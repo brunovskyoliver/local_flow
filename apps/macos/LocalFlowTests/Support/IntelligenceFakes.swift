@@ -249,8 +249,9 @@ final class FakeAnalysisTransport: AnalysisTransporting, @unchecked Sendable {
     let index = request.chunk?.index ?? 0
     let step = nextStep(for: request.stage, index: index)
     let fixture = self.fixture
-    let body = (try? JSONSerialization.data(
-      withJSONObject: requestJSONObject(request))) ?? Data()
+    let body =
+      (try? JSONSerialization.data(
+        withJSONObject: requestJSONObject(request))) ?? Data()
     lock.withLock { requestByteSizes.append(body.count) }
     return AsyncThrowingStream { continuation in
       continuation.onTermination = { [weak self] state in
@@ -327,7 +328,8 @@ final class FakeAnalysisTransport: AnalysisTransporting, @unchecked Sendable {
   {
     if let string = value as? String {
       if string.hasPrefix("$seg:"), let ordinal = Int(string.dropFirst(5)),
-        let segment = fixture?.segments.first(where: { $0.ordinal == ordinal }) {
+        let segment = fixture?.segments.first(where: { $0.ordinal == ordinal })
+      {
         return segment.id.uuidString
       }
       return string
@@ -365,8 +367,9 @@ final class FakeAnalysisTransport: AnalysisTransporting, @unchecked Sendable {
       return AnalysisHealth(
         schemaVersion: 1, service: AnalysisHealth.serviceName,
         protocolVersions: [1], serverName: "flowd", serverVersion: "0.3.0",
-        backend: .init(state: "ready", kind: "openai-compatible", model: "test-model",
-                       jsonSchema: true),
+        backend: .init(
+          state: "ready", kind: "openai-compatible", model: "test-model",
+          jsonSchema: true),
         promptVersions: ["full": 1, "chunk": 1, "synthesis": 1],
         resultSchemaVersion: 1,
         limits: .init(
@@ -429,7 +432,8 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
         requestConfigJSON: policy.requestConfigJSON(), createdAt: now)
       runs.append(run)
       runRows[meetingID] = runs
-      var pointer = pointers[meetingID]
+      var pointer =
+        pointers[meetingID]
         ?? MeetingAnalysisPointer(
           meetingID: meetingID, acceptedRunID: nil, currentRunID: nil,
           acceptedEvidenceVersion: nil, autoRestartedAt: nil)
@@ -520,7 +524,9 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
           }) ?? rows.firstIndex(where: { $0.id != runID }) {
             content.removeValue(forKey: rows[drop].id)
             rows.remove(at: drop)
-          } else { break }
+          } else {
+            break
+          }
         }
         runRows[meetingID] = rows
         guard var pointer = pointers[meetingID] else {
@@ -639,7 +645,8 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
 
   func markAutoRestarted(meetingID: UUID, now: Int64) async throws {
     lock.withLock {
-      var pointer = pointers[meetingID]
+      var pointer =
+        pointers[meetingID]
         ?? MeetingAnalysisPointer(
           meetingID: meetingID, acceptedRunID: nil, currentRunID: nil,
           acceptedEvidenceVersion: nil, autoRestartedAt: nil)
@@ -651,8 +658,14 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
   func readModel(meetingID: UUID) async throws -> StoredAnalysis? {
     try check("readModel")
     return lock.withLock {
-      guard let accepted = pointers[meetingID]?.acceptedRunID else { return nil }
-      return content[accepted]
+      guard let accepted = pointers[meetingID]?.acceptedRunID,
+        var analysis = content[accepted]
+      else { return nil }
+      // Overlays are read live, like the real store's fetchOverlays — a
+      // setOverlay after adopt must appear here.
+      analysis.overlays =
+        overlayRows[meetingID]?.values.sorted { $0.createdAt < $1.createdAt } ?? []
+      return analysis
     }
   }
 
@@ -674,7 +687,10 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
         if rows.count >= overlayCap {
           throw AnalysisFailure(.persistenceCapacity, detail: "overlays_full")
         }
-        let itemID: UUID? = { if case .item(let id) = target { return id }; return nil }()
+        let itemID: UUID? = {
+          if case .item(let id) = target { return id }
+          return nil
+        }()
         let row = AnalysisOverlay(
           id: UUID(), meetingID: meetingID, itemID: itemID, targetKind: target,
           itemKind: nil, field: field, value: value, snapshot: snapshot,
@@ -729,6 +745,7 @@ final class FakeEvidenceReader: MeetingEvidenceReading, @unchecked Sendable {
   var segments: [EvidenceSegment] = []
   var participantRows: [EvidenceParticipant] = []
   var noteRows: [NoteParagraph] = []
+  var candidateNameSet: Set<String> = []
   var transcription: MeetingTranscription?
   var meetingRow: Meeting?
   private(set) var pageRequests: [(after: Int?, limit: Int)] = []
@@ -738,6 +755,7 @@ final class FakeEvidenceReader: MeetingEvidenceReading, @unchecked Sendable {
       segments = fixture.segments
       participantRows = fixture.participants
       noteRows = fixture.notes
+      candidateNameSet = Set(fixture.candidateNames.values)
       meetingRow = fixture.meeting
       transcription = MeetingTranscription(
         meetingID: fixture.id, state: .final, liveRequested: false,
@@ -762,6 +780,10 @@ final class FakeEvidenceReader: MeetingEvidenceReading, @unchecked Sendable {
 
   func participants(meetingID: UUID) async throws -> [EvidenceParticipant] {
     participantRows
+  }
+
+  func possibleCandidateNames(meetingID: UUID) async throws -> Set<String> {
+    candidateNameSet
   }
 
   func notes(meetingID: UUID) async throws -> [NoteParagraph] { noteRows }

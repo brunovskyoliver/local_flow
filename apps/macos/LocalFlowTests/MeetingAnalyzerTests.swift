@@ -184,14 +184,17 @@ final class MeetingAnalyzerTests: XCTestCase {
     let reader = FakeEvidenceReader(fixture: fixture)
     let store = FakeAnalysisStore()
     let transport = FakeAnalysisTransport(fixture: fixture)
-    transport.script(.full, [
-      .lines(FakeAnalysisTransport.Lines(value: [
-        [
-          "type": "error", "schema_version": 1, "request_id": "*",
-          "code": "backend_timeout",
-        ],
-      ])),
-    ])
+    transport.script(
+      .full,
+      [
+        .lines(
+          FakeAnalysisTransport.Lines(value: [
+            [
+              "type": "error", "schema_version": 1, "request_id": "*",
+              "code": "backend_timeout",
+            ]
+          ]))
+      ])
     let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
 
     let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
@@ -222,6 +225,105 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(run.failureDetail, "evidence_changed")
   }
 
+  // MARK: T051 — the request never leaks uncertain identity
+
+  /// For every certainty fixture the encoded request carries no Possible-match
+  /// candidate name, no name for any Unknown participant, no `known_speakers`
+  /// list, no embedding, no vocabulary and no other meeting's id (spec US3).
+  func testRequestNeverLeaksUncertainIdentity() async throws {
+    let fixtureNames = [
+      "deployment", "slovak", "english", "mixed", "due-dates",
+      "certainty-confirmed", "certainty-possible", "certainty-unknown",
+    ]
+    let otherIDs = try fixtureNames.map { try IntelligenceFixtures.meeting($0).id }
+
+    for name in ["certainty-possible", "certainty-unknown", "certainty-confirmed", "deployment"] {
+      let fixture = try IntelligenceFixtures.meeting(name)
+      let reader = FakeEvidenceReader(fixture: fixture)
+      let store = FakeAnalysisStore()
+      let transport = FakeAnalysisTransport(fixture: fixture)
+      try transport.script(
+        response: name == "deployment" ? "deployment-valid" : "certainty-confirmed")
+      let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+      _ = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+
+      let request = try XCTUnwrap(transport.requests.first, name)
+      let data = try JSONEncoder().encode(request)
+      let body = String(decoding: data, as: UTF8.self)
+      XCTAssertFalse(body.contains("Tomáš Juríček"), name)
+      XCTAssertFalse(body.contains("candidate"), name)
+      XCTAssertFalse(body.contains("known_speakers"), name)
+      XCTAssertFalse(body.contains("embedding"), name)
+      XCTAssertFalse(body.contains("vocabulary"), name)
+      for id in otherIDs where id != fixture.id {
+        XCTAssertFalse(body.contains(id.uuidString), "\(name) leaked a foreign meeting id")
+      }
+
+      let object = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: data) as? [String: Any], name)
+      let participants = try XCTUnwrap(object["participants"] as? [[String: Any]], name)
+      for participant in participants {
+        let certainty = participant["certainty"] as? String
+        if certainty == "possible" || certainty == "unknown" {
+          XCTAssertNil(participant["name"], "\(name): \(certainty) participant named")
+        }
+      }
+    }
+  }
+
+  /// A `local_name` participant on a Possible-match root ships only the typed
+  /// name — never the candidate name the matcher proposed.
+  func testLocalNameOnPossibleRootCarriesOnlyTypedName() async throws {
+    let fixture = try IntelligenceFixtures.meeting("certainty-possible")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let speaker = UUID()
+    reader.participantRows = [
+      EvidenceParticipant(
+        speakerID: speaker, certainty: .localName, origin: "automatic_match",
+        knownSpeakerID: UUID(), name: "Stretko")
+    ]
+    XCTAssertEqual(reader.candidateNameSet, ["Tomáš Juríček"])
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "certainty-confirmed")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    _ = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+
+    let request = try XCTUnwrap(transport.requests.first)
+    let data = try JSONEncoder().encode(request)
+    XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("Tomáš Juríček"))
+    let object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let participants = try XCTUnwrap(object["participants"] as? [[String: Any]])
+    let local = try XCTUnwrap(
+      participants.first { ($0["certainty"] as? String) == "local_name" })
+    XCTAssertEqual(local["name"] as? String, "Stretko")
+  }
+
+  /// A server response that names a Possible-match speaker as a participant
+  /// owner is re-checked against the identity rule: the adopted owner is
+  /// unresolved and the downgrade is counted — the run still succeeds.
+  func testServerNamedPossibleOwnerDowngrades() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "named-possible-owner")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+
+    XCTAssertEqual(run.state, .succeeded)
+    XCTAssertEqual(run.identityDowngradeCount, 1)
+    XCTAssertEqual(run.unresolvedOwnerCount, 1)
+    let model = try await store.readModel(meetingID: fixture.id)
+    let item = try XCTUnwrap(model?.items.first { $0.kind == .actionItem })
+    XCTAssertEqual(item.owner, ValidatedOwner.none)
+    XCTAssertEqual(item.ownershipState, .unresolved)
+  }
+
   // MARK: Helpers
 
   // MARK: T045 — fabricated and foreign sources
@@ -237,10 +339,12 @@ final class MeetingAnalyzerTests: XCTestCase {
     let valid = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
     let fabricated = try IntelligenceFixtures.response("fabricated-segment")[.full]![0]
     let foreign = try IntelligenceFixtures.response("cross-meeting-segment")[.full]![0]
-    transport.script(.full, [
-      .lines(.init(value: valid)), .lines(.init(value: fabricated)),
-      .lines(.init(value: foreign)),
-    ])
+    transport.script(
+      .full,
+      [
+        .lines(.init(value: valid)), .lines(.init(value: fabricated)),
+        .lines(.init(value: foreign)),
+      ])
     let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
 
     let first = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
@@ -286,7 +390,10 @@ private final class SecondReadMutatingReader: MeetingEvidenceReading, @unchecked
   init(inner: FakeEvidenceReader) { self.inner = inner }
 
   func notes(meetingID: UUID) async throws -> [NoteParagraph] {
-    let n = lock.withLock { () -> Int in calls += 1; return calls }
+    let n = lock.withLock { () -> Int in
+      calls += 1
+      return calls
+    }
     let rows = try await inner.notes(meetingID: meetingID)
     guard n >= 2 else { return rows }
     return rows + [
@@ -304,6 +411,10 @@ private final class SecondReadMutatingReader: MeetingEvidenceReading, @unchecked
 
   func participants(meetingID: UUID) async throws -> [EvidenceParticipant] {
     try await inner.participants(meetingID: meetingID)
+  }
+
+  func possibleCandidateNames(meetingID: UUID) async throws -> Set<String> {
+    try await inner.possibleCandidateNames(meetingID: meetingID)
   }
 
   func transcription(meetingID: UUID) async throws -> MeetingTranscription? {

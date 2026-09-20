@@ -56,9 +56,12 @@ struct EvidenceVersion: Sendable, Equatable {
         "\(segment.startMs)", "\(segment.endMs)", speaker, segment.text,
       ])
     }
-    for participant in participants.sorted(by: { $0.speakerID.uuidString < $1.speakerID.uuidString }) {
+    for participant in participants.sorted(by: { $0.speakerID.uuidString < $1.speakerID.uuidString }
+    ) {
       if participant.isLocalUser {
-        line(["local", participant.speakerID.uuidString, participant.knownSpeakerID != nil ? "1" : "0"])
+        line([
+          "local", participant.speakerID.uuidString, participant.knownSpeakerID != nil ? "1" : "0",
+        ])
       } else {
         line([
           "root", participant.speakerID.uuidString, participant.certainty.rawValue,

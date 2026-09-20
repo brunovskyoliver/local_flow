@@ -255,10 +255,12 @@ struct AnalysisResult: Sendable, Equatable, Encodable {
   /// Decode a `result` event's `analysis` object with every structural rule of
   /// the contract. `partial == true` applies the halved section caps.
   static func decode(_ value: Any?, partial: Bool) throws -> AnalysisResult {
-    let object = try object(value, allowed: [
-      "schema_version", "meeting_id", "partial", "language", "summary", "topics",
-      "decisions", "action_items", "next_steps", "open_questions", "risks",
-    ])
+    let object = try object(
+      value,
+      allowed: [
+        "schema_version", "meeting_id", "partial", "language", "summary", "topics",
+        "decisions", "action_items", "next_steps", "open_questions", "risks",
+      ])
     guard try requiredInt(object, "schema_version") == AnalysisBounds.schemaVersion else {
       throw AnalysisFailure(.unsupportedVersion)
     }
@@ -270,7 +272,8 @@ struct AnalysisResult: Sendable, Equatable, Encodable {
     else { throw AnalysisFailure(.malformedResponse) }
     let policy = AnalysisPolicy()
     let summary = try decodeSummary(object["summary"])
-    let topics = try decodeArray(object, "topics", cap: policy.cap(for: .topics, partial: partial)) {
+    let topics = try decodeArray(object, "topics", cap: policy.cap(for: .topics, partial: partial))
+    {
       try decodeTopic($0)
     }
     let decisions = try decodeArray(
@@ -487,8 +490,10 @@ struct AnalysisResult: Sendable, Equatable, Encodable {
       throw AnalysisFailure(.malformedResponse)
     }
     let original = object["original"] as? String
-    if let original, original.isEmpty
-      || original.utf8.count > AnalysisBounds.maxDueOriginalBytes {
+    if let original,
+      original.isEmpty
+        || original.utf8.count > AnalysisBounds.maxDueOriginalBytes
+    {
       throw AnalysisFailure(.malformedResponse)
     }
     var source: WireSourceRef?

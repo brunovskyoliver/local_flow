@@ -390,7 +390,8 @@ final class MeetingDeletionTests: XCTestCase {
         result: ValidatedAnalysis(
           language: .en,
           summary: ValidatedSummary(text: "s", sources: [source], wholeMeeting: true),
-          topics: [], decisions: [
+          topics: [],
+          decisions: [
             ValidatedItem(kind: .decision, text: "d", sources: [source])
           ], actionItems: [], nextSteps: [], openQuestions: [], risks: []),
         counts: ValidationCounts(itemCount: 1), identity: identity, now: now + 2)
