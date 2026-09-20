@@ -40,6 +40,23 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertEqual(defaults.object(forKey: "settings.speakerIdentificationEnabled") as? Bool, false)
   }
 
+  /// Feature 011 (FR-035): on by default under `settings.meetingSummariesAutomatic`;
+  /// toggling it must not disturb the existing preference defaults.
+  @MainActor func testMeetingSummariesDefaultsOnAndPersists() {
+    let suite = "LocalFlow-summaries-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertTrue(preferences.meetingSummariesAutomatic)
+    preferences.meetingSummariesAutomatic = false
+    XCTAssertFalse(AppPreferences(defaults: defaults).meetingSummariesAutomatic)
+    XCTAssertEqual(defaults.object(forKey: "settings.meetingSummariesAutomatic") as? Bool, false)
+    let fresh = AppPreferences(defaults: defaults)
+    XCTAssertTrue(fresh.meetingTranscriptionEnabled)
+    XCTAssertTrue(fresh.meetingDiarizationEnabled)
+    XCTAssertTrue(fresh.speakerIdentificationEnabled)
+  }
+
   @MainActor func testRewriteModeDefaultsPersistenceAndUnknownValue() {
     let suite = "LocalFlow-mode-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!

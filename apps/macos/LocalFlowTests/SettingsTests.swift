@@ -11,6 +11,19 @@ final class SettingsTests: XCTestCase {
     )
   }
 
+  /// Feature 011 (T038): the Meetings toggle reads the contract caption and
+  /// defaults on.
+  @MainActor func testMeetingSummariesToggleCopyAndDefault() {
+    XCTAssertEqual(SettingsView.meetingSummariesTitle, "Summarize meetings automatically")
+    XCTAssertEqual(
+      SettingsView.meetingSummariesCaption,
+      "Uses the server configured under Rewriting. Transcript text, confirmed speaker names and your notes are sent; audio never leaves this Mac.")
+    let suite = "LocalFlow-summaries-settings-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    XCTAssertTrue(AppPreferences(defaults: defaults).meetingSummariesAutomatic)
+  }
+
   /// Feature 010 (T072): the global toggle defaults on with its detail text, and with
   /// the toggle off the sheet is the 007 sheet and the coordinator admits nothing.
   @MainActor func testSpeakerIdentificationToggleDefaultsOnAndOffShortCircuitsEverything()

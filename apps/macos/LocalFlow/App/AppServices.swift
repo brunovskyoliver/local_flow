@@ -35,6 +35,11 @@ final class AppServices {
   @ObservationIgnored private(set) var speakerStore: SpeakerStore?
   // Feature 010: persistent speaker identification.
   private(set) var speakerIdentification: SpeakerIdentificationCoordinator?
+  // Feature 011: meeting intelligence.
+  private(set) var meetingIntelligence: MeetingIntelligenceCoordinator?
+  @ObservationIgnored private(set) var analysisStore: AnalysisStore?
+  @ObservationIgnored private(set) var meetingAnalyzer: MeetingAnalyzer?
+  @ObservationIgnored private(set) var meetingEvidenceReader: MeetingEvidenceReader?
   private(set) var knownSpeakers: KnownSpeakersModel?
   @ObservationIgnored private(set) var identityStore: IdentityStore?
   @ObservationIgnored private var voiceModelIdentity: VoiceModelIdentity?
@@ -572,6 +577,42 @@ final class AppServices {
     identification.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
     diarization.identification = identification
     speakerIdentification = identification
+    // Feature 011: meeting intelligence on the rewrite server. Everything it
+    // sends is structured evidence; the store, reader and transport keep the
+    // speech data local by construction.
+    let analysisStore = AnalysisStore(history: history)
+    self.analysisStore = analysisStore
+    let evidenceReader = MeetingEvidenceReader(
+      transcripts: transcripts, speakers: speakers, identities: identities,
+      meetings: store)
+    self.meetingEvidenceReader = evidenceReader
+    let analyzer = MeetingAnalyzer(
+      evidence: evidenceReader,
+      transport: AnalysisClient(credentials: rewriteCredentials),
+      store: analysisStore, clock: clock,
+      endpoint: { [weak self] in
+        guard let self else { return nil }
+        return RewriteEndpoint(
+          settings: RewriteSettings.capture(
+            preferences: self.preferences, credentialStore: self.rewriteCredentials))
+      },
+      settings: { [weak self] in
+        self.map {
+          RewriteSettings.capture(
+            preferences: $0.preferences, credentialStore: $0.rewriteCredentials)
+        }
+      },
+      recorder: recorder)
+    self.meetingAnalyzer = analyzer
+    let intelligence = MeetingIntelligenceCoordinator(
+      analyzer: analyzer, store: analysisStore,
+      automaticEnabled: { [weak self] in
+        self?.preferences.meetingSummariesAutomatic ?? false
+      },
+      clock: clock)
+    intelligence.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
+    transcription.intelligence = intelligence
+    meetingIntelligence = intelligence
     let identificationReconciler = IdentificationReconciler(store: identities, clock: clock)
     let gate = reconciliationGate
     let reconciler = MeetingReconciler(
@@ -612,6 +653,13 @@ final class AppServices {
                 store: store, transcripts: transcripts, speakers: speakers)
             }
           }
+          if let name = options.debugSeedIntelligence {
+            Task {
+              await self.seedSyntheticIntelligence(
+                named: name, store: store, transcripts: transcripts,
+                speakers: speakers, identities: identities)
+            }
+          }
         #endif
       }
     }
@@ -628,9 +676,11 @@ final class AppServices {
     meetingLibrary = MeetingLibraryViewModel(store: store) { [weak coordinator] in
       coordinator?.activeMeetingID
     }
-    meetingLibrary?.willDelete = { [weak coordinator, weak diarization, weak identification] id in
+    meetingLibrary?.willDelete = {
+      [weak coordinator, weak diarization, weak identification, weak intelligence] id in
       await diarization?.meetingWillDelete(id: id)
       await identification?.meetingWillDelete(id: id)
+      await intelligence?.meetingWillDelete(id: id)
       await coordinator?.meetingWillDelete(id: id)
     }
     observeBackgroundWork()
@@ -715,6 +765,19 @@ final class AppServices {
     MeetingNotesEditor(
       meetingID: detail.meeting.id, store: meetingStore!, clock: SystemMeetingClock(),
       text: detail.notes.text, revision: detail.notes.revision)
+  }
+
+  /// One `SummaryModel` per opened meeting; nil before the intelligence stack
+  /// exists, which keeps the placeholder Summary tab.
+  func makeSummaryModel(meetingID: UUID) -> SummaryModel? {
+    guard let intelligence = meetingIntelligence, let analysisStore,
+      let analyzer = meetingAnalyzer, let reader = meetingEvidenceReader,
+      let speakers = speakerStore, let identities = identityStore
+    else { return nil }
+    return SummaryModel(
+      meetingID: meetingID, coordinator: intelligence, store: analysisStore,
+      speakers: speakers, identities: identities, analyzer: analyzer,
+      transcripts: reader)
   }
 
   /// Window close: notes are saved before the editor goes away; capture is untouched.
@@ -1317,6 +1380,9 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
   var debugFailDiarizationWindow: Int?
   var debugSlowDiarization: Double?
   var debugSeedDiarization = false
+  /// Feature 011: `--debug-seed-intelligence <deployment|fourhour|slovak|english|mixed>`
+  /// seeds fixture evidence (final transcript, speakers, notes) for the Summary tab.
+  var debugSeedIntelligence: String?
 
   static func parse(environment: [String: String], arguments: [String]) -> MeetingRuntimeOptions {
     var options = MeetingRuntimeOptions()
@@ -1354,6 +1420,11 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
         options.debugSlowDiarization = seconds
       }
       options.debugSeedDiarization = arguments.contains("--debug-seed-diarization")
+      if let name = value(after: "--debug-seed-intelligence"),
+        ["deployment", "fourhour", "slovak", "english", "mixed"].contains(name)
+      {
+        options.debugSeedIntelligence = name
+      }
     #endif
     return options
   }
@@ -1495,6 +1566,265 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
       } catch {
         showMeetingNotice("Speaker seeding failed")
       }
+    }
+  }
+
+  extension AppServices {
+    /// `--debug-seed-intelligence <name>`: one fixture's evidence — final
+    /// transcript, speaker rows with the fixture certainties and the notes —
+    /// on the newest completed meeting, so the Summary tab and the analyzer
+    /// can be exercised without a server. Debug builds only; no network.
+    fileprivate func seedSyntheticIntelligence(
+      named name: String, store: MeetingStore, transcripts: TranscriptStore,
+      speakers: SpeakerStore, identities: IdentityStore
+    ) async {
+      do {
+        guard let fixture = Self.intelligenceFixture(named: name) else {
+          showMeetingNotice("Intelligence fixture '\(name)' not found")
+          return
+        }
+        let page = try await store.page(before: nil, limit: MeetingStore.pageLimit)
+        guard let target = page.first(where: { $0.state == .completed }) else {
+          showMeetingNotice("Intelligence seeding needs a completed meeting")
+          return
+        }
+        let meetingID = target.id
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+
+        // Final transcript pass with the fixture segments, in pages of 50.
+        var row = try await transcripts.transcription(meetingID: meetingID)
+        if row?.state == .notRequested || row == nil {
+          row = try await transcripts.transition(
+            meetingID: meetingID, to: .pending, now: now, effects: [])
+        }
+        guard let row, row.state != .live, row.state != .finalizing else { return }
+        let pass = UUID()
+        let covered = max(fixture.durationMs, 1_000)
+        _ = try await transcripts.transition(
+          meetingID: meetingID, to: .finalizing, now: now,
+          effects: [.setPass(id: pass, kind: .final), .setTimestamps(recordedMsAtPass: covered)])
+        var ordinal = 0
+        while ordinal < fixture.segments.count {
+          let end = min(fixture.segments.count, ordinal + 50)
+          let batch = fixture.segments[ordinal..<end].enumerated().map { index, segment in
+            TranscriptSegmentDraft(
+              finality: .final, ordinal: ordinal + index, stretchSequence: 1,
+              startMs: segment.startMs, endMs: segment.endMs, coveredMs: covered,
+              windowIndex: (ordinal + index) / 15, timingBasis: .window,
+              rawText: segment.text, assembledText: segment.text,
+              normalizedText: segment.text, pipelineVersion: "debug_seed",
+              analysisTracks: .both)
+          }
+          _ = try await transcripts.appendSegments(
+            meetingID: meetingID, passID: pass, drafts: batch,
+            progress: .init(sequence: 1, sample: Int64(batch.last?.endMs ?? 0) * 16), now: now)
+          ordinal += batch.count
+        }
+        _ = try await transcripts.completeFinalPass(
+          meetingID: meetingID, passID: pass,
+          descriptor: .init(
+            source: .decodedTracks, contributingTracks: [.mic, .system],
+            stretches: [.init(sequence: 1, lengthMs: covered, tracks: .both)]),
+          coveredMs: covered, now: now)
+
+        // Speaker rows: one confident root per fixture participant, keeping the
+        // fixture's speaker ids so the certainties below line up.
+        let speakerIdentity = DiarizationIdentity(
+          engine: "debug_seed", modelID: "debug", modelRevision: "debug",
+          manifestHash: String(repeating: "0", count: 64), pipelineVersion: "debug_seed")
+        let run = try await speakers.admit(
+          meetingID: meetingID, transcriptPassID: pass, trigger: .manual,
+          identity: speakerIdentity, expectedRevision: nil, now: now)
+        _ = try await speakers.start(runID: run.id, now: now)
+        let drafts = fixture.participants.enumerated().map { index, participant in
+          SpeakerDraft(
+            id: participant.speakerID, clusterKey: index,
+            track: index == 0 ? .microphone : .system, reconciliation: .confident)
+        }
+        let turns = drafts.enumerated().map { index, draft in
+          TurnDraft(
+            speakerID: draft.id, track: draft.track, startMs: Int64(index) * 100,
+            endMs: Int64(index) * 100 + covered / Int64(max(1, drafts.count)), quality: nil)
+        }
+        try await speakers.appendWindow(runID: run.id, speakers: drafts, turns: turns, audioMs: covered)
+        let rows = try await transcripts.page(
+          meetingID: meetingID, finality: .final, after: nil, limit: 20_000)
+        var speakerByOrdinal: [Int: UUID] = [:]
+        for segment in fixture.segments { speakerByOrdinal[segment.ordinal] = segment.speakerID }
+        let assignments = rows.map { row in
+          AssignmentDraft(
+            segmentID: row.id, kind: .speaker,
+            speakerID: speakerByOrdinal[row.ordinal],
+            topSpeakerID: speakerByOrdinal[row.ordinal], secondSpeakerID: nil,
+            topCoverage: 1, secondCoverage: 0)
+        }
+        _ = try await speakers.complete(runID: run.id, assignments: assignments, now: now)
+
+        // Certainties. Manual links first; one automatic run carries the
+        // recognized and possible decisions (its candidates keep their names
+        // local, exactly like a real possible match).
+        var automatic: [UUID: IdentityMatcher.Decision] = [:]
+        var automaticCandidates: [MatchCandidateDraft] = []
+        for participant in fixture.participants {
+          switch participant.certainty {
+          case "confirmed", "local_user":
+            let known = try await identities.createKnownSpeaker(
+              name: participant.name ?? "Speaker", isLocalUser: participant.certainty == "local_user",
+              now: now)
+            try await identities.link(
+              meetingID: meetingID, speakerID: participant.speakerID, to: known.id,
+              origin: .userConfirmation, now: now)
+          case "recognized":
+            let known = try await identities.createKnownSpeaker(
+              name: participant.name ?? "Speaker", isLocalUser: false, now: now)
+            let candidate = IdentityMatcher.Candidate(
+              knownSpeakerID: known.id, score: 0.9, tier: .recognized, reasons: [],
+              sampleCount: 1, supportCount: 1)
+            automatic[participant.speakerID] = IdentityMatcher.Decision(
+              state: .recognized, best: candidate, second: nil, candidates: [candidate])
+            automaticCandidates.append(
+              MatchCandidateDraft(
+                meetingSpeakerID: participant.speakerID, knownSpeakerID: known.id,
+                score: 0.9, tier: .recognized, reasons: [], sampleCount: 1, supportCount: 1))
+          case "possible":
+            let known = try await identities.createKnownSpeaker(
+              name: participant.candidateName ?? "Candidate", isLocalUser: false, now: now)
+            let candidate = IdentityMatcher.Candidate(
+              knownSpeakerID: known.id, score: 0.5, tier: .possible, reasons: [],
+              sampleCount: 1, supportCount: 1)
+            automatic[participant.speakerID] = IdentityMatcher.Decision(
+              state: .possible, best: candidate, second: nil, candidates: [candidate])
+            automaticCandidates.append(
+              MatchCandidateDraft(
+                meetingSpeakerID: participant.speakerID, knownSpeakerID: known.id,
+                score: 0.5, tier: .possible, reasons: [], sampleCount: 1, supportCount: 1))
+          case "local_name":
+            if let name = participant.name {
+              try await speakers.saveNames(
+                meetingID: meetingID, names: [participant.speakerID: name], now: now)
+            }
+          default: break  // unknown: no assignment, no name
+          }
+        }
+        if !automatic.isEmpty {
+          let voiceIdentity =
+            voiceModelIdentity
+            ?? FluidAudioVoiceEmbedderFactory.identity(
+              descriptor: nil, manifestHash: String(repeating: "0", count: 64))
+          let identificationRun = try await identities.admit(
+            meetingID: meetingID, trigger: .manual, identity: voiceIdentity,
+            policy: "debug_seed", now: now)
+          _ = try await identities.start(runID: identificationRun.id, now: now)
+          try await identities.appendCandidates(runID: identificationRun.id, rows: automaticCandidates)
+          _ = try await identities.complete(
+            runID: identificationRun.id, decisions: automatic, now: now)
+        }
+
+        // Notes, verbatim from the fixture.
+        if !fixture.notes.isEmpty {
+          let revision = try await store.notes(meetingID: meetingID)?.revision ?? 0
+          _ = try await store.saveNotes(
+            meetingID: meetingID, text: fixture.notes, revision: revision, now: now)
+        }
+        await meetingIntelligence?.evidenceDidChange(meetingID: meetingID)
+        await meetingLibrary?.refresh()
+        showMeetingNotice("Seeded '\(name)' evidence")
+      } catch {
+        showMeetingNotice("Intelligence seeding failed")
+      }
+    }
+
+    // MARK: Fixture loading
+
+    private struct IntelligenceSeedFixture {
+      struct Participant {
+        var speakerID: UUID
+        var certainty: String
+        var name: String?
+        var candidateName: String?
+      }
+      struct Segment {
+        var ordinal: Int
+        var startMs: Int64
+        var endMs: Int64
+        var speakerID: UUID?
+        var text: String
+      }
+      var durationMs: Int64
+      var participants: [Participant]
+      var segments: [Segment]
+      var notes: String
+    }
+
+    private static func intelligenceFixture(named name: String) -> IntelligenceSeedFixture? {
+      if name == "fourhour" { return fourHourFixture() }
+      guard let directory = fixtureDirectory(),
+        let data = try? Data(contentsOf: directory.appendingPathComponent("\(name).json")),
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+      else { return nil }
+      var fixture = IntelligenceSeedFixture(
+        durationMs: (object["duration_ms"] as? NSNumber)?.int64Value ?? 60_000,
+        participants: [], segments: [], notes: object["notes"] as? String ?? "")
+      for raw in object["participants"] as? [[String: Any]] ?? [] {
+        guard let id = (raw["speaker_id"] as? String).flatMap(UUID.init(uuidString:)),
+          let certainty = raw["certainty"] as? String
+        else { continue }
+        fixture.participants.append(
+          .init(
+            speakerID: id, certainty: certainty, name: raw["name"] as? String,
+            candidateName: raw["candidate_name_kept_local"] as? String))
+      }
+      for raw in object["segments"] as? [[String: Any]] ?? [] {
+        guard let ordinal = (raw["ordinal"] as? NSNumber)?.intValue,
+          let text = raw["normalized_text"] as? String
+        else { continue }
+        fixture.segments.append(
+          .init(
+            ordinal: ordinal,
+            startMs: (raw["start_ms"] as? NSNumber)?.int64Value ?? 0,
+            endMs: (raw["end_ms"] as? NSNumber)?.int64Value ?? 0,
+            speakerID: (raw["speaker_id"] as? String).flatMap(UUID.init(uuidString:)),
+            text: text))
+      }
+      fixture.segments.sort { $0.ordinal < $1.ordinal }
+      return fixture
+    }
+
+    /// `LOCALFLOW_FIXTURES` wins; otherwise walk ancestors of this source file
+    /// (debug builds only) until `fixtures/intelligence` turns up.
+    private static func fixtureDirectory() -> URL? {
+      if let root = ProcessInfo.processInfo.environment["LOCALFLOW_FIXTURES"], !root.isEmpty {
+        let url = URL(fileURLWithPath: root, isDirectory: true)
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+      }
+      var url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      while url.path.count > 1 {
+        let candidate = url.appendingPathComponent("fixtures/intelligence", isDirectory: true)
+        if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        url.deleteLastPathComponent()
+      }
+      return nil
+    }
+
+    /// The four-hour fixture is generated, matching the test helper's shape.
+    private static func fourHourFixture() -> IntelligenceSeedFixture {
+      var fixture = IntelligenceSeedFixture(
+        durationMs: 4 * 3_600_000, participants: [
+          .init(speakerID: UUID(), certainty: "local_name", name: "Ana")
+        ], segments: [], notes: "Long budget review with several topic switches.")
+      var offset: Int64 = 0
+      var ordinal = 0
+      let filler = "The group discussed the release checklist and open work. "
+      while offset < fixture.durationMs {
+        fixture.segments.append(
+          .init(
+            ordinal: ordinal, startMs: offset, endMs: offset + 5_000,
+            speakerID: fixture.participants[0].speakerID,
+            text: filler + "Topic \(ordinal) covered in detail."))
+        offset += 5_000
+        ordinal += 1
+      }
+      return fixture
     }
   }
 

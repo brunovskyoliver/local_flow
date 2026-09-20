@@ -21,6 +21,9 @@ struct SettingsView: View {
   static let speakerIdentificationTitle = "Remember and recognize speakers across meetings"
   static let speakerIdentificationCaption =
     "Nothing is stored until you choose Remember for a voice."
+  static let meetingSummariesTitle = "Summarize meetings automatically"
+  static let meetingSummariesCaption =
+    "Uses the server configured under Rewriting. Transcript text, confirmed speaker names and your notes are sent; audio never leaves this Mac."
 
   var body: some View {
     PrototypePage {
@@ -108,6 +111,12 @@ struct SettingsView: View {
             Toggle(Self.speakerIdentificationTitle, isOn: $preferences.speakerIdentificationEnabled)
               .labelsHidden().toggleStyle(.switch)
               .accessibilityIdentifier("settings.speakerIdentificationEnabled")
+          }
+          separator
+          SettingsRow(Self.meetingSummariesTitle, detail: Self.meetingSummariesCaption) {
+            Toggle(Self.meetingSummariesTitle, isOn: $preferences.meetingSummariesAutomatic)
+              .labelsHidden().toggleStyle(.switch)
+              .accessibilityIdentifier("settings.meetingSummariesAutomatic")
           }
         }
         if let knownSpeakers {

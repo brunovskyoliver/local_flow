@@ -294,6 +294,7 @@ private struct LocalFlowWindowView: View {
           preferences: services.preferences, transcriptStore: services.transcriptStore,
           diarization: services.speakerDiarization,
           identification: services.speakerIdentification,
+          summaryModelFactory: { services.makeSummaryModel(meetingID: $0) },
           notesEditorFactory: { services.makeNotesEditor(for: $0) })
       } else {
         ContentUnavailableView(

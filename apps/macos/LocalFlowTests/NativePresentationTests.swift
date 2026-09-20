@@ -234,6 +234,92 @@ final class NativePresentationTests: XCTestCase {
     }
   }
 
+  /// Feature 011 (T043): the Summary tab's empty, running and succeeded
+  /// states, rendered against the deployment fixture.
+  @MainActor
+  func testRenderSummaryTab() async throws {
+    guard let path = ProcessInfo.processInfo.environment["LOCALFLOW_UI_CAPTURE_DIR"] else {
+      throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_UI_CAPTURE_DIR for native render artifacts.")
+    }
+    let output = URL(fileURLWithPath: path, isDirectory: true)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let endpoint: @MainActor @Sendable () -> RewriteEndpoint? = {
+      RewriteEndpoint(url: URL(string: "http://127.0.0.1:8765")!, origin: "test")
+    }
+    let makeStack: () -> (
+      SummaryModel, MeetingIntelligenceCoordinator, MeetingAnalyzer,
+      FakeEvidenceReader, FakeAnalysisStore, FakeAnalysisTransport
+    ) = {
+      let reader = FakeEvidenceReader(fixture: fixture)
+      let store = FakeAnalysisStore()
+      let transport = FakeAnalysisTransport()
+      let analyzer = MeetingAnalyzer(
+        evidence: reader, transport: transport, store: store, endpoint: endpoint,
+        settings: { nil })
+      let coordinator = MeetingIntelligenceCoordinator(
+        analyzer: analyzer, store: store, automaticEnabled: { false })
+      let martin = UUID(uuidString: "aaaa0002-0000-4000-8000-000000000002")!
+      let peter = UUID(uuidString: "aaaa0003-0000-4000-8000-000000000003")!
+      let oliver = UUID(uuidString: "aaaa0001-0000-4000-8000-000000000001")!
+      let speakers = FakeSpeakerStore(summaries: [
+        SpeakerSummary(
+          id: oliver, source: .remote, labelOrdinal: 1, colorIndex: 3,
+          displayName: nil, inRoom: false, speechMs: 1_000,
+          identity: SpeakerIdentity(
+            state: .confirmed, origin: .userConfirmation, knownSpeakerID: UUID(),
+            knownSpeakerName: "Oliver Brunovský")),
+        SpeakerSummary(
+          id: martin, source: .remote, labelOrdinal: 2, colorIndex: 5,
+          displayName: "Martin", inRoom: false, speechMs: 1_000),
+        SpeakerSummary(
+          id: peter, source: .remote, labelOrdinal: 3, colorIndex: 1,
+          displayName: "Peter", inRoom: false, speechMs: 1_000),
+      ])
+      let model = SummaryModel(
+        meetingID: fixture.id, coordinator: coordinator, store: store,
+        speakers: speakers, identities: FakeIdentityStore(), analyzer: analyzer,
+        transcripts: reader)
+      return (model, coordinator, analyzer, reader, store, transport)
+    }
+
+    // Empty: eligible, nothing generated yet.
+    var (model, _, _, _, _, _) = makeStack()
+    await model.refresh()
+    try await render(
+      SummaryTabView(model: model),
+      to: output.appendingPathComponent("summary-empty.png"), appearance: .aqua,
+      scheme: .light)
+
+    // Running: a held stream shows the stage text and Cancel.
+    var running = makeStack()
+    let gate = PreparationGate()
+    let lines = try IntelligenceFixtures.response("deployment-valid")[.full]!.first!
+    running.5.script(.full, [.hold(gate, lines: .init(value: lines))])
+    running.1.generate(meetingID: fixture.id)
+    for _ in 0..<200 {
+      await running.0.refresh()
+      if case .running = running.0.header { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    try await render(
+      SummaryTabView(model: running.0),
+      to: output.appendingPathComponent("summary-running.png"), appearance: .aqua,
+      scheme: .light)
+    await gate.open()
+    await running.1.cancel(meetingID: fixture.id)
+
+    // Succeeded: the deployment analysis in its contract order.
+    var succeeded = makeStack()
+    try succeeded.5.script(response: "deployment-valid")
+    _ = try await succeeded.2.run(meetingID: fixture.id, trigger: .manual)
+    await succeeded.0.refresh()
+    try await render(
+      SummaryTabView(model: succeeded.0),
+      to: output.appendingPathComponent("summary-succeeded.png"), appearance: .aqua,
+      scheme: .light)
+  }
+
   /// Feature 010 (T076): the sheet with a Recognized, a Possible, an Unknown and a
   /// merged-conflict section, and Settings with three known speakers (one needing
   /// re-enrollment, one with a deleted-source sample), at the three 007 sizes.

@@ -37,6 +37,13 @@ final class AppPreferences {
   var meetingDiarizationEnabled: Bool {
     didSet { defaults.set(meetingDiarizationEnabled, forKey: "meetingDiarizationEnabled") }
   }
+  /// Feature 011 (FR-035): summarize each meeting after its final transcript.
+  /// On by default; only structured evidence leaves this Mac.
+  var meetingSummariesAutomatic: Bool {
+    didSet {
+      defaults.set(meetingSummariesAutomatic, forKey: "settings.meetingSummariesAutomatic")
+    }
+  }
   /// Feature 010 (FR-038): remember and recognize speakers across meetings. On by
   /// default; nothing is stored until the user chooses Remember for a voice.
   var speakerIdentificationEnabled: Bool {
@@ -90,6 +97,8 @@ final class AppPreferences {
       defaults.object(forKey: "meetingDiarizationEnabled") as? Bool ?? true
     speakerIdentificationEnabled =
       defaults.object(forKey: "settings.speakerIdentificationEnabled") as? Bool ?? true
+    meetingSummariesAutomatic =
+      defaults.object(forKey: "settings.meetingSummariesAutomatic") as? Bool ?? true
     appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
     keepModelReady = defaults.bool(forKey: "keepModelReady")
     learnCorrections = defaults.bool(forKey: "learnCorrections")

@@ -8,6 +8,8 @@ struct MeetingLibraryView: View {
   var transcriptStore: (any TranscriptStoring)? = nil
   var diarization: SpeakerDiarizationCoordinator? = nil
   var identification: SpeakerIdentificationCoordinator? = nil
+  /// Feature 011: one `SummaryModel` per opened meeting.
+  var summaryModelFactory: ((UUID) -> SummaryModel?)? = nil
   let notesEditorFactory: (MeetingDetail) -> MeetingNotesEditor
   @State private var transcribe = true
   @State private var hoveredID: UUID?
@@ -30,7 +32,8 @@ struct MeetingLibraryView: View {
             ? coordinator.notesEditor : nil,
           transcriptStore: transcriptStore, transcription: coordinator.transcriptionCoordinator,
           coordinator: coordinator, diarization: diarization, identification: identification,
-          identificationEnabled: preferences.speakerIdentificationEnabled, initialTab: model.openTab
+          identificationEnabled: preferences.speakerIdentificationEnabled,
+          summaryModelFactory: summaryModelFactory, initialTab: model.openTab
         ).id(detail.meeting.id)
       } else {
         GeometryReader { geometry in

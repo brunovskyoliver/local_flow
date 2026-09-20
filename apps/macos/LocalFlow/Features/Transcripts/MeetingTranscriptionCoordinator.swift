@@ -23,6 +23,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   var noticePublished: (@MainActor (String) -> Void)?
   /// Feature 007: told once a final transcript is published and its lease finished.
   @ObservationIgnored weak var diarization: (any DiarizationObserving)?
+  @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
   var analysisQueueHighWater: Int { recognizer?.queue.highWater ?? 0 }
   var pendingSegmentCount: Int { recognizer?.pendingCount ?? 0 }
   var analysisGapRangeCount: Int { recognizer?.gapRangeCount ?? 0 }
@@ -799,7 +800,10 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
         self.publish(outcome.row, phase: .transcriptFinalizing)
         if self.status?.meetingID == id { self.status?.progress = 1 }
         // `MeetingFinalizer.run` finished the lease before returning the outcome.
-        if outcome.row.state == .final { self.diarization?.meetingTranscriptDidFinalize(id: id) }
+        if outcome.row.state == .final {
+          self.diarization?.meetingTranscriptDidFinalize(id: id)
+          self.intelligence?.meetingTranscriptDidFinalize(id: id)
+        }
       } catch is CancellationError {
         // The pass advanced the row, so the user's revision no longer applies.
         self.finalizingMeetingID = nil

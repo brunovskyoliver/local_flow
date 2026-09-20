@@ -506,6 +506,7 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
         run.backendModel = identity.backendModel
         run.promptVersions = identity.promptVersions
         run.pipelineVersion = identity.pipelineVersion
+        run.languagePolicy = result.language
         run.itemCount = counts.itemCount
         run.droppedLiteralCount = counts.droppedLiteralCount
         run.droppedUnsupportedCount = counts.droppedUnsupportedCount

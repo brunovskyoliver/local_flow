@@ -19,8 +19,11 @@ struct MeetingDetailView: View {
   /// Feature 010: persistent identities; nil or the setting off keeps the 007 view.
   var identification: SpeakerIdentificationCoordinator? = nil
   var identificationEnabled = false
+  /// Feature 011: one `SummaryModel` per opened meeting; nil keeps the placeholder.
+  var summaryModelFactory: ((UUID) -> SummaryModel?)? = nil
   var initialTab: NoteDetailTab = .thoughts
   @State private var tab: NoteDetailTab = .thoughts
+  @State private var summaryModel: SummaryModel?
   @State private var retainedEditor: MeetingNotesEditor?
   @State private var explainingSharing = false
   @State private var transcriptSearch = false
@@ -113,6 +116,7 @@ struct MeetingDetailView: View {
       stopPlayback()
     }
     .task(id: meeting.id) {
+      summaryModel = summaryModelFactory?(meeting.id)
       guard let transcriptStore else { return }
       let loaded = TranscriptPager(
         meetingID: meeting.id, store: transcriptStore,
@@ -303,19 +307,26 @@ struct MeetingDetailView: View {
   }
 
   private var summary: some View {
-    VStack(alignment: .leading, spacing: 24) {
-      HStack {
-        Label("SUMMARY", systemImage: "lightbulb").font(.system(size: 10, weight: .medium))
-          .tracking(0.8)
-        Spacer()
-      }.foregroundStyle(SottoPalette.muted).padding(12)
-        .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
-      Text("No summary yet").font(.system(size: 16, weight: .semibold))
-      Text(
-        "Meeting summaries are not available yet. Your transcript and thoughts are saved with this note."
-      )
-      .foregroundStyle(SottoPalette.muted).lineSpacing(7)
-      Button("Read transcript") { tab = .transcript }.buttonStyle(.plain)
+    Group {
+      if let summaryModel {
+        SummaryTabView(model: summaryModel, openTranscript: { tab = .transcript })
+      } else {
+        VStack(alignment: .leading, spacing: 24) {
+          HStack {
+            Label("SUMMARY", systemImage: "lightbulb")
+              .font(.system(size: 10, weight: .medium))
+              .tracking(0.8)
+            Spacer()
+          }.foregroundStyle(SottoPalette.muted).padding(12)
+            .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
+          Text("No summary yet").font(.system(size: 16, weight: .semibold))
+          Text(
+            "Meeting summaries are not available yet. Your transcript and thoughts are saved with this note."
+          )
+          .foregroundStyle(SottoPalette.muted).lineSpacing(7)
+          Button("Read transcript") { tab = .transcript }.buttonStyle(.plain)
+        }
+      }
     }
   }
 
@@ -781,7 +792,7 @@ struct MeetingDetailView: View {
 enum NoteDetailTab: String, CaseIterable, Identifiable {
   case thoughts = "My thoughts"
   case transcript = "Transcript"
-  case summary = "+ Summary"
+  case summary = "Summary"
   var id: Self { self }
 }
 
