@@ -82,6 +82,57 @@ struct AnalysisPolicy: Sendable, Equatable {
     "čoskoro", "neskôr", "niekedy", "nabudúce", "časom",
   ]
 
+  /// R5/R6: English and Slovak function words plus weekday and month names.
+  /// Compared folded (lowercase, diacritics stripped); neither the
+  /// proper-noun class nor lexical support counts them.
+  static let stopWords: Set<String> = [
+    // English function words.
+    "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+    "by", "from", "is", "are", "was", "were", "be", "been", "being", "it",
+    "its", "this", "that", "these", "those", "we", "you", "they", "he", "she",
+    "i", "will", "would", "can", "could", "should", "shall", "must", "may",
+    "might", "do", "does", "did", "done", "have", "has", "had", "not", "no",
+    "so", "if", "then", "than", "as", "about", "before", "after", "when",
+    "what", "who", "how", "why", "which", "all", "any", "each", "every",
+    "some", "more", "most", "other", "another", "new", "one", "two", "out",
+    "up", "down", "over", "under", "again", "also", "just", "only", "very",
+    "there", "here", "now", "us", "our", "ours", "your", "yours", "their",
+    "theirs", "his", "her", "hers", "my", "mine", "me", "him", "them", "the",
+    "into", "onto", "per", "via", "off", "too", "such", "same", "own", "both",
+    "few", "many", "much", "between", "during", "until", "while", "because",
+    "through", "against", "without", "within", "next", "last", "still",
+    "already", "yet", "back", "well", "even", "really", "let", "lets",
+    "make", "makes", "made", "get", "gets", "got", "go", "goes", "going",
+    "went", "gone", "say", "says", "said", "see", "seen", "know", "think",
+    "take", "took", "need", "needs", "want", "wants", "sure", "yes", "yeah",
+    "okay", "ok", "please", "thanks", "ill", "im", "ive", "dont", "wont",
+    // Slovak function words.
+    "a", "ale", "aj", "aby", "ak", "že", "som", "si", "je", "sme", "ste",
+    "sú", "bol", "bola", "bolo", "boli", "byť", "bude", "budem", "budeš",
+    "budeme", "budú", "na", "v", "vo", "do", "za", "po", "pod", "nad",
+    "pri", "pre", "od", "z", "zo", "so", "s", "k", "ku", "o", "u", "ten",
+    "to", "tá", "tí", "tie", "tento", "toto", "táto", "ono", "on", "ona",
+    "oni", "ony", "my", "vy", "ja", "ty", "náš", "naša", "naše", "váš",
+    "vaša", "vaše", "ich", "jeho", "jej", "nie", "no", "niečo", "nič",
+    "všetko", "všetci", "ako", "tak", "takže", "už", "ešte", "len", "veľmi",
+    "tu", "tam", "kde", "kedy", "čo", "kto", "prečo", "lebo", "pretože",
+    "keď", "potom", "teraz", "dnes", "včera", "mal", "mala", "malo", "mali",
+    "má", "mám", "máš", "máme", "máte", "majú", "môže", "môžem", "môžeme",
+    "musí", "musím", "musíme", "treba", "chce", "chcem", "chceme", "mne",
+    "mi", "ma", "mu", "ho", "nám", "vám", "im", "nej", "nich", "sa", "sa",
+    "či", "teda", "tiež", "prosím", "ďakujem",
+    // English weekday and month names.
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+    "sunday", "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+    // Slovak weekday and month names.
+    "pondelok", "utorok", "streda", "štvrtok", "piatok", "sobota", "nedeľa",
+    "január", "januára", "február", "februára", "marec", "marca", "apríl",
+    "apríla", "máj", "mája", "jún", "júna", "júl", "júla", "august",
+    "augusta", "september", "septembra", "október", "októbra", "november",
+    "novembra", "december", "decembra",
+  ]
+
   /// The policy values recorded on the run row (≤ `maxRequestConfigBytes`).
   func requestConfigJSON() -> String {
     let pairs = [

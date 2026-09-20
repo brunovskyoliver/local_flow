@@ -19,7 +19,7 @@ enum AnalysisValidator {
       text: result.summary.text,
       sources: try resolveSources(result.summary.sources, evidence: evidence, policy: policy),
       wholeMeeting: result.summary.wholeMeeting)
-    let topics = try result.topics.map { topic in
+    var topics = try result.topics.map { topic in
       ValidatedTopic(
         title: topic.title, summary: topic.summary, bullets: topic.bullets,
         sources: try resolveSources(topic.sources, evidence: evidence, policy: policy))
@@ -42,10 +42,10 @@ enum AnalysisValidator {
 
     checkIdentity(items: &actionItems, evidence: evidence, policy: policy, counts: &counts)
     resolveDueDates(items: &actionItems, evidence: evidence)
-    checkProtectedLiterals(
-      summary: summary, topics: topics,
-      items: decisions + nextSteps + openQuestions + risks
-        + actionItems.map { ValidatedItem(kind: .actionItem, text: $0.text, sources: $0.sources) },
+    try checkProtectedLiterals(
+      summary: summary, topics: &topics, decisions: &decisions,
+      actionItems: &actionItems, nextSteps: &nextSteps,
+      openQuestions: &openQuestions, risks: &risks,
       evidence: evidence, counts: &counts)
     checkSupport(
       decisions: &decisions, actionItems: &actionItems, nextSteps: &nextSteps,
@@ -214,21 +214,147 @@ enum AnalysisValidator {
     return (1...12).contains(month) && (1...31).contains(day)
   }
 
-  // MARK: 5. Protected literals (stub — T063+)
+  // MARK: 5. Protected literals (T067)
 
+  /// Numeric, address and identifier literals must appear verbatim in the
+  /// item's referenced sources (proper nouns by the stem rule); the summary
+  /// is checked against all evidence and a mutation fails the run
+  /// `protected_literal`. Dropped items and topics count `dropped_literal`.
   private static func checkProtectedLiterals(
-    summary: ValidatedSummary, topics: [ValidatedTopic], items: [ValidatedItem],
-    evidence: AnalysisEvidence, counts: inout ValidationCounts
-  ) {}
+    summary: ValidatedSummary, topics: inout [ValidatedTopic],
+    decisions: inout [ValidatedItem], actionItems: inout [ValidatedActionItem],
+    nextSteps: inout [ValidatedItem], openQuestions: inout [ValidatedItem],
+    risks: inout [ValidatedItem], evidence: AnalysisEvidence,
+    counts: inout ValidationCounts
+  ) throws {
+    let allEvidence = sourceText(
+      evidence.segmentText.values.sorted()
+        + evidence.notes.sorted { $0.ordinal < $1.ordinal }.map(\.text))
+    guard
+      ProtectedLiteralDetector.violations(
+        in: summary.text, evidence: allEvidence
+      ).isEmpty
+    else {
+      throw AnalysisFailure(.protectedLiteral)
+    }
 
-  // MARK: 6. Support (stub — T063+ adds lexical support)
+    counts.droppedLiteralCount +=
+      dropTopics(&topics, evidence: evidence)
+      + dropItems(&decisions, evidence: evidence)
+      + dropActionItems(&actionItems, evidence: evidence)
+      + dropItems(&nextSteps, evidence: evidence)
+      + dropItems(&openQuestions, evidence: evidence)
+      + dropItems(&risks, evidence: evidence)
+  }
 
+  /// Concatenated text of the sources an item cites — the evidence its
+  /// literals and its content tokens are checked against.
+  private static func sourceText(_ parts: some Sequence<String>) -> String {
+    parts.joined(separator: " ")
+  }
+
+  private static func sourceText(
+    of sources: [SourceRef], evidence: AnalysisEvidence
+  ) -> String {
+    sourceText(
+      sources.map { ref in
+        switch ref {
+        case .segment(let id): return evidence.segmentText[id] ?? ""
+        case .note(let ordinal, _):
+          return evidence.notes.first { $0.ordinal == ordinal }?.text ?? ""
+        }
+      })
+  }
+
+  private static func dropTopics(
+    _ topics: inout [ValidatedTopic], evidence: AnalysisEvidence
+  ) -> Int {
+    let keep = topics.filter {
+      let text = ([$0.title, $0.summary] + $0.bullets).joined(separator: " ")
+      return ProtectedLiteralDetector.violations(
+        in: text, evidence: sourceText(of: $0.sources, evidence: evidence)
+      ).isEmpty
+    }
+    let dropped = topics.count - keep.count
+    topics = keep
+    return dropped
+  }
+
+  private static func dropItems(
+    _ items: inout [ValidatedItem], evidence: AnalysisEvidence
+  ) -> Int {
+    let keep = items.filter {
+      ProtectedLiteralDetector.violations(
+        in: $0.text, evidence: sourceText(of: $0.sources, evidence: evidence)
+      ).isEmpty
+    }
+    let dropped = items.count - keep.count
+    items = keep
+    return dropped
+  }
+
+  private static func dropActionItems(
+    _ items: inout [ValidatedActionItem], evidence: AnalysisEvidence
+  ) -> Int {
+    let keep = items.filter {
+      ProtectedLiteralDetector.violations(
+        in: $0.text, evidence: sourceText(of: $0.sources, evidence: evidence),
+        excluding: ownerNames(of: $0.owner, evidence: evidence)
+      ).isEmpty
+    }
+    let dropped = items.count - keep.count
+    items = keep
+    return dropped
+  }
+
+  /// The participant names an owner resolves to — rendered from the speaker
+  /// record, so excluded from the literal check (R5).
+  private static func ownerNames(
+    of owner: ValidatedOwner, evidence: AnalysisEvidence
+  ) -> Set<String> {
+    guard case .participant(let speakerID, _, _) = owner,
+      let name = evidence.participants.first(where: { $0.speakerID == speakerID })?.name
+    else { return [] }
+    return [name]
+  }
+
+  // MARK: 6. Support (T067)
+
+  /// R6: an item is unsupported when none of its content tokens (≥ 4
+  /// characters, folded, stopwords removed) occurs — by the stem rule — in
+  /// the concatenated text of its referenced sources. The check is lenient
+  /// on purpose; dropped items count `dropped_unsupported`.
   private static func checkSupport(
     decisions: inout [ValidatedItem], actionItems: inout [ValidatedActionItem],
     nextSteps: inout [ValidatedItem], openQuestions: inout [ValidatedItem],
     risks: inout [ValidatedItem], evidence: AnalysisEvidence,
     counts: inout ValidationCounts
-  ) {}
+  ) {
+    func supported(_ text: String, sources: [SourceRef]) -> Bool {
+      let tokens = ProtectedLiteralDetector.contentTokens(of: text)
+      guard !tokens.isEmpty else { return true }
+      let source = ProtectedLiteralDetector.wordTokens(
+        of: sourceText(of: sources, evidence: evidence))
+      return tokens.contains { token in
+        source.contains { ProtectedLiteralDetector.stemMatch(token, $0) }
+      }
+    }
+    func drop(_ items: inout [ValidatedItem]) -> Int {
+      let keep = items.filter { supported($0.text, sources: $0.sources) }
+      let dropped = items.count - keep.count
+      items = keep
+      return dropped
+    }
+    func dropActions(_ items: inout [ValidatedActionItem]) -> Int {
+      let keep = items.filter { supported($0.text, sources: $0.sources) }
+      let dropped = items.count - keep.count
+      items = keep
+      return dropped
+    }
+    counts.droppedUnsupportedCount +=
+      drop(&decisions) + dropActions(&actionItems) + drop(&nextSteps)
+      + drop(&openQuestions) + drop(&risks)
+  }
 
   // MARK: 7. Share threshold
 

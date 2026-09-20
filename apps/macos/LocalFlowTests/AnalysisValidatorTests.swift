@@ -10,7 +10,16 @@ final class AnalysisValidatorTests: XCTestCase {
   private let segB = UUID()
 
   private func evidence() -> AnalysisEvidence {
-    AnalysisEvidence(meetingID: meetingID, segmentIDs: [segA, segB])
+    // The lexical-support step (R6) requires at least one content token of
+    // every item in its cited sources; both segments carry the test
+    // vocabulary so fixture items survive it.
+    let text =
+      "we will ship the release and deploy on monday and call the vendor "
+      + "and send the report and book the retro and finish the task "
+      + "and complete the testing and notify the customer"
+    return AnalysisEvidence(
+      meetingID: meetingID, segmentIDs: [segA, segB],
+      segmentText: [segA: text, segB: text])
   }
 
   private func wireItem(_ text: String, sources: [WireSourceRef]) -> WireItem {
@@ -534,12 +543,12 @@ extension AnalysisValidatorTests {
     let result = result(
       actionItems: [
         action(
-          "Good",
+          "Send the report",
           due: WireDue(
             state: .explicitRelativeResolved, date: "2026-09-21",
             original: "tomorrow", source: .segment(segB))),
         action(
-          "Bad",
+          "Notify the customer",
           due: WireDue(
             state: .explicitRelativeResolved, date: "bogus",
             original: "tomorrow", source: .segment(segB))),
@@ -554,5 +563,119 @@ extension AnalysisValidatorTests {
     XCTAssertEqual(validated.actionItems[0].due.date, "2026-09-21")
     XCTAssertEqual(validated.actionItems[1].due.state, .unresolved)
     XCTAssertEqual(validated.decisions.count, 1)
+  }
+
+  // MARK: Protected literals and support (T064)
+
+  private func literalEvidence() -> AnalysisEvidence {
+    var evidence = evidence()
+    let vocabulary = evidence.segmentText[segB] ?? ""
+    evidence.segmentText = [
+      segA:
+        "The new server is at 172.19.223.30 and the license costs $1,200 per year. "
+        + vocabulary,
+      segB: vocabulary,
+    ]
+    return evidence
+  }
+
+  /// An item whose literal is absent from its referenced sources is dropped
+  /// and counted `dropped_literal`; it is absent from `ValidatedAnalysis`.
+  func testMutatedLiteralDropsItemCounted() throws {
+    let result = result(
+      actionItems: [
+        action(
+          "Check the server at 172.19.223.20",
+          due: WireDue(state: .absent), sources: [.segment(segA)]),
+        action(
+          "Send the report",
+          due: WireDue(state: .absent), sources: [.segment(segB)]),
+      ],
+      decisions: [wireItem("Deploy on Monday", sources: [.segment(segB)])])
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: result, against: literalEvidence(), policy: policy)
+    XCTAssertEqual(counts.droppedLiteralCount, 1)
+    XCTAssertEqual(validated.actionItems.map(\.text), ["Send the report"])
+    XCTAssertEqual(validated.decisions.count, 1)
+  }
+
+  /// A topic with a mutated literal is dropped and counted the same way.
+  func testMutatedLiteralDropsTopic() throws {
+    var res = result(
+      decisions: [
+        wireItem("Deploy on Monday", sources: [.segment(segB)]),
+        wireItem("Ship the release", sources: [.segment(segB)]),
+        wireItem("Call the vendor", sources: [.segment(segB)]),
+      ])
+    res.topics = [
+      WireTopic(
+        title: "Server", summary: "It lives at 172.19.223.20", bullets: [],
+        sources: [.segment(segA)])
+    ]
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: res, against: literalEvidence(), policy: policy)
+    XCTAssertTrue(validated.topics.isEmpty)
+    XCTAssertEqual(counts.droppedLiteralCount, 1)
+  }
+
+  /// The summary is checked against all evidence; a mutation fails the run.
+  func testMutatedSummaryLiteralFailsRun() throws {
+    var res = result()
+    res.summary = WireSummary(
+      text: "The team checked the server at 172.19.223.99.",
+      sources: [], wholeMeeting: true)
+    XCTAssertThrowsError(
+      try AnalysisValidator.validate(
+        result: res, against: literalEvidence(), policy: policy)
+    ) { error in
+      XCTAssertEqual((error as? AnalysisFailure)?.category, .protectedLiteral)
+    }
+  }
+
+  /// An item none of whose content tokens occur in its referenced sources is
+  /// dropped and counted `dropped_unsupported`.
+  func testUnrelatedSourcesDropItemCounted() throws {
+    let result = result(
+      actionItems: [
+        action(
+          "Renew the office lease",
+          due: WireDue(state: .absent), sources: [.segment(segB)]),
+        action(
+          "Send the report",
+          due: WireDue(state: .absent), sources: [.segment(segB)]),
+      ],
+      decisions: [
+        wireItem("Deploy on Monday", sources: [.segment(segB)]),
+        wireItem("Ship the release", sources: [.segment(segB)]),
+      ])
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: result, against: literalEvidence(), policy: policy)
+    XCTAssertEqual(counts.droppedUnsupportedCount, 1)
+    XCTAssertEqual(validated.actionItems.map(\.text), ["Send the report"])
+    XCTAssertEqual(validated.decisions.count, 2)
+  }
+
+  /// More than a third of returned items dropped fails the run
+  /// `unsupported_content`.
+  func testDroppedShareOverThirdFailsRun() {
+    let result = result(
+      actionItems: [
+        action(
+          "Renew the office lease",
+          due: WireDue(state: .absent), sources: [.segment(segB)]),
+        action(
+          "Check the server at 172.19.223.20",
+          due: WireDue(state: .absent), sources: [.segment(segA)]),
+        action(
+          "Send the report",
+          due: WireDue(state: .absent), sources: [.segment(segB)]),
+      ])
+    // 2 of 3 returned items drop (one literal, one unsupported) → > 1/3.
+    XCTAssertThrowsError(
+      try AnalysisValidator.validate(
+        result: result, against: literalEvidence(), policy: policy)
+    ) { error in
+      XCTAssertEqual((error as? AnalysisFailure)?.category, .unsupportedContent)
+    }
   }
 }

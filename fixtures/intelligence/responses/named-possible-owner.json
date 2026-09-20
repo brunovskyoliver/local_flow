@@ -1,76 +1,76 @@
 {
-  "schema": "intelligence-response-v1",
-  "streams": {
-    "full": [
-      [
-        {
-          "schema_version": 1,
-          "type": "accepted",
-          "request_id": "*",
-          "server": {
-            "name": "flowd",
-            "version": "0.3.0"
-          }
+ "schema": "intelligence-response-v1",
+ "streams": {
+  "full": [
+   [
+    {
+     "schema_version": 1,
+     "type": "accepted",
+     "request_id": "*",
+     "server": {
+      "name": "flowd",
+      "version": "0.3.0"
+     }
+    },
+    {
+     "schema_version": 1,
+     "type": "result",
+     "request_id": "*",
+     "run_id": "*",
+     "stage": "full",
+     "server": {
+      "name": "flowd",
+      "version": "0.3.0"
+     },
+     "backend": {
+      "kind": "openai-compatible",
+      "model": "test-model"
+     },
+     "prompt_version": 1,
+     "pipeline_version": "analysis_v1",
+     "timing": {
+      "queue_ms": 12,
+      "first_token_ms": 640,
+      "backend_ms": 18400
+     },
+     "preemptions": 0,
+     "analysis": {
+      "schema_version": 1,
+      "meeting_id": "*",
+      "partial": false,
+      "language": "*",
+      "summary": {
+       "text": "The team settled the Monday deployment and split the preparation work.",
+       "sources": [],
+       "whole_meeting": true
+      },
+      "topics": [],
+      "decisions": [],
+      "action_items": [
+       {
+        "text": "Prepare the database backup",
+        "owner": {
+         "kind": "participant",
+         "speaker_id": "aaaa0004-0000-4000-8000-000000000004"
         },
-        {
-          "schema_version": 1,
-          "type": "result",
-          "request_id": "*",
-          "run_id": "*",
-          "stage": "full",
-          "server": {
-            "name": "flowd",
-            "version": "0.3.0"
-          },
-          "backend": {
-            "kind": "openai-compatible",
-            "model": "test-model"
-          },
-          "prompt_version": 1,
-          "pipeline_version": "analysis_v1",
-          "timing": {
-            "queue_ms": 12,
-            "first_token_ms": 640,
-            "backend_ms": 18400
-          },
-          "preemptions": 0,
-          "analysis": {
-            "schema_version": 1,
-            "meeting_id": "*",
-            "partial": false,
-            "language": "*",
-            "summary": {
-              "text": "The team settled the Monday deployment and split the preparation work.",
-              "sources": [],
-              "whole_meeting": true
-            },
-            "topics": [],
-            "decisions": [],
-            "action_items": [
-              {
-                "text": "Send the contract",
-                "owner": {
-                  "kind": "participant",
-                  "speaker_id": "aaaa0004-0000-4000-8000-000000000004"
-                },
-                "ownership_state": "explicit",
-                "due": {
-                  "state": "absent"
-                },
-                "sources": [
-                  {
-                    "kind": "segment",
-                    "id": "aaaa0001-0000-4000-8000-000000000001"
-                  }
-                ]
-              }
-            ],
-            "next_steps": [],
-            "open_questions": [],
-            "risks": []
-          }
-        }
-      ]
-    ]
-  }
+        "ownership_state": "explicit",
+        "due": {
+         "state": "absent"
+        },
+        "sources": [
+         {
+          "kind": "segment",
+          "id": "aaaa0002-0000-4000-8000-000000000002"
+         }
+        ]
+       }
+      ],
+      "next_steps": [],
+      "open_questions": [],
+      "risks": []
+     }
+    }
+   ]
+  ]
+ }
 }

@@ -363,6 +363,63 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertNil(report.due?.date)
   }
 
+  // MARK: T065 — mutated literals
+
+  /// The mutated-IP and mutated-price responses each adopt with the forged
+  /// item dropped and `dropped_literal_count` on the run row; the dropped
+  /// text appears nowhere in the stored rows.
+  func testMutatedLiteralResponsesDropItemsAndCount() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let ip = try IntelligenceFixtures.response("mutated-ip-item")[.full]![0]
+    let price = try IntelligenceFixtures.response("mutated-price-decision")[.full]![0]
+    transport.script(.full, [.lines(.init(value: ip)), .lines(.init(value: price))])
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let first = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(first.state, .succeeded)
+    XCTAssertEqual(first.droppedLiteralCount, 1)
+    var model = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(model?.items.filter { $0.kind == .actionItem }.count, 3)
+    XCTAssertFalse(
+      (model?.items ?? []).contains { ($0.text).contains("172.19.223.20") })
+
+    let second = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(second.state, .succeeded)
+    XCTAssertEqual(second.droppedLiteralCount, 1)
+    model = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(model?.items.filter { $0.kind == .decision }.count, 1)
+    XCTAssertFalse(
+      (model?.items ?? []).contains { ($0.text).contains("$1,300") })
+  }
+
+  /// A summary-level mutation fails the run `protected_literal`: no content
+  /// row is written and the previously accepted analysis and evidence stay
+  /// byte-identical.
+  func testMutatedSummaryLiteralFailsAndPreservesAccepted() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let valid = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
+    let mutated = try IntelligenceFixtures.response("mutated-digit-summary")[.full]![0]
+    transport.script(.full, [.lines(.init(value: valid)), .lines(.init(value: mutated))])
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let first = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(first.state, .succeeded)
+    let accepted = try await store.readModel(meetingID: fixture.id)
+
+    let second = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(second.state, .failed)
+    XCTAssertEqual(second.failureCategory, .protectedLiteral)
+
+    let preserved = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(preserved, accepted)
+  }
+
   // MARK: Helpers
 
   // MARK: T045 — fabricated and foreign sources
