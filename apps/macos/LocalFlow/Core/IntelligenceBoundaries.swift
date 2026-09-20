@@ -192,6 +192,12 @@ struct AnalysisEvidence: Sendable, Equatable {
   var participants: [EvidenceParticipant] = []
   /// Candidate names of Possible matches; never in a result owner (T051).
   var possibleCandidateNames: Set<String> = []
+  /// The meeting's start in epoch milliseconds; the due step re-resolves
+  /// relative phrases against it (T057+).
+  var meetingStartedAtMs: Int64? = nil
+  /// IANA name of the meeting's zone; due resolution happens in it, never
+  /// in UTC (T057+).
+  var meetingTimeZone: String? = nil
 }
 
 /// The counters `adopt` records on the run row (FR-050).

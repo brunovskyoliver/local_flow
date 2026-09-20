@@ -386,6 +386,55 @@ final class SummaryModelTests: XCTestCase {
       "only reads reached the identity store: \(calls)")
   }
 
+  // MARK: T059 — due-date rendering
+
+  /// The due-dates fixture renders: `tomorrow` resolved against the meeting's
+  /// date in its zone, `soon` unresolved with the phrase kept, `Send the
+  /// report` with no due — and the one settled decision (spec US4).
+  func testDueDatesFixtureRendersResolvedAndUnresolvedDues() async throws {
+    let fixture = try IntelligenceFixtures.meeting("due-dates")
+    let (model, _, _, _) = try await makeModel(
+      fixture: fixture, response: "due-dates-valid")
+    await model.refresh()
+    let read = try XCTUnwrap(model.readModel)
+
+    XCTAssertEqual(read.decisions.map(\.text), ["We will deploy on Monday"])
+    XCTAssertEqual(read.actionItems.count, 3)
+
+    let resolved = read.actionItems[0]
+    XCTAssertEqual(resolved.dueState, .explicitRelativeResolved)
+    XCTAssertEqual(resolved.dueDate, "2026-09-21")
+    XCTAssertEqual(resolved.dueOriginal, "tomorrow")
+    XCTAssertEqual(SummaryModel.dueText(resolved.dueDate!), "21 Sep")
+
+    let vague = read.actionItems[1]
+    XCTAssertEqual(vague.dueState, .unresolved)
+    XCTAssertNil(vague.dueDate)
+    XCTAssertEqual(vague.dueOriginal, "soon")
+
+    let report = try XCTUnwrap(read.actionItems.first { $0.text == "Send the report" })
+    XCTAssertEqual(report.dueState, .absent)
+    XCTAssertNil(report.dueDate)
+  }
+
+  /// An analysis without decisions leaves the read model's decisions empty —
+  /// the view renders no Decisions section for it.
+  func testNoDecisionsLeavesSectionEmpty() async throws {
+    let fixture = try IntelligenceFixtures.meeting("english")
+    let (model, store, _, _) = try await makeModel(fixture: fixture, run: false)
+    _ = try await adopt(
+      store, meetingID: fixture.id,
+      actionItems: [
+        ValidatedActionItem(
+          text: "Send it", owner: .none, ownershipState: .unresolved,
+          due: ValidatedDue(state: .absent), sources: [])
+      ])
+    await model.refresh()
+    let read = try XCTUnwrap(model.readModel)
+    XCTAssertTrue(read.decisions.isEmpty)
+    XCTAssertEqual(read.actionItems.count, 1)
+  }
+
   // MARK: Helpers
 
   /// Admits + adopts `actionItems` into `store` as the accepted analysis.
@@ -412,16 +461,17 @@ final class SummaryModelTests: XCTestCase {
   }
 
   /// Runs the analyzer on `fixture` (unless `run` is false) against the
-  /// scripted `deployment-valid` response, then returns the model plus the
-  /// fakes the test tunes.
+  /// scripted `response` stream, then returns the model plus the fakes the
+  /// test tunes.
   private func makeModel(
     fixture: IntelligenceFixture, run: Bool = true,
+    response: String = "deployment-valid",
     identities: FakeIdentityStore = FakeIdentityStore()
   ) async throws -> (SummaryModel, FakeAnalysisStore, FakeEvidenceReader, FakeSpeakerStore) {
     let reader = FakeEvidenceReader(fixture: fixture)
     let store = FakeAnalysisStore()
     let transport = FakeAnalysisTransport()
-    if run { try transport.script(response: "deployment-valid") }
+    if run { try transport.script(response: response) }
     let clock = FakeMeetingClock()
     let analyzer = MeetingAnalyzer(
       evidence: reader, transport: transport, store: store, clock: clock,

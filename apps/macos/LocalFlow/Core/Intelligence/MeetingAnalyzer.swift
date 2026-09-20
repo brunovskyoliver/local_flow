@@ -168,10 +168,15 @@ struct MeetingAnalyzer: Sendable {
         request: request, endpoint: admission.endpoint, runID: run.id,
         meetingID: meetingID, policy: effective)
 
-      // 7. Validate against the same evidence.
+      // 7. Validate against the same evidence. The due step re-resolves
+      // relative phrases against the meeting's start in its zone.
+      var analysisEvidence = admission.snapshot.evidence(meetingID: meetingID)
+      analysisEvidence.meetingStartedAtMs =
+        admission.meeting?.startedAt ?? admission.meeting?.createdAt
+      analysisEvidence.meetingTimeZone = admission.meeting?.timeZone
       let (validated, counts) = try AnalysisValidator.validate(
         result: result.analysis,
-        against: admission.snapshot.evidence(meetingID: meetingID),
+        against: analysisEvidence,
         policy: effective)
 
       // 8. The evidence must not have drifted mid-run.
@@ -290,7 +295,8 @@ struct MeetingAnalyzer: Sendable {
         title: String(decoding: title.utf8.prefix(AnalysisBounds.maxTitleBytes), as: UTF8.self),
         startedAt: rfc3339(ms: startedMs), durationMs: durationMs,
         timeZone: String(
-          decoding: TimeZone.current.identifier.utf8.prefix(AnalysisBounds.maxTimeZoneBytes),
+          decoding: (meeting?.timeZone ?? TimeZone.current.identifier).utf8
+            .prefix(AnalysisBounds.maxTimeZoneBytes),
           as: UTF8.self),
         languagePolicy: LanguagePolicy.requestValue(output: language)),
       participants: snapshot.participants.map { participant in

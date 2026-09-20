@@ -153,11 +153,66 @@ enum AnalysisValidator {
     }
   }
 
-  // MARK: 4. Due dates (stub — T057+ adds resolution and the vague-term rule)
+  // MARK: 4. Due dates (T060)
 
+  /// The conservative due rules, item-level only — this step never fails the
+  /// run. A vague term is `unresolved` even with a server date; `explicit_*`
+  /// needs a parseable date and a resolved source or it drops to
+  /// `unresolved`; a date on `unresolved`/`absent` is cleared; a known phrase
+  /// is re-resolved against the meeting's start in its zone and a mismatch
+  /// drops the item to `unresolved` with the original kept. A phrase outside
+  /// the resolver's table leaves a consistent server value alone.
   private static func resolveDueDates(
     items: inout [ValidatedActionItem], evidence: AnalysisEvidence
-  ) {}
+  ) {
+    let meetingDate = evidence.meetingStartedAtMs.map {
+      Date(timeIntervalSince1970: Double($0) / 1_000)
+    }
+    let zone =
+      evidence.meetingTimeZone.flatMap(TimeZone.init(identifier:))
+      ?? TimeZone.current
+    for index in items.indices {
+      var due = items[index].due
+      let resolution = due.original.flatMap { original in
+        meetingDate.flatMap {
+          DueDateResolver.resolve(original, on: $0, in: zone)
+        }
+      }
+      // A vague term can never carry a date, whatever the server claimed.
+      if resolution?.state == .unresolved {
+        due.state = .unresolved
+        due.date = nil
+        items[index].due = due
+        continue
+      }
+      switch due.state {
+      case .explicitAbsolute, .explicitRelativeResolved:
+        guard due.source != nil, let date = due.date, Self.isISODate(date)
+        else {
+          due.state = .unresolved
+          due.date = nil
+          break
+        }
+        if let resolved = resolution?.date, resolved != date {
+          due.state = .unresolved
+          due.date = nil
+        }
+      case .unresolved, .absent:
+        due.date = nil
+      }
+      items[index].due = due
+    }
+  }
+
+  /// Strict `YYYY-MM-DD` — the contract's `date` pattern.
+  private static func isISODate(_ date: String) -> Bool {
+    let parts = date.split(separator: "-")
+    guard parts.count == 3, parts[0].count == 4, parts[1].count == 2,
+      parts[2].count == 2, Int(parts[0]) != nil, let month = Int(parts[1]),
+      let day = Int(parts[2])
+    else { return false }
+    return (1...12).contains(month) && (1...31).contains(day)
+  }
 
   // MARK: 5. Protected literals (stub — T063+)
 
@@ -271,10 +326,13 @@ enum AnalysisValidator {
   private static func due(
     _ wire: WireDue, evidence: AnalysisEvidence, policy: AnalysisPolicy
   ) throws -> ValidatedDue {
-    ValidatedDue(
+    // A fabricated due source does not fail the run — it resolves to nil and
+    // the due step drops an `explicit_*` state to `unresolved` (item-level).
+    let source = wire.source.flatMap {
+      try? resolveSources([$0], evidence: evidence, policy: policy).first
+    }
+    return ValidatedDue(
       state: wire.state, date: wire.date, original: wire.original,
-      source: try wire.source.map {
-        try resolveSources([$0], evidence: evidence, policy: policy).first!
-      })
+      source: source)
   }
 }

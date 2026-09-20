@@ -82,7 +82,7 @@ Offline cases replayed by `scripts/analysis-quality.py` / `make check`:
 | deployment.json | malformed-json | SC-001: `malformed_response` |
 | certainty-possible.json | named-possible-owner | SC-002: owner downgraded, candidate name never sent |
 | deployment.json | mentioned-owner | mentioned owner stored verbatim |
-| due-dates.json | due-dates-valid | SC-005: relative dates resolved, vague terms unresolved |
+| due-dates.json | due-dates-valid | SC-005: `tomorrow` → 2026-09-21 in Europe/Bratislava, `soon` unresolved, unassigned action item survives, one decision |
 | slovak.json / english.json / mixed.json | language-valid | SC-014: policy value and term preservation |
 
 ## fourhour.json (generated)

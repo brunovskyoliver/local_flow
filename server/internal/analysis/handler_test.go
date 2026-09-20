@@ -200,7 +200,7 @@ func TestResultLineEvents(t *testing.T) {
 	_, lines, _ := post(t, server.URL, requestBody(t), "")
 	result := lines[1]
 	if result["run_id"] == "" || result["stage"] != "full" ||
-		result["prompt_version"].(float64) != 1 ||
+		result["prompt_version"].(float64) != 2 ||
 		result["pipeline_version"] != "analysis_v1" {
 		t.Fatalf("result fields: %v", result)
 	}

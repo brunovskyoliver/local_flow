@@ -324,6 +324,45 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(item.ownershipState, .unresolved)
   }
 
+  // MARK: T059 — conservative due dates end to end
+
+  /// The due-dates fixture: "tomorrow" re-resolves client-side to 2026-09-21,
+  /// "soon" stays unresolved, "Send the report" survives ownerless, and
+  /// exactly one decision is stored (spec US4).
+  func testDueDatesFixtureResolvesConservatively() async throws {
+    let fixture = try IntelligenceFixtures.meeting("due-dates")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "due-dates-valid")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .automatic)
+
+    XCTAssertEqual(run.state, .succeeded)
+    let model = try await store.readModel(meetingID: fixture.id)
+    let decisions = model?.items.filter { $0.kind == .decision } ?? []
+    XCTAssertEqual(decisions.count, 1)
+    XCTAssertEqual(decisions.first?.text, "We will deploy on Monday")
+
+    let items = model?.items.filter { $0.kind == .actionItem } ?? []
+    XCTAssertEqual(items.count, 3)
+
+    XCTAssertEqual(items[0].due?.state, .explicitRelativeResolved)
+    XCTAssertEqual(items[0].due?.date, "2026-09-21")
+    XCTAssertEqual(items[0].due?.original, "tomorrow")
+
+    XCTAssertEqual(items[1].due?.state, .unresolved)
+    XCTAssertNil(items[1].due?.date)
+    XCTAssertEqual(items[1].due?.original, "soon")
+
+    let report = try XCTUnwrap(items.first { $0.text == "Send the report" })
+    XCTAssertEqual(report.owner, ValidatedOwner.none)
+    XCTAssertEqual(report.ownershipState, .unresolved)
+    XCTAssertEqual(report.due?.state, .absent)
+    XCTAssertNil(report.due?.date)
+  }
+
   // MARK: Helpers
 
   // MARK: T045 — fabricated and foreign sources

@@ -74,6 +74,9 @@ struct Meeting: Sendable, Equatable, Identifiable {
   var failureDetail: String?
   var updatedAt: Int64
   var revision: Int64
+  /// IANA name of the zone the meeting is analyzed in — the capture zone;
+  /// not persisted, defaults to the current zone.
+  var timeZone: String = TimeZone.current.identifier
 
   var displayTitle: String { title ?? fallbackTitle(createdAt: createdAt) }
 }

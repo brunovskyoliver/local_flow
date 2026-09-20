@@ -357,4 +357,202 @@ extension AnalysisValidatorTests {
     XCTAssertEqual(item.ownershipState, .supported)
     XCTAssertEqual(counts.identityDowngradeCount, 0)
   }
+
+  // MARK: Due dates (T058)
+
+  /// The due-dates fixture's anchor: Sunday 2026-09-20, Europe/Bratislava.
+  private func dueEvidence() -> AnalysisEvidence {
+    var evidence = evidence()
+    evidence.meetingStartedAtMs = 1_789_887_600_000  // 2026-09-20T09:00:00+02:00
+    evidence.meetingTimeZone = "Europe/Bratislava"
+    return evidence
+  }
+
+  private func action(
+    _ text: String, due: WireDue, sources: [WireSourceRef] = []
+  ) -> WireActionItem {
+    WireActionItem(
+      text: text, owner: WireOwner(kind: .none), ownershipState: .unresolved,
+      due: due, sources: sources.isEmpty ? [.segment(segA)] : sources)
+  }
+
+  /// `explicit_*` without a parseable date drops to `unresolved` and keeps
+  /// the original phrase (contract due-date rules).
+  func testExplicitWithoutDateBecomesUnresolved() throws {
+    let result = result(actionItems: [
+      action(
+        "Send it",
+        due: WireDue(
+          state: .explicitRelativeResolved, date: "not-a-date",
+          original: "tomorrow", source: .segment(segB))),
+      action(
+        "Send the report",
+        due: WireDue(
+          state: .explicitAbsolute, date: nil, original: "25 September",
+          source: .segment(segB))),
+    ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    XCTAssertEqual(validated.actionItems.count, 2)
+    for item in validated.actionItems {
+      XCTAssertEqual(item.due.state, .unresolved)
+      XCTAssertNil(item.due.date)
+      XCTAssertNotNil(item.due.original)
+    }
+  }
+
+  /// `explicit_*` without a source drops to `unresolved`.
+  func testExplicitWithoutSourceBecomesUnresolved() throws {
+    let result = result(actionItems: [
+      action(
+        "Send it",
+        due: WireDue(
+          state: .explicitAbsolute, date: "2026-09-25",
+          original: "25 September", source: nil))
+    ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    let due = try XCTUnwrap(validated.actionItems.first).due
+    XCTAssertEqual(due.state, .unresolved)
+    XCTAssertNil(due.date)
+    XCTAssertEqual(due.original, "25 September")
+  }
+
+  /// An explicit due whose source is fabricated does not fail the run — the
+  /// item drops to `unresolved` (due validation is item-level).
+  func testFabricatedDueSourceBecomesUnresolvedWithoutFailingRun() throws {
+    let result = result(actionItems: [
+      action(
+        "Send it",
+        due: WireDue(
+          state: .explicitRelativeResolved, date: "2026-09-21",
+          original: "tomorrow",
+          source: .segment(UUID())))
+    ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    let due = try XCTUnwrap(validated.actionItems.first).due
+    XCTAssertEqual(due.state, .unresolved)
+    XCTAssertNil(due.date)
+    XCTAssertEqual(due.original, "tomorrow")
+  }
+
+  /// A `date` attached to `unresolved` or `absent` is cleared.
+  func testDateOnUnresolvedOrAbsentIsCleared() throws {
+    let result = result(actionItems: [
+      action(
+        "One",
+        due: WireDue(
+          state: .unresolved, date: "2026-09-25", original: "later",
+          source: .segment(segB))),
+      action(
+        "Two",
+        due: WireDue(
+          state: .absent, date: "2026-09-25", original: nil, source: nil)),
+    ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    XCTAssertEqual(validated.actionItems[0].due.state, .unresolved)
+    XCTAssertNil(validated.actionItems[0].due.date)
+    XCTAssertEqual(validated.actionItems[1].due.state, .absent)
+    XCTAssertNil(validated.actionItems[1].due.date)
+  }
+
+  /// A server date that disagrees with the client-side resolution of a known
+  /// phrase drops to `unresolved`; the original phrase stays.
+  func testMismatchedServerDateBecomesUnresolved() throws {
+    let result = result(actionItems: [
+      action(
+        "Send it",
+        due: WireDue(
+          state: .explicitRelativeResolved, date: "2026-09-24",
+          original: "tomorrow", source: .segment(segB)))
+    ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    let due = try XCTUnwrap(validated.actionItems.first).due
+    XCTAssertEqual(due.state, .unresolved)
+    XCTAssertNil(due.date)
+    XCTAssertEqual(due.original, "tomorrow")
+  }
+
+  /// A matching client resolution keeps the server's resolved value.
+  func testMatchingResolutionKeepsServerValue() throws {
+    let result = result(actionItems: [
+      action(
+        "Send it",
+        due: WireDue(
+          state: .explicitRelativeResolved, date: "2026-09-21",
+          original: "tomorrow", source: .segment(segB)))
+    ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    let due = try XCTUnwrap(validated.actionItems.first).due
+    XCTAssertEqual(due.state, .explicitRelativeResolved)
+    XCTAssertEqual(due.date, "2026-09-21")
+    XCTAssertEqual(due.original, "tomorrow")
+    XCTAssertEqual(due.source, .segment(segB))
+  }
+
+  /// A vague term with a server date still resolves to `unresolved` — the
+  /// server cannot pin down "soon".
+  func testVagueTermWithServerDateBecomesUnresolved() throws {
+    let result = result(actionItems: [
+      action(
+        "Send it",
+        due: WireDue(
+          state: .explicitRelativeResolved, date: "2026-09-25",
+          original: "soon", source: .segment(segB)))
+    ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    let due = try XCTUnwrap(validated.actionItems.first).due
+    XCTAssertEqual(due.state, .unresolved)
+    XCTAssertNil(due.date)
+    XCTAssertEqual(due.original, "soon")
+  }
+
+  /// A phrase outside the known table leaves the server's consistent value.
+  func testUnknownPhraseKeepsConsistentServerValue() throws {
+    let result = result(actionItems: [
+      action(
+        "Send it",
+        due: WireDue(
+          state: .explicitAbsolute, date: "2026-10-01",
+          original: "by the next board review", source: .segment(segB)))
+    ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    let due = try XCTUnwrap(validated.actionItems.first).due
+    XCTAssertEqual(due.state, .explicitAbsolute)
+    XCTAssertEqual(due.date, "2026-10-01")
+  }
+
+  /// Due conservatism is item-level: a bad due on one item neither fails the
+  /// run nor touches a good item's due.
+  func testDueConservatismStaysItemLevel() throws {
+    let result = result(
+      actionItems: [
+        action(
+          "Good",
+          due: WireDue(
+            state: .explicitRelativeResolved, date: "2026-09-21",
+            original: "tomorrow", source: .segment(segB))),
+        action(
+          "Bad",
+          due: WireDue(
+            state: .explicitRelativeResolved, date: "bogus",
+            original: "tomorrow", source: .segment(segB))),
+      ],
+      decisions: [
+        wireItem("Deploy on Monday", sources: [.segment(segA)])
+      ])
+    let (validated, _) = try AnalysisValidator.validate(
+      result: result, against: dueEvidence(), policy: policy)
+    XCTAssertEqual(validated.actionItems.count, 2)
+    XCTAssertEqual(validated.actionItems[0].due.state, .explicitRelativeResolved)
+    XCTAssertEqual(validated.actionItems[0].due.date, "2026-09-21")
+    XCTAssertEqual(validated.actionItems[1].due.state, .unresolved)
+    XCTAssertEqual(validated.decisions.count, 1)
+  }
 }

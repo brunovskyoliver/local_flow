@@ -21,11 +21,17 @@ struct IntelligenceFixture {
   var notes: [NoteParagraph]
 
   var meeting: Meeting {
-    Meeting(
-      id: id, state: .completed, title: title, createdAt: 0, startedAt: 0,
-      stoppedAt: durationMs, completedAt: durationMs, wallClockMs: durationMs,
+    let startedMs =
+      ISO8601DateFormatter().date(from: startedAt)
+      .map { Int64($0.timeIntervalSince1970 * 1_000) } ?? 0
+    return Meeting(
+      id: id, state: .completed, title: title, createdAt: startedMs,
+      startedAt: startedMs,
+      stoppedAt: startedMs + durationMs, completedAt: startedMs + durationMs,
+      wallClockMs: durationMs,
       recordedMs: durationMs, finalizationStage: nil, failureReason: nil,
-      failureDetail: nil, updatedAt: durationMs, revision: 1)
+      failureDetail: nil, updatedAt: startedMs + durationMs, revision: 1,
+      timeZone: timeZone)
   }
 }
 

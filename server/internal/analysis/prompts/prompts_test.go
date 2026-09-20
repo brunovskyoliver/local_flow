@@ -58,6 +58,35 @@ func TestChunkAndSynthesisRules(t *testing.T) {
 	}
 }
 
+// T062: the full conservatism block must appear verbatim in every template —
+// settled decisions only, proposals excluded, no owner from "someone needs
+// to", vague terms unresolved, relative dates keeping the original phrase,
+// and empty sections staying empty.
+func TestConservatismBlockGolden(t *testing.T) {
+	rules := []string{
+		"A decision is settled",
+		"proposal or suggestion nobody accepted is not a decision",
+		"someone needs to",
+		"stay unresolved",
+		"original phrase",
+		"Empty sections stay empty",
+	}
+	for _, stage := range []string{StageFull, StageChunk, StageSynthesis} {
+		template, err := For(stage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(template.Text, conservatism) {
+			t.Errorf("%s template does not contain the full conservatism block", stage)
+		}
+		for _, rule := range rules {
+			if !strings.Contains(template.Text, rule) {
+				t.Errorf("%s template missing conservatism rule %q", stage, rule)
+			}
+		}
+	}
+}
+
 func TestNoParticipantWithoutNameIsNamed(t *testing.T) {
 	// The prompt text must state the rule; the request render is where it is
 	// enforced, so assert the rule sentence exists in every template.

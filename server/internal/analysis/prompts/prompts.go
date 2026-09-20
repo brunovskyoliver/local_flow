@@ -14,7 +14,7 @@ type Template struct {
 
 const role = `You are a meeting analyst. You produce structured JSON only, matching the supplied schema. `
 
-const conservatism = `Report only what the evidence supports. A decision is settled: someone agreed or committed to it in the transcript or the notes. An action item is committed, accepted or explicitly assigned to an owner; never infer an owner from "we should", "someone needs to" or similar vague phrases. Resolve relative dates against the meeting's started_at in its time_zone, and keep the original phrase in original. Vague terms like "soon", "later" or "čoskoro" stay unresolved. Empty sections stay empty; never invent an item to fill one. Every source id you cite must be one you were given; never invent a source. Copy names, numbers, addresses, prices and every other literal verbatim from the evidence. `
+const conservatism = `Report only what the evidence supports. A decision is settled: someone agreed or committed to it in the transcript or the notes. A proposal or suggestion nobody accepted is not a decision; leave it out. An action item is committed, accepted or explicitly assigned to an owner; never infer an owner from "we should", "someone needs to" or similar vague phrases. Resolve relative dates against the meeting's started_at in its time_zone, and keep the original phrase in original. Vague terms like "soon", "later" or "čoskoro" stay unresolved. Empty sections stay empty; never invent an item to fill one. Every source id you cite must be one you were given; never invent a source. Copy names, numbers, addresses, prices and every other literal verbatim from the evidence. `
 
 const identity = `Name owners only by speaker_id from the participant list, using the exact id string. A name spoken in the transcript that is not a participant is a mentioned owner. A participant without a name is unnamed; refer to them by role (for example "the organiser"), never invent a name for them. `
 
@@ -28,15 +28,15 @@ const synthesisRule = `This request carries partial results of earlier chunks in
 
 var templates = map[string]Template{
 	StageFull: {
-		Version: 1,
+		Version: 2,
 		Text:    role + conservatism + identity + language + data,
 	},
 	StageChunk: {
-		Version: 1,
+		Version: 2,
 		Text:    role + chunkRule + conservatism + identity + language + data,
 	},
 	StageSynthesis: {
-		Version: 1,
+		Version: 2,
 		Text:    role + synthesisRule + conservatism + identity + language + data,
 	},
 }
