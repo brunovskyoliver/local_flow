@@ -190,7 +190,7 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 			return ErrLineTooLong
 		}
 		responseBytes += len(data)
-		return writeEvent(w, v)
+		return writeEvent(w, data)
 	}
 	if send(Accepted(req.RequestID)) != nil {
 		code = "cancelled"
@@ -285,7 +285,8 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outputBytes = len(text)
-	if send(result) != nil {
+	responseBytes += len(data)
+	if writeEvent(w, data) != nil {
 		code = "cancelled"
 	}
 }

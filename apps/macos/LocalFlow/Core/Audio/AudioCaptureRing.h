@@ -12,6 +12,10 @@ void LFAudioRingDestroy(LFAudioRing *ring);
 // Larger device callbacks use multiple slots, admitted as one bounded batch.
 bool LFAudioRingPush(LFAudioRing *ring, const AudioBufferList *buffers, uint32_t frames);
 uint32_t LFAudioRingPop(LFAudioRing *ring, AudioBufferList *buffers);
+// Durable meeting consumer only: emit bounded silence for overflow intervals,
+// then retained audio at its original source position. Terminal silence is
+// available after CloseAndJoin. Do not mix pop modes on the same ring.
+uint32_t LFAudioRingPopPreservingTimeline(LFAudioRing *ring, AudioBufferList *buffers);
 // Closes admission and joins in-progress copies; call only off realtime thread.
 void LFAudioRingCloseAndJoin(LFAudioRing *ring);
 // 0 = no failure, 1 = overflow, 2 = invalid/oversized format.

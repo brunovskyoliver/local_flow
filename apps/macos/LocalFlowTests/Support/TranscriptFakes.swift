@@ -682,10 +682,24 @@ final class LoggingTranscriptStore: TranscriptStoring, @unchecked Sendable {
   func passSegmentCount(meetingID: UUID, passID: UUID) async throws -> Int {
     try await base.passSegmentCount(meetingID: meetingID, passID: passID)
   }
+  /// Runs before every `page` read, so a test can observe state at read time.
+  var beforePage: (@Sendable () async -> Void)?
   func page(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
     async throws -> [TranscriptSegment]
   {
-    try await base.page(meetingID: meetingID, finality: finality, after: ordinal, limit: limit)
+    await beforePage?()
+    return try await base.page(
+      meetingID: meetingID, finality: finality, after: ordinal, limit: limit)
+  }
+  // Forwarded, or the protocol's no-label defaults would hide the base store's labels.
+  func labeledPage(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
+    async throws -> [LabeledSegment]
+  {
+    try await base.labeledPage(
+      meetingID: meetingID, finality: finality, after: ordinal, limit: limit)
+  }
+  func acceptedSpeakers(meetingID: UUID) async throws -> AcceptedSpeakers? {
+    try await base.acceptedSpeakers(meetingID: meetingID)
   }
   func gaps(meetingID: UUID) async throws -> [LiveGap] { try await base.gaps(meetingID: meetingID) }
   func activeRows(limit: Int) async throws -> [MeetingTranscription] {

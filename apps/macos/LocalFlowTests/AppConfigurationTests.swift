@@ -14,7 +14,7 @@ final class AppConfigurationTests: XCTestCase {
   }
   @MainActor
   func testIndicatorCannotTakeFocusAndStopsObserversWhenHidden() {
-    let panel = IndicatorPanel(announce: { _ in })
+    let panel = IndicatorPanel(animated: false, announce: { _ in })
     defer { panel.orderOut(nil) }
     XCTAssertFalse(panel.canBecomeKey)
     XCTAssertFalse(panel.canBecomeMain)
@@ -33,7 +33,7 @@ final class AppConfigurationTests: XCTestCase {
   @MainActor
   func testIndicatorAnnouncesTerminalStatesOnceBeforeHiding() {
     var announcements: [String] = []
-    let panel = IndicatorPanel { announcements.append($0) }
+    let panel = IndicatorPanel(animated: false) { announcements.append($0) }
     defer { panel.orderOut(nil) }
     panel.update(state: .preparing, level: 0, cancel: {})
     panel.update(state: .cancelling, level: 0, cancel: {})
@@ -95,6 +95,32 @@ final class MeetingRuntimeOptionsTests: XCTestCase {
     XCTAssertNil(options.debugFailRecognition)
     XCTAssertFalse(options.debugFailPersistence)
     XCTAssertNil(options.debugSeedTranscript)
+    XCTAssertNil(options.debugFailDiarizationWindow)
+    XCTAssertNil(options.debugSlowDiarization)
+    XCTAssertFalse(options.debugSeedDiarization)
+  }
+
+  func testDiarizationArgumentsAreEnabledOnlyInDebugBuilds() {
+    let options = MeetingRuntimeOptions.parse(
+      environment: [:],
+      arguments: [
+        "LocalFlow", "--debug-fail-diarization", "window=2", "--debug-slow-diarization", "1.5",
+        "--debug-seed-diarization",
+      ])
+    if MeetingRuntimeOptions.slowFinalizeSupported {
+      XCTAssertEqual(options.debugFailDiarizationWindow, 2)
+      XCTAssertEqual(options.debugSlowDiarization, 1.5)
+      XCTAssertTrue(options.debugSeedDiarization)
+    } else {
+      XCTAssertNil(options.debugFailDiarizationWindow)
+      XCTAssertNil(options.debugSlowDiarization)
+      XCTAssertFalse(options.debugSeedDiarization)
+    }
+    let malformed = MeetingRuntimeOptions.parse(
+      environment: [:],
+      arguments: ["LocalFlow", "--debug-fail-diarization", "2", "--debug-slow-diarization", "-1"])
+    XCTAssertNil(malformed.debugFailDiarizationWindow)
+    XCTAssertNil(malformed.debugSlowDiarization)
   }
 
   func testTranscriptionArgumentsAreEnabledOnlyInDebugBuilds() {

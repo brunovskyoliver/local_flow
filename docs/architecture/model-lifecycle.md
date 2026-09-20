@@ -5,7 +5,7 @@ ModelLifecycleCoordinator is the sole authority for heavy local inference. It is
 ```text
 unloaded -> preparing(ASR) -> active(ASR) -> cooling(ASR) -> releasing -> unloaded
                           failure/cancel -> releasing -> unloaded or failed
-unloaded -> preparing(diarization) -> active -> releasing -> unloaded  [future]
+unloaded -> preparing(diarization) -> active(diarization) -> releasing -> unloaded
 ```
 
 Idle has UI, SQLite and networking only. No ASR, diarization or client LLM. During dictation only ASR may load. During meetings diarization stays unloaded. Post-meeting processing releases ASR before acquiring diarization, including embedding work in the same exclusive heavy-workload phase.
@@ -25,3 +25,47 @@ Feature 001 Settings displays installed/verified state separately from loaded st
 Stop detaches live taps and bounds the in-flight drain at 30 seconds, records discarded audio as gaps, flushes text and finishes the live lease. Finalization begins after the meeting reaches a terminal state. `MeetingFinalizer` acquires its own lease, processes windows serially and finishes the lease on completion, failure or cancellation. A finalization queue holds at most 100 meeting IDs. Live work takes priority; finalization cannot run alongside it.
 
 Active meetings already block dictation. While finalization holds the work slot, dictation admission instead reports "Meeting transcript is finalizing. Wait for it to finish." Settings load/unload also respects lease ownership. Deletion cancels and joins the relevant pass before removing its audio. No transcript path creates a runtime or loads diarization.
+
+## Speaker diarization leases (Feature 007)
+
+The lease is keyed by workload: `acquire(session:workload:)` defaults to `.speechRecognition`; `MeetingDiarizer` asks for `.diarization`. One runtime is resident at a time. A workload switch releases the resident runtime before preparing the other, so ASR and the diarizer never co-reside. `diarize(_:window:)` is the only diarization inference entry; it takes one 16 kHz mono window of at most 9,600,000 samples and refuses invalid audio or a result with more than 20,000 turns.
+
+Speech recognition preempts a diarization lease: ownership moves to the new lease first, the in-flight window is joined (never abandoned), and the diarizer is released. A diarization acquire never preempts; while ASR or an installation holds the model, the run stays `pending` at the head of the queue and the coordinator retries. The preempted run restarts from its first window, because embeddings are never persisted. A finished diarization lease releases at once with no cooldown, then Keep model ready re-prepares ASR if it is on.
+
+The lease is held only while windows are diarized. Alignment and adoption run after `finish`, so they cannot be preempted; only Cancel and meeting deletion stop them. Observed phases name the workload (`modelLoading(diarization)`, `modelActive(diarization)`, `modelReleasing(diarization)`); the unqualified phases stay speech recognition. `diarizing` samples RSS every 10 s while a run is active. See [ADR 0017](../adr/0017-speaker-diarization-engine-and-lifecycle.md).
+
+
+## Default final meeting model (Feature 009)
+
+Final meeting actions use the `meetingTranscription` workload and the verified
+Whisper large-v3-turbo package. Live previews and dictation continue to acquire
+`speechRecognition` (Parakeet). The coordinator releases the resident model
+before switching workloads and immediately releases Turbo when its pass ends.
+If Keep ready is enabled, it can then warm Parakeet. Diarization remains exclusive
+with both speech workloads.
+
+The bundled native helper accepts at most 120 seconds per request. Cancellation
+kills and joins it before the lease is released. A bounded temporary WAV is
+removed on completion or failure; startup removes abandoned temporary directories.
+Obvious repetition retries once in two shorter windows. Output that still loops
+fails the pass. Model source URLs, sizes and hashes are pinned in the manifest.
+
+All final action paths share the configured finalizer. Pass identity distinguishes
+Turbo's engine and geometry from Parakeet. An unavailable model is rejected before
+an existing completed transcript is replaced. Native segment timestamps are
+retained by the adapter, but the current word-oriented segmenter falls back to
+window timing where native segments do not map as words; it does not invent word
+onsets. See ADR 0019 and the Feature 009 acceptance record.
+
+
+### Recovery refinement from the full meeting replay
+
+The first full run encountered a loop at 600 seconds into the second recording
+stretch. Both the 120-second request and a 60-second retry repeated a stock phrase;
+a 30-second request also lost speech. Isolated 15-second requests recovered spoken
+content. Recovery now has two bounded levels: split the main request in half,
+then split only a still-repeating half into four pieces. With a 120-second main
+window, final pieces are at most 15 seconds. Maximum work is 11 requests and
+360 seconds of input including retries. Reject repetition in both pieces and
+the combined result. The main window geometry and persisted resume boundaries
+remain unchanged, so already successful windows can resume safely.

@@ -98,7 +98,12 @@ struct TranscriptNormalizer: Sendable {
       text.append(value)
       bytes += count
     }
-    mutating func append(_ scalar: Unicode.Scalar) throws { try append(String(scalar)) }
+    mutating func append(_ scalar: Unicode.Scalar) throws {
+      let count = scalar.utf8.count
+      guard bytes + count <= TranscriptNormalizer.maximumTextBytes else { throw Capacity.full }
+      text.unicodeScalars.append(scalar)
+      bytes += count
+    }
   }
   private enum Capacity: Error { case full }
 

@@ -258,8 +258,11 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
         emitError("The requested language is not supported.", *id);
         return;
     }
-    const bool benchmarkEvidence = request.contains("benchmarkEvidence") && request["benchmarkEvidence"].is_boolean()
-        && request["benchmarkEvidence"].get<bool>();
+    const bool benchmarkEvidence =
+        (request.contains("benchmarkEvidence") && request["benchmarkEvidence"].is_boolean()
+         && request["benchmarkEvidence"].get<bool>()) ||
+        (request.contains("meetingTranscription") && request["meetingTranscription"].is_boolean()
+         && request["meetingTranscription"].get<bool>());
     const auto vocabulary = vocabularyTerms(request);
     if (const auto failure = std::get_if<std::string>(&vocabulary)) {
         emitError(*failure, *id);

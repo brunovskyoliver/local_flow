@@ -26,10 +26,14 @@ struct ActiveMeetingView: View {
         HStack(spacing: 14) {
           trackIndicator(.microphone, status.microphone)
           trackIndicator(.system, status.system)
-          if status.droppedFrames > 0 {
-            Text("Dropped frames: \(status.droppedFrames)").font(.caption).foregroundStyle(
-              .secondary)
-          }
+        }
+        if status.droppedFrames > 0 {
+          Label(
+            "Some audio was lost during recording. The transcript may be incomplete.",
+            systemImage: "exclamationmark.triangle.fill"
+          )
+          .font(.caption).foregroundStyle(.orange)
+          .accessibilityIdentifier("meeting.captureLoss")
         }
         if let notice = status.notice {
           HStack {

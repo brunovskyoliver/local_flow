@@ -4,6 +4,72 @@ import XCTest
 @testable import LocalFlow
 
 final class MeetingSampleRingTests: XCTestCase {
+  func testPreservingTimelinePlacesLongGapBeforeLaterAudioInEveryChannel() throws {
+    for channels in [1, 2, 8] {
+      let ring = try MeetingSampleRing(channels: channels, sampleRate: 44_100)
+      let before = [Float](repeating: 0.25, count: 17 * channels)
+      for _ in 0..<32 { XCTAssertTrue(ring.push(interleaved: before, frames: 17)) }
+      XCTAssertFalse(
+        ring.push(interleaved: [Float](repeating: 0.9, count: 9_000 * channels), frames: 9_000))
+      let block = try XCTUnwrap(ring.makeBlock())
+      for _ in 0..<32 {
+        XCTAssertEqual(ring.popPreservingTimeline(into: block), 17)
+        for channel in 0..<channels {
+          XCTAssertEqual(block.floatChannelData![channel][0], 0.25)
+        }
+      }
+      XCTAssertEqual(ring.popPreservingTimeline(into: block), 0, "open tail is not guessed")
+      let after = (0..<(23 * channels)).map { Float($0 % channels + 1) / 10 }
+      XCTAssertTrue(ring.push(interleaved: after, frames: 23))
+      var silence = 0
+      for expected in [4_096, 4_096, 808] {
+        XCTAssertEqual(ring.popPreservingTimeline(into: block), UInt32(expected))
+        silence += expected
+        for channel in 0..<channels {
+          XCTAssertTrue((0..<expected).allSatisfy { block.floatChannelData![channel][$0] == 0 })
+        }
+        XCTAssertEqual(ring.occupancy, 1, "later audio stays queued until its original position")
+      }
+      XCTAssertEqual(silence, 9_000)
+      XCTAssertEqual(ring.popPreservingTimeline(into: block), 23)
+      for channel in 0..<channels {
+        XCTAssertEqual(block.floatChannelData![channel][22], Float(channel + 1) / 10)
+      }
+      ring.closeAndJoin()
+      XCTAssertEqual(ring.popPreservingTimeline(into: block), 0)
+      XCTAssertEqual(ring.droppedFrames, 9_000)
+      XCTAssertEqual(ring.highWater, 32)
+    }
+  }
+
+  func testPreservingTimelineIncludesConsecutiveTerminalDropsOnlyAfterClose() throws {
+    let ring = try MeetingSampleRing(channels: 2, sampleRate: 48_000)
+    for _ in 0..<32 {
+      XCTAssertTrue(ring.push(interleaved: [0.25, -0.25], frames: 1))
+    }
+    for frames in [5_000, 100] {
+      XCTAssertFalse(
+        ring.push(interleaved: [Float](repeating: 0.5, count: frames * 2), frames: frames))
+    }
+    let block = try XCTUnwrap(ring.makeBlock())
+    var total = 0
+    for _ in 0..<32 { total += Int(ring.popPreservingTimeline(into: block)) }
+    XCTAssertEqual(total, 32)
+    XCTAssertEqual(ring.popPreservingTimeline(into: block), 0)
+    ring.closeAndJoin()
+    for expected in [4_096, 1_004] {
+      XCTAssertEqual(ring.popPreservingTimeline(into: block), UInt32(expected))
+      total += expected
+      for channel in 0..<2 {
+        XCTAssertTrue((0..<expected).allSatisfy { block.floatChannelData![channel][$0] == 0 })
+      }
+    }
+    XCTAssertEqual(total, 5_132)
+    XCTAssertEqual(ring.popPreservingTimeline(into: block), 0)
+    XCTAssertEqual(ring.popPreservingTimeline(into: block), 0, "terminal gap is emitted once")
+    XCTAssertEqual(ring.droppedFrames, 5_100)
+  }
+
   func testCapacityIsPreallocatedAndFixed() throws {
     let ring = try MeetingSampleRing(channels: 8, sampleRate: 48_000)
     XCTAssertEqual(ring.capacity, 32)

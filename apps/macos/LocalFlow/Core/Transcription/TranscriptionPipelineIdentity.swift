@@ -3,6 +3,7 @@ import Foundation
 /// Pinned application/model identity, captured before dictation. The lifecycle factory
 /// verifies these same model artifacts before granting a lease.
 struct TranscriptionPipelineIdentity: Sendable {
+  private var windowSamples = 239_360
   private var engine = "unrecorded_runtime"
   private var descriptor: ModelDescriptor?
   private var manifestHash: String?
@@ -13,9 +14,13 @@ struct TranscriptionPipelineIdentity: Sendable {
 
   init() {}
 
-  init(descriptor: ModelDescriptor, manifestHash: String, build: String?) throws {
+  init(
+    descriptor: ModelDescriptor, manifestHash: String, build: String?,
+    engine: String = "FluidAudio", windowSamples: Int = 239_360
+  ) throws {
     try descriptor.validate()
-    self.engine = "FluidAudio"
+    self.engine = engine
+    self.windowSamples = windowSamples
     self.descriptor = descriptor
     self.manifestHash = manifestHash
     self.build = build
@@ -47,7 +52,7 @@ struct TranscriptionPipelineIdentity: Sendable {
       build: build, dirty: nil, languageHint: nil, automaticLanguage: true,
       sampleRate: 16_000, channels: 1, inputSamples: sampleCount,
       inputDurationSeconds: Double(sampleCount) / 16_000, inputSampleFormat: "float32_pcm",
-      windowSamples: 239_360, overlapSamples: 0, strideSamples: 239_360,
+      windowSamples: windowSamples, overlapSamples: 0, strideSamples: windowSamples,
       minimumPaddedSamples: 4_800,
       operatingSystem: operatingSystem, foldingRuntime: foldingRuntime,
       stageDurations: ["recognition": recognition, "assembly": assembly],

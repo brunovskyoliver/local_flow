@@ -4,10 +4,185 @@ import XCTest
 @testable import LocalFlow
 
 final class MeetingTrackWorkerTests: XCTestCase {
+  func testFinalizeEncodesTerminalLossAcrossMultipleBoundedDrainRounds() async throws {
+    let clock = FakeMeetingClock()
+    let format = MeetingSourceFormat(sampleRate: 48_000, channels: 1)
+    let ring = try MeetingSampleRing(format: format)
+    let writer = FakeSegmentWriter()
+    let handle = try writer.open(meetingID: UUID(), kind: .microphone, sequence: 1)
+    let encoder = FailingEncoder(
+      inner: try MeetingTrackEncoder(kind: .microphone, sourceFormat: format))
+    let worker = try MeetingTrackWorker(
+      kind: .microphone, segmentID: UUID(), handle: handle, ring: ring,
+      encoder: encoder, writer: writer, clock: clock, recorder: nil, heartbeat: { _ in })
+    await worker.start()
+    let samples = [Float](repeating: 0.25, count: 4_096)
+    // No worker wake: 32 retained blocks, followed by 40 lost blocks. Finalize
+    // must drain more than one ring's worth of timeline with the same buffer.
+    for _ in 0..<72 { _ = ring.push(interleaved: samples, frames: 4_096) }
+    XCTAssertEqual(ring.droppedFrames, 40 * 4_096)
+    let result = await worker.finalize()
+    guard case .success(let completion) = result else { return XCTFail("\(result)") }
+    XCTAssertEqual(encoder.blockSizes.reduce(0, +), 72 * 4_096)
+    XCTAssertTrue(encoder.blockSizes.allSatisfy { $0 <= 4_096 })
+    let expectedMs = Int64(72 * 4_096 * 1_000 / 48_000)
+    XCTAssertGreaterThanOrEqual(completion.durationMs, expectedMs)
+    XCTAssertLessThanOrEqual(completion.durationMs, expectedMs + 64, "AAC priming/padding only")
+    XCTAssertEqual(completion.droppedFrames, 40 * 4_096)
+    XCTAssertEqual(writer.finalized.map(\.id), [handle.id])
+    XCTAssertEqual(ring.occupancy, 0)
+    XCTAssertFalse(ring.push(interleaved: samples, frames: 4_096), "finalization closes admission")
+  }
+
+  private final class HeartbeatGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+      await withCheckedContinuation { continuation in
+        let resume = lock.withLock {
+          if released { return true }
+          self.continuation = continuation
+          return false
+        }
+        if resume { continuation.resume() }
+      }
+    }
+
+    func release() {
+      let pending = lock.withLock {
+        released = true
+        let pending = continuation
+        continuation = nil
+        return pending
+      }
+      pending?.resume()
+    }
+  }
+
+  func testSuspendedHeartbeatDoesNotStopCaptureDrainOrFinalization() async throws {
+    let clock = FakeMeetingClock()
+    let format = MeetingSourceFormat(sampleRate: 48_000, channels: 1)
+    let ring = try MeetingSampleRing(format: format)
+    let writer = FakeSegmentWriter()
+    let handle = try writer.open(meetingID: UUID(), kind: .microphone, sequence: 1)
+    let gate = HeartbeatGate()
+    defer { gate.release() }
+    let entered = expectation(description: "heartbeat consumer entered")
+    let worker = try MeetingTrackWorker(
+      kind: .microphone, segmentID: UUID(), handle: handle, ring: ring,
+      encoder: MeetingTrackEncoder(kind: .microphone, sourceFormat: format),
+      writer: writer, clock: clock, recorder: nil,
+      heartbeat: { _ in
+        entered.fulfill()
+        await gate.wait()
+      })
+    await worker.start()
+    await clock.advance(by: .seconds(5))
+    await fulfillment(of: [entered], timeout: 2)
+
+    // Feed 3.4 seconds of callbacks, allowing a worker wake after each one.
+    // The 32-slot ring holds only 2.73 seconds at this callback size.
+    let samples = Array(repeating: Float(0.1), count: 4_096)
+    for _ in 0..<40 {
+      _ = ring.push(interleaved: samples, frames: 4_096)
+      await clock.advance(by: .milliseconds(86))
+    }
+    XCTAssertEqual(ring.droppedFrames, 0, "a stalled progress consumer must not lose audio")
+    XCTAssertEqual(ring.occupancy, 0, "capture must drain while heartbeat is suspended")
+
+    let finalized = expectation(description: "finalization does not await heartbeat")
+    let finish = Task {
+      let result = await worker.finalize()
+      finalized.fulfill()
+      return result
+    }
+    await fulfillment(of: [finalized], timeout: 2)
+    gate.release()
+    let result = await finish.value
+    guard case .success(let completion) = result else { return XCTFail("\(result)") }
+    XCTAssertEqual(completion.droppedFrames, 0)
+    XCTAssertEqual(ring.occupancy, 0)
+    XCTAssertEqual(writer.finalized.map(\.id), [handle.id])
+  }
+
+  func testHeartbeatCoalescesPendingProgressAndDiscardsItOnFinalization() async throws {
+    let clock = FakeMeetingClock()
+    let format = MeetingSourceFormat(sampleRate: 48_000, channels: 1)
+    let ring = try MeetingSampleRing(format: format)
+    let writer = FakeSegmentWriter()
+    let handle = try writer.open(meetingID: UUID(), kind: .microphone, sequence: 1)
+    let firstGate = HeartbeatGate()
+    let secondGate = HeartbeatGate()
+    defer {
+      firstGate.release()
+      secondGate.release()
+    }
+    let log = HeartbeatLog()
+    let returned = expectation(description: "late heartbeat returned")
+    let worker = try MeetingTrackWorker(
+      kind: .microphone, segmentID: UUID(), handle: handle, ring: ring,
+      encoder: MeetingTrackEncoder(kind: .microphone, sourceFormat: format),
+      writer: writer, clock: clock, recorder: nil,
+      heartbeat: { beat in
+        log.append(beat)
+        if log.all.count == 1 {
+          await firstGate.wait()
+        } else {
+          await secondGate.wait()
+          returned.fulfill()
+        }
+      })
+    await worker.start()
+    let samples = Array(repeating: Float(0.1), count: 4_096)
+    for index in 0..<4 {
+      XCTAssertTrue(ring.push(interleaved: samples, frames: 4_096))
+      await clock.advance(by: .seconds(5))
+      if index == 0 { await fulfillment(of: [log.delivered(1)], timeout: 2) }
+    }
+    XCTAssertEqual(log.all.count, 1, "only one callback may be in flight")
+    let newestBytes = await worker.totalBytes
+    firstGate.release()
+    await fulfillment(of: [log.delivered(2)], timeout: 2)
+    XCTAssertEqual(log.all.map(\.byteSize).last, newestBytes)
+    XCTAssertLessThan(log.all[0].byteSize, newestBytes)
+
+    XCTAssertTrue(ring.push(interleaved: samples, frames: 4_096))
+    await clock.advance(by: .seconds(5))
+    let result = await worker.finalize()
+    guard case .success = result else { return XCTFail("\(result)") }
+    secondGate.release()
+    await fulfillment(of: [returned], timeout: 2)
+    // Advancing another heartbeat interval must not deliver the pending value
+    // after the already-running callback returns into a finished worker.
+    await clock.advance(by: .seconds(5))
+    XCTAssertEqual(log.all.count, 2)
+  }
+
   private final class HeartbeatLog: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [MeetingTrackWorker.Heartbeat] = []
-    func append(_ beat: MeetingTrackWorker.Heartbeat) { lock.withLock { items.append(beat) } }
+    private var waiters: [(Int, XCTestExpectation)] = []
+    func append(_ beat: MeetingTrackWorker.Heartbeat) {
+      let ready = lock.withLock {
+        items.append(beat)
+        let ready = waiters.filter { $0.0 <= items.count }.map(\.1)
+        waiters.removeAll { $0.0 <= items.count }
+        return ready
+      }
+      for expectation in ready { expectation.fulfill() }
+    }
+    func delivered(_ count: Int) -> XCTestExpectation {
+      let expectation = XCTestExpectation(description: "delivered \(count) heartbeats")
+      let ready = lock.withLock {
+        if items.count >= count { return true }
+        waiters.append((count, expectation))
+        return false
+      }
+      if ready { expectation.fulfill() }
+      return expectation
+    }
     var all: [MeetingTrackWorker.Heartbeat] { lock.withLock { items } }
   }
 
@@ -72,6 +247,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
     XCTAssertEqual(rig.writer.syncCount(.microphone), 0)
     XCTAssertEqual(rig.heartbeats.all.count, 0)
     await rig.clock.advance(by: .milliseconds(100))
+    await fulfillment(of: [rig.heartbeats.delivered(1)], timeout: 2)
     XCTAssertEqual(rig.writer.syncCount(.microphone), 1)
     XCTAssertEqual(rig.heartbeats.all.count, 1)
     let beat = try XCTUnwrap(rig.heartbeats.all.first)
@@ -81,6 +257,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
     XCTAssertEqual(beat.droppedFrames, 0)
     XCTAssertEqual(beat.byteSize, Int64(rig.writer.bytes(.microphone).count))
     for _ in 0..<50 { await rig.clock.advance(by: .milliseconds(100)) }
+    await fulfillment(of: [rig.heartbeats.delivered(2)], timeout: 2)
     XCTAssertEqual(rig.writer.syncCount(.microphone), 2)
     XCTAssertEqual(rig.heartbeats.all.count, 2)
     let metrics = try await XCTUnwrap(rig.capture).metrics()
@@ -202,6 +379,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
         await clock.advance(by: .milliseconds(125))
       }
       _ = await worker.tick()
+      await fulfillment(of: [log.delivered(1)], timeout: 2)
       _ = await worker.finalize()
       return (
         writer.bytes(.microphone), writer.syncCount(.microphone),

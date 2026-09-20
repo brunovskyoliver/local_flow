@@ -30,6 +30,19 @@ while its final License section says Apache 2.0 and points to FluidAudio.
 These are inconsistent labels. Dependency licenses are recorded above;
 selected model artifact license interpretation remains an open T002 gate.
 
+## Feature 007 speaker diarization model
+
+The speaker labeling model is `FluidInference/speaker-diarization-coreml` at revision
+`1ed7a662fdc7109e36d822db793ee6eebdaf8594`, offline variant only (segmentation,
+FBank, embedding, PLDA rho and `plda-parameters.json`). The repository declares
+CC-BY-4.0. It converts pyannote `speaker-diarization-community-1` (powerset
+segmentation and PLDA) and the WeSpeaker ResNet34 embedding, both CC-BY-4.0.
+Every file was verified against pinned LFS SHA-256 or Git blob identities and has a
+SHA-256 in the manifest. The assets are installed by the user, not bundled, and not
+modified. Preserve the [licence review](docs/licenses/speaker-diarization-coreml.md),
+the [pinned model card](docs/licenses/speaker-diarization-coreml-model-card.md) and
+the [CC BY 4.0 attribution terms](https://creativecommons.org/licenses/by/4.0/).
+
 ## Evaluation speech fixtures
 
 Google FLEURS, revision `70bb2e84b976b7e960aa89f1c648e09c59f894dd`, is used for
@@ -61,6 +74,27 @@ LocalFlow adapts the sidebar from `SottoWindowView.swift` and the palette/sideba
 material from `SottoTheme.swift` in `LocalFlowApp.swift`. Preserve the full
 [MIT notice](third_party/sotto/LICENSE), also bundled as `Sotto-LICENSE.txt`.
 
-The snapshot retains upstream notices and scripts for reference. Its Swift
-server, HTTP client, model helpers, package dependencies and submodule contents
-are not linked into LocalFlow. No Sotto model weights were downloaded.
+The snapshot retains upstream notices and scripts. Its Swift application, server,
+HTTP client and language-model dependencies are not linked into LocalFlow.
+Feature 009 adopts its native speech helper as described below.
+
+
+## Feature 009 native Whisper meeting transcription
+
+The app bundles the Sotto native C++ speech helper, locally adapted for bounded
+meeting requests, linked statically against whisper.cpp/ggml revision
+`371b5a7561823ab2bb32142d2751e35e7534727b` (MIT). Preserve Sotto's MIT license
+and the whisper.cpp license in the app bundle. The native helper uses nlohmann
+JSON (MIT) and miniaudio (MIT No Attribution option); preserve the retained
+[JSON notice](third_party/sotto/Resources/JSON-LICENSE.txt) and
+[miniaudio notice](third_party/sotto/Resources/miniaudio-LICENSE.txt).
+
+The separately provisioned Whisper large-v3-turbo GGML model comes from
+`ggerganov/whisper.cpp`, revision `5359861c739e955e79d9a303bcbc70fb988958b1`,
+based on OpenAI Whisper large-v3-turbo (MIT). The Silero VAD conversion comes
+from `ggml-org/whisper-vad`, revision `9ffd54a1e1ee413ddf265af9913beaf518d1639b`
+(MIT). Preserve the [Whisper model notice](third_party/sotto/Resources/Whisper-model-LICENSE.txt)
+and [Silero notice](third_party/sotto/Resources/Silero-LICENSE.txt). The model
+manifest records exact sizes and SHA-256 hashes. Assets remain outside version
+control and are not bundled into the app. This records the licenses supplied
+with the pinned source snapshot; it does not change their terms.

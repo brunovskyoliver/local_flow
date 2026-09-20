@@ -70,6 +70,15 @@ final class MeetingSampleRing: @unchecked Sendable {
     return frames
   }
 
+  /// Durable capture only. Lost intervals become silence before later samples;
+  /// terminal loss is available after closeAndJoin. Never mix consumer modes.
+  func popPreservingTimeline(into block: AVAudioPCMBuffer) -> UInt32 {
+    block.frameLength = block.frameCapacity
+    let frames = LFAudioRingPopPreservingTimeline(pointer, block.mutableAudioBufferList)
+    block.frameLength = frames
+    return frames
+  }
+
   /// Pops at most `maxSlots` slots, handing each to `body`. Returns slots popped.
   @discardableResult
   func drain(

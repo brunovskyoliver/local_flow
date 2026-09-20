@@ -9,14 +9,18 @@ struct AssembledWindow: Sendable {
 
 struct MeetingWindowAssembler: Sendable {
   let geometry: String
+  private let maximumWindowSamples: Int
   private var previous: TranscriptAssembler.Window?
   var retainedWindowCount: Int { previous == nil ? 0 : 1 }
   var assemblyVersion: String { "\(TranscriptAssembler.version)/\(geometry)" }
 
-  init(geometry: String = LiveChunkPlanner.version) { self.geometry = geometry }
+  init(geometry: String = LiveChunkPlanner.version, maximumWindowSamples: Int = 239_360) {
+    self.geometry = geometry
+    self.maximumWindowSamples = maximumWindowSamples
+  }
 
   mutating func append(window: TranscriptAssembler.Window) -> AssembledWindow {
-    var assembler = TranscriptAssembler()
+    var assembler = TranscriptAssembler(maximumWindowSamples: maximumWindowSamples)
     var offset = 0
     if let previous {
       offset = previous.sampleCount

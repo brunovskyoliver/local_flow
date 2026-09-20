@@ -1,0 +1,3 @@
+# Data model
+
+No migration or wire change. Ring slots gain source-frame offsets; the producer records total offered valid frames; the single consumer owns an output cursor. These are process-local, fixed-capacity metadata. Durable AAC includes silence at overflow positions for new recordings. Existing segment and track dropped-frame counts retain their meaning as lost source content. Duration now includes those silent intervals; legacy files remain shorter. A track duration warning is true for any nonzero drops or the existing duration mismatch threshold. Progress snapshots coalesce in memory; finalized segment updates remain rejected.

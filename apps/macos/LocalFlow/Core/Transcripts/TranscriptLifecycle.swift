@@ -55,18 +55,23 @@ enum TranscriptErrorMessage {
   static let tooManyWaiting = "Too many transcripts waiting"
   static let changed = "The transcript changed. Try again."
   static func message(
-    for category: TranscriptFailureCategory, keptCount: Int = 0, resumesAutomatically: Bool = true
+    for category: TranscriptFailureCategory, keptCount: Int = 0, resumesAutomatically: Bool = true,
+    finalMeeting: Bool = false
   ) -> String {
     switch category {
     case .modelUnavailable:
-      "The speech model is not installed. Install it in Settings to transcribe."
+      finalMeeting
+        ? "Whisper Turbo is not installed. Install the meeting model in Settings to transcribe."
+        : "The speech model is not installed. Install it in Settings to transcribe."
     case .modelProvisioning: "The speech model could not be verified. Reinstall it in Settings."
     case .modelLoadFailure: "The speech model failed to load. The recording was not affected."
     case .audioDecodeFailure: "A recorded track could not be decoded. The recording was kept."
     case .analysisStreamFailure:
       "Audio could not be prepared for transcription. The recording was kept."
     case .runtimeFailure:
-      "Transcription stopped because the speech model failed. The recording continues."
+      finalMeeting
+        ? "Meeting transcription failed. The recording was kept; choose Retry to try again."
+        : "Transcription stopped because the speech model failed. The recording continues."
     case .finalizationInterrupted:
       resumesAutomatically
         ? "Finalization was interrupted. It will resume automatically."

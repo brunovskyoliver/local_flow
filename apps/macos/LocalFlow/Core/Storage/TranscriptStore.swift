@@ -357,6 +357,111 @@ actor TranscriptStore: TranscriptStoring {
       ).map(Self.segment)
     }
   }
+  /// One page with each row's effective label (`manual ?? auto`, mapped to the display
+  /// root) from the accepted run. Labels apply only to final rows of the pass the run
+  /// aligned against, and only while that pass is the transcript's current pass.
+  // `async` so concrete calls pick these over the protocol's no-label defaults.
+  func labeledPage(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
+    async throws -> [LabeledSegment]
+  {
+    try await database.read { db in
+      try Row.fetchAll(
+        db,
+        sql: """
+          SELECT s.*, r.id AS label_run, r.in_room AS label_in_room, COALESCE(a.manual_kind, a.auto_kind) AS label_kind,
+            a.manual_kind IS NOT NULL AS label_edited,
+            p.id AS label_root, p.source AS label_source, p.label_ordinal AS label_ordinal,
+            p.color_index AS label_color, p.display_name AS label_name
+          FROM transcript_segments s
+          LEFT JOIN meeting_diarization d ON d.meeting_id=s.meeting_id
+          LEFT JOIN diarization_runs r ON r.id=d.accepted_run_id AND s.finality='final'
+            AND r.transcript_pass_id=s.pass_id
+            AND r.transcript_pass_id=(SELECT pass_id FROM meeting_transcriptions WHERE meeting_id=s.meeting_id)
+          LEFT JOIN speaker_assignments a ON a.run_id=r.id AND a.segment_id=s.id
+          LEFT JOIN meeting_speakers e ON e.id=CASE WHEN a.manual_kind IS NOT NULL
+            THEN a.manual_speaker_id ELSE a.auto_speaker_id END
+          LEFT JOIN meeting_speakers p ON p.id=COALESCE(e.merged_into, e.id)
+          WHERE s.meeting_id=? AND s.finality=? AND s.ordinal>? ORDER BY s.ordinal LIMIT ?
+          """,
+        arguments: [
+          meetingID.uuidString, finality.rawValue, ordinal ?? -1, max(0, min(200, limit)),
+        ]
+      ).map { row in
+        LabeledSegment(
+          segment: try Self.segment(row), label: Self.label(row),
+          runID: (row["label_run"] as String?).flatMap(UUID.init(uuidString:)))
+      }
+    }
+  }
+
+  func acceptedSpeakers(meetingID: UUID) async throws -> AcceptedSpeakers? {
+    try await database.read { db in
+      guard
+        let accepted = try Row.fetchOne(
+          db,
+          sql: """
+            SELECT r.id, r.in_room FROM meeting_diarization d
+            JOIN diarization_runs r ON r.id=d.accepted_run_id
+            JOIN meeting_transcriptions t ON t.meeting_id=d.meeting_id AND t.pass_id=r.transcript_pass_id
+            WHERE d.meeting_id=?
+            """, arguments: [meetingID.uuidString]),
+        let runID = UUID(uuidString: accepted["id"])
+      else { return nil }
+      let inRoom: Bool = accepted["in_room"]
+      // The run's clusters plus the meeting's manual "new speaker" rows (run_id NULL).
+      let speakers = try Row.fetchAll(
+        db,
+        sql: """
+          SELECT id, source, label_ordinal, color_index, display_name, merged_into
+          FROM meeting_speakers WHERE run_id=? OR (run_id IS NULL AND meeting_id=?)
+          ORDER BY color_index, run_id IS NULL, label_ordinal LIMIT 512
+          """, arguments: [runID.uuidString, meetingID.uuidString]
+      ).compactMap { row -> MeetingSpeaker? in
+        guard let id = UUID(uuidString: row["id"]),
+          let source = SpeakerSource(rawValue: row["source"])
+        else { return nil }
+        return MeetingSpeaker(
+          id: id, source: source, labelOrdinal: row["label_ordinal"],
+          colorIndex: row["color_index"], displayName: row["display_name"],
+          mergedInto: (row["merged_into"] as String?).flatMap(UUID.init(uuidString:)),
+          inRoom: inRoom)
+      }
+      let count =
+        try Int.fetchOne(
+          db,
+          sql: """
+            SELECT COUNT(DISTINCT COALESCE(e.merged_into, e.id)) FROM speaker_assignments a
+            JOIN meeting_speakers e ON e.id=CASE WHEN a.manual_kind IS NOT NULL
+              THEN a.manual_speaker_id ELSE a.auto_speaker_id END
+            WHERE a.run_id=? AND COALESCE(a.manual_kind, a.auto_kind)='speaker'
+            """, arguments: [runID.uuidString]) ?? 0
+      return AcceptedSpeakers(runID: runID, speakers: speakers, count: count)
+    }
+  }
+
+  private static func label(_ row: Row) -> SegmentLabel? {
+    let edited: Bool = row["label_edited"] ?? false
+    switch row["label_kind"] as String? {
+    case "unknown":
+      return SegmentLabel(
+        kind: .unknown, text: SpeakerPalette.unknown, colorIndex: nil, edited: edited)
+    case "ambiguous":
+      return SegmentLabel(kind: .overlapping, text: SpeakerPalette.overlapping, colorIndex: nil)
+    case "speaker":
+      guard let root = (row["label_root"] as String?).flatMap(UUID.init(uuidString:)),
+        let source = (row["label_source"] as String?).flatMap(SpeakerSource.init(rawValue:)),
+        let ordinal = row["label_ordinal"] as Int?
+      else { return nil }
+      return SegmentLabel(
+        kind: .speaker(root: root),
+        text: SpeakerPalette.text(
+          source: source, ordinal: ordinal, name: row["label_name"],
+          inRoom: row["label_in_room"] ?? false),
+        colorIndex: row["label_color"], edited: edited)
+    default: return nil
+    }
+  }
+
   func gaps(meetingID: UUID) throws -> [LiveGap] {
     try database.read { db in
       try Row.fetchAll(

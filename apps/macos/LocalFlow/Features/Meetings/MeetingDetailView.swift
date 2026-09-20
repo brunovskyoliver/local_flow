@@ -14,6 +14,8 @@ struct MeetingDetailView: View {
   var transcriptStore: (any TranscriptStoring)? = nil
   var transcription: MeetingTranscriptionCoordinator? = nil
   var coordinator: MeetingCoordinator? = nil
+  /// Feature 007: speaker labels for the finalized transcript.
+  var diarization: SpeakerDiarizationCoordinator? = nil
   var initialTab: NoteDetailTab = .thoughts
   @State private var tab: NoteDetailTab = .thoughts
   @State private var retainedEditor: MeetingNotesEditor?
@@ -29,6 +31,7 @@ struct MeetingDetailView: View {
   /// The track the footer player is showing; nil until Playback or "Play from here" loads one.
   @State private var playingKind: MeetingTrackKind?
   @State private var pager: TranscriptPager?
+  @State private var assigningSpeakers: AssignSpeakersModel?
 
   private var meeting: Meeting { detail.meeting }
   private var editor: MeetingNotesEditor { liveEditor ?? retainedEditor ?? notesEditor }
@@ -75,6 +78,7 @@ struct MeetingDetailView: View {
         .frame(maxWidth: .infinity)
       }
       .scrollIndicators(.hidden)
+      .hideScrollers()
       footer.frame(maxWidth: NotetakerStyle.readingWidth)
         .padding(.horizontal, 30).padding(.top, 12).padding(.bottom, 20)
     }
@@ -102,15 +106,43 @@ struct MeetingDetailView: View {
       let loaded = TranscriptPager(meetingID: meeting.id, store: transcriptStore)
       pager = loaded
       await loaded.loadFirst()
+      await diarization?.observe(meetingID: meeting.id)
     }
     .onChange(of: transcription?.status) { _, status in
       guard let status, status.meetingID == meeting.id, let pager else { return }
-      Task { await pager.apply(status: status) }
+      Task {
+        await pager.apply(status: status)
+        await diarization?.observe(meetingID: meeting.id)
+      }
+    }
+    .onChange(of: speakerStatus) { _, _ in
+      guard let pager else { return }
+      Task { await pager.applyLabels() }
+    }
+    .task(id: finalizingPollKey) {
+      // The final pass writes in batches; every few seconds the newest rows load.
+      guard finalizingPollKey != nil else { return }
+      while !Task.isCancelled {
+        do { try await Task.sleep(for: .seconds(5)) } catch { return }
+        await pager?.refreshFinalizingPreview()
+      }
     }
     .onDisappear {
       stopPlayback()
       Task { await editor.flush() }
     }
+    .overlay {
+      if let assigning = assigningSpeakers {
+        AssignSpeakersView(
+          model: assigning,
+          saved: { diarization?.namesDidChange(meetingID: assigning.meetingID) },
+          structureChanged: { Task { await pager?.refreshLabels() } },
+          close: { assigningSpeakers = nil }
+        )
+        .transition(.opacity)
+      }
+    }
+    .animation(.easeOut(duration: 0.18), value: assigningSpeakers?.id)
     .confirmationDialog("Delete \"\(meeting.displayTitle)\"?", isPresented: $confirmingDelete) {
       Button("Delete meeting", role: .destructive) {
         stopPlayback()
@@ -138,7 +170,9 @@ struct MeetingDetailView: View {
       .background(SottoPalette.button, in: .rect(cornerRadius: 6))
       .disabled(leaving)
       Spacer()
-      NoteOverflowMenu(canDelete: meeting.state.isTerminal) { confirmingDelete = true }
+      NoteOverflowMenu(
+        canDelete: meeting.state.isTerminal, transcription: transcriptMenuAction
+      ) { confirmingDelete = true }
       Button {
         explainingSharing = true
       } label: {
@@ -165,23 +199,42 @@ struct MeetingDetailView: View {
     Task {
       leaving = true
       await editor.flush()
-      if !editor.isDirty { await model.open(id) }
+      if !editor.isDirty { await model.open(id, tab: tab) }
       leaving = false
     }
   }
 
   private var header: some View {
     VStack(alignment: .leading, spacing: 8) {
-      TextField(liveStatus == nil ? meeting.displayTitle : "New note", text: $titleDraft, axis: .vertical)
-        .textFieldStyle(.plain)
-        .font(.system(size: 26, weight: .bold))
-        .lineLimit(1...3)
-        .focused($titleFocused)
-        .onSubmit { saveTitle() }
-        .accessibilityLabel("Note title")
-        .accessibilityIdentifier("meeting.title")
+      TextField(
+        liveStatus == nil ? meeting.displayTitle : "New note", text: $titleDraft, axis: .vertical
+      )
+      .textFieldStyle(.plain)
+      .font(.system(size: 26, weight: .bold))
+      .lineLimit(1...3)
+      .focused($titleFocused)
+      .onSubmit { saveTitle() }
+      .accessibilityLabel("Note title")
+      .accessibilityIdentifier("meeting.title")
       Text(MeetingRowView.dateText(meeting.createdAt))
         .font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+      if (liveStatus?.droppedFrames ?? 0) > 0
+        || detail.tracks.contains(where: { $0.track.droppedFrames > 0 })
+      {
+        Label(
+          "Some audio was lost during recording. The transcript may be incomplete.",
+          systemImage: "exclamationmark.triangle.fill"
+        )
+        .font(.callout).foregroundStyle(.orange)
+        .accessibilityIdentifier("meeting.captureLoss")
+      } else if detail.tracks.contains(where: { $0.track.durationWarning }) {
+        Label(
+          "A recording track does not match the meeting duration. Some audio may be missing.",
+          systemImage: "exclamationmark.triangle.fill"
+        )
+        .font(.callout).foregroundStyle(.orange)
+        .accessibilityIdentifier("meeting.durationWarning")
+      }
       if let reason = meeting.failureReason {
         Text(MeetingErrorMessage.text(for: reason)).font(.callout).foregroundStyle(.red)
           .accessibilityIdentifier("meeting.reason")
@@ -326,15 +379,25 @@ struct MeetingDetailView: View {
   private var transcriptSection: some View {
     VStack(alignment: .leading, spacing: 16) {
       HStack(spacing: 8) {
-        Label(
-          meetingDurationText(liveStatus?.recordedElapsedMs ?? meeting.recordedMs),
-          systemImage: "clock"
-        )
-        .font(.system(size: 10, weight: .medium)).monospacedDigit()
-        if liveStatus == nil {
-          Text("· " + transcriptBadgeText).font(.system(size: 10, weight: .medium))
+        if liveStatus == nil, let count = pager?.speakerCount {
+          // FR-018: Unknown and Overlapping are not speakers.
+          Text(
+            "\(count) \(count == 1 ? "SPEAKER" : "SPEAKERS") • \(meetingDurationText(meeting.recordedMs))"
+          )
+          .font(.system(size: 10, weight: .medium)).monospacedDigit()
+          .accessibilityIdentifier("meeting.speakers.header")
+        } else {
+          Label(
+            meetingDurationText(liveStatus?.recordedElapsedMs ?? meeting.recordedMs),
+            systemImage: "clock"
+          )
+          .font(.system(size: 10, weight: .medium)).monospacedDigit()
+          if liveStatus == nil {
+            Text("· " + transcriptBadgeText).font(.system(size: 10, weight: .medium))
+          }
         }
         Spacer()
+        if showsSpeakerControls { speakersMenu }
         NoteIconButton(symbol: "magnifyingglass", label: "Search loaded transcript") {
           transcriptSearch.toggle()
         }
@@ -352,13 +415,13 @@ struct MeetingDetailView: View {
           .textFieldStyle(.plain).padding(10)
           .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
       }
-      Text("Labels follow the audio source. Mixed audio remains unassigned.")
-        .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+      if showsSpeakerControls { speakerStatusLine }
       if let row = transcriptRow, let category = row.failureCategory {
         Text(
           TranscriptErrorMessage.message(
             for: category, keptCount: row.segmentCount,
-            resumesAutomatically: row.state == .finalizing)
+            resumesAutomatically: row.state == .finalizing,
+            finalMeeting: row.engine == "whisper.cpp")
         )
         .foregroundStyle(.red)
       }
@@ -366,9 +429,7 @@ struct MeetingDetailView: View {
       if liveStatus != nil {
         liveTranscript
       } else if let pager, !pager.segments.isEmpty {
-        let segments = pager.segments.filter {
-          transcriptQuery.isEmpty || $0.normalizedText.localizedStandardContains(transcriptQuery)
-        }
+        let segments = pager.segments.filter { pager.matches($0, query: transcriptQuery) }
         LazyVStack(alignment: .leading, spacing: 3) {
           if pager.hasPrevious {
             Button("Show earlier") { Task { await pager.loadPrevious() } }.padding(.bottom, 10)
@@ -376,11 +437,14 @@ struct MeetingDetailView: View {
           ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
             NoteTranscriptBubble(
               segment: segment,
-              showSource: index == 0
-                || segments[index - 1].draft.analysisTracks != segment.draft.analysisTracks,
+              showSource: pager.startsGroup(at: index, in: segments),
+              speaker: pager.label(for: segment.id),
+              speakerChoices: speakerChoices,
               selected: pager.selection.contains(segment.id),
               select: { pager.toggleSelection(segment.id) },
-              seek: canSeek(segment) ? { seek(to: segment) } : nil)
+              seek: canSeek(segment) ? { seek(to: segment) } : nil,
+              changeSpeaker: pager.speakers == nil
+                ? nil : { correctSpeaker(segment, to: $0) })
           }
           if segments.isEmpty {
             Text("No matches in the loaded transcript.").foregroundStyle(SottoPalette.muted)
@@ -389,11 +453,7 @@ struct MeetingDetailView: View {
             Button("Show more") { Task { await pager.loadNext() } }.padding(.top, 12)
           }
         }.accessibilityIdentifier("meeting.transcript.list")
-      } else {
-        Text("Your transcript will appear here.").foregroundStyle(SottoPalette.muted).padding(
-          .vertical, 20)
       }
-      if liveStatus == nil { transcriptActions.font(.caption).buttonStyle(.borderless) }
     }.accessibilityIdentifier("meeting.transcript")
   }
 
@@ -408,8 +468,8 @@ struct MeetingDetailView: View {
         liveStatus?.transcriptionRequested == false
           ? "Transcription is off for this note." : "Listening…"
       )
-        .italic().foregroundStyle(SottoPalette.muted)
-        .frame(maxWidth: .infinity).padding(.vertical, 20)
+      .italic().foregroundStyle(SottoPalette.muted)
+      .frame(maxWidth: .infinity).padding(.vertical, 20)
     } else {
       LazyVStack(alignment: .leading, spacing: 3) {
         ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
@@ -423,25 +483,135 @@ struct MeetingDetailView: View {
     }
   }
 
+  // MARK: Speakers (Feature 007, US1)
+
+  private var speakerStatus: SpeakerDiarizationCoordinator.DiarizationStatus? {
+    guard let status = diarization?.status, status.meetingID == meeting.id else { return nil }
+    return status
+  }
+
+  /// Speaker labels exist only for a finished, final transcript.
+  private var showsSpeakerControls: Bool {
+    diarization != nil && liveStatus == nil && meeting.state.isTerminal
+      && transcriptRow?.state == .final
+  }
+
+  @ViewBuilder private var speakerStatusLine: some View {
+    let hasResult = pager?.speakers != nil
+    Group {
+      switch speakerStatus?.state {
+      case .pending?:
+        Text(hasResult ? "Updating speaker labels…" : "Waiting to label speakers…")
+      case .running?:
+        Text(
+          hasResult
+            ? "Updating speaker labels…"
+            : "Labeling speakers… \(Int(((speakerStatus?.progress ?? 0) * 100).rounded()))%")
+      case .failed?, .interrupted?:
+        let category = speakerStatus?.failure ?? .interrupted
+        HStack(spacing: 8) {
+          Text(DiarizationFailureMessage.message(for: category)).foregroundStyle(.red)
+          if DiarizationFailureMessage.isRetryable(category) {
+            Button("Retry") { requestSpeakerRun(.retry) }.buttonStyle(.borderless)
+          }
+        }
+      default:
+        EmptyView()
+      }
+    }
+    .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+    .accessibilityIdentifier("meeting.speakers.status")
+  }
+
+  private var speakersMenu: some View {
+    let active = speakerStatus?.state == .pending || speakerStatus?.state == .running
+    let failed = speakerStatus?.state == .failed || speakerStatus?.state == .interrupted
+    return Menu {
+      Button("Assign speakers…") {
+        guard let diarization else { return }
+        assigningSpeakers = AssignSpeakersModel(meetingID: meeting.id, store: diarization.store)
+      }
+      .disabled(pager?.speakers == nil)
+      Toggle(
+        "In-room meeting",
+        isOn: Binding(
+          get: { speakerStatus?.inRoom ?? false },
+          set: { value in
+            let id = meeting.id
+            Task { await diarization?.setInRoom(meetingID: id, inRoom: value) }
+          })
+      )
+      .disabled(active)
+      Divider()
+      if failed, let category = speakerStatus?.failure,
+        DiarizationFailureMessage.isRetryable(category)
+      {
+        Button("Retry") { requestSpeakerRun(.retry) }
+      }
+      Button(pager?.speakers == nil ? "Label speakers" : "Re-run speaker labels") {
+        requestSpeakerRun(pager?.speakers == nil ? .manual : .retry)
+      }
+      .disabled(active)
+      if active {
+        Button("Cancel speaker labeling") {
+          Task { await diarization?.cancel(meetingID: meeting.id) }
+        }
+      }
+    } label: {
+      Label("Speakers", systemImage: "person.2")
+    }
+    .menuStyle(.borderlessButton).fixedSize()
+    .accessibilityLabel("Speakers")
+    .accessibilityIdentifier("meeting.speakers.menu")
+  }
+
+  private func requestSpeakerRun(_ trigger: DiarizationTrigger) {
+    let id = meeting.id
+    Task { await diarization?.requestRun(meetingID: id, revision: nil, trigger: trigger) }
+  }
+
+  /// Change speaker ▸ entries: every display root of the current result, in label order.
+  private var speakerChoices: [NoteTranscriptBubble.SpeakerChoice] {
+    (pager?.speakers?.speakers ?? []).filter { $0.mergedInto == nil }
+      .map { .init(id: $0.id, label: $0.label) }
+  }
+
+  /// FR-026: a manual correction for one row, then only the resident labels reload.
+  private func correctSpeaker(_ segment: TranscriptSegment, to correction: SegmentCorrection) {
+    guard let diarization, let pager else { return }
+    let id = meeting.id
+    Task {
+      if await diarization.correctSegment(meetingID: id, segmentID: segment.id, to: correction) {
+        await pager.refreshLabels()
+      }
+    }
+  }
+
   private var transcriptBadgeText: String {
     if let status = transcriptStatus { return TranscriptBadge.text(for: status) }
     return TranscriptBadge.text(for: pager?.row)
   }
 
-  /// Only the actions that get a transcript started; a final transcript has none.
-  @ViewBuilder private var transcriptActions: some View {
-    let state = transcriptRow?.state ?? .notRequested
-    let enabled = transcription != nil && meeting.state.isTerminal && transcriptRow != nil
-    switch state {
-    case .notRequested:
-      Button("Transcribe") { requestFinalization() }.disabled(!enabled)
-        .accessibilityIdentifier("meeting.transcript.transcribe")
-    case .failed, .interrupted:
-      Button("Retry") { requestFinalization() }.disabled(!enabled)
-        .accessibilityIdentifier("meeting.transcript.retry")
-    case .final, .pending, .live, .finalizing:
-      EmptyView()
+  /// Start, retry or replace a transcript through the same finalization queue; the
+  /// item lives in the note's overflow menu and is absent while a pass is running.
+  private var transcriptMenuAction: NoteOverflowMenu.TranscriptionAction? {
+    guard transcription != nil, meeting.state.isTerminal, let row = transcriptRow else {
+      return nil
     }
+    let title: String
+    let identifier: String
+    switch row.state {
+    case .notRequested: (title, identifier) = ("Transcribe", "meeting.transcript.transcribe")
+    case .failed, .interrupted: (title, identifier) = ("Retry transcription", "meeting.transcript.retry")
+    case .final: (title, identifier) = ("Re-transcribe", "meeting.transcript.retranscribe")
+    case .pending, .live, .finalizing: return nil
+    }
+    return .init(title: title, identifier: identifier) { requestFinalization() }
+  }
+
+  /// Non-nil while this note's transcript is being finalized; drives the preview poll.
+  private var finalizingPollKey: UUID? {
+    transcriptRow?.state == .finalizing ? meeting.id : nil
   }
 
   private func requestFinalization() {
@@ -475,11 +645,22 @@ enum NoteDetailTab: String, CaseIterable, Identifiable {
 }
 
 struct NoteTranscriptBubble: View {
+  struct SpeakerChoice: Identifiable, Equatable {
+    let id: UUID
+    let label: String
+  }
+
   let segment: TranscriptSegment
   let showSource: Bool
+  /// Feature 007: the speaker label; nil keeps the Feature 006 source label.
+  var speaker: SegmentLabel? = nil
+  /// Change speaker ▸ targets; the menu also offers Unknown and New speaker.
+  var speakerChoices: [SpeakerChoice] = []
   let selected: Bool
   let select: () -> Void
   var seek: (() -> Void)?
+  /// Present when the row has a current result to correct (FR-026).
+  var changeSpeaker: ((SegmentCorrection) -> Void)? = nil
 
   private var sourceColor: Color {
     switch segment.draft.analysisTracks {
@@ -491,7 +672,17 @@ struct NoteTranscriptBubble: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 5) {
-      if showSource {
+      if showSource, let speaker {
+        HStack(spacing: 6) {
+          Circle()
+            .fill(speaker.colorIndex.map(SpeakerPalette.color) ?? SottoPalette.muted)
+            .frame(width: 8, height: 8)
+          Text(speaker.text).font(.system(size: 12, weight: .medium))
+        }
+        .padding(.top, 14)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Speaker: \(speaker.text)")
+      } else if showSource {
         Text(segment.draft.analysisTracks.sourceLabel)
           .font(.system(size: 12, weight: .medium)).foregroundStyle(sourceColor)
           .padding(.top, 14)
@@ -504,14 +695,28 @@ struct NoteTranscriptBubble: View {
         .contextMenu {
           Button(selected ? "Deselect segment" : "Select segment", action: select)
           if let seek { Button("Play from here", action: seek) }
+          if let changeSpeaker {
+            Menu("Change speaker") {
+              ForEach(speakerChoices) { choice in
+                Button(choice.label) { changeSpeaker(.speaker(choice.id)) }
+              }
+              Divider()
+              Button(SpeakerPalette.unknown) { changeSpeaker(.unknown) }
+              Button("New speaker") { changeSpeaker(.newSpeaker) }
+            }
+            .accessibilityIdentifier("meeting.transcript.row.changeSpeaker")
+          }
         }
         .accessibilityAction(named: selected ? "Deselect segment" : "Select segment", select)
       if segment.finality == .provisional {
         Text("Provisional").font(.system(size: 10)).foregroundStyle(SottoPalette.muted)
+      } else if speaker?.edited == true {
+        Text("Edited").font(.system(size: 10)).foregroundStyle(SottoPalette.muted)
+          .accessibilityLabel("Speaker edited manually")
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .contain)
-    .accessibilityLabel(segment.draft.analysisTracks.sourceExplanation)
+    .accessibilityLabel(speaker?.text ?? segment.draft.analysisTracks.sourceExplanation)
   }
 }

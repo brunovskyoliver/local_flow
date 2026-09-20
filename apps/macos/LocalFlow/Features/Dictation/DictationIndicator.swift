@@ -71,7 +71,6 @@ struct DictationIndicator: View {
 
 /// "Added to dictionary" in the indicator's capsule, with Undo ringed by a draining countdown.
 struct LearnedNoticeView: View {
-  static let width: CGFloat = 244
   let notice: LearnedNotice
   let undo: () -> Void
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -105,7 +104,8 @@ struct LearnedNoticeView: View {
       .accessibilityIdentifier("dictionary.notice.undo")
     }
     .padding(.leading, 14).padding(.trailing, 5)
-    .frame(width: Self.width, height: 38)
+    .frame(height: 38)
+    .fixedSize()
     .background(Color(red: 36 / 255, green: 37 / 255, blue: 34 / 255), in: Capsule())
     .overlay { Capsule().strokeBorder(.white.opacity(0.13), lineWidth: 1) }
     .accessibilityElement(children: .contain)
@@ -127,7 +127,8 @@ extension Duration {
 /// One-line notice with a single action, in the indicator's capsule: used for
 /// rewrite fallbacks, refusals and cancellations.
 struct ActionNoticeView: View {
-  static let width: CGFloat = 400
+  /// The longest a one-line message grows before it truncates.
+  static let maximumTextWidth: CGFloat = 420
   let message: String
   let actionTitle: String?
   let actionIdentifier: String
@@ -140,7 +141,7 @@ struct ActionNoticeView: View {
       Text(message).font(.system(size: 12, weight: .medium))
         .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255))
         .lineLimit(1).truncationMode(.tail)
-      Spacer(minLength: 4)
+        .frame(maxWidth: Self.maximumTextWidth)
       if let actionTitle {
         Button(action: action) {
           Text(actionTitle).font(.system(size: 11, weight: .semibold))
@@ -153,11 +154,70 @@ struct ActionNoticeView: View {
         .accessibilityIdentifier(actionIdentifier)
       }
     }
-    .padding(.leading, 14).padding(.trailing, 5)
-    .frame(width: Self.width, height: 38)
+    .padding(.leading, 14).padding(.trailing, actionTitle == nil ? 16 : 5)
+    .frame(height: 38)
+    .fixedSize()
     .background(Color(red: 36 / 255, green: 37 / 255, blue: 34 / 255), in: Capsule())
     .overlay { Capsule().strokeBorder(.white.opacity(0.13), lineWidth: 1) }
     .accessibilityElement(children: .contain)
     .accessibilityLabel(message)
+  }
+}
+
+/// Work that keeps going while LocalFlow is in the background: a transcript being
+/// finalized, speakers being labeled. Clicking the pill opens the app where the
+/// work is. `id` is stable for one piece of work, so progress updates the text in
+/// place instead of re-announcing it.
+struct BackgroundNotice: Equatable, Identifiable {
+  enum Destination: Equatable {
+    case meetings
+    case transcript(meetingID: UUID)
+  }
+  let id: UUID
+  var message: String
+  var symbol: String
+  /// 0…1; shown as a percentage after the message.
+  var progress: Double?
+  var destination: Destination
+
+  var text: String {
+    guard let progress else { return message }
+    return "\(message) · \(Int((min(1, max(0, progress)) * 100).rounded())) %"
+  }
+}
+
+/// The background-work pill: one line and a symbol, the whole capsule is the button.
+struct BackgroundNoticeView: View {
+  let notice: BackgroundNotice
+  let open: () -> Void
+  @State private var hovering = false
+
+  var body: some View {
+    Button(action: open) {
+      HStack(spacing: 10) {
+        Image(systemName: notice.symbol).font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255).opacity(0.9))
+        Text(notice.text).font(.system(size: 12, weight: .medium)).monospacedDigit()
+          .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255))
+          .lineLimit(1).truncationMode(.tail)
+          .frame(maxWidth: ActionNoticeView.maximumTextWidth)
+          .contentTransition(.numericText())
+      }
+      .padding(.horizontal, 16)
+      .frame(height: 38)
+      .fixedSize()
+      .background(
+        Color(red: 36 / 255, green: 37 / 255, blue: 34 / 255).opacity(hovering ? 0.92 : 1),
+        in: Capsule()
+      )
+      .overlay { Capsule().strokeBorder(.white.opacity(hovering ? 0.22 : 0.13), lineWidth: 1) }
+      .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
+    .animation(.easeOut(duration: 0.15), value: hovering)
+    .accessibilityLabel(notice.text)
+    .accessibilityHint("Opens LocalFlow")
+    .accessibilityIdentifier("background.notice")
   }
 }

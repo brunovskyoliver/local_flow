@@ -9,7 +9,7 @@ import OSLog
 /// - Ring: 32 slots × 4,096 frames × up to 8 channels, preallocated by
 ///   `MeetingSampleRing`; overflow drops whole callbacks and counts them.
 /// - Input block: one `AVAudioPCMBuffer` of 4,096 frames in the ring's layout,
-///   popped into at most 32 times per 10 ms tick (one ring per poll).
+///   filled at most 32 times per 10 ms tick, including overflow silence.
 /// - Output block: one `AVAudioCompressedBuffer` of at most 8 packets of 1,536
 ///   bytes inside the encoder; `encode` returns at most 8 frames per call and the
 ///   worker writes them synchronously before asking for more.
@@ -83,6 +83,9 @@ actor MeetingTrackWorker {
   private var running = false
   private var finished = false
   private var loop: Task<Void, Never>?
+  private var heartbeatDelivery: Task<Void, Never>?
+  private var heartbeatGeneration: UUID?
+  private var pendingHeartbeat: Heartbeat?
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "meetings")
 
   init(
@@ -137,7 +140,7 @@ actor MeetingTrackWorker {
       if now - lastSync >= Self.syncIntervalMs {
         try writer.sync(handle)
         lastSync = now
-        await emitHeartbeat()
+        emitHeartbeat()
       }
       return true
     } catch {
@@ -146,21 +149,24 @@ actor MeetingTrackWorker {
     }
   }
 
-  /// Stops the loop, drains the ring once, finishes the encoder, appends the
+  /// Stops admission, drains retained audio and loss intervals in bounded rounds,
+  /// finishes the encoder, appends the
   /// trailing frames and finalizes the file. After a latched failure the file
   /// is left as `.part` (closed, not renamed) and the failure is returned.
   func finalize() async -> Result<Completion, MeetingCaptureFailure> {
     running = false
     loop?.cancel()
     loop = nil
+    stopHeartbeatDelivery()
     guard !finished else { return .failure(.closed) }
     finished = true
+    ring.closeAndJoin()
     if let reason = latch.value {
       writer.abandon(handle)
       return .failure(failureValue(reason))
     }
     do {
-      try drainOnce()
+      while try drainOnce() > 0 { await Task.yield() }
       let trailing = try encoder.finish()
       try append(trailing)
       let size = try writer.finalize(handle)
@@ -185,10 +191,14 @@ actor MeetingTrackWorker {
 
   // MARK: - Loop steps
 
-  private func drainOnce() throws {
-    try ring.drain(maxSlots: Self.maximumSlotsPerTick, into: input) { block in
-      analysisSink?.push(block)
-      var frames = try encoder.encode(block: block)
+  @discardableResult
+  private func drainOnce() throws -> Int {
+    var blocks = 0
+    while blocks < Self.maximumSlotsPerTick {
+      guard ring.popPreservingTimeline(into: input) > 0 else { break }
+      blocks += 1
+      analysisSink?.push(input)
+      var frames = try encoder.encode(block: input)
       try append(frames)
       // A full output block means the converter may hold more; drain it in
       // bounded rounds without a second input block.
@@ -199,6 +209,7 @@ actor MeetingTrackWorker {
         rounds += 1
       }
     }
+    return blocks
   }
 
   private func append(_ frames: [ADTSFrame]) throws {
@@ -209,7 +220,7 @@ actor MeetingTrackWorker {
     bytesSinceHeartbeat += Int64(bytes)
   }
 
-  private func emitHeartbeat() async {
+  private func emitHeartbeat() {
     let beat = Heartbeat(
       segmentID: segmentID, kind: kind,
       durationMs: Self.durationMs(frames: encoder.encodedFrameCount), byteSize: bytesWritten,
@@ -233,7 +244,41 @@ actor MeetingTrackWorker {
         itemCount: UInt32(clamping: beat.droppedFrames), meetingKey: kind.rawValue)
     }
     bytesSinceHeartbeat = 0
-    await heartbeat(beat)
+    if heartbeatDelivery != nil {
+      pendingHeartbeat = beat
+      return
+    }
+    let generation = UUID()
+    heartbeatGeneration = generation
+    let heartbeat = heartbeat
+    heartbeatDelivery = Task { [weak self] in
+      var next: Heartbeat? = beat
+      while let current = next, !Task.isCancelled {
+        // Capture only the callback across this await. A stalled recipient must
+        // neither suspend capture nor keep the worker alive after finalization.
+        await heartbeat(current)
+        next = await self?.nextHeartbeat(generation: generation)
+      }
+    }
+  }
+
+  private func nextHeartbeat(generation: UUID) -> Heartbeat? {
+    guard heartbeatGeneration == generation else { return nil }
+    if running, !finished, let next = pendingHeartbeat {
+      pendingHeartbeat = nil
+      return next
+    }
+    pendingHeartbeat = nil
+    heartbeatGeneration = nil
+    heartbeatDelivery = nil
+    return nil
+  }
+
+  private func stopHeartbeatDelivery() {
+    heartbeatGeneration = nil
+    pendingHeartbeat = nil
+    heartbeatDelivery?.cancel()
+    heartbeatDelivery = nil
   }
 
   private func fail(_ error: Error) {
@@ -242,6 +287,7 @@ actor MeetingTrackWorker {
     running = false
     loop?.cancel()
     loop = nil
+    stopHeartbeatDelivery()
     let metric: ResourceRecorder.Metric =
       failure.reason == .encoderFailed ? .meetingEncoderFailure : .meetingWriteFailure
     recorder?.record(

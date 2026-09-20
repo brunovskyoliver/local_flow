@@ -1081,6 +1081,45 @@ final class MeetingTranscriptionCoordinatorTests: XCTestCase {
     await coordinator.shutdown()
   }
 
+  // MARK: Feature 007: speaker labels follow a final transcript
+
+  @MainActor private final class DiarizationSpy: DiarizationObserving {
+    var finalized: [UUID] = []
+    func meetingTranscriptDidFinalize(id: UUID) { finalized.append(id) }
+    func meetingWillDelete(id: UUID) async {}
+  }
+
+  func testFinalTranscriptNotifiesDiarizationAfterTheLeaseIsFinished() async throws {
+    let clock = FakeMeetingClock()
+    let harness = try await FinalizingHarness.make(clock: clock)
+    defer { harness.cleanup() }
+    let coordinator = harness.coordinator
+    let spy = DiarizationSpy()
+    coordinator.diarization = spy
+    let id = harness.meeting.meetingID
+    let row = try await harness.store.transcription(meetingID: id)
+    coordinator.requestFinalization(meetingID: id, revision: try XCTUnwrap(row).revision)
+    await settle { coordinator.status?.state == .final }
+    await settle { !spy.finalized.isEmpty }
+    XCTAssertEqual(spy.finalized, [id])
+    let snapshot = await harness.lifecycle.snapshot()
+    XCTAssertFalse(snapshot.leased)
+    // A pass that fails never triggers diarization.
+    let failing = try await FinalizingHarness.make(
+      runtime: FakeTranscriptionRuntime(failureOnCall: 1), clock: clock)
+    defer { failing.cleanup() }
+    let failingSpy = DiarizationSpy()
+    failing.coordinator.diarization = failingSpy
+    let failingID = failing.meeting.meetingID
+    let failingRow = try await failing.store.transcription(meetingID: failingID)
+    failing.coordinator.requestFinalization(
+      meetingID: failingID, revision: try XCTUnwrap(failingRow).revision)
+    await settle { failing.coordinator.status?.state == .failed }
+    XCTAssertTrue(failingSpy.finalized.isEmpty)
+    await coordinator.shutdown()
+    await failing.coordinator.shutdown()
+  }
+
   // MARK: Phase 11: notes stay independent (US8)
 
   func testNotesAreByteIdenticalAndNeverReadByTranscriptTypes() async throws {

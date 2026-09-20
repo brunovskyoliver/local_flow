@@ -4,6 +4,13 @@ import XCTest
 @testable import LocalFlow
 
 final class TranscriptNormalizerTests: XCTestCase {
+  func testScalarBufferPreservesAllUTF8Widths() {
+    let input = "  a é 日 😀\t\r\nnext  "
+    let result = TranscriptNormalizer().normalize(input)
+    XCTAssertTrue(result.text.utf8.elementsEqual("a é 日 😀\nnext".utf8))
+    XCTAssertFalse(result.incomplete)
+  }
+
   func testAuthoredFormattingCasesAndExactSecondPass() throws {
     struct Cases: Decodable {
       struct Case: Decodable {

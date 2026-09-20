@@ -3,6 +3,28 @@ import XCTest
 @testable import LocalFlow
 
 final class TranscriptAssemblerTests: XCTestCase {
+  func testLongMeetingWindowsHaveExplicitBoundsWithoutWideningDictation() {
+    let first = TranscriptAssembler.Window(
+      sequence: 0, sampleStart: 0, sampleCount: 1_920_000,
+      paddedSampleCount: 1_920_000, text: "Prvá veta.", tokens: nil)
+    let second = TranscriptAssembler.Window(
+      sequence: 1, sampleStart: 1_920_000, sampleCount: 1_920_000,
+      paddedSampleCount: 1_920_000, text: "Druhá veta.", tokens: nil)
+    var dictation = TranscriptAssembler()
+    dictation.append(first)
+    XCTAssertTrue(dictation.reasons.contains(.invalidResult))
+    var meeting = TranscriptAssembler(maximumWindowSamples: 1_920_000)
+    meeting.append(first)
+    meeting.append(second)
+    XCTAssertFalse(meeting.incomplete)
+    XCTAssertTrue(meeting.text.contains("Prvá veta."))
+    XCTAssertTrue(meeting.text.contains("Druhá veta."))
+    var windows = MeetingWindowAssembler(
+      geometry: MeetingFinalizer.Configuration.turbo.geometry, maximumWindowSamples: 1_920_000)
+    _ = windows.append(window: first)
+    XCTAssertEqual(windows.append(window: second).text, "Druhá veta.")
+  }
+
   struct Corpus: Decodable {
     struct Case: Decodable {
       struct Expected: Decodable {
@@ -265,6 +287,23 @@ extension TranscriptAssemblerTests {
       TranscriptSourceMapper.map(text: "hello!", words: [.init(text: "hello", start: 0, end: 1)]))
     XCTAssertNil(
       TranscriptSourceMapper.map(text: "foobar", words: [.init(text: "bar", start: 0, end: 1)]))
+  }
+
+  func testSourceMappingTracksMultibyteWhitespaceAndDecomposedWords() throws {
+    let texts = ["e\u{0301}", "👩🏽‍💻", "日本語", "end!"]
+    let text = "\u{2003}" + texts.joined(separator: "\r\n\u{00A0}\t") + "\n"
+    let words = texts.map { TranscriptionToken(text: $0, start: 0, end: 1) }
+    let mapped = try XCTUnwrap(TranscriptSourceMapper.map(text: text, words: words))
+    let bytes = Array(text.utf8)
+    var expectedStart = 3
+    for (token, word) in zip(mapped, texts) {
+      XCTAssertEqual(token.utf8Start, expectedStart)
+      XCTAssertEqual(token.utf8End, expectedStart + word.utf8.count)
+      XCTAssertTrue(bytes[token.utf8Start..<token.utf8End].elementsEqual(word.utf8))
+      expectedStart = token.utf8End + 5
+    }
+    XCTAssertNil(
+      TranscriptSourceMapper.map(text: "é", words: [.init(text: "e\u{0301}", start: 0, end: 1)]))
   }
 
   func testRepeatedWordsAtDistinctTimesInOverlapSurvive() {

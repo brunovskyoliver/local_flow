@@ -3,12 +3,34 @@ import Foundation
 enum ModelCapability: String, Codable, Equatable, Sendable {
   case speechRecognition = "speech_recognition"
   case voiceActivityDetection = "voice_activity_detection"
+  case speakerDiarization = "speaker_diarization"
 }
 
 struct ModelFileDescriptor: Codable, Equatable, Sendable {
   let path: String
   let size: Int64
   let sha256: String
+  /// Optional pinned source when an asset comes from a different repository.
+  var sourceURL: URL? = nil
+
+  func validateSourceURL() throws {
+    guard let sourceURL else { return }
+    let parts = sourceURL.path.split(separator: "/", omittingEmptySubsequences: false)
+    let safe = CharacterSet(
+      charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    guard sourceURL.absoluteString.utf8.count <= 2_048,
+      sourceURL.scheme == "https", sourceURL.host == "huggingface.co",
+      sourceURL.user == nil, sourceURL.password == nil, sourceURL.port == nil,
+      sourceURL.query == nil, sourceURL.fragment == nil,
+      !sourceURL.absoluteString.contains("%"),
+      parts.count >= 6, parts[0].isEmpty, parts[3] == "resolve",
+      parts[4].utf8.count == 40,
+      parts[4].utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+      parts.dropFirst().allSatisfy({
+        !$0.isEmpty && $0 != "." && $0 != ".." && $0.unicodeScalars.allSatisfy(safe.contains)
+      })
+    else { throw ModelProvisioner.Error.invalidManifest }
+  }
 }
 
 struct ModelDescriptor: Codable, Equatable, Sendable {
@@ -45,6 +67,7 @@ struct ModelDescriptor: Codable, Equatable, Sendable {
     var paths = Set<String>()
     var total: Int64 = 0
     for file in files {
+      try file.validateSourceURL()
       let components = file.path.split(separator: "/", omittingEmptySubsequences: false)
       guard boundedText(file.path, maximum: 1_024), !file.path.contains("\\"),
         components.count <= 32,

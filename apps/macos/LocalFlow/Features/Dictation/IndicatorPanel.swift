@@ -8,25 +8,34 @@ private final class IndicatorPresentation {
   var level: Float = 0
   var notice: LearnedNotice?
   var actionNotice: RewriteActionNotice?
+  var background: BackgroundNotice?
   @ObservationIgnored var cancel: () -> Void = {}
   @ObservationIgnored var undo: () -> Void = {}
   @ObservationIgnored var action: () -> Void = {}
+  @ObservationIgnored var open: () -> Void = {}
 }
 
+/// Dictation states win, then the two dictation notices, then background work.
 private struct IndicatorHost: View {
   let presentation: IndicatorPresentation
+  let sizeChanged: (CGSize) -> Void
   var body: some View {
-    if IndicatorPanel.showsPanel(presentation.state) {
-      DictationIndicator(
-        state: presentation.state, level: presentation.level, cancel: presentation.cancel)
-    } else if let notice = presentation.notice {
-      LearnedNoticeView(notice: notice, undo: presentation.undo).id(notice.entryID)
-    } else if let notice = presentation.actionNotice {
-      ActionNoticeView(
-        message: notice.message, actionTitle: notice.canRetry ? "Retry" : nil,
-        actionIdentifier: "rewrite.notice.retry", action: presentation.action
-      ).id(notice.id)
+    Group {
+      if IndicatorPanel.showsPanel(presentation.state) {
+        DictationIndicator(
+          state: presentation.state, level: presentation.level, cancel: presentation.cancel)
+      } else if let notice = presentation.notice {
+        LearnedNoticeView(notice: notice, undo: presentation.undo).id(notice.entryID)
+      } else if let notice = presentation.actionNotice {
+        ActionNoticeView(
+          message: notice.message, actionTitle: notice.canRetry ? "Retry" : nil,
+          actionIdentifier: "rewrite.notice.retry", action: presentation.action
+        ).id(notice.id)
+      } else if let notice = presentation.background {
+        BackgroundNoticeView(notice: notice, open: presentation.open).id(notice.id)
+      }
     }
+    .onGeometryChange(for: CGSize.self, of: \.size, action: sizeChanged)
   }
 }
 
@@ -51,17 +60,37 @@ private final class IndicatorGeometryObservers {
   }
 }
 
+/// The pill at the bottom of the screen. It hugs whatever it shows: the content view
+/// reports its size and the panel resizes around it, staying centered.
 @MainActor
 final class IndicatorPanel: NSPanel {
+  static let height: CGFloat = 38
+  /// The waveform is 118 points wide with Cancel in the trailing 35; the waveform is
+  /// what sits on the screen's center line.
+  static let indicatorWidth: CGFloat = 153
+  static let indicatorVisualCenter: CGFloat = 59
+  private static let showDuration: TimeInterval = 0.22
+  private static let hideDuration: TimeInterval = 0.16
+  private static let rise: CGFloat = 8
+
   private let presentation = IndicatorPresentation()
   private let announce: @MainActor (String) -> Void
+  private let animated: Bool
   private var targetPoint: NSPoint?
   private var geometryObservers: IndicatorGeometryObservers?
+  private var contentSize = NSSize(width: IndicatorPanel.indicatorWidth, height: IndicatorPanel.height)
+  private var hiding = false
+  /// True while the main window is focused: background work is on screen there already.
+  var suppressesBackgroundNotice = false {
+    didSet { if oldValue != suppressesBackgroundNotice { refresh() } }
+  }
   var observesGeometryChanges: Bool { geometryObservers != nil }
+  var showsBackgroundNotice: Bool { isVisible && !hiding && Self.showsBackground(presentation) }
   override var canBecomeKey: Bool { false }
   override var canBecomeMain: Bool { false }
 
   init(
+    animated: Bool = true,
     announce: @escaping @MainActor (String) -> Void = { message in
       // The application remains an accessibility element after this panel hides.
       NSAccessibility.post(
@@ -70,9 +99,9 @@ final class IndicatorPanel: NSPanel {
     }
   ) {
     self.announce = announce
+    self.animated = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     super.init(
-      // The trailing 35 points hold Cancel without covering the centered 118-point waveform.
-      contentRect: NSRect(x: 0, y: 0, width: 153, height: 38),
+      contentRect: NSRect(x: 0, y: 0, width: Self.indicatorWidth, height: Self.height),
       styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     isOpaque = false
     backgroundColor = .clear
@@ -81,7 +110,13 @@ final class IndicatorPanel: NSPanel {
     hidesOnDeactivate = false
     collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     isReleasedWhenClosed = false
-    contentView = NSHostingView(rootView: IndicatorHost(presentation: presentation))
+    animationBehavior = .none
+    let hosting = NSHostingView(
+      rootView: IndicatorHost(presentation: presentation) { [weak self] size in
+        self?.contentDidResize(to: size)
+      })
+    hosting.sizingOptions = []
+    contentView = hosting
   }
 
   static func displayPoint(for target: CapturedTarget?) -> NSPoint? {
@@ -114,20 +149,12 @@ final class IndicatorPanel: NSPanel {
     let previous = presentation.state
     presentation.state = state
     if let message = Self.announcement(from: previous, to: state) { announce(message) }
-    guard Self.showsPanel(state) else {
-      if presentation.notice != nil {
-        present(width: LearnedNoticeView.width)
-      } else if presentation.actionNotice != nil {
-        present(width: ActionNoticeView.width)
-      } else {
-        orderOut(nil)
-      }
-      return
+    if Self.showsPanel(state) {
+      self.targetPoint = targetPoint
+      presentation.level = level.isFinite ? min(1, max(0, level)) : 0
+      presentation.cancel = cancel
     }
-    self.targetPoint = targetPoint
-    presentation.level = level.isFinite ? min(1, max(0, level)) : 0
-    presentation.cancel = cancel
-    present(width: 153)
+    refresh()
   }
 
   /// The learned-correction bubble uses the same panel; dictation states take precedence.
@@ -136,18 +163,11 @@ final class IndicatorPanel: NSPanel {
     let previous = presentation.notice
     presentation.notice = notice
     presentation.undo = undo
-    guard !Self.showsPanel(presentation.state) else { return }
-    guard let notice else {
-      if presentation.actionNotice != nil {
-        present(width: ActionNoticeView.width)
-      } else {
-        orderOut(nil)
-      }
-      return
+    if let notice, previous?.entryID != notice.entryID {
+      announce("Added \(notice.canonical) to dictionary.")
     }
-    if previous?.entryID != notice.entryID { announce("Added \(notice.canonical) to dictionary.") }
-    if let targetPoint { self.targetPoint = targetPoint }
-    present(width: LearnedNoticeView.width)
+    if let targetPoint, notice != nil { self.targetPoint = targetPoint }
+    refresh()
   }
 
   /// A rewrite notice with one action (Retry). The learned-correction bubble
@@ -159,29 +179,118 @@ final class IndicatorPanel: NSPanel {
     presentation.actionNotice = notice
     presentation.action = action
     if let notice, previous?.id != notice.id { announce(notice.message) }
-    guard !Self.showsPanel(presentation.state), presentation.notice == nil else { return }
-    guard let notice else {
+    if let targetPoint, notice != nil { self.targetPoint = targetPoint }
+    refresh()
+  }
+
+  /// Clears the action notice only if it is still the one with `id`.
+  func dismissActionNotice(id: UUID) {
+    guard presentation.actionNotice?.id == id else { return }
+    presentation.actionNotice = nil
+    presentation.action = {}
+    refresh()
+  }
+
+  /// Background work (finalizing, labeling). Lowest precedence; hidden while the main
+  /// window is focused. Clicking the pill calls `open`.
+  func showBackgroundNotice(_ notice: BackgroundNotice?, open: @escaping () -> Void) {
+    let previous = presentation.background
+    presentation.background = notice
+    presentation.open = open
+    if let notice, previous?.id != notice.id { announce(notice.text) }
+    refresh()
+  }
+
+  private static func showsBackground(_ presentation: IndicatorPresentation) -> Bool {
+    !showsPanel(presentation.state) && presentation.notice == nil
+      && presentation.actionNotice == nil && presentation.background != nil
+  }
+
+  /// One place decides what is on screen, in the host's order of precedence.
+  private func refresh() {
+    let showsWork =
+      Self.showsPanel(presentation.state) || presentation.notice != nil
+      || presentation.actionNotice != nil
+    if showsWork || (Self.showsBackground(presentation) && !suppressesBackgroundNotice) {
+      present()
+    } else {
+      hide()
+    }
+  }
+
+  /// The content reported a new size: the panel wraps it and re-centers.
+  private func contentDidResize(to size: CGSize) {
+    guard size.width > 0, size.height > 0 else { return }
+    let rounded = NSSize(width: ceil(size.width), height: ceil(size.height))
+    guard rounded != contentSize else { return }
+    contentSize = rounded
+    guard isVisible, !hiding else { return }
+    layoutFrame(animated: animated)
+  }
+
+  private func present() {
+    observeGeometryChanges()
+    if let hosting = contentView as? NSHostingView<IndicatorHost> {
+      // The first layout after a content change; the geometry callback corrects later ones.
+      hosting.layoutSubtreeIfNeeded()
+      let fitting = hosting.fittingSize
+      if fitting.width > 0, fitting.height > 0 {
+        contentSize = NSSize(width: ceil(fitting.width), height: ceil(fitting.height))
+      }
+    }
+    if isVisible && !hiding {
+      layoutFrame(animated: animated)
+      return
+    }
+    hiding = false
+    let target = targetFrame()
+    guard animated else {
+      alphaValue = 1
+      setFrame(target, display: true)
+      orderFrontRegardless()
+      return
+    }
+    alphaValue = 0
+    setFrame(target.offsetBy(dx: 0, dy: -Self.rise), display: false)
+    orderFrontRegardless()
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = Self.showDuration
+      context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      animator().alphaValue = 1
+      animator().setFrame(target, display: true)
+    }
+  }
+
+  private func hide() {
+    guard isVisible, !hiding else { return }
+    guard animated else {
       orderOut(nil)
       return
     }
-    _ = notice
-    if let targetPoint { self.targetPoint = targetPoint }
-    present(width: ActionNoticeView.width)
-  }
-
-  private func present(width: CGFloat) {
-    if frame.width != width { setContentSize(NSSize(width: width, height: 38)) }
-    observeGeometryChanges()
-    reposition()
-    if !isVisible { orderFrontRegardless() }
+    hiding = true
+    let sunk = frame.offsetBy(dx: 0, dy: -Self.rise)
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = Self.hideDuration
+      context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+      animator().alphaValue = 0
+      animator().setFrame(sunk, display: true)
+    } completionHandler: { [weak self] in
+      MainActor.assumeIsolated {
+        guard let self, self.hiding else { return }
+        self.hiding = false
+        self.orderOut(nil)
+      }
+    }
   }
 
   override func orderOut(_ sender: Any?) {
     geometryObservers = nil
     targetPoint = nil
+    hiding = false
     presentation.cancel = {}
     presentation.undo = {}
     presentation.action = {}
+    presentation.open = {}
     super.orderOut(sender)
   }
 
@@ -205,17 +314,45 @@ final class IndicatorPanel: NSPanel {
 
   private func reposition() {
     guard geometryObservers != nil else { return }
+    layoutFrame(animated: false)
+  }
+
+  private func layoutFrame(animated: Bool) {
+    let target = targetFrame()
+    guard target != frame else { return }
+    guard animated else {
+      setFrame(target, display: true)
+      return
+    }
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.2
+      context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      animator().setFrame(target, display: true)
+    }
+  }
+
+  private func targetFrame() -> NSRect {
     let point = targetPoint ?? NSEvent.mouseLocation
     let screen =
       NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) }
       ?? NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
       ?? NSScreen.main
-    if let screen { setFrameOrigin(Self.origin(in: screen.visibleFrame, width: frame.width)) }
+    let visible = screen?.visibleFrame ?? NSRect(origin: .zero, size: contentSize)
+    let centered = Self.showsPanel(presentation.state) ? Self.indicatorVisualCenter : nil
+    return NSRect(
+      origin: Self.origin(in: visible, width: contentSize.width, visualCenter: centered),
+      size: contentSize)
   }
 
-  /// Centers the 118-point waveform; wider content centers itself the same way.
-  static func origin(in visibleFrame: NSRect, width: CGFloat = 153) -> NSPoint {
-    NSPoint(x: visibleFrame.midX - 59 - max(0, width - 153) / 2, y: visibleFrame.minY + 20)
+  /// Bottom-centered on the visible frame. `visualCenter` is the point inside the
+  /// content that should sit on the center line (the waveform's middle); nil centers
+  /// the whole width.
+  static func origin(
+    in visibleFrame: NSRect, width: CGFloat = IndicatorPanel.indicatorWidth,
+    visualCenter: CGFloat? = IndicatorPanel.indicatorVisualCenter
+  ) -> NSPoint {
+    let center = visualCenter ?? width / 2
+    return NSPoint(x: (visibleFrame.midX - center).rounded(), y: visibleFrame.minY + 20)
   }
 
   static func showsPanel(_ state: DictationSession.State) -> Bool {

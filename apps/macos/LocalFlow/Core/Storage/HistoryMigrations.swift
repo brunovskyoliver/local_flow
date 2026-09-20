@@ -378,6 +378,121 @@ enum HistoryMigrations {
             SELECT id,'not_requested',0,updated_at FROM meetings;
           """)
     }
+    // Feature 007: new tables only; transcript_segments is not altered and final
+    // segment rows are never updated. Run pointers null out when a run row is removed.
+    migrator.registerMigration("speakers-v7") { db in
+      let hex64 = "length(model_manifest_hash)=64 AND model_manifest_hash NOT GLOB '*[^0-9a-f]*'"
+      let categories = DiarizationFailureCategory.allCases.map { "'\($0.rawValue)'" }
+        .joined(separator: ",")
+      try db.execute(
+        sql: """
+          CREATE TABLE diarization_runs (
+            id TEXT PRIMARY KEY NOT NULL,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            transcript_pass_id TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','interrupted','superseded')),
+            "trigger" TEXT NOT NULL CHECK("trigger" IN ('automatic','manual','retry','in_room_change')),
+            in_room INTEGER NOT NULL CHECK(in_room IN (0,1)),
+            engine TEXT NOT NULL, model_id TEXT NOT NULL, model_revision TEXT NOT NULL,
+            model_manifest_hash TEXT NOT NULL CHECK(\(hex64)),
+            pipeline_version TEXT NOT NULL CHECK(length(CAST(pipeline_version AS BLOB)) BETWEEN 1 AND 256),
+            created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
+            failure_category TEXT CHECK(failure_category IS NULL OR failure_category IN (\(categories))),
+            failure_detail TEXT CHECK(failure_detail IS NULL OR length(CAST(failure_detail AS BLOB))<=512),
+            inferred_speaker_count INTEGER NOT NULL DEFAULT 0 CHECK(inferred_speaker_count>=0),
+            audio_ms INTEGER NOT NULL DEFAULT 0 CHECK(audio_ms>=0),
+            window_count INTEGER NOT NULL DEFAULT 0 CHECK(window_count>=0),
+            turn_count INTEGER NOT NULL DEFAULT 0 CHECK(turn_count>=0),
+            overlap_turn_count INTEGER NOT NULL DEFAULT 0 CHECK(overlap_turn_count>=0),
+            unknown_count INTEGER NOT NULL DEFAULT 0 CHECK(unknown_count>=0),
+            ambiguous_count INTEGER NOT NULL DEFAULT 0 CHECK(ambiguous_count>=0),
+            uncertain_reconciliations INTEGER NOT NULL DEFAULT 0 CHECK(uncertain_reconciliations>=0),
+            overflow_turns INTEGER NOT NULL DEFAULT 0 CHECK(overflow_turns>=0),
+            preemption_count INTEGER NOT NULL DEFAULT 0 CHECK(preemption_count>=0),
+            CHECK((failure_category IS NOT NULL) = (state IN ('failed','interrupted')))
+          );
+          CREATE INDEX diarization_runs_meeting ON diarization_runs(meeting_id, created_at);
+          CREATE UNIQUE INDEX diarization_runs_active ON diarization_runs(meeting_id)
+            WHERE state IN ('pending','running');
+          CREATE TABLE meeting_diarization (
+            meeting_id TEXT PRIMARY KEY NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            accepted_run_id TEXT REFERENCES diarization_runs(id) ON DELETE SET NULL,
+            current_run_id TEXT REFERENCES diarization_runs(id) ON DELETE SET NULL,
+            in_room INTEGER NOT NULL DEFAULT 0 CHECK(in_room IN (0,1)),
+            updated_at INTEGER NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0)
+          );
+          CREATE TABLE meeting_speakers (
+            id TEXT PRIMARY KEY NOT NULL,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            run_id TEXT REFERENCES diarization_runs(id) ON DELETE CASCADE,
+            cluster_key INTEGER NOT NULL CHECK(cluster_key>=0),
+            source TEXT NOT NULL CHECK(source IN ('local','remote')),
+            track TEXT CHECK(track IS NULL OR track IN ('microphone','system')),
+            origin TEXT NOT NULL CHECK(origin IN ('engine','manual')),
+            label_ordinal INTEGER NOT NULL DEFAULT 1 CHECK(label_ordinal>=1),
+            color_index INTEGER NOT NULL DEFAULT 0 CHECK(color_index BETWEEN 0 AND 7),
+            display_name TEXT CHECK(display_name IS NULL OR (
+              length(display_name) BETWEEN 1 AND 80 AND display_name = trim(display_name)
+              AND display_name NOT GLOB ('*[' || char(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,127) || ']*'))),
+            merged_into TEXT REFERENCES meeting_speakers(id) ON DELETE SET NULL,
+            reconciliation TEXT NOT NULL DEFAULT 'confident' CHECK(reconciliation IN ('confident','uncertain')),
+            first_ms INTEGER NOT NULL DEFAULT 0 CHECK(first_ms>=0),
+            speech_ms INTEGER NOT NULL DEFAULT 0 CHECK(speech_ms>=0),
+            engine_quality REAL,
+            CHECK((origin = 'manual') = (run_id IS NULL)),
+            CHECK((origin = 'manual') = (track IS NULL)),
+            CHECK(merged_into IS NULL OR merged_into <> id)
+          );
+          CREATE UNIQUE INDEX meeting_speakers_cluster ON meeting_speakers(run_id, cluster_key)
+            WHERE run_id IS NOT NULL;
+          CREATE INDEX meeting_speakers_meeting ON meeting_speakers(meeting_id);
+          CREATE TABLE speaker_turns (
+            id INTEGER PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES diarization_runs(id) ON DELETE CASCADE,
+            speaker_id TEXT REFERENCES meeting_speakers(id) ON DELETE CASCADE,
+            track TEXT NOT NULL CHECK(track IN ('microphone','system')),
+            start_ms INTEGER NOT NULL CHECK(start_ms>=0),
+            end_ms INTEGER NOT NULL CHECK(end_ms>start_ms),
+            engine_quality REAL,
+            overlapped INTEGER NOT NULL DEFAULT 0 CHECK(overlapped IN (0,1))
+          );
+          CREATE INDEX speaker_turns_run_start ON speaker_turns(run_id, start_ms);
+          CREATE INDEX speaker_turns_speaker ON speaker_turns(speaker_id);
+          CREATE TABLE speaker_assignments (
+            run_id TEXT NOT NULL REFERENCES diarization_runs(id) ON DELETE CASCADE,
+            segment_id TEXT NOT NULL REFERENCES transcript_segments(id) ON DELETE CASCADE,
+            auto_kind TEXT NOT NULL CHECK(auto_kind IN ('speaker','unknown','ambiguous')),
+            auto_speaker_id TEXT REFERENCES meeting_speakers(id),
+            top_speaker_id TEXT, second_speaker_id TEXT,
+            top_coverage REAL NOT NULL DEFAULT 0 CHECK(top_coverage BETWEEN 0 AND 1),
+            second_coverage REAL NOT NULL DEFAULT 0 CHECK(second_coverage BETWEEN 0 AND 1),
+            manual_kind TEXT CHECK(manual_kind IS NULL OR manual_kind IN ('speaker','unknown')),
+            manual_speaker_id TEXT REFERENCES meeting_speakers(id),
+            manual_at INTEGER,
+            PRIMARY KEY(run_id, segment_id),
+            CHECK((auto_speaker_id IS NOT NULL) = (auto_kind = 'speaker')),
+            CHECK((manual_speaker_id IS NOT NULL) = (manual_kind IS 'speaker')),
+            CHECK((manual_at IS NOT NULL) = (manual_kind IS NOT NULL))
+          ) WITHOUT ROWID;
+          CREATE INDEX speaker_assignments_segment ON speaker_assignments(segment_id);
+          CREATE TABLE speaker_corrections (
+            id TEXT PRIMARY KEY NOT NULL,
+            meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            run_id TEXT NOT NULL REFERENCES diarization_runs(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK(kind IN ('rename','merge','unmerge','segment')),
+            speaker_id TEXT, target_speaker_id TEXT,
+            segment_id TEXT CHECK((segment_id IS NOT NULL) = (kind = 'segment')),
+            previous_value TEXT CHECK(previous_value IS NULL OR length(previous_value)<=80),
+            new_value TEXT CHECK(new_value IS NULL OR length(new_value)<=80),
+            needs_review INTEGER NOT NULL DEFAULT 0 CHECK(needs_review IN (0,1)),
+            created_at INTEGER NOT NULL, undone_at INTEGER
+          );
+          CREATE INDEX speaker_corrections_meeting ON speaker_corrections(meeting_id, created_at);
+          INSERT INTO meeting_diarization(meeting_id, in_room, updated_at, revision)
+            SELECT id, 0, updated_at, 0 FROM meetings;
+          """)
+    }
     return migrator
   }
 }

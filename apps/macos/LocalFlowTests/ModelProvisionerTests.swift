@@ -233,6 +233,26 @@ final class ModelProvisionerTests: XCTestCase {
     XCTAssertThrowsError(try ambiguous.validate())
   }
 
+  func testSpeakerDiarizationManifestDecodesAndRequiresNoAutomaticLanguage() throws {
+    let url = try XCTUnwrap(
+      Bundle.main.url(forResource: "speaker-diarization-offline", withExtension: "json"))
+    let manifest = try JSONDecoder().decode(ModelDescriptor.self, from: Data(contentsOf: url))
+    try manifest.validate()
+    XCTAssertEqual(manifest.effectiveCapability, .speakerDiarization)
+    XCTAssertEqual(manifest.modelID, "FluidInference/speaker-diarization-coreml")
+    XCTAssertFalse(manifest.automaticLanguage)
+    XCTAssertTrue(manifest.files.contains { $0.path == "plda-parameters.json" })
+
+    let legacy = descriptor(for: Data([1]))
+    let automatic = ModelDescriptor(
+      schemaVersion: 1, modelID: "test/diarizer", sourceRevision: String(repeating: "a", count: 40),
+      sdkCompatibility: "test", automaticLanguage: true, capability: .speakerDiarization,
+      license: "test", files: legacy.files, complete: true)
+    XCTAssertThrowsError(try automatic.validate()) {
+      XCTAssertEqual($0 as? ModelProvisioner.Error, .invalidManifest)
+    }
+  }
+
   func testManifestRejectsPathAliasesControlCharactersAndExcessBytes() {
     let hash = String(repeating: "a", count: 64)
     for path in [
@@ -311,6 +331,56 @@ final class ModelProvisionerTests: XCTestCase {
     XCTAssertEqual(provisioner.progress.snapshot().phase, .installed)
   }
 
+  func testDownloadSupportsPinnedAssetFromSeparateRepository() async throws {
+    let f = try fixture()
+    defer { try? FileManager.default.removeItem(at: f.base) }
+    let url = URL(
+      string:
+        "https://huggingface.co/other/vad/resolve/" + String(repeating: "b", count: 40)
+        + "/vad.bin")!
+    let file = ModelFileDescriptor(
+      path: "Preprocessor/model.bin", size: Int64(f.bytes.count),
+      sha256: SHA256.hash(data: f.bytes).map { String(format: "%02x", $0) }.joined(),
+      sourceURL: url)
+    let manifest = descriptor(for: f.bytes, files: [file])
+    let provisioner = ModelProvisioner(descriptor: manifest, rootURL: f.root)
+    let transport = SyntheticTransport(data: f.bytes)
+    let installed = try await provisioner.download(using: transport)
+    let urls = await transport.urls
+    XCTAssertEqual(urls, [url])
+    XCTAssertEqual(installed.descriptor.files.first?.sourceURL, url)
+    let verified = try await provisioner.verifiedLocalDescriptor()
+    XCTAssertEqual(verified.descriptor, manifest)
+  }
+
+  func testAssetSourceRejectsUnpinnedOrUntrustedURLsBeforeDownload() async throws {
+    let f = try fixture()
+    defer { try? FileManager.default.removeItem(at: f.base) }
+    let revision = String(repeating: "b", count: 40)
+    let valid = "https://huggingface.co/other/vad/resolve/" + revision + "/vad.bin"
+    for source in [
+      valid.replacingOccurrences(of: "https:", with: "http:"),
+      valid.replacingOccurrences(of: "huggingface.co", with: "example.com"),
+      valid.replacingOccurrences(of: revision, with: "main"),
+      valid.replacingOccurrences(of: "https://", with: "https://user:pass@"),
+      valid + "?download=true", valid + "#fragment",
+      valid.replacingOccurrences(of: "vad.bin", with: "%2e%2e/vad.bin"),
+    ] {
+      let file = ModelFileDescriptor(
+        path: "Preprocessor/model.bin", size: Int64(f.bytes.count),
+        sha256: String(repeating: "a", count: 64), sourceURL: URL(string: source)!)
+      let provisioner = ModelProvisioner(
+        descriptor: descriptor(for: f.bytes, files: [file]), rootURL: f.root)
+      let transport = SyntheticTransport(data: f.bytes)
+      do {
+        _ = try await provisioner.download(using: transport)
+        XCTFail("Rejected source was accepted: \(source)")
+      } catch { XCTAssertEqual(error as? ModelProvisioner.Error, .invalidManifest) }
+      let urls = await transport.urls
+      XCTAssertTrue(urls.isEmpty)
+    }
+  }
+
   func testIncompleteDownloadManifestFailsBeforeTransport() async throws {
     let f = try fixture()
     defer { try? FileManager.default.removeItem(at: f.base) }
@@ -370,6 +440,26 @@ final class ModelProvisionerTests: XCTestCase {
         XCTFail("Invalid HTTP response must fail: " + path)
       } catch {}
     }
+  }
+
+  func testHTTPStreamingTransportWritesCallbacksLargerThanBufferCap() async throws {
+    // Hugging Face's CDN delivers multi-megabyte data callbacks on fast links;
+    // those must be sliced and written, not rejected as packageTooLarge.
+    let f = try fixture()
+    defer { try? FileManager.default.removeItem(at: f.base) }
+    let outputURL = f.base.appendingPathComponent("large-output")
+    FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+    let output = try FileHandle(forWritingTo: outputURL)
+    defer { try? output.close() }
+    let transport = HTTPModelDownloadTransport(protocolClasses: [SyntheticHTTPProtocol.self])
+    let progress = ProvisioningProgress()
+    let expected = Int64(SyntheticHTTPProtocol.largeBody.count)
+    progress.reset(total: expected)
+    try await transport.transfer(
+      url: URL(string: "https://fixture.invalid/large")!, output: output.fileDescriptor,
+      expectedBytes: expected, progress: progress)
+    XCTAssertEqual(try Data(contentsOf: outputURL), SyntheticHTTPProtocol.largeBody)
+    XCTAssertEqual(progress.snapshot().completedBytes, expected)
   }
 
   func testHTTPTransferCancellationJoinsDelegateBeforeReturning() async throws {
@@ -458,12 +548,17 @@ private actor SyntheticTransport: ModelDownloadTransport {
 private final class SyntheticHTTPProtocol: URLProtocol, @unchecked Sendable {
   static let cancelStarted = XCTestExpectation(description: "cancel request admitted")
   static let cancelStopped = XCTestExpectation(description: "cancel request stopped")
+  static let largeBody = Data(
+    (0..<(3 * ModelProvisioner.maxTransferBufferBytes)).map { UInt8(truncatingIfNeeded: $0) })
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
   override func startLoading() {
     let path = request.url!.lastPathComponent
     let bytes: Data =
-      path == "short" ? Data([1]) : path == "oversize" ? Data([1, 2, 3, 4]) : Data([1, 2, 3])
+      path == "short"
+      ? Data([1])
+      : path == "oversize"
+        ? Data([1, 2, 3, 4]) : path == "large" ? Self.largeBody : Data([1, 2, 3])
     let response = HTTPURLResponse(
       url: request.url!, statusCode: path == "status" ? 404 : 200, httpVersion: "HTTP/1.1",
       headerFields: path == "length" ? ["Content-Length": "9"] : [:])!

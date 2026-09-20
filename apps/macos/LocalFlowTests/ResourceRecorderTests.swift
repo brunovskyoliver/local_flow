@@ -32,6 +32,65 @@ final class ResourceRecorderTests: XCTestCase {
     }
   }
 
+  /// Feature 007 (T072): every diarization metric is a number of its own kind; the
+  /// failure category is the only key and belongs to `diarizationFailure` alone.
+  func testDiarizationMetricsAreContentFreeAndKeyedOnlyByCategory() async throws {
+    let capture = try RecorderCapture.make()
+    defer { capture.cleanup() }
+    let recorder = capture.recorder
+    for metric in ResourceRecorder.Metric.allDiarizationCases {
+      let accepted: Bool
+      switch metric.kind {
+      case .duration:
+        accepted = recorder.record(phase: .diarizing, durationNanoseconds: 5, metric: metric)
+      case .bytes:
+        accepted = recorder.record(phase: .diarizing, metric: metric, payloadBytes: 1)
+      case .count:
+        accepted = recorder.record(
+          phase: .diarizing, metric: metric, itemCount: 1,
+          meetingKey: metric == .diarizationFailure ? "runtime_failure" : nil)
+      }
+      XCTAssertTrue(accepted, "\(metric)")
+      for key in ["Ana", "Meetings/file.aac", "microphone", "runtime_failure"]
+      where metric != .diarizationFailure {
+        let keyed: Bool
+        if metric.kind == .duration {
+          keyed = recorder.record(
+            phase: .diarizing, durationNanoseconds: 5, metric: metric, meetingKey: key)
+        } else {
+          keyed = recorder.record(phase: .diarizing, metric: metric, itemCount: 1, meetingKey: key)
+        }
+        XCTAssertFalse(keyed, "\(metric) took key \(key)")
+      }
+    }
+    XCTAssertFalse(
+      recorder.record(
+        phase: .diarizing, metric: .diarizationFailure, itemCount: 1, meetingKey: "Ana's voice"))
+    XCTAssertFalse(
+      recorder.record(
+        phase: .diarizing, metric: .diarizationFailure, itemCount: 2,
+        meetingKey: "runtime_failure"), "a failure is one event")
+    XCTAssertTrue(
+      recorder.record(
+        phase: .diarizing, metric: .diarizationTurnCount,
+        itemCount: UInt32(DiarizationConstants.turnsPerRun)))
+    XCTAssertFalse(
+      recorder.record(
+        phase: .diarizing, metric: .diarizationTurnCount,
+        itemCount: UInt32(DiarizationConstants.turnsPerRun) + 1))
+    XCTAssertTrue(recorder.record(phase: .diarizing, rssBytes: 1))
+    let report = await recorder.flush()
+    for line in try Data(contentsOf: report.files[0]).split(separator: 10) {
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+      for forbidden in ["text", "name", "quote", "embedding", "path", "audio", "error"] {
+        XCTAssertNil(object[forbidden])
+      }
+      if let key = object["meetingKey"] as? String {
+        XCTAssertTrue(ResourceRecorder.diarizationKeys.contains(key), key)
+      }
+    }
+  }
+
   private func identity() throws -> ResourceRecorder.Identity {
     try .init(
       build: "test-build", model: "parakeet-v3", hardware: "test-host", os: "test-os",

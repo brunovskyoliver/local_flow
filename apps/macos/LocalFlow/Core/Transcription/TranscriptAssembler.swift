@@ -65,6 +65,14 @@ struct TranscriptAssembler: Sendable {
   private var rawBytes = 0
   private var previous: Window?
 
+  private let maximumWindowSamples: Int
+  private let maximumTotalSamples: Int
+
+  init(maximumWindowSamples: Int = 239_360) {
+    self.maximumWindowSamples = min(1_920_000, max(1, maximumWindowSamples))
+    self.maximumTotalSamples = max(2_880_000, self.maximumWindowSamples * 2)
+  }
+
   mutating func stop(_ reason: Reason) {
     note(reason)
     stopped = true
@@ -88,9 +96,9 @@ struct TranscriptAssembler: Sendable {
       return
     }
     guard window.sequence >= 0, window.sequence <= 13,
-      window.sampleStart >= 0, window.sampleStart <= 2_880_000,
-      (1...239_360).contains(window.sampleCount),
-      window.sampleStart <= 2_880_000 - window.sampleCount,
+      window.sampleStart >= 0, window.sampleStart <= maximumTotalSamples,
+      (1...maximumWindowSamples).contains(window.sampleCount),
+      window.sampleStart <= maximumTotalSamples - window.sampleCount,
       window.paddedSampleCount == max(4_800, window.sampleCount)
     else {
       stop(.invalidResult)
@@ -207,7 +215,7 @@ struct TranscriptAssembler: Sendable {
         token.utf8End <= bytes.count,
         !token.text.contains(where: \.isWhitespace),
         lastByte == 0 || token.utf8Start > lastByte,
-        Array(token.text.utf8) == Array(bytes[token.utf8Start..<token.utf8End]),
+        token.text.utf8.elementsEqual(bytes[token.utf8Start..<token.utf8End]),
         whitespace(bytes[lastByte..<token.utf8Start]),
         token.startSeconds.isFinite, token.endSeconds.isFinite,
         token.startSeconds >= 0, token.endSeconds >= token.startSeconds,
@@ -352,10 +360,13 @@ enum TranscriptSourceMapper {
     }
     var mapped: [TranscriptAssembler.Token] = []
     var cursor = text.startIndex
+    var byteOffset = 0
     for word in words {
       guard !word.text.isEmpty else { return nil }
       while cursor < text.endIndex && text[cursor].isWhitespace {
-        cursor = text.index(after: cursor)
+        let next = text.index(after: cursor)
+        byteOffset += text[cursor..<next].utf8.count
+        cursor = next
       }
       guard
         let range = text.range(
@@ -366,9 +377,10 @@ enum TranscriptSourceMapper {
       }
       mapped.append(
         .init(
-          text: word.text, utf8Start: text[..<range.lowerBound].utf8.count,
-          utf8End: text[..<range.upperBound].utf8.count,
+          text: word.text, utf8Start: byteOffset,
+          utf8End: byteOffset + word.text.utf8.count,
           startSeconds: word.start, endSeconds: word.end))
+      byteOffset += word.text.utf8.count
       cursor = range.upperBound
     }
     guard text[cursor...].allSatisfy(\.isWhitespace) else { return nil }

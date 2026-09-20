@@ -615,3 +615,175 @@ extension RuntimeCompatibilityTests {
     }
   }
 }
+
+// MARK: Feature 007 diarizer loading (T012)
+
+extension RuntimeCompatibilityTests {
+  private func diarizationManifest() throws -> ModelDescriptor {
+    let url = try XCTUnwrap(
+      Bundle.main.url(forResource: "speaker-diarization-offline", withExtension: "json"))
+    return try JSONDecoder().decode(ModelDescriptor.self, from: Data(contentsOf: url))
+  }
+
+  private func withOfflineMode<T>(_ value: Bool, _ body: () async throws -> T) async rethrows
+    -> T
+  {
+    let previous = ModelHub.offlineMode
+    ModelHub.offlineMode = value
+    defer { ModelHub.offlineMode = previous }
+    return try await body()
+  }
+
+  private func expectFailure(
+    _ expected: DiarizationFailureCategory, _ factory: FluidAudioDiarizerFactory
+  ) async {
+    do {
+      _ = try await factory.makeRuntime()
+      XCTFail("Expected \(expected)")
+    } catch { XCTAssertEqual(error as? DiarizationFailureCategory, expected) }
+  }
+
+  func testDiarizerRefusesToLoadWhenOfflineModeIsOff() async throws {
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = LocalModelDescriptor(
+      descriptor: try diarizationManifest(),
+      rootURL: FluidAudioDiarizerFactory.installRoot(models: root))
+    var factory = FluidAudioDiarizerFactory(descriptor: local)
+    factory.offlineMode = { false }
+    await expectFailure(.modelUnavailable, factory)
+  }
+
+  func testDiarizerOnMacOS14IsUnsupportedAndLoadsNothing() async throws {
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = LocalModelDescriptor(
+      descriptor: try diarizationManifest(),
+      rootURL: FluidAudioDiarizerFactory.installRoot(models: root))
+    var factory = FluidAudioDiarizerFactory(descriptor: local)
+    factory.offlineMode = { true }
+    factory.operatingSystem = OperatingSystemVersion(
+      majorVersion: 14, minorVersion: 7, patchVersion: 0)
+    await expectFailure(.osUnsupported, factory)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: local.rootURL.path))
+  }
+
+  func testMissingDiarizerFilesFailAsModelUnavailableWithoutDownloading() async throws {
+    guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15 else {
+      throw XCTSkip("Diarization loads only on macOS 15 or later.")
+    }
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let install = FluidAudioDiarizerFactory.installRoot(models: root)
+    try FileManager.default.createDirectory(at: install, withIntermediateDirectories: true)
+    let local = LocalModelDescriptor(descriptor: try diarizationManifest(), rootURL: install)
+    await withOfflineMode(true) {
+      await expectFailure(.modelUnavailable, FluidAudioDiarizerFactory(descriptor: local))
+    }
+    let contents = try FileManager.default.contentsOfDirectory(atPath: install.path)
+    XCTAssertTrue(contents.isEmpty, "Nothing was fetched into the model directory")
+  }
+
+  func testDiarizerMapsSpeakerIDsQualityAndNormalizedCentroids() throws {
+    let result = DiarizationResult(
+      segments: [
+        .init(
+          speakerId: "S1", embedding: [], startTimeSeconds: 0, endTimeSeconds: 2, qualityScore: 0.9),
+        .init(
+          speakerId: "S2", embedding: [], startTimeSeconds: 1, endTimeSeconds: 3, qualityScore: 0.4),
+        .init(
+          speakerId: "S3", embedding: [], startTimeSeconds: 4, endTimeSeconds: 4, qualityScore: 1),
+      ],
+      chunkEmbeddings: [
+        .init(
+          speakerId: "S1", chunkIndex: 0, speakerIndex: 0, startTimeSeconds: 0, endTimeSeconds: 1,
+          embedding256: [3, 0]),
+        .init(
+          speakerId: "S1", chunkIndex: 1, speakerIndex: 0, startTimeSeconds: 1, endTimeSeconds: 2,
+          embedding256: [0, 4]),
+      ])
+    let mapped = try FluidAudioDiarizer.map(result)
+    XCTAssertEqual(mapped.turns.map(\.cluster), [0, 1], "An empty span is dropped")
+    XCTAssertEqual(mapped.turns.map(\.quality), [0.9, 0.4])
+    XCTAssertEqual(Set(mapped.centroids.keys), [0], "A cluster without chunk embeddings has none")
+    let centroid = try XCTUnwrap(mapped.centroids[0])
+    XCTAssertEqual(centroid[0], 0.6, accuracy: 1e-6)
+    XCTAssertEqual(centroid[1], 0.8, accuracy: 1e-6)
+    XCTAssertThrowsError(
+      try FluidAudioDiarizer.map(
+        DiarizationResult(segments: [
+          .init(
+            speakerId: "X", embedding: [], startTimeSeconds: 0, endTimeSeconds: 1, qualityScore: 1)
+        ])))
+  }
+
+  /// Opt-in: set TEST_RUNNER_LOCALFLOW_DIARIZATION_MODEL_SOURCE to a directory holding the
+  /// pinned files (e.g. build/model-downloads/speaker-diarization-coreml-<revision>).
+  func testOptInDiarizerLoadsFromTheProvisionedLayoutOffline() async throws {
+    guard let source = ProcessInfo.processInfo.environment["LOCALFLOW_DIARIZATION_MODEL_SOURCE"],
+      !source.isEmpty
+    else { throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_DIARIZATION_MODEL_SOURCE explicitly.") }
+    guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15 else {
+      throw XCTSkip("Diarization loads only on macOS 15 or later.")
+    }
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provisioner = ModelProvisioner(
+      descriptor: try diarizationManifest(),
+      rootURL: FluidAudioDiarizerFactory.installRoot(models: root))
+    _ = try await provisioner.install(from: URL(fileURLWithPath: source, isDirectory: true))
+    try await withOfflineMode(true) {
+      let lifecycle = ModelLifecycleCoordinator(
+        diarizationFactory: {
+          try await FluidAudioDiarizerFactory(
+            descriptor: provisioner.verifiedLocalDescriptor()
+          ).makeRuntime()
+        }, factory: { throw DictationFailure.modelUnavailable })
+      let lease = try await lifecycle.acquire(session: UUID(), workload: .diarization)
+      do {
+        let silence = [Float](repeating: 0, count: 16_000 * 12)
+        let unconstrained = try await lifecycle.diarize(
+          lease, window: .init(samples: silence, numSpeakers: nil))
+        XCTAssertTrue(unconstrained.isValid)
+        let microphone = try await lifecycle.diarize(
+          lease, window: .init(samples: silence, numSpeakers: 1))
+        XCTAssertLessThanOrEqual(Set(microphone.turns.map(\.cluster)).count, 1)
+        try await lifecycle.finish(lease)
+      } catch {
+        await lifecycle.cancelAndJoin(lease)
+        throw error
+      }
+      let state = await lifecycle.state
+      XCTAssertEqual(state, .unloaded)
+    }
+  }
+
+  /// FR-036/FR-037 (T073): nothing under the diarization or speakers modules names a
+  /// networking symbol. The engine loads from the verified local layout only.
+  func testDiarizationSourcesReferenceNoNetworkingSymbols() throws {
+    let root = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("LocalFlow")
+    let directories = [
+      root.appendingPathComponent("Core/Diarization"),
+      root.appendingPathComponent("Features/Speakers"),
+    ]
+    let files = [
+      root.appendingPathComponent("Core/DiarizationBoundaries.swift"),
+      root.appendingPathComponent("Core/Storage/SpeakerStore.swift"),
+    ]
+    var sources: [URL] = files
+    for directory in directories {
+      let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+      sources += names.filter { $0.hasSuffix(".swift") }.map(directory.appendingPathComponent)
+    }
+    XCTAssertGreaterThan(sources.count, 8)
+    let forbidden = ["URLSession", "import Network", "NWConnection", "URLRequest", "CFNetwork"]
+    for source in sources {
+      let text = try String(contentsOf: source, encoding: .utf8)
+      for symbol in forbidden {
+        XCTAssertFalse(text.contains(symbol), "\(source.lastPathComponent) references \(symbol)")
+      }
+    }
+  }
+}

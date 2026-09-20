@@ -7,7 +7,7 @@ import OSLog
 /// `run`. Progress is persisted with every batch, so a pass that stops between
 /// windows resumes at the next window and never re-finalizes a persisted row.
 /// Decoding holds one 4,096-frame buffer per track, the mixer's stagings and one
-/// 239,360-sample window; no audio is written anywhere.
+/// bounded inference window. The runtime may use one bounded temporary WAV.
 actor MeetingFinalizer {
   enum Error: Swift.Error, Equatable {
     case staleRevision, meetingActive, noSourceAudio
@@ -20,6 +20,25 @@ actor MeetingFinalizer {
     let coveredGapCount: Int
     let coveredGapMs: Int64
   }
+  struct Configuration: Sendable {
+    let windowSamples: Int
+    let geometry: String
+    let workload: ModelWorkload
+
+    private init(windowSamples: Int, geometry: String, workload: ModelWorkload) {
+      self.windowSamples = windowSamples
+      self.geometry = geometry
+      self.workload = workload
+    }
+
+    static let parakeet = Configuration(
+      windowSamples: 239_360, geometry: "contiguous_fixed239360_preserve_v1",
+      workload: .speechRecognition)
+    static let turbo = Configuration(
+      windowSamples: 1_920_000, geometry: "contiguous_fixed1920000_turbo_preserve_v1",
+      workload: .meetingTranscription)
+  }
+
   static let geometry = "contiguous_fixed239360_preserve_v1"
   static let windowSamples = 239_360
   static let decodeFrames: AVAudioFrameCount = 4_096
@@ -35,6 +54,7 @@ actor MeetingFinalizer {
   private let lifecycle: ModelLifecycleCoordinator
   private let vocabulary: any VocabularyProviding
   private let identity: TranscriptionPipelineIdentity
+  private let configuration: Configuration
   private let clock: any MeetingClock
   private let recorder: ResourceRecorder?
   private let logSink: @Sendable (String) -> Void
@@ -44,6 +64,7 @@ actor MeetingFinalizer {
     lifecycle: ModelLifecycleCoordinator,
     vocabulary: any VocabularyProviding = EmptyVocabularyProvider(),
     identity: TranscriptionPipelineIdentity = .init(),
+    configuration: Configuration = .parakeet,
     clock: any MeetingClock = SystemMeetingClock(), recorder: ResourceRecorder? = nil,
     logSink: @escaping @Sendable (String) -> Void = { message in
       Logger(subsystem: "org.localflow.LocalFlow", category: "transcript")
@@ -56,6 +77,8 @@ actor MeetingFinalizer {
     self.lifecycle = lifecycle
     self.vocabulary = vocabulary
     self.identity = identity
+    self.configuration = configuration
+    self.window = [Float](repeating: 0, count: configuration.windowSamples)
     self.clock = clock
     self.recorder = recorder
     self.logSink = logSink
@@ -158,8 +181,33 @@ actor MeetingFinalizer {
     } catch {
       snapshot = nil
     }
-    let admission = try await admit(
-      meetingID: meetingID, revision: revision, detail: detail, snapshot: snapshot)
+    var replacementLease: ModelLease?
+    if let existing = try await store.transcription(meetingID: meetingID), existing.state == .final
+    {
+      guard existing.revision == revision else { throw Error.staleRevision }
+      guard snapshot != nil else {
+        throw Error.failed(.runtimeFailure, detail: "vocabulary_unavailable")
+      }
+      do {
+        replacementLease = try await lifecycle.acquire(
+          session: meetingID, workload: configuration.workload)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch DictationFailure.cancelled {
+        throw CancellationError()
+      } catch {
+        throw Error.failed(.acquisition(error), detail: nil)
+      }
+    }
+    let admission: Admission
+    do {
+      try Task.checkCancellation()
+      admission = try await admit(
+        meetingID: meetingID, revision: revision, detail: detail, snapshot: snapshot)
+    } catch {
+      if let replacementLease { try? await lifecycle.finish(replacementLease) }
+      throw error
+    }
     publishTransition(admission.row)
     guard let snapshot else {
       throw await fail(meetingID, .runtimeFailure, detail: "vocabulary_unavailable", lease: nil)
@@ -167,11 +215,15 @@ actor MeetingFinalizer {
     let stretchCount = Self.stretchCount(detail: detail)
     guard stretchCount <= Self.workListCapacity else {
       throw await fail(
-        meetingID, .finalizationInterrupted, detail: "work_list_capacity", lease: nil)
+        meetingID, .finalizationInterrupted, detail: "work_list_capacity", lease: replacementLease)
     }
     let lease: ModelLease
     do {
-      lease = try await lifecycle.acquire(session: meetingID)
+      if let replacementLease {
+        lease = replacementLease
+      } else {
+        lease = try await lifecycle.acquire(session: meetingID, workload: configuration.workload)
+      }
     } catch is CancellationError {
       throw CancellationError()
     } catch DictationFailure.cancelled {
@@ -224,7 +276,7 @@ actor MeetingFinalizer {
       [
         .setIdentity(
           engine: provenance.engine, model: modelIdentity, pipeline: pipelineVersion,
-          planner: Self.geometry, vocabulary: snapshot ?? .empty),
+          planner: configuration.geometry, vocabulary: snapshot ?? .empty),
         .setTimestamps(
           startedAt: row.startedAt ?? now, finalizationStartedAt: now,
           recordedMsAtPass: detail.meeting.recordedMs, expectedRevision: expected),
@@ -281,8 +333,10 @@ actor MeetingFinalizer {
 
   private func matches(_ row: MeetingTranscription, snapshot: VocabularySnapshot) -> Bool {
     row.engine == provenance.engine && row.modelID == modelIdentity.id
-      && row.modelRevision == modelIdentity.revision && row.pipelineVersion == pipelineVersion
-      && row.plannerVersion == Self.geometry && row.vocabularyRevision == snapshot.revision
+      && row.modelRevision == modelIdentity.revision
+      && row.modelManifestHash == modelIdentity.manifestHash
+      && row.pipelineVersion == pipelineVersion
+      && row.plannerVersion == configuration.geometry && row.vocabularyRevision == snapshot.revision
       && row.vocabularyHash == snapshot.hash
   }
 
@@ -297,7 +351,7 @@ actor MeetingFinalizer {
   }
   private var pipelineVersion: String {
     [
-      Self.geometry, TranscriptAssembler.version, TranscriptSegmenter.version,
+      configuration.geometry, TranscriptAssembler.version, TranscriptSegmenter.version,
       TranscriptNormalizer.version,
     ].joined(separator: "+")
   }
@@ -355,7 +409,7 @@ actor MeetingFinalizer {
   }
 
   /// One window buffer for the whole pass; refilled in place.
-  private var window = [Float](repeating: 0, count: MeetingFinalizer.windowSamples)
+  private var window: [Float]
 
   private func processStretch(_ item: FinalizationWorkItem, context: inout PassContext)
     async throws
@@ -387,7 +441,8 @@ actor MeetingFinalizer {
     }
     let mixer = try AnalysisStreamMixer(decoding: formats)
     var stretch = StretchState(sequence: item.sequence, resume: context.resume)
-    var assembler = MeetingWindowAssembler(geometry: Self.geometry)
+    var assembler = MeetingWindowAssembler(
+      geometry: configuration.geometry, maximumWindowSamples: configuration.windowSamples)
     var ended: Set<MeetingTrackKind> = []
     while ended.count < readers.count {
       for kind in [MeetingTrackKind.microphone, .system] {
@@ -460,7 +515,7 @@ actor MeetingFinalizer {
     for emission in emissions {
       var offset = 0
       while offset < emission.samples.count {
-        let room = Self.windowSamples - stretch.fill
+        let room = configuration.windowSamples - stretch.fill
         let count = min(room, emission.samples.count - offset)
         window.withUnsafeMutableBufferPointer { target in
           emission.samples.withUnsafeBufferPointer { source in
@@ -471,7 +526,7 @@ actor MeetingFinalizer {
         stretch.position += count
         stretch.tracks.insert(emission.tracks)
         offset += count
-        if stretch.fill == Self.windowSamples {
+        if stretch.fill == configuration.windowSamples {
           try await transcribeWindow(&stretch, assembler: &assembler, context: &context)
         }
       }

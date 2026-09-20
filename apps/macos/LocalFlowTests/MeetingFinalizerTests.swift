@@ -750,6 +750,54 @@ final class MeetingFinalizerTests: XCTestCase {
     XCTAssertFalse(released.leased)
   }
 
+  func testTurboUsesMeetingFactoryAndLongerGeometry() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(microphone: .blocks(180), system: .missing)])
+    let runtime = FakeTranscriptionRuntime(windows: [.init(text: "Turbo výsledok.", tokens: [])])
+    let speech = ProbeRuntime()
+    let lifecycle = ModelLifecycleCoordinator(meetingFactory: { runtime }, factory: { speech })
+    let finalizer = MeetingFinalizer(
+      store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: lifecycle,
+      configuration: .turbo)
+    let outcome = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    let counts = await runtime.sampleCounts
+    let speechCalls = await speech.calls
+    XCTAssertEqual(counts.count, 1)
+    XCTAssertGreaterThan(counts[0], 239_360)
+    XCTAssertEqual(speechCalls, 0)
+    XCTAssertEqual(outcome.row.state, .final)
+    XCTAssertEqual(outcome.row.plannerVersion, MeetingFinalizer.Configuration.turbo.geometry)
+    XCTAssertGreaterThan(outcome.row.segmentCount, 0)
+    let state = await lifecycle.state
+    XCTAssertEqual(state, .unloaded)
+  }
+
+  func testMissingTurboPreservesPreviouslyFinalTranscript() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture)
+    let runtime = FakeTranscriptionRuntime(windows: [
+      .init(text: "Keep this transcript.", tokens: [])
+    ])
+    let (original, _) = makeFinalizer(runtime: runtime)
+    let complete = try await original.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    let lifecycle = ModelLifecycleCoordinator { ProbeRuntime() }
+    let turbo = MeetingFinalizer(
+      store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: lifecycle,
+      configuration: .turbo)
+    do {
+      _ = try await turbo.run(meetingID: meeting.meetingID, revision: complete.row.revision)
+      XCTFail("Unavailable Turbo must fail")
+    } catch {
+      XCTAssertEqual(error as? MeetingFinalizer.Error, .failed(.modelUnavailable, detail: nil))
+    }
+    let retained = try await store.transcription(meetingID: meeting.meetingID)
+    XCTAssertEqual(retained, complete.row)
+    let count = try await store.passSegmentCount(
+      meetingID: meeting.meetingID, passID: try XCTUnwrap(complete.row.passID))
+    XCTAssertEqual(count, complete.row.segmentCount)
+  }
+
   // MARK: Helpers
 
   private func wait(_ condition: @escaping @Sendable () async -> Bool) async {

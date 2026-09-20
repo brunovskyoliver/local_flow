@@ -13,10 +13,26 @@ final class SettingsViewModel {
     case requestMicrophone, requestInputMonitoring, requestAccessibility
     case configureShortcut(ShortcutPreference)
     case setKeepModelReady(Bool)
+    case importSpeakerModel, downloadSpeakerModel, verifySpeakerModel
+    case importMeetingModel, downloadMeetingModel, verifyMeetingModel
   }
   struct Snapshot {
     var modelInstalled = false
     var keepModelReady = false
+    var meetingModelInstalled = false
+    var meetingModelInstalling = false
+    var meetingModelReadiness: String {
+      if meetingModelInstalling { return "Installing Whisper Turbo…" }
+      return meetingModelInstalled
+        ? "Whisper Turbo · Installed and verified"
+        : "Whisper Turbo · Download 1.63 GB or import the model folder to finalize meetings."
+    }
+    var speakerModelInstalled = false
+    var speakerModelInstalling = false
+    var speakerModelReadiness: String {
+      if speakerModelInstalling { return "Installing…" }
+      return speakerModelInstalled ? "Installed and verified" : "Not installed"
+    }
     var modelReadiness: String {
       guard modelInstalled else { return "Not installed" }
       switch runtime.state {

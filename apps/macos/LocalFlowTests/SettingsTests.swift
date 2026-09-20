@@ -7,7 +7,20 @@ final class SettingsTests: XCTestCase {
     XCTAssertEqual(SettingsView.meetingTranscriptionTitle, "Transcribe meetings while recording")
     XCTAssertEqual(
       SettingsView.meetingTranscriptionCaption,
-      "Uses the local speech model. Recording never depends on it.")
+      "Parakeet provides live previews. Whisper Turbo produces the final transcript. Recording never depends on either model."
+    )
+  }
+
+  @MainActor func testMeetingModelReadinessDoesNotBorrowDictationInstallation() {
+    var snapshot = SettingsViewModel.Snapshot()
+    snapshot.modelInstalled = true
+    XCTAssertFalse(snapshot.meetingModelInstalled)
+    XCTAssertTrue(snapshot.meetingModelReadiness.contains("Download"))
+    snapshot.meetingModelInstalling = true
+    XCTAssertEqual(snapshot.meetingModelReadiness, "Installing Whisper Turbo…")
+    snapshot.meetingModelInstalling = false
+    snapshot.meetingModelInstalled = true
+    XCTAssertEqual(snapshot.meetingModelReadiness, "Whisper Turbo · Installed and verified")
   }
 
   func testManualLoadCoolsAndRejectsUnloadWhileLeased() async throws {

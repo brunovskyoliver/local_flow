@@ -17,3 +17,8 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0014: No background text replacement](0014-no-background-text-replacement.md)
 - [0015: ADTS AAC-LC segment files with a database-authoritative manifest](0015-adts-aac-segments.md)
 - [0016: Live preview and durable-audio transcription passes](0016-meeting-transcription-passes.md)
+- [0017: Speaker diarization engine and workload-keyed model lifecycle](0017-speaker-diarization-engine-and-lifecycle.md)
+
+- [0018: Independent capture progress and overflow timeline preservation](0018-capture-progress-and-timeline.md)
+
+- [0019: Turbo meeting transcription](0019-turbo-meeting-transcription.md)

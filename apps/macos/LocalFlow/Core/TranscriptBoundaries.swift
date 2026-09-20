@@ -39,6 +39,11 @@ protocol TranscriptStoring: Sendable {
   func passSegmentCount(meetingID: UUID, passID: UUID) async throws -> Int
   func page(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
     async throws -> [TranscriptSegment]
+  /// `page` plus each row's speaker label from the accepted diarization run (Feature 007).
+  func labeledPage(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
+    async throws -> [LabeledSegment]
+  /// The accepted run's speakers, or nil when there is no current result.
+  func acceptedSpeakers(meetingID: UUID) async throws -> AcceptedSpeakers?
   func gaps(meetingID: UUID) async throws -> [LiveGap]
   func activeRows(limit: Int) async throws -> [MeetingTranscription]
   /// Commits the recovery transition and its outcome together.
@@ -61,6 +66,18 @@ enum TranscriptTransitionEffect: Sendable {
   case setTimestamps(
     startedAt: Int64? = nil, liveStartedAt: Int64? = nil, finalizationStartedAt: Int64? = nil,
     finalizedAt: Int64? = nil, recordedMsAtPass: Int64? = nil, expectedRevision: Int64? = nil)
+}
+
+// Stores without diarization tables serve Feature 006 rows: no labels, no speakers.
+extension TranscriptStoring {
+  func labeledPage(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
+    async throws -> [LabeledSegment]
+  {
+    try await page(meetingID: meetingID, finality: finality, after: ordinal, limit: limit).map {
+      LabeledSegment(segment: $0, label: nil)
+    }
+  }
+  func acceptedSpeakers(meetingID: UUID) async throws -> AcceptedSpeakers? { nil }
 }
 
 // Test doubles may use the ordinary operations; the SQLite store overrides this

@@ -253,4 +253,49 @@ final class MeetingDeletionTests: XCTestCase {
 
   }
 
+  /// Feature 007: the confirmed-deletion path cancels and joins a running diarization
+  /// before the meeting row goes, and the cascade leaves no speaker rows.
+  func testDeletionCancelsDiarizationBeforeTheRowIsDeleted() async throws {
+    let transcripts = TranscriptStore(database: fixture.history.database)
+    let speakers = SpeakerStore(database: fixture.history.database)
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
+    let id = meeting.meetingID
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: id, segments: [(0, 100)])
+    let runtime = FakeDiarizationRuntime()
+    let gate = PreparationGate()
+    await runtime.hold(gate)
+    let lifecycle = ModelLifecycleCoordinator(
+      diarizationFactory: { runtime }, factory: { FakeTranscriptionRuntime() })
+    let diarization = SpeakerDiarizationCoordinator(
+      diarizer: MeetingDiarizer(
+        speakers: speakers, transcripts: transcripts, meetings: store, storageRoot: root,
+        lifecycle: lifecycle, identity: DiarizationTestSupport.identity),
+      store: speakers, automaticEnabled: { true }, modelInstalled: { true })
+    await diarization.requestRun(meetingID: id, revision: nil, trigger: .manual)
+    await gate.waitUntilStarted()
+    let library = MeetingLibraryViewModel(store: store)
+    var order: [String] = []
+    library.willDelete = { id in
+      await diarization.meetingWillDelete(id: id)
+      let exists = try? await self.store.meeting(id: id)
+      order.append(exists == nil ? "row gone" : "joined before delete")
+    }
+    let stored = try await store.meeting(id: id)
+    let revision = try XCTUnwrap(stored).revision
+    let deletion = Task { await library.delete(id, revision: revision) }
+    try await Task.sleep(for: .milliseconds(20))
+    await gate.open()
+    let outcome = await deletion.value
+    XCTAssertEqual(outcome?.complete, true)
+    XCTAssertEqual(order, ["joined before delete"])
+    XCTAssertNil(diarization.activeMeetingID)
+    for table in ["meeting_diarization", "diarization_runs", "meeting_speakers"] {
+      let count = try await fixture.history.database.read { db in
+        try Int.fetchOne(
+          db, sql: "SELECT COUNT(*) FROM \(table) WHERE meeting_id=?", arguments: [id.uuidString])!
+      }
+      XCTAssertEqual(count, 0, table)
+    }
+  }
 }

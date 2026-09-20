@@ -14,7 +14,8 @@ struct SettingsView: View {
 
   static let meetingTranscriptionTitle = "Transcribe meetings while recording"
   static let meetingTranscriptionCaption =
-    "Uses the local speech model. Recording never depends on it."
+    "Parakeet provides live previews. Whisper Turbo produces the final transcript. Recording never depends on either model."
+  static let meetingDiarizationTitle = "Label speakers automatically after transcription"
 
   var body: some View {
     PrototypePage {
@@ -62,6 +63,40 @@ struct SettingsView: View {
             Toggle(Self.meetingTranscriptionTitle, isOn: $preferences.meetingTranscriptionEnabled)
               .labelsHidden().toggleStyle(.switch)
               .accessibilityIdentifier("settings.meetingTranscriptionEnabled")
+          }
+          separator
+          SettingsRow("Final meeting transcript", detail: model.snapshot.meetingModelReadiness) {
+            HStack(spacing: 8) {
+              if model.snapshot.meetingModelInstalled {
+                Button("Verify") { Task { await model.run(.verifyMeetingModel) } }
+              } else {
+                Button("Download") { Task { await model.run(.downloadMeetingModel) } }
+                Button("Import…") { Task { await model.run(.importMeetingModel) } }
+              }
+            }
+            .disabled(model.snapshot.meetingModelInstalling || !model.modelControlsAvailable)
+            .accessibilityIdentifier("settings.meetingModel")
+          }
+          separator
+          SettingsRow(
+            Self.meetingDiarizationTitle, detail: "Runs on this Mac after the transcript is final."
+          ) {
+            Toggle(Self.meetingDiarizationTitle, isOn: $preferences.meetingDiarizationEnabled)
+              .labelsHidden().toggleStyle(.switch)
+              .accessibilityIdentifier("settings.meetingDiarizationEnabled")
+          }
+          separator
+          SettingsRow("Speaker labeling model", detail: model.snapshot.speakerModelReadiness) {
+            HStack(spacing: 8) {
+              if model.snapshot.speakerModelInstalled {
+                Button("Verify") { Task { await model.run(.verifySpeakerModel) } }
+              } else {
+                Button("Download") { Task { await model.run(.downloadSpeakerModel) } }
+                Button("Import…") { Task { await model.run(.importSpeakerModel) } }
+              }
+            }
+            .disabled(model.snapshot.speakerModelInstalling || model.performing)
+            .accessibilityIdentifier("settings.speakerModel")
           }
         }
         rewriteSection

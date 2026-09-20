@@ -30,6 +30,16 @@ final class AppServices {
   // exclusivity guard is in place from the first shortcut press.
   private(set) var meetingCoordinator: MeetingCoordinator?
   private(set) var meetingTranscription: MeetingTranscriptionCoordinator?
+  // Feature 007: speaker labels.
+  private(set) var speakerDiarization: SpeakerDiarizationCoordinator?
+  @ObservationIgnored private(set) var speakerStore: SpeakerStore?
+  private(set) var meetingModelInstalled = false
+  private(set) var meetingModelInstalling = false
+  @ObservationIgnored private var meetingModelProvisioner: ModelProvisioner?
+  private(set) var speakerModelInstalled = false
+  private(set) var speakerModelInstalling = false
+  @ObservationIgnored private var diarizationProvisioner: ModelProvisioner?
+  @ObservationIgnored private var diarizationIdentity: DiarizationIdentity?
   @ObservationIgnored private(set) var transcriptStore: TranscriptStore?
   private(set) var meetingLibrary: MeetingLibraryViewModel?
   @ObservationIgnored private(set) var meetingStore: MeetingStore?
@@ -49,6 +59,9 @@ final class AppServices {
   @ObservationIgnored private var provisioner: ModelProvisioner?
   @ObservationIgnored private let shortcut = ShortcutController()
   @ObservationIgnored private let panel = IndicatorPanel()
+  @ObservationIgnored private var noticeDismissal: Task<Void, Never>?
+  /// Finalizations queued by launch reconciliation; their pill says "Resuming".
+  @ObservationIgnored private var resumedFinalizations: Set<UUID> = []
   @ObservationIgnored private var visualTask: Task<Void, Never>?
   @ObservationIgnored private var displayObserver: DisplayOptionsObserver?
   @ObservationIgnored private var modelDescriptor: ModelDescriptor?
@@ -146,33 +159,108 @@ final class AppServices {
         "\(descriptor.modelID)\nRevision \(descriptor.sourceRevision)\nLicense: \(descriptor.license)\nManifest-listed files: \(size). "
         + (descriptor.complete ? "" : "Integrity metadata incomplete; provisioning unavailable. ")
         + "\nLocation: \(base.appendingPathComponent("Models/parakeet-v3").path)\nWorks offline after verified installation."
+      FluidAudioDiarizerFactory.enableOfflineMode()
+      // Speaker labels have their own pinned manifest and directory; a missing
+      // manifest only disables diarization (model_unavailable).
+      let diarizationManifest = Bundle.main.url(
+        forResource: "speaker-diarization-offline", withExtension: "json"
+      ).flatMap { try? Data(contentsOf: $0) }
+      let diarizationDescriptor = diarizationManifest.flatMap {
+        try? JSONDecoder().decode(ModelDescriptor.self, from: $0)
+      }
+      let diarizationProvisioner = diarizationDescriptor.map {
+        ModelProvisioner(
+          descriptor: $0,
+          rootURL: FluidAudioDiarizerFactory.installRoot(
+            models: base.appendingPathComponent("Models", isDirectory: true)))
+      }
+      self.diarizationProvisioner = diarizationProvisioner
+      diarizationIdentity = DiarizationIdentity(
+        engine: "fluidaudio_offline_diarizer",
+        modelID: diarizationDescriptor?.modelID ?? FluidAudioDiarizerFactory.modelID,
+        modelRevision: diarizationDescriptor?.sourceRevision ?? FluidAudioDiarizerFactory.revision,
+        manifestHash: diarizationManifest.map { TranscriptionQualityDetail.hash($0) }
+          ?? String(repeating: "0", count: 64),
+        pipelineVersion: DiarizationPipelineVersion.current)
+      guard
+        let meetingManifestURL = Bundle.main.url(
+          forResource: "whisper-large-v3-turbo", withExtension: "json")
+      else { throw DictationFailure.modelUnavailable }
+      let meetingManifest = try Data(contentsOf: meetingManifestURL)
+      let meetingDescriptor = try JSONDecoder().decode(ModelDescriptor.self, from: meetingManifest)
+      let meetingProvisioner = ModelProvisioner(
+        descriptor: meetingDescriptor,
+        rootURL: base.appendingPathComponent("Models/whisper-large-v3-turbo"))
+      self.meetingModelProvisioner = meetingProvisioner
       let recorder = recorder
       let lifecycle = ModelLifecycleCoordinator(
-        observe: { state, duration in
+        observe: { state, workload, duration in
           if duration == 0 {
             Logger(subsystem: "org.localflow.LocalFlow", category: "model").notice(
-              "Model lifecycle: \(String(describing: state), privacy: .public)")
+              "Model lifecycle: \(String(describing: state), privacy: .public) \(workload.rawValue, privacy: .public)"
+            )
           }
+          let diarization = workload == .diarization
           let phase: ResourceRecorder.Phase
           switch state {
           case .unloaded: phase = .modelUnloaded
-          case .preparing: phase = .modelLoading
-          case .active: phase = .modelActive
+          case .preparing: phase = diarization ? .diarizerLoading : .modelLoading
+          case .active: phase = diarization ? .diarizerActive : .modelActive
           case .cooling: phase = .modelCooling
-          case .releasing: phase = .modelReleasing
+          case .releasing: phase = diarization ? .diarizerReleasing : .modelReleasing
           }
           recorder?.record(phase: phase, durationNanoseconds: duration)
           // A completed load or release also lands in the metric series, so
           // stage timings and lifecycle timings read from one labeled stream.
           let metric: ResourceRecorder.Metric?
           switch state {
-          case .preparing: metric = .modelLoadDuration
-          case .releasing: metric = .modelReleaseDuration
+          case .preparing:
+            metric = diarization ? .diarizationModelLoadDuration : .modelLoadDuration
+          case .releasing:
+            metric = diarization ? .diarizationModelReleaseDuration : .modelReleaseDuration
           default: metric = nil
           }
           if duration > 0, let metric {
             recorder?.record(phase: phase, durationNanoseconds: duration, metric: metric)
           }
+        },
+        diarizationFactory: {
+          guard let diarizationProvisioner else {
+            throw DiarizationFailureCategory.modelUnavailable
+          }
+          let local: LocalModelDescriptor
+          do {
+            local = try await diarizationProvisioner.verifiedLocalDescriptor()
+          } catch is CancellationError {
+            throw CancellationError()
+          } catch {
+            throw DiarizationFailureCategory.modelUnavailable
+          }
+          var runtime: any DiarizationRuntime = try await FluidAudioDiarizerFactory(
+            descriptor: local
+          ).makeRuntime()
+          #if DEBUG
+            if let seconds = MeetingRuntimeOptions.current.debugSlowDiarization {
+              runtime = SlowDiarizationRuntime(
+                runtime: runtime, seconds: seconds, clock: SystemMeetingClock())
+            }
+            if let window = MeetingRuntimeOptions.current.debugFailDiarizationWindow {
+              runtime = FailingDiarizationRuntime(runtime: runtime, failingWindow: window)
+            }
+          #endif
+          return runtime
+        },
+        meetingFactory: { [weak self] in
+          let local: LocalModelDescriptor
+          do {
+            local = try await meetingProvisioner.verifiedLocalDescriptor()
+          } catch is CancellationError {
+            throw CancellationError()
+          } catch {
+            await self?.invalidateMeetingModelVerification()
+            throw DictationFailure.modelUnavailable
+          }
+          return try await WhisperMeetingRuntime.make(model: local)
         },
         factory: { [weak self] in
           let local: LocalModelDescriptor
@@ -204,9 +292,14 @@ final class AppServices {
       let transcriptIdentity = try TranscriptionPipelineIdentity(
         descriptor: descriptor, manifestHash: TranscriptionQualityDetail.hash(descriptorData),
         build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+      let finalIdentity = try TranscriptionPipelineIdentity(
+        descriptor: meetingDescriptor,
+        manifestHash: TranscriptionQualityDetail.hash(meetingManifest),
+        build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+        engine: "whisper.cpp", windowSamples: 1_920_000)
       startMeetings(
         base: base, history: paths.1, lifecycle: lifecycle,
-        vocabulary: vocabulary, identity: transcriptIdentity)
+        vocabulary: vocabulary, identity: transcriptIdentity, finalIdentity: finalIdentity)
       let insertion = TextInsertionService()
       // Always wired: whether a dictation is rewritten is read from the per-attempt
       // settings snapshot, so the Settings toggle applies without relaunch.
@@ -337,10 +430,20 @@ final class AppServices {
       await coordinator.verifyInitialAdmission()
       // Validation never downloads assets or constructs a model runtime.
       modelInstalled = (try? await provisioner.verifiedLocalDescriptor()) != nil
+      meetingModelInstalled = (try? await meetingProvisioner.verifiedLocalDescriptor()) != nil
+      // Verification only: the diarizer is never loaded here.
+      speakerModelInstalled =
+        await (try? diarizationProvisioner?.verifiedLocalDescriptor()) != nil
       setupStatus =
         modelInstalled
         ? "Verified local model available." : "Import the pinned model before dictating."
       #if DEBUG
+        if !meetingModelInstalled, let source = developmentMeetingModelSource() {
+          do { try await installMeetingModel(source: source) } catch {
+            setupStatus =
+              "Whisper Turbo import failed. Install it in Settings to finalize meetings."
+          }
+        }
         if !modelInstalled, let source = developmentModelSource() {
           installing = true
           beginInstallation(source: source)
@@ -362,7 +465,7 @@ final class AppServices {
   private func startMeetings(
     base: URL, history: TranscriptionStore,
     lifecycle: ModelLifecycleCoordinator, vocabulary: VocabularyStore,
-    identity: TranscriptionPipelineIdentity
+    identity: TranscriptionPipelineIdentity, finalIdentity: TranscriptionPipelineIdentity
   ) {
     let options = MeetingRuntimeOptions.current
     let root = MeetingStorageRoot(
@@ -381,12 +484,34 @@ final class AppServices {
     #endif
     let finalizer = MeetingFinalizer(
       store: transcripts, meetings: store, storageRoot: root, lifecycle: lifecycle,
-      vocabulary: vocabulary, identity: identity, clock: clock, recorder: recorder)
+      vocabulary: vocabulary, identity: finalIdentity, configuration: .turbo,
+      clock: clock, recorder: recorder)
     let transcription = MeetingTranscriptionCoordinator(
       store: liveStore, lifecycle: lifecycle, vocabulary: vocabulary,
       identity: identity, clock: clock, recorder: recorder, finalizer: finalizer)
     transcription.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
     meetingTranscription = transcription
+    let speakers = SpeakerStore(history: history, recorder: recorder)
+    speakerStore = speakers
+    let diarization = SpeakerDiarizationCoordinator(
+      diarizer: MeetingDiarizer(
+        speakers: speakers, transcripts: transcripts, meetings: store, storageRoot: root,
+        lifecycle: lifecycle,
+        identity: diarizationIdentity
+          ?? DiarizationIdentity(
+            engine: "fluidaudio_offline_diarizer", modelID: FluidAudioDiarizerFactory.modelID,
+            modelRevision: FluidAudioDiarizerFactory.revision,
+            manifestHash: String(repeating: "0", count: 64),
+            pipelineVersion: DiarizationPipelineVersion.current),
+        clock: clock, recorder: recorder),
+      store: speakers,
+      automaticEnabled: { [weak self] in self?.preferences.meetingDiarizationEnabled ?? false },
+      modelInstalled: { [weak self] in self?.speakerModelInstalled ?? false },
+      recorder: recorder)
+    diarization.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
+    transcription.diarization = diarization
+    speakerDiarization = diarization
+    let diarizationReconciler = DiarizationReconciler(store: speakers, clock: clock)
     let gate = reconciliationGate
     let reconciler = MeetingReconciler(
       store: store, root: root, recorder: recorder, clock: SystemMeetingClock())
@@ -397,18 +522,31 @@ final class AppServices {
       // Transcript rows are reconciled after the meeting rows they depend on,
       // on the same task; interrupted finalizations resume once Start is enabled.
       let transcriptSummary = await transcriptReconciler.run()
+      // Speaker runs depend on final transcripts, so they are reconciled last.
+      let diarizationSummary = await diarizationReconciler.run()
       await MainActor.run {
         gate.complete(summary)
         self.meetingCoordinator?.markReconciliationComplete()
+        // Resumed finalizations show as the background pill; the rest is a notice.
+        self.resumedFinalizations.formUnion(transcriptSummary.resume)
         transcription.resumeFinalizations(transcriptSummary.resume)
+        diarization.resume(diarizationSummary.resume)
         if let text = summary.noticeText { self.showMeetingNotice(text) }
-        if let text = transcriptSummary.noticeText { self.showMeetingNotice(text) }
+        var remainder = transcriptSummary
+        remainder.resume = []
+        if let text = remainder.noticeText { self.showMeetingNotice(text) }
         Task { await self.meetingLibrary?.refresh() }
         #if DEBUG
           if let count = options.debugSeedTranscript {
             Task {
               await self.seedSyntheticTranscript(
                 count: count, store: store, transcripts: transcripts)
+            }
+          }
+          if options.debugSeedDiarization {
+            Task {
+              await self.seedSyntheticSpeakers(
+                store: store, transcripts: transcripts, speakers: speakers)
             }
           }
         #endif
@@ -427,8 +565,62 @@ final class AppServices {
     meetingLibrary = MeetingLibraryViewModel(store: store) { [weak coordinator] in
       coordinator?.activeMeetingID
     }
-    meetingLibrary?.willDelete = { [weak coordinator] id in
+    meetingLibrary?.willDelete = { [weak coordinator, weak diarization] id in
+      await diarization?.meetingWillDelete(id: id)
       await coordinator?.meetingWillDelete(id: id)
+    }
+    observeBackgroundWork()
+  }
+
+  /// The pill for work that outlives the window: it follows the finalization queue and
+  /// speaker labeling, and steps aside while the main window is focused (the note shows
+  /// the same progress). `withObservationTracking` re-arms itself after every change.
+  private func observeBackgroundWork() {
+    withObservationTracking {
+      panel.suppressesBackgroundNotice = router.isMainWindowFocused
+      let notice = Self.backgroundNotice(
+        finalizing: meetingTranscription?.finalizingMeetingID,
+        progress: meetingTranscription?.status.flatMap { status in
+          status.meetingID == meetingTranscription?.finalizingMeetingID ? status.progress : nil
+        },
+        resumed: resumedFinalizations,
+        labeling: speakerDiarization?.activeMeetingID)
+      panel.showBackgroundNotice(notice) { [weak self] in
+        guard let self, let notice else { return }
+        self.open(notice.destination)
+      }
+    } onChange: {
+      Task { @MainActor [weak self] in self?.observeBackgroundWork() }
+    }
+  }
+
+  /// One notice at a time: the running finalization first, then speaker labeling.
+  static func backgroundNotice(
+    finalizing: UUID?, progress: Double?, resumed: Set<UUID>, labeling: UUID?
+  ) -> BackgroundNotice? {
+    if let finalizing {
+      return BackgroundNotice(
+        id: finalizing,
+        message: resumed.contains(finalizing)
+          ? "Resuming interrupted transcript" : "Finalizing transcript",
+        symbol: "text.badge.checkmark", progress: progress,
+        destination: .transcript(meetingID: finalizing))
+    }
+    if let labeling {
+      return BackgroundNotice(
+        id: labeling, message: "Labeling speakers", symbol: "person.2", progress: nil,
+        destination: .transcript(meetingID: labeling))
+    }
+    return nil
+  }
+
+  /// Opens the main window where the pill's work is: the note's transcript, or Notetaker.
+  private func open(_ destination: BackgroundNotice.Destination) {
+    router.show(.meetings)
+    guard case .transcript(let id) = destination, let library = meetingLibrary else { return }
+    Task {
+      await library.refresh()
+      await library.open(id, tab: .transcript)
     }
   }
 
@@ -440,11 +632,17 @@ final class AppServices {
     return nil
   }
 
-  /// One action notice through the indicator panel; the action opens Meetings.
+  /// One notice through the indicator panel, gone again after a few seconds.
   private func showMeetingNotice(_ text: String) {
     let notice = RewriteActionNotice(dictationID: UUID(), message: text, canRetry: false)
     panel.showActionNotice(notice, targetPoint: coordinator?.targetDisplayPoint) { [weak self] in
-      self?.router.selection = .meetings
+      self?.router.show(.meetings)
+    }
+    noticeDismissal?.cancel()
+    noticeDismissal = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(6)) } catch { return }
+      guard let self, !Task.isCancelled else { return }
+      self.panel.dismissActionNotice(id: notice.id)
     }
   }
 
@@ -506,6 +704,28 @@ final class AppServices {
   }
 
   #if DEBUG
+    private func developmentMeetingModelSource() -> URL? {
+      guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+        return nil
+      }
+      let source: URL
+      if let override = ProcessInfo.processInfo.environment[
+        "LOCALFLOW_DEVELOPMENT_MEETING_MODEL_SOURCE"]
+      {
+        source = URL(fileURLWithPath: override, isDirectory: true)
+      } else {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { root.deleteLastPathComponent() }
+        source = root.appendingPathComponent(
+          "build/model-downloads/whisper-large-v3-turbo", isDirectory: true)
+      }
+      var directory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: source.path, isDirectory: &directory),
+        directory.boolValue
+      else { return nil }
+      return source
+    }
+
     private func developmentModelSource() -> URL? {
       guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
         let modelDescriptor
@@ -617,6 +837,10 @@ final class AppServices {
   private func settingsSnapshot() async -> SettingsViewModel.Snapshot {
     var snapshot = SettingsViewModel.Snapshot()
     snapshot.modelInstalled = modelInstalled
+    snapshot.meetingModelInstalled = meetingModelInstalled
+    snapshot.meetingModelInstalling = meetingModelInstalling
+    snapshot.speakerModelInstalled = speakerModelInstalled
+    snapshot.speakerModelInstalling = speakerModelInstalling
     snapshot.keepModelReady = preferences.keepModelReady
     snapshot.rewriteBlockedReason = SettingsViewModel.rewriteBlockedReason(
       for: RewriteSettings.capture(preferences: preferences, credentialStore: rewriteCredentials))
@@ -724,6 +948,39 @@ final class AppServices {
         invalidateModelVerification()
         throw error
       }
+    case .verifyMeetingModel:
+      guard let meetingModelProvisioner, !meetingModelInstalling else {
+        throw DictationFailure.busy
+      }
+      meetingModelInstalled = (try? await meetingModelProvisioner.verifiedLocalDescriptor()) != nil
+      setupStatus =
+        meetingModelInstalled
+        ? "Whisper Turbo verified." : "Install Whisper Turbo in Settings to finalize meetings."
+    case .importMeetingModel:
+      let picker = NSOpenPanel()
+      picker.canChooseDirectories = true
+      picker.canChooseFiles = false
+      picker.allowsMultipleSelection = false
+      picker.message = "Choose a folder containing ggml-large-v3-turbo.bin and silero-vad.bin."
+      guard await picker.begin() == .OK, let selected = picker.url else { return }
+      try await installMeetingModel(source: selected)
+    case .downloadMeetingModel:
+      try await installMeetingModel(source: nil)
+    case .verifySpeakerModel:
+      guard let diarizationProvisioner, !speakerModelInstalling else { throw DictationFailure.busy }
+      speakerModelInstalled = (try? await diarizationProvisioner.verifiedLocalDescriptor()) != nil
+      setupStatus =
+        speakerModelInstalled
+        ? "Speaker labeling model verified." : "Speaker labeling model isn't installed."
+    case .importSpeakerModel:
+      let picker = NSOpenPanel()
+      picker.canChooseDirectories = true
+      picker.canChooseFiles = false
+      picker.allowsMultipleSelection = false
+      guard await picker.begin() == .OK, let selected = picker.url else { return }
+      try await installSpeakerModel(source: selected)
+    case .downloadSpeakerModel:
+      try await installSpeakerModel(source: nil)
     case .showLocation:
       if let modelLocation { NSWorkspace.shared.activateFileViewerSelecting([modelLocation]) }
     case .requestMicrophone:
@@ -742,6 +999,47 @@ final class AppServices {
       preference.save()
       setupStatus = preference.enabled ? "Shortcut updated." : "Shortcut disabled."
     }
+  }
+
+  private func invalidateMeetingModelVerification() {
+    meetingModelInstalled = false
+    setupStatus = "Install or verify Whisper Turbo in Settings to finalize meetings."
+  }
+
+  private func installMeetingModel(source: URL?) async throws {
+    guard let meetingModelProvisioner, let lifecycle,
+      !meetingModelInstalling, !speakerModelInstalling, !installing
+    else { throw DictationFailure.busy }
+    meetingModelInstalling = true
+    defer { meetingModelInstalling = false }
+    try await lifecycle.installModel {
+      if let source {
+        _ = try await meetingModelProvisioner.install(from: source)
+      } else {
+        _ = try await meetingModelProvisioner.download()
+      }
+    }
+    meetingModelInstalled = true
+    setupStatus = "Whisper Turbo verified. Final meeting transcripts use it locally."
+  }
+
+  /// The speaker labeling model installs through the same provisioner and lifecycle
+  /// gate as the speech model. Neither path loads the diarizer.
+  private func installSpeakerModel(source: URL?) async throws {
+    guard let diarizationProvisioner, let lifecycle, !speakerModelInstalling, !installing else {
+      throw DictationFailure.busy
+    }
+    speakerModelInstalling = true
+    defer { speakerModelInstalling = false }
+    try await lifecycle.installModel {
+      if let source {
+        _ = try await diarizationProvisioner.install(from: source)
+      } else {
+        _ = try await diarizationProvisioner.download()
+      }
+    }
+    speakerModelInstalled = true
+    setupStatus = "Speaker labeling model verified."
   }
 
   private func openPermissionSettings(_ name: String) {
@@ -892,6 +1190,8 @@ final class AppServices {
         await meetingCoordinator.notesEditor?.flush()
         if meetingCoordinator.isActive { await meetingCoordinator.stop() }
       }
+      // A running diarization is cancelled at quit and interrupted at the next launch.
+      await speakerDiarization?.shutdown()
       await meetingTranscription?.shutdown()
       do {
         try await lifecycle?.shutdownIfIdle()
@@ -947,6 +1247,11 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
   var debugFailRecognition: Int?
   var debugFailPersistence = false
   var debugSeedTranscript: Int?
+  /// Feature 007: `--debug-fail-diarization window=N`, `--debug-slow-diarization <s>`
+  /// (seconds per window) and `--debug-seed-diarization`.
+  var debugFailDiarizationWindow: Int?
+  var debugSlowDiarization: Double?
+  var debugSeedDiarization = false
 
   static func parse(environment: [String: String], arguments: [String]) -> MeetingRuntimeOptions {
     var options = MeetingRuntimeOptions()
@@ -973,6 +1278,17 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
       if let raw = value(after: "--debug-seed-transcript"), let count = Int(raw), count > 0 {
         options.debugSeedTranscript = count
       }
+      if let raw = value(after: "--debug-fail-diarization"), raw.hasPrefix("window="),
+        let window = Int(raw.dropFirst("window=".count)), window > 0
+      {
+        options.debugFailDiarizationWindow = window
+      }
+      if let raw = value(after: "--debug-slow-diarization"), let seconds = Double(raw),
+        seconds.isFinite, seconds > 0
+      {
+        options.debugSlowDiarization = seconds
+      }
+      options.debugSeedDiarization = arguments.contains("--debug-seed-diarization")
     #endif
     return options
   }
@@ -1035,6 +1351,116 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
         showMeetingNotice("Transcript seeding failed")
       }
     }
+  }
+
+  extension AppServices {
+    /// `--debug-seed-diarization`: a synthetic accepted result (three voices, an
+    /// Unknown and an Overlapping row, one named speaker) on the newest completed
+    /// meeting with a final transcript, for the screenshots in the quickstart.
+    fileprivate func seedSyntheticSpeakers(
+      store: MeetingStore, transcripts: TranscriptStore, speakers: SpeakerStore
+    ) async {
+      do {
+        let page = try await store.page(before: nil, limit: MeetingStore.pageLimit)
+        var target: (UUID, UUID)?
+        for meeting in page where meeting.state == .completed {
+          if let row = try await transcripts.transcription(meetingID: meeting.id),
+            row.state == .final, let pass = row.passID
+          {
+            target = (meeting.id, pass)
+            break
+          }
+        }
+        guard let (meetingID, pass) = target else {
+          showMeetingNotice("Speaker seeding needs a completed meeting with a final transcript")
+          return
+        }
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        let identity = DiarizationIdentity(
+          engine: "debug_seed", modelID: "debug", modelRevision: "debug",
+          manifestHash: String(repeating: "0", count: 64), pipelineVersion: "debug_seed")
+        let run = try await speakers.admit(
+          meetingID: meetingID, transcriptPassID: pass, trigger: .manual, identity: identity,
+          expectedRevision: nil, now: now)
+        _ = try await speakers.start(runID: run.id, now: now)
+        var rows: [TranscriptSegment] = []
+        var after: Int?
+        while rows.count < 20_000 {
+          let batch = try await transcripts.page(
+            meetingID: meetingID, finality: .final, after: after, limit: 200)
+          rows += batch
+          guard batch.count == 200, let last = batch.last else { break }
+          after = last.ordinal
+        }
+        let end = max(rows.map(\.endMs).max() ?? 1_000, 1_000)
+        let drafts = [
+          SpeakerDraft(id: UUID(), clusterKey: 0, track: .system, reconciliation: .confident),
+          SpeakerDraft(id: UUID(), clusterKey: 1, track: .microphone, reconciliation: .confident),
+          SpeakerDraft(id: UUID(), clusterKey: 2, track: .system, reconciliation: .uncertain),
+        ]
+        let turns = drafts.enumerated().map { index, draft in
+          TurnDraft(
+            speakerID: draft.id, track: draft.track, startMs: Int64(index) * 100,
+            endMs: Int64(index) * 100 + 100 + end / 3, quality: nil)
+        }
+        try await speakers.appendWindow(
+          runID: run.id, speakers: drafts, turns: turns, audioMs: end)
+        let assignments = rows.enumerated().map { index, row -> AssignmentDraft in
+          switch index % 7 {
+          case 5:
+            return .init(
+              segmentID: row.id, kind: .unknown, speakerID: nil, topSpeakerID: nil,
+              secondSpeakerID: nil, topCoverage: 0, secondCoverage: 0)
+          case 6:
+            return .init(
+              segmentID: row.id, kind: .ambiguous, speakerID: nil, topSpeakerID: drafts[0].id,
+              secondSpeakerID: drafts[1].id, topCoverage: 0.5, secondCoverage: 0.5)
+          default:
+            let speaker = drafts[(index / 2) % 3].id
+            return .init(
+              segmentID: row.id, kind: .speaker, speakerID: speaker, topSpeakerID: speaker,
+              secondSpeakerID: nil, topCoverage: 1, secondCoverage: 0)
+          }
+        }
+        _ = try await speakers.complete(runID: run.id, assignments: assignments, now: now)
+        try await speakers.saveNames(
+          meetingID: meetingID, names: [drafts[0].id: "Ana"], now: now + 1)
+        await meetingLibrary?.refresh()
+        showMeetingNotice("Seeded speaker labels for \(rows.count) segments")
+      } catch {
+        showMeetingNotice("Speaker seeding failed")
+      }
+    }
+  }
+
+  /// `--debug-fail-diarization window=N`: the Nth window of this launch fails.
+  actor FailingDiarizationRuntime: DiarizationRuntime {
+    let runtime: any DiarizationRuntime
+    let failingWindow: Int
+    private var windows = 0
+    init(runtime: any DiarizationRuntime, failingWindow: Int) {
+      self.runtime = runtime
+      self.failingWindow = failingWindow
+    }
+    func diarize(_ request: DiarizationWindowRequest) async throws -> DiarizationWindowResult {
+      windows += 1
+      if windows == failingWindow { throw DictationFailure.invalidResult }
+      return try await runtime.diarize(request)
+    }
+    func shutdown() async { await runtime.shutdown() }
+  }
+
+  /// `--debug-slow-diarization <s>`: every window takes at least `seconds` longer.
+  struct SlowDiarizationRuntime: DiarizationRuntime {
+    let runtime: any DiarizationRuntime
+    let seconds: Double
+    let clock: any MeetingClock
+    func diarize(_ request: DiarizationWindowRequest) async throws -> DiarizationWindowResult {
+      try await clock.sleep(for: .seconds(seconds))
+      try Task.checkCancellation()
+      return try await runtime.diarize(request)
+    }
+    func shutdown() async { await runtime.shutdown() }
   }
 
   /// `--debug-fail-recognition <n>`: the nth inference of this launch throws.

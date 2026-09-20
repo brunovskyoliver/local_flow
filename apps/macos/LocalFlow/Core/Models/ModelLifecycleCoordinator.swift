@@ -1,17 +1,47 @@
 import Foundation
 
-/// The sole owner of runtime creation, leases, inference and release.
+/// The sole owner of runtime creation, leases, inference and release. One lease and one
+/// resident runtime at a time, keyed by workload: speech models and diarization are
+/// never resident together (FR-032, ADR 0017).
 actor ModelLifecycleCoordinator {
   enum State: Sendable, Equatable { case unloaded, preparing, active, cooling, releasing }
   typealias Factory = @Sendable () async throws -> any TranscriptionRuntime
+  typealias DiarizationFactory = @Sendable () async throws -> any DiarizationRuntime
+
+  private enum Resident: Sendable {
+    case speech(any TranscriptionRuntime)
+    case meeting(any TranscriptionRuntime)
+    case diarization(any DiarizationRuntime)
+
+    var workload: ModelWorkload {
+      switch self {
+      case .speech: .speechRecognition
+      case .meeting: .meetingTranscription
+      case .diarization: .diarization
+      }
+    }
+
+    func shutdown() async {
+      switch self {
+      case .speech(let runtime), .meeting(let runtime): await runtime.shutdown()
+      case .diarization(let runtime): await runtime.shutdown()
+      }
+    }
+  }
 
   private let factory: Factory
+  private let meetingFactory: Factory
+  private let diarizationFactory: DiarizationFactory
   private let clock: any DictationClock
-  private let observe: @Sendable (State, UInt64) -> Void
+  private let observe: @Sendable (State, ModelWorkload, UInt64) -> Void
   private var stateStarted = DispatchTime.now().uptimeNanoseconds
-  private var runtime: (any TranscriptionRuntime)?
-  private var loading: Task<any TranscriptionRuntime, Error>?
+  private var runtime: Resident?
+  private var loading: Task<Resident, Error>?
   private var inference: Task<TranscriptionWindow, Error>?
+  private var diarizing: Task<DiarizationWindowResult, Error>?
+  /// The workload of the runtime being prepared, used or released.
+  private var workload: ModelWorkload = .speechRecognition
+  private var observedWorkload: ModelWorkload = .speechRecognition
   private var release: Task<Void, Never>?
   private var cooldown: Task<Void, Never>?
   private var cooldownGeneration: UInt64 = 0
@@ -23,19 +53,24 @@ actor ModelLifecycleCoordinator {
     didSet {
       guard oldValue != state else { return }
       let now = DispatchTime.now().uptimeNanoseconds
-      observe(oldValue, now &- stateStarted)
+      observe(oldValue, observedWorkload, now &- stateStarted)
       stateStarted = now
-      observe(state, 0)
+      observedWorkload = workload
+      observe(state, workload, 0)
     }
   }
 
   init(
     clock: any DictationClock = SystemDictationClock(),
-    observe: @escaping @Sendable (State, UInt64) -> Void = { _, _ in },
+    observe: @escaping @Sendable (State, ModelWorkload, UInt64) -> Void = { _, _, _ in },
+    diarizationFactory: @escaping DiarizationFactory = { throw DictationFailure.modelUnavailable },
+    meetingFactory: @escaping Factory = { throw DictationFailure.modelUnavailable },
     factory: @escaping Factory
   ) {
     self.clock = clock
     self.factory = factory
+    self.meetingFactory = meetingFactory
+    self.diarizationFactory = diarizationFactory
     self.observe = observe
   }
 
@@ -50,7 +85,9 @@ actor ModelLifecycleCoordinator {
   }
 
   func snapshot() -> Snapshot {
-    Snapshot(state: state, loaded: runtime != nil, leased: owner != nil, installing: installing)
+    Snapshot(
+      state: state, loaded: runtime?.workload == .speechRecognition, leased: owner != nil,
+      installing: installing)
   }
 
   /// Admission and acquisition run on this actor before the first suspension.
@@ -59,7 +96,7 @@ actor ModelLifecycleCoordinator {
       throw DictationFailure.busy
     }
     let lease = try await acquire(session: UUID())
-    try finish(lease)
+    try await finish(lease)
   }
 
   func unloadIfIdle() async throws {
@@ -78,27 +115,55 @@ actor ModelLifecycleCoordinator {
     await beginRelease()
   }
 
-  func acquire(session: UUID) async throws -> ModelLease {
+  /// Both speech workloads preempt a diarization lease: ownership moves to the new lease
+  /// before any suspension, then the revoked lease's in-flight window is joined and its
+  /// runtime released. A diarization acquire never preempts.
+  func acquire(session: UUID, workload requested: ModelWorkload = .speechRecognition)
+    async throws -> ModelLease
+  {
     guard !Task.isCancelled else { throw DictationFailure.cancelled }
-    guard owner == nil, !installing else { throw DictationFailure.busy }
+    let preempts =
+      requested != .diarization && owner?.workload == .diarization && !installing
+    guard owner == nil || preempts, !installing else { throw DictationFailure.busy }
     generation &+= 1
-    let lease = ModelLease(sessionID: session, generation: generation)
+    let lease = ModelLease(sessionID: session, generation: generation, workload: requested)
     owner = lease
     return try await withTaskCancellationHandler {
       cooldown?.cancel()
       cooldown = nil
+      if preempts {
+        await beginRelease()
+        if Task.isCancelled { await cancelAndJoin(lease) }
+        guard owner == lease else { throw DictationFailure.cancelled }
+      }
       if let pending = release {
         await pending.value
         if Task.isCancelled { await cancelAndJoin(lease) }
         guard owner == lease else { throw DictationFailure.cancelled }
         release = nil
       }
-      if runtime != nil {
-        state = .active
-        return lease
+      if let resident = runtime {
+        if resident.workload == requested {
+          state = .active
+          return lease
+        }
+        // A workload switch releases the resident runtime before preparing the other.
+        await beginRelease()
+        if Task.isCancelled { await cancelAndJoin(lease) }
+        guard owner == lease else { throw DictationFailure.cancelled }
       }
+      workload = requested
       state = .preparing
-      let task = Task { try await factory() }
+      let factory = factory
+      let meetingFactory = meetingFactory
+      let diarizationFactory = diarizationFactory
+      let task = Task { () throws -> Resident in
+        switch requested {
+        case .speechRecognition: return .speech(try await factory())
+        case .meetingTranscription: return .meeting(try await meetingFactory())
+        case .diarization: return .diarization(try await diarizationFactory())
+        }
+      }
       loading = task
       do {
         let loaded = try await task.value
@@ -123,11 +188,17 @@ actor ModelLifecycleCoordinator {
   }
 
   func transcribe(_ lease: ModelLease, samples: [Float]) async throws -> TranscriptionWindow {
-    guard owner == lease, state == .active, let runtime else {
+    guard owner == lease, state == .active else {
       throw DictationFailure.staleLease
     }
+    let runtime: any TranscriptionRuntime
+    switch self.runtime {
+    case .speech(let value), .meeting(let value): runtime = value
+    default: throw DictationFailure.staleLease
+    }
     guard inference == nil else { throw DictationFailure.busy }
-    guard !samples.isEmpty, samples.count <= 239_360, samples.allSatisfy(\.isFinite) else {
+    let maximum = lease.workload == .meetingTranscription ? 1_920_000 : 239_360
+    guard !samples.isEmpty, samples.count <= maximum, samples.allSatisfy(\.isFinite) else {
       throw DictationFailure.invalidAudio
     }
     let task = Task { try await runtime.transcribe(samples) }
@@ -146,12 +217,47 @@ actor ModelLifecycleCoordinator {
     }
   }
 
-  func finish(_ lease: ModelLease) throws {
+  /// The only diarization inference entry. One window at a time; request bounds are
+  /// checked before the runtime sees them.
+  func diarize(_ lease: ModelLease, window request: DiarizationWindowRequest) async throws
+    -> DiarizationWindowResult
+  {
+    guard owner == lease, state == .active, case .diarization(let runtime) = self.runtime else {
+      throw DictationFailure.staleLease
+    }
+    guard diarizing == nil else { throw DictationFailure.busy }
+    guard request.isValid else { throw DictationFailure.invalidAudio }
+    let task = Task { try await runtime.diarize(request) }
+    diarizing = task
+    do {
+      let result = try await task.value
+      guard owner == lease, state == .active else { throw DictationFailure.cancelled }
+      diarizing = nil
+      guard result.isValid else { throw DictationFailure.invalidResult }
+      return result
+    } catch {
+      if owner == lease { diarizing = nil }
+      throw error
+    }
+  }
+
+  /// Live speech cools down; meeting and diarization leases release at once, then
+  /// Keep model ready re-prepares the live speech runtime.
+  func finish(_ lease: ModelLease) async throws {
     guard owner == lease else { throw DictationFailure.staleLease }
-    guard inference == nil, loading == nil else { throw DictationFailure.busy }
+    guard inference == nil, diarizing == nil, loading == nil else {
+      throw DictationFailure.busy
+    }
     owner = nil
-    state = .cooling
-    scheduleCooldown()
+    guard lease.workload != .speechRecognition else {
+      state = .cooling
+      scheduleCooldown()
+      return
+    }
+    await beginRelease()
+    if keepLoaded, owner == nil, !installing {
+      Task { try? await self.loadIfIdle() }
+    }
   }
 
   func setKeepLoaded(_ enabled: Bool) {
@@ -233,14 +339,18 @@ actor ModelLifecycleCoordinator {
     let current = runtime
     let pendingLoad = loading
     let pendingInference = inference
+    let pendingWindow = diarizing
     runtime = nil
     loading = nil
     inference = nil
+    diarizing = nil
     pendingLoad?.cancel()
     pendingInference?.cancel()
+    pendingWindow?.cancel()
     let task = Task {
       // Cancellation cannot interrupt every CoreML call. Join before shutdown.
       _ = await pendingInference?.result
+      _ = await pendingWindow?.result
       let loaded = try? await pendingLoad?.value
       if let current { await current.shutdown() } else if let loaded { await loaded.shutdown() }
     }

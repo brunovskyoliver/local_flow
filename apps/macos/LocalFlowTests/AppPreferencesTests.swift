@@ -18,6 +18,16 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertTrue(MeetingStartOptions(preferences: preferences).transcription)
   }
 
+  @MainActor func testMeetingDiarizationDefaultsOnAndPersists() {
+    let suite = "LocalFlow-speakers-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertTrue(preferences.meetingDiarizationEnabled)
+    preferences.meetingDiarizationEnabled = false
+    XCTAssertFalse(AppPreferences(defaults: defaults).meetingDiarizationEnabled)
+  }
+
   @MainActor func testRewriteModeDefaultsPersistenceAndUnknownValue() {
     let suite = "LocalFlow-mode-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!

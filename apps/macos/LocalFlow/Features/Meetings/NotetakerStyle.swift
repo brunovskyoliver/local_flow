@@ -112,7 +112,15 @@ struct NoteTab: View {
 }
 
 struct NoteOverflowMenu: View {
+  /// Transcribe / Retry / Re-transcribe, depending on the transcript's state.
+  struct TranscriptionAction {
+    let title: String
+    let identifier: String
+    let run: () -> Void
+  }
+
   var canDelete: Bool
+  var transcription: TranscriptionAction? = nil
   var delete: () -> Void
   @State private var presented = false
   @State private var unavailable: String?
@@ -129,6 +137,13 @@ struct NoteOverflowMenu: View {
           }
           menuItem("Report", symbol: "flag") {
             explain("Reporting is not available for local notes. Nothing has been sent.")
+          }
+          if let transcription {
+            menuItem(transcription.title, symbol: "arrow.clockwise") {
+              presented = false
+              transcription.run()
+            }
+            .accessibilityIdentifier(transcription.identifier)
           }
           menuItem("Delete", symbol: "trash", destructive: true) {
             presented = false

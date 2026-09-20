@@ -13,6 +13,71 @@ actor ProbeRuntime: TranscriptionRuntime {
 }
 
 final class ModelOwnershipTests: XCTestCase {
+  func testMeetingRuntimeSwitchAndBoundsLeaveDictationUnchanged() async throws {
+    let speech = ProbeRuntime()
+    let meeting = ProbeRuntime()
+    let lifecycle = ModelLifecycleCoordinator(meetingFactory: { meeting }, factory: { speech })
+    let speechLease = try await lifecycle.acquire(session: UUID())
+    do {
+      _ = try await lifecycle.transcribe(speechLease, samples: Array(repeating: 0, count: 239_361))
+      XCTFail("Dictation must retain its bound")
+    } catch { XCTAssertEqual(error as? DictationFailure, .invalidAudio) }
+    try await lifecycle.finish(speechLease)
+    let meetingLease = try await lifecycle.acquire(session: UUID(), workload: .meetingTranscription)
+    let shutdowns = await speech.shutdowns
+    XCTAssertEqual(shutdowns, 1)
+    _ = try await lifecycle.transcribe(meetingLease, samples: Array(repeating: 0, count: 1_920_000))
+    do {
+      _ = try await lifecycle.transcribe(
+        meetingLease, samples: Array(repeating: 0, count: 1_920_001))
+      XCTFail("Meeting requests must remain bounded")
+    } catch { XCTAssertEqual(error as? DictationFailure, .invalidAudio) }
+    try await lifecycle.finish(meetingLease)
+    let state = await lifecycle.state
+    let meetingShutdowns = await meeting.shutdowns
+    XCTAssertEqual(state, .unloaded)
+    XCTAssertEqual(meetingShutdowns, 1)
+  }
+
+  func testMeetingPreemptsDiarizationAndKeepReadyRestoresSpeech() async throws {
+    let speech = ProbeRuntime()
+    let meeting = ProbeRuntime()
+    let diarizer = FakeDiarizationRuntime()
+    let lifecycle = ModelLifecycleCoordinator(
+      diarizationFactory: { diarizer }, meetingFactory: { meeting }, factory: { speech })
+    await lifecycle.setKeepLoaded(true)
+    let diarizationLease = try await lifecycle.acquire(session: UUID(), workload: .diarization)
+    let meetingLease = try await lifecycle.acquire(session: UUID(), workload: .meetingTranscription)
+    let diarizerShutdowns = await diarizer.shutdownCount
+    XCTAssertEqual(diarizerShutdowns, 1)
+    do {
+      try await lifecycle.finish(diarizationLease)
+      XCTFail("Preempted lease must be stale")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    try await lifecycle.finish(meetingLease)
+    for _ in 0..<1_000 {
+      if await lifecycle.snapshot().loaded { break }
+      await Task.yield()
+    }
+    let snapshot = await lifecycle.snapshot()
+    XCTAssertTrue(snapshot.loaded, "Keep ready warms Parakeet after releasing Turbo")
+    let meetingShutdowns = await meeting.shutdowns
+    XCTAssertEqual(meetingShutdowns, 1)
+    await lifecycle.setKeepLoaded(false)
+    try await lifecycle.shutdownIfIdle()
+  }
+
+  func testMissingMeetingFactoryNeverFallsBackToSpeech() async throws {
+    let speech = ProbeRuntime()
+    let lifecycle = ModelLifecycleCoordinator { speech }
+    do {
+      _ = try await lifecycle.acquire(session: UUID(), workload: .meetingTranscription)
+      XCTFail("Missing Turbo must fail explicitly")
+    } catch { XCTAssertEqual(error as? DictationFailure, .modelUnavailable) }
+    let calls = await speech.calls
+    XCTAssertEqual(calls, 0)
+  }
+
   func testExclusiveLeaseAndStaleRelease() async throws {
     let runtime = ProbeRuntime()
     let coordinator = ModelLifecycleCoordinator { runtime }
@@ -247,6 +312,161 @@ final class ModelOwnershipTests: XCTestCase {
     await coordinator.cancelAndJoin(second)
   }
 
+  // MARK: Feature 007 workloads (FR-032)
+
+  func testWorkloadSwitchReleasesSpeechBeforeTheDiarizerPrepares() async throws {
+    let speech = ProbeRuntime()
+    let diarizer = FakeDiarizationFactory()
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: {
+        // Never co-resident: the speech runtime is already shut down here.
+        let shutdowns = await speech.shutdowns
+        XCTAssertEqual(shutdowns, 1)
+        return try await diarizer.make()
+      }, factory: { speech })
+    let asr = try await coordinator.acquire(session: UUID())
+    try await coordinator.finish(asr)
+    let cooling = await coordinator.snapshot()
+    XCTAssertTrue(cooling.loaded)
+    let lease = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    XCTAssertEqual(lease.workload, .diarization)
+    let made = await diarizer.makeCount
+    XCTAssertEqual(made, 1)
+    let active = await coordinator.snapshot()
+    XCTAssertFalse(active.loaded, "The speech model is not resident during diarization")
+    await coordinator.cancelAndJoin(lease)
+  }
+
+  func testDiarizationAcquireIsRefusedWhileAnyLeaseIsHeldOrInstalling() async throws {
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await FakeDiarizationFactory().make() },
+      factory: { ProbeRuntime() })
+    let asr = try await coordinator.acquire(session: UUID())
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .diarization)
+      XCTFail("Diarization must not preempt speech recognition")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    try await coordinator.finish(asr)
+    let diarization = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .diarization)
+      XCTFail("A second diarization lease must be refused")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    try await coordinator.finish(diarization)
+
+    let gate = PreparationGate()
+    let install = Task { try await coordinator.installModel { await gate.wait() } }
+    await gate.waitUntilStarted()
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .diarization)
+      XCTFail("Installation excludes diarization")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    await gate.open()
+    try await install.value
+  }
+
+  func testSpeechRecognitionPreemptsDiarizationAndJoinsTheInFlightWindow() async throws {
+    let gate = PreparationGate()
+    let runtime = FakeDiarizationRuntime(scripts: [DiarizationScripts.window([(0, 0, 1)])])
+    await runtime.hold(gate)
+    let factory = FakeDiarizationFactory(runtime: runtime)
+    let speech = ProbeRuntime()
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await factory.make() }, factory: { speech })
+    let lease = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    let window = Task {
+      try await coordinator.diarize(
+        lease, window: .init(samples: [Float](repeating: 0, count: 16_000), numSpeakers: nil))
+    }
+    await gate.waitUntilStarted()
+    let asr = Task { try await coordinator.acquire(session: UUID()) }
+    for _ in 0..<1000 {
+      if await coordinator.state == .releasing { break }
+      await Task.yield()
+    }
+    let releasing = await coordinator.state
+    XCTAssertEqual(releasing, .releasing, "Preemption waits for the in-flight window")
+    let shutdownsWhileRunning = await runtime.shutdownCount
+    XCTAssertEqual(shutdownsWhileRunning, 0)
+    await gate.open()
+    let speechLease = try await asr.value
+    XCTAssertEqual(speechLease.workload, .speechRecognition)
+    do {
+      _ = try await window.value
+      XCTFail("A preempted window must not return a result")
+    } catch { XCTAssertEqual(error as? DictationFailure, .cancelled) }
+    let shutdowns = await runtime.shutdownCount
+    XCTAssertEqual(shutdowns, 1)
+    do {
+      _ = try await coordinator.diarize(
+        lease, window: .init(samples: [0], numSpeakers: nil))
+      XCTFail("The revoked lease is stale")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    do {
+      try await coordinator.finish(lease)
+      XCTFail("The revoked lease cannot finish")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    let result = try await coordinator.transcribe(speechLease, samples: [0])
+    XCTAssertEqual(result.text, "test")
+    await coordinator.cancelAndJoin(speechLease)
+  }
+
+  func testLeasesAreBoundToTheirWorkload() async throws {
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await FakeDiarizationFactory().make() },
+      factory: { ProbeRuntime() })
+    let diarization = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    do {
+      _ = try await coordinator.transcribe(diarization, samples: [0])
+      XCTFail("A diarization lease cannot transcribe")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    try await coordinator.finish(diarization)
+    let speech = try await coordinator.acquire(session: UUID())
+    do {
+      _ = try await coordinator.diarize(speech, window: .init(samples: [0], numSpeakers: nil))
+      XCTFail("A speech lease cannot diarize")
+    } catch { XCTAssertEqual(error as? DictationFailure, .staleLease) }
+    await coordinator.cancelAndJoin(speech)
+  }
+
+  func testDiarizeValidatesBoundsAndRunsOneWindowAtATime() async throws {
+    let gate = PreparationGate()
+    let runtime = FakeDiarizationRuntime()
+    let factory = FakeDiarizationFactory(runtime: runtime)
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await factory.make() }, factory: { ProbeRuntime() })
+    let lease = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    let invalid: [DiarizationWindowRequest] = [
+      .init(samples: [], numSpeakers: nil),
+      .init(samples: [Float](repeating: 0, count: 9_600_001), numSpeakers: nil),
+      .init(samples: [0, .nan], numSpeakers: nil),
+      .init(samples: [0, .infinity], numSpeakers: nil),
+      .init(samples: [0], numSpeakers: 0),
+    ]
+    for request in invalid {
+      do {
+        _ = try await coordinator.diarize(lease, window: request)
+        XCTFail("Out-of-bounds request accepted")
+      } catch { XCTAssertEqual(error as? DictationFailure, .invalidAudio) }
+    }
+    let requests = await runtime.requests
+    XCTAssertTrue(requests.isEmpty, "Invalid requests never reach the runtime")
+    await runtime.hold(gate)
+    let first = Task {
+      try await coordinator.diarize(lease, window: .init(samples: [0], numSpeakers: 1))
+    }
+    await gate.waitUntilStarted()
+    do {
+      _ = try await coordinator.diarize(lease, window: .init(samples: [0], numSpeakers: 1))
+      XCTFail("A second concurrent window must be refused")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    await gate.open()
+    let result = try await first.value
+    XCTAssertEqual(result, .empty)
+    let recorded = await runtime.requests
+    XCTAssertEqual(recorded, [.init(sampleCount: 1, numSpeakers: 1)])
+    try await coordinator.finish(lease)
+  }
 }
 
 actor PreparationGate {

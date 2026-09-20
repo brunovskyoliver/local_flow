@@ -11,11 +11,7 @@ const ProgressInterval = 250 * time.Millisecond
 
 // Each response write has a deadline so a peer that stops reading cannot hold
 // an admission slot indefinitely. No request waits in a work queue.
-func writeEvent(w http.ResponseWriter, v any) error {
-	data, err := EncodeLine(v)
-	if err != nil {
-		return err
-	}
+func writeEvent(w http.ResponseWriter, data []byte) error {
 	controller := http.NewResponseController(w)
 	_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := w.Write(data); err != nil {

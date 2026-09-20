@@ -56,6 +56,7 @@ final class MeetingCoordinator {
     var worker: MeetingTrackWorker
     var segment: MeetingSegment
     var format: MeetingSourceFormat
+    var sampledDroppedFrames: Int64 = 0
   }
 
   @ObservationIgnored private let deps: Dependencies
@@ -66,6 +67,7 @@ final class MeetingCoordinator {
   @ObservationIgnored private var trackOffsets: [MeetingTrackKind: Int64] = [:]
   @ObservationIgnored private var failedTracks: [MeetingTrackKind: MeetingFailureReason] = [:]
   @ObservationIgnored private var recordedBase: Int64 = 0
+  @ObservationIgnored private var cumulativeDroppedFrames: Int64 = 0
   @ObservationIgnored private var stretchStartedAt: Int64 = 0
   @ObservationIgnored private var pollTask: Task<Void, Never>?
   @ObservationIgnored private var elapsedTask: Task<Void, Never>?
@@ -190,6 +192,7 @@ final class MeetingCoordinator {
       sequences = [:]
       trackOffsets = [:]
       recordedBase = 0
+      cumulativeDroppedFrames = 0
       // Open one segment file per track; any open failure fails the meeting.
       var handles: [MeetingTrackKind: SegmentHandle] = [:]
       for kind in MeetingTrackKind.allCases where startFailures[kind] == nil {
@@ -579,14 +582,23 @@ final class MeetingCoordinator {
   /// One source failed: mark the track, finalize its segment, continue on the other.
   private func handleSourceFailure(kind: MeetingTrackKind, reason: MeetingFailureReason) async {
     guard let meeting, let runtime = runtimes[kind] else { return }
-    let now = deps.clock.nowMilliseconds
     await runtime.source.stop()
     let outcome = await finalizeRuntime(runtime, closeReason: .sourceFailed)
     runtimes[kind] = nil
-    failedTracks[kind] = reason
     for effect in outcome.effects { try? await apply(effect, meetingID: meeting.id) }
+    await recordSourceFailure(kind: kind, trackID: runtime.trackID, reason: reason)
+  }
+
+  /// The segment has already been finalized and its runtime removed. This also
+  /// handles a replacement source failing before its new segment is opened.
+  private func recordSourceFailure(
+    kind: MeetingTrackKind, trackID: UUID, reason: MeetingFailureReason
+  ) async {
+    guard let meeting else { return }
+    let now = deps.clock.nowMilliseconds
+    failedTracks[kind] = reason
     try? await apply(
-      .markTrackFailed(id: runtime.trackID, reason: reason, at: now), meetingID: meeting.id)
+      .markTrackFailed(id: trackID, reason: reason, at: now), meetingID: meeting.id)
     if runtimes.isEmpty {
       await endInterrupted(reason: .bothSourcesFailed, from: .recording)
       return
@@ -603,6 +615,7 @@ final class MeetingCoordinator {
   /// The source restarted on a new device: close the segment, open the next.
   private func rollSegment(kind: MeetingTrackKind) async {
     guard let meeting, let runtime = runtimes[kind] else { return }
+    await runtime.source.stop()
     let outcome = await finalizeRuntime(runtime, closeReason: .deviceChanged)
     for effect in outcome.effects { try? await apply(effect, meetingID: meeting.id) }
     if let reason = outcome.failure {
@@ -611,27 +624,41 @@ final class MeetingCoordinator {
       return
     }
     let sequence = (sequences[kind] ?? 1) + 1
+    var openedHandle: SegmentHandle?
+    var openedRing: MeetingSampleRing?
     do {
       let handle = try deps.writer.open(meetingID: meeting.id, kind: kind, sequence: sequence)
-      let encoder = try MeetingTrackEncoder(kind: kind, sourceFormat: runtime.format)
+      openedHandle = handle
+      let format = try await runtime.source.probeFormat()
+      let ring = try MeetingSampleRing(format: format)
+      openedRing = ring
+      let encoder = try MeetingTrackEncoder(kind: kind, sourceFormat: format)
+      _ = try await runtime.source.start(into: ring)
       let segment = MeetingSegment(
         id: UUID(), trackID: runtime.trackID, sequence: sequence, relativePath: handle.relativePath,
         startOffsetMs: trackOffsets[kind] ?? 0, startedAt: deps.clock.nowMilliseconds,
         hostStartNs: Int64(clamping: deps.clock.monotonicNanoseconds), openReason: .deviceChanged)
       let worker = try makeWorker(
-        kind: kind, segment: segment, handle: handle, ring: runtime.ring, encoder: encoder)
+        kind: kind, segment: segment, handle: handle, ring: ring, encoder: encoder)
       _ = try await deps.store.openSegment(segment, now: deps.clock.nowMilliseconds)
-      var updated = runtime
-      updated.worker = worker
-      updated.segment = segment
-      runtimes[kind] = updated
+      runtimes[kind] = TrackRuntime(
+        trackID: runtime.trackID, source: runtime.source, ring: ring,
+        worker: worker, segment: segment, format: format)
       sequences[kind] = sequence
       await worker.start()
       await installAnalysisTaps()
       version += 1
     } catch {
+      await runtime.source.stop()
+      openedRing?.closeAndJoin()
+      if let handle = openedHandle { deps.writer.discard(handle) }
       runtimes[kind] = nil
-      await handleTrackStorageFailure(kind: kind, reason: .storageUnavailable)
+      if let sourceFailure = error as? MeetingSourceFailure {
+        await recordSourceFailure(
+          kind: kind, trackID: runtime.trackID, reason: sourceFailure.reason(for: kind))
+      } else {
+        await handleTrackStorageFailure(kind: kind, reason: .storageUnavailable)
+      }
     }
   }
 
@@ -668,6 +695,7 @@ final class MeetingCoordinator {
   private func finalizeRuntime(_ runtime: TrackRuntime, closeReason: SegmentCloseReason) async
     -> FinalizeOutcome
   {
+    refreshDroppedFrames()
     var outcome = FinalizeOutcome()
     let handle = runtime.worker.handle
     switch await runtime.worker.finalize() {
@@ -701,6 +729,7 @@ final class MeetingCoordinator {
       }
     }
     runtime.ring.closeAndJoin()
+    refreshDroppedFrames()
     return outcome
   }
 
@@ -764,10 +793,24 @@ final class MeetingCoordinator {
   }
 
   private func noteHeartbeat(_ beat: MeetingTrackWorker.Heartbeat) {
-    guard var published = status, published.state == .recording else { return }
-    published.droppedFrames = runtimes.values.reduce(0) { $0 + $1.ring.droppedFrames }
-    status = published
+    guard status?.state == .recording else { return }
+    refreshDroppedFrames()
     version += 1
+  }
+
+  /// Each active ring contributes only newly observed loss. The total survives
+  /// runtime replacement and pause; storage stays bounded to the two tracks.
+  private func refreshDroppedFrames() {
+    for kind in MeetingTrackKind.allCases {
+      guard var runtime = runtimes[kind] else { continue }
+      let dropped = runtime.ring.droppedFrames
+      cumulativeDroppedFrames += max(0, dropped - runtime.sampledDroppedFrames)
+      runtime.sampledDroppedFrames = dropped
+      runtimes[kind] = runtime
+    }
+    if status?.droppedFrames != cumulativeDroppedFrames {
+      status?.droppedFrames = cumulativeDroppedFrames
+    }
   }
 
   private func publishTerminal(_ meeting: Meeting, notice: String?) {
@@ -828,6 +871,8 @@ final class MeetingCoordinator {
       while !Task.isCancelled {
         do { try await clock.sleep(for: MeetingCoordinator.elapsedInterval) } catch { return }
         guard let self, var published = self.status, published.state == .recording else { continue }
+        self.refreshDroppedFrames()
+        published.droppedFrames = self.cumulativeDroppedFrames
         published.recordedElapsed = .milliseconds(
           self.recordedBase + max(0, clock.nowMilliseconds - self.stretchStartedAt))
         self.status = published
@@ -865,6 +910,7 @@ final class MeetingCoordinator {
 
   private func poll() async {
     guard !busy, status?.state == .recording else { return }
+    refreshDroppedFrames()
     for (kind, runtime) in runtimes {
       if let reason = runtime.worker.storageFailure {
         await handleTrackStorageFailure(kind: kind, reason: reason)

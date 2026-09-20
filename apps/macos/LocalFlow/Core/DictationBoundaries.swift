@@ -30,6 +30,7 @@ struct SystemDictationClock: DictationClock {
 struct ModelLease: Sendable, Equatable {
   let sessionID: UUID
   let generation: UInt64
+  var workload: ModelWorkload = .speechRecognition
 }
 
 enum DictationFailure: Error, Equatable {

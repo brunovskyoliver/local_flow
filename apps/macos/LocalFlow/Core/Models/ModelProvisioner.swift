@@ -189,6 +189,8 @@ actor ModelProvisioner {
   }
 
   private func downloadURL(for file: ModelFileDescriptor) throws -> URL {
+    try file.validateSourceURL()
+    if let sourceURL = file.sourceURL { return sourceURL }
     let parts = descriptor.modelID.split(separator: "/", omittingEmptySubsequences: false)
     let safe = CharacterSet(
       charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
@@ -610,12 +612,23 @@ private final class HTTPFileTransfer: NSObject, URLSessionDataDelegate, @uncheck
     guard failure == nil else { return }
     do {
       guard !isCancelled else { throw CancellationError() }
-      guard data.count <= ModelProvisioner.maxTransferBufferBytes,
-        Int64(data.count) <= expectedBytes - received
-      else { throw ModelProvisioner.Error.packageTooLarge }
-      try writer.write(contentsOf: data)
-      received += Int64(data.count)
-      progress.advance(Int64(data.count))
+      guard Int64(data.count) <= expectedBytes - received else {
+        throw ModelProvisioner.Error.packageTooLarge
+      }
+      // URLSession can deliver several megabytes per callback from a fast CDN;
+      // write it in bounded slices so each disk write stays under the buffer cap.
+      var offset = data.startIndex
+      while offset < data.endIndex {
+        let end =
+          data.index(
+            offset, offsetBy: ModelProvisioner.maxTransferBufferBytes, limitedBy: data.endIndex)
+          ?? data.endIndex
+        let slice = data[offset..<end]
+        try writer.write(contentsOf: slice)
+        received += Int64(slice.count)
+        progress.advance(Int64(slice.count))
+        offset = end
+      }
     } catch {
       failure = error
       dataTask.cancel()

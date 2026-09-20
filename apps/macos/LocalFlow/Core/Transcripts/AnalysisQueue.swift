@@ -30,8 +30,11 @@ final class AnalysisQueue: @unchecked Sendable {
     state.withLockUnchecked { state in
       guard !state.suspended else { return 0 }
       let count = min(input.count, Self.capacitySamples - state.count)
-      for index in 0..<count {
-        samples[(state.read + state.count + index) % Self.capacitySamples] = input[index]
+      if count > 0, let source = input.baseAddress {
+        let start = (state.read + state.count) % Self.capacitySamples
+        let first = min(count, Self.capacitySamples - start)
+        samples.advanced(by: start).update(from: source, count: first)
+        samples.update(from: source.advanced(by: first), count: count - first)
       }
       state.count += count
       state.high = max(state.high, state.count)
@@ -47,8 +50,10 @@ final class AnalysisQueue: @unchecked Sendable {
   func read(into output: UnsafeMutableBufferPointer<Float>, count requested: Int) -> Int {
     state.withLockUnchecked { state in
       let count = min(max(0, requested), output.count, state.count)
-      for index in 0..<count {
-        output[index] = samples[(state.read + index) % Self.capacitySamples]
+      if count > 0, let destination = output.baseAddress {
+        let first = min(count, Self.capacitySamples - state.read)
+        destination.update(from: samples.advanced(by: state.read), count: first)
+        destination.advanced(by: first).update(from: samples, count: count - first)
       }
       advance(&state, count: count)
       return count

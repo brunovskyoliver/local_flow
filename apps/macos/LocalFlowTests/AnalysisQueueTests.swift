@@ -3,6 +3,27 @@ import XCTest
 @testable import LocalFlow
 
 final class AnalysisQueueTests: XCTestCase {
+  func testTransfersSplitAcrossWrapAndRespectDestinationBounds() {
+    let queue = AnalysisQueue()
+    let capacity = AnalysisQueue.capacitySamples
+    queue.write(Array(repeating: -1, count: capacity - 3))
+    queue.discardOldest(count: capacity - 5)
+    XCTAssertEqual(queue.write([10, 11, 12, 13, 14, 15]), 6)
+    var output = [Float](repeating: -99, count: 10)
+    let read = output.withUnsafeMutableBufferPointer { queue.read(into: $0, count: 7) }
+    XCTAssertEqual(read, 7)
+    XCTAssertEqual(output, [-1, -1, 10, 11, 12, 13, 14, -99, -99, -99])
+    XCTAssertEqual(queue.read(count: 10), [15])
+    XCTAssertEqual(queue.write([]), 0)
+    XCTAssertEqual(queue.read(count: -1), [])
+    queue.write([20, 21])
+    var short = [Float](repeating: 0, count: 1)
+    XCTAssertEqual(
+      short.withUnsafeMutableBufferPointer { queue.read(into: $0, count: 10) }, 1)
+    XCTAssertEqual(short, [20])
+    XCTAssertEqual(queue.read(count: 10), [21])
+  }
+
   func testCapacitySuspendsUntilTenSecondsAndWrapPreservesOrder() {
     let queue = AnalysisQueue()
     XCTAssertEqual(queue.write(Array(repeating: 1, count: 480_001)), 480_000)

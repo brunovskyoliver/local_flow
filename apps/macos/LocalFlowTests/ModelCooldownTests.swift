@@ -110,6 +110,48 @@ final class ModelCooldownTests: XCTestCase {
     XCTAssertFalse(after.loaded)
   }
 
+  func testDiarizationFinishReleasesWithoutCooldown() async throws {
+    let clock = ManualClock()
+    let factory = FakeDiarizationFactory()
+    let coordinator = ModelLifecycleCoordinator(
+      clock: clock, diarizationFactory: { try await factory.make() }, factory: { ProbeRuntime() })
+    let lease = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    try await coordinator.finish(lease)
+    let state = await coordinator.state
+    XCTAssertEqual(state, .unloaded, "Released at finish, not after 30 seconds")
+    let shutdowns = await factory.runtime.shutdownCount
+    XCTAssertEqual(shutdowns, 1)
+    let deadlines = await clock.requested
+    XCTAssertTrue(deadlines.isEmpty)
+  }
+
+  func testKeepModelReadyPreparesSpeechAgainAfterDiarization() async throws {
+    let clock = ManualClock()
+    let built = Counter()
+    let factory = FakeDiarizationFactory()
+    let coordinator = ModelLifecycleCoordinator(
+      clock: clock, diarizationFactory: { try await factory.make() },
+      factory: {
+        _ = await built.increment()
+        return ProbeRuntime()
+      })
+    await coordinator.setKeepLoaded(true)
+    try await coordinator.loadIfIdle()
+    let lease = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    let during = await coordinator.snapshot()
+    XCTAssertFalse(during.loaded, "Retention does not license co-residency")
+    try await coordinator.finish(lease)
+    for _ in 0..<1000 {
+      if await coordinator.snapshot().loaded { break }
+      await Task.yield()
+    }
+    let after = await coordinator.snapshot()
+    XCTAssertTrue(after.loaded)
+    XCTAssertEqual(after.state, .cooling)
+    let count = await built.value
+    XCTAssertEqual(count, 2)
+  }
+
   func testKeepLoadedStillReleasesOnCancellationAndShutdown() async throws {
     let coordinator = ModelLifecycleCoordinator { ProbeRuntime() }
     await coordinator.setKeepLoaded(true)

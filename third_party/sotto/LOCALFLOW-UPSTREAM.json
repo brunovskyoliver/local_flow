@@ -7,5 +7,6 @@
     "vendor/whisper.cpp": "371b5a7561823ab2bb32142d2751e35e7534727b",
     "vendor/llama.cpp": "b95502ba9aa0eb73a2f4fc8878d7fbe6a847a0b9"
   },
-  "purpose": "Pinned source for native view reuse. Not an application target or runtime dependency."
+  "purpose": "Pinned native view reuse and native Whisper meeting helper. LocalFlow does not adopt the Sotto application or server.",
+  "localflowRuntime": "Feature 009 bundles Engine/sotto-engine as localflow-whisper-engine; whisper.cpp is pinned by submodules.vendor/whisper.cpp, model weights separately provisioned."
 }

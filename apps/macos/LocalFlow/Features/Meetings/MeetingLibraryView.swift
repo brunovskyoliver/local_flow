@@ -6,6 +6,7 @@ struct MeetingLibraryView: View {
   let storageRoot: MeetingStorageRoot
   let preferences: AppPreferences
   var transcriptStore: (any TranscriptStoring)? = nil
+  var diarization: SpeakerDiarizationCoordinator? = nil
   let notesEditorFactory: (MeetingDetail) -> MeetingNotesEditor
   @State private var transcribe = true
   @State private var hoveredID: UUID?
@@ -16,8 +17,6 @@ struct MeetingLibraryView: View {
   @State private var deleting: MeetingSummary?
   @State private var settings = false
   @State private var previewPopover = false
-  /// The tab a freshly started note opens on; Wispr lands on the live transcript.
-  @State private var openTab: NoteDetailTab = .thoughts
   @FocusState private var focusedID: UUID?
 
   var body: some View {
@@ -29,7 +28,7 @@ struct MeetingLibraryView: View {
           liveEditor: coordinator.activeMeetingID == detail.meeting.id
             ? coordinator.notesEditor : nil,
           transcriptStore: transcriptStore, transcription: coordinator.transcriptionCoordinator,
-          coordinator: coordinator, initialTab: openTab
+          coordinator: coordinator, diarization: diarization, initialTab: model.openTab
         ).id(detail.meeting.id)
       } else {
         GeometryReader { geometry in
@@ -149,9 +148,8 @@ struct MeetingLibraryView: View {
   private func startNote() async {
     let outcome = await coordinator.start(options: MeetingStartOptions(transcription: transcribe))
     guard case .started(let id) = outcome else { return }
-    openTab = .transcript
     await model.refresh()
-    await model.open(id)
+    await model.open(id, tab: .transcript)
   }
 
   /// Only problems surface in the Today card; a healthy recording lives in the list.
@@ -200,7 +198,6 @@ struct MeetingLibraryView: View {
         }
         HStack(spacing: 0) {
           Button {
-            openTab = .thoughts
             Task { await model.open(row.id) }
           } label: {
             HStack(spacing: 12) {

@@ -33,6 +33,10 @@ final class AppPreferences {
   var meetingTranscriptionEnabled: Bool {
     didSet { defaults.set(meetingTranscriptionEnabled, forKey: "meetingTranscriptionEnabled") }
   }
+  /// Feature 007: label speakers after each final transcript. On by default.
+  var meetingDiarizationEnabled: Bool {
+    didSet { defaults.set(meetingDiarizationEnabled, forKey: "meetingDiarizationEnabled") }
+  }
   private(set) var setupVersion: Int
   var onboardingComplete: Bool { setupVersion >= Self.currentSetupVersion }
 
@@ -75,6 +79,8 @@ final class AppPreferences {
     self.defaults = defaults
     meetingTranscriptionEnabled =
       defaults.object(forKey: "meetingTranscriptionEnabled") as? Bool ?? true
+    meetingDiarizationEnabled =
+      defaults.object(forKey: "meetingDiarizationEnabled") as? Bool ?? true
     appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
     keepModelReady = defaults.bool(forKey: "keepModelReady")
     learnCorrections = defaults.bool(forKey: "learnCorrections")

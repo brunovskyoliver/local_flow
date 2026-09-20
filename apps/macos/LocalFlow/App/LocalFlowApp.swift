@@ -18,12 +18,7 @@ struct LocalFlowApp: App {
     MenuBarExtra {
       LocalFlowMenu(services: services)
     } label: {
-      let glyph = MenuBarGlyph.resolve(
-        needsAttention: services.needsAttention,
-        meetingState: services.meetingCoordinator?.status?.state)
-      Image(systemName: glyph.symbol)
-        .accessibilityLabel(glyph.label)
-        .onAppear { appDelegate.services = services }
+      MenuBarLabel(services: services) { appDelegate.services = services }
     }
     Window("LocalFlow", id: "main") {
       LocalFlowWindowView(services: services)
@@ -40,6 +35,26 @@ struct LocalFlowApp: App {
         Button("Quit LocalFlow") { services.quit() }.keyboardShortcut("q")
       }
     }
+  }
+}
+
+/// The menu bar glyph. It is the one view alive from launch, so it also hands the
+/// scene's window opener to the router for the pill and the delegate.
+private struct MenuBarLabel: View {
+  let services: AppServices
+  let installed: () -> Void
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    let glyph = MenuBarGlyph.resolve(
+      needsAttention: services.needsAttention,
+      meetingState: services.meetingCoordinator?.status?.state)
+    Image(systemName: glyph.symbol)
+      .accessibilityLabel(glyph.label)
+      .onAppear {
+        services.router.openMainWindow = { openWindow(id: "main") }
+        installed()
+      }
   }
 }
 
@@ -277,6 +292,7 @@ private struct LocalFlowWindowView: View {
         MeetingLibraryView(
           coordinator: meetings, model: library, storageRoot: root,
           preferences: services.preferences, transcriptStore: services.transcriptStore,
+          diarization: services.speakerDiarization,
           notesEditorFactory: { services.makeNotesEditor(for: $0) })
       } else {
         ContentUnavailableView(

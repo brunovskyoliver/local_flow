@@ -10,9 +10,11 @@
 #define LF_FRAMES 4096u
 #define LF_CHANNELS 8u
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "Capture requires lock-free atomics");
+_Static_assert(ATOMIC_LLONG_LOCK_FREE == 2, "Capture positions require lock-free atomics");
 
 struct LFSlot {
     uint32_t frames;
+    uint64_t sourceStart;
     float samples[LF_CHANNELS][LF_FRAMES];
 };
 struct LFAudioRing {
@@ -24,6 +26,8 @@ struct LFAudioRing {
     _Atomic int failure;
     _Atomic int dropOnOverflow;
     _Atomic uint64_t dropped;
+    _Atomic uint64_t sourceFrames;
+    uint64_t consumedThrough; // Single consumer, never accessed by the producer.
     uint32_t channels;
     struct LFSlot slots[LF_SLOTS];
 };
@@ -44,6 +48,7 @@ LFAudioRing *LFAudioRingCreate(uint32_t channels, double sampleRate) {
     atomic_init(&ring->failure, 0);
     atomic_init(&ring->dropOnOverflow, 0);
     atomic_init(&ring->dropped, 0);
+    atomic_init(&ring->sourceFrames, 0);
     ring->channels = channels;
     return ring;
 }
@@ -75,6 +80,7 @@ bool LFAudioRingPush(LFAudioRing *ring, const AudioBufferList *buffers, uint32_t
     bool accepted = false;
     if (!atomic_load(&ring->accepting)) goto done;
     if (!valid(buffers, ring->channels, frames)) { fail(ring, 2); goto done; }
+    uint64_t sourceStart = atomic_fetch_add_explicit(&ring->sourceFrames, frames, memory_order_relaxed);
     unsigned head = atomic_load_explicit(&ring->head, memory_order_relaxed);
     unsigned tail = atomic_load_explicit(&ring->tail, memory_order_acquire);
     // AVAudioEngine may deliver more than the requested tap buffer size.
@@ -106,6 +112,7 @@ bool LFAudioRingPush(LFAudioRing *ring, const AudioBufferList *buffers, uint32_t
             }
         }
         slot->frames = count;
+        slot->sourceStart = sourceStart + offset;
         offset += count;
     }
     // One relaxed store keeps the peak without making the callback wait.
@@ -135,8 +142,41 @@ uint32_t LFAudioRingPop(LFAudioRing *ring, AudioBufferList *buffers) {
             memcpy(buffers->mBuffers[channel].mData, slot->samples[channel], slot->frames * sizeof(float));
     }
     uint32_t frames = slot->frames;
+    ring->consumedThrough = slot->sourceStart + frames;
     atomic_store_explicit(&ring->tail, tail + 1, memory_order_release);
     return frames;
+}
+
+uint32_t LFAudioRingPopPreservingTimeline(LFAudioRing *ring, AudioBufferList *buffers) {
+    unsigned tail = atomic_load_explicit(&ring->tail, memory_order_relaxed);
+    unsigned head = atomic_load_explicit(&ring->head, memory_order_acquire);
+    uint64_t next;
+    if (head == tail) {
+        // While admission is open the producer may be preparing a retained slot.
+        // Only a closed, joined producer makes the final source position safe.
+        if (atomic_load(&ring->accepting) || atomic_load(&ring->copying)) return 0;
+        // Re-read after observing quiescence: the last callback may have published
+        // a slot since the first head load. Never cover that audio with silence.
+        head = atomic_load_explicit(&ring->head, memory_order_acquire);
+        next = head == tail ? atomic_load(&ring->sourceFrames)
+                            : ring->slots[tail % LF_SLOTS].sourceStart;
+    } else {
+        next = ring->slots[tail % LF_SLOTS].sourceStart;
+    }
+    if (next > ring->consumedThrough) {
+        uint64_t gap = next - ring->consumedThrough;
+        uint32_t frames = gap > LF_FRAMES ? LF_FRAMES : (uint32_t)gap;
+        if (!valid(buffers, ring->channels, frames)) return 0;
+        if (buffers->mNumberBuffers == 1) {
+            memset(buffers->mBuffers[0].mData, 0, frames * ring->channels * sizeof(float));
+        } else {
+            for (uint32_t channel = 0; channel < ring->channels; ++channel)
+                memset(buffers->mBuffers[channel].mData, 0, frames * sizeof(float));
+        }
+        ring->consumedThrough += frames;
+        return frames;
+    }
+    return head == tail ? 0 : LFAudioRingPop(ring, buffers);
 }
 
 void LFAudioRingCloseAndJoin(LFAudioRing *ring) {

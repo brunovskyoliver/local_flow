@@ -49,7 +49,7 @@ struct TranscriptionProvenance: Codable, Sendable {
     guard sampleRate == 16_000, channels == 1, (0...2_880_000).contains(inputSamples),
       inputDurationSeconds.isFinite, inputDurationSeconds == Double(inputSamples) / 16_000,
       inputSampleFormat == "float32_pcm",
-      windowSamples == 239_360, (0..<windowSamples).contains(overlapSamples),
+      [239_360, 1_920_000].contains(windowSamples), (0..<windowSamples).contains(overlapSamples),
       strideSamples == windowSamples - overlapSamples, minimumPaddedSamples == 4_800,
       artifactHashes.count <= 32, stageDurations.count <= 8, unavailableMetadata.count <= 64
     else { throw Detail.Failure.invalidMetadata }

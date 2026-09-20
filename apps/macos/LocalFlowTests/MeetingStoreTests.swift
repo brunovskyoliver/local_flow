@@ -134,6 +134,8 @@ final class MeetingStoreTests: XCTestCase {
       let old = try TranscriptionStore(path: path)
       try await old.database.write { db in
         for table in [
+          "speaker_corrections", "speaker_assignments", "speaker_turns", "meeting_speakers",
+          "meeting_diarization", "diarization_runs",
           "transcript_live_gaps", "transcript_segments", "meeting_transcriptions",
           "transcript_usage",
           "meeting_recovery_outcomes", "meeting_notes", "meeting_pauses", "meeting_segments",
@@ -142,7 +144,9 @@ final class MeetingStoreTests: XCTestCase {
           try db.drop(table: table)
         }
         try db.execute(
-          sql: "DELETE FROM grdb_migrations WHERE identifier IN ('meetings-v5','transcripts-v6')")
+          sql:
+            "DELETE FROM grdb_migrations WHERE identifier IN ('meetings-v5','transcripts-v6','speakers-v7')"
+        )
       }
     }
     let reopened = try TranscriptionStore(path: path)
@@ -194,6 +198,28 @@ final class MeetingStoreTests: XCTestCase {
     XCTAssertEqual(created, 1)
     let page = try await store.page(before: nil, limit: 20)
     XCTAssertEqual(page.count, 2)
+  }
+
+  func testCreateInsertsTheDiarizationRowWithTheMeeting() async throws {
+    let meeting = try await store.create(now: now)
+    let now = now
+    try await fixture.history.database.read { db in
+      let row = try XCTUnwrap(
+        Row.fetchOne(
+          db, sql: "SELECT * FROM meeting_diarization WHERE meeting_id=?",
+          arguments: [meeting.id.uuidString]))
+      XCTAssertNil(row["accepted_run_id"] as String?)
+      XCTAssertNil(row["current_run_id"] as String?)
+      XCTAssertEqual(row["in_room"] as Int?, 0)
+      XCTAssertEqual(row["updated_at"] as Int64?, now)
+      XCTAssertEqual(row["revision"] as Int64?, 0)
+    }
+    // A refused create writes neither row.
+    _ = try? await store.create(now: now + 1)
+    let rows = try await fixture.history.database.read { db in
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM meeting_diarization")
+    }
+    XCTAssertEqual(rows, 1)
   }
 
   func testTransitionAppliesSideEffectsInOneWriteAndRejectsInvalidPairsWithoutWriting() async throws
@@ -300,6 +326,59 @@ final class MeetingStoreTests: XCTestCase {
     XCTAssertEqual(detail.tracks[0].track.totalDurationMs, 9_000)
     XCTAssertEqual(detail.tracks[0].track.totalBytes, 70_000)
     XCTAssertEqual(detail.tracks[0].track.droppedFrames, 4)
+  }
+
+  func testCaptureLossWarnsEvenWhenTrackDurationMatchesMeeting() async throws {
+    let (meeting, tracks) = try await makePreparing()
+    let mic = segment(tracks[0])
+    let sys = segment(tracks[1])
+    try await store.transition(
+      id: meeting.id, to: .recording, now: now,
+      effects: [.setStartedAt(now), .openSegment(mic), .openSegment(sys)])
+    let stop = now + 60_000
+    try await store.transition(
+      id: meeting.id, to: .finalizing, now: stop, effects: [.setStoppedAt(stop)])
+    for (segment, droppedFrames) in [(mic, Int64(1)), (sys, Int64(0))] {
+      try await store.finalizeSegment(
+        id: segment.id, durationMs: 60_000, byteSize: 1_000,
+        relativePath: String(segment.relativePath.dropLast(5)), closeReason: .stop,
+        droppedFrames: droppedFrames, now: stop)
+    }
+    try await store.transition(
+      id: meeting.id, to: .completed, now: stop,
+      effects: [.setCompletedAt(stop), .computeDurationWarnings])
+    let loaded = try await store.detail(id: meeting.id)
+    let detail = try XCTUnwrap(loaded)
+    let microphone = try XCTUnwrap(detail.tracks.first { $0.track.kind == .microphone })
+    let system = try XCTUnwrap(detail.tracks.first { $0.track.kind == .system })
+    XCTAssertEqual(microphone.track.totalDurationMs, detail.meeting.recordedMs)
+    XCTAssertTrue(microphone.track.durationWarning, "Even one lost frame must remain visible")
+    XCTAssertFalse(system.track.durationWarning)
+  }
+
+  func testLateProgressPreservesFinalizedSegmentAndTrackTotals() async throws {
+    let meeting = try await makeCompleted()
+    let beforeLoaded = try await store.detail(id: meeting.id)
+    let before = try XCTUnwrap(beforeLoaded)
+    let microphone = try XCTUnwrap(before.tracks.first { $0.track.kind == .microphone })
+    let segment = try XCTUnwrap(microphone.segments.first)
+    try await store.progressSegment(
+      id: segment.id, durationMs: 5_000, byteSize: 40, droppedFrames: 100,
+      now: now + 120_000)
+    let afterLoaded = try await store.detail(id: meeting.id)
+    let after = try XCTUnwrap(afterLoaded)
+    let afterMic = try XCTUnwrap(after.tracks.first { $0.track.kind == .microphone })
+    let afterSegment = try XCTUnwrap(afterMic.segments.first)
+    XCTAssertEqual(afterSegment.state, .finalized)
+    XCTAssertEqual(afterSegment.durationMs, segment.durationMs)
+    XCTAssertEqual(afterSegment.byteSize, segment.byteSize)
+    XCTAssertEqual(afterSegment.droppedFrames, segment.droppedFrames)
+    XCTAssertEqual(afterSegment.relativePath, segment.relativePath)
+    XCTAssertEqual(afterMic.track.totalDurationMs, microphone.track.totalDurationMs)
+    XCTAssertEqual(afterMic.track.totalBytes, microphone.track.totalBytes)
+    XCTAssertEqual(afterMic.track.droppedFrames, microphone.track.droppedFrames)
+    XCTAssertEqual(after.meeting.recordedMs, before.meeting.recordedMs)
+    XCTAssertEqual(after.meeting.state, .completed)
   }
 
   func testDurationWarningUsesMaxOnePercentOrTwoSecondsAtStop() async throws {

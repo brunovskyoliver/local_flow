@@ -16,6 +16,12 @@ final class ResourceRecorder: @unchecked Sendable {
     // Feature 004: RSS samples while a meeting is active.
     case meetingRecording, meetingPaused, meetingFinalizing
     case transcriptLive, transcriptFinalizing
+    // Feature 007: the diarizer's model phases name their workload; the unqualified
+    // model phases above stay speech recognition. `diarizing` samples RSS during a run.
+    case diarizerLoading = "modelLoading(diarization)"
+    case diarizerActive = "modelActive(diarization)"
+    case diarizerReleasing = "modelReleasing(diarization)"
+    case diarizing
   }
   enum QueueSource: String, Codable, Sendable {
     case unavailable, controlMailbox, audioRaw, audioNormalized
@@ -54,6 +60,15 @@ final class ResourceRecorder: @unchecked Sendable {
     case transcriptLiveGapMs, transcriptFinalizationDuration, transcriptRealTimeFactor
     case transcriptPersistenceBatchDuration, transcriptModelReload, transcriptFailure,
       transcriptTransition
+    // Speaker diarization (Feature 007, FR-037): one set per run outcome, counters
+    // for user corrections. A failure is keyed by its category only.
+    case diarizationModelLoadDuration, diarizationModelReleaseDuration
+    case diarizationDuration, diarizationRealTimeFactor, diarizationAudioMs
+    case diarizationWindowCount, diarizationSpeakerCount, diarizationTurnCount
+    case diarizationOverlapTurnCount, diarizationUnknownCount, diarizationAmbiguousCount
+    case diarizationReconciledMatches, diarizationReconciledNew, diarizationReconciledUncertain
+    case diarizationOverflowTurns, diarizationPreemption, diarizationFailure
+    case speakerRenameCount, speakerMergeCount, speakerUnmergeCount, speakerSegmentCorrectionCount
 
     var kind: Kind {
       switch self {
@@ -62,7 +77,9 @@ final class ResourceRecorder: @unchecked Sendable {
         .rewriteFirstByteDuration, .rewriteNetworkDuration, .rewriteBackendFirstTokenDuration,
         .rewriteBackendDuration, .meetingStartDuration, .meetingCaptureInitDuration,
         .meetingFinalizationDuration, .transcriptLiveLatency, .transcriptFinalizationDuration,
-        .transcriptRealTimeFactor, .transcriptPersistenceBatchDuration:
+        .transcriptRealTimeFactor, .transcriptPersistenceBatchDuration,
+        .diarizationModelLoadDuration, .diarizationModelReleaseDuration, .diarizationDuration,
+        .diarizationRealTimeFactor:
         return .duration
       case .rawTextBytes, .assembledTextBytes, .normalizedTextBytes, .metadataBytes,
         .rewriteRequestBytes, .rewriteResponseBytes, .meetingBytesWritten, .meetingSegmentBytes:
@@ -74,7 +91,13 @@ final class ResourceRecorder: @unchecked Sendable {
         .meetingWriteFailure, .meetingEncoderFailure, .meetingPauseCount, .meetingResumeCount,
         .meetingRecoveryOutcome, .transcriptAnalysisQueueDepth, .transcriptRecognitionQueueDepth,
         .transcriptSegmentsProvisional, .transcriptSegmentsFinal, .transcriptBackpressureEvent,
-        .transcriptLiveGapMs, .transcriptModelReload, .transcriptFailure, .transcriptTransition:
+        .transcriptLiveGapMs, .transcriptModelReload, .transcriptFailure, .transcriptTransition,
+        .diarizationAudioMs, .diarizationWindowCount, .diarizationSpeakerCount,
+        .diarizationTurnCount, .diarizationOverlapTurnCount, .diarizationUnknownCount,
+        .diarizationAmbiguousCount, .diarizationReconciledMatches, .diarizationReconciledNew,
+        .diarizationReconciledUncertain, .diarizationOverflowTurns, .diarizationPreemption,
+        .diarizationFailure, .speakerRenameCount, .speakerMergeCount, .speakerUnmergeCount,
+        .speakerSegmentCorrectionCount:
         return .count
       }
     }
@@ -98,6 +121,15 @@ final class ResourceRecorder: @unchecked Sendable {
         return 1
       case .meetingMicQueueDepth, .meetingSystemQueueDepth: return 32
       case .meetingDroppedFrames: return UInt32.max
+      case .diarizationAudioMs: return UInt32.max
+      case .diarizationTurnCount, .diarizationOverlapTurnCount, .diarizationReconciledMatches,
+        .diarizationReconciledNew, .diarizationReconciledUncertain, .diarizationOverflowTurns:
+        return UInt32(DiarizationConstants.turnsPerRun)
+      case .diarizationUnknownCount, .diarizationAmbiguousCount: return 20_000
+      case .diarizationPreemption, .diarizationFailure: return 1
+      case .speakerRenameCount, .speakerMergeCount, .speakerUnmergeCount,
+        .speakerSegmentCorrectionCount:
+        return UInt32(SpeakerStore.correctionsPerMeeting)
       default: return ResourceRecorder.maximumItemCount
       }
     }
@@ -125,6 +157,16 @@ final class ResourceRecorder: @unchecked Sendable {
       .meetingEncoderFailure, .meetingPauseCount, .meetingResumeCount, .meetingRecoveryOutcome,
     ]
     var isRefusal: Bool { self == .rewritePreAdmissionRefusal }
+    var isDiarization: Bool { rawValue.hasPrefix("diarization") || rawValue.hasPrefix("speaker") }
+    static let allDiarizationCases: [Metric] = [
+      .diarizationModelLoadDuration, .diarizationModelReleaseDuration, .diarizationDuration,
+      .diarizationRealTimeFactor, .diarizationAudioMs, .diarizationWindowCount,
+      .diarizationSpeakerCount, .diarizationTurnCount, .diarizationOverlapTurnCount,
+      .diarizationUnknownCount, .diarizationAmbiguousCount, .diarizationReconciledMatches,
+      .diarizationReconciledNew, .diarizationReconciledUncertain, .diarizationOverflowTurns,
+      .diarizationPreemption, .diarizationFailure, .speakerRenameCount, .speakerMergeCount,
+      .speakerUnmergeCount, .speakerSegmentCorrectionCount,
+    ]
   }
   enum Failure: Error, Equatable { case invalidIdentity, invalidLimit, unavailable, incomplete }
 
@@ -333,9 +375,13 @@ final class ResourceRecorder: @unchecked Sendable {
     // A meeting key is a closed-set token and belongs to meeting metrics only.
     if let meetingKey {
       let validKey =
-        metric?.isTranscript == true
-        ? Self.transcriptKeys.contains(meetingKey)
-        : metric?.isMeeting == true && Self.isValidMeetingKey(meetingKey)
+        if metric?.isTranscript == true {
+          Self.transcriptKeys.contains(meetingKey)
+        } else if metric == .diarizationFailure {
+          Self.diarizationKeys.contains(meetingKey)
+        } else {
+          metric?.isMeeting == true && Self.isValidMeetingKey(meetingKey)
+        }
       guard validKey else {
         OSAtomicIncrement64Barrier(&loss)
         return false
@@ -506,6 +552,9 @@ final class ResourceRecorder: @unchecked Sendable {
     .union(LiveState.allCases.map(\.rawValue))
     .union(TranscriptFailureCategory.allCases.map(\.rawValue))
     .union(LiveGapReason.allCases.map(\.rawValue))
+  /// The failure category is the only diarization dimension.
+  static let diarizationKeys: Set<String> = Set(
+    DiarizationFailureCategory.allCases.map(\.rawValue))
   static func isValidMeetingKey(_ key: String) -> Bool { meetingKeys.contains(key) }
 
   static func isValidOutcome(_ outcome: String) -> Bool {

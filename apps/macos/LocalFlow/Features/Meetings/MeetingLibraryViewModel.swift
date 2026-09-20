@@ -17,6 +17,9 @@ final class MeetingLibraryViewModel {
   private(set) var notice: String?
   private(set) var selectedID: UUID?
   private(set) var detail: MeetingDetail?
+  /// The tab the detail opens on: a fresh note and the background pill land on the
+  /// transcript, the list on My thoughts.
+  private(set) var openTab: NoteDetailTab = .thoughts
   private(set) var detailNotice: String?
   private(set) var previewID: UUID?
   private(set) var preview: MeetingDetail?
@@ -104,7 +107,8 @@ final class MeetingLibraryViewModel {
     }
   }
 
-  func open(_ id: UUID) async {
+  func open(_ id: UUID, tab: NoteDetailTab = .thoughts) async {
+    openTab = tab
     selectedID = id
     await reloadDetail()
   }

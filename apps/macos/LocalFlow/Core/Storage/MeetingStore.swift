@@ -71,6 +71,7 @@ actor MeetingStore: MeetingStoring {
         sql:
           "INSERT INTO meeting_notes (meeting_id, text, author, updated_at, revision) VALUES (?, '', 'user', ?, 0)",
         arguments: [id.uuidString, now])
+      try Self.insertDiarization(id, now: now, db: db)
       logger.notice("Meeting created")
       guard let meeting = try Self.fetchMeeting(id, db: db) else { throw Error.damagedDatabase }
       return meeting
@@ -391,6 +392,7 @@ actor MeetingStore: MeetingStoring {
         sql:
           "INSERT INTO meeting_notes (meeting_id, text, author, updated_at, revision) VALUES (?, '', 'user', ?, 0)",
         arguments: [meeting.id.uuidString, meeting.updatedAt])
+      try Self.insertDiarization(meeting.id, now: meeting.updatedAt, db: db)
       try Self.insertTracks(tracks, db: db)
       for segment in segments { try Self.insertSegment(segment, now: meeting.updatedAt, db: db) }
       for track in tracks { try Self.recomputeTrackTotals(track.id, db: db) }
@@ -583,7 +585,8 @@ actor MeetingStore: MeetingStoring {
       let tolerance = max(meeting.recordedMs / 100, 2_000)
       try db.execute(
         sql: """
-          UPDATE meeting_tracks SET duration_warning = CASE WHEN abs(total_duration_ms - ?) > ? THEN 1 ELSE 0 END
+          UPDATE meeting_tracks SET duration_warning = CASE
+            WHEN dropped_frames > 0 OR abs(total_duration_ms - ?) > ? THEN 1 ELSE 0 END
           WHERE meeting_id=?
           """, arguments: [meeting.recordedMs, tolerance, meetingID.uuidString])
     #if DEBUG
@@ -608,6 +611,14 @@ actor MeetingStore: MeetingStoring {
     try db.execute(
       sql: "UPDATE meetings SET updated_at=MAX(updated_at, ?) WHERE id=?",
       arguments: [now, meetingID.uuidString])
+  }
+
+  /// Feature 007: one `meeting_diarization` row per meeting, created with it.
+  private static func insertDiarization(_ id: UUID, now: Int64, db: Database) throws {
+    try db.execute(
+      sql:
+        "INSERT INTO meeting_diarization (meeting_id, in_room, updated_at, revision) VALUES (?, 0, ?, 0)",
+      arguments: [id.uuidString, now])
   }
 
   private static func insertTracks(_ tracks: [MeetingTrack], db: Database) throws {

@@ -370,6 +370,81 @@ final class MeetingCoordinatorTests: XCTestCase {
 
   // MARK: US1 start and stop
 
+  func testDroppedFramesPublishBeforeHeartbeatSurvivePauseAndResetForNewMeeting() async throws {
+    let rig = try makeRig()
+    rig.microphone.autoPush = nil
+    rig.system.autoPush = nil
+    _ = try await startRecording(rig)
+    rig.microphone.push(blocks: 40)
+    await rig.advance(.milliseconds(250))
+    let dropped = Int64(8 * 4_096)
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped)
+    XCTAssertEqual(rig.writer.syncCount(.microphone), 0, "no heartbeat has run yet")
+
+    await rig.coordinator.pause(reason: .user)
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped)
+    await rig.coordinator.resume()
+    await rig.advance(.seconds(5))
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped)
+    rig.system.push(blocks: 36)
+    await rig.advance(.milliseconds(250))
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped + 4 * 4_096)
+    await rig.coordinator.stop()
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped + 4 * 4_096)
+
+    _ = try await startRecording(rig)
+    await rig.advance(.milliseconds(250))
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, 0)
+    await rig.coordinator.stop()
+  }
+
+  func testDroppedFramesSurviveSourceReplacementWithoutDoubleCounting() async throws {
+    let rig = try makeRig()
+    rig.microphone.autoPush = nil
+    rig.system.autoPush = nil
+    _ = try await startRecording(rig)
+    rig.microphone.push(blocks: 40)
+    await rig.advance(.milliseconds(250))
+    let dropped = Int64(8 * 4_096)
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped)
+    rig.microphone.simulateDeviceChange(restartSucceeds: true)
+    await rig.advance(seconds: 1)
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped)
+    await rig.advance(.seconds(5))
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped)
+    await rig.coordinator.stop()
+    XCTAssertEqual(rig.coordinator.status?.droppedFrames, dropped)
+  }
+
+  func testDeviceRollRestartFailureDiscardsOnlyNewHandleAndKeepsCompletedAudio() async throws {
+    let rig = try makeRig()
+    let id = try await startRecording(rig)
+    rig.microphone.push(blocks: 12)
+    await rig.advance(seconds: 1)
+    rig.microphone.refuseStart = .deviceLost
+    rig.microphone.simulateDeviceChange(restartSucceeds: true)
+    await rig.advance(seconds: 1)
+    XCTAssertFalse(rig.microphone.isStarted)
+    XCTAssertEqual(rig.coordinator.status?.state, .recording)
+    guard case .failed(.deviceLost, _)? = rig.coordinator.status?.microphone else {
+      return XCTFail("Replacement source must retain its device failure reason")
+    }
+    XCTAssertEqual(rig.coordinator.status?.system, .capturing)
+    let systemBytes = rig.writer.bytes(.system).count
+    rig.system.push(blocks: 12)
+    await rig.advance(seconds: 1)
+    XCTAssertGreaterThan(rig.writer.bytes(.system).count, systemBytes)
+    let discarded = rig.writer.discarded.filter { $0.kind == .microphone }
+    XCTAssertEqual(discarded.map(\.sequence), [2])
+    let detail = try await rig.detail(id)
+    let first = try XCTUnwrap(detail.track(.microphone)?.segments.first)
+    XCTAssertEqual(first.state, .finalized)
+    XCTAssertGreaterThan(first.byteSize, 0)
+    XCTAssertEqual(detail.track(.microphone)?.segments.count, 1)
+    XCTAssertEqual(detail.track(.microphone)?.track.failureReason, .deviceLost)
+    await rig.coordinator.stop()
+  }
+
   func testStartRunsInContractOrderPersistsBeforeCaptureAndPublishesRecording() async throws {
     let rig = try makeRig()
     XCTAssertFalse(rig.coordinator.canStart, "disabled until reconciliation reports completion")
@@ -1030,6 +1105,12 @@ final class MeetingCoordinatorTests: XCTestCase {
     XCTAssertEqual(mic.segments[1].startOffsetMs, mic.segments[0].durationMs)
     XCTAssertEqual(rig.coordinator.status?.microphone, .capturing)
     XCTAssertEqual(detail.track(.system)?.segments.count, 1)
+    let beforeReplacementAudio = rig.writer.bytes(.microphone, sequence: 2).count
+    rig.microphone.push(blocks: 12)
+    await rig.advance(seconds: 6)
+    XCTAssertGreaterThan(rig.writer.bytes(.microphone, sequence: 2).count, beforeReplacementAudio)
+    detail = try await rig.detail(id)
+    XCTAssertGreaterThan(detail.track(.microphone)?.segments[1].durationMs ?? 0, 0)
     await rig.advance(seconds: 2)
     rig.microphone.simulateDeviceChange(restartSucceeds: false)
     await rig.advance(seconds: 1)
