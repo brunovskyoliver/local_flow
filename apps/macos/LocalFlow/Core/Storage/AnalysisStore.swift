@@ -104,6 +104,17 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
+  /// The plan's chunk count, fixed before the first request (T090).
+  func recordPlan(runID: UUID, chunkCount: Int) throws {
+    try database.write { db in
+      guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRun }
+      guard run.state == .running else { throw Error.lateWrite }
+      try db.execute(
+        sql: "UPDATE analysis_runs SET chunk_count=? WHERE id=?",
+        arguments: [chunkCount, runID.uuidString])
+    }
+  }
+
   /// Per-request counters; refused once the run left `running`.
   func recordRequest(runID: UUID, inputBytes: Int, outputBytes: Int, retried: Bool, preempted: Bool)
     throws

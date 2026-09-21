@@ -456,6 +456,8 @@ protocol AnalysisStoring: Sendable {
     policy: AnalysisPolicy, now: Int64
   ) async throws -> AnalysisRun
   func start(runID: UUID, now: Int64) async throws -> AnalysisRun
+  /// The plan's chunk count, fixed before the first request (T090).
+  func recordPlan(runID: UUID, chunkCount: Int) async throws
   func recordRequest(runID: UUID, inputBytes: Int, outputBytes: Int, retried: Bool, preempted: Bool)
     async throws
   /// One transaction: supersede the previous accepted run, delete its content,

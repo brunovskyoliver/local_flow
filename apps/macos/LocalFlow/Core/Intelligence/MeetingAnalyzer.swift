@@ -141,24 +141,27 @@ struct MeetingAnalyzer: Sendable {
       progress?(meetingID, AnalysisProgress(label: "Analyzing", fraction: 0))
       let runID = run.id
 
-      // R11: the whole run — health, requests, validation, adoption — races
-      // the deadline. The staged path raises the request count (T090).
-      let deadline = admission.policy.runDeadline(requestCount: 1)
-      run = try await racing(deadline) {
-        // 5. Health: `result_schema_version` and the limits/caps minima.
-        let health = try await self.transport.health(endpoint: admission.endpoint)
-        if let schema = health.resultSchemaVersion, schema != 1 {
-          throw AnalysisFailure(.unsupportedVersion, detail: "result_schema_version")
-        }
-        let effective = admission.policy.lowered(by: health)
+      // 5. Health: `result_schema_version` and the limits/caps minima. The
+      // plan needs the lowered budget, so health runs ahead of the deadline
+      // window; `chunk_count` lands on the row before the first request.
+      let health = try await self.transport.health(endpoint: admission.endpoint)
+      if let schema = health.resultSchemaVersion, schema != 1 {
+        throw AnalysisFailure(.unsupportedVersion, detail: "result_schema_version")
+      }
+      let effective = admission.policy.lowered(by: health)
+      let plan = try AnalysisChunkPlanner.plan(
+        segments: admission.snapshot.segments, notes: admission.snapshot.notes,
+        policy: effective)
+      try await store.recordPlan(runID: runID, chunkCount: plan.chunks.count)
 
-        // 6. One `full` request, consumed to a validated result.
-        let request = Self.request(
-          meetingID: meetingID, runID: runID, meeting: admission.meeting,
-          snapshot: admission.snapshot, language: admission.language)
-        let result = try await self.consume(
-          request: request, endpoint: admission.endpoint, runID: runID,
-          meetingID: meetingID, policy: effective)
+      // R11: requests, validation and adoption race the deadline, sized to
+      // the plan's request count (60 s + 90 s each, clamped).
+      let deadline = admission.policy.runDeadline(requestCount: plan.requestCount)
+      run = try await racing(deadline) {
+        // 6. One `full` request, or `chunk × n` then bounded synthesis.
+        let result = try await self.perform(
+          plan, admission: admission, effective: effective,
+          runID: runID, meetingID: meetingID)
 
         // 7. Validate against the same evidence. The due step re-resolves
         // relative phrases against the meeting's start in its zone.
@@ -312,17 +315,119 @@ struct MeetingAnalyzer: Sendable {
       chunkBudgetBytes: policy.chunkBudgetBytes)
   }
 
+  // MARK: Stages
+
+  /// `full` or `chunk × n` → bounded synthesis (contract step 6). Requests
+  /// run sequentially — `policy.requestsInFlight` is 1 — so the transport
+  /// never sees two in flight. Every result is validated; partials are kept
+  /// as bounded Swift values and forwarded into `partials` unchanged.
+  private func perform(
+    _ plan: AnalysisChunkPlanner.Plan, admission: Admission,
+    effective: AnalysisPolicy, runID: UUID, meetingID: UUID
+  ) async throws -> Outcome {
+    if plan.isFull {
+      let request = Self.request(
+        meetingID: meetingID, runID: runID, meeting: admission.meeting,
+        snapshot: admission.snapshot, language: admission.language,
+        stage: .full, chunk: nil, segments: admission.snapshot.segments,
+        notes: admission.snapshot.notes, partials: nil)
+      return try await consume(
+        request: request, endpoint: admission.endpoint, runID: runID,
+        meetingID: meetingID, policy: effective, label: "Analyzing")
+    }
+
+    var analysisEvidence = admission.snapshot.evidence(meetingID: meetingID)
+    analysisEvidence.meetingStartedAtMs =
+      admission.meeting?.startedAt ?? admission.meeting?.createdAt
+    analysisEvidence.meetingTimeZone = admission.meeting?.timeZone
+
+    // Chunks: each request is built from one paged window — never more than
+    // one chunk plus a page of text in memory. The tail is never dropped:
+    // the plan's windows cover every segment.
+    var partials: [AnalysisResult] = []
+    for chunk in plan.chunks {
+      let label = "Analyzing part \(chunk.index + 1) of \(plan.chunks.count)"
+      let segments = try await segmentWindow(
+        meetingID: meetingID, passID: admission.passID,
+        first: chunk.firstOrdinal, last: chunk.lastOrdinal,
+        pageSize: effective.evidencePageSize)
+      let request = Self.request(
+        meetingID: meetingID, runID: runID, meeting: admission.meeting,
+        snapshot: admission.snapshot, language: admission.language,
+        stage: .chunk,
+        chunk: .init(index: chunk.index, count: plan.chunks.count),
+        segments: segments, notes: nil, partials: nil)
+      let outcome = try await consume(
+        request: request, endpoint: admission.endpoint, runID: runID,
+        meetingID: meetingID, policy: effective, label: label)
+      _ = try AnalysisValidator.validate(
+        result: outcome.analysis, against: analysisEvidence, policy: effective)
+      partials.append(outcome.analysis)
+    }
+
+    // Reduce: groups of ≤ `partialsPerSynthesis`, ≤ `reduceDepth` levels.
+    // Notes ride the final synthesis request only.
+    var inputs = partials
+    var final: Outcome?
+    for (level, count) in plan.synthesisCounts.enumerated() {
+      let lastLevel = level == plan.synthesisCounts.count - 1
+      var outputs: [AnalysisResult] = []
+      for start in stride(from: 0, to: inputs.count, by: effective.partialsPerSynthesis) {
+        let group = Array(inputs[start..<min(start + effective.partialsPerSynthesis, inputs.count)])
+        let isFinal = lastLevel && outputs.count == count - 1
+        let request = Self.request(
+          meetingID: meetingID, runID: runID, meeting: admission.meeting,
+          snapshot: admission.snapshot, language: admission.language,
+          stage: .synthesis, chunk: nil, segments: nil,
+          notes: isFinal ? admission.snapshot.notes : nil, partials: group)
+        let outcome = try await consume(
+          request: request, endpoint: admission.endpoint, runID: runID,
+          meetingID: meetingID, policy: effective, label: "Combining")
+        if isFinal {
+          final = outcome
+        } else {
+          _ = try AnalysisValidator.validate(
+            result: outcome.analysis, against: analysisEvidence, policy: effective)
+        }
+        outputs.append(outcome.analysis)
+      }
+      inputs = outputs
+    }
+    guard let final else { throw AnalysisFailure(.malformedResponse, detail: "no_result") }
+    return final
+  }
+
+  /// One chunk's segment window, paged from the reader so the builder holds
+  /// at most a chunk plus a page. `first..<last` are pass ordinals.
+  private func segmentWindow(
+    meetingID: UUID, passID: UUID, first: Int, last: Int, pageSize: Int
+  ) async throws -> [EvidenceSegment] {
+    var segments: [EvidenceSegment] = []
+    var after: Int? = first > 0 ? first - 1 : nil
+    while true {
+      let page = try await evidence.segmentPage(
+        meetingID: meetingID, passID: passID, after: after, limit: pageSize)
+      guard let lastSeen = page.last?.ordinal else { break }
+      segments.append(
+        contentsOf: page.filter { $0.ordinal >= first && $0.ordinal < last })
+      guard lastSeen < last - 1 else { break }
+      after = lastSeen
+    }
+    return segments
+  }
+
   // MARK: Request
 
   private static func request(
     meetingID: UUID, runID: UUID, meeting: Meeting?, snapshot: Snapshot,
-    language: AnalysisLanguage
+    language: AnalysisLanguage, stage: AnalysisStage, chunk: AnalysisRequest.Chunk?,
+    segments: [EvidenceSegment]?, notes: [NoteParagraph]?, partials: [AnalysisResult]?
   ) -> AnalysisRequest {
     let title = meeting?.displayTitle ?? "Meeting"
     let startedMs = meeting?.startedAt ?? meeting?.createdAt ?? 0
     let durationMs = meeting?.wallClockMs ?? 0
     return AnalysisRequest(
-      requestID: UUID(), runID: runID, stage: .full, chunk: nil,
+      requestID: UUID(), runID: runID, stage: stage, chunk: chunk,
       meeting: AnalysisRequest.Meeting(
         id: meetingID,
         title: String(decoding: title.utf8.prefix(AnalysisBounds.maxTitleBytes), as: UTF8.self),
@@ -345,7 +450,7 @@ struct MeetingAnalyzer: Sendable {
             }
             : nil)
       },
-      segments: snapshot.segments.map { segment in
+      segments: segments?.map { segment in
         AnalysisRequest.Segment(
           id: segment.id, startMs: segment.startMs, endMs: segment.endMs,
           speakerID: {
@@ -354,8 +459,8 @@ struct MeetingAnalyzer: Sendable {
           }(),
           text: segment.text)
       },
-      notes: snapshot.notes.map { AnalysisRequest.Note(ordinal: $0.ordinal, text: $0.text) },
-      partials: nil)
+      notes: notes?.map { AnalysisRequest.Note(ordinal: $0.ordinal, text: $0.text) },
+      partials: partials)
   }
 
   private static func rfc3339(ms: Int64) -> String {
@@ -375,7 +480,7 @@ struct MeetingAnalyzer: Sendable {
 
   private func consume(
     request: AnalysisRequest, endpoint: RewriteEndpoint, runID: UUID, meetingID: UUID,
-    policy: AnalysisPolicy
+    policy: AnalysisPolicy, label: String
   ) async throws -> Outcome {
     var result: Outcome?
     var requestBytes = 0
@@ -386,17 +491,17 @@ struct MeetingAnalyzer: Sendable {
       try Task.checkCancellation()
       switch item {
       case .firstByte:
-        progress?(meetingID, AnalysisProgress(label: "Analyzing", fraction: 0.05))
+        progress?(meetingID, AnalysisProgress(label: label, fraction: 0.05))
       case .event(let event):
         switch event {
         case .accepted:
-          progress?(meetingID, AnalysisProgress(label: "Analyzing", fraction: 0.1))
+          progress?(meetingID, AnalysisProgress(label: label, fraction: 0.1))
         case .progress(_, _, let chars):
           let total = max(1, request.segments?.reduce(0) { $0 + $1.text.count } ?? 1)
           progress?(
             meetingID,
             AnalysisProgress(
-              label: "Analyzing", fraction: min(0.9, 0.1 + 0.8 * Double(chars) / Double(total))))
+              label: label, fraction: min(0.9, 0.1 + 0.8 * Double(chars) / Double(total))))
         case .result(let payload):
           // A result that names another run is stale protocol noise — the
           // store's `running` + `current_run_id` guard is the second line.

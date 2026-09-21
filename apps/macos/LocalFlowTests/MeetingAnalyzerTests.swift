@@ -727,6 +727,206 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(preserved, accepted)
   }
 
+  // MARK: T088 — bounded staged analysis (US9)
+
+  /// One scripted chunk stream: `accepted` plus a partial result. The tail
+  /// chunk carries the last-five-minute decision; the others carry only a
+  /// summary in meeting vocabulary (the lexical support check runs on every
+  /// stage's output).
+  private func chunkStep(index: Int, decisionSegmentID: String?) -> FakeAnalysisTransport.Step {
+    var decisions: [[String: Any]] = []
+    if let decisionSegmentID {
+      decisions.append([
+        "text": "Deployment moves to Monday",
+        "evidence_class": "explicit",
+        "sources": [["kind": "segment", "id": decisionSegmentID]],
+      ])
+    }
+    return .lines(
+      FakeAnalysisTransport.Lines(value: [
+        [
+          "schema_version": 1, "type": "accepted", "request_id": "*",
+          "server": ["name": "flowd", "version": "0.3.0"],
+        ],
+        [
+          "schema_version": 1, "type": "result", "request_id": "*", "run_id": "*",
+          "stage": "chunk",
+          "server": ["name": "flowd", "version": "0.3.0"],
+          "backend": ["kind": "openai-compatible", "model": "test-model"],
+          "prompt_version": 1, "pipeline_version": "analysis_v1",
+          "analysis": [
+            "schema_version": 1, "meeting_id": "*", "partial": true,
+            "language": "*",
+            "summary": [
+              "text": "The group discussed the release checklist.",
+              "sources": [], "whole_meeting": false,
+            ],
+            "topics": [], "decisions": decisions, "action_items": [],
+            "next_steps": [], "open_questions": [], "risks": [],
+          ],
+        ] as [String: Any],
+      ]))
+  }
+
+  private func synthesisStep(decisionSegmentID: String) -> FakeAnalysisTransport.Step {
+    .lines(
+      FakeAnalysisTransport.Lines(value: [
+        [
+          "schema_version": 1, "type": "accepted", "request_id": "*",
+          "server": ["name": "flowd", "version": "0.3.0"],
+        ],
+        [
+          "schema_version": 1, "type": "result", "request_id": "*", "run_id": "*",
+          "stage": "synthesis",
+          "server": ["name": "flowd", "version": "0.3.0"],
+          "backend": ["kind": "openai-compatible", "model": "test-model"],
+          "prompt_version": 1, "pipeline_version": "analysis_v1",
+          "analysis": [
+            "schema_version": 1, "meeting_id": "*", "partial": false,
+            "language": "*",
+            "summary": [
+              "text": "The group discussed the release checklist and open work.",
+              "sources": [], "whole_meeting": true,
+            ],
+            "topics": [],
+            "decisions": [
+              [
+                "text": "Deployment moves to Monday",
+                "evidence_class": "explicit",
+                "sources": [["kind": "segment", "id": decisionSegmentID]],
+              ]
+            ],
+            "action_items": [], "next_steps": [], "open_questions": [],
+            "risks": [],
+          ],
+        ] as [String: Any],
+      ]))
+  }
+
+  func testFourHourMeetingRunsChunksThenSynthesis() async throws {
+    let fixture = IntelligenceFixtures.fourHourMeeting()
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let tailID = "f0000000-0000-4000-8000-fffffffffffe"
+    let tailUUID = UUID(uuidString: tailID)!
+
+    // ~200 KB of segment text at a 24_576-byte budget: 9 chunk requests,
+    // then one synthesis for the nine partials.
+    let chunkCount = 9
+    transport.script(
+      .chunk,
+      (0..<chunkCount).map {
+        chunkStep(index: $0, decisionSegmentID: $0 == chunkCount - 1 ? tailID : nil)
+      })
+    transport.script(.synthesis, [synthesisStep(decisionSegmentID: tailID)])
+
+    var planChunkCount: Int?
+    var requestsAtPlan: Int?
+    store.recordPlanHook = { _, count in
+      planChunkCount = count
+      requestsAtPlan = transport.requests.count
+    }
+
+    final class LabelBox: @unchecked Sendable {
+      private let lock = NSLock()
+      private(set) var labels: [String] = []
+      func add(_ label: String) { lock.withLock { labels.append(label) } }
+    }
+    let box = LabelBox()
+    var analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+    analyzer.progress = { _, progress in
+      guard let progress else { return }
+      box.add(progress.label)
+    }
+
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .automatic)
+    XCTAssertEqual(run.state, .succeeded)
+
+    // chunk × 9, then exactly one synthesis — sequential by default.
+    let requests = transport.requests
+    XCTAssertEqual(requests.count, chunkCount + 1)
+    for (index, request) in requests.enumerated() {
+      if index < chunkCount {
+        XCTAssertEqual(request.stage, .chunk)
+        XCTAssertEqual(request.chunk, .init(index: index, count: chunkCount))
+      } else {
+        XCTAssertEqual(request.stage, .synthesis)
+        XCTAssertNil(request.chunk)
+      }
+    }
+    XCTAssertLessThanOrEqual(transport.maxInFlight, 1)
+
+    // Every chunk request stays inside the segment-text budget and carries a
+    // whole-segment window; the windows cover every ordinal, tail included.
+    var covered: [UUID] = []
+    for request in requests.prefix(chunkCount) {
+      let window = try XCTUnwrap(request.segments)
+      let bytes = window.reduce(0) { $0 + $1.text.utf8.count }
+      XCTAssertLessThanOrEqual(bytes, 24_576)
+      XCTAssertFalse(window.isEmpty)
+      covered += window.map(\.id)
+    }
+    XCTAssertEqual(covered, fixture.segments.map(\.id))
+    XCTAssertEqual(
+      requests.last?.partials?.count, chunkCount)
+    XCTAssertLessThanOrEqual(requests.last?.partials?.count ?? 0, 16)
+
+    // chunk_count was fixed before the first request; request_count tracked
+    // completion.
+    XCTAssertEqual(planChunkCount, chunkCount)
+    XCTAssertEqual(requestsAtPlan, 0)
+    XCTAssertEqual(run.chunkCount, chunkCount)
+    XCTAssertEqual(run.requestCount, chunkCount + 1)
+
+    // Staged progress labels.
+    XCTAssertTrue(box.labels.contains("Analyzing part 3 of 9"))
+    XCTAssertTrue(box.labels.contains("Combining"))
+
+    // The final decision cites the original tail segment — no chunk or
+    // request identifier appears anywhere in stored sources.
+    let stored = try await store.readModel(meetingID: fixture.id)
+    let model = try XCTUnwrap(stored)
+    let decisions = model.items.filter { $0.kind == .decision }
+    XCTAssertEqual(decisions.count, 1)
+    XCTAssertEqual(decisions.first?.text, "Deployment moves to Monday")
+    XCTAssertEqual(decisions.first?.sources, [.segment(tailUUID)])
+    let knownIDs = Set(fixture.segments.map(\.id))
+    for item in model.items {
+      for source in item.sources {
+        guard case .segment(let id) = source else { continue }
+        XCTAssertTrue(knownIDs.contains(id))
+      }
+    }
+
+    // Windows were built through the paged reader, never a whole-meeting
+    // slice: at least one page call per chunk beyond the initial snapshot.
+    XCTAssertGreaterThanOrEqual(reader.pageRequests.count, chunkCount + 1)
+    XCTAssertTrue(reader.pageRequests.allSatisfy { $0.limit <= 200 })
+  }
+
+  func testChunkResultFailingSourceValidationFailsRun() async throws {
+    let fixture = IntelligenceFixtures.fourHourMeeting()
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+
+    // Chunk 0 cites a segment that does not exist in the evidence.
+    transport.script(
+      .chunk,
+      [chunkStep(index: 0, decisionSegmentID: "eeeeeeee-0000-4000-8000-000000000000")])
+    transport.script(
+      .synthesis, [synthesisStep(decisionSegmentID: "f0000000-0000-4000-8000-fffffffffffe")])
+
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .automatic)
+    XCTAssertEqual(run.state, .failed)
+    XCTAssertEqual(run.failureCategory, .sourceValidation)
+    XCTAssertEqual(transport.requests.count, 1)
+    let storedModel = try await store.readModel(meetingID: fixture.id)
+    XCTAssertNil(storedModel?.summary)
+  }
+
   private func makeAnalyzer(
     reader: FakeEvidenceReader,
     store: FakeAnalysisStore,

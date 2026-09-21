@@ -215,6 +215,9 @@ final class FakeAnalysisTransport: AnalysisTransporting, @unchecked Sendable {
   private(set) var requestByteSizes: [Int] = []
   private(set) var invalidateCount = 0
   private(set) var cancelledCount = 0
+  private var inFlight = 0
+  /// Highest observed concurrent `analyze` streams (T090).
+  private(set) var maxInFlight = 0
   var healthResult: Result<AnalysisHealth, Error>?
 
   init(fixture: IntelligenceFixture? = nil) { self.fixture = fixture }
@@ -265,6 +268,11 @@ final class FakeAnalysisTransport: AnalysisTransporting, @unchecked Sendable {
         self.lock.withLock { self.cancelledCount += 1 }
       }
       Task {
+        lock.withLock {
+          inFlight += 1
+          maxInFlight = max(maxInFlight, inFlight)
+        }
+        defer { lock.withLock { inFlight -= 1 } }
         do {
           switch step {
           case .failure(let error):
@@ -476,6 +484,16 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
     }
     lock.withLock { startedRuns.append(runID) }
     return result!
+  }
+
+  /// Fires inside `recordPlan`; tests use it to prove `chunk_count` lands
+  /// before the transport sees a request (T088).
+  var recordPlanHook: ((UUID, Int) -> Void)?
+
+  func recordPlan(runID: UUID, chunkCount: Int) async throws {
+    try check("recordPlan")
+    updateRun(runID) { $0.chunkCount = chunkCount }
+    recordPlanHook?(runID, chunkCount)
   }
 
   func recordRequest(

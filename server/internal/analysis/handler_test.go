@@ -397,3 +397,46 @@ func TestLogLine(t *testing.T) {
 		t.Errorf("log carries content: %s", out)
 	}
 }
+
+// T090: a synthesis result may cite any source in the union of its
+// partials' sources — and nothing else.
+func TestSynthesisSourceUnion(t *testing.T) {
+	b := newFakeBackend()
+	server := serve(t, b, "")
+
+	partial := minimalResult(uuid(0xf00d), true)
+	partial["summary"].(map[string]any)["whole_meeting"] = false
+	partial["decisions"] = []any{map[string]any{
+		"text": "d", "evidence_class": "explicit",
+		"sources": []any{map[string]any{"kind": "segment", "id": uuid(0x333)}}}}
+	body := validRequest()
+	body["stage"] = "synthesis"
+	body["segments"] = nil
+	body["notes"] = nil
+	body["partials"] = []any{partial}
+	data, _ := json.Marshal(body)
+
+	// uuid(0x333) resolves only through the partial's union.
+	result := minimalResult(uuid(0xf00d), false)
+	result["decisions"] = []any{map[string]any{
+		"text": "d", "evidence_class": "explicit",
+		"sources": []any{map[string]any{"kind": "segment", "id": uuid(0x333)}}}}
+	rd, _ := json.Marshal(result)
+	b.completions <- string(rd)
+	status, lines, _ := post(t, server.URL, data, "")
+	if status != 200 || len(lines) != 2 || lines[1]["type"] != "result" {
+		t.Fatalf("synthesis union source rejected: %d %v", status, lines)
+	}
+
+	// A source outside the union is rejected.
+	bad := minimalResult(uuid(0xf00d), false)
+	bad["decisions"] = []any{map[string]any{
+		"text": "d", "evidence_class": "explicit",
+		"sources": []any{map[string]any{"kind": "segment", "id": uuid(0x444)}}}}
+	bd, _ := json.Marshal(bad)
+	b.completions <- string(bd)
+	_, lines, _ = post(t, server.URL, data, "")
+	if len(lines) != 2 || lines[1]["code"] != "source_validation" {
+		t.Fatalf("want source_validation, got %v", lines)
+	}
+}
