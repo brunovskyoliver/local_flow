@@ -135,15 +135,74 @@ final class SummaryModel {
   func retry() { coordinator.requestRun(meetingID: meetingID, trigger: .retry) }
   func cancel() async { await coordinator.cancel(meetingID: meetingID) }
 
+  /// The last overlay-write failure's message, shown once by the view — a
+  /// capacity refusal surfaces as the persistence message, never silently.
+  private(set) var editError: String?
+
   /// The status circle cycles open → completed; the row's menu can dismiss or
   /// reopen. One overlay write per change (contracts/ui.md "Editing").
   func setStatus(_ status: AnalysisItemStatus, item: ActionItemReadModel) async {
-    try? await store.setOverlay(
-      meetingID: meetingID, target: .item(item.id), field: .status,
-      value: .status(status),
-      snapshot: OverlaySnapshot(aiValue: "open", itemText: item.aiText),
-      now: Self.nowMilliseconds)
-    await load()
+    await writeOverlay(
+      target: .item(item.id), field: .status, value: .status(status),
+      snapshot: OverlaySnapshot(
+        aiValue: item.status.rawValue, itemText: item.aiText,
+        sourceKey: Self.sourceKey(item.sources)))
+  }
+
+  /// Inline text edits: the summary text and the three item text fields
+  /// (contract "Editing"). Open questions and risks have no text field in
+  /// `analysis_overlays.field`, so they take no edit.
+  func editSummaryText(_ text: String) async {
+    guard let summary = readModel?.summary else { return }
+    await writeOverlay(
+      target: .summary, field: .summaryText, value: .text(text),
+      snapshot: OverlaySnapshot(
+        aiValue: summary.aiText, itemText: summary.aiText,
+        sourceKey: Self.sourceKey(summary.sources)))
+  }
+
+  func editText(_ text: String, item: ItemReadModel) async {
+    let field: OverlayField
+    switch item.kind {
+    case .decision: field = .decisionText
+    case .nextStep: field = .nextStepText
+    default: return
+    }
+    await writeOverlay(
+      target: .item(item.id), field: field, value: .text(text),
+      snapshot: OverlaySnapshot(
+        aiValue: item.aiText, itemText: item.aiText,
+        sourceKey: Self.sourceKey(item.sources)))
+  }
+
+  func editText(_ text: String, item: ActionItemReadModel) async {
+    await writeOverlay(
+      target: .item(item.id), field: .taskText, value: .text(text),
+      snapshot: OverlaySnapshot(
+        aiValue: item.aiText, itemText: item.aiText,
+        sourceKey: Self.sourceKey(item.sources)))
+  }
+
+  /// The owner menu's choices (contract "Editing"): a participant by speaker
+  /// root id, a mentioned name from "Someone else…", or `.none` for "No
+  /// owner". Every choice is one overlay write; nothing in spec 010 tables
+  /// changes.
+  func setOwner(_ value: OwnerEditValue, item: ActionItemReadModel) async {
+    await writeOverlay(
+      target: .item(item.id), field: .owner, value: .owner(value),
+      snapshot: OverlaySnapshot(
+        aiValue: Self.ownerText(item.aiOwner), itemText: item.aiText,
+        sourceKey: Self.sourceKey(item.sources)))
+  }
+
+  /// The due-date picker writes `YYYY-MM-DD`; Clear writes a null date —
+  /// still one overlay, marked Edited, so the AI due stays recoverable.
+  func setDue(_ date: String?, item: ActionItemReadModel) async {
+    await writeOverlay(
+      target: .item(item.id), field: .dueDate, value: .dueDate(date),
+      snapshot: OverlaySnapshot(
+        aiValue: item.aiDueDate, itemText: item.aiText,
+        sourceKey: Self.sourceKey(item.sources)))
   }
 
   /// Accepting "might be <known speaker>?" writes one owner overlay
@@ -156,11 +215,56 @@ final class SummaryModel {
     let rootID =
       speakerSummaries.first { $0.identity?.knownSpeakerID == suggestion.id }?.id
       ?? suggestion.id
-    try? await store.setOverlay(
-      meetingID: meetingID, target: .item(item.id), field: .owner,
+    await writeOverlay(
+      target: .item(item.id), field: .owner,
       value: .owner(.participant(rootID)),
-      snapshot: OverlaySnapshot(aiValue: Self.ownerText(item.aiOwner), itemText: item.aiText),
-      now: Self.nowMilliseconds)
+      snapshot: OverlaySnapshot(
+        aiValue: Self.ownerText(item.aiOwner), itemText: item.aiText,
+        sourceKey: Self.sourceKey(item.sources)))
+  }
+
+  /// One menu row of the owner menu; the store never sees it: status, notes
+  /// and summaries stay untouched.
+  struct OwnerChoice: Identifiable, Equatable {
+    let id: UUID
+    var label: String
+    var colorIndex: Int
+  }
+
+  /// The owner menu's participant list (contract "Editing"): every meeting
+  /// speaker by the name the certainty rule permits, or its "Speaker N" label.
+  var ownerChoices: [OwnerChoice] {
+    speakerSummaries.map { root in
+      let display = ParticipantDisplay(root: root)
+      return OwnerChoice(
+        id: root.id,
+        label: display.certainty.mayBeNamed ? display.name : root.anonymousLabel,
+        colorIndex: root.colorIndex)
+    }
+  }
+
+  /// Sorted `s:`/`n:` ids joined by `,` — the re-match input R13 compares
+  /// against the next adoption's item sources.
+  static func sourceKey(_ sources: [SourceRef]) -> String {
+    sources.map(\.sortKey).sorted().joined(separator: ",")
+  }
+
+  /// One overlay write with the capacity refusal surfaced; every edit path
+  /// goes through here so no write reaches a spec 010 table.
+  private func writeOverlay(
+    target: OverlayTarget, field: OverlayField, value: OverlayValue,
+    snapshot: OverlaySnapshot
+  ) async {
+    do {
+      try await store.setOverlay(
+        meetingID: meetingID, target: target, field: field, value: value,
+        snapshot: snapshot, now: Self.nowMilliseconds)
+      editError = nil
+    } catch let failure as AnalysisFailure {
+      editError = AnalysisFailureMessage.message(for: failure.category)
+    } catch {
+      editError = AnalysisFailureMessage.message(for: .persistenceFailure)
+    }
     await load()
   }
 
@@ -366,7 +470,7 @@ final class SummaryModel {
     }
     let summary = SummaryReadModel(
       text: summaryText, aiText: stored.summary?.text ?? "", edited: summaryEdited,
-      sources: stored.summary?.sources ?? [])
+      sources: stored.summary?.sources ?? [], overlayID: summaryOverlay?.id)
 
     var items: [AnalysisItemKind: [ItemReadModel]] = [:]
     var actionItems: [ActionItemReadModel] = []
@@ -374,11 +478,13 @@ final class SummaryModel {
       let overlays = itemOverlays[item.id] ?? []
       var text = item.text
       var edits = Set<OverlayField>()
+      var overlayIDs: [OverlayField: UUID] = [:]
       var editedOwner: OwnerEditValue?
       var editedDue: String??
       var editedStatus: AnalysisItemStatus?
       for overlay in overlays {
         edits.insert(overlay.field)
+        overlayIDs[overlay.field] = overlay.id
         switch (overlay.field, overlay.value) {
         case (.summaryText, _): break
         case (_, .text(let value)): text = value
@@ -393,7 +499,7 @@ final class SummaryModel {
         case .participant(let id):
           resolvedOwner = .participant(speakerID: id, knownSpeakerID: nil, certainty: .localName)
         case .mentioned(let name): resolvedOwner = .mentioned(name: name)
-        case .none: resolvedOwner = .none
+        case .none: resolvedOwner = ValidatedOwner.none
         }
       } else {
         resolvedOwner = item.owner
@@ -409,14 +515,17 @@ final class SummaryModel {
             id: item.id, ordinal: item.ordinal, text: text, aiText: item.text,
             owner: ownerLabel, aiOwner: aiOwnerLabel,
             ownershipState: item.ownershipState ?? .unresolved,
-            dueDate: dueDate, dueOriginal: item.due?.original,
+            dueDate: dueDate, aiDueDate: item.due?.date,
+            dueOriginal: item.due?.original,
             dueState: item.due?.state ?? .absent,
-            status: status, sources: item.sources, edits: edits))
+            status: status, sources: item.sources, edits: edits,
+            overlayIDs: overlayIDs))
       } else {
         items[item.kind, default: []].append(
           ItemReadModel(
             id: item.id, kind: item.kind, ordinal: item.ordinal, text: text,
-            aiText: item.text, sources: item.sources, edits: edits))
+            aiText: item.text, sources: item.sources, edits: edits,
+            overlayIDs: overlayIDs))
       }
     }
 

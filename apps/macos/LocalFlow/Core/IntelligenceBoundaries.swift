@@ -377,6 +377,8 @@ struct ItemReadModel: Sendable, Equatable, Identifiable {
   /// source is a note — note content is never attributed to a speaker (FR-025).
   var speakerAttribution: String?
   var edits: Set<OverlayField> = []
+  /// Field → overlay row id, for "Remove edit" on one field (T097).
+  var overlayIDs: [OverlayField: UUID] = [:]
 }
 
 struct ActionItemReadModel: Sendable, Equatable, Identifiable {
@@ -389,6 +391,8 @@ struct ActionItemReadModel: Sendable, Equatable, Identifiable {
   var aiOwner: OwnerLabel
   var ownershipState: OwnershipState
   var dueDate: String?
+  /// The AI due value before any overlay, for "Show AI value".
+  var aiDueDate: String?
   var dueOriginal: String?
   var dueState: DueState
   var status: AnalysisItemStatus
@@ -397,6 +401,8 @@ struct ActionItemReadModel: Sendable, Equatable, Identifiable {
   /// source is a note — note content is never attributed to a speaker (FR-025).
   var speakerAttribution: String?
   var edits: Set<OverlayField> = []
+  /// Field → overlay row id, for "Remove edit" on one field (T097).
+  var overlayIDs: [OverlayField: UUID] = [:]
 }
 
 struct SummaryReadModel: Sendable, Equatable {
@@ -404,6 +410,8 @@ struct SummaryReadModel: Sendable, Equatable {
   var aiText: String
   var edited: Bool
   var sources: [SourceRef]
+  /// The summary overlay's row id, for "Remove edit" (T097).
+  var overlayID: UUID? = nil
 }
 
 /// One orphaned edit, shown under Previous edits.

@@ -324,6 +324,25 @@ final class NativePresentationTests: XCTestCase {
       to: output.appendingPathComponent("summary-succeeded-dark.png"), appearance: .darkAqua,
       scheme: .dark)
 
+    // Edited (T098): a text edit, an owner pick and a status change paint the
+    // "Edited" tags and the edit affordance while the content stays readable.
+    let edited = makeStack()
+    try edited.5.script(response: "deployment-valid")
+    _ = try await edited.2.run(meetingID: fixture.id, trigger: .manual)
+    await edited.0.refresh()
+    if let item = edited.0.readModel?.actionItems.first {
+      await edited.0.editText("Send the contract to Tomáš today", item: item)
+      await edited.0.setOwner(.mentioned("Tomáš Juríček"), item: item)
+      if let next = edited.0.readModel?.actionItems.dropFirst().first {
+        await edited.0.setStatus(.completed, item: next)
+      }
+    }
+    await edited.0.refresh()
+    try await render(
+      SummaryTabView(model: edited.0),
+      to: output.appendingPathComponent("summary-edited.png"), appearance: .aqua,
+      scheme: .light)
+
     // Stale (T084): an evidence write behind the accepted analysis paints the
     // amber banner while the content stays readable, in both appearances.
     succeeded.3.noteRows.append(

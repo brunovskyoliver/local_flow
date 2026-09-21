@@ -585,6 +585,28 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
       guard let adopted else {
         throw AnalysisFailure(.persistenceFailure, detail: "run_missing")
       }
+      // The real store re-matches overlays inside the same transaction (R13);
+      // the fake mirrors it so a regeneration's overlay carry-over is
+      // testable.
+      var rows = overlayRows[adopted.meetingID] ?? [:]
+      let existing = rows.values.sorted { $0.createdAt < $1.createdAt }
+      let (matched, orphaned) = OverlayMatcher.match(
+        existing: existing, newItems: content[adopted.id]?.items ?? [])
+      for (overlayID, itemID) in matched {
+        guard var row = rows[overlayID] else { continue }
+        row.itemID = itemID
+        row.targetKind = .item(itemID)
+        row.orphanedAt = nil
+        rows[overlayID] = row
+      }
+      for overlayID in orphaned {
+        guard var row = rows[overlayID] else { continue }
+        row.itemID = nil
+        row.targetKind = .item(nil)
+        row.orphanedAt = row.orphanedAt ?? now
+        rows[overlayID] = row
+      }
+      overlayRows[adopted.meetingID] = rows
       return adopted
     }
   }
@@ -729,9 +751,12 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
           if case .item(let id) = target { return id }
           return nil
         }()
+        // The real store reads the kind off the item row; the re-matcher
+        // filters candidates by it.
+        let itemKind = content.values.flatMap(\.items).first { $0.id == itemID }?.kind
         let row = AnalysisOverlay(
           id: UUID(), meetingID: meetingID, itemID: itemID, targetKind: target,
-          itemKind: nil, field: field, value: value, snapshot: snapshot,
+          itemKind: itemKind, field: field, value: value, snapshot: snapshot,
           createdAt: now, updatedAt: now, orphanedAt: nil)
         rows[row.id] = row
       }

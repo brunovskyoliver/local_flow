@@ -505,12 +505,13 @@ final class SummaryModelTests: XCTestCase {
   /// Admits + adopts `actionItems` into `store` as the accepted analysis.
   private func adopt(
     _ store: FakeAnalysisStore, meetingID: UUID,
-    actionItems: [ValidatedActionItem]
+    actionItems: [ValidatedActionItem],
+    decisions: [ValidatedItem] = []
   ) async throws -> AnalysisRun {
     let analysis = ValidatedAnalysis(
       language: .en,
       summary: ValidatedSummary(text: "A meeting.", sources: [], wholeMeeting: true),
-      topics: [], decisions: [], actionItems: actionItems, nextSteps: [],
+      topics: [], decisions: decisions, actionItems: actionItems, nextSteps: [],
       openQuestions: [], risks: [])
     let run = try await store.admit(
       meetingID: meetingID, trigger: .manual,
@@ -578,6 +579,227 @@ final class SummaryModelTests: XCTestCase {
     XCTAssertEqual(
       SummaryTabView.OwnerChip.accessibilityValue(.unresolved(label: "Speaker 3")),
       "owner unresolved")
+  }
+
+  // MARK: T096 — overlay edits (US11)
+
+  /// Text, owner and due edits each write one overlay carrying
+  /// `ai_value_snapshot`, `item_text_snapshot` and `source_key`; the read
+  /// model reports the effective value, the `edits` set and the AI values
+  /// "Show AI value" reveals.
+  func testTextOwnerDueEditsWriteOneOverlayEach() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, store, _, _) = try await makeModel(fixture: fixture)
+    await model.refresh()
+    let item = try XCTUnwrap(model.readModel?.actionItems.first)
+    let aiText = item.text
+    let aiOwner = item.owner
+    let aiDue = item.dueDate
+
+    await model.editText("Ship it Tuesday", item: item)
+    await model.setOwner(.mentioned("Tomáš Juríček"), item: item)
+    await model.setDue("2026-09-25", item: item)
+
+    let overlays = try await store.overlays(meetingID: fixture.id)
+    XCTAssertEqual(overlays.count, 3)
+    for overlay in overlays {
+      // A due overlay's aiValue may be nil — the fixture carries no AI due.
+      if overlay.field != .dueDate {
+        XCTAssertNotNil(overlay.snapshot.aiValue, "\(overlay.field)")
+      }
+      XCTAssertEqual(overlay.snapshot.itemText, aiText, "\(overlay.field)")
+      XCTAssertEqual(
+        overlay.snapshot.sourceKey, SummaryModel.sourceKey(item.sources),
+        "\(overlay.field)")
+      XCTAssertEqual(overlay.itemID, item.id, "\(overlay.field)")
+    }
+    let read = try XCTUnwrap(model.readModel)
+    let edited = try XCTUnwrap(read.actionItems.first)
+    XCTAssertEqual(edited.text, "Ship it Tuesday")
+    XCTAssertEqual(edited.aiText, aiText)
+    XCTAssertEqual(edited.owner, .mentioned(name: "Tomáš Juríček", suggestion: nil))
+    XCTAssertEqual(edited.aiOwner, aiOwner)
+    XCTAssertEqual(edited.dueDate, "2026-09-25")
+    XCTAssertEqual(edited.aiDueDate, aiDue)
+    XCTAssertEqual(edited.edits, [.taskText, .owner, .dueDate])
+    XCTAssertEqual(edited.overlayIDs.count, 3)
+    XCTAssertNil(model.editError)
+  }
+
+  /// The summary text takes one `summary_text` overlay on the summary
+  /// target; "Show AI value" is `aiText`, "Remove edit" restores it.
+  func testSummaryEditAndRemove() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, store, _, _) = try await makeModel(fixture: fixture)
+    await model.refresh()
+    let aiText = try XCTUnwrap(model.readModel?.summary.aiText)
+
+    await model.editSummaryText("A corrected summary.")
+    var read = try XCTUnwrap(model.readModel)
+    XCTAssertEqual(read.summary.text, "A corrected summary.")
+    XCTAssertEqual(read.summary.aiText, aiText)
+    XCTAssertTrue(read.summary.edited)
+
+    let overlayID = try XCTUnwrap(read.summary.overlayID)
+    await model.removeEdit(id: overlayID)
+    read = try XCTUnwrap(model.readModel)
+    XCTAssertEqual(read.summary.text, aiText)
+    XCTAssertFalse(read.summary.edited)
+    let remaining = try await store.overlays(meetingID: fixture.id)
+    XCTAssertTrue(remaining.isEmpty)
+  }
+
+  /// Status cycles open → completed and the row menu dismisses/reopens; a
+  /// completed item copies `[x]`, a dismissed item leaves the report.
+  func testStatusOverlayCyclesAndShapesTheReport() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, store, _, _) = try await makeModel(fixture: fixture)
+    await model.refresh()
+    let item = try XCTUnwrap(model.readModel?.actionItems.first)
+
+    await model.setStatus(.completed, item: item)
+    var read = try XCTUnwrap(model.readModel)
+    XCTAssertEqual(read.actionItems[0].status, .completed)
+    XCTAssertTrue(read.actionItems[0].edits.contains(.status))
+    let completed = try XCTUnwrap(model.copyText())
+    XCTAssertTrue(completed.contains("- [x] \(read.actionItems[0].text)"))
+
+    await model.setStatus(.dismissed, item: read.actionItems[0])
+    read = try XCTUnwrap(model.readModel)
+    XCTAssertEqual(read.actionItems[0].status, .dismissed)
+    let dismissed = try XCTUnwrap(model.copyText())
+    XCTAssertFalse(dismissed.contains(read.actionItems[0].text))
+
+    await model.setStatus(.open, item: read.actionItems[0])
+    read = try XCTUnwrap(model.readModel)
+    XCTAssertEqual(read.actionItems[0].status, .open)
+    let overlays = try await store.overlays(meetingID: fixture.id)
+    XCTAssertEqual(
+      overlays.count, 1,
+      "one overlay row carries every status change")
+  }
+
+  /// The owner menu lists every meeting speaker — Possible and Unknown under
+  /// their "Speaker N" labels — then "Someone else…" and "No owner".
+  func testOwnerChoicesListSpeakersAndMenuOptions() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, _, _, speakers) = try await makeModel(fixture: fixture)
+    let named = UUID()
+    let unnamed = UUID()
+    await speakers.setSummaries([
+      SpeakerSummary(
+        id: named, source: .remote, labelOrdinal: 1, colorIndex: 2,
+        displayName: "Martin", inRoom: false, speechMs: 100,
+        identity: SpeakerIdentity(
+          state: .possible, origin: .automaticMatch,
+          knownSpeakerID: nil, knownSpeakerName: nil)),
+      SpeakerSummary(
+        id: unnamed, source: .remote, labelOrdinal: 3, colorIndex: 5,
+        displayName: nil, inRoom: false, speechMs: 100),
+    ])
+    await model.refresh()
+
+    XCTAssertEqual(
+      model.ownerChoices.map(\.label), ["Martin", "Speaker 3"],
+      "a Possible match with a local name shows the name; an unnamed speaker "
+        + "shows its label, never a candidate")
+    XCTAssertEqual(model.ownerChoices.map(\.id), [named, unnamed])
+  }
+
+  /// A second adoption re-matches edits: the overlay whose item kept its
+  /// sources follows the new row; the edit whose item vanished lands in
+  /// `previousEdits` with its snapshots — never deleted.
+  func testRegenerationCarriesMatchedEditsAndOrphansTheRest() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, store, _, _) = try await makeModel(fixture: fixture, run: false)
+    let segment = try XCTUnwrap(fixture.segments.first).id
+    _ = try await adopt(
+      store, meetingID: fixture.id,
+      actionItems: [
+        ValidatedActionItem(
+          text: "Follow up with Tomáš", owner: .none,
+          ownershipState: .unresolved, due: ValidatedDue(state: .absent),
+          sources: [.segment(segment)])
+      ],
+      decisions: [
+        ValidatedItem(
+          kind: .decision, text: "Deploy Monday", sources: [.segment(segment)])
+      ])
+    await model.refresh()
+    let item = try XCTUnwrap(model.readModel?.actionItems.first)
+    let decision = try XCTUnwrap(model.readModel?.decisions.first)
+    await model.editText("Ping Tomáš Juríček", item: item)
+    await model.editText("Deploy Tuesday", item: decision)
+
+    // The regeneration keeps the action item (same source) and drops the
+    // decision entirely.
+    _ = try await adopt(
+      store, meetingID: fixture.id,
+      actionItems: [
+        ValidatedActionItem(
+          text: "Follow up with Tomáš Juríček", owner: .none,
+          ownershipState: .unresolved, due: ValidatedDue(state: .absent),
+          sources: [.segment(segment)])
+      ])
+    await model.refresh()
+
+    let read = try XCTUnwrap(model.readModel)
+    let carried = try XCTUnwrap(read.actionItems.first)
+    XCTAssertEqual(carried.text, "Ping Tomáš Juríček")
+    XCTAssertTrue(carried.edits.contains(.taskText))
+    let orphan = try XCTUnwrap(read.previousEdits.first)
+    XCTAssertEqual(read.previousEdits.count, 1)
+    XCTAssertEqual(orphan.itemTextSnapshot, "Deploy Monday")
+    XCTAssertEqual(orphan.aiValue, "Deploy Monday")
+    XCTAssertEqual(orphan.userValue, "Deploy Tuesday")
+    XCTAssertEqual(orphan.field, .decisionText)
+  }
+
+  /// "Remove all edits" deletes every overlay for the meeting; edits never
+  /// touch known_speakers, voice_samples or identity_assignments — the fakes
+  /// record no writes.
+  func testRemoveAllEditsAndNoSpec010Writes() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let identities = FakeIdentityStore()
+    let (model, store, _, speakers) = try await makeModel(
+      fixture: fixture, identities: identities)
+    await model.refresh()
+    let item = try XCTUnwrap(model.readModel?.actionItems.first)
+    await model.editText("Edited", item: item)
+    await model.setStatus(.completed, item: item)
+    let written = try await store.overlays(meetingID: fixture.id)
+    XCTAssertEqual(written.count, 2)
+
+    await model.removeAllEdits()
+    let cleared = try await store.overlays(meetingID: fixture.id)
+    XCTAssertTrue(cleared.isEmpty)
+    let read = try XCTUnwrap(model.readModel)
+    XCTAssertFalse(read.actionItems[0].edits.contains(.status))
+    XCTAssertEqual(read.actionItems[0].text, item.aiText)
+
+    // FR-035: overlays are the only writes — the identity and speaker fakes
+    // saw reads, never a mutation.
+    let writes = await identities.calls.filter { $0.name != "knownSpeakers" }
+    XCTAssertTrue(writes.isEmpty)
+    let savedNames = await speakers.savedNames
+    let corrections = await speakers.corrections
+    XCTAssertTrue(savedNames.isEmpty)
+    XCTAssertTrue(corrections.isEmpty)
+  }
+
+  /// A store refusal surfaces the persistence message on `editError` — a
+  /// capacity error is never swallowed.
+  func testOverlayCapacitySurfacesPersistenceMessage() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, store, _, _) = try await makeModel(fixture: fixture)
+    await model.refresh()
+    let item = try XCTUnwrap(model.readModel?.actionItems.first)
+    store.failures["setOverlay"] = AnalysisFailure(
+      .persistenceCapacity, detail: "overlay_cap")
+    await model.editText("Edited", item: item)
+    XCTAssertEqual(
+      model.editError,
+      "The summary couldn't be saved. Meeting storage is full.")
   }
 
   /// Runs the analyzer on `fixture` (unless `run` is false) against the
