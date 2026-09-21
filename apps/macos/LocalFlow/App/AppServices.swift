@@ -17,7 +17,8 @@ final class AppServices {
     observe: { [weak self] in await self?.settingsSnapshot() ?? .init() },
     perform: { [weak self] action in try await self?.performSetting(action) },
     preferences: preferences, rewriteCredentials: rewriteCredentials,
-    rewriteTransport: RewriteClient(credentials: rewriteCredentials))
+    rewriteTransport: RewriteClient(credentials: rewriteCredentials),
+    analysisTransport: AnalysisClient(credentials: rewriteCredentials))
   private(set) var historyModel: HistoryViewModel?
   private(set) var vocabularyModel: VocabularyViewModel?
   @ObservationIgnored private var learner: CorrectionLearner?
@@ -609,7 +610,7 @@ final class AppServices {
       automaticEnabled: { [weak self] in
         self?.preferences.meetingSummariesAutomatic ?? false
       },
-      clock: clock)
+      clock: clock, recorder: recorder)
     intelligence.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
     transcription.intelligence = intelligence
     // Evidence writes — assignment, identity changes, adopted labels and note

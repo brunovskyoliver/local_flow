@@ -14,6 +14,7 @@ python3 scripts/test-dictation-accuracy.py
 python3 scripts/test-transcription-quality.py
 python3 scripts/test-acquire-quality-corpus.py
 python3 scripts/test-rewrite-quality.py
+python3 scripts/test-analysis-quality.py
 plutil -lint apps/macos/LocalFlow/Info.plist apps/macos/LocalFlow.xcodeproj/project.pbxproj
 (cd server && test -z "$(gofmt -l cmd internal)" && go test ./... && go vet ./...)
 xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -scheme LocalFlow -configuration Debug -destination "platform=macOS,arch=arm64" -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO test

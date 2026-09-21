@@ -212,6 +212,11 @@ struct SettingsView: View {
           .disabled(model.connectionTesting || model.rewriteSettings?.isEndpointValid != true)
           .accessibilityIdentifier("settings.rewriteTestConnection")
         }
+        if let analysis = model.analysisStatus {
+          Text(analysis).font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("settings.analysisStatus")
+        }
         separator
         DisclosureGroup("Advanced") {
           SettingsRow("Timeout") {

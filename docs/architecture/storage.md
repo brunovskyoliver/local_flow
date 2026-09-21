@@ -79,3 +79,48 @@ names with no link are untouched. Merges write a `merged` scope row on the displ
 rerun carries manual identity rows and rejected pairs along the safe name map and lists
 the rest as review notices. See
 [the data model](../../specs/010-persistent-speaker-identification/data-model.md).
+
+## Meeting intelligence (Feature 011)
+
+Migration `intelligence-v9` adds `analysis_runs`, `meeting_analysis`,
+`analysis_summaries`, `analysis_topics`, `analysis_items`, `analysis_sources` and
+`analysis_overlays`. `AnalysisStore` owns every write on the shared history
+`DatabaseQueue`, one transaction per operation; analysis never writes to transcript,
+notes, diarization, known-speaker, voice-sample or identity-assignment rows.
+
+`meeting_analysis` is the per-meeting pointer row, created for every existing meeting
+and with each new one: `accepted_run_id`, `current_run_id`, the accepted run's evidence
+version and a revision counter. A meeting has at most one `pending`/`running` run
+(partial unique index) and is queued at most 100 runs deep per the client contract.
+Each `analysis_runs` row carries its trigger, evidence version, transcript pass id,
+server/backend/prompt/pipeline identity, `language_policy`, the request configuration,
+content-free counters (chunks, requests, retries, preemptions, bytes, items, dropped
+literals and unsupported items, identity downgrades, unresolved owners) and, on
+failure, a categorized `failure_category` plus a bounded `failure_detail` code —
+never text.
+
+Adoption is one transaction. It first checks `current_run_id` still names the adopting
+run — a result that arrives after its run left `running` writes nothing and the run is
+marked `superseded` instead of failing. It then swaps the accepted pointer, copies the
+evidence version and inserts the summary, topics, items and `analysis_sources` rows
+under the new `run_id`; the previous run's result rows are deleted with the pointer
+swap. `CHECK` constraints keep the shape honest: only `action_item` rows may carry
+owner and due fields, a `participant` owner requires `owner_speaker_id`, a `mentioned`
+owner requires `owner_name`, `due_date` is present exactly for the two explicit due
+states, and each source row is either a transcript segment (`ON DELETE CASCADE`) or a
+note paragraph by ordinal and content hash.
+
+User edits are overlays, not rewrites of the adopted result. `analysis_overlays` rows
+target the summary (one per meeting, partial unique index) or an item field (one per
+item and field), and snapshot the AI value, the item text and the source key at edit
+time. On regeneration, `OverlayMatcher` re-attaches each overlay to the new result by
+item id first, then source key, then text; an overlay that matches nothing is kept and
+marked `orphaned_at` so it still shows under Previous edits. Deleting a meeting
+cascades every analysis table; removing a meeting's transcript segments removes the
+source rows that point at them.
+
+The evidence version is a hash over the segments, notes and speaker assignments — the
+inputs a summary depends on, with display names excluded. `evidenceDidChange`
+recomputes it: a changed value marks the accepted run's analysis `stale` (readable,
+bannered, regenerable), while a display-name-only rename leaves the version untouched.
+See [the data model](../../specs/011-meeting-intelligence/data-model.md).

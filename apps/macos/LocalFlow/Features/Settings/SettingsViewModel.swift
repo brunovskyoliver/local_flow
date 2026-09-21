@@ -84,11 +84,15 @@ final class SettingsViewModel {
   private let preferences: AppPreferences?
   @ObservationIgnored private let rewriteCredentials: (any RewriteCredentialStoring)?
   @ObservationIgnored private let rewriteTransport: (any RewriteTransporting)?
+  @ObservationIgnored private let analysisTransport: (any AnalysisTransporting)?
   private var credentialRevision = 0
   private var connectionRevision = 0
   @ObservationIgnored private var connectionTask: Task<HealthResponse, Error>?
   private(set) var connectionTesting = false
   private(set) var connectionResult: RewriteConnectionTestResult?
+  /// The meeting-analysis half of the connection test, run only after the
+  /// rewrite health reports `connected`.
+  private(set) var analysisStatus: String?
   private(set) var credentialError: String?
   var credentialDraft = ""
   private(set) var credentialRevealed = false
@@ -205,6 +209,7 @@ final class SettingsViewModel {
     connectionRevision += 1
     connectionTask?.cancel()
     connectionResult = nil
+    analysisStatus = nil
   }
   func closeRewriteSettings() {
     hideRewriteCredential()
@@ -231,15 +236,35 @@ final class SettingsViewModel {
     do {
       let health = try await task.value
       guard revision == connectionRevision, !Task.isCancelled else { return }
+      let category = RewriteConnectionCategory.evaluate(health)
       connectionResult = .init(
-        category: RewriteConnectionCategory.evaluate(health), health: health,
-        diagnostic: "health_response")
+        category: category, health: health, diagnostic: "health_response")
+      if category == .connected {
+        analysisStatus = await analysisHealthStatus(endpoint: endpoint)
+      }
     } catch {
       guard revision == connectionRevision, !Task.isCancelled else { return }
       let failure = error as? RewriteConnectionFailure
       connectionResult = .init(
         category: failure?.category ?? .serverUnreachable,
         diagnostic: failure?.diagnostic ?? "transport_error")
+    }
+  }
+
+  /// `GET /v1/analysis/health` on the same endpoint and credential. A 404 or
+  /// a wrong service value means the server predates meeting analysis.
+  private func analysisHealthStatus(endpoint: RewriteEndpoint) async -> String {
+    guard let analysisTransport else { return "Meeting analysis could not be checked." }
+    do {
+      let health = try await analysisTransport.health(endpoint: endpoint)
+      if let model = health.backend?.model, !model.isEmpty {
+        return "Meeting analysis: available (model \(model))."
+      }
+      return "Meeting analysis: available."
+    } catch let failure as AnalysisFailure where failure.category == .serverUnavailable {
+      return "This server does not offer meeting analysis."
+    } catch {
+      return "Meeting analysis could not be checked."
     }
   }
 
@@ -278,13 +303,15 @@ final class SettingsViewModel {
     perform: @escaping @MainActor (Action) async throws -> Void,
     preferences: AppPreferences? = nil,
     rewriteCredentials: (any RewriteCredentialStoring)? = nil,
-    rewriteTransport: (any RewriteTransporting)? = nil
+    rewriteTransport: (any RewriteTransporting)? = nil,
+    analysisTransport: (any AnalysisTransporting)? = nil
   ) {
     self.observe = observe
     self.perform = perform
     self.preferences = preferences
     self.rewriteCredentials = rewriteCredentials
     self.rewriteTransport = rewriteTransport
+    self.analysisTransport = analysisTransport
   }
   func refresh() async { snapshot = await observe() }
   func run(_ action: Action) async {

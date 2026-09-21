@@ -278,7 +278,7 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request) {
 	defer h.config.Gate.Leave()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	template, _ := prompts.For(req.Stage)
+	template, _ := prompts.For(req.Stage, req.Meeting.LanguagePolicy.Output)
 	info := h.backendInfo(ctx)
 	if ctx.Err() != nil {
 		code = "cancelled"

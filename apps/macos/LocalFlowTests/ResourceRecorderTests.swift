@@ -169,6 +169,85 @@ final class ResourceRecorderTests: XCTestCase {
     }
   }
 
+  /// Feature 011 (T102): every analysis metric and phase is recorded; the
+  /// failure category is the only key; no transcript, note, summary or item
+  /// text and no speaker name or meeting id reaches the recorder.
+  func testAnalysisMetricsAreContentFreeAndKeyedOnlyByCategory() async throws {
+    let capture = try RecorderCapture.make()
+    defer { capture.cleanup() }
+    let recorder = capture.recorder
+    let phases: [ResourceRecorder.Phase] = [
+      .analysisQueued, .analysisRequesting, .analysisValidating, .analysisAdopting,
+    ]
+    for phase in phases {
+      XCTAssertTrue(recorder.record(phase: phase, durationNanoseconds: 1), "\(phase)")
+    }
+    XCTAssertEqual(ResourceRecorder.Metric.allAnalysisCases.count, 17)
+    for metric in ResourceRecorder.Metric.allAnalysisCases {
+      XCTAssertTrue(metric.isAnalysis, "\(metric)")
+      let accepted: Bool
+      switch metric.kind {
+      case .duration:
+        accepted = recorder.record(
+          phase: .analysisRequesting, durationNanoseconds: 5, metric: metric)
+      case .bytes:
+        accepted = recorder.record(
+          phase: .analysisRequesting, metric: metric, payloadBytes: 1)
+      case .count:
+        accepted = recorder.record(
+          phase: .analysisAdopting, metric: metric, itemCount: 1,
+          meetingKey: metric == .analysisFailure ? "backend_busy" : nil)
+      }
+      XCTAssertTrue(accepted, "\(metric)")
+      // Transcript text, a note, a summary line, an item, a speaker name and
+      // a meeting id all count as loss on any analysis metric.
+      for key in [
+        "We will deploy on Monday", "Customer asked", "Summary:", "Send it",
+        "Tomáš Juríček", UUID().uuidString, "backend_busy",
+      ] where metric != .analysisFailure {
+        let keyed: Bool
+        if metric.kind == .duration {
+          keyed = recorder.record(
+            phase: .analysisRequesting, durationNanoseconds: 5, metric: metric,
+            meetingKey: key)
+        } else {
+          keyed = recorder.record(
+            phase: .analysisAdopting, metric: metric, itemCount: 1, meetingKey: key)
+        }
+        XCTAssertFalse(keyed, "\(metric) took key \(key)")
+      }
+    }
+    XCTAssertFalse(
+      recorder.record(
+        phase: .analysisAdopting, metric: .analysisFailure, itemCount: 1,
+        meetingKey: "Tomáš Juríček"))
+    XCTAssertFalse(
+      recorder.record(
+        phase: .analysisAdopting, metric: .analysisFailure, itemCount: 2,
+        meetingKey: "backend_busy"), "a failure is one event")
+    XCTAssertTrue(
+      recorder.record(phase: .analysisQueued, metric: .analysisQueueDepth, itemCount: 100))
+    XCTAssertFalse(
+      recorder.record(phase: .analysisQueued, metric: .analysisQueueDepth, itemCount: 101))
+    XCTAssertTrue(
+      recorder.record(
+        phase: .analysisRequesting, metric: .analysisInputBytes,
+        payloadBytes: 1 << 30))
+    let report = await recorder.flush()
+    for line in try Data(contentsOf: report.files[0]).split(separator: 10) {
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+      for forbidden in [
+        "text", "summary", "item", "note", "speaker", "name", "meetingID",
+        "runID", "transcript", "error",
+      ] {
+        XCTAssertNil(object[forbidden])
+      }
+      if let key = object["meetingKey"] as? String {
+        XCTAssertTrue(ResourceRecorder.analysisKeys.contains(key), key)
+      }
+    }
+  }
+
   private func identity() throws -> ResourceRecorder.Identity {
     try .init(
       build: "test-build", model: "parakeet-v3", hardware: "test-host", os: "test-os",

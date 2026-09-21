@@ -38,16 +38,19 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
   @ObservationIgnored private var requeueTasks: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private let logger = Logger(
     subsystem: "org.localflow.LocalFlow", category: "intelligence")
+  @ObservationIgnored private let recorder: ResourceRecorder?
 
   init(
     analyzer: MeetingAnalyzer, store: any AnalysisStoring,
     automaticEnabled: @escaping @MainActor () -> Bool,
-    clock: any MeetingClock = SystemMeetingClock()
+    clock: any MeetingClock = SystemMeetingClock(),
+    recorder: ResourceRecorder? = nil
   ) {
     self.analyzer = analyzer
     self.store = store
     self.automaticEnabled = automaticEnabled
     self.clock = clock
+    self.recorder = recorder
   }
 
   // MARK: Triggers
@@ -119,7 +122,11 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
         .first(where: { $0.id == acceptedID })
     else { return }
     guard status?.meetingID == id, status?.hasAccepted == true else { return }
-    status?.stale = current != accepted.evidenceVersion
+    let stale = current != accepted.evidenceVersion
+    if stale, status?.stale != true {
+      recorder?.record(phase: .analysisValidating, metric: .analysisStaleCount, itemCount: 1)
+    }
+    status?.stale = stale
   }
 
   /// Launch resume (FR-007a): the reconciler interrupted the leftover rows
@@ -186,6 +193,9 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
           return
         }
         queue.append(id)
+        recorder?.record(
+          phase: .analysisQueued, metric: .analysisQueueDepth,
+          itemCount: UInt32(clamping: queue.count))
         admissions[id] = admission
         triggers[id] = trigger
         await refresh(id)

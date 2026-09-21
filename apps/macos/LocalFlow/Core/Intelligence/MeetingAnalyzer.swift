@@ -136,6 +136,10 @@ struct MeetingAnalyzer: Sendable {
   func execute(_ admission: Admission) async throws -> AnalysisRun {
     let meetingID = admission.run.meetingID
     var run = admission.run
+    // FR-037 shape: the run's numbers, never its text, ids or names. Emitted
+    // on every exit — a started run reports its counters, a refused one
+    // reports nothing.
+    defer { recordTerminal(run) }
     do {
       run = try await store.start(runID: run.id, now: clock.nowMilliseconds)
       progress?(meetingID, AnalysisProgress(label: "Analyzing", fraction: 0))
@@ -189,9 +193,16 @@ struct MeetingAnalyzer: Sendable {
 
         // 9. Adopt: supersede, content swap, re-point, re-match overlays.
         let identity = Self.identity(health: health, payload: result.payload)
-        return try await self.store.adopt(
+        let adopted = try await self.store.adopt(
           runID: runID, result: validated, counts: counts, identity: identity,
           now: self.clock.nowMilliseconds)
+        let orphans =
+          (try? await self.store.overlays(meetingID: meetingID))?
+          .filter { $0.orphanedAt != nil }.count ?? 0
+        self.recorder?.record(
+          phase: .analysisAdopting, metric: .analysisOverlayOrphanCount,
+          itemCount: UInt32(clamping: orphans))
+        return adopted
       }
       progress?(meetingID, nil)
       return run
@@ -258,6 +269,55 @@ struct MeetingAnalyzer: Sendable {
     } else {
       try await store.fail(
         runID: runID, category: failure.category, detail: failure.detail, now: now)
+    }
+  }
+
+  /// FR-037 shape: a started run's counters, durations and byte sizes land on
+  /// the recorder at terminal — never its text, ids or names. `durationMs`
+  /// exists only after adoption, so a zero stays unrecorded.
+  private func recordTerminal(_ run: AnalysisRun) {
+    guard let recorder, run.startedAt != nil else { return }
+    if run.durationMs > 0 {
+      recorder.record(
+        phase: .analysisAdopting,
+        durationNanoseconds: UInt64(run.durationMs) * 1_000_000,
+        metric: .analysisRunDuration)
+    }
+    recorder.record(
+      phase: .analysisRequesting, metric: .analysisInputBytes,
+      payloadBytes: UInt64(clamping: run.inputBytes))
+    recorder.record(
+      phase: .analysisRequesting, metric: .analysisOutputBytes,
+      payloadBytes: UInt64(clamping: run.outputBytes))
+    let requesting: [(ResourceRecorder.Metric, Int)] = [
+      (.analysisRequestCount, run.requestCount),
+      (.analysisRetryCount, run.retryCount),
+      (.analysisPreemptionCount, run.preemptionCount),
+      (.analysisChunkCount, run.chunkCount),
+    ]
+    for (metric, value) in requesting {
+      recorder.record(
+        phase: .analysisRequesting, metric: metric,
+        itemCount: UInt32(clamping: max(0, value)))
+    }
+    let validating: [(ResourceRecorder.Metric, Int)] = [
+      (.analysisDroppedLiteralCount, run.droppedLiteralCount),
+      (.analysisDroppedUnsupportedCount, run.droppedUnsupportedCount),
+      (.analysisIdentityDowngradeCount, run.identityDowngradeCount),
+      (.analysisUnresolvedOwnerCount, run.unresolvedOwnerCount),
+    ]
+    for (metric, value) in validating {
+      recorder.record(
+        phase: .analysisValidating, metric: metric,
+        itemCount: UInt32(clamping: max(0, value)))
+    }
+    recorder.record(
+      phase: .analysisAdopting, metric: .analysisItemCount,
+      itemCount: UInt32(clamping: max(0, run.itemCount)))
+    if let category = run.failureCategory {
+      recorder.record(
+        phase: .analysisAdopting, metric: .analysisFailure, itemCount: 1,
+        meetingKey: category.rawValue)
     }
   }
 
@@ -513,6 +573,13 @@ struct MeetingAnalyzer: Sendable {
     var result: Outcome?
     var requestBytes = 0
     var responseBytes = 0
+    let began = clock.monotonicNanoseconds
+    defer {
+      recorder?.record(
+        phase: .analysisRequesting,
+        durationNanoseconds: clock.monotonicNanoseconds &- began,
+        metric: .analysisStageDuration)
+    }
     let stream = transport.analyze(
       request: request, endpoint: endpoint, timeout: policy.perRequestTimeout)
     for try await item in stream {

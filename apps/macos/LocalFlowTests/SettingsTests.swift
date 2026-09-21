@@ -353,3 +353,72 @@ extension SettingsTests {
     XCTAssertEqual(model.credentialDraft, "")
   }
 }
+
+extension SettingsTests {
+  /// T104: after the rewrite health reports `connected`, the analysis health
+  /// reports availability, absence or an unchecked state.
+  @MainActor private func connectedModel(
+    analysis: FakeAnalysisTransport, suite: String = UUID().uuidString
+  ) -> SettingsViewModel {
+    let defaults = UserDefaults(suiteName: "LocalFlow-analysis-\(suite)")!
+    let rewrite = FakeRewriteTransport()
+    rewrite.healthResult = .success(
+      try! HealthResponse.decode(
+        Data(
+          """
+          {"schema_version":1,"service":"localflow-rewrite","protocol_versions":[1],
+           "server":{"name":"flowd","version":"0.3.0"},
+           "backend":{"state":"ready","kind":"openai-compatible","model":"test-model"},
+           "prompt_versions":{"clean":1},"shield_version":1}
+          """.utf8)))
+    let model = SettingsViewModel(
+      observe: { .init() }, perform: { _ in }, preferences: AppPreferences(defaults: defaults),
+      rewriteCredentials: FakeRewriteCredentialStore(), rewriteTransport: rewrite,
+      analysisTransport: analysis)
+    model.rewriteEndpoint = "http://localhost:8080"
+    return model
+  }
+
+  @MainActor func testAnalysisStatusAfterConnected() async {
+    let analysis = FakeAnalysisTransport()
+    let model = connectedModel(analysis: analysis)
+    await model.testConnection()
+    XCTAssertEqual(model.connectionResult?.category, .connected)
+    XCTAssertEqual(model.analysisStatus, "Meeting analysis: available (model test-model).")
+  }
+
+  @MainActor func testAnalysisStatusWhenServerLacksAnalysis() async {
+    let analysis = FakeAnalysisTransport()
+    analysis.healthResult = .failure(
+      AnalysisFailure(.serverUnavailable, detail: "not offered"))
+    let model = connectedModel(analysis: analysis)
+    await model.testConnection()
+    XCTAssertEqual(model.analysisStatus, "This server does not offer meeting analysis.")
+  }
+
+  @MainActor func testAnalysisStatusOnOtherFailure() async {
+    let analysis = FakeAnalysisTransport()
+    analysis.healthResult = .failure(AnalysisFailure(.serverUnreachable))
+    let model = connectedModel(analysis: analysis)
+    await model.testConnection()
+    XCTAssertEqual(model.analysisStatus, "Meeting analysis could not be checked.")
+  }
+
+  @MainActor func testAnalysisNotProbedWhenRewriteNotConnected() async {
+    let suite = "LocalFlow-analysis-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let rewrite = FakeRewriteTransport()
+    rewrite.healthResult = .failure(
+      RewriteConnectionFailure(category: .serverUnreachable, diagnostic: "x"))
+    let model = SettingsViewModel(
+      observe: { .init() }, perform: { _ in },
+      preferences: AppPreferences(defaults: defaults),
+      rewriteCredentials: FakeRewriteCredentialStore(), rewriteTransport: rewrite,
+      analysisTransport: FakeAnalysisTransport())
+    model.rewriteEndpoint = "http://localhost:8080"
+    await model.testConnection()
+    XCTAssertEqual(model.connectionResult?.category, .serverUnreachable)
+    XCTAssertNil(model.analysisStatus)
+  }
+}

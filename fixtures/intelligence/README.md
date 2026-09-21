@@ -80,10 +80,13 @@ Offline cases replayed by `scripts/analysis-quality.py` / `make check`:
 | deployment.json | unsupported-version | SC-001: `unsupported_version` |
 | deployment.json | wrong-meeting | SC-001: `meeting_mismatch` |
 | deployment.json | malformed-json | SC-001: `malformed_response` |
-| certainty-possible.json | named-possible-owner | SC-002: owner downgraded, candidate name never sent |
+| certainty-possible.json | named-possible-owner-certainty | SC-002: owner downgraded, candidate name never sent |
+| deployment.json | named-possible-owner | SC-002: owner downgraded, candidate name never sent |
 | deployment.json | mentioned-owner | mentioned owner stored verbatim |
 | due-dates.json | due-dates-valid | SC-005: `tomorrow` → 2026-09-21 in Europe/Bratislava, `soon` unresolved, unassigned action item survives, one decision |
-| slovak.json / english.json / mixed.json | language-valid | SC-014: policy value and term preservation |
+| slovak.json | slovak-valid | SC-014: policy value, Slovak prose |
+| english.json | language-valid | SC-014: policy value, English prose |
+| mixed.json | mixed-valid | SC-014: policy value, Slovak prose with English terms kept |
 
 ## fourhour.json (generated)
 
@@ -93,3 +96,28 @@ segments of a four-hour meeting, with the unique decision
 "Deployment moves to Monday" spoken in the last five minutes. Regenerate the
 same bytes by seeding the loader with the fixture name; the generator note
 exists so the deterministic synthesis is documented, not reproduced by hand.
+
+## Evaluation
+
+The manifest above is the evaluation set. `AnalysisEvaluationExportTests`
+replays every pairing through the real `MeetingAnalyzer` against the scripted
+responses and writes `analysis-eval.json` — run state, failure category,
+adopted text, owner labels, due values, validation counters, the
+candidate-name request check and the report's copy text — under
+0700/0600 permissions:
+
+```
+TEST_RUNNER_LOCALFLOW_ANALYSIS_EVAL_DIR=/private/path/to/eval \
+  xcodebuild -project apps/macos/LocalFlow.xcodeproj -scheme LocalFlow \
+  -destination 'platform=macOS' \
+  -only-testing LocalFlowTests/AnalysisEvaluationExportTests test
+```
+
+`scripts/analysis-quality.py` reads that file and reports SC-001 through
+SC-006, SC-013 and SC-014 as violation counts; `--output-dir` writes the
+report JSON under private permissions. With `--live --endpoint URL` it instead
+posts each meeting fixture to a running flowd's `POST /v1/analysis/meeting`
+and evaluates the raw results — client-side validation counters do not apply
+in live mode, so the checks they drive simply report zero cases. The export
+directory and the report are the only files either tool writes; keep them
+private.

@@ -28,6 +28,9 @@ final class ResourceRecorder: @unchecked Sendable {
     case embedderActive = "modelActive(identification)"
     case embedderReleasing = "modelReleasing(identification)"
     case identifying
+    // Feature 011: meeting intelligence queue, transport, validation and
+    // adoption. No RSS sampling — these phases only label metric samples.
+    case analysisQueued, analysisRequesting, analysisValidating, analysisAdopting
   }
   enum QueueSource: String, Codable, Sendable {
     case unavailable, controlMailbox, audioRaw, audioNormalized
@@ -86,6 +89,16 @@ final class ResourceRecorder: @unchecked Sendable {
     case identificationComparisons, identificationRecognized, identificationSuggested
     case identificationUnknown, identificationConfirmations, identificationCorrections
     case identificationFailure, enrollmentSamplesStored
+    // Meeting intelligence (Feature 011, FR-037 shape): durations, byte sizes
+    // and counters per run or stage; the failure carries its category as the
+    // meeting key, like diarization/identification. Nothing contentful.
+    case analysisRunDuration, analysisStageDuration
+    case analysisInputBytes, analysisOutputBytes
+    case analysisChunkCount, analysisRequestCount, analysisRetryCount
+    case analysisPreemptionCount, analysisItemCount, analysisDroppedLiteralCount
+    case analysisDroppedUnsupportedCount, analysisIdentityDowngradeCount
+    case analysisUnresolvedOwnerCount, analysisFailure, analysisStaleCount
+    case analysisOverlayOrphanCount, analysisQueueDepth
 
     var kind: Kind {
       switch self {
@@ -98,10 +111,11 @@ final class ResourceRecorder: @unchecked Sendable {
         .diarizationModelLoadDuration, .diarizationModelReleaseDuration, .diarizationDuration,
         .diarizationRealTimeFactor, .diarizationEchoProfileDuration,
         .identificationModelLoadDuration, .identificationModelReleaseDuration,
-        .identificationDuration:
+        .identificationDuration, .analysisRunDuration, .analysisStageDuration:
         return .duration
       case .rawTextBytes, .assembledTextBytes, .normalizedTextBytes, .metadataBytes,
-        .rewriteRequestBytes, .rewriteResponseBytes, .meetingBytesWritten, .meetingSegmentBytes:
+        .rewriteRequestBytes, .rewriteResponseBytes, .meetingBytesWritten, .meetingSegmentBytes,
+        .analysisInputBytes, .analysisOutputBytes:
         return .bytes
       case .windowCount, .completionReasonCount, .appliedRuleCount, .appliedEntryCount,
         .rewriteInputScalars, .rewriteAttemptOrdinal, .rewriteOutcome, .rewriteFallback,
@@ -120,7 +134,12 @@ final class ResourceRecorder: @unchecked Sendable {
         .speakerUnmergeCount, .speakerSegmentCorrectionCount, .identificationRegionsExtracted,
         .identificationRegionsRejected, .identificationComparisons, .identificationRecognized,
         .identificationSuggested, .identificationUnknown, .identificationConfirmations,
-        .identificationCorrections, .identificationFailure, .enrollmentSamplesStored:
+        .identificationCorrections, .identificationFailure, .enrollmentSamplesStored,
+        .analysisChunkCount, .analysisRequestCount, .analysisRetryCount,
+        .analysisPreemptionCount, .analysisItemCount, .analysisDroppedLiteralCount,
+        .analysisDroppedUnsupportedCount, .analysisIdentityDowngradeCount,
+        .analysisUnresolvedOwnerCount, .analysisFailure, .analysisStaleCount,
+        .analysisOverlayOrphanCount, .analysisQueueDepth:
         return .count
       }
     }
@@ -160,13 +179,21 @@ final class ResourceRecorder: @unchecked Sendable {
         .identificationRecognized, .identificationSuggested, .identificationUnknown,
         .enrollmentSamplesStored:
         return 20_000
+      case .analysisChunkCount: return 64
+      // The queue cap lives on the main-actor coordinator; the contract fixes
+      // it at 100 (contracts/client-analysis.md).
+      case .analysisQueueDepth: return 100
+      case .analysisFailure, .analysisStaleCount: return 1
       default: return ResourceRecorder.maximumItemCount
       }
     }
-    /// Largest byte value; segment files can exceed the quality-detail ceiling.
+    /// Largest byte value; segment files and multi-hour analysis traffic can
+    /// exceed the quality-detail ceiling.
     var payloadLimit: UInt64 {
       switch self {
-      case .meetingBytesWritten, .meetingSegmentBytes: return 1 << 32
+      case .meetingBytesWritten, .meetingSegmentBytes, .analysisInputBytes,
+        .analysisOutputBytes:
+        return 1 << 32
       default: return ResourceRecorder.maximumPayloadBytes
       }
     }
@@ -208,6 +235,16 @@ final class ResourceRecorder: @unchecked Sendable {
       .diarizationEchoProfileDuration, .diarizationMinorClusterCount, .speakerRenameCount,
       .speakerMergeCount,
       .speakerUnmergeCount, .speakerSegmentCorrectionCount,
+    ]
+    var isAnalysis: Bool { rawValue.hasPrefix("analysis") }
+    static let allAnalysisCases: [Metric] = [
+      .analysisRunDuration, .analysisStageDuration, .analysisInputBytes,
+      .analysisOutputBytes, .analysisChunkCount, .analysisRequestCount,
+      .analysisRetryCount, .analysisPreemptionCount, .analysisItemCount,
+      .analysisDroppedLiteralCount, .analysisDroppedUnsupportedCount,
+      .analysisIdentityDowngradeCount, .analysisUnresolvedOwnerCount,
+      .analysisFailure, .analysisStaleCount, .analysisOverlayOrphanCount,
+      .analysisQueueDepth,
     ]
   }
   enum Failure: Error, Equatable { case invalidIdentity, invalidLimit, unavailable, incomplete }
@@ -423,6 +460,8 @@ final class ResourceRecorder: @unchecked Sendable {
           Self.diarizationKeys.contains(meetingKey)
         } else if metric == .identificationFailure {
           Self.identificationKeys.contains(meetingKey)
+        } else if metric == .analysisFailure {
+          Self.analysisKeys.contains(meetingKey)
         } else {
           metric?.isMeeting == true && Self.isValidMeetingKey(meetingKey)
         }
@@ -601,6 +640,9 @@ final class ResourceRecorder: @unchecked Sendable {
     DiarizationFailureCategory.allCases.map(\.rawValue))
   static let identificationKeys: Set<String> = Set(
     IdentificationFailureCategory.allCases.map(\.rawValue))
+  /// The failure category is the only analysis dimension.
+  static let analysisKeys: Set<String> = Set(
+    AnalysisFailureCategory.allCases.map(\.rawValue))
   static func isValidMeetingKey(_ key: String) -> Bool { meetingKeys.contains(key) }
 
   static func isValidOutcome(_ outcome: String) -> Bool {

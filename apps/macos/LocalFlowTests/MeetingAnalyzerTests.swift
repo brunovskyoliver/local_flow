@@ -1026,6 +1026,32 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(run.failureDetail, "server_busy")
   }
 
+  // MARK: T099 — language policy (US12)
+
+  /// The three language fixtures send `language_policy.output` of `sk`, `en`
+  /// and `mixed` with `preserve_terms: true`; the run row stores the
+  /// `language_policy` the accepted result reported (the scripted response
+  /// echoes the request's output value).
+  func testLanguageFixturesSendPolicyAndStoreIt() async throws {
+    for (name, expected) in [("slovak", AnalysisLanguage.sk), ("english", .en), ("mixed", .mixed)] {
+      let fixture = try IntelligenceFixtures.meeting(name)
+      let reader = FakeEvidenceReader(fixture: fixture)
+      let store = FakeAnalysisStore()
+      let transport = FakeAnalysisTransport()
+      try transport.script(response: "language-valid")
+      let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+      let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+      XCTAssertEqual(run.state, .succeeded, name)
+      let request = try XCTUnwrap(transport.requests.first, name)
+      XCTAssertEqual(request.meeting.languagePolicy.output, expected, name)
+      XCTAssertTrue(request.meeting.languagePolicy.preserveTerms, name)
+      XCTAssertEqual(run.languagePolicy, expected, name)
+      let rows = try await store.runs(meetingID: fixture.id, limit: 1)
+      XCTAssertEqual(rows.first?.languagePolicy, expected, name)
+    }
+  }
+
   private func makeAnalyzer(
     reader: FakeEvidenceReader,
     store: FakeAnalysisStore,

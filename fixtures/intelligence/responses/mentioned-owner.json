@@ -48,7 +48,7 @@
             "decisions": [],
             "action_items": [
               {
-                "text": "Send the contract",
+                "text": "Notify the customer about the change",
                 "owner": {
                   "kind": "mentioned",
                   "name": "Tomáš"
