@@ -525,6 +525,61 @@ final class SummaryModelTests: XCTestCase {
       now: 4)
   }
 
+  // MARK: T084 — reading time, order, report
+
+  /// FR-037: the deployment analysis reads as `1 MIN READ`, computed on the
+  /// Mac; action items lead the four lists in contract order and the two
+  /// empty lists stay absent.
+  func testReadingMinutesOrderAndHiddenEmpties() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, _, _, _) = try await makeModel(fixture: fixture)
+    await model.refresh()
+    let read = try XCTUnwrap(model.readModel)
+    XCTAssertEqual(read.readingMinutes, 1)
+    XCTAssertEqual(read.actionItems.count, 3)
+    XCTAssertEqual(
+      read.nextSteps.map(\.text), ["Reconfirm the deployment window on Monday morning"])
+    XCTAssertEqual(read.decisions.map(\.text), ["Deployment moves to Monday"])
+    XCTAssertTrue(read.openQuestions.isEmpty)
+    XCTAssertTrue(read.risks.isEmpty)
+  }
+
+  /// `copyText()` is `AnalysisReport`: the fixture's title and date head the
+  /// report, the trailing line closes it, and the dated action item carries
+  /// `(due 25 Sep)`.
+  func testCopyTextDelegatesToAnalysisReport() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, _, _, _) = try await makeModel(fixture: fixture)
+    await model.refresh()
+    let read = try XCTUnwrap(model.readModel)
+    let text = try XCTUnwrap(model.copyText())
+    XCTAssertEqual(
+      text,
+      AnalysisReport.text(model: read, title: "Deployment sync", date: "20 Sep 2026"))
+    XCTAssertTrue(text.hasPrefix("Deployment sync\n20 Sep 2026"))
+    XCTAssertTrue(text.contains("(due 25 Sep)"))
+    XCTAssertTrue(text.hasSuffix(AnalysisReport.trailingLine))
+    XCTAssertFalse(text.contains("Open questions"), "an empty section is absent")
+    XCTAssertFalse(text.contains("Risks / blockers"), "an empty section is absent")
+  }
+
+  /// Color is never the only cue: the participant chip pairs a name with its
+  /// color index, the mentioned chip carries its caption and the unresolved
+  /// chip keeps a text label — each maps to its contract accessibilityValue.
+  func testOwnerChipStylesAreNeverColorAlone() {
+    XCTAssertEqual(
+      SummaryTabView.OwnerChip.accessibilityValue(
+        .participant(name: "Martin K.", colorIndex: 5, certainty: .confirmed)),
+      "confirmed participant")
+    XCTAssertEqual(
+      SummaryTabView.OwnerChip.accessibilityValue(
+        .mentioned(name: "Jana", suggestion: nil)),
+      "mentioned name")
+    XCTAssertEqual(
+      SummaryTabView.OwnerChip.accessibilityValue(.unresolved(label: "Speaker 3")),
+      "owner unresolved")
+  }
+
   /// Runs the analyzer on `fixture` (unless `run` is false) against the
   /// scripted `response` stream, then returns the model plus the fakes the
   /// test tunes.

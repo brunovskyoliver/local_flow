@@ -319,6 +319,24 @@ final class NativePresentationTests: XCTestCase {
       SummaryTabView(model: succeeded.0),
       to: output.appendingPathComponent("summary-succeeded.png"), appearance: .aqua,
       scheme: .light)
+    try await render(
+      SummaryTabView(model: succeeded.0),
+      to: output.appendingPathComponent("summary-succeeded-dark.png"), appearance: .darkAqua,
+      scheme: .dark)
+
+    // Stale (T084): an evidence write behind the accepted analysis paints the
+    // amber banner while the content stays readable, in both appearances.
+    succeeded.3.noteRows.append(
+      NoteParagraph(ordinal: 99, text: "Added later.", hash: String(repeating: "a", count: 64)))
+    await succeeded.0.refresh()
+    try await render(
+      SummaryTabView(model: succeeded.0),
+      to: output.appendingPathComponent("summary-stale.png"), appearance: .aqua,
+      scheme: .light)
+    try await render(
+      SummaryTabView(model: succeeded.0),
+      to: output.appendingPathComponent("summary-stale-dark.png"), appearance: .darkAqua,
+      scheme: .dark)
   }
 
   /// Feature 010 (T076): the sheet with a Recognized, a Possible, an Unknown and a
