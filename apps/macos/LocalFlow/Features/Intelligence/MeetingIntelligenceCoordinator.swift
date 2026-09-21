@@ -54,9 +54,9 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     enqueue(id, trigger: .automatic)
   }
 
-  /// Generate Summary, Retry and Regenerate; always allowed, whatever the
-  /// automatic preference says.
-  func generate(meetingID: UUID, trigger: AnalysisTrigger = .manual) {
+  /// Generate Summary, Retry and Regenerate (`requestRun` in the contract);
+  /// always allowed, whatever the automatic preference says.
+  func requestRun(meetingID: UUID, trigger: AnalysisTrigger = .manual) {
     enqueue(meetingID, trigger: trigger)
   }
 
@@ -89,6 +89,11 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     progress[id] = nil
     if activeMeetingID == id { await stopActive() }
     if admitting.contains(id) { cancelled.insert(id) }
+    if let run = try? await store.latestRun(meetingID: id),
+      run.state == .pending || run.state == .running
+    {
+      try? await store.cancel(runID: run.id, now: clock.nowMilliseconds)
+    }
     if status?.meetingID == id { status = nil }
   }
 
@@ -100,12 +105,11 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     status?.stale = true
   }
 
-  /// Launch resume: meetings whose run row is already `pending`.
-  func resume(_ ids: [UUID]) {
-    for id in ids {
-      admit(id, trigger: .restart) { [analyzer] in
-        try await analyzer.resumeAdmission(meetingID: id)
-      }
+  /// Launch resume (FR-007a): the reconciler interrupted the leftover rows
+  /// and picked these meetings; each restarts through the queue as a fresh run.
+  func resume(_ restarts: [UUID]) {
+    for id in restarts {
+      enqueue(id, trigger: .restart)
     }
   }
 

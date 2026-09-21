@@ -614,6 +614,12 @@ final class AppServices {
     transcription.intelligence = intelligence
     meetingIntelligence = intelligence
     let identificationReconciler = IdentificationReconciler(store: identities, clock: clock)
+    let intelligenceReconciler = IntelligenceReconciler(
+      store: analysisStore,
+      automaticEnabled: { [weak self] in
+        await MainActor.run { self?.preferences.meetingSummariesAutomatic ?? false }
+      },
+      clock: clock)
     let gate = reconciliationGate
     let reconciler = MeetingReconciler(
       store: store, root: root, recorder: recorder, clock: SystemMeetingClock())
@@ -627,6 +633,7 @@ final class AppServices {
       // Speaker runs depend on final transcripts, so they are reconciled last.
       let diarizationSummary = await diarizationReconciler.run()
       let identificationSummary = await identificationReconciler.run()
+      let intelligenceSummary = await intelligenceReconciler.run()
       await MainActor.run {
         gate.complete(summary)
         self.meetingCoordinator?.markReconciliationComplete()
@@ -635,6 +642,7 @@ final class AppServices {
         transcription.resumeFinalizations(transcriptSummary.resume)
         diarization.resume(diarizationSummary.resume)
         identification.resume(identificationSummary.resume)
+        intelligence.resume(intelligenceSummary.restarts)
         if let text = summary.noticeText { self.showMeetingNotice(text) }
         var remainder = transcriptSummary
         remainder.resume = []

@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import XCTest
 
 @testable import LocalFlow
@@ -418,6 +419,163 @@ final class MeetingAnalyzerTests: XCTestCase {
 
     let preserved = try await store.readModel(meetingID: fixture.id)
     XCTAssertEqual(preserved, accepted)
+  }
+
+  // MARK: T068 — failure matrix
+
+  /// Every transport or validation failure lands on the run row with a
+  /// category and `completed_at`; no content row is written and the accepted
+  /// analysis — when one exists — stays byte-identical (T068).
+  private func runAndAssertFailure(
+    steps: [FakeAnalysisTransport.Step],
+    category: AnalysisFailureCategory,
+    state: AnalysisRunState = .failed,
+    file: StaticString = #filePath, line: UInt = #line
+  ) async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let valid = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
+    transport.script(.full, [.lines(.init(value: valid))] + steps)
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let accepted = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(accepted.state, .succeeded, file: file, line: line)
+    let before = try await store.readModel(meetingID: fixture.id)
+
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(run.state, state, file: file, line: line)
+    XCTAssertEqual(run.failureCategory, category, file: file, line: line)
+    XCTAssertNotNil(run.completedAt, file: file, line: line)
+    let after = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(after, before, file: file, line: line)
+  }
+
+  func testFailureMatrixTransportErrors() async throws {
+    // What AnalysisClient throws for a refused connection, a 401 and a 404.
+    for (error, category) in [
+      (AnalysisFailure(.serverUnreachable), AnalysisFailureCategory.serverUnreachable),
+      (AnalysisFailure(.authenticationFailed), .authenticationFailed),
+      (AnalysisFailure(.serverUnavailable), .serverUnavailable),
+      (AnalysisFailure(.oversizedResponse), .oversizedResponse),
+    ] {
+      try await runAndAssertFailure(steps: [.failure(error)], category: category)
+    }
+  }
+
+  func testFailureMatrixServerErrorEvents() async throws {
+    for (code, category) in [
+      ("backend_unavailable", AnalysisFailureCategory.backendUnavailable),
+      ("backend_timeout", .backendTimeout),
+      ("backend_first_token_timeout", .backendTimeout),
+    ] {
+      let event: [String: Any] = [
+        "schema_version": 1, "type": "error", "request_id": "*", "code": code,
+      ]
+      try await runAndAssertFailure(
+        steps: [.lines(.init(value: [event]))], category: category)
+    }
+  }
+
+  func testFailureMatrixResponseFixtures() async throws {
+    for (name, category) in [
+      ("unsupported-version", AnalysisFailureCategory.unsupportedVersion),
+      ("malformed-json", .malformedResponse),
+      ("wrong-meeting", .meetingMismatch),
+      ("over-cap-decisions", .overCap),
+    ] {
+      let batch = try IntelligenceFixtures.response(name)[.full]![0]
+      try await runAndAssertFailure(steps: [.lines(.init(value: batch))], category: category)
+    }
+  }
+
+  /// SQLITE_FULL from the store maps to `persistence_capacity`, not a generic
+  /// failure — the UI tells the user storage is full.
+  func testStoreCapacityMapsToPersistenceCapacity() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "deployment-valid")
+    store.failures["adopt"] = DatabaseError(resultCode: .SQLITE_FULL, message: "full")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(run.state, .failed)
+    XCTAssertEqual(run.failureCategory, .persistenceCapacity)
+    let model = try await store.readModel(meetingID: fixture.id)
+    XCTAssertNil(model)
+  }
+
+  /// R11: the deadline is 60 s + 90 s × 1 request = 150 s. A stream still
+  /// parked when the clock passes it ends the run `timed_out` and cancels the
+  /// work — nothing is adopted when the gate opens afterwards.
+  func testRunDeadlineFiresTimedOut() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let batch = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
+    let gate = PreparationGate()
+    transport.script(.full, [.hold(gate, lines: .init(value: batch))])
+    let clock = FakeMeetingClock()
+    let analyzer = makeAnalyzer(
+      reader: reader, store: store, transport: transport, clock: clock)
+
+    let task = Task { try await analyzer.run(meetingID: fixture.id, trigger: .manual) }
+    await clock.waitForSleepers()
+    await clock.advance(by: .seconds(150))
+    let run = try await task.value
+    XCTAssertEqual(run.state, .timedOut)
+    XCTAssertEqual(run.failureCategory, .timeout)
+    XCTAssertNotNil(run.completedAt)
+    await gate.open()
+    let model = try await store.readModel(meetingID: fixture.id)
+    XCTAssertNil(model)
+  }
+
+  /// Cancelling mid-stream cancels the transport and writes `cancelled`; a
+  /// result that arrives afterwards writes nothing.
+  func testCancellationMidStreamWritesCancelled() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let batch = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
+    let gate = PreparationGate()
+    transport.script(.full, [.hold(gate, lines: .init(value: batch))])
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let task = Task { try await analyzer.run(meetingID: fixture.id, trigger: .manual) }
+    await gate.waitUntilStarted()
+    task.cancel()
+    await gate.open()
+    await assertThrowsErrorAsync(try await task.value) { error in
+      XCTAssertTrue(error is CancellationError)
+    }
+    let run = try await store.latestRun(meetingID: fixture.id)
+    XCTAssertEqual(run?.state, .cancelled)
+    let model = try await store.readModel(meetingID: fixture.id)
+    XCTAssertNil(model)
+  }
+
+  /// A retry on unchanged evidence hashes to the same `evidence_version`.
+  func testRetryReusesEvidenceVersionWhenUnchanged() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "deployment-valid")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let first = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    let retry = try await analyzer.run(meetingID: fixture.id, trigger: .retry)
+    XCTAssertEqual(first.state, .succeeded)
+    XCTAssertEqual(retry.state, .succeeded)
+    XCTAssertEqual(retry.evidenceVersion, first.evidenceVersion)
+    let rows = try await store.runs(meetingID: fixture.id, limit: 10)
+    XCTAssertEqual(rows.count, 2)
   }
 
   // MARK: Helpers

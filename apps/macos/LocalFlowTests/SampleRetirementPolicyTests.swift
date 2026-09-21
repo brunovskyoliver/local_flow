@@ -42,8 +42,10 @@ final class SampleRetirementPolicyTests: XCTestCase {
     let others = (1..<10).map { entry($0, quality: 0.5) }
     let outcome = SampleRetirementPolicy.retire(active: others + [good], incoming: [poor])
     XCTAssertEqual(outcome.retire, [poor.id])
-    // A distinct direction survives over a duplicate of higher quality.
-    let diverse = entry(15, quality: 0.5)
+    // A distinct direction survives over a duplicate of higher quality. The
+    // distinct sample scores above the equal-quality others so it never ties
+    // with them for the second retirement slot.
+    let diverse = entry(15, quality: 0.8)
     let duplicateHigh = entry(0, quality: 0.7)
     let second = SampleRetirementPolicy.retire(
       active: others + [good], incoming: [diverse, duplicateHigh])

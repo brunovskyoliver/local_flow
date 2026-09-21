@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import OSLog
 
 /// The run executor (`contracts/client-analysis.md` "Run algorithm"). One `run`
@@ -109,20 +110,6 @@ struct MeetingAnalyzer: Sendable {
       endpoint: prepared.endpoint, snapshot: prepared.snapshot)
   }
 
-  /// Launch resume: the meeting already holds a `pending` row. The snapshot is
-  /// rebuilt; if evidence drifted while the app was away the pre-adoption
-  /// check fails the run with `evidence_changed`, as it should.
-  func resumeAdmission(meetingID: UUID) async throws -> Admission {
-    guard let run = try await store.latestRun(meetingID: meetingID),
-      run.state == .pending
-    else { throw AnalysisFailure(.notEligible, detail: "no_pending_run") }
-    let prepared = try await prepare(meetingID: meetingID)
-    return Admission(
-      run: run, passID: prepared.passID, meeting: prepared.meeting,
-      language: prepared.language, policy: prepared.policy,
-      endpoint: prepared.endpoint, snapshot: prepared.snapshot)
-  }
-
   /// One-shot convenience: admit then execute.
   func run(meetingID: UUID, trigger: AnalysisTrigger) async throws -> AnalysisRun {
     try await execute(admit(meetingID: meetingID, trigger: trigger))
@@ -152,50 +139,57 @@ struct MeetingAnalyzer: Sendable {
     do {
       run = try await store.start(runID: run.id, now: clock.nowMilliseconds)
       progress?(meetingID, AnalysisProgress(label: "Analyzing", fraction: 0))
+      let runID = run.id
 
-      // 5. Health: `result_schema_version` and the limits/caps minima.
-      let health = try await transport.health(endpoint: admission.endpoint)
-      if let schema = health.resultSchemaVersion, schema != 1 {
-        throw AnalysisFailure(.unsupportedVersion, detail: "result_schema_version")
+      // R11: the whole run — health, requests, validation, adoption — races
+      // the deadline. The staged path raises the request count (T090).
+      let deadline = admission.policy.runDeadline(requestCount: 1)
+      run = try await racing(deadline) {
+        // 5. Health: `result_schema_version` and the limits/caps minima.
+        let health = try await self.transport.health(endpoint: admission.endpoint)
+        if let schema = health.resultSchemaVersion, schema != 1 {
+          throw AnalysisFailure(.unsupportedVersion, detail: "result_schema_version")
+        }
+        let effective = admission.policy.lowered(by: health)
+
+        // 6. One `full` request, consumed to a validated result.
+        let request = Self.request(
+          meetingID: meetingID, runID: runID, meeting: admission.meeting,
+          snapshot: admission.snapshot, language: admission.language)
+        let result = try await self.consume(
+          request: request, endpoint: admission.endpoint, runID: runID,
+          meetingID: meetingID, policy: effective)
+
+        // 7. Validate against the same evidence. The due step re-resolves
+        // relative phrases against the meeting's start in its zone.
+        var analysisEvidence = admission.snapshot.evidence(meetingID: meetingID)
+        analysisEvidence.meetingStartedAtMs =
+          admission.meeting?.startedAt ?? admission.meeting?.createdAt
+        analysisEvidence.meetingTimeZone = admission.meeting?.timeZone
+        let (validated, counts) = try AnalysisValidator.validate(
+          result: result.analysis,
+          against: analysisEvidence,
+          policy: effective)
+
+        // 8. The evidence must not have drifted mid-run.
+        let fresh = try await self.loadEvidence(
+          meetingID: meetingID, passID: admission.passID)
+        guard
+          Self.compute(
+            meetingID: meetingID, passID: admission.passID, snapshot: fresh,
+            language: admission.language, policy: admission.policy
+          )
+          .hex == admission.run.evidenceVersion
+        else {
+          throw AnalysisFailure(.sourceValidation, detail: "evidence_changed")
+        }
+
+        // 9. Adopt: supersede, content swap, re-point, re-match overlays.
+        let identity = Self.identity(health: health, payload: result.payload)
+        return try await self.store.adopt(
+          runID: runID, result: validated, counts: counts, identity: identity,
+          now: self.clock.nowMilliseconds)
       }
-      let effective = admission.policy.lowered(by: health)
-
-      // 6. One `full` request, consumed to a validated result.
-      let request = Self.request(
-        meetingID: meetingID, runID: run.id, meeting: admission.meeting,
-        snapshot: admission.snapshot, language: admission.language)
-      let result = try await consume(
-        request: request, endpoint: admission.endpoint, runID: run.id,
-        meetingID: meetingID, policy: effective)
-
-      // 7. Validate against the same evidence. The due step re-resolves
-      // relative phrases against the meeting's start in its zone.
-      var analysisEvidence = admission.snapshot.evidence(meetingID: meetingID)
-      analysisEvidence.meetingStartedAtMs =
-        admission.meeting?.startedAt ?? admission.meeting?.createdAt
-      analysisEvidence.meetingTimeZone = admission.meeting?.timeZone
-      let (validated, counts) = try AnalysisValidator.validate(
-        result: result.analysis,
-        against: analysisEvidence,
-        policy: effective)
-
-      // 8. The evidence must not have drifted mid-run.
-      let fresh = try await loadEvidence(meetingID: meetingID, passID: admission.passID)
-      guard
-        Self.compute(
-          meetingID: meetingID, passID: admission.passID, snapshot: fresh,
-          language: admission.language, policy: admission.policy
-        )
-        .hex == admission.run.evidenceVersion
-      else {
-        throw AnalysisFailure(.sourceValidation, detail: "evidence_changed")
-      }
-
-      // 9. Adopt: supersede, content swap, re-point, re-match overlays.
-      let identity = Self.identity(health: health, payload: result.payload)
-      run = try await store.adopt(
-        runID: run.id, result: validated, counts: counts, identity: identity,
-        now: clock.nowMilliseconds)
       progress?(meetingID, nil)
       return run
     } catch is CancellationError {
@@ -207,11 +201,44 @@ struct MeetingAnalyzer: Sendable {
       progress?(meetingID, nil)
       return (try? await store.latestRun(meetingID: meetingID)) ?? run
     } catch {
+      // The history-database ceiling is a capacity refusal, not a fault.
+      let category: AnalysisFailureCategory =
+        (error as? DatabaseError)?.resultCode == .SQLITE_FULL
+        ? .persistenceCapacity : .persistenceFailure
       try? await store.fail(
-        runID: run.id, category: .persistenceFailure, detail: "internal_error",
+        runID: run.id, category: category, detail: "internal_error",
         now: clock.nowMilliseconds)
       progress?(meetingID, nil)
       return (try? await store.latestRun(meetingID: meetingID)) ?? run
+    }
+  }
+
+  /// Runs `operation` against a `clock` sleeper; whichever finishes first
+  /// decides. Expiry throws `AnalysisFailure(.timeout)` and cancels the work
+  /// task — the stream stops at the next cancellation point, and `finish`
+  /// writes `timed_out`. A cancelled run task surfaces as `CancellationError`.
+  private func racing(
+    _ deadline: Duration,
+    operation: @escaping @Sendable () async throws -> AnalysisRun
+  ) async throws -> AnalysisRun {
+    enum Outcome: Sendable {
+      case done(AnalysisRun)
+      case expired
+    }
+    return try await withThrowingTaskGroup(of: Outcome.self) { group in
+      group.addTask { .done(try await operation()) }
+      group.addTask {
+        try await self.clock.sleep(for: deadline)
+        return .expired
+      }
+      for try await outcome in group {
+        group.cancelAll()
+        switch outcome {
+        case .done(let run): return run
+        case .expired: throw AnalysisFailure(.timeout)
+        }
+      }
+      throw CancellationError()
     }
   }
 
@@ -365,6 +392,11 @@ struct MeetingAnalyzer: Sendable {
             AnalysisProgress(
               label: "Analyzing", fraction: min(0.9, 0.1 + 0.8 * Double(chars) / Double(total))))
         case .result(let payload):
+          // A result that names another run is stale protocol noise — the
+          // store's `running` + `current_run_id` guard is the second line.
+          guard payload.runID == nil || payload.runID == runID.uuidString else {
+            throw AnalysisFailure(.malformedResponse, detail: "run_id")
+          }
           result = Outcome(analysis: payload.analysis, payload: payload)
         case .error(_, let code):
           throw AnalysisFailure(AnalysisFailureCategory.forServerCode(code))
@@ -374,6 +406,9 @@ struct MeetingAnalyzer: Sendable {
         responseBytes = responseBytes_
       }
     }
+    // A cancelled stream can end `nil` without throwing; the run still writes
+    // `cancelled`, not a malformed-response failure.
+    try Task.checkCancellation()
     try await store.recordRequest(
       runID: runID, inputBytes: requestBytes, outputBytes: responseBytes,
       retried: false, preempted: false)

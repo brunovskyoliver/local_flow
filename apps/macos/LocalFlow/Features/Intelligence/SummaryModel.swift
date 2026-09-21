@@ -119,9 +119,9 @@ final class SummaryModel {
 
   // MARK: Actions
 
-  func generate() { coordinator.generate(meetingID: meetingID, trigger: .manual) }
-  func regenerate() { coordinator.generate(meetingID: meetingID, trigger: .regenerate) }
-  func retry() { coordinator.generate(meetingID: meetingID, trigger: .retry) }
+  func generate() { coordinator.requestRun(meetingID: meetingID, trigger: .manual) }
+  func regenerate() { coordinator.requestRun(meetingID: meetingID, trigger: .regenerate) }
+  func retry() { coordinator.requestRun(meetingID: meetingID, trigger: .retry) }
   func cancel() async { await coordinator.cancel(meetingID: meetingID) }
 
   /// The status circle cycles open → completed; the row's menu can dismiss or

@@ -32,7 +32,7 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     let fixture = try IntelligenceFixtures.meeting("deployment")
     let (coordinator, store, _, _) = try makeCoordinator(
       fixture: fixture, automatic: false)
-    coordinator.generate(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
     await waitUntil { store.adoptCalls == 1 }
     let run = try await store.latestRun(meetingID: fixture.id)
     XCTAssertEqual(run?.state, .succeeded)
@@ -47,7 +47,7 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
       passID: UUID(), updatedAt: 0)
     var notices: [String] = []
     coordinator.noticePublished = { notices.append($0) }
-    coordinator.generate(meetingID: meetingID)
+    coordinator.requestRun(meetingID: meetingID)
     await waitUntil { !notices.isEmpty }
     XCTAssertEqual(notices, ["The transcript is not finished yet."])
     let refusedRun = try await store.latestRun(meetingID: meetingID)
@@ -69,12 +69,12 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
         .hold(gate, lines: FakeAnalysisTransport.Lines(value: batch)),
         .lines(FakeAnalysisTransport.Lines(value: batch)),
       ])
-    coordinator.generate(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
     await gate.waitUntilStarted()
 
     // A second meeting admits pending while the first holds the single slot.
     let second = UUID()
-    coordinator.generate(meetingID: second)
+    coordinator.requestRun(meetingID: second)
     await waitUntil { coordinator.queuedCount == 1 }
     let status = await coordinator.observe(meetingID: second)
     XCTAssertEqual(status.state, .pending)
@@ -103,14 +103,14 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     var notices: [String] = []
     coordinator.noticePublished = { notices.append($0) }
 
-    coordinator.generate(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
     await gate.waitUntilStarted()
     // 1 running + 99 queued + admissions in flight fills the 100 bound.
     for _ in 0..<99 {
-      coordinator.generate(meetingID: UUID())
+      coordinator.requestRun(meetingID: UUID())
     }
     await waitUntil { coordinator.queuedCount == 99 }
-    coordinator.generate(meetingID: UUID())
+    coordinator.requestRun(meetingID: UUID())
     XCTAssertEqual(notices, [MeetingIntelligenceCoordinator.queueFullNotice])
     XCTAssertEqual(store.admitCalls, 100)
     await gate.open()
@@ -130,11 +130,11 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
         .hold(gate, lines: FakeAnalysisTransport.Lines(value: batch)),
         .lines(FakeAnalysisTransport.Lines(value: batch)),
       ])
-    coordinator.generate(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
     await gate.waitUntilStarted()
 
     let second = UUID()
-    coordinator.generate(meetingID: second)
+    coordinator.requestRun(meetingID: second)
     await waitUntil { coordinator.queuedCount == 1 }
     await coordinator.cancel(meetingID: second)
     let run = try await store.latestRun(meetingID: second)
@@ -142,6 +142,95 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     let status = await coordinator.observe(meetingID: second)
     XCTAssertEqual(status.state, .cancelled)
     await gate.open()
+  }
+
+  // MARK: T069 — cancel running, retry, delete
+
+  /// `cancel` on the running meeting cancels the task, joins it, and the
+  /// published status reads `cancelled` only after the store write.
+  func testCancelRunningWritesCancelledBeforeStatus() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let batch = try XCTUnwrap(
+      IntelligenceFixtures.response("deployment-valid")[.full]?.first)
+    let gate = PreparationGate()
+    let (coordinator, store, transport, _) = try makeCoordinator(fixture: fixture)
+    transport.script(.full, [.hold(gate, lines: .init(value: batch))])
+    coordinator.requestRun(meetingID: fixture.id)
+    await gate.waitUntilStarted()
+
+    await coordinator.cancel(meetingID: fixture.id)
+
+    let run = try await store.latestRun(meetingID: fixture.id)
+    XCTAssertEqual(run?.state, .cancelled)
+    let status = await coordinator.observe(meetingID: fixture.id)
+    XCTAssertEqual(status.state, .cancelled)
+    await gate.open()
+  }
+
+  /// Retry on a failed run admits a new row and keeps the failed one.
+  func testRetryOnFailedRunStartsNewRunKeepsOld() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let batch = try XCTUnwrap(
+      IntelligenceFixtures.response("deployment-valid")[.full]?.first)
+    let (coordinator, store, transport, _) = try makeCoordinator(fixture: fixture)
+    transport.script(
+      .full,
+      [
+        .failure(AnalysisFailure(.serverUnreachable)),
+        .lines(.init(value: batch)),
+      ])
+    _ = await coordinator.observe(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
+    await waitUntil { coordinator.status?.state == .failed }
+
+    coordinator.requestRun(meetingID: fixture.id, trigger: .retry)
+    await waitUntil { store.adoptCalls == 1 }
+
+    let rows = try await store.runs(meetingID: fixture.id, limit: 10)
+    XCTAssertEqual(rows.count, 2)
+    XCTAssertEqual(Set(rows.map(\.trigger)), [.manual, .retry])
+    XCTAssertEqual(rows.first { $0.trigger == .retry }?.state, .succeeded)
+    XCTAssertEqual(rows.first { $0.trigger == .manual }?.state, .failed)
+  }
+
+  /// `meetingWillDelete` cancels the running task and waits for it before
+  /// returning; queued ids leave the queue so the cascade can proceed.
+  func testMeetingWillDeleteCancelsAndJoins() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let batch = try XCTUnwrap(
+      IntelligenceFixtures.response("deployment-valid")[.full]?.first)
+    let gate = PreparationGate()
+    let (coordinator, store, transport, _) = try makeCoordinator(fixture: fixture)
+    transport.script(.full, [.hold(gate, lines: .init(value: batch))])
+    coordinator.requestRun(meetingID: fixture.id)
+    await gate.waitUntilStarted()
+    let second = UUID()
+    coordinator.requestRun(meetingID: second)
+    await waitUntil { coordinator.queuedCount == 1 }
+
+    await coordinator.meetingWillDelete(id: second)
+    XCTAssertEqual(coordinator.queuedCount, 0)
+    let queued = try await store.latestRun(meetingID: second)
+    XCTAssertEqual(queued?.state, .cancelled)
+
+    await coordinator.meetingWillDelete(id: fixture.id)
+    let run = try await store.latestRun(meetingID: fixture.id)
+    XCTAssertEqual(run?.state, .cancelled)
+    await gate.open()
+  }
+
+  /// A failed run publishes the category so the header can pick the fixed
+  /// message — never a generic failure.
+  func testFailedStatusCarriesCategory() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (coordinator, store, transport, _) = try makeCoordinator(fixture: fixture)
+    transport.script(.full, [.failure(AnalysisFailure(.authenticationFailed))])
+    _ = await coordinator.observe(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
+    await waitUntil { coordinator.status?.state == .failed }
+    let status = await coordinator.observe(meetingID: fixture.id)
+    XCTAssertEqual(status.state, .failed)
+    XCTAssertEqual(status.failure, .authenticationFailed)
   }
 
   // MARK: Helpers

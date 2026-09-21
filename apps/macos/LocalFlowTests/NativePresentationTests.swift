@@ -297,7 +297,7 @@ final class NativePresentationTests: XCTestCase {
     let gate = PreparationGate()
     let lines = try IntelligenceFixtures.response("deployment-valid")[.full]!.first!
     running.5.script(.full, [.hold(gate, lines: .init(value: lines))])
-    running.1.generate(meetingID: fixture.id)
+    running.1.requestRun(meetingID: fixture.id)
     for _ in 0..<200 {
       await running.0.refresh()
       if case .running = running.0.header { break }
