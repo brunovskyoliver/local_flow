@@ -19,7 +19,8 @@ enum AnalysisRunState: String, Sendable, Equatable, CaseIterable {
     switch (self, next) {
     case (.pending, .running), (.pending, .cancelled), (.pending, .interrupted),
       (.running, .succeeded), (.running, .failed), (.running, .timedOut),
-      (.running, .cancelled), (.running, .interrupted), (.succeeded, .superseded):
+      (.running, .cancelled), (.running, .interrupted), (.running, .superseded),
+      (.succeeded, .superseded):
       return true
     default: return false
     }

@@ -346,4 +346,20 @@ final class SpeakerIdentificationCoordinatorTests: XCTestCase {
     let active = try await store.activeRuns(limit: 10)
     XCTAssertLessThanOrEqual(active.count, 1, "At most the run that was in flight")
   }
+
+  // MARK: T078 — evidence-change notice
+
+  /// Confirmations, corrections, adopted results and enrollments all funnel
+  /// through `identitiesDidChange`; the observer hears it exactly once with
+  /// the meeting id.
+  func testIdentitiesDidChangeNotifiesEvidenceDidChangeOnce() async throws {
+    let coordinator = makeCoordinator()
+    let observer = FakeIntelligenceObserver()
+    coordinator.intelligence = observer
+    let id = UUID()
+
+    coordinator.identitiesDidChange(meetingID: id)
+
+    XCTAssertEqual(observer.evidenceChanges, [id])
+  }
 }

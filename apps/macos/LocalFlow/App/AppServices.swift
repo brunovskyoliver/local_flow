@@ -612,6 +612,10 @@ final class AppServices {
       clock: clock)
     intelligence.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
     transcription.intelligence = intelligence
+    // Evidence writes — assignment, identity changes, adopted labels and note
+    // saves — refresh the analysis stale flag (US7).
+    diarization.intelligence = intelligence
+    identification.intelligence = intelligence
     meetingIntelligence = intelligence
     let identificationReconciler = IdentificationReconciler(store: identities, clock: clock)
     let intelligenceReconciler = IntelligenceReconciler(
@@ -680,6 +684,7 @@ final class AppServices {
         },
         isDictationBusy: { [weak self] in self?.coordinator?.busy == true },
         reconciliationGate: { await gate.wait() }, options: options, transcription: transcription))
+    coordinator.intelligence = intelligence
     meetingCoordinator = coordinator
     meetingLibrary = MeetingLibraryViewModel(store: store) { [weak coordinator] in
       coordinator?.activeMeetingID
@@ -770,9 +775,11 @@ final class AppServices {
 
   /// Notes for a library meeting; the active meeting's editor lives on the coordinator.
   func makeNotesEditor(for detail: MeetingDetail) -> MeetingNotesEditor {
-    MeetingNotesEditor(
+    let editor = MeetingNotesEditor(
       meetingID: detail.meeting.id, store: meetingStore!, clock: SystemMeetingClock(),
       text: detail.notes.text, revision: detail.notes.revision)
+    editor.intelligence = meetingIntelligence
+    return editor
   }
 
   /// One `SummaryModel` per opened meeting; nil before the intelligence stack

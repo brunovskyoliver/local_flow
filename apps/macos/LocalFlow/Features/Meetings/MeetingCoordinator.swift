@@ -46,6 +46,8 @@ final class MeetingCoordinator {
   private(set) var refusal: String?
   private(set) var refusalPermission: MeetingTrackKind?
   private(set) var notesEditor: MeetingNotesEditor?
+  /// Feature 011: the live notes editor reports saved paragraphs as evidence.
+  @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
   /// Bumped after every persisted change so the library can refresh.
   private(set) var version = 0
 
@@ -265,7 +267,10 @@ final class MeetingCoordinator {
       stretchStartedAt = recordingAt
       for runtime in runtimes.values { await runtime.worker.start() }
       await installAnalysisTaps()
-      notesEditor = MeetingNotesEditor(meetingID: created.id, store: deps.store, clock: deps.clock)
+      let editor = MeetingNotesEditor(
+        meetingID: created.id, store: deps.store, clock: deps.clock)
+      editor.intelligence = intelligence
+      notesEditor = editor
       var published = MeetingStatus(
         id: created.id, state: .recording, storageWarning: warning, createdAt: created.createdAt)
       published.transcriptionRequested = deps.transcription != nil && options.transcription

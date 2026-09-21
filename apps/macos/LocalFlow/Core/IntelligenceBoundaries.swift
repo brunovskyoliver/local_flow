@@ -469,6 +469,8 @@ protocol AnalysisStoring: Sendable {
   func timeOut(runID: UUID, now: Int64) async throws
   func cancel(runID: UUID, now: Int64) async throws
   func interrupt(runID: UUID, now: Int64) async throws
+  /// FR-011: a run whose late result was discarded; no content, no failure.
+  func supersede(runID: UUID, now: Int64) async throws
   func activeRuns(limit: Int) async throws -> [AnalysisRun]
   func latestRun(meetingID: UUID) async throws -> AnalysisRun?
   func markAutoRestarted(meetingID: UUID, now: Int64) async throws

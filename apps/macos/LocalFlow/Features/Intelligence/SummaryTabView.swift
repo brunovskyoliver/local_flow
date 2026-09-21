@@ -142,13 +142,15 @@ struct SummaryTabView: View {
     }
   }
 
+  /// contracts/ui.md "stale": the amber banner sentence.
+  static let staleBannerText =
+    "Summary may be outdated — the transcript, speakers or notes changed after it was generated."
+
   private var staleBanner: some View {
     HStack(spacing: 10) {
       Image(systemName: "exclamationmark.triangle").foregroundStyle(SottoPalette.warning)
-      Text(
-        "Summary may be outdated — the transcript, speakers or notes changed after it was generated."
-      )
-      .foregroundStyle(SottoPalette.ink)
+      Text(Self.staleBannerText)
+        .foregroundStyle(SottoPalette.ink)
       Spacer()
       Button("Regenerate") { model.regenerate() }
         .buttonStyle(PrototypeButtonStyle())

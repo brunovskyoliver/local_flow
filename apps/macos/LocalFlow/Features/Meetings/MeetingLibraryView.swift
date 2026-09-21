@@ -8,6 +8,8 @@ struct MeetingLibraryView: View {
   var transcriptStore: (any TranscriptStoring)? = nil
   var diarization: SpeakerDiarizationCoordinator? = nil
   var identification: SpeakerIdentificationCoordinator? = nil
+  /// Feature 011: evidence-change notices for merges and identity saves.
+  var intelligence: MeetingIntelligenceCoordinator? = nil
   /// Feature 011: one `SummaryModel` per opened meeting.
   var summaryModelFactory: ((UUID) -> SummaryModel?)? = nil
   let notesEditorFactory: (MeetingDetail) -> MeetingNotesEditor
@@ -32,6 +34,7 @@ struct MeetingLibraryView: View {
             ? coordinator.notesEditor : nil,
           transcriptStore: transcriptStore, transcription: coordinator.transcriptionCoordinator,
           coordinator: coordinator, diarization: diarization, identification: identification,
+          intelligence: intelligence,
           identificationEnabled: preferences.speakerIdentificationEnabled,
           summaryModelFactory: summaryModelFactory, initialTab: model.openTab
         ).id(detail.meeting.id)

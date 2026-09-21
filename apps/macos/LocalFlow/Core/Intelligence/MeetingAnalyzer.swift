@@ -200,6 +200,12 @@ struct MeetingAnalyzer: Sendable {
       try? await finish(runID: run.id, meetingID: meetingID, failure: failure)
       progress?(meetingID, nil)
       return (try? await store.latestRun(meetingID: meetingID)) ?? run
+    } catch AnalysisStore.Error.lateWrite {
+      // FR-011: a newer run won the `current_run_id` race; this result is
+      // discarded and the run is superseded, never failed.
+      try? await store.supersede(runID: run.id, now: clock.nowMilliseconds)
+      progress?(meetingID, nil)
+      return (try? await store.latestRun(meetingID: meetingID)) ?? run
     } catch {
       // The history-database ceiling is a capacity refusal, not a fault.
       let category: AnalysisFailureCategory =

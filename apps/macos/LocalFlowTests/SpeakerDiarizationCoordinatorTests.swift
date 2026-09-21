@@ -454,4 +454,27 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
     await settled(cancelled, coordinator)
     XCTAssertEqual(observer.adopted, [id])
   }
+
+  // MARK: T078 — evidence-change notice
+
+  /// A manual segment assignment is an evidence write: the observer hears it
+  /// exactly once with the meeting id.
+  func testCorrectSegmentNotifiesEvidenceDidChangeOnce() async throws {
+    let coordinator = makeCoordinator()
+    let observer = FakeIntelligenceObserver()
+    coordinator.intelligence = observer
+    let id = try await finalMeeting()
+    coordinator.meetingTranscriptDidFinalize(id: id)
+    await DiarizationTestSupport.eventually { await self.state(id) == .succeeded }
+    let rows = try await transcripts.page(
+      meetingID: id, finality: .final, after: nil, limit: 10)
+    let segment = try XCTUnwrap(rows.first?.id)
+    let before = observer.evidenceChanges.count
+
+    let corrected = await coordinator.correctSegment(
+      meetingID: id, segmentID: segment, to: .newSpeaker)
+    XCTAssertTrue(corrected)
+    XCTAssertEqual(observer.evidenceChanges.count, before + 1)
+    XCTAssertEqual(observer.evidenceChanges.last, id)
+  }
 }

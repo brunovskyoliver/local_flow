@@ -179,6 +179,22 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
+  /// FR-011: a run that lost the `current_run_id` race is discarded, not failed.
+  /// Its row stays content-free and `completed_at` is set.
+  func supersede(runID: UUID, now: Int64) throws {
+    try database.write { db in
+      guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRun }
+      if run.state == .superseded { return }
+      guard run.state.canTransition(to: .superseded) else { throw Error.invalidTransition }
+      try db.execute(
+        sql: """
+          UPDATE analysis_runs SET state='superseded', completed_at=?,
+            duration_ms=MAX(0, ? - COALESCE(started_at, created_at)) WHERE id=?
+          """,
+        arguments: [now, now, runID.uuidString])
+    }
+  }
+
   // MARK: Adoption
 
   /// One transaction per data-model.md "Retention and deletion". A response

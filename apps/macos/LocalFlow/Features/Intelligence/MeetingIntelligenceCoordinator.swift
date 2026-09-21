@@ -97,12 +97,23 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     if status?.meetingID == id { status = nil }
   }
 
-  /// `IntelligenceObserving`: an evidence write (transcript, identity, notes)
-  /// may have outdated the accepted analysis. T076 replaces this with a
-  /// recomputed-version check.
+  /// `IntelligenceObserving`: an evidence write (assignment, identity, notes)
+  /// may have outdated the accepted analysis. The version is recomputed and
+  /// compared to the accepted run's — a display-name-only rename keeps the
+  /// version and never flips the flag. Staleness never enqueues a run.
   func evidenceDidChange(meetingID: UUID) {
-    guard status?.meetingID == meetingID, status?.hasAccepted == true else { return }
-    status?.stale = true
+    Task { [weak self] in await self?.refreshStaleness(meetingID) }
+  }
+
+  private func refreshStaleness(_ id: UUID) async {
+    guard let pointer = try? await store.analysis(meetingID: id),
+      let acceptedID = pointer.acceptedRunID,
+      let current = try? await analyzer.currentEvidenceVersion(meetingID: id),
+      let accepted = try? await store.runs(meetingID: id, limit: AnalysisStore.runRowCap)
+        .first(where: { $0.id == acceptedID })
+    else { return }
+    guard status?.meetingID == id, status?.hasAccepted == true else { return }
+    status?.stale = current != accepted.evidenceVersion
   }
 
   /// Launch resume (FR-007a): the reconciler interrupted the leftover rows

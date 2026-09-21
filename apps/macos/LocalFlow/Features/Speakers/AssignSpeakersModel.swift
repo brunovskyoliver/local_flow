@@ -107,6 +107,13 @@ final class AssignSpeakersModel: Identifiable {
   private(set) var structureRevision = 0
   /// Bumped after Save committed identity actions, so the transcript relabels.
   private(set) var identityRevision = 0
+  /// Set by a Save that wrote identity state (link, reject, unlink, resolve or
+  /// an enrollment request); the caller reports `identitiesDidChange` then.
+  /// A names-only save leaves it false — a rename is not an evidence change.
+  private(set) var didChangeIdentities = false
+  /// Feature 011: merges and unmerges are evidence writes; names and identity
+  /// saves report through `identitiesDidChange` instead.
+  @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
   /// R7: "Couldn't carry over" entries from the last adoption, oldest first.
   private(set) var reviews: [ReviewNotice] = []
   /// Known speakers for the picker and duplicate detection; empty with the setting off.
@@ -200,6 +207,7 @@ final class AssignSpeakersModel: Identifiable {
     }
     await reload(keeping: drafts)
     structureRevision += 1
+    intelligence?.evidenceDidChange(meetingID: meetingID)
   }
 
   /// Sections in color order with the local speaker first.
@@ -368,6 +376,7 @@ final class AssignSpeakersModel: Identifiable {
   func save() async -> Bool {
     guard canSave else { return false }
     isSaving = true
+    didChangeIdentities = false
     defer { isSaving = false }
     var names: [UUID: String?] = [:]
     for section in sections {
@@ -405,6 +414,7 @@ final class AssignSpeakersModel: Identifiable {
           try await identityStore.link(
             meetingID: meetingID, speakerID: root, to: known, origin: .manualProfileSelection,
             now: now)
+          didChangeIdentities = true
           if section.alsoRemember {
             requests.append(
               (
@@ -419,6 +429,7 @@ final class AssignSpeakersModel: Identifiable {
           try await identityStore.link(
             meetingID: meetingID, speakerID: root, to: candidate, origin: .userConfirmation,
             now: now)
+          didChangeIdentities = true
           if section.alsoRemember {
             requests.append(
               (
@@ -431,6 +442,7 @@ final class AssignSpeakersModel: Identifiable {
         case .chooseAnother(let known):
           try await identityStore.link(
             meetingID: meetingID, speakerID: root, to: known, origin: .manualCorrection, now: now)
+          didChangeIdentities = true
           if section.alsoRemember {
             requests.append(
               (
@@ -448,9 +460,11 @@ final class AssignSpeakersModel: Identifiable {
           } else {
             try await identityStore.unlink(meetingID: meetingID, speakerID: root, now: now)
           }
+          didChangeIdentities = true
         case .resolveMerged(let resolution):
           try await identityStore.resolveMerged(
             meetingID: meetingID, rootID: root, to: resolution, now: now)
+          didChangeIdentities = true
         case .rememberLocal:
           let name = section.trimmedDraft ?? "You"
           requests.append(

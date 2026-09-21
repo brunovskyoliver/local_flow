@@ -578,6 +578,115 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(rows.count, 2)
   }
 
+  // MARK: T075 — regeneration and FR-011
+
+  /// A successful `regenerate` supersedes the previous accepted run, deletes
+  /// its content rows and records the evidence version it validated against.
+  /// The analyzer never calls transcription, diarization or identification —
+  /// it reuses the evidence reader's current snapshot.
+  func testRegenerateSupersedesOldRunAndAdoptsNewEvidence() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "deployment-valid")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let first = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(first.state, .succeeded)
+
+    // The evidence changed since the accepted run: the transcript gained a
+    // segment, so the regeneration records a new evidence version.
+    reader.segments.append(
+      EvidenceSegment(
+        id: UUID(), ordinal: reader.segments.count, startMs: 0, endMs: 1,
+        speaker: .unknown, text: "One more remark."))
+
+    let regen = try await analyzer.run(meetingID: fixture.id, trigger: .regenerate)
+    XCTAssertEqual(regen.state, .succeeded)
+    XCTAssertEqual(regen.trigger, .regenerate)
+    XCTAssertNotEqual(regen.evidenceVersion, first.evidenceVersion)
+
+    // The old run is superseded with no content rows; the read model is the
+    // new run's analysis.
+    let rows = try await store.runs(meetingID: fixture.id, limit: 10)
+    XCTAssertEqual(rows.first { $0.id == first.id }?.state, .superseded)
+    let model = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(model?.run.id, regen.id)
+  }
+
+  /// A failed regeneration leaves the accepted analysis byte-identical.
+  func testFailedRegenerationPreservesAcceptedAnalysis() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let valid = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
+    transport.script(
+      .full,
+      [
+        .lines(FakeAnalysisTransport.Lines(value: valid)),
+        .failure(AnalysisFailure(.serverUnreachable)),
+      ])
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let first = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(first.state, .succeeded)
+    let accepted = try await store.readModel(meetingID: fixture.id)
+
+    let regen = try await analyzer.run(meetingID: fixture.id, trigger: .regenerate)
+    XCTAssertEqual(regen.state, .failed)
+    XCTAssertEqual(regen.failureCategory, .serverUnreachable)
+    XCTAssertEqual(regen.trigger, .regenerate)
+
+    let preserved = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(preserved, accepted)
+  }
+
+  /// FR-011: a run whose response lands after it lost the `current_run_id`
+  /// race writes nothing; its row is superseded, never failed, and the newer
+  /// run's accepted state wins.
+  func testOlderRunFinishingLastIsDiscarded() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let gate = PreparationGate()
+    let valid = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
+    transport.script(
+      .full,
+      [
+        .holdBeforeCompletion(gate, lines: .init(value: valid)),
+        .lines(.init(value: valid)),
+      ])
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let admissionA = try await analyzer.admit(meetingID: fixture.id, trigger: .manual)
+    let taskA = Task { try await analyzer.execute(admissionA) }
+    // A is running; its stream delivered the result and parks before
+    // `completed`. Then A loses the race: it goes terminal mid-flight.
+    for _ in 0..<200 {
+      if (try? await store.latestRun(meetingID: fixture.id))?.state == .running { break }
+      await Task.yield()
+    }
+    try await store.supersede(runID: admissionA.run.id, now: 2)
+
+    let admissionB = try await analyzer.admit(meetingID: fixture.id, trigger: .manual)
+    let runB = try await analyzer.execute(admissionB)
+    XCTAssertEqual(runB.state, .succeeded)
+
+    await gate.open()
+    let late = try await taskA.value
+    XCTAssertEqual(late.id, runB.id, "the stale run returns the winning state")
+
+    let rows = try await store.runs(meetingID: fixture.id, limit: 10)
+    let runA = try XCTUnwrap(rows.first { $0.id == admissionA.run.id })
+    XCTAssertEqual(runA.state, .superseded)
+    XCTAssertNil(runA.failureCategory, "a discarded result is not a failure")
+    let model = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(model?.run.id, runB.id)
+  }
+
   // MARK: Helpers
 
   // MARK: T045 — fabricated and foreign sources

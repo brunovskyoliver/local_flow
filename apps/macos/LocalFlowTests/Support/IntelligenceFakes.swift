@@ -506,7 +506,10 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
           rows[i].state = .superseded
         }
         var run = rows[index]
-        precondition(run.state.canTransition(to: .succeeded))
+        // FR-011: a result for a run that left `running` or is no longer
+        // `current_run_id` writes nothing.
+        guard run.state == .running, pointers[meetingID]?.currentRunID == runID
+        else { throw AnalysisStore.Error.lateWrite }
         run.state = .succeeded
         run.completedAt = now
         run.serverVersion = identity.serverVersion
@@ -634,6 +637,17 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
   func interrupt(runID: UUID, now: Int64) async throws {
     try check("interrupt")
     await transition(runID, to: .interrupted, now: now, failure: .interrupted)
+  }
+
+  /// FR-011: the run that lost the `current_run_id` race; content-free.
+  /// Already `superseded` is a no-op so a double discard never crashes.
+  func supersede(runID: UUID, now: Int64) async throws {
+    try check("supersede")
+    let already = lock.withLock {
+      runRows.values.flatMap { $0 }.first { $0.id == runID }?.state == .superseded
+    }
+    if already { return }
+    await transition(runID, to: .superseded, now: now)
   }
 
   func activeRuns(limit: Int) async throws -> [AnalysisRun] {
@@ -799,4 +813,17 @@ final class FakeEvidenceReader: MeetingEvidenceReading, @unchecked Sendable {
   }
 
   func meeting(id: UUID) async throws -> Meeting? { meetingRow }
+}
+
+/// Records `evidenceDidChange` calls; T078 asserts each write path notifies
+/// exactly once with the meeting id.
+@MainActor
+final class FakeIntelligenceObserver: IntelligenceObserving {
+  private(set) var evidenceChanges: [UUID] = []
+  private(set) var finalized: [UUID] = []
+  private(set) var deleted: [UUID] = []
+
+  func meetingTranscriptDidFinalize(id: UUID) { finalized.append(id) }
+  func meetingWillDelete(id: UUID) async { deleted.append(id) }
+  func evidenceDidChange(meetingID: UUID) { evidenceChanges.append(meetingID) }
 }

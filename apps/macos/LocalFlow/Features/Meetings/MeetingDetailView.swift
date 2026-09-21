@@ -18,6 +18,8 @@ struct MeetingDetailView: View {
   var diarization: SpeakerDiarizationCoordinator? = nil
   /// Feature 010: persistent identities; nil or the setting off keeps the 007 view.
   var identification: SpeakerIdentificationCoordinator? = nil
+  /// Feature 011: evidence-change notices for merges and identity saves.
+  var intelligence: MeetingIntelligenceCoordinator? = nil
   var identificationEnabled = false
   /// Feature 011: one `SummaryModel` per opened meeting; nil keeps the placeholder.
   var summaryModelFactory: ((UUID) -> SummaryModel?)? = nil
@@ -197,7 +199,10 @@ struct MeetingDetailView: View {
           model: assigning,
           saved: {
             diarization?.namesDidChange(meetingID: assigning.meetingID)
-            identification?.identitiesDidChange(meetingID: assigning.meetingID)
+            // A names-only save is a rename, not an identity or evidence change.
+            if assigning.didChangeIdentities {
+              identification?.identitiesDidChange(meetingID: assigning.meetingID)
+            }
           },
           structureChanged: { Task { await pager?.refreshLabels() } },
           close: { assigningSpeakers = nil }
@@ -659,13 +664,17 @@ struct MeetingDetailView: View {
   private func openAssignSpeakers() {
     guard let diarization else { return }
     guard showsIdentification, let coordinator = identification else {
-      assigningSpeakers = AssignSpeakersModel(meetingID: meeting.id, store: diarization.store)
+      let model = AssignSpeakersModel(meetingID: meeting.id, store: diarization.store)
+      model.intelligence = intelligence
+      assigningSpeakers = model
       return
     }
-    assigningSpeakers = AssignSpeakersModel(
+    let model = AssignSpeakersModel(
       meetingID: meeting.id, store: diarization.store, identityStore: coordinator.store,
       identificationEnabled: true,
       enroll: { request in await coordinator.enroll(request) })
+    model.intelligence = intelligence
+    assigningSpeakers = model
   }
 
   // MARK: Identification (Feature 010)

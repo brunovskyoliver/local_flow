@@ -235,6 +235,46 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
 
   // MARK: Helpers
 
+  // MARK: T076 — evidenceDidChange and the stale flag
+
+  /// An evidence write recomputes the version through one paged read; when it
+  /// differs from the accepted run's, `status.stale` flips. Nothing is queued.
+  func testEvidenceDidChangeFlipsStaleWhenVersionDiffers() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (coordinator, store, _, reader) = try makeCoordinator(fixture: fixture)
+    coordinator.requestRun(meetingID: fixture.id)
+    await waitUntil { store.adoptCalls == 1 }
+    let observed = await coordinator.observe(meetingID: fixture.id)
+    XCTAssertTrue(observed.hasAccepted)
+    XCTAssertFalse(observed.stale)
+
+    // A notes write changes the evidence; one paged read proves the drift.
+    let pagesBefore = reader.pageRequests.count
+    reader.noteRows.append(
+      NoteParagraph(ordinal: 99, text: "Added later.", hash: String(repeating: "a", count: 64)))
+    coordinator.evidenceDidChange(meetingID: fixture.id)
+    await waitUntil { coordinator.status?.stale == true }
+    XCTAssertEqual(coordinator.status?.stale, true)
+    XCTAssertGreaterThan(reader.pageRequests.count, pagesBefore)
+    XCTAssertEqual(coordinator.queuedCount, 0, "staleness never enqueues a run")
+  }
+
+  /// A display-name-only rename leaves the version alone: participant names
+  /// are hashed out, so the flag stays down and nothing is queued.
+  func testRenameOnlyLeavesStaleFalse() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (coordinator, store, _, reader) = try makeCoordinator(fixture: fixture)
+    coordinator.requestRun(meetingID: fixture.id)
+    await waitUntil { store.adoptCalls == 1 }
+    _ = await coordinator.observe(meetingID: fixture.id)
+
+    reader.participantRows[0].name = "Martin"
+    coordinator.evidenceDidChange(meetingID: fixture.id)
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertEqual(coordinator.status?.stale, false)
+    XCTAssertEqual(coordinator.queuedCount, 0)
+  }
+
   private func makeCoordinator(
     fixture: IntelligenceFixture? = nil, automatic: Bool = true
   ) throws -> (

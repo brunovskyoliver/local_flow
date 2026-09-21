@@ -24,6 +24,8 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
   var noticePublished: (@MainActor (String) -> Void)?
   /// R10: after an enrollment stored ≥ 1 sample, once per enrollment.
   var enrollmentDidStore: (@MainActor (_ knownSpeakerID: UUID, _ name: String) -> Void)?
+  /// Feature 011: identity writes refresh the analysis stale flag.
+  @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
 
   @ObservationIgnored private let identifier: MeetingIdentifier
   @ObservationIgnored private let enrollment: EnrollmentJob
@@ -135,9 +137,12 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
     await refresh(id)
   }
 
-  /// A confirmation or correction changed the meeting's effective identities.
+  /// A confirmation or correction changed the meeting's effective identities —
+  /// adopted run results, enrollments and every manual action funnel here, so
+  /// the evidence-change notice goes out exactly once per write.
   func identitiesDidChange(meetingID id: UUID) {
     if status?.meetingID == id { status?.identityRevision += 1 }
+    intelligence?.evidenceDidChange(meetingID: id)
   }
 
   func shutdown() async {

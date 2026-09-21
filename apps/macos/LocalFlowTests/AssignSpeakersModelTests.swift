@@ -611,4 +611,50 @@ final class AssignSpeakersIdentityModelTests: XCTestCase {
     XCTAssertFalse(
       try XCTUnwrap(remembered.identityBlock(for: first)).picker.contains { $0.id == me })
   }
+
+  // MARK: T078 — evidence-change notice
+
+  /// Merges and unmerges are evidence writes; each notifies exactly once with
+  /// the meeting id.
+  func testMergeAndUnmergeNotifyEvidenceDidChangeOnce() async throws {
+    let observer = FakeIntelligenceObserver()
+    let (model, _) = await model(summaries(), identityStore: FakeIdentityStore(known: known()))
+    model.intelligence = observer
+
+    await model.merge(second, into: first)
+    XCTAssertEqual(observer.evidenceChanges, [meetingID])
+    await model.unmerge(second)
+    XCTAssertEqual(observer.evidenceChanges, [meetingID, meetingID])
+  }
+
+  /// A names-only save is a rename: no identity flag, no evidence notice.
+  func testNamesOnlySaveIsNotAnEvidenceChange() async throws {
+    let observer = FakeIntelligenceObserver()
+    let (model, _) = await model(summaries(), identityStore: FakeIdentityStore(known: known()))
+    model.intelligence = observer
+    model.setDraft("Ben", for: second)
+
+    _ = await model.save()
+
+    XCTAssertFalse(model.didChangeIdentities)
+    XCTAssertTrue(observer.evidenceChanges.isEmpty)
+  }
+
+  /// An identity save reports through `didChangeIdentities` so the caller's
+  /// `identitiesDidChange` funnel publishes it once; the model does not also
+  /// publish.
+  func testIdentitySaveReportsThroughDidChangeIdentities() async throws {
+    let identities = FakeIdentityStore(known: known())
+    let observer = FakeIntelligenceObserver()
+    let (model, _) = await model(
+      summaries(firstIdentity: possible), identityStore: identities,
+      enroll: { _ in .noUsableSample })
+    model.intelligence = observer
+    model.setIdentityAction(.confirm, for: first)
+
+    _ = await model.save()
+
+    XCTAssertTrue(model.didChangeIdentities)
+    XCTAssertTrue(observer.evidenceChanges.isEmpty)
+  }
 }

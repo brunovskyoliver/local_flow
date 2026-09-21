@@ -435,6 +435,71 @@ final class SummaryModelTests: XCTestCase {
     XCTAssertEqual(read.actionItems.count, 1)
   }
 
+  // MARK: T077 — rename relabel and stale banner
+
+  /// Renaming a speaker relabels the owner chip at the next load: the stored
+  /// item text is untouched, no stale flag rises and the evidence version is
+  /// unchanged because names are hashed out of it.
+  func testRenameRelabelsOwnerWithoutStaleOrProseChange() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, _, _, speakers) = try await makeModel(fixture: fixture)
+    let martin = UUID(uuidString: "aaaa0002-0000-4000-8000-000000000002")!
+    let peter = UUID(uuidString: "aaaa0003-0000-4000-8000-000000000003")!
+    let oliver = UUID(uuidString: "aaaa0001-0000-4000-8000-000000000001")!
+    await speakers.setSummaries([
+      SpeakerSummary(
+        id: martin, source: .remote, labelOrdinal: 2, colorIndex: 5,
+        displayName: "Speaker 2", inRoom: false, speechMs: 1_000),
+      SpeakerSummary(
+        id: peter, source: .remote, labelOrdinal: 3, colorIndex: 1,
+        displayName: "Peter S.", inRoom: false, speechMs: 1_000),
+      SpeakerSummary(
+        id: oliver, source: .remote, labelOrdinal: 1, colorIndex: 3,
+        displayName: nil, inRoom: false, speechMs: 1_000,
+        identity: SpeakerIdentity(
+          state: .confirmed, origin: .userConfirmation,
+          knownSpeakerID: UUID(), knownSpeakerName: "Oliver B.")),
+    ])
+    await model.refresh()
+    let before = try XCTUnwrap(model.readModel)
+    let itemText = before.actionItems.first?.text
+
+    // Speaker 2 is renamed to "Martin".
+    try await speakers.saveNames(meetingID: fixture.id, names: [martin: "Martin"], now: 1)
+    await model.refresh()
+
+    let read = try XCTUnwrap(model.readModel)
+    XCTAssertFalse(read.stale, "a rename is not an evidence change")
+    XCTAssertEqual(read.actionItems.first?.text, itemText, "item prose is not rewritten")
+    guard case .participant(let name, _, _) = read.actionItems.first?.owner else {
+      XCTFail("expected a participant owner")
+      return
+    }
+    XCTAssertEqual(name, "Martin")
+  }
+
+  /// A stale analysis stays readable behind the amber banner with Regenerate
+  /// offered; the flag comes from the evidence-version comparison.
+  func testStaleAnalysisStaysReadableWithBanner() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (model, _, reader, speakers) = try await makeModel(fixture: fixture)
+    await speakers.setSummaries([])
+    await model.refresh()
+    XCTAssertEqual(model.header, .succeeded)
+
+    // A notes write after acceptance marks the analysis stale.
+    reader.noteRows.append(
+      NoteParagraph(ordinal: 99, text: "Added later.", hash: String(repeating: "b", count: 64)))
+    await model.refresh()
+
+    let read = try XCTUnwrap(model.readModel)
+    XCTAssertTrue(read.stale)
+    XCTAssertEqual(
+      SummaryTabView.staleBannerText,
+      "Summary may be outdated — the transcript, speakers or notes changed after it was generated.")
+    XCTAssertFalse(read.summary.text.isEmpty, "the old analysis stays readable")
+  }
+
   // MARK: Helpers
 
   /// Admits + adopts `actionItems` into `store` as the accepted analysis.

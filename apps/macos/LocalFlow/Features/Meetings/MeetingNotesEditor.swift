@@ -26,6 +26,8 @@ final class MeetingNotesEditor {
   private(set) var revealText: String?
   private var stored: String
   private var current: String
+  /// Feature 011: a saved note paragraph is an evidence write.
+  @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
   @ObservationIgnored private let store: any MeetingStoring
   @ObservationIgnored private let clock: any MeetingClock
   @ObservationIgnored private var debounceTask: Task<Void, Never>?
@@ -145,6 +147,7 @@ final class MeetingNotesEditor {
       isDirty = current != snapshot
       saveState = .saved
       notice = nil
+      intelligence?.evidenceDidChange(meetingID: meetingID)
     } catch {
       saveState = .notSaved
       notice = MeetingErrorMessage.notesNotSaved

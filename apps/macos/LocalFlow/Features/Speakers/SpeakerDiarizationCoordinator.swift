@@ -29,6 +29,9 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   var noticePublished: (@MainActor (String) -> Void)?
   /// Feature 010 (FR-022): told after the lease has finished and adoption committed.
   @ObservationIgnored weak var identification: (any IdentificationObserving)?
+  /// Feature 011: evidence writes (assignment, adopted labels) refresh the
+  /// analysis stale flag.
+  @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
 
   @ObservationIgnored private let diarizer: MeetingDiarizer
   /// Also the Assign speakers sheet's store.
@@ -72,6 +75,7 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     do {
       try await store.correctSegment(
         meetingID: meetingID, segmentID: segmentID, to: correction, now: clock.nowMilliseconds)
+      intelligence?.evidenceDidChange(meetingID: meetingID)
       return true
     } catch SpeakerStore.Error.correctionCapacity {
       noticePublished?("This meeting has too many speaker changes to save more.")
@@ -233,6 +237,8 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
       if status?.meetingID == id { status?.labelsRevision += 1 }
       // The diarizer's lease finished before adoption; identification may start now.
       identification?.diarizationDidAdopt(meetingID: id)
+      // New labels are evidence: an accepted analysis is now behind them.
+      intelligence?.evidenceDidChange(meetingID: id)
     case .failed, .cancelled, .nothingToRun: break
     }
     cancelled.remove(id)

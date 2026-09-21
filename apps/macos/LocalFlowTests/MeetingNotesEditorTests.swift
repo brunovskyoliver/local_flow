@@ -271,4 +271,33 @@ final class MeetingNotesEditorTests: XCTestCase {
       }
     }
   }
+
+  // MARK: T078 — evidence-change notice
+
+  /// A persisted note save is an evidence write; the observer hears it once
+  /// per save. A failed save is not evidence and publishes nothing.
+  func testSuccessfulSaveNotifiesEvidenceDidChangeOnce() async throws {
+    let (editor, store, clock) = makeEditor()
+    let observer = FakeIntelligenceObserver()
+    editor.intelligence = observer
+    editor.text = "hello"
+    await clock.advance(by: .seconds(2))
+    await settle()
+
+    XCTAssertEqual(store.saves.count, 1)
+    XCTAssertEqual(observer.evidenceChanges.count, 1)
+  }
+
+  func testFailedSaveDoesNotNotifyEvidenceDidChange() async throws {
+    let (editor, store, clock) = makeEditor()
+    store.failNext = true
+    let observer = FakeIntelligenceObserver()
+    editor.intelligence = observer
+    editor.text = "hello"
+    await clock.advance(by: .seconds(2))
+    await settle()
+
+    XCTAssertTrue(store.saves.isEmpty)
+    XCTAssertTrue(observer.evidenceChanges.isEmpty)
+  }
 }
