@@ -711,7 +711,9 @@ final class AppServices {
           status.meetingID == meetingTranscription?.finalizingMeetingID ? status.progress : nil
         },
         resumed: resumedFinalizations,
-        labeling: speakerDiarization?.activeMeetingID)
+        labeling: speakerDiarization?.activeMeetingID,
+        summarizing: meetingIntelligence?.activeMeetingID,
+        queuedSummaries: meetingIntelligence?.queuedCount ?? 0)
       panel.showBackgroundNotice(notice) { [weak self] in
         guard let self, let notice else { return }
         self.open(notice.destination)
@@ -721,9 +723,11 @@ final class AppServices {
     }
   }
 
-  /// One notice at a time: the running finalization first, then speaker labeling.
+  /// One notice at a time: the running finalization first, then speaker
+  /// labeling, then meeting summarization with its queue depth.
   static func backgroundNotice(
-    finalizing: UUID?, progress: Double?, resumed: Set<UUID>, labeling: UUID?
+    finalizing: UUID?, progress: Double?, resumed: Set<UUID>, labeling: UUID?,
+    summarizing: UUID? = nil, queuedSummaries: Int = 0
   ) -> BackgroundNotice? {
     if let finalizing {
       return BackgroundNotice(
@@ -738,16 +742,35 @@ final class AppServices {
         id: labeling, message: "Labeling speakers", symbol: "person.2", progress: nil,
         destination: .transcript(meetingID: labeling))
     }
+    if let summarizing {
+      let message =
+        queuedSummaries > 0
+        ? "Summarizing… (\(queuedSummaries) queued)" : "Summarizing…"
+      return BackgroundNotice(
+        id: summarizing, message: message, symbol: "text.quote", progress: nil,
+        destination: .summary(meetingID: summarizing))
+    }
     return nil
   }
 
   /// Opens the main window where the pill's work is: the note's transcript, or Notetaker.
   private func open(_ destination: BackgroundNotice.Destination) {
     router.show(.meetings)
-    guard case .transcript(let id) = destination, let library = meetingLibrary else { return }
+    let tab: NoteDetailTab
+    let id: UUID
+    switch destination {
+    case .transcript(let meetingID):
+      id = meetingID
+      tab = .transcript
+    case .summary(let meetingID):
+      id = meetingID
+      tab = .summary
+    case .meetings: return
+    }
+    guard let library = meetingLibrary else { return }
     Task {
       await library.refresh()
-      await library.open(id, tab: .transcript)
+      await library.open(id, tab: tab)
     }
   }
 

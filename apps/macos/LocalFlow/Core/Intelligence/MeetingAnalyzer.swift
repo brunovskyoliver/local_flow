@@ -331,7 +331,7 @@ struct MeetingAnalyzer: Sendable {
         snapshot: admission.snapshot, language: admission.language,
         stage: .full, chunk: nil, segments: admission.snapshot.segments,
         notes: admission.snapshot.notes, partials: nil)
-      return try await consume(
+      return try await consumeWithPreemptionRetry(
         request: request, endpoint: admission.endpoint, runID: runID,
         meetingID: meetingID, policy: effective, label: "Analyzing")
     }
@@ -357,7 +357,7 @@ struct MeetingAnalyzer: Sendable {
         stage: .chunk,
         chunk: .init(index: chunk.index, count: plan.chunks.count),
         segments: segments, notes: nil, partials: nil)
-      let outcome = try await consume(
+      let outcome = try await consumeWithPreemptionRetry(
         request: request, endpoint: admission.endpoint, runID: runID,
         meetingID: meetingID, policy: effective, label: label)
       _ = try AnalysisValidator.validate(
@@ -380,7 +380,7 @@ struct MeetingAnalyzer: Sendable {
           snapshot: admission.snapshot, language: admission.language,
           stage: .synthesis, chunk: nil, segments: nil,
           notes: isFinal ? admission.snapshot.notes : nil, partials: group)
-        let outcome = try await consume(
+        let outcome = try await consumeWithPreemptionRetry(
           request: request, endpoint: admission.endpoint, runID: runID,
           meetingID: meetingID, policy: effective, label: "Combining")
         if isFinal {
@@ -478,9 +478,37 @@ struct MeetingAnalyzer: Sendable {
     var payload: AnalysisEvent.ResultPayload
   }
 
+  /// `consume` plus the preemption rule (contract step 6): on a `preempted`
+  /// error the same stage is retried after 2 s × attempt, at most
+  /// `preemptionRetries` times, then the run fails `backend_busy`. The
+  /// preempted attempt is recorded on the row — it consumed server time.
+  private func consumeWithPreemptionRetry(
+    request: AnalysisRequest, endpoint: RewriteEndpoint, runID: UUID,
+    meetingID: UUID, policy: AnalysisPolicy, label: String
+  ) async throws -> Outcome {
+    var attempt = 0
+    while true {
+      do {
+        return try await consume(
+          request: request, endpoint: endpoint, runID: runID,
+          meetingID: meetingID, policy: policy, label: label,
+          retried: attempt > 0)
+      } catch let failure as AnalysisFailure
+        where failure.category == .backendBusy && failure.detail == "preempted"
+      {
+        try? await store.recordRequest(
+          runID: runID, inputBytes: 0, outputBytes: 0,
+          retried: attempt > 0, preempted: true)
+        attempt += 1
+        guard attempt <= policy.preemptionRetries else { throw failure }
+        try await clock.sleep(for: .seconds(2 * attempt))
+      }
+    }
+  }
+
   private func consume(
     request: AnalysisRequest, endpoint: RewriteEndpoint, runID: UUID, meetingID: UUID,
-    policy: AnalysisPolicy, label: String
+    policy: AnalysisPolicy, label: String, retried: Bool = false
   ) async throws -> Outcome {
     var result: Outcome?
     var requestBytes = 0
@@ -510,7 +538,8 @@ struct MeetingAnalyzer: Sendable {
           }
           result = Outcome(analysis: payload.analysis, payload: payload)
         case .error(_, let code):
-          throw AnalysisFailure(AnalysisFailureCategory.forServerCode(code))
+          throw AnalysisFailure(
+            AnalysisFailureCategory.forServerCode(code), detail: code)
         }
       case .completed(let requestBytes_, let responseBytes_):
         requestBytes = requestBytes_
@@ -522,7 +551,7 @@ struct MeetingAnalyzer: Sendable {
     try Task.checkCancellation()
     try await store.recordRequest(
       runID: runID, inputBytes: requestBytes, outputBytes: responseBytes,
-      retried: false, preempted: false)
+      retried: retried, preempted: false)
     guard let result else { throw AnalysisFailure(.malformedResponse, detail: "no_result") }
     return result
   }

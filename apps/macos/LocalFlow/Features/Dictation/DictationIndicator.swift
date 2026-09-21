@@ -172,6 +172,7 @@ struct BackgroundNotice: Equatable, Identifiable {
   enum Destination: Equatable {
     case meetings
     case transcript(meetingID: UUID)
+    case summary(meetingID: UUID)
   }
   let id: UUID
   var message: String

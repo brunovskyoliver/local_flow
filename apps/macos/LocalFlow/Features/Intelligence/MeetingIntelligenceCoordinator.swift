@@ -32,6 +32,10 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
   @ObservationIgnored private var task: Task<Void, Never>?
   @ObservationIgnored private var cancelled: Set<UUID> = []
   @ObservationIgnored private var progress: [UUID: AnalysisProgress] = [:]
+  /// Meetings whose `server_busy` run already used its one re-queue
+  /// (contract step 6: retry once after 30 s, then fail for good).
+  @ObservationIgnored private var busyRequeued: Set<UUID> = []
+  @ObservationIgnored private var requeueTasks: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private let logger = Logger(
     subsystem: "org.localflow.LocalFlow", category: "intelligence")
 
@@ -66,6 +70,7 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     triggers[id] = nil
     admissions[id] = nil
     progress[id] = nil
+    dropRequeue(id)
     if activeMeetingID == id {
       await stopActive()
     } else {
@@ -87,6 +92,7 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     triggers[id] = nil
     admissions[id] = nil
     progress[id] = nil
+    dropRequeue(id)
     if activeMeetingID == id { await stopActive() }
     if admitting.contains(id) { cancelled.insert(id) }
     if let run = try? await store.latestRun(meetingID: id),
@@ -138,6 +144,9 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     queue.removeAll()
     triggers.removeAll()
     progress.removeAll()
+    for task in requeueTasks.values { task.cancel() }
+    requeueTasks.removeAll()
+    busyRequeued.removeAll()
     await stopActive()
   }
 
@@ -230,8 +239,34 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     progress[id] = nil
     triggers[id] = nil
     cancelled.remove(id)
+    // contracts/client-analysis.md step 6: `server_busy` (or HTTP 429) is a
+    // re-queue request — the run re-enters the queue once after 30 s; a
+    // second busy answer stays `server_unavailable`.
+    if let run, run.state == .failed, run.failureCategory == .serverUnavailable,
+      run.failureDetail == "server_busy", !busyRequeued.contains(id)
+    {
+      busyRequeued.insert(id)
+      requeueTasks[id] = Task { [weak self] in
+        try? await self?.clock.sleep(for: .seconds(30))
+        guard !Task.isCancelled else { return }
+        await self?.requeue(id)
+      }
+    } else {
+      busyRequeued.remove(id)
+    }
     await refresh(id)
     pump()
+  }
+
+  private func requeue(_ id: UUID) {
+    requeueTasks[id] = nil
+    enqueue(id, trigger: .retry)
+  }
+
+  private func dropRequeue(_ id: UUID) {
+    requeueTasks[id]?.cancel()
+    requeueTasks[id] = nil
+    busyRequeued.remove(id)
   }
 
   private func report(_ id: UUID, progress value: AnalysisProgress?) {

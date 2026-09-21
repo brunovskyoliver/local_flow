@@ -275,8 +275,107 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     XCTAssertEqual(coordinator.queuedCount, 0)
   }
 
+  // MARK: T092 — queue positions, server_busy requeue, background pill
+
+  /// Three requested meetings: one runs, two wait as `pending` rows with
+  /// queue positions 1 and 2 (contract `queued_position`).
+  func testThreeRequestsQueueWithPositions() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let batch = try XCTUnwrap(
+      IntelligenceFixtures.response("deployment-valid")[.full]?.first)
+    let gate = PreparationGate()
+    let (coordinator, store, transport, _) = try makeCoordinator(fixture: fixture)
+    transport.script(
+      .full,
+      [
+        .hold(gate, lines: .init(value: batch)),
+        .lines(.init(value: batch)),
+        .lines(.init(value: batch)),
+      ])
+    coordinator.requestRun(meetingID: fixture.id)
+    await gate.waitUntilStarted()
+
+    let second = UUID()
+    let third = UUID()
+    coordinator.requestRun(meetingID: second)
+    await waitUntil { coordinator.queuedCount == 1 }
+    coordinator.requestRun(meetingID: third)
+    await waitUntil { coordinator.queuedCount == 2 }
+    XCTAssertEqual(coordinator.activeMeetingID, fixture.id)
+
+    let statusSecond = await coordinator.observe(meetingID: second)
+    XCTAssertEqual(statusSecond.state, .pending)
+    XCTAssertEqual(statusSecond.queuedPosition, 1)
+    let statusThird = await coordinator.observe(meetingID: third)
+    XCTAssertEqual(statusThird.state, .pending)
+    XCTAssertEqual(statusThird.queuedPosition, 2)
+    let runSecond = try await store.latestRun(meetingID: second)
+    let runThird = try await store.latestRun(meetingID: third)
+    XCTAssertEqual(runSecond?.state, .pending)
+    XCTAssertEqual(runThird?.state, .pending)
+
+    await gate.open()
+    await waitUntil { store.adoptCalls == 3 }
+  }
+
+  /// `server_busy` is a re-queue request: the run re-enters the queue once
+  /// after 30 s; a second busy answer fails `server_unavailable` for good.
+  func testServerBusyRequeuesOnceThenFailsServerUnavailable() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let busy: [String: Any] = [
+      "schema_version": 1, "type": "error", "request_id": "*", "code": "server_busy",
+    ]
+    let clock = FakeMeetingClock()
+    let (coordinator, store, transport, _) = try makeCoordinator(
+      fixture: fixture, clock: clock)
+    transport.script(
+      .full,
+      [.lines(.init(value: [busy])), .lines(.init(value: [busy]))])
+    _ = await coordinator.observe(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
+    await waitUntil { coordinator.status?.state == .failed }
+    XCTAssertEqual(coordinator.status?.failure, .serverUnavailable)
+
+    // The re-queue waits 30 s on the coordinator clock, then admits a fresh
+    // run with the `retry` trigger.
+    await clock.waitForSleepers(1)
+    await clock.advance(by: .seconds(30))
+    var rows: [AnalysisRun] = []
+    for _ in 0..<200 {
+      rows = (try? await store.runs(meetingID: fixture.id, limit: 10)) ?? []
+      if rows.count == 2 && rows.allSatisfy({ $0.state.isTerminal }) { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(rows.count, 2)
+    XCTAssertEqual(rows[1].trigger, .retry)
+    XCTAssertEqual(
+      rows.map(\.failureCategory), [.serverUnavailable, .serverUnavailable])
+    XCTAssertEqual(rows[1].state, .failed)
+
+    // The re-queue is used up — no third admission.
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(store.admitCalls, 2)
+  }
+
+  /// While a run is active the pill reports "Summarizing…" with the queued
+  /// count; it opens the meeting's Summary tab.
+  func testSummarizingNoticeCarriesQueuedCount() {
+    let id = UUID()
+    let notice = AppServices.backgroundNotice(
+      finalizing: nil, progress: nil, resumed: [], labeling: nil,
+      summarizing: id, queuedSummaries: 2)
+    XCTAssertEqual(notice?.message, "Summarizing… (2 queued)")
+    XCTAssertEqual(notice?.destination, .summary(meetingID: id))
+
+    let single = AppServices.backgroundNotice(
+      finalizing: nil, progress: nil, resumed: [], labeling: nil,
+      summarizing: id, queuedSummaries: 0)
+    XCTAssertEqual(single?.message, "Summarizing…")
+  }
+
   private func makeCoordinator(
-    fixture: IntelligenceFixture? = nil, automatic: Bool = true
+    fixture: IntelligenceFixture? = nil, automatic: Bool = true,
+    clock: FakeMeetingClock = FakeMeetingClock()
   ) throws -> (
     MeetingIntelligenceCoordinator, FakeAnalysisStore, FakeAnalysisTransport,
     FakeEvidenceReader
@@ -295,7 +394,7 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     return (
       MeetingIntelligenceCoordinator(
         analyzer: analyzer, store: store,
-        automaticEnabled: { automatic }, clock: FakeMeetingClock()),
+        automaticEnabled: { automatic }, clock: clock),
       store, transport, reader
     )
   }

@@ -927,6 +927,105 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertNil(storedModel?.summary)
   }
 
+  // MARK: - T091 — preemption retries (US10)
+
+  /// Contract step 6: a `preempted` error retries the same stage after
+  /// 2 s × attempt. Two preemptions then a success completes the run;
+  /// `preemption_count` counts the interrupted attempts.
+  func testPreemptedTwiceRetriesThenSucceeds() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let valid = try IntelligenceFixtures.response("deployment-valid")[.full]![0]
+    let preempted: [String: Any] = [
+      "schema_version": 1, "type": "error", "request_id": "*", "code": "preempted",
+    ]
+    transport.script(
+      .full,
+      [
+        .lines(.init(value: [preempted])),
+        .lines(.init(value: [preempted])),
+        .lines(.init(value: valid)),
+      ])
+    let clock = FakeMeetingClock()
+    let analyzer = makeAnalyzer(
+      reader: reader, store: store, transport: transport, clock: clock)
+
+    let task = Task {
+      try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    }
+    // Sleeper 1 is the run deadline; each preemption parks one retry sleep.
+    await clock.waitForSleepers(2)
+    await clock.advance(by: .seconds(2))
+    await clock.waitForSleepers(3)
+    await clock.advance(by: .seconds(4))
+    let run = try await task.value
+
+    XCTAssertEqual(run.state, .succeeded)
+    XCTAssertEqual(run.preemptionCount, 2)
+    XCTAssertEqual(transport.requests.count, 3)
+    // Same stage, same shape on every attempt.
+    XCTAssertTrue(transport.requests.allSatisfy { $0.stage == .full })
+  }
+
+  /// The fourth `preempted` answer ends the run `backend_busy` — the retry
+  /// budget is three. Every interrupted attempt lands on the counters.
+  func testPreemptedFourTimesFailsBackendBusy() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let preempted: [String: Any] = [
+      "schema_version": 1, "type": "error", "request_id": "*", "code": "preempted",
+    ]
+    transport.script(
+      .full,
+      (0..<4).map { _ in .lines(.init(value: [preempted])) })
+    let clock = FakeMeetingClock()
+    let analyzer = makeAnalyzer(
+      reader: reader, store: store, transport: transport, clock: clock)
+
+    let task = Task {
+      try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    }
+    await clock.waitForSleepers(2)
+    await clock.advance(by: .seconds(2))
+    await clock.waitForSleepers(3)
+    await clock.advance(by: .seconds(4))
+    await clock.waitForSleepers(4)
+    await clock.advance(by: .seconds(6))
+    let run = try await task.value
+
+    XCTAssertEqual(run.state, .failed)
+    XCTAssertEqual(run.failureCategory, .backendBusy)
+    XCTAssertEqual(run.preemptionCount, 4)
+    XCTAssertEqual(run.requestCount, 4)
+    XCTAssertEqual(run.retryCount, 3)
+    XCTAssertEqual(transport.requests.count, 4)
+    let storedModel = try await store.readModel(meetingID: fixture.id)
+    XCTAssertNil(storedModel?.summary)
+  }
+
+  /// `server_busy` fails the run `server_unavailable` with the code preserved
+  /// in `failure_detail` — the detail is the coordinator's requeue signal.
+  func testServerBusyFailsServerUnavailableWithDetail() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let busy: [String: Any] = [
+      "schema_version": 1, "type": "error", "request_id": "*", "code": "server_busy",
+    ]
+    transport.script(.full, [.lines(.init(value: [busy]))])
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(run.state, .failed)
+    XCTAssertEqual(run.failureCategory, .serverUnavailable)
+    XCTAssertEqual(run.failureDetail, "server_busy")
+  }
+
   private func makeAnalyzer(
     reader: FakeEvidenceReader,
     store: FakeAnalysisStore,

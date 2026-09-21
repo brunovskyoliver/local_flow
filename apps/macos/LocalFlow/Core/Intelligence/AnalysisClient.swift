@@ -144,7 +144,11 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
     }
     guard http.statusCode == 200 else {
       let code = try await Self.errorCode(from: bytes)
-      throw AnalysisFailure(AnalysisFailureCategory.forHTTPStatus(http.statusCode, code: code))
+      // A bare 429 carries the same requeue meaning as a `server_busy` event
+      // (contract step 6), so the coordinator sees one detail for both.
+      let detail = code ?? (http.statusCode == 429 ? "server_busy" : nil)
+      throw AnalysisFailure(
+        AnalysisFailureCategory.forHTTPStatus(http.statusCode, code: code), detail: detail)
     }
     var line: [UInt8] = []
     var total = 0

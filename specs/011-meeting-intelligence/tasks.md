@@ -304,14 +304,14 @@ Chunk budget 24,576 B, `full` when total segment bytes ≤ 24,576 B, chunks per 
 
 ### Tests for User Story 10
 
-- [ ] T091 [P] [US10] Extend `apps/macos/LocalFlowTests/MeetingAnalyzerTests.swift`: `preempted` retries the same stage after 2 s × attempt (controllable clock) up to 3 times then fails `backend_busy`; retries and preemptions are counted on the run row; `server_busy` (429) surfaces to the coordinator as a re-queue request
-- [ ] T092 [P] [US10] Extend `apps/macos/LocalFlowTests/MeetingIntelligenceCoordinatorTests.swift`: three requests → one `running`, two `pending` with `queuedPosition` 1 and 2; a `server_busy` run is re-queued once after 30 s and then fails `server_unavailable`; the background-work summary reports "Summarizing…" with the queued count while a run is active and the main window is not showing that meeting
-- [ ] T093 [P] [US10] Extend `server/internal/analysis/priority_test.go` with an end-to-end `httptest` case through both handlers: a rewrite issued during an analysis generation is served without waiting and the analysis stream ends with `preempted`; with `--analysis-preempt=false` the rewrite waits behind the analysis; every request carries `priority: "background"` and the rewrite path never reads it
+- [x] T091 [P] [US10] Extend `apps/macos/LocalFlowTests/MeetingAnalyzerTests.swift`: `preempted` retries the same stage after 2 s × attempt (controllable clock) up to 3 times then fails `backend_busy`; retries and preemptions are counted on the run row; `server_busy` (429) surfaces to the coordinator as a re-queue request
+- [x] T092 [P] [US10] Extend `apps/macos/LocalFlowTests/MeetingIntelligenceCoordinatorTests.swift`: three requests → one `running`, two `pending` with `queuedPosition` 1 and 2; a `server_busy` run is re-queued once after 30 s and then fails `server_unavailable`; the background-work summary reports "Summarizing…" with the queued count while a run is active and the main window is not showing that meeting
+- [x] T093 [P] [US10] Extend `server/internal/analysis/priority_test.go` with an end-to-end `httptest` case through both handlers: a rewrite issued during an analysis generation is served without waiting and the analysis stream ends with `preempted`; with `--analysis-preempt=false` the rewrite waits behind the analysis; every request carries `priority: "background"` and the rewrite path never reads it
 
 ### Implementation for User Story 10
 
-- [ ] T094 [US10] Implement preemption retries and the `server_busy` re-queue signal in `apps/macos/LocalFlow/Core/Intelligence/MeetingAnalyzer.swift` and the single re-queue with positions in `apps/macos/LocalFlow/Features/Intelligence/MeetingIntelligenceCoordinator.swift`; make T091 and T092 pass
-- [ ] T095 [US10] Show "Queued (N ahead)" in `apps/macos/LocalFlow/Features/Intelligence/SummaryTabView.swift` and add the "Summarizing…" state to `observeBackgroundWork()` in `apps/macos/LocalFlow/App/AppServices.swift` (pill in `apps/macos/LocalFlow/Features/Dictation/IndicatorPanel.swift` if a new phrase is needed); make T093 pass on the server side
+- [x] T094 [US10] Implement preemption retries and the `server_busy` re-queue signal in `apps/macos/LocalFlow/Core/Intelligence/MeetingAnalyzer.swift` and the single re-queue with positions in `apps/macos/LocalFlow/Features/Intelligence/MeetingIntelligenceCoordinator.swift`; make T091 and T092 pass
+- [x] T095 [US10] Show "Queued (N ahead)" in `apps/macos/LocalFlow/Features/Intelligence/SummaryTabView.swift` and add the "Summarizing…" state to `observeBackgroundWork()` in `apps/macos/LocalFlow/App/AppServices.swift` (pill in `apps/macos/LocalFlow/Features/Dictation/IndicatorPanel.swift` if a new phrase is needed); make T093 pass on the server side
 
 **Checkpoint**: Deterministic half of SC-009 done; the latency measurement waits for Phase 15.
 
