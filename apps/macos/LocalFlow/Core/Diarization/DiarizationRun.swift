@@ -82,13 +82,17 @@ enum DiarizationConstants {
 
 enum DiarizationPipelineVersion {
   static let engine = "offline_vbx_community1_nonexcl"
-  static let reconciler = "xwin_cos_greedy_v1"
+  static let reconciler = "xwin_cos_greedy_v2"
   static let maxBytes = 256
 
   static var echoGate: String {
     "echo_lag\(EchoGate.maxLagFrames * Int(EchoGate.frameMs) / 1_000)s"
       + "_p\(Int(EchoGate.gainPercentile * 100))_k\(Int(EchoGate.marginDB))"
       + "_min\(EchoGate.minPieceMs)_v1"
+  }
+
+  static var merge: String {
+    "merge_cos\(decimal(RunClusterMerge.mergeSimilarity))_v1"
   }
 
   static var minorFold: String {
@@ -104,12 +108,13 @@ enum DiarizationPipelineVersion {
   static var aligner: String {
     "align_dom\(decimal(DiarizationConstants.alignDominant))"
       + "_ratio\(decimal(DiarizationConstants.alignRatio))"
-      + "_ovl\(decimal(DiarizationConstants.alignOverlap))_bytrack_v2"
+      + "_ovl\(decimal(DiarizationConstants.alignOverlap))_bytrack_v3"
   }
 
-  /// e.g. `offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v1+echo_lag1s_p20_k12_min300_v1+minor10s_5pct_cos0.60_v1+align_dom0.60_ratio2_ovl0.20_bytrack_v2`
+  /// e.g. `offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v2+echo_lag1s_p20_k12_min300_v1+merge_cos0.70_v1+minor10s_5pct_cos0.60_v1+align_dom0.60_ratio2_ovl0.20_bytrack_v3`
   static var current: String {
-    let value = [engine, window, reconciler, echoGate, minorFold, aligner].joined(separator: "+")
+    let value = [engine, window, reconciler, echoGate, merge, minorFold, aligner]
+      .joined(separator: "+")
     precondition(value.utf8.count <= maxBytes)
     return value
   }

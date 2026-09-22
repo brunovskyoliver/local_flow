@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -95,6 +96,28 @@ func TestTimeoutsAndDelay(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestRequestTimeoutOverride(t *testing.T) {
+	// Per-request deadlines replace the configured budgets in both directions:
+	// a shorter first-token bound fires where the config would not, a longer
+	// one lets a slow prefill finish where the config would kill it.
+	f := NewFake()
+	f.Delay = 100 * time.Millisecond
+	s := httptest.NewServer(f)
+	defer s.Close()
+	a := adapter(t, s.URL, func(c *Config) { c.FirstTokenTimeout = time.Second })
+	if _, err := a.Generate(context.Background(), Input{Text: "test", MaxOutputBytes: 100, FirstTokenTimeout: 20 * time.Millisecond}); !errors.Is(err, ErrFirstTokenTimeout) {
+		t.Fatal(err)
+	}
+	r, err := a.Generate(context.Background(), Input{Text: "test", MaxOutputBytes: 100, Timeout: 30 * time.Millisecond})
+	if !errors.Is(err, ErrTimeout) || r.Text != "" {
+		t.Fatal(r, err)
+	}
+	b := adapter(t, s.URL, func(c *Config) { c.FirstTokenTimeout = 20 * time.Millisecond })
+	r, err = b.Generate(context.Background(), Input{Text: "test", MaxOutputBytes: 100, FirstTokenTimeout: time.Second})
+	if err != nil || r.Text == "" || r.FirstTokenMS == nil {
+		t.Fatal(r, err)
+	}
+}
 func TestUnavailableAndModelBound(t *testing.T) {
 	s := httptest.NewServer(NewFake())
 	url := s.URL
@@ -152,6 +175,81 @@ func TestMalformedAndBoundedSSE(t *testing.T) {
 			t.Fatal(out, err)
 		}
 		s.Close()
+	}
+}
+
+// finish_reason=length is not a backend fault: the partial text comes back
+// flagged Truncated for the caller's validation to judge. Other non-stop
+// reasons still fail as backend errors.
+func TestFinishLengthDeliversOutput(t *testing.T) {
+	body := `data: {"model":"test","choices":[{"delta":{"content":"{\"a\":"},"finish_reason":"length"}]}` + "\n\ndata: [DONE]\n\n"
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
+	defer s.Close()
+	a := adapter(t, s.URL, nil)
+	out, err := a.Generate(context.Background(), Input{Text: "t", MaxOutputBytes: 100})
+	if err != nil || out.Text != `{"a":` || !out.Truncated {
+		t.Fatal(out, err)
+	}
+	body = `data: {"model":"test","choices":[{"delta":{"content":"x"},"finish_reason":"content_filter"}]}` + "\n\ndata: [DONE]\n\n"
+	s2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
+	defer s2.Close()
+	a = adapter(t, s2.URL, nil)
+	if _, err = a.Generate(context.Background(), Input{Text: "t", MaxOutputBytes: 100}); !errors.Is(err, ErrBackend) {
+		t.Fatal(err)
+	}
+}
+
+// A backend that rejects response_format gets one retry without it; the
+// completion reports whether the schema made it through.
+func TestSchemaRejectionRetriesWithout(t *testing.T) {
+	var withSchema, withoutSchema atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]any{"id": "test"}}})
+			return
+		}
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if _, ok := req["response_format"]; ok {
+			withSchema.Add(1)
+			w.WriteHeader(400)
+			fmt.Fprint(w, `{"error":{"message":"unsupported JSON Schema: unimplemented keys"}}`)
+			return
+		}
+		withoutSchema.Add(1)
+		fmt.Fprint(w, `data: {"model":"test","choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n")
+	}))
+	defer s.Close()
+	a := adapter(t, s.URL, nil)
+	schema := map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "t", "schema": map[string]any{"type": "object"}}}
+	out, err := a.Generate(context.Background(), Input{Text: "t", MaxOutputBytes: 100, ResponseSchema: schema})
+	if err != nil || out.Text != "hi" || out.SchemaAccepted {
+		t.Fatal(out, err)
+	}
+	if withSchema.Load() != 1 || withoutSchema.Load() != 1 {
+		t.Fatalf("calls: %d with schema, %d without", withSchema.Load(), withoutSchema.Load())
+	}
+	// An unrelated rejection does not trigger the retry.
+	s2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		fmt.Fprint(w, `{"error":{"message":"context length exceeded"}}`)
+	}))
+	defer s2.Close()
+	b := adapter(t, s2.URL, nil)
+	_, err = b.Generate(context.Background(), Input{Text: "t", MaxOutputBytes: 100, ResponseSchema: schema})
+	if !errors.Is(err, ErrBackend) {
+		t.Fatal(err)
+	}
+	// Accepted schemas mark the completion.
+	f := NewFake()
+	f.JSONSchema = true
+	s3 := httptest.NewServer(f)
+	defer s3.Close()
+	c := adapter(t, s3.URL, nil)
+	out, err = c.Generate(context.Background(), Input{Text: "t", MaxOutputBytes: 100, ResponseSchema: schema})
+	if err != nil || !out.SchemaAccepted {
+		t.Fatal(out, err)
 	}
 }
 func TestCancelMidstream(t *testing.T) {

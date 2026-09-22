@@ -76,34 +76,34 @@ Phase 0 output for [plan.md](plan.md). Each entry resolves one unknown left by t
 
 ## R10. Language policy: on-device dominant-language detection
 
-**Decision.** `LanguagePolicy.detect` samples up to 32 KiB of final segment text spread across the meeting, runs `NLLanguageRecognizer` on each sampled segment, and yields `sk`, `en` or `mixed` (`mixed` when the minority language covers ≥ 20 % of sampled characters; other languages fall back to `mixed`). The request carries `language_policy: {"output": "sk"|"en"|"mixed", "preserve_terms": true}`. `mixed` instructs Slovak prose with English technical terms kept. No user override in this feature.
+**Decision.** The 2026-09-21 follow-up reuses the meeting-language selection introduced by Feature 009. Explicit Slovak or English wins; without a per-meeting override, use a fixed supported language recorded in the final pass identity. Otherwise `LanguagePolicy.detect` samples up to 32 KiB of final segment text spread across the meeting, runs `NLLanguageRecognizer` on each sampled segment, and yields `sk`, `en` or `mixed` (`mixed` when no supported language reaches 80% of sampled characters). Samples end at valid UTF-8 boundaries. Automatic and Czech choices keep text detection; this follow-up does not add Czech to the summary schema. The request carries `language_policy: {"output": "sk"|"en"|"mixed", "preserve_terms": true}`. `mixed` instructs Slovak prose with English technical terms kept.
 
-**Rationale.** FR-036 requires an explicit policy; the transcription layer records no language. `NaturalLanguage` is an Apple framework, offline, and costs nothing at idle. Sampling bounds the work on long meetings.
+**Rationale.** FR-036 requires an explicit policy. The transcript pass now records its selected language; using that evidence avoids a second guess driven by technical vocabulary. The same resolver handles admission, staleness and pre-adoption validation. Today's global setting must not reinterpret an older pass. `NaturalLanguage` remains the bounded, offline fallback.
 
-**Alternatives.** Ask the model: forbidden by FR-036. A Settings override: cheap but out of scope (constitution 14); noted for the later features that consume the output.
+**Alternatives.** Asking the model to choose or adding a separate summary-language setting is unnecessary. The existing meeting picker supplies the override. Declared response language is checked on both sides, while actual prose language and meaning still require live evaluation.
 
 ## R11. Chunking, budgets and stage bounds (provisional defaults)
 
-**Decision.** `AnalysisChunkPlanner` (`chunking_v1`) walks final segments in ordinal order and closes a chunk when adding the next segment would exceed the chunk budget; a segment never straddles a boundary (FR-044). Every chunk repeats the participant table and meeting header. Notes go only with the `synthesis` request, or with the single `full` request. Defaults (all configurable through `AnalysisPolicy`, overridden downward by the server's advertised limits):
+**Decision.** `AnalysisChunkPlanner` (`chunking_v2`) walks final segments in ordinal order and closes a chunk when it reaches a balanced target (the remaining bytes over the fewest chunks that fit the budget, at least two) or when the next segment would exceed the budget, so no near-empty tail request remains; a segment never straddles a boundary (FR-044). Every chunk repeats the participant table and meeting header. Notes go only with the `synthesis` request, or with the single `full` request. Defaults (all configurable through `AnalysisPolicy`, overridden downward by the server's advertised limits):
 
 | Bound | Default | Where enforced |
 | --- | --- | --- |
-| `full` request when total segment bytes ≤ | 24,576 B | client |
-| chunk budget (segment text bytes) | 24,576 B | client; server refuses `input_too_large` above `--analysis-input-bytes` (98,304) |
+| `full` request when total segment bytes ≤ | 12,288 B | client |
+| chunk budget (segment text bytes) | 16,384 B (balanced, so typical chunks land lower) | client; server refuses `input_too_large` above `--analysis-input-bytes` (98,304). Sized so a dense-tokenizing language's prompt plus the output reservation fit the backend's real KV pool — advertised context is 32,768 but the paged pool runs 16–29k under memory pressure (2026-09-21: a 24 KB Slovak chunk needed ~21k prompt tokens and left no room to decode; 2026-09-22 measured on Qwen3.5 4B: Slovak with the request envelope runs ≈ 1.2 B/token — 12 KB ≈ 12.1k, 16 KB ≈ 15.2k, 20 KB ≈ 18.0k prompt tokens, system prompt 1.8k) |
 | request body cap | 262,144 B | both (413 `too_large`) |
-| chunks per run | 64 | client; beyond it the run fails `too_long` (a 4-hour meeting is ~9 chunks at ~200 KB of text) |
+| chunks per run | 64 | client; beyond it the run fails `too_long` (a 4-hour meeting is ~17 chunks at ~200 KB of text) |
 | partial results per synthesis request | 16, then a second reduce level (max 2 levels, 64 partials) | client |
 | requests in flight per run | 1 (max 2) | client |
 | runs across meetings | 1 running, queue capacity 100 | client coordinator |
 | result line bytes | 98,304 B | both (`output_too_large`) |
-| backend output tokens | 2,048 chunk, 3,072 synthesis/full | server `--analysis-output-tokens` |
+| backend output tokens | 3,072 chunk, 10,240 synthesis/full | server `--analysis-output-tokens-chunk`/`--analysis-output-tokens`; chunk partials measured ~1–2k tokens (2026-09-22), the cap bounds a runaway decode; a `finish_reason=length` stream is validated like any output and fails `output_invalid` (2026-09-21) |
 | per item source references | 10 | both |
 | per section, final result | topics 20, decisions 40, action items 60, next steps 40, open questions 40, risks 40 | both |
 | per section, partial result | half of the above | both |
 | text lengths | summary 4,000 B; topic summary 2,000 B; item text 1,000 B; owner name 80 B; due original 80 B | both |
 | dropped-item share that fails the run | > 1/3 of returned items | client |
-| run timeout | 60 s + 90 s × (chunks + reduce requests), floor 120 s, ceiling 30 min | client |
-| per-request backend timeout | 120 s total, 15 s first token | server `--analysis-timeout`, `--analysis-first-token-timeout` |
+| run timeout | 60 s + 300 s × (chunks + reduce requests), floor 120 s, ceiling 30 min | client |
+| per-request backend timeout | 300 s total, 60 s first token (2026-09-21: a ~10k-token chunk took 9.8 s to its first token on a 4B model, sustained profile, with nothing else running) | server `--analysis-timeout`, `--analysis-first-token-timeout` |
 | server queue wait for the rewrite-first gate | 30 s | server |
 | preemption retries per stage | 3 | client |
 | run records per meeting | 20 (oldest non-accepted pruned first) | store |

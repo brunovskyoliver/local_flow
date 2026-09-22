@@ -91,7 +91,7 @@ final class MeetingStoreTests: XCTestCase {
         [
           "id", "state", "title", "created_at", "started_at", "stopped_at", "completed_at",
           "wall_clock_ms", "recorded_ms", "finalization_stage", "failure_reason", "failure_detail",
-          "updated_at", "revision",
+          "updated_at", "revision", "language",
         ])
       let indexes = try String.fetchAll(
         db, sql: "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name LIKE 'meeting%'")

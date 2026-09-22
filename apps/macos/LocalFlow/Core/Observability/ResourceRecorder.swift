@@ -67,6 +67,7 @@ final class ResourceRecorder: @unchecked Sendable {
     case transcriptLiveLatency, transcriptAnalysisQueueDepth, transcriptRecognitionQueueDepth
     case transcriptSegmentsProvisional, transcriptSegmentsFinal, transcriptBackpressureEvent
     case transcriptLiveGapMs, transcriptFinalizationDuration, transcriptRealTimeFactor
+    case transcriptEchoProfileDuration, transcriptFinalizationWaitDuration
     case transcriptPersistenceBatchDuration, transcriptModelReload, transcriptFailure,
       transcriptTransition
     // Speaker diarization (Feature 007, FR-037): one set per run outcome, counters
@@ -79,8 +80,12 @@ final class ResourceRecorder: @unchecked Sendable {
     case diarizationOverflowTurns, diarizationPreemption, diarizationFailure
     /// Microphone turn milliseconds the echo gate removed, and its profiling time.
     case diarizationEchoGatedMs, diarizationEchoProfileDuration
-    /// Run clusters folded into another or detached for having almost no speech.
-    case diarizationMinorClusterCount
+    /// 1 when the diarizer rebased the finalization pass's profile instead of
+    /// decoding both tracks again.
+    case diarizationEchoProfileReused
+    /// Run clusters merged into an earlier cluster of the same voice, and run clusters
+    /// folded into another or detached for having almost no speech.
+    case diarizationMergedClusterCount, diarizationMinorClusterCount
     case speakerRenameCount, speakerMergeCount, speakerUnmergeCount, speakerSegmentCorrectionCount
     // Speaker identification (Feature 010, FR-037): counts and durations per run or
     // enrollment. A failure is keyed by its category only.
@@ -108,6 +113,7 @@ final class ResourceRecorder: @unchecked Sendable {
         .rewriteBackendDuration, .meetingStartDuration, .meetingCaptureInitDuration,
         .meetingFinalizationDuration, .transcriptLiveLatency, .transcriptFinalizationDuration,
         .transcriptRealTimeFactor, .transcriptPersistenceBatchDuration,
+        .transcriptEchoProfileDuration, .transcriptFinalizationWaitDuration,
         .diarizationModelLoadDuration, .diarizationModelReleaseDuration, .diarizationDuration,
         .diarizationRealTimeFactor, .diarizationEchoProfileDuration,
         .identificationModelLoadDuration, .identificationModelReleaseDuration,
@@ -129,7 +135,8 @@ final class ResourceRecorder: @unchecked Sendable {
         .diarizationTurnCount, .diarizationOverlapTurnCount, .diarizationUnknownCount,
         .diarizationAmbiguousCount, .diarizationReconciledMatches, .diarizationReconciledNew,
         .diarizationReconciledUncertain, .diarizationOverflowTurns, .diarizationPreemption,
-        .diarizationFailure, .diarizationEchoGatedMs, .diarizationMinorClusterCount,
+        .diarizationFailure, .diarizationEchoGatedMs, .diarizationMergedClusterCount,
+        .diarizationMinorClusterCount, .diarizationEchoProfileReused,
         .speakerRenameCount, .speakerMergeCount,
         .speakerUnmergeCount, .speakerSegmentCorrectionCount, .identificationRegionsExtracted,
         .identificationRegionsRejected, .identificationComparisons, .identificationRecognized,
@@ -168,7 +175,7 @@ final class ResourceRecorder: @unchecked Sendable {
         .diarizationReconciledNew, .diarizationReconciledUncertain, .diarizationOverflowTurns:
         return UInt32(DiarizationConstants.turnsPerRun)
       case .diarizationUnknownCount, .diarizationAmbiguousCount: return 20_000
-      case .diarizationPreemption, .diarizationFailure: return 1
+      case .diarizationPreemption, .diarizationFailure, .diarizationEchoProfileReused: return 1
       case .speakerRenameCount, .speakerMergeCount, .speakerUnmergeCount,
         .speakerSegmentCorrectionCount:
         return UInt32(SpeakerStore.correctionsPerMeeting)
@@ -232,7 +239,8 @@ final class ResourceRecorder: @unchecked Sendable {
       .diarizationUnknownCount, .diarizationAmbiguousCount, .diarizationReconciledMatches,
       .diarizationReconciledNew, .diarizationReconciledUncertain, .diarizationOverflowTurns,
       .diarizationPreemption, .diarizationFailure, .diarizationEchoGatedMs,
-      .diarizationEchoProfileDuration, .diarizationMinorClusterCount, .speakerRenameCount,
+      .diarizationEchoProfileDuration, .diarizationMergedClusterCount,
+      .diarizationMinorClusterCount, .speakerRenameCount,
       .speakerMergeCount,
       .speakerUnmergeCount, .speakerSegmentCorrectionCount,
     ]

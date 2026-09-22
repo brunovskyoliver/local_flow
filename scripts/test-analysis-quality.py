@@ -96,12 +96,31 @@ class EvaluateTests(unittest.TestCase):
                          "dueState": "unresolved", "dueDate": "2026-09-21"}]))
         self.assertEqual(counts["SC-005"], 1)
 
-    def test_sc006_all_items_dropped(self):
-        counts = self.violations(
-            case(items=[], summaryText="", droppedUnsupportedCount=2),
-            case(items=[], summaryText="",
-                 droppedLiteralCount=0, droppedUnsupportedCount=0))
-        self.assertEqual(counts["SC-006"], 1)
+    def test_sc005_wrong_relative_date(self):
+        counts = self.violations(case(
+            expectedRelativeDates={"tomorrow": "2026-09-21"},
+            items=[{"kind": "action", "text": "Send it tomorrow", "sources": 1,
+                    "dueState": "explicit_relative_resolved",
+                    "dueOriginal": "tomorrow", "dueDate": "2030-01-01"}]))
+        self.assertEqual(counts["SC-005"], 1)
+
+    def test_sc005_missing_expected_date(self):
+        counts = self.violations(case(
+            expectedRelativeDates={"tomorrow": "2026-09-21"}, items=[]))
+        self.assertEqual(counts["SC-005"], 1)
+
+    def test_sc006_requires_human_review(self):
+        report = aq.evaluate([case(items=[])])["SC-006"]
+        self.assertEqual(report["status"], "unmeasured")
+        self.assertEqual(report["cases"], 0)
+        self.assertEqual(report["unmeasured"], 1)
+
+    def test_live_language_metadata_is_not_a_prose_measurement(self):
+        report = aq.evaluate([case(
+            expectedLanguage="mixed", language="mixed", detectedLanguage=None,
+            summaryText="Dohodli sme sa na nasadení.")])["SC-014"]
+        self.assertEqual(report["violations"], 0)
+        self.assertEqual(report["status"], "unmeasured")
 
     def test_sc013_banned_strings(self):
         counts = self.violations(

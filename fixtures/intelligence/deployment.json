@@ -83,5 +83,8 @@
       "normalized_text": "The license costs $1,200 per year."
     }
   ],
-  "notes": "Customer specifically requested Monday"
+  "notes": "Customer specifically requested Monday",
+  "expected_relative_dates": {
+    "before Friday": "2026-09-25"
+  }
 }

@@ -74,6 +74,8 @@ struct Meeting: Sendable, Equatable, Identifiable {
   var failureDetail: String?
   var updatedAt: Int64
   var revision: Int64
+  /// The language the final transcript is decoded in; nil is the Settings default.
+  var language: MeetingLanguage?
   /// IANA name of the zone the meeting is analyzed in — the capture zone;
   /// not persisted, defaults to the current zone.
   var timeZone: String = TimeZone.current.identifier
@@ -210,6 +212,8 @@ struct MeetingStatus: Sendable, Equatable {
   var droppedFrames: Int64 = 0
   var notice: String?
   let createdAt: Int64
+  /// Per-meeting transcript language; nil is the Settings default.
+  var language: MeetingLanguage?
 
   var displayTitle: String { title ?? fallbackTitle(createdAt: createdAt) }
   func track(_ kind: MeetingTrackKind) -> TrackStatus {

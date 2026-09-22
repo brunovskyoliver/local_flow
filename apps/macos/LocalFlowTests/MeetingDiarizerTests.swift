@@ -191,6 +191,101 @@ final class MeetingDiarizerTests: XCTestCase {
     XCTAssertEqual(Set(stored.compactMap(\.speakerID)).count, 2)
   }
 
+  /// The finalization pass's profile over the fixture's tracks: per-stretch 100 ms
+  /// frame energies on a zero base, exactly what `MeetingFinalizer` hands over.
+  private func decodedEchoProfile(
+    _ meeting: TranscriptMeetingFixture
+  ) async throws -> EchoGate.Profile {
+    var profile = EchoGate.Profile()
+    for (sequence, tracks) in meeting.files {
+      var stretch = EchoGate.Stretch(baseMs: 0, microphone: [], system: [])
+      for (kind, url) in tracks {
+        var accumulator = EchoGate.FrameAccumulator()
+        try await MeetingTrackDecoder.decode(url: url, kind: kind) { emissions in
+          for emission in emissions { accumulator.append(emission.samples) }
+        }
+        if kind == .microphone {
+          stretch.microphone = accumulator.finish()
+        } else {
+          stretch.system = accumulator.finish()
+        }
+      }
+      profile.stretches[sequence] = stretch
+    }
+    return profile
+  }
+
+  /// The same amplitude-varying tone on both tracks calibrates a gate at lag 0
+  /// that echo-explains the whole scripted microphone turn. A profile handed in
+  /// by the finalization pass must yield exactly the turns a local profiling
+  /// pass yields — and a handed profile whose microphone energies are silence
+  /// must drop the gate, proving the handed profile drove the decision rather
+  /// than a hidden decode.
+  func testAHandedEchoProfileReplacesTheProfilingPass() async throws {
+    let wavy: [TranscriptMeetingFixture.Stretch] = [
+      .init(microphone: .wavyBlocks(600), system: .wavyBlocks(600))
+    ]
+    let scripts = [
+      DiarizationScripts.window(
+        [(0, 0.0, 30.0)], centroids: [0: DiarizationScripts.centroid(axis: 0)])
+    ]
+    let (diarizer, _) = makeDiarizer(FakeDiarizationRuntime(scripts: scripts))
+
+    // Baseline: the diarizer decodes the tracks and profiles them itself.
+    let baselineMeeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: wavy)
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: baselineMeeting.meetingID, segments: [(0, 1_000)])
+    _ = try await diarizer.admit(
+      meetingID: baselineMeeting.meetingID, trigger: .manual, expectedRevision: nil)
+    guard
+      case .succeeded(let baselineRun) = await diarizer.run(
+        meetingID: baselineMeeting.meetingID)
+    else { return XCTFail("baseline run failed") }
+    let baseline = try await turns(baselineRun.id)
+    XCTAssertTrue(
+      baseline.allSatisfy { $0.track != .microphone },
+      "the scripted mic turn was fully echo-explained")
+
+    // The same audio profiled by the caller: same gate, same turns, no decode.
+    let handedMeeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: wavy)
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: handedMeeting.meetingID, segments: [(0, 1_000)])
+    _ = try await diarizer.admit(
+      meetingID: handedMeeting.meetingID, trigger: .manual, expectedRevision: nil)
+    let profile = try await decodedEchoProfile(handedMeeting)
+    guard
+      case .succeeded(let handedRun) = await diarizer.run(
+        meetingID: handedMeeting.meetingID, echoProfile: profile)
+    else { return XCTFail("handed run failed") }
+    let handed = try await turns(handedRun.id)
+    XCTAssertEqual(handed.map(\.track), baseline.map(\.track))
+    XCTAssertEqual(handed.map(\.startMs), baseline.map(\.startMs))
+    XCTAssertEqual(handed.map(\.endMs), baseline.map(\.endMs))
+
+    // A handed profile with a silent microphone cannot calibrate a gate.
+    let flatMeeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: wavy)
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: flatMeeting.meetingID, segments: [(0, 1_000)])
+    _ = try await diarizer.admit(
+      meetingID: flatMeeting.meetingID, trigger: .manual, expectedRevision: nil)
+    var flat = try await decodedEchoProfile(flatMeeting)
+    for (sequence, stretch) in flat.stretches.sorted(by: { $0.key < $1.key }) {
+      flat.stretches[sequence]?.microphone = Array(
+        repeating: -100, count: stretch.microphone.count)
+    }
+    guard
+      case .succeeded(let flatRun) = await diarizer.run(
+        meetingID: flatMeeting.meetingID, echoProfile: flat)
+    else { return XCTFail("flat run failed") }
+    let flatTurns = try await turns(flatRun.id)
+    XCTAssertTrue(
+      flatTurns.contains { $0.track == .microphone },
+      "no gate without mic energy: the scripted mic turn survives")
+  }
+
   func testSilentSystemTrackGivesOnlyTheLocalSpeaker() async throws {
     let runtime = FakeDiarizationRuntime(scripts: threeSpeakers)
     await runtime.noSpeech(onWindow: 1)
@@ -379,6 +474,39 @@ final class MeetingDiarizerTests: XCTestCase {
     XCTAssertEqual(shown, ["Speaker 1", "Speaker 1", "Unknown"])
     let summaries = try await speakers.speakerSummaries(meetingID: meeting.meetingID)
     XCTAssertEqual(summaries.map(\.speechMs), [310])
+  }
+
+  func testDuplicateClustersOfOneVoiceMergeBeforeTheMinorFoldAndAlignment() async throws {
+    // One system voice the engine split into two substantial clusters at cosine 0.9,
+    // plus a distinct voice. The duplicate joins the first cluster; the other stays.
+    var near = DiarizationScripts.centroid(axis: 0)
+    near[0] = 0.9
+    near[1] = (1 - 0.81).squareRoot()
+    // The fixture stretch is 341 ms long; every turn is inside it.
+    let window = DiarizationScripts.window(
+      [(0, 0, 0.15), (1, 0.15, 0.25), (2, 0.25, 0.33)],
+      centroids: [
+        0: DiarizationScripts.centroid(axis: 0), 1: near, 2: DiarizationScripts.centroid(axis: 2),
+      ])
+    let runtime = FakeDiarizationRuntime(scripts: [window])
+    await runtime.noSpeech(onWindow: 2)
+    let (diarizer, _) = makeDiarizer(runtime)
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: meeting.meetingID, segments: [(0, 150), (150, 250), (250, 330)])
+    _ = try await diarizer.admit(
+      meetingID: meeting.meetingID, trigger: .manual, expectedRevision: nil)
+    let outcome = await diarizer.run(meetingID: meeting.meetingID)
+    guard case .succeeded(let run) = outcome else { return XCTFail("\(outcome)") }
+    XCTAssertEqual(run.inferredSpeakerCount, 2)
+    let stored = try await turns(run.id)
+    XCTAssertEqual(stored.map { $0.endMs - $0.startMs }, [150, 100, 80])
+    XCTAssertEqual(Set(stored.compactMap(\.speakerID)).count, 2)
+    XCTAssertEqual(stored.first?.speakerID, stored.dropFirst().first?.speakerID)
+    let shown = try await labels(meeting.meetingID)
+    XCTAssertEqual(shown, ["Speaker 1", "Speaker 1", "Speaker 2"])
+    let summaries = try await speakers.speakerSummaries(meetingID: meeting.meetingID)
+    XCTAssertEqual(summaries.map(\.speechMs), [250, 80])
   }
 
   func testTurnsBeyondTheClusterCapacityAreOverflowAndAlignToUnknown() async throws {

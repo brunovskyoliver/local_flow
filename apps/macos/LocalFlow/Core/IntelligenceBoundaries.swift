@@ -41,6 +41,16 @@ enum ParticipantCertainty: String, Sendable, Equatable, Encodable, CaseIterable 
     case .possible, .unknown: return false
     }
   }
+
+  /// Contract: `known_speaker_id` travels only with a confirmed or recognized
+  /// match. The local root keeps its profile link for the evidence hash, not for
+  /// the request — the server refused a `local_user` row carrying it.
+  var mayCarryKnownSpeaker: Bool {
+    switch self {
+    case .confirmed, .recognized: return true
+    case .possible, .unknown, .localName, .localUser: return false
+    }
+  }
 }
 
 /// One participant row of a request. `name` is present only when `certainty`
@@ -519,8 +529,10 @@ protocol MeetingEvidenceReading: Sendable {
 /// Transcription, deletion and evidence-change events the intelligence scheduler
 /// reacts to.
 @MainActor protocol IntelligenceObserving: AnyObject {
-  /// After a final transcript pass is adopted.
-  func meetingTranscriptDidFinalize(id: UUID)
+  /// Speaker work for the finalized transcript reached a terminal state —
+  /// diarization and identification finished, were skipped or won't run — so an
+  /// automatic analysis now sees every label and name there is (FR-002).
+  func meetingSpeakersDidSettle(id: UUID)
   /// Before the meeting row is deleted; cancel and join first.
   func meetingWillDelete(id: UUID) async
   /// After a 007/010 write or a notes save: refresh the stale flag.

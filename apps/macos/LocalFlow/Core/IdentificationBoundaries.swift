@@ -284,7 +284,9 @@ protocol IdentityStoring: Sendable {
 
 /// Diarization and meeting lifecycle events the identification scheduler reacts to.
 @MainActor protocol IdentificationObserving: AnyObject {
-  /// After the diarization lease finished and the adoption committed.
-  func diarizationDidAdopt(meetingID: UUID)
+  /// After the diarization lease finished and the adoption committed. Returns
+  /// whether an identification run will follow — the caller uses it to know when
+  /// speaker evidence has settled for the summary pass.
+  @discardableResult func diarizationDidAdopt(meetingID: UUID) -> Bool
   func meetingWillDelete(id: UUID) async
 }

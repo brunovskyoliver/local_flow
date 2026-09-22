@@ -108,6 +108,9 @@ protocol SpeakerStoring: Sendable {
 
 /// Transcript and meeting lifecycle events the diarization scheduler reacts to.
 @MainActor protocol DiarizationObserving: AnyObject {
-  func meetingTranscriptDidFinalize(id: UUID)
+  /// `echoProfile` is the finalization pass's echo energy profile when it built
+  /// one; the diarizer rebases and calibrates it instead of decoding the tracks
+  /// again. nil means "profile yourselves" (mixed layout or an older build).
+  func meetingTranscriptDidFinalize(id: UUID, echoProfile: EchoGate.Profile?)
   func meetingWillDelete(id: UUID) async
 }

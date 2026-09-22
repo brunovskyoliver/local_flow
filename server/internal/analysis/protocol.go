@@ -348,23 +348,25 @@ type Topic struct {
 	Sources []SourceRef `json:"sources"`
 }
 
+// Optional result fields are omitted, never null: the contract calls them
+// absent and the client's strict decoder rejects a null.
 type Item struct {
 	Text          string      `json:"text"`
-	EvidenceClass *string     `json:"evidence_class"`
+	EvidenceClass *string     `json:"evidence_class,omitempty"`
 	Sources       []SourceRef `json:"sources"`
 }
 
 type Owner struct {
 	Kind      string  `json:"kind"`
-	SpeakerID *string `json:"speaker_id"`
-	Name      *string `json:"name"`
+	SpeakerID *string `json:"speaker_id,omitempty"`
+	Name      *string `json:"name,omitempty"`
 }
 
 type Due struct {
 	State    string     `json:"state"`
-	Date     *string    `json:"date"`
-	Original *string    `json:"original"`
-	Source   *SourceRef `json:"source"`
+	Date     *string    `json:"date,omitempty"`
+	Original *string    `json:"original,omitempty"`
+	Source   *SourceRef `json:"source,omitempty"`
 }
 
 type ActionItem struct {

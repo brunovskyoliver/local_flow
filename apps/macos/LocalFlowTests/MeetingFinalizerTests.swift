@@ -755,7 +755,7 @@ final class MeetingFinalizerTests: XCTestCase {
       in: fixture, stretches: [.init(microphone: .blocks(180), system: .missing)])
     let runtime = FakeTranscriptionRuntime(windows: [.init(text: "Turbo výsledok.", tokens: [])])
     let speech = ProbeRuntime()
-    let lifecycle = ModelLifecycleCoordinator(meetingFactory: { runtime }, factory: { speech })
+    let lifecycle = ModelLifecycleCoordinator(meetingFactory: { _ in runtime }, factory: { speech })
     let finalizer = MeetingFinalizer(
       store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: lifecycle,
       configuration: .turbo)
@@ -773,6 +773,62 @@ final class MeetingFinalizerTests: XCTestCase {
     XCTAssertEqual(state, .unloaded)
   }
 
+  /// The language chosen in Settings is part of the pass identity, so a pass that
+  /// stopped under one language is not resumed under another.
+  func testTurboRecordsTheChosenLanguageInThePipelineVersion() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(microphone: .blocks(4), system: .blocks(4))])
+    let runtime = FakeTranscriptionRuntime(windows: [
+      .init(text: "Ahoj.", tokens: []), .init(text: "Čau.", tokens: []),
+    ])
+    let lifecycle = ModelLifecycleCoordinator(
+      meetingFactory: { _ in runtime }, factory: { ProbeRuntime() })
+    let finalizer = MeetingFinalizer(
+      store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: lifecycle,
+      configuration: .turbo, defaultLanguage: { .slovak })
+    let outcome = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    XCTAssertEqual(outcome.row.state, .final)
+    XCTAssertEqual(
+      outcome.row.pipelineVersion?.contains("+echo_lag1s_p20_k12_min300_v1+lang_sk_prompt_v1+"),
+      true)
+    let rows = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 10)
+    XCTAssertFalse(rows.isEmpty)
+    XCTAssertTrue(rows.allSatisfy { $0.draft.pipelineVersion.contains("+lang_sk_prompt_v1+") })
+  }
+
+  /// A language chosen on the meeting wins over the Settings default.
+  func testTurboPrefersTheMeetingsOwnLanguageOverTheDefault() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(microphone: .blocks(4), system: .blocks(4))])
+    let now = Int64(Date().timeIntervalSince1970 * 1_000)
+    let currentRow = try await fixture.store.meeting(id: meeting.meetingID)
+    let current = try XCTUnwrap(currentRow)
+    _ = try await fixture.store.setLanguage(
+      meetingID: meeting.meetingID, language: .english, revision: current.revision, now: now)
+    let storedRow = try await fixture.store.meeting(id: meeting.meetingID)
+    let stored = try XCTUnwrap(storedRow)
+    XCTAssertEqual(stored.language, .english)
+    let runtime = FakeTranscriptionRuntime(windows: [
+      .init(text: "Hello.", tokens: []), .init(text: "Hi.", tokens: []),
+    ])
+    let lifecycle = ModelLifecycleCoordinator(
+      meetingFactory: { _ in runtime }, factory: { ProbeRuntime() })
+    let finalizer = MeetingFinalizer(
+      store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: lifecycle,
+      configuration: .turbo, defaultLanguage: { .slovak })
+    let outcome = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    XCTAssertEqual(outcome.row.pipelineVersion?.contains("+lang_en_prompt_v1+"), true)
+    // Clearing the choice returns the meeting to the default.
+    _ = try await fixture.store.setLanguage(
+      meetingID: meeting.meetingID, language: nil, revision: stored.revision, now: now)
+    let clearedRow = try await fixture.store.meeting(id: meeting.meetingID)
+    let cleared = try XCTUnwrap(clearedRow)
+    XCTAssertNil(cleared.language)
+  }
+
   func testTurboRecognizesEachTrackAloneLevelledAndMergesRowsByTime() async throws {
     let meeting = try await TranscriptMeetingFixture.make(
       in: fixture, stretches: [.init(microphone: .blocks(180), system: .blocks(180))])
@@ -786,7 +842,7 @@ final class MeetingFinalizerTests: XCTestCase {
         tokens: [.init(text: "Čau.", start: 2, end: 3), .init(text: "Fajn.", start: 6, end: 7)]),
     ])
     let lifecycle = ModelLifecycleCoordinator(
-      meetingFactory: { runtime }, factory: { ProbeRuntime() })
+      meetingFactory: { _ in runtime }, factory: { ProbeRuntime() })
     let finalizer = MeetingFinalizer(
       store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: lifecycle,
       configuration: .turbo)
@@ -805,7 +861,8 @@ final class MeetingFinalizerTests: XCTestCase {
     XCTAssertEqual(outcome.row.plannerVersion, "per_track_fixed1920000_turbo_level_v2")
     XCTAssertEqual(
       outcome.row.pipelineVersion?.hasPrefix(
-        "per_track_fixed1920000_turbo_level_v2+level_p90_m20_v1+echo_lag1s_p20_k12_min300_v1+"),
+        "per_track_fixed1920000_turbo_level_v2+level_p90_m20_v1+echo_lag1s_p20_k12_min300_v1+lang_auto_prompt_v1+"
+      ),
       true)
     XCTAssertEqual(outcome.row.analysisDescriptor?.version, "per_track_16k_v1")
     XCTAssertEqual(outcome.row.analysisDescriptor?.mixRule, "none")

@@ -11,7 +11,7 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
   func testFinalizedTranscriptEnqueuesAutomaticRun() async throws {
     let fixture = try IntelligenceFixtures.meeting("deployment")
     let (coordinator, store, _, _) = try makeCoordinator(fixture: fixture)
-    coordinator.meetingTranscriptDidFinalize(id: fixture.id)
+    coordinator.meetingSpeakersDidSettle(id: fixture.id)
     await waitUntil { store.adoptCalls == 1 }
     let run = try await store.latestRun(meetingID: fixture.id)
     XCTAssertEqual(run?.state, .succeeded)
@@ -22,7 +22,7 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     let fixture = try IntelligenceFixtures.meeting("deployment")
     let (coordinator, store, _, _) = try makeCoordinator(
       fixture: fixture, automatic: false)
-    coordinator.meetingTranscriptDidFinalize(id: fixture.id)
+    coordinator.meetingSpeakersDidSettle(id: fixture.id)
     try await Task.sleep(for: .milliseconds(100))
     XCTAssertEqual(store.admitCalls, 0)
     XCTAssertEqual(coordinator.queuedCount, 0)

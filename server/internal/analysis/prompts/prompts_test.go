@@ -132,6 +132,29 @@ func TestLanguagePolicyBlocks(t *testing.T) {
 	}
 }
 
+func TestLanguageMetadataAndASRUncertaintyInstructions(t *testing.T) {
+	for _, stage := range []string{StageFull, StageChunk, StageSynthesis} {
+		for _, language := range []string{"sk", "en", "mixed"} {
+			template, _ := For(stage, language)
+			for _, required := range []string{
+				`Set the result's language field to "` + language + `"`,
+				"Do not guess a name, number or technical term",
+				"preserve negation and uncertainty",
+			} {
+				if !strings.Contains(template.Text, required) {
+					t.Errorf("%s/%s missing %q", stage, language, required)
+				}
+			}
+		}
+	}
+	synthesis, _ := For(StageSynthesis, "sk")
+	for _, required := range []string{"Do not strengthen", "owner and deadline", "distinct commitments"} {
+		if !strings.Contains(synthesis.Text, required) {
+			t.Errorf("synthesis missing %q", required)
+		}
+	}
+}
+
 func TestNoParticipantWithoutNameIsNamed(t *testing.T) {
 	// The prompt text must state the rule; the request render is where it is
 	// enforced, so assert the rule sentence exists in every template.

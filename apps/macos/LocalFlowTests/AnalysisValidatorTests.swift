@@ -618,7 +618,52 @@ extension AnalysisValidatorTests {
     XCTAssertEqual(counts.droppedLiteralCount, 1)
   }
 
-  /// The summary is checked against all evidence; a mutation fails the run.
+  /// Title, summary and bullets are checked apart — the first word of each
+  /// is not a mid-sentence proper noun — and against all evidence, since a
+  /// topic's literals may come from segments it does not cite (R5).
+  func testTopicPartsCheckedApartAgainstAllEvidence() throws {
+    var res = result()
+    res.topics = [
+      WireTopic(
+        title: "Server move", summary: "Discussion of the new host",
+        bullets: ["Located at 172.19.223.30"], sources: [.segment(segB)])
+    ]
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: res, against: literalEvidence(), policy: policy)
+    XCTAssertEqual(validated.topics.count, 1)
+    XCTAssertEqual(counts.droppedLiteralCount, 0)
+  }
+
+  /// A dropped topic counts on both sides of the share: one of four
+  /// returned entries is under a third, so the run survives.
+  func testDroppedTopicCountsAgainstTopicsToo() throws {
+    var res = result(decisions: [wireItem("Deploy on Monday", sources: [.segment(segB)])])
+    res.topics = [
+      WireTopic(
+        title: "Server", summary: "It lives at 172.19.223.20", bullets: [],
+        sources: [.segment(segA)]),
+      WireTopic(title: "Release", summary: "", bullets: [], sources: []),
+      WireTopic(title: "Budget", summary: "", bullets: [], sources: []),
+    ]
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: res, against: literalEvidence(), policy: policy)
+    XCTAssertEqual(validated.topics.map(\.title), ["Release", "Budget"])
+    XCTAssertEqual(counts.droppedLiteralCount, 1)
+  }
+
+  /// A summary sentence with a mutated literal is removed; the rest stays.
+  func testMutatedSummarySentenceIsRemoved() throws {
+    var res = result()
+    res.summary = WireSummary(
+      text: "The team met. They checked the server at 172.19.223.99. "
+        + "The server is at 172.19.223.30.",
+      sources: [], wholeMeeting: true)
+    let (validated, _) = try AnalysisValidator.validate(
+      result: res, against: literalEvidence(), policy: policy)
+    XCTAssertEqual(validated.summary.text, "The team met. The server is at 172.19.223.30.")
+  }
+
+  /// A summary left with no clean sentence fails the run.
   func testMutatedSummaryLiteralFailsRun() throws {
     var res = result()
     res.summary = WireSummary(

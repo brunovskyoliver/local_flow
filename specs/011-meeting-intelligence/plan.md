@@ -12,6 +12,14 @@ Every result is validated again on the Mac: schema version, meeting id, source r
 
 Nothing here writes transcript text, audio, notes, speaker assignments, known speakers or voice samples. No model runs on the Mac. Only the structured text described in the contract leaves it, and only to the configured server.
 
+## Language quality follow-up (2026-09-21)
+
+Keep the configured 4B inference model. Resolve summary language in this order: explicit meeting choice; fixed language in the final pass identity when there is no override; existing bounded text detection. Only existing `sk` and `en` output choices override detection; Automatic and Czech retain the existing detection fallback. Do not consult today's global setting when summarizing an older pass. Use this same resolution for admission, staleness and the pre-adoption evidence check. Check current pass identity before adoption as well. A changed resolved language is already part of the evidence hash.
+
+Enforce response language equality on the server and client for full, chunk and synthesis stages. This validates declared metadata, not the actual prose language. Prompt version 3 requires exact language metadata, preserves technical terms in Slovak, avoids guessing through ASR ambiguity, and retains uncertainty and task/owner/deadline associations during synthesis. Bound text sampling to valid UTF-8 prefixes without replacement characters or budget expansion.
+
+Constitution check: no new dependency, model, schema enum, table, process or outgoing evidence field. Existing queue, sample, request, response and retry limits remain. Rejected results preserve accepted summaries. No architecture exception. Tests cover language precedence, stale/adoption races, response mismatch and UTF-8 limits. Live quality and latency remain unmeasured until the existing acceptance runs are performed.
+
 ## Technical context
 
 | Item | Decision |
@@ -24,7 +32,7 @@ Nothing here writes transcript text, audio, notes, speaker assignments, known sp
 | Platform/type | One native macOS app plus the existing Go server; no new permission, no new process |
 | Performance | SC-008: ~30-minute meeting ≤ 30 s warm on the reference server; SC-007: four-hour fixture completes, every request within budget, ≤ 1 in flight; SC-009: spec 003 rewrite gates hold during a long run; SC-010: idle client RSS unchanged, bounded working set for a four-hour request build. All measured in Phase 8, none assumed |
 | Constraints | Every queue, page, chunk, buffer, table and cap is bounded ([contracts/client-analysis.md](contracts/client-analysis.md) "Bounds summary"; protocol "Server bounds and flags"). One run at a time; one request in flight by default. Content-free logs and metrics on both sides. Evidence, spec 010 tables and notes are read-only for this feature |
-| Scope | Eligibility, automatic and manual runs, queue, cancel, retry, restart per FR-007a, staged pipeline, client and server validation, identity rule, protected literals, lexical support, adoption with overlays, stale detection, Summary tab with edits, statuses, View source, Copy, Settings toggle, health/connection test, priority gate, instrumentation, evaluation set. Not built: Ask Meeting, semantic search, exports beyond Copy, task integrations, per-note exclusion, language override, model-judged verification, analysis history browsing |
+| Scope | Eligibility, automatic and manual runs, queue, cancel, retry, restart per FR-007a, staged pipeline, client and server validation, identity rule, protected literals, lexical support, adoption with overlays, stale detection, Summary tab with edits, statuses, View source, Copy, Settings toggle, health/connection test, priority gate, instrumentation, evaluation set. Not built: Ask Meeting, semantic search, exports beyond Copy, task integrations, per-note exclusion, separate summary-language override, model-judged verification, analysis history browsing |
 
 Provisional values frozen in Phase 8: chunk budget 24,576 B, chunks ≤ 64, partials per synthesis 16 with reduce depth 2, output tokens 2,048/3,072, per-request backend timeout 120 s, run timeout 60 s + 90 s × requests within [120 s, 30 min], queue wait 30 s, preemption retries 3, dropped-item share 1/3, sources per item 10, section caps 20/40/60/40/40/40, run rows per meeting 20, overlays per meeting 500, context estimate 3 bytes per token against 32,768 tokens. The spec's clarification session left nothing open; its remaining assumptions are settled in [research.md](research.md) (R5 to R15).
 
@@ -78,7 +86,7 @@ apps/macos/LocalFlow/
     EvidenceVersion.swift                        # evidence_v1
     MeetingEvidenceReader.swift                  # read-only adapter over Transcript/Speaker/Identity/Meeting stores; note paragraphs
     LanguagePolicy.swift                         # NLLanguageRecognizer sampling
-    AnalysisChunkPlanner.swift                   # chunking_v1
+    AnalysisChunkPlanner.swift                   # chunking_v2
     ProtectedLiteralDetector.swift               # classes, stem rule, stoplist
     DueDateResolver.swift                        # relative phrase table, vague terms, resolution against started_at
     AnalysisValidator.swift                      # meeting, sources, identity, due, literals, support, share, duplicates

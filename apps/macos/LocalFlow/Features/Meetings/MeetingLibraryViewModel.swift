@@ -31,6 +31,7 @@ final class MeetingLibraryViewModel {
   @ObservationIgnored private let activeMeetingID: @MainActor () -> UUID?
   @ObservationIgnored private var generation = 0
   var willDelete: (@MainActor (UUID) async -> Void)?
+  @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
 
   init(store: any MeetingStoring, activeMeetingID: @escaping @MainActor () -> UUID? = { nil }) {
     self.store = store
@@ -151,6 +152,22 @@ final class MeetingLibraryViewModel {
       await reloadDetail()
     } catch {
       detailNotice = "The title could not be saved."
+    }
+  }
+
+  func setLanguage(_ language: MeetingLanguage?, for meeting: Meeting) async {
+    do {
+      _ = try await store.setLanguage(
+        meetingID: meeting.id, language: language, revision: meeting.revision,
+        now: Int64(Date().timeIntervalSince1970 * 1_000))
+      intelligence?.evidenceDidChange(meetingID: meeting.id)
+      await reloadDetail()
+      await refresh()
+    } catch MeetingStore.Error.staleRevision {
+      detailNotice = "The meeting changed. Try again."
+      await reloadDetail()
+    } catch {
+      detailNotice = "The language could not be saved."
     }
   }
 

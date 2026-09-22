@@ -27,7 +27,7 @@ The migration inserts one row per existing meeting. `MeetingStore` inserts the r
 | trigger | `automatic`, `manual`, `retry`, `in_room_change` |
 | in_room | INTEGER 0/1 (snapshot at admission) |
 | engine, model_id, model_revision, model_manifest_hash | TEXT; manifest hash 64 hex |
-| pipeline_version | TEXT ≤ 256 B, e.g. `offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v1+echo_lag1s_p20_k12_min300_v1+minor10s_5pct_cos0.60_v1+align_dom0.60_ratio2_ovl0.20_bytrack_v2` |
+| pipeline_version | TEXT ≤ 256 B, e.g. `offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v2+echo_lag1s_p20_k12_min300_v1+merge_cos0.70_v1+minor10s_5pct_cos0.60_v1+align_dom0.60_ratio2_ovl0.20_bytrack_v3` |
 | created_at, started_at, completed_at | INTEGER ms |
 | failure_category | NULL or one of `model_unavailable`, `os_unsupported`, `model_load_failure`, `audio_missing`, `audio_decode_failure`, `runtime_failure`, `transcript_changed`, `persistence_failure`, `persistence_capacity`, `interrupted`; CHECK: non-null ⇔ state ∈ (failed, interrupted) |
 | failure_detail | TEXT ≤ 512 B, content-free |

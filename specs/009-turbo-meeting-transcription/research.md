@@ -61,7 +61,7 @@ rows of one window index are merged by start time once every lane has passed tha
 window, so ordinals stay chronological, and the merged window's progress is the
 furthest lane's end so a resume skips it on both tracks. Speaker alignment then
 labels a per-track row from that track's turns alone
-(`align_dom0.60_ratio2_ovl0.20_bytrack_v2`). The descriptor records
+(`align_dom0.60_ratio2_ovl0.20_bytrack_v3`). The descriptor records
 `per_track_16k_v1` / `mixRule = none`; the live pass keeps the mixed stream.
 
 A track on its own carries the other side's silence, which the decoder is happy to
@@ -73,3 +73,61 @@ distinct), and the window is decoded again sampled from 0.4 up. The app's split 
 (FR-006) stays as the last resort. The reference meeting's system track opens with a
 ringback tone (three decaying bursts, 0–5 s) that the model reads as "Ďakujem za
 pozornosť"; that opening stays fragile and is not a silence the VAD removes.
+
+### Meeting language (2026-09-21)
+
+The 56-minute Slovak call of 2026-09-20 (both tracks intact, no capture drops)
+scored 24.6 % word disagreement against the Wispr Flow transcript of the same call
+and took 12.6 min to finalize. Replaying the pass's exact lane audio (echo gate on,
+29.6 of 56 microphone minutes muted; `MeetingLaneDumpHarness`) through the bundled
+helper showed where both went: with `language: auto`, 10 of the 28 microphone
+windows were decoded as English or Romanian — whisper detects the language on the
+first 30 s of a request, and a microphone window whose first 30 s is muted echo
+leaves it a few words in silence — and 14 of 28 hit the loop retry, which decodes a
+window twice ("Thank you. Thank you. …", "I don't think I'm a good person. …"
+over muted spans). Slovak speech came back translated into English ("…a video about
+the simulation of the robot sapiens"), or as Romanian.
+
+Two changes. Each meeting gets a **Transcript language** (picker next to the title while
+recording and in the transcript header afterwards: Default, Automatic, Slovak, Czech,
+English), with Settings' **Meeting language** as the default; the choice is read when a
+final pass loads the runtime and
+recorded in the pass identity as `lang_<code>_prompt_v1`, so a pass interrupted under one
+language is never resumed under another. A fixed language goes to the helper as its
+code; whisper then skips detection and the encoder passes it costs.
+
+Automatic no longer lets whisper detect on whatever fills a window. The helper
+decides the language before decoding on the window's first 30 s of *speech* (the
+Silero spans concatenated) and hands `whisper_full` a fixed language: a detection at
+probability ≥ 0.9 is used as is; below that the request's `fallbackLanguage` decides,
+which `WhisperMeetingRuntime` sets to the helper's last confident detection of the
+pass (`languageDecision = detected`); without one, whisper detects as before. Nothing
+is pinned for good: a later window that is confidently another language still
+decodes in it, so a call that switches language keeps working. The decision is
+reported per request (`languageDecision`: fixed, detected, fallback, whisper).
+
+Replays of the same lanes (`build/wispr-compare-20260921`, word disagreement against
+the Wispr transcript after the app's energy filter; helper seconds for 2 × 56 min):
+
+| Request | Disagreement | Helper time | Stock filler rows | Wrong-language windows |
+| --- | ---: | ---: | ---: | ---: |
+| `auto`, old helper (the app's pass) | 26.6 % | 447 s | 9 | 17 of 58 |
+| `sk` fixed | 23.8 % | 376 s | 34 | 0 |
+| `auto`, speech detection + fallback | 23.6 % | 412 s | 29 | 1 (8 words) |
+| `sk` + the four Dictionary terms as prompt | 21.4 % | 365 s | 18 | 0 |
+| `sk` + a Slovak context sentence + Dictionary | 20.3 % | 369 s | 6 | 0 |
+
+The remaining disagreement is mostly substitutions, and the largest single class is
+English terms inside Slovak speech written as heard ("rag" → "rak", "case" → "casy",
+"browser" → "bráuseri") where Wispr keeps the English spelling. The meeting request
+therefore also carries the enabled Dictionary terms (`vocabularyTerms`, canonical
+spellings, at most 256) and one context sentence per language (`languageContext`);
+the helper puts the sentence for the window's decoded language in front of the
+terms as whisper's carried initial prompt. The sentence never appeared in the
+output. Terms the Dictionary does not know stay as heard: the Dictionary is the way
+to teach the final pass a project's vocabulary.
+
+Not changed: whisper large-v3-turbo itself, beam 5 and the 120 s windows. The pass
+still decodes both tracks in full (echo gate on, VAD skipping the muted spans), and
+the loop retry still decodes about a third of the windows twice; those are the
+next levers for time.

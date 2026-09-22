@@ -34,7 +34,7 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
       UnsafeBufferPointer(
         start: try XCTUnwrap(buffer.floatChannelData?[0]), count: Int(buffer.frameLength)))
     let lifecycle = ModelLifecycleCoordinator(
-      meetingFactory: {
+      meetingFactory: { _ in
         try await WhisperMeetingRuntime.make(model: local)
       }, factory: { throw DictationFailure.modelUnavailable })
     let started = ProcessInfo.processInfo.systemUptime
@@ -96,6 +96,131 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(result.text, "Hello meeting.")
     XCTAssertEqual(result.tokens, [.init(text: "Hello meeting.", start: 0, end: 0.2)])
     await runtime.shutdown()
+  }
+
+  /// A fixed language goes to the helper as its code, with no fallback field, on
+  /// every request.
+  func testFixedLanguageIsSentAsItsCodeWithoutAFallback() async throws {
+    let (root, model, helper) = try fixture(
+      body: """
+        assert 'fallbackLanguage' not in request
+        assert request['languageContext']['sk'] == 'Prepis pracovného stretnutia v slovenčine.'
+        text = request['language'] + '|' + ','.join(request['vocabularyTerms'])
+        print(json.dumps({'type':'result', 'id':request['id'], 'text':text,
+          'language':'sk', 'languageDecision':'fixed', 'segments':[]}), flush=True)
+        """)
+    defer { try? FileManager.default.removeItem(at: root) }
+    // An empty and an oversized term are dropped before the helper sees them.
+    let runtime = try await WhisperMeetingRuntime.make(
+      model: model, helperURL: helper, language: .slovak,
+      promptTerms: ["SAPGUI", "", String(repeating: "x", count: 257), "Keycloak"])
+    for _ in 0..<2 {
+      let result = try await runtime.transcribe(Array(repeating: 0.1, count: 3_200))
+      XCTAssertEqual(result.text, "sk|SAPGUI,Keycloak")
+    }
+    await runtime.shutdown()
+  }
+
+  /// Automatic: the first request carries no fallback; a window the helper decided
+  /// by a confident detection becomes the fallback for every later window, while a
+  /// fallback or whisper decision and an implausible code leave it as it was.
+  func testAutomaticLanguageCarriesTheLastConfidentDetectionAsFallback() async throws {
+    let (root, model, helper) = try fixture(
+      body: """
+        fallback = request.get('fallbackLanguage', '-')
+        replies = {'-': ('sk', 'detected'), 'sk': ('ro', 'fallback')}
+        language, decision = replies[fallback]
+        print(json.dumps({'type':'result', 'id':request['id'],
+          'text':request['language'] + '|' + fallback, 'language':language,
+          'languageDecision':decision, 'segments':[],
+          'languageProbability':0.99, 'languageSpeechSeconds':5.0}), flush=True)
+        """)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+    let samples = Array(repeating: Float(0.1), count: 80_000)
+    var result = try await runtime.transcribe(samples)
+    XCTAssertEqual(result.text, "auto|-")
+    result = try await runtime.transcribe(samples)
+    XCTAssertEqual(result.text, "auto|sk", "the confident detection is the fallback")
+    result = try await runtime.transcribe(samples)
+    XCTAssertEqual(result.text, "auto|sk", "a fallback decision does not replace it")
+    await runtime.shutdown()
+    XCTAssertTrue(WhisperMeetingRuntime.isLanguageCode("sk"))
+    XCTAssertTrue(WhisperMeetingRuntime.isLanguageCode("yue"))
+    XCTAssertFalse(WhisperMeetingRuntime.isLanguageCode("../x"))
+    XCTAssertFalse(WhisperMeetingRuntime.isLanguageCode("SK"))
+    XCTAssertFalse(WhisperMeetingRuntime.isLanguageCode(""))
+  }
+
+  func testUntrustworthyDetectionDoesNotSeedLaterWindows() async throws {
+    for (text, probability, speech) in [
+      ("", "0.99", "5.0"), ("Words", "0.6", "5.0"),
+      ("Words", "0.99", "0.5"), ("Words", "1.1", "5.0"),
+      ("Words", "0.99", "31.0"), ("Words", "null", "null"),
+    ] {
+      let (root, model, helper) = try fixture(
+        body: """
+          assert 'fallbackLanguage' not in request
+          print(json.dumps({'type':'result', 'id':request['id'], 'text':'\(text)',
+            'language':'sk', 'languageDecision':'detected', 'segments':[],
+            'languageProbability':json.loads('\(probability)'),
+            'languageSpeechSeconds':json.loads('\(speech)')}), flush=True)
+          """)
+      defer { try? FileManager.default.removeItem(at: root) }
+      let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+      do {
+        for _ in 0..<2 {
+          _ = try await runtime.transcribe(Array(repeating: 0.1, count: 80_000))
+        }
+      } catch { XCTFail("Untrusted language changed fallback: \(error)") }
+      await runtime.shutdown()
+    }
+  }
+
+  func testSpeechFilteredAndRepetitiveResultsDoNotSeedLanguage() async throws {
+    for repeated in [false, true] {
+      let (root, model, helper) = try fixture(
+        body: """
+          assert 'fallbackLanguage' not in request
+          repeated = \(repeated ? "True" : "False")
+          text = 'we configured the proxy. ' * 5 if repeated else 'Hallucinated words'
+          segments = [] if repeated else [{'text':text, 'startSeconds':0, 'endSeconds':5}]
+          print(json.dumps({'type':'result', 'id':request['id'], 'text':text,
+            'language':'sk', 'languageDecision':'detected', 'segments':segments,
+            'languageProbability':0.99, 'languageSpeechSeconds':5.0}), flush=True)
+          """)
+      defer { try? FileManager.default.removeItem(at: root) }
+      let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+      do {
+        for _ in 0..<2 {
+          _ = try await runtime.transcribe(Array(repeating: repeated ? 0.1 : 0, count: 80_000))
+        }
+        XCTAssertFalse(repeated)
+      } catch WhisperMeetingRuntime.Failure.repetition {
+        XCTAssertTrue(repeated)
+      } catch { XCTFail("Rejected output changed fallback: \(error)") }
+      await runtime.shutdown()
+    }
+  }
+
+  func testConfidentLanguageChangeAndRuntimeIsolation() async throws {
+    let (root, model, helper) = try fixture(
+      body: """
+        fallback = request.get('fallbackLanguage', '-')
+        language = 'sk' if fallback == '-' else 'en'
+        print(json.dumps({'type':'result', 'id':request['id'], 'text':fallback,
+          'language':language, 'languageDecision':'detected', 'segments':[],
+          'languageProbability':0.99, 'languageSpeechSeconds':5.0}), flush=True)
+        """)
+    defer { try? FileManager.default.removeItem(at: root) }
+    for _ in 0..<2 {
+      let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+      for expected in ["-", "sk", "en"] {
+        let result = try await runtime.transcribe(Array(repeating: 0.1, count: 80_000))
+        XCTAssertEqual(result.text, expected)
+      }
+      await runtime.shutdown()
+    }
   }
 
   func testSlightlyOverrunningFinalSegmentIsClampedToTheInput() async throws {

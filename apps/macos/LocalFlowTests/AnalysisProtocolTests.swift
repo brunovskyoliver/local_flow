@@ -295,13 +295,13 @@ final class AnalysisProtocolTests: XCTestCase {
       serverName: nil, serverVersion: nil, backend: nil, promptVersions: [:],
       resultSchemaVersion: 1,
       limits: .init(
-        inputBytes: 16_000, outputBytes: 98_304, contextTokens: 8_192,
+        inputBytes: 8_000, outputBytes: 98_304, contextTokens: 8_192,
         concurrency: 1),
       caps: .init(
         sourcesPerItem: 4, topics: 10, decisions: 40, actionItems: 60,
         nextSteps: 40, openQuestions: 40, risks: 40))
     let policy = AnalysisPolicy().lowered(by: health)
-    XCTAssertEqual(policy.chunkBudgetBytes, 16_000)
+    XCTAssertEqual(policy.chunkBudgetBytes, 8_000)
     XCTAssertEqual(policy.contextTokens, 8_192)
     XCTAssertEqual(policy.topicCap, 10)
     XCTAssertEqual(policy.sourcesPerItem, 4)

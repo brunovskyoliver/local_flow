@@ -4,6 +4,9 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -13,10 +16,63 @@ import (
 //go:embed result.schema.json
 var resultSchemaJSON []byte
 
+// grammarOpaqueKeys are the JSON Schema keywords a constrained-decoding
+// backend cannot compile — conditional refinements — plus descriptive
+// metadata that only pads the request. Everything dropped here is enforced
+// again by ValidateResult on the decoded output.
+var grammarOpaqueKeys = map[string]bool{
+	"if": true, "then": true, "else": true, "not": true, "allOf": true,
+	"$schema": true, "$id": true, "$comment": true, "title": true,
+	"description": true, "default": true, "examples": true,
+	// Ids reach the model as short aliases; the UUID check runs after mapping.
+	"format": true,
+}
+
+// constraintSchemaJSON is the result schema reduced to what a grammar engine
+// can enforce: structure, required fields, types, enums and bounds.
+var constraintSchemaJSON = func() []byte {
+	var doc map[string]any
+	if json.Unmarshal(resultSchemaJSON, &doc) != nil {
+		return resultSchemaJSON
+	}
+	stripKeys(doc, grammarOpaqueKeys)
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return resultSchemaJSON
+	}
+	return data
+}()
+
+// stripKeys deletes the schema keywords in `keys` at any depth. The keys of a
+// `properties` object are field names, not keywords — a topic's "title" field
+// survives while the schema's "title" annotation goes.
+func stripKeys(node any, keys map[string]bool) {
+	switch n := node.(type) {
+	case map[string]any:
+		for k, v := range n {
+			if keys[k] {
+				delete(n, k)
+			} else if k == "properties" {
+				if fields, ok := v.(map[string]any); ok {
+					for _, field := range fields {
+						stripKeys(field, keys)
+					}
+				}
+			} else {
+				stripKeys(v, keys)
+			}
+		}
+	case []any:
+		for _, v := range n {
+			stripKeys(v, keys)
+		}
+	}
+}
+
 // ResponseFormat is the OpenAI response_format value for constrained decoding.
 func ResponseFormat(stage string) map[string]any {
 	var schema map[string]any
-	_ = json.Unmarshal(resultSchemaJSON, &schema)
+	_ = json.Unmarshal(constraintSchemaJSON, &schema)
 	return map[string]any{
 		"type": "json_schema",
 		"json_schema": map[string]any{
@@ -53,31 +109,70 @@ func ValidateResult(data []byte, req *Request) (*Analysis, error) {
 	if len(trimmed) == 0 || trimmed[0] != '{' || bytes.HasPrefix(trimmed, []byte("<think>")) {
 		return nil, &RequestError{CodeOutputInvalid, "not a JSON object"}
 	}
+	if fixed, ok := repairJSONShape(trimmed); ok {
+		trimmed = fixed
+	}
 	var a Analysis
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&a); err != nil || decoder.More() {
-		return nil, &RequestError{CodeOutputInvalid, "malformed or unknown field"}
+	if err := decoder.Decode(&a); err != nil {
+		// Field names are protocol vocabulary, not content; syntax-error text
+		// could echo model output, so only the field-naming errors pass through
+		// to the log line and the repair hint.
+		reason := "malformed or unknown field"
+		var ute *json.UnmarshalTypeError
+		switch {
+		case strings.HasPrefix(err.Error(), "json: unknown field "):
+			reason += ": " + err.Error()
+		case errors.As(err, &ute):
+			reason += ": " + ute.Field + " has wrong type"
+		}
+		return nil, &RequestError{CodeOutputInvalid, reason}
+	}
+	if decoder.More() {
+		return nil, &RequestError{CodeOutputInvalid, "trailing data after the object"}
 	}
 	if a.SchemaVersion != SchemaVersion {
 		return nil, &RequestError{CodeOutputInvalid, "schema_version"}
 	}
-	if a.MeetingID != req.Meeting.ID {
-		return nil, &RequestError{CodeOutputInvalid, "meeting_id"}
-	}
+	// The model saw short id aliases; restore the request's UUIDs. The meeting
+	// id is ours to set — echoing a UUID back is a copy task a small model
+	// fails for no content reason.
+	mapIDs(&a, newAliases(req).long)
+	a.MeetingID = req.Meeting.ID
+	// partial and whole_meeting are fixed per stage; a model that copies
+	// partial:true out of the input partials makes a mechanical slip, not a
+	// content error — normalize instead of burning a repair attempt.
 	partial := req.Stage == StageChunk
-	if a.Partial != partial {
-		return nil, &RequestError{CodeOutputInvalid, "partial flag"}
-	}
+	a.Partial = partial
+	a.Summary.WholeMeeting = !partial
 	switch a.Language {
 	case "sk", "en", "mixed":
 	default:
 		return nil, &RequestError{CodeOutputInvalid, "language"}
 	}
+	if a.Language != req.Meeting.LanguagePolicy.Output {
+		return nil, &RequestError{CodeOutputInvalid, "language_policy mismatch"}
+	}
 	if err := validateStructure(&a, partial); err != nil {
 		return nil, err
 	}
 	return &a, validateSources(&a, req)
+}
+
+// clampList keeps the first cap entries — models order by significance, and an
+// over-long section is a mechanical overflow, not a content defect. The client
+// enforces the same caps, so an unbounded result could never be persisted.
+// A missing list comes back empty: nil encodes as null, which the client
+// rejects.
+func clampList[T any](items []T, limit int) []T {
+	if items == nil {
+		return []T{}
+	}
+	if len(items) > limit {
+		return items[:limit]
+	}
+	return items
 }
 
 func validateStructure(a *Analysis, partial bool) error {
@@ -86,21 +181,42 @@ func validateStructure(a *Analysis, partial bool) error {
 	if len(a.Summary.Text) < 1 || len(a.Summary.Text) > MaxSummaryBytes {
 		return fail("summary.text length")
 	}
-	if len(a.Summary.Sources) > MaxSourcesPerItem {
-		return fail("summary.sources over 10")
+	a.Summary.Sources = normalizeSources(a.Summary.Sources)
+	a.Topics = clampList(a.Topics, c["topics"])
+	a.Decisions = clampList(a.Decisions, c["decisions"])
+	a.NextSteps = clampList(a.NextSteps, c["next_steps"])
+	a.OpenQuestions = clampList(a.OpenQuestions, c["open_questions"])
+	a.Risks = clampList(a.Risks, c["risks"])
+	a.ActionItems = clampList(a.ActionItems, c["action_items"])
+	for i := range a.Topics {
+		a.Topics[i].Sources = normalizeSources(a.Topics[i].Sources)
+		a.Topics[i].Bullets = clampList(a.Topics[i].Bullets, MaxTopicBullets)
 	}
-	if len(a.Topics) > c["topics"] {
-		return fail("topics over cap")
+	for i := range a.Decisions {
+		a.Decisions[i].Sources = normalizeSources(a.Decisions[i].Sources)
 	}
-	for _, t := range a.Topics {
-		if len(t.Title) < 1 || len(t.Title) > MaxTopicTitle ||
-			len(t.Summary) > MaxTopicSummary || len(t.Bullets) > MaxTopicBullets ||
-			len(t.Sources) > MaxSourcesPerItem {
-			return fail("topic field bound")
+	for i := range a.NextSteps {
+		a.NextSteps[i].Sources = normalizeSources(a.NextSteps[i].Sources)
+	}
+	for i := range a.OpenQuestions {
+		a.OpenQuestions[i].Sources = normalizeSources(a.OpenQuestions[i].Sources)
+	}
+	for i := range a.Risks {
+		a.Risks[i].Sources = normalizeSources(a.Risks[i].Sources)
+	}
+	for i := range a.ActionItems {
+		a.ActionItems[i].Sources = normalizeSources(a.ActionItems[i].Sources)
+	}
+	for i, t := range a.Topics {
+		if len(t.Title) < 1 || len(t.Title) > MaxTopicTitle {
+			return fail(fmt.Sprintf("topics[%d].title must be 1..%d bytes", i, MaxTopicTitle))
 		}
-		for _, b := range t.Bullets {
+		if len(t.Summary) > MaxTopicSummary {
+			return fail(fmt.Sprintf("topics[%d].summary over %d bytes", i, MaxTopicSummary))
+		}
+		for j, b := range t.Bullets {
 			if len(b) > MaxBulletBytes {
-				return fail("bullet over 500 bytes")
+				return fail(fmt.Sprintf("topics[%d].bullets[%d] over %d bytes", i, j, MaxBulletBytes))
 			}
 		}
 	}
@@ -116,12 +232,9 @@ func validateStructure(a *Analysis, partial bool) error {
 		{"risks", a.Risks, true},
 	}
 	for _, section := range sections {
-		if len(section.items) > c[section.name] {
-			return fail(section.name + " over cap")
-		}
-		for _, item := range section.items {
+		for i, item := range section.items {
 			if len(item.Text) < 1 || len(item.Text) > MaxItemText {
-				return fail(section.name + " text bound")
+				return fail(fmt.Sprintf("%s[%d].text must be 1..%d bytes", section.name, i, MaxItemText))
 			}
 			if item.EvidenceClass != nil {
 				if !section.evidenceAllowed ||
@@ -129,24 +242,17 @@ func validateStructure(a *Analysis, partial bool) error {
 					return fail(section.name + " evidence_class")
 				}
 			}
-			if len(item.Sources) < 1 || len(item.Sources) > MaxSourcesPerItem {
-				return fail(section.name + " sources 1..10")
-			}
-			if err := uniqueSources(item.Sources); err != nil {
-				return err
+			if len(item.Sources) < 1 {
+				return fail(section.name + " needs at least 1 source")
 			}
 		}
 	}
-	if len(a.ActionItems) > c["action_items"] {
-		return fail("action_items over cap")
-	}
-	for _, item := range a.ActionItems {
-		if len(item.Text) < 1 || len(item.Text) > MaxItemText ||
-			len(item.Sources) < 1 || len(item.Sources) > MaxSourcesPerItem {
-			return fail("action_item bound")
+	for i, item := range a.ActionItems {
+		if len(item.Text) < 1 || len(item.Text) > MaxItemText {
+			return fail(fmt.Sprintf("action_items[%d].text must be 1..%d bytes", i, MaxItemText))
 		}
-		if err := uniqueSources(item.Sources); err != nil {
-			return err
+		if len(item.Sources) < 1 {
+			return fail("action_items needs at least 1 source")
 		}
 		switch item.Owner.Kind {
 		case "participant":
@@ -184,16 +290,104 @@ func validateStructure(a *Analysis, partial bool) error {
 	return nil
 }
 
-func uniqueSources(sources []SourceRef) error {
+// repairJSONShape patches the signature structural defect of a small model:
+// dropped or misplaced closing braces/brackets and dangling commas. It only
+// inserts or removes structural characters — never content — stops at the
+// balanced root (rescuing trailing junk after the object), and refuses
+// anything whose defect is another class. The repaired text still goes
+// through the full decode and validation path.
+func repairJSONShape(data []byte) ([]byte, bool) {
+	var stack []byte
+	out := make([]byte, 0, len(data)+16)
+	inString, escaped := false, false
+	emitCloser := func(c byte) {
+		i := len(out) - 1
+		for i >= 0 && (out[i] == ' ' || out[i] == '\t' || out[i] == '\n' || out[i] == '\r') {
+			i--
+		}
+		if i >= 0 && out[i] == ',' {
+			out = out[:i]
+		}
+		out = append(out, c)
+	}
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+			out = append(out, c)
+		case '{', '[':
+			stack = append(stack, map[byte]byte{'{': '}', '[': ']'}[c])
+			out = append(out, c)
+		case '}', ']':
+			// A closer that mismatches the innermost open container means the
+			// model dropped one or more closers ahead of it; emit them first.
+			for len(stack) > 0 && stack[len(stack)-1] != c {
+				emitCloser(stack[len(stack)-1])
+				stack = stack[:len(stack)-1]
+			}
+			if len(stack) == 0 {
+				return nil, false
+			}
+			stack = stack[:len(stack)-1]
+			emitCloser(c)
+			if len(stack) == 0 {
+				// Root closed — anything left is trailing junk.
+				if json.Valid(out) {
+					return out, true
+				}
+				return nil, false
+			}
+		default:
+			out = append(out, c)
+		}
+	}
+	if inString {
+		if escaped {
+			return nil, false
+		}
+		out = append(out, '"')
+	}
+	for len(stack) > 0 {
+		emitCloser(stack[len(stack)-1])
+		stack = stack[:len(stack)-1]
+	}
+	if !json.Valid(out) {
+		return nil, false
+	}
+	return out, true
+}
+
+// normalizeSources dedupes a citation list and clamps it to the schema cap.
+// An over-long sources list is a mechanical overflow, not a content defect:
+// every kept ref still resolves to real evidence, and rejecting a sound
+// answer over it costs a full repair attempt the model may not survive.
+func normalizeSources(sources []SourceRef) []SourceRef {
 	seen := map[string]bool{}
+	out := make([]SourceRef, 0, len(sources))
 	for _, s := range sources {
 		key := s.Kind + "\x00" + s.ID
 		if seen[key] {
-			return &RequestError{CodeOutputInvalid, "duplicate source"}
+			continue
 		}
 		seen[key] = true
+		out = append(out, s)
+		if len(out) == MaxSourcesPerItem {
+			break
+		}
 	}
-	return nil
+	return out
 }
 
 func validateDue(due Due) error {

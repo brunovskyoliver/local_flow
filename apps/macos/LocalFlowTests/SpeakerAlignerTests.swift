@@ -3,6 +3,45 @@ import XCTest
 @testable import LocalFlow
 
 final class SpeakerAlignerTests: XCTestCase {
+  /// A per-track row can only be that track's voice: one speaker on the track labels
+  /// every row, however little of it the turns cover (a row timed as its window).
+  func testPerTrackRowWithOneSpeakerOnTheTrackIsThatSpeakerRegardlessOfCoverage() {
+    let turns = [SpeakerAligner.Turn(speaker: 3, startMs: 10_000, endMs: 12_000)]
+    let row = SpeakerAligner.Segment(startMs: 0, endMs: 120_000)
+    let mixed = SpeakerAligner.assign(row, turns: turns)
+    XCTAssertEqual(mixed.kind, .unknown)
+    let perTrack = SpeakerAligner.assign(row, turns: turns, track: .init(keys: [3]))
+    XCTAssertEqual(perTrack.kind, .speaker)
+    XCTAssertEqual(perTrack.speaker, 3)
+    XCTAssertEqual(perTrack.topCoverage, 2_000 / 120_000, accuracy: 0.001)
+    // No turn under a one-second "Áno." at all: still the track's only voice.
+    let short = SpeakerAligner.assign(
+      .init(startMs: 50_000, endMs: 51_000), turns: turns, track: .init(keys: [3]))
+    XCTAssertEqual(short.kind, .speaker)
+    XCTAssertEqual(short.speaker, 3)
+    XCTAssertEqual(short.top, 3)
+  }
+
+  /// Several speakers on the track: the covered speakers decide by ratio, the
+  /// uncovered part of the row does not count against them.
+  func testPerTrackRowWithSeveralSpeakersDecidesAmongTheCoveredOnes() {
+    let turns = [
+      SpeakerAligner.Turn(speaker: 1, startMs: 10_000, endMs: 20_000),
+      SpeakerAligner.Turn(speaker: 2, startMs: 20_000, endMs: 23_000),
+    ]
+    let track = SpeakerAligner.TrackSpeakers(keys: [1, 2])
+    let row = SpeakerAligner.assign(
+      .init(startMs: 0, endMs: 120_000), turns: turns, track: track)
+    XCTAssertEqual(row.kind, .speaker)
+    XCTAssertEqual(row.speaker, 1)
+    let close = SpeakerAligner.assign(
+      .init(startMs: 15_000, endMs: 23_000), turns: turns, track: track)
+    XCTAssertEqual(close.kind, .ambiguous, "5 s against 3 s is under the 2× ratio")
+    let none = SpeakerAligner.assign(
+      .init(startMs: 60_000, endMs: 61_000), turns: turns, track: track)
+    XCTAssertEqual(none.kind, .unknown)
+  }
+
   private typealias Turn = SpeakerAligner.Turn
 
   private func turn(_ speaker: Int?, _ start: Int64, _ end: Int64) -> Turn {
@@ -19,10 +58,10 @@ final class SpeakerAlignerTests: XCTestCase {
   }
 
   func testVersionMatchesThePipelineString() {
-    XCTAssertEqual(SpeakerAligner.version, "align_dom0.60_ratio2_ovl0.20_bytrack_v2")
+    XCTAssertEqual(SpeakerAligner.version, "align_dom0.60_ratio2_ovl0.20_bytrack_v3")
     XCTAssertEqual(
       DiarizationPipelineVersion.current,
-      "offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v1+echo_lag1s_p20_k12_min300_v1+minor10s_5pct_cos0.60_v1+align_dom0.60_ratio2_ovl0.20_bytrack_v2"
+      "offline_vbx_community1_nonexcl+win600s_v1+xwin_cos_greedy_v2+echo_lag1s_p20_k12_min300_v1+merge_cos0.70_v1+minor10s_5pct_cos0.60_v1+align_dom0.60_ratio2_ovl0.20_bytrack_v3"
     )
   }
 

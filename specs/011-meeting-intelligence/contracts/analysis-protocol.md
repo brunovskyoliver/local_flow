@@ -136,16 +136,19 @@ Identical shape for `full`, `chunk` and `synthesis`; `chunk` results are "partia
 | --- | --- |
 | schema_version | 1; the client rejects any other value with `unsupported_version` |
 | meeting_id | must equal the request's; else `meeting_mismatch` |
-| partial | true iff `stage == chunk` |
-| language | `sk`, `en`, `mixed` |
+| partial | true iff `stage == chunk`; `summary.whole_meeting` is its inverse — both are fixed per stage, so the server sets them rather than rejecting a wrong value |
+| language | `sk`, `en`, `mixed`; must equal the request's `meeting.language_policy.output` at every stage; otherwise server `output_invalid`, client `malformed_response` |
 | summary.text | 1…4,000 bytes; `sources` 0…10; `whole_meeting` boolean |
 | topics | ≤ 20 (partial ≤ 10); `title` 1…200; `summary` ≤ 2,000; `bullets` ≤ 12 × ≤ 500 bytes; `sources` 0…10 |
 | decisions, next_steps, open_questions, risks | caps 40/40/40/40 (partial 20); `text` 1…1,000; `sources` 1…10; `evidence_class` optional `explicit`/`implied` (not on next steps) |
 | action_items | ≤ 60 (partial 30); `text` 1…1,000; `owner.kind` ∈ `participant` (with `speaker_id`), `mentioned` (with `name` 1…80), `none`; `ownership_state` ∈ `explicit`, `supported`, `unresolved`; `due.state` ∈ `explicit_absolute`, `explicit_relative_resolved`, `unresolved`, `absent`; `date` `YYYY-MM-DD` only for the explicit states; `original` 1…80 and `source` required unless `absent`; `sources` 1…10 |
-| sources[].kind | `segment` or `note`; `id` a segment UUID or `note:<n>`; no duplicates within one list |
+| sources[].kind | `segment` or `note`; `id` a segment UUID or `note:<n>`; the server dedupes a list and truncates it to 10 before validating — citations are evidence pointers, so an over-long list is normalized rather than rejected |
+| list overflow | every capped list — topics, sections, action items, topic bullets, sources — is truncated to its cap before validating; models emit entries in rough significance order, so keeping the first N loses the tail while an outright rejection would burn a repair attempt on a mechanical defect. Scalar and string bounds (title/summary/text/bullet byte lengths, enums, owner/due shapes) stay strict — mid-string truncation would corrupt content |
 | total | the encoded result line ≤ 98,304 bytes |
 
-Server-side validation before sending, in order: JSON decode; schema (`additionalProperties: false`, closed enums, lengths, caps); `meeting_id` equality; every `source_ref` present in the request (for `synthesis`: present in the union of the partials' sources); `owner.speaker_id` present among participants; `due.date` parses; if the model output fails and the backend advertises JSON schema, one repair attempt re-sends with the validation error appended, then `output_invalid`. The server does not check protected literals, certainty rules or lexical support; the client does (contracts/client-analysis.md).
+Server-side validation before sending, in order: a structural fixer first repairs the small-model signature defects — dropped or misplaced closers, dangling commas, truncation at the token cap — by inserting or removing structural characters only, never content, and the result must still parse and validate in full; then JSON decode; schema (`additionalProperties: false`, closed enums, lengths, caps); `meeting_id` equality; every `source_ref` present in the request (for `synthesis`: present in the union of the partials' sources); `owner.speaker_id` present among participants; `due.date` parses; if the model output fails, up to two repair attempts re-send with the validation error appended at rising temperature (0.3, then 0.5) — a truncated answer is told to answer shorter, and the raised temperature escapes greedy-decoding attractors (repetition collapse) that an identical request reproduces deterministically at temperature 0 — then `output_invalid`. The server does not check protected literals, certainty rules or lexical support; the client does (contracts/client-analysis.md).
+
+A backend that advertises `capabilities.json_schema` gets `response_format` with a constraint-reduced variant of the result schema — conditional `if`/`then`/`allOf` clauses and descriptive metadata dropped, structure, required fields, enums and bounds kept — because grammar engines differ in what they can compile. A rejection that names the field is retried once without it. Backends that do not advertise are sent no `response_format` at all: an engine that accepts it silently can degenerate on a schema this size (2026-09-21: MTPLX burned the whole token budget and emitted a few hundred bytes of content). The in-prompt schema is what guides output everywhere. Health's `backend.json_schema` stays the advertised capability only.
 
 ### Prompts (server, versioned)
 
@@ -157,10 +160,10 @@ Server-side validation before sending, in order: JSON decode; schema (`additiona
 | --- | --- | --- |
 | `--analysis-concurrency` | 1 | analysis admission slots |
 | `--analysis-input-bytes` | 98304 | max sum of segment/notes/partials text bytes per request |
-| `--analysis-output-tokens` | 2048 chunk / 3072 full, synthesis | backend `max_tokens` |
+| `--analysis-output-tokens` | 8192 chunk / 10240 full, synthesis | backend `max_tokens`; a `finish_reason=length` stream is validated like any output and fails `output_invalid` |
 | `--analysis-context-tokens` | 32768 | usable backend context; requests whose estimate (input bytes ÷ 3 + instruction, schema and output reservations) exceeds it fail `too_large` |
-| `--analysis-timeout` | 120s | backend total per request |
-| `--analysis-first-token-timeout` | 15s | |
+| `--analysis-timeout` | 300s | backend total per request |
+| `--analysis-first-token-timeout` | 60s | prefill of a ~10k-token chunk |
 | `--analysis-queue-wait` | 30s | rewrite-first gate window |
 | `--analysis-preempt` | on | cancel the backend call when a rewrite arrives |
 | `--analysis` | on | serve the endpoints at all |

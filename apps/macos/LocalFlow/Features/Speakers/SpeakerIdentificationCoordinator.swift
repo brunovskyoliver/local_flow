@@ -72,12 +72,24 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
     self.recorder = recorder
   }
 
+  /// Meetings whose automatic identification run must end in one
+  /// `meetingSpeakersDidSettle` so the summary sees every identity there is.
+  @ObservationIgnored private var pendingSettle: Set<UUID> = []
+
   // MARK: Triggers
 
   /// After the diarization lease has finished and the adoption committed (FR-022).
-  func diarizationDidAdopt(meetingID: UUID) {
-    guard enabled() else { return }
-    Task { await enqueue(meetingID, trigger: .automatic) }
+  /// True when an identification run follows — it then owns the settle.
+  @discardableResult
+  func diarizationDidAdopt(meetingID: UUID) -> Bool {
+    guard enabled() else { return false }
+    pendingSettle.insert(meetingID)
+    Task {
+      if await !enqueue(meetingID, trigger: .automatic), pendingSettle.remove(meetingID) != nil {
+        intelligence?.meetingSpeakersDidSettle(id: meetingID)
+      }
+    }
+    return true
   }
 
   /// Rerun identification, Retry and the sample-change rerun.
@@ -92,6 +104,10 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
   /// Cancel identification: the pending or running run is removed.
   func cancel(meetingID id: UUID) async {
     pastSearch.removeAll { $0 == id }
+    if pendingSettle.remove(id) != nil {
+      // No identities will land; the waiting summary proceeds without them.
+      intelligence?.meetingSpeakersDidSettle(id: id)
+    }
     if activeMeetingID == id {
       await stopActive()
     } else {
@@ -110,6 +126,7 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
     queue.removeAll { $0 == id }
     triggers[id] = nil
     pastSearch.removeAll { $0 == id }
+    pendingSettle.remove(id)
     for pending in enrollments where pending.request.meetingID == id {
       pending.continuation.resume(returning: .failed(.interrupted))
     }
@@ -118,13 +135,15 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
     if status?.meetingID == id { status = nil }
   }
 
-  /// Launch resume: meetings whose run is already `pending`.
+  /// Launch resume: meetings whose run is already `pending`. Their settle was
+  /// in flight when the app quit; finishing the run fires it now.
   func resume(_ ids: [UUID]) {
     guard enabled() else { return }
     for id in ids where !queue.contains(id) && activeMeetingID != id {
       guard queue.count < Self.queueCapacity else { break }
       queue.append(id)
       triggers[id] = .retry
+      pendingSettle.insert(id)
     }
     pump()
   }
@@ -198,28 +217,34 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
 
   // MARK: Queue
 
-  private func enqueue(_ id: UUID, trigger: IdentificationTrigger) async {
-    guard !queue.contains(id), activeMeetingID != id else { return }
+  /// True when the meeting is queued or running at the end — false when admission
+  /// was refused and no run will come of it.
+  @discardableResult
+  private func enqueue(_ id: UUID, trigger: IdentificationTrigger) async -> Bool {
+    guard !queue.contains(id), activeMeetingID != id else { return true }
     // The active run counts against the bound; a busy retry puts it back at the head.
     guard queue.count + (activeMeetingID == nil ? 0 : 1) < Self.queueCapacity else {
       // An automatic request just leaves the meeting as it was; a manual one is told.
       noticePublished?(Self.queueFullNotice)
-      return
+      return false
     }
     do {
-      guard try await identifier.admit(meetingID: id, trigger: trigger) != nil else { return }
+      guard try await identifier.admit(meetingID: id, trigger: trigger) != nil else {
+        return false
+      }
     } catch IdentityStore.Error.runInProgress {
       // Already pending (for example from reconciliation): queue it once.
     } catch {
       logger.notice("Identification admission refused")
       if trigger != .automatic { noticePublished?("Speakers can't be identified right now.") }
-      return
+      return false
     }
-    guard !queue.contains(id), activeMeetingID != id else { return }
+    guard !queue.contains(id), activeMeetingID != id else { return true }
     queue.append(id)
     triggers[id] = trigger
     await refresh(id)
     pump()
+    return true
   }
 
   private func pump() {
@@ -343,7 +368,13 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
       }
     case .succeeded:
       identitiesDidChange(meetingID: id)
-    case .failed, .cancelled, .nothingToRun, .skipped: break
+      if pendingSettle.remove(id) != nil {
+        intelligence?.meetingSpeakersDidSettle(id: id)
+      }
+    case .failed, .cancelled, .nothingToRun, .skipped:
+      if pendingSettle.remove(id) != nil {
+        intelligence?.meetingSpeakersDidSettle(id: id)
+      }
     }
     if outcome != .busy, outcome != .preempted { triggers[id] = nil }
     cancelled.remove(id)

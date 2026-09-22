@@ -33,6 +33,11 @@ final class AppPreferences {
   var meetingTranscriptionEnabled: Bool {
     didSet { defaults.set(meetingTranscriptionEnabled, forKey: "meetingTranscriptionEnabled") }
   }
+  /// The language the final meeting transcript is decoded in. Automatic lets whisper
+  /// detect it; a fixed language is faster and never drifts (see `MeetingLanguage`).
+  var meetingLanguage: MeetingLanguage {
+    didSet { defaults.set(meetingLanguage.rawValue, forKey: MeetingLanguage.defaultsKey) }
+  }
   /// Feature 007: label speakers after each final transcript. On by default.
   var meetingDiarizationEnabled: Bool {
     didSet { defaults.set(meetingDiarizationEnabled, forKey: "meetingDiarizationEnabled") }
@@ -95,6 +100,9 @@ final class AppPreferences {
       defaults.object(forKey: "meetingTranscriptionEnabled") as? Bool ?? true
     meetingDiarizationEnabled =
       defaults.object(forKey: "meetingDiarizationEnabled") as? Bool ?? true
+    meetingLanguage =
+      MeetingLanguage(rawValue: defaults.string(forKey: MeetingLanguage.defaultsKey) ?? "")
+      ?? .automatic
     speakerIdentificationEnabled =
       defaults.object(forKey: "settings.speakerIdentificationEnabled") as? Bool ?? true
     meetingSummariesAutomatic =

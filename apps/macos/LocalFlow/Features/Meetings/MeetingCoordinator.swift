@@ -124,6 +124,23 @@ final class MeetingCoordinator {
     version += 1
   }
 
+  /// The language the final transcript decodes in; nil follows Settings. Stored on
+  /// the meeting, so the final pass after Stop picks it up.
+  func setLanguage(_ language: MeetingLanguage?) async throws {
+    guard let meeting else { return }
+    let revision = try await deps.store.setLanguage(
+      meetingID: meeting.id, language: language, revision: meeting.revision,
+      now: deps.clock.nowMilliseconds)
+    if let updated = try await deps.store.meeting(id: meeting.id) {
+      self.meeting = updated
+    } else {
+      self.meeting?.revision = revision
+      self.meeting?.language = language
+    }
+    status?.language = language
+    version += 1
+  }
+
   // MARK: - Start
 
   func start(options: MeetingStartOptions = .init()) async -> StartOutcome {

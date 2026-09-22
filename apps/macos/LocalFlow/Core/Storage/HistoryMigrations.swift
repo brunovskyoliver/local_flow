@@ -795,6 +795,16 @@ enum HistoryMigrations {
             SELECT id, updated_at, 0 FROM meetings;
           """)
     }
+    // Feature 009: the language a meeting's final transcript is decoded in, chosen on
+    // the meeting; NULL means the Meeting language in Settings.
+    migrator.registerMigration("meeting-language-v10") { db in
+      let languages = MeetingLanguage.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      try db.execute(
+        sql: """
+          ALTER TABLE meetings ADD COLUMN language TEXT
+            CHECK(language IS NULL OR language IN (\(languages)));
+          """)
+    }
     return migrator
   }
 }

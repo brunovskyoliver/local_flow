@@ -57,22 +57,22 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
     let coordinator = makeCoordinator()
     // A transcript that is not final yet: nothing is admitted.
     let early = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
-    coordinator.meetingTranscriptDidFinalize(id: early.meetingID)
+    coordinator.meetingTranscriptDidFinalize(id: early.meetingID, echoProfile: nil)
     try await Task.sleep(for: .milliseconds(50))
     let observed1 = await state(early.meetingID)
     XCTAssertEqual(observed1, .notRequested)
 
     let id = try await finalMeeting(startedAt: 1_800_000_000_000)
-    coordinator.meetingTranscriptDidFinalize(id: id)
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: nil)
     await DiarizationTestSupport.eventually { await self.state(id) == .succeeded }
 
     automatic = false
     let off = try await finalMeeting(startedAt: 1_900_000_000_000)
-    coordinator.meetingTranscriptDidFinalize(id: off)
+    coordinator.meetingTranscriptDidFinalize(id: off, echoProfile: nil)
     automatic = true
     installed = false
     let missing = try await finalMeeting(startedAt: 2_000_000_000_000)
-    coordinator.meetingTranscriptDidFinalize(id: missing)
+    coordinator.meetingTranscriptDidFinalize(id: missing, echoProfile: nil)
     try await Task.sleep(for: .milliseconds(50))
     let observed2 = await state(off)
     XCTAssertEqual(observed2, .notRequested)
@@ -108,7 +108,7 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
     coordinator.resume((0..<150).map { _ in UUID() })
     XCTAssertEqual(coordinator.queuedCount, SpeakerDiarizationCoordinator.queueCapacity)
     let overflowAuto = try await finalMeeting(startedAt: 1_900_000_000_000)
-    coordinator.meetingTranscriptDidFinalize(id: overflowAuto)
+    coordinator.meetingTranscriptDidFinalize(id: overflowAuto, echoProfile: nil)
     try await Task.sleep(for: .milliseconds(50))
     let observed6 = await state(overflowAuto)
     XCTAssertEqual(observed6, .notRequested)
@@ -368,7 +368,7 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
       transcripts, meetingID: id, segments: [(0, 100)])
     let hidden = try await transcripts.acceptedSpeakers(meetingID: id)
     XCTAssertNil(hidden, "a result for another pass is not shown")
-    coordinator.meetingTranscriptDidFinalize(id: id)
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: nil)
     await DiarizationTestSupport.eventually {
       let latest = (try? await self.speakers.latestRun(meetingID: id)) ?? nil
       return latest?.transcriptPassID == newPass
@@ -390,6 +390,98 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
     XCTAssertEqual(visible?.runID, rerun?.id)
   }
 
+  // MARK: FR-002: the automatic summary waits for speaker work to settle
+
+  func testAutomaticSummaryWaitsForTheRunToFinish() async throws {
+    let runtime = FakeDiarizationRuntime()
+    let gate = PreparationGate()
+    await runtime.hold(gate)
+    let intelligence = FakeIntelligenceObserver()
+    let coordinator = makeCoordinator(runtime)
+    coordinator.intelligence = intelligence
+    let id = try await finalMeeting()
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: nil)
+    await gate.waitUntilStarted()
+    XCTAssertTrue(intelligence.finalized.isEmpty, "the run is in flight; no settle yet")
+    await gate.open()
+    await DiarizationTestSupport.eventually { await self.state(id) == .succeeded }
+    XCTAssertEqual(intelligence.finalized, [id])
+    await coordinator.shutdown()
+  }
+
+  func testAutomaticSummarySettlesAtOnceWhenLabelingIsOff() async throws {
+    let intelligence = FakeIntelligenceObserver()
+    let coordinator = makeCoordinator()
+    coordinator.intelligence = intelligence
+    automatic = false
+    let id = try await finalMeeting()
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: nil)
+    XCTAssertEqual(intelligence.finalized, [id])
+    let observed = await state(id)
+    XCTAssertEqual(observed, .notRequested)
+  }
+
+  func testAutomaticSummarySettlesWhenTheModelIsMissing() async throws {
+    let intelligence = FakeIntelligenceObserver()
+    let coordinator = makeCoordinator()
+    coordinator.intelligence = intelligence
+    installed = false
+    let id = try await finalMeeting()
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: nil)
+    await DiarizationTestSupport.eventually { intelligence.finalized == [id] }
+    let observed = await state(id)
+    XCTAssertEqual(observed, .notRequested)
+  }
+
+  func testAutomaticSummarySettlesWhenLabelingFails() async throws {
+    let runtime = FakeDiarizationRuntime()
+    await runtime.failWindow(1)
+    let intelligence = FakeIntelligenceObserver()
+    let coordinator = makeCoordinator(runtime)
+    coordinator.intelligence = intelligence
+    let id = try await finalMeeting()
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: nil)
+    await DiarizationTestSupport.eventually { await self.state(id) == .failed }
+    XCTAssertEqual(intelligence.finalized, [id])
+    await coordinator.shutdown()
+  }
+
+  func testAutomaticSummarySettlesWhenLabelingIsCancelled() async throws {
+    let runtime = FakeDiarizationRuntime()
+    let gate = PreparationGate()
+    await runtime.hold(gate)
+    let intelligence = FakeIntelligenceObserver()
+    let coordinator = makeCoordinator(runtime)
+    coordinator.intelligence = intelligence
+    let id = try await finalMeeting()
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: nil)
+    await gate.waitUntilStarted()
+    let cancelTask = Task { await coordinator.cancel(meetingID: id) }
+    await DiarizationTestSupport.eventually { intelligence.finalized == [id] }
+    await gate.open()
+    await cancelTask.value
+    await coordinator.shutdown()
+  }
+
+  func testResumedRunsSettleTheSummary() async throws {
+    let intelligence = FakeIntelligenceObserver()
+    let coordinator = makeCoordinator()
+    coordinator.intelligence = intelligence
+    let id = try await finalMeeting()
+    // A pending run left over from before the relaunch.
+    let diarizer = MeetingDiarizer(
+      speakers: speakers, transcripts: transcripts, meetings: fixture.store,
+      storageRoot: fixture.root, lifecycle: lifecycle, identity: DiarizationTestSupport.identity,
+      clock: FakeMeetingClock())
+    let pending = try await diarizer.admit(
+      meetingID: id, trigger: .automatic, expectedRevision: nil)
+    XCTAssertEqual(pending.state, .pending)
+    coordinator.resume([id])
+    await DiarizationTestSupport.eventually { await self.state(id) == .succeeded }
+    XCTAssertEqual(intelligence.finalized, [id])
+    await coordinator.shutdown()
+  }
+
   // MARK: Feature 010 (T041): adoption is published after the lease finished
 
   @MainActor
@@ -403,7 +495,7 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
       self.lifecycle = lifecycle
       self.store = store
     }
-    func diarizationDidAdopt(meetingID: UUID) {
+    func diarizationDidAdopt(meetingID: UUID) -> Bool {
       adopted.append(meetingID)
       Task {
         let snapshot = await lifecycle.snapshot()
@@ -413,6 +505,7 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
           acceptedAtAdoption.append(accepted)
         }
       }
+      return false
     }
     func meetingWillDelete(id: UUID) async {}
   }
@@ -464,7 +557,7 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
     let observer = FakeIntelligenceObserver()
     coordinator.intelligence = observer
     let id = try await finalMeeting()
-    coordinator.meetingTranscriptDidFinalize(id: id)
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: nil)
     await DiarizationTestSupport.eventually { await self.state(id) == .succeeded }
     let rows = try await transcripts.page(
       meetingID: id, finality: .final, after: nil, limit: 10)

@@ -209,6 +209,7 @@ final class AppServices {
         rootURL: base.appendingPathComponent("Models/whisper-large-v3-turbo"))
       self.meetingModelProvisioner = meetingProvisioner
       let recorder = recorder
+      let vocabulary = VocabularyStore(history: paths.1)
       let lifecycle = ModelLifecycleCoordinator(
         observe: { state, workload, duration in
           if duration == 0 {
@@ -293,7 +294,7 @@ final class AppServices {
           }
           return try await FluidAudioVoiceEmbedderFactory(descriptor: local).makeRuntime()
         },
-        meetingFactory: { [weak self] in
+        meetingFactory: { [weak self] session in
           let local: LocalModelDescriptor
           do {
             local = try await meetingProvisioner.verifiedLocalDescriptor()
@@ -303,7 +304,14 @@ final class AppServices {
             await self?.invalidateMeetingModelVerification()
             throw DictationFailure.modelUnavailable
           }
-          return try await WhisperMeetingRuntime.make(model: local)
+          // Read when the pass loads the runtime, so a change on the meeting or in
+          // Settings applies to the next final pass; the finalizer records the same
+          // value in its version.
+          let language = await self?.meetingLanguage(for: session) ?? .automatic
+          // The Dictionary as prompt terms; its revision is already in the pass identity.
+          let terms = (try? await vocabulary.snapshot().entries)?.filter(\.enabled).map(\.canonical)
+          return try await WhisperMeetingRuntime.make(
+            model: local, language: language, promptTerms: terms ?? [])
         },
         factory: { [weak self] in
           let local: LocalModelDescriptor
@@ -331,7 +339,6 @@ final class AppServices {
         })
       self.lifecycle = lifecycle
       await lifecycle.setKeepLoaded(preferences.keepModelReady && allowsPreferenceWarmup)
-      let vocabulary = VocabularyStore(history: paths.1)
       let transcriptIdentity = try TranscriptionPipelineIdentity(
         descriptor: descriptor, manifestHash: TranscriptionQualityDetail.hash(descriptorData),
         build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
@@ -505,6 +512,13 @@ final class AppServices {
   /// Meeting storage, store, launch reconciliation (detached, never awaited by
   /// launch) and the coordinator. Start Meeting stays disabled until the
   /// reconciler reports completion.
+  /// The language a meeting's final transcript decodes in: the meeting's own choice,
+  /// else the Meeting language in Settings.
+  func meetingLanguage(for meetingID: UUID) async -> MeetingLanguage {
+    if let stored = try? await meetingStore?.meeting(id: meetingID)?.language { return stored }
+    return preferences.meetingLanguage
+  }
+
   private func startMeetings(
     base: URL, history: TranscriptionStore,
     lifecycle: ModelLifecycleCoordinator, vocabulary: VocabularyStore,
@@ -528,6 +542,9 @@ final class AppServices {
     let finalizer = MeetingFinalizer(
       store: transcripts, meetings: store, storageRoot: root, lifecycle: lifecycle,
       vocabulary: vocabulary, identity: finalIdentity, configuration: .turbo,
+      defaultLanguage: { [weak self] in
+        await MainActor.run { self?.preferences.meetingLanguage ?? .automatic }
+      },
       clock: clock, recorder: recorder)
     let transcription = MeetingTranscriptionCoordinator(
       store: liveStore, lifecycle: lifecycle, vocabulary: vocabulary,
@@ -690,6 +707,7 @@ final class AppServices {
     meetingLibrary = MeetingLibraryViewModel(store: store) { [weak coordinator] in
       coordinator?.activeMeetingID
     }
+    meetingLibrary?.intelligence = intelligence
     meetingLibrary?.willDelete = {
       [weak coordinator, weak diarization, weak identification, weak intelligence] id in
       await diarization?.meetingWillDelete(id: id)

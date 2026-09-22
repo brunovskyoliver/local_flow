@@ -21,7 +21,7 @@ func TestFlags(t *testing.T) {
 	if err != nil || c.shield || c.versions[0] != 2 || c.backend.DebugDelay != 30*time.Second || c.backend.Token != "backend-secret" || c.token != "client-secret" {
 		t.Fatal(c, err)
 	}
-	for _, args := range [][]string{{"--shield=maybe"}, {"--protocol-versions=0"}, {"--backend-timeout=0s"}, {"--first-token-timeout=-1s"}, {"--debug-delay=-1s"}, {"--listen=0.0.0.0:8080"}, {"extra"}, {"--analysis-dump-requests=/tmp/x"}} {
+	for _, args := range [][]string{{"--shield=maybe"}, {"--protocol-versions=0"}, {"--backend-timeout=0s"}, {"--first-token-timeout=-1s"}, {"--debug-delay=-1s"}, {"--analysis-timeout=0s"}, {"--analysis-first-token-timeout=-1s"}, {"--listen=0.0.0.0:8080"}, {"extra"}, {"--analysis-dump-requests=/tmp/x"}} {
 		if _, err := parse(args, func(string) string { return "" }, io.Discard); err == nil {
 			t.Fatal(args)
 		}

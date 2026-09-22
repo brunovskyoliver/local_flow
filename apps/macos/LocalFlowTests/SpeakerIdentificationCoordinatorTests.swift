@@ -175,6 +175,61 @@ final class SpeakerIdentificationCoordinatorTests: XCTestCase {
     XCTAssertEqual(samples, 1)
   }
 
+  // MARK: FR-002: adoption hands the waiting summary its settle
+
+  func testDiarizationAdoptSettlesTheSummaryAfterTheRun() async throws {
+    let intelligence = FakeIntelligenceObserver()
+    let coordinator = makeCoordinator()
+    coordinator.intelligence = intelligence
+    let meeting = try await meeting()
+    let tomas = try await store.createKnownSpeaker(name: "Tomáš", isLocalUser: false, now: 1)
+    _ = try await store.addSamples(
+      knownSpeakerID: tomas.id,
+      drafts: [
+        IdentificationTestSupport.draft(
+          vector: VoiceVectors.unit(axis: 1), meetingID: meeting.id, speakerID: meeting.remote)
+      ], consent: .remember, now: 2)
+    let gate = PreparationGate()
+    await runtime.hold(gate)
+    XCTAssertTrue(coordinator.diarizationDidAdopt(meetingID: meeting.id))
+    await gate.waitUntilStarted()
+    XCTAssertTrue(intelligence.finalized.isEmpty, "the run is in flight; no settle yet")
+    await gate.open()
+    await DiarizationTestSupport.eventually { await self.state(meeting.id) == .succeeded }
+    XCTAssertEqual(intelligence.finalized, [meeting.id])
+    await coordinator.shutdown()
+  }
+
+  func testDiarizationAdoptReportsNoRunWhenDisabled() async throws {
+    let coordinator = makeCoordinator()
+    let meeting = try await meeting()
+    enabled = false
+    XCTAssertFalse(coordinator.diarizationDidAdopt(meetingID: meeting.id))
+  }
+
+  func testCancelledIdentificationSettlesTheSummary() async throws {
+    let intelligence = FakeIntelligenceObserver()
+    let coordinator = makeCoordinator()
+    coordinator.intelligence = intelligence
+    let meeting = try await meeting()
+    let tomas = try await store.createKnownSpeaker(name: "Tomáš", isLocalUser: false, now: 1)
+    _ = try await store.addSamples(
+      knownSpeakerID: tomas.id,
+      drafts: [
+        IdentificationTestSupport.draft(
+          vector: VoiceVectors.unit(axis: 1), meetingID: meeting.id, speakerID: meeting.remote)
+      ], consent: .remember, now: 2)
+    let gate = PreparationGate()
+    await runtime.hold(gate)
+    XCTAssertTrue(coordinator.diarizationDidAdopt(meetingID: meeting.id))
+    await gate.waitUntilStarted()
+    let cancelling = Task { await coordinator.cancel(meetingID: meeting.id) }
+    await DiarizationTestSupport.eventually { intelligence.finalized == [meeting.id] }
+    await gate.open()
+    await cancelling.value
+    await coordinator.shutdown()
+  }
+
   // MARK: Runs (T040)
 
   func testDiarizationDidAdoptEnqueuesAnAutomaticRunOnlyAfterTheLeaseFinished() async throws {

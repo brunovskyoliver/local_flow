@@ -254,6 +254,12 @@ final class MeetingCoordinatorTests: XCTestCase {
     {
       try await inner.setTitle(meetingID: meetingID, title: title, revision: revision, now: now)
     }
+    func setLanguage(meetingID: UUID, language: MeetingLanguage?, revision: Int64, now: Int64)
+      async throws -> Int64
+    {
+      try await inner.setLanguage(
+        meetingID: meetingID, language: language, revision: revision, now: now)
+    }
     func notes(meetingID: UUID) async throws -> MeetingNotes? {
       try await inner.notes(meetingID: meetingID)
     }

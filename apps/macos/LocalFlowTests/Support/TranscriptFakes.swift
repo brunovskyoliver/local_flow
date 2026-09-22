@@ -341,6 +341,8 @@ extension FakeMeetingClock: DictationClock {}
 struct TranscriptMeetingFixture {
   enum TrackSource: Equatable {
     case blocks(Int)
+    /// The same tone at alternating amplitude so the echo gate can calibrate.
+    case wavyBlocks(Int)
     case missing, unrecoverable
   }
   struct Stretch {
@@ -414,10 +416,15 @@ struct TranscriptMeetingFixture {
       for (segment, track, source) in current {
         let final = String(segment.relativePath.dropLast(5))
         switch source {
-        case .blocks(let blocks):
+        case .blocks(let blocks), .wavyBlocks(let blocks):
           let url = store.root.resolve(relativePath: final)!
-          try ADTSFixtures.write(
-            try ADTSFixtures.encodedTone(blocks: blocks, kind: track.kind), to: url)
+          if case .wavyBlocks = source {
+            try ADTSFixtures.write(
+              try ADTSFixtures.encodedWavyTone(blocks: blocks, kind: track.kind), to: url)
+          } else {
+            try ADTSFixtures.write(
+              try ADTSFixtures.encodedTone(blocks: blocks, kind: track.kind), to: url)
+          }
           files[sequence, default: [:]][track.kind] = url
           let duration = Int64(blocks) * blockMs
           longest = max(longest, duration)
@@ -535,6 +542,13 @@ final class LoggingMeetingStore: MeetingStoring, @unchecked Sendable {
     note("setTitle")
     return try await base.setTitle(meetingID: meetingID, title: title, revision: revision, now: now)
   }
+  func setLanguage(meetingID: UUID, language: MeetingLanguage?, revision: Int64, now: Int64)
+    async throws -> Int64
+  {
+    note("setLanguage")
+    return try await base.setLanguage(
+      meetingID: meetingID, language: language, revision: revision, now: now)
+  }
   func notes(meetingID: UUID) async throws -> MeetingNotes? {
     note("notes")
     return try await base.notes(meetingID: meetingID)
@@ -606,6 +620,9 @@ final class StubMeetingStore: MeetingStoring, @unchecked Sendable {
     throw unsupported()
   }
   func setTitle(meetingID: UUID, title: String?, revision: Int64, now: Int64) async throws -> Int64
+  { throw unsupported() }
+  func setLanguage(meetingID: UUID, language: MeetingLanguage?, revision: Int64, now: Int64)
+    async throws -> Int64
   { throw unsupported() }
   func notes(meetingID: UUID) async throws -> MeetingNotes? { detailValue?.notes }
   func setFinalizationStage(meetingID: UUID, stage: FinalizationStage, now: Int64) async throws {

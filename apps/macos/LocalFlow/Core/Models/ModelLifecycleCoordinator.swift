@@ -33,7 +33,10 @@ actor ModelLifecycleCoordinator {
   }
 
   private let factory: Factory
-  private let meetingFactory: Factory
+  /// Receives the session (a meeting id), so the runtime can be built for that
+  /// meeting's language and vocabulary.
+  typealias MeetingFactory = @Sendable (UUID) async throws -> any TranscriptionRuntime
+  private let meetingFactory: MeetingFactory
   private let diarizationFactory: DiarizationFactory
   private let voiceEmbeddingFactory: VoiceEmbeddingFactory
   private let clock: any DictationClock
@@ -72,7 +75,7 @@ actor ModelLifecycleCoordinator {
     voiceEmbeddingFactory: @escaping VoiceEmbeddingFactory = {
       throw DictationFailure.modelUnavailable
     },
-    meetingFactory: @escaping Factory = { throw DictationFailure.modelUnavailable },
+    meetingFactory: @escaping MeetingFactory = { _ in throw DictationFailure.modelUnavailable },
     factory: @escaping Factory
   ) {
     self.clock = clock
@@ -170,7 +173,7 @@ actor ModelLifecycleCoordinator {
       let task = Task { () throws -> Resident in
         switch requested {
         case .speechRecognition: return .speech(try await factory())
-        case .meetingTranscription: return .meeting(try await meetingFactory())
+        case .meetingTranscription: return .meeting(try await meetingFactory(session))
         case .diarization: return .diarization(try await diarizationFactory())
         case .speakerIdentification: return .embedding(try await voiceEmbeddingFactory())
         }

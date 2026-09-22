@@ -37,7 +37,7 @@ final class EvidenceVersionTests: XCTestCase {
   private func compute(
     segments: [EvidenceSegment], participants: [EvidenceParticipant],
     notes: [NoteParagraph],
-    language: AnalysisLanguage = .sk, budget: Int = 24_576
+    language: AnalysisLanguage = .sk, budget: Int = 12_288
   ) -> EvidenceVersion {
     EvidenceVersion.compute(
       meetingID: meetingID, passID: passID, segments: segments,

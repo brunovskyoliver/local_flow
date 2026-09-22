@@ -2,7 +2,7 @@ import XCTest
 
 @testable import LocalFlow
 
-/// T087 — `chunking_v1` plan shape (contract step 5).
+/// T087 — `chunking_v2` plan shape (contract step 5).
 final class AnalysisChunkPlannerTests: XCTestCase {
 
   private func segment(_ ordinal: Int, bytes: Int) -> EvidenceSegment {
@@ -32,7 +32,7 @@ final class AnalysisChunkPlannerTests: XCTestCase {
   }
 
   func testAtOrBelowBudgetPlansOneFullRequest() throws {
-    for total in [1_000, 24_576] {
+    for total in [1_000, 12_288] {
       let plan = try AnalysisChunkPlanner.plan(
         segments: self.segments([total / 2, total - total / 2]), notes: [],
         policy: AnalysisPolicy())
@@ -44,15 +44,15 @@ final class AnalysisChunkPlannerTests: XCTestCase {
   }
 
   func testSegmentNeverStraddlesAChunkBoundary() throws {
-    // 6 × 10_000 bytes, budget 24_576 → [0,1], [2,3], [4,5].
+    // 6 × 10_000 bytes, budget 16_384 → one segment per chunk.
     let input = self.segments([10_000, 10_000, 10_000, 10_000, 10_000, 10_000])
     let plan = try AnalysisChunkPlanner.plan(
       segments: input, notes: [], policy: AnalysisPolicy())
-    XCTAssertEqual(plan.chunks.count, 3)
+    XCTAssertEqual(plan.chunks.count, 6)
     var covered: [Int] = []
     for chunk in plan.chunks {
       XCTAssertLessThan(chunk.firstOrdinal, chunk.lastOrdinal)
-      XCTAssertLessThanOrEqual(chunk.segmentBytes, 24_576)
+      XCTAssertLessThanOrEqual(chunk.segmentBytes, 12_288)
       covered += Array(chunk.firstOrdinal..<chunk.lastOrdinal)
     }
     // Contiguous, whole-segment coverage — the tail is never dropped.
@@ -66,7 +66,7 @@ final class AnalysisChunkPlannerTests: XCTestCase {
       segments: input, notes: [], policy: AnalysisPolicy())
     XCTAssertFalse(plan.isFull)
     for chunk in plan.chunks where !chunk.oversized {
-      XCTAssertLessThanOrEqual(chunk.segmentBytes, 24_576)
+      XCTAssertLessThanOrEqual(chunk.segmentBytes, AnalysisPolicy().chunkBudgetBytes)
       let bytes = input[chunk.firstOrdinal..<chunk.lastOrdinal]
         .reduce(0) { $0 + $1.text.utf8.count }
       XCTAssertEqual(chunk.segmentBytes, bytes)
@@ -112,8 +112,30 @@ final class AnalysisChunkPlannerTests: XCTestCase {
 
   func testLargerServerLimitNeverRaisesTheBudget() throws {
     let policy = AnalysisPolicy().lowered(by: health(inputBytes: 1_000_000))
-    XCTAssertEqual(policy.chunkBudgetBytes, 24_576)
-    XCTAssertEqual(policy.fullBudgetBytes, 24_576)
+    XCTAssertEqual(policy.chunkBudgetBytes, 16_384)
+    XCTAssertEqual(policy.fullBudgetBytes, 12_288)
+  }
+
+  func testChunksAreBalancedWithoutATinyTail() throws {
+    // 49 KB greedy at 16 KB would leave a 1 KB tail request.
+    let plan = try AnalysisChunkPlanner.plan(
+      segments: self.segments(Array(repeating: 1_000, count: 49)), notes: [],
+      policy: AnalysisPolicy())
+    XCTAssertEqual(plan.chunks.reduce(0) { $0 + $1.segmentBytes }, 49_000)
+    for chunk in plan.chunks {
+      XCTAssertGreaterThanOrEqual(chunk.segmentBytes, 10_000)
+      XCTAssertLessThanOrEqual(chunk.segmentBytes, 16_384)
+    }
+  }
+
+  func testTextBetweenFullAndChunkBudgetStillSplits() throws {
+    // Over the full budget but under the chunk budget: a single chunk would
+    // leave nothing to synthesize.
+    let plan = try AnalysisChunkPlanner.plan(
+      segments: self.segments([100, 4_000, 4_000, 4_000, 4_000]), notes: [],
+      policy: AnalysisPolicy())
+    XCTAssertGreaterThanOrEqual(plan.chunks.count, 2)
+    XCTAssertEqual(plan.synthesisCounts, [1])
   }
 
   func testSixtyFiveChunksFailTooLong() {

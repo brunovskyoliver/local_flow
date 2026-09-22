@@ -8,7 +8,7 @@ go build -o ../build/flowd ./cmd/flowd
 # Set LOCALFLOW_REWRITE_TOKEN to the separate secret entered in LocalFlow Settings.
 ../build/flowd rewrite --listen 127.0.0.1:8080 \
   --backend http://127.0.0.1:8000/v1 \
-  --model mtplx-qwen35-9b-optimized-speed
+  --model youssofal-qwen3.5-4b-mtplx-optimized-speed
 ```
 
 Use the exact model id reported by the backend's `GET /v1/models`. A missing configured model reports `unavailable`; flowd never selects or loads a different model. Point the app at flowd (`http://127.0.0.1:8080`), not at the inference port. The protocol is in [rewrite-protocol.md](../specs/003-server-rewriting/contracts/rewrite-protocol.md).
@@ -17,7 +17,7 @@ Use the exact model id reported by the backend's `GET /v1/models`. A missing con
 | --- | --- | --- |
 | `--listen` | `127.0.0.1:8080` | HTTP bind address; host must be an IP literal |
 | `--backend` | `http://127.0.0.1:8000/v1` | Inference API base URL, including `/v1` |
-| `--model` | `mtplx-qwen35-9b-optimized-speed` | Exact served model id |
+| `--model` | `youssofal-qwen3.5-4b-mtplx-optimized-speed` | Exact served model id |
 | `--shield` | `on` | `on` or `off`; off reports shield version 0 |
 | `--first-token-timeout` | `5s` | Deadline for the first content token |
 | `--backend-timeout` | `20s` | Total inference deadline |

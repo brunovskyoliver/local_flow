@@ -36,6 +36,7 @@ struct MeetingLibraryView: View {
           coordinator: coordinator, diarization: diarization, identification: identification,
           intelligence: intelligence,
           identificationEnabled: preferences.speakerIdentificationEnabled,
+          defaultLanguage: preferences.meetingLanguage,
           summaryModelFactory: summaryModelFactory, initialTab: model.openTab
         ).id(detail.meeting.id)
       } else {
@@ -178,7 +179,7 @@ struct MeetingLibraryView: View {
         .foregroundStyle(SottoPalette.muted)
       }
       if needsAttention {
-        ActiveMeetingView(coordinator: coordinator)
+        ActiveMeetingView(coordinator: coordinator, defaultLanguage: preferences.meetingLanguage)
       } else {
         Text("No meetings today").frame(maxWidth: .infinity).padding(.bottom, 12)
       }

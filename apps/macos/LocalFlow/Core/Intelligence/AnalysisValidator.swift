@@ -15,7 +15,7 @@ enum AnalysisValidator {
     try checkMeeting(result: result, evidence: evidence)
     var counts = ValidationCounts()
 
-    let summary = ValidatedSummary(
+    var summary = ValidatedSummary(
       text: result.summary.text,
       sources: try resolveSources(result.summary.sources, evidence: evidence, policy: policy),
       wholeMeeting: result.summary.wholeMeeting)
@@ -43,7 +43,7 @@ enum AnalysisValidator {
     checkIdentity(items: &actionItems, evidence: evidence, policy: policy, counts: &counts)
     resolveDueDates(items: &actionItems, evidence: evidence)
     try checkProtectedLiterals(
-      summary: summary, topics: &topics, decisions: &decisions,
+      summary: &summary, topics: &topics, decisions: &decisions,
       actionItems: &actionItems, nextSteps: &nextSteps,
       openQuestions: &openQuestions, risks: &risks,
       evidence: evidence, counts: &counts)
@@ -218,10 +218,12 @@ enum AnalysisValidator {
 
   /// Numeric, address and identifier literals must appear verbatim in the
   /// item's referenced sources (proper nouns by the stem rule); the summary
-  /// is checked against all evidence and a mutation fails the run
-  /// `protected_literal`. Dropped items and topics count `dropped_literal`.
+  /// and topics are checked against all evidence (R5). A summary sentence
+  /// with an unsupported literal is removed; only a summary left empty fails
+  /// the run `protected_literal`. Dropped items and topics count
+  /// `dropped_literal`.
   private static func checkProtectedLiterals(
-    summary: ValidatedSummary, topics: inout [ValidatedTopic],
+    summary: inout ValidatedSummary, topics: inout [ValidatedTopic],
     decisions: inout [ValidatedItem], actionItems: inout [ValidatedActionItem],
     nextSteps: inout [ValidatedItem], openQuestions: inout [ValidatedItem],
     risks: inout [ValidatedItem], evidence: AnalysisEvidence,
@@ -230,16 +232,22 @@ enum AnalysisValidator {
     let allEvidence = sourceText(
       evidence.segmentText.values.sorted()
         + evidence.notes.sorted { $0.ordinal < $1.ordinal }.map(\.text))
-    guard
-      ProtectedLiteralDetector.violations(
-        in: summary.text, evidence: allEvidence
-      ).isEmpty
-    else {
-      throw AnalysisFailure(.protectedLiteral)
+    // Sentence by sentence: one invented name costs its sentence, not the
+    // whole result, and the invented literal is still never shown.
+    var sentences: [String] = []
+    summary.text.enumerateSubstrings(
+      in: summary.text.startIndex..., options: .bySentences
+    ) { sentence, _, _, _ in
+      guard let sentence else { return }
+      if ProtectedLiteralDetector.violations(in: sentence, evidence: allEvidence).isEmpty {
+        sentences.append(sentence.trimmingCharacters(in: .whitespacesAndNewlines))
+      }
     }
+    guard !sentences.isEmpty else { throw AnalysisFailure(.protectedLiteral) }
+    summary.text = sentences.joined(separator: " ")
 
     counts.droppedLiteralCount +=
-      dropTopics(&topics, evidence: evidence)
+      dropTopics(&topics, evidence: allEvidence)
       + dropItems(&decisions, evidence: evidence)
       + dropActionItems(&actionItems, evidence: evidence)
       + dropItems(&nextSteps, evidence: evidence)
@@ -266,14 +274,17 @@ enum AnalysisValidator {
       })
   }
 
+  /// A topic summarizes a stretch of discussion, so its literals may come
+  /// from anywhere in the meeting, not only the few segments it cites (R5).
+  /// Title, summary and each bullet are checked apart: joined, the first
+  /// word of each would read as a mid-sentence proper noun.
   private static func dropTopics(
-    _ topics: inout [ValidatedTopic], evidence: AnalysisEvidence
+    _ topics: inout [ValidatedTopic], evidence allEvidence: String
   ) -> Int {
-    let keep = topics.filter {
-      let text = ([$0.title, $0.summary] + $0.bullets).joined(separator: " ")
-      return ProtectedLiteralDetector.violations(
-        in: text, evidence: sourceText(of: $0.sources, evidence: evidence)
-      ).isEmpty
+    let keep = topics.filter { topic in
+      ([topic.title, topic.summary] + topic.bullets).allSatisfy {
+        ProtectedLiteralDetector.violations(in: $0, evidence: allEvidence).isEmpty
+      }
     }
     let dropped = topics.count - keep.count
     topics = keep
@@ -359,10 +370,12 @@ enum AnalysisValidator {
   // MARK: 7. Share threshold
 
   /// `dropped / returned > 1/3` fails the run with `unsupported_content`.
+  /// Topics count on both sides (FR-024a): their drops are in
+  /// `droppedLiteralCount`, so they must be in `returned` too.
   private static func checkShareThreshold(result: AnalysisResult, counts: ValidationCounts) throws {
     let returned =
-      result.decisions.count + result.actionItems.count + result.nextSteps.count
-      + result.openQuestions.count + result.risks.count
+      result.topics.count + result.decisions.count + result.actionItems.count
+      + result.nextSteps.count + result.openQuestions.count + result.risks.count
     let dropped = counts.droppedLiteralCount + counts.droppedUnsupportedCount
     guard returned > 0 else { return }
     if dropped * 3 > returned { throw AnalysisFailure(.unsupportedContent) }

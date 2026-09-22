@@ -156,6 +156,21 @@ final class MeetingLibraryTests: XCTestCase {
     XCTAssertNil(MeetingRowView.transcriptGlyph(nil))
   }
 
+  func testLanguageSaveNotifiesSummaryOnlyAfterSuccessfulWrite() async throws {
+    let ids = try await seedCompleted(1)
+    let model = MeetingLibraryViewModel(store: store)
+    let observer = FakeIntelligenceObserver()
+    model.intelligence = observer
+    await model.open(ids[0])
+    let original = try XCTUnwrap(model.detail?.meeting)
+    await model.setLanguage(.slovak, for: original)
+    XCTAssertEqual(model.detail?.meeting.language, .slovak)
+    XCTAssertEqual(observer.evidenceChanges, ids)
+    await model.setLanguage(.english, for: original)
+    XCTAssertEqual(observer.evidenceChanges, ids)
+    XCTAssertEqual(model.detail?.meeting.language, .slovak)
+  }
+
   func testActiveMeetingIsPinnedAtTheTop() async throws {
     let ids = try await seedCompleted(3)
     let active = try await store.create(now: t0 - 1_000_000)  // older than every completed meeting

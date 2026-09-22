@@ -25,6 +25,8 @@ type fakeBackend struct {
 	block       chan struct{}
 	requests    chan backend.Input
 	probes      atomic.Int32
+	truncated   atomic.Bool
+	schemaOK    atomic.Bool
 }
 
 func newFakeBackend() *fakeBackend {
@@ -58,7 +60,10 @@ func (f *fakeBackend) Generate(ctx context.Context, in backend.Input) (backend.C
 	select {
 	case text := <-f.completions:
 		ms := 12
-		return backend.Completion{Text: text, Model: "test", FirstTokenMS: &ms, DurationMS: 100}, nil
+		return backend.Completion{
+			Text: text, Model: "test", FirstTokenMS: &ms, DurationMS: 100,
+			Truncated: f.truncated.Swap(false), SchemaAccepted: f.schemaOK.Swap(false),
+		}, nil
 	case <-ctx.Done():
 		return backend.Completion{}, context.Cause(ctx)
 	case <-time.After(2 * time.Second):
@@ -187,8 +192,24 @@ func TestHappyPath(t *testing.T) {
 		t.Fatalf("events: %v", lines)
 	}
 	request := <-b.requests
-	if request.MaxOutputTokens != 3072 {
+	if request.MaxOutputTokens != 10240 {
 		t.Fatalf("max_tokens = %d", request.MaxOutputTokens)
+	}
+	if request.ResponseSchema != nil {
+		t.Fatal("response_format is sent only where the backend advertises json_schema")
+	}
+}
+
+// The result schema rides response_format only when the probe advertised the
+// capability; an unadvertised acceptor can degenerate on a schema this size.
+func TestResponseSchemaFollowsAdvertisement(t *testing.T) {
+	b := newFakeBackend()
+	b.info.JSONSchema = true
+	server := serve(t, b, "")
+	b.completions <- resultLine(t, uuid(0xf00d))
+	post(t, server.URL, requestBody(t), "")
+	if (<-b.requests).ResponseSchema == nil {
+		t.Fatal("advertised json_schema backend did not get response_format")
 	}
 }
 
@@ -200,7 +221,7 @@ func TestResultLineEvents(t *testing.T) {
 	_, lines, _ := post(t, server.URL, requestBody(t), "")
 	result := lines[1]
 	if result["run_id"] == "" || result["stage"] != "full" ||
-		result["prompt_version"].(float64) != 2 ||
+		result["prompt_version"].(float64) != 7 ||
 		result["pipeline_version"] != "analysis_v1" {
 		t.Fatalf("result fields: %v", result)
 	}
@@ -256,20 +277,80 @@ func TestBackendFailures(t *testing.T) {
 
 func TestOutputInvalidAfterRepair(t *testing.T) {
 	b := newFakeBackend()
-	b.info.JSONSchema = true
+	b.schemaOK.Store(true)
 	b.completions <- "not json"
+	b.completions <- "still not json"
 	b.completions <- "still not json"
 	server := serve(t, b, "")
 	_, lines, _ := post(t, server.URL, requestBody(t), "")
 	if len(lines) != 2 || lines[1]["code"] != "output_invalid" {
 		t.Fatalf("want output_invalid, got %v", lines)
 	}
-	// Two backend calls: initial + one repair.
+	// Three backend calls: initial + two repairs at rising temperatures.
+	first := <-b.requests
+	r1 := <-b.requests
+	r2 := <-b.requests
+	if !strings.Contains(r1.System, "failed validation") || !strings.Contains(r2.System, "failed validation") {
+		t.Fatal("repair attempt did not carry the failure")
+	}
+	if first.Temperature != nil || r1.Temperature == nil || *r1.Temperature != 0.3 ||
+		r2.Temperature == nil || *r2.Temperature != 0.5 {
+		t.Fatalf("temperature escalation missing: %v %v %v", first.Temperature, r1.Temperature, r2.Temperature)
+	}
+}
+
+// The schema is in the system prompt on every request, so an unconstrained
+// backend's malformed output still earns the contract's repair attempts.
+func TestRepairWithoutSchemaConstraint(t *testing.T) {
+	b := newFakeBackend()
+	b.completions <- "not json"
+	b.completions <- resultLine(t, uuid(0xf00d))
+	server := serve(t, b, "")
+	_, lines, _ := post(t, server.URL, requestBody(t), "")
+	if len(lines) != 2 || lines[1]["type"] != "result" {
+		t.Fatalf("want repaired result, got %v", lines)
+	}
 	<-b.requests
 	repair := <-b.requests
 	if !strings.Contains(repair.System, "failed validation") {
 		t.Fatal("repair attempt did not carry the failure")
 	}
+}
+
+// A completion cut at the token cap is validation's problem, not the
+// backend's: the text still fails the schema, the code is output_invalid,
+// and a schema-capable backend's repair attempt is told the answer was
+// truncated — not merely malformed — so it should answer shorter.
+func TestTruncatedOutput(t *testing.T) {
+	t.Run("no schema", func(t *testing.T) {
+		b := newFakeBackend()
+		b.truncated.Store(true)
+		b.completions <- `{"meeting_id": "x` // cut mid-object
+		b.completions <- `{"meeting_id": "y` // repairs fail the same way
+		b.completions <- `{"meeting_id": "y`
+		server := serve(t, b, "")
+		_, lines, _ := post(t, server.URL, requestBody(t), "")
+		if len(lines) != 2 || lines[1]["code"] != "output_invalid" {
+			t.Fatalf("want output_invalid, got %v", lines)
+		}
+	})
+	t.Run("repair carries the hint", func(t *testing.T) {
+		b := newFakeBackend()
+		b.schemaOK.Store(true)
+		b.truncated.Store(true)
+		b.completions <- `{"meeting_id": "x`
+		b.completions <- resultLine(t, uuid(0xf00d))
+		server := serve(t, b, "")
+		_, lines, _ := post(t, server.URL, requestBody(t), "")
+		if len(lines) != 2 || lines[1]["type"] != "result" {
+			t.Fatalf("want result, got %v", lines)
+		}
+		<-b.requests
+		repair := <-b.requests
+		if !strings.Contains(repair.System, "cut off at the token limit") {
+			t.Fatal("repair did not carry the truncation hint")
+		}
+	})
 }
 
 func TestSourceValidation(t *testing.T) {
@@ -283,6 +364,8 @@ func TestSourceValidation(t *testing.T) {
 	}}
 	data, _ := json.Marshal(result)
 	b.completions <- string(data)
+	b.completions <- string(data) // repair attempts
+	b.completions <- string(data)
 	server := serve(t, b, "")
 	_, lines, _ := post(t, server.URL, requestBody(t), "")
 	if len(lines) != 2 || lines[1]["code"] != "source_validation" {
@@ -290,6 +373,9 @@ func TestSourceValidation(t *testing.T) {
 	}
 }
 
+// An over-cap section is clamped to the schema bound, not rejected — the
+// client enforces the same caps, so emitting an unbounded result could never
+// persist. The kept entries still validate end to end.
 func TestOverCapResult(t *testing.T) {
 	b := newFakeBackend()
 	result := minimalResult(uuid(0xf00d), false)
@@ -307,8 +393,65 @@ func TestOverCapResult(t *testing.T) {
 	b.completions <- string(data)
 	server := serve(t, b, "")
 	_, lines, _ := post(t, server.URL, requestBody(t), "")
-	if len(lines) != 2 || lines[1]["code"] != "output_invalid" {
-		t.Fatalf("want output_invalid, got %v", lines)
+	if len(lines) != 2 || lines[1]["type"] != "result" {
+		t.Fatalf("want clamped result, got %v", lines)
+	}
+	if got := len(lines[1]["analysis"].(map[string]any)["decisions"].([]any)); got != 40 {
+		t.Fatalf("want 40 decisions after clamp, got %d", got)
+	}
+}
+
+// Regression: the --analysis-timeout / --analysis-first-token-timeout budgets
+// must reach the backend call — before, Generate fell back to the rewrite
+// adapter's 20 s/5 s deadlines and every chunk died at the 5 s first token.
+func TestAnalysisDeadlinesReachBackend(t *testing.T) {
+	b := newFakeBackend()
+	limits := DefaultLimits()
+	limits.Timeout = 123 * time.Second
+	limits.FirstTokenTimeout = 45 * time.Second
+	h := NewHandler(HandlerConfig{Backend: b, ProtocolVersions: []int{1}, Limits: limits})
+	server := httptest.NewServer(h)
+	defer server.Close()
+	b.completions <- resultLine(t, uuid(0xf00d))
+	post(t, server.URL, requestBody(t), "")
+	request := <-b.requests
+	if request.Timeout != limits.Timeout || request.FirstTokenTimeout != limits.FirstTokenTimeout {
+		t.Fatalf("analysis deadlines not forwarded: %+v", request)
+	}
+}
+
+// The contract's prompts state the schema; without it in the text a backend
+// that lacks constrained decoding never learns the required shape.
+func TestPromptCarriesResultSchema(t *testing.T) {
+	b := newFakeBackend()
+	server := serve(t, b, "")
+	b.completions <- resultLine(t, uuid(0xf00d))
+	post(t, server.URL, requestBody(t), "")
+	request := <-b.requests
+	for _, marker := range []string{
+		"This is the JSON Schema the result must match",
+		"never a copy of the schema itself",
+		"analysis-result.schema.json", `"meeting_id"`, `"action_items"`,
+	} {
+		if !strings.Contains(request.System, marker) {
+			t.Fatalf("system prompt missing %q", marker)
+		}
+	}
+}
+
+func TestUnsetDeadlinesGetDefaults(t *testing.T) {
+	b := newFakeBackend()
+	limits := DefaultLimits()
+	limits.Timeout = 0
+	limits.FirstTokenTimeout = 0
+	h := NewHandler(HandlerConfig{Backend: b, ProtocolVersions: []int{1}, Limits: limits})
+	server := httptest.NewServer(h)
+	defer server.Close()
+	b.completions <- resultLine(t, uuid(0xf00d))
+	post(t, server.URL, requestBody(t), "")
+	request := <-b.requests
+	if request.Timeout <= 0 || request.FirstTokenTimeout <= 0 {
+		t.Fatalf("unset deadlines stayed zero: %+v", request)
 	}
 }
 
@@ -434,6 +577,8 @@ func TestSynthesisSourceUnion(t *testing.T) {
 		"text": "d", "evidence_class": "explicit",
 		"sources": []any{map[string]any{"kind": "segment", "id": uuid(0x444)}}}}
 	bd, _ := json.Marshal(bad)
+	b.completions <- string(bd)
+	b.completions <- string(bd) // repair attempts
 	b.completions <- string(bd)
 	_, lines, _ = post(t, server.URL, data, "")
 	if len(lines) != 2 || lines[1]["code"] != "source_validation" {

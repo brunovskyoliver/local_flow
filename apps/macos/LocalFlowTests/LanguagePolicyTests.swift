@@ -81,6 +81,16 @@ final class LanguagePolicyTests: XCTestCase {
     XCTAssertEqual(positions, 64)
   }
 
+  func testUnicodeSamplesStayWithinEveryBudgetWithoutReplacementCharacters() {
+    let source = segments(Array(repeating: String(repeating: "ľščť🙂", count: 100), count: 80))
+    for budget in [0, 1, 2, 3, 63, 65, 129, 1025] {
+      let sampled = LanguagePolicy.sampledTexts(segments: source, budget: budget)
+      XCTAssertLessThanOrEqual(sampled.reduce(0) { $0 + $1.utf8.count }, budget)
+      XCTAssertFalse(sampled.contains { $0.contains("\u{FFFD}") })
+    }
+    XCTAssertEqual(LanguagePolicy.sampledTexts(segments: source, budget: -1), [])
+  }
+
   func testRequestValue() {
     let value = LanguagePolicy.requestValue(output: .sk)
     XCTAssertEqual(value.output, .sk)

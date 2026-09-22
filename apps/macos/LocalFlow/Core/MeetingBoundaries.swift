@@ -221,6 +221,8 @@ protocol MeetingStoring: Sendable {
   func closePause(id: UUID, at: Int64, closedBy: PauseClosedBy) async throws
   func saveNotes(meetingID: UUID, text: String, revision: Int64, now: Int64) async throws -> Int64
   func setTitle(meetingID: UUID, title: String?, revision: Int64, now: Int64) async throws -> Int64
+  func setLanguage(meetingID: UUID, language: MeetingLanguage?, revision: Int64, now: Int64)
+    async throws -> Int64
   func notes(meetingID: UUID) async throws -> MeetingNotes?
   func setFinalizationStage(meetingID: UUID, stage: FinalizationStage, now: Int64) async throws
   func page(before: MeetingCursor?, limit: Int) async throws -> [MeetingSummary]

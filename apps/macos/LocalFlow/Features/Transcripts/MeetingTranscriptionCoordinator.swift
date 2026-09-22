@@ -49,6 +49,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   /// Completed meetings whose drain is still running.
   private var completedMeetings: Set<UUID> = []
   private var deletedMeetings: Set<UUID> = []
+  /// Monotonic stamp of each in-session `meetingDidStop`, consumed when its final
+  /// pass starts — the drain, live-pass and queue wait the user feels (FR-037).
+  private var stopBeganAt: [UUID: UInt64] = [:]
   private var meetingID: UUID?
   private var requested = false
   private var passID = UUID()
@@ -617,6 +620,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     }
     guard meetingID == id else { return }
     stopped = true
+    stopBeganAt[id] = clock.monotonicNanoseconds
     retentionTask?.cancel()
     retentionTask = nil
     detach(taps)
@@ -788,6 +792,12 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
         guard let row = try await store.transcription(meetingID: id) else { return }
         self.publish(row, phase: .transcriptFinalizing)
         if self.status?.meetingID == id { self.status?.progress = 0 }
+        if let stopBegan = self.stopBeganAt.removeValue(forKey: id) {
+          self.recorder?.record(
+            phase: .transcriptFinalizing,
+            durationNanoseconds: clock.monotonicNanoseconds &- stopBegan,
+            metric: .transcriptFinalizationWaitDuration)
+        }
         let outcome = try await finalizer.run(
           meetingID: id, revision: request.revision ?? row.revision,
           progress: { [weak self] fraction in
@@ -801,8 +811,15 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
         if self.status?.meetingID == id { self.status?.progress = 1 }
         // `MeetingFinalizer.run` finished the lease before returning the outcome.
         if outcome.row.state == .final {
-          self.diarization?.meetingTranscriptDidFinalize(id: id)
-          self.intelligence?.meetingTranscriptDidFinalize(id: id)
+          if let diarization = self.diarization {
+            // The pass's echo profile rides along so diarization does not decode
+            // both tracks again; the automatic summary waits for speaker work to
+            // settle (FR-002, settle instead of transcript-final).
+            diarization.meetingTranscriptDidFinalize(
+              id: id, echoProfile: outcome.echoProfile)
+          } else {
+            self.intelligence?.meetingSpeakersDidSettle(id: id)
+          }
         }
       } catch is CancellationError {
         // The pass advanced the row, so the user's revision no longer applies.
@@ -864,6 +881,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     finalizationQueue.removeAll { $0.meetingID == id }
     awaitingCompletion.remove(id)
     completedMeetings.remove(id)
+    stopBeganAt.removeValue(forKey: id)
     if finalizingMeetingID == id {
       finalizationTask?.cancel()
       await finalizationTask?.value

@@ -19,6 +19,7 @@ struct IntelligenceFixture {
   var candidateNames: [UUID: String]
   var segments: [EvidenceSegment]
   var notes: [NoteParagraph]
+  var expectedRelativeDates: [String: String] = [:]
 
   var meeting: Meeting {
     let startedMs =
@@ -131,7 +132,8 @@ enum IntelligenceFixtures {
       expectedLanguage: object["expected_language"] as? String,
       expectedTerms: object["expected_terms"] as? [String] ?? [],
       participants: participants, candidateNames: candidateNames,
-      segments: segments, notes: notes)
+      segments: segments, notes: notes,
+      expectedRelativeDates: object["expected_relative_dates"] as? [String: String] ?? [:])
   }
 
   /// The deterministic four-hour fixture documented in README.md: ~200 KB of
@@ -143,7 +145,7 @@ enum IntelligenceFixtures {
     var offset: Int64 = 0
     var ordinal = 0
     var bytes = 0
-    while bytes < 200_000 {
+    while bytes < 300_000 {
       let text = filler + "Topic \(ordinal) covered in detail."
       segments.append(
         EvidenceSegment(
@@ -219,6 +221,7 @@ final class FakeAnalysisTransport: AnalysisTransporting, @unchecked Sendable {
   /// Highest observed concurrent `analyze` streams (T090).
   private(set) var maxInFlight = 0
   var healthResult: Result<AnalysisHealth, Error>?
+  var healthHook: (@Sendable () async throws -> Void)?
 
   init(fixture: IntelligenceFixture? = nil) { self.fixture = fixture }
 
@@ -374,6 +377,7 @@ final class FakeAnalysisTransport: AnalysisTransporting, @unchecked Sendable {
   }
 
   func health(endpoint: RewriteEndpoint) async throws -> AnalysisHealth {
+    try await healthHook?()
     switch healthResult {
     case .success(let health): return health
     case .failure(let error): throw error
@@ -644,6 +648,7 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
       precondition($0.state.canTransition(to: state), "\($0.state) -> \(state)")
       $0.state = state
       $0.completedAt = now
+      $0.durationMs = Int(max(0, now - ($0.startedAt ?? now)))
       $0.failureCategory = failure
       $0.failureDetail = detail
     }
@@ -866,7 +871,7 @@ final class FakeIntelligenceObserver: IntelligenceObserving {
   private(set) var finalized: [UUID] = []
   private(set) var deleted: [UUID] = []
 
-  func meetingTranscriptDidFinalize(id: UUID) { finalized.append(id) }
+  func meetingSpeakersDidSettle(id: UUID) { finalized.append(id) }
   func meetingWillDelete(id: UUID) async { deleted.append(id) }
   func evidenceDidChange(meetingID: UUID) { evidenceChanges.append(meetingID) }
 }

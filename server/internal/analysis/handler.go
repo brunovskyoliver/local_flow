@@ -67,6 +67,12 @@ func NewHandler(c HandlerConfig) *Handler {
 	if c.Limits.OutputBytes < 1 {
 		c.Limits.OutputBytes = MaxLineBytes
 	}
+	if c.Limits.Timeout < 1 {
+		c.Limits.Timeout = 300 * time.Second
+	}
+	if c.Limits.FirstTokenTimeout < 1 {
+		c.Limits.FirstTokenTimeout = 60 * time.Second
+	}
 	return &Handler{config: c, slots: make(chan struct{}, c.Limits.Concurrency)}
 }
 
@@ -241,14 +247,25 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	code := "succeeded"
+	// Content-free reason behind a failure code: our own sentinel and reason
+	// strings (a backend HTTP status, a stream shape, a validation rule).
+	detail := "-"
 	outputBytes := 0
 	queueMS := int(time.Since(start).Milliseconds())
 	preemptions := 0
+	// Why each rejected attempt failed, in the same content-free vocabulary
+	// as detail: a request that burned its repairs shows which rule it hit.
+	var rejected []string
 	defer func() {
+		reasons := "-"
+		if len(rejected) > 0 {
+			reasons = strings.Join(rejected, ",")
+		}
 		h.config.Logger.Printf(
-			"request_id=%s run_id=%s stage=%s input_bytes=%d output_bytes=%d duration_ms=%d queue_ms=%d preemptions=%d code=%s",
+			"request_id=%s run_id=%s stage=%s input_bytes=%d output_bytes=%d duration_ms=%d queue_ms=%d preemptions=%d attempts=%d rejected=%s code=%s detail=%s",
 			req.RequestID, req.RunID, req.Stage, req.InputTextBytes(), outputBytes,
-			time.Since(start).Milliseconds(), queueMS, preemptions, code)
+			time.Since(start).Milliseconds(), queueMS, preemptions, len(rejected)+1,
+			reasons, code, detail)
 	}()
 	send := func(v any) bool {
 		data, err := encodeLine(v)
@@ -288,8 +305,13 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request) {
 		fail(CodeBackendUnavailable)
 		return
 	}
+	system := template.Text + schemaClause
+	// Constrained decoding only where the backend advertises it: an engine
+	// that accepts response_format without advertising can degenerate on a
+	// schema this size — MTPLX burned the whole token budget to emit a few
+	// hundred bytes. Everywhere else the in-prompt schema plus validation
+	// and the repair attempt carry the shape.
 	var responseSchema map[string]any
-	system := template.Text
 	if info.JSONSchema {
 		responseSchema = ResponseFormat(req.Stage)
 	}
@@ -299,13 +321,17 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lastProgress := time.Now()
-	generate := func(extra string) (backend.Completion, error) {
+	generate := func(extra string, temperature *float64) (backend.Completion, error) {
 		return h.config.Backend.Generate(ctx, backend.Input{
-			System:          system + extra,
-			Text:            user,
-			MaxOutputBytes:  h.config.Limits.OutputBytes,
-			MaxOutputTokens: h.config.Limits.OutputTokens(req.Stage),
-			ResponseSchema:  responseSchema,
+			System:            system + extra,
+			Text:              user,
+			MaxOutputBytes:    h.config.Limits.OutputBytes,
+			MaxOutputTokens:   h.config.Limits.OutputTokens(req.Stage),
+			Timeout:           h.config.Limits.Timeout,
+			FirstTokenTimeout: h.config.Limits.FirstTokenTimeout,
+			ResponseSchema:    responseSchema,
+			Temperature:       temperature,
+			ReasoningOff:      true,
 			Progress: func(chars int) error {
 				if time.Since(lastProgress) < 250*time.Millisecond {
 					return nil
@@ -318,21 +344,40 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
+	// Cut at the token cap? Name it, so the repair attempt knows to answer
+	// shorter rather than chase a phantom syntax fault.
+	validate := func(c backend.Completion) (*Analysis, error) {
+		result, err := ValidateResult([]byte(c.Text), req)
+		if err != nil && c.Truncated {
+			err = &RequestError{CodeOutputInvalid, "truncated at the output token limit"}
+		}
+		return result, err
+	}
 	var completion backend.Completion
 	var analysisResult *Analysis
-	completion, err = generate("")
+	completion, err = generate("", nil)
 	if err == nil {
-		analysisResult, err = ValidateResult([]byte(completion.Text), req)
+		analysisResult, err = validate(completion)
 	}
 	if err != nil {
-		// One repair attempt when constrained decoding is available: resend
-		// with the validation failure appended to the instruction.
+		// Repair attempts on any validation failure: the result schema is in
+		// the system prompt on every request, so the failure text is always
+		// actionable. A truncated answer needs a smaller one, not a syntax
+		// fix. The raised temperature escapes greedy-decoding attractors — at
+		// temperature 0 a near-identical prompt reproduces the same failure.
 		var re *RequestError
-		if errors.As(err, &re) && info.JSONSchema {
-			completion, err = generate(
-				" The previous output failed validation: " + re.Reason + ". Correct it.")
+		for _, temp := range repairTemperatures {
+			if !errors.As(err, &re) {
+				break
+			}
+			rejected = append(rejected, strings.ReplaceAll(re.Reason, " ", "_"))
+			hint := " The previous output failed validation: " + re.Reason + ". Correct it."
+			if completion.Truncated {
+				hint = " The previous output was cut off at the token limit. Produce a shorter result: keep only the most significant topics and items."
+			}
+			completion, err = generate(hint, &temp)
 			if err == nil {
-				analysisResult, err = ValidateResult([]byte(completion.Text), req)
+				analysisResult, err = validate(completion)
 			}
 		}
 	}
@@ -346,6 +391,7 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request) {
 			code = "cancelled"
 			return
 		}
+		detail = strings.ReplaceAll(err.Error(), " ", "_")
 		var re *RequestError
 		switch {
 		case errors.As(err, &re):
@@ -409,20 +455,40 @@ func dumpRequestBody(dir string, body []byte) {
 	_ = os.WriteFile(filepath.Join(dir, name+".json"), body, 0o600)
 }
 
-// renderUserText quotes the request's evidence as one JSON document.
+// repairTemperatures drive the two repair attempts: a mild perturbation
+// escapes a deterministic repetition attractor, a stronger one re-rolls an
+// output that was still broken — the failure hint alone does not move a
+// temperature-0 decode off its attractor.
+var repairTemperatures = []float64{0.3, 0.5}
+
+// schemaClause carries the compacted result schema between two directives: the
+// tail keeps the prompt from ending on JSON, which small models mistake for a
+// document to echo, and asks for compact output — constrained backends emit
+// whitespace tokens the budget would otherwise pay for.
+const schemaClauseHead = "This is the JSON Schema the result must match: "
+const schemaClauseTail = " Reply with exactly one JSON object matching it — compact, no indentation or extra whitespace, no markdown fence, no text before or after the object, and never a copy of the schema itself. Report only what matters: a shorter accurate result beats a long padded one. Cite at most 10 sources per list — pick the few most representative segments, not every related one. Never exceed the schema's maxItems limits: keep only the most significant entries (e.g. at most 12 bullets per topic, a handful of strong topics rather than every minor aside)."
+
+// The prompt's schema drops `format`: ids reach the model as short aliases
+// ("s12", "p2"), not the UUIDs the wire schema declares.
+var schemaClause = func() string {
+	var doc map[string]any
+	if json.Unmarshal(resultSchemaJSON, &doc) != nil {
+		return schemaClauseHead + string(resultSchemaJSON) + schemaClauseTail
+	}
+	stripKeys(doc, map[string]bool{"format": true})
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return schemaClauseHead + string(resultSchemaJSON) + schemaClauseTail
+	}
+	return schemaClauseHead + string(data) + schemaClauseTail
+}()
+
+// renderUserText quotes the request's evidence as one JSON document, with
+// short id aliases in place of UUIDs (see idAliases).
 func renderUserText(req *Request) (string, error) {
-	doc := map[string]any{
-		"meeting":      req.Meeting,
-		"participants": req.Participants,
-	}
-	if req.Segments != nil {
-		doc["segments"] = req.Segments
-	}
-	if req.Notes != nil {
-		doc["notes"] = req.Notes
-	}
-	if req.Partials != nil {
-		doc["partials"] = req.Partials
+	doc, err := aliasedDocument(req, newAliases(req))
+	if err != nil {
+		return "", err
 	}
 	data, err := json.Marshal(doc)
 	if err != nil {

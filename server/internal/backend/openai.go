@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -25,6 +26,9 @@ var (
 )
 
 const maxSSELine = 65536
+
+// MaxOutputBytes is the largest completion a caller may ask for.
+const MaxOutputBytes = 131072
 const maxErrorBody = 8192
 const maxProbeBody = 65536
 
@@ -44,15 +48,36 @@ type Input struct {
 	System, Text    string
 	MaxOutputBytes  int
 	MaxOutputTokens int
+	// Timeout and FirstTokenTimeout override the configured deadlines for this
+	// call when positive; zero values keep the adapter's configured budgets.
+	Timeout, FirstTokenTimeout time.Duration
 	// ResponseSchema is sent as the OpenAI `response_format` value when set; the
 	// caller also decides whether to append a constrained-output instruction.
 	ResponseSchema map[string]any
-	Progress       func(int) error
+	// Temperature overrides the request's sampling temperature when non-nil;
+	// nil keeps the deterministic default of 0. A retry that must escape a
+	// greedy-decoding attractor (repetition collapse) raises it.
+	Temperature *float64
+	// ReasoningOff sends `chat_template_kwargs.enable_thinking=false`. Reasoning
+	// models burn the token budget on hidden thinking that never reaches the
+	// content stream — Qwen3.x on MTPLX spent all 8,192 tokens on reasoning —
+	// and the first-token deadline can't see it. Backends that ignore the field
+	// are unaffected.
+	ReasoningOff bool
+	Progress     func(int) error
 }
 type Completion struct {
 	Text, Model  string
 	FirstTokenMS *int
 	DurationMS   int
+	// Truncated is true when the backend stopped at its token limit
+	// (finish_reason=length); the text is delivered for the caller's
+	// validation, which decides whether it is usable.
+	Truncated bool
+	// SchemaAccepted is true when the request carried response_format and the
+	// backend did not reject it — the caller may treat the output as
+	// schema-guided and offer a repair attempt on validation failure.
+	SchemaAccepted bool
 }
 
 func New(c Config) (*OpenAI, error) {
@@ -159,16 +184,35 @@ func failure(ctx context.Context, fallback error) error {
 	}
 	return fallback
 }
+
+// optionalFieldBlamed reports whether a rejected request named one of the
+// optional extension fields (response_format, chat_template_kwargs) in its
+// (capped) error body — the trigger for one field-free retry.
+func optionalFieldBlamed(body string) bool {
+	b := strings.ToLower(body)
+	return strings.Contains(b, "response_format") ||
+		strings.Contains(b, "json_schema") || strings.Contains(b, "json schema") ||
+		strings.Contains(b, "chat_template_kwargs") || strings.Contains(b, "enable_thinking")
+}
 func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) {
-	if in.MaxOutputBytes < 1 || in.MaxOutputBytes > 65536 {
-		return Completion{}, ErrBackend
+	// Rewriting asks for at most 64 KiB; an analysis result line may be 96 KiB
+	// (analysis.MaxLineBytes). A caller above the ceiling is a programming error.
+	if in.MaxOutputBytes < 1 || in.MaxOutputBytes > MaxOutputBytes {
+		return Completion{}, fmt.Errorf("%w: output_cap_%d", ErrBackend, in.MaxOutputBytes)
 	}
 	start := time.Now()
-	ctx, timeoutCancel := context.WithTimeoutCause(parent, a.config.Timeout, ErrTimeout)
+	timeout, firstToken := a.config.Timeout, a.config.FirstTokenTimeout
+	if in.Timeout > 0 {
+		timeout = in.Timeout
+	}
+	if in.FirstTokenTimeout > 0 {
+		firstToken = in.FirstTokenTimeout
+	}
+	ctx, timeoutCancel := context.WithTimeoutCause(parent, timeout, ErrTimeout)
 	defer timeoutCancel()
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(context.Canceled)
-	firstTimer := time.AfterFunc(a.config.FirstTokenTimeout, func() { cancel(ErrFirstTokenTimeout) })
+	firstTimer := time.AfterFunc(firstToken, func() { cancel(ErrFirstTokenTimeout) })
 	defer firstTimer.Stop()
 	if a.config.DebugDelay > 0 {
 		timer := time.NewTimer(a.config.DebugDelay)
@@ -180,41 +224,69 @@ func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) 
 		}
 	}
 	payload := map[string]any{"model": a.config.Model, "stream": true, "temperature": 0}
+	if in.Temperature != nil {
+		payload["temperature"] = *in.Temperature
+	}
 	if in.ResponseSchema != nil {
 		payload["response_format"] = in.ResponseSchema
+	}
+	if in.ReasoningOff {
+		payload["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
 	}
 	if in.MaxOutputTokens > 0 {
 		payload["max_tokens"] = in.MaxOutputTokens
 	}
 	payload["messages"] = []map[string]string{{"role": "system", "content": in.System}, {"role": "user", "content": in.Text}}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return Completion{}, ErrBackend
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", a.config.BaseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return Completion{}, ErrBackend
-	}
-	if a.config.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+a.config.Token)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return Completion{}, failure(ctx, ErrUnavailable)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBody))
+	var rejectedBody string
+	send := func() (*http.Response, error) {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, ErrBackend
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", a.config.BaseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return nil, ErrBackend
+		}
+		if a.config.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+a.config.Token)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		resp, err := a.client.Do(req)
+		if err != nil {
+			return nil, failure(ctx, ErrUnavailable)
+		}
+		if resp.StatusCode == http.StatusOK {
+			return resp, nil
+		}
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		_ = resp.Body.Close()
+		rejectedBody = string(errBody)
 		code := ErrBackend
 		if resp.StatusCode == 503 || resp.StatusCode == 502 {
 			code = ErrUnavailable
 		}
-		return Completion{}, failure(ctx, code)
+		// The status alone, never the body: enough to tell a rejected request from
+		// a backend that is down, without logging what was sent.
+		return nil, failure(ctx, fmt.Errorf("%w: http_%d", code, resp.StatusCode))
 	}
+	resp, err := send()
+	schemaAccepted := in.ResponseSchema != nil
+	if err != nil && (schemaAccepted || in.ReasoningOff) && optionalFieldBlamed(rejectedBody) {
+		// A backend that cannot honour response_format or chat_template_kwargs
+		// gets the same request once more without them; the in-prompt schema
+		// still guides its output.
+		delete(payload, "response_format")
+		delete(payload, "chat_template_kwargs")
+		schemaAccepted = false
+		resp, err = send()
+	}
+	if err != nil {
+		return Completion{}, err
+	}
+	defer resp.Body.Close()
 	output := newOutputBuffer(in.MaxOutputBytes)
-	result := Completion{Model: boundModel(a.config.Model)}
+	result := Completion{Model: boundModel(a.config.Model), SchemaAccepted: schemaAccepted}
 	done := false
 	// Scanner has a fixed backing buffer: a line larger than the limit fails
 	// before any larger buffer is allocated, even without a newline.
@@ -245,19 +317,28 @@ func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) 
 			}
 			Error json.RawMessage
 		}
-		if json.Unmarshal(data, &event) != nil || len(event.Error) > 0 || event.Choices == nil {
-			return Completion{}, ErrBackend
+		if json.Unmarshal(data, &event) != nil {
+			return Completion{}, fmt.Errorf("%w: sse_malformed", ErrBackend)
+		}
+		if len(event.Error) > 0 {
+			return Completion{}, fmt.Errorf("%w: sse_error_event", ErrBackend)
+		}
+		if event.Choices == nil {
+			return Completion{}, fmt.Errorf("%w: sse_no_choices", ErrBackend)
 		}
 		if event.Model != "" {
 			if event.Model != a.config.Model {
-				return Completion{}, ErrBackend
+				return Completion{}, fmt.Errorf("%w: model_mismatch", ErrBackend)
 			}
 			result.Model = boundModel(event.Model)
 		}
 		for _, choice := range event.Choices {
 			fragment := choice.Delta.Content
-			if choice.FinishReason != nil && *choice.FinishReason != "stop" {
-				return Completion{}, ErrBackend
+			if choice.FinishReason != nil && *choice.FinishReason != "stop" && *choice.FinishReason != "length" {
+				return Completion{}, fmt.Errorf("%w: finish_%s", ErrBackend, *choice.FinishReason)
+			}
+			if choice.FinishReason != nil && *choice.FinishReason == "length" {
+				result.Truncated = true
 			}
 			if fragment == "" {
 				continue
@@ -286,7 +367,9 @@ func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) 
 	if ctx.Err() != nil {
 		return Completion{}, context.Cause(ctx)
 	}
-	if scanner.Err() != nil || !done {
+	// A truncated stream may end without [DONE] — the server already
+	// reported the finish, so the partial text stands on its own.
+	if scanner.Err() != nil || (!done && !result.Truncated) {
 		return Completion{}, failure(ctx, ErrBackend)
 	}
 	result.Text = string(output.bytes)

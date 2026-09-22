@@ -72,6 +72,7 @@ final class AnalysisEvaluationExportTests: XCTestCase {
     var detectedLanguage: String? = nil
     var expectedLanguage: String? = nil
     var expectedTerms: [String] = []
+    var expectedRelativeDates: [String: String] = [:]
     var candidateNames: [String] = []
     var candidateInRequest = false
     var namedOwnerViolation = false
@@ -142,6 +143,8 @@ final class AnalysisEvaluationExportTests: XCTestCase {
       unresolvedOwnerCount: run.unresolvedOwnerCount,
       expectedLanguage: fixture.expectedLanguage,
       expectedTerms: fixture.expectedTerms,
+      expectedRelativeDates: entry.response == "deployment-valid" || entry.fixture == "due-dates"
+        ? fixture.expectedRelativeDates : [:],
       candidateNames: reader.candidateNameSet.sorted())
 
     // SC-002: a Possible-match candidate name never reaches the request body.

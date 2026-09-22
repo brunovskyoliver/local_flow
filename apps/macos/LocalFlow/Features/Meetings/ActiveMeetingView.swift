@@ -6,8 +6,11 @@ import SwiftUI
 /// title, the warning banner and the notice line, and the notes editor.
 struct ActiveMeetingView: View {
   let coordinator: MeetingCoordinator
+  /// The Meeting language in Settings, shown as this meeting's "Default".
+  var defaultLanguage: MeetingLanguage = .automatic
   @State private var titleDraft = ""
   @State private var titleNotice: String?
+  @State private var languageNotice: String?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -159,6 +162,20 @@ struct ActiveMeetingView: View {
         .onSubmit { Task { await saveTitle(status) } }
         .frame(maxWidth: 360)
       if let titleNotice { Text(titleNotice).font(.caption).foregroundStyle(.red) }
+      if status.transcriptionRequested {
+        MeetingLanguagePicker(selection: status.language, defaultLanguage: defaultLanguage) {
+          choice in
+          Task {
+            do {
+              try await coordinator.setLanguage(choice)
+              languageNotice = nil
+            } catch {
+              languageNotice = "The language could not be saved."
+            }
+          }
+        }
+        if let languageNotice { Text(languageNotice).font(.caption).foregroundStyle(.red) }
+      }
     }
     .onAppear { titleDraft = status.title ?? "" }
   }

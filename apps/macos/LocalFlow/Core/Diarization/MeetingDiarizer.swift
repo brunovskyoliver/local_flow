@@ -119,12 +119,18 @@ actor MeetingDiarizer {
     var tracks: [Int: MeetingTrackKind] = [:]
     var speechMs: [Int: Int64] = [:]
     var centroids: [Int: [Double]] = [:]
+    var mergedClusters = 0
     var minorClusters = 0
   }
 
   /// Runs the meeting's pending run to a terminal state. `progress` gets
-  /// (windows done, windows planned).
-  func run(meetingID: UUID, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> Outcome {
+  /// (windows done, windows planned). `echoProfile` is the finalization pass's
+  /// frame-energy profile; when given, its stretches are rebased onto this
+  /// meeting's transcript bases and calibrated without decoding the tracks again.
+  func run(
+    meetingID: UUID, progress: (@Sendable (Int, Int) -> Void)? = nil,
+    echoProfile: EchoGate.Profile? = nil
+  ) async -> Outcome {
     let pending: DiarizationRun
     do {
       guard let row = try await speakers.diarization(meetingID: meetingID),
@@ -181,7 +187,11 @@ actor MeetingDiarizer {
       let pages =
         (MeetingFinalizer.stretchCount(detail: detail) + MeetingFinalizer.workListPage - 1)
         / MeetingFinalizer.workListPage
-      try await profileEcho(detail: detail, pages: pages, base: base, context: &context)
+      if let echoProfile {
+        adoptEchoProfile(echoProfile, detail: detail, pages: pages, base: base, context: &context)
+      } else {
+        try await profileEcho(detail: detail, pages: pages, base: base, context: &context)
+      }
       // System first, then microphone (research R5).
       for kind in [MeetingTrackKind.system, .microphone] {
         var reconciler = WindowClusterReconciler()
@@ -203,6 +213,7 @@ actor MeetingDiarizer {
         }
         context.centroids.merge(reconciler.centroids) { _, new in new }
       }
+      try await mergeDuplicateClusters(context: &context)
       try await foldMinorClusters(context: &context)
       try await lifecycle.finish(lease)
     } catch {
@@ -243,6 +254,7 @@ actor MeetingDiarizer {
       (.diarizationAudioMs, Int(clamping: run.audioMs)), (.diarizationWindowCount, run.windowCount),
       (.diarizationSpeakerCount, run.inferredSpeakerCount),
       (.diarizationTurnCount, run.turnCount),
+      (.diarizationMergedClusterCount, context.mergedClusters),
       (.diarizationMinorClusterCount, context.minorClusters),
       (.diarizationOverlapTurnCount, run.overlapTurnCount),
       (.diarizationUnknownCount, run.unknownCount),
@@ -303,6 +315,36 @@ actor MeetingDiarizer {
     recorder?.record(
       phase: .diarizing, durationNanoseconds: clock.monotonicNanoseconds &- began,
       metric: .diarizationEchoProfileDuration)
+  }
+
+  /// The finalization pass decoded the same immutable track files into this
+  /// profile minutes ago; rebasing its stretches onto the transcript's bases and
+  /// re-running the same calibration yields the gate a local profiling pass would
+  /// have computed, without a second decode of every track.
+  private func adoptEchoProfile(
+    _ handed: EchoGate.Profile, detail: MeetingDetail, pages: Int,
+    base: [Int: (Int64, Int64?)], context: inout Context
+  ) {
+    var profile = EchoGate.Profile()
+    for page in 0..<pages {
+      for item in MeetingFinalizer.workItems(detail: detail, page: page) {
+        guard let stretch = handed.stretches[item.sequence] else { continue }
+        profile.stretches[item.sequence] = EchoGate.Stretch(
+          baseMs: base[item.sequence]?.0 ?? item.baseMs,
+          microphone: stretch.microphone, system: stretch.system)
+      }
+    }
+    let gate = EchoGate.calibrate(profile)
+    context.echoProfile = gate == nil ? .init() : profile
+    context.echo = gate
+    if let gate = context.echo {
+      logger.notice(
+        "echo gate on (reused profile) lag=\(gate.lagFrames * Int(EchoGate.frameMs))ms gain=\(gate.gainDB, format: .fixed(precision: 1))dB corr=\(gate.correlation, format: .fixed(precision: 2))"
+      )
+    } else {
+      logger.notice("echo gate off (reused profile) frames=\(profile.frames)")
+    }
+    recorder?.record(phase: .diarizing, metric: .diarizationEchoProfileReused, itemCount: 1)
   }
 
   // MARK: Windows
@@ -453,6 +495,49 @@ actor MeetingDiarizer {
     else { throw Failure(.transcriptChanged) }
   }
 
+  // MARK: Duplicate clusters
+
+  /// Applies `RunClusterMerge` to the run's clusters: turns move to the surviving
+  /// speaker, the merged keys are forgotten and the survivor carries the combined
+  /// speech and centroid into the minor fold.
+  private func mergeDuplicateClusters(context: inout Context) async throws {
+    let clusters = context.ids.keys.sorted().compactMap { key -> RunClusterMerge.Cluster? in
+      guard let track = context.tracks[key] else { return nil }
+      return .init(
+        key: key, track: track, speechMs: context.speechMs[key] ?? 0,
+        centroid: context.centroids[key])
+    }
+    let result = RunClusterMerge.apply(clusters)
+    guard !result.folds.isEmpty else { return }
+    var folds: [UUID: UUID?] = [:]
+    for (key, into) in result.folds {
+      guard let id = context.ids[key], let target = context.ids[into] else { continue }
+      folds[id] = target
+    }
+    for merge in result.merges {
+      let speech = context.speechMs[merge.key] ?? 0
+      logger.notice(
+        "duplicate cluster key=\(merge.key) speech=\(speech)ms merged into=\(merge.into) cos=\(merge.similarity, format: .fixed(precision: 2))"
+      )
+    }
+    do {
+      try await speakers.fold(runID: context.run.id, speakers: folds)
+    } catch {
+      throw Failure(.persistenceFailure)
+    }
+    for key in result.folds.keys {
+      guard let id = context.ids.removeValue(forKey: key) else { continue }
+      context.keys.removeValue(forKey: id)
+      context.speechMs.removeValue(forKey: key)
+      context.centroids.removeValue(forKey: key)
+    }
+    for cluster in result.clusters {
+      context.speechMs[cluster.key] = cluster.speechMs
+      context.centroids[cluster.key] = cluster.centroid
+    }
+    context.mergedClusters = result.folds.count
+  }
+
   // MARK: Minor clusters
 
   /// Applies `MinorClusterFold` to the run's clusters and forgets the folded keys, so
@@ -519,11 +604,13 @@ actor MeetingDiarizer {
         cursor = TurnCursor(startMs: tail.startMs, id: tail.id)
       }
       // A row transcribed from one track (Feature 009 per-track pass) is labeled from
-      // that track's turns alone; a mixed row sees every turn.
+      // that track's turns alone, among that track's speakers; a mixed row sees
+      // every turn.
       let aligned = segments.map { segment in
         SpeakerAligner.assign(
           .init(startMs: segment.startMs, endMs: segment.endMs),
-          turns: Self.turns(turns, for: segment.draft.analysisTracks))
+          turns: Self.turns(turns, for: segment.draft.analysisTracks),
+          track: Self.trackSpeakers(context, for: segment.draft.analysisTracks))
       }
       for (segment, result) in zip(segments, aligned) {
         assignments.append(
@@ -537,6 +624,22 @@ actor MeetingDiarizer {
       if page.count < Self.alignmentPage { break }
     }
     return assignments
+  }
+
+  /// The run's surviving speakers on the row's track; nil for a mixed row.
+  private static func trackSpeakers(_ context: Context, for tracks: AnalysisTracks)
+    -> SpeakerAligner.TrackSpeakers?
+  {
+    let kind: MeetingTrackKind
+    switch tracks {
+    case .both: return nil
+    case .mic: kind = .microphone
+    case .system: kind = .system
+    }
+    // `tracks` keeps merged and folded keys; the survivors are the ones with an id.
+    return .init(
+      keys: Set(context.tracks.filter { $0.value == kind && context.ids[$0.key] != nil }.map(\.key))
+    )
   }
 
   static func turns(_ turns: [SpeakerAligner.Turn], for tracks: AnalysisTracks)

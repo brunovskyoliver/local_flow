@@ -21,6 +21,8 @@ struct MeetingDetailView: View {
   /// Feature 011: evidence-change notices for merges and identity saves.
   var intelligence: MeetingIntelligenceCoordinator? = nil
   var identificationEnabled = false
+  /// The Meeting language in Settings, shown as the meeting's "Default".
+  var defaultLanguage: MeetingLanguage = .automatic
   /// Feature 011: one `SummaryModel` per opened meeting; nil keeps the placeholder.
   var summaryModelFactory: ((UUID) -> SummaryModel?)? = nil
   var initialTab: NoteDetailTab = .thoughts
@@ -473,6 +475,13 @@ struct MeetingDetailView: View {
           }
         }
         Spacer()
+        if transcription != nil, meeting.state.isTerminal {
+          MeetingLanguagePicker(selection: meeting.language, defaultLanguage: defaultLanguage) {
+            choice in
+            let target = meeting
+            Task { await model.setLanguage(choice, for: target) }
+          }
+        }
         if showsSpeakerControls { speakersMenu }
         NoteIconButton(symbol: "magnifyingglass", label: "Search loaded transcript") {
           transcriptSearch.toggle()

@@ -402,6 +402,34 @@ enum ADTSFixtures {
     return bytes
   }
 
+  /// The same 1 kHz tone at alternating amplitude — 0.6 s loud, 0.4 s quiet each
+  /// second — so the decoded 100 ms frame energies vary enough for the echo
+  /// gate's correlation to see the two tracks move together. The quiet runs are
+  /// long enough that whole frames fall inside them, so the gate's mic floor
+  /// (20th percentile + 6 dB) lands in the quiet band and ~60 % of frames still
+  /// pair, past the 300-frame minimum.
+  static func encodedWavyTone(blocks: Int, kind: MeetingTrackKind = .microphone) throws -> [UInt8] {
+    let format = MeetingSourceFormat(sampleRate: 48_000, channels: 1)
+    let encoder = try MeetingTrackEncoder(kind: kind, sourceFormat: format)
+    let block = AVAudioPCMBuffer(pcmFormat: encoder.inputFormat, frameCapacity: 4_096)!
+    var bytes: [UInt8] = []
+    var phase = 0.0
+    var sample = 0
+    for _ in 0..<blocks {
+      block.frameLength = 4_096
+      for frame in 0..<4_096 {
+        let amplitude: Float =
+          (Double(sample) / 48_000).truncatingRemainder(dividingBy: 1.0) < 0.6 ? 0.4 : 0.05
+        block.floatChannelData![0][frame] = Float(sin(phase)) * amplitude
+        phase += 2 * .pi * 1_000 / 48_000
+        sample += 1
+      }
+      for frame in try encoder.encode(block: block) { bytes.append(contentsOf: frame.bytes) }
+    }
+    for frame in try encoder.finish() { bytes.append(contentsOf: frame.bytes) }
+    return bytes
+  }
+
   static func write(_ bytes: [UInt8], to url: URL) throws {
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true,

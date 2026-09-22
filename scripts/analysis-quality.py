@@ -6,8 +6,9 @@ Offline mode reads `analysis-eval.json`, produced by
 is set, and reports the deterministic success criteria SC-001 through SC-006,
 SC-013 and SC-014. Live mode (`--live`) posts each meeting fixture to a
 running flowd's `POST /v1/analysis/meeting` and reports the same criteria on
-the raw results; checks that need the client's validation counters simply do
-not apply. The verdicts carry adopted text; the report itself is content-free
+the raw results. Semantic extraction quality requires human review; live prose
+language and copy output remain explicitly unmeasured. The verdicts carry
+adopted text; the report itself is content-free
 — counts and case labels only. An optional `--output-dir` receives the report
 JSON under 0700/0600 permissions, matching the export's private-directory
 convention.
@@ -134,6 +135,7 @@ def live_verdict(fixture, endpoint, credential):
         "detectedLanguage": None,
         "expectedLanguage": fixture.get("expected_language"),
         "expectedTerms": fixture.get("expected_terms") or [],
+        "expectedRelativeDates": fixture.get("expected_relative_dates") or {},
         "candidateNames": sorted(candidates),
         "candidateInRequest": candidate_in_request,
         "namedOwnerViolation": False,
@@ -264,6 +266,11 @@ def text_of(case):
 def evaluate(cases):
     report = {}
     violations = {}
+    unmeasured = {}
+
+    def unknown(sc, case, reason):
+        unmeasured.setdefault(sc, []).append(
+            f"{case.get('fixture', '?')}/{case['response']}: {reason}")
 
     def add(sc, case, note):
         violations.setdefault(sc, []).append(
@@ -307,15 +314,27 @@ def evaluate(cases):
             if item.get("dueState") in ("unresolved", "absent") and item.get("dueDate"):
                 add("SC-005", case, f"date on {item['dueState']} due")
 
-        # SC-006 (offline portion): an accepted run keeps its returned items.
-        if succeeded and not items and (
-                (case.get("droppedLiteralCount") or 0)
-                + (case.get("droppedUnsupportedCount") or 0) > 0):
-            add("SC-006", case, "all returned items dropped")
+        if succeeded:
+            expected_dates = case.get("expectedRelativeDates") or {}
+            for phrase, date in expected_dates.items():
+                matching = [i for i in items if i.get("dueOriginal") == phrase]
+                if not matching or any(
+                        i.get("dueState") != "explicit_relative_resolved"
+                        or i.get("dueDate") != date for i in matching):
+                    add("SC-005", case, "missing or incorrect expected relative date")
+            if any(i.get("dueState") == "explicit_relative_resolved"
+                   and i.get("dueOriginal") not in expected_dates for i in items):
+                unknown("SC-005", case, "relative date has no fixture expectation")
+
+        # SC-006 requires semantic review of omissions, unsupported claims and
+        # proposals. Drop counters do not measure any of those requirements.
+        unknown("SC-006", case, "requires human review of extraction and support")
 
         # SC-013: copied output carries no identifiers or state words.
         copy_text = case.get("copyText")
-        if copy_text is not None:
+        if copy_text is None:
+            unknown("SC-013", case, "no client copy output")
+        else:
             hits = sorted(set(m.group(0).lower() for m in COPY_BANNED.finditer(copy_text)))
             if hits:
                 add("SC-013", case, f"banned strings in copy text: {','.join(hits)}")
@@ -323,10 +342,11 @@ def evaluate(cases):
         # SC-014: prose in the expected language, expected terms preserved.
         expected = case.get("expectedLanguage")
         if expected and succeeded:
-            # Offline runs NLLanguageRecognizer on the adopted text; live
-            # falls back to the model's declared language.
-            detected = case.get("detectedLanguage") or case.get("language")
-            if detected != EXPECTED_PROSE.get(expected, expected):
+            # A model's language label is not a measurement of its prose.
+            detected = case.get("detectedLanguage")
+            if not detected:
+                unknown("SC-014", case, "prose language requires detection or review")
+            elif detected != EXPECTED_PROSE.get(expected, expected):
                 add("SC-014", case,
                     f"prose {detected} != expected {expected}")
             text = text_of(case).lower()
@@ -338,8 +358,13 @@ def evaluate(cases):
     for sc in ("SC-001", "SC-002", "SC-003", "SC-004", "SC-005", "SC-006",
                "SC-013", "SC-014"):
         found = violations.get(sc, [])
-        report[sc] = {"cases": len(cases), "violations": len(found),
-                      "details": found}
+        missing = unmeasured.get(sc, [])
+        measured = len(cases) - len(missing)
+        report[sc] = {"cases": measured, "violations": len(found),
+                      "details": found, "unmeasured": len(missing),
+                      "unmeasuredDetails": missing,
+                      "status": ("unmeasured" if measured == 0 else
+                                 "partial" if missing else "checked")}
     return report
 
 
@@ -407,10 +432,12 @@ def main():
     report = evaluate(cases)
     total = sum(r["violations"] for r in report.values())
     for sc, r in report.items():
-        print(f"{sc}: {r['cases']} cases, {r['violations']} violations")
+        print(f"{sc}: {r['cases']} checked, {r['violations']} violations, "
+              f"{r['unmeasured']} unmeasured ({r['status']})")
         for detail in r["details"]:
             print(f"  - {detail}")
-    print(f"total: {len(cases)} cases, {total} violations")
+    print(f"total: {len(cases)} cases, {total} violations; "
+          "unmeasured criteria still require acceptance review")
 
     if args.output_dir:
         args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)

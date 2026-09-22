@@ -303,6 +303,34 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(local["name"] as? String, "Stretko")
   }
 
+  /// The local root linked to a saved voice profile is sent with its name but
+  /// without `known_speaker_id`, which the server allows only for confirmed and
+  /// recognized matches (the 2026-09-20 call failed with `invalid_request`).
+  func testLocalUserWithProfileIsSentWithoutKnownSpeakerID() async throws {
+    let fixture = try IntelligenceFixtures.meeting("certainty-possible")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    reader.participantRows = [
+      EvidenceParticipant(
+        speakerID: UUID(), certainty: .localUser, origin: "none",
+        knownSpeakerID: UUID(), name: "Oliver", isLocalUser: true)
+    ]
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "certainty-confirmed")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    _ = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+
+    let request = try XCTUnwrap(transport.requests.first)
+    let data = try JSONEncoder().encode(request)
+    let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let participants = try XCTUnwrap(object["participants"] as? [[String: Any]])
+    let local = try XCTUnwrap(
+      participants.first { ($0["certainty"] as? String) == "local_user" })
+    XCTAssertEqual(local["name"] as? String, "Oliver")
+    XCTAssertNil(local["known_speaker_id"])
+  }
+
   /// A server response that names a Possible-match speaker as a participant
   /// owner is re-checked against the identity rule: the adopted owner is
   /// unresolved and the downgrade is counted — the run still succeeds.
@@ -525,7 +553,8 @@ final class MeetingAnalyzerTests: XCTestCase {
 
     let task = Task { try await analyzer.run(meetingID: fixture.id, trigger: .manual) }
     await clock.waitForSleepers()
-    await clock.advance(by: .seconds(150))
+    // One request: the run deadline is 60 s plus one per-request timeout.
+    await clock.advance(by: AnalysisPolicy().runDeadline(requestCount: 1))
     let run = try await task.value
     XCTAssertEqual(run.state, .timedOut)
     XCTAssertEqual(run.failureCategory, .timeout)
@@ -733,7 +762,10 @@ final class MeetingAnalyzerTests: XCTestCase {
   /// chunk carries the last-five-minute decision; the others carry only a
   /// summary in meeting vocabulary (the lexical support check runs on every
   /// stage's output).
-  private func chunkStep(index: Int, decisionSegmentID: String?) -> FakeAnalysisTransport.Step {
+  private func chunkStep(
+    index: Int, decisionSegmentID: String?,
+    summary: String = "The group discussed the release checklist."
+  ) -> FakeAnalysisTransport.Step {
     var decisions: [[String: Any]] = []
     if let decisionSegmentID {
       decisions.append([
@@ -758,7 +790,7 @@ final class MeetingAnalyzerTests: XCTestCase {
             "schema_version": 1, "meeting_id": "*", "partial": true,
             "language": "*",
             "summary": [
-              "text": "The group discussed the release checklist.",
+              "text": summary,
               "sources": [], "whole_meeting": false,
             ],
             "topics": [], "decisions": decisions, "action_items": [],
@@ -811,9 +843,13 @@ final class MeetingAnalyzerTests: XCTestCase {
     let tailID = "f0000000-0000-4000-8000-fffffffffffe"
     let tailUUID = UUID(uuidString: tailID)!
 
-    // ~200 KB of segment text at a 24_576-byte budget: 9 chunk requests,
-    // then one synthesis for the nine partials.
-    let chunkCount = 9
+    // ~300 KB of segment text: more than 16 chunk requests, then a bounded
+    // reduce — two groups of ≤16 partials, then one final synthesis (the
+    // scripted step is clamped and answers all three).
+    let chunkCount = try AnalysisChunkPlanner.plan(
+      segments: fixture.segments, notes: [], policy: AnalysisPolicy()
+    ).chunks.count
+    XCTAssertTrue((17...32).contains(chunkCount))
     transport.script(
       .chunk,
       (0..<chunkCount).map {
@@ -843,9 +879,9 @@ final class MeetingAnalyzerTests: XCTestCase {
     let run = try await analyzer.run(meetingID: fixture.id, trigger: .automatic)
     XCTAssertEqual(run.state, .succeeded)
 
-    // chunk × 9, then exactly one synthesis — sequential by default.
+    // chunk × n, then three synthesis requests — sequential by default.
     let requests = transport.requests
-    XCTAssertEqual(requests.count, chunkCount + 1)
+    XCTAssertEqual(requests.count, chunkCount + 3)
     for (index, request) in requests.enumerated() {
       if index < chunkCount {
         XCTAssertEqual(request.stage, .chunk)
@@ -863,13 +899,13 @@ final class MeetingAnalyzerTests: XCTestCase {
     for request in requests.prefix(chunkCount) {
       let window = try XCTUnwrap(request.segments)
       let bytes = window.reduce(0) { $0 + $1.text.utf8.count }
-      XCTAssertLessThanOrEqual(bytes, 24_576)
+      XCTAssertLessThanOrEqual(bytes, AnalysisPolicy().chunkBudgetBytes)
       XCTAssertFalse(window.isEmpty)
       covered += window.map(\.id)
     }
     XCTAssertEqual(covered, fixture.segments.map(\.id))
-    XCTAssertEqual(
-      requests.last?.partials?.count, chunkCount)
+    // The last request is the second reduce level: two group outputs in.
+    XCTAssertEqual(requests.last?.partials?.count, 2)
     XCTAssertLessThanOrEqual(requests.last?.partials?.count ?? 0, 16)
 
     // chunk_count was fixed before the first request; request_count tracked
@@ -877,10 +913,10 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(planChunkCount, chunkCount)
     XCTAssertEqual(requestsAtPlan, 0)
     XCTAssertEqual(run.chunkCount, chunkCount)
-    XCTAssertEqual(run.requestCount, chunkCount + 1)
+    XCTAssertEqual(run.requestCount, chunkCount + 3)
 
     // Staged progress labels.
-    XCTAssertTrue(box.labels.contains("Analyzing part 3 of 9"))
+    XCTAssertTrue(box.labels.contains("Analyzing part 3 of \(chunkCount)"))
     XCTAssertTrue(box.labels.contains("Combining"))
 
     // The final decision cites the original tail segment — no chunk or
@@ -903,6 +939,27 @@ final class MeetingAnalyzerTests: XCTestCase {
     // slice: at least one page call per chunk beyond the initial snapshot.
     XCTAssertGreaterThanOrEqual(reader.pageRequests.count, chunkCount + 1)
     XCTAssertTrue(reader.pageRequests.allSatisfy { $0.limit <= 200 })
+  }
+
+  /// A partial is never adopted: an invented name in a chunk summary does
+  /// not fail the run — the final result carries the literal rules.
+  func testInventedLiteralInPartialDoesNotFailRun() async throws {
+    let fixture = IntelligenceFixtures.fourHourMeeting()
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let tailID = "f0000000-0000-4000-8000-fffffffffffe"
+    transport.script(
+      .chunk,
+      [
+        chunkStep(index: 0, decisionSegmentID: nil, summary: "The group met Zyxworth today."),
+        chunkStep(index: 1, decisionSegmentID: tailID),
+      ])
+    transport.script(.synthesis, [synthesisStep(decisionSegmentID: tailID)])
+    let analyzer = makeAnalyzer(
+      reader: FakeEvidenceReader(fixture: fixture), store: store, transport: transport)
+
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(run.state, .succeeded)
   }
 
   func testChunkResultFailingSourceValidationFailsRun() async throws {
@@ -1052,18 +1109,143 @@ final class MeetingAnalyzerTests: XCTestCase {
     }
   }
 
+  func testMeetingAndFinalPassLanguagePrecedence() async throws {
+    let fixture = try IntelligenceFixtures.meeting("english")
+    let cases: [(MeetingLanguage?, String?, AnalysisLanguage)] = [
+      (.slovak, nil, .sk), (.english, "lang_sk_prompt_v1", .en),
+      (nil, "geometry+lang_sk_prompt_v1+normalizer", .sk),
+      (nil, "geometry+lang_sk_prompt_v2+normalizer", .sk),
+      (.automatic, "lang_sk_prompt_v1", .en),
+      (.czech, "lang_sk_prompt_v1", .en),
+      (nil, "lang_auto_prompt_v1+speech_language_v2", .en),
+      (nil, "not_lang_sk_prompt_v1", .en),
+      (nil, nil, .en),
+    ]
+    for (language, pipeline, expected) in cases {
+      let reader = FakeEvidenceReader(fixture: fixture)
+      reader.meetingRow?.language = language
+      reader.transcription?.pipelineVersion = pipeline
+      let store = FakeAnalysisStore()
+      let transport = FakeAnalysisTransport()
+      try transport.script(response: "language-valid")
+      let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+      let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+      XCTAssertEqual(run.state, .succeeded)
+      XCTAssertEqual(transport.requests.first?.meeting.languagePolicy.output, expected)
+      XCTAssertEqual(run.languagePolicy, expected)
+    }
+  }
+
+  func testLanguageChangeMarksEvidenceStaleAndRejectsInFlightResult() async throws {
+    let fixture = try IntelligenceFixtures.meeting("english")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport()
+    try transport.script(response: "language-valid")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+    let original = try await analyzer.currentEvidenceVersion(meetingID: fixture.id)
+    let admission = try await analyzer.admit(meetingID: fixture.id, trigger: .manual)
+    reader.meetingRow?.language = .slovak
+    let changed = try await analyzer.currentEvidenceVersion(meetingID: fixture.id)
+    XCTAssertNotEqual(original, changed)
+    let run = try await analyzer.execute(admission)
+    XCTAssertEqual(run.failureCategory, .sourceValidation)
+    XCTAssertEqual(store.adoptCalls, 0)
+  }
+
+  func testDeclaredLanguageMismatchPreservesAcceptedSummary() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "deployment-valid")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+    let accepted = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    let before = try await store.readModel(meetingID: fixture.id)
+    reader.meetingRow?.language = .slovak
+    var lines = try XCTUnwrap(IntelligenceFixtures.response("deployment-valid")[.full]?.first)
+    for index in lines.indices {
+      guard var event = lines[index] as? [String: Any],
+        var analysis = event["analysis"] as? [String: Any]
+      else { continue }
+      analysis["language"] = "en"
+      event["analysis"] = analysis
+      lines[index] = event
+    }
+    transport.script(.full, [.lines(.init(value: lines))])
+    let rejected = try await analyzer.run(meetingID: fixture.id, trigger: .regenerate)
+    XCTAssertEqual(accepted.state, .succeeded)
+    XCTAssertEqual(rejected.failureCategory, .malformedResponse)
+    XCTAssertEqual(store.adoptCalls, 1)
+    let after = try await store.readModel(meetingID: fixture.id)
+    XCTAssertEqual(after?.summary?.text, before?.summary?.text)
+  }
+
+  func testFailureMetricsUseTerminalRun() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "mutated-digit-summary")
+    let clock = FakeMeetingClock()
+    transport.healthHook = { await clock.advance(by: .seconds(1)) }
+    let capture = try RecorderCapture.make()
+    defer { capture.cleanup() }
+    let analyzer = makeAnalyzer(
+      reader: FakeEvidenceReader(fixture: fixture), store: store,
+      transport: transport, clock: clock, recorder: capture.recorder)
+
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(run.failureCategory, .protectedLiteral)
+    XCTAssertGreaterThan(run.inputBytes, 0)
+    let samples = try await capture.samples()
+    func sample(_ metric: String) -> [String: Any]? {
+      samples.first { $0["metric"] as? String == metric }
+    }
+    XCTAssertEqual(sample("analysisFailure")?["meetingKey"] as? String, "protected_literal")
+    XCTAssertEqual(sample("analysisRequestCount")?["itemCount"] as? Int, run.requestCount)
+    XCTAssertEqual(sample("analysisInputBytes")?["payloadBytes"] as? Int, run.inputBytes)
+    XCTAssertEqual(sample("analysisChunkCount")?["itemCount"] as? Int, run.chunkCount)
+    XCTAssertEqual(sample("analysisRunDuration")?["durationNanoseconds"] as? Int, 1_000_000_000)
+  }
+
+  func testCancellationMetricsUseTerminalRun() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    transport.script(.full, [.failure(CancellationError())])
+    let clock = FakeMeetingClock()
+    transport.healthHook = { await clock.advance(by: .seconds(1)) }
+    let capture = try RecorderCapture.make()
+    defer { capture.cleanup() }
+    let analyzer = makeAnalyzer(
+      reader: FakeEvidenceReader(fixture: fixture), store: store,
+      transport: transport, clock: clock, recorder: capture.recorder)
+    do {
+      _ = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+      XCTFail("expected cancellation")
+    } catch is CancellationError {}
+    let samples = try await capture.samples()
+    XCTAssertEqual(
+      samples.first { $0["metric"] as? String == "analysisChunkCount" }?["itemCount"] as? Int, 0)
+    XCTAssertEqual(
+      samples.first { $0["metric"] as? String == "analysisRunDuration" }?["durationNanoseconds"]
+        as? Int, 1_000_000_000)
+    XCTAssertFalse(samples.contains { $0["metric"] as? String == "analysisFailure" })
+  }
+
   private func makeAnalyzer(
     reader: FakeEvidenceReader,
     store: FakeAnalysisStore,
     transport: FakeAnalysisTransport,
-    clock: MeetingClock = FakeMeetingClock()
+    clock: MeetingClock = FakeMeetingClock(),
+    recorder: ResourceRecorder? = nil
   ) -> MeetingAnalyzer {
     MeetingAnalyzer(
       evidence: reader, transport: transport, store: store, clock: clock,
       endpoint: {
         RewriteEndpoint(url: URL(string: "http://127.0.0.1:8765")!, origin: "test")
       },
-      settings: { nil })
+      settings: { nil }, recorder: recorder)
   }
 }
 

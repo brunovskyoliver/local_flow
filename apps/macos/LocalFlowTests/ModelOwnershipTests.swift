@@ -16,7 +16,7 @@ final class ModelOwnershipTests: XCTestCase {
   func testMeetingRuntimeSwitchAndBoundsLeaveDictationUnchanged() async throws {
     let speech = ProbeRuntime()
     let meeting = ProbeRuntime()
-    let lifecycle = ModelLifecycleCoordinator(meetingFactory: { meeting }, factory: { speech })
+    let lifecycle = ModelLifecycleCoordinator(meetingFactory: { _ in meeting }, factory: { speech })
     let speechLease = try await lifecycle.acquire(session: UUID())
     do {
       _ = try await lifecycle.transcribe(speechLease, samples: Array(repeating: 0, count: 239_361))
@@ -44,7 +44,7 @@ final class ModelOwnershipTests: XCTestCase {
     let meeting = ProbeRuntime()
     let diarizer = FakeDiarizationRuntime()
     let lifecycle = ModelLifecycleCoordinator(
-      diarizationFactory: { diarizer }, meetingFactory: { meeting }, factory: { speech })
+      diarizationFactory: { diarizer }, meetingFactory: { _ in meeting }, factory: { speech })
     await lifecycle.setKeepLoaded(true)
     let diarizationLease = try await lifecycle.acquire(session: UUID(), workload: .diarization)
     let meetingLease = try await lifecycle.acquire(session: UUID(), workload: .meetingTranscription)

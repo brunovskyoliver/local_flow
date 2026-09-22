@@ -1,8 +1,11 @@
 import Foundation
 
-/// `align_dom0.60_ratio2_ovl0.20_bytrack_v2` (research R6). Labels a transcript segment
+/// `align_dom0.60_ratio2_ovl0.20_bytrack_v3` (research R6). Labels a transcript segment
 /// from speaker turns and times only; it never sees text (FR-001, FR-013). The caller
-/// passes only the turns of the segment's own track when the row came from one track.
+/// passes only the turns of the segment's own track when the row came from one track,
+/// and says so: such a row can only be that track's voice, so its label is decided
+/// among the track's speakers even when the turns cover little of the row (a row
+/// whose timing is its whole window), and a track with one speaker labels every row.
 enum SpeakerAligner {
   static var version: String { DiarizationPipelineVersion.aligner }
 
@@ -40,7 +43,16 @@ enum SpeakerAligner {
     segments.map { assign($0, turns: turns) }
   }
 
-  static func assign(_ segment: Segment, turns: [Turn]) -> Assignment {
+  /// `track`: the speakers of the row's own track when the row came from one track;
+  /// nil for a mixed row.
+  struct TrackSpeakers: Sendable, Equatable {
+    let keys: Set<Int>
+    var sole: Int? { keys.count == 1 ? keys.first : nil }
+  }
+
+  static func assign(_ segment: Segment, turns: [Turn], track: TrackSpeakers? = nil)
+    -> Assignment
+  {
     let duration = segment.endMs - segment.startMs
     guard duration > 0 else {
       return .init(
@@ -68,15 +80,32 @@ enum SpeakerAligner {
     let c1 = first?.ms ?? 0
     let c2 = second?.ms ?? 0
     let kind: SpeakerAssignmentKind
-    if c1 > 0, c1 * 100 >= dominant * duration, c1 * 100 >= ratio * c2 {
+    var speaker: Int?
+    if let sole = track?.sole {
+      // One voice on this track: every row of the track is it, timed or not.
       kind = .speaker
+      speaker = sole
+    } else if track != nil {
+      // Several voices on the track: the row is one of them; the uncovered part of
+      // the row is its timing, not another speaker.
+      if c1 > 0, c1 * 100 >= ratio * c2 {
+        kind = .speaker
+        speaker = first?.speaker
+      } else if c2 > 0 {
+        kind = .ambiguous
+      } else {
+        kind = .unknown
+      }
+    } else if c1 > 0, c1 * 100 >= dominant * duration, c1 * 100 >= ratio * c2 {
+      kind = .speaker
+      speaker = first?.speaker
     } else if c2 * 100 >= overlap * duration, c2 > 0 {
       kind = .ambiguous
     } else {
       kind = .unknown
     }
     return .init(
-      kind: kind, speaker: kind == .speaker ? first?.speaker : nil, top: first?.speaker,
+      kind: kind, speaker: speaker, top: first?.speaker ?? speaker,
       second: second?.speaker, topCoverage: Double(c1) / Double(duration),
       secondCoverage: Double(c2) / Double(duration))
   }

@@ -6,7 +6,7 @@ Swift/macOS client with a bundled native C++ whisper.cpp helper, existing SQLite
 ## Architecture
 Add a distinct meetingTranscription workload and factory to ModelLifecycleCoordinator. Default speechRecognition retains Parakeet. Finalizer receives explicit Turbo identity and 120-second geometry. Its bounded decoder and persistence batches remain unchanged; assembler receives a separate window bound. Acquire a valid model before replacing an existing final pass. Existing mid-pass replacement behavior is retained and failure remains visible.
 
-WhisperMeetingRuntime writes a bounded temporary WAV, sends one JSONL request, parses bounded native segment output, and exposes TranscriptionWindow. Dedicated blocking IO stays off cooperative executors. Cancellation kills and joins the helper before lease release. Request language is auto; context resets between requests but rolls internally through a request. Detect obvious adjacent phrase loops, retry in two 60-second windows, and fail on repeated failure.
+WhisperMeetingRuntime writes a bounded temporary WAV, sends one JSONL request, parses bounded native segment output, and exposes TranscriptionWindow. Dedicated blocking IO stays off cooperative executors. Cancellation kills and joins the helper before lease release. Request language is the Meeting language from Settings (`MeetingLanguage`; Automatic sends `auto` plus the pass's last confident detection as `fallbackLanguage`, and the helper decides each window's language on its speech before decoding); context resets between requests but rolls internally through a request. Detect obvious adjacent phrase loops, retry in two 60-second windows, and fail on repeated failure.
 
 Settings exposes separate Turbo installation and verification. AppServices uses Turbo for finalization only. Model descriptor permits strictly pinned HTTPS Hugging Face source URLs for assets from separate repositories, with SHA-256 and size verification still mandatory.
 
@@ -23,6 +23,12 @@ Runtime/packaging: new WhisperMeetingRuntime, Sotto worker meeting protocol, bui
 Lifecycle/finalizer: workload, factory, identity, bounded final assembler and pre-admission acquisition.
 Provisioning/UI: ModelDescriptor/ModelProvisioner source URLs, Turbo manifest, AppServices and Settings.
 Docs: provenance, notices, ADR, feature artifacts.
+
+## Language reliability follow-up (2026-09-21)
+
+Keep Whisper Turbo and the existing fixed-language picker. Automatic detection requires at least 3 seconds of VAD-selected speech and probability at least 0.9. Start each automatic request from the prior fallback, so unavailable detection also retains it. Return the bounded speech duration with the decision. Swift updates the fallback only after output validation and silence filtering, for nonempty, nonrepetitive text with valid confidence and speech duration. The automatic pipeline identity gains `speech_language_v2`; fixed-language passes remain compatible. The 3-second threshold is a conservative heuristic, not measured accuracy evidence.
+
+Constitution check: no new dependency, model, process, network payload or persisted text. Existing model ownership, 30-second detection sample, 120-second window, cancellation and cleanup bounds remain. Original audio and completed transcripts are not automatically reprocessed. Regression tests cover empty output, short/weak detection, repetition, valid language changes, and isolation between runtimes.
 
 ## Validation
 Focused tests for lifecycle exclusion/cancellation, unavailable-model preservation, larger final windows, helper failure/limits/repetition and pinned URLs. Production-runtime smoke on existing excerpt. make check after integration. Inspect actual diff independently. Hardware RSS and long meeting acceptance remain distinct from automated checks.

@@ -1,6 +1,6 @@
 import Foundation
 
-/// `xwin_cos_greedy_v1` (research R4). Maps one track's window clusters onto the run
+/// `xwin_cos_greedy_v2` (research R4). Maps one track's window clusters onto the run
 /// clusters seen so far in that track. Pure; run-cluster centroids live in memory for
 /// the run only and are never persisted (FR-036). One instance per track, so clusters
 /// from different tracks are never compared.
@@ -70,8 +70,13 @@ struct WindowClusterReconciler: Sendable {
     var decided: [Int: SpeakerReconciliation] = [:]
     var taken: Set<Int> = []
     for pair in pairs where decided[pair.cluster] == nil && !taken.contains(pair.key) {
+      // The margin guards against guessing between two different voices. A run
+      // cluster that is itself at τ to the best one is the same voice already split
+      // (a fragment from an earlier window), so it is no rival: without this, one
+      // fragment made every later window "uncertain" and a new speaker each.
+      let rivals = rivals(of: pair.key)
       let nextBest =
-        similarity[pair.cluster]?.filter { $0.key != pair.key }.map(\.value).max()
+        similarity[pair.cluster]?.filter { rivals.contains($0.key) }.map(\.value).max()
         ?? -.infinity
       if pair.value - nextBest >= DiarizationConstants.reconcileMargin {
         result.keys[pair.cluster] = pair.key
@@ -119,15 +124,32 @@ struct WindowClusterReconciler: Sendable {
     return result
   }
 
+  /// Run clusters that are a different voice from `key`: under τ to it, or without a
+  /// centroid to compare.
+  private func rivals(of key: Int) -> Set<Int> {
+    guard let centroid = clusters.first(where: { $0.key == key })?.centroid else {
+      return Set(clusters.map(\.key).filter { $0 != key })
+    }
+    return Set(
+      clusters.filter { run in
+        run.key != key
+          && (run.centroid.map { Self.cosine(centroid, $0) } ?? -1)
+            < DiarizationConstants.reconcileSimilarity
+      }.map(\.key))
+  }
+
   static func cosine(_ lhs: [Float], _ rhs: [Double]) -> Double {
+    cosine(lhs.map(Double.init), rhs)
+  }
+
+  static func cosine(_ lhs: [Double], _ rhs: [Double]) -> Double {
     guard lhs.count == rhs.count, !lhs.isEmpty else { return -1 }
     var dot = 0.0
     var left = 0.0
     var right = 0.0
     for index in lhs.indices {
-      let value = Double(lhs[index])
-      dot += value * rhs[index]
-      left += value * value
+      dot += lhs[index] * rhs[index]
+      left += lhs[index] * lhs[index]
       right += rhs[index] * rhs[index]
     }
     guard left > 0, right > 0 else { return -1 }

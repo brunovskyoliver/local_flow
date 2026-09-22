@@ -48,6 +48,15 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   @ObservationIgnored private var task: Task<Void, Never>?
   @ObservationIgnored private var retry: Task<Void, Never>?
   @ObservationIgnored private var cancelled: Set<UUID> = []
+  /// Echo energy profiles handed over by the finalization pass, keyed by meeting.
+  /// Bounded: kept only for the newest few pending runs, else the diarizer
+  /// profiles the tracks itself.
+  @ObservationIgnored private var echoProfiles: [UUID: EchoGate.Profile] = [:]
+  @ObservationIgnored private var echoProfileOrder: [UUID] = []
+  static let echoProfileCapacity = 4
+  /// Meetings whose automatic speaker work must end in one `meetingSpeakersDidSettle`
+  /// so the summary sees every label there is (settle instead of transcript-final).
+  @ObservationIgnored private var pendingSettle: Set<UUID> = []
   @ObservationIgnored private let logger = Logger(
     subsystem: "org.localflow.LocalFlow", category: "speakers")
 
@@ -87,12 +96,31 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
 
   // MARK: Triggers
 
-  /// After `final` is published and the finalization lease has finished.
-  func meetingTranscriptDidFinalize(id: UUID) {
-    guard automaticEnabled() else { return }
+  /// After `final` is published and the finalization lease has finished. The
+  /// summary is told once speaker work settles — a run that ends here, or at
+  /// once when diarization is off, unavailable or refused (FR-002).
+  func meetingTranscriptDidFinalize(id: UUID, echoProfile: EchoGate.Profile?) {
+    if let echoProfile {
+      if echoProfiles[id] == nil { echoProfileOrder.append(id) }
+      echoProfiles[id] = echoProfile
+      while echoProfileOrder.count > Self.echoProfileCapacity {
+        let stale = echoProfileOrder.removeFirst()
+        echoProfiles.removeValue(forKey: stale)
+      }
+    }
+    guard automaticEnabled() else {
+      intelligence?.meetingSpeakersDidSettle(id: id)
+      return
+    }
     Task {
-      guard await modelInstalled() else { return }
-      await enqueue(id, trigger: .automatic, revision: nil)
+      guard await modelInstalled() else {
+        intelligence?.meetingSpeakersDidSettle(id: id)
+        return
+      }
+      pendingSettle.insert(id)
+      if await !enqueue(id, trigger: .automatic, revision: nil), pendingSettle.remove(id) != nil {
+        intelligence?.meetingSpeakersDidSettle(id: id)
+      }
     }
   }
 
@@ -116,17 +144,23 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     await enqueue(id, trigger: .inRoomChange, revision: nil)
   }
 
-  /// Launch resume: meetings whose run is already `pending`.
+  /// Launch resume: meetings whose run is already `pending`. The automatic
+  /// summary was still waiting on these when the app quit, so they settle it.
   func resume(_ ids: [UUID]) {
     for id in ids where !queue.contains(id) && activeMeetingID != id {
       guard queue.count < Self.queueCapacity else { break }
       queue.append(id)
+      pendingSettle.insert(id)
     }
     pump()
   }
 
   /// Cancel speaker labeling: the pending or running run is removed.
   func cancel(meetingID id: UUID) async {
+    if pendingSettle.remove(id) != nil {
+      // No labels will land after all; the waiting summary proceeds without them.
+      intelligence?.meetingSpeakersDidSettle(id: id)
+    }
     if activeMeetingID == id {
       await stopActive()
     } else {
@@ -141,6 +175,9 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   /// Cancel and join; the meeting's rows then go with its cascade.
   func meetingWillDelete(id: UUID) async {
     queue.removeAll { $0 == id }
+    pendingSettle.remove(id)
+    echoProfiles.removeValue(forKey: id)
+    echoProfileOrder.removeAll { $0 == id }
     if activeMeetingID == id { await stopActive() }
     if status?.meetingID == id { status = nil }
   }
@@ -165,12 +202,15 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
 
   // MARK: Queue
 
-  private func enqueue(_ id: UUID, trigger: DiarizationTrigger, revision: Int64?) async {
-    guard !queue.contains(id), activeMeetingID != id else { return }
+  /// True when the meeting is queued or running at the end — false when admission
+  /// was refused and no run will come of it.
+  @discardableResult
+  private func enqueue(_ id: UUID, trigger: DiarizationTrigger, revision: Int64?) async -> Bool {
+    guard !queue.contains(id), activeMeetingID != id else { return true }
     guard queue.count < Self.queueCapacity else {
       // An automatic request just leaves the meeting `not_requested`.
       if trigger != .automatic { noticePublished?(Self.queueFullNotice) }
-      return
+      return false
     }
     do {
       _ = try await diarizer.admit(meetingID: id, trigger: trigger, expectedRevision: revision)
@@ -179,13 +219,14 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     } catch {
       logger.notice("Diarization admission refused")
       if trigger != .automatic { noticePublished?("Speakers can't be labeled right now.") }
-      return
+      return false
     }
     // The await above may have let a duplicate in.
-    guard !queue.contains(id), activeMeetingID != id else { return }
+    guard !queue.contains(id), activeMeetingID != id else { return true }
     queue.append(id)
     await refresh(id)
     pump()
+    return true
   }
 
   private func pump() {
@@ -193,11 +234,13 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     let id = queue.removeFirst()
     activeMeetingID = id
     let diarizer = diarizer
+    let echoProfile = echoProfiles.removeValue(forKey: id)
+    echoProfileOrder.removeAll { $0 == id }
     let progress: @Sendable (Int, Int) -> Void = { [weak self] done, planned in
       Task { @MainActor in self?.report(id, done: done, planned: planned) }
     }
     task = Task { [weak self] in
-      let outcome = await diarizer.run(meetingID: id, progress: progress)
+      let outcome = await diarizer.run(meetingID: id, progress: progress, echoProfile: echoProfile)
       await self?.finish(id, outcome: outcome)
     }
     startRSSSampler()
@@ -232,14 +275,27 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
       if !cancelled.contains(id) { queue.insert(id, at: 0) }
       scheduleRetry()
     case .failed(.transcriptChanged):
-      if automaticEnabled() { await enqueue(id, trigger: .automatic, revision: nil) }
+      if automaticEnabled(), await enqueue(id, trigger: .automatic, revision: nil) {
+        break
+      }
+      // Refused or switched off: no labels will land for this transcript.
+      if pendingSettle.remove(id) != nil {
+        intelligence?.meetingSpeakersDidSettle(id: id)
+      }
     case .succeeded:
       if status?.meetingID == id { status?.labelsRevision += 1 }
       // The diarizer's lease finished before adoption; identification may start now.
-      identification?.diarizationDidAdopt(meetingID: id)
+      let identifying = identification?.diarizationDidAdopt(meetingID: id) ?? false
       // New labels are evidence: an accepted analysis is now behind them.
       intelligence?.evidenceDidChange(meetingID: id)
-    case .failed, .cancelled, .nothingToRun: break
+      // Identification owns the settle when it took over; otherwise labels are done.
+      if pendingSettle.remove(id) != nil && !identifying {
+        intelligence?.meetingSpeakersDidSettle(id: id)
+      }
+    case .failed, .cancelled, .nothingToRun:
+      if pendingSettle.remove(id) != nil {
+        intelligence?.meetingSpeakersDidSettle(id: id)
+      }
     }
     cancelled.remove(id)
     await refresh(id)

@@ -55,8 +55,10 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
 
   // MARK: Triggers
 
-  /// `IntelligenceObserving`: after a final transcript pass is adopted.
-  func meetingTranscriptDidFinalize(id: UUID) {
+  /// `IntelligenceObserving`: speaker work for the finalized transcript is done
+  /// (adopted, skipped or unavailable), so the run sees settled evidence instead
+  /// of landing before speaker labels and going stale (FR-002).
+  func meetingSpeakersDidSettle(id: UUID) {
     guard automaticEnabled() else { return }
     enqueue(id, trigger: .automatic)
   }

@@ -72,7 +72,8 @@ apps/macos/LocalFlow/
     FluidAudioDiarizer.swift                # factory + runtime over OfflineDiarizerManager (offline mode, macOS 15 gate)
     DiarizationRun.swift                    # run states, transition table, failure categories, pipeline version
     MeetingDiarizer.swift                   # per-track windows over MeetingFinalizer.workItems, persistence, alignment, completion
-    WindowClusterReconciler.swift           # xwin_cos_greedy_v1
+    WindowClusterReconciler.swift           # xwin_cos_greedy_v2
+    RunClusterMerge.swift                   # merge_cos0.70_v1
     SpeakerAligner.swift                    # align_dom0.60_ratio2_ovl0.20_v1
     CorrectionCarryOver.swift               # carry_ovl0.50_ratio2_v1
     QuoteSelector.swift

@@ -117,7 +117,19 @@ TEST_RUNNER_LOCALFLOW_ANALYSIS_EVAL_DIR=/private/path/to/eval \
 SC-006, SC-013 and SC-014 as violation counts; `--output-dir` writes the
 report JSON under private permissions. With `--live --endpoint URL` it instead
 posts each meeting fixture to a running flowd's `POST /v1/analysis/meeting`
-and evaluates the raw results — client-side validation counters do not apply
-in live mode, so the checks they drive simply report zero cases. The export
+and evaluates the raw results. SC-006 needs human review for missed items,
+unsupported claims and proposals; its status remains `unmeasured`. Live mode
+also leaves prose language and copied-output checks unmeasured because it has
+neither a language detector nor the client's copy output. A model's declared
+language is never treated as detected prose language. Zero violations does not
+mean acceptance is complete.
+
+Fixtures can declare `expected_relative_dates`, a map from the exact original
+phrase to its expected calendar date. The deployment and due-date happy paths
+check these expectations, including missing dates. Relative dates without an
+expectation are reported as unmeasured.
+
+`make check` creates a private temporary export directory, replays the fixture
+manifest during XCTest, scores the resulting JSON and removes the directory. The export
 directory and the report are the only files either tool writes; keep them
 private.

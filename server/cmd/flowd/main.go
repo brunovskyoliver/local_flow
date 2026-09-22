@@ -40,7 +40,7 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.SetOutput(output)
 	fs.StringVar(&c.listen, "listen", "127.0.0.1:8080", "HTTP listen address")
 	fs.StringVar(&c.backend.BaseURL, "backend", "http://127.0.0.1:8000/v1", "OpenAI-compatible API base URL, including /v1")
-	fs.StringVar(&c.backend.Model, "model", "mtplx-qwen35-9b-optimized-speed", "served model id")
+	fs.StringVar(&c.backend.Model, "model", "youssofal-qwen3.5-4b-mtplx-optimized-speed", "served model id")
 	shield := fs.String("shield", "on", "entity shielding: on or off")
 	versions := fs.String("protocol-versions", "1", "comma-separated advertised protocol versions (acceptance double)")
 	fs.DurationVar(&c.backend.DebugDelay, "debug-delay", 0, "delay inference for acceptance tests")
@@ -49,11 +49,11 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.BoolVar(&c.analysis.Enabled, "analysis", true, "serve the meeting analysis endpoints")
 	fs.IntVar(&c.analysis.Concurrency, "analysis-concurrency", 1, "analysis admission slots")
 	fs.IntVar(&c.analysis.InputBytes, "analysis-input-bytes", 98304, "max summed segment/notes/partials text bytes per request")
-	fs.IntVar(&c.analysis.OutputTokensChunk, "analysis-output-tokens-chunk", 2048, "backend max_tokens for chunk requests")
-	fs.IntVar(&c.analysis.OutputTokensFull, "analysis-output-tokens", 3072, "backend max_tokens for full and synthesis requests")
+	fs.IntVar(&c.analysis.OutputTokensChunk, "analysis-output-tokens-chunk", 3072, "backend max_tokens for chunk requests")
+	fs.IntVar(&c.analysis.OutputTokensFull, "analysis-output-tokens", 10240, "backend max_tokens for full and synthesis requests")
 	fs.IntVar(&c.analysis.ContextTokens, "analysis-context-tokens", 32768, "usable backend context tokens")
-	fs.DurationVar(&c.analysis.Timeout, "analysis-timeout", 120*time.Second, "backend deadline per analysis request")
-	fs.DurationVar(&c.analysis.FirstTokenTimeout, "analysis-first-token-timeout", 15*time.Second, "backend first-token deadline for analysis")
+	fs.DurationVar(&c.analysis.Timeout, "analysis-timeout", c.analysis.Timeout, "backend deadline per analysis request")
+	fs.DurationVar(&c.analysis.FirstTokenTimeout, "analysis-first-token-timeout", c.analysis.FirstTokenTimeout, "backend first-token deadline for analysis")
 	fs.DurationVar(&c.analysis.QueueWait, "analysis-queue-wait", 30*time.Second, "rewrite-first gate window")
 	fs.BoolVar(&c.analysis.Preempt, "analysis-preempt", true, "cancel an in-flight analysis call when a rewrite arrives")
 	fs.StringVar(&c.dumpDir, "analysis-dump-requests", "", "debug builds only: write each analysis request body to this directory")
@@ -76,6 +76,9 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	}
 	if c.backend.FirstTokenTimeout <= 0 || c.backend.Timeout <= 0 || c.backend.Timeout > 5*time.Minute || c.backend.FirstTokenTimeout > 5*time.Minute || c.backend.DebugDelay < 0 || c.backend.DebugDelay > 5*time.Minute {
 		return c, errors.New("timeouts must be positive and at most five minutes; debug delay may be zero")
+	}
+	if c.analysis.Timeout <= 0 || c.analysis.FirstTokenTimeout <= 0 {
+		return c, errors.New("analysis timeouts must be positive")
 	}
 	if c.dumpDir != "" && !analysis.DebugBuild {
 		return c, errors.New("--analysis-dump-requests requires a build with -tags localflow_debug")

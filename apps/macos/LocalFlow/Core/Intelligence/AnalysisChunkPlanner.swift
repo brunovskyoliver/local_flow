@@ -1,6 +1,6 @@
 import Foundation
 
-/// `chunking_v1` (`contracts/client-analysis.md` step 5). A meeting whose
+/// `chunking_v2` (`contracts/client-analysis.md` step 5). A meeting whose
 /// segment text fits the (health-lowered) budget takes one `full` request;
 /// anything larger is chunked along whole segments, analyzed into partials
 /// and synthesized in groups of ≤ `partialsPerSynthesis`, at most
@@ -50,15 +50,26 @@ enum AnalysisChunkPlanner {
       throw AnalysisFailure(.tooLong, detail: "notes_too_large")
     }
 
-    let budget = policy.chunkBudgetBytes
     let total = segments.reduce(0) { $0 + $1.text.utf8.count }
     guard total > policy.fullBudgetBytes else {
       return Plan(chunks: [], synthesisCounts: [])
     }
+    // The chunk budget may exceed the full budget; a chunk never holds the
+    // whole text, so a staged plan always has partials to synthesize.
+    let budget = min(policy.chunkBudgetBytes, total - 1)
 
+    // Balanced: each chunk aims at the remaining bytes split over the fewest
+    // chunks that fit the budget (at least two here, since the text is over
+    // the full budget), so a meeting never ends in a near-empty tail request.
     var chunks: [Chunk] = []
     var start = 0
     var bytes = 0
+    var remaining = total
+    var target = 0
+    func retarget() {
+      let count = max(chunks.isEmpty ? 2 : 1, (remaining + budget - 1) / budget)
+      target = (remaining + count - 1) / count
+    }
     func close(_ end: Int, oversized: Bool) {
       chunks.append(
         Chunk(
@@ -66,25 +77,24 @@ enum AnalysisChunkPlanner {
           firstOrdinal: segments[start].ordinal,
           lastOrdinal: segments[end - 1].ordinal + 1,
           segmentBytes: bytes, oversized: oversized))
+      remaining -= bytes
+      start = end
+      bytes = 0
+      retarget()
     }
+    retarget()
     for (i, segment) in segments.enumerated() {
       let size = segment.text.utf8.count
       if size > budget {
         // A segment too large to share a request stands alone.
         if i > start { close(i, oversized: false) }
-        start = i
         bytes = size
         close(i + 1, oversized: true)
-        start = i + 1
-        bytes = 0
         continue
       }
-      if bytes + size > budget {
-        close(i, oversized: false)
-        start = i
-        bytes = 0
-      }
+      if bytes + size > budget { close(i, oversized: false) }
       bytes += size
+      if bytes >= target { close(i + 1, oversized: false) }
     }
     if start < segments.count { close(segments.count, oversized: false) }
 

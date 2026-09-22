@@ -95,7 +95,7 @@ final class IdentityStoreTests: XCTestCase {
         db, sql: "SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') ORDER BY name"
       ).map { "\($0["name"] as String)=\($0["sql"] as String? ?? "")" }
     }
-    try HistoryMigrations.migrator().migrate(database)
+    try HistoryMigrations.migrator().migrate(database, upTo: "identities-v8")
     try database.read { db in
       let rows = try Row.fetchAll(
         db, sql: "SELECT * FROM meeting_identification ORDER BY updated_at")

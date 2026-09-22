@@ -22,13 +22,28 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
   private let directory: URL
   private let startupTimeout: TimeInterval
   private let inferenceTimeout: TimeInterval
+  private let language: MeetingLanguage
+  /// Enabled Dictionary terms, sent as prompt terms with every request so a term is
+  /// heard in its own spelling ("SAPGUI", not "sapu"). Bounded before the helper's
+  /// own token budget applies.
+  private let promptTerms: [String]
+  static let maximumPromptTerms = 256
+  /// Automatic only: the helper's last confident detection, sent with every later
+  /// request as the language to fall back on when a window's own detection is not
+  /// confident (a microphone window that is mostly muted echo). Nothing is pinned
+  /// for good: a confident detection of another language still wins its window.
+  private var fallbackLanguage: String?
 
   private init(
-    model: LocalModelDescriptor, helperURL: URL,
-    startupTimeout: TimeInterval, inferenceTimeout: TimeInterval
+    model: LocalModelDescriptor, helperURL: URL, language: MeetingLanguage,
+    promptTerms: [String], startupTimeout: TimeInterval, inferenceTimeout: TimeInterval
   ) throws {
     self.startupTimeout = startupTimeout
     self.inferenceTimeout = inferenceTimeout
+    self.language = language
+    self.promptTerms = Array(
+      promptTerms.filter { !$0.isEmpty && $0.utf8.count <= VocabularyEntry.maximumTermBytes }
+        .prefix(Self.maximumPromptTerms))
     directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("localflow-meeting-whisper", isDirectory: true)
       .appendingPathComponent(String(getpid()) + "." + UUID().uuidString, isDirectory: true)
@@ -46,12 +61,13 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
 
   static func make(
     model: LocalModelDescriptor, helperURL: URL = bundledHelperURL,
+    language: MeetingLanguage = .automatic, promptTerms: [String] = [],
     startupTimeout: TimeInterval = 120, inferenceTimeout: TimeInterval = 300
   )
     async throws -> WhisperMeetingRuntime
   {
     let runtime = try WhisperMeetingRuntime(
-      model: model, helperURL: helperURL,
+      model: model, helperURL: helperURL, language: language, promptTerms: promptTerms,
       startupTimeout: startupTimeout, inferenceTimeout: inferenceTimeout)
     do {
       try await runtime.perform {
@@ -150,12 +166,16 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
       ? samples + Array(repeating: Float.zero, count: 4_800 - samples.count) : samples
     try Self.writeWAV(padded, to: file)
     let id = UUID().uuidString
-    var data = try JSONSerialization.data(
-      withJSONObject: [
-        "type": "transcribe", "id": id,
-        "path": file.path, "language": "auto", "meetingTranscription": true,
-        "silenceSkipping": true,
-      ] as [String: Any])
+    var request: [String: Any] = [
+      "type": "transcribe", "id": id,
+      "path": file.path, "language": language.whisperCode, "meetingTranscription": true,
+      "silenceSkipping": true, "vocabularyTerms": promptTerms,
+      "languageContext": MeetingLanguage.contextSentences,
+    ]
+    if language == .automatic, let fallback = lock.withLock({ fallbackLanguage }) {
+      request["fallbackLanguage"] = fallback
+    }
+    var data = try JSONSerialization.data(withJSONObject: request)
     data.append(10)
     try input.fileHandleForWriting.write(contentsOf: data)
     let deadline = ProcessInfo.processInfo.systemUptime + inferenceTimeout
@@ -193,12 +213,27 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
       guard validTiming else { return TranscriptionWindow(text: text, tokens: []) }
       // A segment the audio does not back is the decoder filling silence.
       let backed = Self.speechBacked(native, samples: samples)
-      if backed.count < native.count {
-        let rebuilt = backed.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
-        return TranscriptionWindow(text: rebuilt, tokens: Self.words(backed))
+      let finalText =
+        backed.count < native.count
+        ? backed.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines) : text
+      if language == .automatic, event["languageDecision"] as? String == "detected",
+        let detected = event["language"] as? String, Self.isLanguageCode(detected),
+        let probability = event["languageProbability"] as? Double,
+        probability.isFinite, (0.9...1).contains(probability),
+        let speechSeconds = event["languageSpeechSeconds"] as? Double,
+        speechSeconds.isFinite, speechSeconds >= 3, speechSeconds <= min(30, duration),
+        !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        !Self.hasRepetition(finalText)
+      {
+        lock.withLock { fallbackLanguage = detected }
       }
-      return TranscriptionWindow(text: text, tokens: Self.words(native))
+      return TranscriptionWindow(text: finalText, tokens: Self.words(backed))
     }
+  }
+
+  /// A code the helper reported: two or three ASCII letters, never a path or text.
+  static func isLanguageCode(_ value: String) -> Bool {
+    (2...3).contains(value.utf8.count) && value.utf8.allSatisfy { (97...122).contains($0) }
   }
 
   /// Frames under this level, after the pass's level normalization, are silence.

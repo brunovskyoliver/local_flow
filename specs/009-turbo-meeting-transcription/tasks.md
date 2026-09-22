@@ -13,3 +13,10 @@
 - [x] T006 Verify focused regression tests and production offline excerpt smoke (SC-002, SC-003, SC-004).
 - [x] T007 Run make check, independent review and resolve findings (SC-001, SC-004).
 - [x] T008 Converge against spec and record acceptance evidence without unmeasured resource claims.
+
+## Language reliability follow-up
+- [x] T009 [US1] Add regression cases in apps/macos/LocalFlowTests/WhisperMeetingRuntimeTests.swift for short/weak, empty, repetitive and valid changed-language evidence.
+- [x] T010 [US1] Gate language decisions in third_party/sotto/Engine/worker.cpp and fallback updates in apps/macos/LocalFlow/Core/Transcription/WhisperMeetingRuntime.swift; version automatic passes in Core/Transcription/MeetingLanguage.swift.
+- [x] T011 Run make check and review the language changes; report real-meeting quality and resource measurements separately.
+
+Validation (2026-09-21): baseline and final `make check` passed, including the native helper build. Focused regressions reproduced the fallback defects before the fix. No new real-meeting WER, latency or RSS measurement was collected; the 3-second threshold remains a heuristic.

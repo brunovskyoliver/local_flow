@@ -21,17 +21,21 @@ type Limits struct {
 
 func DefaultLimits() Limits {
 	return Limits{
-		Enabled:           true,
-		Concurrency:       1,
-		InputBytes:        98304,
-		OutputBytes:       MaxLineBytes,
-		ContextTokens:     32768,
-		Timeout:           120 * time.Second,
-		FirstTokenTimeout: 15 * time.Second,
+		Enabled:       true,
+		Concurrency:   1,
+		InputBytes:    98304,
+		OutputBytes:   MaxLineBytes,
+		ContextTokens: 32768,
+		// A chunk is ~10k prompt tokens; a 4B model on Apple Silicon needs ~10 s of
+		// prefill before its first token when nothing is cached, more under load.
+		Timeout:           300 * time.Second,
+		FirstTokenTimeout: 60 * time.Second,
 		QueueWait:         30 * time.Second,
 		Preempt:           true,
-		OutputTokensChunk: 2048,
-		OutputTokensFull:  3072,
+		// A chunk partial runs ~1–2k tokens; the cap bounds a runaway decode
+		// (and its KV growth) instead of letting it spend minutes.
+		OutputTokensChunk: 3072,
+		OutputTokensFull:  10240,
 	}
 }
 
@@ -44,9 +48,10 @@ func (l Limits) OutputTokens(stage string) int {
 }
 
 // reserved instruction + schema + output tokens per the contract's estimate
-// rule: input bytes / 3 + instruction, schema and output reservations.
+// rule: input bytes / 3 + instruction, schema and output reservations. The
+// schema rides in the system prompt (~1.8k tokens compacted).
 const instructionReserveTokens = 900
-const schemaReserveTokens = 600
+const schemaReserveTokens = 2400
 
 // EstimateTokens approximates the context usage of one request.
 func (l Limits) EstimateTokens(textBytes int, stage string) int {

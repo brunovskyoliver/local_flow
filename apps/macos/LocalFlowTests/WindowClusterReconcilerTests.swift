@@ -69,6 +69,41 @@ final class WindowClusterReconcilerTests: XCTestCase {
     XCTAssertEqual(result.matched, 0)
   }
 
+  func testANearDuplicateRunClusterIsNoRivalForTheMargin() {
+    // The 2026-09-21 meeting: one remote voice, a 4 s fragment of it in window 2 at
+    // cosine 0.89 to the main cluster. From then on every window's main cluster was
+    // 0.98 to the voice and 0.89 to the fragment: a margin of 0.09, "uncertain", and a
+    // new speaker per window. The fragment is at τ to the voice, so it is the same
+    // voice and not a rival.
+    var reconciler = WindowClusterReconciler()
+    var key = 0
+    _ = reconciler.reconcile(window([0: axis(0)], seconds: 250), nextKey: &key)
+    let fragment = reconciler.reconcile(
+      window([0: toward(0.98), 1: toward(0.89)], seconds: 4), nextKey: &key)
+    XCTAssertEqual(fragment.keys, [0: 0, 1: 1])
+    XCTAssertEqual(fragment.created, [.init(key: 1, reconciliation: .uncertain)])
+    for _ in 0..<5 {
+      let next = reconciler.reconcile(window([0: toward(0.985)], seconds: 400), nextKey: &key)
+      XCTAssertEqual(next.keys, [0: 0])
+      XCTAssertEqual(next.matched, 1)
+      XCTAssertTrue(next.created.isEmpty)
+    }
+    XCTAssertEqual(reconciler.clusterCount, 2)
+  }
+
+  func testADistinctRunClusterStillCountsForTheMargin() {
+    var reconciler = WindowClusterReconciler()
+    var key = 0
+    // Two voices at cosine 0.5 to each other: rivals.
+    _ = reconciler.reconcile(window([0: axis(0)]), nextKey: &key)
+    _ = reconciler.reconcile(window([0: toward(0.5)]), nextKey: &key)
+    var between = [Float](repeating: 0, count: 8)
+    between[0] = 0.9
+    between[1] = 0.6
+    let result = reconciler.reconcile(window([3: between]), nextKey: &key)
+    XCTAssertEqual(result.created, [.init(key: 2, reconciliation: .uncertain)])
+  }
+
   func testClusterWithoutCentroidIsNewUncertainAndNeverMatched() {
     var reconciler = WindowClusterReconciler()
     var key = 0

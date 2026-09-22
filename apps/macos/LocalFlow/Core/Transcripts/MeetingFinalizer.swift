@@ -19,6 +19,10 @@ actor MeetingFinalizer {
     let totalGapCount: Int
     let coveredGapCount: Int
     let coveredGapMs: Int64
+    /// The per-track echo energy profile this pass calibrated from, for the
+    /// diarizer to reuse instead of decoding both tracks again. nil unless the
+    /// layout profiled echo (per-track); the stretches keep a zero base.
+    let echoProfile: EchoGate.Profile?
   }
   struct Configuration: Sendable {
     let windowSamples: Int
@@ -63,6 +67,10 @@ actor MeetingFinalizer {
   private let vocabulary: any VocabularyProviding
   private let identity: TranscriptionPipelineIdentity
   private let configuration: Configuration
+  /// The Settings language, for a meeting without its own; the pass's language is
+  /// read once per run and recorded in the pipeline version (`lang_<code>_prompt_v1`).
+  /// The runtime factory resolves the same choice when the pass loads the runtime.
+  private let defaultLanguage: @Sendable () async -> MeetingLanguage
   private let clock: any MeetingClock
   private let recorder: ResourceRecorder?
   private let logSink: @Sendable (String) -> Void
@@ -73,6 +81,7 @@ actor MeetingFinalizer {
     vocabulary: any VocabularyProviding = EmptyVocabularyProvider(),
     identity: TranscriptionPipelineIdentity = .init(),
     configuration: Configuration = .parakeet,
+    defaultLanguage: @escaping @Sendable () async -> MeetingLanguage = { .automatic },
     clock: any MeetingClock = SystemMeetingClock(), recorder: ResourceRecorder? = nil,
     logSink: @escaping @Sendable (String) -> Void = { message in
       Logger(subsystem: "org.localflow.LocalFlow", category: "transcript")
@@ -86,6 +95,7 @@ actor MeetingFinalizer {
     self.vocabulary = vocabulary
     self.identity = identity
     self.configuration = configuration
+    self.defaultLanguage = defaultLanguage
     windows[.both] = [Float](repeating: 0, count: configuration.windowSamples)
     self.clock = clock
     self.recorder = recorder
@@ -189,6 +199,14 @@ actor MeetingFinalizer {
     } catch {
       snapshot = nil
     }
+    var language = MeetingLanguage.automatic
+    if configuration.layout == .perTrack {
+      if let chosen = detail.meeting.language {
+        language = chosen
+      } else {
+        language = await defaultLanguage()
+      }
+    }
     var replacementLease: ModelLease?
     if let existing = try await store.transcription(meetingID: meetingID), existing.state == .final
     {
@@ -211,7 +229,8 @@ actor MeetingFinalizer {
     do {
       try Task.checkCancellation()
       admission = try await admit(
-        meetingID: meetingID, revision: revision, detail: detail, snapshot: snapshot)
+        meetingID: meetingID, revision: revision, detail: detail, snapshot: snapshot,
+        language: language)
     } catch {
       if let replacementLease { try? await lifecycle.finish(replacementLease) }
       throw error
@@ -243,7 +262,8 @@ actor MeetingFinalizer {
       meetingID: meetingID, passID: admission.passID, lease: lease,
       segmenter: TranscriptSegmenter(vocabulary: snapshot), resume: admission.resume,
       totalMs: Self.totalMs(detail), progress: progress, startedAt: clock.monotonicNanoseconds,
-      descriptor: .init(source: .decodedTracks, layout: configuration.layout))
+      descriptor: .init(source: .decodedTracks, layout: configuration.layout),
+      pipelineVersion: pipelineVersion(language: language))
     context.lastFlush = context.startedAt
     do {
       context.ordinal =
@@ -277,8 +297,10 @@ actor MeetingFinalizer {
   }
 
   private func admit(
-    meetingID: UUID, revision: Int64, detail: MeetingDetail, snapshot: VocabularySnapshot?
+    meetingID: UUID, revision: Int64, detail: MeetingDetail, snapshot: VocabularySnapshot?,
+    language: MeetingLanguage
   ) async throws -> Admission {
+    let pipelineVersion = pipelineVersion(language: language)
     guard let row = try await store.transcription(meetingID: meetingID) else {
       throw Error.noSourceAudio
     }
@@ -300,7 +322,7 @@ actor MeetingFinalizer {
         throw Error.meetingActive
       case .finalizing:
         if row.passKind == .final, let existing = row.passID, let snapshot,
-          matches(row, snapshot: snapshot)
+          matches(row, snapshot: snapshot, pipelineVersion: pipelineVersion)
         {
           let resume = row.progressSequence.map {
             FinalizationProgress(sequence: $0, sample: row.progressSample ?? 0)
@@ -343,7 +365,9 @@ actor MeetingFinalizer {
     }
   }
 
-  private func matches(_ row: MeetingTranscription, snapshot: VocabularySnapshot) -> Bool {
+  private func matches(
+    _ row: MeetingTranscription, snapshot: VocabularySnapshot, pipelineVersion: String
+  ) -> Bool {
     row.engine == provenance.engine && row.modelID == modelIdentity.id
       && row.modelRevision == modelIdentity.revision
       && row.modelManifestHash == modelIdentity.manifestHash
@@ -361,10 +385,13 @@ actor MeetingFinalizer {
       id: provenance.modelID ?? "unrecorded", revision: provenance.modelRevision ?? "unrecorded",
       manifestHash: provenance.modelManifestHash ?? String(repeating: "0", count: 64))
   }
-  private var pipelineVersion: String {
+  private func pipelineVersion(language: MeetingLanguage) -> String {
     let front =
       configuration.layout == .perTrack
-      ? [configuration.geometry, TrackLevelNormalizer.version, EchoGate.version]
+      ? [
+        configuration.geometry, TrackLevelNormalizer.version, EchoGate.version,
+        language.pipelineTag,
+      ]
       : [configuration.geometry]
     let back = [
       TranscriptAssembler.version, TranscriptSegmenter.version, TranscriptNormalizer.version,
@@ -410,6 +437,7 @@ actor MeetingFinalizer {
     let progress: (@Sendable (Double) -> Void)?
     let startedAt: UInt64
     var descriptor: AnalysisStreamDescriptor
+    let pipelineVersion: String
     var ordinal = 0
     var baseMs: Int64 = 0
     var contributing: Set<AnalysisTracks> = []
@@ -421,9 +449,10 @@ actor MeetingFinalizer {
     var windowCount = 0
     var recognitionNanoseconds: UInt64 = 0
     var audioSamples = 0
-    /// Per track: frame energies per stretch until the echo gate is calibrated, then
-    /// only while the gate is on; each stretch's frames go once it is transcribed.
-    var echoProfile = EchoGate.Profile()
+    /// Per track: frame energies per stretch once the echo pass ran; the profile
+    /// stays whole so the outcome can hand it to diarization for reuse. nil when
+    /// the layout never profiles echo.
+    var echoProfile: EchoGate.Profile?
     var echo: EchoGate.Calibration?
     var echoMutedMs: Int64 = 0
     var coveredMs: Int64 { descriptor.stretches.reduce(0) { $0 + $1.lengthMs } }
@@ -461,6 +490,7 @@ actor MeetingFinalizer {
   private func profileEcho(detail: MeetingDetail, pages: Int, context: inout PassContext)
     async throws
   {
+    let began = clock.monotonicNanoseconds
     var profile = EchoGate.Profile()
     pagesLoop: for page in 0..<pages {
       for item in Self.workItems(detail: detail, page: page) {
@@ -492,7 +522,7 @@ actor MeetingFinalizer {
     }
     let frames = profile.frames
     context.echo = EchoGate.calibrate(profile)
-    context.echoProfile = context.echo == nil ? .init() : profile
+    context.echoProfile = profile
     if let gate = context.echo {
       logSink(
         "final pass echo gate on lag=\(gate.lagFrames * Int(EchoGate.frameMs))ms gain=\(String(format: "%.1f", gate.gainDB))dB corr=\(String(format: "%.2f", gate.correlation))"
@@ -500,6 +530,10 @@ actor MeetingFinalizer {
     } else {
       logSink("final pass echo gate off frames=\(frames)")
     }
+    recorder?.record(
+      phase: .transcriptFinalizing,
+      durationNanoseconds: clock.monotonicNanoseconds &- began,
+      metric: .transcriptEchoProfileDuration)
   }
 
   // MARK: Stretches
@@ -538,7 +572,7 @@ actor MeetingFinalizer {
     var lanes: [AnalysisTracks: Lane] = [:]
     let echo =
       context.echo.flatMap { calibration in
-        context.echoProfile.stretches.removeValue(forKey: item.sequence).map {
+        context.echoProfile?.stretches[item.sequence].map {
           EchoGate.echoRanges($0, calibration: calibration)
         }
       } ?? []
@@ -758,7 +792,7 @@ actor MeetingFinalizer {
       drafts[index].engine = provenance.engine
       drafts[index].modelID = model.id
       drafts[index].modelRevision = model.revision
-      drafts[index].pipelineVersion = pipelineVersion
+      drafts[index].pipelineVersion = context.pipelineVersion
     }
     context.windowCount += 1
     if lane.tag == .both {
@@ -920,6 +954,7 @@ actor MeetingFinalizer {
     )
     return Outcome(
       row: row, windowCount: context.windowCount, totalGapCount: gaps.count,
-      coveredGapCount: coveredCount, coveredGapMs: coveredMs)
+      coveredGapCount: coveredCount, coveredGapMs: coveredMs,
+      echoProfile: context.echoProfile)
   }
 }

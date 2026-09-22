@@ -17,6 +17,8 @@ struct SettingsView: View {
   static let meetingTranscriptionTitle = "Transcribe meetings while recording"
   static let meetingTranscriptionCaption =
     "Parakeet provides live previews. Whisper Turbo produces the final transcript. Recording never depends on either model."
+  static let meetingLanguageCaption =
+    "Used by the final transcript. Pick the language spoken in your meetings; Automatic detects it and can drift on quiet stretches."
   static let meetingDiarizationTitle = "Label speakers automatically after transcription"
   static let speakerIdentificationTitle = "Remember and recognize speakers across meetings"
   static let speakerIdentificationCaption =
@@ -71,6 +73,13 @@ struct SettingsView: View {
             Toggle(Self.meetingTranscriptionTitle, isOn: $preferences.meetingTranscriptionEnabled)
               .labelsHidden().toggleStyle(.switch)
               .accessibilityIdentifier("settings.meetingTranscriptionEnabled")
+          }
+          separator
+          SettingsRow("Meeting language", detail: Self.meetingLanguageCaption) {
+            Picker("Meeting language", selection: $preferences.meetingLanguage) {
+              ForEach(MeetingLanguage.allCases) { Text($0.title).tag($0) }
+            }
+            .labelsHidden().frame(width: 110).accessibilityIdentifier("settings.meetingLanguage")
           }
           separator
           SettingsRow("Final meeting transcript", detail: model.snapshot.meetingModelReadiness) {

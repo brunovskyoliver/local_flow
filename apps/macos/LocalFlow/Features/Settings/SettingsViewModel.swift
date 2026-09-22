@@ -218,6 +218,7 @@ final class SettingsViewModel {
 
   func testConnection() async {
     guard !connectionTesting, let settings = rewriteSettings else { return }
+    analysisStatus = nil
     if let category = RewriteConnectionCategory.preflight(settings) {
       connectionResult = .init(category: category, diagnostic: "preflight")
       return
@@ -240,7 +241,9 @@ final class SettingsViewModel {
       connectionResult = .init(
         category: category, health: health, diagnostic: "health_response")
       if category == .connected {
-        analysisStatus = await analysisHealthStatus(endpoint: endpoint)
+        let status = await analysisHealthStatus(endpoint: endpoint)
+        guard revision == connectionRevision, !Task.isCancelled else { return }
+        analysisStatus = status
       }
     } catch {
       guard revision == connectionRevision, !Task.isCancelled else { return }

@@ -99,7 +99,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 64,
-          "description": "A segment UUID or a note:<n> paragraph id; unique within one sources list."
+          "description": "A segment id as given in the request, or a note:<n> paragraph id; unique within one sources list."
         }
       }
     },

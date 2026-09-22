@@ -6,25 +6,34 @@ import Foundation
 /// `request_config_json`.
 struct AnalysisPolicy: Sendable, Equatable {
   static let version = "policy_v1"
-  static let chunkingVersion = "chunking_v1"
+  static let chunkingVersion = "chunking_v2"
   static let overlayMatchVersion = "overlay_match_v1"
   static let pipelineVersion = "\(chunkingVersion)/\(overlayMatchVersion)/\(version)"
 
-  /// Segment-text bytes at or under which one `full` request suffices.
-  var fullBudgetBytes = 24_576
-  /// Segment-text bytes per `chunk` request.
-  var chunkBudgetBytes = 24_576
+  /// Segment-text bytes at or under which one `full` request suffices. With
+  /// the request envelope Slovak runs ≈ 1.2 B/token (measured 2026-09-22 on
+  /// Qwen3.5 4B): 12 KB is ~12k prompt tokens, leaving room for the larger
+  /// full-request output inside the backend's real KV pool, which runs well
+  /// under the advertised context when the Mac is memory-pressured.
+  var fullBudgetBytes = 12_288
+  /// Segment-text bytes per `chunk` request: ~15k prompt tokens at most, plus
+  /// the 3,072-token chunk output cap. The planner balances chunks, so most
+  /// land well under it.
+  var chunkBudgetBytes = 16_384
   var maxChunks = 64
   var partialsPerSynthesis = 16
   var reduceDepth = 2
   var requestsInFlight = 1
   var requestsInFlightMax = 2
 
-  var perRequestTimeout = Duration.seconds(120)
-  var firstTokenTimeout = Duration.seconds(15)
-  /// 60 s + 90 s per request, clamped to [120 s, 30 min] (research R11).
+  /// Matches the server's `--analysis-timeout`: a ~10k-token chunk needs ~10 s of
+  /// prefill and ~20 s of generation on a 4B model here, several times that when
+  /// the Mac is also transcribing.
+  var perRequestTimeout = Duration.seconds(300)
+  var firstTokenTimeout = Duration.seconds(60)
+  /// 60 s + one request timeout per request, clamped to [120 s, 30 min] (research R11).
   func runDeadline(requestCount: Int) -> Duration {
-    let seconds = 60 + 90 * max(1, requestCount)
+    let seconds = 60 + Int(perRequestTimeout.components.seconds) * max(1, requestCount)
     let clamped = min(max(seconds, 120), 1_800)
     return .seconds(clamped)
   }

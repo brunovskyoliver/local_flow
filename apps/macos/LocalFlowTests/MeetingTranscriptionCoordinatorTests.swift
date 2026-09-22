@@ -1085,7 +1085,11 @@ final class MeetingTranscriptionCoordinatorTests: XCTestCase {
 
   @MainActor private final class DiarizationSpy: DiarizationObserving {
     var finalized: [UUID] = []
-    func meetingTranscriptDidFinalize(id: UUID) { finalized.append(id) }
+    var profiles: [EchoGate.Profile?] = []
+    func meetingTranscriptDidFinalize(id: UUID, echoProfile: EchoGate.Profile?) {
+      finalized.append(id)
+      profiles.append(echoProfile)
+    }
     func meetingWillDelete(id: UUID) async {}
   }
 

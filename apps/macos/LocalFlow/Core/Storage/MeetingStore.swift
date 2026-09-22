@@ -121,6 +121,22 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
+  /// nil clears the override, so the meeting follows the Settings default again.
+  func setLanguage(meetingID: UUID, language: MeetingLanguage?, revision: Int64, now: Int64)
+    throws -> Int64
+  {
+    try database.write { db in
+      guard let current = try Self.fetchMeeting(meetingID, db: db) else {
+        throw Error.missingMeeting
+      }
+      guard current.revision == revision else { throw Error.staleRevision }
+      try db.execute(
+        sql: "UPDATE meetings SET language=?, revision=revision+1, updated_at=? WHERE id=?",
+        arguments: [language?.rawValue, now, meetingID.uuidString])
+      return revision + 1
+    }
+  }
+
   // MARK: Segments
 
   func openSegment(_ segment: MeetingSegment, now: Int64) throws -> MeetingSegment {
@@ -748,7 +764,8 @@ actor MeetingStore: MeetingStoring {
       wallClockMs: row["wall_clock_ms"], recordedMs: row["recorded_ms"],
       finalizationStage: (row["finalization_stage"] as String?).flatMap(FinalizationStage.init),
       failureReason: (row["failure_reason"] as String?).flatMap(MeetingFailureReason.init),
-      failureDetail: row["failure_detail"], updatedAt: row["updated_at"], revision: row["revision"])
+      failureDetail: row["failure_detail"], updatedAt: row["updated_at"], revision: row["revision"],
+      language: (row["language"] as String?).flatMap(MeetingLanguage.init(rawValue:)))
   }
 
   static func track(_ row: Row) -> MeetingTrack? {

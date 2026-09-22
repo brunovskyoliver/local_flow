@@ -379,6 +379,42 @@ extension SettingsTests {
     return model
   }
 
+  @MainActor func testAnalysisStatusIgnoresChangedEndpoint() async {
+    let analysis = FakeAnalysisTransport()
+    let entered = Gate()
+    let release = Gate()
+    analysis.healthHook = {
+      await entered.openGate()
+      await release.wait()
+    }
+    let model = connectedModel(analysis: analysis)
+    let task = Task { await model.testConnection() }
+    await entered.wait()
+    model.rewriteEndpoint = "http://localhost:9090"
+    await release.openGate()
+    await task.value
+    XCTAssertNil(model.analysisStatus)
+    XCTAssertNil(model.connectionResult)
+  }
+
+  @MainActor func testNewConnectionTestClearsPreviousAnalysisStatus() async {
+    let analysis = FakeAnalysisTransport()
+    let model = connectedModel(analysis: analysis)
+    await model.testConnection()
+    XCTAssertNotNil(model.analysisStatus)
+    let entered = Gate()
+    let release = Gate()
+    analysis.healthHook = {
+      await entered.openGate()
+      await release.wait()
+    }
+    let task = Task { await model.testConnection() }
+    await entered.wait()
+    XCTAssertNil(model.analysisStatus)
+    await release.openGate()
+    await task.value
+  }
+
   @MainActor func testAnalysisStatusAfterConnected() async {
     let analysis = FakeAnalysisTransport()
     let model = connectedModel(analysis: analysis)

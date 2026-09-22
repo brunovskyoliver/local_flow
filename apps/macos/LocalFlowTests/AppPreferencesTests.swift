@@ -28,6 +28,24 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertFalse(AppPreferences(defaults: defaults).meetingDiarizationEnabled)
   }
 
+  /// Automatic by default under `settings.meetingLanguage`; an unknown stored value
+  /// falls back to Automatic rather than failing to load the preferences.
+  @MainActor func testMeetingLanguageDefaultsToAutomaticAndPersists() {
+    let suite = "LocalFlow-language-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertEqual(preferences.meetingLanguage, .automatic)
+    preferences.meetingLanguage = .slovak
+    XCTAssertEqual(defaults.string(forKey: "settings.meetingLanguage"), "slovak")
+    XCTAssertEqual(AppPreferences(defaults: defaults).meetingLanguage, .slovak)
+    XCTAssertEqual(MeetingLanguage.slovak.whisperCode, "sk")
+    XCTAssertEqual(MeetingLanguage.slovak.pipelineTag, "lang_sk_prompt_v1")
+    XCTAssertEqual(MeetingLanguage.automatic.whisperCode, "auto")
+    defaults.set("klingon", forKey: "settings.meetingLanguage")
+    XCTAssertEqual(AppPreferences(defaults: defaults).meetingLanguage, .automatic)
+  }
+
   /// Feature 010 (FR-038): on by default under `settings.speakerIdentificationEnabled`.
   @MainActor func testSpeakerIdentificationDefaultsOnAndPersists() {
     let suite = "LocalFlow-identification-\(UUID())"

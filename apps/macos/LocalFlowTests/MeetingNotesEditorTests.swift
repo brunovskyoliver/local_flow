@@ -79,6 +79,9 @@ final class MeetingNotesEditorTests: XCTestCase {
     func setTitle(meetingID: UUID, title: String?, revision: Int64, now: Int64) async throws
       -> Int64
     { 0 }
+    func setLanguage(meetingID: UUID, language: MeetingLanguage?, revision: Int64, now: Int64)
+      async throws -> Int64
+    { 0 }
     func setFinalizationStage(meetingID: UUID, stage: FinalizationStage, now: Int64) async throws {}
     func page(before: MeetingCursor?, limit: Int) async throws -> [MeetingSummary] { [] }
     func detail(id: UUID) async throws -> MeetingDetail? { try await detailLoader?(id) }

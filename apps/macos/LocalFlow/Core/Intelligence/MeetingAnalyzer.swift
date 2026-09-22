@@ -87,8 +87,9 @@ struct MeetingAnalyzer: Sendable {
       snapshot.notes.allSatisfy({ $0.text.utf8.count <= policy.maxNoteParagraphBytes })
     else { throw AnalysisFailure(.tooLong, detail: "notes_too_large") }
     let meeting = try await evidence.meeting(id: meetingID)
-    let language = LanguagePolicy.detect(
-      segments: snapshot.segments, sampleBytes: policy.languageSampleBytes)
+    let language = LanguagePolicy.resolve(
+      segments: snapshot.segments, sampleBytes: policy.languageSampleBytes,
+      meetingLanguage: meeting?.language, transcriptPipeline: transcription.pipelineVersion)
     let version = Self.compute(
       meetingID: meetingID, passID: passID, snapshot: snapshot,
       language: language, policy: policy)
@@ -101,6 +102,17 @@ struct MeetingAnalyzer: Sendable {
   /// Refusals here throw without a row (contract "Run algorithm").
   func admit(meetingID: UUID, trigger: AnalysisTrigger) async throws -> Admission {
     let prepared = try await prepare(meetingID: meetingID)
+    // One automatic run per finalized pass: a late settle event after a manual
+    // or earlier automatic acceptance must not regenerate on its own (FR-031).
+    if trigger == .automatic,
+      let pointer = try? await store.analysis(meetingID: meetingID),
+      let acceptedID = pointer.acceptedRunID,
+      let accepted = try? await store.runs(meetingID: meetingID, limit: AnalysisStore.runRowCap)
+        .first(where: { $0.id == acceptedID }),
+      accepted.transcriptPassID == prepared.passID
+    {
+      throw AnalysisFailure(.notEligible, detail: "automatic_already_accepted")
+    }
     let run = try await store.admit(
       meetingID: meetingID, trigger: trigger, evidence: prepared.version,
       passID: prepared.passID, policy: prepared.policy, now: clock.nowMilliseconds)
@@ -124,8 +136,10 @@ struct MeetingAnalyzer: Sendable {
     else { return nil }
     let snapshot = try await loadEvidence(meetingID: meetingID, passID: passID)
     let policy = AnalysisPolicy()
-    let language = LanguagePolicy.detect(
-      segments: snapshot.segments, sampleBytes: policy.languageSampleBytes)
+    let meeting = try await evidence.meeting(id: meetingID)
+    let language = LanguagePolicy.resolve(
+      segments: snapshot.segments, sampleBytes: policy.languageSampleBytes,
+      meetingLanguage: meeting?.language, transcriptPipeline: transcription.pipelineVersion)
     return Self.compute(
       meetingID: meetingID, passID: passID, snapshot: snapshot,
       language: language, policy: policy
@@ -136,7 +150,7 @@ struct MeetingAnalyzer: Sendable {
   func execute(_ admission: Admission) async throws -> AnalysisRun {
     let meetingID = admission.run.meetingID
     var run = admission.run
-    // FR-037 shape: the run's numbers, never its text, ids or names. Emitted
+    // T102: the run's numbers, never its text, ids or names. Emitted
     // on every exit — a started run reports its counters, a refused one
     // reports nothing.
     defer { recordTerminal(run) }
@@ -179,14 +193,9 @@ struct MeetingAnalyzer: Sendable {
           policy: effective)
 
         // 8. The evidence must not have drifted mid-run.
-        let fresh = try await self.loadEvidence(
-          meetingID: meetingID, passID: admission.passID)
         guard
-          Self.compute(
-            meetingID: meetingID, passID: admission.passID, snapshot: fresh,
-            language: admission.language, policy: admission.policy
-          )
-          .hex == admission.run.evidenceVersion
+          try await self.currentEvidenceVersion(meetingID: meetingID)
+            == admission.run.evidenceVersion
         else {
           throw AnalysisFailure(.sourceValidation, detail: "evidence_changed")
         }
@@ -208,17 +217,20 @@ struct MeetingAnalyzer: Sendable {
       return run
     } catch is CancellationError {
       try? await store.cancel(runID: run.id, now: clock.nowMilliseconds)
+      run = await terminalRun(run, limit: admission.policy.runRowsPerMeeting)
       progress?(meetingID, nil)
       throw CancellationError()
     } catch let failure as AnalysisFailure {
       try? await finish(runID: run.id, meetingID: meetingID, failure: failure)
       progress?(meetingID, nil)
+      run = await terminalRun(run, limit: admission.policy.runRowsPerMeeting)
       return (try? await store.latestRun(meetingID: meetingID)) ?? run
     } catch AnalysisStore.Error.lateWrite {
       // FR-011: a newer run won the `current_run_id` race; this result is
       // discarded and the run is superseded, never failed.
       try? await store.supersede(runID: run.id, now: clock.nowMilliseconds)
       progress?(meetingID, nil)
+      run = await terminalRun(run, limit: admission.policy.runRowsPerMeeting)
       return (try? await store.latestRun(meetingID: meetingID)) ?? run
     } catch {
       // The history-database ceiling is a capacity refusal, not a fault.
@@ -229,6 +241,7 @@ struct MeetingAnalyzer: Sendable {
         runID: run.id, category: category, detail: "internal_error",
         now: clock.nowMilliseconds)
       progress?(meetingID, nil)
+      run = await terminalRun(run, limit: admission.policy.runRowsPerMeeting)
       return (try? await store.latestRun(meetingID: meetingID)) ?? run
     }
   }
@@ -272,9 +285,14 @@ struct MeetingAnalyzer: Sendable {
     }
   }
 
-  /// FR-037 shape: a started run's counters, durations and byte sizes land on
-  /// the recorder at terminal — never its text, ids or names. `durationMs`
-  /// exists only after adoption, so a zero stays unrecorded.
+  /// Read this run rather than the latest run: a newer admission may already
+  /// exist when a cancelled or superseded execution finishes.
+  private func terminalRun(_ run: AnalysisRun, limit: Int) async -> AnalysisRun {
+    (try? await store.runs(meetingID: run.meetingID, limit: limit))?
+      .first { $0.id == run.id } ?? run
+  }
+
+  /// T102: terminal counters, durations and byte sizes, without content.
   private func recordTerminal(_ run: AnalysisRun) {
     guard let recorder, run.startedAt != nil else { return }
     if run.durationMs > 0 {
@@ -420,8 +438,7 @@ struct MeetingAnalyzer: Sendable {
       let outcome = try await consumeWithPreemptionRetry(
         request: request, endpoint: admission.endpoint, runID: runID,
         meetingID: meetingID, policy: effective, label: label)
-      _ = try AnalysisValidator.validate(
-        result: outcome.analysis, against: analysisEvidence, policy: effective)
+      try Self.checkPartial(outcome.analysis, against: analysisEvidence, policy: effective)
       partials.append(outcome.analysis)
     }
 
@@ -446,8 +463,7 @@ struct MeetingAnalyzer: Sendable {
         if isFinal {
           final = outcome
         } else {
-          _ = try AnalysisValidator.validate(
-            result: outcome.analysis, against: analysisEvidence, policy: effective)
+          try Self.checkPartial(outcome.analysis, against: analysisEvidence, policy: effective)
         }
         outputs.append(outcome.analysis)
       }
@@ -502,7 +518,8 @@ struct MeetingAnalyzer: Sendable {
           speakerID: participant.speakerID, certainty: participant.certainty,
           origin: String(
             decoding: participant.origin.utf8.prefix(AnalysisBounds.maxOriginBytes), as: UTF8.self),
-          knownSpeakerID: participant.knownSpeakerID,
+          knownSpeakerID: participant.certainty.mayCarryKnownSpeaker
+            ? participant.knownSpeakerID : nil,
           name: participant.certainty.mayBeNamed
             ? participant.name.map {
               String(
@@ -536,6 +553,21 @@ struct MeetingAnalyzer: Sendable {
   private struct Outcome: Sendable {
     var analysis: AnalysisResult
     var payload: AnalysisEvent.ResultPayload
+  }
+
+  /// An intermediate result is forwarded to synthesis unchanged and never
+  /// adopted, so only the run-failing source rules (FR-024) apply to it. The
+  /// literal and dropped-share rules (FR-024a) judge the adopted result: a
+  /// small model's partial often carries one invented name, and failing the
+  /// whole run on it protects nothing the final validation does not.
+  private static func checkPartial(
+    _ result: AnalysisResult, against evidence: AnalysisEvidence, policy: AnalysisPolicy
+  ) throws {
+    do {
+      _ = try AnalysisValidator.validate(result: result, against: evidence, policy: policy)
+    } catch let failure as AnalysisFailure
+      where failure.category == .protectedLiteral || failure.category == .unsupportedContent
+    {}
   }
 
   /// `consume` plus the preemption rule (contract step 6): on a `preempted`
@@ -620,6 +652,9 @@ struct MeetingAnalyzer: Sendable {
       runID: runID, inputBytes: requestBytes, outputBytes: responseBytes,
       retried: retried, preempted: false)
     guard let result else { throw AnalysisFailure(.malformedResponse, detail: "no_result") }
+    guard result.analysis.language == request.meeting.languagePolicy.output else {
+      throw AnalysisFailure(.malformedResponse, detail: "language_policy")
+    }
     return result
   }
 

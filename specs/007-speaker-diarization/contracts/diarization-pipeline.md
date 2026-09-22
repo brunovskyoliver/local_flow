@@ -47,7 +47,7 @@ State observation adds the workload to the phase, so `modelLoading(diarization)`
    - Persist the new speakers and the turns in batches of ≤ 500.
    - Check for cancellation.
    - Check that the transcript `pass_id` is unchanged, otherwise fail with `transcript_changed`.
-4. **Finish** the lease, which releases the diarizer (FR-032).
+4. **Merge and fold**: per track, merge run clusters whose speech-weighted centroids reach cosine τ (`RunClusterMerge`, R5), then fold or detach minor clusters (`MinorClusterFold`, R5). Both are one `fold` write each. **Finish** the lease, which releases the diarizer (FR-032).
 5. **Align**: page the final segments 500 at a time in ordinal order. For each page, read the turns overlapping [page start, page end) through the `(run_id, start_ms)` index, bounded by the page's time span. Run `SpeakerAligner` and write the assignments into the completion transaction's staging (the batches are inserted inside the completion `write`).
 6. **Complete** atomically, including carry-over (R7) and the colors and ordinals. On any error before commit, the run fails and its rows are deleted.
 
@@ -105,6 +105,7 @@ New `ResourceRecorder` phase: `diarizing`. The new metrics are:
 - `diarizationWindowCount`, `diarizationSpeakerCount`, `diarizationTurnCount`, `diarizationOverlapTurnCount`
 - `diarizationUnknownCount`, `diarizationAmbiguousCount`
 - `diarizationReconciledMatches`, `diarizationReconciledNew`, `diarizationReconciledUncertain`, `diarizationOverflowTurns`
+- `diarizationMergedClusterCount`, `diarizationMinorClusterCount`, `diarizationEchoGatedMs`, `diarizationEchoProfileDuration`
 - `diarizationPreemption`, `diarizationFailure` (the key is the category)
 - `speakerRenameCount`, `speakerMergeCount`, `speakerUnmergeCount`, `speakerSegmentCorrectionCount`
 - Peak RSS and RSS after release, through the existing 10 s sampler during `diarizing`.

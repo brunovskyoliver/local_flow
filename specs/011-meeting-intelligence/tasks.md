@@ -414,9 +414,20 @@ Chunk budget 24,576 B, `full` when total segment bytes ≤ 24,576 B, chunks per 
 4. **US9 and US10** unlock multi-hour meetings without regressing dictation; **US11** and **US12** complete review-and-correct and language quality.
 5. **Phase 15** records every measured number. No acceptance file leaves "Unmeasured" until its run is done on the reference machine, and no provisional value is called measured until T113.
 
+## Language quality follow-up
+
+- [x] T114 [US12] Add language precedence, UTF-8 sampling, mismatch and in-flight policy-change regression tests in apps/macos/LocalFlowTests/LanguagePolicyTests.swift and MeetingAnalyzerTests.swift, and server/internal/analysis/schema_test.go and prompts/prompts_test.go.
+- [x] T115 [US12] Implement language resolution and adoption checks in apps/macos/LocalFlow/Core/Intelligence/LanguagePolicy.swift and MeetingAnalyzer.swift without changing models or schema enums. Notify intelligence after a successful language save through Features/Meetings/MeetingLibraryViewModel.swift and App/AppServices.swift; cover successful and stale writes in LocalFlowTests/MeetingLibraryTests.swift.
+- [x] T116 [US12] Enforce declared language in server/internal/analysis/schema.go and version precise extraction/synthesis instructions in server/internal/analysis/prompts/prompts.go.
+- [x] T117 Run make check, review the follow-up against the specifications, and keep live quality/resource acceptance distinct from deterministic tests.
+
+Validation (2026-09-21): final `make check`, `go test ./...` and `git diff --check` passed. New regression tests first reproduced ignored language choices, stale-policy adoption, metadata mismatches and UTF-8 sample overflow. The offline analysis evaluation checked 17 scripted cases with zero reported violations; SC-006 remains unmeasured and SC-005/SC-013 remain partially measured. No live-model quality or resource claim is made.
+
+T114 precedes T115 and T116; T117 follows both. The ASR half is tracked by Feature 009 T009–T011. The existing acceptance tasks T107–T113 remain pending.
+
 ## Format validation
 
-Every task starts with `- [ ]`, has a sequential `T###` id (T001–T113), carries `[P]` only when it touches different files from every unfinished task it could run beside, carries a `[US#]` label only in Phases 3–14, and names at least one file path.
+Every task has a checkbox and a sequential `T###` id (T001–T117), carries `[P]` only when it touches different files from every unfinished task it could run beside, carries a `[US#]` label for story work including the language follow-up, and names its relevant paths or verification command.
 
 ## LocalFlow required task coverage
 
