@@ -1,12 +1,8 @@
 package analysis
 
 import (
-	"bytes"
 	_ "embed"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -15,71 +11,6 @@ import (
 //
 //go:embed result.schema.json
 var resultSchemaJSON []byte
-
-// grammarOpaqueKeys are the JSON Schema keywords a constrained-decoding
-// backend cannot compile — conditional refinements — plus descriptive
-// metadata that only pads the request. Everything dropped here is enforced
-// again by ValidateResult on the decoded output.
-var grammarOpaqueKeys = map[string]bool{
-	"if": true, "then": true, "else": true, "not": true, "allOf": true,
-	"$schema": true, "$id": true, "$comment": true, "title": true,
-	"description": true, "default": true, "examples": true,
-	// Ids reach the model as short aliases; the UUID check runs after mapping.
-	"format": true,
-}
-
-// constraintSchemaJSON is the result schema reduced to what a grammar engine
-// can enforce: structure, required fields, types, enums and bounds.
-var constraintSchemaJSON = func() []byte {
-	var doc map[string]any
-	if json.Unmarshal(resultSchemaJSON, &doc) != nil {
-		return resultSchemaJSON
-	}
-	stripKeys(doc, grammarOpaqueKeys)
-	data, err := json.Marshal(doc)
-	if err != nil {
-		return resultSchemaJSON
-	}
-	return data
-}()
-
-// stripKeys deletes the schema keywords in `keys` at any depth. The keys of a
-// `properties` object are field names, not keywords — a topic's "title" field
-// survives while the schema's "title" annotation goes.
-func stripKeys(node any, keys map[string]bool) {
-	switch n := node.(type) {
-	case map[string]any:
-		for k, v := range n {
-			if keys[k] {
-				delete(n, k)
-			} else if k == "properties" {
-				if fields, ok := v.(map[string]any); ok {
-					for _, field := range fields {
-						stripKeys(field, keys)
-					}
-				}
-			} else {
-				stripKeys(v, keys)
-			}
-		}
-	case []any:
-		for _, v := range n {
-			stripKeys(v, keys)
-		}
-	}
-}
-
-// ResponseFormat is the OpenAI response_format value for constrained decoding.
-func ResponseFormat(stage string) map[string]any {
-	var schema map[string]any
-	_ = json.Unmarshal(constraintSchemaJSON, &schema)
-	return map[string]any{
-		"type": "json_schema",
-		"json_schema": map[string]any{
-			"name": "analysis_" + stage, "strict": true, "schema": schema,
-		},
-	}
-}
 
 // Caps per section; chunk (partial) results use half.
 var fullCaps = map[string]int{
@@ -97,67 +28,6 @@ func caps(partial bool) map[string]int {
 		}
 	}
 	return out
-}
-
-// ValidateResult decodes and checks a backend's analysis object for one
-// request, in the contract's order: JSON decode, strict structure, meeting_id
-// equality, every source_ref present in the request (for synthesis: the union
-// of the partials' sources), owner.speaker_id among participants, due.date
-// parses. Returns output_invalid or source_validation.
-func ValidateResult(data []byte, req *Request) (*Analysis, error) {
-	trimmed := bytes.TrimSpace(data)
-	if len(trimmed) == 0 || trimmed[0] != '{' || bytes.HasPrefix(trimmed, []byte("<think>")) {
-		return nil, &RequestError{CodeOutputInvalid, "not a JSON object"}
-	}
-	if fixed, ok := repairJSONShape(trimmed); ok {
-		trimmed = fixed
-	}
-	var a Analysis
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&a); err != nil {
-		// Field names are protocol vocabulary, not content; syntax-error text
-		// could echo model output, so only the field-naming errors pass through
-		// to the log line and the repair hint.
-		reason := "malformed or unknown field"
-		var ute *json.UnmarshalTypeError
-		switch {
-		case strings.HasPrefix(err.Error(), "json: unknown field "):
-			reason += ": " + err.Error()
-		case errors.As(err, &ute):
-			reason += ": " + ute.Field + " has wrong type"
-		}
-		return nil, &RequestError{CodeOutputInvalid, reason}
-	}
-	if decoder.More() {
-		return nil, &RequestError{CodeOutputInvalid, "trailing data after the object"}
-	}
-	if a.SchemaVersion != SchemaVersion {
-		return nil, &RequestError{CodeOutputInvalid, "schema_version"}
-	}
-	// The model saw short id aliases; restore the request's UUIDs. The meeting
-	// id is ours to set — echoing a UUID back is a copy task a small model
-	// fails for no content reason.
-	mapIDs(&a, newAliases(req).long)
-	a.MeetingID = req.Meeting.ID
-	// partial and whole_meeting are fixed per stage; a model that copies
-	// partial:true out of the input partials makes a mechanical slip, not a
-	// content error — normalize instead of burning a repair attempt.
-	partial := req.Stage == StageChunk
-	a.Partial = partial
-	a.Summary.WholeMeeting = !partial
-	switch a.Language {
-	case "sk", "en", "mixed":
-	default:
-		return nil, &RequestError{CodeOutputInvalid, "language"}
-	}
-	if a.Language != req.Meeting.LanguagePolicy.Output {
-		return nil, &RequestError{CodeOutputInvalid, "language_policy mismatch"}
-	}
-	if err := validateStructure(&a, partial); err != nil {
-		return nil, err
-	}
-	return &a, validateSources(&a, req)
 }
 
 // clampList keeps the first cap entries — models order by significance, and an
@@ -288,85 +158,6 @@ func validateStructure(a *Analysis, partial bool) error {
 		}
 	}
 	return nil
-}
-
-// repairJSONShape patches the signature structural defect of a small model:
-// dropped or misplaced closing braces/brackets and dangling commas. It only
-// inserts or removes structural characters — never content — stops at the
-// balanced root (rescuing trailing junk after the object), and refuses
-// anything whose defect is another class. The repaired text still goes
-// through the full decode and validation path.
-func repairJSONShape(data []byte) ([]byte, bool) {
-	var stack []byte
-	out := make([]byte, 0, len(data)+16)
-	inString, escaped := false, false
-	emitCloser := func(c byte) {
-		i := len(out) - 1
-		for i >= 0 && (out[i] == ' ' || out[i] == '\t' || out[i] == '\n' || out[i] == '\r') {
-			i--
-		}
-		if i >= 0 && out[i] == ',' {
-			out = out[:i]
-		}
-		out = append(out, c)
-	}
-	for i := 0; i < len(data); i++ {
-		c := data[i]
-		if inString {
-			out = append(out, c)
-			if escaped {
-				escaped = false
-			} else if c == '\\' {
-				escaped = true
-			} else if c == '"' {
-				inString = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inString = true
-			out = append(out, c)
-		case '{', '[':
-			stack = append(stack, map[byte]byte{'{': '}', '[': ']'}[c])
-			out = append(out, c)
-		case '}', ']':
-			// A closer that mismatches the innermost open container means the
-			// model dropped one or more closers ahead of it; emit them first.
-			for len(stack) > 0 && stack[len(stack)-1] != c {
-				emitCloser(stack[len(stack)-1])
-				stack = stack[:len(stack)-1]
-			}
-			if len(stack) == 0 {
-				return nil, false
-			}
-			stack = stack[:len(stack)-1]
-			emitCloser(c)
-			if len(stack) == 0 {
-				// Root closed — anything left is trailing junk.
-				if json.Valid(out) {
-					return out, true
-				}
-				return nil, false
-			}
-		default:
-			out = append(out, c)
-		}
-	}
-	if inString {
-		if escaped {
-			return nil, false
-		}
-		out = append(out, '"')
-	}
-	for len(stack) > 0 {
-		emitCloser(stack[len(stack)-1])
-		stack = stack[:len(stack)-1]
-	}
-	if !json.Valid(out) {
-		return nil, false
-	}
-	return out, true
 }
 
 // normalizeSources dedupes a citation list and clamps it to the schema cap.

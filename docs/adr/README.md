@@ -24,3 +24,7 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0019: Turbo meeting transcription](0019-turbo-meeting-transcription.md)
 
 - [0020: Persistent speaker identification on the provisioned diarization embeddings](0020-persistent-speaker-identification.md)
+
+- [0021: Optional primary backend for meeting analysis](0021-primary-analysis-backend.md)
+
+- [0022: Meeting analysis as notes, merge and review](0022-notes-merge-review-analysis.md)

@@ -32,7 +32,8 @@ payload = {
     'ThrottleInterval': 30,
     'ProcessType': 'Background',
     'LimitLoadToSessionType': 'Aqua',
-    # Avoid accumulating an unbounded log for the always-on development service.
+    # Avoid an unbounded launchd log; flowd writes its own capped request log
+    # to ~/Library/Logs/LocalFlow/flowd.log (see run-rewrite-agent.sh).
     'StandardOutPath': '/dev/null',
     'StandardErrorPath': '/dev/null',
 }

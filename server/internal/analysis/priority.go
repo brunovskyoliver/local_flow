@@ -76,6 +76,15 @@ func (g *Gate) Enter(ctx context.Context) (context.Context, error) {
 	}
 }
 
+// Guard is Enter plus its Leave, for a backend that gates its own local calls.
+func (g *Gate) Guard(ctx context.Context) (context.Context, func(), error) {
+	ctx, err := g.Enter(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ctx, g.Leave, nil
+}
+
 // Leave clears the preemptable call. Safe without Enter.
 func (g *Gate) Leave() {
 	g.mu.Lock()

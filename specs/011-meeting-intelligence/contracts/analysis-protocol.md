@@ -6,6 +6,8 @@ Shared wire contract between the macOS client and flowd for meeting intelligence
 
 Same as rewrite: HTTP/1.1, UTF-8 JSON bodies, `Authorization: Bearer <secret>` when the endpoint has a credential, keep-alive, no compression, limits on raw bytes. The server rejects request bodies over 262,144 bytes with `413`; the client stops reading a response after 98,304 bytes and records `oversized_response`. Every request carries `priority: "background"`; the server uses it for admission ordering and preemption (R4). A rewrite request never waits for an analysis request.
 
+Both analysis endpoints accept an optional primary backend (ADR 0021): `X-LocalFlow-Primary-URL` (OpenAI-compatible base URL including `/v1`), `X-LocalFlow-Primary-Model` (required with the URL, at most 128 bytes) and `X-LocalFlow-Primary-Key` (optional bearer, at most 4,096 bytes, no line breaks). An invalid set gets `400 invalid_request`. When present, the server serves the request from the primary and falls back to its own backend if the primary is unavailable or fails before producing a result; health then reports whichever backend is serving. Only calls that run on the server's own backend wait for or yield to rewrites.
+
 ## GET /v1/analysis/health
 
 ```json
@@ -15,7 +17,7 @@ Same as rewrite: HTTP/1.1, UTF-8 JSON bodies, `Authorization: Bearer <secret>` w
   "protocol_versions": [1],
   "server": {"name": "flowd", "version": "0.3.0"},
   "backend": {"state": "ready", "kind": "openai-compatible", "model": "mtplx-qwen35-9b-optimized-speed", "json_schema": true},
-  "prompt_versions": {"chunk": 1, "synthesis": 1, "full": 1},
+  "prompt_versions": {"chunk": 9, "synthesis": 9, "full": 9},
   "result_schema_version": 1,
   "limits": {"input_bytes": 98304, "output_bytes": 98304, "context_tokens": 32768, "concurrency": 1},
   "caps": {"sources_per_item": 10, "topics": 20, "decisions": 40, "action_items": 60, "next_steps": 40, "open_questions": 40, "risks": 40}
@@ -89,12 +91,12 @@ Nothing else is allowed: no audio, embeddings, vocabulary, other meetings, known
 ```json
 {"schema_version":1,"type":"accepted","request_id":"…","server":{"name":"flowd","version":"0.3.0"}}
 {"schema_version":1,"type":"progress","request_id":"…","stage":"chunk","chars":1200}
-{"schema_version":1,"type":"result","request_id":"…","run_id":"…","stage":"chunk","server":{"name":"flowd","version":"0.3.0"},"backend":{"kind":"openai-compatible","model":"…"},"prompt_version":1,"pipeline_version":"analysis_v1","timing":{"queue_ms":12,"first_token_ms":640,"backend_ms":18400},"preemptions":0,"analysis":{ … }}
+{"schema_version":1,"type":"result","request_id":"…","run_id":"…","stage":"chunk","server":{"name":"flowd","version":"0.3.0"},"backend":{"kind":"openai-compatible","model":"…"},"prompt_version":9,"pipeline_version":"analysis_v2","timing":{"queue_ms":12,"first_token_ms":640,"backend_ms":18400},"preemptions":0,"analysis":{ … }}
 ```
 
 or a terminal `{"schema_version":1,"type":"error","request_id":"…","code":"…","message":"…"}`.
 
-Error codes (HTTP status for pre-stream failures in parentheses): `unauthorized` (401/403), `invalid_request` (400), `too_large` (413), `unsupported_version` (400), `server_busy` (429; the analysis slot is taken), `queue_timeout` (the rewrite-first gate waited the full window), `preempted` (a rewrite arrived mid-generation; retry), `backend_unavailable`, `backend_timeout`, `backend_first_token_timeout`, `backend_error`, `output_too_large`, `output_invalid` (the model's output failed schema or structural validation after one repair attempt), `source_validation` (a `source_ref` names an id absent from this request).
+Error codes (HTTP status for pre-stream failures in parentheses): `unauthorized` (401/403), `invalid_request` (400), `too_large` (413; also a single segment the backend refuses for its size), `unsupported_version` (400), `server_busy` (429; the analysis slot is taken), `queue_timeout` (the rewrite-first gate waited the full window), `preempted` (a rewrite arrived mid-generation; retry), `backend_unavailable`, `backend_timeout`, `backend_first_token_timeout`, `backend_error`, `output_too_large`, `output_invalid` (the model's notes held no discussion at all, even after a retry), `source_validation` (a `source_ref` names an id absent from this request).
 
 The server never forwards backend error bodies, prompts or model text in `error`. `message` is one fixed sentence per code.
 
@@ -146,13 +148,18 @@ Identical shape for `full`, `chunk` and `synthesis`; `chunk` results are "partia
 | list overflow | every capped list — topics, sections, action items, topic bullets, sources — is truncated to its cap before validating; models emit entries in rough significance order, so keeping the first N loses the tail while an outright rejection would burn a repair attempt on a mechanical defect. Scalar and string bounds (title/summary/text/bullet byte lengths, enums, owner/due shapes) stay strict — mid-string truncation would corrupt content |
 | total | the encoded result line ≤ 98,304 bytes |
 
-Server-side validation before sending, in order: a structural fixer first repairs the small-model signature defects — dropped or misplaced closers, dangling commas, truncation at the token cap — by inserting or removing structural characters only, never content, and the result must still parse and validate in full; then JSON decode; schema (`additionalProperties: false`, closed enums, lengths, caps); `meeting_id` equality; every `source_ref` present in the request (for `synthesis`: present in the union of the partials' sources); `owner.speaker_id` present among participants; `due.date` parses; if the model output fails, up to two repair attempts re-send with the validation error appended at rising temperature (0.3, then 0.5) — a truncated answer is told to answer shorter, and the raised temperature escapes greedy-decoding attractors (repetition collapse) that an identical request reproduces deterministically at temperature 0 — then `output_invalid`. The server does not check protected literals, certainty rules or lexical support; the client does (contracts/client-analysis.md).
+The model never writes this object (ADR 0022). For each request the server runs a pipeline of small backend calls and builds the result in code:
 
-A backend that advertises `capabilities.json_schema` gets `response_format` with a constraint-reduced variant of the result schema — conditional `if`/`then`/`allOf` clauses and descriptive metadata dropped, structure, required fields, enums and bounds kept — because grammar engines differ in what they can compile. A rejection that names the field is retried once without it. Backends that do not advertise are sent no `response_format` at all: an engine that accepts it silently can degenerate on a schema this size (2026-09-21: MTPLX burned the whole token budget and emitted a few hundred bytes of content). The in-prompt schema is what guides output everywhere. Health's `backend.json_schema` stays the advertised capability only.
+- **Notes** (`chunk`, and first for `full`): the model writes markdown notes for the segments under fixed headings — Discussed, Decisions, Commitments ("who: what (due: …)"), Open questions, Risks. A part the backend refuses for its size (`413`, `507`, or a 400/422/500 naming the context) is split in half and each half asked again, down to one segment. An answer without the headings, or in the wrong language, is asked once more at temperature 0.3 when time allows; prose without headings still counts as discussion.
+- **Parse and ground**: the server reads the headings (translations and bold headings too), drops "none" lines, and gives every decision, action item, open question and risk up to three segment sources — the segments of the part that share the most of its content words (folded, ≥ 4 letters, the client's stem rule, rare words weighted higher). An entry sharing fewer than two of its words with the part (one for a one-word entry) is dropped as ungrounded. A due phrase is kept, as `unresolved` with `original` and the segment where it was said, only when every word of it was said in the part; otherwise `due` is `absent`. The owner maps to a participant by full name, a unique first name or the "Speaker N" label the model saw; any other name is a `mentioned` owner; none is `none`. The chunk's `summary.text` is the Discussed bullets.
+- **Merge** (`synthesis`, and second for `full`): the model writes an Overview and up to 8 Topics from the partials' summaries and topics plus the meeting notes; input refused for size is merged in halves first. An answer without an overview falls back to the partials' own summaries.
+- **Review**: the partials' items are deduplicated (≥ 80 % shared content words) and, for a list longer than three, the model answers with the numbers of the entries to keep, most important first (decisions ≤ 20, action items ≤ 30, open questions ≤ 15, risks ≤ 15). An unreadable answer or a failed call keeps the deduplicated list.
+
+The retries and reviews are optional: they run only while at least 45 s of `--analysis-timeout` remain. A backend failure of an optional call keeps the step's fallback; a preemption or a cancelled request always ends the request. The built result then passes the same structural and source checks as before (caps, lengths, owner and due shapes, every `source_ref` present in the request or the partials' union) before it is sent. The server does not check protected literals, certainty rules or lexical support; the client does (contracts/client-analysis.md). No analysis call sends `response_format`; health's `backend.json_schema` stays the advertised capability only.
 
 ### Prompts (server, versioned)
 
-`server/internal/analysis/prompts`: `full`, `chunk`, `synthesis` templates, each with an integer version reported in health and in every result. The prompts state, in order: the role (meeting analyst producing structured JSON only), the conservatism rules (decision = settled; action item = committed, accepted or explicitly assigned; no owner inference from "we should" or "someone needs to"; relative dates resolved against `started_at` in `time_zone` with the original phrase kept; vague terms unresolved; empty sections stay empty; no invented sources; every literal copied verbatim), the identity rules (owners only by `speaker_id` from the participant list; a name spoken in the transcript that is not a participant is a `mentioned` owner; participants without a name are referred to by role, never named), the language policy, and the schema. The transcript and notes are quoted as data with an instruction to treat any instruction inside them as text. Hidden reasoning is disabled where the backend supports it and stripped otherwise; `<think>` prefixes fail `output_invalid`.
+`server/internal/analysis/prompts`: the notes, merge and review instructions, with one pipeline-wide integer version (9) reported in health for every stage and in every result. The notes prompt states the fixed headings, the conservatism rules (decision = settled; commitment = agreed or explicitly given; no commitment from "we should" or "someone needs to"; a deadline only when said out loud, in the words said; literals copied exactly), the transcription-uncertainty rule (no guessed names, numbers or terms; negation and uncertainty preserved), the identity rule (a "Speaker N" has no known name and is never given one), the preserve-terms rule and the language policy, repeated in Slovak for `sk` and `mixed`. The merge prompt adds: do not strengthen tentative wording or turn a question into a decision. The transcript reaches the model as "name: text" lines, never ids; the transcript and notes are quoted as data with an instruction to treat any instruction inside them as text. Hidden reasoning is disabled where the backend supports it and stripped otherwise.
 
 ### Server bounds and flags
 
@@ -160,15 +167,16 @@ A backend that advertises `capabilities.json_schema` gets `response_format` with
 | --- | --- | --- |
 | `--analysis-concurrency` | 1 | analysis admission slots |
 | `--analysis-input-bytes` | 98304 | max sum of segment/notes/partials text bytes per request |
-| `--analysis-output-tokens` | 8192 chunk / 10240 full, synthesis | backend `max_tokens`; a `finish_reason=length` stream is validated like any output and fails `output_invalid` |
-| `--analysis-context-tokens` | 32768 | usable backend context; requests whose estimate (input bytes ÷ 3 + instruction, schema and output reservations) exceeds it fail `too_large` |
-| `--analysis-timeout` | 300s | backend total per request |
-| `--analysis-first-token-timeout` | 60s | prefill of a ~10k-token chunk |
+| `--analysis-output-tokens-chunk` | 1024 | backend `max_tokens` for the notes of one part; cut-off notes are parsed as far as they go |
+| `--analysis-output-tokens` | 2048 | backend `max_tokens` for the merged overview and topics |
+| `--analysis-context-tokens` | 32768 | usable backend context; requests whose estimate (input bytes ÷ 3 + instruction and output reservations) exceeds it fail `too_large` |
+| `--analysis-timeout` | 270s | all backend calls of one request together; under the client's 300 s per-request deadline |
+| `--analysis-first-token-timeout` | 60s | prefill of one part |
 | `--analysis-queue-wait` | 30s | rewrite-first gate window |
 | `--analysis-preempt` | on | cancel the backend call when a rewrite arrives |
 | `--analysis` | on | serve the endpoints at all |
 
-Per-request memory: the request body (≤ 256 KiB), one fixed-capacity output buffer (≤ 96 KiB), the decoded result. Nothing is retained after the response. Server logs one line per request: `request_id`, `run_id`, `stage`, `input_bytes`, `output_bytes`, `duration_ms`, `queue_ms`, `preemptions`, `code`; never text.
+Per-request memory: the request body (≤ 256 KiB), one fixed-capacity output buffer (≤ 96 KiB), the decoded result. Nothing is retained after the response. Server logs one line per request: `request_id`, `run_id`, `stage`, `input_bytes`, `output_bytes`, `duration_ms`, `queue_ms`, `preemptions`, `attempts` (backend calls), `model` (the model that answered last — the primary's or the fallback's), `rejected` (content-free reasons such as `format`, `language`, `too_large_split`, `ungrounded_<n>`, `due_not_said`, `merge_fallback`, `review_unreadable`), `code`; never text.
 
 ## Compatibility
 

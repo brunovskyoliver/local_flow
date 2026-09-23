@@ -23,6 +23,10 @@ var (
 	ErrTimeout           = errors.New("backend_timeout")
 	ErrUnavailable       = errors.New("backend_unavailable")
 	ErrBackend           = errors.New("backend_error")
+	// ErrTooLarge is a request the backend refused for its size — context or
+	// memory. It is not a backend fault: the caller splits the work and asks
+	// again, and a fallback does not treat the primary as down.
+	ErrTooLarge = errors.New("backend_too_large")
 )
 
 const maxSSELine = 65536
@@ -45,7 +49,11 @@ type Info struct {
 	JSONSchema   bool
 }
 type Input struct {
-	System, Text    string
+	System, Text string
+	// Followup, when set, is a second user message after Text. A repair hint
+	// goes here, not in System: the prompt prefix stays identical to the
+	// failed attempt, so the backend reuses its cached prefill.
+	Followup        string
 	MaxOutputBytes  int
 	MaxOutputTokens int
 	// Timeout and FirstTokenTimeout override the configured deadlines for this
@@ -103,7 +111,9 @@ func New(c Config) (*OpenAI, error) {
 	tr.MaxIdleConnsPerHost = 3
 	tr.MaxIdleConns = 3
 	tr.DisableCompression = true
-	tr.ResponseHeaderTimeout = c.Timeout
+	// No ResponseHeaderTimeout: the per-call context deadline already bounds
+	// the wait, and a transport timeout racing it would surface as unavailable
+	// rather than backend_timeout.
 	tr.MaxResponseHeaderBytes = 16384
 	return &OpenAI{c, &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
@@ -164,6 +174,29 @@ func (a *OpenAI) Probe(ctx context.Context) Info {
 	return info
 }
 
+// ClearCache asks the inference process to drop its session and prompt
+// caches. MTPLX serves POST /admin/cache/clear at the server origin; other
+// OpenAI-compatible servers answer 404, which the caller treats as a no-op.
+func (a *OpenAI) ClearCache(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	origin := strings.TrimSuffix(a.config.BaseURL, "/v1")
+	req, _ := http.NewRequestWithContext(ctx, "POST", origin+"/admin/cache/clear", nil)
+	if a.config.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+a.config.Token)
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return ErrUnavailable
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBody))
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("%w: status %d", ErrBackend, resp.StatusCode)
+	}
+	return nil
+}
+
 // Fixed capacity: append never invokes Go's geometric slice growth.
 type outputBuffer struct {
 	bytes []byte
@@ -194,6 +227,26 @@ func optionalFieldBlamed(body string) bool {
 		strings.Contains(b, "json_schema") || strings.Contains(b, "json schema") ||
 		strings.Contains(b, "chat_template_kwargs") || strings.Contains(b, "enable_thinking")
 }
+
+// sizeRefusal reports a rejection for prompt size: 413, 507 (MTPLX's
+// memory-plan refusal) or a 400/422/500 whose capped body names the context
+// or token limit. The body is only inspected, never logged.
+func sizeRefusal(status int, body string) bool {
+	if status == 413 || status == 507 {
+		return true
+	}
+	if status != 400 && status != 422 && status != 500 {
+		return false
+	}
+	b := strings.ToLower(body)
+	for _, w := range []string{"context", "too long", "too large", "maximum", "max_tokens", "token limit", "memory"} {
+		if strings.Contains(b, w) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) {
 	// Rewriting asks for at most 64 KiB; an analysis result line may be 96 KiB
 	// (analysis.MaxLineBytes). A caller above the ceiling is a programming error.
@@ -236,7 +289,11 @@ func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) 
 	if in.MaxOutputTokens > 0 {
 		payload["max_tokens"] = in.MaxOutputTokens
 	}
-	payload["messages"] = []map[string]string{{"role": "system", "content": in.System}, {"role": "user", "content": in.Text}}
+	messages := []map[string]string{{"role": "system", "content": in.System}, {"role": "user", "content": in.Text}}
+	if in.Followup != "" {
+		messages = append(messages, map[string]string{"role": "user", "content": in.Followup})
+	}
+	payload["messages"] = messages
 	var rejectedBody string
 	send := func() (*http.Response, error) {
 		body, err := json.Marshal(payload)
@@ -265,6 +322,9 @@ func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) 
 		code := ErrBackend
 		if resp.StatusCode == 503 || resp.StatusCode == 502 {
 			code = ErrUnavailable
+		}
+		if sizeRefusal(resp.StatusCode, rejectedBody) && !optionalFieldBlamed(rejectedBody) {
+			code = ErrTooLarge
 		}
 		// The status alone, never the body: enough to tell a rejected request from
 		// a backend that is down, without logging what was sent.

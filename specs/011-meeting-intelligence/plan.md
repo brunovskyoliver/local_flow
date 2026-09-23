@@ -34,7 +34,7 @@ Constitution check: no new dependency, model, schema enum, table, process or out
 | Constraints | Every queue, page, chunk, buffer, table and cap is bounded ([contracts/client-analysis.md](contracts/client-analysis.md) "Bounds summary"; protocol "Server bounds and flags"). One run at a time; one request in flight by default. Content-free logs and metrics on both sides. Evidence, spec 010 tables and notes are read-only for this feature |
 | Scope | Eligibility, automatic and manual runs, queue, cancel, retry, restart per FR-007a, staged pipeline, client and server validation, identity rule, protected literals, lexical support, adoption with overlays, stale detection, Summary tab with edits, statuses, View source, Copy, Settings toggle, health/connection test, priority gate, instrumentation, evaluation set. Not built: Ask Meeting, semantic search, exports beyond Copy, task integrations, per-note exclusion, separate summary-language override, model-judged verification, analysis history browsing |
 
-Provisional values frozen in Phase 8: chunk budget 24,576 B, chunks ≤ 64, partials per synthesis 16 with reduce depth 2, output tokens 2,048/3,072, per-request backend timeout 120 s, run timeout 60 s + 90 s × requests within [120 s, 30 min], queue wait 30 s, preemption retries 3, dropped-item share 1/3, sources per item 10, section caps 20/40/60/40/40/40, run rows per meeting 20, overlays per meeting 500, context estimate 3 bytes per token against 32,768 tokens. The spec's clarification session left nothing open; its remaining assumptions are settled in [research.md](research.md) (R5 to R15).
+Provisional values frozen in Phase 8: chunk budget 24,576 B, chunks ≤ 64, partials per synthesis 16 with reduce depth 2, output tokens 2,048/3,072, per-request backend timeout 120 s, run timeout 60 s + 90 s × requests within [120 s, 30 min], queue wait 30 s, preemption retries 3, dropped-item share limit removed 2026-09-23 (FR-024a), sources per item 10, section caps 20/40/60/40/40/40, run rows per meeting 20, overlays per meeting 500, context estimate 3 bytes per token against 32,768 tokens. The spec's clarification session left nothing open; its remaining assumptions are settled in [research.md](research.md) (R5 to R15).
 
 ## Constitution check
 
@@ -89,7 +89,7 @@ apps/macos/LocalFlow/
     AnalysisChunkPlanner.swift                   # chunking_v2
     ProtectedLiteralDetector.swift               # classes, stem rule, stoplist
     DueDateResolver.swift                        # relative phrase table, vague terms, resolution against started_at
-    AnalysisValidator.swift                      # meeting, sources, identity, due, literals, support, share, duplicates
+    AnalysisValidator.swift                      # meeting, sources, identity, due, literals, support, duplicates
     OverlayMatcher.swift                         # overlay_match_v1
     MeetingAnalyzer.swift                        # run executor: eligibility, health, plan, stages, retries, adoption
     IntelligenceReconciler.swift                 # launch reconciliation, FR-007a restart selection

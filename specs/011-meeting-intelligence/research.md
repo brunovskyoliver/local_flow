@@ -101,7 +101,7 @@ Phase 0 output for [plan.md](plan.md). Each entry resolves one unknown left by t
 | per section, final result | topics 20, decisions 40, action items 60, next steps 40, open questions 40, risks 40 | both |
 | per section, partial result | half of the above | both |
 | text lengths | summary 4,000 B; topic summary 2,000 B; item text 1,000 B; owner name 80 B; due original 80 B | both |
-| dropped-item share that fails the run | > 1/3 of returned items | client |
+| dropped-item share that fails the run | none — removed 2026-09-23 (FR-024a amendment); drops are counted only | client |
 | run timeout | 60 s + 300 s × (chunks + reduce requests), floor 120 s, ceiling 30 min | client |
 | per-request backend timeout | 300 s total, 60 s first token (2026-09-21: a ~10k-token chunk took 9.8 s to its first token on a 4B model, sustained profile, with nothing else running) | server `--analysis-timeout`, `--analysis-first-token-timeout` |
 | server queue wait for the rewrite-first gate | 30 s | server |

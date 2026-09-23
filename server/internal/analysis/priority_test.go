@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,7 +133,7 @@ func newSerialBackend() *serialBackend {
 
 func (s *serialBackend) Probe(context.Context) backend.Info { return s.info }
 
-func (s *serialBackend) Generate(ctx context.Context, _ backend.Input) (backend.Completion, error) {
+func (s *serialBackend) Generate(ctx context.Context, in backend.Input) (backend.Completion, error) {
 	select {
 	case s.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -145,6 +146,11 @@ func (s *serialBackend) Generate(ctx context.Context, _ backend.Input) (backend.
 	}
 	select {
 	case text := <-s.completions:
+		// A queued item releases one call; an analysis call answers its own
+		// prompt, so the order the two handlers take the slot does not matter.
+		if strings.Contains(in.System, "take notes") || strings.Contains(in.System, "Overview") {
+			text = defaultAnswer(in)
+		}
 		return backend.Completion{Text: text, Model: "test"}, nil
 	case <-ctx.Done():
 		return backend.Completion{}, context.Cause(ctx)
@@ -262,7 +268,8 @@ func TestEndToEndRewritePreemptsAnalysis(t *testing.T) {
 }
 
 // T093: with --analysis-preempt off the rewrite waits behind the in-flight
-// analysis generation on the shared slot.
+// analysis generation on the shared slot — one backend call, not the whole
+// analysis request.
 func TestEndToEndRewriteWaitsBehindAnalysis(t *testing.T) {
 	b := newSerialBackend()
 	gate := NewGate(30*time.Second, false)
@@ -298,30 +305,25 @@ func TestEndToEndRewriteWaitsBehindAnalysis(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 	}
 
-	// The analysis result frees the slot; the rewrite then completes.
-	b.completions <- resultLine(t, uuid(0xf00d))
-	select {
-	case out := <-analysisDone:
-		if out.err != nil {
-			t.Fatalf("analysis request failed: %v", out.err)
-		}
-		if lastType(out.lines, "type") != "result" {
-			t.Fatalf("analysis did not succeed: %v", out.lines)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("analysis stream never finished")
+	// The notes call frees the slot. The analysis makes several short calls,
+	// so the rewrite may take the slot between them; each call parks until an
+	// answer is queued, whichever of the two gets it. Either way both finish.
+	for i := 0; i < 3; i++ {
+		b.completions <- "rewritten"
 	}
-	b.completions <- "rewritten"
-	select {
-	case out := <-rewriteDone:
-		if out.err != nil {
-			t.Fatalf("rewrite request failed: %v", out.err)
+	for pending := 2; pending > 0; pending-- {
+		select {
+		case out := <-analysisDone:
+			if out.err != nil || lastType(out.lines, "type") != "result" {
+				t.Fatalf("analysis did not succeed: %v %v", out.err, out.lines)
+			}
+		case out := <-rewriteDone:
+			if out.err != nil || out.status != 200 || lastType(out.lines, "event") != "result" {
+				t.Fatalf("rewrite not served: %v status=%d lines=%v", out.err, out.status, out.lines)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("analysis or rewrite never finished")
 		}
-		if out.status != 200 || lastType(out.lines, "event") != "result" {
-			t.Fatalf("rewrite not served: status=%d lines=%v", out.status, out.lines)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("rewrite never finished after analysis completed")
 	}
 	if gate.Preemptions() != 0 {
 		t.Fatalf("no preemption expected, got %d", gate.Preemptions())

@@ -31,6 +31,7 @@ type configuration struct {
 	token    string
 	analysis analysis.Limits
 	dumpDir  string
+	logFile  string
 }
 
 func parse(args []string, getenv func(string) string, output io.Writer) (configuration, error) {
@@ -49,13 +50,14 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.BoolVar(&c.analysis.Enabled, "analysis", true, "serve the meeting analysis endpoints")
 	fs.IntVar(&c.analysis.Concurrency, "analysis-concurrency", 1, "analysis admission slots")
 	fs.IntVar(&c.analysis.InputBytes, "analysis-input-bytes", 98304, "max summed segment/notes/partials text bytes per request")
-	fs.IntVar(&c.analysis.OutputTokensChunk, "analysis-output-tokens-chunk", 3072, "backend max_tokens for chunk requests")
-	fs.IntVar(&c.analysis.OutputTokensFull, "analysis-output-tokens", 10240, "backend max_tokens for full and synthesis requests")
+	fs.IntVar(&c.analysis.OutputTokensChunk, "analysis-output-tokens-chunk", 1024, "backend max_tokens for the notes of one meeting part")
+	fs.IntVar(&c.analysis.OutputTokensFull, "analysis-output-tokens", 2048, "backend max_tokens for the merged overview and topics")
 	fs.IntVar(&c.analysis.ContextTokens, "analysis-context-tokens", 32768, "usable backend context tokens")
-	fs.DurationVar(&c.analysis.Timeout, "analysis-timeout", c.analysis.Timeout, "backend deadline per analysis request")
+	fs.DurationVar(&c.analysis.Timeout, "analysis-timeout", c.analysis.Timeout, "deadline for all backend calls of one analysis request")
 	fs.DurationVar(&c.analysis.FirstTokenTimeout, "analysis-first-token-timeout", c.analysis.FirstTokenTimeout, "backend first-token deadline for analysis")
 	fs.DurationVar(&c.analysis.QueueWait, "analysis-queue-wait", 30*time.Second, "rewrite-first gate window")
 	fs.BoolVar(&c.analysis.Preempt, "analysis-preempt", true, "cancel an in-flight analysis call when a rewrite arrives")
+	fs.StringVar(&c.logFile, "log-file", "", "append the request log to this file, rotated at 1 MiB to <file>.1")
 	fs.StringVar(&c.dumpDir, "analysis-dump-requests", "", "debug builds only: write each analysis request body to this directory")
 	if err := fs.Parse(args); err != nil {
 		return c, err
@@ -125,7 +127,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		return err
 	}
 	defer adapter.Close()
-	logger := log.New(output, "flowd ", log.LstdFlags)
+	logOutput := output
+	if c.logFile != "" {
+		file := &cappedFile{path: c.logFile, limit: logFileLimit}
+		defer file.Close()
+		logOutput = file
+	}
+	logger := log.New(logOutput, "flowd ", log.LstdFlags)
 	gate := analysis.NewGate(c.analysis.QueueWait, c.analysis.Preempt)
 	rewriteHandler := rewrite.NewHandler(rewrite.HandlerConfig{Backend: adapter, Token: c.token, Shield: c.shield, ProtocolVersions: c.versions, Logger: logger, Gate: gate})
 	mux := http.NewServeMux()
@@ -134,6 +142,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 	if c.analysis.Enabled {
 		analysisHandler := analysis.NewHandler(analysis.HandlerConfig{
 			Backend: adapter, Token: c.token, ProtocolVersions: c.versions,
+			Route: (&analysis.Router{
+				Local: adapter, Gate: gate,
+				FirstTokenTimeout: c.backend.FirstTokenTimeout, Timeout: c.backend.Timeout,
+			}).For,
 			Limits: c.analysis, Gate: gate, Logger: logger, DumpDir: c.dumpDir,
 		})
 		mux.Handle("/v1/analysis/meeting", analysisHandler)
@@ -163,6 +175,51 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		return nil
 	}
 }
+
+// logFileLimit bounds the request log: one live file plus one rotated copy,
+// so the log never holds more than twice this on disk.
+const logFileLimit = 1 << 20
+
+// cappedFile appends to path and, once a write would pass limit, moves the
+// file to path+".1" (replacing the previous copy) and starts a new one.
+// log.Logger serialises writes, so no lock is needed here.
+type cappedFile struct {
+	path  string
+	limit int64
+	file  *os.File
+	size  int64
+}
+
+func (c *cappedFile) Write(p []byte) (int, error) {
+	if c.file != nil && c.size+int64(len(p)) > c.limit {
+		_ = c.file.Close()
+		c.file = nil
+		_ = os.Rename(c.path, c.path+".1")
+	}
+	if c.file == nil {
+		file, err := os.OpenFile(c.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return 0, err
+		}
+		info, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			return 0, err
+		}
+		c.file, c.size = file, info.Size()
+	}
+	n, err := c.file.Write(p)
+	c.size += int64(n)
+	return n, err
+}
+
+func (c *cappedFile) Close() error {
+	if c.file == nil {
+		return nil
+	}
+	return c.file.Close()
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

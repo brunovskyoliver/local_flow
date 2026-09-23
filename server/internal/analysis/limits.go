@@ -26,20 +26,25 @@ func DefaultLimits() Limits {
 		InputBytes:    98304,
 		OutputBytes:   MaxLineBytes,
 		ContextTokens: 32768,
-		// A chunk is ~10k prompt tokens; a 4B model on Apple Silicon needs ~10 s of
-		// prefill before its first token when nothing is cached, more under load.
-		Timeout:           300 * time.Second,
+		// A part is ~6k prompt tokens; a 4B model on Apple Silicon needs seconds
+		// of prefill before its first token when nothing is cached, more under
+		// load. Timeout bounds every backend call of one request together and
+		// stays under the client's 300 s per-request deadline, so the client
+		// gets a result or an error rather than its own timeout.
+		Timeout:           270 * time.Second,
 		FirstTokenTimeout: 60 * time.Second,
 		QueueWait:         30 * time.Second,
 		Preempt:           true,
-		// A chunk partial runs ~1–2k tokens; the cap bounds a runaway decode
-		// (and its KV growth) instead of letting it spend minutes.
-		OutputTokensChunk: 3072,
-		OutputTokensFull:  10240,
+		// Notes for one part ran 200–700 tokens in the ADR 0022 prototype and
+		// the merged overview 1.4–2k; the caps bound a runaway decode (and its
+		// KV growth) instead of letting it spend minutes.
+		OutputTokensChunk: 1024,
+		OutputTokensFull:  2048,
 	}
 }
 
-// OutputTokens is the backend max_tokens for a stage.
+// OutputTokens is the largest backend max_tokens a stage's calls use: notes
+// for chunk, the merge for full and synthesis.
 func (l Limits) OutputTokens(stage string) int {
 	if stage == StageChunk {
 		return l.OutputTokensChunk
@@ -47,15 +52,14 @@ func (l Limits) OutputTokens(stage string) int {
 	return l.OutputTokensFull
 }
 
-// reserved instruction + schema + output tokens per the contract's estimate
-// rule: input bytes / 3 + instruction, schema and output reservations. The
-// schema rides in the system prompt (~1.8k tokens compacted).
+// reserved instruction + output tokens per the contract's estimate rule:
+// input bytes / 3 + instruction and output reservations. The prompts no
+// longer carry the result schema (ADR 0022).
 const instructionReserveTokens = 900
-const schemaReserveTokens = 2400
 
 // EstimateTokens approximates the context usage of one request.
 func (l Limits) EstimateTokens(textBytes int, stage string) int {
-	return textBytes/3 + instructionReserveTokens + schemaReserveTokens + l.OutputTokens(stage)
+	return textBytes/3 + instructionReserveTokens + l.OutputTokens(stage)
 }
 
 // ExceedsContext reports whether a request carrying `textBytes` of user text

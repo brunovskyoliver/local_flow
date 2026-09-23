@@ -230,7 +230,8 @@ func TestSchemaRejectionRetriesWithout(t *testing.T) {
 	if withSchema.Load() != 1 || withoutSchema.Load() != 1 {
 		t.Fatalf("calls: %d with schema, %d without", withSchema.Load(), withoutSchema.Load())
 	}
-	// An unrelated rejection does not trigger the retry.
+	// An unrelated rejection does not trigger the retry; a context overflow
+	// is a size refusal the caller splits, not a backend fault.
 	s2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)
 		fmt.Fprint(w, `{"error":{"message":"context length exceeded"}}`)
@@ -238,7 +239,7 @@ func TestSchemaRejectionRetriesWithout(t *testing.T) {
 	defer s2.Close()
 	b := adapter(t, s2.URL, nil)
 	_, err = b.Generate(context.Background(), Input{Text: "t", MaxOutputBytes: 100, ResponseSchema: schema})
-	if !errors.Is(err, ErrBackend) {
+	if !errors.Is(err, ErrTooLarge) || errors.Is(err, ErrBackend) {
 		t.Fatal(err)
 	}
 	// Accepted schemas mark the completion.
@@ -348,5 +349,68 @@ func TestTotalTimeoutAfterFirstToken(t *testing.T) {
 	case <-f.Cancelled:
 	case <-time.After(time.Second):
 		t.Fatal("timeout did not cancel backend")
+	}
+}
+
+func TestClearCachePostsToOrigin(t *testing.T) {
+	var path, auth string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.Method+" "+r.URL.Path, r.Header.Get("Authorization")
+	}))
+	defer s.Close()
+	a := adapter(t, s.URL, func(c *Config) { c.Token = "backend-secret" })
+	if err := a.ClearCache(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if path != "POST /admin/cache/clear" || auth != "Bearer backend-secret" {
+		t.Fatal(path, auth)
+	}
+}
+
+// A followup rides as a third message, leaving system and user untouched so
+// the backend's cached prefix still matches.
+func TestFollowupIsTrailingUserMessage(t *testing.T) {
+	f := NewFake()
+	f.Text = "ok"
+	s := httptest.NewServer(f)
+	defer s.Close()
+	a := adapter(t, s.URL, nil)
+	if _, err := a.Generate(context.Background(), Input{System: "sys", Text: "doc", Followup: "fix it", MaxOutputBytes: 100}); err != nil {
+		t.Fatal(err)
+	}
+	messages, _ := (<-f.Requests)["messages"].([]any)
+	if len(messages) != 3 {
+		t.Fatalf("want 3 messages, got %v", messages)
+	}
+	last, _ := messages[2].(map[string]any)
+	first, _ := messages[1].(map[string]any)
+	if last["role"] != "user" || last["content"] != "fix it" || first["content"] != "doc" {
+		t.Fatalf("followup misplaced: %v", messages)
+	}
+}
+
+// A server that refuses a prompt for its size — 413, MTPLX's 507 memory-plan
+// refusal, or a 400 naming the context — answers ErrTooLarge; any other 400
+// stays a backend error.
+func TestSizeRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		want   error
+	}{
+		{413, "", ErrTooLarge},
+		{507, `{"error":{"message":"prompt does not fit in memory"}}`, ErrTooLarge},
+		{400, `{"error":{"message":"This model's maximum context length is 32768 tokens"}}`, ErrTooLarge},
+		{400, `{"error":{"message":"temperature must be positive"}}`, ErrBackend},
+	} {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tc.status)
+			fmt.Fprint(w, tc.body)
+		}))
+		_, err := adapter(t, s.URL, nil).Generate(context.Background(), Input{Text: "t", MaxOutputBytes: 100})
+		s.Close()
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%d %s: got %v", tc.status, tc.body, err)
+		}
 	}
 }

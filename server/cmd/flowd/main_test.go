@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -144,5 +145,23 @@ func TestHelpAndShutdown(t *testing.T) {
 	defer cancel()
 	if err := run(ctx, []string{"rewrite", "--listen=127.0.0.1:0"}, func(string) string { return "" }, io.Discard); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The request log rotates once past its limit: the live file restarts and
+// the previous one survives as .1, so disk use stays under twice the limit.
+func TestCappedFileRotates(t *testing.T) {
+	path := t.TempDir() + "/flowd.log"
+	file := &cappedFile{path: path, limit: 10}
+	defer file.Close()
+	for _, line := range []string{"aaaaaa\n", "bbbbbb\n", "cccccc\n"} {
+		if _, err := file.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live, _ := os.ReadFile(path)
+	rotated, _ := os.ReadFile(path + ".1")
+	if string(live) != "cccccc\n" || string(rotated) != "bbbbbb\n" {
+		t.Fatalf("live %q rotated %q", live, rotated)
 	}
 }

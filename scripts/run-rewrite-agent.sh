@@ -14,5 +14,10 @@ LOCALFLOW_BACKEND_TOKEN="$(cat "$HOME/Library/Application Support/MTPLX/daemon-a
 # Fail closed if Keychain or MTPLX credentials are unavailable at login.
 [[ -n "$LOCALFLOW_REWRITE_TOKEN" && -n "$LOCALFLOW_BACKEND_TOKEN" ]]
 export LOCALFLOW_REWRITE_TOKEN LOCALFLOW_BACKEND_TOKEN
+# flowd caps its own request log (1 MiB + one rotated copy); launchd output
+# stays discarded.
+log_dir="$HOME/Library/Logs/LocalFlow"
+mkdir -p "$log_dir"
 exec "$agent_dir/flowd" rewrite --listen 127.0.0.1:8080 \
-  --backend http://127.0.0.1:8000/v1 --model "$1"
+  --backend http://127.0.0.1:8000/v1 --model "$1" \
+  --log-file "$log_dir/flowd.log"
