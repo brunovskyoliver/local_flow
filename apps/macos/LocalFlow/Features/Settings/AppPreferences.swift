@@ -56,6 +56,15 @@ final class AppPreferences {
       defaults.set(speakerIdentificationEnabled, forKey: "settings.speakerIdentificationEnabled")
     }
   }
+  var summaryServer: SummaryServer {
+    didSet { defaults.set(summaryServer.rawValue, forKey: SummaryServer.defaultsKey) }
+  }
+  var summaryServerURL: String {
+    didSet { defaults.set(summaryServerURL, forKey: SummaryServer.urlKey) }
+  }
+  var summaryServerModel: String {
+    didSet { defaults.set(summaryServerModel, forKey: SummaryServer.modelKey) }
+  }
   private(set) var setupVersion: Int
   var onboardingComplete: Bool { setupVersion >= Self.currentSetupVersion }
 
@@ -96,17 +105,19 @@ final class AppPreferences {
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
-    meetingTranscriptionEnabled =
-      defaults.object(forKey: "meetingTranscriptionEnabled") as? Bool ?? true
-    meetingDiarizationEnabled =
-      defaults.object(forKey: "meetingDiarizationEnabled") as? Bool ?? true
+    // Transcription, speaker labels, identification and summaries always run;
+    // Settings has no switches for them, so an old stored `false` is ignored.
+    meetingTranscriptionEnabled = true
+    meetingDiarizationEnabled = true
     meetingLanguage =
       MeetingLanguage(rawValue: defaults.string(forKey: MeetingLanguage.defaultsKey) ?? "")
       ?? .automatic
-    speakerIdentificationEnabled =
-      defaults.object(forKey: "settings.speakerIdentificationEnabled") as? Bool ?? true
-    meetingSummariesAutomatic =
-      defaults.object(forKey: "settings.meetingSummariesAutomatic") as? Bool ?? true
+    speakerIdentificationEnabled = true
+    meetingSummariesAutomatic = true
+    summaryServer =
+      SummaryServer(rawValue: defaults.string(forKey: SummaryServer.defaultsKey) ?? "") ?? .local
+    summaryServerURL = defaults.string(forKey: SummaryServer.urlKey) ?? ""
+    summaryServerModel = defaults.string(forKey: SummaryServer.modelKey) ?? ""
     appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
     keepModelReady = defaults.bool(forKey: "keepModelReady")
     learnCorrections = defaults.bool(forKey: "learnCorrections")

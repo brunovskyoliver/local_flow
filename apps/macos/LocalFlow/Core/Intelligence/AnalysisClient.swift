@@ -1,6 +1,39 @@
 import Foundation
 import OSLog
 
+/// Where meeting summaries run. Remote hands flowd the server from Settings
+/// as its first choice; flowd falls back to its own backend (ADR 0021).
+enum SummaryServer: String, CaseIterable, Identifiable, Sendable {
+  case remote, local
+  var id: String { rawValue }
+  var title: String { self == .remote ? "Remote" : "This Mac" }
+
+  static let defaultsKey = "summaryServer"
+  static let urlKey = "summaryServerURL"
+  static let modelKey = "summaryServerModel"
+  /// Keychain account for the Remote server's API key, beside the rewrite secrets.
+  static let credentialAccount = "summary-server"
+
+  /// flowd's primary-backend headers for the current choice; empty for This Mac
+  /// or an incomplete Remote entry. Read at request-build time, like the bearer.
+  static func headers(defaults: UserDefaults, credentials: any RewriteCredentialStoring)
+    -> [String: String]
+  {
+    let trimmed = { (key: String) in
+      defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+    let url = trimmed(urlKey)
+    let model = trimmed(modelKey)
+    guard defaults.string(forKey: defaultsKey) == remote.rawValue, !url.isEmpty, !model.isEmpty
+    else { return [:] }
+    var headers = ["X-LocalFlow-Primary-URL": url, "X-LocalFlow-Primary-Model": model]
+    if let key = try? credentials.read(origin: credentialAccount) {
+      headers["X-LocalFlow-Primary-Key"] = key
+    }
+    return headers
+  }
+}
+
 /// `URLSession`-backed analysis transport (T030). Same shape as `RewriteClient`:
 /// an ephemeral session (no cache, cookies or credential storage) created
 /// lazily, the bearer read from the Keychain at request-build time, one NDJSON
@@ -16,6 +49,7 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
   static let unavailableMessage = "This server does not offer meeting analysis"
 
   private let credentials: any RewriteCredentialStoring
+  private let defaults: UserDefaults
   private let clock: any DictationClock
   private let configure: @Sendable (URLSessionConfiguration) -> Void
   private let lock = NSLock()
@@ -25,10 +59,12 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "analysis")
 
   init(
-    credentials: any RewriteCredentialStoring, clock: any DictationClock = SystemDictationClock(),
+    credentials: any RewriteCredentialStoring, defaults: UserDefaults = .standard,
+    clock: any DictationClock = SystemDictationClock(),
     configure: @escaping @Sendable (URLSessionConfiguration) -> Void = { _ in }
   ) {
     self.credentials = credentials
+    self.defaults = defaults
     self.clock = clock
     self.configure = configure
   }
@@ -128,6 +164,9 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
     if let secret = try? credentials.read(origin: endpoint.origin) {
       urlRequest.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
     }
+    for (name, value) in SummaryServer.headers(defaults: defaults, credentials: credentials) {
+      urlRequest.setValue(value, forHTTPHeaderField: name)
+    }
     let body = try JSONEncoder().encode(request)
     urlRequest.httpBody = body
     return (urlRequest, body.count)
@@ -220,6 +259,9 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
     urlRequest.timeoutInterval = Self.connectionTestTimeout.seconds
     if let secret = try? credentials.read(origin: endpoint.origin) {
       urlRequest.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+    }
+    for (name, value) in SummaryServer.headers(defaults: defaults, credentials: credentials) {
+      urlRequest.setValue(value, forHTTPHeaderField: name)
     }
     let data: Data
     let response: URLResponse

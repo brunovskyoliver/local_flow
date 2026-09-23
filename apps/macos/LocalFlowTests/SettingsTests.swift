@@ -3,22 +3,9 @@ import XCTest
 @testable import LocalFlow
 
 final class SettingsTests: XCTestCase {
-  @MainActor func testMeetingTranscriptionSettingExplainsRecordingIndependence() {
-    XCTAssertEqual(SettingsView.meetingTranscriptionTitle, "Transcribe meetings while recording")
-    XCTAssertEqual(
-      SettingsView.meetingTranscriptionCaption,
-      "Parakeet provides live previews. Whisper Turbo produces the final transcript. Recording never depends on either model."
-    )
-  }
-
   /// Feature 011 (T038): the Meetings toggle reads the contract caption and
   /// defaults on.
   @MainActor func testMeetingSummariesToggleCopyAndDefault() {
-    XCTAssertEqual(SettingsView.meetingSummariesTitle, "Summarize meetings automatically")
-    XCTAssertEqual(
-      SettingsView.meetingSummariesCaption,
-      "Uses the server configured under Rewriting. Transcript text, confirmed speaker names and your notes are sent; audio never leaves this Mac."
-    )
     let suite = "LocalFlow-summaries-settings-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -30,11 +17,6 @@ final class SettingsTests: XCTestCase {
   @MainActor func testSpeakerIdentificationToggleDefaultsOnAndOffShortCircuitsEverything()
     async throws
   {
-    XCTAssertEqual(
-      SettingsView.speakerIdentificationTitle, "Remember and recognize speakers across meetings")
-    XCTAssertEqual(
-      SettingsView.speakerIdentificationCaption,
-      "Nothing is stored until you choose Remember for a voice.")
     let suite = "LocalFlow-identification-settings-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -89,12 +71,12 @@ final class SettingsTests: XCTestCase {
     var snapshot = SettingsViewModel.Snapshot()
     snapshot.modelInstalled = true
     XCTAssertFalse(snapshot.meetingModelInstalled)
-    XCTAssertTrue(snapshot.meetingModelReadiness.contains("Download"))
+    XCTAssertTrue(snapshot.meetingModelReadiness.hasPrefix("Not installed"))
     snapshot.meetingModelInstalling = true
-    XCTAssertEqual(snapshot.meetingModelReadiness, "Installing Whisper Turbo…")
+    XCTAssertEqual(snapshot.meetingModelReadiness, "Installing…")
     snapshot.meetingModelInstalling = false
     snapshot.meetingModelInstalled = true
-    XCTAssertEqual(snapshot.meetingModelReadiness, "Whisper Turbo · Installed and verified")
+    XCTAssertEqual(snapshot.meetingModelReadiness, "Ready")
   }
 
   func testManualLoadCoolsAndRejectsUnloadWhileLeased() async throws {

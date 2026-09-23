@@ -49,21 +49,17 @@ struct AssignSpeakersView: View {
 
   private var card: some View {
     VStack(alignment: .leading, spacing: 0) {
-      VStack(alignment: .leading, spacing: 6) {
-        Text("Assign speakers").font(.system(size: 30, weight: .regular, design: .serif))
-        Text("Name each voice and we'll relabel the whole transcript.")
-          .font(.system(size: 14)).foregroundStyle(SottoPalette.muted)
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.horizontal, 32).padding(.top, 30).padding(.bottom, 8)
-      .overlay(alignment: .topTrailing) {
-        Button(action: close) {
-          Image(systemName: "xmark").font(.system(size: 15, weight: .medium))
-            .frame(width: 30, height: 30).contentShape(.rect)
+      Text("Assign speakers").font(.system(size: 28, weight: .regular, design: .serif))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 32).padding(.top, 28).padding(.bottom, 12)
+        .overlay(alignment: .topTrailing) {
+          Button(action: close) {
+            Image(systemName: "xmark").font(.system(size: 15, weight: .medium))
+              .frame(width: 30, height: 30).contentShape(.rect)
+          }
+          .buttonStyle(.plain).padding(.top, 22).padding(.trailing, 22)
+          .accessibilityLabel("Close")
         }
-        .buttonStyle(.plain).padding(.top, 22).padding(.trailing, 22)
-        .accessibilityLabel("Close")
-      }
       ScrollView {
         VStack(alignment: .leading, spacing: 28) {
           ForEach(model.reviews) { review in reviewRow(review) }
@@ -75,8 +71,6 @@ struct AssignSpeakersView: View {
           }
           ForEach(Array(model.sections.enumerated()), id: \.element.id) { index, section in
             sectionView(section, position: index + 1)
-              // An open suggestion list floats over the block below it.
-              .zIndex(focused == section.id ? 1 : 0)
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -147,10 +141,6 @@ struct AssignSpeakersView: View {
         Circle().fill(SpeakerPalette.color(section.speaker.colorIndex)).frame(width: 10, height: 10)
         Text(section.anonymousLabel.uppercased())
           .font(.system(size: 12, weight: .semibold)).tracking(1.4)
-        if section.speaker.isYou {
-          Text("This Mac's microphone").font(.system(size: 12))
-            .foregroundStyle(SottoPalette.muted)
-        }
       }
       .accessibilityElement(children: .contain)
       ForEach(section.includes) { member in
@@ -166,7 +156,7 @@ struct AssignSpeakersView: View {
         ForEach(Array(section.speaker.quotes.enumerated()), id: \.offset) { _, quote in
           HStack(alignment: .top, spacing: 12) {
             RoundedRectangle(cornerRadius: 1).fill(NotetakerStyle.rule).frame(width: 2)
-            Text("\u{201C}\(quote)\u{201D}").font(.system(size: 15)).lineSpacing(4)
+            Text("\u{201C}\(quote)\u{201D}").font(.system(size: 14)).lineSpacing(4)
               .foregroundStyle(SottoPalette.ink.opacity(0.85)).lineLimit(3)
               .fixedSize(horizontal: false, vertical: true)
           }
@@ -174,6 +164,11 @@ struct AssignSpeakersView: View {
         }
       }
       nameField(section, position: position)
+      // Inline rather than floating: the list pushes the rows below it down
+      // instead of drawing over them.
+      if focused == section.id, !model.suggestions.isEmpty {
+        suggestionList(for: section.id)
+      }
       if let block = model.identityBlock(for: section.id) {
         identityBlock(block, section: section)
       }
@@ -212,11 +207,6 @@ struct AssignSpeakersView: View {
     .onSubmit(save)
     .accessibilityLabel("Name for \(section.anonymousLabel)")
     .accessibilityIdentifier("meeting.speakers.name.\(position)")
-    .overlay(alignment: .topLeading) {
-      if active, !model.suggestions.isEmpty {
-        suggestionList(for: section.id).offset(y: Self.fieldHeight + 6)
-      }
-    }
   }
 
   // MARK: Identity (Feature 010, contracts/ui.md)
@@ -240,14 +230,15 @@ struct AssignSpeakersView: View {
               .accessibilityIdentifier("identity.rememberLocal")
           }
         case .remembered:
-          Text("Your voice is remembered").font(.system(size: 12))
-            .foregroundStyle(SottoPalette.muted)
+          EmptyView()
         }
       } else {
         HStack(spacing: 8) {
-          Text(block.matchState).font(.system(size: 12, weight: .medium))
-            .foregroundStyle(block.needsChoice ? .orange : SottoPalette.muted)
-            .accessibilityIdentifier("identity.matchState")
+          if block.needsChoice {
+            Text(block.matchState).font(.system(size: 12, weight: .medium))
+              .foregroundStyle(.orange)
+              .accessibilityIdentifier("identity.matchState")
+          }
           if !block.picker.isEmpty, !block.needsChoice {
             pickerMenu(block.picker, section: section, title: "Known speakers…")
               .accessibilityIdentifier("identity.picker")
@@ -383,7 +374,6 @@ struct AssignSpeakersView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(SottoPalette.surface, in: .rect(cornerRadius: 12))
     .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(NotetakerStyle.rule, lineWidth: 1) }
-    .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
     .transition(.opacity)
   }
 

@@ -106,6 +106,7 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
       try? await store.cancel(runID: run.id, now: clock.nowMilliseconds)
     }
     if status?.meetingID == id { status = nil }
+    await analyzer.forget(meetingID: id)
   }
 
   /// `IntelligenceObserving`: an evidence write (assignment, identity, notes)

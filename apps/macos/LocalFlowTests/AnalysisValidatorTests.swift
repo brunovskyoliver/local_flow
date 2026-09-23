@@ -700,9 +700,10 @@ extension AnalysisValidatorTests {
     XCTAssertEqual(validated.decisions.count, 2)
   }
 
-  /// More than a third of returned items dropped fails the run
-  /// `unsupported_content`.
-  func testDroppedShareOverThirdFailsRun() {
+  /// Dropping most items never fails the run: the survivors are adopted and
+  /// the drops are counted (a small model's paraphrases must not discard a
+  /// whole summary).
+  func testHighDroppedShareKeepsSurvivors() throws {
     let result = result(
       actionItems: [
         action(
@@ -715,12 +716,10 @@ extension AnalysisValidatorTests {
           "Send the report",
           due: WireDue(state: .absent), sources: [.segment(segB)]),
       ])
-    // 2 of 3 returned items drop (one literal, one unsupported) → > 1/3.
-    XCTAssertThrowsError(
-      try AnalysisValidator.validate(
-        result: result, against: literalEvidence(), policy: policy)
-    ) { error in
-      XCTAssertEqual((error as? AnalysisFailure)?.category, .unsupportedContent)
-    }
+    // 2 of 3 returned items drop (one literal, one unsupported).
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: result, against: literalEvidence(), policy: policy)
+    XCTAssertEqual(counts.droppedLiteralCount + counts.droppedUnsupportedCount, 2)
+    XCTAssertEqual(validated.actionItems.map(\.text), ["Send the report"])
   }
 }

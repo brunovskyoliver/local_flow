@@ -324,9 +324,7 @@ private struct LocalFlowWindowView: View {
           description: Text(services.setupStatus))
       }
     case .settings:
-      SettingsView(
-        model: services.settings, preferences: services.preferences,
-        knownSpeakers: services.knownSpeakers)
+      SettingsView(model: services.settings, preferences: services.preferences)
     }
   }
 }

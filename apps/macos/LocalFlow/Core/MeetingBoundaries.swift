@@ -234,10 +234,7 @@ protocol MeetingStoring: Sendable {
 
 struct MeetingStartOptions: Sendable, Equatable {
   var transcription: Bool
-  init(
-    transcription: Bool = UserDefaults.standard.object(forKey: "meetingTranscriptionEnabled")
-      as? Bool ?? true
-  ) {
+  init(transcription: Bool = true) {
     self.transcription = transcription
   }
   @MainActor init(preferences: AppPreferences) {

@@ -40,10 +40,6 @@ struct AnalysisPolicy: Sendable, Equatable {
 
   var serverQueueWait = Duration.seconds(30)
   var preemptionRetries = 3
-  /// A run fails `unsupported_content` when more than this share of returned
-  /// items is dropped (FR-024a).
-  var maxDroppedShareNumerator = 1
-  var maxDroppedShareDenominator = 3
 
   var sourcesPerItem = 10
   var topicCap = 20
@@ -154,8 +150,6 @@ struct AnalysisPolicy: Sendable, Equatable {
       ("open_question_cap", openQuestionCap), ("risk_cap", riskCap),
       ("evidence_page", evidencePageSize), ("language_sample_bytes", languageSampleBytes),
       ("bytes_per_token", bytesPerToken), ("context_tokens", contextTokens),
-      ("dropped_share_num", maxDroppedShareNumerator),
-      ("dropped_share_den", maxDroppedShareDenominator),
     ]
     let body = pairs.map { "\"\($0)\":\($1)" }.joined(separator: ",")
     return

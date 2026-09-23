@@ -12,7 +12,8 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertTrue(preferences.meetingTranscriptionEnabled)
     preferences.meetingTranscriptionEnabled = false
     XCTAssertFalse(defaults.bool(forKey: "meetingTranscriptionEnabled"))
-    XCTAssertFalse(AppPreferences(defaults: defaults).meetingTranscriptionEnabled)
+    // No Settings switch any more: a stored `false` from an older build is ignored.
+    XCTAssertTrue(AppPreferences(defaults: defaults).meetingTranscriptionEnabled)
     XCTAssertFalse(MeetingStartOptions(preferences: preferences).transcription)
     preferences.meetingTranscriptionEnabled = true
     XCTAssertTrue(MeetingStartOptions(preferences: preferences).transcription)
@@ -25,7 +26,7 @@ final class AppPreferencesTests: XCTestCase {
     let preferences = AppPreferences(defaults: defaults)
     XCTAssertTrue(preferences.meetingDiarizationEnabled)
     preferences.meetingDiarizationEnabled = false
-    XCTAssertFalse(AppPreferences(defaults: defaults).meetingDiarizationEnabled)
+    XCTAssertTrue(AppPreferences(defaults: defaults).meetingDiarizationEnabled)
   }
 
   /// Automatic by default under `settings.meetingLanguage`; an unknown stored value
@@ -54,7 +55,7 @@ final class AppPreferencesTests: XCTestCase {
     let preferences = AppPreferences(defaults: defaults)
     XCTAssertTrue(preferences.speakerIdentificationEnabled)
     preferences.speakerIdentificationEnabled = false
-    XCTAssertFalse(AppPreferences(defaults: defaults).speakerIdentificationEnabled)
+    XCTAssertTrue(AppPreferences(defaults: defaults).speakerIdentificationEnabled)
     XCTAssertEqual(defaults.object(forKey: "settings.speakerIdentificationEnabled") as? Bool, false)
   }
 
@@ -67,7 +68,7 @@ final class AppPreferencesTests: XCTestCase {
     let preferences = AppPreferences(defaults: defaults)
     XCTAssertTrue(preferences.meetingSummariesAutomatic)
     preferences.meetingSummariesAutomatic = false
-    XCTAssertFalse(AppPreferences(defaults: defaults).meetingSummariesAutomatic)
+    XCTAssertTrue(AppPreferences(defaults: defaults).meetingSummariesAutomatic)
     XCTAssertEqual(defaults.object(forKey: "settings.meetingSummariesAutomatic") as? Bool, false)
     let fresh = AppPreferences(defaults: defaults)
     XCTAssertTrue(fresh.meetingTranscriptionEnabled)
@@ -122,5 +123,34 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertEqual(panel.effectiveAppearance.name, .darkAqua)
     panel.appearance = AppPreferences.Appearance.system.nsAppearance
     XCTAssertNil(panel.appearance, "System mode must not pin a panel appearance")
+  }
+
+  /// Settings writes the summary server; the analysis client reads it back as
+  /// flowd's primary-backend headers, and only when Remote is complete.
+  @MainActor func testSummaryServerBecomesPrimaryHeaders() throws {
+    let suite = "LocalFlow-summary-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let credentials = FakeRewriteCredentialStore()
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertEqual(preferences.summaryServer, .local)
+    preferences.summaryServerURL = " http://10.0.0.1:8000/v1 "
+    preferences.summaryServerModel = "qwen3-8b"
+    XCTAssertEqual(SummaryServer.headers(defaults: defaults, credentials: credentials), [:])
+    preferences.summaryServer = .remote
+    XCTAssertEqual(
+      SummaryServer.headers(defaults: defaults, credentials: credentials),
+      [
+        "X-LocalFlow-Primary-URL": "http://10.0.0.1:8000/v1",
+        "X-LocalFlow-Primary-Model": "qwen3-8b",
+      ])
+    try credentials.write(origin: SummaryServer.credentialAccount, secret: "key")
+    XCTAssertEqual(
+      SummaryServer.headers(defaults: defaults, credentials: credentials)[
+        "X-LocalFlow-Primary-Key"],
+      "key")
+    preferences.summaryServerModel = ""
+    XCTAssertEqual(SummaryServer.headers(defaults: defaults, credentials: credentials), [:])
+    XCTAssertEqual(AppPreferences(defaults: defaults).summaryServer, .remote)
   }
 }

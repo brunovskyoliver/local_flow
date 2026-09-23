@@ -6,6 +6,18 @@ import XCTest
 @MainActor
 final class SummaryModelTests: XCTestCase {
 
+  /// Speaker names in the summary are found by full name, then first name with a
+  /// short case ending; "You" never matches and a full name is not split.
+  func testSpeakerMentions() {
+    let text = "Lucia Majerovska ukázala Olivera. Lucia a Oliver. You too. Olivia."
+    let mentions = SummaryModel.speakerMentions(
+      in: text, speakers: [("Lucia Majerovska", 1), ("Oliver Brunovský (You)", 3), ("You", 0)])
+    let found = mentions.sorted { $0.range.lowerBound < $1.range.lowerBound }
+      .map { (String(text[$0.range]), $0.colorIndex) }
+    XCTAssertEqual(found.map(\.0), ["Lucia Majerovska", "Olivera", "Lucia", "Oliver"])
+    XCTAssertEqual(found.map(\.1), [1, 3, 1, 3])
+  }
+
   // MARK: Deployment read model
 
   /// The stored deployment analysis renders summary, one decision and three
@@ -496,7 +508,7 @@ final class SummaryModelTests: XCTestCase {
     XCTAssertTrue(read.stale)
     XCTAssertEqual(
       SummaryTabView.staleBannerText,
-      "Summary may be outdated — the transcript, speakers or notes changed after it was generated.")
+      "The transcript, speakers or notes changed after this summary.")
     XCTAssertFalse(read.summary.text.isEmpty, "the old analysis stays readable")
   }
 

@@ -984,6 +984,71 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertNil(storedModel?.summary)
   }
 
+  /// A retry after a failed synthesis reuses the chunk results that already
+  /// passed: only the synthesis is requested again.
+  func testRetryAfterFailedSynthesisReusesChunks() async throws {
+    let fixture = IntelligenceFixtures.fourHourMeeting()
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let tailID = "f0000000-0000-4000-8000-fffffffffffe"
+    let chunkCount = try AnalysisChunkPlanner.plan(
+      segments: fixture.segments, notes: [], policy: AnalysisPolicy()
+    ).chunks.count
+    transport.script(
+      .chunk,
+      (0..<chunkCount).map {
+        chunkStep(index: $0, decisionSegmentID: $0 == chunkCount - 1 ? tailID : nil)
+      })
+    let invalid: [String: Any] = [
+      "schema_version": 1, "type": "error", "request_id": "*", "code": "output_invalid",
+    ]
+    transport.script(
+      .synthesis,
+      [.lines(.init(value: [invalid]))] + [synthesisStep(decisionSegmentID: tailID)])
+    let analyzer = makeAnalyzer(
+      reader: FakeEvidenceReader(fixture: fixture), store: store, transport: transport)
+
+    let failed = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(failed.state, .failed)
+    let firstCount = transport.requests.count
+    XCTAssertEqual(firstCount, chunkCount + 1)
+
+    let retried = try await analyzer.run(meetingID: fixture.id, trigger: .retry)
+    XCTAssertEqual(retried.state, .succeeded)
+    let retryRequests = transport.requests.dropFirst(firstCount)
+    XCTAssertFalse(retryRequests.isEmpty)
+    XCTAssertTrue(retryRequests.allSatisfy { $0.stage == .synthesis })
+  }
+
+  /// A user-started run while the model is not loaded is refused before
+  /// admission: no failed row, one message.
+  func testManualRunRefusedWhileBackendNotReady() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    transport.healthResult = .success(
+      AnalysisHealth(
+        schemaVersion: 1, service: AnalysisHealth.serviceName,
+        protocolVersions: [1], serverName: "flowd", serverVersion: "0.3.0",
+        backend: .init(
+          state: "unavailable", kind: "openai-compatible", model: "test-model",
+          jsonSchema: false),
+        promptVersions: ["full": 1, "chunk": 1, "synthesis": 1],
+        resultSchemaVersion: 1, limits: nil, caps: nil))
+    let analyzer = makeAnalyzer(
+      reader: FakeEvidenceReader(fixture: fixture), store: store, transport: transport)
+
+    do {
+      _ = try await analyzer.admit(meetingID: fixture.id, trigger: .manual)
+      XCTFail("admitted against a stopped backend")
+    } catch let failure as AnalysisFailure {
+      XCTAssertEqual(failure.category, .backendUnavailable)
+    }
+    let latest = try await store.latestRun(meetingID: fixture.id)
+    XCTAssertNil(latest)
+    XCTAssertTrue(transport.requests.isEmpty)
+  }
+
   // MARK: - T091 — preemption retries (US10)
 
   /// Contract step 6: a `preempted` error retries the same stage after

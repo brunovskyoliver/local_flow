@@ -36,6 +36,8 @@ struct TranscriptSectionView: View {
             .padding(8)
           }
           .coordinateSpace(name: "liveTranscript")
+          .scrollIndicators(.hidden)
+          .hideScrollers()
           .frame(height: 180)
           .onPreferenceChange(TranscriptBottomPreference.self) { bottom in
             coordinator.liveModel.setAtBottom(bottom <= 190)

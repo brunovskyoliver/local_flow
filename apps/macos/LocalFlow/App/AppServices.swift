@@ -1132,6 +1132,27 @@ final class AppServices {
         invalidateModelVerification()
         throw error
       }
+    case .testModel(let test):
+      let verify: SettingsViewModel.Action =
+        switch test {
+        case .speech: .verifyModel
+        case .meeting: .verifyMeetingModel
+        case .speaker: .verifySpeakerModel
+        }
+      try await performSetting(verify)
+      let installed =
+        switch test {
+        case .speech: modelInstalled
+        case .meeting: meetingModelInstalled
+        case .speaker: speakerModelInstalled
+        }
+      guard installed else { throw DictationFailure.modelUnavailable }
+      guard let lifecycle, !installing, !modelCommandInProgress, coordinator?.busy == false else {
+        throw DictationFailure.busy
+      }
+      modelCommandInProgress = true
+      defer { modelCommandInProgress = false }
+      try await lifecycle.smokeTest(test.workload)
     case .verifyMeetingModel:
       guard let meetingModelProvisioner, !meetingModelInstalling else {
         throw DictationFailure.busy

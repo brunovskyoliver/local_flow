@@ -2,7 +2,7 @@ import Foundation
 
 /// Client-side result validation (contracts/client-analysis.md). Runs after the
 /// transport's structural decode on every result. The pipeline order is fixed —
-/// meeting, sources, identity, due dates, protected literals, support, share,
+/// meeting, sources, identity, due dates, protected literals, support,
 /// duplicates, partial merge — and each step is a named function so the later
 /// tasks (T044+ identity, T057+ due dates, T063+ literals/support) slot in
 /// without reordering. Implemented now: the meeting-id step, the duplicate rule
@@ -50,7 +50,6 @@ enum AnalysisValidator {
     checkSupport(
       decisions: &decisions, actionItems: &actionItems, nextSteps: &nextSteps,
       openQuestions: &openQuestions, risks: &risks, evidence: evidence, counts: &counts)
-    try checkShareThreshold(result: result, counts: counts)
     dropDuplicates(actionItems: actionItems, nextSteps: &nextSteps)
     decisions = mergePartialItems(decisions)
     actionItems = mergePartialActionItems(actionItems)
@@ -365,20 +364,6 @@ enum AnalysisValidator {
     counts.droppedUnsupportedCount +=
       drop(&decisions) + dropActions(&actionItems) + drop(&nextSteps)
       + drop(&openQuestions) + drop(&risks)
-  }
-
-  // MARK: 7. Share threshold
-
-  /// `dropped / returned > 1/3` fails the run with `unsupported_content`.
-  /// Topics count on both sides (FR-024a): their drops are in
-  /// `droppedLiteralCount`, so they must be in `returned` too.
-  private static func checkShareThreshold(result: AnalysisResult, counts: ValidationCounts) throws {
-    let returned =
-      result.topics.count + result.decisions.count + result.actionItems.count
-      + result.nextSteps.count + result.openQuestions.count + result.risks.count
-    let dropped = counts.droppedLiteralCount + counts.droppedUnsupportedCount
-    guard returned > 0 else { return }
-    if dropped * 3 > returned { throw AnalysisFailure(.unsupportedContent) }
   }
 
   // MARK: 8. Duplicates (FR-021)

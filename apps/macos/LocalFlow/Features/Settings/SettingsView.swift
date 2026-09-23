@@ -5,27 +5,14 @@ import SwiftUI
 struct SettingsView: View {
   @Bindable var model: SettingsViewModel
   @Bindable var preferences: AppPreferences
-  /// Feature 010: nil before the identity store exists.
-  var knownSpeakers: KnownSpeakersModel? = nil
   @State private var recorder: ShortcutRecorder?
   @State private var recordingError: String?
   @State private var confirmingDownload = false
   @State private var editingCredential = false
+  @State private var summaryKeyDraft = ""
+  @State private var editingSummaryKey = false
   private enum FocusTarget: Hashable { case page }
   @FocusState private var focusTarget: FocusTarget?
-
-  static let meetingTranscriptionTitle = "Transcribe meetings while recording"
-  static let meetingTranscriptionCaption =
-    "Parakeet provides live previews. Whisper Turbo produces the final transcript. Recording never depends on either model."
-  static let meetingLanguageCaption =
-    "Used by the final transcript. Pick the language spoken in your meetings; Automatic detects it and can drift on quiet stretches."
-  static let meetingDiarizationTitle = "Label speakers automatically after transcription"
-  static let speakerIdentificationTitle = "Remember and recognize speakers across meetings"
-  static let speakerIdentificationCaption =
-    "Nothing is stored until you choose Remember for a voice."
-  static let meetingSummariesTitle = "Summarize meetings automatically"
-  static let meetingSummariesCaption =
-    "Uses the server configured under Rewriting. Transcript text, confirmed speaker names and your notes are sent; audio never leaves this Mac."
 
   var body: some View {
     PrototypePage {
@@ -54,86 +41,23 @@ struct SettingsView: View {
           separator
           SettingsRow(
             "Learn corrections",
-            detail:
-              "After LocalFlow inserts a dictation, it watches that text for 90 seconds. Corrections to likely names, technical terms, or spellings can be learned for future dictations. Ordinary grammar and wording edits are ignored. Only the inserted text is compared; correction text is not kept unless added to your Dictionary."
+            detail: "Watches inserted text for 90 seconds to learn names and terms you fix."
           ) {
             Toggle("Learn corrections", isOn: $preferences.learnCorrections)
               .labelsHidden().toggleStyle(.switch)
               .accessibilityIdentifier("settings.learnCorrections")
           }
           separator
-          SettingsRow("Languages") {
-            Text("Slovak & English · Auto").font(.system(size: 12)).foregroundStyle(
-              SottoPalette.muted)
-          }
-        }
-        sectionTitle("Meetings")
-        settingsGroup {
-          SettingsRow(Self.meetingTranscriptionTitle, detail: Self.meetingTranscriptionCaption) {
-            Toggle(Self.meetingTranscriptionTitle, isOn: $preferences.meetingTranscriptionEnabled)
-              .labelsHidden().toggleStyle(.switch)
-              .accessibilityIdentifier("settings.meetingTranscriptionEnabled")
-          }
-          separator
-          SettingsRow("Meeting language", detail: Self.meetingLanguageCaption) {
+          SettingsRow("Meeting language") {
             Picker("Meeting language", selection: $preferences.meetingLanguage) {
               ForEach(MeetingLanguage.allCases) { Text($0.title).tag($0) }
             }
             .labelsHidden().frame(width: 110).accessibilityIdentifier("settings.meetingLanguage")
           }
-          separator
-          SettingsRow("Final meeting transcript", detail: model.snapshot.meetingModelReadiness) {
-            HStack(spacing: 8) {
-              if model.snapshot.meetingModelInstalled {
-                Button("Verify") { Task { await model.run(.verifyMeetingModel) } }
-              } else {
-                Button("Download") { Task { await model.run(.downloadMeetingModel) } }
-                Button("Import…") { Task { await model.run(.importMeetingModel) } }
-              }
-            }
-            .disabled(model.snapshot.meetingModelInstalling || !model.modelControlsAvailable)
-            .accessibilityIdentifier("settings.meetingModel")
-          }
-          separator
-          SettingsRow(
-            Self.meetingDiarizationTitle, detail: "Runs on this Mac after the transcript is final."
-          ) {
-            Toggle(Self.meetingDiarizationTitle, isOn: $preferences.meetingDiarizationEnabled)
-              .labelsHidden().toggleStyle(.switch)
-              .accessibilityIdentifier("settings.meetingDiarizationEnabled")
-          }
-          separator
-          SettingsRow("Speaker labeling model", detail: model.snapshot.speakerModelReadiness) {
-            HStack(spacing: 8) {
-              if model.snapshot.speakerModelInstalled {
-                Button("Verify") { Task { await model.run(.verifySpeakerModel) } }
-              } else {
-                Button("Download") { Task { await model.run(.downloadSpeakerModel) } }
-                Button("Import…") { Task { await model.run(.importSpeakerModel) } }
-              }
-            }
-            .disabled(model.snapshot.speakerModelInstalling || model.performing)
-            .accessibilityIdentifier("settings.speakerModel")
-          }
-          separator
-          SettingsRow(Self.speakerIdentificationTitle, detail: Self.speakerIdentificationCaption) {
-            Toggle(Self.speakerIdentificationTitle, isOn: $preferences.speakerIdentificationEnabled)
-              .labelsHidden().toggleStyle(.switch)
-              .accessibilityIdentifier("settings.speakerIdentificationEnabled")
-          }
-          separator
-          SettingsRow(Self.meetingSummariesTitle, detail: Self.meetingSummariesCaption) {
-            Toggle(Self.meetingSummariesTitle, isOn: $preferences.meetingSummariesAutomatic)
-              .labelsHidden().toggleStyle(.switch)
-              .accessibilityIdentifier("settings.meetingSummariesAutomatic")
-          }
         }
-        if let knownSpeakers {
-          sectionTitle("Known speakers")
-          settingsGroup { KnownSpeakersView(model: knownSpeakers) }
-        }
-        rewriteSection
         modelSection
+        rewriteSection
+        summarySection
         permissionsSection
         if let recordingError {
           Text(recordingError).foregroundStyle(SottoPalette.warning).padding(.top, 16)
@@ -341,6 +265,74 @@ struct SettingsView: View {
     }.padding(.bottom, 18)
   }
 
+  var summarySection: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      sectionTitle("Summaries")
+      settingsGroup {
+        SettingsRow("Server") {
+          Picker("Server", selection: $preferences.summaryServer) {
+            ForEach(SummaryServer.allCases) { Text($0.title).tag($0) }
+          }
+          .labelsHidden().frame(width: 110).accessibilityIdentifier("settings.summaryServer")
+        }
+        if preferences.summaryServer == .remote {
+          separator
+          VStack(alignment: .leading, spacing: 14) {
+            fieldLabel("Server URL")
+            RewriteInputSurface(symbol: "link") {
+              TextField("http://host:8000/v1", text: $preferences.summaryServerURL)
+                .accessibilityIdentifier("settings.summaryServerURL")
+            }
+            fieldLabel("Model")
+            RewriteInputSurface(symbol: "cpu") {
+              TextField("Model", text: $preferences.summaryServerModel)
+                .accessibilityIdentifier("settings.summaryServerModel")
+            }
+            fieldLabel("API key")
+            if model.summaryKeySaved && !editingSummaryKey {
+              HStack(spacing: 8) {
+                RewriteInputSurface(symbol: "key") {
+                  Text("••••••••••••").tracking(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("API key saved")
+                }
+                Button("Edit") { editingSummaryKey = true }
+              }
+            } else {
+              HStack(spacing: 8) {
+                RewriteInputSurface(symbol: "key") {
+                  SecureField("API key", text: $summaryKeyDraft)
+                    .accessibilityIdentifier("settings.summaryServerKey")
+                    .onSubmit(saveSummaryKey)
+                }
+                Button("Save", action: saveSummaryKey).disabled(summaryKeyDraft.isEmpty)
+                if model.summaryKeySaved {
+                  Button("Cancel") {
+                    summaryKeyDraft = ""
+                    editingSummaryKey = false
+                  }
+                }
+              }
+            }
+            if let error = model.summaryKeyError {
+              Text(error).font(.system(size: 12)).foregroundStyle(SottoPalette.warning)
+            }
+          }.padding(.vertical, 18)
+        }
+      }
+    }
+  }
+
+  private func fieldLabel(_ title: String) -> some View {
+    Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(SottoPalette.muted)
+  }
+
+  private func saveSummaryKey() {
+    guard !summaryKeyDraft.isEmpty, model.saveSummaryKey(summaryKeyDraft) else { return }
+    summaryKeyDraft = ""
+    editingSummaryKey = false
+  }
+
   private func saveRewriteCredential() {
     guard !model.credentialDraft.isEmpty, model.rewriteSettings?.isEndpointValid == true else {
       return
@@ -349,23 +341,56 @@ struct SettingsView: View {
     if model.credentialError == nil { editingCredential = false }
   }
 
+  /// Every local model in one list: status, install, and a Test that loads the model,
+  /// runs it once and releases it again.
   var modelSection: some View {
     VStack(alignment: .leading, spacing: 0) {
-      sectionTitle("Speech model")
+      sectionTitle("Models")
       settingsGroup {
-        SettingsRow("Speech model", detail: model.snapshot.modelReadiness) {
-          Button(model.snapshot.runtime.loaded ? "Unload" : "Load") {
-            Task { await model.run(model.snapshot.runtime.loaded ? .unload : .load) }
+        modelRow(
+          "Parakeet", role: "Dictation", status: model.snapshot.modelReadiness, test: .speech,
+          installed: model.snapshot.modelInstalled
+        ) {
+          if model.snapshot.modelInstalled {
+            Button(model.snapshot.runtime.loaded ? "Unload" : "Load") {
+              Task { await model.run(model.snapshot.runtime.loaded ? .unload : .load) }
+            }
+            .disabled(!model.modelControlsAvailable)
+          } else if !model.snapshot.installing {
+            Button("Download…") { confirmingDownload = true }
+            Button("Import…") { Task { await model.run(.importModel) } }
           }
-          .buttonStyle(PrototypeButtonStyle(minimumWidth: 99))
-          .disabled(!model.modelControlsAvailable || !model.snapshot.modelInstalled)
+        }
+        if model.snapshot.installing {
+          installProgress
         }
         separator
-        SettingsRow(
-          "Keep model ready", detail: "Load at launch and keep in memory for faster dictation."
+        modelRow(
+          "Whisper Turbo", role: "Meeting transcripts",
+          status: model.snapshot.meetingModelReadiness,
+          test: .meeting, installed: model.snapshot.meetingModelInstalled
         ) {
+          if !model.snapshot.meetingModelInstalled && !model.snapshot.meetingModelInstalling {
+            Button("Download") { Task { await model.run(.downloadMeetingModel) } }
+            Button("Import…") { Task { await model.run(.importMeetingModel) } }
+          }
+        }
+        .accessibilityIdentifier("settings.meetingModel")
+        separator
+        modelRow(
+          "Speaker labels", role: "Who said what", status: model.snapshot.speakerModelReadiness,
+          test: .speaker, installed: model.snapshot.speakerModelInstalled
+        ) {
+          if !model.snapshot.speakerModelInstalled && !model.snapshot.speakerModelInstalling {
+            Button("Download") { Task { await model.run(.downloadSpeakerModel) } }
+            Button("Import…") { Task { await model.run(.importSpeakerModel) } }
+          }
+        }
+        .accessibilityIdentifier("settings.speakerModel")
+        separator
+        SettingsRow("Keep Parakeet loaded", detail: "Faster first dictation, more memory.") {
           Toggle(
-            "Keep model ready",
+            "Keep Parakeet loaded",
             isOn: Binding(
               get: { model.snapshot.keepModelReady },
               set: { enabled in Task { await model.run(.setKeepModelReady(enabled)) } })
@@ -374,47 +399,51 @@ struct SettingsView: View {
           .toggleStyle(.switch)
           .disabled(!model.modelControlsAvailable)
         }
-        if !model.snapshot.modelInstalled && !model.snapshot.installing {
-          separator
-          SettingsRow("Install model") {
-            HStack(spacing: 8) {
-              Button("Download…") { confirmingDownload = true }
-              Button("Import…") { Task { await model.run(.importModel) } }
-            }.disabled(!model.modelControlsAvailable)
-          }
-        }
-        if model.snapshot.installing {
-          separator
-          VStack(alignment: .leading, spacing: 10) {
-            if model.snapshot.progress.totalBytes > 0 {
-              ProgressView(
-                value: Double(model.snapshot.progress.completedBytes),
-                total: Double(model.snapshot.progress.totalBytes))
-            } else {
-              ProgressView().controlSize(.small)
-            }
-            HStack {
-              Text(
-                model.snapshot.progress.phase == .verifying
-                  ? "Verifying integrity…" : "Transferring model files…")
-              Spacer()
-              Button("Cancel installation") { Task { await model.run(.cancelInstall) } }
-            }
-          }.font(.system(size: 12)).padding(.vertical, 19)
-        }
       }
-
     }
-    .confirmationDialog("Download speech model?", isPresented: $confirmingDownload) {
+    .confirmationDialog("Download Parakeet?", isPresented: $confirmingDownload) {
       Button("Download") { Task { await model.run(.download) } }
       Button("Cancel", role: .cancel) {}
     } message: {
       Text(
         model.snapshot.downloadBytes.map {
           ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
-            + " download. Speech stays on this Mac."
-        } ?? "Download size unavailable. Speech stays on this Mac.")
+        } ?? "Download size unavailable.")
     }
+  }
+
+  private func modelRow<Extra: View>(
+    _ name: String, role: String, status: String, test: SettingsViewModel.ModelTest,
+    installed: Bool, @ViewBuilder extra: () -> Extra
+  ) -> some View {
+    let result = model.testing == test ? "Testing…" : model.testResults[test]
+    return SettingsRow(name, detail: "\(role) · \(result ?? status)") {
+      HStack(spacing: 8) {
+        extra()
+        if installed {
+          Button("Test") { Task { await model.test(test) } }
+            .disabled(model.performing || model.snapshot.busy)
+            .accessibilityLabel("Test \(name)")
+        }
+      }
+    }
+  }
+
+  private var installProgress: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      if model.snapshot.progress.totalBytes > 0 {
+        ProgressView(
+          value: Double(model.snapshot.progress.completedBytes),
+          total: Double(model.snapshot.progress.totalBytes))
+      } else {
+        ProgressView().controlSize(.small)
+      }
+      HStack {
+        Text(model.snapshot.progress.phase == .verifying ? "Verifying…" : "Downloading…")
+        Spacer()
+        Button("Cancel") { Task { await model.run(.cancelInstall) } }
+      }
+    }.font(.system(size: 12)).padding(.bottom, 19)
   }
 
   var permissionsSection: some View {

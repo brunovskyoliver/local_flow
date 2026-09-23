@@ -433,9 +433,6 @@ final class NativePresentationTests: XCTestCase {
     let preferences = AppPreferences(defaults: defaults)
     let settings = SettingsViewModel(observe: { SettingsViewModel.Snapshot() }, perform: { _ in })
     await settings.refresh()
-    let knownModel = KnownSpeakersModel(store: identities)
-    await knownModel.load()
-    await knownModel.toggleSamples(known[2].id)
     for (name, appearance, scheme, width) in [
       ("wide-light", NSAppearance.Name.aqua, ColorScheme.light, CGFloat(1440)),
       ("compact-light", .aqua, .light, CGFloat(680)),
@@ -446,8 +443,8 @@ final class NativePresentationTests: XCTestCase {
         to: output.appendingPathComponent("identity-sheet-\(name).png"), appearance: appearance,
         scheme: scheme, height: 900, width: width)
       try await render(
-        SettingsView(model: settings, preferences: preferences, knownSpeakers: knownModel),
-        to: output.appendingPathComponent("known-speakers-\(name).png"), appearance: appearance,
+        SettingsView(model: settings, preferences: preferences),
+        to: output.appendingPathComponent("settings-\(name).png"), appearance: appearance,
         scheme: scheme, height: 1_400, width: width)
     }
   }

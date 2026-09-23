@@ -22,10 +22,6 @@ struct SummaryTabView: View {
           .accessibilityIdentifier("meeting.summary.editError")
       }
       bodyContent
-      if model.readModel != nil {
-        Text("AI-generated. Check against the transcript before acting on it.")
-          .font(.system(size: 10)).foregroundStyle(SottoPalette.muted)
-      }
     }
     .accessibilityIdentifier("meeting.summary")
     .task { await model.refresh() }
@@ -34,69 +30,77 @@ struct SummaryTabView: View {
 
   // MARK: Header
 
+  /// Wispr's quiet bar: reading time on the left, copy and options on the right.
+  /// Run state replaces the icons while a summary is queued, running or failed.
   @ViewBuilder private var headerRow: some View {
     HStack(spacing: 10) {
-      Label("SUMMARY", systemImage: "lightbulb")
-        .font(.system(size: 10, weight: .medium)).tracking(0.8)
+      Label(
+        model.readModel.map { "\($0.readingMinutes) MIN READ" } ?? "SUMMARY",
+        systemImage: "lightbulb"
+      )
+      .font(.system(size: 10, weight: .medium)).tracking(0.8).monospacedDigit()
+      .accessibilityIdentifier("meeting.summary.readingTime")
       Spacer()
       switch model.header {
       case .notEligible:
         EmptyView()
       case .eligible:
-        Button("Generate Summary") { model.generate() }
-          .buttonStyle(PrototypeButtonStyle())
+        Button("Generate") { model.generate() }
+          .buttonStyle(.plain).foregroundStyle(SottoPalette.ink)
           .accessibilityIdentifier("meeting.summary.generate")
-      case .pending(let ahead):
-        Text("Queued (\(ahead) ahead)").foregroundStyle(SottoPalette.muted)
+      case .pending:
+        Text("Queued")
         cancelButton
       case .running(let stage):
-        Text(stage).foregroundStyle(SottoPalette.muted)
         if let progress = model.status.progress {
-          ProgressView(value: progress.fraction).frame(width: 90)
+          ProgressView(value: progress.fraction).frame(width: 70).controlSize(.small)
         }
+        Text(stage)
         cancelButton
       case .failed(let message):
         Text(message).foregroundStyle(.red).lineLimit(1)
         Button("Retry") { model.retry() }
-          .buttonStyle(PrototypeButtonStyle())
+          .buttonStyle(.plain).foregroundStyle(SottoPalette.ink)
           .accessibilityIdentifier("meeting.summary.retry")
       case .succeeded:
-        if let line = model.generatedLine {
-          Text(line).foregroundStyle(SottoPalette.muted)
-        }
-        Button("Regenerate") { model.regenerate() }
-          .buttonStyle(PrototypeButtonStyle())
-          .accessibilityIdentifier("meeting.summary.regenerate")
-        NoteIconButton(symbol: "doc.on.doc", label: copied ? "Copied" : "Copy summary") {
-          copy()
-        }
+        NoteIconButton(
+          symbol: copied ? "checkmark" : "square.on.square",
+          label: copied ? "Copied" : "Copy summary"
+        ) { copy() }
         .accessibilityIdentifier("meeting.summary.copy")
         overflowMenu
       }
     }
-    .foregroundStyle(SottoPalette.muted).padding(12)
+    .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+    .padding(.leading, 12).padding(.trailing, 4).frame(height: 32)
     .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
   }
 
   private var cancelButton: some View {
     Button("Cancel") { Task { await model.cancel() } }
-      .buttonStyle(PrototypeButtonStyle())
+      .buttonStyle(.plain).foregroundStyle(SottoPalette.ink)
       .accessibilityIdentifier("meeting.summary.cancel")
   }
 
   private var overflowMenu: some View {
     Menu {
+      Button("Regenerate") { model.regenerate() }
+        .accessibilityIdentifier("meeting.summary.regenerate")
       Button("Previous edits") { previousEdits = true }
         .disabled(model.readModel?.previousEdits.isEmpty ?? true)
       Button("Remove all edits", role: .destructive) {
         Task { await model.removeAllEdits() }
       }
       .disabled(!hasEdits)
+      if let line = model.generatedLine {
+        Divider()
+        Text(line)
+      }
     } label: {
       Image(systemName: "ellipsis").font(.system(size: 13))
         .frame(width: 28, height: 28).contentShape(.rect)
     }
-    .menuStyle(.borderlessButton).menuIndicator(.hidden)
+    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
     .accessibilityLabel("Summary options")
     .popover(isPresented: $previousEdits, arrowEdge: .bottom) {
       PreviousEditsView(model: model)
@@ -118,27 +122,19 @@ struct SummaryTabView: View {
     case .notEligible(let reason):
       emptyState(reason: reason, transcriptButton: true)
     case .eligible:
-      emptyState(
-        reason:
-          "Generate a structured summary on your server. Only the transcript, speaker names you confirmed, and your notes are sent.",
-        transcriptButton: false)
+      emptyState(reason: "No summary yet.", transcriptButton: false)
     case .pending, .running, .failed, .succeeded:
       if let read = model.readModel {
         analysisBody(read)
       } else {
-        emptyState(
-          reason:
-            "Generate a structured summary on your server. Only the transcript, speaker names you confirmed, and your notes are sent.",
-          transcriptButton: false)
+        emptyState(reason: "Summarizing…", transcriptButton: false)
       }
     }
   }
 
   private func emptyState(reason: String, transcriptButton: Bool) -> some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("No summary yet").font(.system(size: 16, weight: .semibold))
-        .foregroundStyle(SottoPalette.ink)
-      Text(reason).foregroundStyle(SottoPalette.muted).lineSpacing(7)
+      Text(reason).foregroundStyle(SottoPalette.muted).lineSpacing(6)
       if transcriptButton, let openTranscript {
         Button("Read transcript", action: openTranscript).buttonStyle(.plain)
           .foregroundStyle(SottoPalette.accent)
@@ -148,7 +144,7 @@ struct SummaryTabView: View {
 
   /// contracts/ui.md "stale": the amber banner sentence.
   static let staleBannerText =
-    "Summary may be outdated — the transcript, speakers or notes changed after it was generated."
+    "The transcript, speakers or notes changed after this summary."
 
   private var staleBanner: some View {
     HStack(spacing: 10) {
@@ -166,29 +162,16 @@ struct SummaryTabView: View {
 
   // MARK: Succeeded body
 
+  /// Overview paragraph, then one bold heading per topic with its bullets, then the
+  /// item lists under the same heading style. Topic summaries repeat the overview,
+  /// so only their bullets are shown.
   @ViewBuilder private func analysisBody(_ read: MeetingAnalysisReadModel) -> some View {
-    Text("\(read.readingMinutes) MIN READ")
-      .font(.system(size: 10, weight: .medium)).tracking(1).monospacedDigit()
-      .foregroundStyle(SottoPalette.muted)
-      .accessibilityIdentifier("meeting.summary.readingTime")
-
-    VStack(alignment: .leading, spacing: 8) {
-      EditableSummaryText(read: read, model: model)
-    }
+    EditableSummaryText(read: read, model: model)
 
     ForEach(read.topics) { topic in
-      VStack(alignment: .leading, spacing: 6) {
-        Text(topic.title).font(.system(size: 13, weight: .semibold))
-        if !topic.summary.isEmpty {
-          Text(topic.summary).foregroundStyle(SottoPalette.muted).lineSpacing(6)
-        }
+      Section(title: topic.title) {
         ForEach(topic.bullets, id: \.self) { bullet in
-          Label(bullet, systemImage: "circle.fill").labelStyle(.titleOnly)
-            .overlay(alignment: .leading) {
-              Circle().fill(SottoPalette.muted).frame(width: 3, height: 3)
-                .offset(x: 2, y: 1)
-            }
-            .padding(.leading, 12)
+          Bullet { model.highlighted(bullet) }
         }
       }
     }
@@ -211,7 +194,7 @@ struct SummaryTabView: View {
       Section(title: "Open questions") { ItemRows(items: read.openQuestions, model: model) }
     }
     if !read.risks.isEmpty {
-      Section(title: "Risks / blockers") { ItemRows(items: read.risks, model: model) }
+      Section(title: "Risks") { ItemRows(items: read.risks, model: model) }
     }
   }
 
@@ -219,11 +202,24 @@ struct SummaryTabView: View {
     let title: String
     @ViewBuilder var content: Content
     var body: some View {
-      VStack(alignment: .leading, spacing: 8) {
-        Text(title).font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(SottoPalette.muted)
+      VStack(alignment: .leading, spacing: 4) {
+        Text(title).font(.system(size: 13, weight: .semibold)).padding(.bottom, 2)
         content
       }
+      .padding(.top, 6)
+    }
+  }
+
+  /// A real list bullet: the dot sits on the first line's baseline and wrapped
+  /// lines align under the text, not under the dot.
+  struct Bullet<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Text("•").foregroundStyle(SottoPalette.ink)
+        content.lineSpacing(5).fixedSize(horizontal: false, vertical: true)
+      }
+      .padding(.leading, 6)
     }
   }
 
@@ -247,6 +243,7 @@ struct SummaryTabView: View {
     @State private var editing = false
     @State private var draft = ""
     @State private var showAI = false
+    @State private var hovering = false
 
     var editable: Bool { item.kind == .decision || item.kind == .nextStep }
 
@@ -260,16 +257,16 @@ struct SummaryTabView: View {
           Button("Save") { save() }
             .accessibilityIdentifier("meeting.summary.edit.save")
         } else {
-          Text(showAI ? item.aiText : item.text).lineSpacing(5)
-            .onTapGesture(count: 2) { if editable { beginEdit() } }
-          // FR-025: segment-sourced items may name their speaker; a note-only
-          // item has no attribution by construction.
-          if let attribution = item.speakerAttribution {
-            Text("— \(attribution)").foregroundStyle(SottoPalette.muted)
-              .font(.system(size: 11))
+          Bullet {
+            // FR-025: segment-sourced items may name their speaker; a note-only
+            // item has no attribution by construction.
+            model.highlighted(showAI ? item.aiText : item.text)
+              + Text(item.speakerAttribution == nil ? "" : " — ").foregroundColor(
+                SottoPalette.muted)
+              + model.highlighted(item.speakerAttribution ?? "")
           }
+          .onTapGesture(count: 2) { if editable { beginEdit() } }
           Spacer(minLength: 4)
-          if !item.edits.isEmpty { EditedTag() }
           if editable || !item.edits.isEmpty {
             ItemEditMenu(
               editable: editable,
@@ -279,11 +276,14 @@ struct SummaryTabView: View {
                   Task { await model.removeEdit(id: id) }
                 }
               },
-              edits: item.edits)
+              edits: item.edits
+            )
+            .opacity(hovering ? 1 : 0)
           }
-          SourceButton(item: item, model: model)
+          SourceButton(item: item, model: model).opacity(hovering ? 1 : 0)
         }
       }
+      .onHover { hovering = $0 }
     }
 
     private func beginEdit() {
@@ -354,6 +354,7 @@ struct SummaryTabView: View {
       if editing {
         TextEditor(text: $draft)
           .font(.body).frame(minHeight: 90)
+          .hideScrollers()
           .overlay { RoundedRectangle(cornerRadius: 4).stroke(SottoPalette.line) }
         HStack(spacing: 8) {
           Button("Save") {
@@ -366,46 +367,33 @@ struct SummaryTabView: View {
             .buttonStyle(.plain).foregroundStyle(SottoPalette.muted)
         }
       } else {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
           let text = showAI ? read.summary.aiText : read.summary.text
           ForEach(text.components(separatedBy: "\n\n"), id: \.self) { paragraph in
-            Text(paragraph).lineSpacing(7)
+            model.highlighted(paragraph).lineSpacing(6).fixedSize(horizontal: false, vertical: true)
           }
-          .onTapGesture(count: 2) {
-            draft = read.summary.text
-            editing = true
-          }
-          HStack(spacing: 6) {
-            if read.summary.edited {
-              EditedTag()
-              ItemEditMenu(
-                editable: true,
-                showAI: $showAI,
-                startEdit: {
-                  draft = read.summary.text
-                  editing = true
-                },
-                removeEdit: { _ in
-                  if let id = read.summary.overlayID {
-                    Task { await model.removeEdit(id: id) }
-                  }
-                },
-                edits: [.summaryText])
-            } else {
-              Button {
-                draft = read.summary.text
-                editing = true
-              } label: {
-                Image(systemName: "pencil").font(.system(size: 10))
-                  .foregroundStyle(SottoPalette.muted)
+        }
+        .contentShape(.rect)
+        .onTapGesture(count: 2) { beginEdit() }
+        .contextMenu {
+          Button("Edit summary") { beginEdit() }
+            .accessibilityIdentifier("meeting.summary.edit")
+          if read.summary.edited {
+            Button(showAI ? "Hide AI value" : "Show AI value") { showAI.toggle() }
+            Button("Remove text edit") {
+              if let id = read.summary.overlayID {
+                Task { await model.removeEdit(id: id) }
               }
-              .buttonStyle(.plain)
-              .accessibilityLabel("Edit summary")
-              .accessibilityIdentifier("meeting.summary.edit")
             }
           }
         }
+        .padding(.bottom, 4)
       }
+    }
+
+    private func beginEdit() {
+      draft = read.summary.text
+      editing = true
     }
   }
 
@@ -445,9 +433,10 @@ struct SummaryTabView: View {
     @State private var otherName = ""
     @State private var pickingDue = false
     @State private var duePick = Date()
+    @State private var hovering = false
 
     var body: some View {
-      HStack(alignment: .firstTextBaseline, spacing: 10) {
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
         Button {
           Task {
             await model.setStatus(item.status == .open ? .completed : .open, item: item)
@@ -457,7 +446,7 @@ struct SummaryTabView: View {
             systemName: item.status == .completed
               ? "checkmark.circle.fill" : "circle"
           )
-          .font(.system(size: 14))
+          .font(.system(size: 13))
           .foregroundStyle(
             item.status == .completed ? SottoPalette.success : SottoPalette.muted)
         }
@@ -472,23 +461,28 @@ struct SummaryTabView: View {
           Button("Save") { save() }
             .accessibilityIdentifier("meeting.summary.edit.save")
         } else {
-          Text(showAI ? item.aiText : item.text)
-            .strikethrough(item.status == .dismissed)
-            .foregroundStyle(
-              item.status == .dismissed ? SottoPalette.muted : SottoPalette.ink
-            )
-            .lineSpacing(5)
-            .onTapGesture(count: 2) { beginEdit() }
-          Spacer(minLength: 4)
-          OwnerChip(owner: showAI ? item.aiOwner : item.owner) {
-            Task { await model.acceptSuggestion(item: item) }
+          // Text wraps on its own line; owner and due date sit under it so a long
+          // task never squeezes them off the row.
+          VStack(alignment: .leading, spacing: 5) {
+            model.highlighted(showAI ? item.aiText : item.text)
+              .strikethrough(item.status != .open)
+              .foregroundStyle(item.status == .open ? SottoPalette.ink : SottoPalette.muted)
+              .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
+              .onTapGesture(count: 2) { beginEdit() }
+            HStack(spacing: 8) {
+              OwnerChip(owner: showAI ? item.aiOwner : item.owner) {
+                Task { await model.acceptSuggestion(item: item) }
+              }
+              DueLabel(item: item, showAI: showAI)
+            }
           }
-          DueLabel(item: item, showAI: showAI)
-          if !item.edits.isEmpty { EditedTag() }
-          actionEditMenu
-          SourceButton(item: item, model: model)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          actionEditMenu.opacity(hovering ? 1 : 0)
+          SourceButton(item: item, model: model).opacity(hovering ? 1 : 0)
         }
       }
+      .padding(.vertical, 3)
+      .onHover { hovering = $0 }
       .accessibilityIdentifier(
         "meeting.summary.item.\(AnalysisItemKind.actionItem.rawValue).\(item.ordinal)"
       )
@@ -733,17 +727,6 @@ struct SummaryTabView: View {
     }
   }
 
-  /// The "Edited" tag on any field an overlay changed.
-  struct EditedTag: View {
-    var body: some View {
-      Text("Edited")
-        .font(.system(size: 9, weight: .medium))
-        .padding(.horizontal, 5).padding(.vertical, 1)
-        .background(SottoPalette.tint, in: .capsule)
-        .foregroundStyle(SottoPalette.muted)
-    }
-  }
-
   /// The overflow's "Previous edits": orphaned overlays with the item text
   /// snapshot, the AI value and the user value, each with Delete.
   private struct PreviousEditsView: View {
@@ -780,5 +763,17 @@ struct SummaryTabView: View {
       try? await Task.sleep(for: .seconds(2))
       copied = false
     }
+  }
+}
+
+extension SummaryModel {
+  /// Summary text with every speaker's name in the color the transcript gives them.
+  func highlighted(_ text: String) -> Text {
+    var attributed = AttributedString(text)
+    for mention in speakerMentions(in: text) {
+      guard let range = Range(mention.range, in: attributed) else { continue }
+      attributed[range].foregroundColor = SpeakerPalette.color(mention.colorIndex)
+    }
+    return Text(attributed)
   }
 }

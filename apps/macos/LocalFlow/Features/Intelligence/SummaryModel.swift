@@ -243,6 +243,40 @@ final class SummaryModel {
     }
   }
 
+  /// Where the summary names a meeting speaker, with that speaker's color index.
+  /// A full name wins over a first name; "You" is never matched.
+  func speakerMentions(in text: String) -> [(range: Range<String.Index>, colorIndex: Int)] {
+    Self.speakerMentions(in: text, speakers: ownerChoices.map { ($0.label, $0.colorIndex) })
+  }
+
+  static func speakerMentions(
+    in text: String, speakers: [(name: String, colorIndex: Int)]
+  ) -> [(range: Range<String.Index>, colorIndex: Int)] {
+    var found: [(range: Range<String.Index>, colorIndex: Int)] = []
+    var names: [(String, Int)] = []
+    for speaker in speakers where speaker.name != "You" {
+      let name = speaker.name.replacingOccurrences(of: " (You)", with: "")
+      names.append((name, speaker.colorIndex))
+      if let first = name.split(separator: " ").first, first.count >= 3, first != name[...] {
+        names.append((String(first), speaker.colorIndex))
+      }
+    }
+    for (name, colorIndex) in names.sorted(by: { $0.0.count > $1.0.count }) {
+      // ponytail: up to three trailing lowercase letters cover Slovak case endings
+      // ("Olivera"); a stemmer if names in other languages slip through.
+      let pattern =
+        "(?<!\\p{L})" + NSRegularExpression.escapedPattern(for: name) + "\\p{Ll}{0,3}(?!\\p{L})"
+      guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+      for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+        guard let range = Range(match.range, in: text),
+          !found.contains(where: { $0.range.overlaps(range) })
+        else { continue }
+        found.append((range, colorIndex))
+      }
+    }
+    return found
+  }
+
   /// Sorted `s:`/`n:` ids joined by `,` — the re-match input R13 compares
   /// against the next adoption's item sources.
   static func sourceKey(_ sources: [SourceRef]) -> String {

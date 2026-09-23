@@ -30,10 +30,11 @@ private struct ScrollerRemover: NSViewRepresentable {
       strip()
     }
 
-    /// The `TextEditor`'s scroll view is a sibling in the same SwiftUI container.
+    /// The scroll view is a sibling in the same SwiftUI container, or encloses this view
+    /// when SwiftUI hosts the background inside it.
     func strip() {
       guard let container = superview else { return }
-      for scroll in Self.scrollViews(in: container) {
+      for scroll in Self.scrollViews(in: container) + [enclosingScrollView].compactMap({ $0 }) {
         scroll.hasVerticalScroller = false
         scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
@@ -241,6 +242,7 @@ struct NotePreview: View {
           }.font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(20)
         }
         .scrollIndicators(.hidden)
+        .hideScrollers()
       } else {
         Text("Hover over a note to see its overview.")
           .font(.system(size: 12)).foregroundStyle(SottoPalette.muted).padding(20)

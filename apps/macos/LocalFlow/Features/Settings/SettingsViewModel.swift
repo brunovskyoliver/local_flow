@@ -15,6 +15,18 @@ final class SettingsViewModel {
     case setKeepModelReady(Bool)
     case importSpeakerModel, downloadSpeakerModel, verifySpeakerModel
     case importMeetingModel, downloadMeetingModel, verifyMeetingModel
+    case testModel(ModelTest)
+  }
+  /// The three local models Settings can load and run once.
+  enum ModelTest: Hashable {
+    case speech, meeting, speaker
+    var workload: ModelWorkload {
+      switch self {
+      case .speech: .speechRecognition
+      case .meeting: .meetingTranscription
+      case .speaker: .diarization
+      }
+    }
   }
   struct Snapshot {
     var modelInstalled = false
@@ -22,16 +34,14 @@ final class SettingsViewModel {
     var meetingModelInstalled = false
     var meetingModelInstalling = false
     var meetingModelReadiness: String {
-      if meetingModelInstalling { return "Installing Whisper Turbo…" }
-      return meetingModelInstalled
-        ? "Whisper Turbo · Installed and verified"
-        : "Whisper Turbo · Download 1.63 GB or import the model folder to finalize meetings."
+      if meetingModelInstalling { return "Installing…" }
+      return meetingModelInstalled ? "Ready" : "Not installed · 1.63 GB"
     }
     var speakerModelInstalled = false
     var speakerModelInstalling = false
     var speakerModelReadiness: String {
       if speakerModelInstalling { return "Installing…" }
-      return speakerModelInstalled ? "Installed and verified" : "Not installed"
+      return speakerModelInstalled ? "Ready" : "Not installed"
     }
     var modelReadiness: String {
       guard modelInstalled else { return "Not installed" }
@@ -94,6 +104,8 @@ final class SettingsViewModel {
   /// rewrite health reports `connected`.
   private(set) var analysisStatus: String?
   private(set) var credentialError: String?
+  private var summaryKeyRevision = 0
+  private(set) var summaryKeyError: String?
   var credentialDraft = ""
   private(set) var credentialRevealed = false
 
@@ -187,6 +199,23 @@ final class SettingsViewModel {
       credentialChanged()
     } catch { showCredentialError(error) }
   }
+  var summaryKeySaved: Bool {
+    _ = summaryKeyRevision
+    return rewriteCredentials?.exists(origin: SummaryServer.credentialAccount) == true
+  }
+  /// Saves the Remote summary server's API key; false leaves `summaryKeyError` set.
+  func saveSummaryKey(_ key: String) -> Bool {
+    guard let rewriteCredentials else { return false }
+    do {
+      try rewriteCredentials.write(origin: SummaryServer.credentialAccount, secret: key)
+      summaryKeyError = nil
+      summaryKeyRevision += 1
+      return true
+    } catch {
+      summaryKeyError = Self.credentialMessage(error)
+      return false
+    }
+  }
   private func credentialChanged() {
     hideRewriteCredential()
     credentialError = nil
@@ -195,11 +224,14 @@ final class SettingsViewModel {
     disableBlockedRewriting()
   }
   private func showCredentialError(_ error: Error) {
+    credentialError = Self.credentialMessage(error)
+  }
+  private static func credentialMessage(_ error: Error) -> String {
     switch error as? RewriteCredentialError {
-    case .empty: credentialError = "Enter a credential first."
-    case .tooLarge: credentialError = "The credential must be no more than 4,096 bytes."
-    case .invalidCharacters: credentialError = "Remove surrounding whitespace and line breaks."
-    default: credentialError = "Could not access the credential in Keychain."
+    case .empty: "Enter a credential first."
+    case .tooLarge: "The credential must be no more than 4,096 bytes."
+    case .invalidCharacters: "Remove surrounding whitespace and line breaks."
+    default: "Could not access the credential in Keychain."
     }
   }
   private func disableBlockedRewriting() {
@@ -317,6 +349,30 @@ final class SettingsViewModel {
     self.analysisTransport = analysisTransport
   }
   func refresh() async { snapshot = await observe() }
+  private(set) var testing: ModelTest?
+  /// "Working · 420 ms" or the failure, per model, until the next test.
+  private(set) var testResults: [ModelTest: String] = [:]
+
+  func test(_ model: ModelTest) async {
+    guard !performing else { return }
+    performing = true
+    testing = model
+    testResults[model] = nil
+    error = nil
+    let started = ContinuousClock.now
+    do {
+      try await perform(.testModel(model))
+      let elapsed = started.duration(to: .now).components
+      let ms = elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000
+      testResults[model] = "Working · \(ms) ms"
+    } catch {
+      testResults[model] = DictationErrorMessage.describe(error)
+    }
+    testing = nil
+    performing = false
+    await refresh()
+  }
+
   func run(_ action: Action) async {
     guard !performing else { return }
     performing = true

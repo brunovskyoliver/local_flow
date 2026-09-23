@@ -21,8 +21,6 @@ struct MeetingDetailView: View {
   /// Feature 011: evidence-change notices for merges and identity saves.
   var intelligence: MeetingIntelligenceCoordinator? = nil
   var identificationEnabled = false
-  /// The Meeting language in Settings, shown as the meeting's "Default".
-  var defaultLanguage: MeetingLanguage = .automatic
   /// Feature 011: one `SummaryModel` per opened meeting; nil keeps the placeholder.
   var summaryModelFactory: ((UUID) -> SummaryModel?)? = nil
   var initialTab: NoteDetailTab = .thoughts
@@ -30,8 +28,11 @@ struct MeetingDetailView: View {
   @State private var summaryModel: SummaryModel?
   @State private var retainedEditor: MeetingNotesEditor?
   @State private var explainingSharing = false
-  @State private var transcriptSearch = false
   @State private var transcriptQuery = ""
+  @State private var searchOpen = false
+  @FocusState private var searchFocused: Bool
+  /// The row to keep in view after a page loads or is evicted above or below it.
+  @State private var pageAnchor: PageAnchor?
   @State private var leaving = false
   @FocusState private var titleFocused: Bool
   @State private var titleDraft = ""
@@ -98,6 +99,12 @@ struct MeetingDetailView: View {
         }
         .scrollIndicators(.hidden)
         .hideScrollers()
+        .onChange(of: pageAnchor) { _, target in
+          // Eviction removes a page on the far side, so hold the row the reader was on.
+          guard let target else { return }
+          proxy.scrollTo(target.id, anchor: target.anchor)
+          pageAnchor = nil
+        }
         .onChange(of: pager?.highlightedSegmentID) { _, id in
           // Feature 011: a View-source jump lands here — scroll to the segment,
           // then end the two-second highlight.
@@ -123,7 +130,7 @@ struct MeetingDetailView: View {
       Text("This recording and your thoughts are stored on this Mac. No link has been created.")
     }
     .onAppear {
-      titleDraft = meeting.title ?? ""
+      titleDraft = meeting.displayTitle
       retainedEditor = notesEditor
       tab = initialTab
     }
@@ -131,8 +138,9 @@ struct MeetingDetailView: View {
       if old && !focused { saveTitle() }
     }
     .onChange(of: meeting.id) { _, _ in
-      titleDraft = meeting.title ?? ""
+      titleDraft = meeting.displayTitle
       stopPlayback()
+      closeSearch()
     }
     .task(id: meeting.id) {
       let created = summaryModelFactory?(meeting.id)
@@ -276,16 +284,15 @@ struct MeetingDetailView: View {
 
   private var header: some View {
     VStack(alignment: .leading, spacing: 8) {
-      TextField(
-        liveStatus == nil ? meeting.displayTitle : "New note", text: $titleDraft, axis: .vertical
-      )
-      .textFieldStyle(.plain)
-      .font(.system(size: 26, weight: .bold))
-      .lineLimit(1...3)
-      .focused($titleFocused)
-      .onSubmit { saveTitle() }
-      .accessibilityLabel("Note title")
-      .accessibilityIdentifier("meeting.title")
+      TextField("Untitled", text: $titleDraft, axis: .vertical)
+        .textFieldStyle(.plain)
+        .font(.system(size: 30, weight: .regular, design: .serif))
+        .tracking(-0.4)
+        .lineLimit(1...3)
+        .focused($titleFocused)
+        .onSubmit { saveTitle() }
+        .accessibilityLabel("Note title")
+        .accessibilityIdentifier("meeting.title")
       Text(MeetingRowView.dateText(meeting.createdAt))
         .font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
       if (liveStatus?.droppedFrames ?? 0) > 0
@@ -313,7 +320,8 @@ struct MeetingDetailView: View {
   }
 
   private func saveTitle() {
-    guard titleDraft != (meeting.title ?? "") else { return }
+    // The field starts on the generated title; leaving it untouched stores nothing.
+    guard titleDraft != (meeting.title ?? ""), titleDraft != meeting.displayTitle else { return }
     let target = meeting
     let title = titleDraft
     Task { await model.setTitle(title, for: target) }
@@ -321,23 +329,25 @@ struct MeetingDetailView: View {
 
   private var thoughts: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("Capture your thoughts here.").foregroundStyle(SottoPalette.muted)
-        .font(.system(size: 12))
       SelectableTextEditor(
         text: Binding(get: { editor.text }, set: { editor.text = $0 }),
         selection: editor.revealText == editor.text ? editor.revealRange : nil,
         onSelect: { editor.clearReveal() }
       )
-      .frame(minHeight: 330)
+      .frame(minHeight: 420)
+      .overlay(alignment: .topLeading) {
+        if editor.text.isEmpty {
+          Text("Capture your thoughts here").font(.system(size: 14))
+            .foregroundStyle(SottoPalette.muted.opacity(0.7))
+            .padding(.top, 4).allowsHitTesting(false)
+        }
+      }
       .accessibilityLabel("My thoughts")
       if let notice = editor.notice {
         HStack {
           Text(notice).foregroundStyle(.red)
           Button("Retry save") { Task { await editor.flush() } }
-        }
-      } else if editor.saveState == .saving || editor.saveState == .saved {
-        Text(editor.isDirty ? "Saving…" : "Saved").font(.caption).foregroundStyle(
-          SottoPalette.muted)
+        }.font(.system(size: 12))
       }
     }
   }
@@ -347,31 +357,13 @@ struct MeetingDetailView: View {
       if let summaryModel {
         SummaryTabView(model: summaryModel, openTranscript: { tab = .transcript })
       } else {
-        VStack(alignment: .leading, spacing: 24) {
-          HStack {
-            Label("SUMMARY", systemImage: "lightbulb")
-              .font(.system(size: 10, weight: .medium))
-              .tracking(0.8)
-            Spacer()
-          }.foregroundStyle(SottoPalette.muted).padding(12)
-            .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
-          Text("No summary yet").font(.system(size: 16, weight: .semibold))
-          Text(
-            "Meeting summaries are not available yet. Your transcript and thoughts are saved with this note."
-          )
-          .foregroundStyle(SottoPalette.muted).lineSpacing(7)
-          Button("Read transcript") { tab = .transcript }.buttonStyle(.plain)
-        }
+        Text("No summary yet.").foregroundStyle(SottoPalette.muted)
       }
     }
   }
 
   private var footer: some View {
     VStack(spacing: 10) {
-      if tab == .thoughts {
-        Text("My thoughts are private to this Mac.").font(.system(size: 10)).foregroundStyle(
-          SottoPalette.muted)
-      }
       HStack(spacing: 8) {
         if let coordinator, let liveStatus {
           if liveStatus.state == .paused {
@@ -442,6 +434,16 @@ struct MeetingDetailView: View {
 
   // MARK: Transcript (Feature 005, US7)
 
+  struct PageAnchor: Equatable {
+    let id: UUID
+    let anchor: UnitPoint
+  }
+
+  private func closeSearch() {
+    transcriptQuery = ""
+    searchOpen = false
+  }
+
   /// The coordinator's status when it is about this meeting; otherwise the stored row.
   private var transcriptStatus: TranscriptStatus? {
     guard let status = transcription?.status, status.meetingID == meeting.id else { return nil }
@@ -456,50 +458,51 @@ struct MeetingDetailView: View {
 
   private var transcriptSection: some View {
     VStack(alignment: .leading, spacing: 16) {
-      HStack(spacing: 8) {
-        if liveStatus == nil, let count = pager?.speakerCount {
-          // FR-018: Unknown and Overlapping are not speakers.
-          Text(
-            "\(count) \(count == 1 ? "SPEAKER" : "SPEAKERS") • \(meetingDurationText(meeting.recordedMs))"
-          )
-          .font(.system(size: 10, weight: .medium)).monospacedDigit()
-          .accessibilityIdentifier("meeting.speakers.header")
-        } else {
-          Label(
-            meetingDurationText(liveStatus?.recordedElapsedMs ?? meeting.recordedMs),
-            systemImage: "clock"
-          )
-          .font(.system(size: 10, weight: .medium)).monospacedDigit()
-          if liveStatus == nil {
-            Text("· " + transcriptBadgeText).font(.system(size: 10, weight: .medium))
-          }
+      HStack(spacing: 10) {
+        Label(
+          meetingDurationText(liveStatus?.recordedElapsedMs ?? meeting.recordedMs),
+          systemImage: "clock"
+        )
+        .monospacedDigit()
+        if liveStatus == nil, transcriptRow?.state != .final {
+          Text("· " + transcriptBadgeText)
         }
         Spacer()
-        if transcription != nil, meeting.state.isTerminal {
-          MeetingLanguagePicker(selection: meeting.language, defaultLanguage: defaultLanguage) {
-            choice in
-            let target = meeting
-            Task { await model.setLanguage(choice, for: target) }
+        if searchOpen {
+          HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+            TextField("Search", text: $transcriptQuery)
+              .textFieldStyle(.plain).frame(maxWidth: 170)
+              .focused($searchFocused)
+              .onExitCommand { closeSearch() }
+              .onChange(of: searchFocused) { _, focused in
+                if !focused, transcriptQuery.isEmpty { searchOpen = false }
+              }
+              .accessibilityIdentifier("meeting.transcript.search")
           }
-        }
-        if showsSpeakerControls { speakersMenu }
-        NoteIconButton(symbol: "magnifyingglass", label: "Search loaded transcript") {
-          transcriptSearch.toggle()
+        } else {
+          NoteIconButton(symbol: "magnifyingglass", label: "Search transcript") {
+            searchOpen = true
+            searchFocused = true
+          }
+          .accessibilityIdentifier("meeting.transcript.search.open")
         }
         if let pager, !pager.segments.isEmpty {
-          NoteIconButton(symbol: "square.on.square", label: "Copy loaded transcript") {
+          NoteIconButton(symbol: "square.on.square", label: "Copy transcript") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(pager.copyText(), forType: .string)
           }
         }
+        if showsSpeakerControls, pager?.speakers != nil {
+          NoteIconButton(symbol: "person.badge.plus", label: "Assign speakers") {
+            openAssignSpeakers()
+          }
+          .accessibilityIdentifier("meeting.speakers.assign.open")
+        }
       }
-      .foregroundStyle(SottoPalette.muted).padding(.horizontal, 12).padding(.vertical, 5)
+      .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+      .padding(.leading, 12).padding(.trailing, 4).frame(height: 32)
       .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
-      if transcriptSearch {
-        TextField("Search loaded transcript", text: $transcriptQuery)
-          .textFieldStyle(.plain).padding(10)
-          .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
-      }
       if showsSpeakerControls { speakerStatusLine }
       if showsIdentification { identificationStatusLine }
       if let prompt = pastSearchPrompt { pastSearchPromptRow(prompt) }
@@ -518,8 +521,14 @@ struct MeetingDetailView: View {
       } else if let pager, !pager.segments.isEmpty {
         let segments = pager.segments.filter { pager.matches($0, query: transcriptQuery) }
         LazyVStack(alignment: .leading, spacing: 3) {
-          if pager.hasPrevious {
-            Button("Show earlier") { Task { await pager.loadPrevious() } }.padding(.bottom, 10)
+          // No buttons: the next page loads when its edge scrolls into view.
+          if pager.hasPrevious, let first = segments.first {
+            Color.clear.frame(height: 1).onAppear {
+              Task {
+                await pager.loadPrevious()
+                pageAnchor = PageAnchor(id: first.id, anchor: .top)
+              }
+            }
           }
           ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
             NoteTranscriptBubble(
@@ -538,10 +547,15 @@ struct MeetingDetailView: View {
             .id(segment.id)
           }
           if segments.isEmpty {
-            Text("No matches in the loaded transcript.").foregroundStyle(SottoPalette.muted)
+            Text("No matches.").foregroundStyle(SottoPalette.muted)
           }
-          if pager.hasNext {
-            Button("Show more") { Task { await pager.loadNext() } }.padding(.top, 12)
+          if pager.hasNext, let last = segments.last {
+            Color.clear.frame(height: 1).onAppear {
+              Task {
+                await pager.loadNext()
+                pageAnchor = PageAnchor(id: last.id, anchor: .bottom)
+              }
+            }
           }
         }.accessibilityIdentifier("meeting.transcript.list")
       }
@@ -612,57 +626,6 @@ struct MeetingDetailView: View {
     }
     .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
     .accessibilityIdentifier("meeting.speakers.status")
-  }
-
-  private var speakersMenu: some View {
-    let active = speakerStatus?.state == .pending || speakerStatus?.state == .running
-    let failed = speakerStatus?.state == .failed || speakerStatus?.state == .interrupted
-    let identifying =
-      identificationStatus?.state == .pending || identificationStatus?.state == .running
-    return Menu {
-      Button("Assign speakers…", action: openAssignSpeakers)
-        .disabled(pager?.speakers == nil)
-      if showsIdentification {
-        Button("Rerun identification") { requestIdentification(.manual) }
-          .disabled(pager?.speakers == nil || identifying)
-          .accessibilityIdentifier("speakers.rerunIdentification")
-        if identifying {
-          Button("Cancel identification") {
-            Task { await identification?.cancel(meetingID: meeting.id) }
-          }
-        }
-      }
-      Toggle(
-        "In-room meeting",
-        isOn: Binding(
-          get: { speakerStatus?.inRoom ?? false },
-          set: { value in
-            let id = meeting.id
-            Task { await diarization?.setInRoom(meetingID: id, inRoom: value) }
-          })
-      )
-      .disabled(active)
-      Divider()
-      if failed, let category = speakerStatus?.failure,
-        DiarizationFailureMessage.isRetryable(category)
-      {
-        Button("Retry") { requestSpeakerRun(.retry) }
-      }
-      Button(pager?.speakers == nil ? "Label speakers" : "Re-run speaker labels") {
-        requestSpeakerRun(pager?.speakers == nil ? .manual : .retry)
-      }
-      .disabled(active)
-      if active {
-        Button("Cancel speaker labeling") {
-          Task { await diarization?.cancel(meetingID: meeting.id) }
-        }
-      }
-    } label: {
-      Label("Speakers", systemImage: "person.2")
-    }
-    .menuStyle(.borderlessButton).fixedSize()
-    .accessibilityLabel("Speakers")
-    .accessibilityIdentifier("meeting.speakers.menu")
   }
 
   private func requestSpeakerRun(_ trigger: DiarizationTrigger) {
@@ -880,9 +843,6 @@ struct NoteTranscriptBubble: View {
     VStack(alignment: .leading, spacing: 5) {
       if showSource, let speaker {
         HStack(spacing: 6) {
-          Circle()
-            .fill(speaker.colorIndex.map(SpeakerPalette.color) ?? SottoPalette.muted)
-            .frame(width: 8, height: 8)
           Text(speaker.text).font(.system(size: 12, weight: .medium))
             .foregroundStyle(
               speaker.colorIndex.map(SpeakerPalette.color) ?? SottoPalette.ink)
@@ -906,13 +866,14 @@ struct NoteTranscriptBubble: View {
           .help(segment.draft.analysisTracks.sourceExplanation)
       }
       Text(segment.normalizedText)
-        .font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
-        .padding(.horizontal, 11).padding(.vertical, 8)
+        .font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
+        .foregroundStyle(segment.finality == .provisional ? SottoPalette.muted : SottoPalette.ink)
+        .padding(.horizontal, 10).padding(.vertical, 7)
         .background(
           highlighted
             ? SottoPalette.accent.opacity(0.2)
             : selected ? SottoPalette.tint : SottoPalette.canvas,
-          in: .rect(cornerRadius: 10)
+          in: .rect(cornerRadius: 8)
         )
         .contextMenu {
           Button(selected ? "Deselect segment" : "Select segment", action: select)
@@ -930,12 +891,6 @@ struct NoteTranscriptBubble: View {
           }
         }
         .accessibilityAction(named: selected ? "Deselect segment" : "Select segment", select)
-      if segment.finality == .provisional {
-        Text("Provisional").font(.system(size: 10)).foregroundStyle(SottoPalette.muted)
-      } else if speaker?.edited == true {
-        Text("Edited").font(.system(size: 10)).foregroundStyle(SottoPalette.muted)
-          .accessibilityLabel("Speaker edited manually")
-      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .contain)
@@ -957,7 +912,11 @@ private struct SelectableTextEditor: NSViewRepresentable {
   func makeNSView(context: Context) -> NSScrollView {
     let scroll = NSTextView.scrollableTextView()
     scroll.hasVerticalScroller = false
+    // No box: the note is typed straight onto the page.
+    scroll.drawsBackground = false
     let textView = scroll.documentView as! NSTextView
+    textView.drawsBackground = false
+    textView.textContainer?.lineFragmentPadding = 0
     textView.isRichText = false
     textView.allowsUndo = true
     textView.font = .systemFont(ofSize: 14)

@@ -17,6 +17,7 @@ struct MeetingAnalyzer: Sendable {
   private let endpoint: @MainActor @Sendable () -> RewriteEndpoint?
   private let settings: @MainActor @Sendable () -> RewriteSettings?
   private let recorder: ResourceRecorder?
+  private let partials: AnalysisPartialCache
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "analysis")
 
   /// Reports progress; the coordinator publishes it on the main actor.
@@ -27,7 +28,8 @@ struct MeetingAnalyzer: Sendable {
     store: any AnalysisStoring, clock: any MeetingClock = SystemMeetingClock(),
     endpoint: @escaping @MainActor @Sendable () -> RewriteEndpoint?,
     settings: @escaping @MainActor @Sendable () -> RewriteSettings?,
-    recorder: ResourceRecorder? = nil
+    recorder: ResourceRecorder? = nil,
+    partials: AnalysisPartialCache = AnalysisPartialCache()
   ) {
     self.evidence = evidence
     self.transport = transport
@@ -36,6 +38,12 @@ struct MeetingAnalyzer: Sendable {
     self.endpoint = endpoint
     self.settings = settings
     self.recorder = recorder
+    self.partials = partials
+  }
+
+  /// Drops the cached chunk results of a deleted meeting.
+  func forget(meetingID: UUID) async {
+    await partials.clear(meetingID: meetingID)
   }
 
   // MARK: Run
@@ -102,6 +110,16 @@ struct MeetingAnalyzer: Sendable {
   /// Refusals here throw without a row (contract "Run algorithm").
   func admit(meetingID: UUID, trigger: AnalysisTrigger) async throws -> Admission {
     let prepared = try await prepare(meetingID: meetingID)
+    // A user-started run against a stopped model fails every request at
+    // once; tell the user now instead of writing another failed row. An
+    // automatic run still records its failure so the Summary tab can offer
+    // a retry. An unreachable server is left to the run's own health step.
+    if trigger != .automatic, trigger != .restart,
+      let backend = try? await transport.health(endpoint: prepared.endpoint).backend,
+      backend.state != "ready"
+    {
+      throw AnalysisFailure(.backendUnavailable, detail: backend.state)
+    }
     // One automatic run per finalized pass: a late settle event after a manual
     // or earlier automatic acceptance must not regenerate on its own (FR-031).
     if trigger == .automatic,
@@ -205,6 +223,7 @@ struct MeetingAnalyzer: Sendable {
         let adopted = try await self.store.adopt(
           runID: runID, result: validated, counts: counts, identity: identity,
           now: self.clock.nowMilliseconds)
+        await self.partials.clear(meetingID: meetingID)
         let orphans =
           (try? await self.store.overlays(meetingID: meetingID))?
           .filter { $0.orphanedAt != nil }.count ?? 0
@@ -422,8 +441,17 @@ struct MeetingAnalyzer: Sendable {
     // Chunks: each request is built from one paged window — never more than
     // one chunk plus a page of text in memory. The tail is never dropped:
     // the plan's windows cover every segment.
+    // A retry after a failed chunk or synthesis reuses the chunks that
+    // already passed, keyed by evidence version and segment window.
     var partials: [AnalysisResult] = []
     for chunk in plan.chunks {
+      let key = AnalysisPartialCache.Key(
+        meetingID: meetingID, evidenceVersion: admission.run.evidenceVersion,
+        firstOrdinal: chunk.firstOrdinal, lastOrdinal: chunk.lastOrdinal)
+      if let cached = await self.partials.result(for: key) {
+        partials.append(cached)
+        continue
+      }
       let label = "Analyzing part \(chunk.index + 1) of \(plan.chunks.count)"
       let segments = try await segmentWindow(
         meetingID: meetingID, passID: admission.passID,
@@ -440,6 +468,7 @@ struct MeetingAnalyzer: Sendable {
         meetingID: meetingID, policy: effective, label: label)
       try Self.checkPartial(outcome.analysis, against: analysisEvidence, policy: effective)
       partials.append(outcome.analysis)
+      await self.partials.store(outcome.analysis, for: key)
     }
 
     // Reduce: groups of ≤ `partialsPerSynthesis`, ≤ `reduceDepth` levels.
@@ -682,5 +711,39 @@ struct MeetingAnalyzer: Sendable {
       backendModel: payload.backend?.model ?? health.backend?.model ?? "",
       promptVersions: promptVersions,
       pipelineVersion: payload.pipelineVersion ?? AnalysisPolicy.pipelineVersion)
+  }
+}
+
+/// Chunk results that passed validation, kept so a retry resumes at the chunk
+/// or synthesis that failed instead of re-analyzing the whole meeting.
+/// Holds one meeting's evidence version at a time — at most one plan's chunks
+/// (≤ `AnalysisPolicy.maxChunks`); a different meeting or version replaces it.
+// ponytail: memory only, lost on relaunch; persist to the history database if
+// retries across launches matter.
+actor AnalysisPartialCache {
+  struct Key: Hashable, Sendable {
+    var meetingID: UUID
+    var evidenceVersion: String
+    var firstOrdinal: Int
+    var lastOrdinal: Int
+  }
+
+  private var scope: (meetingID: UUID, evidenceVersion: String)?
+  private var results: [Key: AnalysisResult] = [:]
+
+  func result(for key: Key) -> AnalysisResult? { results[key] }
+
+  func store(_ result: AnalysisResult, for key: Key) {
+    if scope?.meetingID != key.meetingID || scope?.evidenceVersion != key.evidenceVersion {
+      scope = (key.meetingID, key.evidenceVersion)
+      results = [:]
+    }
+    results[key] = result
+  }
+
+  func clear(meetingID: UUID) {
+    guard scope?.meetingID == meetingID else { return }
+    scope = nil
+    results = [:]
   }
 }

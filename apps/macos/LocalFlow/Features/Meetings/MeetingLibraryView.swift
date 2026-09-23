@@ -36,7 +36,6 @@ struct MeetingLibraryView: View {
           coordinator: coordinator, diarization: diarization, identification: identification,
           intelligence: intelligence,
           identificationEnabled: preferences.speakerIdentificationEnabled,
-          defaultLanguage: preferences.meetingLanguage,
           summaryModelFactory: summaryModelFactory, initialTab: model.openTab
         ).id(detail.meeting.id)
       } else {
@@ -147,6 +146,7 @@ struct MeetingLibraryView: View {
         .frame(maxWidth: .infinity)
       }
       .scrollIndicators(.hidden)
+      .hideScrollers()
       NoteUnavailableBar(prompt: "Ask about your meetings")
         .shadow(color: .black.opacity(0.06), radius: 5, y: 3)
         .padding(20)
@@ -179,7 +179,7 @@ struct MeetingLibraryView: View {
         .foregroundStyle(SottoPalette.muted)
       }
       if needsAttention {
-        ActiveMeetingView(coordinator: coordinator, defaultLanguage: preferences.meetingLanguage)
+        ActiveMeetingView(coordinator: coordinator)
       } else {
         Text("No meetings today").frame(maxWidth: .infinity).padding(.bottom, 12)
       }

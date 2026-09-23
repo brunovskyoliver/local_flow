@@ -231,6 +231,22 @@ actor ModelLifecycleCoordinator {
     }
   }
 
+  /// Settings › Models › Test: load the workload's runtime, run one second of
+  /// silence through a speech model, then release it. Loading alone proves the
+  /// speaker models; silence would only exercise their empty-result path.
+  func smokeTest(_ workload: ModelWorkload) async throws {
+    let lease = try await acquire(session: UUID(), workload: workload)
+    do {
+      if workload.isSpeech {
+        _ = try await transcribe(lease, samples: [Float](repeating: 0, count: 16_000))
+      }
+    } catch {
+      try? await finish(lease)
+      throw error
+    }
+    try await finish(lease)
+  }
+
   /// The only diarization inference entry. One window at a time; request bounds are
   /// checked before the runtime sees them.
   func diarize(_ lease: ModelLease, window request: DiarizationWindowRequest) async throws
