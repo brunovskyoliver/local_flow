@@ -20,6 +20,7 @@ final class AppServices {
     rewriteTransport: rewriteClient, analysisTransport: analysisClient)
   private(set) var historyModel: HistoryViewModel?
   private(set) var vocabularyModel: VocabularyViewModel?
+  private(set) var insightsModel: InsightsModel?
   @ObservationIgnored private var learner: CorrectionLearner?
   @ObservationIgnored private let rewriteCredentials = CachedRewriteCredentialStore()
   /// One client per protocol, shared by Settings › Test and real requests, so the
@@ -448,7 +449,13 @@ final class AppServices {
         learner?.observe(inserted: text, target: target)
       }
       historyModel = HistoryViewModel(store: paths.1, rewriter: rewriteCoordinator)
-      coordinator.historyChanged = { [weak self] in self?.historyModel?.refresh() }
+      insightsModel = InsightsModel(store: paths.1)
+      coordinator.historyChanged = { [weak self] in
+        self?.historyModel?.refresh()
+        if self?.router.selection == .insights, let insights = self?.insightsModel {
+          Task { await insights.refresh() }
+        }
+      }
       let explicit = ExplicitInsertionCoordinator(
         store: paths.1, insertion: insertion, dictation: coordinator)
       explicitInsertion = explicit

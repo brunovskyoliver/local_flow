@@ -5,6 +5,7 @@ import SwiftUI
 enum LocalFlowPage: String, CaseIterable, Identifiable {
   case meetings = "Notetaker"
   case history = "Transcriptions"
+  case insights = "Insights"
   case dictionary = "Dictionary"
   case settings = "Settings"
 
@@ -13,6 +14,7 @@ enum LocalFlowPage: String, CaseIterable, Identifiable {
     switch self {
     case .meetings: "record.circle"
     case .history: "mic"
+    case .insights: "chart.bar"
     case .dictionary: "text.book.closed"
     case .settings: "gearshape"
     }

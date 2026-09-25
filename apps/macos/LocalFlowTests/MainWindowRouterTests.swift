@@ -153,7 +153,7 @@ final class MainWindowRouterTests: XCTestCase {
   @MainActor
   func testMeetingsPageIsListedFirstAndRoutable() {
     XCTAssertEqual(
-      LocalFlowPage.allCases, [.meetings, .history, .dictionary, .settings])
+      LocalFlowPage.allCases, [.meetings, .history, .insights, .dictionary, .settings])
     XCTAssertEqual(LocalFlowPage.meetings.rawValue, "Notetaker")
     XCTAssertEqual(LocalFlowPage.meetings.symbol, "record.circle")
     let router = MainWindowRouter(setActivationPolicy: { _ in }, activate: {})

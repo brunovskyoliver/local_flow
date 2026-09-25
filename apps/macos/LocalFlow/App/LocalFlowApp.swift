@@ -313,6 +313,14 @@ private struct LocalFlowWindowView: View {
           "Transcriptions unavailable", systemImage: "externaldrive.badge.exclamationmark",
           description: Text(services.setupStatus))
       }
+    case .insights:
+      if let insights = services.insightsModel {
+        InsightsView(model: insights)
+      } else {
+        ContentUnavailableView(
+          "Insights unavailable", systemImage: "externaldrive.badge.exclamationmark",
+          description: Text(services.setupStatus))
+      }
     case .dictionary:
       if let vocabulary = services.vocabularyModel {
         DictionaryView(model: vocabulary)

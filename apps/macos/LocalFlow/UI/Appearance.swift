@@ -24,6 +24,18 @@ enum SottoPalette {
   static let onPrimary = surface
   static let onAccent = surface
   static let glassTint = canvas
+  // Insights: card surface and the teal data scale, strongest first.
+  static let card = adaptive(light: 0xF5F4F1, dark: 0x1F1F1E)
+  static let cardLine = adaptive(light: 0xEDEBE4, dark: 0x292928)
+  static let rule = adaptive(light: 0xC4C0B4, dark: 0x3A3A38)
+  static let heatEmpty = adaptive(light: 0xEDEBE4, dark: 0x2A2A29)
+  static let dataStrong = adaptive(light: 0x345A5C, dark: 0x4F8580)
+  static let streakOutline = adaptive(light: 0x2F5452, dark: 0xB9DDD8)
+  static let dataScale = [
+    adaptive(light: 0x457672, dark: 0x84BDB5), adaptive(light: 0x59918A, dark: 0x5A948D),
+    adaptive(light: 0x9ACAC2, dark: 0x3F6A65), adaptive(light: 0xD6ECEA, dark: 0x2E4744),
+  ]
+  static let dataQuiet = adaptive(light: 0x84BAB1, dark: 0x3F6A65)
   static let success = Color(nsColor: .systemGreen)
   static let warning = adaptive(light: 0xEA580C, dark: 0xFB923C)
 
@@ -60,6 +72,8 @@ extension EnvironmentValues {
 
 struct PrototypePage<Content: View>: View {
   @Environment(\.prototypeCompact) private var compact
+  /// Dashboard pages such as Insights use a wider reading column.
+  var maxWidth: CGFloat = 960
   @ViewBuilder var content: Content
 
   var body: some View {
@@ -68,7 +82,7 @@ struct PrototypePage<Content: View>: View {
         .padding(.horizontal, compact ? 24 : 48)
         .padding(.top, compact ? 32 : 48)
         .padding(.bottom, 64)
-        .frame(maxWidth: 960)
+        .frame(maxWidth: maxWidth)
         .frame(maxWidth: .infinity, alignment: .top)
     }
     .scrollIndicators(.never)
