@@ -20,7 +20,12 @@ private final class IndicatorPresentation {
   /// What the pill shows, in the host's order of precedence. The key changes only
   /// when a different notice takes the pill, so progress updates animate in place.
   enum Content: Hashable {
-    case dictation, learned(String), clipboard(UUID), action(UUID), background(UUID), none
+    case dictation
+    case learned(String)
+    case clipboard(UUID)
+    case action(UUID)
+    case background(UUID)
+    case none
   }
   var content: Content {
     if IndicatorPanel.showsPanel(state) { return .dictation }

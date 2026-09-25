@@ -103,7 +103,8 @@ final class AppConfigurationTests: XCTestCase {
     panel.showClipboardNotice(notice)
     XCTAssertTrue(panel.isVisible)
     XCTAssertFalse(panel.showsBackgroundNotice)
-    XCTAssertEqual(announcements.last, "Couldn't insert · copied to clipboard. Paste with Command-V.")
+    XCTAssertEqual(
+      announcements.last, "Couldn't insert · copied to clipboard. Paste with Command-V.")
     panel.dismissClipboardNotice(id: UUID())
     XCTAssertFalse(panel.showsBackgroundNotice)
     panel.dismissClipboardNotice(id: notice.id)

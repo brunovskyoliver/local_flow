@@ -90,7 +90,8 @@ struct HistoryView: View {
                   delete: {
                     model.selectedEntry = entry
                     confirmingDelete = true
-                  })
+                  }
+                )
                 .overlay(alignment: .bottom) {
                   if !last { SottoPalette.line.frame(height: 1).padding(.horizontal, 1) }
                 }

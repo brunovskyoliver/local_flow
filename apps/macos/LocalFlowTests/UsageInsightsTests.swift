@@ -73,6 +73,7 @@ final class UsageInsightsTests: XCTestCase {
     XCTAssertEqual(UsageInsights.correctedWords(input: "hello there", output: "hello, there."), 0)
     XCTAssertEqual(
       UsageInsights.correctedWords(input: "um send the the file", output: "send the file"), 2)
-    XCTAssertEqual(UsageInsights.correctedWords(input: "laitec parsing", output: "LaTeX parsing"), 1)
+    XCTAssertEqual(
+      UsageInsights.correctedWords(input: "laitec parsing", output: "LaTeX parsing"), 1)
   }
 }

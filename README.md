@@ -4,6 +4,19 @@ A privacy-first, local-first macOS voice productivity project. Native Swift hand
 
 The macOS app translates the approved HTML prototype into SwiftUI over existing local capture, FluidAudio speech recognition, safe insertion and SQLite storage. Feature 001 remains in progress; its task list records incomplete UI and acceptance work. The Go server provides optional text rewriting through a separate self-hosted inference process. Speech recognition remains local.
 
+## Install with Homebrew
+
+Install on Apple Silicon with Homebrew:
+
+```sh
+brew install --cask brunovskyoliver/tap/localflow
+```
+
+The app is ad-hoc signed, without an Apple Developer ID or notarization. On first
+launch, if macOS blocks it and you trust the download, use System Settings >
+Privacy & Security > Open Anyway. Updates may require renewed approval and privacy
+permissions. See the [installation and release guide](docs/distribution/homebrew.md).
+
 ## Development
 
 Requires macOS with Xcode (validated with 26.4.1), Go >= 1.23 and Python 3 for repository validation only. The application embeds neither Python nor Node. Run `make check` for JSON/link checks, shell syntax, plist validation, Go tests/vet and deterministic XCTest suites. `make macos` builds the app; `make server` prints the flowd version. No signing team or model downloads are needed for these checks.

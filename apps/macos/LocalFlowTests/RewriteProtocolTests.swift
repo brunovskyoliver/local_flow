@@ -522,7 +522,9 @@ final class RewriteProtocolTests: XCTestCase {
       JSONSerialization.jsonObject(with: request.httpBody()) as? [String: Any])
     XCTAssertNil(object["context"])
     XCTAssertEqual(object["schema_version"] as? Int, 1)
-    XCTAssertEqual(try request.httpBody(), try JSONEncoder().encode(request))
+    let encoded = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? NSDictionary)
+    XCTAssertEqual(object as NSDictionary, encoded)
   }
 
   func testOversizedOrNonObjectContextIsRefused() {

@@ -287,7 +287,9 @@ private struct AppUsageCard: View {
 
   private var rows: [(category: UsageCategory, count: Int)] {
     UsageCategory.allCases.enumerated()
-      .map { (offset: $0.offset, category: $0.element, count: insights.categories[$0.element] ?? 0) }
+      .map {
+        (offset: $0.offset, category: $0.element, count: insights.categories[$0.element] ?? 0)
+      }
       .sorted { ($1.count, $0.offset) < ($0.count, $1.offset) }
       .map { ($0.category, $0.count) }
   }
@@ -536,7 +538,8 @@ private struct HourCard: View {
     let words = insights.hours[hour]
     guard words > 0 else { return .note(title: "No dictation", detail: range) }
     let dictations = insights.hourDictations[hour]
-    var detail = "\(range) · \(dictations.formatted()) \(dictations == 1 ? "dictation" : "dictations")"
+    var detail =
+      "\(range) · \(dictations.formatted()) \(dictations == 1 ? "dictation" : "dictations")"
     if let top = insights.hourApps[hour].max(by: { ($0.value, $1.key) < ($1.value, $0.key) }) {
       detail += "\nMost in \(AppName.display(top.key))"
     }
