@@ -1,0 +1,57 @@
+#!/bin/sh
+# launchd entry for org.localflow.LocalFlow.mtplx, registered by LocalFlow with
+# SMAppService. Serves the model chosen in LocalFlow headless, without MTPLX.app,
+# only while LocalFlow runs: the app starts it at launch, before each dictation
+# and when rewriting is switched back to this Mac, and stops it when it quits or
+# switches to a server. launchd never starts or restarts it.
+set -eu
+umask 077
+state="$HOME/Library/Application Support/LocalFlow/LocalAI"
+model="$(cat "$state/model-path")"
+[ -d "$model" ] && [ -s "$state/api-key" ]
+# The flags MTPLX.app launches with, minus its dashboard: one request at a time
+# for the lowest rewrite latency, no reasoning, no SSD session cache, no stats
+# footer. Profile and draft depth come from MTPLX's per-model preset and any
+# `mtplx tune` result. Every catalog model is pinned to a Hugging Face commit.
+# Fan mode stays default: smart needs the sudo-installed helper MTPLX.app adds,
+# and under the development agent it left a new idle thermal sidecar process
+# every few minutes. Short rewrites never run long enough to heat the Mac.
+#
+# Rewrites are one-shot, so no request's context outlives it: MLX's buffer
+# cache is emptied after every request and capped at 256 MB, and the session
+# bank keeps one entry of at most 512 MB. With MTPLX's defaults (4 GB cache,
+# four 4 GB entries) the 4B model grew from 3.6 to 4.2 GB over four rewrites;
+# with these it stayed at 3.3 GB, and the rewrites took the same time.
+export MTPLX_CLEAR_CACHE_AFTER_REQUEST=always MTPLX_MLX_CACHE_LIMIT=268435456 \
+  MTPLX_SESSION_BANK_MAX_ENTRIES=1 MTPLX_SESSION_BANK_MAX_BYTES=512M \
+  MTPLX_SESSION_BANK_PER_SESSION_BYTES=512M
+"$state/venv/bin/mtplx" serve --host 127.0.0.1 --port 8000 \
+  --model "$model" --model-id localflow --api-key-file "$state/api-key" \
+  --scheduler-mode serial --batching-preset latency --ssd-session-cache off \
+  --context-window 32768 --fan-mode default --reasoning off \
+  --adaptive-policy expected_value --no-stats-footer --unsafe-force-unverified --yes &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null || true' TERM INT HUP
+# A crashed LocalFlow never stops the model, so follow the app that started it:
+# LocalFlow writes its PID before every start, and once that PID is gone, or
+# belongs to another program, the model stops within five seconds.
+app_running() {
+  app="$(cat "$state/app-pid" 2>/dev/null || true)"
+  case "$(ps -o comm= -p "${app:-0}" 2>/dev/null || true)" in
+  */LocalFlow) return 0 ;;
+  esac
+  return 1
+}
+orphaned=
+while kill -0 "$child" 2>/dev/null; do
+  if ! app_running; then
+    orphaned=1
+    kill -TERM "$child" 2>/dev/null || true
+  fi
+  sleep 5 &
+  wait $! || true
+done
+wait "$child" || true
+# A LocalFlow relaunched while the orphaned model was stopping found this job
+# still running, so its start did nothing: serve it now.
+if [ -n "$orphaned" ] && app_running; then exec "$0"; fi

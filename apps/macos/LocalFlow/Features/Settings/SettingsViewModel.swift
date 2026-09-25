@@ -34,6 +34,7 @@ final class SettingsViewModel {
     var keepModelReady = false
     var meetingModelInstalled = false
     var meetingModelInstalling = false
+    var meetingProgress = ProvisioningProgress.Snapshot()
     var meetingModelReadiness: String {
       if meetingModelInstalling { return "Installing…" }
       return meetingModelInstalled ? "Ready" : "Not installed · 1.63 GB"

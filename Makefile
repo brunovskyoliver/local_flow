@@ -1,4 +1,4 @@
-.PHONY: check server macos run
+.PHONY: check server macos run release
 check:
 	./scripts/test.sh
 server:
@@ -8,3 +8,7 @@ macos:
 
 run:
 	./scripts/dev-macos.sh
+
+# Optimized build, installed and opened the same way as run.
+release:
+	LOCALFLOW_CONFIGURATION=Release ./scripts/dev-macos.sh

@@ -9,7 +9,7 @@ final class AppContextStoreTests: XCTestCase {
   private var urls: [URL] = []
 
   override func tearDown() {
-    for url in urls { try? FileManager.default.removeItem(at: url) }
+    for url in urls { removeDatabase(at: url) }
     urls = []
   }
 

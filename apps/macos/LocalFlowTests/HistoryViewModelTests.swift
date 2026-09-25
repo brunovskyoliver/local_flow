@@ -23,7 +23,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testReplacementSearchAndBoundedNavigation() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-vm-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     for index in 0..<65 {
       let entry = try TranscriptionEntry(
@@ -67,7 +67,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testHistoryBrowsingNeverCallsTheRewriteTransport() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-rewrite-guard-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let rig = RewriteRig(store: store, enabled: true, failOnAnyCall: true)
     defer { rig.removeSuite() }
@@ -91,7 +91,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testIndependentBadgesAndCalendarRegrouping() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-date-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let date = Date(timeIntervalSince1970: 1_800_000_000)
     let entry = try TranscriptionEntry(
@@ -146,7 +146,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testDeleteRejectsStaleRevisionAndBusyInsertionWithoutLosingRows() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-delete-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let entry = try TranscriptionEntry(
       id: UUID(), text: "keep this text",
@@ -196,7 +196,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testCopyAndDismissPreserveQualityAndDeliveryStatus() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-status-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let entry = try TranscriptionEntry(
       id: UUID(), text: "status text",
@@ -228,7 +228,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testResidentPagesAndSelectedRowStayBounded() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-residency-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let text = String(repeating: "a", count: 4_000)
     for index in 0..<60 {
@@ -258,7 +258,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testScrollWindowSlidesBothWaysWithinTheResidentLimit() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-window-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let total = HistoryViewModel.residentLimit + 50
     for index in 0..<total {
@@ -293,7 +293,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testSelectedDetailReplacementCloseAndDeletion() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "detail-vm-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let first = try makeQualityEnvelope(raw: "raw first", text: "First")
     let second = try makeQualityEnvelope(raw: "raw second", text: "Second")
@@ -326,7 +326,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testLegacyDetailAndCloseDuringLoad() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "legacy-vm-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let entry = try TranscriptionEntry(
       id: UUID(), text: "legacy", createdAtMilliseconds: 1,
@@ -352,7 +352,7 @@ final class HistoryViewModelTests: XCTestCase {
   func testRefreshUpdatesDeliveryWithoutReprocessingAndClearsExternalDeletion() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "detail-refresh-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let source = try makeQualityEnvelope(text: " preserved  historical spacing ")
     let saved = try await store.commit(reservation: try await store.reserve(), envelope: source)
@@ -424,7 +424,7 @@ final class HistoryViewModelTests: XCTestCase {
 
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "context-vm-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let store = try TranscriptionStore(path: url.path)
     let snapshot = AppContextSnapshot.make(
       .init(appName: "Slack", beforeCursor: "Ask Miroslav Kováčik "))

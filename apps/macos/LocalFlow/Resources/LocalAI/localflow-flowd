@@ -1,0 +1,15 @@
+#!/bin/sh
+# launchd entry for org.localflow.LocalFlow.flowd, registered by LocalFlow with
+# SMAppService. Runs the flowd bundled with this copy of the app, so updating
+# the app updates the server.
+set -eu
+umask 077
+contents="$(cd "$(dirname "$0")/../.." && pwd)"
+state="$HOME/Library/Application Support/LocalFlow/LocalAI"
+LOCALFLOW_BACKEND_TOKEN="$(cat "$state/api-key")"
+[ -n "$LOCALFLOW_BACKEND_TOKEN" ]
+export LOCALFLOW_BACKEND_TOKEN
+logs="$HOME/Library/Logs/LocalFlow"
+mkdir -p "$logs"
+exec "$contents/Helpers/flowd" serve --listen 127.0.0.1:8080 \
+  --backend http://127.0.0.1:8000/v1 --model localflow --log-file "$logs/flowd.log"

@@ -12,7 +12,12 @@ final class AppServices {
   let preferences = AppPreferences()
   @ObservationIgnored lazy var onboarding = OnboardingCoordinator(
     preferences: preferences,
-    liveReadiness: { [weak self] in await self?.settingsSnapshot() ?? .init() })
+    liveReadiness: { [weak self] in await self?.settingsSnapshot() ?? .init() },
+    startDownloads: { [weak self] localAI in self?.beginSetupDownloads(localAI: localAI) },
+    startMeetingModels: { [weak self] in self?.downloadMeetingModels() })
+  @ObservationIgnored lazy var localAI = LocalAISetup(
+    preferences: preferences, installer: LocalAIInstaller())
+  @ObservationIgnored private var meetingModelsTask: Task<Void, Never>?
   @ObservationIgnored lazy var settings = SettingsViewModel(
     observe: { [weak self] in await self?.settingsSnapshot() ?? .init() },
     perform: { [weak self] action in try await self?.performSetting(action) },
@@ -64,6 +69,8 @@ final class AppServices {
   @ObservationIgnored private let reconciliationGate = MeetingReconciliationGate()
   private(set) var setupStatus = "Starting…"
   private(set) var isReadyToTerminate = false
+  @ObservationIgnored private var localModelWanted: Bool?
+  @ObservationIgnored private var localModelCommand: Task<Void, Never>?
   private(set) var modelInstalled = false
   private(set) var installing = false
   private(set) var modelCommandInProgress = false
@@ -125,6 +132,7 @@ final class AppServices {
     guard coordinator == nil, !starting else { return }
     starting = true
     applyAppearance()
+    followLocalModelChoice()
     defer { starting = false }
     do {
       let base = try FileManager.default.url(
@@ -471,6 +479,8 @@ final class AppServices {
       }
       coordinator.sessionStarted = { [weak self] id in
         self?.learner?.cancel()
+        // The model loads while the user speaks; after a crash this restarts it.
+        self?.wakeLocalModel()
         self?.onboarding.dictationStarted(id: id)
       }
       coordinator.processingMeasured = { [weak self] metrics in
@@ -1104,8 +1114,7 @@ final class AppServices {
   /// Settings or Onboarding is showing and the user can be granting permissions.
   var settingsPollingWanted: Bool {
     guard NSApp?.isActive == true else { return false }
-    return router.selection == .settings
-      || (!preferences.onboardingComplete && router.selection == .history)
+    return router.selection == .settings || !preferences.onboardingComplete
   }
 
   private func refreshSettingsState() async {
@@ -1156,6 +1165,9 @@ final class AppServices {
     snapshot.modelDetails = modelDetails
     if let lifecycle { snapshot.runtime = await lifecycle.snapshot() }
     snapshot.progress = modelProgress
+    if let meetingModelProvisioner {
+      snapshot.meetingProgress = meetingModelProvisioner.progress.snapshot()
+    }
     switch AVCaptureDevice.authorizationStatus(for: .audio) {
     case .authorized: snapshot.microphone = .granted
     case .notDetermined: snapshot.microphone = .unknown
@@ -1440,6 +1452,30 @@ final class AppServices {
 
   func cancelModelInstallation() { installTask?.cancel() }
 
+  /// Onboarding: the speech model and local AI download side by side.
+  func beginSetupDownloads(localAI wanted: Bool) {
+    if !modelInstalled { downloadModel() }
+    if wanted { localAI.start() }
+  }
+
+  /// Onboarding's optional meeting pack: speaker labels, then Whisper Turbo, after
+  /// the speech model, since model installs take the lifecycle gate one at a time.
+  func downloadMeetingModels() {
+    guard meetingModelsTask == nil else { return }
+    meetingModelsTask = Task { [weak self] in
+      await self?.installTask?.value
+      guard let self else { return }
+      defer { meetingModelsTask = nil }
+      do {
+        if !speakerModelInstalled { try await installSpeakerModel(source: nil) }
+        if !meetingModelInstalled { try await installMeetingModel(source: nil) }
+      } catch {
+        Self.logModelFailure("Meeting models", error)
+        setupStatus = "Meeting models did not finish downloading. Retry in Settings."
+      }
+    }
+  }
+
   private func beginInstallation(source: URL?) {
     guard let provisioner, let lifecycle else {
       installing = false
@@ -1484,6 +1520,38 @@ final class AppServices {
       }
     }
   }
+  /// Starts the local MTPLX model when rewriting points at the local services (ADR 0026).
+  private func wakeLocalModel() {
+    guard preferences.rewriteEndpoint == LocalAIInstaller.rewriteEndpoint else { return }
+    setLocalModel(running: true)
+  }
+
+  /// Keeps the local model loaded exactly while rewriting points at it: switching
+  /// to a server in Settings unloads it, switching back loads it. Acts only when
+  /// that choice flips, not on every keystroke in the address field.
+  private func followLocalModelChoice() {
+    withObservationTracking {
+      let wanted = preferences.rewriteEndpoint == LocalAIInstaller.rewriteEndpoint
+      guard wanted != localModelWanted, !quitting else { return }
+      localModelWanted = wanted
+      setLocalModel(running: wanted)
+    } onChange: {
+      Task { @MainActor [weak self] in self?.followLocalModelChoice() }
+    }
+  }
+
+  /// `launchctl` calls run one at a time, in order, off the main actor.
+  @discardableResult
+  private func setLocalModel(running: Bool) -> Task<Void, Never> {
+    let previous = localModelCommand
+    let command = Task.detached(priority: .utility) {
+      await previous?.value
+      LocalAIInstaller.setModelRunning(running)
+    }
+    localModelCommand = command
+    return command
+  }
+
   func quit() {
     guard !quitting else { return }
     if modelCommandInProgress {
@@ -1534,6 +1602,8 @@ final class AppServices {
         setupStatus =
           "Measurement export is incomplete. Its completion record contains the loss status."
       }
+      // The local model holds gigabytes; it runs only while LocalFlow does.
+      await setLocalModel(running: false).value
       isReadyToTerminate = true
       NSApplication.shared.terminate(nil)
     }

@@ -4,6 +4,13 @@ import XCTest
 
 @testable import LocalFlow
 
+/// Deletes a test database with the WAL and shared-memory files SQLite leaves beside it.
+func removeDatabase(at url: URL) {
+  for suffix in ["", "-wal", "-shm"] {
+    try? FileManager.default.removeItem(atPath: url.path + suffix)
+  }
+}
+
 final class TranscriptionStoreTests: XCTestCase {
   private func makeStore() throws -> (TranscriptionStore, URL) {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -18,7 +25,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testStableIDRetryReturnsExistingWithoutResettingStatus() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let original = try entry()
     let reservation = try await store.reserve()
     _ = try await store.commit(reservation: reservation, entry: original)
@@ -33,7 +40,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testSameIDConflictingTextFailsAndReservationCanBeReleased() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let id = UUID()
     let first = try entry(id: id, text: "one")
     _ = try await store.commit(reservation: try await store.reserve(), entry: first)
@@ -48,7 +55,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testReservationCountsAgainstPayloadCapacity() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     // Every commit that still leaves room for one full reservation (Feature 012
     // widened it by the context row's maximum).
     let fits =
@@ -75,12 +82,12 @@ final class TranscriptionStoreTests: XCTestCase {
     let recovered = try await restarted.get(original.id)
     XCTAssertEqual(recovered?.deliveryState, .uncertain)
     XCTAssertEqual(recovered?.recoveryState, .needsReview)
-    try? FileManager.default.removeItem(at: url)
+    removeDatabase(at: url)
   }
 
   func testDismissKeepsTextQualityAndUsage() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let original = try entry()
     _ = try await store.commit(reservation: try await store.reserve(), entry: original)
     let dismissed = try await store.dismissRecovery(id: original.id, revision: original.revision)
@@ -92,7 +99,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testOnlyOneCaptureReservationIsAdmitted() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     _ = try await store.reserve()
     do {
       _ = try await store.reserve()
@@ -104,7 +111,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testCommitCanonicalizesInitialDeliveryAndRecoveryState() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let supplied = try TranscriptionEntry(
       id: UUID(), text: "saved", createdAtMilliseconds: 1, deliveryState: .confirmed,
       recoveryState: .resolved, quality: .incomplete, stopReason: .failure, revision: 42)
@@ -117,7 +124,7 @@ final class TranscriptionStoreTests: XCTestCase {
   func testLegacyPendingRowsArePreservedAndMapped() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "localflow-legacy-\(UUID().uuidString).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let old = try DatabaseQueue(path: url.path)
     let id = UUID().uuidString
     try await old.write { db in
@@ -143,7 +150,7 @@ final class TranscriptionStoreTests: XCTestCase {
   func testDamagedDatabaseIsRejectedWithoutReset() throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "localflow-damaged-\(UUID().uuidString).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     try Data("this is not sqlite".utf8).write(to: url)
     XCTAssertThrowsError(try TranscriptionStore(path: url.path))
     XCTAssertEqual(try Data(contentsOf: url), Data("this is not sqlite".utf8))
@@ -151,7 +158,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testRowCountReservationCapacityIsEnforced() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let database = try DatabaseQueue(path: url.path)
     try await database.write { db in
       for index in 0..<TranscriptionStore.maximumRows {
@@ -178,7 +185,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testStatusUpdatesDoNotChangeUsageAndConfirmedDeleteFreesIt() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let original = try entry(text: "usage")
     _ = try await store.commit(reservation: try await store.reserve(), entry: original)
     let before = try usage(at: url)
@@ -200,7 +207,7 @@ final class TranscriptionStoreTests: XCTestCase {
   func testSQLiteFullRollsBackSaveAndKeepsReservationForRetry() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "localflow-full-\(UUID().uuidString).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     // Freeze the page limit after the schema and first entry fit. This keeps the
     // failure test independent of schema growth while leaving no room for a second
     // 64 KiB entry. Deletion must still free enough pages to retry that same write.
@@ -235,7 +242,7 @@ final class TranscriptionStoreTests: XCTestCase {
   func testFailedLegacyMigrationPreservesOriginalRows() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "localflow-invalid-legacy-\(UUID().uuidString).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let database = try DatabaseQueue(path: url.path)
     try await database.write { db in
       try db.execute(
@@ -257,7 +264,7 @@ final class TranscriptionStoreTests: XCTestCase {
     async throws
   {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let envelope = try makeQualityEnvelope(raw: "e\u{301}  raw\r\n", text: "é assembled")
     let saved = try await store.commit(reservation: try await store.reserve(), envelope: envelope)
     let detail = try await store.qualityDetail(saved.id)
@@ -275,7 +282,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testQualityRetryRejectsProvenanceOrRawChangesButKeepsDeliveryRevisions() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let original = try makeQualityEnvelope()
     _ = try await store.commit(reservation: try await store.reserve(), envelope: original)
     let dismissed = try await store.dismissRecovery(id: original.entry.id, revision: 0)
@@ -301,7 +308,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testCanonicallyEquivalentLegacyRetryStillRequiresExactUTF8() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let original = try entry(text: "e\u{301}")
     _ = try await store.commit(reservation: try await store.reserve(), entry: original)
     do {
@@ -315,7 +322,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testQualityDeleteAndRestartReconcileEveryRepresentation() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let envelope = try makeQualityEnvelope()
     _ = try await store.commit(reservation: try await store.reserve(), envelope: envelope)
     let legacy = try entry(text: "legacy")
@@ -342,7 +349,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testFullEnvelopeReservationRejectsBeforeCaptureEvenForTinyRequestedText() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let database = try DatabaseQueue(path: url.path)
     try await database.write {
       try $0.execute(
@@ -360,7 +367,7 @@ final class TranscriptionStoreTests: XCTestCase {
   func testQualityTransactionFailureRollsBackParentDetailAndCounterAndAllowsSameRetry() async throws
   {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let database = try DatabaseQueue(path: url.path)
     try await database.write {
       try $0.execute(
@@ -387,7 +394,7 @@ final class TranscriptionStoreTests: XCTestCase {
   func testHistoryV1MigrationPreservesRowsWithoutInventingRawDetail() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "localflow-v1-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let database = try DatabaseQueue(path: url.path)
     try HistoryMigrations.migrator().migrate(database, upTo: "history-v1")
     let id = UUID()
@@ -470,7 +477,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testIncompleteDetailCannotBeStoredAsComplete() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let envelope = try makeQualityEnvelope(reasons: [.init(.uncertainJoin, window: 0)])
     let complete = try entry(id: envelope.entry.id, text: envelope.entry.text)
     do {
@@ -484,7 +491,7 @@ final class TranscriptionStoreTests: XCTestCase {
 
   func testDetailBytesParticipateInCommitCapacityChecks() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let envelope = try makeQualityEnvelope()
     let reservation = try await store.reserve()
     let database = try DatabaseQueue(path: url.path)
@@ -554,7 +561,7 @@ final class TranscriptionStoreTests: XCTestCase {
   /// a full (non-partial) index whose leading column is that column.
   func testEveryForeignKeyColumnHasALeadingIndex() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let unindexed = try await store.database.read { db in
       try Row.fetchAll(
         db,
@@ -593,7 +600,7 @@ final class TranscriptionStoreTests: XCTestCase {
   /// and a bounded WAL file after checkpoints.
   func testDatabaseUsesDurableWriteAheadLog() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     @Sendable func pragmas(_ db: Database) throws -> [String] {
       try [
         String.fetchOne(db, sql: "PRAGMA journal_mode") ?? "",
@@ -622,7 +629,7 @@ final class TranscriptionStoreTests: XCTestCase {
   /// no payload rescan and no empty fsynced transaction.
   func testCleanRestartPerformsNoStartupWrites() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     _ = try await store.commit(reservation: try await store.reserve(), entry: try entry())
     let before = try usage(at: url)
     try await store.database.write { db in

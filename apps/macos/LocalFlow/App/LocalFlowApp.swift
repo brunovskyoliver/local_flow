@@ -171,34 +171,19 @@ private struct LocalFlowWindowView: View {
   let services: AppServices
 
   var body: some View {
-    GeometryReader { geometry in
-      HStack(spacing: 0) {
-        sidebar(compact: geometry.size.width <= 800).frame(
-          width: geometry.size.width <= 800 ? 180 : 216)
-        VStack(spacing: 0) {
-          if let coordinator = services.coordinator {
-            RecoveryNotice(coordinator: coordinator)
-          }
-          if !services.preferences.onboardingComplete && services.router.selection == .history {
-            OnboardingView(settings: services.settings, coordinator: services.onboarding)
-          } else {
-            destination
-          }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(SottoPalette.surface)
-        .clipShape(.rect(cornerRadius: 16))
-        .overlay {
-          RoundedRectangle(cornerRadius: 16).strokeBorder(SottoPalette.line, lineWidth: 1)
-        }
-        .padding(.top, 44).padding(.trailing, 8).padding(.bottom, 8)
+    Group {
+      if services.preferences.onboardingComplete {
+        library
+      } else {
+        // First run owns the whole window; the library appears once setup is done.
+        OnboardingView(
+          settings: services.settings, coordinator: services.onboarding,
+          localAI: services.localAI, preferences: services.preferences
+        )
+        .background(SottoPalette.canvas)
+        .ignoresSafeArea(.container, edges: .top)
       }
-      .background(SottoPalette.canvas)
-      .font(.flow(size: 14))
-      .scrollIndicators(.never)
-      .environment(\.prototypeCompact, geometry.size.width <= 800)
     }
-    .ignoresSafeArea(.container, edges: .top)
     .foregroundStyle(SottoPalette.ink)
     .tint(SottoPalette.accent)
     .onExitCommand { services.coordinator?.cancel() }
@@ -218,6 +203,33 @@ private struct LocalFlowWindowView: View {
         InsertionReviewView(insertion: insertion, entry: entry)
       }
     }
+  }
+
+  private var library: some View {
+    GeometryReader { geometry in
+      HStack(spacing: 0) {
+        sidebar(compact: geometry.size.width <= 800).frame(
+          width: geometry.size.width <= 800 ? 180 : 216)
+        VStack(spacing: 0) {
+          if let coordinator = services.coordinator {
+            RecoveryNotice(coordinator: coordinator)
+          }
+          destination
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(SottoPalette.surface)
+        .clipShape(.rect(cornerRadius: 16))
+        .overlay {
+          RoundedRectangle(cornerRadius: 16).strokeBorder(SottoPalette.line, lineWidth: 1)
+        }
+        .padding(.top, 44).padding(.trailing, 8).padding(.bottom, 8)
+      }
+      .background(SottoPalette.canvas)
+      .font(.flow(size: 14))
+      .scrollIndicators(.never)
+      .environment(\.prototypeCompact, geometry.size.width <= 800)
+    }
+    .ignoresSafeArea(.container, edges: .top)
   }
 
   private func sidebar(compact: Bool) -> some View {

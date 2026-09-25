@@ -162,6 +162,8 @@ final class ShortcutController {
     ) { [weak self] _ in
       MainActor.assumeIsolated { self?.checkHealth() }
     }
+    // Lets macOS batch this wakeup with others instead of waking the CPU on its own.
+    healthMonitor?.tolerance = 0.5
   }
 
   static let idleHealthInterval: TimeInterval = 2

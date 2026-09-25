@@ -16,7 +16,7 @@ final class NativePresentationTests: XCTestCase {
     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
     let databaseURL = FileManager.default.temporaryDirectory.appendingPathComponent(
       "render-\(UUID()).sqlite")
-    defer { try? FileManager.default.removeItem(at: databaseURL) }
+    defer { removeDatabase(at: databaseURL) }
     let store = try TranscriptionStore(path: databaseURL.path)
     for index in 0..<4 {
       let entry = try TranscriptionEntry(
@@ -72,9 +72,82 @@ final class NativePresentationTests: XCTestCase {
         scheme: scheme)
       try await render(
         OnboardingView(
-          settings: settings, coordinator: OnboardingCoordinator(preferences: preferences)),
+          settings: settings, coordinator: OnboardingCoordinator(preferences: preferences),
+          localAI: LocalAISetup(preferences: nil, installer: nil, downloaded: []),
+          preferences: preferences),
         to: output.appendingPathComponent("setup-\(name).png"), appearance: appearance,
         scheme: scheme)
+    }
+  }
+
+  /// Every first-run step, with downloads caught mid-flight, for design review.
+  @MainActor
+  func testRenderOnboardingSteps() async throws {
+    guard let path = ProcessInfo.processInfo.environment["LOCALFLOW_UI_CAPTURE_DIR"] else {
+      throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_UI_CAPTURE_DIR for native render artifacts.")
+    }
+    let output = URL(fileURLWithPath: path, isDirectory: true)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    let suite = "LocalFlow-render-onboarding-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    var snapshot = SettingsViewModel.Snapshot()
+    snapshot.installing = true
+    snapshot.downloadBytes = 483_105_645
+    snapshot.progress = .init(phase: .staging, completedBytes: 301_000_000, totalBytes: 483_105_645)
+    snapshot.microphone = .granted
+    snapshot.inputMonitoring = .unknown
+    snapshot.accessibility = .denied
+    snapshot.storageAvailable = true
+    snapshot.shortcut = .rightControl
+    let state = snapshot
+    var installed = state
+    installed.modelInstalled = true
+    installed.installing = false
+    installed.inputMonitoring = .granted
+    installed.accessibility = .granted
+    installed.shortcutReady = true
+    let preferences = AppPreferences(defaults: defaults)
+    let settings = SettingsViewModel(observe: { state }, perform: { _ in })
+    await settings.refresh()
+    let coordinator = OnboardingCoordinator(preferences: preferences)
+    let localAI = LocalAISetup(
+      preferences: nil, installer: nil, physicalMemory: 32 << 30,
+      phase: .downloadingModel(completed: 1_130_000_000, total: 2_567_456_768), downloaded: [])
+    let view = OnboardingView(
+      settings: settings, coordinator: coordinator, localAI: localAI, preferences: preferences)
+    let ready = SettingsViewModel(observe: { installed }, perform: { _ in })
+    await ready.refresh()
+    let later = OnboardingView(
+      settings: ready, coordinator: coordinator, localAI: localAI, preferences: preferences)
+    let captures: [(String, any View, () -> Void)] = [
+      ("1-welcome", view, {}),
+      ("2-ai-choice", view, { coordinator.advance(readiness: state) }),
+      ("3-ai-remote", view, { coordinator.aiMode = .remote }),
+      ("4-ai-remote-server", view, { coordinator.advance(readiness: state) }),
+      (
+        "5-model", view,
+        {
+          coordinator.back()
+          coordinator.aiMode = .local
+          coordinator.advance(readiness: state)
+        }
+      ),
+      ("6-downloads", view, { coordinator.advance(readiness: state) }),
+      ("7-downloads-meetings", view, { coordinator.downloadMeetingModels() }),
+      ("8-permissions", view, { coordinator.advance(readiness: installed) }),
+      ("9-personalize", later, { coordinator.advance(readiness: installed) }),
+    ]
+    for (name, screen, step) in captures {
+      step()
+      for (mode, appearance, scheme) in [
+        ("light", NSAppearance.Name.aqua, ColorScheme.light), ("dark", .darkAqua, .dark),
+      ] {
+        try await render(
+          AnyView(screen).background(SottoPalette.canvas),
+          to: output.appendingPathComponent("onboarding-\(name)-\(mode).png"),
+          appearance: appearance, scheme: scheme, height: 760, width: 1000)
+      }
     }
   }
 

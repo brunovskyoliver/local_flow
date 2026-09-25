@@ -25,6 +25,8 @@ struct DictationIndicator: View {
   static let compactWidth: CGFloat = 46
   static let expandedWidth: CGFloat = 118
   static let barCount = 15
+  /// 60 fps is smooth for a small pill; ProMotion's 120 Hz only doubles the redraw cost.
+  static let frames = AnimationTimelineSchedule.animation(minimumInterval: 1.0 / 60)
   let state: DictationSession.State
   let level: Float
   let cancel: () -> Void
@@ -42,17 +44,17 @@ struct DictationIndicator: View {
       if state == .rewriting && !reduceMotion {
         // No label: a slow rolling wave with a light sweeping through it says the
         // text is being worked on.
-        TimelineView(.animation) { timeline in
+        TimelineView(Self.frames) { timeline in
           rewritingWave(time: timeline.date.timeIntervalSinceReferenceDate)
         }
         .transition(.opacity)
       } else if state == .recording && !reduceMotion {
-        TimelineView(.animation) { timeline in
+        TimelineView(Self.frames) { timeline in
           recordingStrip(time: timeline.date.timeIntervalSinceReferenceDate)
         }
       } else if Self.isProcessing(state) && !reduceMotion {
         // A soft pulse travels across low bars while the text is being made.
-        TimelineView(.animation) { timeline in
+        TimelineView(Self.frames) { timeline in
           bars(time: timeline.date.timeIntervalSinceReferenceDate)
         }
         .transition(.opacity)

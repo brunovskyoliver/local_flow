@@ -51,7 +51,16 @@ make check
 
 The tests use in-process HTTP/SSE backends for deadlines, cancellation, concurrency, credential separation, shielding, corpus detector coverage, response validation and memory bounds. Live model quality, client interaction, latency and RSS acceptance are separate Phase 11 work. See [phase-10.md](../specs/003-server-rewriting/acceptance/phase-10.md) for the recorded smoke test.
 
-## Start at login with MTPLX
+## Shipped app
+
+LocalFlow.app bundles flowd (`Contents/Helpers/flowd`) and registers it with MTPLX as
+login items during onboarding; no Go toolchain, MTPLX.app or script is needed on the
+user's Mac. See [ADR 0026](../docs/adr/0026-app-provisioned-local-ai.md). The labels are
+`org.localflow.LocalFlow.flowd` and `org.localflow.LocalFlow.mtplx`, and the runtime
+lives in `~/Library/Application Support/LocalFlow/LocalAI`. Remove the development
+agents below before testing onboarding on the same Mac; both want ports 8000 and 8080.
+
+## Start at login with MTPLX (development)
 
 For the existing local setup (LocalFlow at `http://127.0.0.1:8080`, MTPLX at
 `http://127.0.0.1:8000/v1`), run from the repository root:
@@ -59,6 +68,14 @@ For the existing local setup (LocalFlow at `http://127.0.0.1:8080`, MTPLX at
 ```sh
 scripts/install-rewrite-agent.sh youssofal-qwen3.5-4b-mtplx-optimized-speed
 ```
+
+To serve the model without MTPLX.app, quit the app and run
+`scripts/install-mtplx-agent.sh ~/.mtplx/models/<model-directory>`. It registers
+`org.localflow.mtplx`, which runs `mtplx serve` on `127.0.0.1:8000` at login with
+the app's serving flags. The app's dashboard polls the server continuously; the
+headless service avoids that idle CPU and about 270 MB of GUI memory. Remove it
+with `launchctl bootout gui/$(id -u)/org.localflow.mtplx` and delete
+`~/Library/LaunchAgents/org.localflow.mtplx.plist`.
 
 Use the exact model id served by your MTPLX instance. Stop any manually started
 flowd first. The installer builds a separate binary under

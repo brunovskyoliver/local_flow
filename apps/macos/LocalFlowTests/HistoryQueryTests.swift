@@ -22,7 +22,7 @@ final class HistoryQueryTests: XCTestCase {
 
   func testSearchUsesNormalizedParentAndSelectedStagesSurviveRestart() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let source = try makeQualityEnvelope(raw: "raw_only e\u{301}", text: "assembled_only")
     let base = try XCTUnwrap(source.detail)
     let detail = try TranscriptionQualityDetail(
@@ -64,7 +64,7 @@ final class HistoryQueryTests: XCTestCase {
 
   func testRawDetailPreservesReceivedOrderOverlapAndInvalidTimingLabel() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let source = try makeQualityEnvelope(text: "repeated words remain")
     let base = try XCTUnwrap(source.detail)
     let windows: [TranscriptionQualityDetail.RawWindow] = [
@@ -96,7 +96,7 @@ final class HistoryQueryTests: XCTestCase {
 
   func testOversizedStoredDetailIsRejectedWithoutReturningAnEnvelope() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let source = try makeQualityEnvelope()
     let saved = try await store.commit(reservation: try await store.reserve(), envelope: source)
     let database = try DatabaseQueue(path: url.path)
@@ -121,7 +121,7 @@ final class HistoryQueryTests: XCTestCase {
 
   func testTimestampTiesRoundTripAndWatermarkExcludesNewerRows() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     for index in 0..<45 { _ = try await save("row \(index)", store: store) }
     let first = try await store.page()
     XCTAssertEqual(first.entries.count, 20)
@@ -147,7 +147,7 @@ final class HistoryQueryTests: XCTestCase {
     async throws
   {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     _ = try await save("STARÉ cafe\u{301} 100% _ [x]", at: 1, store: store)
     for index in 0..<45 { _ = try await save("unrelated \(index)", at: 2, store: store) }
     for query in ["staré", "CAFÉ", "100% _ [x]"] {
@@ -162,7 +162,7 @@ final class HistoryQueryTests: XCTestCase {
 
   func testSearchBoundsAndEmptyStore() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let page = try await store.page()
     XCTAssertTrue(page.entries.isEmpty)
     XCTAssertNil(page.watermark)
@@ -172,7 +172,7 @@ final class HistoryQueryTests: XCTestCase {
 
   func testCancelledScanDoesNotPreventSave() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     for index in 0..<60 { _ = try await save("entry \(index)", store: store) }
     let search = Task { try await store.page(query: "missing") }
     search.cancel()
@@ -187,7 +187,7 @@ final class HistoryQueryTests: XCTestCase {
 
   func testTenThousandRowAdmissionAndExplicitDeleteFreesOneSlot() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let database = try DatabaseQueue(path: url.path)
     try await database.write { db in
       for _ in 0..<10_000 {
@@ -217,7 +217,7 @@ final class HistoryQueryTests: XCTestCase {
 
   func testDeleteStaleAndBusyPreserveText() async throws {
     let (store, url) = try makeStore()
-    defer { try? FileManager.default.removeItem(at: url) }
+    defer { removeDatabase(at: url) }
     let saved = try await save("keep me", store: store)
     let attempt = try await store.beginAttempt(id: saved.id, revision: saved.revision)
     do {

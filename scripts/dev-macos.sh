@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+configuration="${LOCALFLOW_CONFIGURATION:-Debug}"
 # Keep development launches on the identity and location authorized in System Settings.
 identity="${LOCALFLOW_SIGNING_IDENTITY:-Apple Development: obrunovsky7@gmail.com (D63PW2838J)}"
 app=/Applications/LocalFlow.app
@@ -9,10 +10,10 @@ security find-identity -v -p codesigning | grep -F -- "$identity" >/dev/null || 
   exit 1
 }
 xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -scheme LocalFlow \
-  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -configuration "$configuration" -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath build/SignedDevelopment CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$identity" DEVELOPMENT_TEAM=QUB47S3XTF build
-source_app=build/SignedDevelopment/Build/Products/Debug/LocalFlow.app
+source_app=build/SignedDevelopment/Build/Products/$configuration/LocalFlow.app
 codesign --verify --deep --strict "$source_app"
 if [[ -d "$app" ]]; then
   [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Contents/Info.plist")" == org.localflow.LocalFlow ]]

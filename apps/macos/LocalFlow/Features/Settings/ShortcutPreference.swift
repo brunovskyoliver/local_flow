@@ -139,6 +139,18 @@ struct ShortcutPreference: Codable, Equatable {
     return "Key \(code)"
   }
 
+  /// Onboarding's default: hold Right Control on its own.
+  static let rightControl = ShortcutPreference(
+    kind: .modifierOnly, modifiers: UInt32(controlKey),
+    deviceModifiers: UInt64(NX_DEVICERCTLKEYMASK))
+  static let rightOption = ShortcutPreference(
+    kind: .modifierOnly, modifiers: UInt32(optionKey),
+    deviceModifiers: UInt64(NX_DEVICERALTKEYMASK))
+  static let fnGlobe = ShortcutPreference()
+
+  /// False until a shortcut has been saved, so first-run defaults never override a choice.
+  static var isSaved: Bool { UserDefaults.standard.data(forKey: "shortcut") != nil }
+
   static func load() -> Self {
     guard let data = UserDefaults.standard.data(forKey: "shortcut"),
       let value = try? JSONDecoder().decode(Self.self, from: data), value.isValid
