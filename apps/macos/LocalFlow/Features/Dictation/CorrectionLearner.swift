@@ -240,7 +240,14 @@ final class CorrectionLearner {
         current = try await reader.readText(
           on: target, location: start, length: baselineLength + Self.growthUnits)
       } catch {
-        return Self.stopReason(for: error)
+        let reason = Self.stopReason(for: error)
+        // Fixing a word and pressing Return clears or leaves the field before a second read
+        // can confirm the fix; the last read before that is the final text.
+        if let pending, reason == .focusChanged || reason == .readFailed {
+          guard !Task.isCancelled else { return .cancelled }
+          return await learn(pending)
+        }
+        return reason
       }
       let candidate = CorrectionDetector.candidate(
         inserted: text, before: before, after: after, current: current, leadingCut: leadingCut,

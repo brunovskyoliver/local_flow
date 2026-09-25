@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// Every diarization table write goes through this actor, on the shared history
-/// `DatabaseQueue`. Each operation is one transaction except a window batch, which
+/// `DatabasePool`. Each operation is one transaction except a window batch, which
 /// commits its turns 500 at a time. Failure, interruption and preemption delete only
 /// the run's own rows; the accepted run changes only inside `complete`.
 actor SpeakerStore: SpeakerStoring {
@@ -23,10 +23,10 @@ actor SpeakerStore: SpeakerStoring {
   static let maxTurnMs = Int64(
     DiarizationConstants.windowSamples / (DiarizationConstants.sampleRate / 1_000))
 
-  nonisolated let database: DatabaseQueue
+  nonisolated let database: DatabasePool
   /// FR-037: correction counters, never the names or rows behind them.
   private let recorder: ResourceRecorder?
-  init(database: DatabaseQueue, recorder: ResourceRecorder? = nil) {
+  init(database: DatabasePool, recorder: ResourceRecorder? = nil) {
     self.database = database
     self.recorder = recorder
   }
@@ -158,6 +158,14 @@ actor SpeakerStore: SpeakerStoring {
         sql: "UPDATE diarization_runs SET state='running', started_at=? WHERE id=?",
         arguments: [now, runID.uuidString])
       return run
+    }
+  }
+
+  func markInRoom(runID: UUID) throws {
+    try write { db in
+      try db.execute(
+        sql: "UPDATE diarization_runs SET in_room=1 WHERE id=? AND state='running'",
+        arguments: [runID.uuidString])
     }
   }
 
@@ -449,6 +457,40 @@ actor SpeakerStore: SpeakerStoring {
         summaries[index].identity = identities[id]
       }
       return summaries
+    }
+  }
+
+  /// `speakerSummaries` without the quote, name and identity reads: the same rows in
+  /// the same order, members sorted like `includes`.
+  func speakerRoots(meetingID: UUID) throws -> [SpeakerRoot] {
+    try database.read { db in
+      guard let run = try Self.acceptedRun(meetingID, db: db) else { return [] }
+      let rows = try Row.fetchAll(
+        db,
+        sql: """
+          SELECT id, source, label_ordinal, merged_into
+          FROM meeting_speakers
+          WHERE (run_id=? AND speech_ms>0) OR (run_id IS NULL AND meeting_id=?)
+          ORDER BY color_index, run_id IS NULL, first_ms, cluster_key LIMIT 512
+          """, arguments: [run.id.uuidString, meetingID.uuidString])
+      var roots: [(id: UUID, source: SpeakerSource)] = []
+      var members: [UUID: [(id: UUID, source: SpeakerSource, ordinal: Int)]] = [:]
+      for row in rows {
+        guard let id = UUID(uuidString: row["id"]),
+          let source = SpeakerSource(rawValue: row["source"])
+        else { continue }
+        if let target = (row["merged_into"] as String?).flatMap(UUID.init(uuidString:)) {
+          members[target, default: []].append((id, source, row["label_ordinal"]))
+          continue
+        }
+        roots.append((id, source))
+      }
+      return roots.map { root in
+        let sorted = (members[root.id] ?? []).sorted {
+          ($0.source.rawValue, $0.ordinal) < ($1.source.rawValue, $1.ordinal)
+        }
+        return SpeakerRoot(id: root.id, source: root.source, members: sorted.map(\.id))
+      }
     }
   }
 

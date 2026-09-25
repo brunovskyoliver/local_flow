@@ -31,9 +31,10 @@ final class SpeakerIdentificationCoordinatorTests: XCTestCase {
   private static let blocks = 200
   private static let stretchMs = Int64(blocks) * TranscriptMeetingFixture.blockMs
 
-  private func makeCoordinator(scripts: [[Float]] = [VoiceVectors.unit(axis: 1)])
-    -> SpeakerIdentificationCoordinator
-  {
+  private func makeCoordinator(
+    scripts: [[Float]] = [VoiceVectors.unit(axis: 1)], retryDelay: Duration = .milliseconds(10),
+    signalled: Bool = false
+  ) -> SpeakerIdentificationCoordinator {
     let runtime = FakeVoiceEmbeddingRuntime(scripts: scripts)
     self.runtime = runtime
     let factory = FakeVoiceEmbeddingFactory(runtime: runtime)
@@ -52,7 +53,8 @@ final class SpeakerIdentificationCoordinatorTests: XCTestCase {
       clock: FakeMeetingClock())
     let coordinator = SpeakerIdentificationCoordinator(
       identifier: identifier, enrollment: enrollment, store: store,
-      enabled: { [unowned self] in self.enabled }, retryDelay: .milliseconds(10))
+      enabled: { [unowned self] in self.enabled }, retryDelay: retryDelay,
+      lifecycle: signalled ? lifecycle : nil)
     coordinator.noticePublished = { [unowned self] in self.notices.append($0) }
     return coordinator
   }
@@ -129,6 +131,23 @@ final class SpeakerIdentificationCoordinatorTests: XCTestCase {
     XCTAssertEqual(outcome, .stored(1))
     let made = await factory.makeCount
     XCTAssertEqual(made, 1)
+  }
+
+  /// A busy enrollment waits for the lease to be released instead of polling on the
+  /// fallback timer, so a long diarization does not use up its attempts.
+  func testABusyEnrollmentStartsWhenTheModelIsReleased() async throws {
+    let coordinator = makeCoordinator(retryDelay: .seconds(60), signalled: true)
+    let meeting = try await meeting()
+    let diarization = try await lifecycle.acquire(session: UUID(), workload: .diarization)
+    let task = Task { await coordinator.enroll(request(meeting, name: "Tomáš")) }
+    try await Task.sleep(for: .milliseconds(60))
+    let madeWhileBusy = await factory.makeCount
+    XCTAssertEqual(madeWhileBusy, 0)
+    let started = ContinuousClock.now
+    try await lifecycle.finish(diarization)
+    let outcome = await task.value
+    XCTAssertEqual(outcome, .stored(1))
+    XCTAssertLessThan(ContinuousClock.now - started, .seconds(10), "not the 60 s fallback")
   }
 
   func testTheGlobalSettingOffReturnsDisabledWithoutTouchingTheStore() async throws {

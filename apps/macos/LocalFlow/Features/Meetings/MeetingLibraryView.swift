@@ -14,9 +14,9 @@ struct MeetingLibraryView: View {
   var summaryModelFactory: ((UUID) -> SummaryModel?)? = nil
   let notesEditorFactory: (MeetingDetail) -> MeetingNotesEditor
   @State private var transcribe = true
-  @State private var hoveredID: UUID?
   @State private var previewRequestID: UUID?
-  @State private var shared = false
+  /// The open note's editor, made once per meeting rather than on every body pass.
+  @State private var editors = NotesEditorCache()
   @State private var showingSearch = false
   @State private var query = ""
   @State private var deleting: MeetingSummary?
@@ -29,7 +29,7 @@ struct MeetingLibraryView: View {
       if let detail = model.detail {
         MeetingDetailView(
           detail: detail, model: model, storageRoot: storageRoot,
-          notesEditor: notesEditorFactory(detail),
+          notesEditor: editors.editor(for: detail, make: notesEditorFactory),
           liveEditor: coordinator.activeMeetingID == detail.meeting.id
             ? coordinator.notesEditor : nil,
           transcriptStore: transcriptStore, transcription: coordinator.transcriptionCoordinator,
@@ -50,7 +50,7 @@ struct MeetingLibraryView: View {
         }
       }
     }
-    .font(.system(size: 13))
+    .font(.flow(size: 13))
     .foregroundStyle(SottoPalette.ink)
     .background(SottoPalette.surface)
     .task {
@@ -64,6 +64,10 @@ struct MeetingLibraryView: View {
       do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
       await model.preview(id)
     }
+    // Leaving the page drops the open meeting and the preview (up to 1 MiB of notes).
+    .onDisappear { model.releaseDetail() }
+    // A closed note reopens with a fresh editor loaded from the store.
+    .onChange(of: model.detail == nil) { _, closed in if closed { editors.reset() } }
     .onChange(of: preferences.meetingTranscriptionEnabled) { _, value in transcribe = value }
     .onChange(of: coordinator.version) { _, _ in Task { await model.refresh() } }
     .confirmationDialog(
@@ -93,7 +97,7 @@ struct MeetingLibraryView: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 0) {
           HStack(spacing: 6) {
-            Text("Notetaker").font(.system(size: 19, weight: .bold))
+            Text("Notetaker").font(.flow(size: 26, weight: .medium)).tracking(-0.4)
             Spacer()
             if compact {
               NoteIconButton(symbol: "sidebar.right", label: "Show note overview") {
@@ -119,8 +123,7 @@ struct MeetingLibraryView: View {
             Text(notice).foregroundStyle(.red).padding(.bottom, 12)
           }
           HStack(spacing: 20) {
-            NoteTab(title: "Past notes", selected: !shared) { shared = false }
-            NoteTab(title: "Shared with me", selected: shared) { shared = true }
+            NoteTab(title: "Past notes", selected: true) {}
             Spacer()
             NoteIconButton(symbol: "magnifyingglass", label: "Search loaded notes") {
               showingSearch.toggle()
@@ -128,15 +131,12 @@ struct MeetingLibraryView: View {
           }
           .overlay(alignment: .bottom) { NotetakerStyle.rule.frame(height: 1) }
           if showingSearch {
-            TextField("Search loaded notes", text: $query).textFieldStyle(.plain)
-              .padding(10).background(SottoPalette.canvas, in: .rect(cornerRadius: 6)).padding(
+            TextField("Search", text: $query).textFieldStyle(.plain).font(.flow(size: 14))
+              .padding(10).background(SottoPalette.canvas, in: .rect(cornerRadius: 8)).padding(
                 .top, 12)
           }
-          if shared {
-            empty("No shared notes", message: "Note sharing is not available yet.")
-          } else if model.rows.isEmpty {
-            empty(
-              "Your notes will appear here", message: "Start a new note to record a conversation.")
+          if model.rows.isEmpty {
+            empty("No notes yet")
           } else {
             noteList.padding(.top, 25)
           }
@@ -145,8 +145,7 @@ struct MeetingLibraryView: View {
         .padding(.horizontal, 30).padding(.top, 32).padding(.bottom, 32)
         .frame(maxWidth: .infinity)
       }
-      .scrollIndicators(.hidden)
-      .hideScrollers()
+      .scrollIndicators(.never)
       NoteUnavailableBar(prompt: "Ask about your meetings")
         .shadow(color: .black.opacity(0.06), radius: 5, y: 3)
         .padding(20)
@@ -171,7 +170,7 @@ struct MeetingLibraryView: View {
   private var today: some View {
     VStack(alignment: .leading, spacing: 16) {
       HStack {
-        Text("TODAY").font(.system(size: 10, weight: .semibold)).tracking(1)
+        Text("TODAY").font(.flow(size: 12, weight: .medium)).tracking(1.2)
         Spacer()
         NoteIconButton(symbol: "arrow.clockwise", label: "Refresh notes") {
           Task { await model.refresh() }
@@ -181,11 +180,12 @@ struct MeetingLibraryView: View {
       if needsAttention {
         ActiveMeetingView(coordinator: coordinator)
       } else {
-        Text("No meetings today").frame(maxWidth: .infinity).padding(.bottom, 12)
+        Text("No meetings today").font(.flow(size: 15)).frame(maxWidth: .infinity)
+          .padding(.bottom, 14)
       }
     }
-    .padding(.horizontal, 16).padding(.vertical, 10)
-    .background(SottoPalette.canvas, in: .rect(cornerRadius: 12))
+    .padding(.horizontal, 20).padding(.vertical, 12)
+    .background(SottoPalette.canvas, in: .rect(cornerRadius: 16))
   }
 
   private var filteredRows: [MeetingSummary] {
@@ -194,66 +194,28 @@ struct MeetingLibraryView: View {
   }
 
   private var noteList: some View {
-    LazyVStack(alignment: .leading, spacing: 3) {
+    // Filtered once per pass; each row compares its day with the previous row's.
+    let rows = filteredRows
+    return LazyVStack(alignment: .leading, spacing: 3) {
       if model.evictedNewest {
         Button("Show newest") { Task { await model.refresh() } }.padding(.bottom, 12)
       }
-      ForEach(Array(filteredRows.enumerated()), id: \.element.id) { index, row in
-        if index == 0 || day(row.createdAt) != day(filteredRows[index - 1].createdAt) {
+      ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+        if index == 0 || day(row.createdAt) != day(rows[index - 1].createdAt) {
           Text(dayHeading(row.createdAt))
-            .font(.system(size: 10, weight: .semibold)).tracking(0.8)
+            .font(.flow(size: 12, weight: .medium)).tracking(1.2)
             .foregroundStyle(SottoPalette.muted)
             .padding(.top, index == 0 ? 0 : 24).padding(.bottom, 7).padding(.leading, 4)
         }
-        HStack(spacing: 0) {
-          Button {
-            Task { await model.open(row.id) }
-          } label: {
-            HStack(spacing: 12) {
-              Image(systemName: "doc.text").font(.system(size: 13))
-                .foregroundStyle(SottoPalette.muted)
-                .frame(width: 30, height: 30)
-                .background(SottoPalette.button, in: .rect(cornerRadius: 7))
-              VStack(alignment: .leading, spacing: 5) {
-                Text(row.displayTitle).lineLimit(1)
-                Text(
-                  Date(timeIntervalSince1970: Double(row.createdAt) / 1_000),
-                  format: .dateTime.hour().minute()
-                )
-                .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
-              }
-              Spacer(minLength: 0)
-              if let status = coordinator.status, coordinator.activeMeetingID == row.id {
-                LiveRecordingBadge(status: status).padding(.trailing, 6)
-              } else if row.state != .completed {
-                Text(row.state.badgeText).font(.caption).foregroundStyle(SottoPalette.muted)
-              }
-              if row.hasTrackWarning || model.isDeletionPending(row.id) {
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                  .accessibilityLabel("Recording needs attention")
-              }
-            }.padding(.vertical, 12).padding(.leading, 10).contentShape(.rect)
-          }
-          .buttonStyle(.plain).focused($focusedID, equals: row.id)
-          .accessibilityIdentifier("notetaker.note.\(row.id)")
-          NoteOverflowMenu(canDelete: row.state.isTerminal) { deleting = row }
-            .padding(.horizontal, 8)
-        }
-        .background(
-          (hoveredID == row.id || focusedID == row.id) ? SottoPalette.canvas : .clear,
-          in: .rect(cornerRadius: 10)
-        )
-        .onHover { inside in
-          if inside {
-            hoveredID = row.id
-            previewRequestID = row.id
-          } else if hoveredID == row.id {
-            hoveredID = nil
-          }
-        }
+        NoteListRow(
+          row: row, coordinator: coordinator, focusedID: $focusedID,
+          deletionPending: model.isDeletionPending(row.id),
+          open: { Task { await model.open(row.id) } },
+          delete: { deleting = row },
+          hoverStarted: { previewRequestID = row.id })
       }
-      if filteredRows.isEmpty {
-        empty("No matching notes", message: "Try another title or load older notes.")
+      if rows.isEmpty {
+        empty("No matches")
       }
       if model.hasOlder {
         Button("Load older notes") { Task { await model.loadOlder() } }
@@ -262,30 +224,102 @@ struct MeetingLibraryView: View {
     }
   }
 
-  private func empty(_ title: String, message: String) -> some View {
-    VStack(spacing: 8) {
-      Text(title).font(.system(size: 14, weight: .medium))
-      Text(message).foregroundStyle(SottoPalette.muted)
-    }.frame(maxWidth: .infinity).padding(.vertical, 50)
+  private func empty(_ title: String) -> some View {
+    Text(title).font(.flow(size: 15)).foregroundStyle(SottoPalette.muted)
+      .frame(maxWidth: .infinity).padding(.vertical, 60)
   }
 
   private func day(_ milliseconds: Int64) -> Date {
     Calendar.current.startOfDay(for: Date(timeIntervalSince1970: Double(milliseconds) / 1_000))
   }
 
+  private static let monthDay = EnglishDateFormat.formatter("MMM d")
+  private static let weekdayMonthDay = EnglishDateFormat.formatter("EEE, MMM d")
+
   private func dayHeading(_ milliseconds: Int64) -> String {
     let date = day(milliseconds)
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMM d"
     if Calendar.current.isDateInToday(date) {
-      return "TODAY, " + formatter.string(from: date).uppercased()
+      return "TODAY, " + Self.monthDay.string(from: date).uppercased()
     }
     if Calendar.current.isDateInYesterday(date) {
-      return "YESTERDAY, " + formatter.string(from: date).uppercased()
+      return "YESTERDAY, " + Self.monthDay.string(from: date).uppercased()
     }
-    formatter.dateFormat = "EEE, MMM d"
-    return formatter.string(from: date).uppercased()
+    return Self.weekdayMonthDay.string(from: date).uppercased()
   }
+}
+
+/// One library row. Hover lives here, so moving the pointer redraws one row
+/// instead of the whole list.
+private struct NoteListRow: View {
+  let row: MeetingSummary
+  let coordinator: MeetingCoordinator
+  var focusedID: FocusState<UUID?>.Binding
+  let deletionPending: Bool
+  let open: () -> Void
+  let delete: () -> Void
+  let hoverStarted: () -> Void
+  @State private var hovered = false
+
+  var body: some View {
+    let highlighted = hovered || focusedID.wrappedValue == row.id
+    HStack(spacing: 0) {
+      Button(action: open) {
+        HStack(spacing: 12) {
+          Image(systemName: "doc.text").font(.flow(size: 14))
+            .foregroundStyle(SottoPalette.muted)
+            .frame(width: 36, height: 36)
+            .background(SottoPalette.tint, in: .rect(cornerRadius: 8))
+          VStack(alignment: .leading, spacing: 4) {
+            Text(row.displayTitle).font(.flow(size: 15)).lineLimit(1)
+            Text(
+              Date(timeIntervalSince1970: Double(row.createdAt) / 1_000),
+              format: .dateTime.hour().minute()
+            )
+            .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+          }
+          Spacer(minLength: 0)
+          if let status = coordinator.status, coordinator.activeMeetingID == row.id {
+            LiveRecordingBadge(state: status.state, elapsed: coordinator.elapsed)
+              .padding(.trailing, 6)
+          } else if row.state != .completed {
+            Text(row.state.badgeText).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+          }
+          if row.hasTrackWarning || deletionPending {
+            Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+              .accessibilityLabel("Recording needs attention")
+          }
+        }.padding(.vertical, 12).padding(.leading, 10).contentShape(.rect)
+      }
+      .buttonStyle(.plain).focused(focusedID, equals: row.id)
+      .accessibilityIdentifier("notetaker.note.\(row.id)")
+      NoteOverflowMenu(canDelete: row.state.isTerminal, delete: delete)
+        .padding(.horizontal, 8)
+        .opacity(highlighted ? 1 : 0)
+    }
+    .background(highlighted ? SottoPalette.canvas : .clear, in: .rect(cornerRadius: 10))
+    .onHover { inside in
+      hovered = inside
+      if inside { hoverStarted() }
+    }
+  }
+}
+
+/// Holds the open note's editor across body passes. Not observable: handing out
+/// the cached editor never invalidates a view.
+@MainActor
+final class NotesEditorCache {
+  private var editor: MeetingNotesEditor?
+
+  func editor(
+    for detail: MeetingDetail, make: (MeetingDetail) -> MeetingNotesEditor
+  ) -> MeetingNotesEditor {
+    if let editor, editor.meetingID == detail.meeting.id { return editor }
+    let made = make(detail)
+    editor = made
+    return made
+  }
+
+  func reset() { editor = nil }
 }
 
 /// Formatting retained for recording metadata and transcript availability.
@@ -300,9 +334,7 @@ enum MeetingRowView {
   }
 
   static func dateText(_ milliseconds: Int64) -> String {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .medium
-    formatter.timeStyle = .short
-    return formatter.string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1_000))
+    EnglishDateFormat.dateTime.string(
+      from: Date(timeIntervalSince1970: Double(milliseconds) / 1_000))
   }
 }

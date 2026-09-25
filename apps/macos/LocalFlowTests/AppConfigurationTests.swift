@@ -31,6 +31,22 @@ final class AppConfigurationTests: XCTestCase {
   }
 
   @MainActor
+  func testIndicatorLevelFramesSkipLayoutUntilStateChanges() {
+    let panel = IndicatorPanel(animated: false, announce: { _ in })
+    defer { panel.orderOut(nil) }
+    // Not visible yet: the level path falls back to a full presentation.
+    panel.updateLevel(0.1, state: .recording, cancel: {})
+    XCTAssertTrue(panel.isVisible)
+    let presented = panel.presentCount
+    for step in 0..<20 { panel.updateLevel(Float(step) / 20, state: .recording, cancel: {}) }
+    XCTAssertEqual(panel.presentCount, presented)
+    panel.updateLevel(0.5, state: .transcribing, cancel: {})
+    XCTAssertEqual(panel.presentCount, presented + 1)
+    panel.update(state: .idle, level: 0, cancel: {})
+    XCTAssertFalse(panel.isVisible)
+  }
+
+  @MainActor
   func testIndicatorAnnouncesTerminalStatesOnceBeforeHiding() {
     var announcements: [String] = []
     let panel = IndicatorPanel(animated: false) { announcements.append($0) }
@@ -48,6 +64,84 @@ final class AppConfigurationTests: XCTestCase {
     XCTAssertFalse(panel.observesGeometryChanges)
     panel.update(state: .failed, level: 0, cancel: {})
     XCTAssertEqual(announcements.last, "Dictation failed. Open LocalFlow for details.")
+  }
+
+  @MainActor
+  func testHiddenBackgroundNoticeStaysHiddenAcrossStagesOfTheSameWork() {
+    let panel = IndicatorPanel(animated: false, announce: { _ in })
+    defer { panel.orderOut(nil) }
+    let meeting = UUID()
+    let finalizing = BackgroundNotice(
+      id: meeting, message: "Finalizing transcript", symbol: "text.badge.checkmark",
+      progress: 0.4, destination: .transcript(meetingID: meeting))
+    panel.showBackgroundNotice(finalizing, open: {})
+    XCTAssertTrue(panel.showsBackgroundNotice)
+    panel.hideBackgroundNotice()
+    XCTAssertFalse(panel.isVisible)
+    // Labeling the same meeting stays hidden; another meeting's work shows.
+    var labeling = finalizing
+    labeling.message = "Labeling speakers"
+    panel.showBackgroundNotice(labeling, open: {})
+    XCTAssertFalse(panel.isVisible)
+    let other = BackgroundNotice(
+      id: UUID(), message: "Summarizing…", symbol: "text.quote", progress: nil,
+      destination: .meetings)
+    panel.showBackgroundNotice(other, open: {})
+    XCTAssertTrue(panel.showsBackgroundNotice)
+  }
+
+  @MainActor
+  func testClipboardNoticeTakesPrecedenceOverBackgroundAndDismissesByID() {
+    var announcements: [String] = []
+    let panel = IndicatorPanel(animated: false) { announcements.append($0) }
+    defer { panel.orderOut(nil) }
+    panel.showBackgroundNotice(
+      BackgroundNotice(
+        id: UUID(), message: "Labeling speakers", symbol: "person.2", progress: nil,
+        destination: .meetings), open: {})
+    let notice = ClipboardNotice(dictationID: UUID(), reason: .notInserted)
+    panel.showClipboardNotice(notice)
+    XCTAssertTrue(panel.isVisible)
+    XCTAssertFalse(panel.showsBackgroundNotice)
+    XCTAssertEqual(announcements.last, "Couldn't insert · copied to clipboard. Paste with Command-V.")
+    panel.dismissClipboardNotice(id: UUID())
+    XCTAssertFalse(panel.showsBackgroundNotice)
+    panel.dismissClipboardNotice(id: notice.id)
+    XCTAssertTrue(panel.showsBackgroundNotice)
+  }
+
+  @MainActor
+  func testRecordedWaveformScrollsRightToLeftKeepingEachSlicePeak() {
+    let history = WaveformHistory()
+    history.advance(to: 0, level: 0.02)
+    history.advance(to: 0.03, level: 0.2)
+    history.advance(to: 0.05, level: 0.01)
+    // The open slice holds its peak at the right edge.
+    XCTAssertEqual(history.current, 0.2)
+    XCTAssertEqual(history.progress(at: 0.035), 0.5, accuracy: 0.001)
+    history.advance(to: 0.071, level: 0.04)
+    XCTAssertEqual(history.slices.last, 0.2)
+    XCTAssertEqual(history.current, 0.04)
+    // The next slice pushes it one bar to the left.
+    history.advance(to: 0.142, level: 0)
+    XCTAssertEqual(history.slices.suffix(2), [0.2, 0.04])
+    // A stalled frame closes the missed slices as silence.
+    history.advance(to: 0.142 + 0.07 * 3, level: 0.1)
+    XCTAssertEqual(history.slices.suffix(3), [0.0, 0, 0])
+    XCTAssertEqual(history.heights.count, DictationIndicator.barCount + 1)
+    XCTAssertTrue(
+      [WaveformHistory.height(0), WaveformHistory.height(1), WaveformHistory.height(.nan)]
+        .allSatisfy { $0.isFinite && $0 >= 3 && $0 <= 28 })
+  }
+
+  @MainActor
+  func testProcessingPulseStaysWithinThePill() {
+    let heights = stride(from: 0.0, to: 1.2, by: 0.05).flatMap { time in
+      (0..<DictationIndicator.barCount).map {
+        DictationIndicator.processingBarHeight($0, time: time)
+      }
+    }
+    XCTAssertTrue(heights.allSatisfy { $0 >= 4 && $0 <= 16 })
   }
 
   @MainActor

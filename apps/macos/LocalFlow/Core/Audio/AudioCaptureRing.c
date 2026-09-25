@@ -15,7 +15,7 @@ _Static_assert(ATOMIC_LLONG_LOCK_FREE == 2, "Capture positions require lock-free
 struct LFSlot {
     uint32_t frames;
     uint64_t sourceStart;
-    float samples[LF_CHANNELS][LF_FRAMES];
+    float *samples; // channels × LF_FRAMES, planar, inside the ring's storage.
 };
 struct LFAudioRing {
     _Atomic unsigned head;
@@ -30,16 +30,29 @@ struct LFAudioRing {
     uint64_t consumedThrough; // Single consumer, never accessed by the producer.
     uint32_t channels;
     struct LFSlot slots[LF_SLOTS];
+    float storage[]; // LF_SLOTS × channels × LF_FRAMES, sized at creation.
 };
+
+static inline float *channelSamples(const struct LFSlot *slot, uint32_t channel) {
+    return slot->samples + (size_t)channel * LF_FRAMES;
+}
 
 LFAudioRing *LFAudioRingCreate(uint32_t channels, double sampleRate) {
     if (!channels || channels > LF_CHANNELS || !isfinite(sampleRate) ||
         sampleRate <= 0 || sampleRate > 192000) return NULL;
-    LFAudioRing *ring = malloc(sizeof(*ring));
+    // Sized by the actual channel count: one channel is 512 KiB of samples, not
+    // the 4 MiB an eight-channel layout needs.
+    size_t slotSamples = (size_t)channels * LF_FRAMES;
+    size_t size = sizeof(struct LFAudioRing) + (size_t)LF_SLOTS * slotSamples * sizeof(float);
+    LFAudioRing *ring = calloc(1, size);
     if (!ring) return NULL;
-    // Touch every sample page now, not on the audio callback's first copy.
+    // calloc may hand back untouched zero pages. Touch every page now, not on the
+    // audio callback's first copy; volatile keeps these stores from being elided.
     volatile unsigned char *bytes = (volatile unsigned char *)ring;
-    for (size_t i = 0; i < sizeof(*ring); ++i) bytes[i] = 0;
+    for (size_t i = 0; i < size; i += 4096) bytes[i] = 0;
+    bytes[size - 1] = 0;
+    for (unsigned slot = 0; slot < LF_SLOTS; ++slot)
+        ring->slots[slot].samples = ring->storage + slot * slotSamples;
     atomic_init(&ring->head, 0);
     atomic_init(&ring->tail, 0);
     atomic_init(&ring->copying, 0);
@@ -104,11 +117,11 @@ bool LFAudioRingPush(LFAudioRing *ring, const AudioBufferList *buffers, uint32_t
             const float *source = buffers->mBuffers[0].mData;
             for (uint32_t channel = 0; channel < ring->channels; ++channel)
                 for (uint32_t frame = 0; frame < count; ++frame)
-                    slot->samples[channel][frame] = source[(offset + frame) * ring->channels + channel];
+                    channelSamples(slot, channel)[frame] = source[(offset + frame) * ring->channels + channel];
         } else {
             for (uint32_t channel = 0; channel < ring->channels; ++channel) {
                 const float *source = buffers->mBuffers[channel].mData;
-                memcpy(slot->samples[channel], source + offset, count * sizeof(float));
+                memcpy(channelSamples(slot, channel), source + offset, count * sizeof(float));
             }
         }
         slot->frames = count;
@@ -136,10 +149,10 @@ uint32_t LFAudioRingPop(LFAudioRing *ring, AudioBufferList *buffers) {
         float *destination = buffers->mBuffers[0].mData;
         for (uint32_t frame = 0; frame < slot->frames; ++frame)
             for (uint32_t channel = 0; channel < ring->channels; ++channel)
-                destination[frame * ring->channels + channel] = slot->samples[channel][frame];
+                destination[frame * ring->channels + channel] = channelSamples(slot, channel)[frame];
     } else {
         for (uint32_t channel = 0; channel < ring->channels; ++channel)
-            memcpy(buffers->mBuffers[channel].mData, slot->samples[channel], slot->frames * sizeof(float));
+            memcpy(buffers->mBuffers[channel].mData, channelSamples(slot, channel), slot->frames * sizeof(float));
     }
     uint32_t frames = slot->frames;
     ring->consumedThrough = slot->sourceStart + frames;

@@ -96,6 +96,75 @@ final class WindowedTranscriptionTests: XCTestCase {
     XCTAssertTrue(detail.incomplete)
   }
 
+  /// Windows recognized while recording replay into the same windows, order and
+  /// assembly as recognizing everything after stop, and are never recognized twice.
+  func testIncrementalWindowsMatchTheBatchTranscript() async throws {
+    let window = WindowedTranscriber.productionWindowSamples
+    let total = 2 * window + 50_000
+    func fill(_ spool: AudioSpool, from start: Int, to end: Int) throws {
+      var offset = start
+      while offset < end {
+        let count = min(1_600, end - offset)
+        // Each window carries its own level, so its text depends on its audio.
+        try spool.append(
+          normalizedSamples: (offset..<offset + count).map { Float($0 / window + 1) / 10 })
+        offset += count
+      }
+    }
+    let root = try makeSpoolRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let batchRuntime = ContentWindowRuntime()
+    let batchLifecycle = ModelLifecycleCoordinator { batchRuntime }
+    let batchSpool = try AudioSpool(rootDirectory: root)
+    try fill(batchSpool, from: 0, to: total)
+    let batchLease = try await batchLifecycle.acquire(session: UUID())
+    let batch = await WindowedTranscriber(lifecycle: batchLifecycle).transcribe(
+      spool: batchSpool, lease: batchLease, sampleCount: total)
+    try await batchLifecycle.finish(batchLease)
+    try batchSpool.cleanup()
+
+    let liveRuntime = ContentWindowRuntime()
+    let liveLifecycle = ModelLifecycleCoordinator { liveRuntime }
+    let transcriber = WindowedTranscriber(lifecycle: liveLifecycle)
+    XCTAssertEqual(transcriber.liveWindowSamples, window)
+    let liveSpool = try AudioSpool(rootDirectory: root)
+    defer { try? liveSpool.cleanup() }
+    let liveLease = try await liveLifecycle.acquire(session: UUID())
+    var prefetched: [Int: PrefetchedWindow] = [:]
+    // Recording continues after each full window is recognized.
+    try fill(liveSpool, from: 0, to: window + 10_000)
+    prefetched[0] = try await transcriber.recognizeWindow(
+      spool: liveSpool, lease: liveLease, startSample: 0)
+    try fill(liveSpool, from: window + 10_000, to: 2 * window)
+    prefetched[window] = try await transcriber.recognizeWindow(
+      spool: liveSpool, lease: liveLease, startSample: window)
+    try fill(liveSpool, from: 2 * window, to: total)
+    let live = await transcriber.transcribe(
+      spool: liveSpool, lease: liveLease, sampleCount: total, prefetched: prefetched)
+    try await liveLifecycle.finish(liveLease)
+
+    XCTAssertEqual(Array(live.text.utf8), Array(batch.text.utf8))
+    XCTAssertEqual(live.incomplete, batch.incomplete)
+    XCTAssertEqual(live.completionReasons, batch.completionReasons)
+    let liveDetail = try XCTUnwrap(live.detail)
+    let batchDetail = try XCTUnwrap(batch.detail)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    XCTAssertEqual(
+      try encoder.encode(liveDetail.rawWindows), try encoder.encode(batchDetail.rawWindows))
+    XCTAssertEqual(liveDetail.rawWindows.map(\.sampleStart), [0, window, 2 * window])
+    XCTAssertEqual(Array(liveDetail.assembledText.utf8), Array(batchDetail.assembledText.utf8))
+    XCTAssertEqual(liveDetail.seams, batchDetail.seams)
+    XCTAssertEqual(
+      Array(live.normalizedForDelivery().text.utf8),
+      Array(batch.normalizedForDelivery().text.utf8))
+    let liveCounts = await liveRuntime.counts
+    let batchCounts = await batchRuntime.counts
+    XCTAssertEqual(liveCounts, batchCounts, "no window may be recognized twice")
+    XCTAssertEqual(liveCounts, [window, window, 50_000])
+  }
+
   func testBundledPipelineIdentityIsBoundedAndUnknownBuildStateIsExplicit() throws {
     let url = try XCTUnwrap(Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
     let data = try Data(contentsOf: url)
@@ -113,6 +182,16 @@ final class WindowedTranscriptionTests: XCTestCase {
       try TranscriptionPipelineIdentity(
         descriptor: descriptor,
         manifestHash: "invalid", build: "test-build"))
+    // Dictation runs Parakeet with the English/Slovak Latin-script filter, and the
+    // provenance says so instead of "automatic; no hint".
+    let filtered = try TranscriptionPipelineIdentity(
+      descriptor: descriptor, manifestHash: TranscriptionQualityDetail.hash(data),
+      build: "test-build", languageHint: FluidAudioRuntime.languageHint
+    ).provenance(sampleCount: 16_000, recognition: 1, assembly: 0.01)
+    XCTAssertNoThrow(try filtered.validate())
+    XCTAssertEqual(filtered.languageHint, "en_sk_latin_script")
+    XCTAssertFalse(filtered.automaticLanguage)
+    XCTAssertEqual(FluidAudioRuntime.scriptFilter.script, .latin)
   }
 
   func testSmallTailPaddingPreservesAudioAndRejectsInvalidWindows() throws {
@@ -281,6 +360,17 @@ private actor PipelineWindowRuntime: TranscriptionRuntime {
   func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
     counts.append(samples.count)
     return .init(text: counts.count == 1 ? " c\u{030C}au , svet " : " svet znova ", tokens: [])
+  }
+  func shutdown() async {}
+}
+
+/// Text depends on the window's audio, so a misplaced window changes the transcript.
+private actor ContentWindowRuntime: TranscriptionRuntime {
+  private(set) var counts: [Int] = []
+  func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+    counts.append(samples.count)
+    let level = Int((samples.first ?? 0) * 10)
+    return .init(text: " okno \(level) , dĺžka \(samples.count) ", tokens: [])
   }
   func shutdown() async {}
 }

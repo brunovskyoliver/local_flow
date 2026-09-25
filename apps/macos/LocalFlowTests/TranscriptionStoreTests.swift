@@ -49,7 +49,11 @@ final class TranscriptionStoreTests: XCTestCase {
   func testReservationCountsAgainstPayloadCapacity() async throws {
     let (store, url) = try makeStore()
     defer { try? FileManager.default.removeItem(at: url) }
-    for _ in 0..<507 {
+    // Every commit that still leaves room for one full reservation (Feature 012
+    // widened it by the context row's maximum).
+    let fits =
+      (TranscriptionStore.maximumPayloadBytes - TranscriptionStore.reservationBytes) / 65_536 + 1
+    for _ in 0..<fits {
       let reservation = try await store.reserve()
       let text = String(repeating: "x", count: 65_536)
       _ = try await store.commit(reservation: reservation, entry: try entry(id: UUID(), text: text))
@@ -544,6 +548,104 @@ final class TranscriptionStoreTests: XCTestCase {
       try detail(["N002", "N001", "N001"]).contentHash, try detail(["N001", "N002"]).contentHash)
     XCTAssertThrowsError(try detail(Array(repeating: "N001", count: 33)))
     XCTAssertThrowsError(try detail([String(repeating: "x", count: 129)]))
+  }
+
+  /// Deleting a parent row must not scan a child table: every foreign-key column has
+  /// a full (non-partial) index whose leading column is that column.
+  func testEveryForeignKeyColumnHasALeadingIndex() async throws {
+    let (store, url) = try makeStore()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let unindexed = try await store.database.read { db in
+      try Row.fetchAll(
+        db,
+        sql: """
+          WITH t AS (SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'),
+          fk AS (SELECT t.name AS tbl, f."from" AS col FROM t, pragma_foreign_key_list(t.name) f),
+          lead AS (
+            SELECT t.name AS tbl, ii.name AS col FROM t, pragma_index_list(t.name) il,
+              pragma_index_info(il.name) ii WHERE ii.seqno=0 AND il.partial=0)
+          SELECT tbl, col FROM fk
+          WHERE NOT EXISTS (SELECT 1 FROM lead WHERE lead.tbl=fk.tbl AND lead.col=fk.col)
+          ORDER BY tbl, col
+          """
+      ).map { "\($0["tbl"] as String).\($0["col"] as String)" }
+    }
+    XCTAssertEqual(unindexed, [])
+    let foreignKeys = try await store.database.read { db in
+      try Int.fetchOne(
+        db,
+        sql: """
+          SELECT count(*) FROM sqlite_master t, pragma_foreign_key_list(t.name)
+          WHERE t.type='table'
+          """)
+    }
+    XCTAssertGreaterThan(foreignKeys ?? 0, 40, "the check must see the whole schema")
+    let segmentPlan = try await store.database.read { db in
+      try Row.fetchAll(
+        db, sql: "EXPLAIN QUERY PLAN SELECT 1 FROM analysis_sources WHERE segment_id=?",
+        arguments: ["x"]
+      ).map { $0["detail"] as String }.joined(separator: "; ")
+    }
+    XCTAssertTrue(segmentPlan.contains("analysis_sources_fk_segment_id"), segmentPlan)
+  }
+
+  /// WAL keeps FULL synchronous commits with full fsyncs on the writer and readers,
+  /// and a bounded WAL file after checkpoints.
+  func testDatabaseUsesDurableWriteAheadLog() async throws {
+    let (store, url) = try makeStore()
+    defer { try? FileManager.default.removeItem(at: url) }
+    @Sendable func pragmas(_ db: Database) throws -> [String] {
+      try [
+        String.fetchOne(db, sql: "PRAGMA journal_mode") ?? "",
+        String(Int.fetchOne(db, sql: "PRAGMA synchronous") ?? -1),
+        String(Int.fetchOne(db, sql: "PRAGMA fullfsync") ?? -1),
+        String(Int.fetchOne(db, sql: "PRAGMA checkpoint_fullfsync") ?? -1),
+        String(Int.fetchOne(db, sql: "PRAGMA journal_size_limit") ?? -1),
+      ]
+    }
+    let expected = ["wal", "2", "1", "1", String(TranscriptionStore.journalSizeLimitBytes)]
+    let writer = try await store.database.write { try pragmas($0) }
+    let reader = try await store.database.read { try pragmas($0) }
+    XCTAssertEqual(writer, expected)
+    XCTAssertEqual(reader, expected)
+    _ = try await store.commit(reservation: try await store.reserve(), entry: try entry())
+    let restarted = try TranscriptionStore(path: url.path)
+    let reopened = try await restarted.database.write { try pragmas($0) }
+    XCTAssertEqual(reopened, expected)
+    let mode =
+      try FileManager.default.attributesOfItem(atPath: url.path + "-wal")[.posixPermissions]
+      as? Int
+    XCTAssertEqual(mode, 0o600)
+  }
+
+  /// A clean relaunch trusts the transactional usage counters and writes nothing:
+  /// no payload rescan and no empty fsynced transaction.
+  func testCleanRestartPerformsNoStartupWrites() async throws {
+    let (store, url) = try makeStore()
+    defer { try? FileManager.default.removeItem(at: url) }
+    _ = try await store.commit(reservation: try await store.reserve(), entry: try entry())
+    let before = try usage(at: url)
+    try await store.database.write { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE startup_writes (tbl TEXT);
+          CREATE TRIGGER usage_written AFTER UPDATE ON history_usage
+            BEGIN INSERT INTO startup_writes VALUES ('history_usage'); END;
+          CREATE TRIGGER transcription_written AFTER UPDATE ON transcriptions
+            BEGIN INSERT INTO startup_writes VALUES ('transcriptions'); END;
+          CREATE TRIGGER attempt_written AFTER UPDATE ON rewrite_attempts
+            BEGIN INSERT INTO startup_writes VALUES ('rewrite_attempts'); END;
+          """)
+    }
+    let restarted = try TranscriptionStore(path: url.path)
+    let interrupted = try await restarted.cancelPendingOnStartup()
+    XCTAssertEqual(interrupted, 0)
+    let writes = try await restarted.database.read {
+      try String.fetchAll($0, sql: "SELECT tbl FROM startup_writes")
+    }
+    XCTAssertEqual(writes, [])
+    XCTAssertEqual(try usage(at: url).count, before.count)
+    XCTAssertEqual(try usage(at: url).bytes, before.bytes)
   }
 
   private func usage(at url: URL) throws -> (count: Int, bytes: Int) {

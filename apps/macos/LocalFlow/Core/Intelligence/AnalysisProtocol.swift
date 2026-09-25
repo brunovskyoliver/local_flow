@@ -8,6 +8,11 @@ enum AnalysisBounds {
   static let schemaVersion = 1
   static let maxRequestBodyBytes = 262_144
   static let maxLineBytes = 98_304
+  /// Whole response stream. flowd sends a ~110-byte `progress` line every
+  /// 250 ms while generating, so a request that runs the full 300 s
+  /// per-request timeout carries ~1,200 of them (~132 KB) before its result
+  /// line (≤ `maxLineBytes`). 512 KiB leaves more than twice that room.
+  static let maxStreamBytes = 524_288
   static let maxErrorBodyBytes = 8_192
   static let maxIdentityBytes = 128
   static let maxTitleBytes = 256

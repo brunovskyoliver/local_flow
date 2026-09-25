@@ -35,17 +35,18 @@ final class HistoryViewModelTests: XCTestCase {
     model.refresh()
     try await waitForQuery(model)
     let firstIDs = model.entries.map(\.id)
+    XCTAssertEqual(firstIDs.count, 20)
+    // Scrolling down joins older pages below the ones already loaded.
     for _ in 0..<3 {
-      model.older()
-      try await waitForQuery(model)
-      XCTAssertLessThanOrEqual(model.entries.count, 20)
-      XCTAssertLessThanOrEqual(model.residentTextBytes, 20 * 65_536)
-    }
-    for _ in 0..<3 {
-      model.newer()
+      model.loadOlder()
       try await waitForQuery(model)
     }
-    XCTAssertEqual(model.entries.map(\.id), firstIDs)
+    XCTAssertEqual(model.entries.count, 65)
+    XCTAssertEqual(Array(model.entries.prefix(20).map(\.id)), firstIDs)
+    XCTAssertEqual(model.entries.last?.text, "full multiline\ntext 0")
+    XCTAssertFalse(model.hasOlder)
+    XCTAssertFalse(model.hasNewer)
+    XCTAssertLessThanOrEqual(model.residentTextBytes, 65 * 65_536)
     let selected = try XCTUnwrap(model.entries.first)
     model.selectedEntry = selected
     model.searchText = "text 1"
@@ -100,17 +101,13 @@ final class HistoryViewModelTests: XCTestCase {
     let saved = try await store.commit(reservation: try await store.reserve(), entry: entry)
     let dismissed = try await store.dismissRecovery(id: saved.id, revision: saved.revision)
     XCTAssertEqual(saved.qualityLabel, "Cut short at 180 seconds")
-    XCTAssertEqual(saved.recoveryLabel, "Needs insertion")
     XCTAssertEqual(dismissed.qualityLabel, saved.qualityLabel)
-    XCTAssertNil(dismissed.recoveryLabel)
     let attempt = try await store.beginAttempt(id: saved.id, revision: dismissed.revision)
     let uncertain = try await store.recordOutcome(
       id: saved.id, revision: attempt.entry.revision,
       attemptID: attempt.id, outcome: .uncertain)
-    XCTAssertEqual(uncertain.recoveryLabel, "Delivery uncertain")
     let resolvedUncertain = try await store.dismissRecovery(
       id: saved.id, revision: uncertain.revision)
-    XCTAssertNil(resolvedUncertain.recoveryLabel)
     XCTAssertEqual(resolvedUncertain.deliveryState, .uncertain)
     XCTAssertEqual(resolvedUncertain.qualityLabel, saved.qualityLabel)
     let model = HistoryViewModel(store: store)
@@ -122,6 +119,19 @@ final class HistoryViewModelTests: XCTestCase {
     XCTAssertEqual(model.dateGroups.first?.title, "Today")
     model.regroup(calendar: calendar, now: date.addingTimeInterval(86400))
     XCTAssertEqual(model.dateGroups.first?.title, "Yesterday")
+    // Older days read in English whatever the system locale.
+    model.regroup(calendar: calendar, now: date.addingTimeInterval(3 * 86400))
+    let expected = EnglishDateFormat.formatter(
+      "d MMMM yyyy", timeZone: calendar.timeZone, calendar: calendar
+    ).string(from: date)
+    XCTAssertEqual(model.dateGroups.first?.title, expected)
+    var english = Calendar(identifier: .gregorian)
+    english.locale = Locale(identifier: "en_GB")
+    let months = english.monthSymbols.joined(separator: "|")
+    XCTAssertEqual(EnglishDateFormat.locale.identifier, "en_US_POSIX")
+    XCTAssertNotNil(
+      expected.range(of: #"^\d{1,2} ("# + months + #") \d{4}$"#, options: .regularExpression),
+      expected)
     calendar.timeZone = TimeZone(secondsFromGMT: -12 * 3600)!
     model.regroup(calendar: calendar, now: date)
     XCTAssertEqual(model.dateGroups.first?.id, calendar.startOfDay(for: date))
@@ -232,15 +242,52 @@ final class HistoryViewModelTests: XCTestCase {
     try await waitForQuery(model)
     model.selectedEntry = model.entries.first
     for _ in 0..<3 {
-      model.older()
+      model.loadOlder()
       try await waitForQuery(model)
-      XCTAssertLessThanOrEqual(model.entries.count, 40, "At most two pages stay resident")
+      XCTAssertLessThanOrEqual(model.entries.count, HistoryViewModel.residentLimit)
       let selectedBytes = model.selectedEntry?.text.utf8.count ?? 0
       XCTAssertLessThanOrEqual(selectedBytes, 65_536)
       XCTAssertLessThanOrEqual(
-        model.residentTextBytes + selectedBytes, 2_621_440 + 65_536,
+        model.residentTextBytes + selectedBytes,
+        HistoryViewModel.residentLimit * 65_536 + 65_536,
         "Page text plus the selected row must stay inside the resident bound")
     }
+  }
+
+  /// Scrolling far lets go of the newest rows and scrolling back brings them again.
+  func testScrollWindowSlidesBothWaysWithinTheResidentLimit() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "history-window-\(UUID()).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = try TranscriptionStore(path: url.path)
+    let total = HistoryViewModel.residentLimit + 50
+    for index in 0..<total {
+      let entry = try TranscriptionEntry(
+        id: UUID(), text: "row \(index)", createdAtMilliseconds: Int64(index),
+        quality: .complete, stopReason: .keyRelease)
+      _ = try await store.commit(reservation: try await store.reserve(), entry: entry)
+    }
+    let model = HistoryViewModel(store: store)
+    model.refresh()
+    try await waitForQuery(model)
+    while model.hasOlder {
+      model.loadOlder()
+      try await waitForQuery(model)
+      XCTAssertLessThanOrEqual(model.entries.count, HistoryViewModel.residentLimit)
+    }
+    XCTAssertEqual(model.entries.last?.text, "row 0")
+    XCTAssertTrue(model.hasNewer)
+    while model.hasNewer {
+      model.loadNewer()
+      try await waitForQuery(model)
+      XCTAssertLessThanOrEqual(model.entries.count, HistoryViewModel.residentLimit)
+    }
+    XCTAssertEqual(model.entries.first?.text, "row \(total - 1)")
+    XCTAssertTrue(model.hasOlder)
+    // Rows stay newest first and unique across both slides.
+    let texts = model.entries.map(\.text)
+    XCTAssertEqual(Set(texts).count, texts.count)
+    XCTAssertEqual(texts, (0..<texts.count).map { "row \(total - 1 - $0)" })
   }
 
   func testSelectedDetailReplacementCloseAndDeletion() async throws {
@@ -333,6 +380,78 @@ final class HistoryViewModelTests: XCTestCase {
     XCTFail("Detail load did not settle")
   }
 
+  /// Feature 012, Story 2.4 and 2.5: whether the latest attempt carried the snapshot.
+  func testContextRewriteLineNamesUnsupportedSentAndCopied() {
+    func attempt(hash: String?, category: RewriteFailureCategory?) -> RewriteAttempt {
+      RewriteAttempt(
+        id: UUID(), transcriptionID: UUID(), ordinal: 1, mode: .clean,
+        state: category == nil ? .succeeded : .failed, inputText: "x", inputHash: "h",
+        outputText: nil, outputHash: nil, unchanged: false, failureCategory: category,
+        stale: false, startedAtMilliseconds: 0, spans: .none, serverQueueMilliseconds: nil,
+        backendFirstTokenMilliseconds: nil, backendMilliseconds: nil,
+        protocolVersion: hash == nil ? 1 : 2, identity: .unknown, endpointOrigin: "o",
+        insecureOverride: false, delivered: false, contextHash: hash)
+    }
+    let hash = String(repeating: "a", count: 64)
+    var unsupported = DictationContextRecord(outcome: .used, snapshotJSON: "{}")
+    unsupported.rewriteNote = DictationContextRecord.serverUnsupported
+    XCTAssertEqual(
+      HistoryViewModel.contextRewriteLine(unsupported, latest: attempt(hash: nil, category: nil)),
+      "Context not sent: server unsupported")
+    XCTAssertEqual(
+      HistoryViewModel.contextRewriteLine(.off, latest: attempt(hash: hash, category: nil)),
+      "Context sent to the rewrite server")
+    XCTAssertEqual(
+      HistoryViewModel.contextRewriteLine(
+        .off, latest: attempt(hash: hash, category: .contextCopied)),
+      "Rewrite used on-screen text you did not say; inserted your transcript.")
+    XCTAssertNil(
+      HistoryViewModel.contextRewriteLine(.off, latest: attempt(hash: nil, category: nil)))
+    XCTAssertNil(HistoryViewModel.contextRewriteLine(nil, latest: nil))
+  }
+
+  /// Feature 012 (SC-007, Story 1.4, Story 3.4).
+  func testContextOutcomeLabelsAndSpellingChanges() async throws {
+    let labels = ContextOutcome.allCases.map {
+      HistoryViewModel.contextLabel(DictationContextRecord(outcome: $0))
+    }
+    XCTAssertEqual(Set(labels).count, ContextOutcome.allCases.count)
+    XCTAssertEqual(HistoryViewModel.contextLabel(.off), "Context: off")
+    XCTAssertEqual(
+      HistoryViewModel.contextLabel(DictationContextRecord(outcome: .noPermission)),
+      "Context unavailable: permission")
+    XCTAssertEqual(HistoryViewModel.contextLabel(nil), "Context: not recorded")
+
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "context-vm-\(UUID()).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = try TranscriptionStore(path: url.path)
+    let snapshot = AppContextSnapshot.make(
+      .init(appName: "Slack", beforeCursor: "Ask Miroslav Kováčik "))
+    let change = ContextSpellingChange(
+      original: "Kovacik", replacement: "Kováčik", sourcePart: .beforeCursor, start: 4,
+      length: 7, match: .exactFold)
+    let entry = try TranscriptionEntry(
+      id: UUID(), text: "ask Kováčik", createdAtMilliseconds: 1, quality: .complete,
+      stopReason: .keyRelease)
+    let context = DictationContextRecord(
+      outcome: .used, captureMs: 12, appBundleID: "com.tinyspeck.slackmacgap",
+      snapshotJSON: snapshot.canonicalString, preSpellingText: "ask Kovacik",
+      spellingChangesJSON: String(decoding: try JSONEncoder().encode([change]), as: UTF8.self),
+      spellerVersion: ContextSpeller.version)
+    let saved = try await store.commit(
+      reservation: try await store.reserve(),
+      envelope: TranscriptionEnvelope(entry: entry, detail: nil, context: context))
+    let model = HistoryViewModel(store: store)
+    model.showDetail(saved)
+    try await waitForDetail(model)
+    XCTAssertEqual(model.contextLabel, "Context: used")
+    XCTAssertEqual(model.contextSpellingChanges, [change])
+    XCTAssertEqual(model.contextPreSpellingText, "ask Kovacik")
+    XCTAssertEqual(model.contextSnapshot, snapshot)
+    XCTAssertEqual(change.sourcePart.historyLabel, "Text before the cursor")
+  }
+
   private func makeCoordinator(store: TranscriptionStore) -> DictationCoordinator {
     let root = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent("LocalFlowHistoryVM-\(UUID().uuidString)", isDirectory: true)
@@ -365,4 +484,5 @@ private actor DetailLoadGate {
     continuation?.resume()
     continuation = nil
   }
+
 }

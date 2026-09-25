@@ -45,6 +45,8 @@ struct MeetingDetailView: View {
   @State private var assigningSpeakers: AssignSpeakersModel?
   /// FR-023a: the one-time "Look for this voice in past meetings?" prompt.
   @State private var pastSearchPrompt: PastSearchPrompt?
+  /// Marks the enrollment callback this note installed, so it clears only its own.
+  @State private var enrollmentOwner = UUID()
 
   struct PastSearchPrompt: Equatable {
     let knownSpeakerID: UUID
@@ -82,13 +84,13 @@ struct MeetingDetailView: View {
               Task { await model.delete(meeting.id, revision: meeting.revision) }
             }
           }
-        }.font(.caption).padding(12)
+        }.font(.flow(size: 12)).padding(12)
       }
       ScrollViewReader { proxy in
         ScrollView {
           VStack(alignment: .leading, spacing: 16) {
             switch tab {
-            case .thoughts: thoughts
+            case .thoughts: NoteThoughtsSection(editor: editor)
             case .transcript: transcriptSection
             case .summary: summary
             }
@@ -97,7 +99,7 @@ struct MeetingDetailView: View {
           .padding(.horizontal, 30).padding(.top, 20).padding(.bottom, 24)
           .frame(maxWidth: .infinity)
         }
-        .scrollIndicators(.hidden)
+        .scrollIndicators(.never)
         .hideScrollers()
         .onChange(of: pageAnchor) { _, target in
           // Eviction removes a page on the far side, so hold the row the reader was on.
@@ -105,24 +107,21 @@ struct MeetingDetailView: View {
           proxy.scrollTo(target.id, anchor: target.anchor)
           pageAnchor = nil
         }
-        .onChange(of: pager?.highlightedSegmentID) { _, id in
+        .task(id: pager?.highlightedSegmentID) {
           // Feature 011: a View-source jump lands here — scroll to the segment,
-          // then end the two-second highlight.
-          guard let id else { return }
-          Task { @MainActor in
-            await Task.yield()
-            withAnimation { proxy.scrollTo(id, anchor: .center) }
-          }
-          Task {
-            try? await Task.sleep(for: .seconds(2))
-            pager?.clearHighlight()
-          }
+          // then end the two-second highlight. A newer jump cancels this one, so
+          // its own highlight keeps the full two seconds.
+          guard let id = pager?.highlightedSegmentID else { return }
+          await Task.yield()
+          withAnimation { proxy.scrollTo(id, anchor: .center) }
+          do { try await Task.sleep(for: .seconds(2)) } catch { return }
+          pager?.clearHighlight()
         }
       }
       footer.frame(maxWidth: NotetakerStyle.readingWidth)
         .padding(.horizontal, 30).padding(.top, 12).padding(.bottom, 20)
     }
-    .font(.system(size: 13))
+    .font(.flow(size: 15))
     .foregroundStyle(SottoPalette.ink)
     .alert("Note sharing is not available yet", isPresented: $explainingSharing) {
       Button("OK", role: .cancel) {}
@@ -165,6 +164,7 @@ struct MeetingDetailView: View {
       await loaded.loadFirst()
       await diarization?.observe(meetingID: meeting.id)
       await identification?.observe(meetingID: meeting.id)
+      identification?.enrollmentDidStoreOwner = enrollmentOwner
       identification?.enrollmentDidStore = { [weak identification] id, name in
         guard let identification else { return }
         Task { @MainActor in
@@ -202,6 +202,10 @@ struct MeetingDetailView: View {
     .onDisappear {
       stopPlayback()
       Task { await editor.flush() }
+      if let identification, identification.enrollmentDidStoreOwner == enrollmentOwner {
+        identification.enrollmentDidStore = nil
+        identification.enrollmentDidStoreOwner = nil
+      }
     }
     .overlay {
       if let assigning = assigningSpeakers {
@@ -286,15 +290,15 @@ struct MeetingDetailView: View {
     VStack(alignment: .leading, spacing: 8) {
       TextField("Untitled", text: $titleDraft, axis: .vertical)
         .textFieldStyle(.plain)
-        .font(.system(size: 30, weight: .regular, design: .serif))
-        .tracking(-0.4)
+        .font(.flow(size: 38, weight: .regular, design: .serif))
+        .tracking(-0.6)
         .lineLimit(1...3)
         .focused($titleFocused)
         .onSubmit { saveTitle() }
         .accessibilityLabel("Note title")
         .accessibilityIdentifier("meeting.title")
       Text(MeetingRowView.dateText(meeting.createdAt))
-        .font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+        .font(.flow(size: 15)).foregroundStyle(SottoPalette.muted)
       if (liveStatus?.droppedFrames ?? 0) > 0
         || detail.tracks.contains(where: { $0.track.droppedFrames > 0 })
       {
@@ -302,18 +306,18 @@ struct MeetingDetailView: View {
           "Some audio was lost during recording. The transcript may be incomplete.",
           systemImage: "exclamationmark.triangle.fill"
         )
-        .font(.callout).foregroundStyle(.orange)
+        .font(.flow(size: 13)).foregroundStyle(.orange)
         .accessibilityIdentifier("meeting.captureLoss")
       } else if detail.tracks.contains(where: { $0.track.durationWarning }) {
         Label(
           "A recording track does not match the meeting duration. Some audio may be missing.",
           systemImage: "exclamationmark.triangle.fill"
         )
-        .font(.callout).foregroundStyle(.orange)
+        .font(.flow(size: 13)).foregroundStyle(.orange)
         .accessibilityIdentifier("meeting.durationWarning")
       }
       if let reason = meeting.failureReason {
-        Text(MeetingErrorMessage.text(for: reason)).font(.callout).foregroundStyle(.red)
+        Text(MeetingErrorMessage.text(for: reason)).font(.flow(size: 13)).foregroundStyle(.red)
           .accessibilityIdentifier("meeting.reason")
       }
     }.padding(.bottom, 4)
@@ -325,31 +329,6 @@ struct MeetingDetailView: View {
     let target = meeting
     let title = titleDraft
     Task { await model.setTitle(title, for: target) }
-  }
-
-  private var thoughts: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      SelectableTextEditor(
-        text: Binding(get: { editor.text }, set: { editor.text = $0 }),
-        selection: editor.revealText == editor.text ? editor.revealRange : nil,
-        onSelect: { editor.clearReveal() }
-      )
-      .frame(minHeight: 420)
-      .overlay(alignment: .topLeading) {
-        if editor.text.isEmpty {
-          Text("Capture your thoughts here").font(.system(size: 14))
-            .foregroundStyle(SottoPalette.muted.opacity(0.7))
-            .padding(.top, 4).allowsHitTesting(false)
-        }
-      }
-      .accessibilityLabel("My thoughts")
-      if let notice = editor.notice {
-        HStack {
-          Text(notice).foregroundStyle(.red)
-          Button("Retry save") { Task { await editor.flush() } }
-        }.font(.system(size: 12))
-      }
-    }
   }
 
   private var summary: some View {
@@ -391,43 +370,13 @@ struct MeetingDetailView: View {
           .buttonStyle(PrototypeButtonStyle())
           .accessibilityIdentifier("meeting.stop")
         } else {
-          footerPlayer
+          FooterPlayer(
+            track: detail.track(.microphone) ?? detail.track(.system),
+            playable: meeting.state.isTerminal, storageRoot: storageRoot,
+            playingKind: $playingKind, microphone: microphonePlayback, system: systemPlayback,
+            stop: stopPlayback)
         }
         NoteUnavailableBar()
-      }
-    }
-  }
-
-  /// The loaded track's controller, or the microphone one before anything is loaded.
-  private var playback: TrackPlaybackController {
-    playingKind == .system ? systemPlayback : microphonePlayback
-  }
-
-  /// Play / pause the recording in place; the microphone track wins, system audio is the fallback.
-  @ViewBuilder private var footerPlayer: some View {
-    let track = detail.track(.microphone) ?? detail.track(.system)
-    Button {
-      if playingKind == nil, let track {
-        playingKind = track.track.kind
-        playback.load(track: track, root: storageRoot)
-      }
-      if playback.isPlaying { playback.pause() } else { playback.play() }
-    } label: {
-      Label(
-        playback.isPlaying ? "Pause" : "Playback",
-        systemImage: playback.isPlaying ? "pause.circle" : "play.circle")
-    }
-    .buttonStyle(PrototypeButtonStyle())
-    .disabled(!meeting.state.isTerminal || track == nil)
-    .accessibilityIdentifier("meeting.playback")
-    if playingKind != nil {
-      Text(playback.positionText).font(.system(size: 12)).monospacedDigit()
-        .foregroundStyle(SottoPalette.muted)
-      Button("Stop") {
-        stopPlayback()
-      }.buttonStyle(PrototypeButtonStyle())
-      if let notice = playback.notice {
-        Text(notice).font(.caption).foregroundStyle(SottoPalette.muted).lineLimit(1)
       }
     }
   }
@@ -450,20 +399,21 @@ struct MeetingDetailView: View {
     return status
   }
   private var transcriptRow: MeetingTranscription? { transcriptStatus?.metadata ?? pager?.row }
-  private func canSeek(_ segment: TranscriptSegment) -> Bool {
-    let kind: MeetingTrackKind = segment.draft.analysisTracks == .system ? .system : .microphone
-    return meeting.state.isTerminal
-      && detail.track(kind)?.segments.contains { $0.state == .finalized } == true
+  /// Tracks "Play from here" can seek in: a finished meeting's tracks with a finalized
+  /// segment. Computed once per pass, not per row.
+  private var seekableKinds: Set<MeetingTrackKind> {
+    guard meeting.state.isTerminal else { return [] }
+    return Set(
+      MeetingTrackKind.allCases.filter { kind in
+        detail.track(kind)?.segments.contains { $0.state == .finalized } == true
+      })
   }
 
   private var transcriptSection: some View {
     VStack(alignment: .leading, spacing: 16) {
       HStack(spacing: 10) {
-        Label(
-          meetingDurationText(liveStatus?.recordedElapsedMs ?? meeting.recordedMs),
-          systemImage: "clock"
-        )
-        .monospacedDigit()
+        MeetingDurationLabel(
+          elapsed: liveStatus == nil ? nil : coordinator?.elapsed, storedMs: meeting.recordedMs)
         if liveStatus == nil, transcriptRow?.state != .final {
           Text("· " + transcriptBadgeText)
         }
@@ -500,7 +450,7 @@ struct MeetingDetailView: View {
           .accessibilityIdentifier("meeting.speakers.assign.open")
         }
       }
-      .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+      .font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
       .padding(.leading, 12).padding(.trailing, 4).frame(height: 32)
       .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
       if showsSpeakerControls { speakerStatusLine }
@@ -519,7 +469,11 @@ struct MeetingDetailView: View {
       if liveStatus != nil {
         liveTranscript
       } else if let pager, !pager.segments.isEmpty {
-        let segments = pager.segments.filter { pager.matches($0, query: transcriptQuery) }
+        let segments =
+          transcriptQuery.isEmpty
+          ? pager.segments : pager.segments.filter { pager.matches($0, query: transcriptQuery) }
+        let seekable = seekableKinds
+        let choices = speakerChoices
         LazyVStack(alignment: .leading, spacing: 3) {
           // No buttons: the next page loads when its edge scrolls into view.
           if pager.hasPrevious, let first = segments.first {
@@ -536,10 +490,10 @@ struct MeetingDetailView: View {
               showSource: pager.startsGroup(at: index, in: segments),
               highlighted: pager.highlightedSegmentID == segment.id,
               speaker: pager.label(for: segment.id),
-              speakerChoices: speakerChoices,
+              speakerChoices: choices,
               selected: pager.selection.contains(segment.id),
               select: { pager.toggleSelection(segment.id) },
-              seek: canSeek(segment) ? { seek(to: segment) } : nil,
+              seek: seekable.contains(Self.playbackKind(segment)) ? { seek(to: segment) } : nil,
               changeSpeaker: pager.speakers == nil
                 ? nil : { correctSpeaker(segment, to: $0) },
               confirmIdentity: showsIdentification ? { confirmIdentity(segment) } : nil
@@ -624,7 +578,7 @@ struct MeetingDetailView: View {
         EmptyView()
       }
     }
-    .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+    .font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
     .accessibilityIdentifier("meeting.speakers.status")
   }
 
@@ -691,7 +645,7 @@ struct MeetingDetailView: View {
         }
       }
     }
-    .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+    .font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
     .accessibilityIdentifier("meeting.identification.status")
   }
 
@@ -701,7 +655,7 @@ struct MeetingDetailView: View {
       Text(
         "Look for this voice in past meetings? \(prompt.meetingCount) \(prompt.meetingCount == 1 ? "meeting" : "meetings") would be checked."
       )
-      .font(.system(size: 12))
+      .font(.flow(size: 12))
       Button("Look") {
         let id = prompt.knownSpeakerID
         pastSearchPrompt = nil
@@ -784,8 +738,13 @@ struct MeetingDetailView: View {
     transcription?.requestFinalization(meetingID: meeting.id, revision: row.revision)
   }
 
+  /// The track a transcript row plays from: system audio for system rows, else the microphone.
+  private static func playbackKind(_ segment: TranscriptSegment) -> MeetingTrackKind {
+    segment.draft.analysisTracks == .system ? .system : .microphone
+  }
+
   private func seek(to segment: TranscriptSegment) {
-    let kind: MeetingTrackKind = segment.draft.analysisTracks == .system ? .system : .microphone
+    let kind = Self.playbackKind(segment)
     guard let track = detail.track(kind) else { return }
     if playingKind != kind { stopPlayback() }
     playingKind = kind
@@ -799,6 +758,96 @@ struct MeetingDetailView: View {
     microphonePlayback.unload()
     systemPlayback.unload()
     playingKind = nil
+  }
+}
+
+/// "My thoughts". Only this section reads the editor's text, so a keystroke redraws
+/// it and not the whole note.
+private struct NoteThoughtsSection: View {
+  let editor: MeetingNotesEditor
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      SelectableTextEditor(
+        text: Binding(get: { editor.text }, set: { editor.text = $0 }),
+        // The text comparison runs only while a View-source reveal is pending.
+        selection: editor.revealRange.flatMap { range in
+          editor.revealText == editor.text ? range : nil
+        },
+        onSelect: { editor.clearReveal() }
+      )
+      .frame(minHeight: 420)
+      .overlay(alignment: .topLeading) {
+        if editor.text.isEmpty {
+          Text("Capture your thoughts here").font(.flow(size: 14))
+            .foregroundStyle(SottoPalette.muted.opacity(0.7))
+            .padding(.top, 4).allowsHitTesting(false)
+        }
+      }
+      .accessibilityLabel("My thoughts")
+      if let notice = editor.notice {
+        HStack {
+          Text(notice).foregroundStyle(.red)
+          Button("Retry save") { Task { await editor.flush() } }
+        }.font(.flow(size: 12))
+      }
+    }
+  }
+}
+
+/// The transcript header's duration: the live 1 Hz elapsed while recording,
+/// otherwise the stored recorded time. Only this label reads the tick.
+private struct MeetingDurationLabel: View {
+  let elapsed: MeetingElapsed?
+  let storedMs: Int64
+
+  var body: some View {
+    Label(meetingDurationText(elapsed?.milliseconds ?? storedMs), systemImage: "clock")
+      .monospacedDigit()
+  }
+}
+
+/// Play / pause the recording in place; the microphone track wins, system audio is the
+/// fallback. Its own view, so the 4 Hz playback position redraws only the footer.
+private struct FooterPlayer: View {
+  let track: MeetingTrackDetail?
+  let playable: Bool
+  let storageRoot: MeetingStorageRoot
+  @Binding var playingKind: MeetingTrackKind?
+  let microphone: TrackPlaybackController
+  let system: TrackPlaybackController
+  let stop: () -> Void
+
+  /// The loaded track's controller, or the microphone one before anything is loaded.
+  private var playback: TrackPlaybackController {
+    playingKind == .system ? system : microphone
+  }
+
+  var body: some View {
+    Button {
+      if playingKind == nil, let track {
+        playingKind = track.track.kind
+        playback.load(track: track, root: storageRoot)
+      }
+      if playback.isPlaying { playback.pause() } else { playback.play() }
+    } label: {
+      Label(
+        playback.isPlaying ? "Pause" : "Playback",
+        systemImage: playback.isPlaying ? "pause.circle" : "play.circle")
+    }
+    .buttonStyle(PrototypeButtonStyle())
+    .disabled(!playable || track == nil)
+    .accessibilityIdentifier("meeting.playback")
+    if playingKind != nil {
+      Text(playback.positionText).font(.flow(size: 12)).monospacedDigit()
+        .foregroundStyle(SottoPalette.muted)
+      Button("Stop") {
+        stop()
+      }.buttonStyle(PrototypeButtonStyle())
+      if let notice = playback.notice {
+        Text(notice).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted).lineLimit(1)
+      }
+    }
   }
 }
 
@@ -843,12 +892,12 @@ struct NoteTranscriptBubble: View {
     VStack(alignment: .leading, spacing: 5) {
       if showSource, let speaker {
         HStack(spacing: 6) {
-          Text(speaker.text).font(.system(size: 12, weight: .medium))
+          Text(speaker.text).font(.flow(size: 12, weight: .medium))
             .foregroundStyle(
               speaker.colorIndex.map(SpeakerPalette.color) ?? SottoPalette.ink)
           if let confirmIdentity, case .suggested? = speaker.identity {
             Button(action: confirmIdentity) {
-              Image(systemName: "checkmark.circle").font(.system(size: 11))
+              Image(systemName: "checkmark.circle").font(.flow(size: 11))
             }
             .buttonStyle(.plain).foregroundStyle(SottoPalette.muted)
             .help("Confirm this speaker")
@@ -861,12 +910,12 @@ struct NoteTranscriptBubble: View {
         .accessibilityLabel("Speaker: \(speaker.text)")
       } else if showSource {
         Text(segment.draft.analysisTracks.sourceLabel)
-          .font(.system(size: 12, weight: .medium)).foregroundStyle(sourceColor)
+          .font(.flow(size: 12, weight: .medium)).foregroundStyle(sourceColor)
           .padding(.top, 14)
           .help(segment.draft.analysisTracks.sourceExplanation)
       }
       Text(segment.normalizedText)
-        .font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
+        .font(.flow(size: 13)).lineSpacing(4).textSelection(.enabled)
         .foregroundStyle(segment.finality == .provisional ? SottoPalette.muted : SottoPalette.ink)
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(
@@ -928,7 +977,10 @@ private struct SelectableTextEditor: NSViewRepresentable {
 
   func updateNSView(_ nsView: NSScrollView, context: Context) {
     let textView = nsView.documentView as! NSTextView
-    if textView.string != text {
+    // `lastText` is the string last pushed to or read from the view. After a
+    // keystroke the binding hands back that same storage, so this comparison
+    // takes Swift's identical-storage fast path instead of scanning the note.
+    if text != context.coordinator.lastText {
       context.coordinator.updating = true
       context.coordinator.set(text, in: textView)
       context.coordinator.updating = false
@@ -947,11 +999,13 @@ private struct SelectableTextEditor: NSViewRepresentable {
   final class Coordinator: NSObject, NSTextViewDelegate {
     var text: Binding<String>
     var updating = false
+    var lastText = ""
 
     init(text: Binding<String>) { self.text = text }
 
     /// Assigns text and reapplies the 6-pt line spacing the SwiftUI editor had.
     func set(_ value: String, in textView: NSTextView) {
+      lastText = value
       textView.string = value
       textView.font = .systemFont(ofSize: 14)
       let style = NSMutableParagraphStyle()
@@ -964,7 +1018,9 @@ private struct SelectableTextEditor: NSViewRepresentable {
 
     func textDidChange(_ notification: Notification) {
       guard !updating, let view = notification.object as? NSTextView else { return }
-      text.wrappedValue = view.string
+      let value = view.string
+      lastText = value
+      text.wrappedValue = value
     }
   }
 }

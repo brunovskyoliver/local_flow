@@ -6,6 +6,20 @@ import OSLog
 struct RewriteEndpoint: Sendable, Equatable {
   let url: URL
   let origin: String
+  /// Meeting analysis only: the summary-server headers pinned at admission
+  /// (`AnalysisTransporting.pinned`), held in memory for one run and never
+  /// logged or stored. Nil means "read the current Settings choice".
+  var summaryHeaders: [String: String]? = nil
+
+  /// Which primary backend a pinned endpoint reaches: origin, URL and model,
+  /// never the key. Keys the analysis partial cache.
+  var summaryBackendKey: String {
+    let headers = summaryHeaders ?? [:]
+    return [
+      origin, headers[SummaryServer.primaryURLHeader] ?? "",
+      headers[SummaryServer.primaryModelHeader] ?? "",
+    ].joined(separator: "|")
+  }
 
   init?(settings: RewriteSettings) {
     guard let url = settings.endpoint, settings.isEndpointValid else { return nil }
@@ -62,6 +76,27 @@ struct RewriteConnectionFailure: Error, Equatable, Sendable {
   let diagnostic: String
 }
 
+/// Feature 012: the one-entry protocol-version cache (ADR 0023). Holds the
+/// `protocol_versions` of one endpoint origin for the app run; a different
+/// origin replaces it, and a 400 to a v2 request discards it.
+struct RewriteProtocolVersionCache: Sendable, Equatable {
+  private(set) var origin: String?
+  private(set) var versions: [Int] = []
+
+  func versions(for origin: String) -> [Int]? { self.origin == origin ? versions : nil }
+
+  mutating func store(_ versions: [Int], for origin: String) {
+    self.origin = origin
+    self.versions = Array(versions.prefix(16))
+  }
+
+  mutating func discard(origin: String) {
+    guard self.origin == origin else { return }
+    self.origin = nil
+    versions = []
+  }
+}
+
 /// `URLSession`-backed transport. The session is ephemeral (no cache, cookies
 /// or credential storage), created lazily, and can be invalidated when
 /// rewriting is turned off so nothing stays mapped while the feature is idle.
@@ -75,6 +110,7 @@ final class RewriteClient: RewriteTransporting, @unchecked Sendable {
   private let configure: @Sendable (URLSessionConfiguration) -> Void
   private let lock = NSLock()
   private var session: URLSession?
+  private var versionCache = RewriteProtocolVersionCache()
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "rewrite")
 
   init(
@@ -124,6 +160,21 @@ final class RewriteClient: RewriteTransporting, @unchecked Sendable {
     existing?.invalidateAndCancel()
   }
 
+  // MARK: Protocol versions
+
+  /// Health's `protocol_versions` for the endpoint, fetched once per origin per
+  /// app run. A failed probe is not cached here; `RewriteCoordinator` keeps a
+  /// short negative entry that also covers its own probe time limit.
+  func protocolVersions(endpoint: RewriteEndpoint) async -> [Int]? {
+    if let cached = lock.withLock({ versionCache.versions(for: endpoint.origin) }) {
+      return cached
+    }
+    guard let health = try? await health(endpoint: endpoint) else { return nil }
+    return health.protocolVersions
+  }
+
+  var cachedProtocolVersions: RewriteProtocolVersionCache { lock.withLock { versionCache } }
+
   // MARK: Rewrite
 
   func rewrite(request: RewriteRequest, endpoint: RewriteEndpoint, timeout: Duration)
@@ -142,7 +193,9 @@ final class RewriteClient: RewriteTransporting, @unchecked Sendable {
             }
             group.addTask {
               try await self.stream(
-                urlRequest, cap: cap, requestBytes: requestBytes, continuation: continuation)
+                urlRequest, cap: cap, requestBytes: requestBytes,
+                sendsContext: request.sendsContext,
+                origin: endpoint.origin, continuation: continuation)
             }
             // The first to finish decides; the other is cancelled with the group.
             try await group.next()
@@ -169,18 +222,22 @@ final class RewriteClient: RewriteTransporting, @unchecked Sendable {
     if let secret = try? credentials.read(origin: endpoint.origin) {
       urlRequest.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
     }
-    let body = try JSONEncoder().encode(request)
+    let body = try request.httpBody()
     urlRequest.httpBody = body
     return (urlRequest, body.count)
   }
 
   private func stream(
-    _ urlRequest: URLRequest, cap: Int, requestBytes: Int,
+    _ urlRequest: URLRequest, cap: Int, requestBytes: Int, sendsContext: Bool, origin: String,
     continuation: AsyncThrowingStream<RewriteTransportItem, Error>.Continuation
   ) async throws {
     let (bytes, response) = try await currentSession().bytes(for: urlRequest)
     continuation.yield(.firstByte)
     guard let http = response as? HTTPURLResponse else { throw RewriteFailure(.transportError) }
+    // The server may have been replaced by one without v2; ask health again next time.
+    if sendsContext, http.statusCode == 400 {
+      lock.withLock { versionCache.discard(origin: origin) }
+    }
     guard http.statusCode == 200 else {
       let code = try await Self.errorCode(from: bytes)
       throw RewriteFailure(RewriteFailureCategory.forHTTPStatus(http.statusCode, code: code))
@@ -301,6 +358,9 @@ final class RewriteClient: RewriteTransporting, @unchecked Sendable {
         let health = try? HealthResponse.decode(data.prefix(RewriteBounds.maximumErrorBodyBytes))
       else {
         throw RewriteConnectionFailure(category: .rewriteServiceUnavailable, diagnostic: "non_json")
+      }
+      if health.isRewriteService {
+        lock.withLock { versionCache.store(health.protocolVersions, for: endpoint.origin) }
       }
       return health
     case 401, 403:

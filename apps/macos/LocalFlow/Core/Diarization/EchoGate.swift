@@ -93,6 +93,14 @@ enum EchoGate {
 
   /// nil when the profile cannot support a gate: too few paired frames, or the two
   /// tracks do not move together at any lag.
+  /// True when no system frame in the profile rises above the silence floor: the
+  /// remote side never spoke, or the system track has no audio at all.
+  static func systemIsSilent(_ profile: Profile) -> Bool {
+    profile.stretches.values.allSatisfy { stretch in
+      stretch.system.allSatisfy { $0 <= remoteFloorDB }
+    }
+  }
+
   static func calibrate(_ profile: Profile) -> Calibration? {
     guard profile.frames <= frameCapacity else { return nil }
     let stretches = profile.stretches.values.filter {

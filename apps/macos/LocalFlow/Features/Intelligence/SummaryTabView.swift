@@ -18,14 +18,15 @@ struct SummaryTabView: View {
       headerRow
       if model.readModel?.stale == true { staleBanner }
       if let error = model.editError {
-        Text(error).font(.system(size: 11)).foregroundStyle(.red)
+        Text(error).font(.flow(size: 11)).foregroundStyle(.red)
           .accessibilityIdentifier("meeting.summary.editError")
       }
       bodyContent
     }
     .accessibilityIdentifier("meeting.summary")
     .task { await model.refresh() }
-    .onChange(of: model.status) { _, _ in Task { await model.refresh() } }
+    // Progress-only changes do not reload; the running header reads progress directly.
+    .onChange(of: model.reloadKey) { _, _ in Task { await model.refresh() } }
   }
 
   // MARK: Header
@@ -38,7 +39,7 @@ struct SummaryTabView: View {
         model.readModel.map { "\($0.readingMinutes) MIN READ" } ?? "SUMMARY",
         systemImage: "lightbulb"
       )
-      .font(.system(size: 10, weight: .medium)).tracking(0.8).monospacedDigit()
+      .font(.flow(size: 12, weight: .medium)).tracking(1.2).monospacedDigit()
       .accessibilityIdentifier("meeting.summary.readingTime")
       Spacer()
       switch model.header {
@@ -55,7 +56,7 @@ struct SummaryTabView: View {
         if let progress = model.status.progress {
           ProgressView(value: progress.fraction).frame(width: 70).controlSize(.small)
         }
-        Text(stage)
+        Text(model.status.progress?.label ?? stage)
         cancelButton
       case .failed(let message):
         Text(message).foregroundStyle(.red).lineLimit(1)
@@ -71,9 +72,9 @@ struct SummaryTabView: View {
         overflowMenu
       }
     }
-    .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
-    .padding(.leading, 12).padding(.trailing, 4).frame(height: 32)
-    .background(SottoPalette.canvas, in: .rect(cornerRadius: 6))
+    .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+    .padding(.leading, 14).padding(.trailing, 6).frame(height: 44)
+    .background(SottoPalette.canvas, in: .rect(cornerRadius: 8))
   }
 
   private var cancelButton: some View {
@@ -97,7 +98,7 @@ struct SummaryTabView: View {
         Text(line)
       }
     } label: {
-      Image(systemName: "ellipsis").font(.system(size: 13))
+      Image(systemName: "ellipsis").font(.flow(size: 13))
         .frame(width: 28, height: 28).contentShape(.rect)
     }
     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -155,7 +156,7 @@ struct SummaryTabView: View {
       Button("Regenerate") { model.regenerate() }
         .buttonStyle(PrototypeButtonStyle())
     }
-    .font(.system(size: 12)).padding(10)
+    .font(.flow(size: 12)).padding(10)
     .background(SottoPalette.warning.opacity(0.12), in: .rect(cornerRadius: 6))
     .accessibilityIdentifier("meeting.summary.stale")
   }
@@ -170,7 +171,7 @@ struct SummaryTabView: View {
 
     ForEach(read.topics) { topic in
       Section(title: topic.title) {
-        ForEach(topic.bullets, id: \.self) { bullet in
+        ForEach(Array(topic.bullets.enumerated()), id: \.offset) { _, bullet in
           Bullet { model.highlighted(bullet) }
         }
       }
@@ -202,11 +203,11 @@ struct SummaryTabView: View {
     let title: String
     @ViewBuilder var content: Content
     var body: some View {
-      VStack(alignment: .leading, spacing: 4) {
-        Text(title).font(.system(size: 13, weight: .semibold)).padding(.bottom, 2)
+      VStack(alignment: .leading, spacing: 9) {
+        Text(title).font(.flow(size: 15, weight: .semibold))
         content
       }
-      .padding(.top, 6)
+      .padding(.top, 14)
     }
   }
 
@@ -260,10 +261,14 @@ struct SummaryTabView: View {
           Bullet {
             // FR-025: segment-sourced items may name their speaker; a note-only
             // item has no attribution by construction.
-            model.highlighted(showAI ? item.aiText : item.text)
-              + Text(item.speakerAttribution == nil ? "" : " — ").foregroundColor(
-                SottoPalette.muted)
-              + model.highlighted(item.speakerAttribution ?? "")
+            // An item that already names its speaker does not repeat the name.
+            let text = showAI ? item.aiText : item.text
+            let attribution = item.speakerAttribution.flatMap {
+              text.localizedCaseInsensitiveContains($0) ? nil : $0
+            }
+            model.highlighted(text)
+              + Text(attribution == nil ? "" : " — ").foregroundColor(SottoPalette.muted)
+              + model.highlighted(attribution ?? "")
           }
           .onTapGesture(count: 2) { if editable { beginEdit() } }
           Spacer(minLength: 4)
@@ -322,7 +327,7 @@ struct SummaryTabView: View {
           }
         }
       } label: {
-        Image(systemName: "ellipsis").font(.system(size: 11))
+        Image(systemName: "ellipsis").font(.flow(size: 11))
           .foregroundStyle(SottoPalette.muted)
           .frame(width: 20, height: 20).contentShape(.rect)
       }
@@ -353,7 +358,7 @@ struct SummaryTabView: View {
     var body: some View {
       if editing {
         TextEditor(text: $draft)
-          .font(.body).frame(minHeight: 90)
+          .font(.flow(size: 14)).frame(minHeight: 90)
           .hideScrollers()
           .overlay { RoundedRectangle(cornerRadius: 4).stroke(SottoPalette.line) }
         HStack(spacing: 8) {
@@ -369,7 +374,8 @@ struct SummaryTabView: View {
       } else {
         VStack(alignment: .leading, spacing: 10) {
           let text = showAI ? read.summary.aiText : read.summary.text
-          ForEach(text.components(separatedBy: "\n\n"), id: \.self) { paragraph in
+          ForEach(Array(text.components(separatedBy: "\n\n").enumerated()), id: \.offset) {
+            _, paragraph in
             model.highlighted(paragraph).lineSpacing(6).fixedSize(horizontal: false, vertical: true)
           }
         }
@@ -414,7 +420,7 @@ struct SummaryTabView: View {
       if !sources.isEmpty {
         Button(action: action) {
           Image(systemName: "arrow.up.right.square")
-            .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+            .font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
         }
         .buttonStyle(.plain)
         .help("View source")
@@ -446,7 +452,7 @@ struct SummaryTabView: View {
             systemName: item.status == .completed
               ? "checkmark.circle.fill" : "circle"
           )
-          .font(.system(size: 13))
+          .font(.flow(size: 13))
           .foregroundStyle(
             item.status == .completed ? SottoPalette.success : SottoPalette.muted)
         }
@@ -558,7 +564,7 @@ struct SummaryTabView: View {
           }
         }
       } label: {
-        Image(systemName: "ellipsis").font(.system(size: 11))
+        Image(systemName: "ellipsis").font(.flow(size: 11))
           .foregroundStyle(SottoPalette.muted)
           .frame(width: 20, height: 20).contentShape(.rect)
       }
@@ -570,7 +576,7 @@ struct SummaryTabView: View {
     /// "Someone else…" — a mentioned-name owner entry (contract "Editing").
     private var otherNameField: some View {
       VStack(alignment: .leading, spacing: 8) {
-        Text("Owner name").font(.system(size: 11, weight: .semibold))
+        Text("Owner name").font(.flow(size: 11, weight: .semibold))
         TextField("Name", text: $otherName)
           .textFieldStyle(.roundedBorder)
           .onSubmit { saveOther() }
@@ -646,7 +652,7 @@ struct SummaryTabView: View {
           Circle().fill(SpeakerPalette.color(colorIndex)).frame(width: 8, height: 8)
           Text(certainty == .localUser ? "You" : name)
         }
-        .font(.system(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
+        .font(.flow(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
         .background(SottoPalette.button, in: .capsule)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("meeting.summary.owner")
@@ -655,9 +661,9 @@ struct SummaryTabView: View {
         HStack(spacing: 6) {
           VStack(alignment: .leading, spacing: 1) {
             Text(name)
-            Text("mentioned").font(.system(size: 9)).foregroundStyle(SottoPalette.muted)
+            Text("mentioned").font(.flow(size: 9)).foregroundStyle(SottoPalette.muted)
           }
-          .font(.system(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
+          .font(.flow(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
           .overlay { Capsule().stroke(SottoPalette.line) }
           .accessibilityElement(children: .combine)
           .accessibilityIdentifier("meeting.summary.owner")
@@ -668,12 +674,12 @@ struct SummaryTabView: View {
               Button("Accept") { onAcceptSuggestion?() }
                 .accessibilityIdentifier("meeting.summary.owner.accept")
             }
-            .font(.system(size: 9)).foregroundStyle(SottoPalette.muted)
+            .font(.flow(size: 9)).foregroundStyle(SottoPalette.muted)
           }
         }
       case .unresolved(let label):
         Text(label)
-          .font(.system(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
+          .font(.flow(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
           .overlay {
             Capsule().stroke(
               SottoPalette.muted, style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
@@ -715,12 +721,12 @@ struct SummaryTabView: View {
       case .explicitAbsolute, .explicitRelativeResolved:
         if let date = showAI ? item.aiDueDate : item.dueDate {
           Text("Due \(SummaryModel.dueText(date))")
-            .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+            .font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
             .help(item.dueOriginal ?? "")
         }
       case .unresolved:
         Text("Due: unclear\(item.dueOriginal.map { " (\"\($0)\")" } ?? "")")
-          .font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+          .font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
       case .absent:
         EmptyView()
       }
@@ -733,18 +739,18 @@ struct SummaryTabView: View {
     let model: SummaryModel
     var body: some View {
       VStack(alignment: .leading, spacing: 10) {
-        Text("Previous edits").font(.system(size: 12, weight: .semibold))
+        Text("Previous edits").font(.flow(size: 12, weight: .semibold))
         ForEach(model.readModel?.previousEdits ?? []) { edit in
           VStack(alignment: .leading, spacing: 3) {
             if let snapshot = edit.itemTextSnapshot {
-              Text(snapshot).font(.system(size: 11)).lineLimit(2)
+              Text(snapshot).font(.flow(size: 11)).lineLimit(2)
                 .foregroundStyle(SottoPalette.muted)
             }
             HStack {
-              Text(edit.userValue).font(.system(size: 11)).lineLimit(1)
+              Text(edit.userValue).font(.flow(size: 11)).lineLimit(1)
               Spacer()
               Button("Delete") { Task { await model.removeEdit(id: edit.id) } }
-                .buttonStyle(.plain).foregroundStyle(.red).font(.system(size: 11))
+                .buttonStyle(.plain).foregroundStyle(.red).font(.flow(size: 11))
             }
           }
         }
@@ -763,17 +769,5 @@ struct SummaryTabView: View {
       try? await Task.sleep(for: .seconds(2))
       copied = false
     }
-  }
-}
-
-extension SummaryModel {
-  /// Summary text with every speaker's name in the color the transcript gives them.
-  func highlighted(_ text: String) -> Text {
-    var attributed = AttributedString(text)
-    for mention in speakerMentions(in: text) {
-      guard let range = Range(mention.range, in: attributed) else { continue }
-      attributed[range].foregroundColor = SpeakerPalette.color(mention.colorIndex)
-    }
-    return Text(attributed)
   }
 }

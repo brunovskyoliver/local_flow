@@ -104,6 +104,10 @@ final class ResourceRecorder: @unchecked Sendable {
     case analysisDroppedUnsupportedCount, analysisIdentityDowngradeCount
     case analysisUnresolvedOwnerCount, analysisFailure, analysisStaleCount
     case analysisOverlayOrphanCount, analysisQueueDepth
+    // Feature 012: one sample set per dictation whose context was read. The key is
+    // the outcome or the part name, both closed sets; never text or a bundle ID.
+    case contextCaptureDuration, contextOutcome, contextPartBytes, contextTermCount
+    case contextSpellingChanges
 
     var kind: Kind {
       switch self {
@@ -117,11 +121,12 @@ final class ResourceRecorder: @unchecked Sendable {
         .diarizationModelLoadDuration, .diarizationModelReleaseDuration, .diarizationDuration,
         .diarizationRealTimeFactor, .diarizationEchoProfileDuration,
         .identificationModelLoadDuration, .identificationModelReleaseDuration,
-        .identificationDuration, .analysisRunDuration, .analysisStageDuration:
+        .identificationDuration, .analysisRunDuration, .analysisStageDuration,
+        .contextCaptureDuration:
         return .duration
       case .rawTextBytes, .assembledTextBytes, .normalizedTextBytes, .metadataBytes,
         .rewriteRequestBytes, .rewriteResponseBytes, .meetingBytesWritten, .meetingSegmentBytes,
-        .analysisInputBytes, .analysisOutputBytes:
+        .analysisInputBytes, .analysisOutputBytes, .contextPartBytes:
         return .bytes
       case .windowCount, .completionReasonCount, .appliedRuleCount, .appliedEntryCount,
         .rewriteInputScalars, .rewriteAttemptOrdinal, .rewriteOutcome, .rewriteFallback,
@@ -146,7 +151,8 @@ final class ResourceRecorder: @unchecked Sendable {
         .analysisPreemptionCount, .analysisItemCount, .analysisDroppedLiteralCount,
         .analysisDroppedUnsupportedCount, .analysisIdentityDowngradeCount,
         .analysisUnresolvedOwnerCount, .analysisFailure, .analysisStaleCount,
-        .analysisOverlayOrphanCount, .analysisQueueDepth:
+        .analysisOverlayOrphanCount, .analysisQueueDepth, .contextOutcome, .contextTermCount,
+        .contextSpellingChanges:
         return .count
       }
     }
@@ -191,6 +197,9 @@ final class ResourceRecorder: @unchecked Sendable {
       // it at 100 (contracts/client-analysis.md).
       case .analysisQueueDepth: return 100
       case .analysisFailure, .analysisStaleCount: return 1
+      case .contextOutcome: return 1
+      case .contextTermCount: return UInt32(AppContextSnapshot.maximumTerms)
+      case .contextSpellingChanges: return UInt32(ContextSpeller.maximumChanges)
       default: return ResourceRecorder.maximumItemCount
       }
     }
@@ -243,6 +252,11 @@ final class ResourceRecorder: @unchecked Sendable {
       .diarizationMinorClusterCount, .speakerRenameCount,
       .speakerMergeCount,
       .speakerUnmergeCount, .speakerSegmentCorrectionCount,
+    ]
+    var isContext: Bool { rawValue.hasPrefix("context") }
+    static let allContextCases: [Metric] = [
+      .contextCaptureDuration, .contextOutcome, .contextPartBytes, .contextTermCount,
+      .contextSpellingChanges,
     ]
     var isAnalysis: Bool { rawValue.hasPrefix("analysis") }
     static let allAnalysisCases: [Metric] = [
@@ -470,6 +484,10 @@ final class ResourceRecorder: @unchecked Sendable {
           Self.identificationKeys.contains(meetingKey)
         } else if metric == .analysisFailure {
           Self.analysisKeys.contains(meetingKey)
+        } else if metric == .contextOutcome {
+          ContextOutcome(rawValue: meetingKey) != nil
+        } else if metric == .contextPartBytes {
+          ContextPart(rawValue: meetingKey) != nil
         } else {
           metric?.isMeeting == true && Self.isValidMeetingKey(meetingKey)
         }
@@ -618,6 +636,67 @@ final class ResourceRecorder: @unchecked Sendable {
         phase: phase, cycleID: cycle, metric: .rewriteShieldFailure, itemCount: 1, bucket: bucket,
         rewriteIdentity: identity)
     }
+  }
+
+  /// Feature 012: numbers and closed-set keys only (FR-016).
+  func record(context metrics: ContextMetrics, phase: Phase = .idle) {
+    let cycle = metrics.sessionID
+    if let milliseconds = metrics.captureMilliseconds, milliseconds >= 0 {
+      record(
+        phase: phase, cycleID: cycle, durationNanoseconds: UInt64(milliseconds) * 1_000_000,
+        metric: .contextCaptureDuration)
+    }
+    record(
+      phase: phase, cycleID: cycle, metric: .contextOutcome, itemCount: 1,
+      meetingKey: metrics.outcome.rawValue)
+    for part in ContextPart.allCases {
+      guard let bytes = metrics.partBytes[part] else { continue }
+      record(
+        phase: phase, cycleID: cycle, metric: .contextPartBytes,
+        payloadBytes: UInt64(max(0, bytes)), meetingKey: part.rawValue)
+    }
+    record(
+      phase: phase, cycleID: cycle, metric: .contextTermCount,
+      itemCount: UInt32(clamping: max(0, metrics.termCount)))
+    record(
+      phase: phase, cycleID: cycle, metric: .contextSpellingChanges,
+      itemCount: UInt32(clamping: max(0, metrics.spellingChanges)))
+  }
+
+  /// Capture duration percentiles (unmeasured under 20 samples, the SC-005
+  /// minimum) and outcome counts. The input lines carry no text fields.
+  static func contextReport(files: [URL]) throws -> String {
+    var durations: [Double] = []
+    var outcomes: [String: Int] = [:]
+    for file in files {
+      guard let data = try? Data(contentsOf: file) else { continue }
+      for line in data.split(separator: 10) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+          let name = object["metric"] as? String, let metric = Metric(rawValue: name),
+          metric.isContext
+        else { continue }
+        if metric == .contextCaptureDuration, let value = object["durationNanoseconds"] as? Double {
+          durations.append(value / 1_000_000)
+        } else if metric == .contextOutcome, let key = object["meetingKey"] as? String {
+          outcomes[key, default: 0] += 1
+        }
+      }
+    }
+    var lines = ["context capture"]
+    let sorted = durations.sorted()
+    if sorted.count < 20 {
+      lines.append("  capture_ms: unmeasured (fewer than 20 samples, n=\(sorted.count))")
+    } else {
+      let p50 = sorted[sorted.count / 2]
+      let p95 = sorted[min(sorted.count - 1, Int((Double(sorted.count) * 0.95).rounded(.up)) - 1)]
+      lines.append("  capture_ms: n=\(sorted.count) p50=\(Int(p50)) p95=\(Int(p95))")
+    }
+    lines.append("context outcomes")
+    if outcomes.isEmpty { lines.append("  none") }
+    for (key, count) in outcomes.sorted(by: { $0.key < $1.key }) {
+      lines.append("  \(key): \(count)")
+    }
+    return lines.joined(separator: "\n")
   }
 
   /// Pre-admission refusals: a counter with reason and bucket, no span, no identity.

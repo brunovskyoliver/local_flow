@@ -39,6 +39,26 @@ final class ModelOwnershipTests: XCTestCase {
     XCTAssertEqual(meetingShutdowns, 1)
   }
 
+  /// The meeting runtime is built for the language the acquiring pass names, and a
+  /// resident runtime for another language is never reused.
+  func testMeetingRuntimeIsBuiltForTheRequestedLanguage() async throws {
+    let languages = LanguageLog()
+    let lifecycle = ModelLifecycleCoordinator(
+      meetingFactory: { language in
+        await languages.append(language)
+        return ProbeRuntime()
+      }, factory: { ProbeRuntime() })
+    for language in [MeetingLanguage.slovak, .english] {
+      let lease = try await lifecycle.acquire(
+        session: UUID(), workload: .meetingTranscription, meetingLanguage: language)
+      try await lifecycle.finish(lease)
+    }
+    let lease = try await lifecycle.acquire(session: UUID(), workload: .meetingTranscription)
+    try await lifecycle.finish(lease)
+    let recorded = await languages.values
+    XCTAssertEqual(recorded, [.slovak, .english, .defaultLanguage])
+  }
+
   func testMeetingPreemptsDiarizationAndKeepReadyRestoresSpeech() async throws {
     let speech = ProbeRuntime()
     let meeting = ProbeRuntime()
@@ -766,4 +786,9 @@ extension ModelOwnershipTests {
     XCTAssertEqual(recorded, [VoiceRegionRequest.minSamples, VoiceRegionRequest.minSamples])
     try await coordinator.finish(lease)
   }
+}
+
+private actor LanguageLog {
+  private(set) var values: [MeetingLanguage] = []
+  func append(_ language: MeetingLanguage) { values.append(language) }
 }

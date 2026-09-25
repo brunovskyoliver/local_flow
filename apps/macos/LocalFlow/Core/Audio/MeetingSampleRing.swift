@@ -1,8 +1,9 @@
 import AVFoundation
 import Foundation
 
-/// The meeting-mode wrapper over `LFAudioRing`: 32 slots × 4,096 frames × up to
-/// 8 channels preallocated once (4 MiB sample payload). A push that does not
+/// The meeting-mode wrapper over `LFAudioRing`: 32 slots × 4,096 frames × the
+/// source's channel count (1–8) preallocated once (512 KiB per channel, 4 MiB at
+/// eight). A push that does not
 /// fit is dropped whole and counted; admission stays open, unlike the dictation
 /// ring which latches `overflow`. One producer (a realtime or SCK callback),
 /// one serial consumer (the track worker) popping at most 32 slots per poll.

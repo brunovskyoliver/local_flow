@@ -254,6 +254,7 @@ actor FakeSpeakerStore: SpeakerStoring {
     identity: DiarizationIdentity, expectedRevision: Int64?, now: Int64
   ) throws -> DiarizationRun { throw Unsupported() }
   func start(runID: UUID, now: Int64) throws -> DiarizationRun { throw Unsupported() }
+  func markInRoom(runID: UUID) throws { throw Unsupported() }
   func appendWindow(runID: UUID, speakers: [SpeakerDraft], turns: [TurnDraft], audioMs: Int64)
     throws
   { throw Unsupported() }
@@ -317,6 +318,7 @@ actor FailingSpeakerStore: SpeakerStoring {
   func start(runID: UUID, now: Int64) async throws -> DiarizationRun {
     try await store.start(runID: runID, now: now)
   }
+  func markInRoom(runID: UUID) async throws { try await store.markInRoom(runID: runID) }
   func fail(runID: UUID, category: DiarizationFailureCategory, detail: String?, now: Int64)
     async throws
   {

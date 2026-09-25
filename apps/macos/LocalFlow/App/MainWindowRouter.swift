@@ -12,8 +12,8 @@ enum LocalFlowPage: String, CaseIterable, Identifiable {
   var symbol: String {
     switch self {
     case .meetings: "record.circle"
-    case .history: "list.bullet.rectangle"
-    case .dictionary: "character.book.closed"
+    case .history: "mic"
+    case .dictionary: "text.book.closed"
     case .settings: "gearshape"
     }
   }
@@ -28,6 +28,8 @@ final class MainWindowRouter {
   private(set) var isMainWindowFocused = false
   /// Set by the scene so services can open the window without an environment.
   @ObservationIgnored var openMainWindow: () -> Void = {}
+  /// Told after the main window closed, so window-only state can be released.
+  @ObservationIgnored var mainWindowDidClose: () -> Void = {}
   @ObservationIgnored private weak var window: NSWindow?
   @ObservationIgnored private let activate: () -> Void
   @ObservationIgnored private let setActivationPolicy: (NSApplication.ActivationPolicy) -> Void
@@ -52,6 +54,7 @@ final class MainWindowRouter {
     closeObserver = MainWindowCloseObserver(window: window) { [weak self] in
       self?.setActivationPolicy(.accessory)
       self?.refreshFocus()
+      self?.mainWindowDidClose()
     }
     observeFocus(window)
     refreshFocus()

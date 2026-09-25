@@ -138,7 +138,9 @@ final class ExplicitInsertionCoordinator {
       self.target = selected
       self.phase = .confirming
       self.message =
-        "Insert into \(selected.bundleIdentifier), selected field at character \(selected.selectedRange.location + 1)?"
+        selected.delivery == .paste
+        ? "Paste into the focused \(selected.bundleIdentifier) window?"
+        : "Insert into \(selected.bundleIdentifier), selected field at character \(selected.selectedRange.location + 1)?"
       self.showPanel()
     }
   }

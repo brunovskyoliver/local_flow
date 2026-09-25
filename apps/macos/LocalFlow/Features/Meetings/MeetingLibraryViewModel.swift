@@ -22,6 +22,8 @@ final class MeetingLibraryViewModel {
   private(set) var openTab: NoteDetailTab = .thoughts
   private(set) var detailNotice: String?
   private(set) var previewID: UUID?
+  /// The previewed meeting with only what the preview shows: its notes cut to
+  /// `previewNoteCharacters`, no tracks, pauses or recovery outcomes.
   private(set) var preview: MeetingDetail?
   private(set) var previewNotice: String?
   @ObservationIgnored private var previewGeneration = 0
@@ -31,6 +33,9 @@ final class MeetingLibraryViewModel {
   @ObservationIgnored private let activeMeetingID: @MainActor () -> UUID?
   @ObservationIgnored private var generation = 0
   var willDelete: (@MainActor (UUID) async -> Void)?
+  /// Called after a title or language write to the active meeting, so the
+  /// coordinator adopts the new row (its title and revision).
+  var activeMeetingDidChange: (@MainActor (UUID) async -> Void)?
   @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
 
   init(store: any MeetingStoring, activeMeetingID: @escaping @MainActor () -> UUID? = { nil }) {
@@ -90,6 +95,9 @@ final class MeetingLibraryViewModel {
     }
   }
 
+  /// Characters of My thoughts the preview shows.
+  static let previewNoteCharacters = 1_200
+
   func preview(_ id: UUID?) async {
     previewGeneration += 1
     let request = previewGeneration
@@ -100,12 +108,30 @@ final class MeetingLibraryViewModel {
     do {
       let loaded = try await store.detail(id: id)
       guard request == previewGeneration, !Task.isCancelled else { return }
-      preview = loaded
+      preview = loaded.map(Self.previewDetail)
       if loaded == nil { previewNotice = "This note no longer exists." }
     } catch {
       guard request == previewGeneration, !Task.isCancelled else { return }
       previewNotice = "The overview could not be loaded."
     }
+  }
+
+  /// Notes can be 1 MiB; the preview keeps only the prefix it displays.
+  static func previewDetail(_ detail: MeetingDetail) -> MeetingDetail {
+    var notes = detail.notes
+    notes.text = String(notes.text.prefix(previewNoteCharacters))
+    return MeetingDetail(
+      meeting: detail.meeting, tracks: [], pauses: [], notes: notes, outcomes: [])
+  }
+
+  /// The library left the screen (another page, or the main window closed): the open
+  /// meeting and the preview are dropped and load again from the store when shown.
+  func releaseDetail() {
+    closeDetail()
+    previewGeneration += 1
+    previewID = nil
+    preview = nil
+    previewNotice = nil
   }
 
   func open(_ id: UUID, tab: NoteDetailTab = .thoughts) async {
@@ -143,6 +169,7 @@ final class MeetingLibraryViewModel {
       _ = try await store.setTitle(
         meetingID: meeting.id, title: title, revision: meeting.revision,
         now: Int64(Date().timeIntervalSince1970 * 1_000))
+      await notifyIfActive(meeting.id)
       await reloadDetail()
       await refresh()
     } catch MeetingStore.Error.titleTooLarge {
@@ -161,6 +188,7 @@ final class MeetingLibraryViewModel {
         meetingID: meeting.id, language: language, revision: meeting.revision,
         now: Int64(Date().timeIntervalSince1970 * 1_000))
       intelligence?.evidenceDidChange(meetingID: meeting.id)
+      await notifyIfActive(meeting.id)
       await reloadDetail()
       await refresh()
     } catch MeetingStore.Error.staleRevision {
@@ -203,6 +231,11 @@ final class MeetingLibraryViewModel {
   }
 
   func isDeletionPending(_ id: UUID) -> Bool { deletionPending.contains(id) }
+
+  private func notifyIfActive(_ id: UUID) async {
+    guard activeMeetingID() == id else { return }
+    await activeMeetingDidChange?(id)
+  }
 
   static func summary(_ detail: MeetingDetail) -> MeetingSummary {
     MeetingSummary(

@@ -45,6 +45,15 @@ struct FluidAudioEngineFactory: Sendable {
 }
 
 actor FluidAudioRuntime: TranscriptionRuntime {
+  /// FluidAudio 0.15.7's v3 `language` only filters decoder tokens by script
+  /// (`TokenLanguageFilter`: Latin vs Cyrillic vs Greek); English and Slovak are
+  /// both Latin, so either value behaves the same and English is not constrained.
+  /// Slovak is passed because its alphabet contains English's: a later per-language
+  /// allowlist for it would still admit English words.
+  nonisolated static let scriptFilter: Language = .slovak
+  /// Recorded as the provenance language hint, so a dictation says which filter ran.
+  nonisolated static let languageHint = "en_sk_latin_script"
+
   private let manager: AsrManager
 
   private let evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)?
@@ -61,7 +70,8 @@ actor FluidAudioRuntime: TranscriptionRuntime {
     let actualCount = samples.count
     let bounded = try Self.paddedWindow(samples)
     var decoderState = TdtDecoderState.make(decoderLayers: AsrModelVersion.v3.decoderLayers)
-    let result = try await manager.transcribe(bounded, decoderState: &decoderState, language: nil)
+    let result = try await manager.transcribe(
+      bounded, decoderState: &decoderState, language: Self.scriptFilter)
     guard result.text.utf8.count <= 65_536, (result.tokenTimings?.count ?? 0) <= 16_384,
       (result.tokenTimings ?? []).reduce(0, { min(65_537, $0 + min(65_537, $1.token.utf8.count)) })
         <= 65_536

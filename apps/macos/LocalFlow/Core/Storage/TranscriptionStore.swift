@@ -8,7 +8,9 @@ import GRDB
 public actor TranscriptionStore {
   public static let maximumRows = 10_000
   public static let maximumPayloadBytes = 33_554_432
-  public static let reservationBytes = 393_216
+  /// Text, quality detail and (Feature 012) the context row: snapshot 8 KiB,
+  /// pre-spelling text 64 KiB and spelling changes 32 KiB.
+  public static let reservationBytes = 393_216 + 106_496
   public static let maximumTextBytes = 65_536
 
   public enum Error: Swift.Error, Equatable, Sendable {
@@ -26,6 +28,7 @@ public actor TranscriptionStore {
     case busy
     case damagedDatabase
     case databaseLimitExceeded
+    case invalidContext
   }
 
   public struct Reservation: Sendable, Equatable {
@@ -44,10 +47,16 @@ public actor TranscriptionStore {
     case uncertain
   }
 
-  /// Shared with `VocabularyStore`; both use one file, one journal and one page ceiling.
-  nonisolated let database: DatabaseQueue
+  /// Shared with every history store; all use one file, one WAL and one page ceiling.
+  /// One writer connection serializes writes; readers see the last committed state.
+  nonisolated let database: DatabasePool
   private let databaseURL: URL
   private var reservations: [UUID: Reservation] = [:]
+
+  /// After a checkpoint the WAL is truncated to this size, so the file beside the
+  /// database stays small between large meeting transactions.
+  static let journalSizeLimitBytes = 4 * 1024 * 1024
+  private static let matchLocale = Locale(identifier: "en_US_POSIX")
 
   public func verifyWritable() async throws {
     try await database.write { db in
@@ -61,7 +70,8 @@ public actor TranscriptionStore {
       throw Error.databaseLimitExceeded
     }
     databaseURL = URL(fileURLWithPath: path)
-    // Create the database privately before SQLite creates its rollback journal.
+    // Create the database privately before SQLite creates its WAL and shared-memory
+    // files; SQLite gives both the database file's permissions.
     let fd = open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw Error.damagedDatabase }
     guard fchmod(fd, 0o600) == 0 else {
@@ -70,7 +80,10 @@ public actor TranscriptionStore {
     }
     close(fd)
     var configuration = Configuration()
+    // Two readers are enough for history and meeting pages beside one writer.
+    configuration.maximumReaderCount = 2
     configuration.prepareDatabase { db in
+      let locale = Self.matchLocale
       db.add(
         function: DatabaseFunction("history_matches", argumentCount: 2, pure: true) { values in
           guard let text = String.fromDatabaseValue(values[0]),
@@ -78,12 +91,16 @@ public actor TranscriptionStore {
           else { return false }
           // At most 64 KiB input; canonical composition and case matching use bounded row scratch.
           return text.precomposedStringWithCanonicalMapping.range(
-            of: query, options: [.caseInsensitive, .literal],
-            locale: Locale(identifier: "en_US_POSIX")) != nil
+            of: query, options: [.caseInsensitive, .literal], locale: locale) != nil
         })
-      try db.execute(sql: "PRAGMA journal_mode=DELETE")
+      // WAL with synchronous=FULL and full fsyncs keeps every commit as durable as the
+      // rollback journal did, while readers no longer wait for a long meeting write.
+      if !db.configuration.readonly {
+        try db.execute(sql: "PRAGMA journal_mode=WAL")
+      }
       try db.execute(sql: "PRAGMA synchronous=FULL")
       try db.execute(sql: "PRAGMA fullfsync=ON")
+      try db.execute(sql: "PRAGMA checkpoint_fullfsync=ON")
       try db.execute(sql: "PRAGMA mmap_size=0")
       try db.execute(sql: "PRAGMA cache_size=-2048")
       guard let pageSize = try Int.fetchOne(db, sql: "PRAGMA page_size"), pageSize > 0 else {
@@ -92,26 +109,78 @@ public actor TranscriptionStore {
       let cap = maximumDatabaseBytes / pageSize
       guard cap > 0 else { throw Error.databaseLimitExceeded }
       guard try Int.fetchOne(db, sql: "PRAGMA max_page_count=\(cap)") == cap,
-        try String.fetchOne(db, sql: "PRAGMA journal_mode") == "delete",
-        try Int.fetchOne(db, sql: "PRAGMA synchronous") == 2,
-        try Int.fetchOne(db, sql: "PRAGMA fullfsync") == 1,
+        try Int.fetchOne(db, sql: "PRAGMA journal_size_limit=\(Self.journalSizeLimitBytes)")
+          == Self.journalSizeLimitBytes,
+        try String.fetchOne(db, sql: "PRAGMA journal_mode") == "wal",
+        try Self.hasDurableSync(db),
         try Int.fetchOne(db, sql: "PRAGMA mmap_size") == 0,
         try Int.fetchOne(db, sql: "PRAGMA cache_size") == -2048
       else { throw Error.databaseLimitExceeded }
     }
-    self.database = try DatabaseQueue(path: path, configuration: configuration)
+    self.database = try DatabasePool(path: path, configuration: configuration)
+    // GRDB lowers the writer to synchronous=NORMAL when it enables WAL; restore FULL
+    // before the first migration or history write.
+    try database.writeWithoutTransaction { db in
+      try db.execute(sql: "PRAGMA synchronous=FULL")
+      guard try Self.hasDurableSync(db) else { throw Error.databaseLimitExceeded }
+    }
     try Self.verifyDatabaseBounds(database)
-    try HistoryMigrations.migrator().migrate(database)
+    let migrator = HistoryMigrations.migrator()
+    let migrationsPending = try database.read { try !migrator.hasCompletedMigrations($0) }
+    try migrator.migrate(database)
     try Self.verifyDatabaseBounds(database)
+    // Launch reads first and writes only when something needs repair, so an ordinary
+    // start neither rescans every payload nor pays for an empty fsynced transaction.
+    let repair = try database.read { db in
+      try StartupRepair(
+        attempting: Bool.fetchOne(
+          db, sql: "SELECT EXISTS(SELECT 1 FROM transcriptions WHERE delivery_state='attempting')")
+          ?? false,
+        pendingAttempts: Self.hasPendingAttempts(db),
+        reconcile: migrationsPending || Self.usageDrifted(db))
+    }
+    guard repair.attempting || repair.pendingAttempts || repair.reconcile else { return }
     try database.write { db in
-      try db.execute(
-        sql:
-          "UPDATE transcriptions SET delivery_state='uncertain', recovery_state='needs_review', revision=revision+1 WHERE delivery_state='attempting'"
-      )
+      if repair.attempting {
+        try db.execute(
+          sql:
+            "UPDATE transcriptions SET delivery_state='uncertain', recovery_state='needs_review', revision=revision+1 WHERE delivery_state='attempting'"
+        )
+      }
       // A rewrite left pending by a crash or quit is interrupted, never resumed.
       _ = try Self.interruptPendingAttempts(db)
-      try Self.reconcileUsage(db)
+      if repair.reconcile { try Self.reconcileUsage(db) }
     }
+  }
+
+  private struct StartupRepair {
+    let attempting: Bool
+    let pendingAttempts: Bool
+    let reconcile: Bool
+  }
+
+  private static func hasDurableSync(_ db: Database) throws -> Bool {
+    try Int.fetchOne(db, sql: "PRAGMA synchronous") == 2
+      && Int.fetchOne(db, sql: "PRAGMA fullfsync") == 1
+      && Int.fetchOne(db, sql: "PRAGMA checkpoint_fullfsync") == 1
+  }
+
+  private static func hasPendingAttempts(_ db: Database) throws -> Bool {
+    try Bool.fetchOne(
+      db, sql: "SELECT EXISTS(SELECT 1 FROM rewrite_attempts WHERE state='pending')") ?? false
+  }
+
+  /// Every write updates `history_usage` in the same transaction as the rows it counts,
+  /// so a crash cannot make the counters drift. A full rescan runs after a migration
+  /// (which may change what is counted) or when the cheap row-count check disagrees,
+  /// which only an out-of-band edit can cause.
+  private static func usageDrifted(_ db: Database) throws -> Bool {
+    try Bool.fetchOne(
+      db,
+      sql: """
+        SELECT row_count <> (SELECT count(*) FROM transcriptions) OR payload_bytes < 0
+        FROM history_usage WHERE id=1
+        """) ?? true
   }
 
   /// Usage counts transcript text, quality detail and every attempt's input plus output.
@@ -122,6 +191,7 @@ public actor TranscriptionStore {
           payload_bytes=(SELECT coalesce(sum(length(cast(text AS blob))),0) FROM transcriptions)
             + (SELECT coalesce(sum(length(cast(detail_json AS blob))),0) FROM transcription_quality)
             + (SELECT coalesce(sum(length(cast(input_text AS blob)) + length(cast(coalesce(output_text,'') AS blob))),0) FROM rewrite_attempts)
+            + (SELECT coalesce(sum(\(contextBytesSQL)),0) FROM dictation_contexts)
         WHERE id=1
         """)
   }
@@ -171,7 +241,8 @@ public actor TranscriptionStore {
     let entry = envelope.entry
     let detailData = try envelope.detail?.serialized()
     let detailJSON = detailData.map { String(decoding: $0, as: UTF8.self) }
-    let entryBytes = entry.text.utf8.count + (detailData?.count ?? 0)
+    let entryBytes =
+      entry.text.utf8.count + (detailData?.count ?? 0) + (envelope.context?.payloadBytes ?? 0)
     guard entryBytes <= reservation.bytes else { throw Error.capacityExceeded }
     let saved = try database.write { db -> TranscriptionEntry in
       let usage = try Self.usage(db)
@@ -190,6 +261,9 @@ public actor TranscriptionStore {
         if let detail = envelope.detail {
           let stored = try Self.fetchDetail(entry.id, normalizedText: existing.text, db: db)
           guard stored?.contentHash == detail.contentHash else { throw Error.conflictingContent }
+        }
+        guard try Self.fetchContext(entry.id, db: db) == envelope.context else {
+          throw Error.conflictingContent
         }
         return existing
       }
@@ -222,6 +296,18 @@ public actor TranscriptionStore {
             "INSERT INTO transcription_quality (transcription_id,schema_version,detail_json,content_hash) VALUES (?,1,?,?)",
           arguments: [entry.id.uuidString, detailJSON, detail.contentHash])
       }
+      if let context = envelope.context {
+        try db.execute(
+          sql: """
+            INSERT INTO dictation_contexts (transcription_id,outcome,capture_ms,app_bundle_id,snapshot_json,snapshot_hash,pre_spelling_text,spelling_changes_json,speller_version,rewrite_note)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            """,
+          arguments: [
+            entry.id.uuidString, context.outcome.rawValue, context.captureMs, context.appBundleID,
+            context.snapshotJSON, context.snapshotHash, context.preSpellingText,
+            context.spellingChangesJSON, context.spellerVersion, context.rewriteNote,
+          ])
+      }
       try db.execute(
         sql:
           "UPDATE history_usage SET row_count=row_count+1, payload_bytes=payload_bytes+? WHERE id=1",
@@ -253,7 +339,8 @@ public actor TranscriptionStore {
       try Task.checkCancellation()
       let detail = try Self.fetchDetail(id, normalizedText: entry.text, db: db)
       try Task.checkCancellation()
-      return TranscriptionEnvelope(entry: entry, detail: detail)
+      return TranscriptionEnvelope(
+        entry: entry, detail: detail, context: try Self.fetchContext(id, db: db))
     }
   }
 
@@ -263,6 +350,44 @@ public actor TranscriptionStore {
       guard let entry = try Self.fetch(id, db: db) else { throw Error.missingEntry }
       return try Self.fetchDetail(id, normalizedText: entry.text, db: db)
     }
+  }
+
+  /// Feature 012: the dictation's context row; nil for a legacy entry ("not recorded").
+  func context(for id: UUID) throws -> DictationContextRecord? {
+    try database.read { try Self.fetchContext(id, db: $0) }
+  }
+
+  /// Records or clears the rewrite context note for the latest attempt only.
+  func recordRewriteNote(_ note: String?, for id: UUID) throws {
+    guard note == nil || note == DictationContextRecord.serverUnsupported else {
+      throw Error.invalidContext
+    }
+    try database.write { db in
+      try db.execute(
+        sql: "UPDATE dictation_contexts SET rewrite_note=? WHERE transcription_id=?",
+        arguments: [note, id.uuidString])
+    }
+  }
+
+  private static let contextBytesSQL =
+    "length(cast(coalesce(snapshot_json,'') AS blob)) + length(cast(coalesce(pre_spelling_text,'') AS blob)) + length(cast(coalesce(spelling_changes_json,'') AS blob))"
+
+  private static func fetchContext(_ id: UUID, db: Database) throws -> DictationContextRecord? {
+    guard
+      let row = try Row.fetchOne(
+        db, sql: "SELECT * FROM dictation_contexts WHERE transcription_id=?",
+        arguments: [id.uuidString])
+    else { return nil }
+    let outcomeString: String = row["outcome"]
+    guard let outcome = ContextOutcome(rawValue: outcomeString) else { throw Error.damagedDatabase }
+    let record = DictationContextRecord(
+      outcome: outcome, captureMs: row["capture_ms"], appBundleID: row["app_bundle_id"],
+      snapshotJSON: row["snapshot_json"], preSpellingText: row["pre_spelling_text"],
+      spellingChangesJSON: row["spelling_changes_json"], spellerVersion: row["speller_version"],
+      rewriteNote: row["rewrite_note"])
+    let hash: String? = row["snapshot_hash"]
+    guard hash == record.snapshotHash else { throw Error.damagedDatabase }
+    return record
   }
 
   private static func fetchDetail(_ id: UUID, normalizedText: String, db: Database) throws
@@ -360,27 +485,46 @@ public actor TranscriptionStore {
     while true {
       try Task.checkCancellation()
       let batchBoundary = boundary
-      // Metadata only: SQLite normalizes one bounded payload at a time and
-      // returns just a match bit. Never retain a second batch of full text.
-      let batch: [(cursor: HistoryCursor, matches: Bool)] = try await database.read { db in
-        let matchSQL = query.isEmpty ? "1" : "history_matches(text,?)"
-        var sql =
-          "SELECT created_at,id,\(matchSQL) AS matched FROM transcriptions WHERE (created_at,id) <= (?,?)"
-        var arguments: StatementArguments = query.isEmpty ? [] : [query]
-        arguments += [ceiling.timestamp, ceiling.id]
-        if let boundary = batchBoundary {
+      let wanted = 20 - found.count
+      // One read per batch: SQLite normalizes one bounded payload at a time and returns
+      // a match bit, then full rows are loaded only for the matches this page still
+      // needs, from the same snapshot. Never retain a second batch of full text.
+      let batch: [(cursor: HistoryCursor, matches: Bool, entry: TranscriptionEntry?)] =
+        try await database.read { db in
+          let matchSQL = query.isEmpty ? "1" : "history_matches(text,?)"
+          var sql =
+            "SELECT created_at,id,\(matchSQL) AS matched FROM transcriptions WHERE (created_at,id) <= (?,?)"
+          var arguments: StatementArguments = query.isEmpty ? [] : [query]
+          arguments += [ceiling.timestamp, ceiling.id]
+          if let boundary = batchBoundary {
+            sql +=
+              direction == .older ? " AND (created_at,id) < (?,?)" : " AND (created_at,id) > (?,?)"
+            arguments += [boundary.timestamp, boundary.id]
+          }
           sql +=
-            direction == .older ? " AND (created_at,id) < (?,?)" : " AND (created_at,id) > (?,?)"
-          arguments += [boundary.timestamp, boundary.id]
+            direction == .older
+            ? " ORDER BY created_at DESC,id DESC LIMIT 20"
+            : " ORDER BY created_at ASC,id ASC LIMIT 20"
+          let rows: [(cursor: HistoryCursor, matches: Bool)] = try Row.fetchAll(
+            db, sql: sql, arguments: arguments
+          ).map { row in
+            (HistoryCursor(timestamp: row["created_at"], id: row["id"]), row["matched"])
+          }
+          let ids = rows.filter(\.matches).prefix(wanted).map(\.cursor.id)
+          var entries: [UUID: TranscriptionEntry] = [:]
+          if !ids.isEmpty {
+            let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+            for entry in try Self.fetchAll(
+              db, sql: "SELECT * FROM transcriptions WHERE id IN (\(placeholders))",
+              arguments: StatementArguments(ids))
+            {
+              entries[entry.id] = entry
+            }
+          }
+          return rows.map { row in
+            (row.cursor, row.matches, UUID(uuidString: row.cursor.id).flatMap { entries[$0] })
+          }
         }
-        sql +=
-          direction == .older
-          ? " ORDER BY created_at DESC,id DESC LIMIT 20"
-          : " ORDER BY created_at ASC,id ASC LIMIT 20"
-        return try Row.fetchAll(db, sql: sql, arguments: arguments).map { row in
-          (HistoryCursor(timestamp: row["created_at"], id: row["id"]), row["matched"])
-        }
-      }
       for match in batch where match.matches {
         try Task.checkCancellation()
         if found.count == 20 {
@@ -388,10 +532,8 @@ public actor TranscriptionStore {
             entries: direction == .older ? found : found.reversed(), watermark: ceiling,
             hasMore: true)
         }
-        guard let id = UUID(uuidString: match.cursor.id) else { throw Error.damagedDatabase }
-        if let entry = try await database.read({ db in try Self.fetch(id, db: db) }) {
-          found.append(entry)
-        }
+        guard UUID(uuidString: match.cursor.id) != nil else { throw Error.damagedDatabase }
+        if let entry = match.entry { found.append(entry) }
       }
       guard batch.count == 20, let last = batch.last else {
         return HistoryPage(
@@ -509,13 +651,19 @@ public actor TranscriptionStore {
           sql:
             "SELECT coalesce(sum(length(cast(input_text AS blob)) + length(cast(coalesce(output_text,'') AS blob))),0) FROM rewrite_attempts WHERE transcription_id=?",
           arguments: [id.uuidString]) ?? 0
+      // The context row cascades too (Feature 012).
+      let contextBytes =
+        try Int.fetchOne(
+          db,
+          sql: "SELECT \(Self.contextBytesSQL) FROM dictation_contexts WHERE transcription_id=?",
+          arguments: [id.uuidString]) ?? 0
       try db.execute(
         sql: "DELETE FROM transcriptions WHERE id=? AND revision=?",
         arguments: [id.uuidString, revision])
       try db.execute(
         sql:
           "UPDATE history_usage SET row_count=row_count-1, payload_bytes=payload_bytes-? WHERE id=1",
-        arguments: [current.text.utf8.count + detailBytes + attemptBytes])
+        arguments: [current.text.utf8.count + detailBytes + attemptBytes + contextBytes])
     }
   }
 
@@ -634,13 +782,14 @@ public actor TranscriptionStore {
       try db.execute(
         sql: """
           INSERT INTO rewrite_attempts (id, transcription_id, ordinal, mode, state, input_text, input_hash,
-            started_at, protocol_version, endpoint_origin, insecure_override)
-          VALUES (?,?,?,?,'pending',?,?,?,1,?,?)
+            started_at, protocol_version, endpoint_origin, insecure_override, context_hash)
+          VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?)
           """,
         arguments: [
           id.uuidString, transcription, ordinal, admission.mode.rawValue, admission.inputText,
           TranscriptionQualityDetail.hash(admission.inputText), startedAt,
-          admission.endpointOrigin, admission.insecureOverride ? 1 : 0,
+          admission.protocolVersion, admission.endpointOrigin, admission.insecureOverride ? 1 : 0,
+          admission.contextHash,
         ])
       try db.execute(
         sql: "UPDATE history_usage SET payload_bytes=payload_bytes+? WHERE id=1",
@@ -737,7 +886,9 @@ public actor TranscriptionStore {
   /// in `init`, so a crash never leaves a resumable request behind.
   @discardableResult
   func cancelPendingOnStartup() throws -> Int {
-    try database.write { db in try Self.interruptPendingAttempts(db) }
+    // `init` already interrupted them; skip the empty fsynced write in the usual case.
+    guard try database.read(Self.hasPendingAttempts) else { return 0 }
+    return try database.write { db in try Self.interruptPendingAttempts(db) }
   }
 
   /// Explicit insertion of one attempt's text from history.
@@ -844,11 +995,11 @@ public actor TranscriptionStore {
           backendKind: row["backend_kind"], backendModel: row["backend_model"],
           promptVersion: row["prompt_version"], shieldVersion: row["shield_version"]),
         endpointOrigin: row["endpoint_origin"], insecureOverride: insecure == 1,
-        delivered: delivered == 1)
+        delivered: delivered == 1, contextHash: row["context_hash"])
     }
   }
 
-  private static func verifyDatabaseBounds(_ db: DatabaseQueue) throws {
+  private static func verifyDatabaseBounds(_ db: some DatabaseReader) throws {
     try db.read { database in
       let pageSize: Int = try Int.fetchOne(database, sql: "PRAGMA page_size") ?? 0
       let pageCount: Int = try Int.fetchOne(database, sql: "PRAGMA page_count") ?? 0

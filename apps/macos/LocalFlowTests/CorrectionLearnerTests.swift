@@ -23,7 +23,8 @@ actor FakeFieldReader: TextInserting {
     reads += 1
     if focusLost { throw TargetIssue.focusChanged }
     let units = Array(field.utf16)
-    guard location <= units.count else { throw TargetIssue.unsupported }
+    // Like the AX adapter: a field that no longer reaches `location` cannot be read.
+    guard location < units.count else { throw TargetIssue.unsupported }
     let end = min(units.count, location + length)
     return String(utf16CodeUnits: Array(units[location..<end]), count: end - location)
   }
@@ -254,6 +255,23 @@ final class CorrectionLearnerTests: XCTestCase {
     let entries = await store.entries
     XCTAssertEqual(entries.count, 1)
     XCTAssertEqual(entries[0].aliases, ["local flow"])
+  }
+
+  func testFixThenSendLearnsTheLastReadBeforeTheFieldClears() async throws {
+    let reader = FakeFieldReader(field: "open key clock now")
+    let store = FakeVocabularyStore()
+    let learner = makeLearner(reader: reader, store: store)
+    learner.observe(inserted: "open key clock now", target: target(location: 0))
+    try await awaitBaseline(reader)
+    await reader.setField("open Keycloak now")
+    let seen = await reader.reads
+    while await reader.reads < seen + 1 { try await Task.sleep(for: .milliseconds(5)) }
+    // Return sends the message: the field is empty before a second read confirms the fix.
+    await reader.setField("")
+    try await waitUntil { learner.lastStop == .learned }
+    let entries = await store.entries
+    XCTAssertEqual(entries.map(\.canonical), ["Keycloak"])
+    XCTAssertEqual(entries.first?.aliases, ["key clock"])
   }
 
   func testMomentaryEditsAreNotLearnedUntilSettled() async throws {

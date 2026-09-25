@@ -294,6 +294,34 @@ final class VocabularyStoreTests: XCTestCase {
     XCTAssertEqual(observed9, snapshot)
   }
 
+  /// The per-press snapshot is cached against the state row: every edit, from this
+  /// store or another one on the same file, yields a fresh snapshot.
+  func testSnapshotCacheFollowsEveryEdit() async throws {
+    let history = try makeHistory()
+    let store = VocabularyStore(history: history)
+    let empty = try await store.snapshot()
+    XCTAssertEqual(empty.revision, 0)
+    try await store.save(VocabularyEntry(id: "a", canonical: "Alpha"))
+    let saved = try await store.snapshot()
+    XCTAssertEqual(saved.revision, 1)
+    XCTAssertEqual(saved.entries.map(\.id), ["a"])
+    let repeated = try await store.snapshot()
+    XCTAssertEqual(repeated, saved)
+    try await store.setEnabled(id: "a", enabled: false)
+    let disabled = try await store.snapshot()
+    XCTAssertEqual(disabled.revision, 2)
+    XCTAssertEqual(disabled.entries.map(\.id), [])
+    let other = VocabularyStore(history: history)
+    try await other.save(VocabularyEntry(id: "b", canonical: "Beta"))
+    let external = try await store.snapshot()
+    XCTAssertEqual(external.revision, 3)
+    XCTAssertEqual(external.entries.map(\.id), ["b"])
+    try await store.delete(id: "b")
+    let deleted = try await store.snapshot()
+    XCTAssertEqual(deleted.revision, 4)
+    XCTAssertEqual(deleted.entries, [])
+  }
+
   func testDamagedRowsBlockSnapshotAndEditor() async throws {
     let history = try makeHistory()
     let store = VocabularyStore(history: history)

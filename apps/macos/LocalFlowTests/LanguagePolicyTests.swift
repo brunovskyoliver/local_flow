@@ -49,12 +49,32 @@ final class LanguagePolicyTests: XCTestCase {
       .mixed)
   }
 
-  func testTwentyPercentMinorityDetectsMixed() {
-    // 76 % English / 24 % Slovak by character count → mixed.
-    let list = (0..<19).map { _ in english } + (0..<6).map { _ in slovak }
+  func testTwentyPercentEnglishMinorityDetectsMixed() {
+    // 76 % Slovak / 24 % English by character count → mixed (Slovak prose).
+    let list = (0..<17).map { _ in slovak } + (0..<6).map { _ in english }
     XCTAssertEqual(
       LanguagePolicy.detect(segments: segments(list), sampleBytes: 32 * 1024),
       .mixed)
+  }
+
+  /// `mixed` is Slovak prose, so a mostly English meeting stays English (FR-036:
+  /// the meeting's dominant language) even with a large Slovak minority.
+  func testEnglishMajorityWithSlovakMinorityStaysEnglish() {
+    // 76 % English / 24 % Slovak by character count.
+    let list = (0..<19).map { _ in english } + (0..<6).map { _ in slovak }
+    XCTAssertEqual(
+      LanguagePolicy.detect(segments: segments(list), sampleBytes: 32 * 1024),
+      .en)
+  }
+
+  /// Short Slovak segments that an unconstrained recognizer calls Czech ("No tak to
+  /// je.") count as Slovak: only English and Slovak exist.
+  func testShortSlovakSegmentsCountAsSlovak() {
+    let list = Array(repeating: "No tak to je.", count: 20)
+    XCTAssertEqual(
+      LanguagePolicy.detect(segments: segments(list), sampleBytes: 32 * 1024), .sk)
+    XCTAssertEqual(SupportedTextLanguage.dominant(for: "No tak to je."), .slovak)
+    XCTAssertNil(SupportedTextLanguage.dominant(for: "12345"))
   }
 
   func testFifteenPercentMinorityKeepsMajority() {

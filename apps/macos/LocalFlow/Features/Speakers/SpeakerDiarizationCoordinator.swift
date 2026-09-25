@@ -38,15 +38,26 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   @ObservationIgnored let store: any SpeakerStoring
   @ObservationIgnored private let automaticEnabled: @MainActor () -> Bool
   @ObservationIgnored private let modelInstalled: @MainActor () async -> Bool
+  /// The fallback wait after a busy or preempted run; the retry normally starts as
+  /// soon as the lifecycle reports the model free.
   @ObservationIgnored private let retryDelay: Duration
   @ObservationIgnored private let clock: any MeetingClock
+  /// Tells the lifecycle while runs are queued so Keep model ready waits for them, and
+  /// wakes a busy retry when the model is released.
+  @ObservationIgnored private let demand: SpeakerModelDemand?
   /// FR-037: RSS samples every 10 s while a run is active (`diarizing`).
   @ObservationIgnored private let recorder: ResourceRecorder?
   @ObservationIgnored private var rssTask: Task<Void, Never>?
   static let rssInterval: Duration = .seconds(10)
-  @ObservationIgnored private var queue: [UUID] = []
-  @ObservationIgnored private var task: Task<Void, Never>?
-  @ObservationIgnored private var retry: Task<Void, Never>?
+  @ObservationIgnored private var queue: [UUID] = [] {
+    didSet { demandDidChange() }
+  }
+  @ObservationIgnored private var task: Task<Void, Never>? {
+    didSet { demandDidChange() }
+  }
+  @ObservationIgnored private var retry: Task<Void, Never>? {
+    didSet { demandDidChange() }
+  }
   @ObservationIgnored private var cancelled: Set<UUID> = []
   /// Echo energy profiles handed over by the finalization pass, keyed by meeting.
   /// Bounded: kept only for the newest few pending runs, else the diarizer
@@ -54,9 +65,13 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   @ObservationIgnored private var echoProfiles: [UUID: EchoGate.Profile] = [:]
   @ObservationIgnored private var echoProfileOrder: [UUID] = []
   static let echoProfileCapacity = 4
+  /// The profile handed to the active run, put back when the run returns to the queue.
+  @ObservationIgnored private var activeEchoProfile: EchoGate.Profile?
   /// Meetings whose automatic speaker work must end in one `meetingSpeakersDidSettle`
   /// so the summary sees every label there is (settle instead of transcript-final).
-  @ObservationIgnored private var pendingSettle: Set<UUID> = []
+  @ObservationIgnored private var pendingSettle: Set<UUID> = [] {
+    didSet { demandDidChange() }
+  }
   @ObservationIgnored private let logger = Logger(
     subsystem: "org.localflow.LocalFlow", category: "speakers")
 
@@ -64,8 +79,8 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     diarizer: MeetingDiarizer, store: any SpeakerStoring,
     automaticEnabled: @escaping @MainActor () -> Bool,
     modelInstalled: @escaping @MainActor () async -> Bool,
-    retryDelay: Duration = .seconds(5), clock: any MeetingClock = SystemMeetingClock(),
-    recorder: ResourceRecorder? = nil
+    retryDelay: Duration = .seconds(30), clock: any MeetingClock = SystemMeetingClock(),
+    recorder: ResourceRecorder? = nil, lifecycle: ModelLifecycleCoordinator? = nil
   ) {
     self.diarizer = diarizer
     self.store = store
@@ -74,6 +89,7 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     self.retryDelay = retryDelay
     self.clock = clock
     self.recorder = recorder
+    self.demand = lifecycle.map(SpeakerModelDemand.init)
   }
 
   /// FR-026: one row's manual speaker. The caller relabels its pager; the accepted
@@ -100,14 +116,7 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   /// summary is told once speaker work settles — a run that ends here, or at
   /// once when diarization is off, unavailable or refused (FR-002).
   func meetingTranscriptDidFinalize(id: UUID, echoProfile: EchoGate.Profile?) {
-    if let echoProfile {
-      if echoProfiles[id] == nil { echoProfileOrder.append(id) }
-      echoProfiles[id] = echoProfile
-      while echoProfileOrder.count > Self.echoProfileCapacity {
-        let stale = echoProfileOrder.removeFirst()
-        echoProfiles.removeValue(forKey: stale)
-      }
-    }
+    if let echoProfile { keepEchoProfile(echoProfile, for: id) }
     guard automaticEnabled() else {
       intelligence?.meetingSpeakersDidSettle(id: id)
       return
@@ -123,6 +132,19 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
       }
     }
   }
+
+  /// Holds a handed-over profile for the meeting's next run, newest few only.
+  private func keepEchoProfile(_ profile: EchoGate.Profile, for id: UUID) {
+    if echoProfiles[id] == nil { echoProfileOrder.append(id) }
+    echoProfiles[id] = profile
+    while echoProfileOrder.count > Self.echoProfileCapacity {
+      let stale = echoProfileOrder.removeFirst()
+      echoProfiles.removeValue(forKey: stale)
+    }
+  }
+
+  /// Meetings holding a handed-over echo profile, oldest first. For tests.
+  var echoProfileMeetingIDs: [UUID] { echoProfileOrder }
 
   /// Label speakers, Re-run, Retry and the in-room change. Always available (FR-002).
   func requestRun(meetingID: UUID, revision: Int64?, trigger: DiarizationTrigger) async {
@@ -236,6 +258,7 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     let diarizer = diarizer
     let echoProfile = echoProfiles.removeValue(forKey: id)
     echoProfileOrder.removeAll { $0 == id }
+    activeEchoProfile = echoProfile
     let progress: @Sendable (Int, Int) -> Void = { [weak self] done, planned in
       Task { @MainActor in self?.report(id, done: done, planned: planned) }
     }
@@ -269,10 +292,16 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     activeMeetingID = nil
     rssTask?.cancel()
     rssTask = nil
+    let echoProfile = activeEchoProfile
+    activeEchoProfile = nil
     switch outcome {
     case .preempted, .busy:
-      // Back to the head; the model is someone else's for now.
-      if !cancelled.contains(id) { queue.insert(id, at: 0) }
+      // Back to the head; the model is someone else's for now. The retry gets the
+      // same echo profile, unless a newer pass handed one over meanwhile.
+      if !cancelled.contains(id) {
+        queue.insert(id, at: 0)
+        if let echoProfile, echoProfiles[id] == nil { keepEchoProfile(echoProfile, for: id) }
+      }
       scheduleRetry()
     case .failed(.transcriptChanged):
       if automaticEnabled(), await enqueue(id, trigger: .automatic, revision: nil) {
@@ -305,11 +334,17 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   private func scheduleRetry() {
     guard retry == nil else { return }
     let delay = retryDelay
+    let demand = demand
     retry = Task { [weak self] in
-      try? await Task.sleep(for: delay)
+      await SpeakerModelDemand.waitForRetry(demand, fallback: delay)
       self?.retry = nil
       self?.pump()
     }
+  }
+
+  private func demandDidChange() {
+    demand?.update(
+      pending: task != nil || retry != nil || !queue.isEmpty || !pendingSettle.isEmpty)
   }
 
   private func stopActive() async {

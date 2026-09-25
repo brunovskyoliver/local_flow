@@ -173,7 +173,7 @@ enum IdentificationTestSupport {
   }
 
   /// A SHA-256 over every row of the given tables, for byte-identity checks.
-  static func digest(_ database: DatabaseQueue, tables: [String]) throws -> String {
+  static func digest(_ database: some DatabaseReader, tables: [String]) throws -> String {
     try database.read { db in
       var text = ""
       for table in tables {

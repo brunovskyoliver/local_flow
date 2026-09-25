@@ -18,6 +18,7 @@ struct MeetingAnalyzer: Sendable {
   private let settings: @MainActor @Sendable () -> RewriteSettings?
   private let recorder: ResourceRecorder?
   private let partials: AnalysisPartialCache
+  private let languages = ResolvedLanguageCache()
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "analysis")
 
   /// Reports progress; the coordinator publishes it on the main actor.
@@ -84,9 +85,11 @@ struct MeetingAnalyzer: Sendable {
     {
       throw AnalysisFailure(Self.mapPreflight(refusal))
     }
-    guard let endpoint = await endpoint() else {
+    guard let configured = await endpoint() else {
       throw AnalysisFailure(.serverUnavailable, detail: AnalysisClient.unavailableMessage)
     }
+    // The summary backend is fixed here for the whole run (health included).
+    let endpoint = transport.pinned(configured)
 
     // 3. Evidence snapshot, language policy and version (R8, R10).
     let snapshot = try await loadEvidence(meetingID: meetingID, passID: passID)
@@ -95,8 +98,8 @@ struct MeetingAnalyzer: Sendable {
       snapshot.notes.allSatisfy({ $0.text.utf8.count <= policy.maxNoteParagraphBytes })
     else { throw AnalysisFailure(.tooLong, detail: "notes_too_large") }
     let meeting = try await evidence.meeting(id: meetingID)
-    let language = LanguagePolicy.resolve(
-      segments: snapshot.segments, sampleBytes: policy.languageSampleBytes,
+    let language = resolveLanguage(
+      passID: passID, snapshot: snapshot, policy: policy,
       meetingLanguage: meeting?.language, transcriptPipeline: transcription.pipelineVersion)
     let version = Self.compute(
       meetingID: meetingID, passID: passID, snapshot: snapshot,
@@ -155,13 +158,51 @@ struct MeetingAnalyzer: Sendable {
     let snapshot = try await loadEvidence(meetingID: meetingID, passID: passID)
     let policy = AnalysisPolicy()
     let meeting = try await evidence.meeting(id: meetingID)
-    let language = LanguagePolicy.resolve(
-      segments: snapshot.segments, sampleBytes: policy.languageSampleBytes,
+    let language = resolveLanguage(
+      passID: passID, snapshot: snapshot, policy: policy,
       meetingLanguage: meeting?.language, transcriptPipeline: transcription.pipelineVersion)
     return Self.compute(
       meetingID: meetingID, passID: passID, snapshot: snapshot,
       language: language, policy: policy
     ).hex
+  }
+
+  /// A final pass's segment text never changes, so the resolved language only
+  /// varies with the meeting's language setting and the pass's pipeline; the
+  /// NLLanguageRecognizer sample runs once per combination.
+  private func resolveLanguage(
+    passID: UUID, snapshot: Snapshot, policy: AnalysisPolicy,
+    meetingLanguage: MeetingLanguage?, transcriptPipeline: String?
+  ) -> AnalysisLanguage {
+    let key = ResolvedLanguageCache.Key(
+      passID: passID, meetingLanguage: meetingLanguage,
+      transcriptPipeline: transcriptPipeline, sampleBytes: policy.languageSampleBytes)
+    if let cached = languages.value(for: key) { return cached }
+    let language = LanguagePolicy.resolve(
+      segments: snapshot.segments, sampleBytes: policy.languageSampleBytes,
+      meetingLanguage: meetingLanguage, transcriptPipeline: transcriptPipeline)
+    languages.store(language, for: key)
+    return language
+  }
+
+  /// A run may wait in the queue after admission, and a chunked run takes
+  /// minutes; the evidence it was admitted with must still hold. Same outcome
+  /// as the check before adoption.
+  private func requireAdmittedEvidence(_ admission: Admission) async throws {
+    guard
+      try await currentEvidenceVersion(meetingID: admission.run.meetingID)
+        == admission.run.evidenceVersion
+    else {
+      throw AnalysisFailure(.sourceValidation, detail: "evidence_changed")
+    }
+  }
+
+  /// One health probe against the configured endpoint; the coordinator uses it
+  /// to decide whether an automatic run that found the server unreachable is
+  /// worth one more try.
+  func serverReachable() async -> Bool {
+    guard let configured = await endpoint() else { return false }
+    return (try? await transport.health(endpoint: transport.pinned(configured))) != nil
   }
 
   /// `pending` → a terminal row state. Every failure lands on the row.
@@ -176,6 +217,8 @@ struct MeetingAnalyzer: Sendable {
       run = try await store.start(runID: run.id, now: clock.nowMilliseconds)
       progress?(meetingID, AnalysisProgress(label: "Analyzing", fraction: 0))
       let runID = run.id
+      // 4a. The snapshot was taken at admission; a queued run may start later.
+      try await requireAdmittedEvidence(admission)
 
       // 5. Health: `result_schema_version` and the limits/caps minima. The
       // plan needs the lowered budget, so health runs ahead of the deadline
@@ -211,12 +254,7 @@ struct MeetingAnalyzer: Sendable {
           policy: effective)
 
         // 8. The evidence must not have drifted mid-run.
-        guard
-          try await self.currentEvidenceVersion(meetingID: meetingID)
-            == admission.run.evidenceVersion
-        else {
-          throw AnalysisFailure(.sourceValidation, detail: "evidence_changed")
-        }
+        try await self.requireAdmittedEvidence(admission)
 
         // 9. Adopt: supersede, content swap, re-point, re-match overlays.
         let identity = Self.identity(health: health, payload: result.payload)
@@ -444,14 +482,19 @@ struct MeetingAnalyzer: Sendable {
     // A retry after a failed chunk or synthesis reuses the chunks that
     // already passed, keyed by evidence version and segment window.
     var partials: [AnalysisResult] = []
+    var requested = false
     for chunk in plan.chunks {
       let key = AnalysisPartialCache.Key(
         meetingID: meetingID, evidenceVersion: admission.run.evidenceVersion,
+        backend: admission.endpoint.summaryBackendKey,
         firstOrdinal: chunk.firstOrdinal, lastOrdinal: chunk.lastOrdinal)
       if let cached = await self.partials.result(for: key) {
         partials.append(cached)
         continue
       }
+      // Stop before spending another chunk request on outdated evidence.
+      if requested { try await requireAdmittedEvidence(admission) }
+      requested = true
       let label = "Analyzing part \(chunk.index + 1) of \(plan.chunks.count)"
       let segments = try await segmentWindow(
         meetingID: meetingID, passID: admission.passID,
@@ -643,6 +686,8 @@ struct MeetingAnalyzer: Sendable {
     }
     let stream = transport.analyze(
       request: request, endpoint: endpoint, timeout: policy.perRequestTimeout)
+    // Progress arrives every 250 ms; the denominator is fixed per request.
+    let totalChars = max(1, request.segments?.reduce(0) { $0 + $1.text.count } ?? 1)
     for try await item in stream {
       try Task.checkCancellation()
       switch item {
@@ -653,11 +698,10 @@ struct MeetingAnalyzer: Sendable {
         case .accepted:
           progress?(meetingID, AnalysisProgress(label: label, fraction: 0.1))
         case .progress(_, _, let chars):
-          let total = max(1, request.segments?.reduce(0) { $0 + $1.text.count } ?? 1)
           progress?(
             meetingID,
             AnalysisProgress(
-              label: label, fraction: min(0.9, 0.1 + 0.8 * Double(chars) / Double(total))))
+              label: label, fraction: min(0.9, 0.1 + 0.8 * Double(chars) / Double(totalChars))))
         case .result(let payload):
           // A result that names another run is stale protocol noise — the
           // store's `running` + `current_run_id` guard is the second line.
@@ -684,7 +728,27 @@ struct MeetingAnalyzer: Sendable {
     guard result.analysis.language == request.meeting.languagePolicy.output else {
       throw AnalysisFailure(.malformedResponse, detail: "language_policy")
     }
+    guard Self.proseMatches(result.analysis, output: request.meeting.languagePolicy.output)
+    else { throw AnalysisFailure(.malformedResponse, detail: "prose_language") }
     return result
+  }
+
+  /// The server copies the requested language into the result, so the prose itself
+  /// is checked: the summary, and the topic summaries together, are each rejected
+  /// when substantial and confidently the other language (English for `sk`/`mixed`,
+  /// Slovak for `en`). Short text, names and jargon never decide; titles and bullets
+  /// are not read.
+  static func proseMatches(_ analysis: AnalysisResult, output: AnalysisLanguage) -> Bool {
+    let expected: SupportedTextLanguage = output == .en ? .english : .slovak
+    let blocks = [
+      analysis.summary.text,
+      analysis.topics.map(\.summary).filter { !$0.isEmpty }.joined(separator: "\n"),
+    ]
+    return blocks.allSatisfy { block in
+      let language = SupportedTextLanguage.confident(
+        block, minimumLetters: 200, minimumWords: 30, minimumConfidence: 0.99)
+      return language == nil || language == expected
+    }
   }
 
   // MARK: Mapping
@@ -716,26 +780,31 @@ struct MeetingAnalyzer: Sendable {
 
 /// Chunk results that passed validation, kept so a retry resumes at the chunk
 /// or synthesis that failed instead of re-analyzing the whole meeting.
-/// Holds one meeting's evidence version at a time — at most one plan's chunks
-/// (≤ `AnalysisPolicy.maxChunks`); a different meeting or version replaces it.
+/// Holds one meeting's evidence version and summary backend at a time — at
+/// most one plan's chunks (≤ `AnalysisPolicy.maxChunks`); a different meeting,
+/// version or backend replaces it, so one summary never mixes backends.
 // ponytail: memory only, lost on relaunch; persist to the history database if
 // retries across launches matter.
 actor AnalysisPartialCache {
   struct Key: Hashable, Sendable {
     var meetingID: UUID
     var evidenceVersion: String
+    /// `RewriteEndpoint.summaryBackendKey`: origin, primary URL and model.
+    var backend: String
     var firstOrdinal: Int
     var lastOrdinal: Int
   }
 
-  private var scope: (meetingID: UUID, evidenceVersion: String)?
+  private var scope: (meetingID: UUID, evidenceVersion: String, backend: String)?
   private var results: [Key: AnalysisResult] = [:]
 
   func result(for key: Key) -> AnalysisResult? { results[key] }
 
   func store(_ result: AnalysisResult, for key: Key) {
-    if scope?.meetingID != key.meetingID || scope?.evidenceVersion != key.evidenceVersion {
-      scope = (key.meetingID, key.evidenceVersion)
+    if scope?.meetingID != key.meetingID || scope?.evidenceVersion != key.evidenceVersion
+      || scope?.backend != key.backend
+    {
+      scope = (key.meetingID, key.evidenceVersion, key.backend)
       results = [:]
     }
     results[key] = result
@@ -745,5 +814,29 @@ actor AnalysisPartialCache {
     guard scope?.meetingID == meetingID else { return }
     scope = nil
     results = [:]
+  }
+}
+
+/// Resolved output languages per final pass (see `resolveLanguage`). Bounded:
+/// at most `capacity` entries, cleared when full.
+final class ResolvedLanguageCache: @unchecked Sendable {
+  struct Key: Hashable {
+    var passID: UUID
+    var meetingLanguage: MeetingLanguage?
+    var transcriptPipeline: String?
+    var sampleBytes: Int
+  }
+
+  static let capacity = 16
+  private let lock = NSLock()
+  private var values: [Key: AnalysisLanguage] = [:]
+
+  func value(for key: Key) -> AnalysisLanguage? { lock.withLock { values[key] } }
+
+  func store(_ language: AnalysisLanguage, for key: Key) {
+    lock.withLock {
+      if values.count >= Self.capacity, values[key] == nil { values.removeAll() }
+      values[key] = language
+    }
   }
 }

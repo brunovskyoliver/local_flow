@@ -1,5 +1,6 @@
-// Package rewrite implements the LocalFlow rewrite protocol v1 types and their
-// validation. The wire contract is specs/003-server-rewriting/contracts/rewrite-protocol.md.
+// Package rewrite implements the LocalFlow rewrite protocol v1 and v2 types and
+// their validation. The wire contracts are specs/003-server-rewriting/contracts/rewrite-protocol.md
+// and specs/012-app-context-awareness/contracts/rewrite-protocol-v2.md.
 package rewrite
 
 import (
@@ -14,13 +15,14 @@ import (
 
 // Limits shared with the client; enforced on raw bytes before parsing.
 const (
-	SchemaVersion       = 1
+	SchemaVersion       = 1 // v1 requests; also the event and health schema version
+	ContextVersion      = 2 // v2 requests: v1 plus the required context
 	ServiceName         = "localflow-rewrite"
 	MaxRequestBodyBytes = 262144
 	MaxInputScalars     = 20000
 	MaxInputBytes       = 65536
 	MaxLineBytes        = 8192
-	MaxLanguageHints    = 4
+	MaxLanguageHints    = 2
 	MaxIdentityBytes    = 128
 )
 
@@ -45,13 +47,16 @@ const (
 var Modes = []string{"clean", "polished", "concise"}
 
 // Request is the body of POST /v1/rewrite. Unknown fields are rejected.
+// ContextJSON holds the v2 context bytes as received; Context is their parse.
 type Request struct {
-	SchemaVersion int      `json:"schema_version"`
-	RequestID     string   `json:"request_id"`
-	Mode          string   `json:"mode"`
-	Text          string   `json:"text"`
-	LanguageHints []string `json:"language_hints"`
-	StreamDeltas  bool     `json:"stream_deltas"`
+	SchemaVersion int             `json:"schema_version"`
+	RequestID     string          `json:"request_id"`
+	Mode          string          `json:"mode"`
+	Text          string          `json:"text"`
+	LanguageHints []string        `json:"language_hints"`
+	StreamDeltas  bool            `json:"stream_deltas"`
+	ContextJSON   json.RawMessage `json:"context,omitempty"`
+	Context       *Context        `json:"-"`
 }
 
 // InputBytes is the UTF-8 length of the text; the output bound derives from it.
@@ -106,7 +111,7 @@ func DecodeRequest(r io.Reader) (Request, error) {
 		"language_hints": true, "stream_deltas": true,
 	}
 	for key := range raw {
-		if !allowed[key] {
+		if !allowed[key] && key != "context" {
 			return req, &RequestError{CodeInvalidRequest, "unknown field"}
 		}
 	}
@@ -121,10 +126,22 @@ func DecodeRequest(r io.Reader) (Request, error) {
 	if len(trimmed) == 0 || trimmed[0] == '"' || json.Unmarshal(trimmed, &version) != nil {
 		return req, &RequestError{CodeUnsupportedVersion, "schema_version not a number"}
 	}
-	if v, err := version.Int64(); err != nil || v != SchemaVersion {
+	v, err := version.Int64()
+	if err != nil || (v != SchemaVersion && v != ContextVersion) {
 		return req, &RequestError{CodeUnsupportedVersion, "schema_version unsupported"}
 	}
-	req.SchemaVersion = SchemaVersion
+	req.SchemaVersion = int(v)
+	contextJSON, hasContext := raw["context"]
+	if hasContext != (req.SchemaVersion == ContextVersion) {
+		return req, &RequestError{CodeInvalidRequest, "context not allowed for schema_version"}
+	}
+	if hasContext {
+		context, err := DecodeContext(bytes.TrimSpace(contextJSON))
+		if err != nil {
+			return req, err
+		}
+		req.ContextJSON, req.Context = bytes.TrimSpace(contextJSON), &context
+	}
 	if err := json.Unmarshal(raw["request_id"], &req.RequestID); err != nil || !IsUUID(req.RequestID) {
 		return req, &RequestError{CodeInvalidRequest, "request_id not a UUID"}
 	}
@@ -152,10 +169,13 @@ func DecodeRequest(r io.Reader) (Request, error) {
 	if len(req.LanguageHints) > MaxLanguageHints {
 		return req, &RequestError{CodeInvalidRequest, "too many language hints"}
 	}
+	// English and Slovak are the only supported languages; each at most once.
+	seen := map[string]bool{}
 	for _, hint := range req.LanguageHints {
-		if hint == "" || len(hint) > 35 {
+		if (hint != "en" && hint != "sk") || seen[hint] {
 			return req, &RequestError{CodeInvalidRequest, "language hint invalid"}
 		}
+		seen[hint] = true
 	}
 	if value := string(bytes.TrimSpace(raw["stream_deltas"])); value != "true" && value != "false" {
 		return req, &RequestError{CodeInvalidRequest, "stream_deltas not a boolean"}
@@ -235,6 +255,8 @@ type Result struct {
 	PromptVersion int      `json:"prompt_version"`
 	Shield        Shield   `json:"shield"`
 	Timing        Timing   `json:"timing"`
+	// ContextPromptVersion is set only for v2 requests.
+	ContextPromptVersion int `json:"context_prompt_version,omitempty"`
 }
 
 // Event is one NDJSON line. Exactly one of the typed payloads is used per kind.

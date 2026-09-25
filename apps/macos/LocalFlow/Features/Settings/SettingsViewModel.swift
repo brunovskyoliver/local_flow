@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -28,7 +29,7 @@ final class SettingsViewModel {
       }
     }
   }
-  struct Snapshot {
+  struct Snapshot: Equatable {
     var modelInstalled = false
     var keepModelReady = false
     var meetingModelInstalled = false
@@ -310,6 +311,63 @@ final class SettingsViewModel {
   }
 
   /// Inline reason the Enable toggle is unavailable, in refusal precedence.
+  // MARK: App context (Feature 012)
+
+  static let contextDisclosure =
+    "Reads the app name, window title and text around the cursor to spell names as they appear on screen. Never reads passwords, the clipboard or excluded apps."
+  static let contextRewriteTitle = "Send context to rewrite server"
+
+  /// Why the context rewrite toggle is unavailable, or nil when it can be turned on (FR-020).
+  static func contextRewriteBlockedReason(contextEnabled: Bool, rewriteEnabled: Bool) -> String? {
+    if !contextEnabled { return "Turn on Use app context first." }
+    if !rewriteEnabled { return "Turn on rewriting first." }
+    return nil
+  }
+  private(set) var contextExclusionError: String?
+
+  func addContextExclusion(_ bundleID: String) {
+    guard let preferences else { return }
+    contextExclusionError =
+      preferences.addContextExclusion(bundleID)
+      ? nil
+      : "Enter a bundle ID such as com.example.App. At most \(AppPreferences.maximumContextRules) apps can be excluded."
+  }
+
+  static let contextStyleTitle = "Match style to the app"
+
+  static func appCount(_ count: Int) -> String { count == 1 ? "1 app" : "\(count) apps" }
+  private(set) var contextOverrideError: String?
+
+  func setContextCategory(_ category: AppCategory, for bundleID: String) {
+    guard let preferences else { return }
+    let id = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+    contextOverrideError =
+      preferences.setContextCategory(category, for: id)
+      ? nil
+      : "Enter a bundle ID such as com.example.App. At most \(AppPreferences.maximumContextRules) apps can have a kind."
+  }
+
+  /// Regular running apps, by name.
+  var runningApps: [(id: String, name: String)] {
+    NSWorkspace.shared.runningApplications
+      .filter { $0.activationPolicy == .regular }
+      .compactMap { app in app.bundleIdentifier.map { ($0, app.localizedName ?? $0) } }
+      .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+  }
+
+  /// Regular running apps that are not excluded yet, by name.
+  var contextExclusionCandidates: [(id: String, name: String)] {
+    let excluded = Set(preferences?.contextExcludedBundleIDs ?? [])
+    return NSWorkspace.shared.runningApplications
+      .filter { $0.activationPolicy == .regular }
+      .compactMap { app in
+        app.bundleIdentifier.flatMap {
+          excluded.contains($0) ? nil : ($0, app.localizedName ?? $0)
+        }
+      }
+      .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+  }
+
   static func rewriteBlockedReason(for settings: RewriteSettings) -> String? {
     switch settings.refusalCategory {
     case .invalidSettings: return "Enter a valid http:// or https:// endpoint first."
@@ -348,7 +406,11 @@ final class SettingsViewModel {
     self.rewriteTransport = rewriteTransport
     self.analysisTransport = analysisTransport
   }
-  func refresh() async { snapshot = await observe() }
+  /// Assigns only on change so an unchanged poll does not invalidate observers.
+  func refresh() async {
+    let next = await observe()
+    if next != snapshot { snapshot = next }
+  }
   private(set) var testing: ModelTest?
   /// "Working · 420 ms" or the failure, per model, until the next test.
   private(set) var testResults: [ModelTest: String] = [:]

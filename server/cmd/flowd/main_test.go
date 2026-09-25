@@ -19,13 +19,63 @@ func TestFlags(t *testing.T) {
 		return map[string]string{"LOCALFLOW_REWRITE_TOKEN": "client-secret", "LOCALFLOW_BACKEND_TOKEN": "backend-secret"}[key]
 	}
 	c, err := parse([]string{"--shield=off", "--debug-delay=30s", "--protocol-versions=2", "--first-token-timeout=7s", "--backend-timeout=40s"}, env, io.Discard)
-	if err != nil || c.shield || c.versions[0] != 2 || c.backend.DebugDelay != 30*time.Second || c.backend.Token != "backend-secret" || c.token != "client-secret" {
+	if err != nil || c.shield || c.versions[0] != 2 || len(c.rewriteVersions) != 1 || c.rewriteVersions[0] != 2 || c.backend.DebugDelay != 30*time.Second || c.backend.Token != "backend-secret" || c.token != "client-secret" {
 		t.Fatal(c, err)
 	}
-	for _, args := range [][]string{{"--shield=maybe"}, {"--protocol-versions=0"}, {"--backend-timeout=0s"}, {"--first-token-timeout=-1s"}, {"--debug-delay=-1s"}, {"--analysis-timeout=0s"}, {"--analysis-first-token-timeout=-1s"}, {"--listen=0.0.0.0:8080"}, {"extra"}, {"--analysis-dump-requests=/tmp/x"}} {
+	for _, args := range [][]string{{"--shield=maybe"}, {"--protocol-versions=0"}, {"--rewrite-protocol-versions=1,x"}, {"--rewrite-protocol-versions="}, {"--backend-timeout=0s"}, {"--first-token-timeout=-1s"}, {"--debug-delay=-1s"}, {"--analysis-timeout=0s"}, {"--analysis-first-token-timeout=-1s"}, {"--listen=0.0.0.0:8080"}, {"extra"}, {"--analysis-dump-requests=/tmp/x"}} {
 		if _, err := parse(args, func(string) string { return "" }, io.Discard); err == nil {
 			t.Fatal(args)
 		}
+	}
+}
+
+// Rewrite advertises 1 and 2 by default while analysis keeps its own list.
+func TestRewriteProtocolVersions(t *testing.T) {
+	none := func(string) string { return "" }
+	for _, tc := range []struct {
+		args              []string
+		analysis, rewrite string
+	}{
+		{nil, "[1]", "[1 2]"},
+		{[]string{"--rewrite-protocol-versions=1"}, "[1]", "[1]"},
+		{[]string{"--protocol-versions=2"}, "[2]", "[2]"},
+		{[]string{"--protocol-versions=1", "--rewrite-protocol-versions=2"}, "[1]", "[2]"},
+	} {
+		c, err := parse(tc.args, none, io.Discard)
+		if err != nil || fmt.Sprint(c.versions) != tc.analysis || fmt.Sprint(c.rewriteVersions) != tc.rewrite {
+			t.Fatal(tc.args, c.versions, c.rewriteVersions, err)
+		}
+	}
+	addr := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, []string{"serve", "--listen=" + addr}, none, io.Discard) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}()
+	versions := map[string]string{}
+	deadline := time.Now().Add(3 * time.Second)
+	for _, path := range []string{"/v1/rewrite/health", "/v1/analysis/health"} {
+		for time.Now().Before(deadline) {
+			resp, err := http.Get("http://" + addr + path)
+			if err != nil {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			var health struct {
+				ProtocolVersions []int `json:"protocol_versions"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&health)
+			resp.Body.Close()
+			versions[path] = fmt.Sprint(health.ProtocolVersions)
+			break
+		}
+	}
+	if versions["/v1/rewrite/health"] != "[1 2]" || versions["/v1/analysis/health"] != "[1]" {
+		t.Fatal(versions)
 	}
 }
 
@@ -138,7 +188,7 @@ func freePort(t *testing.T) string {
 
 func TestHelpAndShutdown(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(context.Background(), nil, func(string) string { return "" }, &out); err != nil || !strings.Contains(out.String(), "0.2.0") {
+	if err := run(context.Background(), nil, func(string) string { return "" }, &out); err != nil || !strings.Contains(out.String(), "0.3.0") {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)

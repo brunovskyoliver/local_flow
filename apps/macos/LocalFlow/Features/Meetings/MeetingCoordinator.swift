@@ -6,7 +6,8 @@ import Observation
 /// Owns at most one meeting. Every transition is written through the store
 /// before it is published; the two sources and two workers of a stretch are
 /// released on every pause, stop, sleep and failure. Polls run on the injected
-/// clock: 250 ms for storage latches, source failures, device changes and the
+/// clock: 250 ms for storage latches and device changes; at most 1 Hz for source
+/// failures (the system source preflights screen-capture access) and the
 /// microphone authorization; 1 Hz for the elapsed display; 10 s for RSS.
 @MainActor @Observable
 final class MeetingCoordinator {
@@ -33,6 +34,8 @@ final class MeetingCoordinator {
   }
 
   static let pollInterval: Duration = .milliseconds(250)
+  /// Source failure and permission checks are TCC queries; they run at most this often.
+  static let permissionIntervalMs: Int64 = 1_000
   static let elapsedInterval: Duration = .seconds(1)
   static let rssInterval: Duration = .seconds(10)
   static let blockingFreeBytes: Int64 = 500_000_000
@@ -48,8 +51,14 @@ final class MeetingCoordinator {
   private(set) var notesEditor: MeetingNotesEditor?
   /// Feature 011: the live notes editor reports saved paragraphs as evidence.
   @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
-  /// Bumped after every persisted change so the library can refresh.
+  /// Bumped after every persisted change the library lists (state, title, tracks,
+  /// segments). Recording heartbeats do not bump it: they change nothing the list
+  /// or the open note shows beyond `status.droppedFrames`.
   private(set) var version = 0
+  /// Recorded time, ticked at 1 Hz while recording. It lives outside `status` so
+  /// only the small views that print it redraw every second.
+  let elapsed = MeetingElapsed()
+  var recordedElapsed: Duration { elapsed.recorded }
 
   private struct TrackRuntime {
     let trackID: UUID
@@ -72,6 +81,7 @@ final class MeetingCoordinator {
   @ObservationIgnored private var cumulativeDroppedFrames: Int64 = 0
   @ObservationIgnored private var stretchStartedAt: Int64 = 0
   @ObservationIgnored private var pollTask: Task<Void, Never>?
+  @ObservationIgnored private var lastPermissionCheckMs: Int64?
   @ObservationIgnored private var elapsedTask: Task<Void, Never>?
   @ObservationIgnored private var rssTask: Task<Void, Never>?
   @ObservationIgnored private var sleepObserver: SleepObserver?
@@ -122,6 +132,20 @@ final class MeetingCoordinator {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     status?.title = trimmed.isEmpty ? nil : trimmed
     version += 1
+  }
+
+  /// The library wrote the meeting row (title or language) outside the coordinator.
+  /// Adopts the stored row when it is newer, so the published title stays current
+  /// and the next revision-checked edit here does not fail as stale.
+  func meetingDidChange(id: UUID) async {
+    guard meeting?.id == id, let updated = try? await deps.store.meeting(id: id),
+      let current = meeting, current.id == id, updated.revision > current.revision
+    else { return }
+    meeting = updated
+    if status?.id == id, status?.title != updated.title || status?.language != updated.language {
+      status?.title = updated.title
+      status?.language = updated.language
+    }
   }
 
   /// The language the final transcript decodes in; nil follows Settings. Stored on
@@ -203,6 +227,7 @@ final class MeetingCoordinator {
       meeting = current
       status = MeetingStatus(
         id: created.id, state: .preparing, storageWarning: warning, createdAt: created.createdAt)
+      elapsed.recorded = .zero
       status?.transcriptionRequested = deps.transcription != nil && options.transcription
       refusal = nil
       refusalPermission = nil
@@ -357,7 +382,7 @@ final class MeetingCoordinator {
       var published = status!
       published.state = .paused
       published.pauseReason = reason
-      published.recordedElapsed = .milliseconds(recordedBase)
+      elapsed.recorded = .milliseconds(recordedBase)
       for kind in MeetingTrackKind.allCases where published[kind] == .capturing {
         published[kind] = .finalized
       }
@@ -481,7 +506,7 @@ final class MeetingCoordinator {
       var published = status!
       published.state = .finalizing
       published.pauseReason = nil
-      published.recordedElapsed = .milliseconds(recordedBase)
+      elapsed.recorded = .milliseconds(recordedBase)
       status = published
       version += 1
       startRSSSampler()
@@ -817,7 +842,6 @@ final class MeetingCoordinator {
   private func noteHeartbeat(_ beat: MeetingTrackWorker.Heartbeat) {
     guard status?.state == .recording else { return }
     refreshDroppedFrames()
-    version += 1
   }
 
   /// Each active ring contributes only newly observed loss. The total survives
@@ -842,7 +866,7 @@ final class MeetingCoordinator {
       status ?? MeetingStatus(id: meeting.id, state: meeting.state, createdAt: meeting.createdAt)
     published.state = meeting.state
     published.pauseReason = nil
-    published.recordedElapsed = .milliseconds(meeting.recordedMs)
+    elapsed.recorded = .milliseconds(meeting.recordedMs)
     for kind in MeetingTrackKind.allCases {
       if let reason = failedTracks[kind] {
         if case .failed = published[kind] {
@@ -882,6 +906,7 @@ final class MeetingCoordinator {
   private func startTimers() {
     stopTimers()
     let clock = deps.clock
+    lastPermissionCheckMs = nil
     pollTask = Task { [weak self] in
       while !Task.isCancelled {
         do { try await clock.sleep(for: MeetingCoordinator.pollInterval) } catch { return }
@@ -892,12 +917,11 @@ final class MeetingCoordinator {
     elapsedTask = Task { [weak self] in
       while !Task.isCancelled {
         do { try await clock.sleep(for: MeetingCoordinator.elapsedInterval) } catch { return }
-        guard let self, var published = self.status, published.state == .recording else { continue }
+        guard let self, self.status?.state == .recording else { continue }
+        // `status` changes only when the dropped-frame count does.
         self.refreshDroppedFrames()
-        published.droppedFrames = self.cumulativeDroppedFrames
-        published.recordedElapsed = .milliseconds(
+        self.elapsed.recorded = .milliseconds(
           self.recordedBase + max(0, clock.nowMilliseconds - self.stretchStartedAt))
-        self.status = published
       }
     }
     startRSSSampler()
@@ -939,12 +963,18 @@ final class MeetingCoordinator {
         return
       }
     }
+    let now = deps.clock.nowMilliseconds
+    let checkPermissions =
+      lastPermissionCheckMs.map { now - $0 >= Self.permissionIntervalMs } ?? true
+    if checkPermissions { lastPermissionCheckMs = now }
     for (kind, runtime) in runtimes {
-      if let failure = await runtime.source.failure() {
+      if checkPermissions, let failure = await runtime.source.failure() {
         await handleSourceFailure(kind: kind, reason: failure.reason(for: kind))
         return
       }
-      if kind == .microphone, deps.permissions.microphoneStatus() != .authorized {
+      if checkPermissions, kind == .microphone,
+        deps.permissions.microphoneStatus() != .authorized
+      {
         await handleSourceFailure(kind: kind, reason: .permissionRevoked)
         return
       }
@@ -959,6 +989,19 @@ final class MeetingCoordinator {
     deps.recorder?.record(
       phase: .meetingRecording, metric: .meetingTransition, itemCount: 1, meetingKey: state.rawValue
     )
+  }
+}
+
+/// The coordinator's recorded time. A separate observable so a per-second tick
+/// invalidates only the views that read it, never whoever reads `status`.
+@MainActor @Observable
+final class MeetingElapsed {
+  fileprivate(set) var recorded: Duration = .zero
+
+  /// Recorded time as whole milliseconds, for the duration formatter.
+  var milliseconds: Int64 {
+    let components = recorded.components
+    return Int64(components.seconds) * 1_000 + Int64(components.attoseconds / 1_000_000_000_000_000)
   }
 }
 

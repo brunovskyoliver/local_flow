@@ -42,7 +42,33 @@ actor ModelProvisioner {
   private var parentURL: URL { rootURL.deletingLastPathComponent() }
   private var stagingName: String { ".\(rootURL.lastPathComponent).staging" }
 
-  func verifiedLocalDescriptor() throws -> LocalModelDescriptor {
+  /// Per-file stat identity recorded after a full hash. Any write, replacement or
+  /// metadata change moves ctime, so a match means the hashed bytes are still in place.
+  struct FileFingerprint: Codable, Sendable, Equatable {
+    var path: String
+    var sha256: String
+    var size: Int64
+    var device: Int32
+    var inode: UInt64
+    var modifiedSeconds: Int
+    var modifiedNanoseconds: Int
+    var changedSeconds: Int
+    var changedNanoseconds: Int
+  }
+
+  private struct FingerprintRecord: Codable {
+    var version = 1
+    var files: [FileFingerprint]
+  }
+
+  private var verifiedFingerprints: [FileFingerprint]?
+  /// Full SHA-256 passes over installed files; tests use it to prove the fast path.
+  private(set) var fullVerificationCount = 0
+
+  /// Checks the install marker and inventory, then compares each file's stat fingerprint
+  /// with the one recorded after the last full hash. A missing or changed fingerprint,
+  /// or `fullHash`, rehashes every file. Explicit user verification passes `fullHash`.
+  func verifiedLocalDescriptor(fullHash: Bool = false) throws -> LocalModelDescriptor {
     guard !operating else { throw Error.alreadyInUse }
     do {
       try prepareWorkspace()
@@ -62,7 +88,13 @@ actor ModelProvisioner {
       let installed = try JSONDecoder().decode(ModelDescriptor.self, from: data)
       try installed.validate()
       guard installed == descriptor else { throw Error.invalidManifest }
-      try verifyFiles(in: directory)
+      let current = try currentFingerprints(in: directory)
+      if fullHash || current != (verifiedFingerprints ?? storedFingerprints()) {
+        fullVerificationCount += 1
+        recordFingerprints(try verifyFiles(in: directory))
+      } else {
+        verifiedFingerprints = current
+      }
       state = .installed
       progress.setPhase(.installed)
       return LocalModelDescriptor(descriptor: descriptor, rootURL: rootURL)
@@ -70,6 +102,8 @@ actor ModelProvisioner {
       // Cancelling a read-only verification does not invalidate the installed files.
       throw CancellationError()
     } catch {
+      // A failed check must not leave a fingerprint that would pass the next one.
+      recordFingerprints(nil)
       state = .failed
       progress.setPhase(.failed)
       throw error
@@ -106,7 +140,7 @@ actor ModelProvisioner {
       }
       state = .verifying
       progress.setPhase(.verifying)
-      try verifyFiles(in: stage)
+      let fingerprints = try verifyFiles(in: stage)
       let marker = try Self.createPrivateFile("manifest.json", relativeTo: stage)
       defer { close(marker) }
       let markerHandle = FileHandle(fileDescriptor: marker, closeOnDealloc: false)
@@ -115,6 +149,8 @@ actor ModelProvisioner {
       try Task.checkCancellation()
       try promote()
       promoted = true
+      // Renaming the stage keeps each file's inode and ctime.
+      recordFingerprints(fingerprints)
       // After a swap this stable directory owns the prior installation.
       try cleanStaging()
       state = .installed
@@ -158,7 +194,7 @@ actor ModelProvisioner {
       }
       state = .verifying
       progress.setPhase(.verifying)
-      try verifyFiles(in: stage)
+      let fingerprints = try verifyFiles(in: stage)
       let marker = try Self.createPrivateFile("manifest.json", relativeTo: stage)
       defer { close(marker) }
       let handle = FileHandle(fileDescriptor: marker, closeOnDealloc: false)
@@ -167,6 +203,7 @@ actor ModelProvisioner {
       try Task.checkCancellation()
       try promote()
       promoted = true
+      recordFingerprints(fingerprints)
       try cleanStaging()
       state = .installed
       progress.setPhase(.installed)
@@ -296,15 +333,99 @@ actor ModelProvisioner {
     guard unlinkat(parent, name, AT_REMOVEDIR) == 0 else { throw Error.cleanupFailed }
   }
 
-  private func verifyFiles(in directory: Int32) throws {
-    let paths = Set(descriptor.files.map(\.path))
-    var remainingEntries = Self.maxFiles * 33 + 1
-    try Self.verifyInventory(directory, prefix: "", allowed: paths, remaining: &remainingEntries)
+  /// Hashes every file. Returns the fingerprints to record, or nil if a file changed
+  /// while it was read, so a racing writer never leaves a trusted fingerprint.
+  private func verifyFiles(in directory: Int32) throws -> [FileFingerprint]? {
+    try verifyInventory(in: directory)
+    var fingerprints: [FileFingerprint]? = []
     for file in descriptor.files {
       try Task.checkCancellation()
       let input = try Self.openRegularFile(file.path, relativeTo: directory)
       defer { close(input) }
+      let before = try Self.fingerprint(of: file, input: input)
       try streamVerified(file, input: input, output: nil)
+      let after = try Self.fingerprint(of: file, input: input)
+      if before == after { fingerprints?.append(after) } else { fingerprints = nil }
+    }
+    return fingerprints
+  }
+
+  /// Inventory and stat only; no file bytes are read.
+  private func currentFingerprints(in directory: Int32) throws -> [FileFingerprint] {
+    try verifyInventory(in: directory)
+    return try descriptor.files.map { file in
+      try Task.checkCancellation()
+      let input = try Self.openRegularFile(file.path, relativeTo: directory)
+      defer { close(input) }
+      let fingerprint = try Self.fingerprint(of: file, input: input)
+      guard fingerprint.size == file.size else { throw Error.sizeMismatch(file.path) }
+      return fingerprint
+    }
+  }
+
+  private func verifyInventory(in directory: Int32) throws {
+    let paths = Set(descriptor.files.map(\.path))
+    var remainingEntries = Self.maxFiles * 33 + 1
+    try Self.verifyInventory(directory, prefix: "", allowed: paths, remaining: &remainingEntries)
+  }
+
+  private static func fingerprint(of file: ModelFileDescriptor, input: Int32) throws
+    -> FileFingerprint
+  {
+    var info = stat()
+    guard fstat(input, &info) == 0 else { throw Error.fileMissing(file.path) }
+    return FileFingerprint(
+      path: file.path, sha256: file.sha256, size: Int64(info.st_size), device: info.st_dev,
+      inode: info.st_ino, modifiedSeconds: info.st_mtimespec.tv_sec,
+      modifiedNanoseconds: info.st_mtimespec.tv_nsec, changedSeconds: info.st_ctimespec.tv_sec,
+      changedNanoseconds: info.st_ctimespec.tv_nsec)
+  }
+
+  /// Sits beside the import lock, outside the verified inventory.
+  private var fingerprintName: String { ".\(rootURL.lastPathComponent).fingerprint" }
+
+  private func storedFingerprints() -> [FileFingerprint]? {
+    guard parentFD >= 0 else { return nil }
+    let fd = openat(parentFD, fingerprintName, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW)
+    guard fd >= 0 else { return nil }
+    defer { close(fd) }
+    var info = stat()
+    guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+      info.st_size <= Self.maxManifestBytes
+    else { return nil }
+    let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+    guard let data = try? handle.read(upToCount: Self.maxManifestBytes + 1),
+      data.count <= Self.maxManifestBytes,
+      let record = try? JSONDecoder().decode(FingerprintRecord.self, from: data),
+      record.version == 1
+    else { return nil }
+    return record.files
+  }
+
+  /// Best effort: a missing or unreadable record only costs the next check a full hash.
+  private func recordFingerprints(_ fingerprints: [FileFingerprint]?) {
+    verifiedFingerprints = fingerprints
+    guard parentFD >= 0 else { return }
+    let temporary = fingerprintName + ".tmp"
+    guard let fingerprints,
+      let data = try? JSONEncoder().encode(FingerprintRecord(files: fingerprints))
+    else {
+      unlinkat(parentFD, fingerprintName, 0)
+      return
+    }
+    let fd = openat(
+      parentFD, temporary, O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0o600)
+    guard fd >= 0 else {
+      unlinkat(parentFD, fingerprintName, 0)
+      return
+    }
+    let written =
+      (try? FileHandle(fileDescriptor: fd, closeOnDealloc: false).write(
+        contentsOf: data)) != nil
+    close(fd)
+    if !written || renameat(parentFD, temporary, parentFD, fingerprintName) != 0 {
+      unlinkat(parentFD, temporary, 0)
+      unlinkat(parentFD, fingerprintName, 0)
     }
   }
 
@@ -479,7 +600,7 @@ actor ModelProvisioner {
 
 /// One replaceable snapshot; producers never enqueue tasks or retain progress history.
 final class ProvisioningProgress: @unchecked Sendable {
-  struct Snapshot: Sendable {
+  struct Snapshot: Sendable, Equatable {
     var phase: ModelProvisioner.State = .absent
     var completedBytes: Int64 = 0
     var totalBytes: Int64 = 0

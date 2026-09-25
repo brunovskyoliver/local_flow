@@ -3,6 +3,7 @@ package prompts
 import (
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -20,3 +21,79 @@ func TestVersionedTemplates(t *testing.T) {
 		}
 	}
 }
+
+// The context rules block is versioned the same way as the mode templates.
+func TestVersionedContextRules(t *testing.T) {
+	hashes := map[int]string{1: "516159fa149daced6e3a8683bf41e8a5310eca2f2f4b13185ada071ea96dd383"}
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(ContextRules))); hashes[ContextPromptVersion] != got {
+		t.Errorf("context rules v%d unregistered hash: %s", ContextPromptVersion, got)
+	}
+}
+
+func TestWithContext(t *testing.T) {
+	block := "<screen_context>{}</screen_context>"
+	for mode, template := range templates {
+		got := WithContext(template.Text, Reference{Category: "email", Block: block})
+		if got != template.Text+" "+ContextRules+block {
+			t.Fatalf("%s: %q", mode, got)
+		}
+		// The mode template is a prefix and never changes.
+		if got[:len(template.Text)] != template.Text {
+			t.Fatal(mode)
+		}
+	}
+	if !strings.HasSuffix(ContextRules, " ") || strings.Contains(ContextRules, "<") {
+		t.Fatal("rules must end with a space and contain no tag")
+	}
+}
+
+// Story 4 (FR-018): category formatting rules appear only with style_hints and
+// never change the mode template.
+func TestCategoryStyleRules(t *testing.T) {
+	block := "<screen_context>{}</screen_context>"
+	for _, category := range []string{"email", "work_chat", "personal_chat", "code", "terminal", "document", "other"} {
+		off := WithContext(templates["clean"].Text, Reference{Category: category, Block: block})
+		if off != templates["clean"].Text+" "+ContextRules+block {
+			t.Fatalf("%s: style rules without style_hints", category)
+		}
+		on := WithContext(templates["clean"].Text, Reference{Category: category, StyleHints: true, Block: block})
+		if !strings.HasPrefix(on, templates["clean"].Text+" "+ContextRules) || !strings.HasSuffix(on, block) {
+			t.Fatalf("%s: template, rules or block moved", category)
+		}
+		rule := CategoryRules[category]
+		switch category {
+		case "work_chat", "personal_chat":
+			if !strings.Contains(rule, "trailing period") {
+				t.Fatalf("%s: %q", category, rule)
+			}
+		case "email":
+			if !strings.Contains(rule, "greeting on its own line") || !strings.Contains(rule, "full punctuation") {
+				t.Fatalf("%s: %q", category, rule)
+			}
+		case "code", "terminal":
+			if !strings.Contains(rule, "verbatim") {
+				t.Fatalf("%s: %q", category, rule)
+			}
+		default:
+			if rule != "" {
+				t.Fatalf("%s has no category rule, got %q", category, rule)
+			}
+		}
+		if on != off[:len(off)-len(block)]+rule+block {
+			t.Fatalf("%s: rule not placed between the rules and the block", category)
+		}
+		if strings.Contains(rule, "mode") && category != "" {
+			t.Fatalf("%s: a category rule must not change the mode", category)
+		}
+	}
+	// Registered with context prompt version 1.
+	var all strings.Builder
+	for _, category := range []string{"code", "email", "personal_chat", "terminal", "work_chat"} {
+		all.WriteString(CategoryRules[category])
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(all.String()))); got != categoryRulesHashes[ContextPromptVersion] {
+		t.Errorf("category rules v%d unregistered hash: %s", ContextPromptVersion, got)
+	}
+}
+
+var categoryRulesHashes = map[int]string{1: "6d041a22a0bdfcc9a1123bfe0a07fd55fd05cf18c9801bb66747358282efc539"}

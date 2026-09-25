@@ -276,8 +276,9 @@ actor FakeRewriteAttemptStore: RewriteAttemptStoring {
       outputText: nil, outputHash: nil, unchanged: false, failureCategory: nil, stale: false,
       startedAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), spans: .none,
       serverQueueMilliseconds: nil, backendFirstTokenMilliseconds: nil, backendMilliseconds: nil,
-      protocolVersion: 1, identity: .unknown, endpointOrigin: admission.endpointOrigin,
-      insecureOverride: admission.insecureOverride, delivered: false)
+      protocolVersion: admission.protocolVersion, identity: .unknown,
+      endpointOrigin: admission.endpointOrigin, insecureOverride: admission.insecureOverride,
+      delivered: false, contextHash: admission.contextHash)
     rows[attempt.id] = attempt
     stateChanged[admission.transcriptionID] = .pending
     return attempt
@@ -373,7 +374,8 @@ actor FakeRewriteAttemptStore: RewriteAttemptStoring {
       backendFirstTokenMilliseconds: result?.backendFirstTokenMilliseconds,
       backendMilliseconds: result?.backendMilliseconds, protocolVersion: current.protocolVersion,
       identity: identity, endpointOrigin: current.endpointOrigin,
-      insecureOverride: current.insecureOverride, delivered: current.delivered)
+      insecureOverride: current.insecureOverride, delivered: current.delivered,
+      contextHash: current.contextHash)
     rows[next.id] = next
     let newest = rows.values.filter { $0.transcriptionID == next.transcriptionID }
       .max { $0.ordinal < $1.ordinal }
@@ -394,7 +396,19 @@ actor FakeRewriteAttemptStore: RewriteAttemptStoring {
       backendFirstTokenMilliseconds: current.backendFirstTokenMilliseconds,
       backendMilliseconds: current.backendMilliseconds, protocolVersion: current.protocolVersion,
       identity: current.identity, endpointOrigin: current.endpointOrigin,
-      insecureOverride: current.insecureOverride, delivered: delivered ?? current.delivered)
+      insecureOverride: current.insecureOverride, delivered: delivered ?? current.delivered,
+      contextHash: current.contextHash)
+  }
+
+  // MARK: Feature 012 context rows
+
+  private(set) var contexts: [UUID: DictationContextRecord] = [:]
+  private(set) var rewriteNoteWrites: [(UUID, String?)] = []
+  func setContext(_ record: DictationContextRecord?, for id: UUID) { contexts[id] = record }
+  func context(for transcriptionID: UUID) -> DictationContextRecord? { contexts[transcriptionID] }
+  func recordRewriteNote(_ note: String?, for transcriptionID: UUID) throws {
+    rewriteNoteWrites.append((transcriptionID, note))
+    contexts[transcriptionID]?.rewriteNote = note
   }
 }
 
@@ -617,7 +631,8 @@ final class FakeRewriteTransport: RewriteTransporting, @unchecked Sendable {
         backend: .init(kind: "fake", model: backendModel), promptVersion: promptVersion,
         shield: .init(version: shieldVersion, placeholders: 0, restored: 0),
         timing: .init(
-          queueMilliseconds: 1, backendFirstTokenMilliseconds: 20, backendMilliseconds: 80))
+          queueMilliseconds: 1, backendFirstTokenMilliseconds: 20, backendMilliseconds: 80),
+        contextPromptVersion: request.sendsContext ? 1 : nil)
       continuation.yield(.firstByte)
       continuation.yield(.event(.accepted(requestID: request.requestID.uuidString)))
       continuation.yield(.event(.result(payload)))
@@ -681,5 +696,64 @@ final class RewriteRig {
 
   func removeSuite() {
     UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+  }
+}
+
+/// Scripted `AppContextReading` (Feature 012). Each call takes the next script
+/// (then the default): a delay, an outcome and a snapshot. It keeps the contract:
+/// a delay past the deadline returns `timed_out` at the deadline. Cancellation
+/// ends the read early and is counted. `failOnAnyCall` fails the test on any read.
+final class FakeAppContextReader: AppContextReading, @unchecked Sendable {
+  struct Script: Sendable {
+    var delay: Duration = .zero
+    var outcome: ContextOutcome = .used
+    var snapshot: AppContextSnapshot?
+    var bundleID: String? = "com.apple.mail"
+  }
+
+  let failOnAnyCall: Bool
+  private let lock = NSLock()
+  private var scripts: [Script]
+  private let defaultScript: Script
+  private var targetStorage: [CapturedTarget?] = []
+  private var settingsStorage: [ContextSettings] = []
+  private var finishedStorage = 0
+  private var cancelledStorage = 0
+
+  init(scripts: [Script] = [], defaultScript: Script = Script(), failOnAnyCall: Bool = false) {
+    self.scripts = scripts
+    self.defaultScript = defaultScript
+    self.failOnAnyCall = failOnAnyCall
+  }
+
+  var callCount: Int { lock.withLock { targetStorage.count } }
+  var targets: [CapturedTarget?] { lock.withLock { targetStorage } }
+  var settings: [ContextSettings] { lock.withLock { settingsStorage } }
+  var finishedCount: Int { lock.withLock { finishedStorage } }
+  var cancelledCount: Int { lock.withLock { cancelledStorage } }
+
+  func read(target: CapturedTarget?, settings: ContextSettings, deadline: Duration) async
+    -> AppContextCapture
+  {
+    if failOnAnyCall { XCTFail("AppContextReading must not be invoked in this configuration") }
+    let script = lock.withLock {
+      targetStorage.append(target)
+      settingsStorage.append(settings)
+      return scripts.isEmpty ? defaultScript : scripts.removeFirst()
+    }
+    let late = script.delay > deadline
+    do {
+      try await Task.sleep(for: late ? deadline : script.delay)
+    } catch {
+      lock.withLock { cancelledStorage += 1 }
+      return AppContextCapture(outcome: .timedOut, snapshot: nil, bundleID: script.bundleID)
+    }
+    lock.withLock { finishedStorage += 1 }
+    let elapsed = late ? deadline : script.delay
+    return AppContextCapture(
+      outcome: late ? .timedOut : script.outcome, snapshot: script.snapshot,
+      bundleID: script.bundleID,
+      durationMs: Int(elapsed.components.seconds * 1_000)
+        + Int(elapsed.components.attoseconds / 1_000_000_000_000_000))
   }
 }

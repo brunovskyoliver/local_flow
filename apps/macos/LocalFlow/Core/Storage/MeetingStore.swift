@@ -4,7 +4,7 @@ import GRDB
 import OSLog
 
 /// Every meeting-table write goes through this actor. It shares the history
-/// `DatabaseQueue` (one file, one journal, one page ceiling), bumps
+/// `DatabasePool` (one file, one writer, one page ceiling), bumps
 /// `updated_at` on every write, recomputes `recorded_ms`/`wall_clock_ms` on
 /// each persisted change and logs counts and codes only.
 actor MeetingStore: MeetingStoring {
@@ -28,11 +28,11 @@ actor MeetingStore: MeetingStoring {
   }
 
   static let pageLimit = 20
-  nonisolated let database: DatabaseQueue
+  nonisolated let database: DatabasePool
   let root: MeetingStorageRoot
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "meetings")
 
-  init(database: DatabaseQueue, root: MeetingStorageRoot) {
+  init(database: DatabasePool, root: MeetingStorageRoot) {
     self.database = database
     self.root = root
   }
@@ -765,7 +765,7 @@ actor MeetingStore: MeetingStoring {
       finalizationStage: (row["finalization_stage"] as String?).flatMap(FinalizationStage.init),
       failureReason: (row["failure_reason"] as String?).flatMap(MeetingFailureReason.init),
       failureDetail: row["failure_detail"], updatedAt: row["updated_at"], revision: row["revision"],
-      language: (row["language"] as String?).flatMap(MeetingLanguage.init(rawValue:)))
+      language: MeetingLanguage(storedValue: row["language"]))
   }
 
   static func track(_ row: Row) -> MeetingTrack? {

@@ -215,6 +215,38 @@ final class MeetingLibraryTests: XCTestCase {
     XCTAssertEqual(model.selectedID, ids[0])
   }
 
+  /// The preview keeps only the notes prefix it shows; leaving the library drops the
+  /// open meeting and the preview, and both load again from the store.
+  func testPreviewKeepsTheDisplayedNotesAndReleaseDropsDetailAndPreview() async throws {
+    let ids = try await seedCompleted(2)
+    let loaded = try await store.detail(id: ids[1])
+    let previewed = try XCTUnwrap(loaded)
+    var notes = previewed.notes
+    notes.text = String(repeating: "é", count: 5_000)
+    let long = MeetingDetail(
+      meeting: previewed.meeting, tracks: previewed.tracks, pauses: previewed.pauses,
+      notes: notes, outcomes: previewed.outcomes)
+    let opened = try await store.detail(id: ids[0])
+    let fake = MeetingNotesEditorTests.NotesStore()
+    fake.detailLoader = { id in id == ids[1] ? long : opened }
+    let model = MeetingLibraryViewModel(store: fake)
+    await model.open(ids[0])
+    await model.preview(ids[1])
+    XCTAssertEqual(model.preview?.meeting, long.meeting)
+    XCTAssertEqual(
+      model.preview?.notes.text,
+      String(repeating: "é", count: MeetingLibraryViewModel.previewNoteCharacters))
+    XCTAssertEqual(model.preview?.tracks.isEmpty, true)
+    XCTAssertEqual(model.detail?.meeting.id, ids[0])
+    model.releaseDetail()
+    XCTAssertNil(model.detail)
+    XCTAssertNil(model.selectedID)
+    XCTAssertNil(model.preview)
+    XCTAssertNil(model.previewID)
+    await model.open(ids[0])
+    XCTAssertEqual(model.detail?.meeting.id, ids[0])
+  }
+
   func testSlowPreviewCannotReplaceNewerPreview() async throws {
     let ids = try await seedCompleted(2)
     let firstResult = try await store.detail(id: ids[0])

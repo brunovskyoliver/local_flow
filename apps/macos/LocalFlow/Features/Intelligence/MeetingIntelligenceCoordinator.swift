@@ -12,6 +12,9 @@ import Observation
 final class MeetingIntelligenceCoordinator: IntelligenceObserving {
   static let queueCapacity = 100
   static let queueFullNotice = "Summary queue is full"
+  /// Health probes after an automatic run found the server unreachable; the
+  /// first success re-queues the run once, otherwise it stays failed.
+  static let unreachableProbeDelays: [Duration] = [.seconds(30), .seconds(60), .seconds(120)]
 
   /// The displayed meeting's status; see `observe(meetingID:)`.
   private(set) var status: AnalysisStatus?
@@ -35,6 +38,9 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
   /// Meetings whose `server_busy` run already used its one re-queue
   /// (contract step 6: retry once after 30 s, then fail for good).
   @ObservationIgnored private var busyRequeued: Set<UUID> = []
+  /// Meetings whose automatic run found the server unreachable and already
+  /// used its one re-queue.
+  @ObservationIgnored private var unreachableRequeued: Set<UUID> = []
   @ObservationIgnored private var requeueTasks: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private let logger = Logger(
     subsystem: "org.localflow.LocalFlow", category: "intelligence")
@@ -66,6 +72,8 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
   /// Generate Summary, Retry and Regenerate (`requestRun` in the contract);
   /// always allowed, whatever the automatic preference says.
   func requestRun(meetingID: UUID, trigger: AnalysisTrigger = .manual) {
+    // The user's request replaces any pending background re-queue.
+    dropRequeue(meetingID)
     enqueue(meetingID, trigger: trigger)
   }
 
@@ -157,6 +165,7 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     for task in requeueTasks.values { task.cancel() }
     requeueTasks.removeAll()
     busyRequeued.removeAll()
+    unreachableRequeued.removeAll()
     await stopActive()
   }
 
@@ -267,6 +276,21 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     } else {
       busyRequeued.remove(id)
     }
+    // An automatic run that could not reach the server gets one more try once
+    // a health probe succeeds (bounded probes, one re-queue). User-started
+    // runs report the failure and wait for the user.
+    if let run, run.state == .failed, run.failureCategory == .serverUnreachable,
+      run.trigger == .automatic || run.trigger == .restart,
+      !unreachableRequeued.contains(id)
+    {
+      unreachableRequeued.insert(id)
+      let trigger = run.trigger
+      requeueTasks[id] = Task { [weak self] in
+        await self?.requeueWhenReachable(id, trigger: trigger)
+      }
+    } else {
+      unreachableRequeued.remove(id)
+    }
     await refresh(id)
     pump()
   }
@@ -276,10 +300,26 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     enqueue(id, trigger: .retry)
   }
 
+  private func requeueWhenReachable(_ id: UUID, trigger: AnalysisTrigger) async {
+    for delay in Self.unreachableProbeDelays {
+      do { try await clock.sleep(for: delay) } catch { return }
+      guard !Task.isCancelled else { return }
+      guard await analyzer.serverReachable() else { continue }
+      guard !Task.isCancelled else { return }
+      requeueTasks[id] = nil
+      // Automatic summaries may have been turned off in the meantime.
+      if trigger == .automatic, !automaticEnabled() { return }
+      enqueue(id, trigger: trigger)
+      return
+    }
+    requeueTasks[id] = nil
+  }
+
   private func dropRequeue(_ id: UUID) {
     requeueTasks[id]?.cancel()
     requeueTasks[id] = nil
     busyRequeued.remove(id)
+    unreachableRequeued.remove(id)
   }
 
   private func report(_ id: UUID, progress value: AnalysisProgress?) {

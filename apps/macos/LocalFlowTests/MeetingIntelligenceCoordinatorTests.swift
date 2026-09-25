@@ -357,6 +357,67 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     XCTAssertEqual(store.admitCalls, 2)
   }
 
+  /// An automatic run that could not reach the server is re-queued once, as
+  /// an automatic run, after a health probe succeeds.
+  func testUnreachableAutomaticRunRequeuesOnceAfterHealthyProbe() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let batch = try XCTUnwrap(
+      IntelligenceFixtures.response("deployment-valid")[.full]?.first)
+    let clock = FakeMeetingClock()
+    let (coordinator, store, transport, _) = try makeCoordinator(
+      fixture: fixture, clock: clock)
+    transport.script(
+      .full, [.failure(AnalysisFailure(.serverUnreachable)), .lines(.init(value: batch))])
+    _ = await coordinator.observe(meetingID: fixture.id)
+    coordinator.meetingSpeakersDidSettle(id: fixture.id)
+    await waitUntil { coordinator.status?.state == .failed }
+    XCTAssertEqual(coordinator.status?.failure, .serverUnreachable)
+
+    await clock.waitForSleepers(1)
+    await clock.advance(by: MeetingIntelligenceCoordinator.unreachableProbeDelays[0])
+    await waitUntil { store.adoptCalls == 1 }
+    let rows = try await store.runs(meetingID: fixture.id, limit: 10)
+    XCTAssertEqual(rows.count, 2)
+    XCTAssertEqual(rows.map(\.trigger), [.automatic, .automatic])
+    XCTAssertEqual(Set(rows.map(\.state)), [.failed, .succeeded])
+  }
+
+  /// When every bounded probe fails the run stays failed: no re-queue, no
+  /// sleeper left behind, and a manual run never re-queues on its own.
+  func testUnreachableAutomaticRunStaysFailedWhenProbesFail() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let clock = FakeMeetingClock()
+    let (coordinator, store, transport, _) = try makeCoordinator(
+      fixture: fixture, clock: clock)
+    transport.healthResult = .failure(AnalysisFailure(.serverUnreachable))
+    _ = await coordinator.observe(meetingID: fixture.id)
+    coordinator.meetingSpeakersDidSettle(id: fixture.id)
+    await waitUntil { coordinator.status?.state == .failed }
+
+    for (index, delay) in MeetingIntelligenceCoordinator.unreachableProbeDelays.enumerated() {
+      await clock.waitForSleepers(index + 1)
+      await clock.advance(by: delay)
+    }
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(store.admitCalls, 1)
+    XCTAssertEqual(clock.parkedSleepers, 0)
+    XCTAssertEqual(
+      clock.sleepCount, MeetingIntelligenceCoordinator.unreachableProbeDelays.count)
+
+    // A user-started run that finds the server unreachable waits for the user.
+    coordinator.requestRun(meetingID: fixture.id)
+    var latest: AnalysisRun?
+    for _ in 0..<400 {
+      latest = try? await store.latestRun(meetingID: fixture.id)
+      if latest?.trigger == .manual, latest?.state.isTerminal == true { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(latest?.failureCategory, .serverUnreachable)
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(
+      clock.sleepCount, MeetingIntelligenceCoordinator.unreachableProbeDelays.count)
+  }
+
   /// While a run is active the pill reports "Summarizing…" with the queued
   /// count; it opens the meeting's Summary tab.
   func testSummarizingNoticeCarriesQueuedCount() {

@@ -9,9 +9,9 @@ struct TranscriptSectionView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Text("Transcript").font(.system(size: 13, weight: .semibold))
+        Text("Transcript").font(.flow(size: 13, weight: .semibold))
         if coordinator.isWindowInFlight { ProgressView().controlSize(.mini) }
-        Text(stateText).font(.caption).foregroundStyle(.secondary)
+        Text(stateText).font(.flow(size: 12)).foregroundStyle(.secondary)
           .accessibilityIdentifier("meeting.transcript.state")
       }
       if !coordinator.liveModel.segments.isEmpty {
@@ -32,11 +32,11 @@ struct TranscriptSectionView: View {
                 )
                 .id("bottom")
             }
-            .font(.system(size: 13))
+            .font(.flow(size: 13))
             .padding(8)
           }
           .coordinateSpace(name: "liveTranscript")
-          .scrollIndicators(.hidden)
+          .scrollIndicators(.never)
           .hideScrollers()
           .frame(height: 180)
           .onPreferenceChange(TranscriptBottomPreference.self) { bottom in
@@ -108,9 +108,9 @@ struct TranscriptSegmentRow: View {
         if provisional {
           HStack(spacing: 3) {
             Text("provisional").italic()
-            Image(systemName: "circle.fill").font(.system(size: 3))
+            Image(systemName: "circle.fill").font(.flow(size: 3))
           }
-          .font(.caption2).foregroundStyle(.secondary)
+          .font(.flow(size: 11)).foregroundStyle(.secondary)
           .accessibilityElement(children: .ignore)
           .accessibilityLabel("Provisional")
         }

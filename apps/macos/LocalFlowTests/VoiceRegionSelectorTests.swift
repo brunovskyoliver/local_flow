@@ -129,4 +129,99 @@ final class VoiceRegionSelectorTests: XCTestCase {
       rootTurns: [turn(root, 0, 3_000)], otherTurns: [], meetingLengthMs: 3_000, limits: .enroll)
     XCTAssertEqual(none, [])
   }
+
+  /// The sorted sweep answers every clash test exactly like scanning every other turn,
+  /// with and without excluded speakers, for long, short, nested and speakerless turns.
+  func testSortedClashSweepMatchesAFullScan() {
+    var generator = SeededGenerator(seed: 7)
+    let speakers = (0..<6).map { _ in UUID() }
+    for _ in 0..<50 {
+      let count = Int.random(in: 0..<120, using: &generator)
+      let others = (0..<count).map { index -> SpeakerTurn in
+        let start = Int64.random(in: 0..<600_000, using: &generator)
+        let long = Int.random(in: 0..<10, using: &generator) == 0
+        let length = Int64.random(in: 1..<(long ? 200_000 : 8_000), using: &generator)
+        let speaker = Int.random(in: 0..<8, using: &generator)
+        return turn(
+          speaker < speakers.count ? speakers[speaker] : nil, start, start + length,
+          id: Int64(index))
+      }
+      let excluded = Set(speakers.prefix(Int.random(in: 0..<3, using: &generator)))
+      let sweep = VoiceRegionSelector.OtherTurns(others)
+      for probe in 0..<60 {
+        let start = Int64.random(in: 0..<650_000, using: &generator)
+        let length = Int64.random(in: 1..<30_000, using: &generator)
+        let speaker = speakers[Int.random(in: 0..<speakers.count, using: &generator)]
+        let root = turn(speaker, start, start + length, id: Int64(10_000 + probe))
+        let scanned = others.contains { other in
+          other.speakerID != root.speakerID && other.startMs < root.endMs
+            && other.endMs > root.startMs
+        }
+        XCTAssertEqual(sweep.clashes(with: root), scanned)
+        let scannedExcluding = others.contains { other in
+          other.speakerID != root.speakerID && other.startMs < root.endMs
+            && other.endMs > root.startMs
+            && !(other.speakerID.map(excluded.contains) ?? false)
+        }
+        XCTAssertEqual(sweep.clashes(with: root, excluding: excluded), scannedExcluding)
+      }
+    }
+  }
+
+  /// Regions for many roots from one grouping equal the per-root filters they replace.
+  func testRegionsForAllRootsMatchPerRootFiltering() {
+    var generator = SeededGenerator(seed: 11)
+    let speakers = (0..<8).map { _ in UUID() }
+    let roots = [
+      RegionExtractor.Root(id: speakers[0], members: [speakers[1]], source: .remote),
+      RegionExtractor.Root(id: speakers[2], members: [], source: .remote),
+      RegionExtractor.Root(id: speakers[3], members: [speakers[4], speakers[5]], source: .remote),
+      RegionExtractor.Root(id: speakers[6], members: [], source: .local),
+    ]
+    var start: Int64 = 0
+    let turns = (0..<400).map { index -> SpeakerTurn in
+      start += Int64.random(in: 0..<30_000, using: &generator)
+      let length = Int64.random(in: 500..<25_000, using: &generator)
+      let speaker = speakers[Int.random(in: 0..<speakers.count, using: &generator)]
+      let quality: Double? =
+        Bool.random(using: &generator) ? nil : Double.random(in: 0.3...1, using: &generator)
+      return turn(
+        speaker, start, start + length,
+        track: Bool.random(using: &generator) ? .system : .microphone, quality: quality,
+        overlapped: Int.random(in: 0..<10, using: &generator) == 0, id: Int64(index))
+    }
+    var found = 0
+    for track in [MeetingTrackKind?.none, .system, .microphone] {
+      for limits in [VoiceRegionSelector.Limits.query, .enroll] {
+        let grouped = RegionExtractor.regions(
+          for: roots, turns: turns, track: track, lengthMs: start, limits: limits)
+        XCTAssertEqual(grouped.map(\.root), roots.map(\.id))
+        for (root, entry) in zip(roots, grouped) {
+          let own = turns.filter {
+            guard let speaker = $0.speakerID, root.clusters.contains(speaker) else { return false }
+            return track == nil || $0.track == track
+          }
+          let others = turns.filter { $0.speakerID.map { !root.clusters.contains($0) } ?? false }
+          let expected = VoiceRegionSelector.select(
+            rootTurns: own, otherTurns: others, meetingLengthMs: start, limits: limits)
+          XCTAssertEqual(entry.regions, expected)
+          found += expected.count
+        }
+      }
+    }
+    XCTAssertGreaterThan(found, 0, "the fixture yields regions to compare")
+  }
+}
+
+/// SplitMix64: a reproducible sequence for randomized equivalence tests.
+private struct SeededGenerator: RandomNumberGenerator {
+  private var state: UInt64
+  init(seed: UInt64) { state = seed }
+  mutating func next() -> UInt64 {
+    state &+= 0x9E37_79B9_7F4A_7C15
+    var value = state
+    value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
+    return value ^ (value >> 31)
+  }
 }

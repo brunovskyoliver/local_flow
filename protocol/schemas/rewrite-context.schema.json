@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localflow.org/schemas/rewrite-context.schema.json",
+  "title": "LocalFlow rewrite context v1",
+  "description": "The context object of a rewrite v2 request: the client's canonical, redacted snapshot of the focused app and field (Feature 012). The client sends sorted keys without whitespace and omits absent parts; servers also accept null for the five optional parts. At most 8,192 bytes as sent. Character limits count user-perceived characters (extended grapheme clusters). No other field is permitted; servers reject unknown fields with invalid_request.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "app_category",
+    "field_kind",
+    "terms",
+    "truncated",
+    "style_hints"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "app_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "description": "At most 128 UTF-8 bytes; maxLength approximates the byte bound."
+    },
+    "app_category": {
+      "type": "string",
+      "enum": [
+        "email",
+        "work_chat",
+        "personal_chat",
+        "code",
+        "terminal",
+        "document",
+        "other"
+      ]
+    },
+    "field_kind": {
+      "type": "string",
+      "enum": [
+        "single_line",
+        "multi_line",
+        "search",
+        "code",
+        "terminal",
+        "unknown"
+      ]
+    },
+    "window_title": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200,
+      "description": "At most 200 characters, redacted."
+    },
+    "before_cursor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "description": "At most 1,000 characters ending at the cursor, redacted."
+    },
+    "after_cursor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300,
+      "description": "At most 300 characters starting at the selection end, redacted."
+    },
+    "selected_text": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2000,
+      "description": "At most 2,000 characters, redacted."
+    },
+    "terms": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "source",
+          "kind"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "At most 64 UTF-8 bytes; maxLength approximates the byte bound."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "window_title",
+              "before_cursor",
+              "after_cursor",
+              "selected_text"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "name",
+              "identifier"
+            ]
+          }
+        }
+      },
+      "description": "Candidate spellings, nearest to the cursor first kept."
+    },
+    "truncated": {
+      "type": "array",
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "window_title",
+          "before_cursor",
+          "after_cursor",
+          "selected_text"
+        ]
+      },
+      "description": "Parts cut or dropped to meet the bounds."
+    },
+    "style_hints": {
+      "type": "boolean",
+      "description": "True only when the category style toggle was on at the press."
+    }
+  }
+}

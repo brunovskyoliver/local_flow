@@ -475,6 +475,10 @@ final class SummaryModelTests: XCTestCase {
     await model.refresh()
     let before = try XCTUnwrap(model.readModel)
     let itemText = before.actionItems.first?.text
+    let sentence = "Martin met Peter S. and Speaker 2"
+    XCTAssertEqual(
+      model.speakerMentions(in: sentence).map { String(sentence[$0.range]) }.sorted(),
+      ["Peter S.", "Speaker 2"])
 
     // Speaker 2 is renamed to "Martin".
     try await speakers.saveNames(meetingID: fixture.id, names: [martin: "Martin"], now: 1)
@@ -488,6 +492,10 @@ final class SummaryModelTests: XCTestCase {
       return
     }
     XCTAssertEqual(name, "Martin")
+    // The cached name matcher follows the rename.
+    XCTAssertEqual(
+      model.speakerMentions(in: sentence).map { String(sentence[$0.range]) }.sorted(),
+      ["Martin", "Peter S."])
   }
 
   /// A stale analysis stays readable behind the amber banner with Regenerate

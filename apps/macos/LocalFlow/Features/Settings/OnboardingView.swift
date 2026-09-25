@@ -8,14 +8,15 @@ struct OnboardingView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 20) {
-      Text(title).font(.system(size: 26, weight: .semibold))
-      Text("Step \(min(coordinator.step.rawValue + 1, 4)) of 4").font(.caption).foregroundStyle(
-        .secondary)
+      Text(title).font(.flow(size: 26, weight: .semibold))
+      Text("Step \(min(coordinator.step.rawValue + 1, 4)) of 4").font(.flow(size: 12))
+        .foregroundStyle(
+          .secondary)
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
           switch coordinator.step {
           case .introduction:
-            Text("Dictate privately on your Mac").font(.title3.weight(.semibold))
+            Text("Dictate privately on your Mac").font(.flow(size: 17, weight: .semibold))
             Text(
               "LocalFlow recognizes speech on this Mac after you install the speech model. Microphone audio is temporary and is removed after processing."
             )
@@ -60,7 +61,7 @@ struct OnboardingView: View {
             }
           case .complete: Text("Setup complete.")
           }
-          Text(settings.error ?? settings.snapshot.status).font(.callout).foregroundStyle(
+          Text(settings.error ?? settings.snapshot.status).font(.flow(size: 13)).foregroundStyle(
             .secondary)
         }.frame(maxWidth: .infinity, alignment: .leading)
       }

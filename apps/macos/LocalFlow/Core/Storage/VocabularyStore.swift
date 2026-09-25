@@ -420,9 +420,12 @@ actor VocabularyStore {
     let entries: [VocabularyEntry]
   }
 
-  private let database: DatabaseQueue
+  private let database: DatabasePool
   /// Rows are hash-checked on every read; full cross-entry validation runs once per content hash.
   private var validated: (hash: String, table: VocabularyValidation.KeyTable)?
+  /// The last snapshot and the state row it was built from. Every edit through this
+  /// store bumps the state row, so a matching row means the entries are unchanged.
+  private var cachedSnapshot: (state: VocabularyState, snapshot: VocabularySnapshot)?
 
   init(history: TranscriptionStore) { database = history.database }
 
@@ -435,11 +438,32 @@ actor VocabularyStore {
   }
 
   /// Enabled entries under the current revision, or a load failure that blocks admission.
+  /// Called on every dictation press, so it reads only the state row when a cached
+  /// snapshot exists and rebuilds (reload, re-serialize, re-hash) only after a change.
   func snapshot() throws -> VocabularySnapshot {
+    if let cached = cachedSnapshot, try database.read(Self.loadState) == cached.state {
+      return cached.snapshot
+    }
+    cachedSnapshot = nil
     let contents = try contents()
-    return try VocabularySnapshot(
+    let snapshot = try VocabularySnapshot(
       revision: contents.state.revision, hash: contents.state.contentHash,
       entries: contents.entries, verifyFormatting: false)
+    cachedSnapshot = (contents.state, snapshot)
+    return snapshot
+  }
+
+  private static func loadState(_ db: Database) throws -> VocabularyState? {
+    guard
+      let row = try Row.fetchOne(
+        db,
+        sql:
+          "SELECT schema_version, revision, content_hash, payload_bytes FROM vocabulary_state WHERE id=1"
+      ), row["schema_version"] == VocabularyState.schemaVersion
+    else { return nil }
+    return VocabularyState(
+      revision: row["revision"], contentHash: row["content_hash"],
+      payloadBytes: row["payload_bytes"])
   }
 
   @discardableResult
@@ -510,6 +534,7 @@ actor VocabularyStore {
     var loadedTable: VocabularyValidation.KeyTable?
     var loadedHash: String?
     defer { if let loadedTable, let loadedHash { validated = (loadedHash, loadedTable) } }
+    cachedSnapshot = nil
     return try database.write { db in
       let loaded = try Self.load(db, cached: cached)
       let current = loaded.contents

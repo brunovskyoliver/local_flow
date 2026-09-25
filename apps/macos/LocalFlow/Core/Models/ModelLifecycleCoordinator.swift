@@ -10,7 +10,7 @@ actor ModelLifecycleCoordinator {
 
   private enum Resident: Sendable {
     case speech(any TranscriptionRuntime)
-    case meeting(any TranscriptionRuntime)
+    case meeting(any TranscriptionRuntime, MeetingLanguage)
     case diarization(any DiarizationRuntime)
     case embedding(any VoiceEmbeddingRuntime)
 
@@ -23,9 +23,15 @@ actor ModelLifecycleCoordinator {
       }
     }
 
+    /// The language a meeting runtime decodes in; nil for every other workload.
+    var meetingLanguage: MeetingLanguage? {
+      if case .meeting(_, let language) = self { return language }
+      return nil
+    }
+
     func shutdown() async {
       switch self {
-      case .speech(let runtime), .meeting(let runtime): await runtime.shutdown()
+      case .speech(let runtime), .meeting(let runtime, _): await runtime.shutdown()
       case .diarization(let runtime): await runtime.shutdown()
       case .embedding(let runtime): await runtime.shutdown()
       }
@@ -33,9 +39,9 @@ actor ModelLifecycleCoordinator {
   }
 
   private let factory: Factory
-  /// Receives the session (a meeting id), so the runtime can be built for that
-  /// meeting's language and vocabulary.
-  typealias MeetingFactory = @Sendable (UUID) async throws -> any TranscriptionRuntime
+  /// Receives the language the acquiring pass recorded in its pipeline version, so
+  /// the runtime decodes in exactly that language.
+  typealias MeetingFactory = @Sendable (MeetingLanguage) async throws -> any TranscriptionRuntime
   private let meetingFactory: MeetingFactory
   private let diarizationFactory: DiarizationFactory
   private let voiceEmbeddingFactory: VoiceEmbeddingFactory
@@ -55,6 +61,18 @@ actor ModelLifecycleCoordinator {
   private var cooldownGeneration: UInt64 = 0
   private var keepLoaded = false
   private var owner: ModelLease?
+  /// The lease Keep model ready took to re-prepare live speech after other work.
+  /// Nobody waits on it, so diarization and identification preempt it.
+  private var warmLease: ModelLease?
+  /// Speaker work queued or running, by coordinator token with the newest sequence
+  /// seen. While any is pending, Keep model ready does not reload live speech between
+  /// leases; the last withdrawal triggers the reload instead.
+  private var speakerDemand: [UUID: (sequence: UInt64, pending: Bool)] = [:]
+  /// Callers of `waitUntilAvailable`, resumed when no lease is held and no install is
+  /// running. Bounded: past the capacity a caller returns at once and relies on its
+  /// own fallback delay.
+  private var availabilityWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+  static let availabilityWaiterCapacity = 16
   private var installing = false
   private(set) var generation: UInt64 = 0
   private(set) var state: State = .unloaded {
@@ -86,7 +104,7 @@ actor ModelLifecycleCoordinator {
     self.observe = observe
   }
 
-  struct Snapshot: Sendable {
+  struct Snapshot: Sendable, Equatable {
     let state: State
     let loaded: Bool
     let leased: Bool
@@ -123,23 +141,44 @@ actor ModelLifecycleCoordinator {
   func shutdownIfIdle() async throws {
     guard owner == nil, !installing else { throw DictationFailure.busy }
     installing = true
-    defer { installing = false }
+    defer {
+      installing = false
+      notifyAvailable()
+    }
     await beginRelease()
   }
 
   /// Both speech workloads preempt a diarization or identification lease: ownership
   /// moves to the new lease before any suspension, then the revoked lease's in-flight
   /// window is joined and its runtime released. A diarization or identification acquire
-  /// never preempts.
-  func acquire(session: UUID, workload requested: ModelWorkload = .speechRecognition)
+  /// preempts only Keep model ready's own background reload of live speech.
+  /// `meetingLanguage` applies to `.meetingTranscription` only: a resident meeting
+  /// runtime built for another language is released and rebuilt.
+  func acquire(
+    session: UUID, workload requested: ModelWorkload = .speechRecognition,
+    meetingLanguage: MeetingLanguage = .defaultLanguage
+  )
     async throws -> ModelLease
   {
+    try await acquire(
+      session: session, workload: requested, meetingLanguage: meetingLanguage, warm: false)
+  }
+
+  /// `warm` marks Keep model ready's own reload, which speaker work may preempt.
+  private func acquire(
+    session: UUID, workload requested: ModelWorkload, meetingLanguage: MeetingLanguage,
+    warm: Bool
+  ) async throws -> ModelLease {
+    let requestedLanguage = requested == .meetingTranscription ? meetingLanguage : nil
     guard !Task.isCancelled else { throw DictationFailure.cancelled }
-    let preempts = requested.isSpeech && owner?.workload.isSpeech == false && !installing
+    let preemptsWarm = !requested.isSpeech && owner != nil && owner == warmLease
+    let preempts =
+      (requested.isSpeech && owner?.workload.isSpeech == false || preemptsWarm) && !installing
     guard owner == nil || preempts, !installing else { throw DictationFailure.busy }
     generation &+= 1
     let lease = ModelLease(sessionID: session, generation: generation, workload: requested)
     owner = lease
+    warmLease = warm ? lease : nil
     return try await withTaskCancellationHandler {
       cooldown?.cancel()
       cooldown = nil
@@ -155,11 +194,12 @@ actor ModelLifecycleCoordinator {
         release = nil
       }
       if let resident = runtime {
-        if resident.workload == requested {
+        if resident.workload == requested, resident.meetingLanguage == requestedLanguage {
           state = .active
           return lease
         }
-        // A workload switch releases the resident runtime before preparing the other.
+        // A workload or language switch releases the resident runtime before preparing
+        // the other.
         await beginRelease()
         if Task.isCancelled { await cancelAndJoin(lease) }
         guard owner == lease else { throw DictationFailure.cancelled }
@@ -173,7 +213,8 @@ actor ModelLifecycleCoordinator {
       let task = Task { () throws -> Resident in
         switch requested {
         case .speechRecognition: return .speech(try await factory())
-        case .meetingTranscription: return .meeting(try await meetingFactory(session))
+        case .meetingTranscription:
+          return .meeting(try await meetingFactory(meetingLanguage), meetingLanguage)
         case .diarization: return .diarization(try await diarizationFactory())
         case .speakerIdentification: return .embedding(try await voiceEmbeddingFactory())
         }
@@ -193,6 +234,7 @@ actor ModelLifecycleCoordinator {
           loading = nil
           owner = nil
           state = .unloaded
+          notifyAvailable()
         }
         throw error
       }
@@ -207,7 +249,7 @@ actor ModelLifecycleCoordinator {
     }
     let runtime: any TranscriptionRuntime
     switch self.runtime {
-    case .speech(let value), .meeting(let value): runtime = value
+    case .speech(let value), .meeting(let value, _): runtime = value
     default: throw DictationFailure.staleLease
     }
     guard inference == nil else { throw DictationFailure.busy }
@@ -296,22 +338,87 @@ actor ModelLifecycleCoordinator {
   }
 
   /// Live speech cools down; meeting, diarization and identification leases release at
-  /// once, then Keep model ready re-prepares the live speech runtime.
+  /// once, then Keep model ready re-prepares the live speech runtime unless speaker
+  /// work is still queued.
   func finish(_ lease: ModelLease) async throws {
     guard owner == lease else { throw DictationFailure.staleLease }
     guard inference == nil, diarizing == nil, embedding == nil, loading == nil else {
       throw DictationFailure.busy
     }
     owner = nil
+    if warmLease == lease { warmLease = nil }
     guard lease.workload != .speechRecognition else {
       state = .cooling
       scheduleCooldown()
+      notifyAvailable()
       return
     }
+    notifyAvailable()
     await beginRelease()
-    if keepLoaded, owner == nil, !installing {
-      Task { try? await self.loadIfIdle() }
+    warmIfNeeded()
+  }
+
+  /// Keep model ready re-prepares live speech once nothing else wants the model:
+  /// not while a lease is held, an install runs, or speaker work is still queued.
+  private func warmIfNeeded() {
+    guard keepLoaded, owner == nil, !installing, state == .unloaded, !hasSpeakerDemand else {
+      return
     }
+    Task { await self.warm() }
+  }
+
+  private func warm() async {
+    guard keepLoaded, owner == nil, !installing, state == .unloaded || state == .cooling,
+      !hasSpeakerDemand
+    else { return }
+    guard
+      let lease = try? await acquire(
+        session: UUID(), workload: .speechRecognition, meetingLanguage: .defaultLanguage,
+        warm: true)
+    else { return }
+    try? await finish(lease)
+  }
+
+  private var hasSpeakerDemand: Bool { speakerDemand.values.contains { $0.pending } }
+
+  /// Speaker coordinators report whether they have work queued or running. Updates
+  /// may arrive out of order, so only a newer sequence for a token applies.
+  func setSpeakerDemand(_ token: UUID, pending: Bool, sequence: UInt64) {
+    if let current = speakerDemand[token], current.sequence >= sequence { return }
+    speakerDemand[token] = (sequence, pending)
+    if !pending { warmIfNeeded() }
+  }
+
+  /// Returns once no lease is held and no install is running, or at once when that is
+  /// already true or the caller is cancelled. Speaker coordinators await this after a
+  /// busy acquire instead of polling on a timer.
+  func waitUntilAvailable() async {
+    guard owner != nil || installing, !Task.isCancelled,
+      availabilityWaiters.count < Self.availabilityWaiterCapacity
+    else { return }
+    let id = UUID()
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        if Task.isCancelled {
+          continuation.resume()
+        } else {
+          availabilityWaiters[id] = continuation
+        }
+      }
+    } onCancel: {
+      Task { await self.resumeWaiter(id) }
+    }
+  }
+
+  private func resumeWaiter(_ id: UUID) {
+    availabilityWaiters.removeValue(forKey: id)?.resume()
+  }
+
+  private func notifyAvailable() {
+    guard owner == nil, !installing, !availabilityWaiters.isEmpty else { return }
+    let waiters = availabilityWaiters.values
+    availabilityWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
   }
 
   func setKeepLoaded(_ enabled: Bool) {
@@ -357,7 +464,44 @@ actor ModelLifecycleCoordinator {
       return
     }
     owner = nil
+    notifyAvailable()
     await beginRelease()
+  }
+
+  /// Ends a live speech lease whose session was cancelled or left incomplete without
+  /// discarding a healthy runtime: an in-flight window is cancelled and joined, then the
+  /// runtime cools down exactly as after `finish`, so Keep model ready still holds. A
+  /// pending load, a window that failed for any reason other than cancellation, or any
+  /// other workload releases as `cancelAndJoin` does.
+  func cancelAndCool(_ lease: ModelLease) async {
+    var healthy =
+      owner == lease && lease.workload == .speechRecognition && state == .active
+      && loading == nil
+    if healthy { healthy = await interruptInference(lease) }
+    guard healthy, owner == lease, state == .active, loading == nil, inference == nil else {
+      await cancelAndJoin(lease)
+      return
+    }
+    owner = nil
+    state = .cooling
+    scheduleCooldown()
+    notifyAvailable()
+  }
+
+  /// Cancels and joins the lease's in-flight speech window, keeping the lease and its
+  /// runtime. False when that window failed for a reason other than cancellation, which
+  /// callers treat as a runtime fault, or when the lease is no longer current.
+  func interruptInference(_ lease: ModelLease) async -> Bool {
+    guard owner == lease else { return false }
+    guard let pending = inference else { return true }
+    pending.cancel()
+    let outcome = await pending.result
+    if owner == lease, inference == pending { inference = nil }
+    switch outcome {
+    case .success: return true
+    case .failure(let error):
+      return error is CancellationError || error as? DictationFailure == .cancelled
+    }
   }
 
   func releaseIfIdle(generation expected: UInt64, deadline: UInt64? = nil) async {
@@ -370,7 +514,10 @@ actor ModelLifecycleCoordinator {
   func installModel(_ operation: @Sendable () async throws -> Void) async throws {
     guard owner == nil, !installing else { throw DictationFailure.busy }
     installing = true
-    defer { installing = false }
+    defer {
+      installing = false
+      notifyAvailable()
+    }
     await beginRelease()
     try Task.checkCancellation()
     try await operation()
@@ -417,6 +564,53 @@ actor ModelLifecycleCoordinator {
     if generation == expected {
       release = nil
       state = .unloaded
+    }
+  }
+}
+
+/// One speaker coordinator's link to the lifecycle: reports whether it has model work
+/// queued or running, coalesced to the latest value per main-actor turn and sequenced
+/// so late updates cannot overwrite newer ones.
+@MainActor
+final class SpeakerModelDemand {
+  private let lifecycle: ModelLifecycleCoordinator
+  private let token = UUID()
+  private var pending = false
+  private var sent = false
+  private var sequence: UInt64 = 0
+  private var scheduled = false
+
+  init(lifecycle: ModelLifecycleCoordinator) {
+    self.lifecycle = lifecycle
+  }
+
+  func update(pending: Bool) {
+    self.pending = pending
+    guard !scheduled else { return }
+    scheduled = true
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      self.scheduled = false
+      guard self.pending != self.sent else { return }
+      self.sent = self.pending
+      self.sequence &+= 1
+      await self.lifecycle.setSpeakerDemand(
+        self.token, pending: self.sent, sequence: self.sequence)
+    }
+  }
+
+  /// A busy or preempted run waits for the lifecycle to free the model, bounded by
+  /// `fallback` in case the release is never signalled (for example a failed finish).
+  nonisolated static func waitForRetry(_ demand: SpeakerModelDemand?, fallback: Duration) async {
+    guard let lifecycle = demand?.lifecycle else {
+      try? await Task.sleep(for: fallback)
+      return
+    }
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { await lifecycle.waitUntilAvailable() }
+      group.addTask { try? await Task.sleep(for: fallback) }
+      await group.next()
+      group.cancelAll()
     }
   }
 }

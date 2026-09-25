@@ -24,6 +24,8 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
   var noticePublished: (@MainActor (String) -> Void)?
   /// R10: after an enrollment stored ≥ 1 sample, once per enrollment.
   var enrollmentDidStore: (@MainActor (_ knownSpeakerID: UUID, _ name: String) -> Void)?
+  /// The open note that installed `enrollmentDidStore`; only that note clears it.
+  @ObservationIgnored var enrollmentDidStoreOwner: UUID?
   /// Feature 011: identity writes refresh the analysis stale flag.
   @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
 
@@ -31,19 +33,34 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
   @ObservationIgnored private let enrollment: EnrollmentJob
   @ObservationIgnored let store: any IdentityStoring
   @ObservationIgnored private let enabled: @MainActor () -> Bool
+  /// The fallback wait after a busy or preempted run; the retry normally starts as
+  /// soon as the lifecycle reports the model free.
   @ObservationIgnored private let retryDelay: Duration
   @ObservationIgnored private let clock: any MeetingClock
+  /// Tells the lifecycle while work is queued so Keep model ready waits for it, and
+  /// wakes a busy retry when the model is released.
+  @ObservationIgnored private let demand: SpeakerModelDemand?
   @ObservationIgnored private let recorder: ResourceRecorder?
   @ObservationIgnored private var rssTask: Task<Void, Never>?
-  @ObservationIgnored private var queue: [UUID] = []
+  @ObservationIgnored private var queue: [UUID] = [] {
+    didSet { demandDidChange() }
+  }
   @ObservationIgnored private var triggers: [UUID: IdentificationTrigger] = [:]
-  @ObservationIgnored private var pastSearch: [UUID] = []
+  @ObservationIgnored private var pastSearch: [UUID] = [] {
+    didSet { demandDidChange() }
+  }
   @ObservationIgnored private var pastSearchName: String?
-  @ObservationIgnored private var task: Task<Void, Never>?
-  @ObservationIgnored private var retry: Task<Void, Never>?
+  @ObservationIgnored private var task: Task<Void, Never>? {
+    didSet { demandDidChange() }
+  }
+  @ObservationIgnored private var retry: Task<Void, Never>? {
+    didSet { demandDidChange() }
+  }
   @ObservationIgnored private var cancelled: Set<UUID> = []
   /// Enrollments wait in order and run before the next identification run.
-  @ObservationIgnored private var enrollments: [PendingEnrollment] = []
+  @ObservationIgnored private var enrollments: [PendingEnrollment] = [] {
+    didSet { demandDidChange() }
+  }
   @ObservationIgnored private var activeEnrollment: PendingEnrollment?
   @ObservationIgnored private let logger = Logger(
     subsystem: "org.localflow.LocalFlow", category: "identification")
@@ -60,8 +77,9 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
 
   init(
     identifier: MeetingIdentifier, enrollment: EnrollmentJob, store: any IdentityStoring,
-    enabled: @escaping @MainActor () -> Bool, retryDelay: Duration = .seconds(5),
-    clock: any MeetingClock = SystemMeetingClock(), recorder: ResourceRecorder? = nil
+    enabled: @escaping @MainActor () -> Bool, retryDelay: Duration = .seconds(30),
+    clock: any MeetingClock = SystemMeetingClock(), recorder: ResourceRecorder? = nil,
+    lifecycle: ModelLifecycleCoordinator? = nil
   ) {
     self.identifier = identifier
     self.enrollment = enrollment
@@ -70,11 +88,14 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
     self.retryDelay = retryDelay
     self.clock = clock
     self.recorder = recorder
+    self.demand = lifecycle.map(SpeakerModelDemand.init)
   }
 
   /// Meetings whose automatic identification run must end in one
   /// `meetingSpeakersDidSettle` so the summary sees every identity there is.
-  @ObservationIgnored private var pendingSettle: Set<UUID> = []
+  @ObservationIgnored private var pendingSettle: Set<UUID> = [] {
+    didSet { demandDidChange() }
+  }
 
   // MARK: Triggers
 
@@ -387,11 +408,18 @@ final class SpeakerIdentificationCoordinator: IdentificationObserving {
   private func scheduleRetry() {
     guard retry == nil else { return }
     let delay = retryDelay
+    let demand = demand
     retry = Task { [weak self] in
-      try? await Task.sleep(for: delay)
+      await SpeakerModelDemand.waitForRetry(demand, fallback: delay)
       self?.retry = nil
       self?.pump()
     }
+  }
+
+  private func demandDidChange() {
+    demand?.update(
+      pending: task != nil || retry != nil || !queue.isEmpty || !pastSearch.isEmpty
+        || !enrollments.isEmpty || !pendingSettle.isEmpty)
   }
 
   private func stopActive() async {

@@ -108,55 +108,10 @@ enum HistoryMigrations {
     migrator.registerMigration("rewrite-v4") { db in
       // One row per admitted rewrite attempt; cascades with its dictation. The
       // failure_category check admits exactly the twelve post-admission codes.
-      let categories = RewriteFailureCategory.persisted.map { "'\($0.rawValue)'" }
-        .joined(separator: ",")
-      let spanColumns = [
-        "duration_ms", "first_byte_ms", "network_ms", "server_queue_ms",
-        "backend_first_token_ms", "backend_ms", "request_bytes", "response_bytes",
-      ]
-      let identityColumns = ["server_name", "server_version", "backend_kind", "backend_model"]
-      try db.create(table: "rewrite_attempts") { t in
-        t.column("id", .text).notNull().primaryKey()
-        t.column("transcription_id", .text).notNull()
-          .references("transcriptions", onDelete: .cascade)
-        t.column("ordinal", .integer).notNull().check(sql: "ordinal BETWEEN 1 AND 10")
-        t.column("mode", .text).notNull().check(sql: "mode IN ('clean','polished','concise')")
-        t.column("state", .text).notNull()
-          .check(sql: "state IN ('pending','succeeded','failed','cancelled','timed_out')")
-        t.column("input_text", .text).notNull()
-          .check(sql: "length(cast(input_text AS blob)) BETWEEN 1 AND 65536")
-        t.column("input_hash", .text).notNull().check(sql: "length(input_hash) = 64")
-        t.column("output_text", .text)
-          .check(sql: "output_text IS NULL OR length(cast(output_text AS blob)) <= 65536")
-        t.column("output_hash", .text)
-          .check(sql: "output_hash IS NULL OR length(output_hash) = 64")
-        t.column("unchanged", .integer).notNull().defaults(to: 0).check(sql: "unchanged IN (0,1)")
-        t.column("failure_category", .text)
-          .check(sql: "failure_category IS NULL OR failure_category IN (\(categories))")
-        t.column("stale", .integer).notNull().defaults(to: 0).check(sql: "stale IN (0,1)")
-        t.column("started_at", .integer).notNull().check(sql: "started_at >= 0")
-        for column in spanColumns {
-          t.column(column, .integer).check(sql: "\(column) IS NULL OR \(column) >= 0")
-        }
-        t.column("protocol_version", .integer).notNull().check(sql: "protocol_version = 1")
-        for column in identityColumns {
-          t.column(column, .text)
-            .check(sql: "\(column) IS NULL OR length(cast(\(column) AS blob)) BETWEEN 1 AND 128")
-        }
-        t.column("prompt_version", .integer)
-          .check(sql: "prompt_version IS NULL OR prompt_version >= 0")
-        t.column("shield_version", .integer)
-          .check(sql: "shield_version IS NULL OR shield_version >= 0")
-        t.column("endpoint_origin", .text).notNull()
-          .check(sql: "length(cast(endpoint_origin AS blob)) BETWEEN 1 AND 255")
-        t.column("insecure_override", .integer).notNull().defaults(to: 0)
-          .check(sql: "insecure_override IN (0,1)")
-        t.column("delivered", .integer).notNull().defaults(to: 0).check(sql: "delivered IN (0,1)")
-        t.check(sql: "(state = 'succeeded') = (output_text IS NOT NULL)")
-        t.check(sql: "(output_text IS NULL) = (output_hash IS NULL)")
-        t.check(sql: "(state IN ('failed','timed_out')) = (failure_category IS NOT NULL)")
-        t.check(sql: "state != 'timed_out' OR failure_category = 'timeout'")
-      }
+      try createRewriteAttempts(
+        db, named: "rewrite_attempts",
+        categories: RewriteFailureCategory.persisted.filter { $0 != .contextCopied },
+        contextHash: false)
       try db.execute(
         sql:
           "CREATE UNIQUE INDEX rewrite_attempts_transcription_ordinal ON rewrite_attempts(transcription_id, ordinal)"
@@ -798,13 +753,176 @@ enum HistoryMigrations {
     // Feature 009: the language a meeting's final transcript is decoded in, chosen on
     // the meeting; NULL means the Meeting language in Settings.
     migrator.registerMigration("meeting-language-v10") { db in
-      let languages = MeetingLanguage.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      // The values when v10 shipped, so every database reaches the same schema. Czech
+      // was removed later; `meeting-language-en-sk-v12` clears stored Czech rows.
+      let languages = "'automatic','slovak','czech','english'"
       try db.execute(
         sql: """
           ALTER TABLE meetings ADD COLUMN language TEXT
             CHECK(language IS NULL OR language IN (\(languages)));
           """)
     }
+    // Feature 012: one context row per dictation, and the attempt table rebuilt
+    // for protocol version 2. SQLite cannot widen a CHECK in place, so the table is
+    // created, copied, dropped and renamed under GRDB's deferred foreign-key check.
+    migrator.registerMigration("app-context-v11") { db in
+      let outcomes = ContextOutcome.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      try db.execute(
+        sql: """
+          CREATE TABLE dictation_contexts (
+            transcription_id TEXT NOT NULL PRIMARY KEY
+              REFERENCES transcriptions(id) ON DELETE CASCADE,
+            outcome TEXT NOT NULL CHECK(outcome IN (\(outcomes))),
+            capture_ms INTEGER CHECK(capture_ms IS NULL OR capture_ms >= 0),
+            app_bundle_id TEXT CHECK(app_bundle_id IS NULL
+              OR length(cast(app_bundle_id AS blob)) BETWEEN 1 AND 255),
+            snapshot_json TEXT CHECK(snapshot_json IS NULL
+              OR length(cast(snapshot_json AS blob)) <= 8192),
+            snapshot_hash TEXT CHECK(snapshot_hash IS NULL OR \(hex64("snapshot_hash"))),
+            pre_spelling_text TEXT CHECK(pre_spelling_text IS NULL
+              OR length(cast(pre_spelling_text AS blob)) <= 65536),
+            spelling_changes_json TEXT CHECK(spelling_changes_json IS NULL
+              OR length(cast(spelling_changes_json AS blob)) <= 32768),
+            speller_version INTEGER CHECK(speller_version IS NULL OR speller_version >= 1),
+            rewrite_note TEXT CHECK(rewrite_note IS NULL OR rewrite_note = 'server_unsupported'),
+            CHECK((snapshot_json IS NULL) = (snapshot_hash IS NULL)),
+            CHECK((pre_spelling_text IS NULL) = (spelling_changes_json IS NULL)),
+            CHECK(outcome NOT IN ('used','timed_out') OR snapshot_json IS NOT NULL),
+            CHECK(outcome != 'off' OR (snapshot_json IS NULL AND app_bundle_id IS NULL
+              AND capture_ms IS NULL AND pre_spelling_text IS NULL))
+          )
+          """)
+      let columns = try db.columns(in: "rewrite_attempts").map { "\"\($0.name)\"" }
+        .joined(separator: ",")
+      try createRewriteAttempts(
+        db, named: "rewrite_attempts_v11", categories: RewriteFailureCategory.persisted,
+        contextHash: true)
+      try db.execute(
+        sql: """
+          INSERT INTO rewrite_attempts_v11 (\(columns)) SELECT \(columns) FROM rewrite_attempts;
+          DROP TABLE rewrite_attempts;
+          ALTER TABLE rewrite_attempts_v11 RENAME TO rewrite_attempts;
+          CREATE UNIQUE INDEX rewrite_attempts_transcription_ordinal
+            ON rewrite_attempts(transcription_id, ordinal);
+          CREATE INDEX rewrite_attempts_state ON rewrite_attempts(state) WHERE state = 'pending';
+          """)
+    }
+    // LocalFlow supports English and Slovak only. SQLite cannot narrow v10's CHECK in
+    // place; a meeting that chose a removed language (Czech) falls back to NULL, the
+    // Meeting language in Settings, and the app has no value that could write one.
+    migrator.registerMigration("meeting-language-en-sk-v12") { db in
+      let languages = MeetingLanguage.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
+      try db.execute(
+        sql: """
+          UPDATE meetings SET language = NULL
+            WHERE language IS NOT NULL AND language NOT IN (\(languages));
+          """)
+    }
+    // Every foreign-key child column gets an index whose leading column is that column.
+    // Without one, deleting or re-keying a parent row makes SQLite scan the whole child
+    // table (e.g. each deleted transcript segment scanned all of analysis_sources).
+    // Partial indexes do not count: SQLite cannot use them for foreign-key lookups.
+    migrator.registerMigration("foreign-key-indexes-v13") { db in
+      let indexes: [(table: String, column: String)] = [
+        ("analysis_items", "meeting_id"),
+        ("analysis_items", "owner_known_speaker_id"),
+        ("analysis_items", "owner_speaker_id"),
+        ("analysis_items", "topic_id"),
+        ("analysis_overlays", "item_id"),
+        ("analysis_sources", "meeting_id"),
+        ("analysis_sources", "segment_id"),
+        ("analysis_summaries", "meeting_id"),
+        ("analysis_topics", "meeting_id"),
+        ("identification_runs", "diarization_run_id"),
+        ("identity_assignments", "run_id"),
+        ("identity_assignments", "second_known_speaker_id"),
+        ("meeting_analysis", "accepted_run_id"),
+        ("meeting_analysis", "current_run_id"),
+        ("meeting_diarization", "accepted_run_id"),
+        ("meeting_diarization", "current_run_id"),
+        ("meeting_identification", "accepted_run_id"),
+        ("meeting_identification", "current_run_id"),
+        ("meeting_pauses", "meeting_id"),
+        ("meeting_speakers", "merged_into"),
+        ("meeting_speakers", "run_id"),
+        ("speaker_assignments", "auto_speaker_id"),
+        ("speaker_assignments", "manual_speaker_id"),
+        ("speaker_corrections", "run_id"),
+        ("transcript_live_gaps", "meeting_id"),
+        ("transcriptions", "delivered_rewrite_attempt_id"),
+      ]
+      for index in indexes {
+        try db.execute(
+          sql:
+            "CREATE INDEX \(index.table)_fk_\(index.column) ON \(index.table)(\(index.column))")
+      }
+    }
     return migrator
+  }
+
+  /// The Feature 003 attempt table. `app-context-v11` recreates it with protocol
+  /// version 2, `context_copied` and `context_hash`.
+  private static func createRewriteAttempts(
+    _ db: Database, named name: String, categories persisted: [RewriteFailureCategory],
+    contextHash: Bool
+  ) throws {
+    let categories = persisted.map { "'\($0.rawValue)'" }.joined(separator: ",")
+    let spanColumns = [
+      "duration_ms", "first_byte_ms", "network_ms", "server_queue_ms",
+      "backend_first_token_ms", "backend_ms", "request_bytes", "response_bytes",
+    ]
+    let identityColumns = ["server_name", "server_version", "backend_kind", "backend_model"]
+    try db.create(table: name) { t in
+      t.column("id", .text).notNull().primaryKey()
+      t.column("transcription_id", .text).notNull()
+        .references("transcriptions", onDelete: .cascade)
+      t.column("ordinal", .integer).notNull().check(sql: "ordinal BETWEEN 1 AND 10")
+      t.column("mode", .text).notNull().check(sql: "mode IN ('clean','polished','concise')")
+      t.column("state", .text).notNull()
+        .check(sql: "state IN ('pending','succeeded','failed','cancelled','timed_out')")
+      t.column("input_text", .text).notNull()
+        .check(sql: "length(cast(input_text AS blob)) BETWEEN 1 AND 65536")
+      t.column("input_hash", .text).notNull().check(sql: "length(input_hash) = 64")
+      t.column("output_text", .text)
+        .check(sql: "output_text IS NULL OR length(cast(output_text AS blob)) <= 65536")
+      t.column("output_hash", .text)
+        .check(sql: "output_hash IS NULL OR length(output_hash) = 64")
+      t.column("unchanged", .integer).notNull().defaults(to: 0).check(sql: "unchanged IN (0,1)")
+      t.column("failure_category", .text)
+        .check(sql: "failure_category IS NULL OR failure_category IN (\(categories))")
+      t.column("stale", .integer).notNull().defaults(to: 0).check(sql: "stale IN (0,1)")
+      t.column("started_at", .integer).notNull().check(sql: "started_at >= 0")
+      for column in spanColumns {
+        t.column(column, .integer).check(sql: "\(column) IS NULL OR \(column) >= 0")
+      }
+      t.column("protocol_version", .integer).notNull()
+        .check(sql: contextHash ? "protocol_version IN (1,2)" : "protocol_version = 1")
+      for column in identityColumns {
+        t.column(column, .text)
+          .check(sql: "\(column) IS NULL OR length(cast(\(column) AS blob)) BETWEEN 1 AND 128")
+      }
+      t.column("prompt_version", .integer)
+        .check(sql: "prompt_version IS NULL OR prompt_version >= 0")
+      t.column("shield_version", .integer)
+        .check(sql: "shield_version IS NULL OR shield_version >= 0")
+      t.column("endpoint_origin", .text).notNull()
+        .check(sql: "length(cast(endpoint_origin AS blob)) BETWEEN 1 AND 255")
+      t.column("insecure_override", .integer).notNull().defaults(to: 0)
+        .check(sql: "insecure_override IN (0,1)")
+      t.column("delivered", .integer).notNull().defaults(to: 0).check(sql: "delivered IN (0,1)")
+      t.check(sql: "(state = 'succeeded') = (output_text IS NOT NULL)")
+      t.check(sql: "(output_text IS NULL) = (output_hash IS NULL)")
+      t.check(sql: "(state IN ('failed','timed_out')) = (failure_category IS NOT NULL)")
+      t.check(sql: "state != 'timed_out' OR failure_category = 'timeout'")
+      if contextHash {
+        t.column("context_hash", .text).check(
+          sql: "context_hash IS NULL OR \(hex64("context_hash"))")
+        t.check(sql: "(protocol_version = 2) = (context_hash IS NOT NULL)")
+      }
+    }
+  }
+
+  private static func hex64(_ column: String) -> String {
+    "(length(\(column)) = 64 AND \(column) NOT GLOB '*[^0-9a-f]*')"
   }
 }

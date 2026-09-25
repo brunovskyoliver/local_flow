@@ -873,26 +873,42 @@ func isDigits(s string) bool {
 	return s != ""
 }
 
+// slovakMarks are the diacritics of Slovak. czechMarks exist in Czech but not in
+// Slovak: Czech prose carries them in about one letter in forty, so more than a
+// name's worth marks a Slovak answer that drifted into Czech.
+const (
+	slovakMarks = "áäčďéíĺľňóôŕšťúýž"
+	czechMarks  = "ěřů"
+)
+
 // languageOK is a coarse check for the requested prose language: Slovak text
-// carries diacritics (about one letter in twenty), English text almost none.
-// Text too short to tell passes — 60 letters for Slovak, 200 for English,
-// where a few Slovak names must not read as the wrong language.
+// carries diacritics (about one letter in twenty) and no Czech-only letters
+// beyond a name's worth, English text almost none. Text too short to tell
+// passes — 60 letters for Slovak, 200 for English, where a few Slovak names
+// must not read as the wrong language.
 func (p *pipeline) languageOK(text string) bool {
-	letters, marked := 0, 0
+	letters, slovak, czech := 0, 0, 0
 	for _, r := range strings.ToLower(text) {
 		if !unicode.IsLetter(r) {
 			continue
 		}
 		letters++
-		if strings.ContainsRune("áäčďéěíĺľňóôŕřšťúůýž", r) {
-			marked++
+		switch {
+		case strings.ContainsRune(slovakMarks, r):
+			slovak++
+		case strings.ContainsRune(czechMarks, r):
+			czech++
 		}
 	}
-	ratio := float64(marked) / float64(letters)
 	if p.req.Meeting.LanguagePolicy.Output == "en" {
-		return letters < 200 || ratio < 0.03
+		return letters < 200 || float64(slovak+czech)/float64(letters) < 0.03
 	}
-	return letters < 60 || ratio >= 0.01
+	if letters < 60 {
+		return true
+	}
+	// A name such as "Jiří" leaves a Slovak answer usable; Czech prose does not.
+	czechTolerance := max(2, letters/500)
+	return float64(slovak)/float64(letters) >= 0.01 && czech <= czechTolerance
 }
 
 // bound cuts s to at most n bytes on a rune boundary.

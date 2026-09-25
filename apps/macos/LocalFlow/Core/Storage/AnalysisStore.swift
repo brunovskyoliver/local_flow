@@ -3,7 +3,7 @@ import GRDB
 import OSLog
 
 /// Every analysis-table write goes through this actor. It shares the history
-/// `DatabaseQueue`, keeps run rows content-free, follows the `analysis_runs`
+/// `DatabasePool`, keeps run rows content-free, follows the `analysis_runs`
 /// transition table, refuses writes for a run that is no longer `running` or
 /// no longer `current_run_id`, and performs `adopt` as one transaction:
 /// supersede the previous accepted run, replace its content, re-match
@@ -33,11 +33,11 @@ actor AnalysisStore: AnalysisStoring {
   static let overlayCap = 500
   static let sourceCapPerTarget = 10
 
-  nonisolated let database: DatabaseQueue
+  nonisolated let database: DatabasePool
   private let matchOverlays: OverlayMatching
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "analysis")
 
-  init(database: DatabaseQueue, matchOverlays: @escaping OverlayMatching = OverlayMatcher.match) {
+  init(database: DatabasePool, matchOverlays: @escaping OverlayMatching = OverlayMatcher.match) {
     self.database = database
     self.matchOverlays = matchOverlays
   }
@@ -331,6 +331,8 @@ actor AnalysisStore: AnalysisStoring {
         let accepted = pointer.acceptedRunID,
         let run = try Self.fetchRun(accepted, db: db)
       else { return nil }
+      // Every source row of the run in one query, grouped by target in memory.
+      let sources = (try? Self.fetchSourceGroups(runID: accepted, db: db)) ?? [:]
       let summary = try Row.fetchOne(
         db, sql: "SELECT * FROM analysis_summaries WHERE run_id=?",
         arguments: [accepted.uuidString]
@@ -338,8 +340,7 @@ actor AnalysisStore: AnalysisStoring {
         StoredSummary(
           text: row["text"], language: run.languagePolicy ?? .en,
           wholeMeeting: (row["whole_meeting"] as Int) == 1,
-          sources: (try? Self.fetchSources(
-            runID: accepted, kind: "summary", target: accepted.uuidString, db: db)) ?? [])
+          sources: sources[SourceTarget(kind: "summary", id: accepted.uuidString)] ?? [])
       }
       let topics = try Row.fetchAll(
         db, sql: "SELECT * FROM analysis_topics WHERE run_id=? ORDER BY ordinal",
@@ -353,10 +354,9 @@ actor AnalysisStore: AnalysisStoring {
         return StoredTopic(
           id: id, ordinal: row["ordinal"], title: row["title"], summary: row["summary"],
           bullets: bullets,
-          sources: (try? Self.fetchSources(
-            runID: accepted, kind: "topic", target: id.uuidString, db: db)) ?? [])
+          sources: sources[SourceTarget(kind: "topic", id: id.uuidString)] ?? [])
       }
-      let items = try Self.fetchItems(runID: accepted, db: db)
+      let items = try Self.fetchItems(runID: accepted, sources: sources, db: db)
       let overlays = try Self.fetchOverlays(meetingID, db: db)
       return StoredAnalysis(
         run: run, summary: summary, topics: topics, items: items, overlays: overlays)
@@ -660,8 +660,13 @@ actor AnalysisStore: AnalysisStoring {
       .flatMap(run)
   }
 
-  static func fetchItems(runID: UUID, db: Database) throws -> [StoredItem] {
-    try Row.fetchAll(
+  /// `sources` is the run's grouped source rows when the caller already holds them;
+  /// nil reads them here in one query.
+  static func fetchItems(
+    runID: UUID, sources: [SourceTarget: [SourceRef]]? = nil, db: Database
+  ) throws -> [StoredItem] {
+    let sources = sources ?? ((try? fetchSourceGroups(runID: runID, db: db)) ?? [:])
+    return try Row.fetchAll(
       db, sql: "SELECT * FROM analysis_items WHERE run_id=? ORDER BY kind, ordinal",
       arguments: [runID.uuidString]
     ).compactMap { row -> StoredItem? in
@@ -674,31 +679,42 @@ actor AnalysisStore: AnalysisStoring {
         evidenceClass: (row["evidence_class"] as String?).flatMap(EvidenceClass.init),
         topicID: (row["topic_id"] as String?).flatMap(UUID.init(uuidString:)),
         owner: owner.owner, ownershipState: owner.state, due: due,
-        sources: (try? Self.fetchSources(runID: runID, kind: "item", target: id.uuidString, db: db))
-          ?? [])
+        sources: sources[SourceTarget(kind: "item", id: id.uuidString)] ?? [])
     }
   }
 
-  static func fetchSources(runID: UUID, kind: String, target: String, db: Database) throws
-    -> [SourceRef]
-  {
-    try Row.fetchAll(
+  /// One source row's owner: `analysis_sources.target_kind` and `target_id`.
+  struct SourceTarget: Hashable {
+    let kind: String
+    let id: String
+  }
+
+  /// Every source row of one run, grouped by target, each group in `ordinal` order.
+  static func fetchSourceGroups(runID: UUID, db: Database) throws -> [SourceTarget: [SourceRef]] {
+    var groups: [SourceTarget: [SourceRef]] = [:]
+    let rows = try Row.fetchAll(
       db,
       sql: """
-        SELECT source_kind, segment_id, note_ordinal, note_hash FROM analysis_sources
-        WHERE run_id=? AND target_kind=? AND target_id=? ORDER BY ordinal
-        """, arguments: [runID.uuidString, kind, target]
-    ).compactMap { row -> SourceRef? in
-      if row["source_kind"] as String == "segment",
-        let id = (row["segment_id"] as String?).flatMap(UUID.init(uuidString:))
-      {
-        return .segment(id)
-      }
-      if row["source_kind"] as String == "note", let ordinal = row["note_ordinal"] as Int? {
-        return .note(ordinal: ordinal, hash: (row["note_hash"] as String?) ?? "")
-      }
-      return nil
+        SELECT target_kind, target_id, source_kind, segment_id, note_ordinal, note_hash
+        FROM analysis_sources WHERE run_id=? ORDER BY target_kind, target_id, ordinal
+        """, arguments: [runID.uuidString])
+    for row in rows {
+      guard let ref = sourceRef(row) else { continue }
+      groups[SourceTarget(kind: row["target_kind"], id: row["target_id"]), default: []].append(ref)
     }
+    return groups
+  }
+
+  private static func sourceRef(_ row: Row) -> SourceRef? {
+    if row["source_kind"] as String == "segment",
+      let id = (row["segment_id"] as String?).flatMap(UUID.init(uuidString:))
+    {
+      return .segment(id)
+    }
+    if row["source_kind"] as String == "note", let ordinal = row["note_ordinal"] as Int? {
+      return .note(ordinal: ordinal, hash: (row["note_hash"] as String?) ?? "")
+    }
+    return nil
   }
 
   private static func decodeOwner(_ row: Row) -> (owner: ValidatedOwner?, state: OwnershipState?) {

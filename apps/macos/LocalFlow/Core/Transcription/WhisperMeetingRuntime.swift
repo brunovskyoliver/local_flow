@@ -28,7 +28,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
   /// own token budget applies.
   private let promptTerms: [String]
   static let maximumPromptTerms = 256
-  /// Automatic only: the helper's last confident detection, sent with every later
+  /// Automatic only: the helper's last confident detection (`en` or `sk`), sent with every later
   /// request as the language to fall back on when a window's own detection is not
   /// confident (a microphone window that is mostly muted echo). Nothing is pinned
   /// for good: a confident detection of another language still wins its window.
@@ -61,7 +61,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
 
   static func make(
     model: LocalModelDescriptor, helperURL: URL = bundledHelperURL,
-    language: MeetingLanguage = .automatic, promptTerms: [String] = [],
+    language: MeetingLanguage = .defaultLanguage, promptTerms: [String] = [],
     startupTimeout: TimeInterval = 120, inferenceTimeout: TimeInterval = 300
   )
     async throws -> WhisperMeetingRuntime
@@ -159,7 +159,10 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
 
   private func request(_ samples: [Float]) throws -> TranscriptionWindow {
     try checkRunning()
-    let file = directory.appendingPathComponent(UUID().uuidString + ".wav")
+    // One scratch path in the runtime's private directory. Requests are serial and the
+    // helper has read the file by the time it answers, so the next request can reuse
+    // the path; the file is removed after every request.
+    let file = directory.appendingPathComponent("window.wav")
     defer { try? FileManager.default.removeItem(at: file) }
     let padded =
       samples.count < 4_800
@@ -217,7 +220,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
         backed.count < native.count
         ? backed.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines) : text
       if language == .automatic, event["languageDecision"] as? String == "detected",
-        let detected = event["language"] as? String, Self.isLanguageCode(detected),
+        let detected = event["language"] as? String, Self.isSupportedLanguageCode(detected),
         let probability = event["languageProbability"] as? Double,
         probability.isFinite, (0.9...1).contains(probability),
         let speechSeconds = event["languageSpeechSeconds"] as? Double,
@@ -231,9 +234,10 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
     }
   }
 
-  /// A code the helper reported: two or three ASCII letters, never a path or text.
-  static func isLanguageCode(_ value: String) -> Bool {
-    (2...3).contains(value.utf8.count) && value.utf8.allSatisfy { (97...122).contains($0) }
+  /// A code the helper reported that LocalFlow supports: `en` or `sk`, never another
+  /// language, a path or text.
+  static func isSupportedLanguageCode(_ value: String) -> Bool {
+    MeetingLanguage.supportedCodes.contains(value)
   }
 
   /// Frames under this level, after the pass's level normalization, are silence.
@@ -427,15 +431,18 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
     }
   }
 
-  private static func writeWAV(_ samples: [Float], to url: URL) throws {
-    var data = Data(capacity: 44 + samples.count * 4)
+  /// A 32-bit float mono 16 kHz WAV: the 44-byte header, then the samples straight
+  /// from the array's storage. Private scratch read once by the helper, so no atomic
+  /// temporary copy and no second in-memory copy of the window.
+  static func writeWAV(_ samples: [Float], to url: URL) throws {
+    var header = Data(capacity: 44)
     func append<T: FixedWidthInteger>(_ value: T) {
       var little = value.littleEndian
-      withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+      withUnsafeBytes(of: &little) { header.append(contentsOf: $0) }
     }
-    data.append(contentsOf: "RIFF".utf8)
+    header.append(contentsOf: "RIFF".utf8)
     append(UInt32(36 + samples.count * 4))
-    data.append(contentsOf: "WAVEfmt ".utf8)
+    header.append(contentsOf: "WAVEfmt ".utf8)
     append(UInt32(16))
     append(UInt16(3))
     append(UInt16(1))
@@ -443,9 +450,26 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
     append(UInt32(64_000))
     append(UInt16(4))
     append(UInt16(32))
-    data.append(contentsOf: "data".utf8)
+    header.append(contentsOf: "data".utf8)
     append(UInt32(samples.count * 4))
-    samples.withUnsafeBytes { data.append(contentsOf: $0) }
-    try data.write(to: url, options: .atomic)
+    let descriptor = open(url.path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
+    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    defer { close(descriptor) }
+    try header.withUnsafeBytes { try writeAll(descriptor, $0) }
+    try samples.withUnsafeBytes { try writeAll(descriptor, $0) }
+  }
+
+  private static func writeAll(_ descriptor: Int32, _ bytes: UnsafeRawBufferPointer) throws {
+    guard var cursor = bytes.baseAddress else { return }
+    var remaining = bytes.count
+    while remaining > 0 {
+      let written = write(descriptor, cursor, remaining)
+      if written < 0 {
+        if errno == EINTR { continue }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
+      cursor += written
+      remaining -= written
+    }
   }
 }

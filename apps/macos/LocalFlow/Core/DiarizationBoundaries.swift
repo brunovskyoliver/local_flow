@@ -62,6 +62,9 @@ protocol SpeakerStoring: Sendable {
     identity: DiarizationIdentity, expectedRevision: Int64?, now: Int64
   ) async throws -> DiarizationRun
   func start(runID: UUID, now: Int64) async throws -> DiarizationRun
+  /// A running run found no remote side on the system track: its microphone voices
+  /// are labeled as in-room voices. The meeting's own In-room setting is unchanged.
+  func markInRoom(runID: UUID) async throws
   func appendWindow(runID: UUID, speakers: [SpeakerDraft], turns: [TurnDraft], audioMs: Int64)
     async throws
   /// Folds minor clusters before adoption: each key's turns move to the target
@@ -84,6 +87,9 @@ protocol SpeakerStoring: Sendable {
     async throws -> [SpeakerTurn]
   /// Assign speakers: the accepted run's display roots with their quotes.
   func speakerSummaries(meetingID: UUID) async throws -> [SpeakerSummary]
+  /// The same display roots in the same order, with their members and nothing else:
+  /// no quotes, names or identities.
+  func speakerRoots(meetingID: UUID) async throws -> [SpeakerRoot]
   /// Every changed name plus one `rename` correction each, in one transaction.
   func saveNames(meetingID: UUID, names: [UUID: String?], now: Int64) async throws
   /// At most 8 distinct stored names with this prefix, most recently used first.
@@ -104,6 +110,14 @@ protocol SpeakerStoring: Sendable {
   /// R7: corrections flagged `needs_review` by the last adoption, oldest first.
   func reviewNotices(meetingID: UUID) async throws -> [ReviewNotice]
   func dismissReview(id: UUID) async throws
+}
+
+extension SpeakerStoring {
+  func speakerRoots(meetingID: UUID) async throws -> [SpeakerRoot] {
+    try await speakerSummaries(meetingID: meetingID).map {
+      SpeakerRoot(id: $0.id, source: $0.source, members: $0.includes.map(\.id))
+    }
+  }
 }
 
 /// Transcript and meeting lifecycle events the diarization scheduler reacts to.

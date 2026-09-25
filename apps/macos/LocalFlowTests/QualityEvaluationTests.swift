@@ -215,4 +215,19 @@ private actor QualityFakeRuntime: TranscriptionRuntime {
     return .init(text: "authored test", tokens: [])
   }
   func shutdown() async { stopped = true }
+
+  /// Feature 012 (T023): context spelling changes the delivered text after
+  /// normalization; the detail is resealed for it without touching the evidence.
+  func testResealedDetailValidatesTheSpelledTextOnly() throws {
+    let envelope = try makeQualityEnvelope(text: "Thanks Kovacik")
+    let detail = try XCTUnwrap(envelope.detail)
+    let resealed = try detail.resealed(normalizedText: "Thanks Kováčik")
+    XCTAssertNoThrow(try resealed.validate(normalizedText: "Thanks Kováčik"))
+    XCTAssertThrowsError(try resealed.validate(normalizedText: "Thanks Kovacik"))
+    XCTAssertEqual(resealed.normalizedHash, TranscriptionQualityDetail.hash("Thanks Kováčik"))
+    XCTAssertEqual(resealed.assembledText, detail.assembledText)
+    XCTAssertEqual(resealed.rawWindows.map(\.text), detail.rawWindows.map(\.text))
+    XCTAssertEqual(resealed.completionReasons, detail.completionReasons)
+    XCTAssertNotEqual(resealed.contentHash, detail.contentHash)
+  }
 }

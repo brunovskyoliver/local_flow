@@ -49,6 +49,21 @@ final class AnalysisStreamMixerTests: XCTestCase {
     XCTAssertEqual(single.descriptor.version, "mixed_mono_16k_v1")
   }
 
+  func testSampleFIFOWrapsAndConsumesInOrder() {
+    var fifo = SampleFIFO(capacity: 5)
+    [Float(1), 2, 3, 4].withUnsafeBufferPointer { fifo.append($0) }
+    fifo.removeFirst(3)
+    XCTAssertEqual(fifo.array, [4])
+    [Float(5), 6, 7, 8].withUnsafeBufferPointer { fifo.append($0) }
+    XCTAssertEqual(fifo.count, 5)
+    XCTAssertEqual(fifo.array, [4, 5, 6, 7, 8])
+    XCTAssertEqual(fifo[1], 5)
+    XCTAssertEqual(fifo[4], 8)
+    fifo.removeFirst(5)
+    XCTAssertTrue(fifo.isEmpty)
+    XCTAssertEqual(fifo.array, [])
+  }
+
   func testFinalFlushCoversExactResampledLength() throws {
     let mic = try tap(.microphone, value: 0.25, blocks: 12)
     let mixer = try AnalysisStreamMixer(microphone: mic, system: nil)

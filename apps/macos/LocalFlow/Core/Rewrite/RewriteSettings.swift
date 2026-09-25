@@ -18,10 +18,12 @@ struct RewriteSettings: Sendable, Equatable {
   let timeoutSeconds: Int
   let insecureOverride: Bool
   let credentialPresent: Bool
+  /// Feature 012: context capture and "Send context to rewrite server" were both on.
+  let sendsContext: Bool
 
   init(
     enabled: Bool, mode: RewriteMode, endpoint: URL?, endpointOrigin: String, timeoutSeconds: Int,
-    insecureOverride: Bool, credentialPresent: Bool
+    insecureOverride: Bool, credentialPresent: Bool, sendsContext: Bool = false
   ) {
     self.enabled = enabled
     self.mode = mode
@@ -30,6 +32,7 @@ struct RewriteSettings: Sendable, Equatable {
     self.timeoutSeconds = Self.clampTimeout(timeoutSeconds)
     self.insecureOverride = insecureOverride
     self.credentialPresent = credentialPresent
+    self.sendsContext = sendsContext
   }
 
   /// Reads preferences and credential presence; the store is asked whether an item
@@ -45,7 +48,8 @@ struct RewriteSettings: Sendable, Equatable {
       enabled: preferences.rewriteEnabled, mode: preferences.rewriteDefaultMode, endpoint: url,
       endpointOrigin: origin ?? "", timeoutSeconds: preferences.rewriteTimeoutSeconds,
       insecureOverride: origin.map { preferences.insecureOverride(for: $0) } ?? false,
-      credentialPresent: origin.map { credentialStore.exists(origin: $0) } ?? false)
+      credentialPresent: origin.map { credentialStore.exists(origin: $0) } ?? false,
+      sendsContext: preferences.contextSettings().rewriteEnabled)
   }
 
   var isEndpointValid: Bool { endpoint != nil && !endpointOrigin.isEmpty }

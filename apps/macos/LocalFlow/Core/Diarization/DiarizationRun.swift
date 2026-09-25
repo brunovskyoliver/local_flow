@@ -291,6 +291,14 @@ struct SpeakerSummary: Sendable, Equatable, Identifiable {
   var isYou: Bool { source == .local && !inRoom }
 }
 
+/// A display root of the accepted run with the speakers merged into it, in the order
+/// and member order of `SpeakerSummary` and `includes`.
+struct SpeakerRoot: Sendable, Equatable {
+  let id: UUID
+  let source: SpeakerSource
+  let members: [UUID]
+}
+
 /// A speaker shown under its merge target in Assign speakers.
 struct MergedSpeaker: Sendable, Equatable, Identifiable {
   let id: UUID

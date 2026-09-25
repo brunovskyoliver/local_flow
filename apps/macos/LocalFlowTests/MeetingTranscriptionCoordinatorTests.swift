@@ -686,6 +686,7 @@ final class MeetingTranscriptionCoordinatorTests: XCTestCase {
     await settle { coordinator.status?.state == .final }
     XCTAssertFalse(coordinator.isFinalizing)
     let outcome = try XCTUnwrap(coordinator.lastFinalization)
+    XCTAssertNil(outcome.echoProfile, "the coordinator does not keep the echo profile")
     XCTAssertEqual(outcome.row.replacedProvisionalCount, provisionalBefore)
     XCTAssertEqual(outcome.totalGapCount, gaps.count)
     XCTAssertGreaterThanOrEqual(outcome.coveredGapCount, 1, "the live gap is covered by the pass")

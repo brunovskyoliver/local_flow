@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// The Summary tab's view model (`contracts/ui.md`). Loads the accepted
 /// `StoredAnalysis` into `MeetingAnalysisReadModel`, applies its overlays and
@@ -68,6 +69,15 @@ final class SummaryModel {
       ? coordinator.status! : AnalysisStatus(meetingID: meetingID)
   }
 
+  /// `status` without its progress. The analyzer reports progress per stream event;
+  /// only a change of this key reloads the header and the stored analysis. The
+  /// running header reads `status.progress` directly.
+  var reloadKey: AnalysisStatus {
+    var key = status
+    key.progress = nil
+    return key
+  }
+
   private let coordinator: MeetingIntelligenceCoordinator
   private let store: any AnalysisStoring
   private let speakers: any SpeakerStoring
@@ -76,7 +86,18 @@ final class SummaryModel {
   private let transcripts: any MeetingEvidenceReading
   /// The last `speakerSummaries` page `load()` resolved owners against; the
   /// suggestion-accept path finds the profile-linked root here.
-  private var speakerSummaries: [SpeakerSummary] = []
+  private var speakerSummaries: [SpeakerSummary] = [] {
+    didSet {
+      mentionMatcher = nil
+      highlightCache = [:]
+    }
+  }
+  /// Built once per `speakerSummaries`; the view highlights every bullet with it.
+  @ObservationIgnored private var mentionMatcher: SpeakerMentionMatcher?
+  /// Highlighted summary texts, dropped whenever the speakers reload. Bounded:
+  /// cleared when it reaches `highlightCacheCapacity`.
+  @ObservationIgnored private var highlightCache: [String: AttributedString] = [:]
+  static let highlightCacheCapacity = 512
 
   init(
     meetingID: UUID, coordinator: MeetingIntelligenceCoordinator,
@@ -246,35 +267,33 @@ final class SummaryModel {
   /// Where the summary names a meeting speaker, with that speaker's color index.
   /// A full name wins over a first name; "You" is never matched.
   func speakerMentions(in text: String) -> [(range: Range<String.Index>, colorIndex: Int)] {
-    Self.speakerMentions(in: text, speakers: ownerChoices.map { ($0.label, $0.colorIndex) })
+    matcher.mentions(in: text)
+  }
+
+  private var matcher: SpeakerMentionMatcher {
+    if let mentionMatcher { return mentionMatcher }
+    let built = SpeakerMentionMatcher(speakers: ownerChoices.map { ($0.label, $0.colorIndex) })
+    mentionMatcher = built
+    return built
   }
 
   static func speakerMentions(
     in text: String, speakers: [(name: String, colorIndex: Int)]
   ) -> [(range: Range<String.Index>, colorIndex: Int)] {
-    var found: [(range: Range<String.Index>, colorIndex: Int)] = []
-    var names: [(String, Int)] = []
-    for speaker in speakers where speaker.name != "You" {
-      let name = speaker.name.replacingOccurrences(of: " (You)", with: "")
-      names.append((name, speaker.colorIndex))
-      if let first = name.split(separator: " ").first, first.count >= 3, first != name[...] {
-        names.append((String(first), speaker.colorIndex))
-      }
+    SpeakerMentionMatcher(speakers: speakers).mentions(in: text)
+  }
+
+  /// Summary text with every speaker's name in the color the transcript gives them.
+  func highlighted(_ text: String) -> Text {
+    if let cached = highlightCache[text] { return Text(cached) }
+    var attributed = AttributedString(text)
+    for mention in speakerMentions(in: text) {
+      guard let range = Range(mention.range, in: attributed) else { continue }
+      attributed[range].foregroundColor = SpeakerPalette.color(mention.colorIndex)
     }
-    for (name, colorIndex) in names.sorted(by: { $0.0.count > $1.0.count }) {
-      // ponytail: up to three trailing lowercase letters cover Slovak case endings
-      // ("Olivera"); a stemmer if names in other languages slip through.
-      let pattern =
-        "(?<!\\p{L})" + NSRegularExpression.escapedPattern(for: name) + "\\p{Ll}{0,3}(?!\\p{L})"
-      guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-      for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-        guard let range = Range(match.range, in: text),
-          !found.contains(where: { $0.range.overlaps(range) })
-        else { continue }
-        found.append((range, colorIndex))
-      }
-    }
-    return found
+    if highlightCache.count >= Self.highlightCacheCapacity { highlightCache.removeAll() }
+    highlightCache[text] = attributed
+    return Text(attributed)
   }
 
   /// Sorted `s:`/`n:` ids joined by `,` — the re-match input R13 compares
@@ -683,5 +702,45 @@ extension PreviousEdit {
         }
       }(),
       createdAt: overlay.createdAt)
+  }
+}
+
+/// Speaker names compiled once into one regular expression each, longest name
+/// first. A full name wins over a first name; "You" is never matched.
+struct SpeakerMentionMatcher {
+  private let patterns: [(regex: NSRegularExpression, colorIndex: Int)]
+
+  init(speakers: [(name: String, colorIndex: Int)]) {
+    var names: [(String, Int)] = []
+    for speaker in speakers where speaker.name != "You" {
+      let name = speaker.name.replacingOccurrences(of: " (You)", with: "")
+      names.append((name, speaker.colorIndex))
+      if let first = name.split(separator: " ").first, first.count >= 3, first != name[...] {
+        names.append((String(first), speaker.colorIndex))
+      }
+    }
+    patterns = names.sorted(by: { $0.0.count > $1.0.count }).compactMap { name, colorIndex in
+      // ponytail: up to three trailing lowercase letters cover Slovak case endings
+      // ("Olivera"); a stemmer if names in other languages slip through.
+      let pattern =
+        "(?<!\\p{L})" + NSRegularExpression.escapedPattern(for: name) + "\\p{Ll}{0,3}(?!\\p{L})"
+      guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+      return (regex, colorIndex)
+    }
+  }
+
+  func mentions(in text: String) -> [(range: Range<String.Index>, colorIndex: Int)] {
+    guard !patterns.isEmpty, !text.isEmpty else { return [] }
+    var found: [(range: Range<String.Index>, colorIndex: Int)] = []
+    let whole = NSRange(text.startIndex..., in: text)
+    for (regex, colorIndex) in patterns {
+      for match in regex.matches(in: text, range: whole) {
+        guard let range = Range(match.range, in: text),
+          !found.contains(where: { $0.range.overlaps(range) })
+        else { continue }
+        found.append((range, colorIndex))
+      }
+    }
+    return found
   }
 }

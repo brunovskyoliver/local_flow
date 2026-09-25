@@ -3,9 +3,9 @@ info:
   title: LocalFlow API
   version: 0.1.0
   description: >-
-    LocalFlow rewrite protocol v1 (Feature 003). Meeting and summary schemas remain
-    provisional design shapes without paths. Breaking changes to the rewrite shape
-    require schema_version 2.
+    LocalFlow rewrite protocol v1 (Feature 003) and v2 (Feature 012, ADR 0023), and
+    the meeting analysis protocol (Feature 011). Breaking changes to the rewrite shape
+    require a new schema_version.
 paths:
   /v1/rewrite/health:
     get:
@@ -37,7 +37,12 @@ paths:
         response is newline-delimited JSON; each line is one rewrite event. Order: zero
         or one accepted, any number of progress and (if stream_deltas) delta, then
         exactly one result or error, then end of stream. Lines are at most 8,192 bytes
-        except result, whose text may reach 65,536 bytes.
+        except result, whose text may reach 65,536 bytes. A v2 body (schema_version 2)
+        is v1 plus the required context object (rewrite-context.schema.json, at most
+        8,192 bytes): reference material from the focused app, placed in the system
+        message and never logged. A v2 result adds context_prompt_version; its event
+        schema_version stays 1. The server accepts a version only if health lists it in
+        protocol_versions; otherwise unsupported_version.
       security:
         - bearer: []
         - {}
@@ -112,8 +117,9 @@ paths:
       description: >-
         Request bodies over 262,144 bytes are rejected with 413 before parsing.
         The response is newline-delimited JSON; each line is one analysis event
-        (accepted, progress, result or error). Each line is at most 98,304 bytes;
-        the client stops reading beyond that and records oversized_response.
+        (accepted, progress, result or error). Each line is at most 98,304 bytes
+        and the whole stream at most 524,288 bytes; the client stops reading
+        beyond either and records oversized_response.
         Every request carries priority "background"; the rewrite-first gate may
         cancel an in-flight generation with code preempted.
       security:
@@ -212,6 +218,7 @@ components:
           const: localflow-rewrite
         protocol_versions:
           type: array
+          description: Accepted request versions; [1, 2] when v2 (reference context) is served.
           items:
             type: integer
             minimum: 1

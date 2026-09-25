@@ -76,12 +76,24 @@ extension TextInserting {
 }
 extension TextInsertionService: TextInserting {}
 
+/// Feature 012: one bounded read of the focused field per dictation, started right
+/// after the insertion target is captured. Never throws; every failure is an outcome.
+/// Returns within `deadline` + 20 ms.
+protocol AppContextReading: Sendable {
+  func read(target: CapturedTarget?, settings: ContextSettings, deadline: Duration) async
+    -> AppContextCapture
+}
+
 /// One immutable result travels through save/retry; summaries never contain the detail.
 struct TranscriptionEnvelope: Sendable {
   let entry: TranscriptionEntry
   let detail: TranscriptionQualityDetail?
+  /// Feature 012: the context row, committed in the entry's transaction. Nil for
+  /// legacy entries and for callers that predate the feature.
+  var context: DictationContextRecord? = nil
 
   func validate() throws {
+    try context?.validate()
     guard let detail else { return }
     try detail.validate(normalizedText: entry.text)
     guard !detail.incomplete || entry.quality != .complete else {
@@ -131,6 +143,10 @@ protocol RewriteAttemptStoring: Sendable {
   func attempts(for transcriptionID: UUID) async throws -> [RewriteAttempt]
   @discardableResult func cancelPendingOnStartup() async throws -> Int
   func recordDelivered(attemptID: UUID) async throws
+  /// Feature 012: the dictation's context row, nil for legacy entries.
+  func context(for transcriptionID: UUID) async throws -> DictationContextRecord?
+  /// Feature 012: `server_unsupported` for the latest attempt, or nil to clear it.
+  func recordRewriteNote(_ note: String?, for transcriptionID: UUID) async throws
 }
 extension TranscriptionStore: RewriteAttemptStoring {}
 
@@ -194,8 +210,17 @@ protocol RewriteTransporting: Sendable {
   func rewrite(request: RewriteRequest, endpoint: RewriteEndpoint, timeout: Duration)
     -> AsyncThrowingStream<RewriteTransportItem, Error>
   func health(endpoint: RewriteEndpoint) async throws -> HealthResponse
+  /// Feature 012: the endpoint's advertised protocol versions, nil when health failed.
+  func protocolVersions(endpoint: RewriteEndpoint) async -> [Int]?
   /// Release idle resources; the next request recreates them.
   func invalidate()
+}
+
+extension RewriteTransporting {
+  /// Uncached default for transports without a version cache.
+  func protocolVersions(endpoint: RewriteEndpoint) async -> [Int]? {
+    (try? await health(endpoint: endpoint))?.protocolVersions
+  }
 }
 
 /// Read once at admission; a failure blocks the session instead of changing its meaning.

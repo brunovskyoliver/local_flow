@@ -700,6 +700,18 @@ final class SpeakerStoreTests: XCTestCase {
     }
   }
 
+  /// `speakerRoots` is `speakerSummaries` without quotes, names and identities.
+  private func assertRootsMatchSummaries(
+    _ meetingID: UUID, file: StaticString = #filePath, line: UInt = #line
+  ) async throws {
+    let roots = try await store.speakerRoots(meetingID: meetingID)
+    let summaries = try await store.speakerSummaries(meetingID: meetingID)
+    XCTAssertEqual(
+      roots,
+      summaries.map { .init(id: $0.id, source: $0.source, members: $0.includes.map(\.id)) },
+      file: file, line: line)
+  }
+
   func testMergeSetsMergedIntoAtDepthOneAndUnmergeRestoresTheSection() async throws {
     let meeting = try await meeting()
     let run = try await accepted(meeting)
@@ -716,6 +728,7 @@ final class SpeakerStoreTests: XCTestCase {
     XCTAssertEqual(summaries.map(\.id), [remote])
     XCTAssertEqual(summaries[0].includes.map(\.id), [local])
     XCTAssertEqual(summaries[0].includes.map(\.anonymousLabel), ["You"])
+    try await assertRootsMatchSummaries(meeting.id)
     var rows = try await corrections(meeting.id)
     XCTAssertEqual(rows.map { $0["kind"] as String }, ["rename", "merge"])
     XCTAssertEqual(rows[1]["speaker_id"] as String?, local.uuidString)
@@ -733,6 +746,7 @@ final class SpeakerStoreTests: XCTestCase {
     summaries = try await store.speakerSummaries(meetingID: meeting.id)
     XCTAssertEqual(summaries.map(\.id), [manual])
     XCTAssertEqual(summaries[0].includes.map(\.id), [local, remote], "local first, then remote")
+    try await assertRootsMatchSummaries(meeting.id)
     do {
       try await store.merge(meetingID: meeting.id, speakerID: manual, into: local, now: 33)
       XCTFail("merged a root into its own member")
@@ -745,6 +759,7 @@ final class SpeakerStoreTests: XCTestCase {
     XCTAssertEqual(row["color_index"] as Int, 1, "the earlier name and color are back")
     summaries = try await store.speakerSummaries(meetingID: meeting.id)
     XCTAssertEqual(Set(summaries.map(\.id)), [manual, local])
+    try await assertRootsMatchSummaries(meeting.id)
     rows = try await corrections(meeting.id)
     XCTAssertEqual(rows.last?["kind"] as String?, "unmerge")
     XCTAssertEqual(rows.last?["target_speaker_id"] as String?, manual.uuidString)

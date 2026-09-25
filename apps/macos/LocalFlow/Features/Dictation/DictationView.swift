@@ -10,13 +10,13 @@ struct DictationView: View {
       VStack(alignment: .leading, spacing: 26) {
         HStack(spacing: 20) {
           Image(systemName: "globe")
-            .font(.system(size: 28, weight: .light))
+            .font(.flow(size: 28, weight: .light))
             .frame(width: 66, height: 66)
             .background(SottoPalette.surface, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(SottoPalette.line, lineWidth: 1))
             .accessibilityHidden(true)
           VStack(alignment: .leading, spacing: 6) {
-            Text("Hold to dictate.").font(.system(size: 26, weight: .semibold))
+            Text("Hold to dictate.").font(.flow(size: 26, weight: .semibold))
             Text("Speak in Slovak, English, or both.").foregroundStyle(SottoPalette.muted)
           }
           Spacer(minLength: 0)
@@ -27,7 +27,7 @@ struct DictationView: View {
             services.readinessStatus,
             systemImage: services.needsAttention ? "exclamationmark.circle" : "mic"
           )
-          .font(.callout)
+          .font(.flow(size: 13))
           Spacer(minLength: 0)
           Button("Settings") { services.router.selection = .settings }
         }
@@ -56,15 +56,7 @@ struct DictationView: View {
                 entry.quality == .durationLimited ? "Cut short at 180 seconds" : "Incomplete",
                 systemImage: "exclamationmark.circle"
               )
-              .font(.caption)
-            }
-            if entry.recoveryState == .needsReview {
-              Label(
-                entry.deliveryState == .uncertain || entry.deliveryState == .attempting
-                  ? "Delivery uncertain. Check the destination before inserting again."
-                  : "Saved for review", systemImage: "tray"
-              )
-              .font(.caption)
+              .font(.flow(size: 12))
             }
           } else {
             Text("Your next dictation will appear here.")
@@ -76,13 +68,13 @@ struct DictationView: View {
         .background(SottoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(SottoPalette.line, lineWidth: 1))
         HStack {
-          Text("Saved text stays until you delete it.").font(.callout).foregroundStyle(
+          Text("Saved text stays until you delete it.").font(.flow(size: 13)).foregroundStyle(
             SottoPalette.muted)
           Spacer()
           Button("View history") { services.router.selection = .history }
         }
         VStack(alignment: .leading, spacing: 8) {
-          Text("Ready when you hold the shortcut").font(.headline)
+          Text("Ready when you hold the shortcut").font(.flow(size: 14, weight: .semibold))
           Text(
             "Wait for the recording waveform, speak, then release. Speech is processed on this Mac. If insertion is unavailable, your text stays in History for Copy."
           )
@@ -90,7 +82,7 @@ struct DictationView: View {
           Text(
             "Each recording can last up to 180 seconds. Recordings are removed after processing."
           )
-          .font(.caption).foregroundStyle(SottoPalette.muted)
+          .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
         }
       }
       .padding(26)

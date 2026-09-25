@@ -464,6 +464,14 @@ protocol AnalysisTransporting: Sendable {
     -> AsyncThrowingStream<AnalysisTransportItem, Error>
   func health(endpoint: RewriteEndpoint) async throws -> AnalysisHealth
   func invalidate()
+  /// The endpoint with this run's per-request settings fixed; called once at
+  /// admission so every request of the run reaches the same backend.
+  func pinned(_ endpoint: RewriteEndpoint) -> RewriteEndpoint
+}
+
+extension AnalysisTransporting {
+  /// Transports without per-run settings use the endpoint unchanged.
+  func pinned(_ endpoint: RewriteEndpoint) -> RewriteEndpoint { endpoint }
 }
 
 /// Every analysis table write goes through one implementation of this.

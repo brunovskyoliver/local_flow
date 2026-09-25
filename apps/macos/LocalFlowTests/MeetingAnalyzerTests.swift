@@ -206,7 +206,8 @@ final class MeetingAnalyzerTests: XCTestCase {
   func testEvidenceChangedMidRunFailsSourceValidation() async throws {
     let fixture = try IntelligenceFixtures.meeting("deployment")
     let inner = FakeEvidenceReader(fixture: fixture)
-    let reader = SecondReadMutatingReader(inner: inner)
+    // Read 1 is admission, 2 the start check; 3, before adoption, changes.
+    let reader = SecondReadMutatingReader(inner: inner, mutatingFrom: 3)
     let store = FakeAnalysisStore()
     let transport = FakeAnalysisTransport(fixture: fixture)
     try transport.script(response: "deployment-valid")
@@ -224,6 +225,72 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(run.state, .failed)
     XCTAssertEqual(run.failureCategory, .sourceValidation)
     XCTAssertEqual(run.failureDetail, "evidence_changed")
+    XCTAssertEqual(transport.requests.count, 1, "the request ran; adoption was refused")
+  }
+
+  /// A run can wait in the queue after admission; evidence that changed in
+  /// the meantime fails it at start, before any request is spent.
+  func testQueuedRunWithChangedEvidenceFailsBeforeAnyRequest() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    try transport.script(response: "deployment-valid")
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let admission = try await analyzer.admit(meetingID: fixture.id, trigger: .automatic)
+    reader.noteRows.append(
+      NoteParagraph(
+        ordinal: 99, text: "added while queued", hash: String(repeating: "e", count: 64)))
+    let run = try await analyzer.execute(admission)
+    XCTAssertEqual(run.state, .failed)
+    XCTAssertEqual(run.failureCategory, .sourceValidation)
+    XCTAssertEqual(run.failureDetail, "evidence_changed")
+    XCTAssertTrue(transport.requests.isEmpty)
+    XCTAssertEqual(store.adoptCalls, 0)
+  }
+
+  /// Summaries from one backend never mix with partials from another: the
+  /// partial cache is keyed (and scoped) by the pinned backend.
+  func testPartialCacheIsKeyedByBackend() async throws {
+    let cache = AnalysisPartialCache()
+    let meetingID = UUID()
+    let result = AnalysisResult(
+      schemaVersion: 1, meetingID: meetingID, partial: true, language: .en,
+      summary: WireSummary(text: "A part.", sources: [], wholeMeeting: false),
+      topics: [], decisions: [], actionItems: [], nextSteps: [], openQuestions: [], risks: [])
+    func key(_ backend: String) -> AnalysisPartialCache.Key {
+      .init(
+        meetingID: meetingID, evidenceVersion: "v", backend: backend,
+        firstOrdinal: 0, lastOrdinal: 10)
+    }
+    await cache.store(result, for: key("a"))
+    let fromA = await cache.result(for: key("a"))
+    let fromB = await cache.result(for: key("b"))
+    XCTAssertNotNil(fromA)
+    XCTAssertNil(fromB)
+    await cache.store(result, for: key("b"))
+    let afterSwitch = await cache.result(for: key("a"))
+    XCTAssertNil(afterSwitch, "a new backend replaces the scope")
+  }
+
+  func testResolvedLanguageCacheIsBounded() {
+    let cache = ResolvedLanguageCache()
+    let passID = UUID()
+    func key(_ n: Int) -> ResolvedLanguageCache.Key {
+      .init(
+        passID: n == 0 ? passID : UUID(), meetingLanguage: nil, transcriptPipeline: nil,
+        sampleBytes: n)
+    }
+    cache.store(.sk, for: key(0))
+    XCTAssertEqual(cache.value(for: key(0)), .sk)
+    XCTAssertNil(
+      cache.value(
+        for: .init(
+          passID: passID, meetingLanguage: .english, transcriptPipeline: nil, sampleBytes: 0)),
+      "the meeting's language setting is part of the key")
+    for n in 1...ResolvedLanguageCache.capacity { cache.store(.en, for: key(n)) }
+    XCTAssertNil(cache.value(for: key(0)), "cleared when full")
   }
 
   // MARK: T051 — the request never leaks uncertain identity
@@ -984,6 +1051,34 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertNil(storedModel?.summary)
   }
 
+  /// A chunked run takes minutes; evidence that changes after the first
+  /// chunk stops the run before the next chunk request.
+  func testEvidenceChangeBetweenChunksStopsBeforeTheNextChunk() async throws {
+    let fixture = IntelligenceFixtures.fourHourMeeting()
+    let reader = FakeEvidenceReader(fixture: fixture)
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport(fixture: fixture)
+    let chunkCount = try AnalysisChunkPlanner.plan(
+      segments: fixture.segments, notes: [], policy: AnalysisPolicy()
+    ).chunks.count
+    var steps = (0..<chunkCount).map { chunkStep(index: $0, decisionSegmentID: nil) }
+    guard case .lines(let first) = steps[0] else { return XCTFail("lines expected") }
+    let gate = PreparationGate()
+    steps[0] = .holdBeforeCompletion(gate, lines: first)
+    transport.script(.chunk, steps)
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+
+    let running = Task { try await analyzer.run(meetingID: fixture.id, trigger: .manual) }
+    await gate.waitUntilStarted()
+    reader.noteRows.append(
+      NoteParagraph(ordinal: 99, text: "added mid-run", hash: String(repeating: "d", count: 64)))
+    await gate.open()
+    let run = try await running.value
+    XCTAssertEqual(run.state, .failed)
+    XCTAssertEqual(run.failureDetail, "evidence_changed")
+    XCTAssertEqual(transport.requests.count, 1, "no second chunk on outdated evidence")
+  }
+
   /// A retry after a failed synthesis reuses the chunk results that already
   /// passed: only the synthesis is requested again.
   func testRetryAfterFailedSynthesisReusesChunks() async throws {
@@ -1176,13 +1271,15 @@ final class MeetingAnalyzerTests: XCTestCase {
 
   func testMeetingAndFinalPassLanguagePrecedence() async throws {
     let fixture = try IntelligenceFixtures.meeting("english")
+    // The language the final pass decoded in wins over the meeting's current choice.
     let cases: [(MeetingLanguage?, String?, AnalysisLanguage)] = [
-      (.slovak, nil, .sk), (.english, "lang_sk_prompt_v1", .en),
+      (.slovak, nil, .sk), (.english, "lang_sk_prompt_v1", .sk),
+      (.slovak, "lang_en_prompt_v1", .en),
       (nil, "geometry+lang_sk_prompt_v1+normalizer", .sk),
       (nil, "geometry+lang_sk_prompt_v2+normalizer", .sk),
-      (.automatic, "lang_sk_prompt_v1", .en),
-      (.czech, "lang_sk_prompt_v1", .en),
-      (nil, "lang_auto_prompt_v1+speech_language_v2", .en),
+      (.automatic, "lang_sk_prompt_v1", .sk),
+      (.slovak, "lang_auto_prompt_v1+speech_language_v3", .sk),
+      (nil, "lang_auto_prompt_v1+speech_language_v3", .en),
       (nil, "not_lang_sk_prompt_v1", .en),
       (nil, nil, .en),
     ]
@@ -1244,6 +1341,68 @@ final class MeetingAnalyzerTests: XCTestCase {
     XCTAssertEqual(store.adoptCalls, 1)
     let after = try await store.readModel(meetingID: fixture.id)
     XCTAssertEqual(after?.summary?.text, before?.summary?.text)
+  }
+
+  /// The server echoes the requested language, so the prose is checked: a long
+  /// English summary for a Slovak request is rejected and nothing is adopted.
+  func testConfidentlyWrongProseLanguageIsRejected() async throws {
+    let fixture = try IntelligenceFixtures.meeting("english")
+    let reader = FakeEvidenceReader(fixture: fixture)
+    reader.meetingRow?.language = .slovak
+    reader.transcription?.pipelineVersion = nil
+    let store = FakeAnalysisStore()
+    let transport = FakeAnalysisTransport()
+    var lines = try XCTUnwrap(IntelligenceFixtures.response("language-valid")[.full]?.first)
+    for index in lines.indices {
+      guard var event = lines[index] as? [String: Any],
+        var analysis = event["analysis"] as? [String: Any],
+        var summary = analysis["summary"] as? [String: Any]
+      else { continue }
+      summary["text"] = Self.englishProse
+      analysis["summary"] = summary
+      event["analysis"] = analysis
+      lines[index] = event
+    }
+    transport.script(.full, [.lines(.init(value: lines))])
+    let analyzer = makeAnalyzer(reader: reader, store: store, transport: transport)
+    let run = try await analyzer.run(meetingID: fixture.id, trigger: .manual)
+    XCTAssertEqual(run.failureCategory, .malformedResponse)
+    XCTAssertEqual(run.failureDetail, "prose_language")
+    XCTAssertEqual(store.adoptCalls, 0)
+  }
+
+  private static let englishProse =
+    "The team reviewed the release plan in detail and agreed that the deployment moves to "
+    + "Monday. Martin will prepare the backup before the change window, and the customer "
+    + "will be told about the new schedule by the end of the week. The open question about "
+    + "the database migration stays with the platform group until they have measured it."
+
+  /// Only substantial, confidently wrong prose fails; Slovak prose full of English
+  /// jargon, short answers and names pass.
+  func testProseLanguageCheckIsConservative() {
+    func result(_ summary: String, topics: [String] = []) -> AnalysisResult {
+      AnalysisResult(
+        schemaVersion: 1, meetingID: UUID(), partial: false, language: .sk,
+        summary: WireSummary(text: summary, sources: [], wholeMeeting: true),
+        topics: topics.map {
+          WireTopic(title: "Deployment", summary: $0, bullets: [], sources: [])
+        },
+        decisions: [], actionItems: [], nextSteps: [], openQuestions: [], risks: [])
+    }
+    let slovakJargon =
+      "Tím prebral deployment na M6, backup cez Veeam a konfiguráciu SAPGUI. Martin pošle "
+      + "ticket do Jiry a Peter overí, či CI/CD pipeline zvládne rollback. Na budúci týždeň "
+      + "sa dohodli, že release pôjde v pondelok a zákazník dostane správu do piatku. Otvorená "
+      + "otázka ostáva pri migrácii databázy, ktorú ešte treba zmerať na produkčných dátach."
+    XCTAssertTrue(MeetingAnalyzer.proseMatches(result(slovakJargon), output: .sk))
+    XCTAssertTrue(MeetingAnalyzer.proseMatches(result(slovakJargon), output: .mixed))
+    XCTAssertFalse(MeetingAnalyzer.proseMatches(result(slovakJargon), output: .en))
+    XCTAssertFalse(MeetingAnalyzer.proseMatches(result(Self.englishProse), output: .sk))
+    XCTAssertFalse(
+      MeetingAnalyzer.proseMatches(result("Stretnutie.", topics: [Self.englishProse]), output: .sk))
+    XCTAssertTrue(MeetingAnalyzer.proseMatches(result(Self.englishProse), output: .en))
+    XCTAssertTrue(
+      MeetingAnalyzer.proseMatches(result("Deployment pipeline, Kubernetes, M6."), output: .sk))
   }
 
   func testFailureMetricsUseTerminalRun() async throws {
@@ -1319,10 +1478,14 @@ final class MeetingAnalyzerTests: XCTestCase {
 /// admitted one.
 private final class SecondReadMutatingReader: MeetingEvidenceReading, @unchecked Sendable {
   private let inner: FakeEvidenceReader
+  private let mutatingFrom: Int
   private let lock = NSLock()
   private var calls = 0
 
-  init(inner: FakeEvidenceReader) { self.inner = inner }
+  init(inner: FakeEvidenceReader, mutatingFrom: Int = 2) {
+    self.inner = inner
+    self.mutatingFrom = mutatingFrom
+  }
 
   func notes(meetingID: UUID) async throws -> [NoteParagraph] {
     let n = lock.withLock { () -> Int in
@@ -1330,7 +1493,7 @@ private final class SecondReadMutatingReader: MeetingEvidenceReading, @unchecked
       return calls
     }
     let rows = try await inner.notes(meetingID: meetingID)
-    guard n >= 2 else { return rows }
+    guard n >= mutatingFrom else { return rows }
     return rows + [
       NoteParagraph(
         ordinal: 99, text: "added mid-run",

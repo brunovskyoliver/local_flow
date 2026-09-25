@@ -271,6 +271,31 @@ final class MeetingReconcilerTests: XCTestCase {
     XCTAssertTrue(again.isSilent)
   }
 
+  /// A reconstructed meeting's length is its longest recovered track, not zero, so
+  /// identification and enrollment see every turn rather than the first ten minutes.
+  func testOrphanRecordedLengthIsTheLongestRecoveredTrack() async throws {
+    let orphan = UUID()
+    let directory = root.meetingDirectory(orphan)
+    try ADTSFixtures.write(
+      ADTSFixtures.completeFrames(50), to: directory.appendingPathComponent("mic-0001.aac"))
+    try ADTSFixtures.write(
+      ADTSFixtures.completeFrames(40), to: directory.appendingPathComponent("mic-0002.aac"))
+    try ADTSFixtures.write(
+      ADTSFixtures.completeFrames(30, channels: 2),
+      to: directory.appendingPathComponent("system-0001.aac"))
+    try ADTSFixtures.write([0xFF, 0xF1], to: directory.appendingPathComponent("mic-0003.aac"))
+    _ = await reconciler().run()
+    let loaded = try await store.detail(id: orphan)
+    let detail = try XCTUnwrap(loaded)
+    let mic = try XCTUnwrap(detail.track(.microphone))
+    let sys = try XCTUnwrap(detail.track(.system))
+    XCTAssertEqual(mic.segments.map(\.state), [.finalized, .finalized, .unrecoverable])
+    XCTAssertGreaterThan(mic.track.totalDurationMs, sys.track.totalDurationMs)
+    XCTAssertEqual(detail.meeting.recordedMs, mic.track.totalDurationMs)
+    XCTAssertEqual(
+      detail.meeting.recordedMs, 50 * 1_024 * 1_000 / 48_000 + 40 * 1_024 * 1_000 / 48_000)
+  }
+
   func testCreatedRowThatNeverPreparedBecomesFailedAndUnblocksCreate() async throws {
     let created = try await store.create(now: t0)
     let summary = await reconciler().run()

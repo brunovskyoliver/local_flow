@@ -21,7 +21,7 @@ final class AnalysisStreamMixer {
     let mono: AVAudioPCMBuffer
     let output: AVAudioPCMBuffer
     let converter: AVAudioConverter
-    var staging: [Float] = []
+    var staging = SampleFIFO(capacity: AnalysisStreamMixer.stagingCapacity)
     var observedDrops: Int64 = 0
     var fractionalDropSamples = 0.0
     var failed = false
@@ -55,7 +55,6 @@ final class AnalysisStreamMixer {
       self.output = output
       self.converter = converter
       converter.primeMethod = .none
-      staging.reserveCapacity(16_000)
     }
     var pendingBlocks: Int { tap?.ring.occupancy ?? 0 }
     func drain() throws {
@@ -99,8 +98,7 @@ final class AnalysisStreamMixer {
       else { throw Failure.analysisStreamFailure }
       convertedFrames += Int(output.frameLength)
       staging.append(
-        contentsOf: UnsafeBufferPointer(
-          start: output.floatChannelData![0], count: Int(output.frameLength)))
+        UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength)))
     }
     func finish() throws {
       guard !finished else { return }
@@ -120,8 +118,7 @@ final class AnalysisStreamMixer {
         0, Int(Double(inputFrames) * 16_000 / sampleRate) - convertedFrames)
       let count = min(remaining, Int(output.frameLength))
       convertedFrames += count
-      staging.append(
-        contentsOf: UnsafeBufferPointer(start: output.floatChannelData![0], count: count))
+      staging.append(UnsafeBufferPointer(start: output.floatChannelData![0], count: count))
     }
     func drops() -> Int {
       // Drops are later than the buffered blocks; account for them once those blocks
@@ -248,20 +245,115 @@ final class AnalysisStreamMixer {
       flush || system == nil || system?.failed == true || system?.ended == true
         || microphone.staging.count > 8_000
     {
-      runs.append(.init(sampleStart: emittedSamples, samples: microphone.staging, tracks: .mic))
+      runs.append(
+        .init(sampleStart: emittedSamples, samples: microphone.staging.array, tracks: .mic))
       emittedSamples += microphone.staging.count
       contributedMic = true
-      microphone.staging.removeAll(keepingCapacity: true)
+      microphone.staging.removeAll()
     }
     if let system, !system.staging.isEmpty,
       flush || microphone == nil || microphone?.failed == true || microphone?.ended == true
         || system.staging.count > 8_000
     {
-      runs.append(.init(sampleStart: emittedSamples, samples: system.staging, tracks: .system))
+      runs.append(
+        .init(sampleStart: emittedSamples, samples: system.staging.array, tracks: .system))
       emittedSamples += system.staging.count
       contributedSystem = true
-      system.staging.removeAll(keepingCapacity: true)
+      system.staging.removeAll()
     }
     return runs
+  }
+}
+
+/// Fixed-capacity sample FIFO. Consuming the front moves an index instead of
+/// shifting the remaining samples, as `Array.removeFirst(_:)` would.
+struct SampleFIFO {
+  private var storage: [Float]
+  private var head = 0
+  private(set) var count = 0
+
+  init(capacity: Int) {
+    precondition(capacity > 0)
+    storage = [Float](repeating: 0, count: capacity)
+  }
+
+  var capacity: Int { storage.count }
+  var isEmpty: Bool { count == 0 }
+
+  subscript(index: Int) -> Float {
+    precondition(index >= 0 && index < count)
+    return storage[(head + index) % storage.count]
+  }
+
+  mutating func append(_ samples: UnsafeBufferPointer<Float>) {
+    guard let source = samples.baseAddress, !samples.isEmpty else { return }
+    precondition(count + samples.count <= storage.count)
+    let start = (head + count) % storage.count
+    storage.withUnsafeMutableBufferPointer { buffer in
+      let first = min(samples.count, buffer.count - start)
+      (buffer.baseAddress! + start).update(from: source, count: first)
+      if first < samples.count {
+        buffer.baseAddress!.update(from: source + first, count: samples.count - first)
+      }
+    }
+    count += samples.count
+  }
+
+  mutating func removeFirst(_ n: Int) {
+    precondition(n >= 0 && n <= count)
+    count -= n
+    head = count == 0 ? 0 : (head + n) % storage.count
+  }
+
+  mutating func removeAll() {
+    head = 0
+    count = 0
+  }
+
+  /// A copy of the queued samples, oldest first.
+  var array: [Float] {
+    guard count > 0 else { return [] }
+    let first = min(count, storage.count - head)
+    var result = Array(storage[head..<(head + first)])
+    if first < count { result += storage[0..<(count - first)] }
+    return result
+  }
+}
+
+/// Owns one live mixer on its own serial executor, so ring draining,
+/// AVAudioConverter resampling and mixing run off the main actor. Callers
+/// receive each tick's emissions and gap intervals together.
+actor AnalysisMixerHost {
+  struct Output: Sendable {
+    let emissions: [AnalysisStreamMixer.Emission]
+    let gaps: [Range<Int>]
+  }
+  private let mixer: AnalysisStreamMixer
+
+  init(microphone: MeetingAnalysisTap?, system: MeetingAnalysisTap?) throws {
+    mixer = try AnalysisStreamMixer(microphone: microphone, system: system)
+  }
+
+  var hasPendingBlocks: Bool { mixer.hasPendingBlocks }
+  var descriptor: AnalysisStreamDescriptor { mixer.descriptor }
+
+  func tick() throws -> Output {
+    let emissions = try mixer.tick()
+    return Output(emissions: emissions, gaps: mixer.takeGaps())
+  }
+
+  func flush() throws -> Output {
+    let emissions = try mixer.flush()
+    return Output(emissions: emissions, gaps: mixer.takeGaps())
+  }
+
+  /// Drains at most one ring of buffered blocks without delivering them and
+  /// returns the discarded length, for PCM that predates a model reload.
+  func discardBuffered() throws -> Int {
+    for _ in 0..<MeetingSampleRing.slotCapacity where mixer.hasPendingBlocks {
+      _ = try mixer.tick()
+    }
+    _ = mixer.takeGaps()
+    return mixer.emittedSamples
   }
 }

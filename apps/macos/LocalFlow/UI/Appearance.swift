@@ -1,26 +1,31 @@
 import AppKit
+import CoreText
 import SwiftUI
 
-// Colors and geometry from design/approved-prototype.html.
+// Wispr Flow's sand/vast tokens: light values from its :root theme, dark values from
+// [data-theme=dark]. Fonts are Figtree (UI) and EB Garamond (display), both OFL.
 enum SottoPalette {
   static let ink = adaptive(
-    light: 0x292A28, dark: 0xE8E9E4, contrastLight: 0x191A18, contrastDark: 0xFFFFFF)
+    light: 0x1A1A1A, dark: 0xDEDDD7, contrastLight: 0x000000, contrastDark: 0xFFFFFF)
   static let muted = adaptive(
-    light: 0x74756F, dark: 0xA0A29A, contrastLight: 0x50514C, contrastDark: 0xCED0C7)
+    light: 0x71716E, dark: 0x9D9C98, contrastLight: 0x464544, contrastDark: 0xC8C8C2)
   static let faint = muted
-  static let canvas = adaptive(light: 0xF5F5F3, dark: 0x242523)
-  static let surface = adaptive(light: 0xFFFFFF, dark: 0x1B1C1A)
+  static let canvas = adaptive(light: 0xF7F6F3, dark: 0x1F1F1E)
+  static let surface = adaptive(light: 0xFCFCFB, dark: 0x141414)
   static let sidebar = canvas
-  static let tint = adaptive(light: 0xE9E9E4, dark: 0x393B35)
-  static let button = adaptive(light: 0xF0F0EC, dark: 0x34362F)
+  static let tint = adaptive(light: 0xF1EEE9, dark: 0x2A2A29)
+  static let button = adaptive(light: 0xEEEBE3, dark: 0x2E2E2C)
   static let line = adaptive(
-    light: 0xEAEAE6, dark: 0x333530, contrastLight: 0x999B93, contrastDark: 0x83867C)
-  static let accent = adaptive(light: 0x356B9B, dark: 0x96BDE0)
+    light: 0xEEEBE3, dark: 0x292928, contrastLight: 0x9D9C98, contrastDark: 0x71716E)
+  static let accent = adaptive(light: 0x247872, dark: 0x68BDB0)
   static let accentInk = accent
+  /// Wispr's primary button: near-black on light, near-white on dark.
+  static let primary = ink
+  static let onPrimary = surface
   static let onAccent = surface
   static let glassTint = canvas
   static let success = Color(nsColor: .systemGreen)
-  static let warning = Color(nsColor: .systemOrange)
+  static let warning = adaptive(light: 0xEA580C, dark: 0xFB923C)
 
   private static func adaptive(
     light: UInt32, dark: UInt32, darkAlpha: CGFloat = 1,
@@ -60,13 +65,14 @@ struct PrototypePage<Content: View>: View {
   var body: some View {
     ScrollView {
       content
-        .padding(.horizontal, compact ? 23 : 55)
-        .padding(.top, compact ? 30 : 49)
-        .padding(.bottom, 65)
-        .frame(maxWidth: 940)
+        .padding(.horizontal, compact ? 24 : 48)
+        .padding(.top, compact ? 32 : 48)
+        .padding(.bottom, 64)
+        .frame(maxWidth: 960)
         .frame(maxWidth: .infinity, alignment: .top)
     }
-    .font(.system(size: 14))
+    .scrollIndicators(.never)
+    .font(.flow(size: 14))
     .foregroundStyle(SottoPalette.ink)
   }
 }
@@ -76,13 +82,45 @@ struct PrototypeButtonStyle: ButtonStyle {
   @Environment(\.isEnabled) private var isEnabled
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(size: 12))
-      .padding(.horizontal, 13).padding(.vertical, 8)
+      .font(.flow(size: 13, weight: .medium))
+      .padding(.horizontal, 12).padding(.vertical, 7)
       .frame(minWidth: minimumWidth)
       .background(
-        configuration.isPressed ? SottoPalette.tint : SottoPalette.button,
-        in: RoundedRectangle(cornerRadius: 6)
+        configuration.isPressed ? SottoPalette.button : SottoPalette.tint,
+        in: RoundedRectangle(cornerRadius: 8)
       )
       .opacity(isEnabled ? 1 : 0.45)
+  }
+}
+
+/// Wispr's filled call to action ("Add new", "Start Notetaker").
+struct PrimaryButtonStyle: ButtonStyle {
+  @Environment(\.isEnabled) private var isEnabled
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .font(.flow(size: 14, weight: .medium))
+      .foregroundStyle(SottoPalette.onPrimary)
+      .padding(.horizontal, 16).padding(.vertical, 9)
+      .background(SottoPalette.primary, in: RoundedRectangle(cornerRadius: 8))
+      .opacity(configuration.isPressed ? 0.8 : isEnabled ? 1 : 0.45)
+  }
+}
+
+extension Font {
+  /// Figtree for interface text; EB Garamond when `design` is `.serif`.
+  static func flow(
+    size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default
+  ) -> Font {
+    .custom(design == .serif ? "EB Garamond" : "Figtree", fixedSize: size).weight(weight)
+  }
+}
+
+enum FlowFonts {
+  /// Registers the bundled fonts for this process only.
+  static func register() {
+    guard
+      let urls = Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: "Fonts")
+    else { return }
+    CTFontManagerRegisterFontURLs(urls as CFArray, .process, true, nil)
   }
 }

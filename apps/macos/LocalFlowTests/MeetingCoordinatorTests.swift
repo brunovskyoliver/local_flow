@@ -481,9 +481,9 @@ final class MeetingCoordinatorTests: XCTestCase {
     XCTAssertTrue(detail.tracks.flatMap(\.segments).allSatisfy(\.isPartFile))
     // Elapsed advances at 1 Hz only while recording.
     await rig.advance(.seconds(1))
-    XCTAssertEqual(rig.coordinator.status?.recordedElapsed, .seconds(1))
+    XCTAssertEqual(rig.coordinator.recordedElapsed, .seconds(1))
     await rig.advance(.seconds(2))
-    XCTAssertEqual(rig.coordinator.status?.recordedElapsed, .seconds(3))
+    XCTAssertEqual(rig.coordinator.recordedElapsed, .seconds(3))
     let second = await rig.coordinator.start()
     XCTAssertEqual(second, .alreadyActive(id))
     let page = try await rig.store.inner.page(before: nil, limit: 20)
@@ -751,7 +751,13 @@ final class MeetingCoordinatorTests: XCTestCase {
     let rig = try makeRig()
     rig.coordinator.markReconciliationComplete()
     guard case .started(let id) = await rig.coordinator.start() else { return XCTFail() }
+    let version = rig.coordinator.version
+    let status = rig.coordinator.status
     await rig.advance(seconds: 6)
+    // Heartbeats and the elapsed tick leave the list signal and the status alone.
+    XCTAssertEqual(rig.coordinator.version, version)
+    XCTAssertEqual(rig.coordinator.status, status)
+    XCTAssertEqual(rig.coordinator.recordedElapsed, .seconds(6))
     let first = try await rig.detail(id)
     let sizes = first.tracks.flatMap(\.segments).map(\.byteSize)
     XCTAssertTrue(sizes.allSatisfy { $0 > 0 }, "\(sizes)")
@@ -765,6 +771,31 @@ final class MeetingCoordinatorTests: XCTestCase {
     XCTAssertTrue(metrics.contains("meetingSystemQueueDepth"))
     XCTAssertTrue(metrics.contains("meetingDroppedFrames"))
     await rig.coordinator.stop()
+  }
+
+  func testLibraryRenameOfTheActiveMeetingReachesTheCoordinator() async throws {
+    let rig = try makeRig()
+    let id = try await startRecording(rig)
+    let coordinator = rig.coordinator
+    let library = MeetingLibraryViewModel(store: rig.store) { [weak coordinator] in
+      coordinator?.activeMeetingID
+    }
+    library.activeMeetingDidChange = { [weak coordinator] in
+      await coordinator?.meetingDidChange(id: $0)
+    }
+    await library.open(id)
+    let meeting = try XCTUnwrap(library.detail?.meeting)
+    await library.setTitle("Weekly sync", for: meeting)
+    XCTAssertNil(library.detailNotice)
+    XCTAssertEqual(coordinator.status?.title, "Weekly sync")
+    // The coordinator adopted the new revision: its own checked edits still succeed.
+    try await coordinator.setTitle("Weekly sync, renamed")
+    try await coordinator.setLanguage(.slovak)
+    let stored = try await rig.store.inner.meeting(id: id)
+    XCTAssertEqual(stored?.title, "Weekly sync, renamed")
+    XCTAssertEqual(stored?.language, .slovak)
+    XCTAssertEqual(coordinator.status?.title, "Weekly sync, renamed")
+    await coordinator.stop()
   }
 
   // MARK: US4 pause and resume
@@ -804,7 +835,7 @@ final class MeetingCoordinatorTests: XCTestCase {
     // Paused: elapsed stops, no bytes reach the writer, a second pause is refused.
     let micBytes = rig.writer.bytes(.microphone).count
     await rig.advance(seconds: 30)
-    XCTAssertEqual(rig.coordinator.status?.recordedElapsed, .seconds(10))
+    XCTAssertEqual(rig.coordinator.recordedElapsed, .seconds(10))
     XCTAssertEqual(rig.writer.bytes(.microphone).count, micBytes)
     await rig.coordinator.pause(reason: .user)
     detail = try await rig.detail(id)
@@ -859,7 +890,7 @@ final class MeetingCoordinatorTests: XCTestCase {
     XCTAssertEqual(detail.pauses[0].closedBy, .stop)
     XCTAssertEqual(detail.meeting.wallClockMs, 10_000)
     XCTAssertEqual(detail.meeting.recordedMs, 4_000)
-    XCTAssertEqual(rig.coordinator.status?.recordedElapsed, .seconds(4))
+    XCTAssertEqual(rig.coordinator.recordedElapsed, .seconds(4))
   }
 
   func testSystemSleepPausesWithReasonAndNeverResumesOnItsOwn() async throws {
@@ -961,11 +992,11 @@ final class MeetingCoordinatorTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(sys.segments[0].byteSize, Int64(systemBefore))
     XCTAssertFalse(rig.coordinator.isActive)
     // No resume, no elapsed advance, no further bytes after the latch.
-    let elapsedShown = rig.coordinator.status?.recordedElapsed
+    let elapsedShown = rig.coordinator.recordedElapsed
     await rig.coordinator.resume()
     XCTAssertEqual(rig.coordinator.status?.state, .interrupted)
     await rig.advance(seconds: 2)
-    XCTAssertEqual(rig.coordinator.status?.recordedElapsed, elapsedShown)
+    XCTAssertEqual(rig.coordinator.recordedElapsed, elapsedShown)
     XCTAssertEqual(rig.clock.parkedSleepers, 0)
     let metrics = try await rig.capture.metrics()
     XCTAssertTrue(metrics.contains("meetingWriteFailure"))
@@ -1014,7 +1045,7 @@ final class MeetingCoordinatorTests: XCTestCase {
     _ = try await startRecording(rig)
     await rig.advance(seconds: 1)
     rig.writer.failAfterBytes[.microphone] = 1
-    // Advance in small steps so the 10 ms worker loop and the 250 ms poll interleave.
+    // Advance in small steps so the 40 ms worker loop and the 250 ms poll interleave.
     for _ in 0..<40 { await rig.advance(.milliseconds(10)) }
     let written = rig.writer.bytes(.microphone).count
     // The meeting is ended by the poll; the ring dropped whatever arrived meanwhile.

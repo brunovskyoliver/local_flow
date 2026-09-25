@@ -14,11 +14,14 @@ enum RewriteMode: String, Codable, CaseIterable, Sendable {
 /// Every numeric limit of the wire contract in one place.
 enum RewriteBounds {
   static let schemaVersion = 1
+  /// Feature 012: v1 plus a required `context` object (ADR 0023).
+  static let contextSchemaVersion = 2
   static let maximumInputScalars = 20_000
   static let maximumInputBytes = 65_536
   static let maximumLineBytes = 8_192
   static let maximumErrorBodyBytes = 8_192
-  static let maximumLanguageHints = 4
+  /// `en` and `sk`, each at most once: the only languages LocalFlow supports.
+  static let maximumLanguageHints = 2
   static let maximumIdentityBytes = 128
   static let placeholderGlyphs: Set<Character> = ["⟦", "⟧"]
 
@@ -46,6 +49,8 @@ enum RewriteFailureCategory: String, Codable, CaseIterable, Sendable, Hashable {
   case serverValidationFailed = "server_validation_failed"
   case requestMismatch = "request_mismatch"
   case interrupted
+  /// Feature 012: the result copied on-screen text the speaker did not say.
+  case contextCopied = "context_copied"
 
   case inputTooLarge = "input_too_large"
   case missingCredential = "missing_credential"
@@ -58,7 +63,7 @@ enum RewriteFailureCategory: String, Codable, CaseIterable, Sendable, Hashable {
   static let persisted: [RewriteFailureCategory] = [
     .serverUnreachable, .timeout, .authenticationFailed, .transportError, .backendUnavailable,
     .malformedResponse, .unsupportedSchemaVersion, .emptyResponse, .oversizedResponse,
-    .serverValidationFailed, .requestMismatch, .interrupted,
+    .serverValidationFailed, .requestMismatch, .interrupted, .contextCopied,
   ]
 
   /// True for the post-admission half; the storage check constraint admits exactly these.
@@ -100,14 +105,17 @@ struct RewriteFailure: Error, Equatable, Sendable {
 }
 
 /// Body of `POST /v1/rewrite`. The closed `CodingKeys` set is the only thing the
-/// encoder can emit, so no other field can ever reach the wire.
+/// encoder can emit, so no other field can ever reach the wire. With `context`
+/// the request is protocol v2 and carries the stored canonical snapshot bytes.
 struct RewriteRequest: Encodable, Sendable, Equatable {
-  let schemaVersion = RewriteBounds.schemaVersion
+  let schemaVersion: Int
   let requestID: UUID
   let mode: RewriteMode
   let text: String
   let languageHints: [String]
   let streamDeltas: Bool
+  /// Canonical snapshot JSON exactly as stored; nil for v1.
+  let context: Data?
 
   enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
@@ -115,15 +123,17 @@ struct RewriteRequest: Encodable, Sendable, Equatable {
     case mode, text
     case languageHints = "language_hints"
     case streamDeltas = "stream_deltas"
+    case context
   }
 
   init(
     requestID: UUID, mode: RewriteMode, text: String, languageHints: [String] = [],
-    streamDeltas: Bool = false
+    streamDeltas: Bool = false, context: Data? = nil
   ) throws {
     guard mode.sendsRequest else { throw RewriteFailure(.invalidSettings) }
     guard languageHints.count <= RewriteBounds.maximumLanguageHints,
-      languageHints.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 35 })
+      Set(languageHints).count == languageHints.count,
+      languageHints.allSatisfy(MeetingLanguage.supportedCodes.contains)
     else { throw RewriteFailure(.invalidSettings) }
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw RewriteFailure(.invalidSettings)
@@ -131,15 +141,24 @@ struct RewriteRequest: Encodable, Sendable, Equatable {
     guard text.unicodeScalars.count <= RewriteBounds.maximumInputScalars,
       text.utf8.count <= RewriteBounds.maximumInputBytes
     else { throw RewriteFailure(.inputTooLarge) }
+    if let context {
+      guard context.count <= AppContextSnapshot.maximumBytes,
+        (try? JSONSerialization.jsonObject(with: context)) is [String: Any]
+      else { throw RewriteFailure(.invalidSettings) }
+    }
+    schemaVersion =
+      context == nil ? RewriteBounds.schemaVersion : RewriteBounds.contextSchemaVersion
     self.requestID = requestID
     self.mode = mode
     self.text = text
     self.languageHints = languageHints
     self.streamDeltas = streamDeltas
+    self.context = context
   }
 
   var inputBytes: Int { text.utf8.count }
   var inputScalars: Int { text.unicodeScalars.count }
+  var sendsContext: Bool { context != nil }
 
   func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
@@ -149,6 +168,35 @@ struct RewriteRequest: Encodable, Sendable, Equatable {
     try container.encode(text, forKey: .text)
     try container.encode(languageHints, forKey: .languageHints)
     try container.encode(streamDeltas, forKey: .streamDeltas)
+    if let context {
+      try container.encode(
+        JSONDecoder().decode(AppContextSnapshot.self, from: context), forKey: .context)
+    }
+  }
+
+  /// Wire bytes. The context is spliced in verbatim, so the sent object is
+  /// byte-identical to the stored snapshot and its hash.
+  func httpBody() throws -> Data {
+    guard let context else { return try JSONEncoder().encode(self) }
+    let fields = try JSONEncoder().encode(
+      RewriteRequest(
+        uncheckedVersion: schemaVersion, requestID: requestID, mode: mode, text: text,
+        languageHints: languageHints, streamDeltas: streamDeltas))
+    guard fields.last == UInt8(ascii: "}") else { throw RewriteFailure(.invalidSettings) }
+    return fields.dropLast() + Data(#","context":"#.utf8) + context + Data("}".utf8)
+  }
+
+  private init(
+    uncheckedVersion: Int, requestID: UUID, mode: RewriteMode, text: String,
+    languageHints: [String], streamDeltas: Bool
+  ) {
+    schemaVersion = uncheckedVersion
+    self.requestID = requestID
+    self.mode = mode
+    self.text = text
+    self.languageHints = languageHints
+    self.streamDeltas = streamDeltas
+    context = nil
   }
 }
 
@@ -185,6 +233,8 @@ enum RewriteEvent: Sendable, Equatable {
     let promptVersion: Int?
     let shield: Shield?
     let timing: Timing?
+    /// Feature 012: present on v2 results only.
+    var contextPromptVersion: Int? = nil
   }
 
   case accepted(requestID: String?)
@@ -256,7 +306,8 @@ enum RewriteEvent: Sendable, Equatable {
           schemaVersion: JSONField.int(object["schema_version"]), requestID: id,
           mode: object["mode"] as? String, text: object["text"] as? String,
           textIsString: object["text"] is String, server: server, backend: backend,
-          promptVersion: JSONField.int(object["prompt_version"]), shield: shield, timing: timing))
+          promptVersion: JSONField.int(object["prompt_version"]), shield: shield, timing: timing,
+          contextPromptVersion: JSONField.int(object["context_prompt_version"])))
     default: return .other(requestID: id)
     }
   }
@@ -299,6 +350,8 @@ struct RewriteResult: Sendable, Equatable {
   let serverQueueMilliseconds: Int?
   let backendFirstTokenMilliseconds: Int?
   let backendMilliseconds: Int?
+  /// Feature 012: the server's context rules version; nil for v1.
+  var contextPromptVersion: Int? = nil
 }
 
 enum RewriteResultValidator {
@@ -331,7 +384,17 @@ enum RewriteResultValidator {
           let promptVersion = payload.promptVersion, promptVersion >= 0,
           let shield = payload.shield, let timing = payload.timing
         else { throw RewriteFailure(.malformedResponse) }
+        // A v2 result must name the context rules it was produced under.
+        let contextPromptVersion = request.sendsContext ? payload.contextPromptVersion : nil
+        guard !request.sendsContext || (contextPromptVersion ?? 0) >= 1 else {
+          throw RewriteFailure(.malformedResponse)
+        }
         guard !text.contains(where: { RewriteBounds.placeholderGlyphs.contains($0) }) else {
+          throw RewriteFailure(.serverValidationFailed)
+        }
+        // A rewrite never translates: Slovak in, English out (or the reverse) falls
+        // back to the faithful transcript.
+        guard !isTranslation(input: request.text, output: text) else {
           throw RewriteFailure(.serverValidationFailed)
         }
         // Rule 9: the first terminal event decides; later ones are ignored.
@@ -341,7 +404,8 @@ enum RewriteResultValidator {
           backendModel: backend.model, promptVersion: promptVersion, shieldVersion: shield.version,
           serverQueueMilliseconds: timing.queueMilliseconds,
           backendFirstTokenMilliseconds: timing.backendFirstTokenMilliseconds,
-          backendMilliseconds: timing.backendMilliseconds)
+          backendMilliseconds: timing.backendMilliseconds,
+          contextPromptVersion: contextPromptVersion)
       case .error(let id, let code, _):
         try checkID(id, expected: expectedID)
         throw RewriteFailure(RewriteFailureCategory.forServerCode(code))
@@ -350,6 +414,18 @@ enum RewriteResultValidator {
       }
     }
     throw RewriteFailure(.malformedResponse)
+  }
+
+  /// True only when both texts are substantial prose the English/Slovak recognizer
+  /// is sure about and the languages differ. Short text, code, names and jargon
+  /// lists are never sure enough to decide.
+  static func isTranslation(input: String, output: String) -> Bool {
+    func language(_ text: String) -> SupportedTextLanguage? {
+      SupportedTextLanguage.confident(
+        text, minimumLetters: 40, minimumWords: 6, minimumConfidence: 0.99)
+    }
+    guard let spoken = language(input), let written = language(output) else { return false }
+    return spoken != written
   }
 
   private static func checkID(_ id: String?, expected: String) throws {
@@ -405,6 +481,7 @@ struct HealthResponse: Sendable, Equatable {
 
   var isRewriteService: Bool { service == Self.serviceName }
   var supportsProtocolOne: Bool { protocolVersions.contains(RewriteBounds.schemaVersion) }
+  var supportsContext: Bool { protocolVersions.contains(RewriteBounds.contextSchemaVersion) }
   var backendReady: Bool { backend?.state == "ready" }
 }
 
@@ -435,12 +512,19 @@ enum RewriteNotice {
     case .attemptLimit: return "This dictation already has ten rewrite attempts."
     case .concurrencyLimit: return "Two rewrites are still running." + inserted
     case .interrupted: return "Rewrite was interrupted by a restart."
+    case .contextCopied:
+      return context == .live
+        ? "Rewrite used on-screen text you did not say; inserted your transcript."
+        : "Rewrite used on-screen text you did not say."
     }
   }
 
   static func cancelled(context: Context) -> String {
     "Rewrite cancelled." + (context == .live ? insertedSuffix : "")
   }
+
+  /// A rewrite finished after the next dictation began; nothing was inserted.
+  static let supersededSaved = "Previous dictation saved to history, not inserted."
 }
 
 /// Connection-test presentation and a separate, content-free diagnostic code.

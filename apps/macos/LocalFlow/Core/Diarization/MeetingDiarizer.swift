@@ -44,8 +44,12 @@ actor MeetingDiarizer {
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "speakers")
 
   private var shuttingDown = false
-  /// One window buffer for every run; refilled in place.
-  private var window = [Float](repeating: 0, count: DiarizationConstants.windowSamples)
+  /// The run's window buffer, refilled in place for every window of the run.
+  /// Allocated when a run starts diarizing and released when it ends, so the
+  /// 38.4 MB buffer is not resident between runs.
+  private var window: [Float] = []
+  /// Samples held in the window buffer right now. For tests.
+  var residentWindowSamples: Int { window.count }
 
   init(
     speakers: any SpeakerStoring, transcripts: any TranscriptStoring,
@@ -114,6 +118,9 @@ actor MeetingDiarizer {
     var echoProfile = EchoGate.Profile()
     var echo: EchoGate.Calibration?
     var echoGatedMs: Int64 = 0
+    /// The profile covered every stretch and the system track never rose above the
+    /// silence floor, so every microphone voice is in the room.
+    var systemSilent = false
     /// Per run cluster key, for the minor-cluster fold: track, gated speech and the
     /// reconciler's centroid once its track is done.
     var tracks: [Int: MeetingTrackKind] = [:]
@@ -170,6 +177,8 @@ actor MeetingDiarizer {
       default: return await fail(pending.id, Failure(.modelLoadFailure))
       }
     }
+    // Only the lease holder reaches this point, so one run owns `window` at a time.
+    defer { window = [] }
     var context: Context
     do {
       let started = try await speakers.start(runID: pending.id, now: clock.nowMilliseconds)
@@ -192,10 +201,19 @@ actor MeetingDiarizer {
       } else {
         try await profileEcho(detail: detail, pages: pages, base: base, context: &context)
       }
+      window = [Float](repeating: 0, count: DiarizationConstants.windowSamples)
+      // The microphone is one local speaker ("You") only when a remote side was
+      // actually captured. Without system audio (failed, denied or silent) the
+      // meeting is treated as in-room, so in-room voices are not all labeled "You".
+      let microphoneIsLocalUser =
+        !context.run.inRoom && hasSystemAudio(detail) && !context.systemSilent
+      if !context.run.inRoom, !microphoneIsLocalUser {
+        try await speakers.markInRoom(runID: context.run.id)
+      }
       // System first, then microphone (research R5).
       for kind in [MeetingTrackKind.system, .microphone] {
         var reconciler = WindowClusterReconciler()
-        let numSpeakers = kind == .microphone && !context.run.inRoom ? 1 : nil
+        let numSpeakers = kind == .microphone && microphoneIsLocalUser ? 1 : nil
         for page in 0..<pages {
           for item in MeetingFinalizer.workItems(detail: detail, page: page) {
             guard let track = item.tracks.first(where: { $0.kind == kind }) else { continue }
@@ -303,6 +321,9 @@ actor MeetingDiarizer {
     }
     let frames = profile.frames
     let gate = EchoGate.calibrate(profile)
+    context.systemSilent =
+      frames <= EchoGate.frameCapacity && profile.stretches.count == stretchCount(detail)
+      && EchoGate.systemIsSilent(profile)
     context.echoProfile = gate == nil ? .init() : profile
     context.echo = gate
     if let gate = context.echo {
@@ -335,6 +356,8 @@ actor MeetingDiarizer {
       }
     }
     let gate = EchoGate.calibrate(profile)
+    context.systemSilent =
+      profile.stretches.count == stretchCount(detail) && EchoGate.systemIsSilent(profile)
     context.echoProfile = gate == nil ? .init() : profile
     context.echo = gate
     if let gate = context.echo {
@@ -403,7 +426,7 @@ actor MeetingDiarizer {
         let fill = stretch.fill
         window.withUnsafeMutableBufferPointer { target in
           emission.samples.withUnsafeBufferPointer { source in
-            for index in 0..<count { target[fill + index] = source[offset + index] }
+            (target.baseAddress! + fill).update(from: source.baseAddress! + offset, count: count)
           }
         }
         stretch.fill += count
@@ -580,6 +603,10 @@ actor MeetingDiarizer {
 
   private func align(meetingID: UUID, context: Context) async throws -> [AssignmentDraft] {
     var assignments: [AssignmentDraft] = []
+    let survivors: [AnalysisTracks: SpeakerAligner.TrackSpeakers?] = Dictionary(
+      uniqueKeysWithValues: [AnalysisTracks.both, .mic, .system].map {
+        ($0, Self.trackSpeakers(context, for: $0))
+      })
     var after: Int?
     while true {
       try Task.checkCancellation()
@@ -590,6 +617,7 @@ actor MeetingDiarizer {
       let segments = page.filter { $0.passID == context.run.transcriptPassID }
       let range = first.startMs..<max(page.map(\.endMs).max() ?? first.endMs, first.startMs + 1)
       var turns: [SpeakerAligner.Turn] = []
+      var trackTurns: [AnalysisTracks: [SpeakerAligner.Turn]] = [:]
       var cursor: TurnCursor?
       // The turn API pages at 1,000; a dense span needs every page or segments go Unknown.
       while true {
@@ -606,11 +634,14 @@ actor MeetingDiarizer {
       // A row transcribed from one track (Feature 009 per-track pass) is labeled from
       // that track's turns alone, among that track's speakers; a mixed row sees
       // every turn.
+      // The page's turns per track and the run's speakers per track are the same for
+      // every segment, so each is filtered once rather than per segment.
       let aligned = segments.map { segment in
-        SpeakerAligner.assign(
+        let tracks = segment.draft.analysisTracks
+        if trackTurns[tracks] == nil { trackTurns[tracks] = Self.turns(turns, for: tracks) }
+        return SpeakerAligner.assign(
           .init(startMs: segment.startMs, endMs: segment.endMs),
-          turns: Self.turns(turns, for: segment.draft.analysisTracks),
-          track: Self.trackSpeakers(context, for: segment.draft.analysisTracks))
+          turns: trackTurns[tracks] ?? [], track: survivors[tracks] ?? nil)
       }
       for (segment, result) in zip(segments, aligned) {
         assignments.append(
@@ -707,6 +738,21 @@ actor MeetingDiarizer {
   }
 
   // MARK: Work list
+
+  /// Stretches the work list visits, so a profile can prove it covered them all.
+  private func stretchCount(_ detail: MeetingDetail) -> Int {
+    MeetingFinalizer.stretchCount(detail: detail)
+  }
+
+  /// A finalized, non-empty system segment whose file exists.
+  private func hasSystemAudio(_ detail: MeetingDetail) -> Bool {
+    detail.track(.system)?.segments.contains { segment in
+      segment.state == .finalized && segment.durationMs > 0
+        && storageRoot.resolve(relativePath: segment.relativePath).map {
+          FileManager.default.fileExists(atPath: $0.path)
+        } == true
+    } == true
+  }
 
   private func hasTrackAudio(_ detail: MeetingDetail) -> Bool {
     detail.tracks.contains { track in

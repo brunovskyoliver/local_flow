@@ -248,6 +248,61 @@ final class ResourceRecorderTests: XCTestCase {
     }
   }
 
+  /// Feature 012 (T017): context metrics are grouped, bounded and keyed only by
+  /// outcome or part name; the report renders them without any string payload.
+  func testContextMetricsAreGroupedContentFreeAndReported() async throws {
+    let capture = try RecorderCapture.make()
+    defer { capture.cleanup() }
+    let recorder = capture.recorder
+    XCTAssertEqual(ResourceRecorder.Metric.allContextCases.count, 5)
+    for metric in ResourceRecorder.Metric.allContextCases {
+      XCTAssertTrue(metric.isContext, "\(metric)")
+      XCTAssertFalse(metric.isRewrite || metric.isMeeting || metric.isAnalysis, "\(metric)")
+    }
+    let id = UUID()
+    for index in 0..<20 {
+      recorder.record(
+        context: ContextMetrics(
+          sessionID: id, outcome: index == 0 ? .timedOut : .used,
+          captureMilliseconds: 10 + index,
+          partBytes: [.windowTitle: 12, .beforeCursor: 300], termCount: 4, spellingChanges: 1))
+    }
+    for key in ["Miroslav Kováčik", "com.apple.mail", "Inbox – Work", "fetchUserProfile"] {
+      XCTAssertFalse(
+        recorder.record(phase: .idle, metric: .contextOutcome, itemCount: 1, meetingKey: key))
+      XCTAssertFalse(
+        recorder.record(phase: .idle, metric: .contextPartBytes, payloadBytes: 1, meetingKey: key))
+      XCTAssertFalse(
+        recorder.record(phase: .idle, metric: .contextTermCount, itemCount: 1, meetingKey: key))
+    }
+    XCTAssertFalse(recorder.record(phase: .idle, metric: .contextTermCount, itemCount: 41))
+    XCTAssertFalse(recorder.record(phase: .idle, metric: .contextSpellingChanges, itemCount: 65))
+    let report = await recorder.flush()
+    var metrics: [String: Int] = [:]
+    for line in try Data(contentsOf: report.files[0]).split(separator: 10) {
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+      guard let name = object["metric"] as? String, name.hasPrefix("context") else { continue }
+      metrics[name, default: 0] += 1
+      for forbidden in ["text", "title", "term", "bundleID", "identity", "outcome", "refusal"] {
+        XCTAssertNil(object[forbidden], forbidden)
+      }
+      if let key = object["meetingKey"] as? String {
+        XCTAssertTrue(
+          ContextOutcome(rawValue: key) != nil || ContextPart(rawValue: key) != nil, key)
+      }
+    }
+    XCTAssertEqual(
+      metrics,
+      [
+        "contextCaptureDuration": 20, "contextOutcome": 20, "contextPartBytes": 40,
+        "contextTermCount": 20, "contextSpellingChanges": 20,
+      ])
+    let rendered = try ResourceRecorder.contextReport(files: report.files)
+    XCTAssertTrue(rendered.contains("capture_ms: n=20 p50=20 p95=28"), rendered)
+    XCTAssertTrue(rendered.contains("used: 19"), rendered)
+    XCTAssertTrue(rendered.contains("timed_out: 1"), rendered)
+  }
+
   private func identity() throws -> ResourceRecorder.Identity {
     try .init(
       build: "test-build", model: "parakeet-v3", hardware: "test-host", os: "test-os",

@@ -28,3 +28,7 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0021: Optional primary backend for meeting analysis](0021-primary-analysis-backend.md)
 
 - [0022: Meeting analysis as notes, merge and review](0022-notes-merge-review-analysis.md)
+
+- [0023: Rewrite protocol v2 with reference context](0023-rewrite-protocol-v2-reference-context.md)
+
+- [0024: Clipboard paste into terminals](0024-terminal-paste-insertion.md)

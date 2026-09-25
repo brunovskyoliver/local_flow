@@ -23,6 +23,12 @@ struct RewriteAdmission: Sendable, Equatable {
   let inputText: String
   let endpointOrigin: String
   let insecureOverride: Bool
+  /// Feature 012: the snapshot hash when this attempt sends protocol v2; nil for v1.
+  var contextHash: String? = nil
+
+  var protocolVersion: Int {
+    contextHash == nil ? RewriteBounds.schemaVersion : RewriteBounds.contextSchemaVersion
+  }
 
   /// Bytes reserved against the history quota while the attempt is pending.
   var reservedBytes: Int {
@@ -118,6 +124,8 @@ struct RewriteAttempt: Identifiable, Sendable, Equatable {
   let endpointOrigin: String
   let insecureOverride: Bool
   let delivered: Bool
+  /// Feature 012: hash of the snapshot sent with a protocol v2 request; nil for v1.
+  var contextHash: String? = nil
 
   /// The text this attempt can deliver, or nil unless it succeeded.
   var deliverableText: String? { state == .succeeded ? outputText : nil }

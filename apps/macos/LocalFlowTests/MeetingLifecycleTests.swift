@@ -85,13 +85,8 @@ final class MeetingLifecycleTests: XCTestCase {
   func testFallbackTitleIsDerivedFromCreatedAt() {
     let createdAt: Int64 = 1_700_000_000_000
     let title = fallbackTitle(createdAt: createdAt, timeZone: TimeZone(identifier: "UTC")!)
-    XCTAssertTrue(title.hasPrefix("Meeting "), title)
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .short
-    formatter.timeZone = TimeZone(identifier: "UTC")
-    XCTAssertEqual(
-      title, "Meeting " + formatter.string(from: Date(timeIntervalSince1970: 1_700_000_000)))
+    // English whatever the system locale; the title is sent to the server.
+    XCTAssertEqual(title, "Meeting 14 Nov 2023, 22:13")
     XCTAssertEqual(meetingDurationText(61_000), "1:01")
     XCTAssertEqual(meetingDurationText(3_661_000), "1:01:01")
   }

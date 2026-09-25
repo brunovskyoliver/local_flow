@@ -234,25 +234,102 @@ final class DictationCoordinatorTests: XCTestCase {
     XCTAssertEqual(insertion.dispatchCount, 0)
   }
 
-  func testReleaseDuringPreparationDoesNotStartCapture() async throws {
+  /// The microphone opens while a cold model load is still running, so the first
+  /// words are recorded; a key release during that load still transcribes them.
+  /// (Before, a release while preparing cancelled the session without capture.)
+  func testReleaseDuringColdLoadStillTranscribesRecordedAudio() async throws {
     let gate = Gate()
-    let runtime = FakeRuntime(gate: gate)
+    let store = try makeStore()
     let lifecycle = ModelLifecycleCoordinator {
       await gate.wait()
-      return runtime
+      return FakeRuntime()
     }
     let capture = FakeCapture()
-    let insertion = FakeInsertion()
+    let insertion = FakeInsertion(store: store)
     let coordinator = try makeCoordinator(
-      lifecycle: lifecycle, capture: capture, insertion: insertion)
+      store: store, lifecycle: lifecycle, capture: capture, insertion: insertion)
 
     coordinator.begin()
-    try await waitUntil { coordinator.state == .preparing }
+    try await waitUntil { coordinator.state == .recording }
+    for _ in 0..<1000 where await lifecycle.state != .preparing { await Task.yield() }
+    let loading = await lifecycle.state
+    XCTAssertEqual(loading, .preparing, "recording must not wait for the model")
     coordinator.release()
+    try await waitUntil { coordinator.state == .transcribing }
     await gate.openGate()
     try await waitUntil { !coordinator.busy }
     let starts = await capture.starts
-    XCTAssertEqual(starts, 0)
+    XCTAssertEqual(starts, 1)
+    let entry = try await store.recent(limit: 1).first
+    XCTAssertEqual(entry?.text, "hello")
+    XCTAssertEqual(entry?.deliveryState, .confirmed)
+    XCTAssertEqual(insertion.dispatchCount, 1)
+  }
+
+  /// Full windows are recognized while the key is still held; after release only the
+  /// tail remains, and no window is recognized twice.
+  func testFullWindowsAreRecognizedWhileRecording() async throws {
+    let window = WindowedTranscriber.productionWindowSamples
+    let store = try makeStore()
+    let runtime = CountingWindowRuntime()
+    let insertion = FakeInsertion(store: store)
+    let coordinator = try makeCoordinator(
+      store: store, lifecycle: ModelLifecycleCoordinator { runtime },
+      capture: StreamingCapture(total: 2 * window + 16_000), insertion: insertion)
+    coordinator.begin()
+    try await waitUntil { coordinator.state == .recording }
+    for _ in 0..<5_000 where await runtime.calls < 2 {
+      try await ContinuousClock().sleep(for: .milliseconds(2))
+    }
+    let early = await runtime.calls
+    XCTAssertEqual(early, 2)
+    XCTAssertEqual(coordinator.state, .recording)
+    coordinator.release()
+    try await waitUntil { !coordinator.busy }
+    let counts = await runtime.counts
+    XCTAssertEqual(counts, [window, window, 16_000])
+    let rows = try await store.recent(limit: 1)
+    let entry = try XCTUnwrap(rows.first)
+    let saved = try await store.qualityDetail(entry.id)
+    let detail = try XCTUnwrap(saved)
+    XCTAssertEqual(detail.rawWindows.map(\.text), ["jeden", "dva", "tri"])
+    XCTAssertEqual(detail.rawWindows.map(\.sampleStart), [0, window, 2 * window])
+    XCTAssertEqual(entry.deliveryState, .confirmed)
+  }
+
+  /// Escape while recording leaves a healthy model cooling for the next dictation
+  /// instead of forcing a cold load.
+  func testCancellingARecordingKeepsTheModelWarm() async throws {
+    let runtime = FakeRuntime()
+    let built = Counter()
+    let lifecycle = ModelLifecycleCoordinator {
+      await built.increment()
+      return runtime
+    }
+    let capture = FakeCapture()
+    let store = try makeStore()
+    let insertion = FakeInsertion(store: store)
+    let coordinator = try makeCoordinator(
+      store: store, lifecycle: lifecycle, capture: capture, insertion: insertion)
+    coordinator.begin()
+    try await waitUntil { coordinator.state == .recording }
+    coordinator.cancel()
+    try await waitUntil { !coordinator.busy }
+    XCTAssertEqual(coordinator.status, "Cancelled")
+    XCTAssertEqual(insertion.dispatchCount, 0)
+    let rows = try await store.recent()
+    XCTAssertTrue(rows.isEmpty)
+    let state = await lifecycle.state
+    XCTAssertEqual(state, .cooling)
+    let shutdowns = await runtime.shutdownCount
+    XCTAssertEqual(shutdowns, 0)
+
+    coordinator.begin()
+    try await waitUntil { coordinator.state == .recording }
+    coordinator.release()
+    try await waitUntil { !coordinator.busy }
+    let count = await built.value
+    XCTAssertEqual(count, 1, "the second dictation reuses the warm runtime")
   }
 
   func testCompleteResultIsCommittedBeforeInsertionAndConfirmed() async throws {
@@ -582,7 +659,9 @@ final class DictationCoordinatorTests: XCTestCase {
     XCTAssertEqual(retained?.quality, .incomplete)
   }
 
-  func testDismissingLastRecoveryClearsRecoveryPresentation() async throws {
+  /// Text that was saved but not inserted asks nothing of the user: the session
+  /// ends idle, with no review state to clear.
+  func testSavedButNotInsertedDictationEndsIdle() async throws {
     let store = try makeStore()
     let coordinator = try makeCoordinator(
       store: store,
@@ -591,7 +670,7 @@ final class DictationCoordinatorTests: XCTestCase {
     try await waitUntil { !coordinator.busy }
     coordinator.setPreviewEnabled(true)
     await coordinator.refreshHistory()
-    XCTAssertEqual(coordinator.state, .recovery)
+    XCTAssertEqual(coordinator.state, .idle)
     XCTAssertTrue(coordinator.hasRecovery)
     let entry = try XCTUnwrap(coordinator.history.first)
     try await coordinator.dismissOrThrow(entry)
@@ -704,7 +783,9 @@ final class DictationCoordinatorTests: XCTestCase {
     XCTAssertEqual(insertion.dispatchCount, 0)
   }
 
-  func testModelLoadFailureReleasesAdmissionWithoutStartingCapture() async throws {
+  /// The load runs beside capture now, so a failed load may find the microphone open;
+  /// it stops capture, removes the audio and releases admission without dispatch.
+  func testModelLoadFailureStopsCaptureAndReleasesAdmission() async throws {
     let store = try makeStore()
     let capture = FakeCapture()
     let insertion = FakeInsertion()
@@ -713,10 +794,15 @@ final class DictationCoordinatorTests: XCTestCase {
       store: store, lifecycle: lifecycle, capture: capture, insertion: insertion)
     coordinator.begin()
     try await waitUntil { !coordinator.busy }
+    XCTAssertEqual(coordinator.state, .failed)
+    XCTAssertTrue(coordinator.status.contains("loading the speech model"), coordinator.status)
     let starts = await capture.starts
-    XCTAssertEqual(starts, 0)
+    let cancels = await capture.cancels
+    XCTAssertGreaterThanOrEqual(cancels, starts, "a started microphone must be stopped")
     XCTAssertEqual(insertion.dispatchCount, 0)
     XCTAssertNil(coordinator.unsavedEnvelope)
+    let rows = try await store.recent()
+    XCTAssertTrue(rows.isEmpty)
     let reservation = try await store.reserve()
     await store.releaseReservation(reservation)
   }
@@ -1099,6 +1185,15 @@ final class DictationRewriteTests: XCTestCase {
     XCTAssertEqual(attempts.first?.state, .succeeded)
     XCTAssertEqual(attempts.first?.outputText, "Older rewrite.")
     XCTAssertEqual(attempts.first?.delivered, false)
+    // The late rewrite is not dropped silently: a notice names where it went,
+    // and the entry stays unattempted and in review.
+    try await waitUntil { coordinator.rewriteNotice?.dictationID == first.id }
+    XCTAssertEqual(coordinator.rewriteNotice?.message, RewriteNotice.supersededSaved)
+    XCTAssertEqual(coordinator.rewriteNotice?.canRetry, false)
+    let older = try await fixture.store.get(first.id)
+    XCTAssertEqual(older?.deliveryState, .notAttempted)
+    XCTAssertEqual(older?.recoveryState, .needsReview)
+    XCTAssertEqual(fixture.insertion.insertedTexts, ["Newer rewrite."])
   }
 
   func testFiveOverlappingDictationsRefuseThreeWithoutRowsOrWrongInsertion() async throws {
@@ -1286,4 +1381,55 @@ final class DictationRewriteTests: XCTestCase {
       await Task.yield()
     }
   }
+}
+
+/// Writes whole windows at start and reports them as recorded while the key is held.
+private actor StreamingCapture: AudioCapturing {
+  let total: Int
+  private var spool: AudioSpool?
+  private var sessionID: UUID?
+
+  init(total: Int) { self.total = total }
+
+  func authorize() async -> Bool { true }
+
+  func start(sessionID: UUID, spool: AudioSpool) async throws {
+    var offset = 0
+    while offset < total {
+      let count = min(AudioSpool.maximumAppendSamples, total - offset)
+      try spool.append(normalizedSamples: Array(repeating: 0.1, count: count))
+      offset += count
+    }
+    self.sessionID = sessionID
+    self.spool = spool
+  }
+
+  func stop(sessionID: UUID) async throws -> AudioCaptureResult {
+    try result(sessionID, .keyRelease)
+  }
+
+  func cancel(sessionID: UUID) async throws -> AudioCaptureResult {
+    try result(sessionID, .cancelled)
+  }
+
+  func snapshot() async -> AudioCaptureSnapshot? {
+    guard let sessionID else { return nil }
+    return AudioCaptureSnapshot(
+      sessionID: sessionID, sampleCount: total, level: 0, terminalReason: nil)
+  }
+
+  private func result(_ id: UUID, _ reason: AudioCaptureStopReason) throws -> AudioCaptureResult {
+    guard let spool, id == sessionID else { throw AudioCaptureFailure.staleSession }
+    return AudioCaptureResult(sessionID: id, spool: spool, sampleCount: total, reason: reason)
+  }
+}
+
+private actor CountingWindowRuntime: TranscriptionRuntime {
+  private(set) var counts: [Int] = []
+  var calls: Int { counts.count }
+  func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+    counts.append(samples.count)
+    return .init(text: ["jeden", "dva", "tri"][min(counts.count - 1, 2)], tokens: [])
+  }
+  func shutdown() async {}
 }

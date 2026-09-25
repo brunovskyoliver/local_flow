@@ -61,7 +61,7 @@ Request:
 | request_id | UUID string, unique per attempt; echoed in every event |
 | mode | `clean`, `polished` or `concise`; `exact` never produces a request |
 | text | 1…20,000 Unicode scalars and ≤ 65,536 bytes, not blank |
-| language_hints | array of ≤ 4 BCP-47 tags; may be empty; advisory only, never a translation request |
+| language_hints | array of ≤ 2 unique codes, each `en` or `sk`; may be empty; advisory only, never a translation request |
 | stream_deltas | boolean; when false the server sends no `delta` events |
 
 No other field is permitted. The request never carries audio, other history entries, clipboard, application, target or file contents. Servers reject unknown fields with `invalid_request`.

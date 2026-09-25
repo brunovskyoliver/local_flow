@@ -204,7 +204,6 @@ struct MeetingStatus: Sendable, Equatable {
   var title: String?
   var state: MeetingState
   var transcriptionRequested: Bool = false
-  var recordedElapsed: Duration = .zero
   var microphone: TrackStatus = .notStarted
   var system: TrackStatus = .notStarted
   var pauseReason: PauseReason?
@@ -224,12 +223,38 @@ struct MeetingStatus: Sendable, Equatable {
   }
 }
 
-/// Derived, never stored: "Meeting " + local short date and time of `created_at`.
+/// Dates the app shows or sends to the server are English whatever the system
+/// locale: the interface is English and summaries are English or Slovak, so a
+/// system date in another language must not leak into either. Fixed patterns
+/// under `en_US_POSIX` read the same on every system ("24 Sep 2026, 14:05").
+enum EnglishDateFormat {
+  static let locale = Locale(identifier: "en_US_POSIX")
+  /// "24 Sep 2026, 14:05": meeting titles and row dates.
+  static let dateTimePattern = "d MMM yyyy, HH:mm"
+  /// Cached for the current time zone; formatting a configured DateFormatter is
+  /// thread-safe.
+  static let dateTime = formatter(dateTimePattern)
+
+  static func formatter(
+    _ pattern: String, timeZone: TimeZone = .autoupdatingCurrent,
+    calendar: Calendar = Calendar(identifier: .gregorian)
+  ) -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = locale
+    formatter.calendar = calendar
+    formatter.timeZone = timeZone
+    formatter.dateFormat = pattern
+    return formatter
+  }
+}
+
+/// Derived, never stored: "Meeting " + English date and time of `created_at` in
+/// the local time zone. Sent as the meeting title when the meeting has none.
 func fallbackTitle(createdAt: Int64, timeZone: TimeZone = .autoupdatingCurrent) -> String {
-  let formatter = DateFormatter()
-  formatter.dateStyle = .short
-  formatter.timeStyle = .short
-  formatter.timeZone = timeZone
+  let formatter =
+    timeZone == .autoupdatingCurrent
+    ? EnglishDateFormat.dateTime
+    : EnglishDateFormat.formatter(EnglishDateFormat.dateTimePattern, timeZone: timeZone)
   return "Meeting " + formatter.string(from: Date(timeIntervalSince1970: Double(createdAt) / 1_000))
 }
 

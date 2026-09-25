@@ -15,7 +15,7 @@ struct ActiveMeetingView: View {
         header(status)
         if let banner = banner(status) {
           Label(banner, systemImage: "exclamationmark.triangle.fill")
-            .font(.system(size: 13, weight: .semibold))
+            .font(.flow(size: 13, weight: .semibold))
             .foregroundStyle(.red)
             .accessibilityIdentifier("meeting.banner")
         }
@@ -32,12 +32,12 @@ struct ActiveMeetingView: View {
             "Some audio was lost during recording. The transcript may be incomplete.",
             systemImage: "exclamationmark.triangle.fill"
           )
-          .font(.caption).foregroundStyle(.orange)
+          .font(.flow(size: 12)).foregroundStyle(.orange)
           .accessibilityIdentifier("meeting.captureLoss")
         }
         if let notice = status.notice {
           HStack {
-            Text(notice).font(.callout).foregroundStyle(.secondary)
+            Text(notice).font(.flow(size: 13)).foregroundStyle(.secondary)
               .accessibilityIdentifier("meeting.notice")
             if let kind = coordinator.refusalPermission { settingsButton(kind) }
           }
@@ -76,21 +76,24 @@ struct ActiveMeetingView: View {
             ? Color.red : status.state == .paused ? Color.orange : Color.secondary
         )
         .frame(width: 10, height: 10)
-      Text(status.state.badgeText).font(.system(size: 15, weight: .semibold))
+      Text(status.state.badgeText).font(.flow(size: 15, weight: .semibold))
         .accessibilityIdentifier("meeting.state")
       if status.state == .paused, let reason = status.pauseReason {
         Text(reason == .systemSleep ? "(sleep)" : "(user)").foregroundStyle(.secondary)
       }
       Spacer()
-      Text(meetingDurationText(elapsedMilliseconds(status)))
-        .font(.system(size: 22, weight: .medium, design: .rounded).monospacedDigit())
-        .accessibilityIdentifier("meeting.elapsed")
+      ElapsedText(elapsed: coordinator.elapsed)
     }
   }
 
-  private func elapsedMilliseconds(_ status: MeetingStatus) -> Int64 {
-    let components = status.recordedElapsed.components
-    return Int64(components.seconds) * 1_000 + Int64(components.attoseconds / 1_000_000_000_000_000)
+  /// The only part of the card that reads the 1 Hz elapsed tick.
+  private struct ElapsedText: View {
+    let elapsed: MeetingElapsed
+    var body: some View {
+      Text(meetingDurationText(elapsed.milliseconds))
+        .font(.flow(size: 22, weight: .medium, design: .rounded).monospacedDigit())
+        .accessibilityIdentifier("meeting.elapsed")
+    }
   }
 
   private func banner(_ status: MeetingStatus) -> String? {
@@ -108,7 +111,7 @@ struct ActiveMeetingView: View {
       Text(kind.displayName)
       Text(indicatorText(track)).foregroundStyle(.secondary)
     }
-    .font(.system(size: 12))
+    .font(.flow(size: 12))
     .accessibilityIdentifier("meeting.track.\(kind.rawValue)")
     .accessibilityValue(indicatorText(track))
   }
@@ -158,7 +161,7 @@ struct ActiveMeetingView: View {
         .textFieldStyle(.roundedBorder)
         .onSubmit { Task { await saveTitle(status) } }
         .frame(maxWidth: 360)
-      if let titleNotice { Text(titleNotice).font(.caption).foregroundStyle(.red) }
+      if let titleNotice { Text(titleNotice).font(.flow(size: 12)).foregroundStyle(.red) }
     }
     .onAppear { titleDraft = status.title ?? "" }
   }
@@ -190,18 +193,18 @@ struct MeetingNotesEditorView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Text("Notes").font(.system(size: 13, weight: .semibold))
+        Text("Notes").font(.flow(size: 13, weight: .semibold))
         Spacer()
-        Text(saveText).font(.caption).foregroundStyle(saveColor)
+        Text(saveText).font(.flow(size: 12)).foregroundStyle(saveColor)
           .accessibilityIdentifier("meeting.notes.state")
       }
       TextEditor(text: Binding(get: { editor.text }, set: { editor.text = $0 }))
-        .font(.system(size: 13))
+        .font(.flow(size: 13))
         .frame(minHeight: 90, maxHeight: 200)
         .scrollContentBackground(.hidden)
         .hideScrollers()
         .background(SottoPalette.surface, in: RoundedRectangle(cornerRadius: 8))
-      if let notice = editor.notice { Text(notice).font(.caption).foregroundStyle(.red) }
+      if let notice = editor.notice { Text(notice).font(.flow(size: 12)).foregroundStyle(.red) }
     }
   }
 

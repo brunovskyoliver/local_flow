@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// Every identity table write goes through this actor, on the shared history
-/// `DatabaseQueue` (Feature 010, data-model.md). Each operation is one transaction.
+/// `DatabasePool` (Feature 010, data-model.md). Each operation is one transaction.
 /// Adoption replaces only `automatic_match` rows; failure, interruption and preemption
 /// delete only the run's own candidate rows; deletion of a known speaker leaves the
 /// copied names behind and zero rows referencing it.
@@ -25,13 +25,13 @@ actor IdentityStore: IdentityStoring {
   /// Shortest turn the selector can use: the minimum region plus both trims.
   static let eligibleTurnMs = VoiceRegionSelector.minDurationMs + 2 * VoiceRegionSelector.trimMs
 
-  nonisolated let database: DatabaseQueue
+  nonisolated let database: DatabasePool
   /// The model the app embeds with; profile state and compatibility derive from it.
   let identity: VoiceModelIdentity
   /// FR-037: confirmation and correction counters, never the names behind them.
   private let recorder: ResourceRecorder?
 
-  init(database: DatabaseQueue, identity: VoiceModelIdentity, recorder: ResourceRecorder? = nil) {
+  init(database: DatabasePool, identity: VoiceModelIdentity, recorder: ResourceRecorder? = nil) {
     self.database = database
     self.identity = identity
     self.recorder = recorder

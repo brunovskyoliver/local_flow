@@ -356,9 +356,12 @@ final class MeetingReconciler: Sendable {
       }
       trackRows.append(track)
     }
+    // Tracks record side by side, so the recovered length is the longest track's run
+    // of validated segments. Identification and enrollment bound their turns by it.
+    let recordedMs = offsets.values.max() ?? 0
     let meeting = Meeting(
       id: id, state: .interrupted, title: nil, createdAt: createdAt, startedAt: createdAt,
-      stoppedAt: createdAt, completedAt: now, wallClockMs: 0, recordedMs: 0,
+      stoppedAt: createdAt, completedAt: now, wallClockMs: 0, recordedMs: recordedMs,
       finalizationStage: nil, failureReason: .recordMissing, failureDetail: "reconstructed",
       updatedAt: now, revision: 0)
     let outcome = RecoveryOutcome(

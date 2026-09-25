@@ -109,8 +109,9 @@ final class MeetingNotesEditor {
   private func scheduleDebounce() {
     debounceTask?.cancel()
     let clock = clock
+    let deadline = Self.deadline(after: Self.debounce, clock: clock)
     debounceTask = Task { [weak self] in
-      do { try await clock.sleep(for: MeetingNotesEditor.debounce) } catch { return }
+      do { try await Self.sleep(until: deadline, clock: clock) } catch { return }
       guard let self, !Task.isCancelled else { return }
       self.debounceTask = nil
       await self.save()
@@ -119,8 +120,9 @@ final class MeetingNotesEditor {
 
   private func scheduleForced() {
     let clock = clock
+    let deadline = Self.deadline(after: Self.forcedInterval, clock: clock)
     forcedTask = Task { [weak self] in
-      do { try await clock.sleep(for: MeetingNotesEditor.forcedInterval) } catch { return }
+      do { try await Self.sleep(until: deadline, clock: clock) } catch { return }
       guard let self, !Task.isCancelled else { return }
       self.forcedTask = nil
       if self.isDirty {
@@ -128,6 +130,28 @@ final class MeetingNotesEditor {
         if self.isDirty, self.forcedTask == nil { self.scheduleForced() }
       }
     }
+  }
+
+  /// Deadlines are fixed when the edit schedules them, on the monotonic clock, so a
+  /// task that starts late still fires 2 s after the edit and 10 s after the first
+  /// unsaved one.
+  private nonisolated static func deadline(after interval: Duration, clock: any MeetingClock)
+    -> UInt64
+  {
+    let components = interval.components
+    let nanoseconds =
+      UInt64(components.seconds) * 1_000_000_000 + UInt64(components.attoseconds / 1_000_000_000)
+    return clock.monotonicNanoseconds &+ nanoseconds
+  }
+
+  private nonisolated static func sleep(until deadline: UInt64, clock: any MeetingClock)
+    async throws
+  {
+    let now = clock.monotonicNanoseconds
+    if deadline > now {
+      try await clock.sleep(for: .nanoseconds(Int64(clamping: deadline - now)))
+    }
+    try Task.checkCancellation()
   }
 
   private func save() async {

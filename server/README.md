@@ -22,7 +22,8 @@ Use the exact model id reported by the backend's `GET /v1/models`. A missing con
 | `--first-token-timeout` | `5s` | Deadline for the first content token |
 | `--backend-timeout` | `20s` | Total inference deadline |
 | `--debug-delay` | `0s` | Test delay, included in both deadlines |
-| `--protocol-versions` | `1` | Advertised versions; `2` exercises client incompatibility handling |
+| `--protocol-versions` | `1` | Analysis protocol versions; when given without `--rewrite-protocol-versions` it also sets the rewrite list (acceptance double) |
+| `--rewrite-protocol-versions` | `1,2` | Rewrite versions advertised in health and accepted; `1` alone turns off reference context (v2) |
 
 `LOCALFLOW_REWRITE_TOKEN` authenticates both LocalFlow routes. It is required when listening off-loopback. `LOCALFLOW_BACKEND_TOKEN` is sent only to the configured inference endpoint, for discovery and completions. The two credentials are independent, limited to 4,096 bytes, and never logged. Backend requests reject redirects and bypass environment proxy settings. Keep credentials out of shell history and tracked configuration. For launchd, provision credentials through your local service setup and run the compiled binary; Docker is unnecessary.
 
@@ -31,7 +32,7 @@ Flowd serves HTTP. For remote use, terminate HTTPS at a trusted proxy or deliber
 ## Endpoints and bounds
 
 - `GET /v1/rewrite/health`: authenticated, content-free identity and backend status. Model discovery is bounded to 64 KiB and two seconds, cached for at least five seconds. A backend 503 reports `loading`; connection failures, authentication failures, other errors and missing model ids report `unavailable`.
-- `POST /v1/rewrite`: validates the closed request schema and returns NDJSON with one terminal `result` or `error`. The input cap is 262,144 raw bytes, 20,000 text scalars and 65,536 text bytes. At most two requests run, including body decoding; excess requests receive 429 without queueing.
+- `POST /v1/rewrite`: validates the closed request schema and returns NDJSON with one terminal `result` or `error`. The input cap is 262,144 raw bytes, 20,000 text scalars and 65,536 text bytes. At most two requests run, including body decoding; excess requests receive 429 without queueing. A v2 request adds a closed `context` object of at most 8,192 bytes; it goes into the system message as delimited reference material, and the log line adds only `context_bytes`.
 - Backend streaming is mandatory. Output accumulation has a fixed capacity of `min(4 × input_bytes, 65,536)` bytes. Every fragment is checked before append; overflow cancels inference and discards partial output. SSE lines are capped at 65,536 bytes and error bodies at 8,192 bytes. Restored output and the complete client response are checked again.
 - Progress is sent at most once per 250 ms, with a 4 KiB auxiliary-event budget. No deltas are emitted, including when requested; v1 permits optional deltas. Response writes have five-second deadlines. Client disconnect cancels inference; SIGINT/SIGTERM cancels active work and closes the listener.
 - Schema constraints are sent only when the selected `/models` entry explicitly advertises `capabilities.json_schema: true`. Otherwise prompts request plain text. A constrained response is a JSON string, decoded and validated before becoming `result.text`; the same accumulation cap still applies to its encoded bytes.

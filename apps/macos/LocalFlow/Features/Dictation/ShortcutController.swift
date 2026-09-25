@@ -68,6 +68,8 @@ final class ShortcutController {
   private var tap: CFMachPort?
   private var source: CFRunLoopSource?
   private var monitor: Timer?
+  private var healthMonitor: Timer?
+  private var activeObserver: NSObjectProtocol?
   private var sleepObserver: NSObjectProtocol?
   private var preference = ShortcutPreference()
   private var priorityActive = false
@@ -147,28 +149,59 @@ final class ShortcutController {
     ) { [weak self] _ in
       MainActor.assumeIsolated { self?.cancelHeldSession(reason: "system sleep") }
     }
-    // The timer detects lost key-up events without installing another event tap.
-    monitor = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-      MainActor.assumeIsolated {
-        guard let self else { return }
-        if !CGPreflightListenEventAccess() {
-          self.cancelHeldSession(reason: "Input Monitoring permission lost")
-        } else if self.priorityActive && !AXIsProcessTrusted() {
-          self.cancelHeldSession(reason: "Accessibility permission lost")
-        } else if IsSecureEventInputEnabled() {
-          self.cancelHeldSession(reason: "secure input enabled")
-        } else if self.tap.map({ !CGEvent.tapIsEnabled(tap: $0) }) == true {
-          self.cancelHeldSession(reason: "event tap disabled during polling")
-        } else {
-          self.pollHeldShortcut()
-        }
+    activeObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.checkHealth() }
+    }
+    // Permission and tap health change rarely; the tap's own disable events cover
+    // timeouts, so an idle app checks at a slow cadence. The fast held-key poll
+    // runs only while the shortcut is held (see syncHeldPolling).
+    healthMonitor = Timer.scheduledTimer(
+      withTimeInterval: Self.idleHealthInterval, repeats: true
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.checkHealth() }
+    }
+  }
+
+  static let idleHealthInterval: TimeInterval = 2
+  static let heldPollInterval: TimeInterval = 0.1
+
+  private func checkHealth() {
+    guard tap != nil else { return }
+    if !CGPreflightListenEventAccess() {
+      cancelHeldSession(reason: "Input Monitoring permission lost")
+    } else if priorityActive && !AXIsProcessTrusted() {
+      cancelHeldSession(reason: "Accessibility permission lost")
+    } else if IsSecureEventInputEnabled() {
+      cancelHeldSession(reason: "secure input enabled")
+    } else if tap.map({ !CGEvent.tapIsEnabled(tap: $0) }) == true {
+      cancelHeldSession(reason: "event tap disabled during polling")
+    } else {
+      pollHeldShortcut()
+    }
+    syncHeldPolling()
+  }
+
+  /// Runs the fast timer only while a hold exists; it detects lost key-up events
+  /// without installing another event tap.
+  private func syncHeldPolling() {
+    let wanted = tap != nil && hold.isHeld
+    if wanted, monitor == nil {
+      monitor = Timer.scheduledTimer(withTimeInterval: Self.heldPollInterval, repeats: true) {
+        [weak self] _ in
+        MainActor.assumeIsolated { self?.checkHealth() }
       }
+    } else if !wanted, let monitor {
+      monitor.invalidate()
+      self.monitor = nil
     }
   }
 
   /// Returns true only for events belonging to this binding. No key text is read.
   @discardableResult
   func receive(_ type: CGEventType, _ event: CGEvent) -> Bool {
+    defer { syncHeldPolling() }
     // Shift is transparent to matching unless the binding uses it, so holding it
     // neither cancels nor ends the hold; it is read at release instead.
     shiftHeld = bypassGestureAvailable && event.flags.contains(.maskShift)
@@ -273,6 +306,7 @@ final class ShortcutController {
     logger.notice("Shortcut cancelled: physical shortcut released without matching event")
     emit(hold.cancel())
     _ = hold.setHeld(false)
+    syncHeldPolling()
   }
   func cancelHeldSession(reason: String = "controller reset") {
     _ = hold.cancel()
@@ -284,6 +318,12 @@ final class ShortcutController {
   func remove() {
     monitor?.invalidate()
     monitor = nil
+    healthMonitor?.invalidate()
+    healthMonitor = nil
+    if let activeObserver {
+      NotificationCenter.default.removeObserver(activeObserver)
+      self.activeObserver = nil
+    }
     if let sleepObserver {
       NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)
       self.sleepObserver = nil

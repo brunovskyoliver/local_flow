@@ -259,6 +259,20 @@ struct TranscriptionQualityDetail: Codable, Sendable {
     try validate(normalizedText: normalizedText)
   }
 
+  /// Feature 012: the same evidence sealed for a changed delivered text (context
+  /// spelling). `addingCompletionReasons` returns early with no reasons, so it cannot.
+  func resealed(normalizedText: String) throws -> Self {
+    try Self(
+      rawWindows: content.rawWindows, assembledText: content.assembledText,
+      normalizedText: normalizedText, assemblyVersion: content.assemblyVersion,
+      normalizationVersion: content.normalizationVersion, appliedRuleIDs: content.appliedRuleIDs,
+      appliedEntryIDs: content.appliedEntryIDs, vocabularyRevision: content.vocabularyRevision,
+      vocabularyHash: content.vocabularyHash, provenance: content.provenance,
+      completionReasons: content.completionReasons, attempts: content.attempts,
+      selectedAttempt: content.selectedAttempt, seams: content.seams,
+      ambiguousEntryIDs: content.ambiguousEntryIDs ?? [])
+  }
+
   func addingCompletionReasons(_ reasons: [CompletionReason], normalizedText: String) throws -> Self
   {
     guard !reasons.isEmpty else { return self }

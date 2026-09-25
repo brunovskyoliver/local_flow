@@ -366,6 +366,35 @@ final class RewriteClientTests: XCTestCase {
     XCTAssertEqual(category(garbage.error), .oversizedResponse)
   }
 
+  /// The rewrite cap counts the whole stream, as the contract says; flowd keeps
+  /// its auxiliary events under 3,800 bytes and its whole response under the
+  /// same cap, so a full auxiliary budget plus the largest result still fits.
+  func testFullProgressBudgetPlusLargestResultFitsTheCap() async throws {
+    // 16,384 four-byte scalars: the largest input the request allows.
+    let largest = String(repeating: "\u{1F600}", count: RewriteBounds.maximumInputBytes / 4)
+    for text in ["abc", largest] {
+      RewriteStubURLProtocol.reset()
+      let request = try request(text: text)
+      let result = resultLine(
+        text: String(
+          repeating: "b",
+          count: RewriteBounds.maximumResultBytes(inputBytes: request.inputBytes)))
+      let progress =
+        Data(
+          #"{"event":"progress","request_id":"\#(requestID.uuidString)","generated_chars":12345}"#
+            .utf8) + Data("\n".utf8)
+      let lines = Array(repeating: progress, count: 3_800 / progress.count + 1) + [result]
+      XCTAssertLessThanOrEqual(
+        lines.reduce(0) { $0 + $1.count },
+        RewriteBounds.maximumResponseBytes(inputBytes: request.inputBytes))
+      RewriteStubURLProtocol.script(.init(chunks: lines), path: "/v1/rewrite")
+      let (client, _) = makeClient()
+      let outcome = await collectItems(
+        client.rewrite(request: request, endpoint: endpoint, timeout: .seconds(20)))
+      XCTAssertNil(outcome.error, "input \(text.utf8.count) bytes")
+    }
+  }
+
   func testNonResultLineOverEightKiBIsMalformed() async throws {
     let request = try request(text: String(repeating: "a", count: 20_000))
     let padding = String(repeating: "p", count: 8_200)
@@ -718,12 +747,12 @@ extension RewriteClientTests {
     XCTAssertEqual(RewriteStubURLProtocol.seenRequests.first?.url?.path, "/v1/rewrite/health")
   }
 
-  func testAnalysisStreamStopsAtByteCap() async throws {
+  func testAnalysisStreamStopsAtLineCap() async throws {
     let client = makeAnalysisClient()
     let accepted =
       Data(
         #"{"type":"accepted","schema_version":1,"request_id":"r1"}"#.utf8) + Data("\n".utf8)
-    let oversized = Data(String(repeating: "x", count: 98_304).utf8)
+    let oversized = Data(String(repeating: "x", count: AnalysisBounds.maxLineBytes + 1).utf8)
     RewriteStubURLProtocol.script(
       .init(chunks: [accepted, oversized]), path: "/v1/analysis/meeting")
     var outcome: (items: [AnalysisTransportItem], error: Error?) = ([], nil)
@@ -739,6 +768,110 @@ extension RewriteClientTests {
     XCTAssertEqual(
       RewriteStubURLProtocol.seenRequests.first?.value(forHTTPHeaderField: "Accept"),
       "application/x-ndjson")
+  }
+
+  private func analysisProgressLine(chars: Int) -> Data {
+    Data(
+      #"{"type":"progress","schema_version":1,"request_id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","stage":"synthesis","chars":\#(chars)}"#
+        .utf8) + Data("\n".utf8)
+  }
+
+  private func collectAnalysis(_ client: AnalysisClient, endpoint: RewriteEndpoint? = nil)
+    async -> (items: [AnalysisTransportItem], error: Error?)
+  {
+    var outcome: (items: [AnalysisTransportItem], error: Error?) = ([], nil)
+    do {
+      for try await item in client.analyze(
+        request: analysisRequest(), endpoint: endpoint ?? self.endpoint, timeout: .seconds(20))
+      { outcome.items.append(item) }
+    } catch { outcome.error = error }
+    return outcome
+  }
+
+  /// A long generation streams a progress line every 250 ms: a full 300 s
+  /// request carries ~1,200 of them, well past one line's 98,304 bytes. The
+  /// line cap is per line; only the stream cap bounds the total.
+  func testAnalysisProgressBeyondOneLineCapIsAccepted() async throws {
+    let client = makeAnalysisClient()
+    let lines = (0..<1_200).map { analysisProgressLine(chars: $0 * 40) }
+    let streamBytes = lines.reduce(0) { $0 + $1.count }
+    XCTAssertGreaterThan(streamBytes, AnalysisBounds.maxLineBytes)
+    // Leave room for the largest result line after a full-timeout run.
+    XCTAssertLessThan(streamBytes + AnalysisBounds.maxLineBytes, AnalysisBounds.maxStreamBytes / 2)
+    RewriteStubURLProtocol.script(.init(chunks: lines), path: "/v1/analysis/meeting")
+    let outcome = await collectAnalysis(client)
+    XCTAssertNil(outcome.error)
+    guard case .completed(_, let responseBytes) = outcome.items.last else {
+      return XCTFail("completed expected last")
+    }
+    XCTAssertEqual(responseBytes, streamBytes)
+    XCTAssertEqual(outcome.items.count, 1 + 1_200 + 1)
+  }
+
+  func testAnalysisStreamStopsAtTotalStreamCap() async throws {
+    let client = makeAnalysisClient()
+    let line = analysisProgressLine(chars: 1)
+    let lines = Array(repeating: line, count: AnalysisBounds.maxStreamBytes / line.count + 2)
+    RewriteStubURLProtocol.script(.init(chunks: lines), path: "/v1/analysis/meeting")
+    let outcome = await collectAnalysis(client)
+    XCTAssertEqual((outcome.error as? AnalysisFailure)?.category, .oversizedResponse)
+    XCTAssertEqual((outcome.error as? AnalysisFailure)?.detail, "stream_bytes")
+    XCTAssertLessThanOrEqual(outcome.items.count - 1, AnalysisBounds.maxStreamBytes / line.count)
+  }
+
+  /// The summary-server headers are fixed when the endpoint is pinned (at
+  /// admission); a Settings change mid-run does not reach later requests.
+  func testPinnedSummaryHeadersSurviveASettingsChange() async throws {
+    let suite = "LocalFlow-analysis-pin-\(UUID())"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set(SummaryServer.remote.rawValue, forKey: SummaryServer.defaultsKey)
+    defaults.set("https://first.example/v1", forKey: SummaryServer.urlKey)
+    defaults.set("model-a", forKey: SummaryServer.modelKey)
+    let store = FakeRewriteCredentialStore()
+    try store.write(origin: SummaryServer.credentialAccount, secret: "key-a")
+    let client = AnalysisClient(credentials: store, defaults: defaults) { configuration in
+      configuration.protocolClasses = [RewriteStubURLProtocol.self]
+    }
+    let pinned = client.pinned(endpoint)
+    XCTAssertNotEqual(
+      pinned.summaryBackendKey, endpoint.summaryBackendKey, "the backend is part of the key")
+    XCTAssertFalse(pinned.summaryBackendKey.contains("key-a"), "never the credential")
+
+    defaults.set("https://second.example/v1", forKey: SummaryServer.urlKey)
+    defaults.set("model-b", forKey: SummaryServer.modelKey)
+    try store.write(origin: SummaryServer.credentialAccount, secret: "key-b")
+    RewriteStubURLProtocol.script(.init(chunks: []), path: "/v1/analysis/meeting")
+    _ = await collectAnalysis(client, endpoint: pinned)
+    let sent = try XCTUnwrap(RewriteStubURLProtocol.seenRequests.first)
+    XCTAssertEqual(
+      sent.value(forHTTPHeaderField: SummaryServer.primaryURLHeader), "https://first.example/v1")
+    XCTAssertEqual(sent.value(forHTTPHeaderField: SummaryServer.primaryModelHeader), "model-a")
+    XCTAssertEqual(sent.value(forHTTPHeaderField: SummaryServer.primaryKeyHeader), "key-a")
+
+    // An unpinned endpoint (the Settings connection test) reads the current choice.
+    RewriteStubURLProtocol.reset()
+    RewriteStubURLProtocol.script(.init(chunks: []), path: "/v1/analysis/meeting")
+    _ = await collectAnalysis(client)
+    XCTAssertEqual(
+      RewriteStubURLProtocol.seenRequests.first?.value(
+        forHTTPHeaderField: SummaryServer.primaryModelHeader), "model-b")
+  }
+
+  func testAnalysisTLSFailuresCarryATLSDetail() async throws {
+    let client = makeAnalysisClient()
+    for (code, detail) in [
+      (URLError.Code.serverCertificateUntrusted, "tls_failure"),
+      (.secureConnectionFailed, "tls_failure"), (.badServerResponse, "transport_error"),
+      (.cannotConnectToHost, nil),
+    ] {
+      RewriteStubURLProtocol.reset()
+      RewriteStubURLProtocol.script(.init(transportError: code), path: "/v1/analysis/meeting")
+      let outcome = await collectAnalysis(client)
+      let failure = outcome.error as? AnalysisFailure
+      XCTAssertEqual(failure?.category, .serverUnreachable, "\(code)")
+      XCTAssertEqual(failure?.detail, detail, "\(code)")
+    }
   }
 
   func testAnalysisStreamYieldsEventsAndCompletion() async throws {
@@ -782,5 +915,100 @@ extension RewriteClientTests {
         languagePolicy: AnalysisRequest.LanguagePolicyValue(
           output: .en, preserveTerms: true)),
       participants: [], segments: [], notes: [], partials: nil)
+  }
+}
+
+/// Feature 012: the one-entry protocol-version cache (ADR 0023).
+extension RewriteClientTests {
+  private func versionsHealth(_ versions: [Int]) -> RewriteStubURLProtocol.Script {
+    .init(
+      headers: ["Content-Type": "application/json"],
+      chunks: [
+        Data(
+          #"{"schema_version":1,"service":"localflow-rewrite","protocol_versions":\#(versions),"server":{"name":"flowd","version":"0.3.0"},"modes":["clean"],"backend":{"state":"ready","kind":"openai-compatible","model":"qwen"},"prompt_versions":{"clean":5},"shield_version":1}"#
+            .utf8)
+      ])
+  }
+  private var healthProbes: Int {
+    RewriteStubURLProtocol.lock.withLock {
+      RewriteStubURLProtocol.seenRequests.filter { $0.url?.path == "/v1/rewrite/health" }.count
+    }
+  }
+
+  func testProtocolVersionsAreFetchedOncePerOrigin() async throws {
+    RewriteStubURLProtocol.script(versionsHealth([1, 2]), path: "/v1/rewrite/health")
+    let client = RewriteClient(credentials: FakeRewriteCredentialStore()) { configuration in
+      configuration.protocolClasses = [RewriteStubURLProtocol.self]
+    }
+    let local = RewriteEndpoint(
+      url: URL(string: "http://127.0.0.1:8080")!, origin: "http://127.0.0.1:8080")
+    let versions = await client.protocolVersions(endpoint: local)
+    XCTAssertEqual(versions, [1, 2])
+    let versions1 = await client.protocolVersions(endpoint: local)
+    XCTAssertEqual(versions1, [1, 2])
+    XCTAssertEqual(healthProbes, 1, "cached for the app run")
+    XCTAssertEqual(client.cachedProtocolVersions.origin, local.origin)
+  }
+
+  func testAnotherOriginReplacesTheSingleEntry() async throws {
+    RewriteStubURLProtocol.script(versionsHealth([1, 2]), path: "/v1/rewrite/health")
+    let client = RewriteClient(credentials: FakeRewriteCredentialStore()) { configuration in
+      configuration.protocolClasses = [RewriteStubURLProtocol.self]
+    }
+    let first = RewriteEndpoint(
+      url: URL(string: "http://127.0.0.1:8080")!, origin: "http://127.0.0.1:8080")
+    let second = RewriteEndpoint(
+      url: URL(string: "http://127.0.0.1:9090")!, origin: "http://127.0.0.1:9090")
+    _ = await client.protocolVersions(endpoint: first)
+    RewriteStubURLProtocol.script(versionsHealth([1]), path: "/v1/rewrite/health")
+    let versions2 = await client.protocolVersions(endpoint: second)
+    XCTAssertEqual(versions2, [1])
+    XCTAssertEqual(client.cachedProtocolVersions.origin, second.origin)
+    XCTAssertEqual(healthProbes, 2)
+    // Back to the first origin: the entry was replaced, so health is asked again.
+    RewriteStubURLProtocol.script(versionsHealth([1, 2]), path: "/v1/rewrite/health")
+    let versions3 = await client.protocolVersions(endpoint: first)
+    XCTAssertEqual(versions3, [1, 2])
+    XCTAssertEqual(healthProbes, 3)
+  }
+
+  func testFailedHealthIsNotCached() async throws {
+    let client = RewriteClient(credentials: FakeRewriteCredentialStore()) { configuration in
+      configuration.protocolClasses = [RewriteStubURLProtocol.self]
+    }
+    let local = RewriteEndpoint(
+      url: URL(string: "http://127.0.0.1:8080")!, origin: "http://127.0.0.1:8080")
+    let versions4 = await client.protocolVersions(endpoint: local)
+    XCTAssertNil(versions4)
+    RewriteStubURLProtocol.script(versionsHealth([1, 2]), path: "/v1/rewrite/health")
+    let versions5 = await client.protocolVersions(endpoint: local)
+    XCTAssertEqual(versions5, [1, 2])
+    XCTAssertEqual(healthProbes, 2)
+  }
+
+  func testA400ToAV2RequestDiscardsTheEntry() async throws {
+    RewriteStubURLProtocol.script(versionsHealth([1, 2]), path: "/v1/rewrite/health")
+    let (client, _) = makeClient(credential: "c")
+    _ = await client.protocolVersions(endpoint: endpoint)
+    XCTAssertEqual(client.cachedProtocolVersions.origin, endpoint.origin)
+    RewriteStubURLProtocol.script(
+      .init(
+        status: 400, headers: ["Content-Type": "application/json"],
+        chunks: [Data(#"{"error":{"code":"invalid_request","message":"x"}}"#.utf8)]),
+      path: "/v1/rewrite")
+    // A 400 to a v1 request keeps the entry.
+    let v1 = try RewriteRequest(requestID: UUID(), mode: .clean, text: "hello")
+    _ = await collectItems(client.rewrite(request: v1, endpoint: endpoint, timeout: .seconds(5)))
+    XCTAssertEqual(client.cachedProtocolVersions.origin, endpoint.origin)
+    let snapshot = AppContextSnapshot.make(.init(appName: "Mail", windowTitle: "Hello"))
+    let v2 = try RewriteRequest(
+      requestID: UUID(), mode: .clean, text: "hello", context: snapshot.canonicalJSON())
+    let outcome = await collectItems(
+      client.rewrite(request: v2, endpoint: endpoint, timeout: .seconds(5)))
+    XCTAssertEqual((outcome.error as? RewriteFailure)?.category, .serverValidationFailed)
+    XCTAssertNil(client.cachedProtocolVersions.origin)
+    // The v2 body carried the stored bytes verbatim.
+    let body = try XCTUnwrap(RewriteStubURLProtocol.seenBodies.last)
+    XCTAssertTrue(String(decoding: body, as: UTF8.self).contains(snapshot.canonicalString))
   }
 }

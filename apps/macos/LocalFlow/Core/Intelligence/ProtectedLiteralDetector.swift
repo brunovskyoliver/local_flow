@@ -126,17 +126,34 @@ enum ProtectedLiteralDetector {
 
   // MARK: Classes
 
+  /// The classes Feature 012 redacts from on-screen context (research D8).
+  enum ProtectedClass: String, Sendable {
+    case email, url, ip, number
+  }
+
+  /// The redaction class of one punctuation-stripped token, or nil.
+  static func protectedClass(of token: String) -> ProtectedClass? {
+    guard !token.isEmpty else { return nil }
+    if isIPv4(token) || isIPv6(token) { return .ip }
+    if isURL(token) || token.lowercased().hasPrefix("www.") { return .url }
+    if isEmail(token) { return .email }
+    if isNumber(token) { return .number }
+    return nil
+  }
+
+  private nonisolated(unsafe) static let isIPv4 = matches(#"^\d{1,3}(\.\d{1,3}){3}$"#)
+  // Two or more colons.
+  private nonisolated(unsafe) static let isIPv6 = matches(
+    #"^([0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f]{0,4}$"#)
+  private nonisolated(unsafe) static let isURL = matches(#"^(https?|ftp)://\S+$"#)
+  private nonisolated(unsafe) static let isEmail = matches(#"^[\w.+-]+@[\w-]+(\.[\w-]+)+$"#)
+  /// Plain numbers and amounts: optional sign or currency, digits with separators, optional %.
+  private nonisolated(unsafe) static let isNumber = matches(#"^[$€£+-]?\d[\d.,]*(%|€)?$"#)
+
   /// Single-token classes checked against the punctuation-stripped token.
   /// `nonisolated(unsafe)`: the compiled matchers are immutable.
   private nonisolated(unsafe) static let tokenClasses: [(String) -> Bool] = [
-    // IPv4
-    matches(#"^\d{1,3}(\.\d{1,3}){3}$"#),
-    // IPv6 (two or more colons)
-    matches(#"^([0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f]{0,4}$"#),
-    // URL
-    matches(#"^(https?|ftp)://\S+$"#),
-    // e-mail
-    matches(#"^[\w.+-]+@[\w-]+(\.[\w-]+)+$"#),
+    isIPv4, isIPv6, isURL, isEmail,
     // dotted hostname with a letter TLD
     matches(#"^([\w-]+\.)+[A-Za-z]{2,}$"#),
     // time

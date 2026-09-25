@@ -163,6 +163,39 @@ final class MeetingStoreTests: XCTestCase {
     XCTAssertEqual(rows.count, 0)
   }
 
+  /// Czech was removed from the meeting languages: migration v12 clears a stored
+  /// 'czech' to NULL (the Settings language) and keeps the supported ones.
+  func testRemovedMeetingLanguageMigratesToSettingsDefault() async throws {
+    let path = fixture.directory.appendingPathComponent("czech.sqlite").path
+    let queue = try DatabaseQueue(path: path)
+    try HistoryMigrations.migrator().migrate(queue, upTo: "app-context-v11")
+    let czech = UUID()
+    let slovak = UUID()
+    try await queue.write { db in
+      for (id, language) in [(czech, "czech"), (slovak, "slovak")] {
+        try db.execute(
+          sql: """
+            INSERT INTO meetings (id,state,created_at,updated_at,language)
+            VALUES (?,'completed',1,1,?)
+            """, arguments: [id.uuidString, language])
+      }
+    }
+    try queue.close()
+    let reopened = try TranscriptionStore(path: path)
+    let store = MeetingStore(history: reopened, root: fixture.root)
+    let czechMeeting = try await store.meeting(id: czech)
+    XCTAssertNotNil(czechMeeting)
+    XCTAssertNil(czechMeeting?.language)
+    let slovakMeeting = try await store.meeting(id: slovak)
+    XCTAssertEqual(slovakMeeting?.language, .slovak)
+    let stored = try await reopened.database.read { db in
+      try String.fetchAll(db, sql: "SELECT language FROM meetings WHERE language IS NOT NULL")
+    }
+    XCTAssertEqual(stored, ["slovak"])
+    XCTAssertNil(MeetingLanguage(storedValue: "czech"))
+    XCTAssertEqual(MeetingLanguage(storedValue: "english"), .english)
+  }
+
   // MARK: Create and transition
 
   func testCreateInsertsCreatedRowWithEmptyNotesAndRefusesASecondActive() async throws {

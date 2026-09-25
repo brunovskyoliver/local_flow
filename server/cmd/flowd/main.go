@@ -27,11 +27,14 @@ type configuration struct {
 	listen   string
 	backend  backend.Config
 	shield   bool
-	versions []int
-	token    string
-	analysis analysis.Limits
-	dumpDir  string
-	logFile  string
+	versions []int // analysis
+	// rewriteVersions defaults to 1,2; an explicit --protocol-versions without
+	// --rewrite-protocol-versions applies to rewrite too (acceptance double).
+	rewriteVersions []int
+	token           string
+	analysis        analysis.Limits
+	dumpDir         string
+	logFile         string
 }
 
 func parse(args []string, getenv func(string) string, output io.Writer) (configuration, error) {
@@ -43,7 +46,8 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.StringVar(&c.backend.BaseURL, "backend", "http://127.0.0.1:8000/v1", "OpenAI-compatible API base URL, including /v1")
 	fs.StringVar(&c.backend.Model, "model", "youssofal-qwen3.5-4b-mtplx-optimized-speed", "served model id")
 	shield := fs.String("shield", "on", "entity shielding: on or off")
-	versions := fs.String("protocol-versions", "1", "comma-separated advertised protocol versions (acceptance double)")
+	versions := fs.String("protocol-versions", "1", "comma-separated analysis protocol versions; also rewrite's unless --rewrite-protocol-versions is set (acceptance double)")
+	rewriteVersions := fs.String("rewrite-protocol-versions", "1,2", "comma-separated rewrite protocol versions advertised and accepted")
 	fs.DurationVar(&c.backend.DebugDelay, "debug-delay", 0, "delay inference for acceptance tests")
 	fs.DurationVar(&c.backend.FirstTokenTimeout, "first-token-timeout", 5*time.Second, "backend first-token deadline")
 	fs.DurationVar(&c.backend.Timeout, "backend-timeout", 20*time.Second, "total backend deadline")
@@ -69,12 +73,17 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 		return c, errors.New("shield must be on or off")
 	}
 	c.shield = *shield == "on"
-	for _, v := range strings.Split(*versions, ",") {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || len(c.versions) >= 8 {
-			return c, errors.New("invalid protocol versions")
-		}
-		c.versions = append(c.versions, n)
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["protocol-versions"] && !set["rewrite-protocol-versions"] {
+		*rewriteVersions = *versions
+	}
+	var err error
+	if c.versions, err = parseVersions(*versions); err != nil {
+		return c, err
+	}
+	if c.rewriteVersions, err = parseVersions(*rewriteVersions); err != nil {
+		return c, err
 	}
 	if c.backend.FirstTokenTimeout <= 0 || c.backend.Timeout <= 0 || c.backend.Timeout > 5*time.Minute || c.backend.FirstTokenTimeout > 5*time.Minute || c.backend.DebugDelay < 0 || c.backend.DebugDelay > 5*time.Minute {
 		return c, errors.New("timeouts must be positive and at most five minutes; debug delay may be zero")
@@ -107,6 +116,17 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	}
 	return c, nil
 }
+func parseVersions(list string) ([]int, error) {
+	var out []int
+	for _, v := range strings.Split(list, ",") {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || len(out) >= 8 {
+			return nil, errors.New("invalid protocol versions")
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
 func run(ctx context.Context, args []string, getenv func(string) string, output io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprintf(output, "LocalFlow flowd %s\nUsage: flowd serve [flags]  (alias: flowd rewrite)\n", rewrite.ServerVersion)
@@ -135,7 +155,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 	}
 	logger := log.New(logOutput, "flowd ", log.LstdFlags)
 	gate := analysis.NewGate(c.analysis.QueueWait, c.analysis.Preempt)
-	rewriteHandler := rewrite.NewHandler(rewrite.HandlerConfig{Backend: adapter, Token: c.token, Shield: c.shield, ProtocolVersions: c.versions, Logger: logger, Gate: gate})
+	rewriteHandler := rewrite.NewHandler(rewrite.HandlerConfig{Backend: adapter, Token: c.token, Shield: c.shield, ProtocolVersions: c.rewriteVersions, Logger: logger, Gate: gate})
 	mux := http.NewServeMux()
 	mux.Handle("/v1/rewrite", rewriteHandler)
 	mux.Handle("/v1/rewrite/health", rewriteHandler)

@@ -165,6 +165,11 @@
           "type": "integer",
           "minimum": 1
         },
+        "context_prompt_version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Version of the context rules block; present only for v2 requests, absent for v1."
+        },
         "shield": {
           "type": "object",
           "required": [

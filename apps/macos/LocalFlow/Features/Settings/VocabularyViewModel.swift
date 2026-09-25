@@ -28,7 +28,12 @@ final class VocabularyViewModel {
     + "already running or to saved history, and do not help the model hear new words. "
     + "Overlapping matches are left unchanged and flagged for review."
 
-  private(set) var entries: [VocabularyEntry] = []
+  private(set) var entries: [VocabularyEntry] = [] {
+    didSet { foldedTerms = nil }
+  }
+  /// Every entry's canonical and aliases folded for search, in `entries` order. Built
+  /// on the first search after `entries` changes, not on every render.
+  @ObservationIgnored private var foldedTerms: [[[Unicode.Scalar]]]?
   private(set) var revision: Int64 = 0
   private(set) var contentHash = TranscriptionQualityDetail.emptyVocabularyHash
   private(set) var loaded = false
@@ -148,7 +153,9 @@ final class VocabularyViewModel {
   /// Rows for the list: enabled/disabled filter plus a case-insensitive search.
   func visibleEntries(filter: ListFilter, search: String) -> [VocabularyEntry] {
     let query = VocabularyValidation.fold(search.trimmingCharacters(in: .whitespaces))
-    return entries.filter { entry in
+    let terms = query.isEmpty ? [] : searchTerms()
+    return entries.indices.filter { index in
+      let entry = entries[index]
       switch filter {
       case .all: break
       case .enabled where !entry.enabled: return false
@@ -157,15 +164,24 @@ final class VocabularyViewModel {
       default: break
       }
       guard !query.isEmpty else { return true }
-      return ([entry.canonical] + entry.aliases).contains { term in
-        let folded = VocabularyValidation.fold(term)
-        return folded.count >= query.count
+      return terms[index].contains { folded in
+        folded.count >= query.count
           && (0...(folded.count - query.count)).contains {
             folded[$0..<($0 + query.count)].elementsEqual(query)
           }
       }
-    }
+    }.map { entries[$0] }
   }
+
+  private func searchTerms() -> [[[Unicode.Scalar]]] {
+    if let foldedTerms { return foldedTerms }
+    let built = entries.map { entry in
+      ([entry.canonical] + entry.aliases).map(VocabularyValidation.fold)
+    }
+    foldedTerms = built
+    return built
+  }
+
   enum ListFilter: String, CaseIterable, Identifiable {
     case all = "All"
     case enabled = "Enabled"

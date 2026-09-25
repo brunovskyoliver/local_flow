@@ -206,7 +206,8 @@ final class MeetingTrackWorkerTests: XCTestCase {
     let format = MeetingSourceFormat(sampleRate: 48_000, channels: channels)
     let ring = try MeetingSampleRing(format: format)
     let source = FakeMeetingAudioSource(
-      kind: kind, format: format, clock: clock, autoPush: (.milliseconds(10), blocksPerWake))
+      kind: kind, format: format, clock: clock,
+      autoPush: (MeetingTrackWorker.tickInterval, blocksPerWake))
     let writer = FakeSegmentWriter()
     let encoder = FailingEncoder(inner: try MeetingTrackEncoder(kind: kind, sourceFormat: format))
     let handle = try writer.open(meetingID: UUID(), kind: kind, sequence: 1)
@@ -225,7 +226,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
 
   func testLoopPopsBoundedBlocksEncodesOneAtATimeAndWritesBoundedAppends() async throws {
     let rig = try await makeRig()
-    for _ in 0..<50 { await rig.clock.advance(by: .milliseconds(10)) }
+    for _ in 0..<50 { await rig.clock.advance(by: MeetingTrackWorker.tickInterval) }
     let bytes = rig.writer.bytes(.microphone)
     XCTAssertGreaterThan(bytes.count, 0)
     XCTAssertTrue(rig.encoder.blockSizes.allSatisfy { $0 == 4_096 }, "\(rig.encoder.blockSizes)")
@@ -272,17 +273,17 @@ final class MeetingTrackWorkerTests: XCTestCase {
     let rig = try await makeRig(blocksPerWake: 2, recorder: true)
     defer { rig.capture?.cleanup() }
     rig.writer.failAfterBytes[.microphone] = 1_000
-    for _ in 0..<30 { await rig.clock.advance(by: .milliseconds(10)) }
+    for _ in 0..<30 { await rig.clock.advance(by: MeetingTrackWorker.tickInterval) }
     XCTAssertEqual(rig.worker.storageFailure, .storageWriteFailed)
     XCTAssertEqual(rig.worker.latch.errorCode, ENOSPC)
     let written = rig.writer.bytes(.microphone).count
     XCTAssertLessThanOrEqual(written, 1_000)
     // The source keeps pushing; the ring fills, then drops and counts.
-    for _ in 0..<40 { await rig.clock.advance(by: .milliseconds(10)) }
+    for _ in 0..<40 { await rig.clock.advance(by: MeetingTrackWorker.tickInterval) }
     XCTAssertEqual(rig.ring.occupancy, 32)
     XCTAssertGreaterThan(rig.ring.droppedFrames, 0)
     let dropped = rig.ring.droppedFrames
-    for _ in 0..<10 { await rig.clock.advance(by: .milliseconds(10)) }
+    for _ in 0..<10 { await rig.clock.advance(by: MeetingTrackWorker.tickInterval) }
     XCTAssertGreaterThan(rig.ring.droppedFrames, dropped, "keeps growing")
     XCTAssertEqual(rig.ring.occupancy, 32, "occupancy stays at capacity")
     XCTAssertEqual(
@@ -306,7 +307,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
 
     let finalize = try await makeRig()
     finalize.writer.failOnFinalize.insert(.microphone)
-    for _ in 0..<5 { await finalize.clock.advance(by: .milliseconds(10)) }
+    for _ in 0..<5 { await finalize.clock.advance(by: MeetingTrackWorker.tickInterval) }
     let result = await finalize.worker.finalize()
     guard case .failure(let failure) = result else { return XCTFail("\(result)") }
     XCTAssertEqual(failure, .finalize(errno: EIO))
@@ -315,7 +316,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
     let encoder = try await makeRig(recorder: true)
     defer { encoder.capture?.cleanup() }
     encoder.encoder.failNext()
-    for _ in 0..<5 { await encoder.clock.advance(by: .milliseconds(10)) }
+    for _ in 0..<5 { await encoder.clock.advance(by: MeetingTrackWorker.tickInterval) }
     XCTAssertEqual(encoder.worker.storageFailure, .encoderFailed)
     XCTAssertEqual(encoder.worker.latch.errorCode, -77)
     let metrics = try await XCTUnwrap(encoder.capture).metrics()
@@ -325,7 +326,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
   func testFinalizeDrainsFinishesAppendsTrailingFramesAndReportsDuration() async throws {
     let rig = try await makeRig(recorder: true)
     defer { rig.capture?.cleanup() }
-    for _ in 0..<30 { await rig.clock.advance(by: .milliseconds(10)) }
+    for _ in 0..<30 { await rig.clock.advance(by: MeetingTrackWorker.tickInterval) }
     rig.source.push(blocks: 3)  // left in the ring for the final drain
     let before = rig.writer.bytes(.microphone).count
     let result = await rig.worker.finalize()
@@ -340,7 +341,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(frames, 33 * 4)
     XCTAssertEqual(rig.ring.occupancy, 0)
     // The loop is stopped: advancing time changes nothing.
-    for _ in 0..<5 { await rig.clock.advance(by: .milliseconds(10)) }
+    for _ in 0..<5 { await rig.clock.advance(by: MeetingTrackWorker.tickInterval) }
     XCTAssertEqual(rig.writer.bytes(.microphone).count, Int(completion.byteSize))
     let second = await rig.worker.finalize()
     guard case .failure(.closed) = second else { return XCTFail("\(second)") }
@@ -447,7 +448,7 @@ final class MeetingTrackWorkerTests: XCTestCase {
 
   // MARK: US3 bounded memory
 
-  /// Thirty simulated minutes at 12 blocks per 10 ms wake (about 12× real time):
+  /// Thirty simulated minutes at 12 blocks per 40 ms wake (about 25× real time):
   /// no resident structure changes size, the ring never exceeds capacity, every
   /// append is at most one output block and the byte log grows at every heartbeat.
   func testThirtySimulatedMinutesKeepEveryStructureBounded() async throws {

@@ -1,3 +1,4 @@
+import Observation
 import XCTest
 
 @testable import LocalFlow
@@ -106,6 +107,54 @@ final class SettingsTests: XCTestCase {
     XCTAssertFalse(model.readyForTest)
   }
 
+  @MainActor func testUnchangedRefreshDoesNotInvalidateObservers() async {
+    var next = SettingsViewModel.Snapshot()
+    let model = SettingsViewModel(observe: { next }, perform: { _ in })
+    await model.refresh()
+    final class Counter: @unchecked Sendable { var value = 0 }
+    let changes = Counter()
+    withObservationTracking {
+      _ = model.snapshot
+    } onChange: {
+      changes.value += 1
+    }
+    await model.refresh()
+    XCTAssertEqual(changes.value, 0)
+    next.accessibility = .granted
+    await model.refresh()
+    XCTAssertEqual(changes.value, 1)
+    XCTAssertEqual(model.snapshot.accessibility, .granted)
+  }
+
+  func testCachedCredentialPresenceInvalidatesOnWriteAndRemove() throws {
+    final class Counting: RewriteCredentialStoring, @unchecked Sendable {
+      let base = FakeRewriteCredentialStore()
+      var existsCalls = 0
+      func read(origin: String) throws -> String? { try base.read(origin: origin) }
+      func write(origin: String, secret: String) throws {
+        try base.write(origin: origin, secret: secret)
+      }
+      func remove(origin: String) throws { try base.remove(origin: origin) }
+      func exists(origin: String) -> Bool {
+        existsCalls += 1
+        return base.exists(origin: origin)
+      }
+    }
+    let backing = Counting()
+    let store = CachedRewriteCredentialStore(backing)
+    XCTAssertFalse(store.exists(origin: "https://a"))
+    XCTAssertFalse(store.exists(origin: "https://a"))
+    XCTAssertEqual(backing.existsCalls, 1)
+    try store.write(origin: "https://a", secret: "secret-value")
+    XCTAssertTrue(store.exists(origin: "https://a"))
+    XCTAssertEqual(backing.existsCalls, 2)
+    XCTAssertFalse(store.exists(origin: "https://b"))
+    XCTAssertEqual(backing.existsCalls, 3)
+    try store.remove(origin: "https://a")
+    XCTAssertFalse(store.exists(origin: "https://a"))
+    XCTAssertEqual(backing.existsCalls, 4)
+  }
+
   @MainActor func testBusyActionDoesNotBlamePermissionsOrModelFiles() async {
     let model = SettingsViewModel(
       observe: { .init() }, perform: { _ in throw DictationFailure.busy })
@@ -203,6 +252,52 @@ extension SettingsTests {
 
 /// T031: the "Enable rewriting" toggle is gated by a fresh snapshot that ignores
 /// `enabled`, so a misconfigured endpoint states its reason instead of turning on.
+/// Feature 012 (FR-020): the context rewrite toggle needs context and rewriting,
+/// is never pre-enabled and keeps its Experimental label.
+@MainActor
+final class ContextRewriteToggleTests: XCTestCase {
+  func testToggleIsExperimentalAndGatedOnContextAndRewriting() {
+    XCTAssertEqual(SettingsViewModel.contextRewriteTitle, "Send context to rewrite server")
+    XCTAssertEqual(
+      SettingsViewModel.contextRewriteBlockedReason(contextEnabled: false, rewriteEnabled: true),
+      "Turn on Use app context first.")
+    XCTAssertEqual(
+      SettingsViewModel.contextRewriteBlockedReason(contextEnabled: true, rewriteEnabled: false),
+      "Turn on rewriting first.")
+    XCTAssertNil(
+      SettingsViewModel.contextRewriteBlockedReason(contextEnabled: true, rewriteEnabled: true))
+    XCTAssertFalse(SettingsViewModel.contextDisclosure.contains("Nothing leaves this Mac"))
+    XCTAssertEqual(SettingsViewModel.appCount(1), "1 app")
+    XCTAssertEqual(SettingsViewModel.appCount(9), "9 apps")
+  }
+
+  func testNeverPreEnabledAndIneffectiveWithoutContext() {
+    let suite = "LocalFlow-context-toggle-\(UUID())"
+    defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: UserDefaults(suiteName: suite)!)
+    preferences.rewriteEnabled = true
+    preferences.contextEnabled = true
+    XCTAssertFalse(preferences.contextRewriteEnabled)
+    XCTAssertFalse(
+      RewriteSettings.capture(
+        preferences: preferences, credentialStore: FakeRewriteCredentialStore()
+      )
+      .sendsContext)
+    preferences.contextRewriteEnabled = true
+    XCTAssertTrue(
+      RewriteSettings.capture(
+        preferences: preferences, credentialStore: FakeRewriteCredentialStore()
+      )
+      .sendsContext)
+    preferences.contextEnabled = false
+    XCTAssertFalse(
+      RewriteSettings.capture(
+        preferences: preferences, credentialStore: FakeRewriteCredentialStore()
+      )
+      .sendsContext, "the next attempt sees the change without relaunch")
+  }
+}
+
 @MainActor
 final class RewriteToggleGatingTests: XCTestCase {
   private var suites: [String] = []

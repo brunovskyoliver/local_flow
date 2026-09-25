@@ -27,12 +27,13 @@ final class ResourceLifecycleTests: XCTestCase {
   /// Success, cancellation and capture failure must all leave the spool root
   /// holding nothing but its owner lock, and must leave no runtime resident.
   func testEveryTerminalPathReleasesAudioAndRuntime() async throws {
-    // Only a clean completion keeps the runtime for reuse. Cancellation and a
-    // failed capture release it immediately, joined, on the same terminal path.
+    // A healthy runtime cools after completion, cancellation and a failed capture
+    // alike, so the next dictation avoids a cold load; the cooldown then releases it.
+    // Only a runtime fault releases at once.
     let cases: [(String, AudioCaptureStopReason, Bool, ModelLifecycleCoordinator.State)] = [
       ("success", .keyRelease, false, .cooling),
-      ("cancellation", .keyRelease, true, .unloaded),
-      ("device loss", .failure(.deviceLost), false, .unloaded),
+      ("cancellation", .keyRelease, true, .cooling),
+      ("device loss", .failure(.deviceLost), false, .cooling),
     ]
     for (name, reason, cancels, expected) in cases {
       let runtime = FakeRuntime()
@@ -64,6 +65,7 @@ final class ResourceLifecycleTests: XCTestCase {
 
   /// Cancelling at preparation, recording and transcription each joins the
   /// runtime and removes the audio rather than returning while work is alive.
+  /// A cancelled load releases; a loaded runtime is left cooling, never busy.
   func testCancellationAtEveryPhaseJoinsBeforeReturning() async throws {
     let phases: [DictationSession.State] = [.preparing, .recording, .transcribing]
     for phase in phases {
@@ -88,6 +90,8 @@ final class ResourceLifecycleTests: XCTestCase {
         try await waitUntil { coordinator.state == .recording }
         coordinator.cancel()
       default:
+        // A release before the microphone opens cancels; release a real recording.
+        try await waitUntil { coordinator.state == .recording }
         coordinator.release()
         try await waitUntil { coordinator.state == .transcribing || !coordinator.busy }
         coordinator.cancel()
@@ -95,9 +99,12 @@ final class ResourceLifecycleTests: XCTestCase {
       }
       try await waitUntil { !coordinator.busy }
 
-      for _ in 0..<1000 where await lifecycle.state != .unloaded { await Task.yield() }
+      let expected: ModelLifecycleCoordinator.State = phase == .preparing ? .unloaded : .cooling
+      for _ in 0..<1000 where await lifecycle.state != expected { await Task.yield() }
       let state = await lifecycle.state
-      XCTAssertEqual(state, .unloaded, "Cancelling at \(phase) left the runtime resident")
+      XCTAssertEqual(state, expected, "Cancelling at \(phase) left an unexpected state")
+      let leased = await lifecycle.snapshot().leased
+      XCTAssertFalse(leased, "Cancelling at \(phase) left the lease held")
       XCTAssertEqual(
         try sessionDirectories(in: root), [],
         "Cancelling at \(phase) left temporary audio behind")

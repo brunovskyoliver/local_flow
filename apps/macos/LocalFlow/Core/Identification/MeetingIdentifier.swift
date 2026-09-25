@@ -60,7 +60,7 @@ actor MeetingIdentifier {
   func admit(meetingID: UUID, trigger: IdentificationTrigger) async throws -> IdentificationRun? {
     if trigger == .pastSearch {
       let identities = try await store.identities(meetingID: meetingID)
-      let roots = try await speakers.speakerSummaries(meetingID: meetingID)
+      let roots = try await speakers.speakerRoots(meetingID: meetingID)
         .filter { $0.source == .remote }
       let unknown = roots.contains { root in
         let state = identities[root.id]?.state ?? .unknown
@@ -104,9 +104,9 @@ actor MeetingIdentifier {
       }
       detail = loaded
       // Remote display roots only: "You" is never queried (FR-016).
-      roots = try await speakers.speakerSummaries(meetingID: meetingID)
+      roots = try await speakers.speakerRoots(meetingID: meetingID)
         .filter { $0.source == .remote }
-        .map { .init(id: $0.id, members: $0.includes.map(\.id), source: $0.source) }
+        .map { .init(id: $0.id, members: $0.members, source: $0.source) }
     } catch {
       return await fail(pending.id, .persistenceFailure)
     }
@@ -166,13 +166,8 @@ actor MeetingIdentifier {
       else { throw RegionExtractor.Failure(.diarizationChanged) }
       let length = max(detail.meeting.recordedMs, 1)
       let turns = try await RegionExtractor.turns(of: runID, lengthMs: length, speakers: speakers)
-      let plan = roots.map { root in
-        (
-          root.id,
-          RegionExtractor.regions(
-            for: root, turns: turns, track: nil, lengthMs: length, limits: .query)
-        )
-      }
+      let plan = RegionExtractor.regions(
+        for: roots, turns: turns, track: nil, lengthMs: length, limits: .query)
       let bases = RegionExtractor.transcriptBases(
         try await transcripts.transcription(meetingID: meetingID)?.analysisDescriptor)
       let reader = VoiceRegionReader(storageRoot: storageRoot, detail: detail, bases: bases)

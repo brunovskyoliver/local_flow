@@ -23,6 +23,13 @@ actor MeetingFinalizer {
     /// diarizer to reuse instead of decoding both tracks again. nil unless the
     /// layout profiled echo (per-track); the stretches keep a zero base.
     let echoProfile: EchoGate.Profile?
+
+    /// The same outcome without its echo profile, for callers that keep it around.
+    var withoutEchoProfile: Outcome {
+      Outcome(
+        row: row, windowCount: windowCount, totalGapCount: totalGapCount,
+        coveredGapCount: coveredGapCount, coveredGapMs: coveredGapMs, echoProfile: nil)
+    }
   }
   struct Configuration: Sendable {
     let windowSamples: Int
@@ -68,8 +75,8 @@ actor MeetingFinalizer {
   private let identity: TranscriptionPipelineIdentity
   private let configuration: Configuration
   /// The Settings language, for a meeting without its own; the pass's language is
-  /// read once per run and recorded in the pipeline version (`lang_<code>_prompt_v1`).
-  /// The runtime factory resolves the same choice when the pass loads the runtime.
+  /// read once per run, recorded in the pipeline version (`lang_<code>_prompt_v1`) and
+  /// handed to the lifecycle, so the runtime decodes in the recorded language.
   private let defaultLanguage: @Sendable () async -> MeetingLanguage
   private let clock: any MeetingClock
   private let recorder: ResourceRecorder?
@@ -81,7 +88,9 @@ actor MeetingFinalizer {
     vocabulary: any VocabularyProviding = EmptyVocabularyProvider(),
     identity: TranscriptionPipelineIdentity = .init(),
     configuration: Configuration = .parakeet,
-    defaultLanguage: @escaping @Sendable () async -> MeetingLanguage = { .automatic },
+    defaultLanguage: @escaping @Sendable () async -> MeetingLanguage = {
+      .defaultLanguage
+    },
     clock: any MeetingClock = SystemMeetingClock(), recorder: ResourceRecorder? = nil,
     logSink: @escaping @Sendable (String) -> Void = { message in
       Logger(subsystem: "org.localflow.LocalFlow", category: "transcript")
@@ -96,7 +105,6 @@ actor MeetingFinalizer {
     self.identity = identity
     self.configuration = configuration
     self.defaultLanguage = defaultLanguage
-    windows[.both] = [Float](repeating: 0, count: configuration.windowSamples)
     self.clock = clock
     self.recorder = recorder
     self.logSink = logSink
@@ -199,7 +207,7 @@ actor MeetingFinalizer {
     } catch {
       snapshot = nil
     }
-    var language = MeetingLanguage.automatic
+    var language = MeetingLanguage.defaultLanguage
     if configuration.layout == .perTrack {
       if let chosen = detail.meeting.language {
         language = chosen
@@ -216,7 +224,7 @@ actor MeetingFinalizer {
       }
       do {
         replacementLease = try await lifecycle.acquire(
-          session: meetingID, workload: configuration.workload)
+          session: meetingID, workload: configuration.workload, meetingLanguage: language)
       } catch is CancellationError {
         throw CancellationError()
       } catch DictationFailure.cancelled {
@@ -249,7 +257,8 @@ actor MeetingFinalizer {
       if let replacementLease {
         lease = replacementLease
       } else {
-        lease = try await lifecycle.acquire(session: meetingID, workload: configuration.workload)
+        lease = try await lifecycle.acquire(
+          session: meetingID, workload: configuration.workload, meetingLanguage: language)
       }
     } catch is CancellationError {
       throw CancellationError()
@@ -258,6 +267,9 @@ actor MeetingFinalizer {
     } catch {
       throw await fail(meetingID, .acquisition(error), detail: nil, lease: nil)
     }
+    // Only the lease holder gets here, so one pass owns `windows` at a time. The lanes
+    // allocate their windows on first use and the pass releases them when it ends.
+    defer { windows = [:] }
     var context = PassContext(
       meetingID: meetingID, passID: admission.passID, lease: lease,
       segmenter: TranscriptSegmenter(vocabulary: snapshot), resume: admission.resume,
@@ -459,8 +471,10 @@ actor MeetingFinalizer {
   }
 
   /// One window buffer per lane for the whole pass, refilled in place: `.both` for the
-  /// mixed layout, `.mic` and `.system` per track.
+  /// mixed layout, `.mic` and `.system` per track. Empty between passes.
   private var windows: [AnalysisTracks: [Float]] = [:]
+  /// Samples held in window buffers right now. For tests.
+  var residentWindowSamples: Int { windows.values.reduce(0) { $0 + $1.count } }
 
   /// One recognizer input stream of a stretch: the mixed stream, or one track.
   private struct Lane {
@@ -707,7 +721,7 @@ actor MeetingFinalizer {
         let fill = lane.stretch.fill
         windows[lane.tag]!.withUnsafeMutableBufferPointer { target in
           emission.samples.withUnsafeBufferPointer { source in
-            for index in 0..<count { target[fill + index] = source[offset + index] }
+            (target.baseAddress! + fill).update(from: source.baseAddress! + offset, count: count)
           }
         }
         lane.stretch.fill += count
@@ -739,7 +753,13 @@ actor MeetingFinalizer {
     }
     guard !lane.stretch.skip(start) else { return }
     try Task.checkCancellation()
-    var samples = Array(windows[lane.tag]!.prefix(count))
+    // A full window goes to the runtime as the lane's buffer itself, levelled in place
+    // (it is refilled before it is read again): no copy per inference. Only a
+    // stretch's shorter tail window is copied out.
+    let whole = count == configuration.windowSamples
+    var samples =
+      whole ? windows.removeValue(forKey: lane.tag) ?? [] : Array(windows[lane.tag]!.prefix(count))
+    defer { if whole { windows[lane.tag] = samples } }
     if configuration.layout == .perTrack {
       if lane.tag == .mic, !lane.echo.isEmpty {
         context.echoMutedMs += EchoGate.mute(

@@ -25,7 +25,11 @@ final class TranscriptPager {
   private(set) var row: MeetingTranscription?
   private(set) var gaps: [LiveGap] = []
   private(set) var finality: SegmentFinality = .final
-  private(set) var pages: [Page] = []
+  private(set) var pages: [Page] = [] {
+    didSet { segments = pages.flatMap(\.segments) }
+  }
+  /// The resident rows in order, rebuilt when `pages` changes rather than on every read.
+  private(set) var segments: [TranscriptSegment] = []
   private(set) var isLoading = false
   private(set) var notice: String?
   private(set) var selection: Set<UUID> = []
@@ -58,7 +62,6 @@ final class TranscriptPager {
     self.clock = clock
   }
 
-  var segments: [TranscriptSegment] { pages.flatMap(\.segments) }
   var residentCount: Int { pages.reduce(0) { $0 + $1.segments.count } }
   var count: Int { row?.segmentCount ?? 0 }
   var hasPrevious: Bool { (pages.first?.first ?? 0) > 0 }

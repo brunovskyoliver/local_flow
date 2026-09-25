@@ -98,3 +98,11 @@ and [Silero notice](third_party/sotto/Resources/Silero-LICENSE.txt). The model
 manifest records exact sizes and SHA-256 hashes. Assets remain outside version
 control and are not bundled into the app. This records the licenses supplied
 with the pinned source snapshot; it does not change their terms.
+
+## Interface fonts
+
+Figtree (variable, `Figtree[wght].ttf`) and EB Garamond (variable, roman and
+italic) are bundled in `apps/macos/LocalFlow/Resources/Fonts` from
+[google/fonts](https://github.com/google/fonts) under the SIL Open Font License
+1.1. The license texts ship beside the fonts as `OFL-Figtree.txt` and
+`OFL-EBGaramond.txt`. The fonts are registered for the app process only.

@@ -11,8 +11,8 @@ final class AppPreferencesTests: XCTestCase {
     let preferences = AppPreferences(defaults: defaults)
     XCTAssertTrue(preferences.meetingTranscriptionEnabled)
     preferences.meetingTranscriptionEnabled = false
-    XCTAssertFalse(defaults.bool(forKey: "meetingTranscriptionEnabled"))
-    // No Settings switch any more: a stored `false` from an older build is ignored.
+    // No Settings switch any more: the value lives only for the session.
+    XCTAssertNil(defaults.object(forKey: "meetingTranscriptionEnabled"))
     XCTAssertTrue(AppPreferences(defaults: defaults).meetingTranscriptionEnabled)
     XCTAssertFalse(MeetingStartOptions(preferences: preferences).transcription)
     preferences.meetingTranscriptionEnabled = true
@@ -47,6 +47,21 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertEqual(AppPreferences(defaults: defaults).meetingLanguage, .automatic)
   }
 
+  /// English and Slovak only: a stored Czech choice reads as the default and is
+  /// rewritten, and no other language is selectable or has a context sentence.
+  @MainActor func testStoredCzechMeetingLanguageMigratesToDefault() {
+    let suite = "LocalFlow-language-czech-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("czech", forKey: "settings.meetingLanguage")
+    XCTAssertEqual(AppPreferences(defaults: defaults).meetingLanguage, .defaultLanguage)
+    XCTAssertEqual(defaults.string(forKey: "settings.meetingLanguage"), "automatic")
+    XCTAssertEqual(MeetingLanguage.allCases, [.automatic, .slovak, .english])
+    XCTAssertEqual(Set(MeetingLanguage.contextSentences.keys), ["en", "sk"])
+    XCTAssertEqual(MeetingLanguage.supportedCodes, ["en", "sk"])
+    XCTAssertEqual(MeetingLanguage.automatic.pipelineTag, "lang_auto_prompt_v1+speech_language_v3")
+  }
+
   /// Feature 010 (FR-038): on by default under `settings.speakerIdentificationEnabled`.
   @MainActor func testSpeakerIdentificationDefaultsOnAndPersists() {
     let suite = "LocalFlow-identification-\(UUID())"
@@ -56,7 +71,7 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertTrue(preferences.speakerIdentificationEnabled)
     preferences.speakerIdentificationEnabled = false
     XCTAssertTrue(AppPreferences(defaults: defaults).speakerIdentificationEnabled)
-    XCTAssertEqual(defaults.object(forKey: "settings.speakerIdentificationEnabled") as? Bool, false)
+    XCTAssertNil(defaults.object(forKey: "settings.speakerIdentificationEnabled"))
   }
 
   /// Feature 011 (FR-035): on by default under `settings.meetingSummariesAutomatic`;
@@ -69,11 +84,28 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertTrue(preferences.meetingSummariesAutomatic)
     preferences.meetingSummariesAutomatic = false
     XCTAssertTrue(AppPreferences(defaults: defaults).meetingSummariesAutomatic)
-    XCTAssertEqual(defaults.object(forKey: "settings.meetingSummariesAutomatic") as? Bool, false)
+    XCTAssertNil(defaults.object(forKey: "settings.meetingSummariesAutomatic"))
     let fresh = AppPreferences(defaults: defaults)
     XCTAssertTrue(fresh.meetingTranscriptionEnabled)
     XCTAssertTrue(fresh.meetingDiarizationEnabled)
     XCTAssertTrue(fresh.speakerIdentificationEnabled)
+  }
+
+  /// Older builds persisted the always-on meeting switches; launch removes those keys
+  /// and ignores their values.
+  @MainActor func testRetiredMeetingSwitchKeysAreRemovedAtLaunch() {
+    let suite = "LocalFlow-retired-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    for key in AppPreferences.retiredKeys { defaults.set(false, forKey: key) }
+    let preferences = AppPreferences(defaults: defaults)
+    for key in AppPreferences.retiredKeys { XCTAssertNil(defaults.object(forKey: key), key) }
+    XCTAssertTrue(preferences.meetingTranscriptionEnabled)
+    XCTAssertTrue(preferences.meetingDiarizationEnabled)
+    XCTAssertTrue(preferences.meetingSummariesAutomatic)
+    XCTAssertTrue(preferences.speakerIdentificationEnabled)
+    preferences.meetingDiarizationEnabled = false
+    XCTAssertNil(defaults.object(forKey: "meetingDiarizationEnabled"))
   }
 
   @MainActor func testRewriteModeDefaultsPersistenceAndUnknownValue() {
@@ -152,5 +184,78 @@ final class AppPreferencesTests: XCTestCase {
     preferences.summaryServerModel = ""
     XCTAssertEqual(SummaryServer.headers(defaults: defaults, credentials: credentials), [:])
     XCTAssertEqual(AppPreferences(defaults: defaults).summaryServer, .remote)
+  }
+
+  // MARK: Feature 012 context preferences (T010)
+
+  @MainActor func testContextPreferencesDefaultOffOnFreshAndUpgradedProfiles() {
+    for upgraded in [false, true] {
+      let suite = "LocalFlow-context-\(UUID())"
+      let defaults = UserDefaults(suiteName: suite)!
+      defer { defaults.removePersistentDomain(forName: suite) }
+      if upgraded {
+        defaults.set(true, forKey: "rewriteEnabled")
+        defaults.set(1, forKey: "setupVersion")
+      }
+      let preferences = AppPreferences(defaults: defaults)
+      XCTAssertFalse(preferences.contextEnabled)
+      XCTAssertFalse(preferences.contextRewriteEnabled)
+      XCTAssertFalse(preferences.contextStyleEnabled)
+      XCTAssertEqual(preferences.contextCategoryOverrides, [:])
+      XCTAssertEqual(
+        Set(preferences.contextExcludedBundleIDs),
+        AppCategory.defaultExclusions.union([AppCategory.ownBundleID]))
+      let settings = preferences.contextSettings()
+      XCTAssertFalse(settings.enabled)
+      XCTAssertFalse(settings.rewriteEnabled)
+    }
+  }
+
+  @MainActor func testContextRulesAreCappedAndOwnBundleCannotBeRemoved() {
+    let suite = "LocalFlow-context-caps-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.removeContextExclusion(AppCategory.ownBundleID)
+    XCTAssertTrue(preferences.contextExcludedBundleIDs.contains(AppCategory.ownBundleID))
+    XCTAssertFalse(preferences.addContextExclusion(""))
+    XCTAssertFalse(preferences.addContextExclusion("has space"))
+    var index = 0
+    while preferences.contextExcludedBundleIDs.count < AppPreferences.maximumContextRules {
+      XCTAssertTrue(preferences.addContextExclusion("com.example.app\(index)"))
+      index += 1
+    }
+    XCTAssertFalse(preferences.addContextExclusion("com.example.one-more"))
+    XCTAssertEqual(preferences.contextExcludedBundleIDs.count, 200)
+    for index in 0..<200 {
+      XCTAssertTrue(preferences.setContextCategory(.code, for: "com.example.editor\(index)"))
+    }
+    XCTAssertFalse(preferences.setContextCategory(.code, for: "com.example.editor200"))
+    XCTAssertTrue(preferences.setContextCategory(.document, for: "com.example.editor0"))
+    let reloaded = AppPreferences(defaults: defaults)
+    XCTAssertEqual(reloaded.contextExcludedBundleIDs.count, 200)
+    XCTAssertEqual(reloaded.contextCategoryOverrides.count, 200)
+    XCTAssertEqual(reloaded.contextCategoryOverrides["com.example.editor0"], .document)
+    XCTAssertTrue(reloaded.contextExcludedBundleIDs.contains(AppCategory.ownBundleID))
+  }
+
+  @MainActor func testContextSettingsSeeChangesWithoutRelaunch() {
+    let suite = "LocalFlow-context-live-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.contextRewriteEnabled = true
+    XCTAssertFalse(preferences.contextSettings().rewriteEnabled, "needs contextEnabled")
+    preferences.contextEnabled = true
+    preferences.addContextExclusion("com.example.chat")
+    preferences.setContextCategory(.workChat, for: "com.example.chat2")
+    let settings = preferences.contextSettings()
+    XCTAssertTrue(settings.enabled)
+    XCTAssertTrue(settings.rewriteEnabled)
+    XCTAssertTrue(settings.isExcluded("com.example.chat"))
+    XCTAssertEqual(settings.categoryOverrides["com.example.chat2"], .workChat)
+    preferences.contextEnabled = false
+    XCTAssertFalse(preferences.contextSettings().enabled)
+    XCTAssertFalse(preferences.contextSettings().rewriteEnabled)
   }
 }

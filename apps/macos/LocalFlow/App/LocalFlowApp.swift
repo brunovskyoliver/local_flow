@@ -7,6 +7,7 @@ struct LocalFlowApp: App {
   @State private var services: AppServices
 
   init() {
+    FlowFonts.register()
     let services = AppServices()
     _services = State(initialValue: services)
     if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
@@ -173,7 +174,7 @@ private struct LocalFlowWindowView: View {
     GeometryReader { geometry in
       HStack(spacing: 0) {
         sidebar(compact: geometry.size.width <= 800).frame(
-          width: geometry.size.width <= 800 ? 165 : 208)
+          width: geometry.size.width <= 800 ? 180 : 216)
         VStack(spacing: 0) {
           if let coordinator = services.coordinator {
             RecoveryNotice(coordinator: coordinator)
@@ -186,13 +187,15 @@ private struct LocalFlowWindowView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(SottoPalette.surface)
-        .clipShape(.rect(cornerRadius: 18))
+        .clipShape(.rect(cornerRadius: 16))
         .overlay {
-          RoundedRectangle(cornerRadius: 18).strokeBorder(SottoPalette.line, lineWidth: 1)
+          RoundedRectangle(cornerRadius: 16).strokeBorder(SottoPalette.line, lineWidth: 1)
         }
-        .padding(.top, 38).padding(.trailing, 8).padding(.bottom, 8)
+        .padding(.top, 44).padding(.trailing, 8).padding(.bottom, 8)
       }
       .background(SottoPalette.canvas)
+      .font(.flow(size: 14))
+      .scrollIndicators(.never)
       .environment(\.prototypeCompact, geometry.size.width <= 800)
     }
     .ignoresSafeArea(.container, edges: .top)
@@ -201,6 +204,10 @@ private struct LocalFlowWindowView: View {
     .onExitCommand { services.coordinator?.cancel() }
     .onDisappear { services.flushMeetingNotes() }
     .task { await services.observeSettingsWhileVisible() }
+    .onChange(of: services.router.selection) { _, _ in services.settingsPageChanged() }
+    .onChange(of: services.preferences.onboardingComplete) { _, _ in
+      services.settingsPageChanged()
+    }
     .onChange(of: services.preferences.appearance) { _, _ in services.applyAppearance() }
     .sheet(
       isPresented: Binding(
@@ -215,37 +222,13 @@ private struct LocalFlowWindowView: View {
 
   private func sidebar(compact: Bool) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      HStack(spacing: 7) {
-        Image(systemName: "waveform").font(.system(size: 19))
-        Text("LocalFlow").font(.system(size: compact ? 18 : 20, weight: .semibold)).tracking(-0.7)
+      HStack(spacing: 6) {
+        Image(systemName: "chart.bar.xaxis").font(.flow(size: 19, weight: .semibold))
+        Text("LocalFlow").font(.flow(size: 22, weight: .bold)).tracking(-0.6)
       }
-      .padding(.horizontal, 10).padding(.top, 77).padding(.bottom, 33)
-      VStack(spacing: 6) {
-        ForEach(LocalFlowPage.allCases) { destination in
-          Button {
-            services.router.selection = destination
-          } label: {
-            HStack(spacing: 10) {
-              Image(systemName: destination.symbol).font(.system(size: 18)).frame(width: 19)
-              Text(destination.rawValue)
-                .lineLimit(1).minimumScaleFactor(0.85)
-                .font(
-                  .system(
-                    size: 14, weight: services.router.selection == destination ? .medium : .regular)
-                )
-              Spacer(minLength: 0)
-            }
-            .padding(10)
-            .background(
-              services.router.selection == destination ? SottoPalette.tint : .clear,
-              in: RoundedRectangle(cornerRadius: 6)
-            )
-            .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .accessibilityIdentifier("navigation.\(destination.rawValue.lowercased())")
-          .accessibilityAddTraits(services.router.selection == destination ? .isSelected : [])
-        }
+      .padding(.horizontal, 8).padding(.top, 70).padding(.bottom, 36)
+      VStack(spacing: 5) {
+        ForEach(LocalFlowPage.allCases.filter { $0 != .settings }) { navigationItem($0) }
       }
       Spacer()
       if let meetings = services.meetingCoordinator, let status = meetings.status,
@@ -256,31 +239,47 @@ private struct LocalFlowWindowView: View {
           if let library = services.meetingLibrary { Task { await library.open(status.id) } }
         } label: {
           VStack(alignment: .leading, spacing: 8) {
-            Text(status.title ?? "Untitled note").font(.system(size: 13, weight: .medium))
+            Text(status.title ?? "Untitled note").font(.flow(size: 13, weight: .medium))
               .lineLimit(1)
-            LiveRecordingBadge(status: status, size: 12)
+            LiveRecordingBadge(state: status.state, elapsed: meetings.elapsed, size: 12)
           }
-          .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-          .background(SottoPalette.tint, in: RoundedRectangle(cornerRadius: 8))
+          .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+          .background(SottoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+          .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(SottoPalette.line) }
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("navigation.activeNote")
-        .padding(.bottom, 16)
+        .padding(.bottom, 12)
       }
-      VStack(alignment: .leading, spacing: 8) {
-        HStack(spacing: 6) {
-          Circle().fill(SottoPalette.muted).frame(width: 6, height: 6)
-          Text("On this Mac")
-        }
-        if services.needsAttention {
-          Label("Review needed", systemImage: "exclamationmark.circle")
-        }
+      if services.needsAttention {
+        Label("Review needed", systemImage: "exclamationmark.circle")
+          .font(.flow(size: 13)).foregroundStyle(SottoPalette.warning)
+          .padding(.horizontal, 10).padding(.bottom, 8)
       }
-      .font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
-      .padding(.horizontal, 10).padding(.bottom, 23)
+      SottoPalette.line.frame(height: 1).padding(.bottom, 8)
+      navigationItem(.settings).padding(.bottom, 12)
     }
     .padding(.horizontal, 12)
+  }
+
+  private func navigationItem(_ destination: LocalFlowPage) -> some View {
+    let selected = services.router.selection == destination
+    return Button {
+      services.router.selection = destination
+    } label: {
+      HStack(spacing: 10) {
+        Image(systemName: destination.symbol).font(.flow(size: 16)).frame(width: 20)
+        Text(destination.rawValue).font(.flow(size: 15)).lineLimit(1).minimumScaleFactor(0.85)
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, 10).frame(height: 35)
+      .background(selected ? SottoPalette.tint : .clear, in: RoundedRectangle(cornerRadius: 8))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityIdentifier("navigation.\(destination.rawValue.lowercased())")
+    .accessibilityAddTraits(selected ? .isSelected : [])
   }
 
   @ViewBuilder private var destination: some View {
@@ -308,7 +307,6 @@ private struct LocalFlowWindowView: View {
           model: history,
           copy: { coordinator.copy($0) },
           insert: { services.reviewInsertion($0, attempt: $1) },
-          dismissRecovery: { try await coordinator.dismissOrThrow($0) },
           delete: { try await coordinator.deleteOrThrow($0) }, globalBusy: coordinator.busy)
       } else {
         ContentUnavailableView(
@@ -335,7 +333,7 @@ private struct InsertionReviewView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
-      Text("Review before inserting").font(.system(size: 26, weight: .semibold))
+      Text("Review before inserting").font(.flow(size: 26, weight: .semibold))
       ForEach(insertion.warnings, id: \.self) { warning in
         Label(warning, systemImage: "exclamationmark.triangle")
       }
@@ -381,7 +379,8 @@ private struct RecoveryNotice: View {
           systemImage: "externaldrive.badge.exclamationmark")
       }
       if let unsaved = coordinator.unsaved {
-        Label("Unsaved text", systemImage: "exclamationmark.triangle").font(.headline)
+        Label("Unsaved text", systemImage: "exclamationmark.triangle").font(
+          .flow(size: 14, weight: .semibold))
         Text("This text will be lost if you quit. Copy does not save it.")
         ScrollView {
           Text(unsaved.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)

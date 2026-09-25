@@ -148,6 +148,27 @@ func TestWrongLanguageRetried(t *testing.T) {
 	}
 }
 
+// Czech-only letters are not Slovak: Czech prose fails a Slovak request, while
+// a Czech name inside Slovak prose does not.
+func TestCzechIsNotSlovak(t *testing.T) {
+	req := pipelineRequest("x")
+	req.Meeting.LanguagePolicy.Output = "sk"
+	p := newPipeline(req, (&scripted{}).call, DefaultLimits(), time.Now().Add(time.Minute))
+	czech := "Rozpočet na projekt schválili všichni účastníci schůzky a řekli, že příští týden se vrátí k dalším krokům."
+	slovak := "Rozpočet na projekt schválili všetci účastníci stretnutia a povedali, že budúci týždeň sa vrátia k ďalším krokom."
+	withName := slovak + " Jiří pošle zhrnutie."
+	if p.languageOK(czech) {
+		t.Fatal("Czech prose passed as Slovak")
+	}
+	if !p.languageOK(slovak) || !p.languageOK(withName) {
+		t.Fatal("Slovak prose failed the Slovak check")
+	}
+	req.Meeting.LanguagePolicy.Output = "mixed"
+	if p.languageOK(czech) {
+		t.Fatal("Czech prose passed as mixed (Slovak prose)")
+	}
+}
+
 // An English overview over Slovak topics is still the wrong language.
 func TestMergeOverviewLanguageChecked(t *testing.T) {
 	req := synthesisRequest(partialWith("- testovanie"))

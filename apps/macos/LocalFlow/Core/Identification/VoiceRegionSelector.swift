@@ -36,17 +36,23 @@ enum VoiceRegionSelector {
   static func select(
     rootTurns: [SpeakerTurn], otherTurns: [SpeakerTurn], meetingLengthMs: Int64, limits: Limits
   ) -> [VoiceRegion] {
-    let others = otherTurns.sorted { ($0.startMs, $0.id) < ($1.startMs, $1.id) }
+    select(
+      rootTurns: rootTurns, others: OtherTurns(otherTurns), excluding: [],
+      meetingLengthMs: meetingLengthMs, limits: limits)
+  }
+
+  /// `select` against turns sorted once for many roots: turns of the `excluding`
+  /// speakers (the root's own clusters) are not other speakers.
+  static func select(
+    rootTurns: [SpeakerTurn], others: OtherTurns, excluding: Set<UUID>, meetingLengthMs: Int64,
+    limits: Limits
+  ) -> [VoiceRegion] {
     var candidates: [VoiceRegion] = []
     for turn in rootTurns.sorted(by: { ($0.startMs, $0.id) < ($1.startMs, $1.id) }) {
       guard turn.speakerID != nil, !turn.overlapped else { continue }
       if let quality = turn.engineQuality, quality < minEngineQuality { continue }
       // Intersecting another speaker's turn on either track disqualifies the turn.
-      let clashes = others.contains { other in
-        other.speakerID != turn.speakerID && other.startMs < turn.endMs
-          && other.endMs > turn.startMs
-      }
-      if clashes { continue }
+      if others.clashes(with: turn, excluding: excluding) { continue }
       let start = turn.startMs + trimMs
       let end = min(turn.endMs - trimMs, start + maxDurationMs)
       guard end - start >= minDurationMs else { continue }
@@ -91,6 +97,51 @@ enum VoiceRegionSelector {
       }
     }
     return chosen.sorted { ($0.startMs, $0.track.rawValue) < ($1.startMs, $1.track.rawValue) }
+  }
+
+  /// Other speakers' turns in start order with the running maximum of their ends, so
+  /// the clash test visits only the turns that can still reach a root turn instead of
+  /// every turn of the meeting.
+  struct OtherTurns {
+    private let turns: [SpeakerTurn]
+    /// `reach[i]` is the latest end among `turns[0...i]`.
+    private let reach: [Int64]
+
+    init(_ turns: [SpeakerTurn]) {
+      self.turns = turns.sorted { ($0.startMs, $0.id) < ($1.startMs, $1.id) }
+      var reach: [Int64] = []
+      reach.reserveCapacity(self.turns.count)
+      var latest = Int64.min
+      for turn in self.turns {
+        latest = max(latest, turn.endMs)
+        reach.append(latest)
+      }
+      self.reach = reach
+    }
+
+    /// True when a turn of another speaker, not one of `excluding`, intersects `turn`:
+    /// the same answer as testing every turn.
+    func clashes(with turn: SpeakerTurn, excluding: Set<UUID> = []) -> Bool {
+      // Turns from `upper` on start at or after `turn` ends and cannot intersect it.
+      var lower = 0
+      var upper = turns.count
+      while lower < upper {
+        let middle = (lower + upper) / 2
+        if turns[middle].startMs < turn.endMs { lower = middle + 1 } else { upper = middle }
+      }
+      // Walking back, once no earlier turn ends after `turn` starts, none can clash.
+      var index = upper - 1
+      while index >= 0, reach[index] > turn.startMs {
+        let other = turns[index]
+        if other.speakerID != turn.speakerID, other.endMs > turn.startMs,
+          !(other.speakerID.map(excluding.contains) ?? false)
+        {
+          return true
+        }
+        index -= 1
+      }
+      return false
+    }
   }
 
   /// After decoding: clipped or too quiet regions are rejected and counted, never used.

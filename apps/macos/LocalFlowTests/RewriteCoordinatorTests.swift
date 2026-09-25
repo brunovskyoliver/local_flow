@@ -64,12 +64,16 @@ final class RewriteCoordinatorTests: XCTestCase {
   private func makeFixture(
     script: FakeRewriteTransport.Script = .succeed(text: "Rewritten text."),
     endpoint: String = "http://127.0.0.1:8080", enabled: Bool = true, credential: String? = nil,
-    failOnAnyCall: Bool = false
+    failOnAnyCall: Bool = false, context: Bool = true
   ) -> Fixture {
     let suite = "LocalFlow-rewrite-coordinator-\(UUID())"
     suites.append(suite)
     let preferences = AppPreferences(defaults: UserDefaults(suiteName: suite)!)
     preferences.rewriteEnabled = enabled
+    // FR-013: the Feature 003 suite runs with both context toggles on. Without a
+    // stored snapshot every attempt is v1 and behaves exactly as before.
+    preferences.contextEnabled = context
+    preferences.contextRewriteEnabled = context
     preferences.rewriteEndpoint = endpoint
     preferences.rewriteTimeoutSeconds = 5
     let credentials = FakeRewriteCredentialStore()
@@ -484,5 +488,228 @@ final class RewriteCoordinatorTests: XCTestCase {
     XCTAssertEqual(fixture.transport.recorded.first?.timeout, .seconds(5))
     XCTAssertEqual(fixture.transport.recorded.first?.endpoint.origin, "http://127.0.0.1:8080")
     XCTAssertEqual(fixture.transport.requests.first?.mode, .clean)
+  }
+
+  /// A dead server must not add the version probe to every dictation: a failed
+  /// probe is remembered for its origin for `failedProbeTTL`, then asked again.
+  func testFailedVersionProbeIsCachedBrieflyPerOrigin() async throws {
+    let fixture = makeFixture()
+    let snapshot = AppContextSnapshot.make(.init(appName: "Mail", windowTitle: "Hello"))
+    await fixture.store.setContext(
+      DictationContextRecord(outcome: .used, snapshotJSON: snapshot.canonicalString),
+      for: fixture.dictation)
+    var now = ContinuousClock.now
+    fixture.coordinator.now = { now }
+    // The fake's health is unscripted, so every probe fails.
+    _ = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    XCTAssertEqual(fixture.transport.healthCalls, 1)
+    XCTAssertEqual(fixture.transport.requests.first?.sendsContext, false)
+    _ = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    XCTAssertEqual(fixture.transport.healthCalls, 1, "the failure is cached")
+    XCTAssertEqual(fixture.transport.requests.count, 2, "the rewrite itself still runs")
+    now = now.advanced(by: RewriteCoordinator.failedProbeTTL + .seconds(1))
+    _ = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    XCTAssertEqual(fixture.transport.healthCalls, 2, "expired: probed again")
+  }
+}
+
+/// Feature 012, Story 2: v1/v2 choice, `server_unsupported`, the copy guard and
+/// retry reuse of the stored snapshot.
+@MainActor
+final class RewriteContextCoordinatorTests: XCTestCase {
+  private var suites: [String] = []
+  private let faithful = "sounds good I will check it tomorrow"
+
+  override func tearDown() async throws {
+    await MainActor.run {
+      for suite in suites { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+      suites.removeAll()
+    }
+  }
+
+  private struct Fixture {
+    let coordinator: RewriteCoordinator
+    let transport: FakeRewriteTransport
+    let store: FakeRewriteAttemptStore
+    let preferences: AppPreferences
+    let dictation: UUID
+    let record: DictationContextRecord
+  }
+
+  private static let snapshot = AppContextSnapshot.make(
+    .init(
+      appName: "Mail", appCategory: .email, fieldKind: .multiLine,
+      windowTitle: "Re: NetBird rollout",
+      beforeCursor: "Hi Miroslav, thanks for the update, the staging cluster is ready."))
+
+  private static func health(_ versions: [Int]) -> HealthResponse {
+    HealthResponse(
+      schemaVersion: 1, service: HealthResponse.serviceName, protocolVersions: versions,
+      serverName: "flowd", serverVersion: "0.3.0", modes: ["clean"],
+      backend: .init(state: "ready", kind: "fake", model: "fake"), promptVersions: [:],
+      shieldVersion: 1)
+  }
+
+  private func makeFixture(
+    contextEnabled: Bool = true, contextRewrite: Bool = true, rewriteEnabled: Bool = true,
+    outcome: ContextOutcome = .used, versions: [Int]? = [1, 2],
+    script: FakeRewriteTransport.Script = .succeed(text: "Sounds good, I will check it tomorrow.")
+  ) async -> Fixture {
+    let suite = "LocalFlow-rewrite-context-\(UUID())"
+    suites.append(suite)
+    let preferences = AppPreferences(defaults: UserDefaults(suiteName: suite)!)
+    preferences.rewriteEnabled = rewriteEnabled
+    preferences.rewriteEndpoint = "http://127.0.0.1:8080"
+    preferences.rewriteTimeoutSeconds = 5
+    preferences.contextEnabled = contextEnabled
+    preferences.contextRewriteEnabled = contextRewrite
+    let transport = FakeRewriteTransport(defaultScript: script)
+    if let versions { transport.healthResult = .success(Self.health(versions)) }
+    let dictation = UUID()
+    let store = FakeRewriteAttemptStore(known: [dictation])
+    let record =
+      [.used, .timedOut].contains(outcome)
+      ? DictationContextRecord(
+        outcome: outcome, captureMs: 12, appBundleID: "com.apple.mail",
+        snapshotJSON: Self.snapshot.canonicalString)
+      : DictationContextRecord(outcome: outcome)
+    await store.setContext(record, for: dictation)
+    let coordinator = RewriteCoordinator(
+      preferences: preferences, credentials: FakeRewriteCredentialStore(), transport: transport,
+      store: store)
+    return Fixture(
+      coordinator: coordinator, transport: transport, store: store, preferences: preferences,
+      dictation: dictation, record: record)
+  }
+
+  func testV2CarriesTheStoredSnapshotAndRecordsItsHash() async throws {
+    let fixture = await makeFixture()
+    let outcome = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    guard case .rewritten(let text, let attempt) = outcome else { return XCTFail("\(outcome)") }
+    XCTAssertEqual(text, "Sounds good, I will check it tomorrow.")
+    let request = try XCTUnwrap(fixture.transport.requests.first)
+    XCTAssertEqual(request.schemaVersion, 2)
+    XCTAssertEqual(request.context, Data(Self.snapshot.canonicalString.utf8))
+    XCTAssertEqual(attempt.protocolVersion, 2)
+    XCTAssertEqual(attempt.contextHash, fixture.record.snapshotHash)
+    XCTAssertEqual(attempt.contextHash, Self.snapshot.hash)
+    let rewriteNote = await fixture.store.context(for: fixture.dictation)?.rewriteNote
+    XCTAssertNil(rewriteNote)
+  }
+
+  func testTimedOutSnapshotIsSentToo() async throws {
+    let fixture = await makeFixture(outcome: .timedOut)
+    _ = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    XCTAssertEqual(fixture.transport.requests.first?.schemaVersion, 2)
+  }
+
+  func testEveryMissingConditionSendsV1WithoutContext() async throws {
+    for (label, fixture) in [
+      ("context off", await makeFixture(contextEnabled: false)),
+      ("rewrite toggle off", await makeFixture(contextRewrite: false)),
+      ("excluded app", await makeFixture(outcome: .excludedApp)),
+      ("capture off", await makeFixture(outcome: .off)),
+      ("nothing readable", await makeFixture(outcome: .nothingReadable)),
+    ] {
+      let outcome = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+      guard case .rewritten(_, let attempt) = outcome else { return XCTFail("\(label) \(outcome)") }
+      let request = try XCTUnwrap(fixture.transport.requests.first, label)
+      XCTAssertEqual(request.schemaVersion, 1, label)
+      XCTAssertNil(request.context, label)
+      XCTAssertNil(
+        String(decoding: try request.httpBody(), as: UTF8.self).range(of: "context"), label)
+      XCTAssertEqual(attempt.protocolVersion, 1, label)
+      XCTAssertNil(attempt.contextHash, label)
+      XCTAssertEqual(fixture.transport.healthCalls, 0, "\(label): no probe without a snapshot")
+      let notes = await fixture.store.rewriteNoteWrites
+      XCTAssertTrue(notes.isEmpty, label)
+    }
+    // Rewriting off: nothing is sent at all.
+    let off = await makeFixture(rewriteEnabled: false)
+    let offOutcome = await off.coordinator.rewrite(dictation: off.dictation, text: faithful)
+    XCTAssertEqual(offOutcome, .notEligible)
+    XCTAssertEqual(off.transport.callCount, 0)
+  }
+
+  func testServerWithoutV2SendsV1AndRecordsServerUnsupported() async throws {
+    for versions in [[1], nil] as [[Int]?] {
+      let fixture = await makeFixture(versions: versions)
+      let outcome = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+      guard case .rewritten(_, let attempt) = outcome else { return XCTFail("\(outcome)") }
+      XCTAssertEqual(fixture.transport.requests.first?.schemaVersion, 1)
+      XCTAssertNil(fixture.transport.requests.first?.context)
+      XCTAssertEqual(attempt.protocolVersion, 1)
+      let note = await fixture.store.context(for: fixture.dictation)?.rewriteNote
+      XCTAssertEqual(note, DictationContextRecord.serverUnsupported)
+      // The note tracks the latest attempt: a later v2 attempt clears it.
+      fixture.transport.healthResult = .success(Self.health([1, 2]))
+      _ = await fixture.coordinator.retry(
+        dictation: fixture.dictation, faithfulText: faithful, mode: .clean, origin: .history)
+      XCTAssertEqual(fixture.transport.requests.last?.schemaVersion, 2)
+      let cleared = await fixture.store.context(for: fixture.dictation)?.rewriteNote
+      XCTAssertNil(cleared)
+    }
+  }
+
+  func testCopiedResultFailsAsContextCopiedAndInsertsTheTranscript() async throws {
+    let fixture = await makeFixture(
+      script: .succeed(text: "Sounds good, the staging cluster is ready. I will check it tomorrow.")
+    )
+    let outcome = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    XCTAssertEqual(outcome, .fallback(faithful: faithful, category: .contextCopied))
+    let rows = await fixture.store.attempts(for: fixture.dictation)
+    XCTAssertEqual(rows.count, 1)
+    XCTAssertEqual(rows[0].state, .failed)
+    XCTAssertEqual(rows[0].failureCategory, .contextCopied)
+    XCTAssertEqual(rows[0].contextHash, Self.snapshot.hash)
+    XCTAssertEqual(rows[0].protocolVersion, 2)
+    XCTAssertNil(rows[0].outputText, "the copied text is never stored as a result")
+    XCTAssertFalse(
+      fixture.coordinator.recentDiagnostics.joined().contains("staging cluster"),
+      "the log names the violation, never the text")
+    XCTAssertEqual(
+      RewriteNotice.text(for: .contextCopied, context: .live),
+      "Rewrite used on-screen text you did not say; inserted your transcript.")
+  }
+
+  func testUnsaidTermIsRejected() async throws {
+    var snapshot = AppContextSnapshot(
+      appName: "Mail", appCategory: .email, fieldKind: .multiLine,
+      beforeCursor: "Dear Miroslav, the rollout")
+    snapshot.terms = [ContextTerm(text: "Miroslav", source: .beforeCursor, kind: .name)]
+    let fixture = await makeFixture(script: .succeed(text: "Hi Miroslav, sounds good."))
+    await fixture.store.setContext(
+      DictationContextRecord(outcome: .used, snapshotJSON: snapshot.canonicalString),
+      for: fixture.dictation)
+    let outcome = await fixture.coordinator.rewrite(
+      dictation: fixture.dictation, text: "hi sounds good")
+    XCTAssertEqual(outcome, .fallback(faithful: "hi sounds good", category: .contextCopied))
+  }
+
+  func testHistoryRetrySendsTheStoredSnapshotByteIdentical() async throws {
+    let fixture = await makeFixture(script: .fail(.serverUnreachable))
+    _ = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    fixture.transport.setDefault(.succeed(text: "Sounds good."))
+    let retried = await fixture.coordinator.retry(
+      dictation: fixture.dictation, faithfulText: faithful, mode: .polished, origin: .history)
+    guard case .rewritten(_, let attempt) = retried else { return XCTFail("\(retried)") }
+    let requests = fixture.transport.requests
+    XCTAssertEqual(requests.count, 2)
+    XCTAssertEqual(requests[0].context, requests[1].context)
+    XCTAssertEqual(requests[1].context, Data(Self.snapshot.canonicalString.utf8))
+    XCTAssertEqual(attempt.contextHash, Self.snapshot.hash)
+    let rows = await fixture.store.attempts(for: fixture.dictation)
+    XCTAssertEqual(rows.map(\.contextHash), [Self.snapshot.hash, Self.snapshot.hash])
+  }
+
+  func testV2FailuresFallBackExactlyLikeV1() async throws {
+    for category in [
+      RewriteFailureCategory.serverUnreachable, .timeout, .malformedResponse, .backendUnavailable,
+    ] {
+      let fixture = await makeFixture(script: .fail(category))
+      let outcome = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+      XCTAssertEqual(outcome, .fallback(faithful: faithful, category: category))
+      XCTAssertEqual(fixture.transport.requests.first?.schemaVersion, 2)
+    }
   }
 }

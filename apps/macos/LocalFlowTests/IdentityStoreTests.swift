@@ -21,7 +21,7 @@ final class IdentityStoreTests: XCTestCase {
   }
   override func tearDown() { fixture.cleanup() }
 
-  private var database: DatabaseQueue { fixture.history.database }
+  private var database: DatabasePool { fixture.history.database }
 
   /// A meeting with an accepted diarization run: the local cluster plus `remote` remote
   /// clusters. Returns the meeting id and the cluster ids (local first).

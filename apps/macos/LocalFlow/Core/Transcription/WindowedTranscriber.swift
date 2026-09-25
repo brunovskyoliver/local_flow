@@ -94,9 +94,40 @@ struct TranscriptionResult: Sendable {
   }
 }
 
+/// A full window recognized while capture continued, replayed by the final pass.
+struct PrefetchedWindow: Sendable {
+  let window: TranscriptionWindow
+  let recognitionSeconds: Double
+}
+
 protocol DictationTranscribing: Sendable {
   func transcribe(spool: AudioSpool, lease: ModelLease, sampleCount: Int) async
     -> TranscriptionResult
+  /// Samples in a window that is final once recorded; nil when nothing can be
+  /// recognized before capture stops.
+  var liveWindowSamples: Int? { get }
+  /// Recognizes the full window starting at `startSample` under the session lease.
+  func recognizeWindow(spool: AudioSpool, lease: ModelLease, startSample: Int) async throws
+    -> PrefetchedWindow
+  /// The final pass. Windows found in `prefetched`, keyed by start sample, are used in
+  /// place of recognizing them again; the result is otherwise the batch result.
+  func transcribe(
+    spool: AudioSpool, lease: ModelLease, sampleCount: Int,
+    prefetched: [Int: PrefetchedWindow]
+  ) async -> TranscriptionResult
+}
+
+extension DictationTranscribing {
+  var liveWindowSamples: Int? { nil }
+  func recognizeWindow(spool: AudioSpool, lease: ModelLease, startSample: Int) async throws
+    -> PrefetchedWindow
+  { throw DictationFailure.invalidAudio }
+  func transcribe(
+    spool: AudioSpool, lease: ModelLease, sampleCount: Int,
+    prefetched: [Int: PrefetchedWindow]
+  ) async -> TranscriptionResult {
+    await transcribe(spool: spool, lease: lease, sampleCount: sampleCount)
+  }
 }
 
 struct WindowedTranscriber: DictationTranscribing {
@@ -106,11 +137,39 @@ struct WindowedTranscriber: DictationTranscribing {
   var profile: Profile = .production
   var identity = TranscriptionPipelineIdentity()
   var evidenceObserver: (@Sendable (Int, Int, Bool) async throws -> Void)? = nil
+  static let productionWindowSamples = 239_360
+
+  /// Production windows are contiguous, so each full one is final once recorded.
+  /// Historical windows overlap and are recognized only after capture stops.
+  var liveWindowSamples: Int? { profile == .production ? Self.productionWindowSamples : nil }
+
+  func recognizeWindow(spool: AudioSpool, lease: ModelLease, startSample: Int) async throws
+    -> PrefetchedWindow
+  {
+    guard profile == .production else { throw DictationFailure.invalidAudio }
+    try Task.checkCancellation()
+    let samples = try spool.readWindow(
+      startSample: startSample, count: Self.productionWindowSamples)
+    try Task.checkCancellation()
+    let began = ProcessInfo.processInfo.systemUptime
+    let window = try await lifecycle.transcribe(lease, samples: samples)
+    return .init(
+      window: window, recognitionSeconds: ProcessInfo.processInfo.systemUptime - began)
+  }
+
   func transcribe(spool: AudioSpool, lease: ModelLease, sampleCount: Int) async
     -> TranscriptionResult
   {
+    await transcribe(spool: spool, lease: lease, sampleCount: sampleCount, prefetched: [:])
+  }
+
+  func transcribe(
+    spool: AudioSpool, lease: ModelLease, sampleCount: Int,
+    prefetched: [Int: PrefetchedWindow]
+  ) async -> TranscriptionResult {
     if profile == .production {
-      return await transcribeProduction(spool: spool, lease: lease, sampleCount: sampleCount)
+      return await transcribeProduction(
+        spool: spool, lease: lease, sampleCount: sampleCount, prefetched: prefetched)
     }
     var assembly = WindowTextAssembler()
     var admission = RecognitionAdmission()
@@ -154,9 +213,10 @@ struct WindowedTranscriber: DictationTranscribing {
       rawWindows: admission.windows, completionReasons: reasons)
   }
 
-  private func transcribeProduction(spool: AudioSpool, lease: ModelLease, sampleCount: Int) async
-    -> TranscriptionResult
-  {
+  private func transcribeProduction(
+    spool: AudioSpool, lease: ModelLease, sampleCount: Int,
+    prefetched: [Int: PrefetchedWindow]
+  ) async -> TranscriptionResult {
     guard (0...2_880_000).contains(sampleCount) else {
       return .init(text: "", incomplete: true, completionReasons: [.init(.invalidResult)])
     }
@@ -180,18 +240,24 @@ struct WindowedTranscriber: DictationTranscribing {
     var offset = 0
     while offset < sampleCount {
       do {
-        try Task.checkCancellation()
         let count = min(239_360, sampleCount - offset)
-        let samples = try spool.readWindow(startSample: offset, count: count)
-        let began = ProcessInfo.processInfo.systemUptime
         let window: TranscriptionWindow
-        do {
-          window = try await lifecycle.transcribe(lease, samples: samples)
-        } catch {
+        if count == Self.productionWindowSamples, let early = prefetched[offset] {
+          // Recognized while recording; cancellation keeps windows that were already done.
+          window = early.window
+          recognitionSeconds += early.recognitionSeconds
+        } else {
+          try Task.checkCancellation()
+          let samples = try spool.readWindow(startSample: offset, count: count)
+          let began = ProcessInfo.processInfo.systemUptime
+          do {
+            window = try await lifecycle.transcribe(lease, samples: samples)
+          } catch {
+            recognitionSeconds += ProcessInfo.processInfo.systemUptime - began
+            throw error
+          }
           recognitionSeconds += ProcessInfo.processInfo.systemUptime - began
-          throw error
         }
-        recognitionSeconds += ProcessInfo.processInfo.systemUptime - began
         try admission.append(window, sampleStart: offset, sampleCount: count)
         let assemblyBegan = ProcessInfo.processInfo.systemUptime
         assembly.append(

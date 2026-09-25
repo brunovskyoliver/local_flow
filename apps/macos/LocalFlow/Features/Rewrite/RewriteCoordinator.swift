@@ -58,6 +58,25 @@ final class RewriteCoordinator: RewriteRequesting {
   @ObservationIgnored private let logger = Logger(
     subsystem: "org.localflow.LocalFlow", category: "rewrite")
   static let diagnosticsCapacity = 32
+  /// Upper bound on the health probe that decides v1 or v2 (ADR 0023).
+  static let versionProbeLimit: Duration = .seconds(2)
+  /// A failed or timed-out probe is remembered this long for its origin, so a
+  /// dead server does not add `versionProbeLimit` to every dictation.
+  static let failedProbeTTL: Duration = .seconds(45)
+  /// One entry: the origin whose last probe failed and until when.
+  @ObservationIgnored private var failedProbe: (origin: String, until: ContinuousClock.Instant)?
+  /// Injectable for tests.
+  @ObservationIgnored var now: () -> ContinuousClock.Instant = { .now }
+
+  /// Feature 012: what a v2 attempt sends and checks against. Built from the
+  /// committed context row only, so a retry sends the same bytes (FR-014).
+  struct ContextPlan: Sendable {
+    let data: Data
+    let hash: String
+    let snapshot: AppContextSnapshot
+    /// Replacements made by local context spelling; they count as said.
+    let spelled: [String]
+  }
 
   init(
     preferences: AppPreferences, credentials: any RewriteCredentialStoring,
@@ -93,10 +112,11 @@ final class RewriteCoordinator: RewriteRequesting {
 
   /// The admission sequence from `data-model.md`, in order. Steps 1–5 are pure;
   /// `store.begin` is the only persisting step and the only one that can
-  /// consume an ordinal.
+  /// consume an ordinal. `freshProbe` ignores a cached failed version probe: an
+  /// explicit retry asks the server again, since it may have been upgraded.
   func admit(
     dictation: UUID, text: String, mode: RewriteMode?, settings: RewriteSettings,
-    committed: ContinuousClock.Instant, context: RewriteNotice.Context
+    committed: ContinuousClock.Instant, context: RewriteNotice.Context, freshProbe: Bool = false
   ) async -> RewriteAdmissionResult {
     let effectiveMode = mode ?? settings.mode
     let bucket = RewriteInputBucket.bucket(for: text)
@@ -126,25 +146,36 @@ final class RewriteCoordinator: RewriteRequesting {
     else { return refuse(.concurrencyLimit, bucket: bucket) }
     admitting.insert(dictation)
     defer { admitting.remove(dictation) }
+    // Feature 012: v1 or v2 is decided before the row records the protocol version.
+    let (plan, record, note) = await contextPlan(
+      dictation: dictation, settings: settings, endpoint: endpoint, freshProbe: freshProbe)
     // 6. Storage admission; re-checks 4–5 inside its transaction.
     let attempt: RewriteAttempt
     do {
       attempt = try await store.begin(
         RewriteAdmission(
           transcriptionID: dictation, mode: effectiveMode, inputText: text,
-          endpointOrigin: settings.endpointOrigin, insecureOverride: settings.insecureOverride))
+          endpointOrigin: settings.endpointOrigin, insecureOverride: settings.insecureOverride,
+          contextHash: plan?.hash))
     } catch let failure as RewriteFailure where !failure.category.isPersistable {
       return refuse(failure.category, bucket: bucket)
     } catch {
       log("begin failed: \(DictationErrorMessage.describe(error))")
       return refuse(.capacityExceeded, bucket: bucket)
     }
+    // The note describes the latest attempt only.
+    if let record, record.rewriteNote != note {
+      do { try await store.recordRewriteNote(note, for: dictation) } catch {
+        log("rewrite note failed: \(DictationErrorMessage.describe(error))")
+      }
+    }
     let instants = RewriteInstants(committed: committed)
     let completion = Completion()
     let task = Task { [weak self] in
       let outcome =
         await self?.run(
-          attempt: attempt, endpoint: endpoint, settings: settings, instants: instants)
+          attempt: attempt, endpoint: endpoint, settings: settings, instants: instants,
+          plan: plan)
         ?? .cancelled(faithful: attempt.inputText)
       self?.resolve(attempt.id, outcome: outcome, completion: completion)
       return outcome
@@ -156,6 +187,55 @@ final class RewriteCoordinator: RewriteRequesting {
       "admitted attempt \(attempt.id.uuidString) ordinal \(attempt.ordinal) bucket \(bucket.rawValue)"
     )
     return .admitted(attempt)
+  }
+
+  /// Conditions from `contracts/rewrite-protocol-v2.md`: both toggles in the
+  /// snapshot, a stored snapshot with outcome `used` or `timed_out`, and health
+  /// listing 2. When only the last fails, the note is `server_unsupported`.
+  private func contextPlan(
+    dictation: UUID, settings: RewriteSettings, endpoint: RewriteEndpoint, freshProbe: Bool
+  ) async -> (ContextPlan?, DictationContextRecord?, String?) {
+    let record = try? await store.context(for: dictation)
+    guard settings.sendsContext, let record, [.used, .timedOut].contains(record.outcome),
+      let json = record.snapshotJSON, let hash = record.snapshotHash,
+      let snapshot = record.snapshot
+    else { return (nil, record, nil) }
+    let versions = await probeVersions(endpoint, fresh: freshProbe)
+    guard versions?.contains(RewriteBounds.contextSchemaVersion) == true else {
+      log("context not sent: server_unsupported")
+      return (nil, record, DictationContextRecord.serverUnsupported)
+    }
+    let plan = ContextPlan(
+      data: Data(json.utf8), hash: hash, snapshot: snapshot,
+      spelled: record.spellingChanges.map(\.replacement))
+    return (plan, record, nil)
+  }
+
+  private func probeVersions(_ endpoint: RewriteEndpoint, fresh: Bool) async -> [Int]? {
+    if !fresh, let failedProbe, failedProbe.origin == endpoint.origin,
+      now() < failedProbe.until
+    {
+      return nil
+    }
+    let transport = transport
+    let versions = await withTaskGroup(of: [Int]?.self) { group in
+      group.addTask { await transport.protocolVersions(endpoint: endpoint) }
+      group.addTask {
+        try? await Task.sleep(for: Self.versionProbeLimit)
+        return nil
+      }
+      let first = await group.next() ?? nil
+      group.cancelAll()
+      return first
+    }
+    // Success stays cached in the transport; a failure (or the limit) is
+    // cached here briefly. A cancelled dictation proves nothing about the server.
+    if versions == nil, !Task.isCancelled {
+      failedProbe = (endpoint.origin, now().advanced(by: Self.failedProbeTTL))
+    } else if versions != nil, failedProbe?.origin == endpoint.origin {
+      failedProbe = nil
+    }
+    return versions
   }
 
   private func refuse(_ reason: RewriteFailureCategory, bucket: RewriteInputBucket)
@@ -204,7 +284,7 @@ final class RewriteCoordinator: RewriteRequesting {
     }
     let admission = await admit(
       dictation: dictation, text: attempts.first?.inputText ?? faithfulText,
-      mode: mode, settings: settings, committed: .now, context: origin)
+      mode: mode, settings: settings, committed: .now, context: origin, freshProbe: true)
     switch admission {
     case .notEligible: return .notEligible
     case .refused(let reason): return .refused(reason)
@@ -279,7 +359,7 @@ final class RewriteCoordinator: RewriteRequesting {
 
   private func run(
     attempt: RewriteAttempt, endpoint: RewriteEndpoint, settings: RewriteSettings,
-    instants: RewriteInstants
+    instants: RewriteInstants, plan: ContextPlan?
   ) async -> RewriteOutcome {
     var instants = instants
     // Retain one terminal payload; progress and deltas never accumulate.
@@ -289,14 +369,15 @@ final class RewriteCoordinator: RewriteRequesting {
     let faithful = attempt.inputText
     let request: RewriteRequest
     do {
-      request = try RewriteRequest(requestID: attempt.id, mode: attempt.mode, text: faithful)
+      request = try RewriteRequest(
+        requestID: attempt.id, mode: attempt.mode, text: faithful, context: plan?.data)
     } catch {
       return await finish(
         attempt, failure: .invalidSettings, instants: instants, requestBytes: nil,
         responseBytes: nil, settings: settings)
     }
     instants.sent = .now
-    let outcome: Result<RewriteResult, RewriteFailure>
+    var outcome: Result<RewriteResult, RewriteFailure>
     do {
       let stream = transport.rewrite(
         request: request, endpoint: endpoint, timeout: .seconds(settings.timeoutSeconds))
@@ -342,6 +423,15 @@ final class RewriteCoordinator: RewriteRequesting {
       outcome = .failure(RewriteFailure(.transportError))
     }
     terminal = nil
+    // FR-012: a v2 result that copies the screen is replaced by the faithful transcript.
+    if case .success(let result) = outcome, let plan,
+      let violation = ContextCopyGuard.check(
+        result: result.text, transcript: faithful, snapshot: plan.snapshot,
+        spelledTerms: plan.spelled)
+    {
+      log("context guard \(violation.rawValue) \(attempt.id.uuidString)")
+      outcome = .failure(RewriteFailure(.contextCopied))
+    }
     // Staleness: applied only while still pending on the main actor.
     guard await isCurrent(attempt) else { return await discard(attempt) }
     switch outcome {

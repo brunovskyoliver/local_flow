@@ -103,6 +103,24 @@ final class AudioSpoolTests: XCTestCase {
     try spool.cleanup()
   }
 
+  /// Appends write at the tracked end offset, so a read that moved the file position
+  /// in between cannot make the next append overwrite earlier audio.
+  func testAppendsAfterReadsLandAtTheEnd() throws {
+    let root = try temporaryRoot()
+    let spool = try AudioSpool(rootDirectory: root)
+    let first = (0..<400).map { Float($0) / 1_000 }
+    let second = (0..<300).map { -Float($0) / 1_000 }
+    try spool.append(normalizedSamples: first)
+    XCTAssertEqual(try spool.readWindow(startSample: 0, count: 10), Array(first.prefix(10)))
+    try second.withUnsafeBufferPointer { try spool.append(normalizedSamples: $0) }
+    XCTAssertEqual(spool.bytesWritten, 700 * MemoryLayout<Float>.stride)
+    XCTAssertEqual(try spool.readWindow(startSample: 0, count: 700), first + second)
+    XCTAssertThrowsError(try spool.append(normalizedSamples: [])) {
+      XCTAssertEqual($0 as? AudioSpoolError, .invalidSamples)
+    }
+    try spool.cleanup()
+  }
+
   private func temporaryRoot() throws -> URL {
     let url = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(UUID().uuidString)

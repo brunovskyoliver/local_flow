@@ -132,8 +132,12 @@ final class MeetingFinalizerTests: XCTestCase {
         ])
     ])
     let (finalizer, lifecycle) = makeFinalizer(runtime: runtime, recorder: capture.recorder)
+    let idle = await finalizer.residentWindowSamples
+    XCTAssertEqual(idle, 0, "no window is allocated before a pass")
     let revision = try await revision(meeting.meetingID)
     let outcome = try await finalizer.run(meetingID: meeting.meetingID, revision: revision)
+    let released = await finalizer.residentWindowSamples
+    XCTAssertEqual(released, 0, "the pass releases its window")
     let counts = await runtime.sampleCounts
     XCTAssertEqual(counts.count, 3)
     XCTAssertEqual(counts[0], MeetingFinalizer.windowSamples)
@@ -479,6 +483,8 @@ final class MeetingFinalizerTests: XCTestCase {
       } catch {
         XCTAssertEqual(error as? MeetingFinalizer.Error, .failed(.runtimeFailure, detail: nil))
       }
+      let resident = await finalizer.residentWindowSamples
+      XCTAssertEqual(resident, 0, "a failed pass releases its window")
       let rowValue = try await store.transcription(meetingID: meeting.meetingID)
       let row = try XCTUnwrap(rowValue)
       XCTAssertEqual(row.state, .failed)
@@ -813,14 +819,20 @@ final class MeetingFinalizerTests: XCTestCase {
     let runtime = FakeTranscriptionRuntime(windows: [
       .init(text: "Hello.", tokens: []), .init(text: "Hi.", tokens: []),
     ])
+    // The runtime decodes in the language the pass recorded, not a second read.
+    let requested = FactoryLanguages()
     let lifecycle = ModelLifecycleCoordinator(
-      meetingFactory: { _ in runtime }, factory: { ProbeRuntime() })
+      meetingFactory: { language in
+        requested.append(language)
+        return runtime
+      }, factory: { ProbeRuntime() })
     let finalizer = MeetingFinalizer(
       store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: lifecycle,
       configuration: .turbo, defaultLanguage: { .slovak })
     let outcome = try await finalizer.run(
       meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
     XCTAssertEqual(outcome.row.pipelineVersion?.contains("+lang_en_prompt_v1+"), true)
+    XCTAssertEqual(requested.values, [.english])
     // Clearing the choice returns the meeting to the default.
     _ = try await fixture.store.setLanguage(
       meetingID: meeting.meetingID, language: nil, revision: stored.revision, now: now)
@@ -850,6 +862,8 @@ final class MeetingFinalizerTests: XCTestCase {
       meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
     let counts = await runtime.sampleCounts
     XCTAssertEqual(counts.count, 2, "one request per track, nothing mixed")
+    let resident = await finalizer.residentWindowSamples
+    XCTAssertEqual(resident, 0, "both lane windows are released")
     XCTAssertEqual(counts[0], counts[1])
     // The 0.4 tone (−11 dBFS) arrives at the −20 dBFS speech level.
     let received = await runtime.received
@@ -922,4 +936,12 @@ struct RevisionVocabulary: VocabularyProviding {
 
 struct FailingVocabulary: VocabularyProviding {
   func snapshot() async throws -> VocabularySnapshot { throw DictationFailure.invalidResult }
+}
+
+/// The languages a meeting runtime factory was asked for, in order.
+private final class FactoryLanguages: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: [MeetingLanguage] = []
+  var values: [MeetingLanguage] { lock.withLock { stored } }
+  func append(_ language: MeetingLanguage) { lock.withLock { stored.append(language) } }
 }

@@ -65,3 +65,52 @@ struct RewriteCredentialStore: Sendable {
     return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
   }
 }
+
+/// Caches presence per origin so polling callers (the Settings snapshot, view
+/// bodies) do not hit the Keychain on every read. LocalFlow is the only writer
+/// of its items, and every write or removal goes through this wrapper, which
+/// invalidates that origin. A different origin is a different cache key, so an
+/// endpoint change looks up again. `read` always goes to the backing store.
+final class CachedRewriteCredentialStore: RewriteCredentialStoring, @unchecked Sendable {
+  private let base: any RewriteCredentialStoring
+  private let lock = NSLock()
+  private var presence: [String: Bool] = [:]
+
+  init(_ base: any RewriteCredentialStoring = RewriteCredentialStore()) {
+    self.base = base
+  }
+
+  func read(origin: String) throws -> String? { try base.read(origin: origin) }
+
+  func write(origin: String, secret: String) throws {
+    defer { invalidate(origin) }
+    try base.write(origin: origin, secret: secret)
+  }
+
+  func remove(origin: String) throws {
+    defer { invalidate(origin) }
+    try base.remove(origin: origin)
+  }
+
+  func exists(origin: String) -> Bool {
+    lock.lock()
+    if let cached = presence[origin] {
+      lock.unlock()
+      return cached
+    }
+    lock.unlock()
+    let present = base.exists(origin: origin)
+    lock.lock()
+    // Bounded by the handful of origins a user configures; drop all if it grows.
+    if presence.count >= 16 { presence.removeAll() }
+    presence[origin] = present
+    lock.unlock()
+    return present
+  }
+
+  private func invalidate(_ origin: String) {
+    lock.lock()
+    presence[origin] = nil
+    lock.unlock()
+  }
+}

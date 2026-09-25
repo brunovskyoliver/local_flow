@@ -107,8 +107,12 @@ final class AudioCaptureStaging: @unchecked Sendable {
 }
 
 /// All engine, converter, spool and session state belongs to one serial worker.
-/// A 10 ms polling timer replaces callback dispatches. Conversion writes directly
-/// to the spool using one <=1600-frame block, below the 32-block queue allowance.
+/// A 25 ms polling timer replaces callback dispatches. The tap requests 1,024
+/// frames per callback and the ring holds 32 callbacks: at least 683 ms at 48 kHz,
+/// 341 ms at 96 kHz and 171 ms at the 192 kHz ceiling, so 25 ms leaves ≥ 6× margin
+/// before overflow latches. Microphone authorization is re-read at most every
+/// 250 ms. Conversion writes directly to the spool using one <=1600-frame block,
+/// below the 32-block queue allowance.
 /// The caller owns spool cleanup after consuming any partial result.
 final class AudioCaptureService: @unchecked Sendable {
   private let worker = DispatchQueue(label: "org.localflow.audio-capture", qos: .userInitiated)
@@ -152,6 +156,8 @@ final class AudioCaptureService: @unchecked Sendable {
     var level: Float { normalizer.level }
     var tapInstalled = true
     var timer: DispatchSourceTimer?
+    /// Last authorization read, in `LFAudioCaptureNow` nanoseconds.
+    var permissionCheckedAt: UInt64 = 0
     var configurationObserver: NSObjectProtocol?
     var sleepObserver: NSObjectProtocol?
 
@@ -275,7 +281,8 @@ final class AudioCaptureService: @unchecked Sendable {
       forName: NSWorkspace.willSleepNotification, object: nil, queue: nil
     ) { _ in LFAudioRingSignalFailure(ring.pointer, 4) }
     let timer = DispatchSource.makeTimerSource(queue: worker)
-    timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(2))
+    timer.schedule(
+      deadline: .now(), repeating: Self.pollInterval, leeway: .milliseconds(5))
     timer.setEventHandler { [weak self] in self?.poll() }
     session.timer = timer
     completed = nil
@@ -283,16 +290,22 @@ final class AudioCaptureService: @unchecked Sendable {
     timer.resume()
   }
 
+  static let pollInterval: DispatchTimeInterval = .milliseconds(25)
+  static let permissionIntervalNanoseconds: UInt64 = 250_000_000
+
   private func poll() {
     guard let session = active else { return }
+    let now = LFAudioCaptureNow()
+    let checkPermission = now &- session.permissionCheckedAt >= Self.permissionIntervalNanoseconds
+    if checkPermission { session.permissionCheckedAt = now }
     let reason: AudioCaptureStopReason?
     if let failure = session.ring.failure {
       reason = .failure(failure)
-    } else if Self.permissionStatus != .authorized {
+    } else if checkPermission, Self.permissionStatus != .authorized {
       reason = .failure(.permissionRevoked)
     } else if !session.engine.isRunning {
       reason = .failure(.deviceLost)
-    } else if session.budget.deadlineReached(at: LFAudioCaptureNow()) {
+    } else if session.budget.deadlineReached(at: now) {
       reason = .durationLimit
     } else {
       reason = nil
@@ -456,16 +469,18 @@ final class AudioCaptureNormalizer {
         guard let data = output.floatChannelData?[0] else {
           throw AudioCaptureFailure.conversion
         }
-        var samples = [Float]()
-        samples.reserveCapacity(count)
+        // The capture boundary: reject non-finite samples and clamp in place, then
+        // spool straight from the converter's buffer.
         var peak: Float = 0
         for index in 0..<count {
           guard data[index].isFinite else { throw AudioCaptureFailure.conversion }
           let value = max(-1, min(1, data[index]))
-          samples.append(value)
+          data[index] = value
           peak = max(peak, abs(value))
         }
-        do { try spool.append(normalizedSamples: samples) } catch {
+        do {
+          try spool.append(normalizedSamples: UnsafeBufferPointer(start: data, count: count))
+        } catch {
           throw AudioCaptureFailure.disk
         }
         _ = budget.accept(count)

@@ -17,12 +17,17 @@ final class AppServices {
     observe: { [weak self] in await self?.settingsSnapshot() ?? .init() },
     perform: { [weak self] action in try await self?.performSetting(action) },
     preferences: preferences, rewriteCredentials: rewriteCredentials,
-    rewriteTransport: RewriteClient(credentials: rewriteCredentials),
-    analysisTransport: AnalysisClient(credentials: rewriteCredentials))
+    rewriteTransport: rewriteClient, analysisTransport: analysisClient)
   private(set) var historyModel: HistoryViewModel?
   private(set) var vocabularyModel: VocabularyViewModel?
   @ObservationIgnored private var learner: CorrectionLearner?
-  @ObservationIgnored private let rewriteCredentials = RewriteCredentialStore()
+  @ObservationIgnored private let rewriteCredentials = CachedRewriteCredentialStore()
+  /// One client per protocol, shared by Settings › Test and real requests, so the
+  /// health check warms the same connection pool the requests use.
+  @ObservationIgnored private lazy var rewriteClient = RewriteClient(
+    credentials: rewriteCredentials)
+  @ObservationIgnored private lazy var analysisClient = AnalysisClient(
+    credentials: rewriteCredentials)
   @ObservationIgnored private(set) var rewriteCoordinator: RewriteCoordinator?
   private(set) var explicitInsertion: ExplicitInsertionCoordinator?
   private(set) var reviewingInsertion = false
@@ -75,6 +80,9 @@ final class AppServices {
   @ObservationIgnored private var resumedFinalizations: Set<UUID> = []
   @ObservationIgnored private var visualTask: Task<Void, Never>?
   @ObservationIgnored private var displayObserver: DisplayOptionsObserver?
+  /// Read once and refreshed by `displayObserver`, not on every indicator frame.
+  @ObservationIgnored private var reduceMotion =
+    NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
   @ObservationIgnored private var modelDescriptor: ModelDescriptor?
   @ObservationIgnored private var modelLocation: URL?
   @ObservationIgnored private var recorder: ResourceRecorder?
@@ -82,6 +90,7 @@ final class AppServices {
   @ObservationIgnored private var quitting = false
   @ObservationIgnored private var lastInputMonitoringAllowed = false
   @ObservationIgnored private var lastAccessibilityAllowed = false
+  @ObservationIgnored private var settingsWake: AsyncStream<Void>.Continuation?
   @ObservationIgnored private var phaseStarted = DispatchTime.now().uptimeNanoseconds
   @ObservationIgnored private var measuredPhase: DictationSession.State = .idle
   @ObservationIgnored private var measuredCycleID: UUID?
@@ -89,7 +98,6 @@ final class AppServices {
   var needsAttention: Bool {
     coordinator?.unsaved != nil || coordinator?.storageBlocked == true
       || coordinator?.capacityBlocked == true || coordinator?.state == .failed
-      || coordinator?.hasRecovery == true
   }
 
   var readinessStatus: String {
@@ -109,7 +117,6 @@ final class AppServices {
     guard shortcut.isAvailable else {
       return "Enable the shortcut and Input Monitoring in Settings."
     }
-    if coordinator?.hasRecovery == true { return "Saved text needs review. Open Transcriptions." }
     return "Ready · hold your shortcut to dictate"
   }
 
@@ -175,9 +182,17 @@ final class AppServices {
       // manifest only disables diarization (model_unavailable).
       let diarizationManifest = Bundle.main.url(
         forResource: "speaker-diarization-offline", withExtension: "json"
-      ).flatMap { try? Data(contentsOf: $0) }
-      let diarizationDescriptor = diarizationManifest.flatMap {
-        try? JSONDecoder().decode(ModelDescriptor.self, from: $0)
+      ).flatMap { url in
+        do { return try Data(contentsOf: url) } catch {
+          Self.logModelFailure("Speaker labeling manifest read", error)
+          return nil
+        }
+      }
+      let diarizationDescriptor = diarizationManifest.flatMap { data in
+        do { return try JSONDecoder().decode(ModelDescriptor.self, from: data) } catch {
+          Self.logModelFailure("Speaker labeling manifest decode", error)
+          return nil
+        }
       }
       let diarizationProvisioner = diarizationDescriptor.map {
         ModelProvisioner(
@@ -264,6 +279,7 @@ final class AppServices {
           } catch is CancellationError {
             throw CancellationError()
           } catch {
+            Self.logModelFailure("Speaker labeling model", error)
             throw DiarizationFailureCategory.modelUnavailable
           }
           var runtime: any DiarizationRuntime = try await FluidAudioDiarizerFactory(
@@ -290,24 +306,24 @@ final class AppServices {
           } catch is CancellationError {
             throw CancellationError()
           } catch {
+            Self.logModelFailure("Voice embedding model", error)
             throw IdentificationFailureCategory.modelUnavailable
           }
           return try await FluidAudioVoiceEmbedderFactory(descriptor: local).makeRuntime()
         },
-        meetingFactory: { [weak self] session in
+        meetingFactory: { [weak self] language in
           let local: LocalModelDescriptor
           do {
             local = try await meetingProvisioner.verifiedLocalDescriptor()
           } catch is CancellationError {
             throw CancellationError()
           } catch {
+            Self.logModelFailure("Whisper Turbo", error)
             await self?.invalidateMeetingModelVerification()
             throw DictationFailure.modelUnavailable
           }
-          // Read when the pass loads the runtime, so a change on the meeting or in
-          // Settings applies to the next final pass; the finalizer records the same
-          // value in its version.
-          let language = await self?.meetingLanguage(for: session) ?? .automatic
+          // The finalizer reads the meeting's language once, records it in the pass's
+          // pipeline version and passes it here, so the decode language is the recorded one.
           // The Dictionary as prompt terms; its revision is already in the pass identity.
           let terms = (try? await vocabulary.snapshot().entries)?.filter(\.enabled).map(\.canonical)
           return try await WhisperMeetingRuntime.make(
@@ -320,6 +336,7 @@ final class AppServices {
           } catch is CancellationError {
             throw CancellationError()
           } catch {
+            Self.logModelFailure("Speech model", error)
             await self?.invalidateModelVerification()
             throw error
           }
@@ -341,7 +358,8 @@ final class AppServices {
       await lifecycle.setKeepLoaded(preferences.keepModelReady && allowsPreferenceWarmup)
       let transcriptIdentity = try TranscriptionPipelineIdentity(
         descriptor: descriptor, manifestHash: TranscriptionQualityDetail.hash(descriptorData),
-        build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+        build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+        languageHint: FluidAudioRuntime.languageHint)
       let finalIdentity = try TranscriptionPipelineIdentity(
         descriptor: meetingDescriptor,
         manifestHash: TranscriptionQualityDetail.hash(meetingManifest),
@@ -355,7 +373,7 @@ final class AppServices {
       // settings snapshot, so the Settings toggle applies without relaunch.
       let rewriteCoordinator = RewriteCoordinator(
         preferences: preferences, credentials: rewriteCredentials,
-        transport: RewriteClient(credentials: rewriteCredentials), store: paths.1)
+        transport: rewriteClient, store: paths.1)
       self.rewriteCoordinator = rewriteCoordinator
       rewriteCoordinator.metricRecorded = { [weak self] metric in
         switch metric {
@@ -373,8 +391,12 @@ final class AppServices {
           identity: try TranscriptionPipelineIdentity(
             descriptor: descriptor,
             manifestHash: TranscriptionQualityDetail.hash(descriptorData),
-            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)),
-        vocabulary: vocabulary, rewriter: rewriteCoordinator)
+            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+            languageHint: FluidAudioRuntime.languageHint)),
+        vocabulary: vocabulary, rewriter: rewriteCoordinator,
+        // Feature 012: read at each press; off by default, so no AX read happens.
+        contextReader: SystemAppContextReader(),
+        contextSettings: { [weak preferences] in preferences?.contextSettings() ?? .disabled })
       self.coordinator = coordinator
       // FR-027: dictation is refused while a meeting is active; with no meeting the
       // guard returns nil and the dictation path is the Feature 003 path.
@@ -391,6 +413,9 @@ final class AppServices {
         self.panel.showActionNotice(notice, targetPoint: coordinator?.targetDisplayPoint) {
           coordinator?.retryRewrite()
         }
+      }
+      coordinator.clipboardFallback = { [weak self, weak coordinator] notice in
+        self?.panel.showClipboardNotice(notice, targetPoint: coordinator?.targetDisplayPoint)
       }
       coordinator.rewriteRetryRequested = { [weak self, weak rewriteCoordinator] id in
         Task {
@@ -444,6 +469,9 @@ final class AppServices {
       coordinator.processingMeasured = { [weak self] metrics in
         self?.recorder?.record(processing: metrics)
       }
+      coordinator.contextMeasured = { [weak self] metrics in
+        self?.recorder?.record(context: metrics)
+      }
       coordinator.stateChanged = { [weak self, weak coordinator] state in
         guard let self, let coordinator else { return }
         self.recordTransition(state, cycleID: coordinator.controlTag?.sessionID)
@@ -458,6 +486,7 @@ final class AppServices {
         self.refreshIndicatorAnimation()
       }
       displayObserver = DisplayOptionsObserver { [weak self] in
+        self?.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         self?.refreshIndicatorAnimation()
       }
       shortcut.onCancel = { [weak coordinator] in coordinator?.cancel() }
@@ -478,22 +507,13 @@ final class AppServices {
       }
       await coordinator.refreshHistory()
       await coordinator.verifyInitialAdmission()
-      // Validation never downloads assets or constructs a model runtime.
-      modelInstalled = (try? await provisioner.verifiedLocalDescriptor()) != nil
-      meetingModelInstalled = (try? await meetingProvisioner.verifiedLocalDescriptor()) != nil
-      // Verification only: the diarizer is never loaded here.
-      speakerModelInstalled =
-        await (try? diarizationProvisioner?.verifiedLocalDescriptor()) != nil
+      // Validation never downloads assets or constructs a model runtime. Only the
+      // dictation model gates the shortcut; after the first launch this is a stat check.
+      modelInstalled = await Self.verifyModel(provisioner, name: "Speech model")
       setupStatus =
         modelInstalled
         ? "Verified local model available." : "Import the pinned model before dictating."
       #if DEBUG
-        if !meetingModelInstalled, let source = developmentMeetingModelSource() {
-          do { try await installMeetingModel(source: source) } catch {
-            setupStatus =
-              "Whisper Turbo import failed. Install it in Settings to finalize meetings."
-          }
-        }
         if !modelInstalled, let source = developmentModelSource() {
           installing = true
           beginInstallation(source: source)
@@ -502,23 +522,78 @@ final class AppServices {
       lastInputMonitoringAllowed = CGPreflightListenEventAccess()
       configureShortcut(ShortcutPreference.load())
       startMeasurements()
+      // Meeting and speaker models are not needed to dictate; a first-launch full hash
+      // of Whisper Turbo must not hold the shortcut back.
+      let meetingVerification = Task(priority: .utility) { [weak self] in
+        let meeting = await Self.verifyModel(meetingProvisioner, name: "Whisper Turbo")
+        // Verification only: the diarizer is never loaded here.
+        let speaker = await Self.verifyModel(diarizationProvisioner, name: "Speaker labeling model")
+        guard let self else { return }
+        if !meetingModelInstalling { meetingModelInstalled = meeting }
+        if !speakerModelInstalling { speakerModelInstalled = speaker }
+      }
       await warmModelIfRequested()
+      #if DEBUG
+        Task { [weak self] in
+          await meetingVerification.value
+          await self?.importDevelopmentMeetingModelIfNeeded()
+        }
+      #else
+        _ = meetingVerification
+      #endif
       if ProcessInfo.processInfo.environment["LOCALFLOW_BENCHMARK"] == "1" {
         await runBenchmark(coordinator: coordinator, lifecycle: lifecycle)
       }
-    } catch { setupStatus = "Setup could not finish. Check app storage and the model manifest." }
+    } catch {
+      Logger(subsystem: "org.localflow.LocalFlow", category: "app").error(
+        "Launch setup failed: \(String(describing: type(of: error)), privacy: .public) \(String(describing: error), privacy: .private)"
+      )
+      setupStatus = "Setup could not finish. Check app storage and the model manifest."
+    }
   }
+
+  /// Verification outcome with the failure reason logged; the caller's flag stays a Bool.
+  nonisolated private static func verifyModel(
+    _ provisioner: ModelProvisioner?, name: String, fullHash: Bool = false
+  ) async -> Bool {
+    guard let provisioner else { return false }
+    do {
+      _ = try await provisioner.verifiedLocalDescriptor(fullHash: fullHash)
+      return true
+    } catch {
+      logModelFailure(name, error)
+      return false
+    }
+  }
+
+  /// Provisioner errors name only manifest file paths; any other error logs its type.
+  nonisolated private static func logModelFailure(_ name: String, _ error: any Error) {
+    guard !(error is CancellationError) else { return }
+    let reason =
+      (error as? ModelProvisioner.Error).map { String(describing: $0) }
+      ?? String(describing: type(of: error))
+    Logger(subsystem: "org.localflow.LocalFlow", category: "model").error(
+      "\(name, privacy: .public) failed: \(reason, privacy: .public)")
+  }
+
+  #if DEBUG
+    /// Runs after launch verification and any development speech import, then rewarms:
+    /// installing Whisper Turbo releases a loaded runtime.
+    private func importDevelopmentMeetingModelIfNeeded() async {
+      guard !meetingModelInstalled, let source = developmentMeetingModelSource() else { return }
+      await installTask?.value
+      do { try await installMeetingModel(source: source) } catch {
+        setupStatus =
+          "Whisper Turbo import failed. Install it in Settings to finalize meetings."
+        return
+      }
+      await warmModelIfRequested()
+    }
+  #endif
 
   /// Meeting storage, store, launch reconciliation (detached, never awaited by
   /// launch) and the coordinator. Start Meeting stays disabled until the
   /// reconciler reports completion.
-  /// The language a meeting's final transcript decodes in: the meeting's own choice,
-  /// else the Meeting language in Settings.
-  func meetingLanguage(for meetingID: UUID) async -> MeetingLanguage {
-    if let stored = try? await meetingStore?.meeting(id: meetingID)?.language { return stored }
-    return preferences.meetingLanguage
-  }
-
   private func startMeetings(
     base: URL, history: TranscriptionStore,
     lifecycle: ModelLifecycleCoordinator, vocabulary: VocabularyStore,
@@ -543,7 +618,7 @@ final class AppServices {
       store: transcripts, meetings: store, storageRoot: root, lifecycle: lifecycle,
       vocabulary: vocabulary, identity: finalIdentity, configuration: .turbo,
       defaultLanguage: { [weak self] in
-        await MainActor.run { self?.preferences.meetingLanguage ?? .automatic }
+        await MainActor.run { self?.preferences.meetingLanguage ?? .defaultLanguage }
       },
       clock: clock, recorder: recorder)
     let transcription = MeetingTranscriptionCoordinator(
@@ -567,7 +642,7 @@ final class AppServices {
       store: speakers,
       automaticEnabled: { [weak self] in self?.preferences.meetingDiarizationEnabled ?? false },
       modelInstalled: { [weak self] in self?.speakerModelInstalled ?? false },
-      recorder: recorder)
+      recorder: recorder, lifecycle: lifecycle)
     diarization.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
     transcription.diarization = diarization
     speakerDiarization = diarization
@@ -591,7 +666,7 @@ final class AppServices {
         recorder: recorder),
       store: identities,
       enabled: { [weak self] in self?.preferences.speakerIdentificationEnabled ?? false },
-      recorder: recorder)
+      recorder: recorder, lifecycle: lifecycle)
     identification.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
     diarization.identification = identification
     speakerIdentification = identification
@@ -606,7 +681,7 @@ final class AppServices {
     self.meetingEvidenceReader = evidenceReader
     let analyzer = MeetingAnalyzer(
       evidence: evidenceReader,
-      transport: AnalysisClient(credentials: rewriteCredentials),
+      transport: analysisClient,
       store: analysisStore, clock: clock,
       endpoint: { [weak self] in
         guard let self else { return nil }
@@ -708,6 +783,9 @@ final class AppServices {
       coordinator?.activeMeetingID
     }
     meetingLibrary?.intelligence = intelligence
+    meetingLibrary?.activeMeetingDidChange = { [weak coordinator] id in
+      await coordinator?.meetingDidChange(id: id)
+    }
     meetingLibrary?.willDelete = {
       [weak coordinator, weak diarization, weak identification, weak intelligence] id in
       await diarization?.meetingWillDelete(id: id)
@@ -715,6 +793,8 @@ final class AppServices {
       await intelligence?.meetingWillDelete(id: id)
       await coordinator?.meetingWillDelete(id: id)
     }
+    // A closed window shows no meeting; its notes and detail load again on return.
+    router.mainWindowDidClose = { [weak self] in self?.meetingLibrary?.releaseDetail() }
     observeBackgroundWork()
   }
 
@@ -938,13 +1018,13 @@ final class AppServices {
     panel.update(
       state: .recording, level: coordinator.level, targetPoint: coordinator.targetDisplayPoint
     ) { [weak coordinator] in coordinator?.cancel() }
-    guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+    guard !reduceMotion else { return }
     visualTask = Task { [weak self, weak coordinator] in
       while !Task.isCancelled, let self, let coordinator, coordinator.state == .recording,
-        !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        !self.reduceMotion
       {
-        self.panel.update(
-          state: .recording, level: coordinator.level, targetPoint: coordinator.targetDisplayPoint
+        self.panel.updateLevel(
+          coordinator.level, state: .recording, targetPoint: coordinator.targetDisplayPoint
         ) { [weak coordinator] in coordinator?.cancel() }
         try? await ContinuousClock().sleep(for: .milliseconds(34))
       }
@@ -986,22 +1066,54 @@ final class AppServices {
     panel.appearance = NSApp.appearance
   }
 
+  /// Polls permissions and model state only while Settings or Onboarding is on
+  /// screen and the app is active. Otherwise it parks until the app becomes
+  /// active or the page changes (`settingsPageChanged`), refreshing once then.
   func observeSettingsWhileVisible() async {
-    while !Task.isCancelled {
-      let allowed = CGPreflightListenEventAccess()
-      let accessibility = AXIsProcessTrusted()
-      if allowed && (!lastInputMonitoringAllowed || accessibility != lastAccessibilityAllowed)
-        && coordinator?.busy != true
-      {
-        configureShortcut(ShortcutPreference.load())
-      }
-      if coordinator?.busy != true {
-        lastInputMonitoringAllowed = allowed
-        lastAccessibilityAllowed = accessibility
-      }
-      await settings.refresh()
-      do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+    let (wakes, continuation) = AsyncStream<Void>.makeStream(
+      bufferingPolicy: .bufferingNewest(1))
+    let token = NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { _ in continuation.yield() }
+    settingsWake = continuation
+    defer {
+      NotificationCenter.default.removeObserver(token)
+      continuation.finish()
     }
+    var iterator = wakes.makeAsyncIterator()
+    while !Task.isCancelled {
+      await refreshSettingsState()
+      if settingsPollingWanted {
+        do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+      } else if await iterator.next() == nil {
+        return
+      }
+    }
+  }
+
+  /// Called by the window when the visible page changes.
+  func settingsPageChanged() { settingsWake?.yield() }
+
+  /// Settings or Onboarding is showing and the user can be granting permissions.
+  var settingsPollingWanted: Bool {
+    guard NSApp?.isActive == true else { return false }
+    return router.selection == .settings
+      || (!preferences.onboardingComplete && router.selection == .history)
+  }
+
+  private func refreshSettingsState() async {
+    let allowed = CGPreflightListenEventAccess()
+    let accessibility = AXIsProcessTrusted()
+    if allowed && (!lastInputMonitoringAllowed || accessibility != lastAccessibilityAllowed)
+      && coordinator?.busy != true
+    {
+      configureShortcut(ShortcutPreference.load())
+    }
+    if coordinator?.busy != true {
+      lastInputMonitoringAllowed = allowed
+      lastAccessibilityAllowed = accessibility
+    }
+    await settings.refresh()
   }
 
   /// A nil attempt reviews the saved transcript; an attempt reviews its output.
@@ -1123,12 +1235,14 @@ final class AppServices {
       modelCommandInProgress = true
       defer { modelCommandInProgress = false }
       do {
-        _ = try await provisioner.verifiedLocalDescriptor()
+        // Explicit verification always rehashes; launch and loads use the fingerprint.
+        _ = try await provisioner.verifiedLocalDescriptor(fullHash: true)
         modelInstalled = true
         setupStatus = "Local model files verified."
       } catch is CancellationError {
         throw CancellationError()
       } catch {
+        Self.logModelFailure("Speech model", error)
         invalidateModelVerification()
         throw error
       }
@@ -1157,7 +1271,8 @@ final class AppServices {
       guard let meetingModelProvisioner, !meetingModelInstalling else {
         throw DictationFailure.busy
       }
-      meetingModelInstalled = (try? await meetingModelProvisioner.verifiedLocalDescriptor()) != nil
+      meetingModelInstalled = await Self.verifyModel(
+        meetingModelProvisioner, name: "Whisper Turbo", fullHash: true)
       setupStatus =
         meetingModelInstalled
         ? "Whisper Turbo verified." : "Install Whisper Turbo in Settings to finalize meetings."
@@ -1173,7 +1288,8 @@ final class AppServices {
       try await installMeetingModel(source: nil)
     case .verifySpeakerModel:
       guard let diarizationProvisioner, !speakerModelInstalling else { throw DictationFailure.busy }
-      speakerModelInstalled = (try? await diarizationProvisioner.verifiedLocalDescriptor()) != nil
+      speakerModelInstalled = await Self.verifyModel(
+        diarizationProvisioner, name: "Speaker labeling model", fullHash: true)
       setupStatus =
         speakerModelInstalled
         ? "Speaker labeling model verified." : "Speaker labeling model isn't installed."

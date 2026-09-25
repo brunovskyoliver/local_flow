@@ -18,13 +18,13 @@ struct DictionaryView: View {
         tabs
         if !bannerDismissed { banner.padding(.top, 22) }
         if let loadError = model.loadError {
-          Text(loadError).font(.system(size: 13)).foregroundStyle(SottoPalette.warning)
+          Text(loadError).font(.flow(size: 13)).foregroundStyle(SottoPalette.warning)
             .padding(.top, 24).textSelection(.enabled)
             .accessibilityIdentifier("vocabulary.loadError")
         }
         list.padding(.top, 24)
         if let status = model.status {
-          Text(status).font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+          Text(status).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
             .padding(.top, 14).accessibilityIdentifier("vocabulary.status")
         }
       }
@@ -48,13 +48,13 @@ struct DictionaryView: View {
       }
       Button("Cancel", role: .cancel) { confirmingDelete = nil }
     } message: {
-      Text("Saved transcriptions keep the spelling they were given. Only future dictations change.")
+      Text("Past transcriptions keep their spelling.")
     }
   }
 
   private var header: some View {
     HStack(alignment: .center) {
-      Text("Dictionary").font(.system(size: 27, weight: .semibold)).tracking(-0.8)
+      Text("Dictionary").font(.flow(size: 26, weight: .medium)).tracking(-0.4)
       Spacer(minLength: 12)
       Button("Add new") { model.beginAdd() }
         .buttonStyle(DictionaryPillButtonStyle(prominent: true))
@@ -71,7 +71,7 @@ struct DictionaryView: View {
         } label: {
           VStack(spacing: 6) {
             Text(item.rawValue)
-              .font(.system(size: 13, weight: filter == item ? .medium : .regular))
+              .font(.flow(size: 15, weight: filter == item ? .medium : .regular))
               .foregroundStyle(filter == item ? SottoPalette.ink : SottoPalette.muted)
             Rectangle().fill(filter == item ? SottoPalette.ink : .clear).frame(height: 2)
           }
@@ -94,7 +94,7 @@ struct DictionaryView: View {
           searching.toggle()
           if !searching { search = "" }
         } label: {
-          Image(systemName: "magnifyingglass").font(.system(size: 13))
+          Image(systemName: "magnifyingglass").font(.flow(size: 13))
         }
         .buttonStyle(.plain).accessibilityLabel("Search")
       }
@@ -107,31 +107,32 @@ struct DictionaryView: View {
   private var banner: some View {
     ZStack(alignment: .topTrailing) {
       VStack(alignment: .leading, spacing: 14) {
-        (Text("LocalFlow spells the way ").font(.system(size: 24, design: .serif))
-          + Text("you").font(.system(size: 24, design: .serif).italic())
-          + Text(" do.").font(.system(size: 24, design: .serif)))
+        (Text("LocalFlow spells the way ").font(.flow(size: 34, design: .serif))
+          + Text("you").font(.flow(size: 34, design: .serif).italic())
+          + Text(" do.").font(.flow(size: 34, design: .serif)))
+          .tracking(-0.6)
           .foregroundStyle(.white)
         (Text("Add a word once, so your ")
           + Text("personal terms, company jargon, or uncommon names").bold()
-          + Text(" are spelled right in every dictation. Matching is exact and stays on this Mac."))
-          .font(.system(size: 12)).foregroundStyle(.white.opacity(0.85)).lineSpacing(3)
-          .frame(maxWidth: 520, alignment: .leading)
+          + Text(" are spelled right in every dictation."))
+          .font(.flow(size: 15)).foregroundStyle(.white.opacity(0.9)).lineSpacing(3)
+          .frame(maxWidth: 600, alignment: .leading)
         HStack(spacing: 8) {
           Button("Add new word") { model.beginAdd() }
             .buttonStyle(DictionaryChipButtonStyle()).disabled(!model.canAdd || model.saving)
           if model.isFull {
             Text("Dictionary is full (\(VocabularyStore.maximumEntries) words).")
-              .font(.system(size: 12)).foregroundStyle(.white.opacity(0.85))
+              .font(.flow(size: 12)).foregroundStyle(.white.opacity(0.85))
           }
         }
         .padding(.top, 4)
       }
-      .padding(.horizontal, 24).padding(.vertical, 26)
+      .padding(.horizontal, 32).padding(.vertical, 36)
       .frame(maxWidth: .infinity, alignment: .leading)
       Button {
         bannerDismissed = true
       } label: {
-        Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+        Image(systemName: "xmark").font(.flow(size: 11, weight: .semibold))
           .foregroundStyle(.white.opacity(0.8)).padding(6)
           .background(.white.opacity(0.14), in: Circle())
       }
@@ -143,22 +144,20 @@ struct DictionaryView: View {
           Color(red: 0.13, green: 0.12, blue: 0.11), Color(red: 0.24, green: 0.2, blue: 0.16),
           Color(red: 0.48, green: 0.36, blue: 0.2),
         ], startPoint: .leading, endPoint: .trailing),
-      in: RoundedRectangle(cornerRadius: 12))
+      in: RoundedRectangle(cornerRadius: 16))
   }
 
   @ViewBuilder private var list: some View {
     let entries = model.visibleEntries(filter: filter, search: search)
     if entries.isEmpty {
-      VStack(spacing: 8) {
-        Text(
-          model.entries.isEmpty
-            ? "No words yet." : (search.isEmpty ? "Nothing here." : "No matching words."))
-        if model.entries.isEmpty { Text("Add a word to keep its spelling in every dictation.") }
-      }
-      .font(.system(size: 13)).foregroundStyle(SottoPalette.muted)
+      Text(
+        model.entries.isEmpty
+          ? "No words yet" : (search.isEmpty ? "Nothing here" : "No matches")
+      )
+      .font(.flow(size: 15)).foregroundStyle(SottoPalette.muted)
       .frame(maxWidth: .infinity).padding(.vertical, 60)
     } else {
-      VStack(spacing: 0) {
+      LazyVStack(spacing: 0) {
         ForEach(entries) { entry in
           DictionaryRow(
             entry: entry, busy: model.saving,
@@ -189,17 +188,17 @@ private struct DictionaryRow: View {
         Text(verbatim: entry.canonical)
       } else {
         Text(verbatim: entry.aliases.joined(separator: ", "))
-        Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold))
+        Image(systemName: "arrow.right").font(.flow(size: 10, weight: .semibold))
         Text(verbatim: entry.canonical)
       }
       if entry.isLearned {
-        Image(systemName: "sparkles").font(.system(size: 10))
+        Image(systemName: "sparkles").font(.flow(size: 10))
           .foregroundStyle(Color(nsColor: .systemYellow))
           .help("Learned from a correction you made")
           .accessibilityLabel("Learned")
       }
       if !entry.enabled {
-        Text("Off").font(.system(size: 11)).foregroundStyle(SottoPalette.muted)
+        Text("Off").font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
           .padding(.horizontal, 6).padding(.vertical, 2)
           .background(SottoPalette.tint, in: Capsule())
       }
@@ -214,10 +213,10 @@ private struct DictionaryRow: View {
         .buttonStyle(DictionaryPillButtonStyle()).disabled(busy)
       }
     }
-    .font(.system(size: 13))
+    .font(.flow(size: 15))
     .foregroundStyle(entry.enabled ? SottoPalette.ink : SottoPalette.muted)
-    .padding(.horizontal, 12).padding(.vertical, 10)
-    .frame(minHeight: 35)
+    .padding(.horizontal, 18).padding(.vertical, 12)
+    .frame(minHeight: 53)
     .contentShape(Rectangle())
     .onHover { hovering = $0 }
     .contextMenu {
@@ -239,7 +238,7 @@ private struct VocabularyEntrySheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Text(editing ? "Edit vocabulary" : "Add to vocabulary")
-        .font(.system(size: 15, weight: .semibold))
+        .font(.flow(size: 15, weight: .semibold))
       toggleRow(
         "Correct a misspelling",
         help: "Replace a misspelling with the correct spelling. Off: keep this word's spelling.",
@@ -303,7 +302,7 @@ private struct VocabularyEntrySheet: View {
               "Misspelling", text: alias, identifier: "vocabulary.alias.\(index)",
               focus: $focused
             ) { model.setAlias($0, at: index) }
-            Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold))
+            Image(systemName: "arrow.right").font(.flow(size: 10, weight: .semibold))
               .foregroundStyle(SottoPalette.muted)
             if index == 0 {
               DictionaryField(
@@ -311,12 +310,12 @@ private struct VocabularyEntrySheet: View {
                 identifier: "vocabulary.canonical", focus: $focused, onChange: model.setCanonical)
             } else {
               Text(verbatim: model.draft?.canonical ?? "")
-                .font(.system(size: 13)).foregroundStyle(SottoPalette.muted).lineLimit(1)
+                .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
               Button {
                 model.removeAlias(at: index)
               } label: {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "xmark").font(.flow(size: 10, weight: .semibold))
               }
               .buttonStyle(.plain).foregroundStyle(SottoPalette.muted)
               .accessibilityLabel("Remove misspelling \(index + 1)")
@@ -334,12 +333,12 @@ private struct VocabularyEntrySheet: View {
       HStack(spacing: 12) {
         if model.canAddAlias {
           Button("Add another misspelling") { model.addAlias() }
-            .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(SottoPalette.accent)
+            .buttonStyle(.plain).font(.flow(size: 12)).foregroundStyle(SottoPalette.accent)
             .accessibilityIdentifier("vocabulary.addAlias")
         }
         if !model.duplicateAliasIndices.isEmpty {
           Button("Remove duplicates") { model.deduplicateAliases() }
-            .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(SottoPalette.accent)
+            .buttonStyle(.plain).font(.flow(size: 12)).foregroundStyle(SottoPalette.accent)
             .accessibilityIdentifier("vocabulary.deduplicate")
         }
       }
@@ -350,8 +349,8 @@ private struct VocabularyEntrySheet: View {
     _ title: String, help: String, isOn: Binding<Bool>, identifier: String
   ) -> some View {
     HStack(spacing: 6) {
-      Text(title).font(.system(size: 13))
-      Image(systemName: "info.circle").font(.system(size: 11))
+      Text(title).font(.flow(size: 13))
+      Image(systemName: "info.circle").font(.flow(size: 11))
         .foregroundStyle(SottoPalette.muted).help(help)
       Spacer()
       Toggle(title, isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
@@ -360,7 +359,7 @@ private struct VocabularyEntrySheet: View {
   }
 
   private func errorText(_ text: String) -> some View {
-    Text(text).font(.system(size: 12)).foregroundStyle(SottoPalette.warning)
+    Text(text).font(.flow(size: 12)).foregroundStyle(SottoPalette.warning)
       .fixedSize(horizontal: false, vertical: true)
   }
 }
@@ -386,7 +385,7 @@ private struct DictionaryField: View {
 
   var body: some View {
     TextField(placeholder, text: Binding(get: { text }, set: { onChange($0) }))
-      .textFieldStyle(.plain).font(.system(size: 13))
+      .textFieldStyle(.plain).font(.flow(size: 13))
       .focused(focus, equals: identifier)
       .padding(.horizontal, 10).padding(.vertical, 7)
       .background(SottoPalette.surface, in: RoundedRectangle(cornerRadius: 8))
@@ -402,14 +401,14 @@ struct DictionaryPillButtonStyle: ButtonStyle {
   @Environment(\.isEnabled) private var isEnabled
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(size: 12, weight: prominent ? .medium : .regular))
-      .padding(.horizontal, 12).padding(.vertical, 7)
+      .font(.flow(size: prominent ? 15 : 13, weight: prominent ? .medium : .regular))
+      .padding(.horizontal, prominent ? 18 : 12).padding(.vertical, prominent ? 10 : 7)
       .foregroundStyle(prominent ? SottoPalette.surface : SottoPalette.ink)
       .background(
         prominent
           ? SottoPalette.ink.opacity(configuration.isPressed ? 0.8 : 1)
           : (configuration.isPressed ? SottoPalette.tint : SottoPalette.button),
-        in: RoundedRectangle(cornerRadius: 7)
+        in: RoundedRectangle(cornerRadius: 8)
       )
       .opacity(isEnabled ? 1 : 0.45)
   }
@@ -420,10 +419,10 @@ private struct DictionaryChipButtonStyle: ButtonStyle {
   @Environment(\.isEnabled) private var isEnabled
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(size: 12)).foregroundStyle(.white)
-      .padding(.horizontal, 11).padding(.vertical, 6)
+      .font(.flow(size: 15, weight: .medium)).foregroundStyle(.white)
+      .padding(.horizontal, 18).padding(.vertical, 10)
       .background(
-        .white.opacity(configuration.isPressed ? 0.28 : 0.18), in: RoundedRectangle(cornerRadius: 6)
+        .white.opacity(configuration.isPressed ? 0.28 : 0.18), in: RoundedRectangle(cornerRadius: 8)
       )
       .opacity(isEnabled ? 1 : 0.5)
   }

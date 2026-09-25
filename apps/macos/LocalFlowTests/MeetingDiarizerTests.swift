@@ -96,8 +96,12 @@ final class MeetingDiarizerTests: XCTestCase {
 
     _ = try await diarizer.admit(
       meetingID: meeting.meetingID, trigger: .automatic, expectedRevision: nil)
+    let idle = await diarizer.residentWindowSamples
+    XCTAssertEqual(idle, 0, "no window is allocated before a run")
     let outcome = await diarizer.run(meetingID: meeting.meetingID)
     guard case .succeeded(let run) = outcome else { return XCTFail("\(outcome)") }
+    let released = await diarizer.residentWindowSamples
+    XCTAssertEqual(released, 0, "the run releases its window")
 
     // System first, unconstrained; then the microphone constrained to one speaker.
     let requests = await runtime.requests
@@ -306,6 +310,72 @@ final class MeetingDiarizerTests: XCTestCase {
     XCTAssertEqual(count, 1)
   }
 
+  /// Two voices on the microphone; with no remote side captured they are in-room
+  /// voices, not one "You".
+  private let twoMicrophoneVoices = [
+    DiarizationScripts.window(
+      [(0, 0.0, 0.1), (1, 0.1, 0.2)],
+      centroids: [0: DiarizationScripts.centroid(axis: 2), 1: DiarizationScripts.centroid(axis: 3)]
+    )
+  ]
+
+  func testNoSystemAudioTreatsTheMicrophoneAsInRoom() async throws {
+    let runtime = FakeDiarizationRuntime(scripts: twoMicrophoneVoices)
+    let (diarizer, _) = makeDiarizer(runtime)
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(system: .missing)])
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: meeting.meetingID, segments: [(0, 100), (100, 200)])
+    _ = try await diarizer.admit(
+      meetingID: meeting.meetingID, trigger: .manual, expectedRevision: nil)
+    let outcome = await diarizer.run(meetingID: meeting.meetingID)
+    guard case .succeeded(let run) = outcome else { return XCTFail("\(outcome)") }
+    let requests = await runtime.requests
+    XCTAssertEqual(requests.map(\.numSpeakers), [nil], "the microphone is not forced to one")
+    XCTAssertEqual(run.inferredSpeakerCount, 2)
+    let value = try await labels(meeting.meetingID)
+    XCTAssertFalse(value.contains("You"), "\(value)")
+    XCTAssertTrue(run.inRoom, "the run records that it labeled in-room voices")
+    let setting = try await speakers.diarization(meetingID: meeting.meetingID)?.inRoom
+    XCTAssertEqual(setting, false, "the meeting's In-room setting is left alone")
+  }
+
+  func testASilentSystemTrackTreatsTheMicrophoneAsInRoom() async throws {
+    let runtime = FakeDiarizationRuntime(scripts: [.empty] + twoMicrophoneVoices)
+    let (diarizer, _) = makeDiarizer(runtime)
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: meeting.meetingID, segments: [(0, 100), (100, 200)])
+    _ = try await diarizer.admit(
+      meetingID: meeting.meetingID, trigger: .manual, expectedRevision: nil)
+    var silent = try await decodedEchoProfile(meeting)
+    for (sequence, stretch) in silent.stretches {
+      silent.stretches[sequence]?.system = Array(
+        repeating: EchoGate.remoteFloorDB - 20, count: stretch.system.count)
+    }
+    let outcome = await diarizer.run(meetingID: meeting.meetingID, echoProfile: silent)
+    guard case .succeeded(let run) = outcome else { return XCTFail("\(outcome)") }
+    let requests = await runtime.requests
+    XCTAssertEqual(requests.map(\.numSpeakers), [nil, nil])
+    XCTAssertEqual(run.inferredSpeakerCount, 2)
+  }
+
+  func testAnAudibleSystemTrackStillKeepsTheMicrophoneAsYou() async throws {
+    let runtime = FakeDiarizationRuntime(scripts: threeSpeakers)
+    let (diarizer, _) = makeDiarizer(runtime)
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: meeting.meetingID, segments: [(0, 100)])
+    _ = try await diarizer.admit(
+      meetingID: meeting.meetingID, trigger: .manual, expectedRevision: nil)
+    let profile = try await decodedEchoProfile(meeting)
+    XCTAssertFalse(EchoGate.systemIsSilent(profile))
+    let outcome = await diarizer.run(meetingID: meeting.meetingID, echoProfile: profile)
+    guard case .succeeded = outcome else { return XCTFail("\(outcome)") }
+    let requests = await runtime.requests
+    XCTAssertEqual(requests.map(\.numSpeakers), [nil, 1])
+  }
+
   func testMissingMicrophoneTrackInventsNoLocalSpeaker() async throws {
     let runtime = FakeDiarizationRuntime(scripts: threeSpeakers)
     let (diarizer, _) = makeDiarizer(runtime)
@@ -357,6 +427,8 @@ final class MeetingDiarizerTests: XCTestCase {
       meetingID: meeting.meetingID, trigger: .manual, expectedRevision: nil)
     let outcome = await diarizer.run(meetingID: meeting.meetingID)
     XCTAssertEqual(outcome, .failed(.runtimeFailure))
+    let resident = await diarizer.residentWindowSamples
+    XCTAssertEqual(resident, 0, "a failed run releases its window")
     let value4 = try await turns(run.id)
     XCTAssertEqual(value4, [])
     let state = try await speakers.meetingState(meetingID: meeting.meetingID)

@@ -76,13 +76,34 @@ enum RegionExtractor {
     for root: Root, turns: [SpeakerTurn], track: MeetingTrackKind?, lengthMs: Int64,
     limits: VoiceRegionSelector.Limits
   ) -> [VoiceRegion] {
-    let own = turns.filter {
-      guard let speaker = $0.speakerID, root.clusters.contains(speaker) else { return false }
-      return track == nil || $0.track == track
+    regions(for: [root], turns: turns, track: track, lengthMs: lengthMs, limits: limits)[0]
+      .regions
+  }
+
+  /// `regions(for:)` for every root, in root order. The turns are grouped by speaker
+  /// and sorted once, not filtered again for each root.
+  static func regions(
+    for roots: [Root], turns: [SpeakerTurn], track: MeetingTrackKind?, lengthMs: Int64,
+    limits: VoiceRegionSelector.Limits
+  ) -> [(root: UUID, regions: [VoiceRegion])] {
+    var bySpeaker: [UUID: [SpeakerTurn]] = [:]
+    for turn in turns {
+      if let speaker = turn.speakerID { bySpeaker[speaker, default: []].append(turn) }
     }
-    let others = turns.filter { $0.speakerID.map { !root.clusters.contains($0) } ?? false }
-    return VoiceRegionSelector.select(
-      rootTurns: own, otherTurns: others, meetingLengthMs: lengthMs, limits: limits)
+    let others = VoiceRegionSelector.OtherTurns(turns.filter { $0.speakerID != nil })
+    return roots.map { root in
+      let clusters = root.clusters
+      // The selector orders turns by start and id, so the grouping order is irrelevant.
+      let own = clusters.flatMap { bySpeaker[$0] ?? [] }.filter {
+        track == nil || $0.track == track
+      }
+      return (
+        root.id,
+        VoiceRegionSelector.select(
+          rootTurns: own, others: others, excluding: clusters, meetingLengthMs: lengthMs,
+          limits: limits)
+      )
+    }
   }
 
   /// Reads every region once, in file order, and embeds each through the lease as it

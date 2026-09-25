@@ -312,7 +312,7 @@ final class RewriteStoreTests: XCTestCase {
       XCTAssertNil(recorded.outputHash)
     }
     // Each dictation holds its text once and its failed attempt's input once.
-    XCTAssertEqual(try payloadBytes(store), 12 * 2 * 12)
+    XCTAssertEqual(try payloadBytes(store), RewriteFailureCategory.persisted.count * 2 * 12)
     let fresh = try await commit(store, text: "another")
     for refusal in RewriteFailureCategory.allCases where !refusal.isPersistable {
       let attempt = try await store.begin(admission(fresh))

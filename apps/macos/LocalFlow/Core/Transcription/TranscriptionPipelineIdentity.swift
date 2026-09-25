@@ -8,6 +8,8 @@ struct TranscriptionPipelineIdentity: Sendable {
   private var descriptor: ModelDescriptor?
   private var manifestHash: String?
   private var build: String?
+  /// What the runtime was told about language; nil means automatic with no hint.
+  private var languageHint: String?
   private let operatingSystem = ProcessInfo.processInfo.operatingSystemVersionString
   private let foldingRuntime =
     "Foundation-on-" + ProcessInfo.processInfo.operatingSystemVersionString
@@ -16,10 +18,11 @@ struct TranscriptionPipelineIdentity: Sendable {
 
   init(
     descriptor: ModelDescriptor, manifestHash: String, build: String?,
-    engine: String = "FluidAudio", windowSamples: Int = 239_360
+    engine: String = "FluidAudio", windowSamples: Int = 239_360, languageHint: String? = nil
   ) throws {
     try descriptor.validate()
     self.engine = engine
+    self.languageHint = languageHint
     self.windowSamples = windowSamples
     self.descriptor = descriptor
     self.manifestHash = manifestHash
@@ -49,7 +52,8 @@ struct TranscriptionPipelineIdentity: Sendable {
       modelRevision: descriptor?.sourceRevision, modelManifestHash: manifestHash,
       artifactHashes: Dictionary(
         uniqueKeysWithValues: (descriptor?.files ?? []).map { ($0.path, $0.sha256) }),
-      build: build, dirty: nil, languageHint: nil, automaticLanguage: true,
+      build: build, dirty: nil, languageHint: languageHint,
+      automaticLanguage: languageHint == nil,
       sampleRate: 16_000, channels: 1, inputSamples: sampleCount,
       inputDurationSeconds: Double(sampleCount) / 16_000, inputSampleFormat: "float32_pcm",
       windowSamples: windowSamples, overlapSamples: 0, strideSamples: windowSamples,

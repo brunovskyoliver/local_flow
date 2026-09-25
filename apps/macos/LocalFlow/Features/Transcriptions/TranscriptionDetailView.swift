@@ -31,10 +31,10 @@ struct TranscriptionDetailView: View {
         case .assembled: stageText(detail.assembledText)
         case .raw:
           Text("Exact received windows in order. Overlapping windows can repeat words.")
-            .font(.caption).foregroundStyle(.secondary)
+            .font(.flow(size: 12)).foregroundStyle(.secondary)
           ForEach(detail.rawWindows, id: \.sequence) { window in
             VStack(alignment: .leading, spacing: 6) {
-              Text(window.historyLabel).font(.caption).foregroundStyle(.secondary)
+              Text(window.historyLabel).font(.flow(size: 12)).foregroundStyle(.secondary)
               stageText(window.text)
             }
           }
@@ -46,12 +46,15 @@ struct TranscriptionDetailView: View {
           .accessibilityIdentifier("history.detail.processing")
       } else {
         Text(TranscriptionEntry.legacyDetailMessage)
-          .font(.callout).foregroundStyle(.secondary)
+          .font(.flow(size: 13)).foregroundStyle(.secondary)
           .accessibilityIdentifier("history.detail.legacy")
-        Text("Saved text").font(.headline)
+        Text("Saved text").font(.flow(size: 14, weight: .semibold))
         stageText(envelope.entry.text)
       }
-      if let model { RewriteSection(model: model, copy: copy, insert: insert) }
+      if let model {
+        ContextSection(model: model)
+        RewriteSection(model: model, copy: copy, insert: insert)
+      }
     }
     .textSelection(.enabled)
     .accessibilityElement(children: .contain)
@@ -65,15 +68,13 @@ struct TranscriptionDetailView: View {
         "Delivery: \(envelope.entry.deliveryState.rawValue.replacingOccurrences(of: "_", with: " "))"
       )
       Text(
-        "Recovery: \(envelope.entry.recoveryState == .needsReview ? "Needs review" : "Resolved")")
-      Text(
         "Stopped: \(envelope.entry.stopReason.rawValue.replacingOccurrences(of: "_", with: " "))")
-    }.font(.callout)
+    }.font(.flow(size: 13))
   }
 
   private func stageText(_ text: String) -> some View {
     Text(verbatim: text.isEmpty ? "(Empty stage)" : text)
-      .font(.body).frame(maxWidth: .infinity, alignment: .leading)
+      .font(.flow(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
       .fixedSize(horizontal: false, vertical: true)
   }
 
@@ -132,12 +133,12 @@ struct TranscriptionDetailView: View {
           "Join before window \(seam.window + 1)",
           "\(seam.decision); \(seam.discardedLexicalWords) words discarded")
       }
-      Text("Processing reasons").font(.headline)
+      Text("Processing reasons").font(.flow(size: 14, weight: .semibold))
       if detail.completionReasons.isEmpty { Text("None recorded") }
       ForEach(Array(detail.completionReasons.enumerated()), id: \.offset) { _, reason in
         Text(reason.code.rawValue + (reason.window.map { " (window \($0 + 1))" } ?? ""))
       }
-      Text("Unavailable evidence").font(.headline)
+      Text("Unavailable evidence").font(.flow(size: 14, weight: .semibold))
       if detail.provenance.unavailableMetadata.isEmpty { Text("None recorded") }
       ForEach(detail.provenance.unavailableMetadata, id: \.field) { item in
         metadata(item.field, item.reason.rawValue)
@@ -163,13 +164,68 @@ struct TranscriptionDetailView: View {
           }
         }.padding(.top, 8)
       }
-    }.font(.callout)
+    }.font(.flow(size: 13))
   }
 
   private func metadata(_ label: String, _ value: String?) -> some View {
     VStack(alignment: .leading, spacing: 2) {
       Text(label).foregroundStyle(.secondary)
       Text(verbatim: value ?? "Unavailable").fixedSize(horizontal: false, vertical: true)
+    }
+  }
+}
+
+/// What app context this dictation read and what local spelling it changed.
+private struct ContextSection: View {
+  let model: HistoryViewModel
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Divider()
+      Text("App context").font(.flow(size: 14, weight: .semibold))
+      Text(model.contextLabel).font(.flow(size: 13))
+        .accessibilityIdentifier("history.detail.context.outcome")
+      if let line = model.contextRewriteLine {
+        Text(line).font(.flow(size: 13)).foregroundStyle(.secondary)
+          .accessibilityIdentifier("history.detail.context.rewrite")
+      }
+      ForEach(Array(model.contextSpellingChanges.enumerated()), id: \.offset) { _, change in
+        Text(
+          verbatim:
+            "“\(change.original)” → “\(change.replacement)” · on screen (\(change.sourcePart.historyLabel.lowercased()))"
+        ).font(.flow(size: 13))
+      }
+      if let before = model.contextPreSpellingText {
+        DisclosureGroup("Text before context spelling") {
+          Text(verbatim: before).font(.flow(size: 13))
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }.font(.flow(size: 13))
+      }
+      if let snapshot = model.contextSnapshot {
+        DisclosureGroup("Context as captured") {
+          VStack(alignment: .leading, spacing: 8) {
+            if let app = snapshot.appName { labeled("App", app) }
+            labeled("Field", snapshot.fieldKind.rawValue.replacingOccurrences(of: "_", with: " "))
+            ForEach(ContextPart.allCases, id: \.self) { part in
+              if let text = snapshot.text(of: part) { labeled(part.historyLabel, text) }
+            }
+            if !snapshot.terms.isEmpty {
+              labeled("Terms", snapshot.terms.map(\.text).joined(separator: ", "))
+            }
+            if !snapshot.truncated.isEmpty {
+              labeled("Shortened", snapshot.truncated.joined(separator: ", "))
+            }
+          }.padding(.top, 8)
+        }.font(.flow(size: 13)).accessibilityIdentifier("history.detail.context.snapshot")
+      }
+    }
+    .accessibilityIdentifier("history.detail.context")
+  }
+
+  private func labeled(_ label: String, _ value: String) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(label).foregroundStyle(.secondary)
+      Text(verbatim: value).fixedSize(horizontal: false, vertical: true)
     }
   }
 }
@@ -184,16 +240,16 @@ private struct RewriteSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Divider()
-      Text("Rewrite").font(.headline)
-      Text(model.rewriteStateLine).font(.callout).foregroundStyle(.secondary)
+      Text("Rewrite").font(.flow(size: 14, weight: .semibold))
+      Text(model.rewriteStateLine).font(.flow(size: 13)).foregroundStyle(.secondary)
       Text(model.deliveredLine)
-        .font(.callout).accessibilityIdentifier("history.detail.rewrite.delivered")
+        .font(.flow(size: 13)).accessibilityIdentifier("history.detail.rewrite.delivered")
       if let notice = model.rewriteNotice {
-        Text(notice).font(.callout).foregroundStyle(.secondary)
+        Text(notice).font(.flow(size: 13)).foregroundStyle(.secondary)
           .accessibilityIdentifier("history.detail.rewrite.notice")
       }
       if let explanation = model.rewriteLimitExplanation {
-        Text(explanation).font(.callout).foregroundStyle(.secondary)
+        Text(explanation).font(.flow(size: 13)).foregroundStyle(.secondary)
       }
       HStack(alignment: .top, spacing: 16) {
         text(
@@ -222,7 +278,7 @@ private struct RewriteSection: View {
         }
       }
       if model.detailAttempts.isEmpty {
-        Text("No rewrite attempts.").font(.callout).foregroundStyle(.secondary)
+        Text("No rewrite attempts.").font(.flow(size: 13)).foregroundStyle(.secondary)
       }
       ForEach(model.detailAttempts) { attempt in
         DisclosureGroup(
@@ -230,10 +286,13 @@ private struct RewriteSection: View {
         ) {
           VStack(alignment: .leading, spacing: 8) {
             Text(summary(attempt)).foregroundStyle(.secondary)
-            Text("Input snapshot").font(.subheadline)
+            if attempt.failureCategory == .contextCopied {
+              Text(RewriteNotice.text(for: .contextCopied, context: .history))
+            }
+            Text("Input snapshot").font(.flow(size: 12))
             Text(verbatim: attempt.inputText)
             if let output = attempt.outputText {
-              Text("AI-generated rewrite, not the transcript.").font(.caption)
+              Text("AI-generated rewrite, not the transcript.").font(.flow(size: 12))
               Text(verbatim: output)
               HStack {
                 Button("Copy") { copy?(output) }
@@ -245,7 +304,7 @@ private struct RewriteSection: View {
             }
           }.frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.callout)
+        .font(.flow(size: 13))
         .accessibilityIdentifier("history.detail.rewrite.attempt.\(attempt.ordinal)")
       }
     }
@@ -258,6 +317,7 @@ private struct RewriteSection: View {
       attempt.spans.durationMilliseconds.map { "\($0) ms total" } ?? "duration unavailable")
     if let first = attempt.spans.firstByteMilliseconds { parts.append("\(first) ms to first byte") }
     if let category = attempt.failureCategory { parts.append(category.rawValue) }
+    if attempt.contextHash != nil { parts.append("context sent") }
     if attempt.stale { parts.append("stale") }
     if attempt.delivered { parts.append("delivered") }
     parts.append(attempt.identity.groupKey)
@@ -268,9 +328,9 @@ private struct RewriteSection: View {
     -> some View
   {
     VStack(alignment: .leading, spacing: 6) {
-      Text(title).font(.subheadline)
-      Text(caption).font(.caption).foregroundStyle(.secondary)
-      Text(verbatim: body).font(.body).fixedSize(horizontal: false, vertical: true)
+      Text(title).font(.flow(size: 12))
+      Text(caption).font(.flow(size: 12)).foregroundStyle(.secondary)
+      Text(verbatim: body).font(.flow(size: 14)).fixedSize(horizontal: false, vertical: true)
       HStack(spacing: 8) {
         Button("Copy") { copy?(body) }
           .accessibilityLabel("Copy \(title)")

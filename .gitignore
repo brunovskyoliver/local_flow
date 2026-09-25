@@ -46,3 +46,6 @@ fixtures/quality/manifest.json
 *.swiftpm/
 *.exe
 vendor/
+
+# Feature 012 live context evaluation output (text; never committed)
+build/context-eval/

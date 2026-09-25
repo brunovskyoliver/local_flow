@@ -128,13 +128,17 @@ final class MainWindowRouterTests: XCTestCase {
   func testClosingKeepsTheRouteAndReopensTheSameWindow() {
     var policies: [NSApplication.ActivationPolicy] = []
     let router = MainWindowRouter(setActivationPolicy: { policies.append($0) }, activate: {})
+    var closes = 0
+    router.mainWindowDidClose = { closes += 1 }
     let window = NSWindow(
       contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable],
       backing: .buffered, defer: true)
     defer { window.orderOut(nil) }
     router.attach(window)
     router.open(.settings) {}
+    XCTAssertEqual(closes, 0)
     NotificationCenter.default.post(name: NSWindow.willCloseNotification, object: window)
+    XCTAssertEqual(closes, 1, "window-only state is released on close")
     XCTAssertEqual(policies.last, .accessory)
     XCTAssertEqual(router.selection, .settings, "Closing must not reset the destination")
 

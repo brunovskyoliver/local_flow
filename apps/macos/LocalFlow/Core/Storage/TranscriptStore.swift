@@ -9,8 +9,8 @@ actor TranscriptStore: TranscriptStoring {
     case capacityExceeded(Capacity)
     case invalidSegment(String)
   }
-  nonisolated let database: DatabaseQueue
-  init(database: DatabaseQueue) { self.database = database }
+  nonisolated let database: DatabasePool
+  init(database: DatabasePool) { self.database = database }
   init(history: TranscriptionStore) { self.database = history.database }
   func transcription(meetingID: UUID) throws -> MeetingTranscription? {
     if let row = try database.read({ try Self.fetch(meetingID, db: $0) }) { return row }

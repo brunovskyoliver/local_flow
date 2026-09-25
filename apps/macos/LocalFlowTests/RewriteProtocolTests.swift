@@ -60,11 +60,20 @@ final class RewriteProtocolTests: XCTestCase {
       try RewriteRequest(
         requestID: requestID, mode: .clean, text: "Hello",
         languageHints: ["en", "sk", "de", "fr", "es"]))
+    // English and Slovak only, each at most once.
+    for hints in [["cs"], ["en-US"], ["sk", "sk"], [""]] {
+      XCTAssertThrowsError(
+        try RewriteRequest(requestID: requestID, mode: .clean, text: "Hello", languageHints: hints),
+        "\(hints)")
+    }
+    XCTAssertNoThrow(
+      try RewriteRequest(
+        requestID: requestID, mode: .clean, text: "Hello", languageHints: ["sk", "en"]))
   }
 
   func testRequestEncodesOnlyTheSixPermittedFields() throws {
     let request = try RewriteRequest(
-      requestID: requestID, mode: .polished, text: "hello", languageHints: ["sk", "en-US"],
+      requestID: requestID, mode: .polished, text: "hello", languageHints: ["sk", "en"],
       streamDeltas: true)
     let data = try JSONEncoder().encode(request)
     let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -75,7 +84,7 @@ final class RewriteProtocolTests: XCTestCase {
     XCTAssertEqual(object["request_id"] as? String, requestID.uuidString)
     XCTAssertEqual(object["mode"] as? String, "polished")
     XCTAssertEqual(object["text"] as? String, "hello")
-    XCTAssertEqual(object["language_hints"] as? [String], ["sk", "en-US"])
+    XCTAssertEqual(object["language_hints"] as? [String], ["sk", "en"])
     XCTAssertEqual(object["stream_deltas"] as? Bool, true)
     XCTAssertEqual(request.inputBytes, 5)
   }
@@ -342,6 +351,38 @@ final class RewriteProtocolTests: XCTestCase {
     }
   }
 
+  /// A rewrite that translates Slovak dictation into English (or the reverse) is a
+  /// validation failure, so the faithful transcript is kept. Short text, jargon
+  /// and code never decide.
+  func testTranslatedResultIsServerValidationFailure() throws {
+    let slovak =
+      "peter prosím presuň nasadenie na pondelok a daj vedieť zákazníkovi že zálohu urobíme v piatok"
+    let english =
+      "Peter, please move the deployment to Monday and let the customer know that we will do the backup on Friday."
+    let cleanSlovak =
+      "Peter, prosím, presuň nasadenie na pondelok a daj vedieť zákazníkovi, že zálohu urobíme v piatok."
+    let englishInput =
+      "peter please move the deployment to monday and tell the customer about the backup"
+    let slovakOutput = "Peter, prosím, presuň nasadenie na pondelok a povedz zákazníkovi o zálohe."
+    for (input, output, expected) in [
+      (slovak, english, RewriteFailureCategory?.some(.serverValidationFailed)),
+      (englishInput, slovakOutput, .serverValidationFailed),
+      (slovak, cleanSlovak, nil),
+      ("ok thanks", "OK, thanks.", nil),
+      ("dobre ďakujem", "Okay, thanks.", nil),
+      ("deploy kubernetes cluster backup", "Deploy Kubernetes cluster backup.", nil),
+      ("let x = foo(bar); return nil", "let x = foo(bar); return nil", nil),
+    ] {
+      let request = try request(text: input)
+      XCTAssertEqual(
+        category {
+          _ = try RewriteResultValidator.validate(
+            events: try events([try resultLine(text: output)]), for: request,
+            inputBytes: request.inputBytes)
+        }, expected, input)
+    }
+  }
+
   func testMissingTerminalEventIsMalformedAndSecondTerminalIsIgnored() throws {
     let request = try request()
     let id = requestID.uuidString
@@ -431,24 +472,143 @@ final class RewriteProtocolTests: XCTestCase {
     }
   }
 
+  // MARK: Protocol v2 (Feature 012)
+
+  private func contextSnapshot() -> AppContextSnapshot {
+    AppContextSnapshot.make(
+      .init(
+        appName: "Mail", appCategory: .email, fieldKind: .multiLine,
+        windowTitle: "Re: NetBird rollout", beforeCursor: "Hi Miroslav, thanks for the update, "))
+  }
+
+  func testV2RequestCarriesTheStoredCanonicalContextBytes() throws {
+    let snapshot = contextSnapshot()
+    let stored = snapshot.canonicalString
+    let request = try RewriteRequest(
+      requestID: requestID, mode: .clean, text: "sounds good", context: Data(stored.utf8))
+    XCTAssertEqual(request.schemaVersion, 2)
+    XCTAssertTrue(request.sendsContext)
+    let body = try request.httpBody()
+    let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+    XCTAssertEqual(
+      Set(object.keys),
+      [
+        "schema_version", "request_id", "mode", "text", "language_hints", "stream_deltas",
+        "context",
+      ])
+    XCTAssertEqual(object["schema_version"] as? Int, 2)
+    // The context object on the wire is byte-identical to the stored snapshot.
+    let wire = String(decoding: body, as: UTF8.self)
+    XCTAssertTrue(wire.hasSuffix(#","context":"# + stored + "}"))
+    let sent = try JSONSerialization.data(
+      withJSONObject: try XCTUnwrap(object["context"]), options: [.sortedKeys])
+    XCTAssertEqual(
+      try JSONSerialization.jsonObject(with: sent) as? NSDictionary,
+      try JSONSerialization.jsonObject(with: Data(stored.utf8)) as? NSDictionary)
+    XCTAssertEqual(AppContextSnapshot.hash(Data(stored.utf8)), snapshot.hash)
+    // The Encodable form carries the same object for fakes and tests.
+    let encoded = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+    XCTAssertEqual(
+      encoded["context"] as? NSDictionary,
+      try JSONSerialization.jsonObject(with: Data(stored.utf8)) as? NSDictionary)
+  }
+
+  func testV1RequestNeverHasContext() throws {
+    let request = try request()
+    XCTAssertEqual(request.schemaVersion, 1)
+    XCTAssertFalse(request.sendsContext)
+    let object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: request.httpBody()) as? [String: Any])
+    XCTAssertNil(object["context"])
+    XCTAssertEqual(object["schema_version"] as? Int, 1)
+    XCTAssertEqual(try request.httpBody(), try JSONEncoder().encode(request))
+  }
+
+  func testOversizedOrNonObjectContextIsRefused() {
+    XCTAssertEqual(
+      category {
+        _ = try RewriteRequest(
+          requestID: requestID, mode: .clean, text: "x",
+          context: Data(repeating: UInt8(ascii: " "), count: 8_193))
+      }, .invalidSettings)
+    XCTAssertEqual(
+      category {
+        _ = try RewriteRequest(
+          requestID: requestID, mode: .clean, text: "x", context: Data("[1]".utf8))
+      }, .invalidSettings)
+  }
+
+  func testV2ResultRequiresContextPromptVersion() throws {
+    let request = try RewriteRequest(
+      requestID: requestID, mode: .clean, text: "peter can you move the deployment",
+      context: contextSnapshot().canonicalJSON())
+    XCTAssertEqual(
+      category {
+        _ = try RewriteResultValidator.validate(
+          events: try events([try resultLine()]), for: request, inputBytes: request.inputBytes)
+      }, .malformedResponse)
+    var object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: try resultLine()) as? [String: Any])
+    object["context_prompt_version"] = 1
+    let result = try RewriteResultValidator.validate(
+      events: try events([try JSONSerialization.data(withJSONObject: object)]), for: request,
+      inputBytes: request.inputBytes)
+    XCTAssertEqual(result.contextPromptVersion, 1)
+    object["context_prompt_version"] = 0
+    XCTAssertEqual(
+      category {
+        _ = try RewriteResultValidator.validate(
+          events: try events([try JSONSerialization.data(withJSONObject: object)]),
+          for: request, inputBytes: request.inputBytes)
+      }, .malformedResponse)
+    // A v1 request ignores the field and reports none.
+    object["context_prompt_version"] = 1
+    let v1 = try self.request()
+    XCTAssertNil(
+      try RewriteResultValidator.validate(
+        events: try events([try JSONSerialization.data(withJSONObject: object)]), for: v1,
+        inputBytes: v1.inputBytes
+      ).contextPromptVersion)
+  }
+
+  func testContextCopiedIsPersistedWithItsNotice() {
+    XCTAssertTrue(RewriteFailureCategory.contextCopied.isPersistable)
+    XCTAssertEqual(RewriteFailureCategory.contextCopied.rawValue, "context_copied")
+    XCTAssertEqual(
+      RewriteNotice.text(for: .contextCopied, context: .live),
+      "Rewrite used on-screen text you did not say; inserted your transcript.")
+  }
+
+  func testHealthReportsContextSupportFromProtocolVersions() throws {
+    let both = try HealthResponse.decode(
+      Data(#"{"service":"localflow-rewrite","protocol_versions":[1,2]}"#.utf8))
+    XCTAssertTrue(both.supportsProtocolOne)
+    XCTAssertTrue(both.supportsContext)
+    let old = try HealthResponse.decode(
+      Data(#"{"service":"localflow-rewrite","protocol_versions":[1]}"#.utf8))
+    XCTAssertFalse(old.supportsContext)
+  }
+
   // MARK: Category halves and notices
 
   func testCategoryHalvesArePartitioned() {
     let persisted: Set<RewriteFailureCategory> = [
       .serverUnreachable, .timeout, .authenticationFailed, .transportError, .backendUnavailable,
       .malformedResponse, .unsupportedSchemaVersion, .emptyResponse, .oversizedResponse,
-      .serverValidationFailed, .requestMismatch, .interrupted,
+      .serverValidationFailed, .requestMismatch, .interrupted, .contextCopied,
     ]
     let refusals: Set<RewriteFailureCategory> = [
       .inputTooLarge, .missingCredential, .insecureEndpointBlocked, .concurrencyLimit,
       .attemptLimit, .capacityExceeded, .invalidSettings,
     ]
-    XCTAssertEqual(persisted.count, 12)
+    // Twelve Feature 003 codes plus Feature 012's `context_copied`.
+    XCTAssertEqual(persisted.count, 13)
     XCTAssertEqual(refusals.count, 7)
     XCTAssertEqual(Set(RewriteFailureCategory.allCases), persisted.union(refusals))
     for category in persisted { XCTAssertTrue(category.isPersistable, category.rawValue) }
     for category in refusals { XCTAssertFalse(category.isPersistable, category.rawValue) }
-    XCTAssertEqual(RewriteFailureCategory.persisted.count, 12)
+    XCTAssertEqual(RewriteFailureCategory.persisted.count, 13)
   }
 
   func testNoticeTextMatchesTheContractTable() {

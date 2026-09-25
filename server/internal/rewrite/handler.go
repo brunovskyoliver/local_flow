@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -19,7 +20,7 @@ import (
 	entityshield "localflow/server/internal/rewrite/shield"
 )
 
-const ServerVersion = "0.2.0"
+const ServerVersion = "0.3.0"
 
 type BackendAdapter interface {
 	Probe(context.Context) backend.Info
@@ -53,7 +54,7 @@ type Handler struct {
 
 func NewHandler(c HandlerConfig) *Handler {
 	if len(c.ProtocolVersions) == 0 {
-		c.ProtocolVersions = []int{1}
+		c.ProtocolVersions = []int{SchemaVersion, ContextVersion}
 	}
 	c.ProtocolVersions = append([]int(nil), c.ProtocolVersions...)
 	if c.Logger == nil {
@@ -174,7 +175,7 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	}
 	supported := false
 	for _, v := range h.config.ProtocolVersions {
-		if v == 1 {
+		if v == req.SchemaVersion {
 			supported = true
 		}
 	}
@@ -185,8 +186,12 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	queueMS := int(time.Since(start).Milliseconds())
 	code := "succeeded"
 	outputBytes := 0
+	contextBytes := ""
+	if req.Context != nil {
+		contextBytes = fmt.Sprintf(" context_bytes=%d", len(req.ContextJSON))
+	}
 	defer func() {
-		h.config.Logger.Printf("request_id=%s input_bytes=%d output_bytes=%d duration_ms=%d code=%s", req.RequestID, len(req.Text), outputBytes, time.Since(start).Milliseconds(), code)
+		h.config.Logger.Printf("request_id=%s input_bytes=%d%s output_bytes=%d duration_ms=%d code=%s", req.RequestID, len(req.Text), contextBytes, outputBytes, time.Since(start).Milliseconds(), code)
 	}()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -240,6 +245,9 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	}
 	lastProgress := time.Now()
 	system := template.Text
+	if req.Context != nil {
+		system = prompts.WithContext(system, prompts.Reference{Category: req.Context.AppCategory, StyleHints: req.Context.StyleHints, Block: RenderContext(req.ContextJSON)})
+	}
 	var responseSchema map[string]any
 	if info.JSONSchema {
 		responseSchema = prompts.ResponseFormat()
@@ -305,6 +313,9 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	}
 	timing := Timing{&queueMS, completion.FirstTokenMS, &completion.DurationMS}
 	result := NewResult(req, text, Identity{"flowd", ServerVersion}, Backend{"openai-compatible", BoundIdentity(completion.Model)}, template.Version, Shield{shieldVersion, len(table), len(table)}, timing)
+	if req.Context != nil {
+		result.ContextPromptVersion = prompts.ContextPromptVersion
+	}
 	// JSON escaping can expand text. Enforce the client's total response budget
 	// as well as its text budget before emitting a terminal result.
 	data, err := EncodeLine(result)

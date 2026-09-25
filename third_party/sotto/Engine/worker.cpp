@@ -249,6 +249,18 @@ VocabularyHints selectVocabulary(whisper_context *context, const std::vector<std
 // first 30 s. Under this detection probability the caller's fallback decides.
 constexpr float languagePinProbability = 0.9f;
 
+// LocalFlow supports English and Slovak only. "auto" chooses between these two and
+// never reaches whisper_full: an argmax over all of whisper's languages turned short
+// Slovak windows into Czech, Slovenian, or Romanian, or translated them to English.
+constexpr const char *automaticLanguages[] = {"en", "sk"};
+// The language an "auto" request decodes in when there is no evidence and no fallback.
+constexpr const char *automaticDefaultLanguage = "sk";
+
+bool isAutomaticLanguage(const std::string &code) {
+    return std::any_of(std::begin(automaticLanguages), std::end(automaticLanguages),
+                       [&](const char *candidate) { return code == candidate; });
+}
+
 // The VAD spans of one window in order, up to 30 s: the audio the language is
 // detected on. Segment times are centiseconds on the 16 kHz input.
 std::vector<float> speechForDetection(const std::vector<float> &samples, whisper_vad_segments *segments) {
@@ -287,7 +299,7 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, const std::s
     // Meeting windows with "auto": the language this window decodes in when its own
     // detection is not confident, typically the caller's last confident detection.
     const auto fallbackLanguage = request.contains("fallbackLanguage") ? stringField(request, "fallbackLanguage") : std::optional<std::string>("");
-    if (!fallbackLanguage || (!fallbackLanguage->empty() && whisper_lang_id(fallbackLanguage->c_str()) < 0)) {
+    if (!fallbackLanguage || (!fallbackLanguage->empty() && !isAutomaticLanguage(*fallbackLanguage))) {
         emitError("The requested fallback language is not supported.", *id);
         return;
     }
@@ -341,16 +353,17 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, const std::s
     Progress progress{*id};
     reportProgress(nullptr, nullptr, 0, &progress);
     std::string text;
-    std::string detectedLanguage = *language;
     std::optional<float> detectedLanguageProbability;
     std::optional<double> languageSpeechSeconds;
-    // The language whisper_full is given, and how it was chosen.
+    // The language whisper_full is given, and how it was chosen. With "auto" and no
+    // usable evidence this is the caller's fallback, else Slovak.
     std::string decodeLanguage = *language;
-    std::string languageDecision = *language == "auto" ? "whisper" : "fixed";
-    if (meetingTranscription && *language == "auto" && !fallbackLanguage->empty()) {
-        decodeLanguage = *fallbackLanguage;
-        languageDecision = "fallback";
+    std::string languageDecision = "fixed";
+    if (*language == "auto") {
+        decodeLanguage = fallbackLanguage->empty() ? automaticDefaultLanguage : *fallbackLanguage;
+        languageDecision = fallbackLanguage->empty() ? "default" : "fallback";
     }
+    std::string detectedLanguage = decodeLanguage;
     std::unique_ptr<whisper_vad_segments, decltype(&whisper_vad_free_segments)> segments(nullptr, whisper_vad_free_segments);
     if (!audio.silent) {
         // A small CPU-only Silero pass rejects fan noise, tones, and other
@@ -373,31 +386,38 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, const std::s
         // off quiet word boundaries or short pauses inside a sentence.
     }
     if (!audio.silent) {
-        if (benchmarkEvidence && *language == "auto") {
+        if (*language == "auto") {
             // Meeting windows decide the language here, on the first 30 s of speech,
             // and hand whisper_full a fixed one. whisper's own detection sees the first
             // 30 s of whatever it gets; on a microphone lane with the remote voice
-            // muted that was a few words in silence, and Slovak windows came back as
-            // Romanian or as English translations. A confident detection is pinned;
-            // under the pin probability the caller's fallback decides; without one,
-            // whisper detects as before.
+            // muted that was a few words in silence. Only English and Slovak compete:
+            // the probability reported is Slovak's or English's share of the two. A
+            // share at the pin probability decides; under it the caller's fallback
+            // does, and without a fallback the larger share still decides.
             const auto speech = meetingTranscription ? speechForDetection(audio.samples, segments.get()) : audio.samples;
             if (meetingTranscription) languageSpeechSeconds = static_cast<double>(speech.size()) / 16000.0;
+            whisper_state *detectionState = benchmarkState.get();
             std::vector<float> languageProbabilities(whisper_lang_max_id() + 1, 0.0f);
-            if (!speech.empty() && (!meetingTranscription || *languageSpeechSeconds >= 3.0)
-                && whisper_pcm_to_mel_with_state(context, benchmarkState.get(), speech.data(), static_cast<int>(speech.size()), threads) == 0) {
-                const auto detected = whisper_lang_auto_detect_with_state(
-                    context, benchmarkState.get(), 0, threads, languageProbabilities.data());
-                if (detected >= 0 && detected <= whisper_lang_max_id()) {
-                    detectedLanguageProbability = languageProbabilities[detected];
-                    if (meetingTranscription) {
-                        if (*detectedLanguageProbability >= languagePinProbability) {
-                            decodeLanguage = whisper_lang_str(detected);
-                            languageDecision = "detected";
-                        } else if (!fallbackLanguage->empty()) {
-                            decodeLanguage = *fallbackLanguage;
-                            languageDecision = "fallback";
-                        }
+            const bool enoughSpeech = !speech.empty() && (!meetingTranscription || *languageSpeechSeconds >= 3.0);
+            const bool mel = enoughSpeech
+                && (detectionState
+                        ? whisper_pcm_to_mel_with_state(context, detectionState, speech.data(), static_cast<int>(speech.size()), threads)
+                        : whisper_pcm_to_mel(context, speech.data(), static_cast<int>(speech.size()), threads)) == 0;
+            const auto detected = !mel ? -1
+                : detectionState
+                    ? whisper_lang_auto_detect_with_state(context, detectionState, 0, threads, languageProbabilities.data())
+                    : whisper_lang_auto_detect(context, 0, threads, languageProbabilities.data());
+            const auto englishID = whisper_lang_id("en");
+            const auto slovakID = whisper_lang_id("sk");
+            if (detected >= 0 && englishID >= 0 && slovakID >= 0) {
+                const float english = languageProbabilities[englishID];
+                const float slovak = languageProbabilities[slovakID];
+                if (std::isfinite(english) && std::isfinite(slovak) && english + slovak > 0.0f) {
+                    const bool isEnglish = english > slovak;
+                    detectedLanguageProbability = (isEnglish ? english : slovak) / (english + slovak);
+                    if (*detectedLanguageProbability >= languagePinProbability || fallbackLanguage->empty()) {
+                        decodeLanguage = isEnglish ? "en" : "sk";
+                        languageDecision = "detected";
                     }
                 }
             }

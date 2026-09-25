@@ -24,8 +24,9 @@ final class NativePresentationTests: XCTestCase {
         text: index == 0
           ? "Zajtra skontrolujeme návrh. Then we can send the final version to the team.\nTento text je syntetický príklad pre kontrolu rozloženia."
           : "A synthetic transcription for checking the native history layout and its actions.",
+        // Two rows today, so the render shows a day card stitched from several rows.
         createdAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1000)
-          - Int64(index * 86_400_000),
+          - Int64(max(0, index - 1) * 86_400_000) - Int64(index * 60_000),
         quality: index == 1 ? .durationLimited : index == 2 ? .incomplete : .complete,
         stopReason: index == 1 ? .durationLimit : .keyRelease)
       _ = try await store.commit(reservation: try await store.reserve(), entry: entry)
@@ -61,7 +62,7 @@ final class NativePresentationTests: XCTestCase {
     ] {
       try await render(
         HistoryView(
-          model: history, copy: { _ in }, insert: { _, _ in }, dismissRecovery: { _ in },
+          model: history, copy: { _ in }, insert: { _, _ in },
           delete: { _ in }),
         to: output.appendingPathComponent("history-\(name).png"), appearance: appearance,
         scheme: scheme)
@@ -74,6 +75,38 @@ final class NativePresentationTests: XCTestCase {
           settings: settings, coordinator: OnboardingCoordinator(preferences: preferences)),
         to: output.appendingPathComponent("setup-\(name).png"), appearance: appearance,
         scheme: scheme)
+    }
+  }
+
+  @MainActor
+  func testRenderIndicatorPills() async throws {
+    guard let path = ProcessInfo.processInfo.environment["LOCALFLOW_UI_CAPTURE_DIR"] else {
+      throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_UI_CAPTURE_DIR for native render artifacts.")
+    }
+    let output = URL(fileURLWithPath: path, isDirectory: true)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    let meeting = UUID()
+    let pills = VStack(spacing: 18) {
+      DictationIndicator(state: .preparing, level: 0, cancel: {})
+      DictationIndicator(state: .recording, level: 0.12, cancel: {})
+      DictationIndicator(state: .transcribing, level: 0, cancel: {})
+      DictationIndicator(state: .rewriting, level: 0, cancel: {})
+      ClipboardNoticeView(
+        notice: ClipboardNotice(dictationID: UUID(), reason: .notInserted), dismiss: {})
+      ClipboardNoticeView(
+        notice: ClipboardNotice(dictationID: UUID(), reason: .uncertain), dismiss: {})
+      BackgroundNoticeView(
+        notice: BackgroundNotice(
+          id: meeting, message: "Finalizing transcript", symbol: "text.badge.checkmark",
+          progress: 0.42, destination: .transcript(meetingID: meeting)),
+        open: {}, hide: {})
+    }
+    for (name, appearance, scheme) in [
+      ("light", NSAppearance.Name.aqua, ColorScheme.light), ("dark", .darkAqua, .dark),
+    ] {
+      try await render(
+        pills, to: output.appendingPathComponent("indicator-pills-\(name).png"),
+        appearance: appearance, scheme: scheme, height: 420, width: 460)
     }
   }
 

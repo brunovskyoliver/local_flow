@@ -15,6 +15,7 @@ python3 scripts/test-transcription-quality.py
 python3 scripts/test-acquire-quality-corpus.py
 python3 scripts/test-rewrite-quality.py
 python3 scripts/test-analysis-quality.py
+python3 scripts/test-context-quality.py
 plutil -lint apps/macos/LocalFlow/Info.plist apps/macos/LocalFlow.xcodeproj/project.pbxproj
 (cd server && test -z "$(gofmt -l cmd internal)" && go test ./... && go vet ./...)
 analysis_eval_dir="$(mktemp -d "${TMPDIR:-/tmp}/localflow-analysis-eval.XXXXXX")"

@@ -1,5 +1,6 @@
 import AppKit
 @preconcurrency import ApplicationServices
+import Carbon.HIToolbox
 import Foundation
 import OSLog
 
@@ -14,6 +15,13 @@ public enum TargetIssue: Error, Equatable, Sendable {
 }
 
 public struct CapturedTarget: @unchecked Sendable {
+  /// How text reaches the target. Terminals expose no editable text element, so their
+  /// focused window receives a clipboard paste that cannot be read back.
+  public enum Delivery: Equatable, Sendable {
+    case typing
+    case paste
+  }
+
   public let processIdentifier: pid_t
   public let launchDate: Date
   public let bundleIdentifier: String
@@ -21,6 +29,7 @@ public struct CapturedTarget: @unchecked Sendable {
   public let focusedWindow: AXUIElement?
   public let selectedRange: CFRange
   public let comparisonContext: String
+  public let delivery: Delivery
 
   public init(
     processIdentifier: pid_t,
@@ -29,7 +38,8 @@ public struct CapturedTarget: @unchecked Sendable {
     element: AXUIElement,
     focusedWindow: AXUIElement?,
     selectedRange: CFRange,
-    comparisonContext: String
+    comparisonContext: String,
+    delivery: Delivery = .typing
   ) {
     self.processIdentifier = processIdentifier
     self.launchDate = launchDate
@@ -38,6 +48,7 @@ public struct CapturedTarget: @unchecked Sendable {
     self.focusedWindow = focusedWindow
     self.selectedRange = selectedRange
     self.comparisonContext = comparisonContext
+    self.delivery = delivery
   }
 }
 
@@ -49,6 +60,8 @@ public enum TargetValidation: Equatable, Sendable {
 public enum AXDispatchResult: Equatable, Sendable {
   case noMutation
   case mutationMayHaveOccurred
+  /// Handed to a paste target, which offers no readback.
+  case pasted
 }
 
 public protocol TextAccessibilityAdapter: Sendable {
@@ -70,7 +83,16 @@ extension TextAccessibilityAdapter {
 }
 
 public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
+  /// Bounds every Accessibility message, so a hung app cannot stall a press or an
+  /// insertion (the default is several seconds).
+  static let messagingTimeout: Float = 0.25
+
   public init() {}
+
+  private static func bounded(_ element: AXUIElement) -> AXUIElement {
+    AXUIElementSetMessagingTimeout(element, messagingTimeout)
+    return element
+  }
 
   public func captureTarget() async throws -> CapturedTarget? {
     try captureSynchronously()
@@ -82,19 +104,19 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     }
     let pid = frontmost.processIdentifier
     var raw: CFTypeRef?
-    let system = AXUIElementCreateSystemWide()
+    let system = Self.bounded(AXUIElementCreateSystemWide())
     let status = AXUIElementCopyAttributeValue(
       system, kAXFocusedUIElementAttribute as CFString, &raw)
     if status != .success || raw == nil {
       // Some apps expose focus only through their application AX object.
-      let application = AXUIElementCreateApplication(pid)
+      let application = Self.bounded(AXUIElementCreateApplication(pid))
       guard
         AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute as CFString, &raw)
           == .success
       else { return nil }
     }
     guard let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
-    let element = raw as! AXUIElement
+    let element = Self.bounded(raw as! AXUIElement)
     var elementPID: pid_t = 0
     guard AXUIElementGetPid(element, &elementPID) == .success, elementPID == pid,
       NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
@@ -103,6 +125,7 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
   }
 
   private func captureSynchronously() throws -> CapturedTarget? {
+    if let target = pasteTarget() { return target }
     guard let element = focusedElement(), let target = try makeTarget(element),
       matchesFocusedIdentity(target)
     else { return nil }
@@ -132,6 +155,7 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
 
   private func validateSynchronously(_ target: CapturedTarget) -> TargetValidation {
     guard AXIsProcessTrusted() else { return .rejected(.accessibilityDenied) }
+    if target.delivery == .paste { return validatePaste(target) }
     guard let current = try? captureSynchronously() else { return .rejected(.focusChanged) }
     guard current.processIdentifier == target.processIdentifier,
       current.launchDate == target.launchDate,
@@ -153,6 +177,12 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     guard !Task.isCancelled, !text.isEmpty, text.utf8.count <= 64 * 1024,
       validateSynchronously(target) == .eligible, !Task.isCancelled
     else { return .noMutation }
+    if target.delivery == .paste {
+      let result = await paste(text, on: target)
+      Logger(subsystem: "org.localflow.LocalFlow", category: "insertion").notice(
+        "Terminal paste: \(String(describing: result), privacy: .public)")
+      return result
+    }
     let result = await UnicodeTextDelivery.send(
       text,
       isCurrent: { submitted in
@@ -180,6 +210,7 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
   }
 
   public func readback(_ text: String, on target: CapturedTarget) async throws -> String {
+    guard target.delivery == .typing else { throw TargetIssue.unsupported }
     // Web editors acknowledge input asynchronously. Poll confirmation, never delivery.
     for attempt in 0..<50 {
       try Task.checkCancellation()
@@ -199,6 +230,7 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     -> String
   {
     guard AXIsProcessTrusted() else { throw TargetIssue.accessibilityDenied }
+    guard target.delivery == .typing else { throw TargetIssue.unsupported }
     // Selection changes recreate the focused element in web views; the field is the same
     // as long as its application is still frontmost and the element still answers.
     guard let frontmost = NSWorkspace.shared.frontmostApplication,
@@ -294,6 +326,87 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     return CFRange(location: start, length: selection.location - start + selection.length)
   }
 
+  /// The frontmost terminal's focused window. Its text is never read.
+  private func pasteTarget() -> CapturedTarget? {
+    guard AXIsProcessTrusted(), let application = NSWorkspace.shared.frontmostApplication,
+      let bundleIdentifier = application.bundleIdentifier,
+      AppCategory.builtIn[bundleIdentifier] == .terminal,
+      let launchDate = application.launchDate,
+      let window = Self.focusedWindow(of: application.processIdentifier)
+    else { return nil }
+    return CapturedTarget(
+      processIdentifier: application.processIdentifier, launchDate: launchDate,
+      bundleIdentifier: bundleIdentifier, element: focusedElement() ?? window,
+      focusedWindow: window, selectedRange: CFRange(location: 0, length: 0),
+      comparisonContext: "", delivery: .paste)
+  }
+
+  private static func focusedWindow(of pid: pid_t) -> AXUIElement? {
+    var raw: CFTypeRef?
+    guard
+      AXUIElementCopyAttributeValue(
+        bounded(AXUIElementCreateApplication(pid)), kAXFocusedWindowAttribute as CFString, &raw)
+        == .success,
+      let raw, CFGetTypeID(raw) == AXUIElementGetTypeID()
+    else { return nil }
+    return bounded(raw as! AXUIElement)
+  }
+
+  /// Same process and window still frontmost. Secure input means a password prompt.
+  private func validatePaste(_ target: CapturedTarget) -> TargetValidation {
+    guard let application = NSWorkspace.shared.frontmostApplication,
+      application.bundleIdentifier == target.bundleIdentifier
+    else { return .rejected(.focusChanged) }
+    guard application.processIdentifier == target.processIdentifier,
+      application.launchDate == target.launchDate
+    else { return .rejected(.staleProcess) }
+    guard let targetWindow = target.focusedWindow,
+      let window = Self.focusedWindow(of: target.processIdentifier),
+      CFEqual(window, targetWindow)
+    else { return .rejected(.focusChanged) }
+    guard !IsSecureEventInputEnabled() else { return .rejected(.secureField) }
+    return .eligible
+  }
+
+  /// Puts the text on the clipboard, sends Command-V to the terminal and restores the
+  /// previous clipboard once the terminal has read it, unless something else wrote since.
+  @MainActor private func paste(_ text: String, on target: CapturedTarget) async
+    -> AXDispatchResult
+  {
+    let pasteboard = NSPasteboard.general
+    guard let saved = PasteboardSnapshot(pasteboard) else { return .noMutation }
+    pasteboard.clearContents()
+    let item = NSPasteboardItem()
+    item.setString(text, forType: .string)
+    // Clipboard managers skip transient items (nspasteboard.org).
+    item.setData(Data(), forType: PasteboardSnapshot.transientType)
+    guard pasteboard.writeObjects([item]) else {
+      saved.restore(to: pasteboard)
+      return .noMutation
+    }
+    let written = pasteboard.changeCount
+    // No suspension between validation and process-targeted dispatch.
+    guard !Task.isCancelled, validatePaste(target) == .eligible,
+      let source = CGEventSource(stateID: .privateState),
+      let down = CGEvent(
+        keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
+      let up = CGEvent(
+        keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)
+    else {
+      saved.restore(to: pasteboard)
+      return .noMutation
+    }
+    // Only the flag: Terminal beeps at a Command-V that also carries a Unicode string.
+    for event in [down, up] { event.flags = .maskCommand }
+    down.postToPid(target.processIdentifier)
+    up.postToPid(target.processIdentifier)
+    Task { @MainActor in
+      try? await Task.sleep(for: PasteboardSnapshot.restoreDelay)
+      if pasteboard.changeCount == written { saved.restore(to: pasteboard) }
+    }
+    return .pasted
+  }
+
   private func makeTarget(_ element: AXUIElement) throws -> CapturedTarget? {
     var pid: pid_t = 0
     guard AXUIElementGetPid(element, &pid) == .success,
@@ -319,7 +432,7 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     var windowValue: CFTypeRef?
     _ = AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &windowValue)
     guard let windowValue, CFGetTypeID(windowValue) == AXUIElementGetTypeID() else { return nil }
-    let window = windowValue as! AXUIElement
+    let window = Self.bounded(windowValue as! AXUIElement)
     var settable = DarwinBoolean(false)
     guard
       AXUIElementIsAttributeSettable(
@@ -346,27 +459,50 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
   }
 }
 
-/// At most one pair of keyboard events is outstanding. No clipboard or Return-key event.
+/// Native keyboard events carrying Unicode strings. No clipboard or Return-key event.
 struct UnicodeTextDelivery {
+  /// Per-event bound: keyboard events carry at most 20 UTF-16 units; longer strings are
+  /// truncated by the event system.
   static let maximumChunkUnits = 20
+  /// Chunks posted between readbacks. Focus identity is still checked before every chunk;
+  /// the readback re-reads the whole delivered prefix, so it runs every `confirmationInterval`
+  /// chunks and after the last one, which keeps long text linear instead of quadratic.
+  static let confirmationInterval = 16
+  static let minimumDeadline = Duration.seconds(10)
 
+  /// Splits on grapheme clusters; a single cluster longer than one event is split on
+  /// scalars, so surrogate pairs are never divided.
   static func chunks(_ text: String) -> [String] {
     guard !text.isEmpty, text.utf8.count <= 65_536 else { return [] }
     var result: [String] = []
     var chunk = ""
     var units = 0
-    for scalar in text.unicodeScalars {
-      let count = scalar.utf16.count
-      if units + count > maximumChunkUnits {
-        result.append(chunk)
-        chunk = ""
-        units = 0
+    func flush() {
+      if !chunk.isEmpty { result.append(chunk) }
+      chunk = ""
+      units = 0
+    }
+    for character in text {
+      let count = character.utf16.count
+      if count > maximumChunkUnits {
+        for scalar in character.unicodeScalars {
+          if units + scalar.utf16.count > maximumChunkUnits { flush() }
+          chunk.unicodeScalars.append(scalar)
+          units += scalar.utf16.count
+        }
+        continue
       }
-      chunk.unicodeScalars.append(scalar)
+      if units + count > maximumChunkUnits { flush() }
+      chunk.append(character)
       units += count
     }
-    if !chunk.isEmpty { result.append(chunk) }
+    flush()
     return result
+  }
+
+  /// Admission window for dispatch: ten seconds, or 5 ms per UTF-16 unit for long text.
+  static func dispatchWindow(forUnits units: Int) -> Duration {
+    max(minimumDeadline, .milliseconds(5 * max(0, units)))
   }
 
   @MainActor static func send(
@@ -377,19 +513,63 @@ struct UnicodeTextDelivery {
   ) async -> AXDispatchResult {
     let parts = chunks(text)
     guard !parts.isEmpty else { return .noMutation }
-    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let deadline = ContinuousClock.now.advanced(by: dispatchWindow(forUnits: text.utf16.count))
     var submitted = false
     var prefix = ""
-    for part in parts {
+    for (index, part) in parts.enumerated() {
       guard !Task.isCancelled, ContinuousClock.now < deadline, isCurrent(submitted) else {
         return submitted ? .mutationMayHaveOccurred : .noMutation
       }
       guard post(part) else { return submitted ? .mutationMayHaveOccurred : .noMutation }
       submitted = true
       prefix += part
-      // Confirm the caret and text before allowing another chunk to reach the app.
+      // Confirm the caret and text periodically and at the end before trusting delivery.
+      let last = index == parts.count - 1
+      guard last || (index + 1) % confirmationInterval == 0 else { continue }
       guard (try? await confirm(prefix)) == prefix else { return .mutationMayHaveOccurred }
     }
     return .mutationMayHaveOccurred
+  }
+}
+
+/// A bounded copy of every clipboard item, so a terminal paste can put it back.
+struct PasteboardSnapshot: Sendable {
+  struct Entry: Sendable {
+    let type: NSPasteboard.PasteboardType
+    let data: Data
+  }
+
+  static let maximumBytes = 32 * 1024 * 1024
+  static let restoreDelay = Duration.seconds(1)
+  static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+
+  let items: [[Entry]]
+
+  /// Nil when the clipboard holds more than `maximumBytes`; the paste is then skipped.
+  @MainActor init?(_ pasteboard: NSPasteboard) {
+    var total = 0
+    var items: [[Entry]] = []
+    for item in pasteboard.pasteboardItems ?? [] {
+      var entries: [Entry] = []
+      for type in item.types {
+        guard let data = item.data(forType: type) else { continue }
+        total += data.count
+        guard total <= Self.maximumBytes else { return nil }
+        entries.append(Entry(type: type, data: data))
+      }
+      items.append(entries)
+    }
+    self.items = items
+  }
+
+  @MainActor func restore(to pasteboard: NSPasteboard) {
+    pasteboard.clearContents()
+    guard !items.isEmpty else { return }
+    pasteboard.writeObjects(
+      items.map { entries in
+        let item = NSPasteboardItem()
+        for entry in entries { item.setData(entry.data, forType: entry.type) }
+        return item
+      })
   }
 }

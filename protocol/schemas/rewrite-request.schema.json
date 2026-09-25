@@ -1,21 +1,86 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://localflow.org/schemas/rewrite-request.schema.json",
-  "title": "LocalFlow rewrite request v1",
-  "description": "Body of POST /v1/rewrite. No other field is permitted; servers reject unknown fields with invalid_request. Byte limits (text <= 65,536 UTF-8 bytes, body <= 262,144 bytes) are enforced before parsing.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "request_id",
-    "mode",
-    "text",
-    "language_hints",
-    "stream_deltas"
+  "title": "LocalFlow rewrite request v1 and v2",
+  "description": "Body of POST /v1/rewrite. v2 is v1 plus the required context (Feature 012); a v1 body with context or a v2 body without it is invalid_request. No other field is permitted; servers reject unknown fields with invalid_request. Byte limits (text <= 65,536 UTF-8 bytes, body <= 262,144 bytes, context <= 8,192 bytes) are enforced before parsing.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/v1"
+    },
+    {
+      "$ref": "#/$defs/v2"
+    }
   ],
-  "properties": {
-    "schema_version": {
-      "const": 1
+  "$defs": {
+    "v1": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Rewrite protocol v1 (Feature 003).",
+      "required": [
+        "schema_version",
+        "request_id",
+        "mode",
+        "text",
+        "language_hints",
+        "stream_deltas"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "language_hints": {
+          "$ref": "#/$defs/language_hints"
+        },
+        "stream_deltas": {
+          "$ref": "#/$defs/stream_deltas"
+        }
+      }
+    },
+    "v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Rewrite protocol v2: v1 plus reference context (ADR 0023).",
+      "required": [
+        "schema_version",
+        "request_id",
+        "mode",
+        "text",
+        "language_hints",
+        "stream_deltas",
+        "context"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "language_hints": {
+          "$ref": "#/$defs/language_hints"
+        },
+        "stream_deltas": {
+          "$ref": "#/$defs/stream_deltas"
+        },
+        "context": {
+          "$ref": "rewrite-context.schema.json"
+        }
+      }
     },
     "request_id": {
       "type": "string",
@@ -38,14 +103,13 @@
     },
     "language_hints": {
       "type": "array",
-      "maxItems": 4,
+      "maxItems": 2,
+      "uniqueItems": true,
       "items": {
         "type": "string",
-        "minLength": 2,
-        "maxLength": 35,
-        "pattern": "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$"
+        "enum": ["en", "sk"]
       },
-      "description": "Advisory BCP-47 tags; never a translation request."
+      "description": "Advisory language codes, English or Slovak only; never a translation request."
     },
     "stream_deltas": {
       "type": "boolean"

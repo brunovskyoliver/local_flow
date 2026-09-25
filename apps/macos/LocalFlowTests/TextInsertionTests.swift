@@ -26,6 +26,33 @@ final class TextInsertionTests: XCTestCase {
     XCTAssertEqual(adapter.dispatchCount, 1)
   }
 
+  func testPasteIsConfirmedWithoutReadback() async {
+    let adapter = FakeInsertionAdapter(validation: .eligible, readback: nil, dispatch: .pasted)
+    let service = TextInsertionService(adapter: adapter)
+    let result = await service.insertOnce(attemptID: UUID(), target: adapter.target, text: "ls")
+    XCTAssertEqual(result, .confirmed)
+    XCTAssertEqual(adapter.dispatchCount, 1)
+  }
+
+  @MainActor func testPasteboardSnapshotRestoresEveryItem() throws {
+    let pasteboard = NSPasteboard(name: .init("org.localflow.tests.\(UUID().uuidString)"))
+    defer { pasteboard.releaseGlobally() }
+    let first = NSPasteboardItem()
+    first.setString("copied", forType: .string)
+    first.setData(Data([1, 2, 3]), forType: .init("org.localflow.tests.binary"))
+    let second = NSPasteboardItem()
+    second.setString("second", forType: .string)
+    pasteboard.clearContents()
+    pasteboard.writeObjects([first, second])
+    let saved = try XCTUnwrap(PasteboardSnapshot(pasteboard))
+    pasteboard.clearContents()
+    pasteboard.setString("dictated", forType: .string)
+    saved.restore(to: pasteboard)
+    let items = try XCTUnwrap(pasteboard.pasteboardItems)
+    XCTAssertEqual(items.map { $0.string(forType: .string) }, ["copied", "second"])
+    XCTAssertEqual(items[0].data(forType: .init("org.localflow.tests.binary")), Data([1, 2, 3]))
+  }
+
   func testReadbackFailureIsUncertain() async {
     let adapter = FakeInsertionAdapter(validation: .eligible, readback: nil)
     let service = TextInsertionService(adapter: adapter)
@@ -107,17 +134,22 @@ private final class FakeInsertionAdapter: TextAccessibilityAdapter, @unchecked S
     selectedRange: CFRange(location: 0, length: 0), comparisonContext: "")
   let validation: TargetValidation
   let readback: String?
+  let dispatch: AXDispatchResult
   private(set) var dispatchCount = 0
 
-  init(validation: TargetValidation, readback: String? = "hello") {
+  init(
+    validation: TargetValidation, readback: String? = "hello",
+    dispatch: AXDispatchResult = .mutationMayHaveOccurred
+  ) {
     self.validation = validation
     self.readback = readback
+    self.dispatch = dispatch
   }
   func captureTarget() async throws -> CapturedTarget? { target }
   func validate(_ target: CapturedTarget) async -> TargetValidation { validation }
   func setSelectedText(_ text: String, on target: CapturedTarget) async throws -> AXDispatchResult {
     dispatchCount += 1
-    return .mutationMayHaveOccurred
+    return dispatch
   }
   func readback(_ text: String, on target: CapturedTarget) async throws -> String {
     guard let readback else { throw TargetIssue.unsupported }
@@ -187,23 +219,55 @@ extension TextInsertionTests {
     XCTAssertTrue(UnicodeTextDelivery.chunks(String(repeating: "a", count: 65_537)).isEmpty)
   }
 
-  @MainActor func testUnicodeDeliveryConfirmsBeforeNextChunkAndNeverRetriesUncertainty() async {
-    let text = String(repeating: "a", count: 45)
+  func testUnicodeChunksKeepGraphemeClustersTogether() {
+    // A flag and a family emoji are several scalars each; neither may straddle events.
+    let text = String(repeating: "ab🇸🇰 👨‍👩‍👧 e\u{0301} ", count: 20)
+    let parts = UnicodeTextDelivery.chunks(text)
+    XCTAssertEqual(parts.joined(), text)
+    XCTAssertTrue(parts.allSatisfy { !$0.isEmpty && $0.utf16.count <= 20 })
+    XCTAssertEqual(
+      parts.reduce(0) { $0 + $1.count }, text.count, "no cluster may be split across chunks")
+    // A single cluster longer than one event still splits, on scalars.
+    let long = "e" + String(repeating: "\u{0301}", count: 30)
+    let longParts = UnicodeTextDelivery.chunks(long)
+    XCTAssertEqual(longParts.joined(), long)
+    XCTAssertTrue(longParts.allSatisfy { $0.utf16.count <= 20 })
+  }
+
+  func testDispatchDeadlineScalesWithLengthAboveTenSeconds() {
+    XCTAssertEqual(UnicodeTextDelivery.dispatchWindow(forUnits: 20), .seconds(10))
+    XCTAssertEqual(UnicodeTextDelivery.dispatchWindow(forUnits: 2_000), .seconds(10))
+    XCTAssertEqual(UnicodeTextDelivery.dispatchWindow(forUnits: 6_000), .seconds(30))
+  }
+
+  @MainActor func testUnicodeDeliveryConfirmsPeriodicallyAndNeverRetriesUncertainty() async {
+    let interval = UnicodeTextDelivery.confirmationInterval
+    let chunkCount = interval * 2 + 3
+    let text = String(repeating: "a", count: 20 * chunkCount)
     var posted: [String] = []
-    var confirmed = ""
+    var identityChecks = 0
+    var confirmations: [Int] = []
     let result = await UnicodeTextDelivery.send(
-      text, isCurrent: { _ in true },
+      text,
+      isCurrent: { _ in
+        identityChecks += 1
+        return true
+      },
       post: { part in
-        XCTAssertEqual(posted.joined(), confirmed)
         posted.append(part)
         return true
       },
       confirm: { prefix in
-        confirmed = prefix
+        // A readback always covers every chunk posted so far.
+        XCTAssertEqual(posted.joined(), prefix)
+        confirmations.append(posted.count)
         return prefix
       })
     XCTAssertEqual(result, .mutationMayHaveOccurred)
     XCTAssertEqual(posted.joined(), text)
+    XCTAssertEqual(identityChecks, chunkCount, "focus identity is checked before every chunk")
+    XCTAssertEqual(confirmations, [interval, interval * 2, chunkCount])
+
     posted.removeAll()
     let uncertain = await UnicodeTextDelivery.send(
       text, isCurrent: { _ in true },
@@ -213,7 +277,21 @@ extension TextInsertionTests {
       },
       confirm: { _ in throw TargetIssue.unsupported })
     XCTAssertEqual(uncertain, .mutationMayHaveOccurred)
-    XCTAssertEqual(posted.count, 1)
+    XCTAssertEqual(posted.count, interval, "an unconfirmed batch stops delivery")
+
+    posted.removeAll()
+    var short: [Int] = []
+    _ = await UnicodeTextDelivery.send(
+      String(repeating: "a", count: 45), isCurrent: { _ in true },
+      post: {
+        posted.append($0)
+        return true
+      },
+      confirm: {
+        short.append(posted.count)
+        return $0
+      })
+    XCTAssertEqual(short, [3], "short text is confirmed once, after the last chunk")
   }
 
   @MainActor func testUnicodeDeliveryStopsOnFocusChangeBeforeOrBetweenChunks() async {

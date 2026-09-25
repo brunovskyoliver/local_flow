@@ -3,7 +3,9 @@ import Observation
 
 @MainActor @Observable
 final class HistoryViewModel {
-  private(set) var entries: [TranscriptionEntry] = []
+  private(set) var entries: [TranscriptionEntry] = [] {
+    didSet { groupCache = nil }
+  }
   private(set) var isLoading = false
   private(set) var hasOlder = false
   private(set) var hasNewer = false
@@ -40,15 +42,32 @@ final class HistoryViewModel {
       if searchText != oldValue { scheduleSearch() }
     }
   }
-  private(set) var calendar = Calendar.autoupdatingCurrent
-  private(set) var now = Date()
+  private(set) var calendar = Calendar.autoupdatingCurrent {
+    didSet { groupCache = nil }
+  }
+  /// English "24 September 2026" headings in `calendar`; rebuilt only by `regroup`.
+  @ObservationIgnored private var headingFormatter = HistoryViewModel.headingFormatter(
+    for: .autoupdatingCurrent)
+  private(set) var now = Date() {
+    didSet { groupCache = nil }
+  }
+  /// `dateGroups` for the current entries, calendar and day; dropped when any changes.
+  @ObservationIgnored private var groupCache: [DateGroup]?
   private let store: TranscriptionStore
   private var watermark: TranscriptionStore.HistoryCursor?
   private var generation = 0
   private var worker: Task<Void, Never>?
   private var pending: Request?
 
+  /// How a finished page lands in `entries`.
+  private enum Placement { case replace, appendOlder, prependNewer }
+
+  /// Resident rows while scrolling. Pages load at either end as the list reaches it
+  /// and the far end is let go, so memory stays flat however far one scrolls.
+  static let residentLimit = 200
+
   private struct Request {
+    let placement: Placement
     let generation: Int
     let query: String
     let cursor: TranscriptionStore.HistoryCursor?
@@ -172,7 +191,7 @@ final class HistoryViewModel {
         })
       guard let self else { return }
       defer { self.rewritingEntries.remove(entry.id) }
-      self.request(cursor: nil, direction: .older, reset: true, debounce: false)
+      self.request(cursor: nil, direction: .older, placement: .replace, debounce: false)
       guard self.detailEntryID == entry.id else { return }
       switch outcome {
       case .rewritten, .notEligible: self.rewriteNotice = nil
@@ -201,7 +220,8 @@ final class HistoryViewModel {
     guard detailEntryID == id else { return }
     detailAttempts = attempts
     if let entry, let envelope = detailEnvelope {
-      detailEnvelope = TranscriptionEnvelope(entry: entry, detail: envelope.detail)
+      detailEnvelope = TranscriptionEnvelope(
+        entry: entry, detail: envelope.detail, context: envelope.context)
       if let index = entries.firstIndex(where: { $0.id == id }) { entries[index] = entry }
     }
   }
@@ -250,6 +270,11 @@ final class HistoryViewModel {
   }
 
   var dateGroups: [DateGroup] {
+    // Read the inputs first so observers stay subscribed when the cache answers.
+    let entries = entries
+    let calendar = calendar
+    let now = now
+    if let groupCache { return groupCache }
     var groups: [DateGroup] = []
     for entry in entries {
       let date = Date(timeIntervalSince1970: Double(entry.createdAtMilliseconds) / 1000)
@@ -265,34 +290,35 @@ final class HistoryViewModel {
         groups.append(DateGroup(id: day, title: title, entries: [entry]))
       }
     }
+    groupCache = groups
     return groups
   }
 
-  private func localizedDate(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.calendar = calendar
-    formatter.timeZone = calendar.timeZone
-    formatter.dateStyle = .long
-    formatter.timeStyle = .none
-    return formatter.string(from: date)
+  private func localizedDate(_ date: Date) -> String { headingFormatter.string(from: date) }
+
+  private static func headingFormatter(for calendar: Calendar) -> DateFormatter {
+    EnglishDateFormat.formatter("d MMMM yyyy", timeZone: calendar.timeZone, calendar: calendar)
   }
 
   func regroup(calendar: Calendar = .autoupdatingCurrent, now: Date = Date()) {
     self.calendar = calendar
     self.now = now
+    headingFormatter = Self.headingFormatter(for: calendar)
   }
 
   func refresh() {
-    request(cursor: nil, direction: .older, reset: true, debounce: false)
+    request(cursor: nil, direction: .older, placement: .replace, debounce: false)
     if detailEntryID != nil { retryDetail() }
   }
-  func older() {
+  /// The list scrolled to its oldest row: the next older page joins at the bottom.
+  func loadOlder() {
     guard hasOlder, !isLoading, let last = entries.last else { return }
-    request(cursor: .init(last), direction: .older, reset: false, debounce: false)
+    request(cursor: .init(last), direction: .older, placement: .appendOlder, debounce: false)
   }
-  func newer() {
+  /// The list scrolled back to its newest resident row after newer ones were let go.
+  func loadNewer() {
     guard hasNewer, !isLoading, let first = entries.first else { return }
-    request(cursor: .init(first), direction: .newer, reset: false, debounce: false)
+    request(cursor: .init(first), direction: .newer, placement: .prependNewer, debounce: false)
   }
   func clearError() { errorMessage = nil }
   func reportActionError() {
@@ -301,13 +327,14 @@ final class HistoryViewModel {
   }
 
   private func scheduleSearch() {
-    request(cursor: nil, direction: .older, reset: true, debounce: true)
+    request(cursor: nil, direction: .older, placement: .replace, debounce: true)
   }
 
   private func request(
     cursor: TranscriptionStore.HistoryCursor?, direction: TranscriptionStore.HistoryDirection,
-    reset: Bool, debounce: Bool
+    placement: Placement, debounce: Bool
   ) {
+    let reset = placement == .replace
     generation += 1
     do { _ = try TranscriptionStore.validatedQuery(searchText) } catch {
       pending = nil
@@ -317,7 +344,7 @@ final class HistoryViewModel {
       return
     }
     pending = Request(
-      generation: generation, query: searchText, cursor: cursor,
+      placement: placement, generation: generation, query: searchText, cursor: cursor,
       direction: direction, watermark: reset ? nil : watermark, debounce: debounce)
     isLoading = true
     worker?.cancel()
@@ -339,10 +366,8 @@ final class HistoryViewModel {
           direction: request.direction, watermark: request.watermark)
         try Task.checkCancellation()
         if request.generation == generation {
-          entries = page.entries
           watermark = page.watermark
-          hasOlder = request.direction == .older ? page.hasMore : request.cursor != nil
-          hasNewer = request.direction == .newer ? page.hasMore : request.cursor != nil
+          place(page, request.placement)
           errorMessage = nil
           isLoading = false
         }
@@ -359,6 +384,89 @@ final class HistoryViewModel {
   }
 }
 
+extension HistoryViewModel {
+  /// Joins a page at its end of the window and lets go of the far end past the limit.
+  private func place(_ page: TranscriptionStore.HistoryPage, _ placement: Placement) {
+    switch placement {
+    case .replace:
+      entries = page.entries
+      hasOlder = page.hasMore
+      hasNewer = false
+    case .appendOlder:
+      var window = entries + page.entries
+      let overflow = window.count - Self.residentLimit
+      if overflow > 0 {
+        window.removeFirst(overflow)
+        hasNewer = true
+      }
+      entries = window
+      hasOlder = page.hasMore
+    case .prependNewer:
+      var window = page.entries + entries
+      let overflow = window.count - Self.residentLimit
+      if overflow > 0 {
+        window.removeLast(overflow)
+        hasOlder = true
+      }
+      entries = window
+      hasNewer = page.hasMore
+    }
+  }
+}
+
+// MARK: Context (Feature 012)
+
+extension HistoryViewModel {
+  /// One line per outcome; a legacy row without a context row reads "not recorded".
+  static func contextLabel(_ context: DictationContextRecord?) -> String {
+    guard let context else { return "Context: not recorded" }
+    return switch context.outcome {
+    case .used: "Context: used"
+    case .off: "Context: off"
+    case .excludedApp: "Context: excluded app"
+    case .ownApp: "Context: LocalFlow window"
+    case .secureField: "Context: secure field"
+    case .noPermission: "Context unavailable: permission"
+    case .nothingReadable: "Context: nothing readable"
+    case .timedOut: "Context: timed out"
+    case .noTarget: "Context: no text field"
+    }
+  }
+  var contextLabel: String { Self.contextLabel(detailEnvelope?.context) }
+  var contextSnapshot: AppContextSnapshot? { detailEnvelope?.context?.snapshot }
+  var contextSpellingChanges: [ContextSpellingChange] {
+    detailEnvelope?.context?.spellingChanges ?? []
+  }
+  var contextPreSpellingText: String? { detailEnvelope?.context?.preSpellingText }
+
+  /// Whether the latest rewrite attempt carried the snapshot (Story 2.4, 2.5).
+  static func contextRewriteLine(_ context: DictationContextRecord?, latest: RewriteAttempt?)
+    -> String?
+  {
+    if context?.rewriteNote == DictationContextRecord.serverUnsupported {
+      return "Context not sent: server unsupported"
+    }
+    guard let latest, latest.contextHash != nil else { return nil }
+    return latest.failureCategory == .contextCopied
+      ? RewriteNotice.text(for: .contextCopied, context: .live)
+      : "Context sent to the rewrite server"
+  }
+  var contextRewriteLine: String? {
+    Self.contextRewriteLine(detailEnvelope?.context, latest: detailAttempts.last)
+  }
+}
+
+extension ContextPart {
+  var historyLabel: String {
+    switch self {
+    case .windowTitle: "Window title"
+    case .beforeCursor: "Text before the cursor"
+    case .afterCursor: "Text after the cursor"
+    case .selectedText: "Selected text"
+    }
+  }
+}
+
 extension TranscriptionEntry {
   var qualityLabel: String? {
     switch quality {
@@ -366,10 +474,6 @@ extension TranscriptionEntry {
     case .incomplete: "Incomplete"
     case .durationLimited: "Cut short at 180 seconds"
     }
-  }
-  var recoveryLabel: String? {
-    guard recoveryState == .needsReview else { return nil }
-    return deliveryState == .uncertain ? "Delivery uncertain" : "Needs insertion"
   }
   /// List badge mirroring the newest attempt; legacy and skipped rows show none.
   var rewriteLabel: String? {

@@ -111,6 +111,7 @@ Dropped items are not stored, rendered, copied or forwarded.
 | chunks per run | 64 |
 | partials per synthesis | 16; reduce depth 2 |
 | response line | 98,304 B |
+| response stream | 524,288 B |
 | result items | per the protocol caps |
 | overlays per meeting | 500 |
 | run rows per meeting | 20 |

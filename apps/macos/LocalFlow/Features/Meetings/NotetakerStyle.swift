@@ -9,7 +9,7 @@ enum NotetakerStyle {
 
 extension View {
   /// Keeps scrolling but drops the scroller from an AppKit-backed control such as `TextEditor`,
-  /// which ignores `scrollIndicators(.hidden)` when the system shows scroll bars permanently.
+  /// which ignores `scrollIndicators(.never)` when the system shows scroll bars permanently.
   func hideScrollers() -> some View {
     background(ScrollerRemover())
   }
@@ -17,28 +17,64 @@ extension View {
 
 private struct ScrollerRemover: NSViewRepresentable {
   func makeNSView(context: Context) -> ScrollerRemoverView { ScrollerRemoverView() }
-  func updateNSView(_ nsView: ScrollerRemoverView, context: Context) { nsView.strip() }
+  func updateNSView(_ nsView: ScrollerRemoverView, context: Context) { nsView.stripIfNeeded() }
 
+  /// Strips once per window and enclosing scroll view instead of walking the sibling
+  /// tree on every layout and update.
   final class ScrollerRemoverView: NSView {
+    private weak var strippedWindow: NSWindow?
+    private weak var strippedEnclosing: NSScrollView?
+    private var stripped: [WeakScroll] = []
+
+    private struct WeakScroll {
+      weak var scroll: NSScrollView?
+    }
+
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
-      strip()
+      strippedWindow = nil
+      stripIfNeeded()
+    }
+
+    override func viewDidMoveToSuperview() {
+      super.viewDidMoveToSuperview()
+      strippedWindow = nil
+      stripIfNeeded()
     }
 
     override func layout() {
       super.layout()
+      stripIfNeeded()
+    }
+
+    func stripIfNeeded() {
+      guard let window, superview != nil else { return }
+      let enclosing = enclosingScrollView
+      // Nothing found yet (the scroll view may not be installed), one went away, or
+      // AppKit put a scroller back: walk again.
+      let stale =
+        stripped.isEmpty
+        || stripped.contains { entry in
+          guard let scroll = entry.scroll else { return true }
+          return scroll.hasVerticalScroller || scroll.hasHorizontalScroller
+        }
+      guard strippedWindow !== window || strippedEnclosing !== enclosing || stale else { return }
+      strippedWindow = window
+      strippedEnclosing = enclosing
       strip()
     }
 
     /// The scroll view is a sibling in the same SwiftUI container, or encloses this view
     /// when SwiftUI hosts the background inside it.
-    func strip() {
+    private func strip() {
       guard let container = superview else { return }
-      for scroll in Self.scrollViews(in: container) + [enclosingScrollView].compactMap({ $0 }) {
+      let scrolls = Self.scrollViews(in: container) + [enclosingScrollView].compactMap({ $0 })
+      for scroll in scrolls {
         scroll.hasVerticalScroller = false
         scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
       }
+      stripped = scrolls.map { WeakScroll(scroll: $0) }
     }
 
     private static func scrollViews(in view: NSView) -> [NSScrollView] {
@@ -50,30 +86,25 @@ private struct ScrollerRemover: NSViewRepresentable {
   }
 }
 
-extension MeetingStatus {
-  /// Recorded time as whole milliseconds, for the duration formatter.
-  var recordedElapsedMs: Int64 {
-    let components = recordedElapsed.components
-    return Int64(components.seconds) * 1_000 + Int64(components.attoseconds / 1_000_000_000_000_000)
-  }
-}
-
 /// The green waveform and live timer Wispr shows next to a note that is being recorded.
+/// Only this view reads the per-second elapsed value.
 struct LiveRecordingBadge: View {
-  let status: MeetingStatus
+  let state: MeetingState
+  let elapsed: MeetingElapsed
   var size: CGFloat = 13
 
   var body: some View {
+    let duration = meetingDurationText(elapsed.milliseconds)
     HStack(spacing: 8) {
-      Image(systemName: status.state == .paused ? "pause.fill" : "waveform")
-        .font(.system(size: size - 1))
-        .symbolEffect(.variableColor.iterative, isActive: status.state == .recording)
-      Text(meetingDurationText(status.recordedElapsedMs))
-        .font(.system(size: size)).monospacedDigit()
+      Image(systemName: state == .paused ? "pause.fill" : "waveform")
+        .font(.flow(size: size - 1))
+        .symbolEffect(.variableColor.iterative, isActive: state == .recording)
+      Text(duration)
+        .font(.flow(size: size)).monospacedDigit()
     }
-    .foregroundStyle(status.state == .paused ? SottoPalette.muted : Color.green)
-    .accessibilityLabel(status.state.badgeText)
-    .accessibilityValue(meetingDurationText(status.recordedElapsedMs))
+    .foregroundStyle(state == .paused ? SottoPalette.muted : Color.green)
+    .accessibilityLabel(state.badgeText)
+    .accessibilityValue(duration)
     .accessibilityIdentifier("meeting.elapsed")
   }
 }
@@ -85,7 +116,7 @@ struct NoteIconButton: View {
 
   var body: some View {
     Button(action: action) {
-      Image(systemName: symbol).font(.system(size: 13))
+      Image(systemName: symbol).font(.flow(size: 13))
         .frame(width: 28, height: 28).contentShape(.rect)
     }
     .buttonStyle(.plain).help(label).accessibilityLabel(label)
@@ -99,7 +130,7 @@ struct NoteTab: View {
 
   var body: some View {
     Button(action: action) {
-      Text(title).font(.system(size: 13, weight: selected ? .semibold : .medium))
+      Text(title).font(.flow(size: 15, weight: selected ? .medium : .regular))
         .foregroundStyle(selected ? SottoPalette.ink : SottoPalette.muted)
         .padding(.vertical, 12)
         .overlay(alignment: .bottom) {
@@ -174,7 +205,7 @@ struct NoteOverflowMenu: View {
   ) -> some View {
     Button(action: action) {
       Label(title, systemImage: symbol)
-        .font(.system(size: 14))
+        .font(.flow(size: 14))
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 9)
         .foregroundStyle(destructive ? Color.red : SottoPalette.ink)
@@ -192,10 +223,10 @@ struct NoteUnavailableBar: View {
       explaining = true
     } label: {
       HStack {
-        Text(prompt).font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+        Text(prompt).font(.flow(size: 15)).foregroundStyle(SottoPalette.muted)
         Spacer()
       }
-      .padding(.horizontal, 16).frame(height: 40)
+      .padding(.horizontal, 18).frame(height: 48)
       .background(SottoPalette.surface, in: Capsule())
       .overlay { Capsule().strokeBorder(NotetakerStyle.rule, lineWidth: 1) }
       .contentShape(Capsule())
@@ -220,37 +251,33 @@ struct NotePreview: View {
     VStack(alignment: .leading, spacing: 0) {
       if let row {
         VStack(alignment: .leading, spacing: 8) {
-          Text(row.displayTitle).font(.system(size: 15, weight: .bold)).fixedSize(
+          Text(row.displayTitle).font(.flow(size: 18, weight: .medium)).fixedSize(
             horizontal: false, vertical: true)
-          Text(MeetingRowView.dateText(row.createdAt)).font(.system(size: 12)).foregroundStyle(
-            SottoPalette.muted)
-          Text(meetingDurationText(row.recordedMs)).font(.system(size: 12)).monospacedDigit()
-            .foregroundStyle(SottoPalette.muted)
+          Text(
+            "\(MeetingRowView.dateText(row.createdAt)) · \(meetingDurationText(row.recordedMs))"
+          )
+          .font(.flow(size: 14)).monospacedDigit().foregroundStyle(SottoPalette.muted)
         }.padding(20)
         NotetakerStyle.rule.frame(height: 1)
         ScrollView {
           VStack(alignment: .leading, spacing: 16) {
-            Text("OVERVIEW").font(.system(size: 10, weight: .semibold)).tracking(1).foregroundStyle(
-              SottoPalette.muted)
-            Text("No summary yet.").foregroundStyle(SottoPalette.muted)
             if let detail, !detail.notes.text.isEmpty {
-              Text("MY THOUGHTS").font(.system(size: 10, weight: .semibold)).tracking(1)
+              Text("MY THOUGHTS").font(.flow(size: 12, weight: .medium)).tracking(1.2)
                 .foregroundStyle(SottoPalette.muted)
-              Text(String(detail.notes.text.prefix(1_200))).lineSpacing(6)
+              Text(
+                String(
+                  detail.notes.text.prefix(MeetingLibraryViewModel.previewNoteCharacters))
+              ).lineSpacing(6)
             }
             if let notice { Text(notice).foregroundStyle(.red) }
-          }.font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(20)
+          }.font(.flow(size: 14)).frame(maxWidth: .infinity, alignment: .leading).padding(20)
         }
-        .scrollIndicators(.hidden)
-        .hideScrollers()
-      } else {
-        Text("Hover over a note to see its overview.")
-          .font(.system(size: 12)).foregroundStyle(SottoPalette.muted).padding(20)
+        .scrollIndicators(.never)
       }
       Spacer(minLength: 0)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    .background(SottoPalette.canvas.opacity(0.5))
+    .background(SottoPalette.surface)
     .accessibilityIdentifier("notetaker.preview")
   }
 }

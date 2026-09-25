@@ -515,6 +515,73 @@ final class ModelProvisionerTests: XCTestCase {
     _ = try await provisioner.install(from: f.source)
   }
 
+  func testRecordedFingerprintSkipsHashingAcrossProvisioners() async throws {
+    let f = try fixture()
+    defer { try? FileManager.default.removeItem(at: f.base) }
+    let manifest = descriptor(for: f.bytes)
+    do {
+      let provisioner = ModelProvisioner(descriptor: manifest, rootURL: f.root)
+      _ = try await provisioner.install(from: f.source)
+      _ = try await provisioner.verifiedLocalDescriptor()
+      _ = try await provisioner.verifiedLocalDescriptor()
+      let hashed = await provisioner.fullVerificationCount
+      XCTAssertEqual(hashed, 0)
+    }
+    XCTAssertTrue(
+      FileManager.default.fileExists(
+        atPath: f.base.appendingPathComponent(".installed.fingerprint").path))
+    // A relaunch reads the recorded fingerprint instead of hashing.
+    let relaunched = ModelProvisioner(descriptor: manifest, rootURL: f.root)
+    _ = try await relaunched.verifiedLocalDescriptor()
+    var hashed = await relaunched.fullVerificationCount
+    XCTAssertEqual(hashed, 0)
+    // Explicit verification always hashes.
+    _ = try await relaunched.verifiedLocalDescriptor(fullHash: true)
+    hashed = await relaunched.fullVerificationCount
+    XCTAssertEqual(hashed, 1)
+  }
+
+  func testChangedFileRehashesAndFailsOnMismatch() async throws {
+    let f = try fixture()
+    defer { try? FileManager.default.removeItem(at: f.base) }
+    let provisioner = ModelProvisioner(descriptor: descriptor(for: f.bytes), rootURL: f.root)
+    _ = try await provisioner.install(from: f.source)
+    _ = try await provisioner.verifiedLocalDescriptor()
+    let file = f.root.appendingPathComponent("Preprocessor/model.bin")
+    let modified = try XCTUnwrap(
+      FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
+    // Same size, same inode and restored mtime: only ctime records the write.
+    let handle = try FileHandle(forWritingTo: file)
+    try handle.write(contentsOf: Data(repeating: 120, count: f.bytes.count))
+    try handle.close()
+    try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: file.path)
+    do {
+      _ = try await provisioner.verifiedLocalDescriptor()
+      XCTFail("Changed bytes must be rehashed and rejected")
+    } catch {
+      XCTAssertEqual(error as? ModelProvisioner.Error, .hashMismatch("Preprocessor/model.bin"))
+    }
+    var hashed = await provisioner.fullVerificationCount
+    XCTAssertEqual(hashed, 1)
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: f.base.appendingPathComponent(".installed.fingerprint").path))
+    // A size change fails before any bytes are hashed.
+    try (f.bytes + Data([0])).write(to: file)
+    do {
+      _ = try await provisioner.verifiedLocalDescriptor()
+      XCTFail("Resized file must fail")
+    } catch {
+      XCTAssertEqual(error as? ModelProvisioner.Error, .sizeMismatch("Preprocessor/model.bin"))
+    }
+    // Restored bytes verify again with a full hash, then take the fast path.
+    try f.bytes.write(to: file)
+    _ = try await provisioner.verifiedLocalDescriptor()
+    _ = try await provisioner.verifiedLocalDescriptor()
+    hashed = await provisioner.fullVerificationCount
+    XCTAssertEqual(hashed, 2)
+  }
+
   func testProgressKeepsOnlyLatestBoundedSnapshot() {
     let progress = ProvisioningProgress()
     progress.reset(total: 100)

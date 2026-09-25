@@ -81,10 +81,16 @@ public final class AudioSpool: @unchecked Sendable {
   }
 
   public func append(normalizedSamples: [Float]) throws {
-    guard !normalizedSamples.isEmpty, normalizedSamples.count <= Self.maximumAppendSamples else {
-      throw AudioSpoolError.invalidSamples
-    }
-    guard normalizedSamples.allSatisfy({ $0.isFinite }) else {
+    try normalizedSamples.withUnsafeBufferPointer { try append(normalizedSamples: $0) }
+  }
+
+  /// Writes straight from the caller's buffer at the tracked end of the file, with no
+  /// copy and no seek. Samples are finite and clamped by the capture normalizer, the
+  /// only producer; the model boundary checks them again before inference.
+  public func append(normalizedSamples samples: UnsafeBufferPointer<Float>) throws {
+    guard let base = samples.baseAddress, !samples.isEmpty,
+      samples.count <= Self.maximumAppendSamples
+    else {
       throw AudioSpoolError.invalidSamples
     }
     stateLock.lock()
@@ -92,18 +98,22 @@ public final class AudioSpool: @unchecked Sendable {
     guard state == .open else {
       throw state == .closed ? AudioSpoolError.closed : AudioSpoolError.failed
     }
-    let bytes = normalizedSamples.count * MemoryLayout<Float>.stride
+    let bytes = samples.count * MemoryLayout<Float>.stride
     guard byteCount <= Self.maximumBytes - bytes else { throw AudioSpoolError.capacityExceeded }
-    do {
-      try handle.seekToEnd()
-      try normalizedSamples.withUnsafeBytes { rawBuffer in
-        try handle.write(contentsOf: Data(rawBuffer))
+    let raw = UnsafeRawPointer(base)
+    let descriptor = handle.fileDescriptor
+    var written = 0
+    while written < bytes {
+      let result = pwrite(
+        descriptor, raw + written, bytes - written, off_t(byteCount + written))
+      if result < 0, errno == EINTR { continue }
+      guard result > 0 else {
+        state = .failed
+        throw AudioSpoolError.ioFailure
       }
-      byteCount += bytes
-    } catch {
-      state = .failed
-      throw AudioSpoolError.ioFailure
+      written += result
     }
+    byteCount += bytes
   }
 
   public func readWindow(startSample: Int, count: Int) throws -> [Float] {

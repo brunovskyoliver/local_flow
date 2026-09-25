@@ -311,6 +311,94 @@ final class ModelCooldownTests: XCTestCase {
   }
 }
 
+// MARK: Cancelled dictation keeps a healthy runtime
+
+extension ModelCooldownTests {
+  /// A cancelled or incomplete dictation ends its lease like a completed one: the
+  /// runtime cools (or stays ready) instead of paying a cold load next time.
+  func testCancelAndCoolKeepsAHealthyRuntimeForTheNextSession() async throws {
+    let clock = ManualClock()
+    let runtime = ProbeRuntime()
+    let built = Counter()
+    let coordinator = ModelLifecycleCoordinator(clock: clock) {
+      await built.increment()
+      return runtime
+    }
+    let lease = try await coordinator.acquire(session: UUID())
+    await coordinator.cancelAndCool(lease)
+    let cooled = await coordinator.state
+    XCTAssertEqual(cooled, .cooling)
+    await clock.waitUntilSleeping(count: 1)
+    let deadlines = await clock.requested
+    XCTAssertEqual(deadlines, [.seconds(30)])
+    let next = try await coordinator.acquire(session: UUID())
+    try await coordinator.finish(next)
+    let count = await built.value
+    XCTAssertEqual(count, 1)
+    let shutdowns = await runtime.shutdowns
+    XCTAssertEqual(shutdowns, 0)
+
+    // Keep model ready holds across a cancellation, too.
+    await coordinator.setKeepLoaded(true)
+    let kept = try await coordinator.acquire(session: UUID())
+    await coordinator.cancelAndCool(kept)
+    let snapshot = await coordinator.snapshot()
+    XCTAssertTrue(snapshot.loaded)
+    XCTAssertTrue(snapshot.controlsAvailable)
+    let stale = await coordinator.interruptInference(kept)
+    XCTAssertFalse(stale, "an ended lease cannot interrupt anything")
+  }
+
+  /// An in-flight window is cancelled and joined; a clean cancellation cools, while a
+  /// window that fails for another reason is a runtime fault and releases.
+  func testCancelAndCoolInterruptsTheWindowAndReleasesOnlyOnAFault() async throws {
+    for faulty in [false, true] {
+      let runtime = InterruptibleRuntime(faulty: faulty)
+      let coordinator = ModelLifecycleCoordinator { runtime }
+      let lease = try await coordinator.acquire(session: UUID())
+      let window = Task { try await coordinator.transcribe(lease, samples: [0, 0]) }
+      await runtime.waitUntilTranscribing()
+      await coordinator.cancelAndCool(lease)
+      _ = await window.result
+      let state = await coordinator.state
+      XCTAssertEqual(state, faulty ? .unloaded : .cooling, "faulty: \(faulty)")
+      let shutdowns = await runtime.shutdowns
+      XCTAssertEqual(shutdowns, faulty ? 1 : 0, "faulty: \(faulty)")
+      if !faulty {
+        let next = try await coordinator.acquire(session: UUID())
+        let result = try await coordinator.transcribe(next, samples: [0, 0])
+        XCTAssertEqual(result.text, "done")
+        try await coordinator.finish(next)
+      }
+    }
+  }
+}
+
+/// Waits inside a window until cancelled; the fault variant then throws a runtime error.
+private actor InterruptibleRuntime: TranscriptionRuntime {
+  let faulty: Bool
+  private var calls = 0
+  private(set) var shutdowns = 0
+  private let entered = Gate()
+  init(faulty: Bool) { self.faulty = faulty }
+
+  func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+    calls += 1
+    guard calls == 1 else { return .init(text: "done", tokens: []) }
+    await entered.openGate()
+    do {
+      try await Task.sleep(for: .seconds(30))
+    } catch {
+      if faulty { throw DictationFailure.invalidResult }
+      throw error
+    }
+    return .init(text: "late", tokens: [])
+  }
+
+  func waitUntilTranscribing() async { await entered.wait() }
+  func shutdown() async { shutdowns += 1 }
+}
+
 actor Counter {
   private(set) var value = 0
   @discardableResult func increment() -> Int {
@@ -372,5 +460,116 @@ extension ModelCooldownTests {
     XCTAssertEqual(after.state, .cooling)
     let count = await built.value
     XCTAssertEqual(count, 2)
+  }
+}
+
+/// Keep model ready after speaker work: queued speaker demand defers the reload, the
+/// reload yields to speaker work, and busy callers wake on release instead of polling.
+extension ModelCooldownTests {
+  private func waitUntil(_ condition: () async -> Bool) async {
+    for _ in 0..<2000 {
+      if await condition() { return }
+      await Task.yield()
+    }
+  }
+
+  func testQueuedSpeakerDemandDefersTheKeepReadyReload() async throws {
+    let built = Counter()
+    let factory = FakeDiarizationFactory()
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await factory.make() },
+      factory: {
+        _ = await built.increment()
+        return ProbeRuntime()
+      })
+    await coordinator.setKeepLoaded(true)
+    let token = UUID()
+    await coordinator.setSpeakerDemand(token, pending: true, sequence: 1)
+    let first = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    try await coordinator.finish(first)
+    for _ in 0..<200 { await Task.yield() }
+    let deferred = await coordinator.snapshot()
+    XCTAssertEqual(deferred.state, .unloaded, "No reload while speaker work is queued")
+    XCTAssertFalse(deferred.leased)
+    let second = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    try await coordinator.finish(second)
+    var count = await built.value
+    XCTAssertEqual(count, 0)
+    // An older update arriving late cannot withdraw newer demand.
+    await coordinator.setSpeakerDemand(token, pending: false, sequence: 1)
+    for _ in 0..<200 { await Task.yield() }
+    count = await built.value
+    XCTAssertEqual(count, 0)
+    await coordinator.setSpeakerDemand(token, pending: false, sequence: 2)
+    await waitUntil { await coordinator.snapshot().loaded }
+    let after = await coordinator.snapshot()
+    XCTAssertTrue(after.loaded, "The last withdrawal re-prepares live speech")
+    XCTAssertEqual(after.state, .cooling)
+    count = await built.value
+    XCTAssertEqual(count, 1)
+  }
+
+  func testSpeakerWorkPreemptsTheKeepReadyReload() async throws {
+    let gate = PreparationGate()
+    let speech = ProbeRuntime()
+    let factory = FakeDiarizationFactory()
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await factory.make() },
+      factory: {
+        await gate.wait()
+        return speech
+      })
+    await coordinator.setKeepLoaded(true)
+    let first = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    try await coordinator.finish(first)
+    await gate.waitUntilStarted()
+    let warming = await coordinator.snapshot()
+    XCTAssertTrue(warming.leased, "The keep-ready reload holds a lease while it loads")
+    let next = Task { try await coordinator.acquire(session: UUID(), workload: .diarization) }
+    for _ in 0..<50 { await Task.yield() }
+    await gate.open()
+    let lease = try await next.value
+    XCTAssertEqual(lease.workload, .diarization)
+    let shutdowns = await speech.shutdowns
+    XCTAssertEqual(shutdowns, 1, "The abandoned reload is shut down, never co-resident")
+    await coordinator.setKeepLoaded(false)
+    try await coordinator.finish(lease)
+  }
+
+  func testDictationStillCannotBePreemptedBySpeakerWork() async throws {
+    let coordinator = ModelLifecycleCoordinator(
+      diarizationFactory: { try await FakeDiarizationFactory().make() },
+      factory: { ProbeRuntime() })
+    let lease = try await coordinator.acquire(session: UUID())
+    do {
+      _ = try await coordinator.acquire(session: UUID(), workload: .diarization)
+      XCTFail("A live speech lease is not preemptible")
+    } catch { XCTAssertEqual(error as? DictationFailure, .busy) }
+    try await coordinator.finish(lease)
+  }
+
+  func testWaitUntilAvailableWakesOnReleaseAndOnCancellation() async throws {
+    let coordinator = ModelLifecycleCoordinator { ProbeRuntime() }
+    await coordinator.waitUntilAvailable()  // Idle: returns at once.
+    let lease = try await coordinator.acquire(session: UUID())
+    let woke = Counter()
+    let waiter = Task {
+      await coordinator.waitUntilAvailable()
+      _ = await woke.increment()
+    }
+    for _ in 0..<200 { await Task.yield() }
+    var count = await woke.value
+    XCTAssertEqual(count, 0, "Still leased")
+    try await coordinator.finish(lease)
+    await waiter.value
+    count = await woke.value
+    XCTAssertEqual(count, 1)
+
+    let held = try await coordinator.acquire(session: UUID())
+    let cancelled = Task { await coordinator.waitUntilAvailable() }
+    for _ in 0..<50 { await Task.yield() }
+    cancelled.cancel()
+    await cancelled.value
+    try await coordinator.finish(held)
   }
 }

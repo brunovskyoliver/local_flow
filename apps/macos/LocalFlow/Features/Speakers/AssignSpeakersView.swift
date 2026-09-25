@@ -49,12 +49,12 @@ struct AssignSpeakersView: View {
 
   private var card: some View {
     VStack(alignment: .leading, spacing: 0) {
-      Text("Assign speakers").font(.system(size: 28, weight: .regular, design: .serif))
+      Text("Assign speakers").font(.flow(size: 28, weight: .regular, design: .serif))
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 32).padding(.top, 28).padding(.bottom, 12)
         .overlay(alignment: .topTrailing) {
           Button(action: close) {
-            Image(systemName: "xmark").font(.system(size: 15, weight: .medium))
+            Image(systemName: "xmark").font(.flow(size: 15, weight: .medium))
               .frame(width: 30, height: 30).contentShape(.rect)
           }
           .buttonStyle(.plain).padding(.top, 22).padding(.trailing, 22)
@@ -66,7 +66,7 @@ struct AssignSpeakersView: View {
           if model.isLoading, model.sections.isEmpty {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(20)
           } else if model.sections.isEmpty {
-            Text("There are no speakers to name.").font(.system(size: 14))
+            Text("There are no speakers to name.").font(.flow(size: 14))
               .foregroundStyle(SottoPalette.muted)
           }
           ForEach(Array(model.sections.enumerated()), id: \.element.id) { index, section in
@@ -76,13 +76,13 @@ struct AssignSpeakersView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 32).padding(.top, 20).padding(.bottom, 28)
       }
-      .scrollIndicators(.hidden)
+      .scrollIndicators(.never)
       .hideScrollers()
       .frame(minHeight: 160, maxHeight: 480)
       NotetakerStyle.rule.frame(height: 1)
       HStack(spacing: 10) {
         if let notice = model.notice {
-          Text(notice).font(.system(size: 12)).foregroundStyle(.red).lineLimit(2)
+          Text(notice).font(.flow(size: 12)).foregroundStyle(.red).lineLimit(2)
         }
         Spacer()
         Button("Cancel", action: close)
@@ -121,10 +121,10 @@ struct AssignSpeakersView: View {
   private func reviewRow(_ review: ReviewNotice) -> some View {
     HStack(spacing: 8) {
       Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-      Text(review.text).font(.system(size: 13))
+      Text(review.text).font(.flow(size: 13))
       Spacer()
       Button("Dismiss") { Task { await model.dismissReview(review.id) } }
-        .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
+        .buttonStyle(.plain).font(.flow(size: 12, weight: .medium))
         .foregroundStyle(SottoPalette.muted)
         .accessibilityLabel("Dismiss notice: \(review.name)")
     }
@@ -140,15 +140,15 @@ struct AssignSpeakersView: View {
       HStack(spacing: 9) {
         Circle().fill(SpeakerPalette.color(section.speaker.colorIndex)).frame(width: 10, height: 10)
         Text(section.anonymousLabel.uppercased())
-          .font(.system(size: 12, weight: .semibold)).tracking(1.4)
+          .font(.flow(size: 12, weight: .semibold)).tracking(1.4)
       }
       .accessibilityElement(children: .contain)
       ForEach(section.includes) { member in
         HStack(spacing: 8) {
-          Text("Includes \(member.anonymousLabel)").font(.system(size: 13))
+          Text("Includes \(member.anonymousLabel)").font(.flow(size: 13))
             .foregroundStyle(SottoPalette.muted)
           Button("Undo merge") { Task { await model.unmerge(member.id) } }
-            .buttonStyle(.plain).font(.system(size: 13, weight: .medium))
+            .buttonStyle(.plain).font(.flow(size: 13, weight: .medium))
             .accessibilityLabel("Undo merge of \(member.anonymousLabel)")
         }
       }
@@ -156,7 +156,7 @@ struct AssignSpeakersView: View {
         ForEach(Array(section.speaker.quotes.enumerated()), id: \.offset) { _, quote in
           HStack(alignment: .top, spacing: 12) {
             RoundedRectangle(cornerRadius: 1).fill(NotetakerStyle.rule).frame(width: 2)
-            Text("\u{201C}\(quote)\u{201D}").font(.system(size: 14)).lineSpacing(4)
+            Text("\u{201C}\(quote)\u{201D}").font(.flow(size: 14)).lineSpacing(4)
               .foregroundStyle(SottoPalette.ink.opacity(0.85)).lineLimit(3)
               .fixedSize(horizontal: false, vertical: true)
           }
@@ -173,13 +173,13 @@ struct AssignSpeakersView: View {
         identityBlock(block, section: section)
       }
       if let error = section.error {
-        Text(error).font(.system(size: 12)).foregroundStyle(.red)
+        Text(error).font(.flow(size: 12)).foregroundStyle(.red)
       } else if let other = model.duplicate(of: section.id) {
         HStack(spacing: 8) {
-          Text("Same name as \(other.anonymousLabel).").font(.system(size: 12))
+          Text("Same name as \(other.anonymousLabel).").font(.flow(size: 12))
             .foregroundStyle(SottoPalette.muted)
           Button("Merge") { Task { await model.merge(section.id, into: other.id) } }
-            .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
+            .buttonStyle(.plain).font(.flow(size: 12, weight: .medium))
             .accessibilityLabel("Merge into \(other.anonymousLabel)")
         }
       }
@@ -194,7 +194,7 @@ struct AssignSpeakersView: View {
       text: Binding(get: { section.draft }, set: { model.setDraft($0, for: section.id) })
     )
     .textFieldStyle(.plain)
-    .font(.system(size: 15))
+    .font(.flow(size: 15))
     .padding(.horizontal, 16)
     .frame(height: Self.fieldHeight)
     .background(SottoPalette.surface, in: .rect(cornerRadius: 12))
@@ -223,10 +223,10 @@ struct AssignSpeakersView: View {
         case .offer:
           if section.identityAction == .rememberLocal {
             Text("Your voice will be remembered from this Mac's microphone.")
-              .font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+              .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
           } else {
             Button("Remember my voice") { model.setIdentityAction(.rememberLocal, for: section.id) }
-              .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
+              .buttonStyle(.plain).font(.flow(size: 12, weight: .medium))
               .accessibilityIdentifier("identity.rememberLocal")
           }
         case .remembered:
@@ -235,7 +235,7 @@ struct AssignSpeakersView: View {
       } else {
         HStack(spacing: 8) {
           if block.needsChoice {
-            Text(block.matchState).font(.system(size: 12, weight: .medium))
+            Text(block.matchState).font(.flow(size: 12, weight: .medium))
               .foregroundStyle(.orange)
               .accessibilityIdentifier("identity.matchState")
           }
@@ -261,12 +261,12 @@ struct AssignSpeakersView: View {
               get: { section.alsoRemember },
               set: { model.setAlsoRemember($0, for: section.id) })
           )
-          .toggleStyle(.checkbox).font(.system(size: 12))
+          .toggleStyle(.checkbox).font(.flow(size: 12))
           .accessibilityIdentifier("identity.alsoRemember")
         }
       }
       if let result = section.enrollmentResult {
-        Text(result).font(.system(size: 12)).foregroundStyle(SottoPalette.muted)
+        Text(result).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
           .accessibilityIdentifier("identity.enrollmentResult")
       }
     }
@@ -277,7 +277,7 @@ struct AssignSpeakersView: View {
   private func rememberRow(_ section: AssignSpeakersModel.Section) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 10) {
-        Text(AssignSpeakersModel.rememberQuestion).font(.system(size: 13, weight: .medium))
+        Text(AssignSpeakersModel.rememberQuestion).font(.flow(size: 13, weight: .medium))
         Button("Remember") { model.setIdentityAction(.remember, for: section.id) }
           .buttonStyle(AssignSpeakersButtonStyle(prominent: section.identityAction == .remember))
           .accessibilityIdentifier("identity.remember")
@@ -286,7 +286,7 @@ struct AssignSpeakersView: View {
           .opacity(section.identityAction == .notNow ? 1 : 0.7)
           .accessibilityIdentifier("identity.notNow")
       }
-      Text(AssignSpeakersModel.rememberSentence).font(.system(size: 12))
+      Text(AssignSpeakersModel.rememberSentence).font(.flow(size: 12))
         .foregroundStyle(SottoPalette.muted).fixedSize(horizontal: false, vertical: true)
         .accessibilityIdentifier("identity.rememberSentence")
     }
@@ -296,7 +296,7 @@ struct AssignSpeakersView: View {
     -> some View
   {
     HStack(spacing: 10) {
-      Text("Is this \(known.name) you already remember?").font(.system(size: 13, weight: .medium))
+      Text("Is this \(known.name) you already remember?").font(.flow(size: 13, weight: .medium))
       Button("Same person") {
         model.setIdentityAction(.rememberSamePerson(known.id), for: section.id)
       }
@@ -353,7 +353,7 @@ struct AssignSpeakersView: View {
         Button(pickerTitle(row)) { model.pickKnownSpeaker(row.id, for: section.id) }
       }
     }
-    .menuStyle(.borderlessButton).fixedSize().font(.system(size: 12))
+    .menuStyle(.borderlessButton).fixedSize().font(.flow(size: 12))
   }
 
   private func pickerTitle(_ row: KnownSpeakerRow) -> String {
@@ -384,7 +384,7 @@ struct AssignSpeakersView: View {
 
     var body: some View {
       Button(action: pick) {
-        Text(name).font(.system(size: 15))
+        Text(name).font(.flow(size: 15))
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.horizontal, 12).padding(.vertical, 10)
           .background(hovering ? SottoPalette.canvas : .clear, in: .rect(cornerRadius: 8))
@@ -404,7 +404,7 @@ struct AssignSpeakersButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(size: 14, weight: .medium))
+      .font(.flow(size: 14, weight: .medium))
       .padding(.horizontal, 18).frame(height: 38)
       .foregroundStyle(prominent ? SottoPalette.surface : SottoPalette.ink)
       .background(prominent ? SottoPalette.ink : SottoPalette.canvas, in: .rect(cornerRadius: 9))

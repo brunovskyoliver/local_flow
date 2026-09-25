@@ -8,34 +8,81 @@ private final class IndicatorPresentation {
   var level: Float = 0
   var notice: LearnedNotice?
   var actionNotice: RewriteActionNotice?
+  var clipboard: ClipboardNotice?
   var background: BackgroundNotice?
   @ObservationIgnored var cancel: () -> Void = {}
   @ObservationIgnored var undo: () -> Void = {}
   @ObservationIgnored var action: () -> Void = {}
   @ObservationIgnored var open: () -> Void = {}
+  @ObservationIgnored var hideBackground: () -> Void = {}
+  @ObservationIgnored var dismissClipboard: () -> Void = {}
+
+  /// What the pill shows, in the host's order of precedence. The key changes only
+  /// when a different notice takes the pill, so progress updates animate in place.
+  enum Content: Hashable {
+    case dictation, learned(String), clipboard(UUID), action(UUID), background(UUID), none
+  }
+  var content: Content {
+    if IndicatorPanel.showsPanel(state) { return .dictation }
+    if let notice { return .learned(notice.entryID) }
+    if let clipboard { return .clipboard(clipboard.id) }
+    if let actionNotice { return .action(actionNotice.id) }
+    if let background { return .background(background.id) }
+    return .none
+  }
 }
 
-/// Dictation states win, then the two dictation notices, then background work.
+/// Dictation states win, then the dictation notices, then background work. A new
+/// notice scales up out of the old one's place; the panel follows its size.
 private struct IndicatorHost: View {
   let presentation: IndicatorPresentation
   let sizeChanged: (CGSize) -> Void
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
   var body: some View {
-    Group {
-      if IndicatorPanel.showsPanel(presentation.state) {
+    ZStack {
+      switch presentation.content {
+      case .dictation:
         DictationIndicator(
-          state: presentation.state, level: presentation.level, cancel: presentation.cancel)
-      } else if let notice = presentation.notice {
-        LearnedNoticeView(notice: notice, undo: presentation.undo).id(notice.entryID)
-      } else if let notice = presentation.actionNotice {
-        ActionNoticeView(
-          message: notice.message, actionTitle: notice.canRetry ? "Retry" : nil,
-          actionIdentifier: "rewrite.notice.retry", action: presentation.action
-        ).id(notice.id)
-      } else if let notice = presentation.background {
-        BackgroundNoticeView(notice: notice, open: presentation.open).id(notice.id)
+          state: presentation.state, level: presentation.level, cancel: presentation.cancel
+        ).transition(transition)
+      case .learned:
+        if let notice = presentation.notice {
+          LearnedNoticeView(notice: notice, undo: presentation.undo).id(notice.entryID)
+            .transition(transition)
+        }
+      case .clipboard:
+        if let notice = presentation.clipboard {
+          ClipboardNoticeView(notice: notice, dismiss: presentation.dismissClipboard)
+            .id(notice.id).transition(transition)
+        }
+      case .action:
+        if let notice = presentation.actionNotice {
+          ActionNoticeView(
+            message: notice.message, actionTitle: notice.canRetry ? "Retry" : nil,
+            actionIdentifier: "rewrite.notice.retry", action: presentation.action
+          ).id(notice.id).transition(transition)
+        }
+      case .background:
+        if let notice = presentation.background {
+          BackgroundNoticeView(
+            notice: notice, open: presentation.open, hide: presentation.hideBackground
+          ).id(notice.id).transition(transition)
+        }
+      case .none:
+        EmptyView()
       }
     }
+    .animation(reduceMotion ? nil : PillStyle.swap, value: presentation.content)
     .onGeometryChange(for: CGSize.self, of: \.size, action: sizeChanged)
+  }
+
+  private var transition: AnyTransition {
+    reduceMotion
+      ? .opacity
+      : .asymmetric(
+        insertion: .scale(scale: 0.88).combined(with: .opacity),
+        removal: .opacity.animation(.easeOut(duration: 0.1)))
   }
 }
 
@@ -69,9 +116,12 @@ final class IndicatorPanel: NSPanel {
   /// what sits on the screen's center line.
   static let indicatorWidth: CGFloat = 153
   static let indicatorVisualCenter: CGFloat = 59
-  private static let showDuration: TimeInterval = 0.22
-  private static let hideDuration: TimeInterval = 0.16
-  private static let rise: CGFloat = 8
+  private static let showDuration: TimeInterval = 0.3
+  private static let hideDuration: TimeInterval = 0.18
+  private static let resizeDuration: TimeInterval = 0.32
+  private static let rise: CGFloat = 10
+  /// Fast out, long settle: the window's stand-in for the pill's spring.
+  private static let settle = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
 
   private let presentation = IndicatorPresentation()
   private let announce: @MainActor (String) -> Void
@@ -81,11 +131,17 @@ final class IndicatorPanel: NSPanel {
   private var contentSize = NSSize(
     width: IndicatorPanel.indicatorWidth, height: IndicatorPanel.height)
   private var hiding = false
+  private static let hiddenBackgroundGrace: Duration = .seconds(10)
+  private var hiddenBackgroundIDs: Set<UUID> = []
+  private var hiddenBackgroundReset: Task<Void, Never>?
+  private var clipboardDismissal: Task<Void, Never>?
   /// True while the main window is focused: background work is on screen there already.
   var suppressesBackgroundNotice = false {
     didSet { if oldValue != suppressesBackgroundNotice { refresh() } }
   }
   var observesGeometryChanges: Bool { geometryObservers != nil }
+  /// Full layout passes, for tests of the level-only path.
+  private(set) var presentCount = 0
   var showsBackgroundNotice: Bool { isVisible && !hiding && Self.showsBackground(presentation) }
   override var canBecomeKey: Bool { false }
   override var canBecomeMain: Bool { false }
@@ -158,6 +214,24 @@ final class IndicatorPanel: NSPanel {
     refresh()
   }
 
+  /// Per-frame meter update. When the pill is already on screen in the same state
+  /// at the same target, only the level changes: no relayout, fitting-size pass or
+  /// frame change. Anything else takes the full `update` path.
+  func updateLevel(
+    _ level: Float, state: DictationSession.State, targetPoint: NSPoint? = nil,
+    cancel: @escaping () -> Void
+  ) {
+    guard isVisible, !hiding, presentation.state == state, Self.showsPanel(state),
+      self.targetPoint == targetPoint
+    else {
+      update(state: state, level: level, targetPoint: targetPoint, cancel: cancel)
+      return
+    }
+    let clamped = level.isFinite ? min(1, max(0, level)) : 0
+    if presentation.level != clamped { presentation.level = clamped }
+    presentation.cancel = cancel
+  }
+
   /// The learned-correction bubble uses the same panel; dictation states take precedence.
   func showNotice(_ notice: LearnedNotice?, targetPoint: NSPoint? = nil, undo: @escaping () -> Void)
   {
@@ -194,24 +268,80 @@ final class IndicatorPanel: NSPanel {
 
   /// Background work (finalizing, labeling). Lowest precedence; hidden while the main
   /// window is focused. Clicking the pill calls `open`.
+  /// A hidden notice stays hidden while its work runs (a meeting's finalizing,
+  /// labeling and summarizing share its id) and returns with the next piece of work.
   func showBackgroundNotice(_ notice: BackgroundNotice?, open: @escaping () -> Void) {
     let previous = presentation.background
-    presentation.background = notice
+    let visible = notice.flatMap { hiddenBackgroundIDs.contains($0.id) ? nil : $0 }
+    presentation.background = visible
     presentation.open = open
-    if let notice, previous?.id != notice.id { announce(notice.text) }
+    presentation.hideBackground = { [weak self] in self?.hideBackgroundNotice() }
+    if let visible, previous?.id != visible.id { announce(visible.text) }
+    forgetHiddenBackground(when: notice == nil)
+    refresh()
+  }
+
+  /// Hides the current background notice until its work is done.
+  func hideBackgroundNotice() {
+    guard let notice = presentation.background else { return }
+    hiddenBackgroundIDs.insert(notice.id)
+    presentation.background = nil
+    announce("Progress hidden. It stays in LocalFlow.")
+    refresh()
+  }
+
+  /// Stages of one meeting's work can leave short gaps with nothing running; only a
+  /// quiet spell means the work is done and hidden notices may return.
+  private func forgetHiddenBackground(when idle: Bool) {
+    hiddenBackgroundReset?.cancel()
+    hiddenBackgroundReset = nil
+    guard idle, !hiddenBackgroundIDs.isEmpty else { return }
+    hiddenBackgroundReset = Task { [weak self] in
+      do { try await Task.sleep(for: Self.hiddenBackgroundGrace) } catch { return }
+      self?.hiddenBackgroundIDs.removeAll()
+    }
+  }
+
+  /// Dictated text that did not land and is on the clipboard now. It clears itself
+  /// after `ClipboardNotice.visibleFor`, or when its keycap is clicked.
+  func showClipboardNotice(_ notice: ClipboardNotice?, targetPoint: NSPoint? = nil) {
+    let previous = presentation.clipboard
+    presentation.clipboard = notice
+    clipboardDismissal?.cancel()
+    clipboardDismissal = nil
+    if let notice {
+      if previous?.id != notice.id { announce("\(notice.message). Paste with Command-V.") }
+      if let targetPoint { self.targetPoint = targetPoint }
+      presentation.dismissClipboard = { [weak self] in self?.dismissClipboardNotice(id: notice.id) }
+      clipboardDismissal = Task { [weak self] in
+        do { try await Task.sleep(for: ClipboardNotice.visibleFor) } catch { return }
+        self?.dismissClipboardNotice(id: notice.id)
+      }
+    }
+    refresh()
+  }
+
+  /// Clears the clipboard notice only if it is still the one with `id`.
+  func dismissClipboardNotice(id: UUID) {
+    guard presentation.clipboard?.id == id else { return }
+    clipboardDismissal?.cancel()
+    clipboardDismissal = nil
+    presentation.clipboard = nil
+    presentation.dismissClipboard = {}
     refresh()
   }
 
   private static func showsBackground(_ presentation: IndicatorPresentation) -> Bool {
     !showsPanel(presentation.state) && presentation.notice == nil
-      && presentation.actionNotice == nil && presentation.background != nil
+      && presentation.clipboard == nil && presentation.actionNotice == nil
+      && presentation.background != nil
   }
 
   /// One place decides what is on screen, in the host's order of precedence.
   private func refresh() {
     let showsWork =
       Self.showsPanel(presentation.state) || presentation.notice != nil
-      || presentation.actionNotice != nil
+      || presentation.clipboard != nil || presentation.actionNotice != nil
     if showsWork || (Self.showsBackground(presentation) && !suppressesBackgroundNotice) {
       present()
     } else {
@@ -230,6 +360,7 @@ final class IndicatorPanel: NSPanel {
   }
 
   private func present() {
+    presentCount &+= 1
     observeGeometryChanges()
     if let hosting = contentView as? NSHostingView<IndicatorHost> {
       // The first layout after a content change; the geometry callback corrects later ones.
@@ -256,7 +387,7 @@ final class IndicatorPanel: NSPanel {
     orderFrontRegardless()
     NSAnimationContext.runAnimationGroup { context in
       context.duration = Self.showDuration
-      context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      context.timingFunction = Self.settle
       animator().alphaValue = 1
       animator().setFrame(target, display: true)
     }
@@ -292,6 +423,8 @@ final class IndicatorPanel: NSPanel {
     presentation.undo = {}
     presentation.action = {}
     presentation.open = {}
+    presentation.hideBackground = {}
+    presentation.dismissClipboard = {}
     super.orderOut(sender)
   }
 
@@ -326,8 +459,8 @@ final class IndicatorPanel: NSPanel {
       return
     }
     NSAnimationContext.runAnimationGroup { context in
-      context.duration = 0.2
-      context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      context.duration = Self.resizeDuration
+      context.timingFunction = Self.settle
       animator().setFrame(target, display: true)
     }
   }

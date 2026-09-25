@@ -2,27 +2,30 @@ import Foundation
 import Observation
 
 /// One in-flight window and a bounded set of drafts waiting for a committed batch.
+/// Only `isWindowInFlight` is shown in the UI, and it changes once per inference.
+/// State that `accept` touches on every mixer tick is `@ObservationIgnored`, so
+/// ingesting PCM never publishes to observers.
 @MainActor @Observable
 final class LiveRecognizer {
   enum Failure: Error, Equatable { case runtimeFailure, persistenceFailure, analysisStreamFailure }
   static let provisionalCapacity = 200
   let queue = AnalysisQueue()
   private(set) var isWindowInFlight = false
-  private(set) var lastLatencyNanoseconds: UInt64 = 0
+  @ObservationIgnored private(set) var lastLatencyNanoseconds: UInt64 = 0
   let windowBufferAllocationCount = 1
-  private(set) var refusedSamples = 0
-  private(set) var consumedEnd = 0
-  private var planner = LiveChunkPlanner()
+  @ObservationIgnored private(set) var refusedSamples = 0
+  @ObservationIgnored private(set) var consumedEnd = 0
+  @ObservationIgnored private var planner = LiveChunkPlanner()
   // Holes contain no PCM. At the metadata bound, refuse incoming PCM until
   // the consumer advances, extending the last hole instead of allocating.
   static let maximumGapRanges = 64
-  private var holes: [Range<Int>] = []
+  @ObservationIgnored private var holes: [Range<Int>] = []
   var gapRangeCount: Int { holes.count }
   var stretchSequence: Int { sequence }
   var stretchBaseMs: Int64 { baseMs }
   var lag: Int { max(0, streamEnd - consumedEnd) }
 
-  private var assembler = MeetingWindowAssembler()
+  @ObservationIgnored private var assembler = MeetingWindowAssembler()
   private let lifecycle: ModelLifecycleCoordinator
   private let lease: ModelLease
   private let sequence: Int
@@ -33,15 +36,16 @@ final class LiveRecognizer {
   private let engine: String
   private let model: TranscriptModelIdentity
   private let pipelineVersion: String
-  private var nextOrdinal: Int
-  private var samples = [Float](repeating: 0, count: LiveChunkPlanner.windowSamples)
-  private var drafts: [TranscriptSegmentDraft] = []
+  @ObservationIgnored private var nextOrdinal: Int
+  @ObservationIgnored private var samples = [Float](
+    repeating: 0, count: LiveChunkPlanner.windowSamples)
+  @ObservationIgnored private var drafts: [TranscriptSegmentDraft] = []
   private struct Stamp {
     var emittedAt: UInt64
     var tracks: AnalysisTracks
   }
   // At most six windows overlap the 30-second queue, plus the in-flight window.
-  private var stamps: [Int: Stamp] = [:]
+  @ObservationIgnored private var stamps: [Int: Stamp] = [:]
 
   var pendingCount: Int { drafts.count }
   var streamEnd: Int { planner.streamEnd }

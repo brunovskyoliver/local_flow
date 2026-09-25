@@ -83,6 +83,47 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
       WhisperMeetingRuntime.hasRepetition("we configured the proxy. Then we tested the proxy."))
   }
 
+  /// The WAV streamed from the sample buffer is byte for byte the one the former
+  /// in-memory `Data` build wrote, and a shorter window rewrites the file whole.
+  func testWAVIsWrittenByteIdenticalFromTheBuffer() throws {
+    func reference(_ samples: [Float]) -> Data {
+      var data = Data()
+      func append<T: FixedWidthInteger>(_ value: T) {
+        var little = value.littleEndian
+        withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+      }
+      data.append(contentsOf: "RIFF".utf8)
+      append(UInt32(36 + samples.count * 4))
+      data.append(contentsOf: "WAVEfmt ".utf8)
+      append(UInt32(16))
+      append(UInt16(3))
+      append(UInt16(1))
+      append(UInt32(16_000))
+      append(UInt32(64_000))
+      append(UInt16(4))
+      append(UInt16(32))
+      data.append(contentsOf: "data".utf8)
+      append(UInt32(samples.count * 4))
+      samples.withUnsafeBytes { data.append(contentsOf: $0) }
+      return data
+    }
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("wav-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appendingPathComponent("window.wav")
+    let long = (0..<(120 * 16_000)).map { Float(sin(Double($0) * 0.013)) * 0.5 }
+    let windows: [[Float]] = [
+      long, [0.25, -1, 1, .leastNonzeroMagnitude], [], Array(long.prefix(4_800)),
+    ]
+    for samples in windows {
+      try WhisperMeetingRuntime.writeWAV(samples, to: url)
+      XCTAssertEqual(try Data(contentsOf: url), reference(samples))
+    }
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o600)
+  }
+
   func testNativeSegmentsAndAutomaticMeetingMode() async throws {
     let (root, model, helper) = try fixture(
       body: """
@@ -145,11 +186,29 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
     result = try await runtime.transcribe(samples)
     XCTAssertEqual(result.text, "auto|sk", "a fallback decision does not replace it")
     await runtime.shutdown()
-    XCTAssertTrue(WhisperMeetingRuntime.isLanguageCode("sk"))
-    XCTAssertTrue(WhisperMeetingRuntime.isLanguageCode("yue"))
-    XCTAssertFalse(WhisperMeetingRuntime.isLanguageCode("../x"))
-    XCTAssertFalse(WhisperMeetingRuntime.isLanguageCode("SK"))
-    XCTAssertFalse(WhisperMeetingRuntime.isLanguageCode(""))
+    XCTAssertTrue(WhisperMeetingRuntime.isSupportedLanguageCode("sk"))
+    XCTAssertTrue(WhisperMeetingRuntime.isSupportedLanguageCode("en"))
+    for rejected in ["cs", "sl", "pl", "yue", "../x", "SK", ""] {
+      XCTAssertFalse(WhisperMeetingRuntime.isSupportedLanguageCode(rejected), rejected)
+    }
+  }
+
+  /// Only English and Slovak are supported: a confident detection of any other
+  /// language (an old helper's argmax) never becomes the fallback.
+  func testConfidentUnsupportedLanguageDoesNotSeedLaterWindows() async throws {
+    let (root, model, helper) = try fixture(
+      body: """
+        assert 'fallbackLanguage' not in request
+        print(json.dumps({'type':'result', 'id':request['id'], 'text':'Words',
+          'language':'cs', 'languageDecision':'detected', 'segments':[],
+          'languageProbability':0.99, 'languageSpeechSeconds':5.0}), flush=True)
+        """)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+    do {
+      for _ in 0..<2 { _ = try await runtime.transcribe(Array(repeating: 0.1, count: 80_000)) }
+    } catch { XCTFail("An unsupported language changed the fallback: \(error)") }
+    await runtime.shutdown()
   }
 
   func testUntrustworthyDetectionDoesNotSeedLaterWindows() async throws {

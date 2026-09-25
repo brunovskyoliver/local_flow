@@ -58,19 +58,20 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   private var lease: ModelLease?
   private var snapshot = VocabularySnapshot.empty
   private var taps: [MeetingTrackKind: MeetingAnalysisTap] = [:]
-  private var mixer: AnalysisStreamMixer?
+  /// Resampling and mixing run on this actor, not the main actor.
+  @ObservationIgnored private var mixer: AnalysisMixerHost?
   private var recognizer: LiveRecognizer?
   private var startTask: Task<Void, Never>?
-  private var pumpTask: Task<Void, Never>?
-  private var timer: Task<Void, Never>?
+  @ObservationIgnored private var pumpTask: Task<Void, Never>?
+  @ObservationIgnored private var timer: Task<Void, Never>?
   private var boundaryTask: Task<Void, Never>?
   private var retentionTask: Task<Void, Never>?
   private var baseMs: Int64 = 0
   private var ordinal = 0
-  private var lastFlush: UInt64 = 0
-  private var flushing = false
-  private var ticking = false
-  private var degraded = false
+  @ObservationIgnored private var lastFlush: UInt64 = 0
+  @ObservationIgnored private var flushing = false
+  @ObservationIgnored private var ticking = false
+  @ObservationIgnored private var degraded = false
   private var persistenceFailures = 0
   private var stopped = false
   private var paused = false
@@ -221,7 +222,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
         ?? tracks.mapValuesWithKey { kind, format in
           try MeetingAnalysisTap(kind: kind, format: format)
         }
-      let nextMixer = try AnalysisStreamMixer(
+      let nextMixer = try AnalysisMixerHost(
         microphone: fresh[.microphone], system: fresh[.system])
       detach(taps)
       timer?.cancel()
@@ -286,11 +287,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
               if reload, let recognizer = self.recognizer {
                 // Buffered PCM predates the completed reload. Preserve its duration
                 // as one gap; recording has continued throughout model acquisition.
-                for _ in 0..<MeetingSampleRing.slotCapacity where nextMixer.hasPendingBlocks {
-                  _ = try nextMixer.tick()
-                }
-                _ = nextMixer.takeGaps()
-                let range = 0..<nextMixer.emittedSamples
+                let range = 0..<(try await nextMixer.discardBuffered())
                 recognizer.insertGap(range)
                 try await self.recordGap(range, reason: .modelReload, recognizer: recognizer)
               }
@@ -395,7 +392,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     ticking = true
     defer { ticking = false }
     do {
-      try await ingest(try mixer.tick(), mixer: mixer, recognizer: recognizer)
+      try await ingest(try await mixer.tick(), recognizer: recognizer)
       try await updateLag(recognizer, discard: false)
       if pumpTask == nil {
         pumpTask = Task { [weak self, weak recognizer] in
@@ -418,11 +415,8 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     } catch { await fail(Self.category(error)) }
   }
 
-  private func ingest(
-    _ emissions: [AnalysisStreamMixer.Emission], mixer: AnalysisStreamMixer,
-    recognizer: LiveRecognizer
-  ) async throws {
-    for emission in emissions {
+  private func ingest(_ output: AnalysisMixerHost.Output, recognizer: LiveRecognizer) async throws {
+    for emission in output.emissions {
       if emission.sampleStart > recognizer.streamEnd {
         let gap = recognizer.streamEnd..<emission.sampleStart
         recognizer.insertGap(gap)
@@ -437,7 +431,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
           reason: .suspended, recognizer: recognizer)
       }
     }
-    for gap in mixer.takeGaps() where gap.upperBound > recognizer.streamEnd {
+    for gap in output.gaps where gap.upperBound > recognizer.streamEnd {
       let missing = recognizer.streamEnd..<gap.upperBound
       recognizer.insertGap(missing)
       try await recordGap(missing, reason: .tapOverflow, recognizer: recognizer)
@@ -580,10 +574,10 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     guard let recognizer else { return }
     do {
       if let mixer {
-        while mixer.hasPendingBlocks {
-          try await ingest(try mixer.tick(), mixer: mixer, recognizer: recognizer)
+        while await mixer.hasPendingBlocks {
+          try await ingest(try await mixer.tick(), recognizer: recognizer)
         }
-        try await ingest(try mixer.flush(), mixer: mixer, recognizer: recognizer)
+        try await ingest(try await mixer.flush(), recognizer: recognizer)
       }
       // A pause permits one final inference. Everything else remains represented
       // by a gap so a slow model cannot prolong a pause indefinitely.
@@ -593,9 +587,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
           range, reason: stopped ? .stopDrain : .pauseDrain, recognizer: recognizer)
       }
       try await flush(force: true)
+      let tracks = await mixer?.descriptor.contributingTracks ?? []
       guard meetingID == id, self.recognizer === recognizer, let id else { return }
       let length = Int64(recognizer.streamEnd) * 1_000 / 16_000
-      let tracks = mixer?.descriptor.contributingTracks ?? []
       descriptor.appendStretch(
         .init(
           sequence: recognizer.stretchSequence, lengthMs: length,
@@ -806,7 +800,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
               self.status?.progress = fraction
             }
           })
-        self.lastFinalization = outcome
+        // Kept for inspection only; the echo profile goes to diarization below and
+        // is not retained here.
+        self.lastFinalization = outcome.withoutEchoProfile
         self.publish(outcome.row, phase: .transcriptFinalizing)
         if self.status?.meetingID == id { self.status?.progress = 1 }
         // `MeetingFinalizer.run` finished the lease before returning the outcome.

@@ -119,4 +119,20 @@ final class ProtectedLiteralDetectorTests: XCTestCase {
         excluding: ["Martin"]
       ).isEmpty)
   }
+
+  /// Feature 012 (T007): the redaction classes come from the same matchers, and
+  /// exposing them leaves `violations` unchanged (the suite above still passes).
+  func testProtectedClassNamesTheRedactionClasses() {
+    let cases: [(String, ProtectedLiteralDetector.ProtectedClass?)] = [
+      ("10.0.0.1", .ip), ("2001:db8::1", .ip), ("https://x.io/a", .url), ("www.example.com", .url),
+      ("jana@example.sk", .email), ("42", .number), ("1,200.50", .number), ("$1,200", .number),
+      ("15%", .number), ("k8s", nil), ("NetBird", nil), ("v2", nil), ("", nil),
+    ]
+    for (token, expected) in cases {
+      XCTAssertEqual(ProtectedLiteralDetector.protectedClass(of: token), expected, token)
+    }
+    XCTAssertEqual(
+      violations(in: "Ping 10.0.0.2 or mail jana@example.sk", evidence: "nothing").sorted(),
+      ["10.0.0.2", "jana@example.sk"])
+  }
 }

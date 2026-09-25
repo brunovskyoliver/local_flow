@@ -6,7 +6,7 @@ AVAudioEngine captures the microphone. A nonblocking audio callback feeds a boun
 
 Default audio is ephemeral. Bounded chunks may spill to app-private temporary files; cleanup runs on every exit and at startup. No audio history or backup. Every nonempty transcription is persisted in bounded local history before insertion, including partial results. Confirmed delivery or Dismiss recovery clears recovery status without changing completeness or deleting text. Only confirmed explicit Delete removes history; Copy changes neither text nor recovery status. An uncertain insertion must not trigger automatic retries that duplicate text.
 
-Capture the target application and focused editable element before showing UI. Revalidate the target before insertion; never send text to a newly focused application. Secure fields are ineligible. Unsupported, closed or inaccessible targets leave completed text available for explicit copy. Clipboard modification is user initiated in Feature 001.
+Capture the target application and focused editable element before showing UI. Revalidate the target before insertion; never send text to a newly focused application. Secure fields are ineligible. Unsupported, closed or inaccessible targets leave completed text available for explicit copy. Clipboard modification is user initiated, except the terminal paste in [ADR 0024](../adr/0024-terminal-paste-insertion.md), which restores the previous clipboard.
 
 ## Meetings (Feature 004)
 

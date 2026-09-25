@@ -6,10 +6,10 @@ import OSLog
 /// Per-track serial loop (contracts/meeting-capture.md, "Track worker loop").
 ///
 /// Bounds, all fixed at creation and never grown by duration or by a disk stall:
-/// - Ring: 32 slots × 4,096 frames × up to 8 channels, preallocated by
+/// - Ring: 32 slots × 4,096 frames × the source's channels (≤ 8), preallocated by
 ///   `MeetingSampleRing`; overflow drops whole callbacks and counts them.
 /// - Input block: one `AVAudioPCMBuffer` of 4,096 frames in the ring's layout,
-///   filled at most 32 times per 10 ms tick, including overflow silence.
+///   filled at most 32 times per 40 ms tick, including overflow silence.
 /// - Output block: one `AVAudioCompressedBuffer` of at most 8 packets of 1,536
 ///   bytes inside the encoder; `encode` returns at most 8 frames per call and the
 ///   worker writes them synchronously before asking for more.
@@ -18,8 +18,12 @@ import OSLog
 ///   `storageFailure`, the loop stops popping and the ring keeps dropping and
 ///   counting while the coordinator (250 ms poll) ends the meeting.
 /// - Cadence: `sync` and one `progressSegment` heartbeat every 5 s of clock time.
+/// - Tick: 40 ms. Each push fills one slot. The microphone tap requests 1,024
+///   frames and accepts up to 192 kHz, so 32 slots hold at least
+///   32 × 1,024 / 192,000 ≈ 170 ms (683 ms at 48 kHz); ScreenCaptureKit delivers
+///   48 kHz buffers of at least 480 frames, so ≥ 320 ms. 40 ms leaves ≥ 4× margin.
 actor MeetingTrackWorker {
-  static let tickInterval: Duration = .milliseconds(10)
+  static let tickInterval: Duration = .milliseconds(40)
   static let syncIntervalMs: Int64 = 5_000
   static let maximumSlotsPerTick = MeetingSampleRing.slotCapacity
   static let maximumFramesPerAppend = Int(MeetingTrackEncoder.outputPackets)

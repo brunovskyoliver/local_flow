@@ -55,6 +55,9 @@ public actor TextInsertionService {
       switch try await adapter.setSelectedText(text, on: target) {
       case .noMutation:
         outcome = .notInserted(.unsupported)
+      case .pasted:
+        // A terminal paste cannot be read back; it reached the validated window.
+        outcome = .confirmed
       case .mutationMayHaveOccurred:
         do {
           let selected = try await adapter.readback(text, on: target)

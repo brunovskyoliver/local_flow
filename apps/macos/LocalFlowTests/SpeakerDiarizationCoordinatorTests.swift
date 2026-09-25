@@ -23,11 +23,17 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
   }
   override func tearDown() async throws { fixture.cleanup() }
 
-  private func makeCoordinator(_ runtime: FakeDiarizationRuntime = FakeDiarizationRuntime())
-    -> SpeakerDiarizationCoordinator
-  {
+  private func makeCoordinator(
+    _ runtime: FakeDiarizationRuntime = FakeDiarizationRuntime(),
+    retryDelay: Duration = .milliseconds(10), signalled: Bool = false,
+    speechBuilds: Counter? = nil
+  ) -> SpeakerDiarizationCoordinator {
     let lifecycle = ModelLifecycleCoordinator(
-      diarizationFactory: { runtime }, factory: { FakeTranscriptionRuntime() })
+      diarizationFactory: { runtime },
+      factory: {
+        await speechBuilds?.increment()
+        return FakeTranscriptionRuntime()
+      })
     self.lifecycle = lifecycle
     let diarizer = MeetingDiarizer(
       speakers: speakers, transcripts: transcripts, meetings: fixture.store,
@@ -35,7 +41,8 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
       clock: FakeMeetingClock())
     let coordinator = SpeakerDiarizationCoordinator(
       diarizer: diarizer, store: speakers, automaticEnabled: { [unowned self] in self.automatic },
-      modelInstalled: { [unowned self] in self.installed }, retryDelay: .milliseconds(10))
+      modelInstalled: { [unowned self] in self.installed }, retryDelay: retryDelay,
+      lifecycle: signalled ? lifecycle : nil)
     coordinator.noticePublished = { [unowned self] in self.notices.append($0) }
     return coordinator
   }
@@ -253,6 +260,76 @@ final class SpeakerDiarizationCoordinatorTests: XCTestCase {
     XCTAssertEqual(resumed?.state, .succeeded)
     let secondRun = try await speakers.latestRun(meetingID: second)
     XCTAssertEqual(secondRun?.state, .succeeded)
+    await coordinator.shutdown()
+  }
+
+  /// A busy run waits for the lease to be released, not for the fallback timer.
+  func testABusyRunStartsWhenTheModelIsReleasedNotOnATimer() async throws {
+    let coordinator = makeCoordinator(retryDelay: .seconds(60), signalled: true)
+    let id = try await finalMeeting()
+    let lifecycle = try XCTUnwrap(lifecycle)
+    let speech = try await lifecycle.acquire(session: UUID(), workload: .speechRecognition)
+    await coordinator.requestRun(meetingID: id, revision: nil, trigger: .manual)
+    await DiarizationTestSupport.eventually {
+      coordinator.queuedCount == 1 && coordinator.activeMeetingID == nil
+    }
+    let pending = await state(id)
+    XCTAssertEqual(pending, .pending)
+    try await lifecycle.finish(speech)
+    await settled(id, coordinator)
+    let done = await state(id)
+    XCTAssertEqual(done, .succeeded, "started on release, a minute before the fallback")
+    await coordinator.shutdown()
+  }
+
+  /// Keep model ready does not reload live speech between queued runs; it reloads
+  /// once the queue is empty.
+  func testKeepModelReadyWaitsForTheQueueToDrain() async throws {
+    let runtime = FakeDiarizationRuntime()
+    let gate = PreparationGate()
+    await runtime.hold(gate)
+    let builds = Counter()
+    let coordinator = makeCoordinator(runtime, signalled: true, speechBuilds: builds)
+    let lifecycle = try XCTUnwrap(lifecycle)
+    await lifecycle.setKeepLoaded(true)
+    let first = try await finalMeeting()
+    let second = try await finalMeeting(startedAt: 1_800_000_000_000)
+    await coordinator.requestRun(meetingID: first, revision: nil, trigger: .manual)
+    await gate.waitUntilStarted()
+    await coordinator.requestRun(meetingID: second, revision: nil, trigger: .manual)
+    await gate.open()
+    await settled(first, coordinator)
+    await settled(second, coordinator)
+    await DiarizationTestSupport.eventually { await lifecycle.snapshot().loaded }
+    let count = await builds.value
+    XCTAssertEqual(count, 1, "one reload after both runs, none between them")
+    await lifecycle.setKeepLoaded(false)
+    await coordinator.shutdown()
+  }
+
+  /// A run that finds the model busy goes back to the queue with the finalization
+  /// pass's echo profile, so its retry does not decode both tracks again.
+  func testABusyRunKeepsTheHandedEchoProfileForItsRetry() async throws {
+    let coordinator = makeCoordinator(retryDelay: .seconds(60))
+    let id = try await finalMeeting()
+    let lifecycle = try XCTUnwrap(lifecycle)
+    let speech = try await lifecycle.acquire(session: UUID(), workload: .speechRecognition)
+    var profile = EchoGate.Profile()
+    profile.stretches[0] = .init(baseMs: 0, microphone: [-20, -30], system: [-25, -35])
+    coordinator.meetingTranscriptDidFinalize(id: id, echoProfile: profile)
+    await DiarizationTestSupport.eventually {
+      coordinator.queuedCount == 1 && coordinator.activeMeetingID == nil
+    }
+    // Past the one attempt; the next is a minute away.
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(coordinator.queuedCount, 1, "back at the head of the queue")
+    XCTAssertNil(coordinator.activeMeetingID)
+    let pending = await state(id)
+    XCTAssertEqual(pending, .pending)
+    XCTAssertEqual(coordinator.echoProfileMeetingIDs, [id], "the profile waits for the retry")
+    try await lifecycle.finish(speech)
+    await coordinator.meetingWillDelete(id: id)
+    XCTAssertTrue(coordinator.echoProfileMeetingIDs.isEmpty)
     await coordinator.shutdown()
   }
 
