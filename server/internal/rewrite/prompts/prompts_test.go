@@ -11,14 +11,35 @@ import (
 // instructions; do not replace an existing version's hash.
 func TestVersionedTemplates(t *testing.T) {
 	hashes := map[string]map[int]string{
-		"clean":    {1: "b3a833cd6dbd539b2277278a200fcd7b55abe193df1353412c074a89dc1bc1f7", 2: "346286e325385a6e739679878ecc278b530c87eedcc1d4fe7d2b6ada72518d04", 3: "6f163546eb9f06d1efbf11cc3b72e5be36529389b9b3dba0a17605002d79bc47", 4: "7d1358ebb7dd416d52017266e1ef2907ddfb11193c614bed91b51fe53b939743", 5: "6758c353aac79135e64e2d5284e859695bd55ee751b86d200b171c96f353d1be"},
-		"polished": {1: "9299470bc8994c821db60d99c2aee37f769b2f2f1a05ba0c61aacf65dce307b0", 2: "2d216a6b524b357f6b6f595eca011d57662420cf1543660876d2ecf2cf96c061", 3: "ab5d6c4ff980ee1f8df294ce33e01f9ec7da808a0b89e78e177ebc632c0023dc"},
-		"concise":  {1: "31f85e89fea9bfe632be91b3e884c1833a9b141f2487acb38f167bb631b528d7", 2: "5b00814078526c1b2453c1d11cf97e46ca785787d9525b4727005d0d976c3bf9", 3: "9818ab41f926b87a15120cf7c9c664f3823471cb382e24786be62fd39b43b338"},
+		"clean":    {1: "b3a833cd6dbd539b2277278a200fcd7b55abe193df1353412c074a89dc1bc1f7", 2: "346286e325385a6e739679878ecc278b530c87eedcc1d4fe7d2b6ada72518d04", 3: "6f163546eb9f06d1efbf11cc3b72e5be36529389b9b3dba0a17605002d79bc47", 4: "7d1358ebb7dd416d52017266e1ef2907ddfb11193c614bed91b51fe53b939743", 5: "6758c353aac79135e64e2d5284e859695bd55ee751b86d200b171c96f353d1be", 6: "0e9a08b51252ed36ca50129268550964c8c487858d63301e6111fa28cc09339b"},
+		"polished": {1: "9299470bc8994c821db60d99c2aee37f769b2f2f1a05ba0c61aacf65dce307b0", 2: "2d216a6b524b357f6b6f595eca011d57662420cf1543660876d2ecf2cf96c061", 3: "ab5d6c4ff980ee1f8df294ce33e01f9ec7da808a0b89e78e177ebc632c0023dc", 4: "db987fefad5fc17c0834684ec96b3b5d9c5a2824773e132b8b66b347a17f56e6"},
+		"concise":  {1: "31f85e89fea9bfe632be91b3e884c1833a9b141f2487acb38f167bb631b528d7", 2: "5b00814078526c1b2453c1d11cf97e46ca785787d9525b4727005d0d976c3bf9", 3: "9818ab41f926b87a15120cf7c9c664f3823471cb382e24786be62fd39b43b338", 4: "5a7172f9bbffcb1c06064805cf7456858003fe13340de373d1c3f22870bf86b0"},
 	}
 	for mode, template := range templates {
 		if got := fmt.Sprintf("%x", sha256.Sum256([]byte(template.Text))); hashes[mode][template.Version] != got {
 			t.Errorf("%s v%d unregistered template hash: %s", mode, template.Version, got)
 		}
+	}
+}
+
+// The spoken rules ship with specific template versions: a change to Spoken
+// must bump every template and be registered here.
+func TestVersionedSpokenRules(t *testing.T) {
+	registered := map[string]map[string]int{
+		"3562e1a6bd4b335cb140149c208ca59619a3eb99d45a5edf614e626832ea5d02": {"clean": 6, "polished": 4, "concise": 4},
+	}
+	got := fmt.Sprintf("%x", sha256.Sum256([]byte(Spoken)))
+	versions, ok := registered[got]
+	if !ok {
+		t.Fatalf("unregistered spoken rules hash: %s", got)
+	}
+	for mode, template := range templates {
+		if versions[mode] != template.Version {
+			t.Errorf("%s v%d does not ship these spoken rules (registered with v%d)", mode, template.Version, versions[mode])
+		}
+	}
+	if got := WithSpoken(templates["clean"].Text); got != templates["clean"].Text+" "+Spoken {
+		t.Fatal(got)
 	}
 }
 

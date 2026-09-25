@@ -27,3 +27,7 @@ python3 scripts/rewrite-quality.py fixtures/rewrite/corpus-v1.json \
 Use `--credential-env NAME` to read a bearer credential from the environment, `--modes clean,polished,concise` to select modes, and `--continue` to continue after a transport failure. Each run needs unused output filenames. The runner refuses redirects and validates health identity before creating output. It records one response at a time and rejects results whose identity differs from health.
 
 The version-1 shielding coverage patterns live in `rewrite_quality_lib.py`. The server shielding phase must match them against these annotated fixtures; detector misses are reported separately from model errors. No live shielding, model-quality, latency or resource result has been collected by these tests.
+
+## Spoken disfluency cases
+
+`disfluency-v1.json` holds English, Slovak and mixed dictations with fillers, repeats, restarts and self-corrections, plus cases where a filler-like word carries meaning ("I like it", "not to Mary", hedges, answers). `must` and `must_not` are case-insensitive regular expressions over the rewrite; `marker` names a case's correction marker. The opt-in live test in `server/internal/rewrite/prompts/disfluency_live_test.go` fails on a correction applied halfway or on lost content, and otherwise allows 15% misses because output varies by model. See [ADR 0025](../../docs/adr/0025-spoken-disfluency-cleanup.md).

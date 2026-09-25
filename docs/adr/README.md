@@ -32,3 +32,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0023: Rewrite protocol v2 with reference context](0023-rewrite-protocol-v2-reference-context.md)
 
 - [0024: Clipboard paste into terminals](0024-terminal-paste-insertion.md)
+
+- [0025: Spoken disfluency cleanup in the rewrite](0025-spoken-disfluency-cleanup.md)

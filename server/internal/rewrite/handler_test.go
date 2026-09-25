@@ -57,7 +57,7 @@ func TestHealthCacheAndShieldOff(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", "/v1/rewrite/health", nil))
 		var v Health
-		if json.Unmarshal(w.Body.Bytes(), &v) != nil || v.Service != ServiceName || v.ShieldVersion != 0 || v.Backend.State != "ready" || v.PromptVersions["clean"] != 5 {
+		if json.Unmarshal(w.Body.Bytes(), &v) != nil || v.Service != ServiceName || v.ShieldVersion != 0 || v.Backend.State != "ready" || v.PromptVersions["clean"] != 6 {
 			t.Fatal(w.Body.String())
 		}
 	}

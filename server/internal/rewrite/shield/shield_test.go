@@ -35,18 +35,54 @@ func TestDetectorClasses(t *testing.T) {
 	}
 }
 func TestRoundTrip(t *testing.T) {
-	input := "Contact dev@example.com at 09:30 with 15 files."
+	input := "Contact dev@example.com or see https://example.com/docs at 09:30 with 15 files."
 	s, table := Shield(input)
-	if s != "Contact ⟦E0⟧ at ⟦E1⟧ with ⟦E2⟧ files." {
+	if s != "Contact ⟦E0⟧ or see ⟦E1⟧ at 09:30 with 15 files." {
 		t.Fatal(s)
 	}
-	output, err := Restore(s, table)
-	if err != nil || output != input {
-		t.Fatal(output, err)
+	output, restored, err := Restore(s, table)
+	if err != nil || output != input || restored != 2 {
+		t.Fatal(output, restored, err)
 	}
-	for _, bad := range []string{strings.Replace(s, "⟦E0⟧", "", 1), s + "⟦E0⟧", s + "⟦E99⟧", s + "⟦broken", s + "⟧"} {
-		if _, err := Restore(bad, table); err == nil {
+	for _, bad := range []string{
+		strings.Replace(s, "⟦E0⟧", "", 1), strings.Replace(s, "⟦E1⟧", "", 1), s + "⟦E0⟧", s + "⟦E99⟧", s + "⟦broken", s + "⟧",
+		// Visible values may not be dropped or changed.
+		strings.Replace(s, "15 files", "files", 1), strings.Replace(s, "09:30", "9.30", 1), strings.Replace(s, "15", "fifteen", 1),
+	} {
+		if _, _, err := Restore(bad, table); err == nil {
 			t.Fatalf("accepted %q", bad)
+		}
+	}
+}
+
+// A spoken correction may drop the value it replaces, but only in favour of a
+// nearby later value of the same class that survives.
+func TestRestoreCorrections(t *testing.T) {
+	for _, tc := range []struct {
+		input, output, want string
+		ok                  bool
+	}{
+		{"Set it to 30 seconds, wait, make it 60 seconds.", "Set it to 60 seconds.", "Set it to 60 seconds.", true},
+		{"Meet on Tuesday, no, Wednesday at 15:00.", "Meet on Wednesday at 15:00.", "Meet on Wednesday at 15:00.", true},
+		{"Stretneme sa v utorok, nie, v stredu.", "Stretneme sa v stredu.", "Stretneme sa v stredu.", true},
+		{"Use 30, no 40, no 60 workers.", "Use 60 workers.", "Use 60 workers.", true},
+		{"Use 5, sorry, 5 workers.", "Use 5 workers.", "Use 5 workers.", true},
+		{"Deploy to 10.0.0.1, sorry, 10.0.0.2 tonight.", "Deploy to ⟦E1⟧ tonight.", "Deploy to 10.0.0.2 tonight.", true},
+		// The replacement itself must survive.
+		{"Set it to 30 seconds, wait, make it 60 seconds.", "Set it to 30 seconds.", "", false},
+		{"Deploy to 10.0.0.1, sorry, 10.0.0.2 tonight.", "Deploy to ⟦E0⟧ tonight.", "", false},
+		// A different class does not supersede.
+		{"Meet on Tuesday, no, at 15:00.", "Meet at 15:00.", "", false},
+		// Too far apart to be a correction.
+		{"Order 5 boxes for the warehouse downstairs, and later this month, once the budget clears, order 6 cables.", "Order boxes, then 6 cables.", "", false},
+	} {
+		_, table := Shield(tc.input)
+		got, restored, err := Restore(tc.output, table)
+		if (err == nil) != tc.ok || got != tc.want {
+			t.Errorf("%q → %q: got %q, %v", tc.input, tc.output, got, err)
+		}
+		if tc.ok && restored > len(table.Shielded) {
+			t.Errorf("%q: restored %d of %d", tc.input, restored, len(table.Shielded))
 		}
 	}
 }
@@ -71,8 +107,8 @@ func TestCorpusCoverage(t *testing.T) {
 				continue
 			}
 			found := false
-			for _, v := range table {
-				if v == p.Value {
+			for _, e := range append(table.Shielded, table.Checked...) {
+				if e.Value == p.Value {
 					found = true
 				}
 			}

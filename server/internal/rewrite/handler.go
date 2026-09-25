@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"localflow/server/internal/backend"
+	"localflow/server/internal/rewrite/disfluency"
 	"localflow/server/internal/rewrite/prompts"
 	entityshield "localflow/server/internal/rewrite/shield"
 )
@@ -226,10 +227,15 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	input := req.Text
 	var table entityshield.Table
 	shieldVersion := 0
+	restored := 0
 	if strings.ContainsAny(input, "⟦⟧") {
 		fail(CodeShieldRestoreFailed)
 		return
 	}
+	// Hesitation sounds are never content; the model need not see them.
+	spoken := disfluency.Signals(input)
+	input = disfluency.Strip(input, req.LanguageHints)
+	stripped := input
 	if h.config.Shield {
 		input, table = entityshield.Shield(input)
 		shieldVersion = entityshield.Version
@@ -244,75 +250,74 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lastProgress := time.Now()
-	system := template.Text
-	if req.Context != nil {
-		system = prompts.WithContext(system, prompts.Reference{Category: req.Context.AppCategory, StyleHints: req.Context.StyleHints, Block: RenderContext(req.ContextJSON)})
+	// The spoken rules clean up disfluent speech but can over-edit. An output
+	// that fails validation under them is regenerated once with the plain mode
+	// template, whose behaviour predates them, before the request fails.
+	systems := []string{template.Text}
+	if spoken {
+		systems = []string{prompts.WithSpoken(template.Text), template.Text}
 	}
 	var responseSchema map[string]any
 	if info.JSONSchema {
 		responseSchema = prompts.ResponseFormat()
-		system += prompts.ConstrainedInstruction
 	}
-	completion, err := h.config.Backend.Generate(ctx, backend.Input{System: system, Text: input, MaxOutputBytes: req.MaxOutputBytes(), ResponseSchema: responseSchema, Progress: func(chars int) error {
-		if time.Since(lastProgress) < ProgressInterval {
-			return nil
+	var completion backend.Completion
+	var text string
+	backendMS := 0
+	for attempt, system := range systems {
+		if req.Context != nil {
+			system = prompts.WithContext(system, prompts.Reference{Category: req.Context.AppCategory, StyleHints: req.Context.StyleHints, Block: RenderContext(req.ContextJSON)})
 		}
-		lastProgress = time.Now()
-		// Keep auxiliary events within 4 KiB, leaving room for identity and a terminal error.
-		if responseBytes > 3800 {
-			return nil
+		if info.JSONSchema {
+			system += prompts.ConstrainedInstruction
 		}
-		return send(Progress(req.RequestID, chars))
-	}})
-	if err != nil {
-		if ctx.Err() != nil {
-			code = "cancelled"
-			return
-		}
-		switch {
-		case errors.Is(err, backend.ErrOutputTooLarge):
-			fail(CodeOutputTooLarge)
-		case errors.Is(err, backend.ErrFirstTokenTimeout):
-			fail(CodeBackendFirstTokenTimeout)
-		case errors.Is(err, backend.ErrTimeout):
-			fail(CodeBackendTimeout)
-		case errors.Is(err, backend.ErrUnavailable):
-			fail(CodeBackendUnavailable)
-		default:
-			fail(CodeBackendError)
-		}
-		return
-	}
-	text := completion.Text
-	if info.JSONSchema {
-		var decoded string
-		if json.Unmarshal([]byte(text), &decoded) != nil {
-			fail(CodeBackendError)
-			return
-		}
-		text = decoded
-	}
-	if strings.TrimSpace(text) == "" {
-		fail(CodeBackendError)
-		return
-	}
-	if h.config.Shield {
-		text, err = entityshield.Restore(text, table)
+		var err error
+		completion, err = h.config.Backend.Generate(ctx, backend.Input{System: system, Text: input, MaxOutputBytes: req.MaxOutputBytes(), ResponseSchema: responseSchema, Progress: func(chars int) error {
+			if time.Since(lastProgress) < ProgressInterval {
+				return nil
+			}
+			lastProgress = time.Now()
+			// Keep auxiliary events within 4 KiB, leaving room for identity and a terminal error.
+			if responseBytes > 3800 {
+				return nil
+			}
+			return send(Progress(req.RequestID, chars))
+		}})
 		if err != nil {
-			fail(CodeShieldRestoreFailed)
+			if ctx.Err() != nil {
+				code = "cancelled"
+				return
+			}
+			switch {
+			case errors.Is(err, backend.ErrOutputTooLarge):
+				fail(CodeOutputTooLarge)
+			case errors.Is(err, backend.ErrFirstTokenTimeout):
+				fail(CodeBackendFirstTokenTimeout)
+			case errors.Is(err, backend.ErrTimeout):
+				fail(CodeBackendTimeout)
+			case errors.Is(err, backend.ErrUnavailable):
+				fail(CodeBackendUnavailable)
+			default:
+				fail(CodeBackendError)
+			}
 			return
 		}
+		backendMS += completion.DurationMS
+		var invalid ErrorCode
+		// Polished and concise may legitimately merge or drop sentences, so
+		// only clean output is held to keeping every one.
+		text, restored, invalid = h.validate(req, completion.Text, info.JSONSchema, table, stripped, attempt == 0 && spoken && req.Mode == "clean")
+		if invalid == "" {
+			break
+		}
+		if attempt == len(systems)-1 {
+			fail(invalid)
+			return
+		}
+		h.config.Logger.Printf("request_id=%s spoken_retry=%s", req.RequestID, invalid)
 	}
-	if len(text) > req.MaxOutputBytes() {
-		fail(CodeOutputTooLarge)
-		return
-	}
-	if strings.ContainsAny(text, "⟦⟧") || hasCommentary(text) {
-		fail(CodeBackendError)
-		return
-	}
-	timing := Timing{&queueMS, completion.FirstTokenMS, &completion.DurationMS}
-	result := NewResult(req, text, Identity{"flowd", ServerVersion}, Backend{"openai-compatible", BoundIdentity(completion.Model)}, template.Version, Shield{shieldVersion, len(table), len(table)}, timing)
+	timing := Timing{&queueMS, completion.FirstTokenMS, &backendMS}
+	result := NewResult(req, text, Identity{"flowd", ServerVersion}, Backend{"openai-compatible", BoundIdentity(completion.Model)}, template.Version, Shield{shieldVersion, len(table.Shielded), restored}, timing)
 	if req.Context != nil {
 		result.ContextPromptVersion = prompts.ContextPromptVersion
 	}
@@ -329,6 +334,42 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 		code = "cancelled"
 	}
 }
+
+// validate decodes and checks one backend output and restores its shielded
+// values. keepSentences additionally rejects outputs that dropped a whole
+// sentence, which the spoken rules can cause and a retry without them avoids.
+func (h *Handler) validate(req Request, raw string, jsonSchema bool, table entityshield.Table, input string, keepSentences bool) (string, int, ErrorCode) {
+	text := raw
+	if jsonSchema {
+		var decoded string
+		if json.Unmarshal([]byte(text), &decoded) != nil {
+			return "", 0, CodeBackendError
+		}
+		text = decoded
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", 0, CodeBackendError
+	}
+	restored := 0
+	if h.config.Shield {
+		var err error
+		text, restored, err = entityshield.Restore(text, table)
+		if err != nil {
+			return "", 0, CodeShieldRestoreFailed
+		}
+	}
+	if len(text) > req.MaxOutputBytes() {
+		return "", 0, CodeOutputTooLarge
+	}
+	if strings.ContainsAny(text, "⟦⟧") || hasCommentary(text) || disfluency.HalfCorrected(input, text) {
+		return "", 0, CodeBackendError
+	}
+	if keepSentences && disfluency.DroppedSentence(input, text) {
+		return "", 0, CodeBackendError
+	}
+	return text, restored, ""
+}
+
 func hasCommentary(text string) bool {
 	s := strings.ToLower(strings.TrimSpace(text))
 	for _, prefix := range []string{"here is ", "here's ", "sure,", "sure!", "certainly,", "certainly!", "rewritten text:", "rewritten version:", "```", "<think>", "tu je prepis", "tu je upraven"} {

@@ -383,7 +383,7 @@ final class SettingsViewModel {
     case .exact: return "Insert the saved transcript unchanged. No request is sent."
     case .clean:
       return
-        "Keep wording and meaning; fix punctuation, grammar and capitalization, and remove obvious fillers."
+        "Keep wording and meaning; fix punctuation, grammar and capitalization, and remove fillers, stutters and self-corrections."
     case .polished:
       return
         "Restructure sentences into natural professional writing while keeping every fact and action."
