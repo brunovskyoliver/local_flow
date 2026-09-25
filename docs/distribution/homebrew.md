@@ -48,6 +48,8 @@ There is deliberately no destructive `zap` stanza.
    The app workflow publishes releases; the tap workflow updates its own main
    branch. No cross-repository token is required.
 3. Push a new version tag, such as `v0.1.0`. Use increasing X.Y.Z versions.
+   To retry a failed release after fixing CI, run the release workflow manually
+   from main with the original tag. This preserves the tagged source commit.
 4. The workflow runs `make check`, builds on Apple Silicon, ad-hoc signs all
    nested binaries and the app, verifies signatures, creates a ZIP and checksum,
    publishes the GitHub Release with the generated `localflow.rb` asset.
@@ -66,7 +68,7 @@ request. Scheduled runs may be delayed; GitHub can disable schedules after
 60 days without repository activity, so check the tap Actions page if it falls
 behind. Never replace a published ZIP with different bytes.
 
-For a local package, install Xcode, Go and CMake, then run:
+For a local package, install Xcode, Go, CMake and FFmpeg, then run:
 
 ```sh
 make check
