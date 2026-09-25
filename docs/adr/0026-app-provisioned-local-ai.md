@@ -36,3 +36,17 @@ About 540 MB of runtime (measured: 70 MB Python, 469 MB venv) plus the chosen mo
 ## Alternatives considered
 
 Requiring MTPLX.app (a second app and dashboard with idle CPU cost); Homebrew (most users don't have it); bundling Python in the app (roughly 540 MB added to every download, including for users who skip AI); unpinned `pip install mtplx`.
+
+## Amendment: unloading the model when it isn't needed (2026-09-25)
+
+The user asked to free the model's memory while gaming or away, and accepted a slower first rewrite afterwards as long as recording stays instant. `LocalModelResidency` stops MTPLX with the existing `SIGTERM` when one of these happens and nothing is using it (no dictation in progress, no meeting analysis running):
+
+- the idle delay chosen in Settings passes (Never, 15 minutes or 1 hour; default Never);
+- an app whose `LSApplicationCategoryType` ends in `games` stays frontmost for 60 seconds (the category macOS Game Mode uses; on by default, with a Settings switch). Quitting that game loads the model again in the background;
+- the system reports memory pressure.
+
+Recording never waits for the model. A dictation starts it, as before, so it loads while the user speaks. Rewrite and analysis requests to the local services wait, inside their own timeout, until flowd's health reports the backend `ready`, polled every 250 ms. That wait also covers a rewrite made while the model is still loading at launch, which used to fall back to plain text.
+
+Measured on the M5 (32 GB, AC power) with the 4B Speed model and its weights in the file cache: start to serving took 4.6, 5.2 and 6.5 s (weights 1.7 s, warmup 1.3 s), and the first rewrite then finished in 0.54–0.61 s, against 0.44–0.48 s warm. MTPLX opens its port only once it serves. The loaded model used a 3.3 GB footprint and 0.1–0.3% CPU while idle. A load whose weights macOS evicted from the file cache was not measured.
+
+Constitution check: passes principles 2 and 3. The model stays centrally owned by the app and launchd, loading happens only for a local request or a user-enabled trigger, and every release is the existing agent stop. Nothing new leaves the Mac. No memory or battery saving is claimed beyond the measurements above.

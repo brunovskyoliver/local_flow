@@ -1,3 +1,4 @@
+import AppKit
 import CryptoKit
 import Foundation
 import ServiceManagement
@@ -430,4 +431,219 @@ private final class PullResult: @unchecked Sendable {
   private var path: String?
   var value: String? { lock.withLock { path } }
   func set(_ value: String) { lock.withLock { path = value } }
+}
+
+/// How long the local rewrite model stays loaded after its last use.
+enum LocalModelIdleUnload: Int, CaseIterable, Identifiable {
+  case never = 0
+  case fifteenMinutes = 900
+  case oneHour = 3600
+
+  var id: Int { rawValue }
+  var title: String {
+    switch self {
+    case .never: "Never"
+    case .fifteenMinutes: "After 15 min"
+    case .oneHour: "After 1 hour"
+    }
+  }
+  var delay: Duration? { self == .never ? nil : .seconds(rawValue) }
+}
+
+/// Unloads the local rewrite model while it isn't needed: after the idle delay
+/// from Settings, a minute after a game comes to the front, or under memory
+/// pressure. Recording never waits for it. Dictation starts the model, and only
+/// a rewrite or analysis request waits for it to answer (ADR 0026 amendment).
+@MainActor final class LocalModelResidency {
+  static let gameDelay: Duration = .seconds(60)
+  static let pollInterval: Duration = .milliseconds(250)
+
+  private let preferences: AppPreferences
+  private let clock: any DictationClock
+  private let setRunning: @MainActor (Bool) -> Void
+  private let backendReady: @MainActor () async -> Bool
+  private let busy: @MainActor () -> Bool
+
+  /// Rewriting points at this Mac's services. The app starts the model when
+  /// this turns on and stops it when it turns off; nothing is managed otherwise.
+  var managed = false {
+    didSet {
+      guard managed != oldValue else { return }
+      loaded = managed
+      starting = managed
+      unloadedForGame = false
+      managed ? scheduleIdle() : cancelTimers()
+    }
+  }
+  private(set) var loaded = false
+  /// Started and not yet confirmed serving; requests wait while this is set.
+  private(set) var starting = false
+  private var unloadedForGame = false
+  private(set) var idleTimer: Task<Void, Never>?
+  private(set) var gameTimer: Task<Void, Never>?
+  private var observers: [NSObjectProtocol] = []
+  private var pressure: DispatchSourceMemoryPressure?
+
+  init(
+    preferences: AppPreferences, clock: any DictationClock = SystemDictationClock(),
+    setRunning: @escaping @MainActor (Bool) -> Void,
+    backendReady: @escaping @MainActor () async -> Bool,
+    busy: @escaping @MainActor () -> Bool
+  ) {
+    self.preferences = preferences
+    self.clock = clock
+    self.setRunning = setRunning
+    self.backendReady = backendReady
+    self.busy = busy
+  }
+
+  /// Follows app activation, game quits, memory pressure and the two settings.
+  func observe() {
+    let center = NSWorkspace.shared.notificationCenter
+    observers = [
+      center.addObserver(
+        forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+      ) { [weak self] note in
+        let game = Self.isGame(
+          note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
+        MainActor.assumeIsolated { self?.frontmostChanged(toGame: game) }
+      },
+      center.addObserver(
+        forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
+      ) { [weak self] note in
+        let game = Self.isGame(
+          note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
+        MainActor.assumeIsolated { if game { self?.gameQuit() } }
+      },
+    ]
+    let source = DispatchSource.makeMemoryPressureSource(
+      eventMask: [.warning, .critical], queue: .main)
+    source.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.memoryPressure() } }
+    source.resume()
+    pressure = source
+    followSettings()
+  }
+
+  /// Dictation started: bring the model back while the user speaks. Also
+  /// restarts an MTPLX that crashed, as before.
+  func wake() {
+    guard managed else { return }
+    load()
+    setRunning(true)
+    scheduleIdle()
+  }
+
+  /// Called before each request. Starts an unloaded model and waits, bounded
+  /// by the caller's timeout, until flowd reports it serving.
+  func ready(for endpoint: RewriteEndpoint) async {
+    guard managed, endpoint.origin == LocalAIInstaller.rewriteEndpoint else { return }
+    if !loaded {
+      load()
+      setRunning(true)
+    }
+    scheduleIdle()
+    while starting, !Task.isCancelled {
+      if await backendReady() {
+        starting = false
+        return
+      }
+      try? await clock.sleep(for: Self.pollInterval)
+    }
+  }
+
+  func frontmostChanged(toGame game: Bool) {
+    gameTimer?.cancel()
+    gameTimer = nil
+    guard managed, game, preferences.unloadLocalModelDuringGames else { return }
+    // A game that stays in front for a minute; alt-tabbing through one doesn't count.
+    gameTimer = Task { [clock] in
+      try? await clock.sleep(for: Self.gameDelay)
+      guard !Task.isCancelled else { return }
+      if busy() {
+        frontmostChanged(toGame: true)
+      } else {
+        unload(forGame: true)
+      }
+    }
+  }
+
+  /// A game that unloaded the model quit: load it again in the background so
+  /// the next dictation after playing is fast.
+  func gameQuit() {
+    guard managed, !loaded, unloadedForGame else { return }
+    load()
+    setRunning(true)
+    scheduleIdle()
+  }
+
+  func memoryPressure() {
+    unload(forGame: false)
+  }
+
+  private func load() {
+    guard !loaded else { return }
+    loaded = true
+    starting = true
+    unloadedForGame = false
+  }
+
+  private func unload(forGame: Bool) {
+    guard managed, loaded, !busy() else { return }
+    loaded = false
+    starting = false
+    unloadedForGame = forGame
+    cancelTimers()
+    setRunning(false)
+  }
+
+  private func scheduleIdle() {
+    idleTimer?.cancel()
+    idleTimer = nil
+    guard managed, loaded, let delay = preferences.localModelIdleUnload.delay else { return }
+    idleTimer = Task { [clock] in
+      try? await clock.sleep(for: delay)
+      guard !Task.isCancelled else { return }
+      if busy() {
+        scheduleIdle()
+      } else {
+        unload(forGame: false)
+      }
+    }
+  }
+
+  private func cancelTimers() {
+    idleTimer?.cancel()
+    idleTimer = nil
+    gameTimer?.cancel()
+    gameTimer = nil
+  }
+
+  /// A changed setting takes effect now, not after the next use.
+  private func followSettings() {
+    withObservationTracking {
+      _ = preferences.localModelIdleUnload
+      _ = preferences.unloadLocalModelDuringGames
+    } onChange: {
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        scheduleIdle()
+        frontmostChanged(toGame: Self.isGame(NSWorkspace.shared.frontmostApplication))
+        followSettings()
+      }
+    }
+  }
+
+  /// macOS's own test for Game Mode: the app declares a games category
+  /// (`public.app-category.games` or a `*-games` subcategory).
+  nonisolated static func isGame(_ app: NSRunningApplication?) -> Bool {
+    guard let url = app?.bundleURL else { return false }
+    return isGame(infoPlist: url.appendingPathComponent("Contents/Info.plist"))
+  }
+
+  /// Reads the plist directly; `Bundle(url:)` would cache every app ever activated.
+  nonisolated static func isGame(infoPlist: URL) -> Bool {
+    let category =
+      NSDictionary(contentsOf: infoPlist)?["LSApplicationCategoryType"] as? String
+    return category?.hasSuffix("games") == true
+  }
 }

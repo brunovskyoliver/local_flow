@@ -452,6 +452,22 @@ struct SettingsView: View {
           .toggleStyle(.switch)
           .disabled(!model.modelControlsAvailable)
         }
+        if preferences.rewriteEndpoint == LocalAIInstaller.rewriteEndpoint {
+          separator
+          SettingsRow("Unload rewrite model") {
+            Picker("Unload rewrite model", selection: $preferences.localModelIdleUnload) {
+              ForEach(LocalModelIdleUnload.allCases) { Text($0.title).tag($0) }
+            }
+            .labelsHidden().tint(SottoPalette.ink).frame(width: 130)
+            .accessibilityIdentifier("settings.localModelIdleUnload")
+          }
+          separator
+          SettingsRow("Unload during games") {
+            Toggle("Unload during games", isOn: $preferences.unloadLocalModelDuringGames)
+              .labelsHidden().toggleStyle(.switch)
+              .accessibilityIdentifier("settings.unloadLocalModelDuringGames")
+          }
+        }
       }
     }
     .confirmationDialog("Download Parakeet?", isPresented: $confirmingDownload) {

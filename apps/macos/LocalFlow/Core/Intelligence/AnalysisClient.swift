@@ -60,6 +60,7 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
   private let configure: @Sendable (URLSessionConfiguration) -> Void
   private let lock = NSLock()
   private var session: URLSession?
+  private let localModel: LocalModelResidency?
   private var activeRuns = 0
   private var idleTask: Task<Void, Never>?
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "analysis")
@@ -67,8 +68,10 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
   init(
     credentials: any RewriteCredentialStoring, defaults: UserDefaults = .standard,
     clock: any DictationClock = SystemDictationClock(),
+    localModel: LocalModelResidency? = nil,
     configure: @escaping @Sendable (URLSessionConfiguration) -> Void = { _ in }
   ) {
+    self.localModel = localModel
     self.credentials = credentials
     self.defaults = defaults
     self.clock = clock
@@ -154,6 +157,7 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
               throw AnalysisFailure(.timeout)
             }
             group.addTask {
+              await self.localModel?.ready(for: endpoint)
               try await self.stream(
                 urlRequest, requestBytes: requestBytes, continuation: continuation)
             }

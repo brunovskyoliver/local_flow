@@ -31,9 +31,17 @@ final class AppServices {
   /// One client per protocol, shared by Settings › Test and real requests, so the
   /// health check warms the same connection pool the requests use.
   @ObservationIgnored private lazy var rewriteClient = RewriteClient(
-    credentials: rewriteCredentials)
+    credentials: rewriteCredentials, localModel: localModel)
   @ObservationIgnored private lazy var analysisClient = AnalysisClient(
-    credentials: rewriteCredentials)
+    credentials: rewriteCredentials, localModel: localModel)
+  /// Unloads the local rewrite model while it isn't needed (ADR 0026).
+  @ObservationIgnored private lazy var localModel = LocalModelResidency(
+    preferences: preferences,
+    setRunning: { [weak self] running in self?.setLocalModel(running: running) },
+    backendReady: { [weak self] in await self?.localBackendReady() == true },
+    busy: { [weak self] in
+      self?.coordinator?.busy == true || self?.meetingIntelligence?.activeMeetingID != nil
+    })
   @ObservationIgnored private(set) var rewriteCoordinator: RewriteCoordinator?
   private(set) var explicitInsertion: ExplicitInsertionCoordinator?
   private(set) var reviewingInsertion = false
@@ -132,6 +140,7 @@ final class AppServices {
     guard coordinator == nil, !starting else { return }
     starting = true
     applyAppearance()
+    localModel.observe()
     followLocalModelChoice()
     defer { starting = false }
     do {
@@ -480,7 +489,7 @@ final class AppServices {
       coordinator.sessionStarted = { [weak self] id in
         self?.learner?.cancel()
         // The model loads while the user speaks; after a crash this restarts it.
-        self?.wakeLocalModel()
+        self?.localModel.wake()
         self?.onboarding.dictationStarted(id: id)
       }
       coordinator.processingMeasured = { [weak self] metrics in
@@ -1520,10 +1529,10 @@ final class AppServices {
       }
     }
   }
-  /// Starts the local MTPLX model when rewriting points at the local services (ADR 0026).
-  private func wakeLocalModel() {
-    guard preferences.rewriteEndpoint == LocalAIInstaller.rewriteEndpoint else { return }
-    setLocalModel(running: true)
+  private func localBackendReady() async -> Bool {
+    let local = RewriteEndpoint(
+      url: URL(string: LocalAIInstaller.rewriteEndpoint)!, origin: LocalAIInstaller.rewriteEndpoint)
+    return (try? await rewriteClient.health(endpoint: local))?.backendReady == true
   }
 
   /// Keeps the local model loaded exactly while rewriting points at it: switching
@@ -1535,6 +1544,7 @@ final class AppServices {
       guard wanted != localModelWanted, !quitting else { return }
       localModelWanted = wanted
       setLocalModel(running: wanted)
+      localModel.managed = wanted
     } onChange: {
       Task { @MainActor [weak self] in self?.followLocalModelChoice() }
     }

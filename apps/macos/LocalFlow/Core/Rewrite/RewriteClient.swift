@@ -108,6 +108,7 @@ final class RewriteClient: RewriteTransporting, @unchecked Sendable {
   private let credentials: any RewriteCredentialStoring
   private let clock: any DictationClock
   private let configure: @Sendable (URLSessionConfiguration) -> Void
+  private let localModel: LocalModelResidency?
   private let lock = NSLock()
   private var session: URLSession?
   private var versionCache = RewriteProtocolVersionCache()
@@ -115,10 +116,12 @@ final class RewriteClient: RewriteTransporting, @unchecked Sendable {
 
   init(
     credentials: any RewriteCredentialStoring, clock: any DictationClock = SystemDictationClock(),
+    localModel: LocalModelResidency? = nil,
     configure: @escaping @Sendable (URLSessionConfiguration) -> Void = { _ in }
   ) {
     self.credentials = credentials
     self.clock = clock
+    self.localModel = localModel
     self.configure = configure
   }
 
@@ -192,6 +195,8 @@ final class RewriteClient: RewriteTransporting, @unchecked Sendable {
               throw RewriteFailure(.timeout)
             }
             group.addTask {
+              // An unloaded local model loads inside the rewrite timeout.
+              await self.localModel?.ready(for: endpoint)
               try await self.stream(
                 urlRequest, cap: cap, requestBytes: requestBytes,
                 sendsContext: request.sendsContext,

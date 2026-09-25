@@ -76,3 +76,113 @@ final class LocalAIRuntimeTests: XCTestCase {
     XCTAssertFalse(preferences.rewriteEnabled)
   }
 }
+
+@MainActor
+final class LocalModelResidencyTests: XCTestCase {
+  private var commands: [Bool] = []
+  private var probes: [Bool] = []
+  private var busy = false
+  private let local = RewriteEndpoint(
+    url: URL(string: LocalAIInstaller.rewriteEndpoint)!, origin: LocalAIInstaller.rewriteEndpoint)
+
+  private func residency(
+    idle: LocalModelIdleUnload = .never, games: Bool = true, clock: any DictationClock
+  ) -> LocalModelResidency {
+    let preferences = AppPreferences(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+    preferences.localModelIdleUnload = idle
+    preferences.unloadLocalModelDuringGames = games
+    let residency = LocalModelResidency(
+      preferences: preferences, clock: clock,
+      setRunning: { [unowned self] in commands.append($0) },
+      backendReady: { [unowned self] in probes.isEmpty ? true : probes.removeFirst() },
+      busy: { [unowned self] in busy })
+    residency.managed = true
+    return residency
+  }
+
+  func testIdleDelayUnloadsAndNeverKeepsTheModel() async {
+    let kept = residency(clock: ImmediateClock())
+    XCTAssertNil(kept.idleTimer)
+    let idle = residency(idle: .fifteenMinutes, clock: ImmediateClock())
+    await idle.idleTimer?.value
+    XCTAssertFalse(idle.loaded)
+    XCTAssertEqual(commands, [false])
+  }
+
+  func testGameInFrontUnloadsAndQuittingItReloads() async {
+    let residency = residency(clock: ImmediateClock())
+    residency.frontmostChanged(toGame: true)
+    await residency.gameTimer?.value
+    XCTAssertFalse(residency.loaded)
+    residency.gameQuit()
+    XCTAssertTrue(residency.loaded)
+    XCTAssertEqual(commands, [false, true])
+  }
+
+  func testGamesSwitchOffOrLeavingTheGameKeepsTheModel() async {
+    let off = residency(games: false, clock: ImmediateClock())
+    off.frontmostChanged(toGame: true)
+    XCTAssertNil(off.gameTimer)
+    let switched = residency(clock: HourClock())
+    switched.frontmostChanged(toGame: true)
+    switched.frontmostChanged(toGame: false)
+    XCTAssertNil(switched.gameTimer)
+    XCTAssertTrue(switched.loaded)
+    XCTAssertEqual(commands, [])
+  }
+
+  func testMemoryPressureWaitsForBusyWork() {
+    let residency = residency(clock: HourClock())
+    busy = true
+    residency.memoryPressure()
+    XCTAssertTrue(residency.loaded)
+    busy = false
+    residency.memoryPressure()
+    XCTAssertFalse(residency.loaded)
+    XCTAssertEqual(commands, [false])
+  }
+
+  func testRequestStartsAnUnloadedModelAndWaitsUntilItServes() async {
+    let residency = residency(clock: ImmediateClock())
+    residency.memoryPressure()
+    probes = [false, false, true]
+    await residency.ready(for: local)
+    XCTAssertEqual(commands, [false, true])
+    XCTAssertTrue(probes.isEmpty)
+    XCTAssertFalse(residency.starting)
+    // Once serving, later requests don't probe.
+    probes = [false]
+    await residency.ready(for: local)
+    XCTAssertEqual(probes, [false])
+  }
+
+  func testRemoteEndpointNeverTouchesTheLocalModel() async {
+    let residency = residency(clock: ImmediateClock())
+    residency.memoryPressure()
+    await residency.ready(
+      for: RewriteEndpoint(url: URL(string: "https://example.com")!, origin: "https://example.com"))
+    XCTAssertFalse(residency.loaded)
+    XCTAssertEqual(commands, [false])
+  }
+
+  func testGameCategoryComesFromInfoPlist() throws {
+    let plist = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: plist) }
+    for (category, game) in [
+      ("public.app-category.games", true), ("public.app-category.action-games", true),
+      ("public.app-category.productivity", false),
+    ] {
+      try (["LSApplicationCategoryType": category] as NSDictionary).write(to: plist)
+      XCTAssertEqual(LocalModelResidency.isGame(infoPlist: plist), game, category)
+    }
+    XCTAssertFalse(LocalModelResidency.isGame(infoPlist: plist.appendingPathExtension("missing")))
+  }
+}
+
+private struct ImmediateClock: DictationClock {
+  func sleep(for duration: Duration) async throws {}
+}
+
+private struct HourClock: DictationClock {
+  func sleep(for duration: Duration) async throws { try await Task.sleep(for: .seconds(3600)) }
+}

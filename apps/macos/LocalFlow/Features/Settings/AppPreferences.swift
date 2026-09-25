@@ -26,6 +26,13 @@ final class AppPreferences {
   var keepModelReady: Bool {
     didSet { defaults.set(keepModelReady, forKey: "keepModelReady") }
   }
+  /// When the local rewrite model is unloaded after its last use (ADR 0026).
+  var localModelIdleUnload: LocalModelIdleUnload {
+    didSet { defaults.set(localModelIdleUnload.rawValue, forKey: "localModelIdleUnload") }
+  }
+  var unloadLocalModelDuringGames: Bool {
+    didSet { defaults.set(unloadLocalModelDuringGames, forKey: "unloadLocalModelDuringGames") }
+  }
   /// Off by default: turning it on is the consent to read back the field after insertion.
   var learnCorrections: Bool {
     didSet { defaults.set(learnCorrections, forKey: "learnCorrections") }
@@ -186,6 +193,10 @@ final class AppPreferences {
     summaryServerModel = defaults.string(forKey: SummaryServer.modelKey) ?? ""
     appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
     keepModelReady = defaults.bool(forKey: "keepModelReady")
+    localModelIdleUnload =
+      LocalModelIdleUnload(rawValue: defaults.integer(forKey: "localModelIdleUnload")) ?? .never
+    unloadLocalModelDuringGames =
+      defaults.object(forKey: "unloadLocalModelDuringGames") as? Bool ?? true
     learnCorrections = defaults.bool(forKey: "learnCorrections")
     setupVersion = defaults.integer(forKey: "setupVersion")
     rewriteEnabled = defaults.bool(forKey: "rewriteEnabled")
