@@ -25,7 +25,8 @@ final class VocabularyViewModel {
   static let explanation =
     "Preferred spellings replace exact whole-word matches of the canonical spelling or an alias, "
     + "keeping this capitalization and accents. They apply to the next dictation, not to one "
-    + "already running or to saved history, and do not help the model hear new words. "
+    + "already running or to saved history. With the term booster installed, dictation also "
+    + "listens for each canonical spelling and fixes a close match the model was unsure of. "
     + "Overlapping matches are left unchanged and flagged for review."
 
   private(set) var entries: [VocabularyEntry] = [] {
@@ -42,9 +43,15 @@ final class VocabularyViewModel {
   private(set) var fieldErrors: [VocabularyEditError.Field: String] = [:]
   private(set) var saving = false
   private(set) var status: String?
+  /// Feature 013: terms to approve; empty without a suggestion store.
+  private(set) var suggestions: [TermSuggestion] = []
   @ObservationIgnored private let store: any VocabularyEditing
+  @ObservationIgnored private let suggestionStore: TermSuggestionStore?
 
-  init(store: any VocabularyEditing) { self.store = store }
+  init(store: any VocabularyEditing, suggestions: TermSuggestionStore? = nil) {
+    self.store = store
+    suggestionStore = suggestions
+  }
 
   var canAdd: Bool { loaded && loadError == nil && entries.count < VocabularyStore.maximumEntries }
   var canSave: Bool { draft != nil && !saving && loadError == nil }
@@ -81,6 +88,36 @@ final class VocabularyViewModel {
       loadError = DictationErrorMessage.describe(error)
     }
     loaded = true
+    await refreshSuggestions()
+  }
+
+  /// Suggestions are advisory: a read failure hides them and leaves the Dictionary usable.
+  private func refreshSuggestions() async {
+    guard let suggestionStore, loadError == nil,
+      let contents = try? await suggestionStore.contents()
+    else {
+      suggestions = []
+      return
+    }
+    // Only terms past the sighting threshold reach the spell checker.
+    suggestions = TermSuggestionMiner.suggestions(contents, dictionary: entries) {
+      !VocabularyBoostPolicy.englishWords(in: [$0]).isEmpty
+    }
+  }
+
+  /// Opens the editor filled in; saving adds the entry and the suggestion disappears.
+  func beginAdd(_ suggestion: TermSuggestion) {
+    guard canAdd, !saving else { return }
+    draft = Draft(
+      canonical: suggestion.canonical, aliases: suggestion.alias.isEmpty ? [] : [suggestion.alias])
+    fieldErrors = [:]
+    status = nil
+  }
+
+  func dismiss(_ suggestion: TermSuggestion) async {
+    suggestions.removeAll { $0.id == suggestion.id }
+    try? await suggestionStore?.dismiss(
+      suggestion, now: Int64(Date().timeIntervalSince1970 * 1000))
   }
 
   /// New entries start in "correct a misspelling" mode, the common case.

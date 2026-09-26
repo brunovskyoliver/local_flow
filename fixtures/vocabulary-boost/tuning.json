@@ -1,0 +1,348 @@
+{
+ "schema_version": 1,
+ "description": "Authored Feature 013 tuning corpus. Spoken by macOS voices; no recordings are committed.",
+ "voices": {
+  "en": [
+   "Eddy (English (US))",
+   "Flo (English (UK))",
+   "Daniel",
+   "Karen",
+   "Aman"
+  ],
+  "sk": [
+   "Laura (Slovak (Slovakia))"
+  ]
+ },
+ "rates": {
+  "en": [
+   null
+  ],
+  "sk": [
+   null,
+   215
+  ]
+ },
+ "vocabulary": [
+  {
+   "canonical": "Keycloak",
+   "aliases": [
+    "key clock"
+   ]
+  },
+  {
+   "canonical": "NetBird",
+   "aliases": []
+  },
+  {
+   "canonical": "NetBox",
+   "aliases": []
+  },
+  {
+   "canonical": "Proxmox",
+   "aliases": []
+  },
+  {
+   "canonical": "TR-069",
+   "aliases": []
+  },
+  {
+   "canonical": "Odoo",
+   "aliases": []
+  },
+  {
+   "canonical": "SAPGUI",
+   "aliases": [
+    "SABGUI"
+   ]
+  },
+  {
+   "canonical": "MTPLX",
+   "aliases": []
+  },
+  {
+   "canonical": "Wispr Flow",
+   "aliases": [
+    "Whisperflow"
+   ]
+  },
+  {
+   "canonical": "LocalFlow",
+   "aliases": [
+    "local flow"
+   ]
+  },
+  {
+   "canonical": "Brunovsky",
+   "aliases": [
+    "Brunowski"
+   ]
+  },
+  {
+   "canonical": "Tenenet",
+   "aliases": []
+  },
+  {
+   "canonical": "Godot",
+   "aliases": []
+  },
+  {
+   "canonical": "Anthropic",
+   "aliases": []
+  },
+  {
+   "canonical": "GitHub",
+   "aliases": []
+  },
+  {
+   "canonical": "Kubernetes",
+   "aliases": []
+  },
+  {
+   "canonical": "PostgreSQL",
+   "aliases": []
+  },
+  {
+   "canonical": "Grafana",
+   "aliases": []
+  },
+  {
+   "canonical": "Prometheus",
+   "aliases": []
+  },
+  {
+   "canonical": "Terraform",
+   "aliases": []
+  },
+  {
+   "canonical": "Ansible",
+   "aliases": []
+  },
+  {
+   "canonical": "OAuth",
+   "aliases": []
+  },
+  {
+   "canonical": "FluidAudio",
+   "aliases": []
+  },
+  {
+   "canonical": "Parakeet",
+   "aliases": []
+  },
+  {
+   "canonical": "WireGuard",
+   "aliases": []
+  },
+  {
+   "canonical": "OPNsense",
+   "aliases": []
+  },
+  {
+   "canonical": "Zabbix",
+   "aliases": []
+  },
+  {
+   "canonical": "MikroTik",
+   "aliases": []
+  },
+  {
+   "canonical": "Ubiquiti",
+   "aliases": []
+  },
+  {
+   "canonical": "Nginx",
+   "aliases": []
+  },
+  {
+   "canonical": "Traefik",
+   "aliases": []
+  },
+  {
+   "canonical": "Cloudflare",
+   "aliases": []
+  },
+  {
+   "canonical": "Tailscale",
+   "aliases": []
+  },
+  {
+   "canonical": "GRDB",
+   "aliases": []
+  },
+  {
+   "canonical": "SwiftUI",
+   "aliases": []
+  },
+  {
+   "canonical": "Xcode",
+   "aliases": []
+  },
+  {
+   "canonical": "LDAP",
+   "aliases": []
+  },
+  {
+   "canonical": "DHCP",
+   "aliases": []
+  },
+  {
+   "canonical": "SNMP",
+   "aliases": []
+  },
+  {
+   "canonical": "Supabase",
+   "aliases": []
+  },
+  {
+   "canonical": "Vercel",
+   "aliases": []
+  },
+  {
+   "canonical": "Hetzner",
+   "aliases": []
+  },
+  {
+   "canonical": "Obsidian",
+   "aliases": []
+  },
+  {
+   "canonical": "Kováčik",
+   "aliases": []
+  },
+  {
+   "canonical": "Sonderborg",
+   "aliases": []
+  },
+  {
+   "canonical": "Wisprflow",
+   "aliases": [
+    "Whisperful"
+   ]
+  }
+ ],
+ "sentences": {
+  "en_pos": [
+   "I need to configure Keycloak so that the login works with our LDAP directory.",
+   "The NetBird client keeps disconnecting after the laptop wakes up from sleep.",
+   "Can you export the device list from NetBox and send it to me?",
+   "We should move the old virtual machines to the new Proxmox cluster next week.",
+   "The router supports TR-069, so we can provision it remotely.",
+   "Please create the invoice in Odoo and attach the signed contract.",
+   "The customer still uses SAPGUI on every workstation in the warehouse.",
+   "I restarted the MTPLX server, but the model is still loading.",
+   "Wispr Flow handles punctuation well, but it sends everything to the cloud.",
+   "LocalFlow should learn the words I use every day without any cloud service.",
+   "Oliver Brunovsky will join the call at three o'clock.",
+   "Tenenet asked for an update on the monitoring project.",
+   "I built a small game prototype in Godot over the weekend.",
+   "Anthropic released a new model this morning and the benchmarks look good.",
+   "Open a pull request on GitHub and ask Stefan to review it.",
+   "The Kubernetes deployment failed because the image tag was wrong.",
+   "We migrated the database from MySQL to PostgreSQL last month.",
+   "The Grafana dashboard shows a spike in latency every night at two.",
+   "Prometheus scrapes the exporters every fifteen seconds.",
+   "Write the Terraform module first, then we can run the Ansible playbook.",
+   "The OAuth callback URL has to match exactly, including the trailing slash.",
+   "FluidAudio runs the Parakeet model on the neural engine.",
+   "Set up a WireGuard tunnel between the two offices.",
+   "The firewall runs OPNsense and the switches are from MikroTik.",
+   "Zabbix sends an alert when the SNMP check fails three times.",
+   "The access points are Ubiquiti and they get their addresses from DHCP.",
+   "Put Nginx in front of the app, or use Traefik if you prefer labels.",
+   "Move the domain to Cloudflare and turn on the proxy.",
+   "Everyone on the team connects through Tailscale now.",
+   "The history store uses GRDB with explicit migrations.",
+   "The settings window is written in SwiftUI and builds fine in Xcode.",
+   "We host the backend on Supabase and the front end on Vercel.",
+   "The new server at Hetzner has sixty four gigabytes of memory.",
+   "I keep my meeting notes in Obsidian with daily pages.",
+   "Miroslav Kováčik sent the offer for the network upgrade.",
+   "The team in Sonderborg will test the build on Thursday.",
+   "Log in to Keycloak and reset the password for the service account.",
+   "The NetBox API returns every prefix assigned to that site.",
+   "After the Proxmox update, the backup job runs twice as fast.",
+   "Check whether the ACS still talks TR-069 to the old modems.",
+   "I pushed the fix to GitHub, and the Kubernetes rollout is green.",
+   "Grafana reads from Prometheus, and Zabbix handles the old hosts.",
+   "The MikroTik router hands out DHCP leases for the guest network.",
+   "Brunovsky wants the LocalFlow build signed before Friday.",
+   "Ask Tenenet whether they still need the Odoo integration."
+  ],
+  "en_neg": [
+   "I will send you the summary after lunch.",
+   "The meeting moved to Thursday at ten in the morning.",
+   "Please check the numbers again before we send the report.",
+   "The clock in the kitchen is five minutes fast.",
+   "We should buy a new box for the router and the cables.",
+   "The bird outside my window starts singing at six.",
+   "Could you book a table for four people tomorrow evening?",
+   "I think the second option is cheaper in the long run.",
+   "The key is under the flower pot next to the door.",
+   "Let's keep the design simple and ship it next week.",
+   "The train was late again, so I missed the first part.",
+   "My laptop battery lasts about eight hours now.",
+   "Thanks for the quick reply, that answers my question.",
+   "The project is almost done, only the tests are missing.",
+   "We can talk about the budget when Peter is back.",
+   "Turn off the lights when you leave the office.",
+   "The weather is nice, so I will walk to work today.",
+   "I forgot my password and had to reset it twice.",
+   "Please write a short note about what changed.",
+   "The printer on the second floor is out of paper."
+  ],
+  "sk_pos": [
+   "Musím nakonfigurovať Keycloak, aby prihlásenie fungovalo cez LDAP.",
+   "NetBird klient sa odpája vždy, keď sa notebook zobudí.",
+   "Vyexportuj mi zoznam zariadení z NetBox a pošli mi ho.",
+   "Staré virtuálky presunieme na nový Proxmox cluster budúci týždeň.",
+   "Router podporuje TR-069, takže ho vieme nastaviť na diaľku.",
+   "Vytvor faktúru v Odoo a prilož podpísanú zmluvu.",
+   "Zákazník stále používa SAPGUI na každom počítači v sklade.",
+   "Reštartoval som MTPLX server, ale model sa ešte stále načítava.",
+   "Wispr Flow dobre robí interpunkciu, ale všetko posiela do cloudu.",
+   "LocalFlow by sa mal naučiť slová, ktoré používam každý deň.",
+   "Pán Brunovsky sa pripojí na hovor o tretej.",
+   "Tenenet chcel vedieť, ako ide projekt s monitoringom.",
+   "Cez víkend som spravil malý prototyp hry v Godot.",
+   "Otvor pull request na GitHub a popros Stefana o review.",
+   "Nasadenie v Kubernetes padlo, lebo tag obrazu bol zlý.",
+   "Minulý mesiac sme migrovali databázu na PostgreSQL.",
+   "Grafana ukazuje nárast latencie každú noc o druhej.",
+   "Najprv napíš Terraform modul a potom spustíme Ansible playbook.",
+   "Nastav WireGuard tunel medzi dvoma pobočkami.",
+   "Firewall beží na OPNsense a switche sú od MikroTik.",
+   "Zabbix pošle upozornenie, keď SNMP kontrola trikrát zlyhá.",
+   "Prístupové body sú Ubiquiti a adresy dostávajú z DHCP.",
+   "Presuň doménu na Cloudflare a zapni proxy.",
+   "Celý tím sa teraz pripája cez Tailscale.",
+   "Nový server v Hetzner má šesťdesiatštyri gigabajtov pamäte.",
+   "Poznámky zo stretnutí si píšem do Obsidian.",
+   "Miroslav Kováčik poslal ponuku na upgrade siete.",
+   "Tím v Sonderborg otestuje build vo štvrtok.",
+   "Grafana číta dáta z Prometheus a Zabbix rieši staré servery.",
+   "Opýtaj sa Tenenet, či ešte potrebujú integráciu s Odoo."
+  ],
+  "sk_neg": [
+   "Pošlem ti zhrnutie hneď po obede.",
+   "Stretnutie sa presunulo na štvrtok o desiatej.",
+   "Prosím, skontroluj ešte raz čísla, kým pošleme správu.",
+   "Hodiny v kuchyni idú o päť minút napred.",
+   "Musíme kúpiť novú krabicu na router a káble.",
+   "Vtáky pod oknom začínajú spievať o šiestej.",
+   "Môžeš zarezervovať stôl pre štyroch na zajtra večer?",
+   "Myslím si, že druhá možnosť je dlhodobo lacnejšia.",
+   "Kľúč je pod kvetináčom vedľa dverí.",
+   "Poďme to spraviť jednoducho a vydať to budúci týždeň.",
+   "Vlak mal zase meškanie, tak som zmeškal začiatok.",
+   "Baterka v notebooku mi teraz vydrží asi osem hodín.",
+   "Ďakujem za rýchlu odpoveď, to mi stačí.",
+   "Projekt je skoro hotový, chýbajú už len testy.",
+   "O rozpočte sa porozprávame, keď sa vráti Peter.",
+   "Keď odchádzaš z kancelárie, zhasni svetlo.",
+   "Je pekne, tak dnes pôjdem do práce pešo.",
+   "Zabudol som heslo a musel som ho dvakrát resetovať.",
+   "Prosím, napíš krátku poznámku o tom, čo sa zmenilo.",
+   "V tlačiarni na druhom poschodí došiel papier."
+  ]
+ }
+}

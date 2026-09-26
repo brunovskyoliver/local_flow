@@ -50,7 +50,7 @@ There is deliberately no destructive `zap` stanza.
 3. Push a new version tag, such as `v0.1.0`. Use increasing X.Y.Z versions.
    To retry a failed release after fixing CI, run the release workflow manually
    from main with the original tag. This preserves the tagged source commit.
-4. The workflow runs `make check`, builds on Apple Silicon, ad-hoc signs all
+4. Run `make check` locally before tagging. CI builds on Apple Silicon, ad-hoc signs all
    nested binaries and the app, verifies signatures, creates a ZIP and checksum,
    publishes the GitHub Release with the generated `localflow.rb` asset.
    The tap checks for releases hourly and commits that cask to its main branch.

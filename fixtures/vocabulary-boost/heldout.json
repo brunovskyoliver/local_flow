@@ -1,0 +1,303 @@
+{
+ "schema_version": 1,
+ "description": "Authored Feature 013 held-out corpus: different terms, sentences, voices and rates.",
+ "voices": {
+  "en": [
+   "Samantha (English (US))",
+   "Moira",
+   "Reed (English (UK))",
+   "Tessa",
+   "Rishi"
+  ],
+  "sk": [
+   "Laura (Slovak (Slovakia))"
+  ]
+ },
+ "rates": {
+  "en": [
+   null
+  ],
+  "sk": [
+   185,
+   240
+  ]
+ },
+ "vocabulary": [
+  {
+   "canonical": "Jira",
+   "aliases": []
+  },
+  {
+   "canonical": "Confluence",
+   "aliases": []
+  },
+  {
+   "canonical": "Redis",
+   "aliases": []
+  },
+  {
+   "canonical": "Kafka",
+   "aliases": []
+  },
+  {
+   "canonical": "RabbitMQ",
+   "aliases": []
+  },
+  {
+   "canonical": "Elasticsearch",
+   "aliases": []
+  },
+  {
+   "canonical": "Kibana",
+   "aliases": []
+  },
+  {
+   "canonical": "Jenkins",
+   "aliases": []
+  },
+  {
+   "canonical": "GitLab",
+   "aliases": []
+  },
+  {
+   "canonical": "Bitbucket",
+   "aliases": []
+  },
+  {
+   "canonical": "Podman",
+   "aliases": []
+  },
+  {
+   "canonical": "Helm",
+   "aliases": []
+  },
+  {
+   "canonical": "Argo CD",
+   "aliases": []
+  },
+  {
+   "canonical": "Vault",
+   "aliases": []
+  },
+  {
+   "canonical": "Consul",
+   "aliases": []
+  },
+  {
+   "canonical": "Nomad",
+   "aliases": []
+  },
+  {
+   "canonical": "HAProxy",
+   "aliases": []
+  },
+  {
+   "canonical": "Fortinet",
+   "aliases": []
+  },
+  {
+   "canonical": "Juniper",
+   "aliases": []
+  },
+  {
+   "canonical": "Mattermost",
+   "aliases": []
+  },
+  {
+   "canonical": "Notion",
+   "aliases": []
+  },
+  {
+   "canonical": "Figma",
+   "aliases": []
+  },
+  {
+   "canonical": "Sentry",
+   "aliases": []
+  },
+  {
+   "canonical": "Datadog",
+   "aliases": []
+  },
+  {
+   "canonical": "Splunk",
+   "aliases": []
+  },
+  {
+   "canonical": "Wazuh",
+   "aliases": []
+  },
+  {
+   "canonical": "Bitwarden",
+   "aliases": []
+  },
+  {
+   "canonical": "Nextcloud",
+   "aliases": []
+  },
+  {
+   "canonical": "TrueNAS",
+   "aliases": []
+  },
+  {
+   "canonical": "Synology",
+   "aliases": []
+  },
+  {
+   "canonical": "UniFi",
+   "aliases": []
+  },
+  {
+   "canonical": "MinIO",
+   "aliases": []
+  },
+  {
+   "canonical": "Ceph",
+   "aliases": []
+  },
+  {
+   "canonical": "Longhorn",
+   "aliases": []
+  },
+  {
+   "canonical": "Rancher",
+   "aliases": []
+  },
+  {
+   "canonical": "K3s",
+   "aliases": []
+  },
+  {
+   "canonical": "Talos",
+   "aliases": []
+  },
+  {
+   "canonical": "Scaleway",
+   "aliases": []
+  },
+  {
+   "canonical": "DigitalOcean",
+   "aliases": []
+  },
+  {
+   "canonical": "Contabo",
+   "aliases": []
+  },
+  {
+   "canonical": "Hrušovský",
+   "aliases": []
+  },
+  {
+   "canonical": "Ďurica",
+   "aliases": []
+  },
+  {
+   "canonical": "Žilina",
+   "aliases": []
+  },
+  {
+   "canonical": "Trnava",
+   "aliases": []
+  },
+  {
+   "canonical": "Mikuláš",
+   "aliases": []
+  }
+ ],
+ "sentences": {
+  "en_pos": [
+   "Create a Jira ticket and link the Confluence page with the design.",
+   "Redis runs out of memory when the cache keys never expire.",
+   "The consumer lag on the Kafka topic keeps growing during the night.",
+   "We replaced RabbitMQ with a simple table queue in the database.",
+   "Elasticsearch needs more disk before we reindex the logs.",
+   "The Kibana dashboard is empty because the index pattern changed.",
+   "Jenkins still builds the old branch every hour.",
+   "Move the repository from Bitbucket to GitLab this month.",
+   "Podman works fine for the containers that do not need root.",
+   "Install the chart with Helm and let Argo CD sync it.",
+   "The secrets are stored in Vault and Consul handles service discovery.",
+   "Nomad schedules the batch jobs on the cheaper nodes.",
+   "HAProxy terminates the TLS connections in front of the web servers.",
+   "The branch office has a Fortinet firewall and a Juniper switch.",
+   "We moved the team chat to Mattermost last year.",
+   "I wrote the meeting agenda in Notion and the mockups are in Figma.",
+   "Sentry caught the crash before the customer reported it.",
+   "Datadog is too expensive, so we looked at Splunk and Wazuh.",
+   "Everyone keeps their passwords in Bitwarden now.",
+   "The documents live in Nextcloud on the TrueNAS box.",
+   "The Synology backup finished, but the UniFi controller is offline.",
+   "MinIO stores the snapshots and Ceph holds the virtual disks.",
+   "Longhorn replicates the volumes across three nodes.",
+   "Rancher manages the K3s clusters at every branch.",
+   "Talos boots straight into Kubernetes without a shell.",
+   "We compared Scaleway, DigitalOcean and Contabo for the test servers.",
+   "Martin Hrušovský will present the budget on Monday.",
+   "Send the contract to Peter Ďurica before Friday.",
+   "The new office in Žilina opens in October.",
+   "Our customer in Trnava wants a second data line.",
+   "Ask Mikuláš whether the Jira migration is finished."
+  ],
+  "en_neg": [
+   "I am ready to start whenever you are.",
+   "Let's grab a coffee after the call.",
+   "The bank keeps the gold in a vault under the building.",
+   "The captain stayed at the helm during the storm.",
+   "She has no notion of how long the project will take.",
+   "The consul signed the papers at the embassy.",
+   "They lived like nomads for a few years.",
+   "A sentry stood at the gate all night.",
+   "The juniper bush in the garden needs water.",
+   "The long horn of the ship sounded twice.",
+   "The rancher counted the cattle before sunset.",
+   "His signature was hard to read on the form.",
+   "We need more confluence between the two teams.",
+   "The kids played in the garden until dinner.",
+   "Please figure out the cost before we decide."
+  ],
+  "sk_pos": [
+   "Vytvor tiket v Jira a prilinkuj stránku z Confluence.",
+   "Redis zaberie všetku pamäť, keď kľúče nikdy neexpirujú.",
+   "Oneskorenie na Kafka téme v noci stále rastie.",
+   "RabbitMQ sme nahradili jednoduchou frontou v databáze.",
+   "Elasticsearch potrebuje viac miesta, kým preindexujeme logy.",
+   "Jenkins stále každú hodinu builduje starú vetvu.",
+   "Tento mesiac presunieme repozitár z Bitbucket na GitLab.",
+   "Nainštaluj chart cez Helm a nech ho Argo CD zosynchronizuje.",
+   "Heslá držíme vo Vault a Consul rieši service discovery.",
+   "HAProxy ukončuje TLS spojenia pred webovými servermi.",
+   "Pobočka má Fortinet firewall a Juniper switch.",
+   "Agendu som napísal v Notion a návrhy sú vo Figma.",
+   "Sentry zachytil pád skôr, ako ho nahlásil zákazník.",
+   "Datadog je drahý, tak sme skúšali Splunk a Wazuh.",
+   "Všetci majú heslá v Bitwarden.",
+   "Dokumenty sú v Nextcloud na TrueNAS serveri.",
+   "Záloha na Synology skončila, ale UniFi kontrolér je offline.",
+   "MinIO ukladá snapshoty a Ceph drží virtuálne disky.",
+   "Rancher spravuje K3s clustre na každej pobočke.",
+   "Porovnali sme Scaleway, DigitalOcean a Contabo.",
+   "Martin Hrušovský odprezentuje rozpočet v pondelok.",
+   "Pošli zmluvu Petrovi Ďuricovi do piatku.",
+   "Nová kancelária v Žiline otvára v októbri.",
+   "Zákazník z Trnavy chce druhú dátovú linku.",
+   "Opýtaj sa Mikuláša, či je migrácia Jira hotová."
+  ],
+  "sk_neg": [
+   "Som pripravený začať, kedykoľvek budeš chcieť.",
+   "Po hovore si dáme kávu.",
+   "Banka má zlato v trezore pod budovou.",
+   "Kapitán stál pri kormidle celú búrku.",
+   "Nemá predstavu, ako dlho bude projekt trvať.",
+   "Konzul podpísal papiere na veľvyslanectve.",
+   "Pár rokov žili ako nomádi.",
+   "Pri bráne celú noc stála stráž.",
+   "Borievka v záhrade potrebuje vodu.",
+   "Loď dvakrát zatrúbila.",
+   "Deti sa hrali v záhrade až do večere.",
+   "Prosím, zisti cenu skôr, ako sa rozhodneme.",
+   "Zajtra ideme na výlet do hôr.",
+   "Tento týždeň som mal veľa stretnutí.",
+   "Faktúru pošlem hneď, ako dostanem objednávku."
+  ]
+ }
+}

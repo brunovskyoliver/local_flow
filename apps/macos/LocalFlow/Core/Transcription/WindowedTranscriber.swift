@@ -71,12 +71,22 @@ struct TranscriptionResult: Sendable {
   var rawWindows: [TranscriptionQualityDetail.RawWindow] = []
   var completionReasons: [TranscriptionQualityDetail.CompletionReason] = []
   var needsNormalization = false
+  /// Feature 013 keyword-spotter replacements, in window order.
+  var boostHints: [VocabularyBoostHint] = []
 
   /// The session's admission-time snapshot decides V001; later edits never reach it.
+  /// Spotter hints apply first, as V002, so V001 and formatting see the boosted text.
   func normalizedForDelivery(vocabulary: VocabularySnapshot = .empty) -> Self {
     guard needsNormalization, let detail else { return self }
     let start = ProcessInfo.processInfo.systemUptime
-    let normalized = TranscriptNormalizer(vocabulary: vocabulary).normalize(detail.assembledText)
+    let boosted = VocabularyBoostApplier.apply(boostHints, to: detail.assembledText)
+    let formatted = TranscriptNormalizer(vocabulary: vocabulary).normalize(boosted.text)
+    let normalized = TranscriptNormalizer.Result(
+      text: formatted.text,
+      appliedRuleIDs: formatted.appliedRuleIDs
+        + (boosted.entryIDs.isEmpty ? [] : [VocabularyBoostPolicy.ruleID]),
+      appliedEntryIDs: formatted.appliedEntryIDs + boosted.entryIDs,
+      ambiguousEntryIDs: formatted.ambiguousEntryIDs, reasons: formatted.reasons)
     do {
       let updated = try detail.normalized(
         normalized,
@@ -225,6 +235,7 @@ struct WindowedTranscriber: DictationTranscribing {
     var admission = RecognitionAdmission(strideSamples: 239_360, processingReserveBytes: 24_576)
     var reasons: [TranscriptionQualityDetail.CompletionReason] = []
     var emptyWindows: [Int] = []
+    var boostHints: [VocabularyBoostHint] = []
     var recognitionSeconds = 0.0
     var assemblySeconds = 0.0
     var retained: TranscriptionQualityDetail
@@ -259,6 +270,7 @@ struct WindowedTranscriber: DictationTranscribing {
           recognitionSeconds += ProcessInfo.processInfo.systemUptime - began
         }
         try admission.append(window, sampleStart: offset, sampleCount: count)
+        boostHints += window.boostHints
         let assemblyBegan = ProcessInfo.processInfo.systemUptime
         assembly.append(
           .init(
@@ -323,7 +335,7 @@ struct WindowedTranscriber: DictationTranscribing {
       return .init(
         text: detail.assembledText, incomplete: detail.incomplete, detail: detail,
         rawWindows: detail.rawWindows, completionReasons: detail.completionReasons,
-        needsNormalization: true)
+        needsNormalization: true, boostHints: boostHints)
     } catch {
       // Retain the valid full envelope, never downgrade accepted raw evidence to a legacy row.
       return .init(

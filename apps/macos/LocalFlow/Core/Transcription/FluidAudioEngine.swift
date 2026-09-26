@@ -1,12 +1,16 @@
 import CoreML
 import FluidAudio
 import Foundation
+import OSLog
 
 /// Constructs the pinned Parakeet v3 runtime only from a previously verified local model.
 /// The lifecycle coordinator owns the returned runtime and is the only caller of this factory.
 struct FluidAudioEngineFactory: Sendable {
   let descriptor: LocalModelDescriptor
   var evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil
+  /// Feature 013: the verified keyword spotter, when installed. Loads and releases with
+  /// the speech runtime; a spotter that fails to load leaves dictation unboosted.
+  var boostModel: LocalModelDescriptor? = nil
 
   func makeRuntime() async throws -> any TranscriptionRuntime {
     try descriptor.descriptor.validate()
@@ -40,7 +44,70 @@ struct FluidAudioEngineFactory: Sendable {
       vocabulary: vocabulary, version: .v3)
     let manager = AsrManager(
       config: ASRConfig(sampleRate: 16_000, parallelChunkConcurrency: 1), models: models)
-    return FluidAudioRuntime(manager: manager, evidenceObserver: evidenceObserver)
+    var booster: VocabularyBooster?
+    if let boostModel {
+      do {
+        booster = try await VocabularyBooster.load(boostModel)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        Logger(subsystem: "org.localflow.LocalFlow", category: "model").error(
+          "Term booster unavailable: \(String(describing: type(of: error)), privacy: .public)")
+      }
+    }
+    return FluidAudioRuntime(manager: manager, evidenceObserver: evidenceObserver, booster: booster)
+  }
+}
+
+/// The pinned Parakeet CTC 110M keyword spotter (ADR 0027), loaded from its verified
+/// directory only: FluidAudio's own session reads the tokenizer from a download cache.
+struct VocabularyBooster: Sendable {
+  static let modelID = "FluidInference/parakeet-ctc-110m-coreml"
+  static let revision = "accdafd8cf8a2ff1cabe3c11e54416b405d409aa"
+  let models: CtcModels
+  let tokenizer: CtcTokenizer
+  let directory: URL
+
+  static func load(_ local: LocalModelDescriptor) async throws -> Self {
+    let pinned = local.descriptor
+    try pinned.validate()
+    guard pinned.modelID == modelID, pinned.sourceRevision == revision,
+      pinned.sdkCompatibility == "0.15.7", pinned.effectiveCapability == .keywordSpotting
+    else { throw DictationFailure.modelUnavailable }
+    try Task.checkCancellation()
+    return Self(
+      models: try await CtcModels.loadDirect(from: local.rootURL),
+      tokenizer: try await CtcTokenizer.load(from: local.rootURL), directory: local.rootURL)
+  }
+
+  /// A rescorer for one Dictionary, built only when the term set changes.
+  struct Session: Sendable {
+    let key: String
+    let context: CustomVocabularyContext
+    let spotter: CtcKeywordSpotter
+    let rescorer: VocabularyRescorer
+    let sizeConfig: ContextBiasingConstants.VocabSizeConfig
+    let entryIDs: [String: String]
+  }
+
+  func session(for boost: VocabularyBoostTerms) async throws -> Session? {
+    var entryIDs: [String: String] = [:]
+    let terms = boost.terms.compactMap { term -> CustomVocabularyTerm? in
+      // A term with no CTC tokens would send FluidAudio to its download cache for a tokenizer.
+      let ids = tokenizer.encode(term.canonical)
+      guard !ids.isEmpty else { return nil }
+      entryIDs[term.canonical] = term.entryID
+      return CustomVocabularyTerm(text: term.canonical, ctcTokenIds: ids)
+    }
+    guard !terms.isEmpty else { return nil }
+    let context = CustomVocabularyContext(terms: terms)
+    let spotter = CtcKeywordSpotter(models: models, blankId: models.vocabulary.count)
+    return Session(
+      key: boost.key, context: context, spotter: spotter,
+      rescorer: try await VocabularyRescorer.create(
+        spotter: spotter, vocabulary: context, config: .default, ctcModelDirectory: directory),
+      sizeConfig: ContextBiasingConstants.rescorerConfig(forVocabSize: terms.count),
+      entryIDs: entryIDs)
   }
 }
 
@@ -57,18 +124,32 @@ actor FluidAudioRuntime: TranscriptionRuntime {
   private let manager: AsrManager
 
   private let evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)?
+  private let booster: VocabularyBooster?
+  private var boostSession: VocabularyBooster.Session?
 
   init(
     manager: AsrManager,
-    evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil
+    evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil,
+    booster: VocabularyBooster? = nil
   ) {
     self.manager = manager
     self.evidenceObserver = evidenceObserver
+    self.booster = booster
   }
 
   func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+    try await transcribe(samples, boost: nil)
+  }
+
+  func transcribe(_ samples: [Float], boost: VocabularyBoostTerms?) async throws
+    -> TranscriptionWindow
+  {
     let actualCount = samples.count
     let bounded = try Self.paddedWindow(samples)
+    let session = await boostSession(for: boost)
+    // The spotter's CTC pass runs beside recognition: about 60 ms of the 110 ms it
+    // takes per window on M5 stays hidden behind the TDT decode.
+    async let spotted = Self.spot(bounded, session: session)
     var decoderState = TdtDecoderState.make(decoderLayers: AsrModelVersion.v3.decoderLayers)
     let result = try await manager.transcribe(
       bounded, decoderState: &decoderState, language: Self.scriptFilter)
@@ -88,7 +169,86 @@ actor FluidAudioRuntime: TranscriptionRuntime {
         text: timing.word, start: timing.startTime, end: timing.endTime, sampleCount: actualCount)
     }
     guard result.text.utf8.count <= 65_536 else { throw DictationFailure.invalidResult }
-    return TranscriptionWindow(text: result.text, tokens: Array(timings), evidence: evidence)
+    var hints: [VocabularyBoostHint] = []
+    if let session, let boost, let spot = await spotted {
+      hints = await Self.hints(result, spot: spot, session: session, boost: boost)
+    }
+    return TranscriptionWindow(
+      text: result.text, tokens: Array(timings), evidence: evidence, boostHints: hints)
+  }
+
+  private static func spot(_ samples: [Float], session: VocabularyBooster.Session?) async
+    -> CtcKeywordSpotter.SpotKeywordsResult?
+  {
+    guard let session else { return nil }
+    return try? await session.spotter.spotKeywordsWithLogProbs(
+      audioSamples: samples, customVocabulary: session.context, minScore: nil)
+  }
+
+  private func boostSession(for boost: VocabularyBoostTerms?) async -> VocabularyBooster.Session? {
+    guard let booster, let boost else { return nil }
+    if let boostSession, boostSession.key == boost.key { return boostSession }
+    boostSession = try? await booster.session(for: boost)
+    return boostSession
+  }
+
+  /// FluidAudio's replacements, filtered by `VocabularyBoostPolicy`. Boosting never
+  /// fails a window: anything unexpected yields no hints.
+  private static func hints(
+    _ result: ASRResult, spot: CtcKeywordSpotter.SpotKeywordsResult,
+    session: VocabularyBooster.Session, boost: VocabularyBoostTerms
+  ) async -> [VocabularyBoostHint] {
+    let timings = result.tokenTimings ?? []
+    guard !timings.isEmpty, !spot.logProbs.isEmpty else { return [] }
+    let output = session.rescorer.ctcTokenRescore(
+      transcript: result.text, tokenTimings: timings, logProbs: spot.logProbs,
+      frameDuration: spot.frameDuration, cbw: session.sizeConfig.cbw, marginSeconds: 0.5,
+      minSimilarity: max(session.sizeConfig.minSimilarity, session.context.minSimilarity))
+    let candidates = output.replacements.compactMap { item -> VocabularyBoostPolicy.Candidate? in
+      // A span the Dictionary maps itself stays with V001, the owner's explicit choice.
+      guard item.shouldReplace, let term = item.replacementWord, !boost.governs(item.originalWord)
+      else { return nil }
+      return .init(
+        source: item.originalWord, term: term,
+        confidence: confidence(of: item.originalWord, in: timings))
+    }
+    guard !candidates.isEmpty else { return [] }
+    let language = VocabularyBoostPolicy.language(of: result.text)
+    let words = Set(
+      candidates.flatMap { $0.source.split { !$0.isLetter && $0 != "'" } }.map(String.init))
+    let english = await MainActor.run { VocabularyBoostPolicy.englishWords(in: words) }
+    return candidates.compactMap { candidate in
+      guard let entryID = session.entryIDs[candidate.term],
+        VocabularyBoostPolicy.allows(candidate, language: language, isEnglishWord: english.contains)
+      else { return nil }
+      return VocabularyBoostHint(
+        source: candidate.source, canonical: candidate.term, entryID: entryID)
+    }
+  }
+
+  /// Lowest token confidence over the TDT words spelling `source`, nil when not found.
+  nonisolated static func confidence(of source: String, in timings: [TokenTiming]) -> Float? {
+    func key(_ text: Substring) -> String {
+      text.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+    var words: [(key: String, confidence: Float)] = []
+    for timing in timings {
+      let piece = timing.token.replacingOccurrences(of: "▁", with: "")
+      if timing.token.hasPrefix("▁") || timing.token.hasPrefix(" ") || words.isEmpty {
+        words.append((key(Substring(piece)), timing.confidence))
+      } else {
+        words[words.count - 1].key += key(Substring(piece))
+        words[words.count - 1].confidence = min(
+          words[words.count - 1].confidence, timing.confidence)
+      }
+    }
+    let target = source.split(separator: " ").map(key)
+    guard !target.isEmpty, target.count <= words.count else { return nil }
+    for start in 0...(words.count - target.count)
+    where words[start..<(start + target.count)].map(\.key) == target {
+      return words[start..<(start + target.count)].map(\.confidence).min()
+    }
+    return nil
   }
 
   nonisolated static func clampedToken(text: String, start: Double, end: Double, sampleCount: Int)

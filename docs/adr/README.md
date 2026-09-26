@@ -34,3 +34,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0024: Clipboard paste into terminals](0024-terminal-paste-insertion.md)
 
 - [0025: Spoken disfluency cleanup in the rewrite](0025-spoken-disfluency-cleanup.md)
+
+- [0027: Dictionary term boosting in dictation](0027-dictionary-term-boosting.md)

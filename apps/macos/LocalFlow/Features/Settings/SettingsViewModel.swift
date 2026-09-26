@@ -15,6 +15,7 @@ final class SettingsViewModel {
     case configureShortcut(ShortcutPreference)
     case setKeepModelReady(Bool)
     case importSpeakerModel, downloadSpeakerModel, verifySpeakerModel
+    case downloadBoostModel
     case importMeetingModel, downloadMeetingModel, verifyMeetingModel
     case testModel(ModelTest)
   }
@@ -44,6 +45,12 @@ final class SettingsViewModel {
     var speakerModelReadiness: String {
       if speakerModelInstalling { return "Installing…" }
       return speakerModelInstalled ? "Ready" : "Not installed"
+    }
+    var boostModelInstalled = false
+    var boostModelInstalling = false
+    var boostModelReadiness: String {
+      if boostModelInstalling { return "Installing…" }
+      return boostModelInstalled ? "Ready" : "Not installed · 103 MB"
     }
     var modelReadiness: String {
       guard modelInstalled else { return "Not installed" }

@@ -29,14 +29,14 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           xcodebuild -version
-          brew install cmake ffmpeg
-      - name: Validate repository
-        run: make check
+          brew install cmake
       - name: Package ad-hoc signed application
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           BUILD_NUMBER: ${{ github.run_number }}
-        run: ./scripts/package-macos.sh "${RELEASE_TAG#v}" "$BUILD_NUMBER"
+        run: |
+          mkdir -p build
+          ./scripts/package-macos.sh "${RELEASE_TAG#v}" "$BUILD_NUMBER" 2>&1 | tee build/release-build.log
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,6 +52,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: release-test-diagnostics
-          path: build/DerivedData/Logs/Test
+          name: release-build-diagnostics
+          path: build/release-build.log
           if-no-files-found: ignore

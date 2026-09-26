@@ -403,6 +403,8 @@ extension CorrectionLearnerTests {
     let reader = FakeFieldReader(field: "use nexora now")
     let store = FakeVocabularyStore()
     let learner = makeLearner(reader: reader, store: store)
+    var suggested: [String] = []
+    learner.suggested = { suggested.append("\($1) → \($0)") }
     for occurrence in 0..<2 {
       await reader.setField("use nexora now")
       let previousReads = await reader.reads
@@ -416,6 +418,7 @@ extension CorrectionLearnerTests {
       if occurrence == 0 { XCTAssertNil(learner.notice) }
     }
     XCTAssertNotNil(learner.notice)
+    XCTAssertEqual(suggested, ["nexora → Nexium"])
     await learner.undo()
     let entries = await store.entries
     XCTAssertTrue(entries.isEmpty)

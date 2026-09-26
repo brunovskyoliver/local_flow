@@ -441,6 +441,16 @@ struct SettingsView: View {
         }
         .accessibilityIdentifier("settings.speakerModel")
         separator
+        SettingsRow(
+          "Term booster",
+          detail: "Dictionary terms in dictation · \(model.snapshot.boostModelReadiness)"
+        ) {
+          if !model.snapshot.boostModelInstalled && !model.snapshot.boostModelInstalling {
+            Button("Download") { Task { await model.run(.downloadBoostModel) } }
+          }
+        }
+        .accessibilityIdentifier("settings.boostModel")
+        separator
         SettingsRow("Keep Parakeet loaded") {
           Toggle(
             "Keep Parakeet loaded",

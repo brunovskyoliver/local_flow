@@ -857,6 +857,21 @@ enum HistoryMigrations {
             "CREATE INDEX \(index.table)_fk_\(index.column) ON \(index.table)(\(index.column))")
       }
     }
+    // Feature 013: corrections the scorer only suggested, and suggestions the user
+    // dismissed. Context sightings are counted from dictation_contexts, not stored.
+    migrator.registerMigration("term-suggestions-v14") { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE term_suggestions (
+            canonical TEXT NOT NULL CHECK(length(cast(canonical AS blob)) BETWEEN 1 AND 256),
+            alias TEXT NOT NULL CHECK(length(cast(alias AS blob)) <= 256),
+            sightings INTEGER NOT NULL CHECK(sightings >= 0),
+            dismissed INTEGER NOT NULL CHECK(dismissed IN (0,1)),
+            last_seen INTEGER NOT NULL,
+            PRIMARY KEY(canonical, alias)
+          ) WITHOUT ROWID
+          """)
+    }
     return migrator
   }
 

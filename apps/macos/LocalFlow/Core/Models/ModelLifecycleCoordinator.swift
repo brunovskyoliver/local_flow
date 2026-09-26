@@ -64,6 +64,7 @@ actor ModelLifecycleCoordinator {
   /// The lease Keep model ready took to re-prepare live speech after other work.
   /// Nobody waits on it, so diarization and identification preempt it.
   private var warmLease: ModelLease?
+  private var boost: (lease: ModelLease, terms: VocabularyBoostTerms)?
   /// Speaker work queued or running, by coordinator token with the newest sequence
   /// seen. While any is pending, Keep model ready does not reload live speech between
   /// leases; the last withdrawal triggers the reload instead.
@@ -154,20 +155,23 @@ actor ModelLifecycleCoordinator {
   /// preempts only Keep model ready's own background reload of live speech.
   /// `meetingLanguage` applies to `.meetingTranscription` only: a resident meeting
   /// runtime built for another language is released and rebuilt.
+  /// `boost` is the dictation's Dictionary for the keyword spotter (Feature 013); it is
+  /// bound to the returned lease and never outlives it.
   func acquire(
     session: UUID, workload requested: ModelWorkload = .speechRecognition,
-    meetingLanguage: MeetingLanguage = .defaultLanguage
+    meetingLanguage: MeetingLanguage = .defaultLanguage, boost: VocabularyBoostTerms? = nil
   )
     async throws -> ModelLease
   {
     try await acquire(
-      session: session, workload: requested, meetingLanguage: meetingLanguage, warm: false)
+      session: session, workload: requested, meetingLanguage: meetingLanguage, warm: false,
+      boost: boost)
   }
 
   /// `warm` marks Keep model ready's own reload, which speaker work may preempt.
   private func acquire(
     session: UUID, workload requested: ModelWorkload, meetingLanguage: MeetingLanguage,
-    warm: Bool
+    warm: Bool, boost: VocabularyBoostTerms? = nil
   ) async throws -> ModelLease {
     let requestedLanguage = requested == .meetingTranscription ? meetingLanguage : nil
     guard !Task.isCancelled else { throw DictationFailure.cancelled }
@@ -179,6 +183,7 @@ actor ModelLifecycleCoordinator {
     let lease = ModelLease(sessionID: session, generation: generation, workload: requested)
     owner = lease
     warmLease = warm ? lease : nil
+    self.boost = boost.map { (lease, $0) }
     return try await withTaskCancellationHandler {
       cooldown?.cancel()
       cooldown = nil
@@ -257,7 +262,8 @@ actor ModelLifecycleCoordinator {
     guard !samples.isEmpty, samples.count <= maximum, samples.allSatisfy(\.isFinite) else {
       throw DictationFailure.invalidAudio
     }
-    let task = Task { try await runtime.transcribe(samples) }
+    let terms = boost?.lease == lease ? boost?.terms : nil
+    let task = Task { try await runtime.transcribe(samples, boost: terms) }
     inference = task
     do {
       let result = try await task.value

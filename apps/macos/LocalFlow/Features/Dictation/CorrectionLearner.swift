@@ -119,6 +119,8 @@ final class CorrectionLearner {
   private(set) var lastStop: StopReason?
   var noticeChanged: ((LearnedNotice?) -> Void)?
   var stopped: ((StopReason) -> Void)?
+  /// A correction worth suggesting: canonical spelling and the replaced text ("" if none).
+  var suggested: ((_ canonical: String, _ alias: String) -> Void)?
   @ObservationIgnored private let scorer: any CorrectionCandidateScoring
   @ObservationIgnored private var candidateHistory = CorrectionCandidateHistory()
   @ObservationIgnored private let reader: any TextInserting
@@ -290,12 +292,17 @@ final class CorrectionLearner {
           canonicalTerms: contents.entries.filter(\.enabled).map(\.canonical),
           previousObservations: candidateHistory.observe(span)))
       lastAssessment = assessment
-      // Suggestions remain internal until a separate approval UI is introduced.
-      guard assessment.disposition == .autoLearn else { return .rejected }
       // An entry that already maps this misspelling (or is this word) means nothing to learn.
       for existing in contents.entries {
         let keys = ([existing.canonical] + existing.aliases).map(VocabularyValidation.fold)
         if keys.contains(key) || keys.contains(target) { return .rejected }
+      }
+      guard assessment.disposition == .autoLearn else {
+        // Feature 013: the Dictionary lists it for approval.
+        if assessment.disposition == .suggest {
+          suggested?(entry.canonical, entry.aliases.first ?? "")
+        }
+        return .rejected
       }
       _ = try await store.save(entry, expectedRevision: contents.state.revision)
     } catch {

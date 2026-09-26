@@ -4,6 +4,8 @@ enum ModelCapability: String, Codable, Equatable, Sendable {
   case speechRecognition = "speech_recognition"
   case voiceActivityDetection = "voice_activity_detection"
   case speakerDiarization = "speaker_diarization"
+  /// Feature 013: the CTC model that scores Dictionary terms against dictation audio.
+  case keywordSpotting = "keyword_spotting"
 }
 
 struct ModelFileDescriptor: Codable, Equatable, Sendable {

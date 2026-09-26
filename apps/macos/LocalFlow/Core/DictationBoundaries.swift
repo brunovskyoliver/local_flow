@@ -10,11 +10,25 @@ struct TranscriptionWindow: Sendable {
   let text: String
   let tokens: [TranscriptionToken]
   var evidence: RecognitionEvidence? = nil
+  /// Feature 013: Dictionary replacements the keyword spotter confirmed for this window.
+  /// The raw text stays as recognized; normalization applies these as V002.
+  var boostHints: [VocabularyBoostHint] = []
 }
 
 protocol TranscriptionRuntime: Sendable {
   func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow
+  /// `boost` is the dictation's Dictionary; runtimes without a keyword spotter ignore it.
+  func transcribe(_ samples: [Float], boost: VocabularyBoostTerms?) async throws
+    -> TranscriptionWindow
   func shutdown() async
+}
+
+extension TranscriptionRuntime {
+  func transcribe(_ samples: [Float], boost: VocabularyBoostTerms?) async throws
+    -> TranscriptionWindow
+  {
+    try await transcribe(samples)
+  }
 }
 
 protocol DictationClock: Sendable {

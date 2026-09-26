@@ -22,6 +22,9 @@ struct DictionaryView: View {
             .padding(.top, 24).textSelection(.enabled)
             .accessibilityIdentifier("vocabulary.loadError")
         }
+        if filter == .all, search.isEmpty, !model.suggestions.isEmpty {
+          suggestions.padding(.top, 24)
+        }
         list.padding(.top, 24)
         if let status = model.status {
           Text(status).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
@@ -145,6 +148,42 @@ struct DictionaryView: View {
           Color(red: 0.48, green: 0.36, blue: 0.2),
         ], startPoint: .leading, endPoint: .trailing),
       in: RoundedRectangle(cornerRadius: 16))
+  }
+
+  /// Feature 013: terms from your corrections and the apps you dictate into.
+  private var suggestions: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text("Suggested").font(.flow(size: 13, weight: .medium)).foregroundStyle(SottoPalette.muted)
+      VStack(spacing: 0) {
+        ForEach(model.suggestions) { suggestion in
+          HStack(spacing: 10) {
+            if !suggestion.alias.isEmpty {
+              Text(verbatim: suggestion.alias)
+              Image(systemName: "arrow.right").font(.flow(size: 10, weight: .semibold))
+            }
+            Text(verbatim: suggestion.canonical)
+            Text(
+              suggestion.source == .correction
+                ? "You corrected this" : "Seen in \(suggestion.sightings) dictations"
+            )
+            .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+            Spacer(minLength: 0)
+            Button("Add") { model.beginAdd(suggestion) }
+              .disabled(!model.canAdd || model.saving)
+              .accessibilityLabel("Add \(suggestion.canonical)")
+            Button("Dismiss") { Task { await model.dismiss(suggestion) } }
+              .accessibilityLabel("Dismiss \(suggestion.canonical)")
+          }
+          .buttonStyle(DictionaryPillButtonStyle())
+          .font(.flow(size: 15)).foregroundStyle(SottoPalette.ink)
+          .padding(.horizontal, 18).padding(.vertical, 10)
+          .accessibilityElement(children: .contain)
+          if suggestion.id != model.suggestions.last?.id { SottoPalette.line.frame(height: 1) }
+        }
+      }
+      .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(SottoPalette.line, lineWidth: 1) }
+    }
+    .accessibilityIdentifier("vocabulary.suggestions")
   }
 
   @ViewBuilder private var list: some View {

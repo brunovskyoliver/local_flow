@@ -81,9 +81,13 @@ struct ContextMetrics: Sendable, Equatable {
   private var claimed = false
   private var recordingEnded = false
 
-  func acquire(_ lifecycle: ModelLifecycleCoordinator, session: UUID) {
+  func acquire(
+    _ lifecycle: ModelLifecycleCoordinator, session: UUID, boost: VocabularyBoostTerms? = nil
+  ) {
     acquiring = Task {
-      do { lease = try await lifecycle.acquire(session: session) } catch { failure = error }
+      do { lease = try await lifecycle.acquire(session: session, boost: boost) } catch {
+        failure = error
+      }
     }
   }
 
@@ -469,7 +473,9 @@ final class DictationCoordinator {
       consumeControls()
       guard !stopRequested, !Task.isCancelled else { throw DictationFailure.cancelled }
       // A cold model load runs beside capture; recording never waits for it.
-      live.acquire(lifecycle, session: session.id)
+      live.acquire(
+        lifecycle, session: session.id,
+        boost: VocabularyBoostTerms(snapshot: session.vocabulary))
       failureStage = "starting the microphone"
       let spool = session.audio!
       let starting = Task { [capture] in try await capture.start(sessionID: id, spool: spool) }

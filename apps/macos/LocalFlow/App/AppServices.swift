@@ -69,6 +69,10 @@ final class AppServices {
   private(set) var speakerModelInstalled = false
   private(set) var speakerModelInstalling = false
   @ObservationIgnored private var diarizationProvisioner: ModelProvisioner?
+  /// Feature 013: the Dictionary term booster's pinned keyword spotter.
+  @ObservationIgnored private var boostProvisioner: ModelProvisioner?
+  private(set) var boostModelInstalled = false
+  private(set) var boostModelInstalling = false
   @ObservationIgnored private var diarizationIdentity: DiarizationIdentity?
   @ObservationIgnored private(set) var transcriptStore: TranscriptStore?
   private(set) var meetingLibrary: MeetingLibraryViewModel?
@@ -231,6 +235,22 @@ final class AppServices {
         descriptor: diarizationDescriptor,
         manifestHash: diarizationManifest.map { TranscriptionQualityDetail.hash($0) }
           ?? String(repeating: "0", count: 64))
+      // A missing or unreadable booster manifest only leaves dictation unboosted.
+      let boostProvisioner = Bundle.main.url(
+        forResource: "parakeet-ctc-110m", withExtension: "json"
+      ).flatMap { url -> ModelProvisioner? in
+        do {
+          let descriptor = try JSONDecoder().decode(
+            ModelDescriptor.self, from: Data(contentsOf: url))
+          return ModelProvisioner(
+            descriptor: descriptor,
+            rootURL: base.appendingPathComponent("Models/parakeet-ctc-110m"))
+        } catch {
+          Self.logModelFailure("Term booster manifest", error)
+          return nil
+        }
+      }
+      self.boostProvisioner = boostProvisioner
       guard
         let meetingManifestURL = Bundle.main.url(
           forResource: "whisper-large-v3-turbo", withExtension: "json")
@@ -358,8 +378,10 @@ final class AppServices {
             await self?.invalidateModelVerification()
             throw error
           }
+          // The booster is optional: unverified or busy means this load dictates without it.
+          let boost = try? await boostProvisioner?.verifiedLocalDescriptor()
           var runtime: any TranscriptionRuntime = try await FluidAudioEngineFactory(
-            descriptor: local
+            descriptor: local, boostModel: boost
           ).makeRuntime()
           #if DEBUG
             if let factor = MeetingRuntimeOptions.current.debugSlowRecognition {
@@ -444,7 +466,8 @@ final class AppServices {
           self?.historyModel?.refresh()
         }
       }
-      let vocabularyModel = VocabularyViewModel(store: vocabulary)
+      let suggestionStore = TermSuggestionStore(history: paths.1)
+      let vocabularyModel = VocabularyViewModel(store: vocabulary, suggestions: suggestionStore)
       self.vocabularyModel = vocabularyModel
       let learner = CorrectionLearner(
         reader: insertion, store: vocabulary,
@@ -461,6 +484,13 @@ final class AppServices {
         Logger(subsystem: "org.localflow.LocalFlow", category: "dictionary").notice(
           "Correction observation stopped: \(reason.rawValue, privacy: .public)")
         if reason == .learned { vocabularyModel?.reload() }
+      }
+      learner.suggested = { [weak vocabularyModel] canonical, alias in
+        Task {
+          try? await suggestionStore.recordCorrection(
+            canonical: canonical, alias: alias, now: Int64(Date().timeIntervalSince1970 * 1000))
+          vocabularyModel?.reload()
+        }
       }
       coordinator.insertionConfirmed = { [weak learner] text, target in
         learner?.observe(inserted: text, target: target)
@@ -554,9 +584,11 @@ final class AppServices {
         let meeting = await Self.verifyModel(meetingProvisioner, name: "Whisper Turbo")
         // Verification only: the diarizer is never loaded here.
         let speaker = await Self.verifyModel(diarizationProvisioner, name: "Speaker labeling model")
+        let boost = await Self.verifyModel(boostProvisioner, name: "Term booster")
         guard let self else { return }
         if !meetingModelInstalling { meetingModelInstalled = meeting }
         if !speakerModelInstalling { speakerModelInstalled = speaker }
+        if !boostModelInstalling { boostModelInstalled = boost }
       }
       await warmModelIfRequested()
       #if DEBUG
@@ -1162,6 +1194,8 @@ final class AppServices {
     snapshot.meetingModelInstalling = meetingModelInstalling
     snapshot.speakerModelInstalled = speakerModelInstalled
     snapshot.speakerModelInstalling = speakerModelInstalling
+    snapshot.boostModelInstalled = boostModelInstalled
+    snapshot.boostModelInstalling = boostModelInstalling
     snapshot.keepModelReady = preferences.keepModelReady
     snapshot.rewriteBlockedReason = SettingsViewModel.rewriteBlockedReason(
       for: RewriteSettings.capture(preferences: preferences, credentialStore: rewriteCredentials))
@@ -1330,6 +1364,8 @@ final class AppServices {
       try await installSpeakerModel(source: selected)
     case .downloadSpeakerModel:
       try await installSpeakerModel(source: nil)
+    case .downloadBoostModel:
+      try await installBoostModel()
     case .showLocation:
       if let modelLocation { NSWorkspace.shared.activateFileViewerSelecting([modelLocation]) }
     case .requestMicrophone:
@@ -1389,6 +1425,19 @@ final class AppServices {
     }
     speakerModelInstalled = true
     setupStatus = "Speaker labeling model verified."
+  }
+
+  /// The term booster installs through the lifecycle gate, which releases a resident
+  /// speech runtime, so the next dictation loads Parakeet with the booster.
+  private func installBoostModel() async throws {
+    guard let boostProvisioner, let lifecycle, !boostModelInstalling, !installing else {
+      throw DictationFailure.busy
+    }
+    boostModelInstalling = true
+    defer { boostModelInstalling = false }
+    try await lifecycle.installModel { _ = try await boostProvisioner.download() }
+    boostModelInstalled = true
+    setupStatus = "Term booster verified. Dictionary terms are checked against your speech."
   }
 
   private func openPermissionSettings(_ name: String) {
@@ -1465,6 +1514,15 @@ final class AppServices {
   func beginSetupDownloads(localAI wanted: Bool) {
     if !modelInstalled { downloadModel() }
     if wanted { localAI.start() }
+    // The term booster follows the speech model through the same install gate.
+    if !boostModelInstalled {
+      Task { [weak self] in
+        await self?.installTask?.value
+        do { try await self?.installBoostModel() } catch {
+          Self.logModelFailure("Term booster", error)
+        }
+      }
+    }
   }
 
   /// Onboarding's optional meeting pack: speaker labels, then Whisper Turbo, after
