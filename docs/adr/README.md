@@ -36,3 +36,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0025: Spoken disfluency cleanup in the rewrite](0025-spoken-disfluency-cleanup.md)
 
 - [0027: Dictionary term boosting in dictation](0027-dictionary-term-boosting.md)
+
+- [0028: Opt-in remote inference on a self-hosted multi-user server](0028-remote-inference-server.md)

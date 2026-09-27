@@ -14,3 +14,4 @@ Each item gets its own Spec Kit cycle. Dependencies may refine numbering; these 
 10. Ask Meeting and semantic search.
 11. Application-aware dictation context.
 12. True multi-device synchronization, only if later required.
+13. Opt-in remote inference on a self-hosted, multi-user server with approved accounts (ADR 0028).
