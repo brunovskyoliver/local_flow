@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(swift format lint *)",
+      "Bash(gofmt -l *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(make check)",
+      "Bash(xcrun xcresulttool get *)",
+      "Bash(defaults read *)",
+      "Bash(plutil -lint *)",
+      "Bash(plutil -p *)",
+      "Bash(log show *)",
+      "Bash(pmset -g *)"
+    ]
+  }
+}
