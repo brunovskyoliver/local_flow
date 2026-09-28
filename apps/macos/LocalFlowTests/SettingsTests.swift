@@ -535,3 +535,174 @@ extension SettingsTests {
     XCTAssertNil(model.analysisStatus)
   }
 }
+
+/// Feature 014: Settings › Remote dictation (T049, T056).
+@MainActor
+final class RemoteDictationSettingsTests: XCTestCase {
+  private var suite = ""
+  private var defaults: UserDefaults!
+  private var preferences: AppPreferences!
+  private var credentials: InMemoryRemoteCredentialStore!
+  private var flowd: FakeFlowdAccounts!
+  private var opener: FakeRemoteTransportOpener!
+  private var fetcher: FakeIdentityFetcher!
+  private var enrollmentInstance: RemoteEnrollment?
+  private var turnedOff = 0
+
+  override func setUp() async throws {
+    suite = "LocalFlow-remote-settings-\(UUID())"
+    defaults = UserDefaults(suiteName: suite)!
+    preferences = AppPreferences(defaults: defaults)
+    credentials = InMemoryRemoteCredentialStore()
+    flowd = FakeFlowdAccounts()
+    let flowd = flowd!
+    opener = FakeRemoteTransportOpener { _ in flowd.transport() }
+    fetcher = FakeIdentityFetcher(key: FakeRemoteServer.serverKey.publicKey.rawRepresentation)
+  }
+
+  override func tearDown() async throws { defaults.removePersistentDomain(forName: suite) }
+
+  /// Mirrors AppServices: the enrollment exists only after the consent step.
+  private func model(googleAvailable: Bool = true) -> RemoteDictationModel {
+    RemoteDictationModel(
+      preferences: preferences,
+      enrollment: { [self] in
+        guard preferences.remoteEnabled,
+          preferences.remoteConsentVersion >= AppPreferences.remoteConsentVersion
+        else { return nil }
+        if enrollmentInstance == nil {
+          enrollmentInstance = RemoteEnrollment(
+            preferences: preferences, credentials: credentials, keys: SoftwareDeviceKeys(),
+            signIn: FakeIdentitySignIn(), identityFetcher: fetcher, transports: opener,
+            clock: ManualRemoteClock(), deviceName: "Test Mac")
+        }
+        return enrollmentInstance
+      },
+      turnOff: { [self] in
+        turnedOff += 1
+        if let enrollmentInstance {
+          enrollmentInstance.turnOff()
+        } else {
+          try? credentials.removeAll()
+          preferences.resetRemote()
+        }
+        enrollmentInstance = nil
+      },
+      signInAvailable: { $0 == .apple || googleAvailable })
+  }
+
+  func testTurningOnShowsConsentAndCancelLeavesEverythingOff() async throws {
+    let model = model()
+    XCTAssertFalse(model.isOn)
+    XCTAssertNil(model.statusText)
+    model.requestTurnOn()
+    XCTAssertTrue(model.showingConsent)
+    XCTAssertFalse(preferences.remoteEnabled)
+    model.serverDraft = "https://mini.example.com"
+    model.cancelConsent()
+    XCTAssertFalse(model.showingConsent)
+    XCTAssertFalse(preferences.remoteEnabled)
+    XCTAssertEqual(preferences.remoteServerURL, "")
+    XCTAssertEqual(preferences.remoteConsentVersion, 0)
+    XCTAssertEqual(fetcher.fetches, 0)
+    XCTAssertEqual(opener.openCount, 0)
+    XCTAssertTrue(RemoteDictationModel.consentText.contains("audio"))
+    XCTAssertTrue(RemoteDictationModel.consentText.contains("transcripts"))
+    XCTAssertTrue(RemoteDictationModel.consentText.contains("Dictionary terms"))
+    XCTAssertTrue(RemoteDictationModel.consentText.contains("rewrite text"))
+    XCTAssertTrue(RemoteDictationModel.consentText.contains("administrator can see audio"))
+  }
+
+  func testConsentNeedsAnHTTPSOrigin() async throws {
+    let model = model()
+    model.requestTurnOn()
+    model.serverDraft = "http://mini.example.com"
+    XCTAssertNil(model.draftOrigin)
+    await model.confirmConsent()
+    XCTAssertFalse(preferences.remoteEnabled)
+    XCTAssertNotNil(model.error)
+    XCTAssertEqual(fetcher.fetches, 0)
+  }
+
+  func testFingerprintIsShownAndPinnedBeforeSignIn() async throws {
+    let model = model()
+    model.requestTurnOn()
+    model.serverDraft = "https://mini.example.com/"
+    await model.confirmConsent()
+    XCTAssertTrue(preferences.remoteEnabled)
+    XCTAssertEqual(preferences.remoteServerURL, "https://mini.example.com")
+    XCTAssertEqual(
+      model.identity?.fingerprint, RemoteServerIdentity.fingerprint(of: fetcher.key))
+    XCTAssertEqual(model.statusText, "Compare the fingerprint")
+    XCTAssertFalse(model.needsSignIn)
+    XCTAssertEqual(opener.openCount, 0)
+    model.trustServer()
+    XCTAssertNil(model.identity)
+    XCTAssertEqual(model.pinnedFingerprint, RemoteServerIdentity.fingerprint(of: fetcher.key))
+    XCTAssertTrue(model.needsSignIn)
+    XCTAssertEqual(model.statusText, "Sign in to finish")
+    await model.signIn(.apple)
+    XCTAssertEqual(model.statusText, "Waiting for approval")
+  }
+
+  func testStatusLines() async throws {
+    let model = model()
+    preferences.remoteEnabled = true
+    preferences.confirmRemoteConsent()
+    preferences.setRemoteServerURL("https://mini.example.com")
+    let expected: [(RemoteDictationState, RemoteDictationNotice?, String)] = [
+      (.pending, nil, "Waiting for approval"),
+      (.rejected, nil, "Rejected"),
+      (.revoked, nil, "Removed from the server"),
+      (.pinMismatch, nil, "Server identity changed"),
+      (.pinned, .signInAgain, "Sign in again"),
+      (.approved, .updateRequired, "Update LocalFlow or the server"),
+      (.approved, nil, "Approved · dictation uses your server"),
+    ]
+    for (state, notice, text) in expected {
+      preferences.remoteState = state
+      preferences.remoteNotice = notice
+      XCTAssertEqual(model.statusText, text, state.rawValue)
+    }
+  }
+
+  func testServerRevocationShowsRemovedAndNotApprovedShowsWaiting() async throws {
+    let model = model()
+    preferences.remoteEnabled = true
+    preferences.confirmRemoteConsent()
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.remoteState = .approved
+    let enrollment = try XCTUnwrap(enrollmentInstanceOrMake())
+    enrollment.apply(.notApproved)
+    XCTAssertEqual(model.statusText, "Waiting for approval")
+    enrollment.apply(.revoked)
+    XCTAssertEqual(model.statusText, "Removed from the server")
+  }
+
+  func testTurningOffAsksFirst() async throws {
+    let model = model()
+    preferences.remoteEnabled = true
+    preferences.confirmRemoteConsent()
+    preferences.setRemoteServerURL("https://mini.example.com")
+    model.requestTurnOff()
+    XCTAssertTrue(model.confirmingTurnOff)
+    model.cancelTurnOff()
+    XCTAssertEqual(turnedOff, 0)
+    XCTAssertTrue(preferences.remoteEnabled)
+    model.requestTurnOff()
+    model.confirmTurnOff()
+    XCTAssertEqual(turnedOff, 1)
+    XCTAssertFalse(preferences.remoteEnabled)
+    XCTAssertNil(model.statusText)
+  }
+
+  func testGoogleIsHiddenWithoutAClientID() {
+    XCTAssertFalse(model(googleAvailable: false).isAvailable(.google))
+    XCTAssertTrue(model(googleAvailable: false).isAvailable(.apple))
+  }
+
+  private func enrollmentInstanceOrMake() -> RemoteEnrollment? {
+    _ = model().pinnedFingerprint
+    return enrollmentInstance
+  }
+}

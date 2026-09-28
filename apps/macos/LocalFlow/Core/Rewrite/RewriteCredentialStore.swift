@@ -1,11 +1,11 @@
 import Foundation
 import Security
 
-/// Keychain generic password: service `org.localflow.LocalFlow.rewrite`, account
+/// Keychain generic password: service `<bundle id>.rewrite`, account
 /// = endpoint origin. Errors map to bounded codes; the secret never leaves this
 /// type except through `read`.
 struct RewriteCredentialStore: Sendable {
-  static let service = "org.localflow.LocalFlow.rewrite"
+  static let service = AppIdentity.current.keychainService("rewrite")
 
   private func query(origin: String) -> [String: Any] {
     [

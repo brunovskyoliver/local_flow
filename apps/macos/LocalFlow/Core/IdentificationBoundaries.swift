@@ -8,49 +8,6 @@ import Foundation
 
 // MARK: - Embedding runtime
 
-struct VoiceRegionRequest: Sendable, Equatable {
-  /// 3 s at 16 kHz.
-  static let minSamples = 48_000
-  /// 20 s at 16 kHz.
-  static let maxSamples = 320_000
-  /// Mono 16 kHz, minSamples...maxSamples, all finite.
-  let samples: [Float]
-
-  var isValid: Bool {
-    (Self.minSamples...Self.maxSamples).contains(samples.count) && samples.allSatisfy(\.isFinite)
-  }
-}
-
-struct VoiceEmbedding: Sendable, Equatable {
-  static let dimension = 256
-  /// L2-normalized, `dimension` finite values.
-  let vector: [Float]
-  /// Seconds of speech the segmentation model found inside the region.
-  let speechSeconds: Double
-
-  var isValid: Bool {
-    guard vector.count == Self.dimension, vector.allSatisfy(\.isFinite), speechSeconds.isFinite,
-      speechSeconds >= 0
-    else { return false }
-    let norm = vector.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
-    return abs(norm - 1) < 0.01
-  }
-}
-
-enum VoiceEmbeddingFailure: Error, Equatable, Sendable {
-  /// The region had no speech; the caller counts it as a rejected region.
-  case noSpeech
-}
-
-protocol VoiceEmbeddingRuntime: Sendable {
-  /// One region at a time. Throws `VoiceEmbeddingFailure.noSpeech` when the region has
-  /// no speech.
-  func embed(_ request: VoiceRegionRequest) async throws -> VoiceEmbedding
-  func shutdown() async
-}
-
-typealias VoiceEmbeddingFactory = @Sendable () async throws -> any VoiceEmbeddingRuntime
-
 // MARK: - Regions
 
 /// One eligible speech region of one cluster on the recorded timeline.

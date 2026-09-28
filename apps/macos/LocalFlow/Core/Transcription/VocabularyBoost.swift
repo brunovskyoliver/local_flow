@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import NaturalLanguage
 
 /// Feature 013 (ADR 0027). The Dictionary's enabled canonical terms for one dictation,
@@ -17,18 +17,6 @@ struct VocabularyBoostTerms: Sendable, Equatable {
   /// Every enabled canonical and alias, folded: V001 already decides these spans.
   let governed: Set<String>
 
-  init?(snapshot: VocabularySnapshot?) {
-    guard let snapshot, !snapshot.entries.isEmpty else { return nil }
-    terms = snapshot.entries.filter(\.enabled)
-      .sorted { $0.id.utf8.lexicographicallyPrecedes($1.id.utf8) }
-      .prefix(Self.maximumTerms)
-      .map { Term(entryID: $0.id, canonical: $0.canonical) }
-    guard !terms.isEmpty else { return nil }
-    key = snapshot.hash
-    governed = Set(
-      snapshot.entries.filter(\.enabled).flatMap { [$0.canonical] + $0.aliases }.map(Self.fold))
-  }
-
   init(terms: [Term], key: String, governed: Set<String> = []) {
     self.terms = terms
     self.key = key
@@ -41,9 +29,9 @@ struct VocabularyBoostTerms: Sendable, Equatable {
     return governed.contains(Self.fold(trimmed))
   }
 
-  private static func fold(_ term: String) -> String {
+  static func fold(_ term: String) -> String {
     var view = String.UnicodeScalarView()
-    view.append(contentsOf: VocabularyValidation.fold(term))
+    view.append(contentsOf: TermFolding.fold(term))
     return String(view)
   }
 }
@@ -97,17 +85,6 @@ enum VocabularyBoostPolicy {
       // and no short function words ("o toho", "s nimi") inside the span.
       if words.contains(where: { $0.count <= 3 && $0 != $0.uppercased() }) { return false }
       return similarity(candidate.source, candidate.term) >= slovakMinimumSimilarity
-    }
-  }
-
-  /// Correctly spelled English words, per the system spell checker.
-  @MainActor static func englishWords(in words: Set<String>) -> Set<String> {
-    let checker = NSSpellChecker.shared
-    return words.filter {
-      checker.checkSpelling(
-        of: $0, startingAt: 0, language: "en", wrap: false, inSpellDocumentWithTag: 0,
-        wordCount: nil
-      ).location == NSNotFound
     }
   }
 

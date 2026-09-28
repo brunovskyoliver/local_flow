@@ -96,6 +96,54 @@ final class RewriteCoordinatorTests: XCTestCase {
 
   private let faithful = "peter can you move the odoo deployment to monday"
 
+  // MARK: Feature 014: rewrite over the remote dictation channel (FR-020, T080)
+
+  func testRemoteRouteSkipsTheSharedTokenAndStoresTheAttemptAsUsual() async throws {
+    // A non-loopback Feature 003 endpoint without a credential would be refused.
+    let fixture = makeFixture(endpoint: "https://studio.example.com")
+    let refused = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    XCTAssertEqual(refused, .refused(.missingCredential))
+    fixture.coordinator.remoteRewriteOrigin = { URL(string: "https://mini.example.com") }
+    let outcome = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    guard case .rewritten(_, let attempt) = outcome else { return XCTFail("\(outcome)") }
+    let recorded = try XCTUnwrap(fixture.transport.recorded.first)
+    XCTAssertTrue(recorded.endpoint.viaRemoteChannel)
+    XCTAssertEqual(recorded.endpoint.origin, "https://mini.example.com:443")
+    XCTAssertEqual(attempt.endpointOrigin, "https://mini.example.com:443")
+    let rows = await fixture.store.attempts(for: fixture.dictation)
+    XCTAssertEqual(rows.map(\.state), [.succeeded])
+    // Nothing read the Feature 003 credential store for this origin.
+    XCTAssertFalse(fixture.credentials.exists(origin: "https://mini.example.com"))
+  }
+
+  func testRemoteRouteFallsBackLikeFeature003() async throws {
+    let fixture = makeFixture(
+      script: .fail(.serverUnreachable), endpoint: "https://studio.example.com")
+    fixture.coordinator.remoteRewriteOrigin = { URL(string: "https://mini.example.com") }
+    let outcome = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    XCTAssertEqual(outcome, .fallback(faithful: faithful, category: .serverUnreachable))
+    let rows = await fixture.store.attempts(for: fixture.dictation)
+    XCTAssertEqual(rows.map(\.state), [.failed])
+    XCTAssertEqual(rows.first?.failureCategory, .serverUnreachable)
+  }
+
+  func testRoutingTransportPicksTheChannelOnlyForRemoteEndpoints() async throws {
+    let http = FakeRewriteTransport(defaultScript: .succeed(text: "Over HTTP."))
+    let remote = FakeRewriteTransport(defaultScript: .succeed(text: "Over the channel."))
+    let routing = RoutingRewriteTransport(http: http, remote: remote)
+    let request = try RewriteRequest(requestID: UUID(), mode: .clean, text: "x")
+    var endpoint = RewriteEndpoint(
+      url: URL(string: "http://127.0.0.1:8080")!, origin: "http://127.0.0.1:8080")
+    for try await _ in routing.rewrite(request: request, endpoint: endpoint, timeout: .seconds(5)) {
+    }
+    endpoint.viaRemoteChannel = true
+    for try await _ in routing.rewrite(request: request, endpoint: endpoint, timeout: .seconds(5)) {
+    }
+    XCTAssertEqual(http.recorded.count, 1)
+    XCTAssertEqual(remote.recorded.count, 1)
+    XCTAssertTrue(remote.recorded[0].endpoint.viaRemoteChannel)
+  }
+
   func testEveryServerModeIsEncodedAndStored() async throws {
     for mode in [RewriteMode.clean, .polished, .concise] {
       let fixture = makeFixture()

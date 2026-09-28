@@ -20,6 +20,84 @@ final class HistoryViewModelTests: XCTestCase {
     XCTFail("History query did not settle")
   }
 
+  // MARK: Feature 014 (T078)
+
+  func testPathLabels() throws {
+    func entry(_ path: TranscriptionEntry.RecognitionPath, _ failure: RemoteFailureReason?) throws
+      -> TranscriptionEntry
+    {
+      try TranscriptionEntry(
+        id: UUID(), text: "x", createdAtMilliseconds: 1, quality: .complete,
+        stopReason: .keyRelease, recognitionPath: path, serverFailure: failure)
+    }
+    XCTAssertEqual(
+      HistoryViewModel.pathLabel(for: try entry(.server, nil), showsLocal: false), "Server")
+    XCTAssertEqual(
+      HistoryViewModel.pathLabel(for: try entry(.server, .pendingRetry), showsLocal: false),
+      "Server")
+    XCTAssertNil(HistoryViewModel.pathLabel(for: try entry(.local, nil), showsLocal: false))
+    XCTAssertEqual(
+      HistoryViewModel.pathLabel(for: try entry(.local, nil), showsLocal: true), "Local")
+    XCTAssertEqual(
+      HistoryViewModel.pathLabel(
+        for: try entry(.localAfterServerFailure, .unreachable), showsLocal: false),
+      "Local after server failure (unreachable)")
+    XCTAssertEqual(
+      HistoryViewModel.pathLabel(for: try entry(.localAfterServerFailure, .busy), showsLocal: true),
+      "Local after server failure (busy)")
+    for reason in RemoteFailureReason.allCases { XCTAssertFalse(reason.label.isEmpty) }
+  }
+
+  func testWaitingForServerRowsAndTheirActions() async throws {
+    let root = try makeSpoolRoot()
+    ownedRoots.append(root)
+    let store = try TranscriptionStore(path: root.appendingPathComponent("h.sqlite").path)
+    let pending = try PendingRemoteDictationStore(
+      database: store.database, directory: root.appendingPathComponent("PendingAudio"))
+    var ids: [UUID] = []
+    for _ in 0..<2 {
+      let file = root.appendingPathComponent("\(UUID().uuidString).f32")
+      try Data(count: 64_000).write(to: file)
+      let id = UUID()
+      ids.append(id)
+      _ = try await pending.add(
+        id: id, audio: file, sampleCount: 16_000, failure: .unreachable, targetBundleID: nil,
+        now: Int64(Date().timeIntervalSince1970 * 1_000))
+    }
+    var recognized: [UUID] = []
+    var provisioned = false
+    let model = HistoryViewModel(store: store)
+    model.pendingRemote = .init(
+      load: { (try? await pending.all()) ?? [] },
+      recognizeLocally: { id in
+        recognized.append(id)
+        try await pending.remove(id: id)
+      },
+      export: { id, url in try await pending.exportWAV(id: id, to: url) },
+      discard: { id in try await pending.remove(id: id) },
+      localModelProvisioned: { provisioned })
+    await model.refreshPending()
+    XCTAssertEqual(model.pendingItems.map(\.id), ids)
+    XCTAssertEqual(HistoryViewModel.pendingStatus(model.pendingItems[0]), "Waiting for server")
+    XCTAssertFalse(model.canRecognizePendingLocally)
+    provisioned = true
+    XCTAssertTrue(model.canRecognizePendingLocally)
+    let copy = root.appendingPathComponent("copy.wav")
+    await model.exportPending(ids[0], to: copy)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
+    XCTAssertEqual(model.pendingItems.count, 2)
+    await model.recognizePendingLocally(ids[0])
+    XCTAssertEqual(recognized, [ids[0]])
+    XCTAssertEqual(model.pendingItems.map(\.id), [ids[1]])
+    await model.discardPending(ids[1])
+    XCTAssertTrue(model.pendingItems.isEmpty)
+    XCTAssertNil(model.pendingError)
+    let old = PendingRemoteDictationStore.Item(
+      id: UUID(), audioFile: "a.f32", sampleCount: 1, createdAt: 0, attempts: 3,
+      nextAttemptAt: .max, lastFailure: .timeout, targetBundleID: nil)
+    XCTAssertEqual(HistoryViewModel.pendingStatus(old), "Retries stopped after 24 hours")
+  }
+
   func testReplacementSearchAndBoundedNavigation() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-vm-\(UUID()).sqlite")

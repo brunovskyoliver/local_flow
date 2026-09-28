@@ -150,6 +150,10 @@ public final class AudioSpool: @unchecked Sendable {
     }
   }
 
+  /// The session's Float32 file. Feature 014 moves it into `PendingAudio/` for a remote
+  /// retry; `cleanup()` then removes only the empty session directory.
+  public var audioFileURL: URL { fileURL }
+
   /// Closes and removes this session's file. Repeated calls are harmless.
   public func cleanup() throws {
     stateLock.lock()

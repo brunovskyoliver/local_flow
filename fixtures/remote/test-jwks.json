@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "alg": "RS256",
+      "e": "AQAB",
+      "kid": "localflow-test-1",
+      "kty": "RSA",
+      "n": "xJVCtETZMveasb0AiuwKbpquLyr_dch-7ksKkJ_bAQeYP9iXtE8BBFv-qR1i4XcJT8U1025r4JzOARdCyrBSuXnRfky_zTnbk0XEwFDuzMJ637YalMR5v9nucYJ7QYiZf46AY8rkLR03MY0jz7sE_Ql1ye_SmlmxjVsNCD7DQlk7Q-Pwa_7SQpZcUHTYuEwgt0T9jIQrMo-tETKbHhDLzvrW_7M1eKsKqzA5xfyi5EFIW1-UT3mXhF3Rsv97LgBvnWWosKUSXpfhxcKdaF7bJF0yc3dIw70X1ixeeP4wqoh99gHzhyohY-GpU4NwsYZ9-iDDk1Nne5sSW3XL1cZcGw",
+      "use": "sig"
+    }
+  ]
+}

@@ -1,12 +1,12 @@
 #!/bin/sh
-# launchd entry for org.localflow.LocalFlow.mtplx, registered by LocalFlow with
+# launchd entry for @BUNDLE_ID@.mtplx, registered by LocalFlow with
 # SMAppService. Serves the model chosen in LocalFlow headless, without MTPLX.app,
 # only while LocalFlow runs: the app starts it at launch, before each dictation
 # and when rewriting is switched back to this Mac, and stops it when it quits or
 # switches to a server. launchd never starts or restarts it.
 set -eu
 umask 077
-state="$HOME/Library/Application Support/LocalFlow/LocalAI"
+state="$HOME/Library/Application Support/@DIRECTORY@/LocalAI"
 model="$(cat "$state/model-path")"
 [ -d "$model" ] && [ -s "$state/api-key" ]
 # The flags MTPLX.app launches with, minus its dashboard: one request at a time
@@ -25,7 +25,7 @@ model="$(cat "$state/model-path")"
 export MTPLX_CLEAR_CACHE_AFTER_REQUEST=always MTPLX_MLX_CACHE_LIMIT=268435456 \
   MTPLX_SESSION_BANK_MAX_ENTRIES=1 MTPLX_SESSION_BANK_MAX_BYTES=512M \
   MTPLX_SESSION_BANK_PER_SESSION_BYTES=512M
-"$state/venv/bin/mtplx" serve --host 127.0.0.1 --port 8000 \
+"$state/venv/bin/mtplx" serve --host 127.0.0.1 --port @MTPLX_PORT@ \
   --model "$model" --model-id localflow --api-key-file "$state/api-key" \
   --scheduler-mode serial --batching-preset latency --ssd-session-cache off \
   --context-window 32768 --fan-mode default --reasoning off \
@@ -38,7 +38,7 @@ trap 'kill -TERM "$child" 2>/dev/null || true' TERM INT HUP
 app_running() {
   app="$(cat "$state/app-pid" 2>/dev/null || true)"
   case "$(ps -o comm= -p "${app:-0}" 2>/dev/null || true)" in
-  */LocalFlow) return 0 ;;
+  */"@EXECUTABLE@") return 0 ;;
   esac
   return 1
 }

@@ -39,3 +39,12 @@ Constitution 1.0.0 forbade this: local-only speech recognition (principle 5), no
 - **Self-hosted IdP (Authentik, Pocket ID).** Neither provides a clean pending-approval queue.
 - **gRPC streaming.** Not supported on public Cloudflare Tunnel hostnames.
 - **Server-side user data storage and sync.** Out of scope (ADR 0006, roadmap item 12).
+
+## Refinements from Feature 014 (first slice)
+
+Feature 014's design ([research](../../specs/014-remote-dictation-server/research.md) R2, R4, R14) refines two points of the decision above and one of its consequences. The status stays Proposed until the hardware and network acceptance in `specs/014-remote-dictation-server/acceptance/` is recorded.
+
+- **Audio is raw Float32, not Opus or PCM16 (R2).** Dictation frames carry the spool's own little-endian Float32 samples at 16 kHz, at most 16,000 per frame, sent every 200 ms while the user speaks. The server then recognizes exactly the samples local dictation would, so remote and local transcripts can be identical (SC-005). At 512 kbit/s this is well within home and LTE uplinks, and only the last 200 ms is sent after key release. `dictation_start` carries a `format` field (`f32le`), so PCM16 can be added later if the LTE latency measurement shows the uplink is the bottleneck.
+- **The server-to-client direction is a second HPKE context (R4).** Both directions use HPKE base mode with DHKEM(X25519, HKDF-SHA256), HKDF-SHA256 and ChaCha20-Poly1305. The client's hello carries a fresh X25519 reply key; the server opens an HPKE sender to it with `info` exported from the client-to-server context, so only the holder of that context can open server frames. Each frame's 8-byte sequence number is authenticated as the AEAD additional data and must equal the receiver's counter. This replaces "the client seals a session key to the server's pinned static key" with two standard contexts, because standalone ChaCha20-Poly1305 is not public in Go's standard library and both directions then keep HPKE's own nonce counters.
+- **Rewrites also travel over the channel (R14).** With remote dictation on and the device approved, rewrite requests use the authenticated channel instead of the Feature 003 shared-token HTTP route; the request and event JSON are unchanged. Meeting analysis stays on HTTP in this slice.
+

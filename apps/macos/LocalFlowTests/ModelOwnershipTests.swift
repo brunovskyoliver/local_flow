@@ -791,4 +791,44 @@ extension ModelOwnershipTests {
 private actor LanguageLog {
   private(set) var values: [MeetingLanguage] = []
   func append(_ language: MeetingLanguage) { values.append(language) }
+
+  /// Feature 014 FR-014: the speech worker runs one lease per job. Terms bound to one
+  /// lease never reach the next lease's hints.
+  func testConsecutiveLeasesUseOnlyTheirOwnBoostTerms() async throws {
+    let runtime = TermEchoRuntime()
+    let lifecycle = ModelLifecycleCoordinator { runtime }
+    let first = VocabularyBoostTerms(
+      terms: [.init(entryID: "a", canonical: "Zabbix")], key: "first")
+    let second = VocabularyBoostTerms(
+      terms: [.init(entryID: "b", canonical: "Keycloak")], key: "second")
+    let leaseA = try await lifecycle.acquire(session: UUID(), boost: first)
+    let windowA = try await lifecycle.transcribe(leaseA, samples: [0.1])
+    try await lifecycle.finish(leaseA)
+    let leaseB = try await lifecycle.acquire(session: UUID(), boost: second)
+    let windowB = try await lifecycle.transcribe(leaseB, samples: [0.1])
+    try await lifecycle.finish(leaseB)
+    let leaseC = try await lifecycle.acquire(session: UUID())
+    let windowC = try await lifecycle.transcribe(leaseC, samples: [0.1])
+    await lifecycle.cancelAndJoin(leaseC)
+    XCTAssertEqual(windowA.boostHints.map(\.entryID), ["a"])
+    XCTAssertEqual(windowB.boostHints.map(\.entryID), ["b"])
+    XCTAssertTrue(windowC.boostHints.isEmpty)
+  }
+}
+
+/// Hints for exactly the terms the lease handed the runtime, as a keyword spotter would.
+private actor TermEchoRuntime: TranscriptionRuntime {
+  func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+    try await transcribe(samples, boost: nil)
+  }
+  func transcribe(_ samples: [Float], boost: VocabularyBoostTerms?) async throws
+    -> TranscriptionWindow
+  {
+    TranscriptionWindow(
+      text: "text", tokens: [],
+      boostHints: (boost?.terms ?? []).map {
+        .init(source: "text", canonical: $0.canonical, entryID: $0.entryID)
+      })
+  }
+  func shutdown() async {}
 }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- LocalFlow.entitlements plus Sign in with Apple (Feature 014). A restricted entitlement:
+     used only when scripts/dev-macos.sh signs with a provisioning profile for the variant's
+     App ID (LOCALFLOW_PROVISIONING_PROFILE, team QUB47S3XTF). -->
+<plist version="1.0"><dict><key>com.apple.security.device.audio-input</key><true/><key>com.apple.developer.applesignin</key><array><string>Default</string></array></dict></plist>

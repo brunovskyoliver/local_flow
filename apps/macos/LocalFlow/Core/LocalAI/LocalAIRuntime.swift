@@ -87,7 +87,7 @@ enum LocalAIError: Error, Equatable, Sendable {
     case .runtimeIntegrity: "A downloaded file did not match its pinned checksum. Retry."
     case .packages: "The AI runtime could not be installed. Details are in local-ai-setup.log."
     case .portInUse:
-      "Another AI server is using port 8000 or 8080. Quit MTPLX.app or stop it, then retry."
+      "Another AI server is using port \(AppIdentity.current.mtplxPort) or \(AppIdentity.current.flowdPort). Quit MTPLX.app or stop it, then retry."
     case .approvalRequired:
       "Allow LocalFlow under System Settings → General → Login Items, then retry."
     case .serviceRegistration:
@@ -102,9 +102,9 @@ enum LocalAIError: Error, Equatable, Sendable {
 /// loads weights: MTPLX runs in its own process, launched by launchd.
 actor LocalAIInstaller {
   static let servedModelID = "localflow"
-  static let rewriteEndpoint = "http://127.0.0.1:8080"
-  static let mtplxLabel = "org.localflow.LocalFlow.mtplx"
-  static let flowdLabel = "org.localflow.LocalFlow.flowd"
+  static let rewriteEndpoint = AppIdentity.current.rewriteEndpoint
+  static let mtplxLabel = AppIdentity.current.mtplxLabel
+  static let flowdLabel = AppIdentity.current.flowdLabel
   /// python-build-standalone 20260924, CPython 3.13.15, stripped install-only build.
   static let pythonURL = URL(
     string:
@@ -114,8 +114,8 @@ actor LocalAIInstaller {
   static let pythonBytes: Int64 = 25_208_410
   static let startDeadline: Duration = .seconds(300)
 
-  static let defaultRoot = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent("Library/Application Support/LocalFlow/LocalAI", isDirectory: true)
+  static let defaultRoot = AppIdentity.current.applicationSupportDirectory
+    .appendingPathComponent("LocalAI", isDirectory: true)
 
   let root: URL
   let resources: URL?
@@ -129,8 +129,7 @@ actor LocalAIInstaller {
   }
 
   private var log: URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Logs/LocalFlow/local-ai-setup.log")
+    AppIdentity.current.logsDirectory.appendingPathComponent("local-ai-setup.log")
   }
 
   func install(_ model: LocalAIModel, report: @escaping @Sendable (LocalAIPhase) -> Void)
@@ -149,7 +148,7 @@ actor LocalAIInstaller {
     let mtplx = SMAppService.agent(plistName: Self.mtplxLabel + ".plist")
     let flowd = SMAppService.agent(plistName: Self.flowdLabel + ".plist")
     // Our own services own the ports once registered; anything else there is a conflict.
-    if mtplx.status != .enabled, await Self.answers("http://127.0.0.1:8000/health") {
+    if mtplx.status != .enabled, await Self.answers(AppIdentity.current.mtplxEndpoint + "/health") {
       throw LocalAIError.portInUse
     }
     if flowd.status != .enabled, await Self.answers(Self.rewriteEndpoint + "/v1/rewrite/health") {
@@ -330,7 +329,7 @@ actor LocalAIInstaller {
     let key = try String(contentsOf: root.appendingPathComponent("api-key"), encoding: .utf8)
     let clock = ContinuousClock()
     let deadline = clock.now + Self.startDeadline
-    var models = URLRequest(url: URL(string: "http://127.0.0.1:8000/v1/models")!)
+    var models = URLRequest(url: URL(string: AppIdentity.current.mtplxEndpoint + "/v1/models")!)
     models.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
     while clock.now < deadline {
       if let body = await Self.fetch(models), body.contains("\"\(Self.servedModelID)\""),

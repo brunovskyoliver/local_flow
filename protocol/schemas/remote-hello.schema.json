@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localflow.org/schemas/remote-hello.schema.json",
+  "title": "LocalFlow remote hello v1",
+  "description": "Plaintext of the first client frame on /v1/remote/channel (Feature 014). The hello has no kind byte. reply_key is the client's fresh per-channel X25519 public key; the server seals every reply to it. access_token is required for purpose session and not permitted otherwise. The server answers ready or an error without op, then closes on error.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/enroll_or_refresh"
+    },
+    {
+      "$ref": "#/$defs/session"
+    }
+  ],
+  "$defs": {
+    "enroll_or_refresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "type",
+        "reply_key",
+        "purpose"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "hello"
+        },
+        "reply_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "base64url without padding, 32 bytes."
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "enroll",
+            "refresh"
+          ]
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "type",
+        "reply_key",
+        "purpose",
+        "access_token"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "hello"
+        },
+        "reply_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "base64url without padding, 32 bytes."
+        },
+        "purpose": {
+          "const": "session"
+        },
+        "access_token": {
+          "type": "string",
+          "pattern": "^lfa_[A-Za-z0-9_-]{43}$",
+          "description": "lfa_ plus 32 random bytes, base64url without padding."
+        }
+      }
+    }
+  }
+}

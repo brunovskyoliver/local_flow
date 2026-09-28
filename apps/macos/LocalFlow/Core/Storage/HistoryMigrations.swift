@@ -872,6 +872,27 @@ enum HistoryMigrations {
           ) WITHOUT ROWID
           """)
     }
+    // Feature 014: which path recognized each dictation, and dictations whose audio
+    // waits for a remote retry because no local model is installed.
+    migrator.registerMigration("remote-dictation-v15") { db in
+      try db.execute(
+        sql: """
+          ALTER TABLE transcriptions ADD COLUMN recognition_path TEXT NOT NULL DEFAULT 'local'
+            CHECK (recognition_path IN ('local', 'server', 'local_after_server_failure'));
+          ALTER TABLE transcriptions ADD COLUMN server_failure TEXT
+            CHECK (server_failure IS NULL OR length(server_failure) <= 32);
+          CREATE TABLE pending_remote_dictations (
+            id TEXT PRIMARY KEY,
+            audio_file TEXT NOT NULL,
+            sample_count INTEGER NOT NULL CHECK (sample_count BETWEEN 1 AND 2880000),
+            created_at INTEGER NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL,
+            last_failure TEXT,
+            target_bundle_id TEXT
+          );
+          """)
+    }
     return migrator
   }
 

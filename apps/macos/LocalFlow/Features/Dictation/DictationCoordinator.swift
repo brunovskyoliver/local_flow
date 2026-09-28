@@ -81,9 +81,13 @@ struct ContextMetrics: Sendable, Equatable {
   private var claimed = false
   private var recordingEnded = false
 
+  /// Whether a lease acquisition was started; remote dictation starts it only at a failure.
+  var acquisitionStarted: Bool { acquiring != nil }
+
   func acquire(
     _ lifecycle: ModelLifecycleCoordinator, session: UUID, boost: VocabularyBoostTerms? = nil
   ) {
+    guard acquiring == nil else { return }
     acquiring = Task {
       do { lease = try await lifecycle.acquire(session: session, boost: boost) } catch {
         failure = error
@@ -206,6 +210,8 @@ final class DictationCoordinator {
   @ObservationIgnored private let rewriter: (any RewriteRequesting)?
   @ObservationIgnored private let contextReader: (any AppContextReading)?
   @ObservationIgnored private let contextSettings: @MainActor () -> ContextSettings
+  /// Feature 014. Nil keeps the local-only flow; no remote object exists then.
+  @ObservationIgnored private let remote: (any RemoteDictationRouting)?
   /// Fires once per dictation whose context was read, before commit.
   var contextMeasured: ((ContextMetrics) -> Void)?
   @ObservationIgnored private let spoolRoot: URL
@@ -234,8 +240,10 @@ final class DictationCoordinator {
     vocabulary: (any VocabularyProviding)? = nil,
     rewriter: (any RewriteRequesting)? = nil,
     contextReader: (any AppContextReading)? = nil,
-    contextSettings: @escaping @MainActor () -> ContextSettings = { .disabled }
+    contextSettings: @escaping @MainActor () -> ContextSettings = { .disabled },
+    remote: (any RemoteDictationRouting)? = nil
   ) {
+    self.remote = remote
     self.store = store
     self.rewriter = rewriter
     self.contextReader = contextReader
@@ -304,7 +312,11 @@ final class DictationCoordinator {
     }
     // FR-017: the settings in force at the press apply to this dictation only.
     let context = contextSettings()
-    operation = Task { await run(tag: tag, mode: mode, context: context) }
+    let remoteSettings = remote?.settings() ?? .off
+    remote?.dictationStarted(settings: remoteSettings)
+    operation = Task {
+      await run(tag: tag, mode: mode, context: context, remoteSettings: remoteSettings)
+    }
   }
   func release(bypassRewrite: Bool = false) {
     guard busy, let tag = controlTag else { return }
@@ -404,8 +416,14 @@ final class DictationCoordinator {
     stateChanged?(value)
   }
 
-  private func run(tag: ControlMailbox.Tag, mode: RewriteMode?, context: ContextSettings) async {
+  private func run(
+    tag: ControlMailbox.Tag, mode: RewriteMode?, context: ContextSettings,
+    remoteSettings: RemoteDictationSettings = .off
+  ) async {
     var session = DictationSession(id: tag.sessionID)
+    var remoteSession: RemoteDictationSession?
+    var recognitionPath = TranscriptionEntry.RecognitionPath.local
+    var serverFailure: RemoteFailureReason?
     let admitted = DispatchTime.now().uptimeNanoseconds
     var recognized: (result: TranscriptionResult, samples: Int)?
     var persistenceNanoseconds: UInt64?
@@ -472,12 +490,30 @@ final class DictationCoordinator {
       session.vocabulary = try await snapshotting.value
       consumeControls()
       guard !stopRequested, !Task.isCancelled else { throw DictationFailure.cancelled }
-      // A cold model load runs beside capture; recording never waits for it.
-      live.acquire(
-        lifecycle, session: session.id,
-        boost: VocabularyBoostTerms(snapshot: session.vocabulary))
-      failureStage = "starting the microphone"
       let spool = session.audio!
+      let boost = VocabularyBoostTerms(snapshot: session.vocabulary)
+      // Feature 014: an approved device streams to the server instead of loading the
+      // local model; the lease is acquired only once the remote path fails.
+      if remoteSettings.routesToServer, let remote,
+        let started = remote.makeSession(
+          settings: remoteSettings, boost: RemoteBoost(boost),
+          read: { start, count in try spool.readWindow(startSample: start, count: count) },
+          recorded: { await live.recordedSamples })
+      {
+        remoteSession = started
+        let lifecycle = lifecycle
+        let sessionID = session.id
+        let provisioned = remote.localModelProvisioned
+        await started.onFailure { _ in
+          guard provisioned else { return }
+          Task { @MainActor in live.acquire(lifecycle, session: sessionID, boost: boost) }
+        }
+        await started.start()
+      } else {
+        // A cold model load runs beside capture; recording never waits for it.
+        live.acquire(lifecycle, session: session.id, boost: boost)
+      }
+      failureStage = "starting the microphone"
       let starting = Task { [capture] in try await capture.start(sessionID: id, spool: spool) }
       // Target capture (bounded Accessibility calls) overlaps the engine start.
       session.target = await insertion.captureTarget()
@@ -491,7 +527,7 @@ final class DictationCoordinator {
       }
       targetDisplayPoint = IndicatorPanel.displayPoint(for: session.target)
       try await starting.value
-      live.startPrefetch(transcriber, spool: spool)
+      if remoteSession == nil { live.startPrefetch(transcriber, spool: spool) }
       consumeControls()
       session.startedAt = .now
       session.deadline = session.startedAt?.advanced(by: .seconds(180))
@@ -504,7 +540,11 @@ final class DictationCoordinator {
         if let snapshot = await capture.snapshot(), snapshot.sessionID == session.id {
           live.recordedSamples = snapshot.sampleCount
           mailbox.publishPresentation(.init(tag: tag, value: .audioLevel(snapshot.level)))
-          if snapshot.terminalReason != nil { break }
+          if let reason = snapshot.terminalReason {
+            // The Mac is going to sleep: the remote session is abandoned at once.
+            if case .failure(.sleep) = reason { await remoteSession?.systemWillSleep() }
+            break
+          }
         }
         consumeControls()
         try? await ContinuousClock().sleep(for: .milliseconds(34))
@@ -522,6 +562,7 @@ final class DictationCoordinator {
       consumeControls()
       // A cancelled recording is never transcribed, so its early windows are dropped.
       if cancelled { await live.discardPrefetch(lifecycle) } else { await live.finishPrefetch() }
+      if cancelled { await remoteSession?.cancel() }
       guard audio.sessionID == session.id else { throw AudioCaptureFailure.staleSession }
       Logger(subsystem: "org.localflow.LocalFlow", category: "dictation").notice(
         "Capture stopped: \(String(describing: audio.reason), privacy: .public); samples=\(audio.sampleCount)"
@@ -577,16 +618,52 @@ final class DictationCoordinator {
         }
       }
       transition(cancelled ? .cancelling : .transcribing)
+      var remoteWindows: RemoteDictationResult?
+      if let started = remoteSession, !cancelled {
+        status = "Transcribing on your server…"
+        failureStage = "recognizing on the server"
+        if remote?.settings().enabled == false {
+          // Remote dictation was switched off during the recording: finish locally.
+          await started.cancel()
+        } else {
+          switch await started.finish(totalSamples: audio.sampleCount) {
+          case .success(let result):
+            remoteWindows = result
+            recognitionPath = .server
+          case .failure(let reason):
+            recognitionPath = .localAfterServerFailure
+            serverFailure = reason
+          }
+        }
+        if remoteWindows == nil, let remote, !remote.localModelProvisioned {
+          // No local model: keep the audio for a retry; nothing is inserted (FR-018).
+          await keepForRetry(
+            session: &session, audio: audio, reason: serverFailure ?? .unreachable,
+            remote: remote)
+          return
+        }
+        if remoteWindows == nil { live.acquire(lifecycle, session: session.id, boost: boost) }
+      }
       status = cancelled ? "Cancelling…" : "Transcribing locally…"
-      // A key release during a cold load still transcribes; a cancel stops the load.
-      failureStage = "loading the speech model"
-      if cancelled, live.lease == nil { throw DictationFailure.cancelled }
-      session.lease = try await live.claimLease()
-      failureStage = "transcribing audio"
-      let result = await transcriber.transcribe(
-        spool: audio.spool, lease: session.lease!, sampleCount: audio.sampleCount,
-        prefetched: live.prefetched
-      ).normalizedForDelivery(vocabulary: session.vocabulary ?? .empty)
+      let result: TranscriptionResult
+      if let remoteWindows {
+        failureStage = "assembling the server's windows"
+        result = await transcriber.transcribe(
+          sampleCount: audio.sampleCount, remote: remoteWindows.windows, model: remoteWindows.model
+        ).normalizedForDelivery(vocabulary: session.vocabulary ?? .empty)
+        remote?.completed(remoteWindows, dictation: session.id)
+      } else {
+        // A key release during a cold load still transcribes; a cancel stops the load.
+        failureStage = "loading the speech model"
+        if cancelled, live.lease == nil { throw DictationFailure.cancelled }
+        session.lease = try await live.claimLease()
+        failureStage = "transcribing audio"
+        // After a server failure the whole spool is recognized locally (scenario 3).
+        result = await transcriber.transcribe(
+          spool: audio.spool, lease: session.lease!, sampleCount: audio.sampleCount,
+          prefetched: remoteSession == nil ? live.prefetched : [:]
+        ).normalizedForDelivery(vocabulary: session.vocabulary ?? .empty)
+      }
       recognized = (result, audio.sampleCount)
       consumeControls()
       if cancelled { contextRead?.cancel() }
@@ -608,7 +685,8 @@ final class DictationCoordinator {
           id: session.id, text: session.text,
           createdAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1000),
           quality: session.quality, stopReason: session.stopReason,
-          targetBundleID: session.target?.bundleIdentifier)
+          targetBundleID: session.target?.bundleIdentifier, recognitionPath: recognitionPath,
+          serverFailure: serverFailure)
         var terminalReasons = result.completionReasons
         if cancelled { terminalReasons.append(.init(.cancelled)) }
         if session.stopReason == .durationLimit { terminalReasons.append(.init(.durationLimit)) }
@@ -789,6 +867,7 @@ final class DictationCoordinator {
       Logger(subsystem: "org.localflow.LocalFlow", category: "dictation").error(
         "Dictation failed while \(failureStage, privacy: .public): \(diagnostic, privacy: .public)")
       _ = try? await capture.cancel(sessionID: session.id)
+      await remoteSession?.cancel()
       // Join early recognition before the spool is removed and the lease ends.
       await live.discardPrefetch(lifecycle)
       if session.lease == nil { session.lease = await live.cancelAcquisition() }
@@ -833,6 +912,45 @@ final class DictationCoordinator {
   }
 
   static let contextDeadline = Duration.milliseconds(250)
+
+  /// FR-018 without a local model: the spool file becomes a pending retry in the same
+  /// step as its row. With 20 already waiting the user decides; nothing is dropped
+  /// silently. The session ends without inserting anything.
+  private func keepForRetry(
+    session: inout DictationSession, audio: AudioCaptureResult, reason: RemoteFailureReason,
+    remote: any RemoteDictationRouting
+  ) async {
+    transition(.persisting)
+    if audio.sampleCount > 0, let spool = session.audio {
+      do {
+        try await remote.keepForRetry(
+          id: session.id, audio: spool.audioFileURL, sampleCount: audio.sampleCount,
+          failure: reason, targetBundleID: session.target?.bundleIdentifier)
+        status =
+          "Your server is unavailable. The dictation is waiting in History and will be retried."
+      } catch {
+        // Full (20 waiting) or unwritable: the user copies the audio or discards it.
+        await remote.retryQueueFull(audio: spool.audioFileURL, sampleCount: audio.sampleCount)
+        status = "This recording could not be kept for your server. Its audio was offered to you."
+      }
+      Logger(subsystem: "org.localflow.LocalFlow", category: "dictation").notice(
+        "Dictation kept for remote retry: reason=\(reason.rawValue, privacy: .public) samples=\(audio.sampleCount)"
+      )
+    } else {
+      status = "No speech detected."
+    }
+    // The audio file has moved (or the user chose); only the session directory is left.
+    if let spool = session.audio {
+      try? await Task.detached { try spool.cleanup() }.value
+      session.audio = nil
+    }
+    if let reservation = session.reservation {
+      await store.releaseReservation(reservation)
+      session.reservation = nil
+    }
+    transition(.idle)
+    await refreshHistory()
+  }
 
   /// A window the runtime failed or answered invalidly; the model is then released.
   private static func runtimeFaulted(_ result: TranscriptionResult) -> Bool {

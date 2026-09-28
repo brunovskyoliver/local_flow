@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "type": "dictation_accepted",
+  "op": 1,
+  "window_samples": 239360,
+  "model": {
+    "engine": "FluidAudio",
+    "model_id": "FluidInference/parakeet-tdt-0.6b-v3-coreml",
+    "model_revision": "7dd20fe6",
+    "manifest_hash": "0f3c9a",
+    "sdk": "0.15.7",
+    "booster": "ctc110m-v1",
+    "worker_build": "flowd-speech 0.14.0"
+  }
+}

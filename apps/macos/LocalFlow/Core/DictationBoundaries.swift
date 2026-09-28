@@ -1,56 +1,5 @@
 import Foundation
 
-struct TranscriptionToken: Sendable, Equatable {
-  let text: String
-  let start: Double
-  let end: Double
-}
-
-struct TranscriptionWindow: Sendable {
-  let text: String
-  let tokens: [TranscriptionToken]
-  var evidence: RecognitionEvidence? = nil
-  /// Feature 013: Dictionary replacements the keyword spotter confirmed for this window.
-  /// The raw text stays as recognized; normalization applies these as V002.
-  var boostHints: [VocabularyBoostHint] = []
-}
-
-protocol TranscriptionRuntime: Sendable {
-  func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow
-  /// `boost` is the dictation's Dictionary; runtimes without a keyword spotter ignore it.
-  func transcribe(_ samples: [Float], boost: VocabularyBoostTerms?) async throws
-    -> TranscriptionWindow
-  func shutdown() async
-}
-
-extension TranscriptionRuntime {
-  func transcribe(_ samples: [Float], boost: VocabularyBoostTerms?) async throws
-    -> TranscriptionWindow
-  {
-    try await transcribe(samples)
-  }
-}
-
-protocol DictationClock: Sendable {
-  func sleep(for duration: Duration) async throws
-}
-
-struct SystemDictationClock: DictationClock {
-  func sleep(for duration: Duration) async throws {
-    try await ContinuousClock().sleep(for: duration)
-  }
-}
-
-struct ModelLease: Sendable, Equatable {
-  let sessionID: UUID
-  let generation: UInt64
-  var workload: ModelWorkload = .speechRecognition
-}
-
-enum DictationFailure: Error, Equatable {
-  case busy, staleLease, cancelled, invalidAudio, invalidResult, modelUnavailable
-}
-
 protocol AudioCapturing: Sendable {
   func authorize() async -> Bool
   func start(sessionID: UUID, spool: AudioSpool) async throws
@@ -235,6 +184,36 @@ extension RewriteTransporting {
   func protocolVersions(endpoint: RewriteEndpoint) async -> [Int]? {
     (try? await health(endpoint: endpoint))?.protocolVersions
   }
+}
+
+/// Feature 014: what the dictation flow needs from remote dictation. A coordinator
+/// without one (the default) is exactly the local-only flow and never connects.
+@MainActor
+protocol RemoteDictationRouting: AnyObject {
+  /// The press-time snapshot; one decision per dictation (FR-017).
+  func settings() -> RemoteDictationSettings
+  /// Called at every key press with that snapshot. A pending device tries one
+  /// background refresh so an approval takes effect without restarting.
+  func dictationStarted(settings: RemoteDictationSettings)
+  /// A session for an approved device, or nil when a credential is missing (then local).
+  func makeSession(
+    settings: RemoteDictationSettings, boost: RemoteBoost?,
+    read: @escaping RemoteDictationSession.SampleReader,
+    recorded: @escaping RemoteDictationSession.SampleCounter
+  ) -> RemoteDictationSession?
+  /// Whether a verified local speech model is installed for fallback.
+  var localModelProvisioned: Bool { get }
+  /// Moves a failed dictation's audio into `PendingAudio/` with its retry row.
+  /// Throws `PendingRemoteDictationStore.Failure.full` when 20 already wait.
+  func keepForRetry(
+    id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?
+  ) async throws
+  /// The recording could not be kept (twenty already wait, or the disk refused): asks
+  /// the user to copy its audio or discard it. Returns once they chose; the audio is
+  /// never deleted silently.
+  func retryQueueFull(audio: URL, sampleCount: Int) async
+  /// The channel of a completed remote dictation, kept open for its rewrite.
+  func completed(_ result: RemoteDictationResult, dictation: UUID)
 }
 
 /// Read once at admission; a failure blocks the session instead of changing its meaning.

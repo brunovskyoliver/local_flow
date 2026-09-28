@@ -106,3 +106,64 @@ rm "$HOME/Library/LaunchAgents/org.localflow.flowd.rewrite.plist"
 This operational setup preserves the constitution's separate Go/inference
 processes and loopback-only listener. It does not complete Phase 11's acceptance
 or resource measurements.
+
+## Remote dictation server (Feature 014)
+
+flowd can also serve remote dictation to approved LocalFlow devices through a
+Cloudflare Tunnel. It is off unless `--remote-listen` is given, and it then opens a
+second loopback listener that serves only `/v1/remote/identity` and
+`/v1/remote/channel` (an end-to-end encrypted WebSocket channel). The Feature 003
+and 011 routes and the shared rewrite token grant nothing there. Speech recognition
+runs in the `flowd-speech` worker, a Swift child process that uses the app's own
+FluidAudio and term-boosting code; flowd loads no weights. Contracts:
+[flowd-cli.md](../specs/014-remote-dictation-server/contracts/flowd-cli.md),
+[remote-channel.md](../specs/014-remote-dictation-server/contracts/remote-channel.md),
+[speech-worker-ipc.md](../specs/014-remote-dictation-server/contracts/speech-worker-ipc.md).
+
+| Flag | Meaning |
+| --- | --- |
+| `--remote-listen 127.0.0.1:8090` | loopback address for the remote listener (development 18090) |
+| `--data-dir <dir>` | holds `flowd-remote.sqlite`; must be owned by this user, mode 0700 |
+| `--speech-worker <path>` | worker executable, default `flowd-speech` next to flowd |
+| `--speech-models <dir>` | models the worker verifies, default `<data-dir>/Models` |
+| `--apple-audience`, `--google-client-id` | accepted ID-token audiences; Google is refused without a client ID |
+| `--dev` | read the identity key from the development Keychain service |
+
+Accounts are created by Sign in with Apple or Google from the app and start pending.
+The administrator approves them on the server; there is no remote admin API:
+
+```sh
+DATA="$HOME/Library/Application Support/LocalFlow Server"
+"$DATA/bin/flowd" admin --data-dir "$DATA" init          # SQLite file and identity key
+"$DATA/bin/flowd" admin --data-dir "$DATA" identity      # fingerprint to compare in the app
+"$DATA/bin/flowd" admin --data-dir "$DATA" list --state pending
+"$DATA/bin/flowd" admin --data-dir "$DATA" approve user 3
+"$DATA/bin/flowd" admin --data-dir "$DATA" approve device 5
+"$DATA/bin/flowd" admin --data-dir "$DATA" revoke device 5   # live channels close within 1 s
+"$DATA/bin/flowd" admin --data-dir "$DATA" audit --limit 20
+```
+
+`scripts/install-remote-server.sh [--dev] [--dry-run] [--google-client-id IDS]
+[--apple-audience IDS] [--mtplx PATH] [--model DIR]` builds flowd and `flowd-speech`,
+installs them under `<data-dir>/bin` with the pinned model descriptors, and loads two
+launch agents: `org.localflow.LocalFlow.remote` (remote listener 127.0.0.1:8090, normal
+listener 127.0.0.1:8091) and the server's own MTPLX, `org.localflow.LocalFlow.remote.mtplx`
+on 127.0.0.1:8092. With `--dev` the labels gain `.dev` and the ports are 18090, 18091 and
+18092. The server's MTPLX stays loaded while its agent runs and needs no LocalFlow app;
+its key is generated into `<data-dir>/mtplx-api-key` and handed to flowd by a wrapper
+script, never through a plist. The runtime and model default to the installed app's.
+Sign-in providers are refused unless `--google-client-id` or `--apple-audience` names
+the accepted client. It never touches the app's `.flowd` and `.mtplx` agents, and it
+stops before loading the agents until `flowd admin init` has run. Provision the speech model with
+`"$DATA/bin/flowd-speech" provision --models "$DATA/Models" --booster`, then point the
+tunnel hostname at the remote listener.
+
+Logs carry identifiers, counts, durations and codes only; the worker's own stderr is
+content-free, and FluidAudio's console output inside the worker is discarded.
+`scripts/check-remote-logs.sh` scans logs for tokens, JWTs, fixture phrases and
+Dictionary terms. Opt-in check of the real worker against the Go side:
+
+```sh
+LOCALFLOW_SPEECH_WORKER=<path to flowd-speech> LOCALFLOW_SPEECH_MODELS=<Models dir> \
+LOCALFLOW_SPEECH_AUDIO=<16 kHz f32le file> go test ./internal/remote -run TestRealWorkerWindowsDecode -v
+```

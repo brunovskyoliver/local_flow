@@ -4,6 +4,7 @@ import ApplicationServices
 import Foundation
 import OSLog
 import Observation
+import UserNotifications
 import os
 
 @MainActor @Observable
@@ -43,6 +44,13 @@ final class AppServices {
       self?.coordinator?.busy == true || self?.meetingIntelligence?.activeMeetingID != nil
     })
   @ObservationIgnored private(set) var rewriteCoordinator: RewriteCoordinator?
+  // Feature 014: remote dictation. Nothing here connects until the user turns it on;
+  // the enrollment object is created only after the consent step.
+  @ObservationIgnored let remoteCredentials = RemoteCredentialStore()
+  @ObservationIgnored private var remoteEnrollmentInstance: RemoteEnrollment?
+  @ObservationIgnored private(set) var remoteRouter: RemoteDictationRouter?
+  @ObservationIgnored private(set) var pendingRemoteStore: PendingRemoteDictationStore?
+  @ObservationIgnored private(set) var pendingRetrier: PendingRemoteRetrier?
   private(set) var explicitInsertion: ExplicitInsertionCoordinator?
   private(set) var reviewingInsertion = false
   private(set) var coordinator: DictationCoordinator?
@@ -140,6 +148,69 @@ final class AppServices {
     return "Ready · hold your shortcut to dictate"
   }
 
+  /// The enrollment flow, created once remote dictation has been turned on after the
+  /// consent step (FR-001, FR-002). Nil before that, so nothing remote can connect.
+  func remoteEnrollment() -> RemoteEnrollment? {
+    guard preferences.remoteEnabled,
+      preferences.remoteConsentVersion >= AppPreferences.remoteConsentVersion
+    else { return nil }
+    if let remoteEnrollmentInstance { return remoteEnrollmentInstance }
+    let enrollment = RemoteEnrollment(
+      preferences: preferences, credentials: remoteCredentials, keys: SecureEnclaveDeviceKeys(),
+      signIn: SystemIdentitySignIn(), identityFetcher: URLSessionIdentityFetcher(),
+      transports: URLSessionRemoteTransportOpener(),
+      deviceName: Host.current().localizedName ?? "Mac")
+    remoteEnrollmentInstance = enrollment
+    return enrollment
+  }
+
+  /// Turning remote dictation off (FR-003): Keychain items and settings go; history stays.
+  func turnOffRemoteDictation() {
+    if let remoteEnrollmentInstance {
+      remoteEnrollmentInstance.turnOff()
+    } else {
+      try? remoteCredentials.removeAll()
+      preferences.resetRemote()
+    }
+    remoteEnrollmentInstance = nil
+    if let channels = remoteRouter?.rewriteChannels { Task { await channels.closeParked() } }
+  }
+
+  /// A failed remote dictation could not be kept for retry: the user saves its audio
+  /// as a WAV file or discards it (FR-018). Nothing is deleted without asking.
+  private func askAboutUnkeptAudio(_ audio: URL, sampleCount: Int) async {
+    let alert = NSAlert()
+    alert.messageText = "This recording can't wait for your server"
+    alert.informativeText =
+      "Twenty dictations are already waiting, or the recording could not be stored. Save its audio to keep it, or discard it."
+    alert.addButton(withTitle: "Save Audio…")
+    alert.addButton(withTitle: "Discard")
+    NSApp.activate(ignoringOtherApps: true)
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "LocalFlow dictation.wav"
+    panel.allowedContentTypes = [.wav]
+    guard panel.runModal() == .OK, let destination = panel.url,
+      let samples = try? Data(contentsOf: audio)
+    else { return }
+    try? PendingRemoteDictationStore.wav(fromFloat32: samples).write(
+      to: destination, options: .atomic)
+  }
+
+  /// A retried dictation was saved for review; nothing was inserted (ADR 0014).
+  private func announceRecoveredDictation() {
+    historyModel?.refresh()
+    let center = UNUserNotificationCenter.current()
+    center.requestAuthorization(options: [.alert]) { granted, _ in
+      guard granted else { return }
+      let content = UNMutableNotificationContent()
+      content.title = "Dictation ready"
+      content.body = "Your server recognized a dictation that was waiting. Review it in History."
+      center.add(
+        UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+  }
+
   func start() async {
     guard coordinator == nil, !starting else { return }
     starting = true
@@ -148,19 +219,16 @@ final class AppServices {
     followLocalModelChoice()
     defer { starting = false }
     do {
-      let base = try FileManager.default.url(
-        for: .applicationSupportDirectory, in: .userDomainMask,
-        appropriateFor: nil, create: true
-      ).appendingPathComponent("LocalFlow", isDirectory: true)
+      let base = AppIdentity.current.applicationSupportDirectory
       let paths = try await Task.detached { () -> (URL, TranscriptionStore, AppInstanceLock) in
         try FileManager.default.createDirectory(
           at: base, withIntermediateDirectories: true,
           attributes: [.posixPermissions: 0o700])
         guard chmod(base.path, 0o700) == 0 else { throw CocoaError(.fileWriteNoPermission) }
         let instanceLock = try AppInstanceLock(directory: base)
-        let cleanup = try AudioSpool(rootDirectory: base.appendingPathComponent("TemporaryAudio"))
+        let cleanup = try AudioSpool(rootDirectory: AppIdentity.current.spoolDirectory)
         try cleanup.cleanup()
-        let store = try TranscriptionStore(path: base.appendingPathComponent("history.sqlite").path)
+        let store = try TranscriptionStore(path: AppIdentity.current.databaseURL.path)
         // A rewrite left pending by the previous run is interrupted, never resumed.
         try await store.cancelPendingOnStartup()
         return (base, store, instanceLock)
@@ -172,7 +240,7 @@ final class AppServices {
       let descriptorData = try Data(contentsOf: url)
       let descriptor = try JSONDecoder().decode(ModelDescriptor.self, from: descriptorData)
       modelDescriptor = descriptor
-      modelLocation = base.appendingPathComponent("Models/parakeet-v3")
+      modelLocation = AppIdentity.current.modelsDirectory.appendingPathComponent("parakeet-v3")
       if ProcessInfo.processInfo.environment["LOCALFLOW_RESOURCE_RECORDING"] == "1" {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         if let hardware = ResourceRecorder.hardwareIdentifier() {
@@ -189,7 +257,8 @@ final class AppServices {
         }
       }
       let provisioner = ModelProvisioner(
-        descriptor: descriptor, rootURL: base.appendingPathComponent("Models/parakeet-v3"))
+        descriptor: descriptor,
+        rootURL: AppIdentity.current.modelsDirectory.appendingPathComponent("parakeet-v3"))
       self.provisioner = provisioner
       let bytes = descriptor.files.reduce(Int64(0)) {
         $0 + max(0, min($1.size, ModelProvisioner.maxPackageBytes))
@@ -198,7 +267,7 @@ final class AppServices {
       modelDetails =
         "\(descriptor.modelID)\nRevision \(descriptor.sourceRevision)\nLicense: \(descriptor.license)\nManifest-listed files: \(size). "
         + (descriptor.complete ? "" : "Integrity metadata incomplete; provisioning unavailable. ")
-        + "\nLocation: \(base.appendingPathComponent("Models/parakeet-v3").path)\nWorks offline after verified installation."
+        + "\nLocation: \(AppIdentity.current.modelsDirectory.appendingPathComponent("parakeet-v3").path)\nWorks offline after verified installation."
       FluidAudioDiarizerFactory.enableOfflineMode()
       // Speaker labels have their own pinned manifest and directory; a missing
       // manifest only disables diarization (model_unavailable).
@@ -220,7 +289,7 @@ final class AppServices {
         ModelProvisioner(
           descriptor: $0,
           rootURL: FluidAudioDiarizerFactory.installRoot(
-            models: base.appendingPathComponent("Models", isDirectory: true)))
+            models: AppIdentity.current.modelsDirectory))
       }
       self.diarizationProvisioner = diarizationProvisioner
       diarizationIdentity = DiarizationIdentity(
@@ -244,7 +313,8 @@ final class AppServices {
             ModelDescriptor.self, from: Data(contentsOf: url))
           return ModelProvisioner(
             descriptor: descriptor,
-            rootURL: base.appendingPathComponent("Models/parakeet-ctc-110m"))
+            rootURL: AppIdentity.current.modelsDirectory.appendingPathComponent("parakeet-ctc-110m")
+          )
         } catch {
           Self.logModelFailure("Term booster manifest", error)
           return nil
@@ -259,7 +329,8 @@ final class AppServices {
       let meetingDescriptor = try JSONDecoder().decode(ModelDescriptor.self, from: meetingManifest)
       let meetingProvisioner = ModelProvisioner(
         descriptor: meetingDescriptor,
-        rootURL: base.appendingPathComponent("Models/whisper-large-v3-turbo"))
+        rootURL: AppIdentity.current.modelsDirectory.appendingPathComponent(
+          "whisper-large-v3-turbo"))
       self.meetingModelProvisioner = meetingProvisioner
       let recorder = recorder
       let vocabulary = VocabularyStore(history: paths.1)
@@ -409,11 +480,45 @@ final class AppServices {
         base: base, history: paths.1, lifecycle: lifecycle,
         vocabulary: vocabulary, identity: transcriptIdentity, finalIdentity: finalIdentity)
       let insertion = TextInsertionService()
+      // Feature 014: pending retries are local rows and files; the router connects only
+      // for an approved device with remote dictation on.
+      let pendingStore = try PendingRemoteDictationStore(
+        database: paths.1.database, directory: AppIdentity.current.pendingAudioDirectory)
+      _ = try? await pendingStore.reconcile()
+      pendingRemoteStore = pendingStore
+      let remoteRouter = RemoteDictationRouter(
+        preferences: preferences, credentials: remoteCredentials,
+        transports: URLSessionRemoteTransportOpener(),
+        enrollment: { [weak self] in self?.remoteEnrollment() },
+        pending: { [weak self] in self?.pendingRemoteStore },
+        localModelProvisioned: { [weak self] in self?.modelInstalled == true },
+        askAboutAudio: { [weak self] audio, count in
+          await self?.askAboutUnkeptAudio(audio, sampleCount: count)
+        })
+      self.remoteRouter = remoteRouter
+      settings.remote = RemoteDictationModel(
+        preferences: preferences, enrollment: { [weak self] in self?.remoteEnrollment() },
+        turnOff: { [weak self] in self?.turnOffRemoteDictation() },
+        signInAvailable: { provider in
+          provider == .apple
+            || !((Bundle.main.object(forInfoDictionaryKey: "LocalFlowGoogleClientID") as? String)?
+              .isEmpty ?? true)
+        })
       // Always wired: whether a dictation is rewritten is read from the per-attempt
-      // settings snapshot, so the Settings toggle applies without relaunch.
+      // settings snapshot, so the Settings toggle applies without relaunch. With remote
+      // dictation on and this device approved, rewrites use the remote channel (FR-020).
       let rewriteCoordinator = RewriteCoordinator(
         preferences: preferences, credentials: rewriteCredentials,
-        transport: rewriteClient, store: paths.1)
+        transport: RoutingRewriteTransport(
+          http: rewriteClient,
+          remote: RemoteRewriteTransport(channels: remoteRouter.rewriteChannels)),
+        store: paths.1)
+      rewriteCoordinator.remoteRewriteOrigin = { [weak preferences] in
+        guard let settings = preferences?.remoteSettings(), settings.routesToServer else {
+          return nil
+        }
+        return settings.serverOrigin
+      }
       self.rewriteCoordinator = rewriteCoordinator
       rewriteCoordinator.metricRecorded = { [weak self] metric in
         switch metric {
@@ -425,7 +530,7 @@ final class AppServices {
       let coordinator = DictationCoordinator(
         store: paths.1, lifecycle: lifecycle,
         capture: AudioCaptureService(), insertion: insertion,
-        spoolRoot: paths.0.appendingPathComponent("TemporaryAudio"),
+        spoolRoot: AppIdentity.current.spoolDirectory,
         transcriber: WindowedTranscriber(
           lifecycle: lifecycle,
           identity: try TranscriptionPipelineIdentity(
@@ -436,8 +541,19 @@ final class AppServices {
         vocabulary: vocabulary, rewriter: rewriteCoordinator,
         // Feature 012: read at each press; off by default, so no AX read happens.
         contextReader: SystemAppContextReader(),
-        contextSettings: { [weak preferences] in preferences?.contextSettings() ?? .disabled })
+        contextSettings: { [weak preferences] in preferences?.contextSettings() ?? .disabled },
+        remote: remoteRouter)
       self.coordinator = coordinator
+      let retrier = PendingRemoteRetrier(
+        store: pendingStore, history: paths.1, vocabulary: vocabulary, starter: remoteRouter,
+        transcriber: WindowedTranscriber(lifecycle: lifecycle, identity: transcriptIdentity))
+      await retrier.setHandlers(
+        recovered: { [weak self] _ in
+          Task { @MainActor in self?.announceRecoveredDictation() }
+        }, decisionNeeded: { [weak self] _ in Task { @MainActor in self?.historyModel?.refresh() } }
+      )
+      await retrier.start()
+      pendingRetrier = retrier
       // FR-027: dictation is refused while a meeting is active; with no meeting the
       // guard returns nil and the dictation path is the Feature 003 path.
       coordinator.admissionGuard = { [weak self] in
@@ -496,6 +612,23 @@ final class AppServices {
         learner?.observe(inserted: text, target: target)
       }
       historyModel = HistoryViewModel(store: paths.1, rewriter: rewriteCoordinator)
+      // Feature 014: dictations waiting for the server and the recognition path label.
+      historyModel?.showsLocalPathLabel = { [weak preferences] in
+        preferences?.remoteEnabled == true
+      }
+      let localTranscriber = WindowedTranscriber(lifecycle: lifecycle, identity: transcriptIdentity)
+      historyModel?.pendingRemote = HistoryViewModel.PendingRemoteActions(
+        load: { (try? await pendingStore.all()) ?? [] },
+        recognizeLocally: { [weak self] id in
+          guard self?.modelInstalled == true, let retrier = self?.pendingRetrier else {
+            throw DictationFailure.modelUnavailable
+          }
+          _ = try await retrier.recognizeLocally(
+            id: id, lifecycle: lifecycle, local: localTranscriber)
+        },
+        export: { id, url in try await pendingStore.exportWAV(id: id, to: url) },
+        discard: { id in try await pendingStore.remove(id: id) },
+        localModelProvisioned: { [weak self] in self?.modelInstalled == true })
       insightsModel = InsightsModel(store: paths.1)
       coordinator.historyChanged = { [weak self] in
         self?.historyModel?.refresh()
@@ -602,6 +735,13 @@ final class AppServices {
       if ProcessInfo.processInfo.environment["LOCALFLOW_BENCHMARK"] == "1" {
         await runBenchmark(coordinator: coordinator, lifecycle: lifecycle)
       }
+      #if DEBUG
+        if ProcessInfo.processInfo.environment["LOCALFLOW_REMOTE_REPLAY"] == "1" {
+          await runRemoteReplay(
+            router: remoteRouter, lifecycle: lifecycle, vocabulary: vocabulary,
+            transcriber: WindowedTranscriber(lifecycle: lifecycle, identity: transcriptIdentity))
+        }
+      #endif
     } catch {
       Logger(subsystem: "org.localflow.LocalFlow", category: "app").error(
         "Launch setup failed: \(String(describing: type(of: error)), privacy: .public) \(String(describing: error), privacy: .private)"
@@ -1026,6 +1166,54 @@ final class AppServices {
   }
 
   #if DEBUG
+    /// Feature 014 T086: `scripts/remote-dictation-benchmark.sh` sets these variables; the
+    /// run writes one JSON report and quits. It uses the enrolled server only when it is
+    /// the one the script names.
+    private func runRemoteReplay(
+      router: RemoteDictationRouter, lifecycle: ModelLifecycleCoordinator,
+      vocabulary: VocabularyStore, transcriber: WindowedTranscriber
+    ) async {
+      let environment = ProcessInfo.processInfo.environment
+      let output = URL(
+        fileURLWithPath: environment["LOCALFLOW_REMOTE_REPLAY_OUTPUT"]
+          ?? FileManager.default.temporaryDirectory.appendingPathComponent("remote-replay.json")
+          .path)
+      setupStatus = "Running the remote dictation benchmark…"
+      var data = Data(#"{"status":"failed","reason":"not_configured"}"#.utf8)
+      let settings = preferences.remoteSettings()
+      let named = environment["LOCALFLOW_REMOTE_REPLAY_SERVER"].flatMap(
+        RemoteDictationSettings.origin)
+      if settings.routesToServer, named == settings.serverOrigin,
+        let directory = environment["LOCALFLOW_REMOTE_REPLAY_RECORDINGS"]
+      {
+        var configuration = RemoteDictationReplay.Configuration()
+        configuration.recordings =
+          ((try? FileManager.default.contentsOfDirectory(
+            at: URL(fileURLWithPath: directory), includingPropertiesForKeys: nil)) ?? [])
+          .filter { ["wav", "f32"].contains($0.pathExtension) }.sorted { $0.path < $1.path }
+        configuration.runs = environment["LOCALFLOW_REMOTE_REPLAY_RUNS"].flatMap(Int.init) ?? 20
+        configuration.users = environment["LOCALFLOW_REMOTE_REPLAY_USERS"].flatMap(Int.init) ?? 1
+        if let snapshot = try? await vocabulary.snapshot() {
+          configuration.boost = RemoteBoost(VocabularyBoostTerms(snapshot: snapshot))
+        }
+        let unreachable = UnreachableRemoteRouter(base: router)
+        do {
+          let report = try await RemoteDictationReplay(
+            router: router, lifecycle: lifecycle, transcriber: transcriber,
+            unreachable: unreachable
+          ).run(configuration)
+          let encoder = JSONEncoder()
+          encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+          data = try encoder.encode(report)
+        } catch {
+          data = Data(#"{"status":"failed","reason":"recordings_unreadable"}"#.utf8)
+        }
+      }
+      try? data.write(to: output, options: .atomic)
+      isReadyToTerminate = true
+      NSApplication.shared.terminate(nil)
+    }
+
     private func developmentMeetingModelSource() -> URL? {
       guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
         return nil

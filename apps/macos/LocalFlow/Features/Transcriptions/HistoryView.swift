@@ -64,6 +64,9 @@ struct HistoryView: View {
             Button("Retry") { model.refresh() }.buttonStyle(PrototypeButtonStyle())
           }.padding(.top, 20)
         }
+        if !model.pendingItems.isEmpty {
+          PendingRemoteSection(model: model)
+        }
         if model.entries.isEmpty && !model.isLoading {
           Text(model.isNoMatches ? "No matches" : "No transcriptions yet")
             .foregroundStyle(SottoPalette.muted).frame(maxWidth: .infinity).padding(.vertical, 80)
@@ -84,7 +87,8 @@ struct HistoryView: View {
                 let first = entry.id == group.entries.first?.id
                 let last = entry.id == group.entries.last?.id
                 HistoryRow(
-                  entry: entry, busy: actionBusy || globalBusy,
+                  entry: entry, pathLabel: model.pathLabel(for: entry),
+                  busy: actionBusy || globalBusy,
                   copy: { copy(entry.text) }, insert: { insert(entry, nil) },
                   detail: { model.showDetail(entry) },
                   delete: {
@@ -211,6 +215,7 @@ struct HistoryView: View {
 private struct HistoryRow: View {
   @Environment(\.prototypeCompact) private var compact
   let entry: TranscriptionEntry
+  let pathLabel: String?
   let busy: Bool
   let copy: () -> Void
   let insert: () -> Void
@@ -231,6 +236,11 @@ private struct HistoryRow: View {
         if let problem = entry.qualityLabel {
           Text(problem).font(.flow(size: 11, weight: .medium))
             .foregroundStyle(SottoPalette.warning)
+        }
+        if let pathLabel {
+          Text(pathLabel).font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("history.pathLabel")
         }
       }
       .padding(.top, 2)
@@ -370,5 +380,72 @@ private struct CardSegmentEdge: Shape {
       path.addLine(to: CGPoint(x: maxX, y: maxY))
     }
     return path
+  }
+}
+
+/// Feature 014: dictations whose audio waits for the server because no local speech
+/// model was installed. Each can be recognized locally once a model is installed, saved
+/// as audio, or discarded; none is ever dropped without the user's choice.
+private struct PendingRemoteSection: View {
+  @Bindable var model: HistoryViewModel
+  @State private var discarding: UUID?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text("WAITING FOR SERVER").font(.flow(size: 12, weight: .medium)).tracking(1.2)
+        .foregroundStyle(SottoPalette.muted).padding(.top, 28).padding(.bottom, 12)
+      VStack(spacing: 0) {
+        ForEach(model.pendingItems) { item in
+          HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+              Text(
+                Date(timeIntervalSince1970: Double(item.createdAt) / 1_000),
+                format: .dateTime.day().month().hour().minute()
+              ).font(.flow(size: 13)).monospacedDigit().foregroundStyle(SottoPalette.muted)
+              Text(HistoryViewModel.pendingStatus(item)).font(.flow(size: 14))
+              Text("\(item.sampleCount / 16_000) s of audio")
+                .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+            }
+            Spacer(minLength: 8)
+            Button("Recognize Locally") {
+              Task { await model.recognizePendingLocally(item.id) }
+            }
+            .disabled(!model.canRecognizePendingLocally)
+            .help(
+              model.canRecognizePendingLocally
+                ? "Recognize with the speech model on this Mac"
+                : "Install the local speech model first")
+            Button("Save Audio…") { save(item) }
+            Button("Discard", role: .destructive) { discarding = item.id }
+          }
+          .buttonStyle(PrototypeButtonStyle())
+          .padding(.vertical, 14).padding(.horizontal, 18)
+          .accessibilityIdentifier("history.pendingRemote")
+        }
+      }
+      .overlay { RoundedRectangle(cornerRadius: 12).stroke(SottoPalette.line) }
+      if let error = model.pendingError {
+        Text(error).font(.flow(size: 12)).foregroundStyle(SottoPalette.warning).padding(.top, 8)
+      }
+    }
+    .confirmationDialog(
+      "Discard this recording?", isPresented: .constant(discarding != nil)
+    ) {
+      Button("Discard", role: .destructive) {
+        if let id = discarding { Task { await model.discardPending(id) } }
+        discarding = nil
+      }
+      Button("Cancel", role: .cancel) { discarding = nil }
+    } message: {
+      Text("Its audio is deleted and it will not be recognized.")
+    }
+  }
+
+  private func save(_ item: PendingRemoteDictationStore.Item) {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "LocalFlow dictation.wav"
+    panel.allowedContentTypes = [.wav]
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    Task { await model.exportPending(item.id, to: url) }
   }
 }

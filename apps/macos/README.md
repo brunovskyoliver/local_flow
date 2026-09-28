@@ -110,3 +110,39 @@ The Meetings page (before Transcriptions) records the microphone and system audi
 - `LOCALFLOW_MEETING_ROOT=/absolute/path` overrides the meeting storage root (for acceptance runs on a disk image); relative values are ignored.
 - `--debug-slow-finalize` (debug builds only) sleeps 10 s between the two track finalizations so a force quit can land during `finalizing`.
 - Acceptance records live under `specs/004-meeting-capture-foundation/acceptance/` (`codec-recoverability.md`, `baseline.md`, `recovery.md`, `storage-failure.md`, `long-run-memory.md`, `privacy.md`, `fr-028-traceability.md`).
+
+## Development variant (Feature 014)
+
+`make run-dev` (`scripts/dev-macos.sh --dev`) builds `LocalFlow Dev.app` with bundle
+identifier `org.localflow.LocalFlow.dev` and installs it at `/Applications/LocalFlow Dev.app`,
+beside the everyday app. `AppIdentity` gives it its own Application Support and Logs
+folders (`LocalFlow Dev`), Keychain services (`org.localflow.LocalFlow.dev.*`), launch
+agents (`org.localflow.LocalFlow.dev.flowd`, `.mtplx`) and ports (MTPLX 18000, flowd
+18080). The script refuses to read, replace or quit `/Applications/LocalFlow.app`.
+Production builds render byte-identical agents to earlier releases.
+`scripts/snapshot-installed-state.sh` prints a content-free snapshot of the installed
+app's database, defaults, Keychain item names, agents and models for before/after
+comparison. Sign in with Apple needs `LOCALFLOW_PROVISIONING_PROFILE` naming a
+profile for the variant's App ID; without it the build signs without that entitlement.
+
+## Remote dictation (Feature 014)
+
+Settings › Remote dictation is off by default. Turning it on shows a consent step that
+names the server and what leaves the Mac; nothing connects before it is confirmed. The
+app then shows the server's fingerprint to compare with `flowd admin identity`, pins it,
+and signs in with Apple or Google (Google appears when `LOCALFLOW_GOOGLE_CLIENT_ID` sets
+`LocalFlowGoogleClientID`). A new device waits for approval and dictates locally until
+then. An approved device streams audio to the server while the user speaks and assembles
+the returned windows with the same code as local dictation; rewrites use the same
+channel. Every failure falls back to local recognition, or, without a local model, keeps
+the audio in `PendingAudio/` and retries it (History › Waiting for server). History
+labels each entry Server, Local, or Local after server failure. Turning remote dictation
+off deletes this Mac's tokens, device key and pinned key; history stays.
+
+`Core/Remote/` holds the channel (CryptoKit HPKE), messages, Keychain store, enrollment,
+the dictation session, the retry queue and the rewrite transport. The `flowd-speech`
+target (`SpeechWorker/`) is the server's speech worker; it compiles the recognition
+sources plus `Core/SpeechBoundaries.swift` and `Core/ModelWorkloadBoundaries.swift`, and
+`scripts/check-speech-worker-imports.sh` keeps SwiftUI, AppKit and GRDB out of it.
+`scripts/add-speech-worker-target.py` created the target;
+`scripts/register-xcode-sources.py --target flowd-speech` adds files to it.

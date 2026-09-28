@@ -2,58 +2,6 @@ import Foundation
 
 /// The meeting domain's view of speaker diarization. Nothing here imports FluidAudio.
 
-enum ModelWorkload: String, Sendable, Equatable {
-  case speechRecognition, meetingTranscription, diarization
-  /// Feature 010: the voice embedder. Preempted by speech like diarization; never preempts.
-  case speakerIdentification
-
-  /// Live and final speech recognition; these preempt the two speaker workloads.
-  var isSpeech: Bool { self == .speechRecognition || self == .meetingTranscription }
-}
-
-struct DiarizationWindowRequest: Sendable, Equatable {
-  static let maxSamples = 9_600_000
-  /// Mono 16 kHz, 1...9_600_000 samples, all finite.
-  let samples: [Float]
-  /// 1 for the default microphone track; nil otherwise.
-  let numSpeakers: Int?
-
-  var isValid: Bool {
-    (1...Self.maxSamples).contains(samples.count) && (numSpeakers ?? 1) >= 1
-      && samples.allSatisfy(\.isFinite)
-  }
-}
-
-struct DiarizationWindowResult: Sendable, Equatable {
-  static let maxTurns = 20_000
-  struct Turn: Sendable, Equatable {
-    let cluster: Int
-    let startSeconds: Double
-    let endSeconds: Double
-    let quality: Float?
-  }
-  /// At most 20,000 per window, else `invalidResult`.
-  let turns: [Turn]
-  /// Cluster → L2-normalized mean embedding. In memory only; never persisted.
-  let centroids: [Int: [Float]]
-
-  static let empty = DiarizationWindowResult(turns: [], centroids: [:])
-
-  var isValid: Bool {
-    turns.count <= Self.maxTurns
-      && turns.allSatisfy {
-        $0.cluster >= 0 && $0.startSeconds.isFinite && $0.endSeconds.isFinite
-          && $0.startSeconds >= 0 && $0.startSeconds < $0.endSeconds
-          && ($0.quality?.isFinite ?? true)
-      }
-  }
-}
-
-protocol DiarizationRuntime: Sendable {
-  func diarize(_ request: DiarizationWindowRequest) async throws -> DiarizationWindowResult
-  func shutdown() async
-}
-
 /// Every diarization table write goes through one implementation of this.
 protocol SpeakerStoring: Sendable {
   func diarization(meetingID: UUID) async throws -> MeetingDiarization?

@@ -141,23 +141,50 @@ func message(code ErrorCode) string {
 		return "The language model output failed validation."
 	}
 }
+
+// RunCancelled is what Run returns when ctx ended or emit failed before a
+// terminal event was written. It is never sent.
+const RunCancelled ErrorCode = "cancelled"
+
+// admit takes one of the MaxConcurrentRequests slots and registers with the
+// analysis gate. HTTP requests and Run share both.
+func (h *Handler) admit() (release func(), ok bool) {
+	select {
+	case h.slots <- struct{}{}:
+	default:
+		return nil, false
+	}
+	gateRelease := func() {}
+	if h.config.Gate != nil {
+		gateRelease = h.config.Gate.RewriteStart()
+	}
+	return func() {
+		gateRelease()
+		<-h.slots
+	}, true
+}
+
+func (h *Handler) supports(version int) bool {
+	for _, v := range h.config.ProtocolVersions {
+		if v == version {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	if r.ContentLength > MaxRequestBodyBytes {
 		httpError(w, 413, CodeTooLarge)
 		return
 	}
-	select {
-	case h.slots <- struct{}{}:
-		defer func() { <-h.slots }()
-	default:
+	release, ok := h.admit()
+	if !ok {
 		httpError(w, 429, CodeServerBusy)
 		return
 	}
-	if h.config.Gate != nil {
-		release := h.config.Gate.RewriteStart()
-		defer release()
-	}
+	defer release()
 	// The slot also bounds simultaneous request-body decoding and shielding.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(10 * time.Second))
 	req, err := DecodeRequest(r.Body)
@@ -174,16 +201,46 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	supported := false
-	for _, v := range h.config.ProtocolVersions {
-		if v == req.SchemaVersion {
-			supported = true
-		}
-	}
-	if !supported {
+	if !h.supports(req.SchemaVersion) {
 		httpError(w, 400, CodeUnsupportedVersion)
 		return
 	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	h.run(r.Context(), req, start, func(line []byte) error { return writeEvent(w, line) })
+}
+
+// Run performs one decoded rewrite request outside HTTP, for the remote
+// channel's rewrite operation. It takes a slot of the same limit of
+// MaxConcurrentRequests and the same analysis gate as the HTTP route, then
+// calls emit once per event with exactly the NDJSON line (trailing newline
+// included) the HTTP route would write, ending with the result or error line.
+// A request refused before streaming (server_busy, unsupported_version) emits
+// a single error line. Run returns "" after a result, the error code after an
+// error line, or RunCancelled when ctx ended or emit failed.
+func (h *Handler) Run(ctx context.Context, req Request, emit func(line []byte) error) ErrorCode {
+	start := time.Now()
+	refuse := func(code ErrorCode) ErrorCode {
+		data, err := EncodeLine(Error(req.RequestID, code, message(code)))
+		if err != nil || emit(data) != nil {
+			return RunCancelled
+		}
+		return code
+	}
+	release, ok := h.admit()
+	if !ok {
+		return refuse(CodeServerBusy)
+	}
+	defer release()
+	if !h.supports(req.SchemaVersion) {
+		return refuse(CodeUnsupportedVersion)
+	}
+	return h.run(ctx, req, start, emit)
+}
+
+// run streams one admitted, decoded and version-checked request through emit.
+func (h *Handler) run(parent context.Context, req Request, start time.Time, emit func([]byte) error) ErrorCode {
 	queueMS := int(time.Since(start).Milliseconds())
 	code := "succeeded"
 	outputBytes := 0
@@ -194,11 +251,8 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		h.config.Logger.Printf("request_id=%s input_bytes=%d%s output_bytes=%d duration_ms=%d code=%s", req.RequestID, len(req.Text), contextBytes, outputBytes, time.Since(start).Milliseconds(), code)
 	}()
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	responseBytes := 0
 	responseLimit := min(4*req.InputBytes()+8192, 73728)
 	send := func(v any) error {
@@ -210,18 +264,21 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 			return ErrLineTooLong
 		}
 		responseBytes += len(data)
-		return writeEvent(w, data)
+		return emit(data)
 	}
 	if send(Accepted(req.RequestID)) != nil {
 		code = "cancelled"
-		return
+		return RunCancelled
 	}
-	fail := func(c ErrorCode) {
+	fail := func(c ErrorCode) ErrorCode {
 		code = string(c)
 		if c == CodeOutputTooLarge {
 			h.outputTooLarge.Add(1)
 		}
-		_ = send(Error(req.RequestID, c, message(c)))
+		if send(Error(req.RequestID, c, message(c))) != nil {
+			return RunCancelled
+		}
+		return c
 	}
 	template, _ := prompts.For(req.Mode)
 	input := req.Text
@@ -229,8 +286,7 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	shieldVersion := 0
 	restored := 0
 	if strings.ContainsAny(input, "⟦⟧") {
-		fail(CodeShieldRestoreFailed)
-		return
+		return fail(CodeShieldRestoreFailed)
 	}
 	// Hesitation sounds are never content; the model need not see them.
 	spoken := disfluency.Signals(input)
@@ -243,11 +299,10 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	info := h.backendInfo(ctx)
 	if ctx.Err() != nil {
 		code = "cancelled"
-		return
+		return RunCancelled
 	}
 	if info.State != "ready" {
-		fail(CodeBackendUnavailable)
-		return
+		return fail(CodeBackendUnavailable)
 	}
 	lastProgress := time.Now()
 	// The spoken rules clean up disfluent speech but can over-edit. An output
@@ -286,21 +341,20 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			if ctx.Err() != nil {
 				code = "cancelled"
-				return
+				return RunCancelled
 			}
 			switch {
 			case errors.Is(err, backend.ErrOutputTooLarge):
-				fail(CodeOutputTooLarge)
+				return fail(CodeOutputTooLarge)
 			case errors.Is(err, backend.ErrFirstTokenTimeout):
-				fail(CodeBackendFirstTokenTimeout)
+				return fail(CodeBackendFirstTokenTimeout)
 			case errors.Is(err, backend.ErrTimeout):
-				fail(CodeBackendTimeout)
+				return fail(CodeBackendTimeout)
 			case errors.Is(err, backend.ErrUnavailable):
-				fail(CodeBackendUnavailable)
+				return fail(CodeBackendUnavailable)
 			default:
-				fail(CodeBackendError)
+				return fail(CodeBackendError)
 			}
-			return
 		}
 		backendMS += completion.DurationMS
 		var invalid ErrorCode
@@ -311,8 +365,7 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if attempt == len(systems)-1 {
-			fail(invalid)
-			return
+			return fail(invalid)
 		}
 		h.config.Logger.Printf("request_id=%s spoken_retry=%s", req.RequestID, invalid)
 	}
@@ -325,14 +378,15 @@ func (h *Handler) rewrite(w http.ResponseWriter, r *http.Request) {
 	// as well as its text budget before emitting a terminal result.
 	data, err := EncodeLine(result)
 	if err != nil || responseBytes+len(data) > responseLimit {
-		fail(CodeOutputTooLarge)
-		return
+		return fail(CodeOutputTooLarge)
 	}
 	outputBytes = len(text)
 	responseBytes += len(data)
-	if writeEvent(w, data) != nil {
+	if emit(data) != nil {
 		code = "cancelled"
+		return RunCancelled
 	}
+	return ""
 }
 
 // validate decodes and checks one backend output and restores its shielded

@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "type": "dictation_start",
+  "op": 1,
+  "format": "f32le",
+  "sample_rate": 16000
+}

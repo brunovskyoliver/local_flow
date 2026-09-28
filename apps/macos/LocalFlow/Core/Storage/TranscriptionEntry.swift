@@ -47,6 +47,12 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     }
   }
 
+  /// Feature 014 (FR-019): which path produced the text.
+  public enum RecognitionPath: String, Sendable, Codable {
+    case local, server
+    case localAfterServerFailure = "local_after_server_failure"
+  }
+
   public let id: UUID
   public let text: String
   public let createdAtMilliseconds: Int64
@@ -63,6 +69,9 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
   public let rewriteState: RewriteState
   public let deliveredSource: DeliveredSource?
   public let deliveredRewriteAttemptID: UUID?
+  public let recognitionPath: RecognitionPath
+  /// Set with `localAfterServerFailure`, and with `server` for a pending retry.
+  public let serverFailure: RemoteFailureReason?
   public static let legacyDetailMessage = "Legacy: raw output and processing metadata unavailable"
 
   public init(
@@ -80,7 +89,9 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     hasQualityDetail: Bool = false,
     rewriteState: RewriteState = .notRequested,
     deliveredSource: DeliveredSource? = nil,
-    deliveredRewriteAttemptID: UUID? = nil
+    deliveredRewriteAttemptID: UUID? = nil,
+    recognitionPath: RecognitionPath = .local,
+    serverFailure: RemoteFailureReason? = nil
   ) throws {
     let bytes = text.data(using: .utf8)?.count ?? Int.max
     guard !text.isEmpty, bytes <= TranscriptionStore.maximumTextBytes else {
@@ -105,5 +116,7 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     self.rewriteState = rewriteState
     self.deliveredSource = deliveredSource
     self.deliveredRewriteAttemptID = deliveredRewriteAttemptID
+    self.recognitionPath = recognitionPath
+    self.serverFailure = serverFailure
   }
 }

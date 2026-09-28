@@ -98,17 +98,7 @@ struct VocabularyEditError: Error, Equatable, Sendable {
 enum VocabularyValidation {
   /// NFC plus locale-independent simple lowercase mapping per scalar. No diacritic,
   /// compatibility or multi-character folding: `ß` stays distinct from `ss`.
-  static func fold(_ term: String) -> [Unicode.Scalar] {
-    var folded: [Unicode.Scalar] = []
-    for scalar in term.precomposedStringWithCanonicalMapping.unicodeScalars {
-      if scalar.properties.changesWhenLowercased {
-        folded.append(contentsOf: scalar.properties.lowercaseMapping.unicodeScalars)
-      } else {
-        folded.append(scalar)
-      }
-    }
-    return folded
-  }
+  static func fold(_ term: String) -> [Unicode.Scalar] { TermFolding.fold(term) }
 
   /// Letter, mark, number or underscore: a whole-term match cannot touch one of these.
   static func isTermScalar(_ scalar: Unicode.Scalar) -> Bool {
@@ -622,5 +612,21 @@ actor VocabularyStore {
       throw VocabularyEditError(field: .store, code: .damaged)
     }
     return (contents, table)
+  }
+}
+
+extension VocabularyBoostTerms {
+  /// The first 256 enabled entries by ID, keyed by the snapshot hash (Feature 013).
+  init?(snapshot: VocabularySnapshot?) {
+    guard let snapshot, !snapshot.entries.isEmpty else { return nil }
+    let terms = snapshot.entries.filter(\.enabled)
+      .sorted { $0.id.utf8.lexicographicallyPrecedes($1.id.utf8) }
+      .prefix(Self.maximumTerms)
+      .map { Term(entryID: $0.id, canonical: $0.canonical) }
+    guard !terms.isEmpty else { return nil }
+    self.init(
+      terms: Array(terms), key: snapshot.hash,
+      governed: Set(
+        snapshot.entries.filter(\.enabled).flatMap { [$0.canonical] + $0.aliases }.map(Self.fold)))
   }
 }

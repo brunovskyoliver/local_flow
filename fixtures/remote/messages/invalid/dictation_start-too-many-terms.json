@@ -1,0 +1,1040 @@
+{
+  "schema_version": 1,
+  "type": "dictation_start",
+  "op": 1,
+  "format": "f32le",
+  "sample_rate": 16000,
+  "boost": {
+    "terms": [
+      {
+        "entry_id": "e0",
+        "canonical": "Term0"
+      },
+      {
+        "entry_id": "e1",
+        "canonical": "Term1"
+      },
+      {
+        "entry_id": "e2",
+        "canonical": "Term2"
+      },
+      {
+        "entry_id": "e3",
+        "canonical": "Term3"
+      },
+      {
+        "entry_id": "e4",
+        "canonical": "Term4"
+      },
+      {
+        "entry_id": "e5",
+        "canonical": "Term5"
+      },
+      {
+        "entry_id": "e6",
+        "canonical": "Term6"
+      },
+      {
+        "entry_id": "e7",
+        "canonical": "Term7"
+      },
+      {
+        "entry_id": "e8",
+        "canonical": "Term8"
+      },
+      {
+        "entry_id": "e9",
+        "canonical": "Term9"
+      },
+      {
+        "entry_id": "e10",
+        "canonical": "Term10"
+      },
+      {
+        "entry_id": "e11",
+        "canonical": "Term11"
+      },
+      {
+        "entry_id": "e12",
+        "canonical": "Term12"
+      },
+      {
+        "entry_id": "e13",
+        "canonical": "Term13"
+      },
+      {
+        "entry_id": "e14",
+        "canonical": "Term14"
+      },
+      {
+        "entry_id": "e15",
+        "canonical": "Term15"
+      },
+      {
+        "entry_id": "e16",
+        "canonical": "Term16"
+      },
+      {
+        "entry_id": "e17",
+        "canonical": "Term17"
+      },
+      {
+        "entry_id": "e18",
+        "canonical": "Term18"
+      },
+      {
+        "entry_id": "e19",
+        "canonical": "Term19"
+      },
+      {
+        "entry_id": "e20",
+        "canonical": "Term20"
+      },
+      {
+        "entry_id": "e21",
+        "canonical": "Term21"
+      },
+      {
+        "entry_id": "e22",
+        "canonical": "Term22"
+      },
+      {
+        "entry_id": "e23",
+        "canonical": "Term23"
+      },
+      {
+        "entry_id": "e24",
+        "canonical": "Term24"
+      },
+      {
+        "entry_id": "e25",
+        "canonical": "Term25"
+      },
+      {
+        "entry_id": "e26",
+        "canonical": "Term26"
+      },
+      {
+        "entry_id": "e27",
+        "canonical": "Term27"
+      },
+      {
+        "entry_id": "e28",
+        "canonical": "Term28"
+      },
+      {
+        "entry_id": "e29",
+        "canonical": "Term29"
+      },
+      {
+        "entry_id": "e30",
+        "canonical": "Term30"
+      },
+      {
+        "entry_id": "e31",
+        "canonical": "Term31"
+      },
+      {
+        "entry_id": "e32",
+        "canonical": "Term32"
+      },
+      {
+        "entry_id": "e33",
+        "canonical": "Term33"
+      },
+      {
+        "entry_id": "e34",
+        "canonical": "Term34"
+      },
+      {
+        "entry_id": "e35",
+        "canonical": "Term35"
+      },
+      {
+        "entry_id": "e36",
+        "canonical": "Term36"
+      },
+      {
+        "entry_id": "e37",
+        "canonical": "Term37"
+      },
+      {
+        "entry_id": "e38",
+        "canonical": "Term38"
+      },
+      {
+        "entry_id": "e39",
+        "canonical": "Term39"
+      },
+      {
+        "entry_id": "e40",
+        "canonical": "Term40"
+      },
+      {
+        "entry_id": "e41",
+        "canonical": "Term41"
+      },
+      {
+        "entry_id": "e42",
+        "canonical": "Term42"
+      },
+      {
+        "entry_id": "e43",
+        "canonical": "Term43"
+      },
+      {
+        "entry_id": "e44",
+        "canonical": "Term44"
+      },
+      {
+        "entry_id": "e45",
+        "canonical": "Term45"
+      },
+      {
+        "entry_id": "e46",
+        "canonical": "Term46"
+      },
+      {
+        "entry_id": "e47",
+        "canonical": "Term47"
+      },
+      {
+        "entry_id": "e48",
+        "canonical": "Term48"
+      },
+      {
+        "entry_id": "e49",
+        "canonical": "Term49"
+      },
+      {
+        "entry_id": "e50",
+        "canonical": "Term50"
+      },
+      {
+        "entry_id": "e51",
+        "canonical": "Term51"
+      },
+      {
+        "entry_id": "e52",
+        "canonical": "Term52"
+      },
+      {
+        "entry_id": "e53",
+        "canonical": "Term53"
+      },
+      {
+        "entry_id": "e54",
+        "canonical": "Term54"
+      },
+      {
+        "entry_id": "e55",
+        "canonical": "Term55"
+      },
+      {
+        "entry_id": "e56",
+        "canonical": "Term56"
+      },
+      {
+        "entry_id": "e57",
+        "canonical": "Term57"
+      },
+      {
+        "entry_id": "e58",
+        "canonical": "Term58"
+      },
+      {
+        "entry_id": "e59",
+        "canonical": "Term59"
+      },
+      {
+        "entry_id": "e60",
+        "canonical": "Term60"
+      },
+      {
+        "entry_id": "e61",
+        "canonical": "Term61"
+      },
+      {
+        "entry_id": "e62",
+        "canonical": "Term62"
+      },
+      {
+        "entry_id": "e63",
+        "canonical": "Term63"
+      },
+      {
+        "entry_id": "e64",
+        "canonical": "Term64"
+      },
+      {
+        "entry_id": "e65",
+        "canonical": "Term65"
+      },
+      {
+        "entry_id": "e66",
+        "canonical": "Term66"
+      },
+      {
+        "entry_id": "e67",
+        "canonical": "Term67"
+      },
+      {
+        "entry_id": "e68",
+        "canonical": "Term68"
+      },
+      {
+        "entry_id": "e69",
+        "canonical": "Term69"
+      },
+      {
+        "entry_id": "e70",
+        "canonical": "Term70"
+      },
+      {
+        "entry_id": "e71",
+        "canonical": "Term71"
+      },
+      {
+        "entry_id": "e72",
+        "canonical": "Term72"
+      },
+      {
+        "entry_id": "e73",
+        "canonical": "Term73"
+      },
+      {
+        "entry_id": "e74",
+        "canonical": "Term74"
+      },
+      {
+        "entry_id": "e75",
+        "canonical": "Term75"
+      },
+      {
+        "entry_id": "e76",
+        "canonical": "Term76"
+      },
+      {
+        "entry_id": "e77",
+        "canonical": "Term77"
+      },
+      {
+        "entry_id": "e78",
+        "canonical": "Term78"
+      },
+      {
+        "entry_id": "e79",
+        "canonical": "Term79"
+      },
+      {
+        "entry_id": "e80",
+        "canonical": "Term80"
+      },
+      {
+        "entry_id": "e81",
+        "canonical": "Term81"
+      },
+      {
+        "entry_id": "e82",
+        "canonical": "Term82"
+      },
+      {
+        "entry_id": "e83",
+        "canonical": "Term83"
+      },
+      {
+        "entry_id": "e84",
+        "canonical": "Term84"
+      },
+      {
+        "entry_id": "e85",
+        "canonical": "Term85"
+      },
+      {
+        "entry_id": "e86",
+        "canonical": "Term86"
+      },
+      {
+        "entry_id": "e87",
+        "canonical": "Term87"
+      },
+      {
+        "entry_id": "e88",
+        "canonical": "Term88"
+      },
+      {
+        "entry_id": "e89",
+        "canonical": "Term89"
+      },
+      {
+        "entry_id": "e90",
+        "canonical": "Term90"
+      },
+      {
+        "entry_id": "e91",
+        "canonical": "Term91"
+      },
+      {
+        "entry_id": "e92",
+        "canonical": "Term92"
+      },
+      {
+        "entry_id": "e93",
+        "canonical": "Term93"
+      },
+      {
+        "entry_id": "e94",
+        "canonical": "Term94"
+      },
+      {
+        "entry_id": "e95",
+        "canonical": "Term95"
+      },
+      {
+        "entry_id": "e96",
+        "canonical": "Term96"
+      },
+      {
+        "entry_id": "e97",
+        "canonical": "Term97"
+      },
+      {
+        "entry_id": "e98",
+        "canonical": "Term98"
+      },
+      {
+        "entry_id": "e99",
+        "canonical": "Term99"
+      },
+      {
+        "entry_id": "e100",
+        "canonical": "Term100"
+      },
+      {
+        "entry_id": "e101",
+        "canonical": "Term101"
+      },
+      {
+        "entry_id": "e102",
+        "canonical": "Term102"
+      },
+      {
+        "entry_id": "e103",
+        "canonical": "Term103"
+      },
+      {
+        "entry_id": "e104",
+        "canonical": "Term104"
+      },
+      {
+        "entry_id": "e105",
+        "canonical": "Term105"
+      },
+      {
+        "entry_id": "e106",
+        "canonical": "Term106"
+      },
+      {
+        "entry_id": "e107",
+        "canonical": "Term107"
+      },
+      {
+        "entry_id": "e108",
+        "canonical": "Term108"
+      },
+      {
+        "entry_id": "e109",
+        "canonical": "Term109"
+      },
+      {
+        "entry_id": "e110",
+        "canonical": "Term110"
+      },
+      {
+        "entry_id": "e111",
+        "canonical": "Term111"
+      },
+      {
+        "entry_id": "e112",
+        "canonical": "Term112"
+      },
+      {
+        "entry_id": "e113",
+        "canonical": "Term113"
+      },
+      {
+        "entry_id": "e114",
+        "canonical": "Term114"
+      },
+      {
+        "entry_id": "e115",
+        "canonical": "Term115"
+      },
+      {
+        "entry_id": "e116",
+        "canonical": "Term116"
+      },
+      {
+        "entry_id": "e117",
+        "canonical": "Term117"
+      },
+      {
+        "entry_id": "e118",
+        "canonical": "Term118"
+      },
+      {
+        "entry_id": "e119",
+        "canonical": "Term119"
+      },
+      {
+        "entry_id": "e120",
+        "canonical": "Term120"
+      },
+      {
+        "entry_id": "e121",
+        "canonical": "Term121"
+      },
+      {
+        "entry_id": "e122",
+        "canonical": "Term122"
+      },
+      {
+        "entry_id": "e123",
+        "canonical": "Term123"
+      },
+      {
+        "entry_id": "e124",
+        "canonical": "Term124"
+      },
+      {
+        "entry_id": "e125",
+        "canonical": "Term125"
+      },
+      {
+        "entry_id": "e126",
+        "canonical": "Term126"
+      },
+      {
+        "entry_id": "e127",
+        "canonical": "Term127"
+      },
+      {
+        "entry_id": "e128",
+        "canonical": "Term128"
+      },
+      {
+        "entry_id": "e129",
+        "canonical": "Term129"
+      },
+      {
+        "entry_id": "e130",
+        "canonical": "Term130"
+      },
+      {
+        "entry_id": "e131",
+        "canonical": "Term131"
+      },
+      {
+        "entry_id": "e132",
+        "canonical": "Term132"
+      },
+      {
+        "entry_id": "e133",
+        "canonical": "Term133"
+      },
+      {
+        "entry_id": "e134",
+        "canonical": "Term134"
+      },
+      {
+        "entry_id": "e135",
+        "canonical": "Term135"
+      },
+      {
+        "entry_id": "e136",
+        "canonical": "Term136"
+      },
+      {
+        "entry_id": "e137",
+        "canonical": "Term137"
+      },
+      {
+        "entry_id": "e138",
+        "canonical": "Term138"
+      },
+      {
+        "entry_id": "e139",
+        "canonical": "Term139"
+      },
+      {
+        "entry_id": "e140",
+        "canonical": "Term140"
+      },
+      {
+        "entry_id": "e141",
+        "canonical": "Term141"
+      },
+      {
+        "entry_id": "e142",
+        "canonical": "Term142"
+      },
+      {
+        "entry_id": "e143",
+        "canonical": "Term143"
+      },
+      {
+        "entry_id": "e144",
+        "canonical": "Term144"
+      },
+      {
+        "entry_id": "e145",
+        "canonical": "Term145"
+      },
+      {
+        "entry_id": "e146",
+        "canonical": "Term146"
+      },
+      {
+        "entry_id": "e147",
+        "canonical": "Term147"
+      },
+      {
+        "entry_id": "e148",
+        "canonical": "Term148"
+      },
+      {
+        "entry_id": "e149",
+        "canonical": "Term149"
+      },
+      {
+        "entry_id": "e150",
+        "canonical": "Term150"
+      },
+      {
+        "entry_id": "e151",
+        "canonical": "Term151"
+      },
+      {
+        "entry_id": "e152",
+        "canonical": "Term152"
+      },
+      {
+        "entry_id": "e153",
+        "canonical": "Term153"
+      },
+      {
+        "entry_id": "e154",
+        "canonical": "Term154"
+      },
+      {
+        "entry_id": "e155",
+        "canonical": "Term155"
+      },
+      {
+        "entry_id": "e156",
+        "canonical": "Term156"
+      },
+      {
+        "entry_id": "e157",
+        "canonical": "Term157"
+      },
+      {
+        "entry_id": "e158",
+        "canonical": "Term158"
+      },
+      {
+        "entry_id": "e159",
+        "canonical": "Term159"
+      },
+      {
+        "entry_id": "e160",
+        "canonical": "Term160"
+      },
+      {
+        "entry_id": "e161",
+        "canonical": "Term161"
+      },
+      {
+        "entry_id": "e162",
+        "canonical": "Term162"
+      },
+      {
+        "entry_id": "e163",
+        "canonical": "Term163"
+      },
+      {
+        "entry_id": "e164",
+        "canonical": "Term164"
+      },
+      {
+        "entry_id": "e165",
+        "canonical": "Term165"
+      },
+      {
+        "entry_id": "e166",
+        "canonical": "Term166"
+      },
+      {
+        "entry_id": "e167",
+        "canonical": "Term167"
+      },
+      {
+        "entry_id": "e168",
+        "canonical": "Term168"
+      },
+      {
+        "entry_id": "e169",
+        "canonical": "Term169"
+      },
+      {
+        "entry_id": "e170",
+        "canonical": "Term170"
+      },
+      {
+        "entry_id": "e171",
+        "canonical": "Term171"
+      },
+      {
+        "entry_id": "e172",
+        "canonical": "Term172"
+      },
+      {
+        "entry_id": "e173",
+        "canonical": "Term173"
+      },
+      {
+        "entry_id": "e174",
+        "canonical": "Term174"
+      },
+      {
+        "entry_id": "e175",
+        "canonical": "Term175"
+      },
+      {
+        "entry_id": "e176",
+        "canonical": "Term176"
+      },
+      {
+        "entry_id": "e177",
+        "canonical": "Term177"
+      },
+      {
+        "entry_id": "e178",
+        "canonical": "Term178"
+      },
+      {
+        "entry_id": "e179",
+        "canonical": "Term179"
+      },
+      {
+        "entry_id": "e180",
+        "canonical": "Term180"
+      },
+      {
+        "entry_id": "e181",
+        "canonical": "Term181"
+      },
+      {
+        "entry_id": "e182",
+        "canonical": "Term182"
+      },
+      {
+        "entry_id": "e183",
+        "canonical": "Term183"
+      },
+      {
+        "entry_id": "e184",
+        "canonical": "Term184"
+      },
+      {
+        "entry_id": "e185",
+        "canonical": "Term185"
+      },
+      {
+        "entry_id": "e186",
+        "canonical": "Term186"
+      },
+      {
+        "entry_id": "e187",
+        "canonical": "Term187"
+      },
+      {
+        "entry_id": "e188",
+        "canonical": "Term188"
+      },
+      {
+        "entry_id": "e189",
+        "canonical": "Term189"
+      },
+      {
+        "entry_id": "e190",
+        "canonical": "Term190"
+      },
+      {
+        "entry_id": "e191",
+        "canonical": "Term191"
+      },
+      {
+        "entry_id": "e192",
+        "canonical": "Term192"
+      },
+      {
+        "entry_id": "e193",
+        "canonical": "Term193"
+      },
+      {
+        "entry_id": "e194",
+        "canonical": "Term194"
+      },
+      {
+        "entry_id": "e195",
+        "canonical": "Term195"
+      },
+      {
+        "entry_id": "e196",
+        "canonical": "Term196"
+      },
+      {
+        "entry_id": "e197",
+        "canonical": "Term197"
+      },
+      {
+        "entry_id": "e198",
+        "canonical": "Term198"
+      },
+      {
+        "entry_id": "e199",
+        "canonical": "Term199"
+      },
+      {
+        "entry_id": "e200",
+        "canonical": "Term200"
+      },
+      {
+        "entry_id": "e201",
+        "canonical": "Term201"
+      },
+      {
+        "entry_id": "e202",
+        "canonical": "Term202"
+      },
+      {
+        "entry_id": "e203",
+        "canonical": "Term203"
+      },
+      {
+        "entry_id": "e204",
+        "canonical": "Term204"
+      },
+      {
+        "entry_id": "e205",
+        "canonical": "Term205"
+      },
+      {
+        "entry_id": "e206",
+        "canonical": "Term206"
+      },
+      {
+        "entry_id": "e207",
+        "canonical": "Term207"
+      },
+      {
+        "entry_id": "e208",
+        "canonical": "Term208"
+      },
+      {
+        "entry_id": "e209",
+        "canonical": "Term209"
+      },
+      {
+        "entry_id": "e210",
+        "canonical": "Term210"
+      },
+      {
+        "entry_id": "e211",
+        "canonical": "Term211"
+      },
+      {
+        "entry_id": "e212",
+        "canonical": "Term212"
+      },
+      {
+        "entry_id": "e213",
+        "canonical": "Term213"
+      },
+      {
+        "entry_id": "e214",
+        "canonical": "Term214"
+      },
+      {
+        "entry_id": "e215",
+        "canonical": "Term215"
+      },
+      {
+        "entry_id": "e216",
+        "canonical": "Term216"
+      },
+      {
+        "entry_id": "e217",
+        "canonical": "Term217"
+      },
+      {
+        "entry_id": "e218",
+        "canonical": "Term218"
+      },
+      {
+        "entry_id": "e219",
+        "canonical": "Term219"
+      },
+      {
+        "entry_id": "e220",
+        "canonical": "Term220"
+      },
+      {
+        "entry_id": "e221",
+        "canonical": "Term221"
+      },
+      {
+        "entry_id": "e222",
+        "canonical": "Term222"
+      },
+      {
+        "entry_id": "e223",
+        "canonical": "Term223"
+      },
+      {
+        "entry_id": "e224",
+        "canonical": "Term224"
+      },
+      {
+        "entry_id": "e225",
+        "canonical": "Term225"
+      },
+      {
+        "entry_id": "e226",
+        "canonical": "Term226"
+      },
+      {
+        "entry_id": "e227",
+        "canonical": "Term227"
+      },
+      {
+        "entry_id": "e228",
+        "canonical": "Term228"
+      },
+      {
+        "entry_id": "e229",
+        "canonical": "Term229"
+      },
+      {
+        "entry_id": "e230",
+        "canonical": "Term230"
+      },
+      {
+        "entry_id": "e231",
+        "canonical": "Term231"
+      },
+      {
+        "entry_id": "e232",
+        "canonical": "Term232"
+      },
+      {
+        "entry_id": "e233",
+        "canonical": "Term233"
+      },
+      {
+        "entry_id": "e234",
+        "canonical": "Term234"
+      },
+      {
+        "entry_id": "e235",
+        "canonical": "Term235"
+      },
+      {
+        "entry_id": "e236",
+        "canonical": "Term236"
+      },
+      {
+        "entry_id": "e237",
+        "canonical": "Term237"
+      },
+      {
+        "entry_id": "e238",
+        "canonical": "Term238"
+      },
+      {
+        "entry_id": "e239",
+        "canonical": "Term239"
+      },
+      {
+        "entry_id": "e240",
+        "canonical": "Term240"
+      },
+      {
+        "entry_id": "e241",
+        "canonical": "Term241"
+      },
+      {
+        "entry_id": "e242",
+        "canonical": "Term242"
+      },
+      {
+        "entry_id": "e243",
+        "canonical": "Term243"
+      },
+      {
+        "entry_id": "e244",
+        "canonical": "Term244"
+      },
+      {
+        "entry_id": "e245",
+        "canonical": "Term245"
+      },
+      {
+        "entry_id": "e246",
+        "canonical": "Term246"
+      },
+      {
+        "entry_id": "e247",
+        "canonical": "Term247"
+      },
+      {
+        "entry_id": "e248",
+        "canonical": "Term248"
+      },
+      {
+        "entry_id": "e249",
+        "canonical": "Term249"
+      },
+      {
+        "entry_id": "e250",
+        "canonical": "Term250"
+      },
+      {
+        "entry_id": "e251",
+        "canonical": "Term251"
+      },
+      {
+        "entry_id": "e252",
+        "canonical": "Term252"
+      },
+      {
+        "entry_id": "e253",
+        "canonical": "Term253"
+      },
+      {
+        "entry_id": "e254",
+        "canonical": "Term254"
+      },
+      {
+        "entry_id": "e255",
+        "canonical": "Term255"
+      },
+      {
+        "entry_id": "e256",
+        "canonical": "Term256"
+      }
+    ],
+    "governed": []
+  }
+}

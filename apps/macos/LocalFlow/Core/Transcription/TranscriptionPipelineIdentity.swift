@@ -14,7 +14,28 @@ struct TranscriptionPipelineIdentity: Sendable {
   private let foldingRuntime =
     "Foundation-on-" + ProcessInfo.processInfo.operatingSystemVersionString
 
+  /// Feature 014: the server worker's model, from `dictation_accepted`. Its manifest hash
+  /// stands for the artifact hashes the app would list for its own descriptor. Values that
+  /// would not validate are recorded as unavailable rather than failing the transcript.
+  private var remoteSDK: String?
+  private var remoteModelID: String?
+  private var remoteRevision: String?
+
   init() {}
+
+  init(remote model: RemoteModelIdentity, build: String?) {
+    func valid(_ value: String) -> String? {
+      (try? TranscriptionQualityDetail.validateID(value)) == nil ? nil : value
+    }
+    engine = valid(model.engine) ?? "remote_worker"
+    remoteSDK = valid(model.sdk)
+    remoteModelID = valid(model.modelID)
+    remoteRevision = valid(model.modelRevision)
+    manifestHash = TranscriptionQualityDetail.isHash(model.manifestHash) ? model.manifestHash : nil
+    self.build = build
+  }
+
+  var recordedBuild: String? { build }
 
   init(
     descriptor: ModelDescriptor, manifestHash: String, build: String?,
@@ -39,7 +60,11 @@ struct TranscriptionPipelineIdentity: Sendable {
       .init(field: "normalization_duration", reason: .notRecorded),
     ]
     if descriptor == nil {
-      for field in ["sdk_version", "model_id", "model_revision", "artifact_hashes"] {
+      let remoteFields = [
+        ("sdk_version", remoteSDK), ("model_id", remoteModelID),
+        ("model_revision", remoteRevision), ("artifact_hashes", nil),
+      ]
+      for (field, value) in remoteFields where value == nil {
         missing.append(.init(field: field, reason: .notRecorded))
       }
     }
@@ -48,8 +73,10 @@ struct TranscriptionPipelineIdentity: Sendable {
     }
     if build == nil { missing.append(.init(field: "build", reason: .notRecorded)) }
     return TranscriptionProvenance(
-      engine: engine, sdkVersion: descriptor?.sdkCompatibility, modelID: descriptor?.modelID,
-      modelRevision: descriptor?.sourceRevision, modelManifestHash: manifestHash,
+      engine: engine, sdkVersion: descriptor?.sdkCompatibility ?? remoteSDK,
+      modelID: descriptor?.modelID ?? remoteModelID,
+      modelRevision: descriptor?.sourceRevision ?? remoteRevision,
+      modelManifestHash: manifestHash,
       artifactHashes: Dictionary(
         uniqueKeysWithValues: (descriptor?.files ?? []).map { ($0.path, $0.sha256) }),
       build: build, dirty: nil, languageHint: languageHint,

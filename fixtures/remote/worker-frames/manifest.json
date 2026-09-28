@@ -1,0 +1,215 @@
+{
+  "description": "Speech worker IPC frames shared by server/internal/speech/ipc_test.go and apps/macos/LocalFlowTests/SpeechWorkerFramingTests.swift. See specs/014-remote-dictation-server/contracts/speech-worker-ipc.md.",
+  "framing": "header_length (u32 BE) | header (UTF-8 JSON, 1...65,536 bytes) | payload_length (u32 BE) | payload",
+  "header_encoding": "Compact JSON: no whitespace, object keys sorted by byte order at every level (Swift: JSONEncoder .sortedKeys + .withoutEscapingSlashes), no HTML escaping. Values avoid characters encoders escape differently, so encoders that sort keys reproduce header_json byte for byte; others should compare the decoded header object. Recognize payloads are Float32 little-endian.",
+  "max_header_bytes": 65536,
+  "max_sample_count": 239360,
+  "update": "cd server && go test ./internal/speech -run TestWorkerFrameFixtures -update",
+  "frames": [
+    {
+      "file": "ready.bin",
+      "valid": true,
+      "direction": "worker_to_flowd",
+      "header": {
+        "model": {
+          "booster": "ctc110m-v1",
+          "engine": "FluidAudio",
+          "manifest_hash": "sha256-0011223344556677",
+          "model_id": "parakeet-tdt-0.6b-v3",
+          "model_revision": "rev-1",
+          "sdk": "0.15.7",
+          "worker_build": "test-1"
+        },
+        "protocol": 1,
+        "type": "ready"
+      },
+      "header_json": "{\"model\":{\"booster\":\"ctc110m-v1\",\"engine\":\"FluidAudio\",\"manifest_hash\":\"sha256-0011223344556677\",\"model_id\":\"parakeet-tdt-0.6b-v3\",\"model_revision\":\"rev-1\",\"sdk\":\"0.15.7\",\"worker_build\":\"test-1\"},\"protocol\":1,\"type\":\"ready\"}",
+      "payload_hex": ""
+    },
+    {
+      "file": "ready-no-booster.bin",
+      "valid": true,
+      "direction": "worker_to_flowd",
+      "header": {
+        "model": {
+          "engine": "FluidAudio",
+          "manifest_hash": "sha256-0011223344556677",
+          "model_id": "parakeet-tdt-0.6b-v3",
+          "model_revision": "rev-1",
+          "sdk": "0.15.7",
+          "worker_build": "test-1"
+        },
+        "protocol": 1,
+        "type": "ready"
+      },
+      "header_json": "{\"model\":{\"engine\":\"FluidAudio\",\"manifest_hash\":\"sha256-0011223344556677\",\"model_id\":\"parakeet-tdt-0.6b-v3\",\"model_revision\":\"rev-1\",\"sdk\":\"0.15.7\",\"worker_build\":\"test-1\"},\"protocol\":1,\"type\":\"ready\"}",
+      "payload_hex": ""
+    },
+    {
+      "file": "unavailable.bin",
+      "valid": true,
+      "direction": "worker_to_flowd",
+      "header": {
+        "reason": "model_missing",
+        "type": "unavailable"
+      },
+      "header_json": "{\"reason\":\"model_missing\",\"type\":\"unavailable\"}",
+      "payload_hex": ""
+    },
+    {
+      "file": "recognize.bin",
+      "valid": true,
+      "direction": "flowd_to_worker",
+      "header": {
+        "boost": {
+          "governed": [
+            "zabix"
+          ],
+          "terms": [
+            {
+              "canonical": "Zabbix",
+              "entry_id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301"
+            }
+          ]
+        },
+        "job": 17,
+        "sample_count": 4,
+        "type": "recognize"
+      },
+      "header_json": "{\"boost\":{\"governed\":[\"zabix\"],\"terms\":[{\"canonical\":\"Zabbix\",\"entry_id\":\"3F2504E0-4F89-11D3-9A0C-0305E82C3301\"}]},\"job\":17,\"sample_count\":4,\"type\":\"recognize\"}",
+      "payload_hex": "000000000000003f000080be0000803f",
+      "samples": [
+        0,
+        0.5,
+        -0.25,
+        1
+      ]
+    },
+    {
+      "file": "recognize-no-boost.bin",
+      "valid": true,
+      "direction": "flowd_to_worker",
+      "header": {
+        "job": 18,
+        "sample_count": 4,
+        "type": "recognize"
+      },
+      "header_json": "{\"job\":18,\"sample_count\":4,\"type\":\"recognize\"}",
+      "payload_hex": "000000000000003f000080be0000803f",
+      "samples": [
+        0,
+        0.5,
+        -0.25,
+        1
+      ]
+    },
+    {
+      "file": "shutdown.bin",
+      "valid": true,
+      "direction": "flowd_to_worker",
+      "header": {
+        "type": "shutdown"
+      },
+      "header_json": "{\"type\":\"shutdown\"}",
+      "payload_hex": ""
+    },
+    {
+      "file": "result.bin",
+      "valid": true,
+      "direction": "worker_to_flowd",
+      "header": {
+        "job": 17,
+        "recognition_ms": 142,
+        "type": "result",
+        "window": {
+          "boost_hints": [
+            {
+              "canonical": "Zabbix",
+              "entry_id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301",
+              "source": "zabix"
+            }
+          ],
+          "evidence": {
+            "padded_samples": 239360,
+            "samples": 239360,
+            "text": "check zabbix",
+            "timings_available": true,
+            "tokens": [
+              {
+                "end": {
+                  "value": 0.4
+                },
+                "start": {
+                  "value": 0.12
+                },
+                "text": "check"
+              }
+            ]
+          },
+          "sample_count": 239360,
+          "text": "check Zabbix",
+          "tokens": [
+            {
+              "end": 0.4,
+              "start": 0.12,
+              "text": "check"
+            }
+          ]
+        }
+      },
+      "header_json": "{\"job\":17,\"recognition_ms\":142,\"type\":\"result\",\"window\":{\"boost_hints\":[{\"canonical\":\"Zabbix\",\"entry_id\":\"3F2504E0-4F89-11D3-9A0C-0305E82C3301\",\"source\":\"zabix\"}],\"evidence\":{\"padded_samples\":239360,\"samples\":239360,\"text\":\"check zabbix\",\"timings_available\":true,\"tokens\":[{\"end\":{\"value\":0.4},\"start\":{\"value\":0.12},\"text\":\"check\"}]},\"sample_count\":239360,\"text\":\"check Zabbix\",\"tokens\":[{\"end\":0.4,\"start\":0.12,\"text\":\"check\"}]}}",
+      "payload_hex": ""
+    },
+    {
+      "file": "error.bin",
+      "valid": true,
+      "direction": "worker_to_flowd",
+      "header": {
+        "code": "invalid_audio",
+        "job": 18,
+        "type": "error"
+      },
+      "header_json": "{\"code\":\"invalid_audio\",\"job\":18,\"type\":\"error\"}",
+      "payload_hex": ""
+    },
+    {
+      "file": "state.bin",
+      "valid": true,
+      "direction": "worker_to_flowd",
+      "header": {
+        "state": "active",
+        "type": "state"
+      },
+      "header_json": "{\"state\":\"active\",\"type\":\"state\"}",
+      "payload_hex": ""
+    },
+    {
+      "file": "invalid-oversized-header.bin",
+      "valid": false,
+      "direction": "any",
+      "error": "header_too_large",
+      "note": "header_length is 65,537; the header is valid JSON padded with spaces and payload_length is 0"
+    },
+    {
+      "file": "invalid-short-read.bin",
+      "valid": false,
+      "direction": "flowd_to_worker",
+      "error": "short_read",
+      "note": "recognize of 4 samples whose payload stops 3 bytes early"
+    },
+    {
+      "file": "invalid-payload-mismatch.bin",
+      "valid": false,
+      "direction": "flowd_to_worker",
+      "error": "payload_length_mismatch",
+      "note": "sample_count 4 with payload_length 12"
+    },
+    {
+      "file": "invalid-sample-count-over.bin",
+      "valid": false,
+      "direction": "flowd_to_worker",
+      "error": "sample_count_out_of_range",
+      "note": "sample_count 239,361 with payload_length 0"
+    }
+  ]
+}

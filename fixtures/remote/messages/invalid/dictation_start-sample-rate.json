@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "type": "dictation_start",
+  "op": 1,
+  "format": "f32le",
+  "sample_rate": 48000,
+  "boost": {
+    "terms": [
+      {
+        "entry_id": "9B1D2C3E-0000-4000-8000-000000000001",
+        "canonical": "Zabbix"
+      }
+    ],
+    "governed": [
+      "zabbix"
+    ]
+  }
+}

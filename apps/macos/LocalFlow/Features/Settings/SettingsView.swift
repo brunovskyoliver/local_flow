@@ -58,6 +58,10 @@ struct SettingsView: View {
         contextSection
         modelSection
         rewriteSection
+        if let remote = model.remote {
+          sectionTitle("Remote dictation")
+          settingsGroup { RemoteDictationView(model: remote) }
+        }
         summarySection
         permissionsSection
         if let recordingError {
@@ -586,7 +590,7 @@ struct SettingsView: View {
 
 }
 
-private struct SettingsRow<Control: View>: View {
+struct SettingsRow<Control: View>: View {
   @Environment(\.prototypeCompact) private var compact
   let title: String
   let detail: String?
@@ -627,7 +631,7 @@ private struct SettingsRow<Control: View>: View {
 }
 
 /// Shared inset styling keeps server fields aligned and gives keyboard focus a visible outline.
-private struct RewriteInputSurface<Content: View>: View {
+struct RewriteInputSurface<Content: View>: View {
   let symbol: String
   @ViewBuilder var content: Content
   @FocusState private var containsFocus: Bool

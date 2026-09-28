@@ -28,6 +28,71 @@ final class HistoryViewModel {
   }
   /// Mode used by the detail view's Retry/Rewrite picker.
   var rewriteMode: RewriteMode = .clean
+
+  // MARK: Feature 014: dictations waiting for the server
+
+  /// What History may do with dictations whose audio waits for a remote retry.
+  struct PendingRemoteActions {
+    let load: @MainActor () async -> [PendingRemoteDictationStore.Item]
+    let recognizeLocally: @MainActor (UUID) async throws -> Void
+    let export: @MainActor (UUID, URL) async throws -> Void
+    let discard: @MainActor (UUID) async throws -> Void
+    let localModelProvisioned: @MainActor () -> Bool
+  }
+  @ObservationIgnored var pendingRemote: PendingRemoteActions?
+  /// Whether rows recognized locally show "Local" (only once remote dictation is on).
+  @ObservationIgnored var showsLocalPathLabel: @MainActor () -> Bool = { false }
+  private(set) var pendingItems: [PendingRemoteDictationStore.Item] = []
+  private(set) var pendingError: String?
+
+  var canRecognizePendingLocally: Bool { pendingRemote?.localModelProvisioned() == true }
+
+  func pathLabel(for entry: TranscriptionEntry) -> String? {
+    Self.pathLabel(for: entry, showsLocal: showsLocalPathLabel())
+  }
+
+  /// FR-019: "Server", "Local" or "Local after server failure (reason)".
+  static func pathLabel(for entry: TranscriptionEntry, showsLocal: Bool) -> String? {
+    switch entry.recognitionPath {
+    case .server: "Server"
+    case .local: showsLocal ? "Local" : nil
+    case .localAfterServerFailure:
+      "Local after server failure (\((entry.serverFailure ?? .unreachable).label))"
+    }
+  }
+
+  static func pendingStatus(_ item: PendingRemoteDictationStore.Item, now: Date = Date()) -> String
+  {
+    item.isExpired(now: Int64(now.timeIntervalSince1970 * 1_000))
+      ? "Retries stopped after 24 hours" : "Waiting for server"
+  }
+
+  func refreshPending() async {
+    guard let pendingRemote else { return }
+    pendingItems = await pendingRemote.load()
+  }
+
+  func recognizePendingLocally(_ id: UUID) async {
+    await runPending { try await $0.recognizeLocally(id) }
+  }
+
+  func exportPending(_ id: UUID, to destination: URL) async {
+    await runPending { try await $0.export(id, destination) }
+  }
+
+  func discardPending(_ id: UUID) async {
+    await runPending { try await $0.discard(id) }
+  }
+
+  private func runPending(_ action: (PendingRemoteActions) async throws -> Void) async {
+    guard let pendingRemote else { return }
+    pendingError = nil
+    do { try await action(pendingRemote) } catch {
+      pendingError = "The waiting dictation could not be changed. Try again."
+    }
+    await refreshPending()
+    refresh()
+  }
   @ObservationIgnored private let rewriter: (any RewriteRequesting)?
   private var detailWorker: Task<Void, Never>?
   private var detailGeneration = 0
@@ -309,6 +374,7 @@ final class HistoryViewModel {
   func refresh() {
     request(cursor: nil, direction: .older, placement: .replace, debounce: false)
     if detailEntryID != nil { retryDetail() }
+    if pendingRemote != nil { Task { await refreshPending() } }
   }
   /// The list scrolled to its oldest row: the next older page joins at the bottom.
   func loadOlder() {
@@ -463,6 +529,25 @@ extension ContextPart {
     case .beforeCursor: "Text before the cursor"
     case .afterCursor: "Text after the cursor"
     case .selectedText: "Selected text"
+    }
+  }
+}
+
+extension RemoteFailureReason {
+  /// Words for the History path label.
+  var label: String {
+    switch self {
+    case .unreachable: "unreachable"
+    case .timeout: "no answer"
+    case .busy: "busy"
+    case .unauthorized: "sign-in needed"
+    case .notApproved: "not approved"
+    case .revoked: "removed"
+    case .pinMismatch: "identity changed"
+    case .workerUnavailable: "recognizer unavailable"
+    case .protocolError: "invalid reply"
+    case .limitExceeded: "too long"
+    case .pendingRetry: "retried"
     }
   }
 }

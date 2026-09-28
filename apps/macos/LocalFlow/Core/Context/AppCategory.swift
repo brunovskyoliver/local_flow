@@ -20,7 +20,7 @@ enum AppCategory: String, Codable, CaseIterable, Sendable {
     }
   }
 
-  static let ownBundleID = "org.localflow.LocalFlow"
+  static let ownBundleID = AppIdentity.current.bundleIdentifier
 
   static let builtIn: [String: AppCategory] = [
     "com.apple.mail": .email,

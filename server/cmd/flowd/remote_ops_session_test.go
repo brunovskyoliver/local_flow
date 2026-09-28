@@ -1,0 +1,58 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"log"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"localflow/server/internal/rewrite"
+)
+
+// The session operations are registered, the worker supervisor keeps running
+// without a worker binary, and stop returns promptly.
+func TestSessionOperations(t *testing.T) {
+	var logs bytes.Buffer
+	logger := log.New(&logs, "", 0)
+	r := remoteConfig{speechWorker: filepath.Join(t.TempDir(), "missing-flowd-speech"), speechModels: t.TempDir()}
+	ops, stop, err := sessionOperations(context.Background(), r, nil, nil, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ops["dictation_start"] == nil || ops["rewrite"] != nil || len(ops) != 1 {
+		t.Fatalf("without a rewrite handler: %v", len(ops))
+	}
+	stopped := make(chan struct{})
+	go func() { stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop did not return")
+	}
+	stop()
+
+	r.rewrite = rewrite.NewHandler(rewrite.HandlerConfig{})
+	ops, stop, err = sessionOperations(context.Background(), r, nil, nil, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop()
+	if ops["dictation_start"] == nil || ops["rewrite"] == nil {
+		t.Fatal("rewrite not registered")
+	}
+	// Both supervisors have stopped, so the log is no longer written.
+	if strings.Contains(logs.String(), r.speechModels) {
+		t.Fatal("paths in logs")
+	}
+}
+
+// The worker does not inherit flowd's credentials.
+func TestWorkerEnvironment(t *testing.T) {
+	got := workerEnvironment([]string{"HOME=/Users/x", "LOCALFLOW_REWRITE_TOKEN=secret", "LOCALFLOW_BACKEND_TOKEN=secret2", "PATH=/bin"})
+	if strings.Join(got, ";") != "HOME=/Users/x;PATH=/bin" {
+		t.Fatal(got)
+	}
+}

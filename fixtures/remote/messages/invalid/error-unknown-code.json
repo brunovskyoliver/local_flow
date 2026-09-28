@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "type": "error",
+  "op": 1,
+  "code": "teapot",
+  "message": "The server is busy."
+}

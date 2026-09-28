@@ -89,9 +89,15 @@ final class RewriteCoordinator: RewriteRequesting {
     try? RewriteDeliveryPolicy.shipped.validateSelectable()
   }
 
+  /// Feature 014: the remote server's origin while remote dictation is on and this device
+  /// is approved; rewrites then use the remote channel. Nil keeps the Feature 003 route.
+  @ObservationIgnored var remoteRewriteOrigin: (@MainActor () -> URL?)?
+
   /// A fresh snapshot; captured once per admission and kept by the attempt.
   func snapshot() -> RewriteSettings {
-    RewriteSettings.capture(preferences: preferences, credentialStore: credentials)
+    let settings = RewriteSettings.capture(preferences: preferences, credentialStore: credentials)
+    guard let origin = remoteRewriteOrigin?() else { return settings }
+    return settings.routedToRemote(origin: origin)
   }
 
   var pendingCount: Int { pendingAttempts.count }

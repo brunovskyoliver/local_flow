@@ -255,7 +255,9 @@ public actor TranscriptionStore {
           existingHash == envelope.detail?.contentHash,
           existing.quality == entry.quality, existing.stopReason == entry.stopReason,
           existing.createdAtMilliseconds == entry.createdAtMilliseconds,
-          existing.targetBundleID == entry.targetBundleID
+          existing.targetBundleID == entry.targetBundleID,
+          existing.recognitionPath == entry.recognitionPath,
+          existing.serverFailure == entry.serverFailure
         else { throw Error.conflictingContent }
         // Also validate the persisted bytes rather than trusting an orphaned hash column.
         if let detail = envelope.detail {
@@ -278,17 +280,19 @@ public actor TranscriptionStore {
         id: entry.id, text: entry.text, createdAtMilliseconds: entry.createdAtMilliseconds,
         deliveryState: .notAttempted, recoveryState: .needsReview, quality: entry.quality,
         stopReason: entry.stopReason, targetBundleID: entry.targetBundleID, revision: 0,
-        hasQualityDetail: envelope.detail != nil)
+        hasQualityDetail: envelope.detail != nil, recognitionPath: entry.recognitionPath,
+        serverFailure: entry.serverFailure)
       try db.execute(
         sql: """
-          INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id,attempt_id,attempt_started_at,revision)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?)
+          INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id,attempt_id,attempt_started_at,revision,recognition_path,server_failure)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
           """,
         arguments: [
           normalized.id.uuidString, normalized.text, normalized.createdAtMilliseconds,
           normalized.deliveryState.rawValue, normalized.recoveryState.rawValue,
           normalized.quality.rawValue,
           normalized.stopReason.rawValue, normalized.targetBundleID, nil, nil, normalized.revision,
+          normalized.recognitionPath.rawValue, normalized.serverFailure?.rawValue,
         ])
       if let detailJSON, let detail = envelope.detail {
         try db.execute(
@@ -559,7 +563,8 @@ public actor TranscriptionStore {
         attemptStartedAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1000),
         revision: revision + 1, hasQualityDetail: current.hasQualityDetail,
         rewriteState: current.rewriteState, deliveredSource: current.deliveredSource,
-        deliveredRewriteAttemptID: current.deliveredRewriteAttemptID)
+        deliveredRewriteAttemptID: current.deliveredRewriteAttemptID,
+        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure)
       try Self.update(next, db: db)
       return next
     }
@@ -600,7 +605,8 @@ public actor TranscriptionStore {
         attemptID: current.attemptID,
         attemptStartedAtMilliseconds: current.attemptStartedAtMilliseconds, revision: revision + 1,
         hasQualityDetail: current.hasQualityDetail, rewriteState: current.rewriteState,
-        deliveredSource: delivery.source, deliveredRewriteAttemptID: deliveredAttempt)
+        deliveredSource: delivery.source, deliveredRewriteAttemptID: deliveredAttempt,
+        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure)
       try Self.update(next, db: db)
       try db.execute(
         sql:
@@ -624,7 +630,8 @@ public actor TranscriptionStore {
         attemptStartedAtMilliseconds: current.attemptStartedAtMilliseconds, revision: revision + 1,
         hasQualityDetail: current.hasQualityDetail, rewriteState: current.rewriteState,
         deliveredSource: current.deliveredSource,
-        deliveredRewriteAttemptID: current.deliveredRewriteAttemptID)
+        deliveredRewriteAttemptID: current.deliveredRewriteAttemptID,
+        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure)
       try Self.update(next, db: db)
       return next
     }
@@ -709,9 +716,13 @@ public actor TranscriptionStore {
       let rewriteString: String? = row["rewrite_state"]
       let deliveredString: String? = row["delivered_source"]
       let deliveredAttemptString: String? = row["delivered_rewrite_attempt_id"]
-      guard let rewriteState = TranscriptionEntry.RewriteState(rawValue: rewriteString ?? "") else {
+      guard let rewriteState = TranscriptionEntry.RewriteState(rawValue: rewriteString ?? ""),
+        let path = TranscriptionEntry.RecognitionPath(
+          rawValue: row["recognition_path"] as String? ?? "local")
+      else {
         throw Error.damagedDatabase
       }
+      let failureString: String? = row["server_failure"]
       return try TranscriptionEntry(
         id: id, text: text, createdAtMilliseconds: createdAt, deliveryState: delivery,
         recoveryState: recovery, quality: quality, stopReason: stop, targetBundleID: targetBundleID,
@@ -719,7 +730,9 @@ public actor TranscriptionStore {
         attemptStartedAtMilliseconds: attemptStartedAt, revision: revision,
         hasQualityDetail: row["has_quality_detail"], rewriteState: rewriteState,
         deliveredSource: deliveredString.flatMap(DeliveredSource.init(rawValue:)),
-        deliveredRewriteAttemptID: deliveredAttemptString.flatMap(UUID.init(uuidString:)))
+        deliveredRewriteAttemptID: deliveredAttemptString.flatMap(UUID.init(uuidString:)),
+        recognitionPath: path,
+        serverFailure: failureString.flatMap(RemoteFailureReason.init(rawValue:)))
     }
   }
 

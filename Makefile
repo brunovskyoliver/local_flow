@@ -1,4 +1,4 @@
-.PHONY: check server macos run release
+.PHONY: check server macos run run-dev release
 check:
 	./scripts/test.sh
 server:
@@ -8,6 +8,10 @@ macos:
 
 run:
 	./scripts/dev-macos.sh
+
+# Installs /Applications/LocalFlow Dev.app beside the everyday app (Feature 014).
+run-dev:
+	./scripts/dev-macos.sh --dev
 
 # Optimized build, installed and opened the same way as run.
 release:

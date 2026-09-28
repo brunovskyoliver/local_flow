@@ -10,6 +10,8 @@ struct RewriteEndpoint: Sendable, Equatable {
   /// (`AnalysisTransporting.pinned`), held in memory for one run and never
   /// logged or stored. Nil means "read the current Settings choice".
   var summaryHeaders: [String: String]? = nil
+  /// Feature 014: the request travels over the remote dictation channel, not HTTP.
+  var viaRemoteChannel = false
 
   /// Which primary backend a pinned endpoint reaches: origin, URL and model,
   /// never the key. Keys the analysis partial cache.
@@ -25,6 +27,7 @@ struct RewriteEndpoint: Sendable, Equatable {
     guard let url = settings.endpoint, settings.isEndpointValid else { return nil }
     self.url = url
     origin = settings.endpointOrigin
+    viaRemoteChannel = settings.viaRemoteChannel
   }
   init(url: URL, origin: String) {
     self.url = url

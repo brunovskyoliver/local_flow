@@ -106,3 +106,28 @@ italic) are bundled in `apps/macos/LocalFlow/Resources/Fonts` from
 [google/fonts](https://github.com/google/fonts) under the SIL Open Font License
 1.1. The license texts ship beside the fonts as `OFL-Figtree.txt` and
 `OFL-EBGaramond.txt`. The fonts are registered for the app process only.
+
+## Feature 014 flowd server modules
+
+flowd's remote listener adds two reviewed modules (research R3, R8): `github.com/coder/websocket`
+(ISC, no dependencies) for the WebSocket channel, and `modernc.org/sqlite` (BSD-3-Clause, pure Go,
+so flowd still builds with `CGO_ENABLED=0`) for the account store. The table lists every module
+linked into `flowd` (`go list -deps ./cmd/flowd`); build- and test-only modules of the SQLite
+generator are not linked. Preserve each license text.
+
+| Module | Version | License | Text |
+| --- | --- | --- | --- |
+| `github.com/coder/websocket` | `v1.8.15` | ISC | [coder-websocket-v1.8.15.txt](docs/licenses/coder-websocket-v1.8.15.txt) |
+| `modernc.org/sqlite` | `v1.59.0` | BSD-3-Clause | [modernc-sqlite-v1.59.0.txt](docs/licenses/modernc-sqlite-v1.59.0.txt) |
+| `modernc.org/libc` | `v1.75.7` | BSD-3-Clause | [modernc-libc-v1.75.7.txt](docs/licenses/modernc-libc-v1.75.7.txt) |
+| `modernc.org/mathutil` | `v1.7.1` | BSD-3-Clause | [modernc-mathutil-v1.7.1.txt](docs/licenses/modernc-mathutil-v1.7.1.txt) |
+| `modernc.org/memory` | `v1.12.1` | BSD-3-Clause | [modernc-memory-v1.12.1.txt](docs/licenses/modernc-memory-v1.12.1.txt) |
+| `github.com/dustin/go-humanize` | `v1.0.1` | MIT | [go-humanize-v1.0.1.txt](docs/licenses/go-humanize-v1.0.1.txt) |
+| `github.com/google/uuid` | `v1.6.0` | BSD-3-Clause | [google-uuid-v1.6.0.txt](docs/licenses/google-uuid-v1.6.0.txt) |
+| `github.com/mattn/go-isatty` | `v0.0.24` | MIT | [go-isatty-v0.0.24.txt](docs/licenses/go-isatty-v0.0.24.txt) |
+| `github.com/ncruces/go-strftime` | `v1.0.0` | MIT | [go-strftime-v1.0.0.txt](docs/licenses/go-strftime-v1.0.0.txt) |
+| `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | BSD-3-Clause | [bigfft-v0.0.0.txt](docs/licenses/bigfft-v0.0.0.txt) |
+| `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause | [golang-x-sys-v0.47.0.txt](docs/licenses/golang-x-sys-v0.47.0.txt) |
+
+`modernc.org/libc` also carries notices for the C sources it was translated from (musl and
+others): [modernc-libc-v1.75.7-third-party.md](docs/licenses/modernc-libc-v1.75.7-third-party.md).

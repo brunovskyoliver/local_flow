@@ -65,6 +65,9 @@ struct TranscriptionDetailView: View {
     VStack(alignment: .leading, spacing: 4) {
       Text("Completeness: \(envelope.entry.qualityLabel ?? "Complete")")
       Text(
+        "Recognized: \(HistoryViewModel.pathLabel(for: envelope.entry, showsLocal: true) ?? "Local")"
+      )
+      Text(
         "Delivery: \(envelope.entry.deliveryState.rawValue.replacingOccurrences(of: "_", with: " "))"
       )
       Text(

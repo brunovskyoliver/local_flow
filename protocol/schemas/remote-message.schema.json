@@ -1,0 +1,828 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localflow.org/schemas/remote-message.schema.json",
+  "title": "LocalFlow remote control message v1",
+  "description": "UTF-8 JSON payload of a control frame (kind 0x00) after the hello on /v1/remote/channel (Feature 014), at most 65,536 bytes. Exactly one definition applies per type. Unknown fields are invalid_message; an unknown schema_version is unsupported_version. Byte bounds that JSON Schema cannot express (device name and term lengths in UTF-8 bytes, device key on the P-256 curve) are enforced by both implementations.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ready"
+    },
+    {
+      "$ref": "#/$defs/enroll"
+    },
+    {
+      "$ref": "#/$defs/enrolled"
+    },
+    {
+      "$ref": "#/$defs/refresh"
+    },
+    {
+      "$ref": "#/$defs/tokens"
+    },
+    {
+      "$ref": "#/$defs/dictation_start"
+    },
+    {
+      "$ref": "#/$defs/dictation_accepted"
+    },
+    {
+      "$ref": "#/$defs/window_result"
+    },
+    {
+      "$ref": "#/$defs/progress"
+    },
+    {
+      "$ref": "#/$defs/dictation_end"
+    },
+    {
+      "$ref": "#/$defs/dictation_cancel"
+    },
+    {
+      "$ref": "#/$defs/dictation_complete"
+    },
+    {
+      "$ref": "#/$defs/cancelled"
+    },
+    {
+      "$ref": "#/$defs/rewrite"
+    },
+    {
+      "$ref": "#/$defs/rewrite_event"
+    },
+    {
+      "$ref": "#/$defs/error"
+    }
+  ],
+  "$defs": {
+    "op": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "Client-chosen operation number, increasing within the channel, echoed in every reply."
+    },
+    "error_code": {
+      "type": "string",
+      "enum": [
+        "unauthorized",
+        "token_expired",
+        "not_approved",
+        "revoked",
+        "busy",
+        "invalid_message",
+        "unsupported_version",
+        "limit_exceeded",
+        "worker_unavailable",
+        "internal"
+      ]
+    },
+    "b64url": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "base64url without padding."
+    },
+    "term_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "1 to 128 UTF-8 bytes; maxLength approximates the byte bound."
+    },
+    "ready": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: the hello was accepted; operations may start.",
+      "required": [
+        "schema_version",
+        "type"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "ready"
+        }
+      }
+    },
+    "enroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client, purpose enroll, within 5 minutes of ready. signature is DER ECDSA P-256 over \"localflow-v1-enroll\" || binding.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "provider",
+        "id_token",
+        "device_name",
+        "device_key",
+        "signature"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "enroll"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "apple",
+            "google"
+          ]
+        },
+        "id_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384,
+          "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+        },
+        "device_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "At most 64 UTF-8 bytes after control characters are removed."
+        },
+        "device_key": {
+          "type": "string",
+          "pattern": "^B[A-Za-z0-9_-]{86}$",
+          "description": "Secure Enclave P-256 public key, X9.63 uncompressed (65 bytes, first byte 0x04), base64url without padding."
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{11,96}$",
+          "description": "DER ECDSA signature, 8 to 72 bytes, base64url without padding."
+        }
+      }
+    },
+    "enrolled": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server reply to enroll. state is the combined user and device state; a rejected user gets no refresh token.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "state"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "enrolled"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected"
+          ]
+        },
+        "refresh_token": {
+          "type": "string",
+          "pattern": "^lfr_[A-Za-z0-9_-]{43}$",
+          "description": "lfr_ plus 32 random bytes, base64url without padding."
+        }
+      },
+      "if": {
+        "properties": {
+          "state": {
+            "const": "rejected"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "refresh_token"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "refresh_token"
+        ]
+      }
+    },
+    "refresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client, purpose refresh. signature is DER ECDSA P-256 over \"localflow-v1-refresh\" || binding || SHA-256(refresh_token).",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "refresh_token",
+        "signature"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "refresh"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "refresh_token": {
+          "type": "string",
+          "pattern": "^lfr_[A-Za-z0-9_-]{43}$",
+          "description": "lfr_ plus 32 random bytes, base64url without padding."
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{11,96}$"
+        }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server reply to refresh: a new access token and the rotated refresh token.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "access_token",
+        "expires_in",
+        "refresh_token"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "tokens"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "access_token": {
+          "type": "string",
+          "pattern": "^lfa_[A-Za-z0-9_-]{43}$",
+          "description": "lfa_ plus 32 random bytes, base64url without padding."
+        },
+        "expires_in": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "Seconds; informational."
+        },
+        "refresh_token": {
+          "type": "string",
+          "pattern": "^lfr_[A-Za-z0-9_-]{43}$",
+          "description": "lfr_ plus 32 random bytes, base64url without padding."
+        }
+      }
+    },
+    "dictation_start": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client, purpose session. boost is absent when the Dictionary is empty.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "format",
+        "sample_rate"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "dictation_start"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "format": {
+          "const": "f32le"
+        },
+        "sample_rate": {
+          "const": 16000
+        },
+        "boost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "terms",
+            "governed"
+          ],
+          "properties": {
+            "terms": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "entry_id",
+                  "canonical"
+                ],
+                "properties": {
+                  "entry_id": {
+                    "$ref": "#/$defs/term_text"
+                  },
+                  "canonical": {
+                    "$ref": "#/$defs/term_text"
+                  }
+                }
+              }
+            },
+            "governed": {
+              "type": "array",
+              "maxItems": 1024,
+              "items": {
+                "$ref": "#/$defs/term_text"
+              }
+            }
+          }
+        }
+      }
+    },
+    "dictation_accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: the dictation was admitted. booster is absent when the server has no term booster.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "window_samples",
+        "model"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "dictation_accepted"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "window_samples": {
+          "const": 239360
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "engine",
+            "model_id",
+            "model_revision",
+            "manifest_hash",
+            "sdk",
+            "worker_build"
+          ],
+          "properties": {
+            "engine": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "model_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "model_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "manifest_hash": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "sdk": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "booster": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "worker_build": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    },
+    "window_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: one recognized window, the wire form of TranscriptionWindow and RecognitionEvidence (FR-016).",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "index",
+        "sample_start",
+        "sample_count",
+        "text",
+        "tokens",
+        "boost_hints",
+        "recognition_ms"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "window_result"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 13
+        },
+        "sample_start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2880000
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 239360
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "tokens": {
+          "type": "array",
+          "maxItems": 16384,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text",
+              "start",
+              "end"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "start": {
+                "type": "number",
+                "minimum": 0
+              },
+              "end": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "text",
+            "samples",
+            "padded_samples",
+            "timings_available",
+            "tokens"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 65536
+            },
+            "samples": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "padded_samples": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "timings_available": {
+              "type": "boolean"
+            },
+            "tokens": {
+              "type": "array",
+              "maxItems": 16384,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "text",
+                  "start",
+                  "end"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "start": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "Finite SDK timing in value, or a non-finite marker in invalid.",
+                    "properties": {
+                      "value": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "invalid": {
+                        "type": "string",
+                        "enum": [
+                          "nan",
+                          "positive_infinity",
+                          "negative_infinity"
+                        ]
+                      }
+                    }
+                  },
+                  "end": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "Finite SDK timing in value, or a non-finite marker in invalid.",
+                    "properties": {
+                      "value": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "invalid": {
+                        "type": "string",
+                        "enum": [
+                          "nan",
+                          "positive_infinity",
+                          "negative_infinity"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "boost_hints": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "canonical",
+              "entry_id"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "canonical": {
+                "$ref": "#/$defs/term_text"
+              },
+              "entry_id": {
+                "$ref": "#/$defs/term_text"
+              }
+            }
+          }
+        },
+        "recognition_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        }
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server, at most every 500 ms while a window of the session is queued or running.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "state"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "progress"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "recognizing"
+          ]
+        }
+      }
+    },
+    "dictation_end": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client: no more audio. total_samples must equal the samples received.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "total_samples"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "dictation_end"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "total_samples": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2896000
+        }
+      }
+    },
+    "dictation_cancel": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client: drop the dictation.",
+      "required": [
+        "schema_version",
+        "type",
+        "op"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "dictation_cancel"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        }
+      }
+    },
+    "dictation_complete": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: every window_result of the dictation was sent.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "windows"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "dictation_complete"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "windows": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 14
+        }
+      }
+    },
+    "cancelled": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server reply to dictation_cancel.",
+      "required": [
+        "schema_version",
+        "type",
+        "op"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "cancelled"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        }
+      }
+    },
+    "rewrite": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client, purpose session: an unchanged rewrite request v1 or v2.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "request"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "rewrite"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "request": {
+          "$ref": "rewrite-request.schema.json"
+        }
+      }
+    },
+    "rewrite_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: one event the HTTP route would have written as an NDJSON line.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "event"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "rewrite_event"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "event": {
+          "$ref": "rewrite-event.schema.json"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server. op is absent for hello errors. message is one fixed sentence per code, never derived from content.",
+      "required": [
+        "schema_version",
+        "type",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "error"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "code": {
+          "$ref": "#/$defs/error_code"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    }
+  }
+}

@@ -258,4 +258,109 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertFalse(preferences.contextSettings().enabled)
     XCTAssertFalse(preferences.contextSettings().rewriteEnabled)
   }
+
+  // MARK: Feature 014 remote dictation settings
+
+  @MainActor func testRemoteDictationIsOffByDefault() {
+    let suite = "LocalFlow-remote-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertFalse(preferences.remoteEnabled)
+    XCTAssertEqual(preferences.remoteServerURL, "")
+    XCTAssertEqual(preferences.remoteState, .off)
+    XCTAssertEqual(preferences.remoteConsentVersion, 0)
+    XCTAssertEqual(preferences.remoteFallbackThresholdMs, 1_500)
+    XCTAssertEqual(preferences.remoteSettings(), .off)
+    XCTAssertFalse(preferences.remoteSettings().routesToServer)
+  }
+
+  @MainActor func testRemoteServerURLAcceptsOnlyHTTPSOrigins() {
+    let suite = "LocalFlow-remote-url-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    for bad in [
+      "http://mini.example.com", "https://mini.example.com/v1", "https://u:p@mini.example.com",
+      "https://mini.example.com?x=1", "https://mini.example.com#f", "mini.example.com", "",
+      "ftp://mini.example.com",
+    ] {
+      XCTAssertFalse(preferences.setRemoteServerURL(bad), bad)
+      XCTAssertEqual(preferences.remoteServerURL, "", bad)
+    }
+    XCTAssertTrue(preferences.setRemoteServerURL(" https://Mini.Example.com/ "))
+    XCTAssertEqual(preferences.remoteServerURL, "https://mini.example.com")
+    XCTAssertTrue(preferences.setRemoteServerURL("https://mini.example.com:8443"))
+    XCTAssertEqual(
+      AppPreferences(defaults: defaults).remoteServerURL, "https://mini.example.com:8443")
+    // A value written by something else that is not an origin reads as empty.
+    defaults.set("https://mini.example.com/path", forKey: "remote.serverURL")
+    XCTAssertEqual(AppPreferences(defaults: defaults).remoteServerURL, "")
+  }
+
+  @MainActor func testRemoteStateAndConsentPersistAndGateTheSnapshot() {
+    let suite = "LocalFlow-remote-state-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertEqual(
+      Set(RemoteDictationState.allCases.map(\.rawValue)),
+      ["off", "pinned", "pending", "approved", "rejected", "revoked", "pin_mismatch"])
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.remoteEnabled = true
+    preferences.remoteState = .approved
+    // Without the consent step the snapshot stays off.
+    XCTAssertFalse(preferences.remoteSettings().enabled)
+    XCTAssertFalse(preferences.remoteSettings().routesToServer)
+    preferences.confirmRemoteConsent()
+    let reloaded = AppPreferences(defaults: defaults)
+    XCTAssertEqual(reloaded.remoteState, .approved)
+    XCTAssertEqual(reloaded.remoteConsentVersion, AppPreferences.remoteConsentVersion)
+    XCTAssertTrue(reloaded.remoteSettings().routesToServer)
+    reloaded.remoteState = .pending
+    XCTAssertFalse(reloaded.remoteSettings().routesToServer)
+    defaults.set("unknown", forKey: "remote.state")
+    XCTAssertEqual(AppPreferences(defaults: defaults).remoteState, .off)
+  }
+
+  @MainActor func testResetRemoteKeepsOnlyTheSwitchOff() {
+    let suite = "LocalFlow-remote-reset-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.remoteEnabled = true
+    preferences.confirmRemoteConsent()
+    preferences.remoteState = .approved
+    preferences.remoteNotice = .signInAgain
+    preferences.remoteFallbackThresholdMs = 900
+    preferences.rewriteEnabled = true
+    preferences.resetRemote()
+    XCTAssertEqual(defaults.object(forKey: "remote.enabled") as? Bool, false)
+    for key in AppPreferences.remoteKeys where key != "remote.enabled" {
+      XCTAssertNil(defaults.object(forKey: key), key)
+    }
+    XCTAssertTrue(defaults.bool(forKey: "rewriteEnabled"))
+    XCTAssertEqual(preferences.remoteSettings(), .off)
+  }
+
+  @MainActor func testFallbackThresholdIsDeveloperOnly() {
+    let suite = "LocalFlow-remote-threshold-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let home = URL(fileURLWithPath: "/Users/tester")
+    let dev = AppIdentity(
+      infoDictionary: ["LocalFlowVariant": "dev", "LocalFlowPortBase": "18000"], home: home)
+    let preferences = AppPreferences(defaults: defaults, identity: dev)
+    XCTAssertEqual(preferences.remoteFallbackThreshold, .milliseconds(1_500))
+    preferences.remoteFallbackThresholdMs = 800
+    XCTAssertEqual(preferences.remoteFallbackThreshold, .milliseconds(800))
+    preferences.remoteFallbackThresholdMs = 5
+    XCTAssertEqual(preferences.remoteFallbackThreshold, .milliseconds(250))
+    XCTAssertTrue(dev.allowsDeveloperSettings)
+    // Debug builds allow it for production too; a Release production build does not.
+    XCTAssertEqual(
+      AppIdentity(infoDictionary: [:], home: home).allowsDeveloperSettings,
+      AppIdentity.isDebugBuild)
+  }
 }

@@ -125,6 +125,10 @@ protocol DictationTranscribing: Sendable {
     spool: AudioSpool, lease: ModelLease, sampleCount: Int,
     prefetched: [Int: PrefetchedWindow]
   ) async -> TranscriptionResult
+  /// Feature 014: the same production loop over windows the server recognized, keyed by
+  /// sample start, with the server's model identity in the provenance.
+  func transcribe(sampleCount: Int, remote: [Int: PrefetchedWindow], model: RemoteModelIdentity)
+    async -> TranscriptionResult
 }
 
 extension DictationTranscribing {
@@ -137,6 +141,11 @@ extension DictationTranscribing {
     prefetched: [Int: PrefetchedWindow]
   ) async -> TranscriptionResult {
     await transcribe(spool: spool, lease: lease, sampleCount: sampleCount)
+  }
+  func transcribe(sampleCount: Int, remote: [Int: PrefetchedWindow], model: RemoteModelIdentity)
+    async -> TranscriptionResult
+  {
+    .init(text: "", incomplete: true, completionReasons: [.init(.invalidResult)])
   }
 }
 
@@ -223,10 +232,42 @@ struct WindowedTranscriber: DictationTranscribing {
       rawWindows: admission.windows, completionReasons: reasons)
   }
 
+  /// Supplies the recognized window at `(sampleStart, sampleCount)`. Local recognition
+  /// reads the spool; remote dictation returns the window the server sent (Feature 014).
+  typealias WindowSource = @Sendable (Int, Int) async throws -> PrefetchedWindow
+
   private func transcribeProduction(
     spool: AudioSpool, lease: ModelLease, sampleCount: Int,
     prefetched: [Int: PrefetchedWindow]
   ) async -> TranscriptionResult {
+    await transcribe(sampleCount: sampleCount) { [lifecycle] offset, count in
+      if count == Self.productionWindowSamples, let early = prefetched[offset] {
+        // Recognized while recording; cancellation keeps windows that were already done.
+        return early
+      }
+      try Task.checkCancellation()
+      let samples = try spool.readWindow(startSample: offset, count: count)
+      let began = ProcessInfo.processInfo.systemUptime
+      let window = try await lifecycle.transcribe(lease, samples: samples)
+      return PrefetchedWindow(
+        window: window, recognitionSeconds: ProcessInfo.processInfo.systemUptime - began)
+    }
+  }
+
+  func transcribe(sampleCount: Int, remote: [Int: PrefetchedWindow], model: RemoteModelIdentity)
+    async -> TranscriptionResult
+  {
+    var server = self
+    server.identity = TranscriptionPipelineIdentity(remote: model, build: identity.recordedBuild)
+    return await server.transcribe(sampleCount: sampleCount) { start, _ in
+      guard let window = remote[start] else { throw DictationFailure.invalidResult }
+      return window
+    }
+  }
+
+  /// The production loop over contiguous windows from sample 0. Assembly, admission,
+  /// quality detail and boost hints are the same whichever source produced the windows.
+  func transcribe(sampleCount: Int, source: WindowSource) async -> TranscriptionResult {
     guard (0...2_880_000).contains(sampleCount) else {
       return .init(text: "", incomplete: true, completionReasons: [.init(.invalidResult)])
     }
@@ -253,21 +294,14 @@ struct WindowedTranscriber: DictationTranscribing {
       do {
         let count = min(239_360, sampleCount - offset)
         let window: TranscriptionWindow
-        if count == Self.productionWindowSamples, let early = prefetched[offset] {
-          // Recognized while recording; cancellation keeps windows that were already done.
-          window = early.window
-          recognitionSeconds += early.recognitionSeconds
-        } else {
-          try Task.checkCancellation()
-          let samples = try spool.readWindow(startSample: offset, count: count)
-          let began = ProcessInfo.processInfo.systemUptime
-          do {
-            window = try await lifecycle.transcribe(lease, samples: samples)
-          } catch {
-            recognitionSeconds += ProcessInfo.processInfo.systemUptime - began
-            throw error
-          }
+        let began = ProcessInfo.processInfo.systemUptime
+        do {
+          let sourced = try await source(offset, count)
+          window = sourced.window
+          recognitionSeconds += sourced.recognitionSeconds
+        } catch {
           recognitionSeconds += ProcessInfo.processInfo.systemUptime - began
+          throw error
         }
         try admission.append(window, sampleStart: offset, sampleCount: count)
         boostHints += window.boostHints

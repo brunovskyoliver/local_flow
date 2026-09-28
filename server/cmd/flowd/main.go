@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"localflow/server/internal/accounts"
 	"localflow/server/internal/analysis"
 	"localflow/server/internal/backend"
 	"localflow/server/internal/rewrite"
@@ -35,6 +36,7 @@ type configuration struct {
 	analysis        analysis.Limits
 	dumpDir         string
 	logFile         string
+	remote          remoteConfig
 }
 
 func parse(args []string, getenv func(string) string, output io.Writer) (configuration, error) {
@@ -63,6 +65,14 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.BoolVar(&c.analysis.Preempt, "analysis-preempt", true, "cancel an in-flight analysis call when a rewrite arrives")
 	fs.StringVar(&c.logFile, "log-file", "", "append the request log to this file, rotated at 1 MiB to <file>.1")
 	fs.StringVar(&c.dumpDir, "analysis-dump-requests", "", "debug builds only: write each analysis request body to this directory")
+	fs.StringVar(&c.remote.listen, "remote-listen", "", "loopback host:port for /v1/remote/*; remote serving is off when unset")
+	fs.StringVar(&c.remote.dataDir, "data-dir", "", "remote server data directory (required with --remote-listen)")
+	fs.StringVar(&c.remote.speechWorker, "speech-worker", "", "speech worker executable (default <flowd dir>/flowd-speech)")
+	fs.StringVar(&c.remote.speechModels, "speech-models", "", "model directory passed to the speech worker (default <data-dir>/Models)")
+	appleAudience := fs.String("apple-audience", "org.localflow.LocalFlow", "comma-separated accepted Apple aud values")
+	googleClientIDs := fs.String("google-client-id", "", "comma-separated accepted Google aud values; Google sign-in is refused when unset")
+	fs.BoolVar(&c.remote.dev, "dev", false, "development variant: read the remote identity key from the "+accounts.ServiceDevelopment+" Keychain service")
+	registerRemoteDebugFlags(fs, &c.remote)
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -114,6 +124,9 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	if !loopback && c.token == "" {
 		return c, errors.New("LOCALFLOW_REWRITE_TOKEN is required for a non-loopback listener")
 	}
+	if err := c.remote.validate(c.listen, *appleAudience, *googleClientIDs); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 func parseVersions(list string) ([]int, error) {
@@ -129,11 +142,14 @@ func parseVersions(list string) ([]int, error) {
 }
 func run(ctx context.Context, args []string, getenv func(string) string, output io.Writer) error {
 	if len(args) == 0 {
-		fmt.Fprintf(output, "LocalFlow flowd %s\nUsage: flowd serve [flags]  (alias: flowd rewrite)\n", rewrite.ServerVersion)
+		fmt.Fprintf(output, "LocalFlow flowd %s\nUsage: flowd serve [flags]  (alias: flowd rewrite)\n       flowd admin --data-dir <dir> <command>\n", rewrite.ServerVersion)
 		return nil
 	}
+	if args[0] == "admin" {
+		return runAdmin(ctx, args[1:], output)
+	}
 	if args[0] != "serve" && args[0] != "rewrite" {
-		return errors.New("unknown subcommand; use flowd serve")
+		return errors.New("unknown subcommand; use flowd serve or flowd admin")
 	}
 	c, err := parse(args[1:], getenv, output)
 	if errors.Is(err, flag.ErrHelp) {
@@ -171,29 +187,50 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		mux.Handle("/v1/analysis/meeting", analysisHandler)
 		mux.Handle("/v1/analysis/health", analysisHandler)
 	}
+	var remoteServer *remoteServer
+	if c.remote.listen != "" {
+		c.remote.rewrite = rewriteHandler
+		if remoteServer, err = startRemote(ctx, c.remote, logger); err != nil {
+			return err
+		}
+	}
 	server := &http.Server{Addr: c.listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: c.analysis.Timeout + 10*time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384, BaseContext: func(net.Listener) context.Context { return ctx }}
 	listener, err := net.Listen("tcp", c.listen)
 	if err != nil {
+		if remoteServer != nil {
+			remoteServer.shutdown(context.Background())
+		}
 		return errors.New("could not open listener")
 	}
-	finished := make(chan error, 1)
+	finished := make(chan error, 2)
+	serving := 1
 	go func() { finished <- server.Serve(listener) }()
+	if remoteServer != nil {
+		serving++
+		go func() { finished <- remoteServer.server.Serve(remoteServer.net) }()
+	}
 	logger.Printf("version=%s listening=%s", rewrite.ServerVersion, listener.Addr())
+	var result error
 	select {
 	case err := <-finished:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+		serving--
+		if !errors.Is(err, http.ErrServerClosed) {
+			result = err
 		}
-		return err
 	case <-ctx.Done():
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdown); err != nil {
-			_ = server.Close()
-		}
-		<-finished
-		return nil
 	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if remoteServer != nil {
+		remoteServer.shutdown(shutdown)
+	}
+	if err := server.Shutdown(shutdown); err != nil {
+		_ = server.Close()
+	}
+	for ; serving > 0; serving-- {
+		<-finished
+	}
+	return result
 }
 
 // logFileLimit bounds the request log: one live file plus one rotated copy,
@@ -243,8 +280,12 @@ func (c *cappedFile) Close() error {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:], os.Getenv, os.Stderr); err != nil {
+	output := io.Writer(os.Stderr)
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		output = os.Stdout
+	}
+	if err := run(ctx, os.Args[1:], os.Getenv, output); err != nil {
 		fmt.Fprintln(os.Stderr, "flowd:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }

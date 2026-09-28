@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "server": "flowd/0.14.0",
+  "protocol_versions": [
+    1
+  ],
+  "suite": "x25519-hkdfsha256-chacha20poly1305",
+  "server_key": "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
+  "fingerprint": "3F9A01C2"
+}

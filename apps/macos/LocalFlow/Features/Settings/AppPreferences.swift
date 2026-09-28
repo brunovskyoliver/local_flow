@@ -160,6 +160,71 @@ final class AppPreferences {
     return true
   }
 
+  // Feature 014: remote dictation. Off by default; `remoteEnabled` is set only after
+  // the consent step. Tokens and keys live in Keychain (RemoteCredentialStore), never here.
+  static let remoteConsentVersion = 1
+  static let remoteKeys = [
+    "remote.enabled", "remote.serverURL", "remote.state", "remote.consentVersion",
+    "remote.fallbackThresholdMs", "remote.notice",
+  ]
+  @ObservationIgnored private let identity: AppIdentity
+  var remoteEnabled: Bool {
+    didSet { defaults.set(remoteEnabled, forKey: "remote.enabled") }
+  }
+  /// The validated origin, or empty. Invalid text is never stored.
+  private(set) var remoteServerURL: String {
+    didSet { defaults.set(remoteServerURL, forKey: "remote.serverURL") }
+  }
+  var remoteState: RemoteDictationState {
+    didSet { defaults.set(remoteState.rawValue, forKey: "remote.state") }
+  }
+  var remoteNotice: RemoteDictationNotice? {
+    didSet { defaults.set(remoteNotice?.rawValue, forKey: "remote.notice") }
+  }
+  private(set) var remoteConsentVersion: Int {
+    didSet { defaults.set(remoteConsentVersion, forKey: "remote.consentVersion") }
+  }
+  /// Development and Debug builds only; stored as given, clamped to 250…10,000 ms on use.
+  var remoteFallbackThresholdMs: Int {
+    didSet { defaults.set(remoteFallbackThresholdMs, forKey: "remote.fallbackThresholdMs") }
+  }
+
+  /// False for anything but an `https://` origin without path or credentials.
+  @discardableResult func setRemoteServerURL(_ text: String) -> Bool {
+    guard let origin = RemoteDictationSettings.origin(text) else { return false }
+    remoteServerURL = origin.absoluteString
+    return true
+  }
+
+  func confirmRemoteConsent() { remoteConsentVersion = Self.remoteConsentVersion }
+
+  /// Turning remote dictation off: every `remote.*` default goes except `remote.enabled = false`.
+  func resetRemote() {
+    remoteEnabled = false
+    remoteServerURL = ""
+    remoteState = .off
+    remoteNotice = nil
+    remoteConsentVersion = 0
+    remoteFallbackThresholdMs = 1_500
+    // The observed values are reset above; the stored ones go, except the switch.
+    for key in Self.remoteKeys where key != "remote.enabled" { defaults.removeObject(forKey: key) }
+  }
+
+  var remoteFallbackThreshold: Duration {
+    guard identity.allowsDeveloperSettings else {
+      return RemoteDictationSettings.defaultFallbackThreshold
+    }
+    return .milliseconds(min(10_000, max(250, remoteFallbackThresholdMs)))
+  }
+
+  /// The immutable press-time snapshot for remote dictation.
+  func remoteSettings() -> RemoteDictationSettings {
+    RemoteDictationSettings(
+      enabled: remoteEnabled && remoteConsentVersion >= Self.remoteConsentVersion,
+      serverOrigin: RemoteDictationSettings.origin(remoteServerURL), state: remoteState,
+      fallbackThreshold: remoteFallbackThreshold)
+  }
+
   static func isValidBundleID(_ id: String) -> Bool {
     !id.isEmpty && id.utf8.count <= 255 && !id.contains { $0.isWhitespace || $0.isNewline }
   }
@@ -173,8 +238,19 @@ final class AppPreferences {
       categoryOverrides: contextCategoryOverrides)
   }
 
-  init(defaults: UserDefaults = .standard) {
+  init(defaults: UserDefaults = .standard, identity: AppIdentity = .current) {
     self.defaults = defaults
+    self.identity = identity
+    remoteEnabled = defaults.bool(forKey: "remote.enabled")
+    remoteServerURL =
+      RemoteDictationSettings.origin(defaults.string(forKey: "remote.serverURL") ?? "")?
+      .absoluteString ?? ""
+    remoteState =
+      RemoteDictationState(rawValue: defaults.string(forKey: "remote.state") ?? "") ?? .off
+    remoteNotice = RemoteDictationNotice(rawValue: defaults.string(forKey: "remote.notice") ?? "")
+    remoteConsentVersion = defaults.integer(forKey: "remote.consentVersion")
+    remoteFallbackThresholdMs =
+      defaults.object(forKey: "remote.fallbackThresholdMs") as? Int ?? 1_500
     // Transcription, speaker labels, identification and summaries always run;
     // Settings has no switches for them, so an old stored value is removed.
     for key in Self.retiredKeys where defaults.object(forKey: key) != nil {

@@ -20,6 +20,9 @@ struct RewriteSettings: Sendable, Equatable {
   let credentialPresent: Bool
   /// Feature 012: context capture and "Send context to rewrite server" were both on.
   let sendsContext: Bool
+  /// Feature 014: rewrites go over the authenticated remote channel to this origin; the
+  /// Feature 003 shared-token credential is neither needed nor sent.
+  var viaRemoteChannel = false
 
   init(
     enabled: Bool, mode: RewriteMode, endpoint: URL?, endpointOrigin: String, timeoutSeconds: Int,
@@ -56,7 +59,7 @@ struct RewriteSettings: Sendable, Equatable {
   var scheme: String { endpoint?.scheme?.lowercased() ?? "" }
   var host: String { Self.host(of: endpointOrigin) }
   var isLoopback: Bool { Self.isLoopbackHost(host) }
-  var requiresCredential: Bool { !isLoopback }
+  var requiresCredential: Bool { !isLoopback && !viaRemoteChannel }
   var isUnencryptedRemote: Bool { scheme == "http" && !isLoopback }
 
   var canSend: Bool {
@@ -72,6 +75,17 @@ struct RewriteSettings: Sendable, Equatable {
     if isEndpointValid && requiresCredential && !credentialPresent { return .missingCredential }
     if !isEndpointValid { return .invalidSettings }
     return nil
+  }
+
+  /// The same choices sent to the remote server over its channel (FR-020).
+  func routedToRemote(origin: URL) -> RewriteSettings {
+    var routed = RewriteSettings(
+      enabled: enabled, mode: mode, endpoint: origin,
+      endpointOrigin: Self.normalizedOrigin(origin.absoluteString) ?? "",
+      timeoutSeconds: timeoutSeconds, insecureOverride: false, credentialPresent: false,
+      sendsContext: sendsContext)
+    routed.viaRemoteChannel = true
+    return routed
   }
 
   static func clampTimeout(_ seconds: Int) -> Int {

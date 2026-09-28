@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://localflow.org/schemas/remote-identity.schema.json",
+  "title": "LocalFlow remote identity v1",
+  "description": "Body of GET /v1/remote/identity on the remote listener (Feature 014). Public, unauthenticated and content-free. The client shows fingerprint at enrollment and pins server_key.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "server",
+    "protocol_versions",
+    "suite",
+    "server_key",
+    "fingerprint"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "server": {
+      "type": "string",
+      "pattern": "^flowd/[0-9A-Za-z.+-]{1,64}$",
+      "description": "flowd/<version>."
+    },
+    "protocol_versions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "description": "Channel versions this server speaks; [1] today."
+    },
+    "suite": {
+      "const": "x25519-hkdfsha256-chacha20poly1305"
+    },
+    "server_key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "The server's raw X25519 public key, base64url without padding (32 bytes)."
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{4}(-[0-9a-f]{4}){7}$",
+      "description": "First 16 bytes of SHA-256 over the raw public key as eight groups of four lowercase hex digits joined by '-'."
+    }
+  }
+}

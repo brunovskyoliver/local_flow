@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "type": "enroll",
+  "op": 1,
+  "provider": "apple",
+  "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImxvY2FsZmxvdy10ZXN0LTEifQ.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+  "device_name": "Oliver's MacBook Pro",
+  "device_key": "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+  "signature": "MEQCIAERERERERERERERERERERERERERERERERERERERERERAiACIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg"
+}
