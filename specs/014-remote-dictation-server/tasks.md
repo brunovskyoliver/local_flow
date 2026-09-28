@@ -357,3 +357,16 @@ Task: "Session tests in apps/macos/LocalFlowTests/RemoteDictationSessionTests.sw
 - T082, T087, T092, T093, T094 on the Mac mini.
 - A permanent hostname: a second domain on Cloudflare, the owner's VPS, or Tailscale Funnel.
 - A logout and login to restore the dev app's local AI agents after T037.
+
+## Report: provisional §5 run (2026-09-28)
+
+**Done:** on the M5 through the quick tunnel, rows 1, 3 and 4 pass:
+- Plain server dictation: tail after release 112–176 ms warm.
+- flowd stopped mid-dictation: `local_after_server_failure`/`unreachable`.
+- Debug busy: `local_after_server_failure`/`busy`.
+
+The worker-kill row recovered without a fallback, because flowd restarted the worker in about 1 s, before a window was due. A flowd restart mid-recording also recovered on a new channel with nothing lost. Details: [acceptance/remote-dictation.md](acceptance/remote-dictation.md). T082 stays unchecked (Mac mini, permanent hostname).
+
+**Not run:** the Dictionary-term row (T093), no-local-model pending retry, device revocation mid-dictation.
+
+**Worth watching:** the first dictation after idle took 1,496 ms after release, close to the 1.5 s fallback threshold. T093 should measure first-after-idle separately.
