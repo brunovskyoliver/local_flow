@@ -143,6 +143,8 @@ DATA="$HOME/Library/Application Support/LocalFlow Server"
 "$DATA/bin/flowd" admin --data-dir "$DATA" audit --limit 20
 ```
 
+Step-by-step setup, tunnel, administration and uninstall: [docs/distribution/remote-server.md](../docs/distribution/remote-server.md).
+
 `scripts/install-remote-server.sh [--dev] [--dry-run] [--google-client-id IDS]
 [--apple-audience IDS] [--mtplx PATH] [--model DIR]` builds flowd and `flowd-speech`,
 installs them under `<data-dir>/bin` with the pinned model descriptors, and loads two
