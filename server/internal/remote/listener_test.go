@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -235,12 +236,15 @@ type testClient struct {
 
 func (h *harness) dial() *testClient {
 	h.t.Helper()
+	return h.dialFrom("")
+}
+
+// dialFrom dials as the client cloudflared reports in Cf-Connecting-Ip (none
+// when empty: the loopback peer address is the client).
+func (h *harness) dialFrom(client string) *testClient {
+	h.t.Helper()
 	c := &testClient{t: h.t}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(h.url, "http")+"/v1/remote/channel", &websocket.DialOptions{
-		OnPingReceived: func(context.Context, []byte) bool { c.pings.Add(1); return true },
-	})
+	ws, err := h.tryDial(client, func(context.Context, []byte) bool { c.pings.Add(1); return true })
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -250,11 +254,34 @@ func (h *harness) dial() *testClient {
 	return c
 }
 
+func (h *harness) tryDial(client string, onPing func(context.Context, []byte) bool) (*websocket.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	header := http.Header{}
+	if client != "" {
+		header.Set("Cf-Connecting-Ip", client)
+	}
+	ws, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(h.url, "http")+"/v1/remote/channel", &websocket.DialOptions{
+		HTTPHeader: header, OnPingReceived: onPing,
+	})
+	if err != nil && resp != nil && resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, errRefused
+	}
+	return ws, err
+}
+
+var errRefused = errors.New("upgrade refused with 503")
+
 // hello dials and sends a hello with the given purpose (and token for
 // session), returning the client and the server's first message.
 func (h *harness) hello(purpose Purpose, token string) (*testClient, Message) {
 	h.t.Helper()
-	c := h.dial()
+	return h.helloFrom("", purpose, token)
+}
+
+func (h *harness) helloFrom(client string, purpose Purpose, token string) (*testClient, Message) {
+	h.t.Helper()
+	c := h.dialFrom(client)
 	replyKey := newKey(h.t)
 	channel, err := NewClient(h.identity.PublicKey(), replyKey)
 	if err != nil {
@@ -401,25 +428,70 @@ func TestIdentityEndpointAndRoutes(t *testing.T) {
 	}
 }
 
-// 16 open channels, then the upgrade is refused with HTTP 503 until one closes.
-func TestChannelLimit(t *testing.T) {
-	h := newHarness(t, Operations{})
-	var clients []*testClient
-	for range MaxChannels {
-		clients = append(clients, h.dial())
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(h.url, "http")+"/v1/remote/channel", nil)
-	if err == nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("17th channel: %v %v", resp, err)
-	}
-	clients[0].ws.Close(websocket.StatusNormalClosure, "")
+// waitOpen waits until the listener has released closed channels.
+func (h *harness) waitAnonymous(t *testing.T, n int) {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	for h.listener.Registry().Len() >= MaxChannels && time.Now().Before(deadline) {
+	for time.Now().Before(deadline) {
+		h.listener.slotsMu.Lock()
+		got := h.listener.anonymous
+		h.listener.slotsMu.Unlock()
+		if got == n {
+			return
+		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	h.dial()
+	t.Fatalf("anonymous channels never reached %d", n)
+}
+
+// A client may hold 4 channels that no session hello has authenticated;
+// the 5th upgrade is refused with HTTP 503 until one closes. Other clients
+// are not affected.
+func TestAnonymousChannelLimitPerClient(t *testing.T) {
+	h := newHarness(t, Operations{})
+	var clients []*testClient
+	for range MaxAnonymousPerClient {
+		clients = append(clients, h.dialFrom("203.0.113.1"))
+	}
+	if _, err := h.tryDial("203.0.113.1", nil); !errors.Is(err, errRefused) {
+		t.Fatalf("5th channel: %v", err)
+	}
+	h.dialFrom("203.0.113.2")
+	clients[0].ws.Close(websocket.StatusNormalClosure, "")
+	h.waitAnonymous(t, MaxAnonymousPerClient)
+	h.dialFrom("203.0.113.1")
+}
+
+// Anonymous channels are also bounded server-wide, across clients.
+func TestAnonymousChannelLimitServerWide(t *testing.T) {
+	h := newHarness(t, Operations{})
+	for i := range MaxAnonymousChannels {
+		h.dialFrom(fmt.Sprintf("203.0.113.%d", i/MaxAnonymousPerClient+1))
+	}
+	if _, err := h.tryDial("198.51.100.1", nil); !errors.Is(err, errRefused) {
+		t.Fatalf("channel over the anonymous budget: %v", err)
+	}
+}
+
+// A session channel leaves the anonymous budget once its hello is accepted,
+// so approved devices keep working while anonymous channels are full; the
+// total stays bounded by MaxChannels.
+func TestAuthenticatedChannelsLeaveTheAnonymousBudget(t *testing.T) {
+	h := newHarness(t, Operations{})
+	sessions := 0
+	for device := 1; sessions < MaxChannels; device++ {
+		_, _, token := h.approved(fmt.Sprintf("user-%d", device), byte(device))
+		for range MaxChannelsPerDevice {
+			if _, first := h.helloFrom("192.0.2.1", PurposeSession, token); first.MessageType() != "ready" {
+				t.Fatalf("session %d: %#v", sessions, first)
+			}
+			sessions++
+		}
+	}
+	h.waitAnonymous(t, 0)
+	if _, err := h.tryDial("192.0.2.9", nil); !errors.Is(err, errRefused) {
+		t.Fatalf("channel over the total: %v", err)
+	}
 }
 
 // The hello must arrive within 10 s of the upgrade.

@@ -187,7 +187,8 @@ func TestSnapshotAuthenticate(t *testing.T) {
 	}
 }
 
-// Refresh reuse revokes the device; its last access token is answered revoked.
+// Unsigned refresh reuse revokes the device; its last access token is answered
+// revoked.
 func TestSnapshotRevokedByRefreshReuse(t *testing.T) {
 	serve, admin, watcher, _, clock := watched(t)
 	user, _, _ := admin.EnsureUser(ctx, "apple", "sub", "")
@@ -199,7 +200,7 @@ func TestSnapshotRevokedByRefreshReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := serve.Refresh(ctx, refresh, func(Device) error { return nil }); !errors.Is(err, ErrRefreshReuse) {
+	if _, err := serve.Refresh(ctx, refresh, func(Device) error { return ErrUnauthorized }); !errors.Is(err, ErrRefreshReuse) {
 		t.Fatal(err)
 	}
 	poll(t, watcher)

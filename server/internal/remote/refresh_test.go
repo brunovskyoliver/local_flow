@@ -74,7 +74,8 @@ func TestRefreshIssuesAndRotates(t *testing.T) {
 	}
 }
 
-// Presenting the replaced token revokes the device and closes the channel.
+// Presenting the replaced token without the device's signature revokes the
+// device and closes the channel.
 func TestRefreshReuseRevokesDevice(t *testing.T) {
 	ctx := context.Background()
 	h := newAccountsHarness(t, nil)
@@ -86,7 +87,7 @@ func TestRefreshReuseRevokesDevice(t *testing.T) {
 	if first.MessageType() != "ready" {
 		t.Fatal(first)
 	}
-	c, m := h.refresh(refresh, d)
+	c, m := h.refresh(refresh, newDevice(t))
 	expectError(t, m, 1, CodeRevoked)
 	if status := c.closed(); status != websocket.StatusNormalClosure {
 		t.Fatal(status)
@@ -200,5 +201,28 @@ func TestRefreshAfterAdminRevoke(t *testing.T) {
 			_, m := h.refresh(token, d)
 			expectError(t, m, 1, CodeUnauthorized)
 		}
+	}
+}
+
+// The device presenting its previous token with its own signature (the reply
+// to its last refresh never arrived) gets a new pair and stays approved.
+func TestRefreshSignedReplayReissues(t *testing.T) {
+	ctx := context.Background()
+	h := newAccountsHarness(t, nil)
+	d := newDevice(t)
+	row, refresh := h.enrolledDevice("sub", d, true)
+	if _, m := h.refresh(refresh, d); m.MessageType() != "tokens" {
+		t.Fatalf("%#v", m)
+	}
+	_, m := h.refresh(refresh, d)
+	tokens, ok := m.(Tokens)
+	if !ok {
+		t.Fatalf("%#v", m)
+	}
+	if got, _ := h.store.Device(ctx, row.ID); got.State != accounts.DeviceApproved {
+		t.Fatal(got.State)
+	}
+	if _, first := h.hello(PurposeSession, tokens.AccessToken); first.MessageType() != "ready" {
+		t.Fatalf("%#v", first)
 	}
 }

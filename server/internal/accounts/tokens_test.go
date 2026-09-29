@@ -133,8 +133,11 @@ func TestRefreshRotates(t *testing.T) {
 	}
 }
 
-// Presenting the previous refresh token revokes the device, clears its hashes
-// and writes refresh_reuse; the current token is dead afterwards.
+func reject(Device) error { return ErrUnauthorized }
+
+// Presenting the previous refresh token without a valid device signature
+// revokes the device, clears its hashes and writes refresh_reuse; the current
+// token is dead afterwards.
 func TestRefreshReuseRevokesDevice(t *testing.T) {
 	store, _, _ := openStore(t)
 	device := approvedDevice(t, store)
@@ -143,7 +146,7 @@ func TestRefreshReuseRevokesDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Refresh(ctx, token1, accept); !errors.Is(err, ErrRefreshReuse) {
+	if _, err := store.Refresh(ctx, token1, reject); !errors.Is(err, ErrRefreshReuse) {
 		t.Fatal(err)
 	}
 	got, _ := store.Device(ctx, device.ID)
@@ -251,5 +254,45 @@ func TestRefreshRefusals(t *testing.T) {
 	clock.Advance(RefreshLifetime)
 	if _, err := store.Refresh(ctx, token, accept); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal("expired by the server clock", err)
+	}
+}
+
+// A signed refresh with the previous token is the device retrying after the
+// reply to its last refresh was lost: it gets a new pair, the token it never
+// received is forgotten, and nothing is revoked or audited.
+func TestRefreshSignedReplayAfterALostReplyReissues(t *testing.T) {
+	store, _, _ := openStore(t)
+	device := approvedDevice(t, store)
+	token1, _, _ := store.IssueRefresh(ctx, device.ID)
+	lost, err := store.Refresh(ctx, token1, accept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var verified Device
+	again, err := store.Refresh(ctx, token1, func(d Device) error { verified = d; return nil })
+	if err != nil || verified.ID != device.ID {
+		t.Fatal(err)
+	}
+	if again.Refresh == lost.Refresh || again.Access == lost.Access {
+		t.Fatal("expected a new pair")
+	}
+	got, _ := store.Device(ctx, device.ID)
+	h1, h3 := HashToken(token1), HashToken(again.Refresh)
+	if got.State != DeviceApproved || !bytes.Equal(got.PreviousRefreshHash, h1[:]) || !bytes.Equal(got.RefreshHash, h3[:]) {
+		t.Fatalf("%+v", got)
+	}
+	// The pair that never arrived is dead.
+	if _, err := store.Refresh(ctx, lost.Refresh, accept); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal(err)
+	}
+	entries, _ := store.AuditLog(ctx, 10)
+	for _, e := range entries {
+		if e.Action == "refresh_reuse" || e.Action == "revoke" {
+			t.Fatalf("%+v", entries)
+		}
+	}
+	// The new token refreshes normally.
+	if _, err := store.Refresh(ctx, again.Refresh, accept); err != nil {
+		t.Fatal(err)
 	}
 }

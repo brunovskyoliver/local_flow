@@ -17,14 +17,21 @@ import (
 )
 
 // Bounds and timers of the remote listener (contract "Timeouts", research R11).
+//
+// A channel is anonymous from the upgrade until a session hello authenticates
+// it; enroll and refresh channels stay anonymous. Anonymous channels have
+// their own budget, server-wide and per client, so nobody without an
+// approved device can hold the slots approved devices need.
 const (
-	MaxChannels          = 16
-	MaxChannelsPerDevice = 2
-	HelloTimeout         = 10 * time.Second
-	IdleTimeout          = 30 * time.Second
-	EnrollIdleTimeout    = 5 * time.Minute
-	PingInterval         = 15 * time.Second
-	writeTimeout         = 10 * time.Second
+	MaxChannels           = 32
+	MaxAnonymousChannels  = 16
+	MaxAnonymousPerClient = 4
+	MaxChannelsPerDevice  = 2
+	HelloTimeout          = 10 * time.Second
+	IdleTimeout           = 30 * time.Second
+	EnrollIdleTimeout     = 5 * time.Minute
+	PingInterval          = 15 * time.Second
+	writeTimeout          = 10 * time.Second
 )
 
 // Clock is the listener's time source; tests inject a manual one.
@@ -93,40 +100,114 @@ type Listener struct {
 	cfg      Config
 	identity []byte
 	registry *Registry
-	open     atomic.Int64
 	nextID   atomic.Uint64
 
-	helloMu       sync.Mutex  // guards accountHellos
-	accountHellos []time.Time // admission times of recent enroll and refresh hellos
+	slotsMu   sync.Mutex     // guards the channel counts
+	open      int            // every channel
+	anonymous int            // channels not bound to a session principal
+	byClient  map[string]int // anonymous channels per client
+
+	helloMu       sync.Mutex             // guards the hello times
+	accountHellos []time.Time            // recent enroll and refresh hellos, server-wide
+	clientHellos  map[string][]time.Time // the same, per client
 }
 
-// MaxAccountHellos enroll and refresh hellos are admitted per
-// AccountHelloWindow, server-wide; more are answered busy (research R11).
+// Enroll and refresh hellos are admitted up to MaxAccountHellos per client
+// and MaxAccountHellosTotal server-wide per AccountHelloWindow; more are
+// answered busy (research R11).
 const (
-	MaxAccountHellos   = 10
-	AccountHelloWindow = time.Minute
+	MaxAccountHellos      = 10
+	MaxAccountHellosTotal = 60
+	AccountHelloWindow    = time.Minute
 	// revokeGrace bounds how long a revoked channel waits for its sealed
 	// error to be written before it is closed regardless.
 	revokeGrace = 300 * time.Millisecond
 )
 
-// admitAccountHello applies the server-wide enroll and refresh hello limit
-// over a sliding minute of the listener's clock.
-func (l *Listener) admitAccountHello() bool {
+// clientAddress names the client for per-client limits. flowd listens on
+// loopback only and cloudflared sets Cf-Connecting-Ip from the Cloudflare
+// edge, which overwrites any value the client sent; without the tunnel (a
+// direct loopback connection) the peer address is used.
+func clientAddress(r *http.Request) string {
+	if ip := r.Header.Get("Cf-Connecting-Ip"); ip != "" {
+		return ip
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// admitChannel takes an anonymous slot for a new channel from client.
+func (l *Listener) admitChannel(client string) bool {
+	l.slotsMu.Lock()
+	defer l.slotsMu.Unlock()
+	if l.open >= MaxChannels || l.anonymous >= MaxAnonymousChannels || l.byClient[client] >= MaxAnonymousPerClient {
+		return false
+	}
+	l.open++
+	l.anonymous++
+	l.byClient[client]++
+	return true
+}
+
+// authenticated moves c out of the anonymous budget once its session hello
+// has been accepted.
+func (l *Listener) authenticated(c *Conn) {
+	l.slotsMu.Lock()
+	defer l.slotsMu.Unlock()
+	if c.anonymous {
+		c.anonymous = false
+		l.leaveAnonymousLocked(c.client)
+	}
+}
+
+func (l *Listener) releaseChannel(c *Conn) {
+	l.slotsMu.Lock()
+	defer l.slotsMu.Unlock()
+	l.open--
+	if c.anonymous {
+		c.anonymous = false
+		l.leaveAnonymousLocked(c.client)
+	}
+}
+
+func (l *Listener) leaveAnonymousLocked(client string) {
+	l.anonymous--
+	if l.byClient[client]--; l.byClient[client] <= 0 {
+		delete(l.byClient, client)
+	}
+}
+
+// admitAccountHello applies the per-client and server-wide enroll and
+// refresh hello limits over a sliding minute of the listener's clock.
+func (l *Listener) admitAccountHello(client string) bool {
 	l.helloMu.Lock()
 	defer l.helloMu.Unlock()
 	now := l.cfg.Clock.Now()
-	kept := l.accountHellos[:0]
-	for _, at := range l.accountHellos {
-		if now.Sub(at) < AccountHelloWindow {
-			kept = append(kept, at)
+	recent := func(times []time.Time) []time.Time {
+		kept := times[:0]
+		for _, at := range times {
+			if now.Sub(at) < AccountHelloWindow {
+				kept = append(kept, at)
+			}
+		}
+		return kept
+	}
+	l.accountHellos = recent(l.accountHellos)
+	for key, times := range l.clientHellos {
+		if kept := recent(times); len(kept) == 0 {
+			delete(l.clientHellos, key)
+		} else {
+			l.clientHellos[key] = kept
 		}
 	}
-	l.accountHellos = kept
-	if len(kept) >= MaxAccountHellos {
+	if len(l.accountHellos) >= MaxAccountHellosTotal || len(l.clientHellos[client]) >= MaxAccountHellos {
 		return false
 	}
 	l.accountHellos = append(l.accountHellos, now)
+	l.clientHellos[client] = append(l.clientHellos[client], now)
 	return true
 }
 
@@ -143,7 +224,7 @@ func NewListener(cfg Config) *Listener {
 		SchemaVersion: SchemaVersion, Server: "flowd/" + cfg.ServerVersion, ProtocolVersions: []int{1},
 		Suite: Suite, ServerKey: cfg.Identity.PublicKey(), Fingerprint: cfg.Identity.Fingerprint(),
 	})
-	return &Listener{cfg: cfg, identity: body, registry: newRegistry()}
+	return &Listener{cfg: cfg, identity: body, registry: newRegistry(), byClient: map[string]int{}, clientHellos: map[string][]time.Time{}}
 }
 
 type discard struct{}
@@ -173,18 +254,19 @@ func (l *Listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(l.identity)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/remote/channel":
-		if l.open.Add(1) > MaxChannels {
-			l.open.Add(-1)
-			l.cfg.Logger.Printf("remote event=refused open=%d code=busy", MaxChannels)
+		client := clientAddress(r)
+		if !l.admitChannel(client) {
+			l.cfg.Logger.Printf("remote event=refused code=busy")
 			http.Error(w, "busy", http.StatusServiceUnavailable)
 			return
 		}
-		defer l.open.Add(-1)
+		c := &Conn{id: l.nextID.Add(1), listener: l, client: client, anonymous: true, done: make(chan struct{}), outcome: "closed"}
+		defer l.releaseChannel(c)
 		ws, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
 		}
-		c := &Conn{id: l.nextID.Add(1), listener: l, socket: newSocket(ws), done: make(chan struct{}), outcome: "closed"}
+		c.socket = newSocket(ws)
 		l.registry.add(c)
 		defer l.registry.remove(c)
 		l.serveChannel(r.Context(), c)
@@ -290,6 +372,7 @@ func (l *Listener) serveChannel(ctx context.Context, c *Conn) {
 			c.Fail(0, CodeBusy)
 			return
 		}
+		l.authenticated(c)
 		// A revocation that swapped the snapshot after Authenticate read it
 		// and walked the registry before bind would miss this channel; the
 		// watcher swaps before it calls Revoke, so re-checking the current
@@ -303,7 +386,7 @@ func (l *Listener) serveChannel(ctx context.Context, c *Conn) {
 			c.Fail(0, CodeUnsupportedVersion)
 			return
 		}
-		if !l.admitAccountHello() {
+		if !l.admitAccountHello(c.client) {
 			l.cfg.Logger.Printf("remote channel=%d purpose=%s event=rate_limited code=busy", c.id, hello.Purpose)
 			c.Fail(0, CodeBusy)
 			return
@@ -346,6 +429,8 @@ type Conn struct {
 	id        uint64
 	listener  *Listener
 	socket    *socket
+	client    string // for per-client limits only; never logged
+	anonymous bool   // counted in the anonymous budget; guarded by listener.slotsMu
 	purpose   Purpose
 	principal accounts.Principal
 	// accessExpires is the expiry of the hello's access token (session only).

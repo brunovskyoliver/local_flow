@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"fmt"
 	"log"
 	"net/http/httptest"
 	"path/filepath"
@@ -375,7 +376,7 @@ func TestEnrollPendingCap(t *testing.T) {
 	enrolled(t, reply(h.enroll("pending-7", newDevice(t))), "pending")
 }
 
-// More than 10 enroll or refresh hellos per minute, server-wide, are busy;
+// More than 10 enroll or refresh hellos per minute from one client are busy;
 // session hellos do not count.
 func TestAccountHelloRateLimit(t *testing.T) {
 	h := newAccountsHarness(t, nil)
@@ -408,4 +409,31 @@ func TestAccountHelloRateLimit(t *testing.T) {
 	if _, first := h.hello(PurposeEnroll, ""); first.MessageType() != "ready" {
 		t.Fatalf("after a minute: %#v", first)
 	}
+}
+
+// One client using up its hello budget leaves other clients' refreshes alone;
+// the server-wide ceiling is higher.
+func TestAccountHelloRateLimitIsPerClient(t *testing.T) {
+	h := newAccountsHarness(t, nil)
+	for range MaxAccountHellos {
+		c, first := h.helloFrom("203.0.113.7", PurposeRefresh, "")
+		if first.MessageType() != "ready" {
+			t.Fatalf("%#v", first)
+		}
+		c.ws.CloseNow()
+	}
+	c, first := h.helloFrom("203.0.113.7", PurposeRefresh, "")
+	expectError(t, first, 0, CodeBusy)
+	c.ws.CloseNow()
+	for i := range MaxAccountHellosTotal - MaxAccountHellos {
+		h.waitAnonymous(t, 0)
+		c, first := h.helloFrom(fmt.Sprintf("198.51.100.%d", i), PurposeRefresh, "")
+		if first.MessageType() != "ready" {
+			t.Fatalf("client %d: %#v", i, first)
+		}
+		c.ws.CloseNow()
+	}
+	h.waitAnonymous(t, 0)
+	c, first = h.helloFrom("192.0.2.1", PurposeEnroll, "")
+	expectError(t, first, 0, CodeBusy)
 }

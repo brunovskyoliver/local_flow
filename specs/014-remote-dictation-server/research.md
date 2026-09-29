@@ -46,7 +46,7 @@ Feature 014, first slice of [ADR 0028](../../docs/adr/0028-remote-inference-serv
 
 ## R5. Server tokens
 
-**Decision**: Opaque random tokens. Access tokens are `lfa_` plus 32 random bytes in base64url; refresh tokens are `lfr_` plus 32 random bytes. The server stores only SHA-256 hashes. Access tokens live 15 minutes, measured by the server clock. Refresh tokens live 30 days, rotate on every use, and the device row keeps the previous hash to detect reuse. Reuse revokes the device (FR-008).
+**Decision**: Opaque random tokens. Access tokens are `lfa_` plus 32 random bytes in base64url; refresh tokens are `lfr_` plus 32 random bytes. The server stores only SHA-256 hashes. Access tokens live 15 minutes, measured by the server clock. Refresh tokens live 30 days, rotate on every use, and the device row keeps the previous hash to detect reuse. Reuse without a valid device signature revokes the device; a signed refresh with the previous token is a retry after a lost reply and gets a new pair (FR-008).
 
 Refresh requires an ECDSA P-256 signature from the device's Secure Enclave key over `"localflow-v1-refresh" ‖ binding ‖ SHA-256(refresh token)`. The binding is the channel exporter value, so a captured signature is useless on any other channel and no challenge round trip is needed.
 
@@ -114,7 +114,8 @@ The first implementation task checks the compile closure. If `ModelLifecycleCoor
 
 | Bound | Value | On overflow |
 | --- | --- | --- |
-| Open channels, total | 16 | WebSocket upgrade refused with HTTP 503 |
+| Open channels, total | 32 | WebSocket upgrade refused with HTTP 503 |
+| Anonymous channels (not yet authenticated by a session hello; enroll and refresh channels stay anonymous) | 16 server-wide, 4 per client (`Cf-Connecting-Ip`, else the peer address) | WebSocket upgrade refused with HTTP 503 |
 | Channels per device | 2 | `busy` |
 | Dictation sessions, total | 8 | `busy` |
 | Dictation sessions per user | 1 | `busy` |
@@ -126,7 +127,7 @@ The first implementation task checks the compile closure. If `ModelLifecycleCoor
 | Per-session audio buffer on the server | one window (957,440 bytes) plus one frame | not reachable; the tail flushes each full window to the queue |
 | Worker job deadline | 30 s | worker killed and restarted; job gets `worker_unavailable` |
 | Pending accounts | 100 | sign-in answers `busy` and is audited |
-| Sign-in and enrollment hellos | 10 per minute, whole server | `busy` |
+| Sign-in and enrollment hellos | 10 per minute per client, 60 per minute server-wide | `busy` |
 | Audit rows | 10,000 | oldest rows pruned |
 | Channel idle | 30 s, or 5 minutes while an enrollment waits for the ID token | channel closed |
 
