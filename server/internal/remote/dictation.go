@@ -25,7 +25,7 @@ const (
 // SpeechSession is the part of a scheduler session (*speech.Session) the
 // dictation operation uses.
 type SpeechSession interface {
-	Submit(w speech.Window) error
+	TrySubmit(w speech.Window) (bool, error)
 	Results() <-chan speech.Outcome
 	Cancel()
 	Progress() speech.Progress
@@ -203,8 +203,10 @@ func (d *Dictation) Start(ctx context.Context, c *Conn, m Message) (Operation, e
 }
 
 // dictationOp is one running dictation. Every field below mu is guarded by
-// it; the terminal message is sent under mu after done is closed, so nothing
-// of the session follows it.
+// it. Messages are queued under mu and written by one sender goroutine
+// outside it, so a slow client never holds mu while the channel's reader
+// needs it for the next audio frame. The terminal message is queued last and
+// nothing of the session is queued after it.
 type dictationOp struct {
 	d       *Dictation
 	conn    *Conn
@@ -218,14 +220,17 @@ type dictationOp struct {
 	done    chan struct{}
 
 	mu         sync.Mutex
-	buffer     []float32 // samples after the last full window; < one window
-	samples    int       // samples received
-	counts     []int     // sample count of each submitted window
-	delivered  int       // window_results sent
-	ended      bool      // dictation_end received
+	buffer     []float32   // samples after the last full window; < one window
+	held       [][]float32 // cut windows the scheduler had no room for yet
+	samples    int         // samples received
+	counts     []int       // sample count of each submitted window
+	delivered  int         // window_results sent
+	ended      bool        // dictation_end received
 	endedAt    time.Time
 	terminated bool
 	progress   Timer
+	outbox     []Message // written in order by send
+	sending    bool
 	closeOnce  sync.Once
 }
 
@@ -258,6 +263,7 @@ func (o *dictationOp) terminateLocked(code string) bool {
 		o.session.Cancel()
 	}
 	o.buffer = nil
+	o.held = nil
 	if o.d != nil {
 		o.d.release(o)
 		now := o.d.cfg.Clock.Now()
@@ -276,14 +282,49 @@ func (o *dictationOp) terminateLocked(code string) bool {
 // the relay and timers; Control and Audio return the *Error instead.
 func (o *dictationOp) failLocked(code ErrorCode) {
 	if o.terminateLocked(string(code)) {
-		_ = o.conn.Send(context.Background(), NewError(o.op, code))
+		o.sendLocked(NewError(o.op, code))
 	}
 }
 
 // refuseLocked ends the operation and returns the *Error the listener sends.
+// Results still queued are dropped so they do not follow that error.
 func (o *dictationOp) refuseLocked(code ErrorCode, reason string) error {
 	o.terminateLocked(string(code))
+	o.outbox = nil
 	return &Error{code, reason}
+}
+
+// sendLocked queues m for the sender goroutine, starting it if needed.
+func (o *dictationOp) sendLocked(m Message) {
+	o.outbox = append(o.outbox, m)
+	if !o.sending {
+		o.sending = true
+		go o.send()
+	}
+}
+
+// send writes queued messages in order, without holding mu during a write. A
+// failed write ends the operation and drops the rest.
+func (o *dictationOp) send() {
+	for {
+		o.mu.Lock()
+		if len(o.outbox) == 0 {
+			o.sending = false
+			o.mu.Unlock()
+			return
+		}
+		m := o.outbox[0]
+		o.outbox = o.outbox[1:]
+		o.mu.Unlock()
+		if err := o.conn.Send(context.Background(), m); err != nil {
+			o.mu.Lock()
+			o.outbox = nil
+			o.sending = false
+			o.terminateLocked("closed")
+			o.mu.Unlock()
+			return
+		}
+	}
 }
 
 func (o *dictationOp) Audio(_ context.Context, payload []byte) error {
@@ -317,26 +358,34 @@ func (o *dictationOp) Audio(_ context.Context, payload []byte) error {
 		window := make([]float32, WindowSamples)
 		copy(window, o.buffer)
 		o.buffer = o.buffer[:copy(o.buffer, o.buffer[WindowSamples:])]
-		if err := o.submitLocked(window); err != nil {
-			return err
+		o.held = append(o.held, window)
+	}
+	return o.submitHeldLocked()
+}
+
+// submitHeldLocked hands held windows to the scheduler while the user's
+// queue has room, ending the operation on refusal. Windows left over wait for
+// the next result, which frees a place. MaxSessionSamples bounds what is
+// held.
+func (o *dictationOp) submitHeldLocked() error {
+	for len(o.held) > 0 {
+		index := len(o.counts)
+		samples := o.held[0]
+		queued, err := o.session.TrySubmit(speech.Window{Index: index, SampleStart: index * WindowSamples, Samples: samples, Boost: o.boost})
+		if err != nil {
+			return o.refuseLocked(speechCode(err), "window refused by the scheduler")
 		}
+		if !queued {
+			return nil
+		}
+		o.held[0] = nil
+		o.held = o.held[1:]
+		o.counts = append(o.counts, len(samples))
 	}
 	return nil
 }
 
-// submitLocked queues the next window, ending the operation on refusal.
-func (o *dictationOp) submitLocked(samples []float32) error {
-	index := len(o.counts)
-	err := o.session.Submit(speech.Window{Index: index, SampleStart: index * WindowSamples, Samples: samples, Boost: o.boost})
-	if err != nil {
-		code := speechCode(err)
-		return o.refuseLocked(code, "window refused by the scheduler")
-	}
-	o.counts = append(o.counts, len(samples))
-	return nil
-}
-
-func (o *dictationOp) Control(ctx context.Context, m Message) error {
+func (o *dictationOp) Control(_ context.Context, m Message) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.terminated {
@@ -352,18 +401,18 @@ func (o *dictationOp) Control(ctx context.Context, m Message) error {
 		}
 		o.ended, o.endedAt = true, o.d.cfg.Clock.Now()
 		if len(o.buffer) > 0 {
-			tail := append([]float32(nil), o.buffer...)
-			o.buffer = nil
-			if err := o.submitLocked(tail); err != nil {
-				return err
-			}
+			o.held = append(o.held, append([]float32(nil), o.buffer...))
 		}
 		o.buffer = nil
+		if err := o.submitHeldLocked(); err != nil {
+			return err
+		}
 		o.completeIfDoneLocked()
 		return nil
 	case DictationCancel:
 		if o.terminateLocked("cancelled") {
-			_ = o.conn.Send(ctx, Cancelled{Op: o.op})
+			o.outbox = nil
+			o.sendLocked(Cancelled{Op: o.op})
 		}
 		return nil
 	}
@@ -373,23 +422,21 @@ func (o *dictationOp) Control(ctx context.Context, m Message) error {
 // completeIfDoneLocked sends dictation_complete once every window of an ended
 // session has been answered.
 func (o *dictationOp) completeIfDoneLocked() {
-	if o.ended && o.delivered == len(o.counts) && o.terminateLocked("ok") {
-		_ = o.conn.Send(context.Background(), DictationComplete{Op: o.op, Windows: o.delivered})
+	if o.ended && len(o.held) == 0 && o.delivered == len(o.counts) && o.terminateLocked("ok") {
+		o.sendLocked(DictationComplete{Op: o.op, Windows: o.delivered})
 	}
 }
 
-// tick sends progress while a window is queued or running, then re-arms.
+// tick sends progress while a window is queued or running, then re-arms. It
+// skips a beat while earlier messages are still being written.
 func (o *dictationOp) tick() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.terminated {
 		return
 	}
-	if state := o.session.Progress(); state != speech.ProgressIdle {
-		if err := o.conn.Send(context.Background(), Progress{Op: o.op, State: string(state)}); err != nil {
-			o.terminateLocked("closed")
-			return
-		}
+	if state := o.session.Progress(); state != speech.ProgressIdle && len(o.outbox) == 0 {
+		o.sendLocked(Progress{Op: o.op, State: string(state)})
 	}
 	o.progress = o.d.cfg.Clock.AfterFunc(ProgressInterval, o.tick)
 }
@@ -415,12 +462,17 @@ func (o *dictationOp) relay() {
 			o.mu.Unlock()
 			return
 		}
-		if err := o.conn.Send(context.Background(), result); err != nil {
-			o.terminateLocked("closed")
+		o.sendLocked(result)
+		o.delivered++
+		// The result freed a place in the user's queue.
+		if err := o.submitHeldLocked(); err != nil {
+			// refuseLocked dropped the queued result; the error goes alone.
+			var coded *Error
+			errors.As(err, &coded)
+			o.sendLocked(NewError(o.op, coded.Code))
 			o.mu.Unlock()
 			return
 		}
-		o.delivered++
 		o.completeIfDoneLocked()
 		o.mu.Unlock()
 	}

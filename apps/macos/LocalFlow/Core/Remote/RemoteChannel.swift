@@ -6,7 +6,8 @@ enum RemoteChannelError: Error, Equatable, Sendable {
   /// The server could not open the hello (close code 4001): not the pinned server.
   case pinMismatch
   case unreachable
-  /// More than four frames waited to be sent, or the server stopped answering.
+  /// The socket took no frame for `stallTimeout` while frames waited, or the server
+  /// stopped answering.
   case timeout
   /// A frame out of sequence, one that did not open, a text message or bad JSON.
   case protocolError
@@ -133,20 +134,28 @@ struct RemoteChannelCrypto {
 
 /// One encrypted channel over a WebSocket: hello, then sequential operations.
 /// Frames are sealed in call order and sent by one loop, so sequence numbers go out
-/// in order. More than four frames waiting to be sent fails the channel with `timeout`.
+/// in order. With more than four frames unsent, a sender waits for the socket to take
+/// one; if the socket takes none for `stallTimeout`, the channel fails with `timeout`.
 actor RemoteChannel {
   static let maximumUnsentFrames = 4
 
   private let transport: any RemoteTransport
+  private let stallTimeout: Duration
   private var crypto: RemoteChannelCrypto
   private var outbox: [Data] = []
   private var sending = false
   private var inFlight = false
+  /// Frames the socket has taken; a waiting sender checks it for progress.
+  private var sentFrames = 0
+  private var waitingSenders: [CheckedContinuation<Void, Never>] = []
   private var failure: RemoteChannelError?
   private var closed = false
 
-  init(transport: any RemoteTransport, serverKey: Data) throws {
+  init(transport: any RemoteTransport, serverKey: Data, stallTimeout: Duration = .seconds(15))
+    throws
+  {
     self.transport = transport
+    self.stallTimeout = stallTimeout
     guard let key = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: serverKey) else {
       throw RemoteChannelError.pinMismatch
     }
@@ -163,7 +172,7 @@ actor RemoteChannel {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let frame = try crypto.helloFrame(try encoder.encode(hello))
-    try enqueue(frame)
+    try await enqueue(frame)
     switch try await receive() {
     case .ready: return
     case .error(_, let code): throw fail(.server(code))
@@ -171,16 +180,17 @@ actor RemoteChannel {
     }
   }
 
-  func send(_ message: RemoteClientMessage) throws {
-    try enqueue(try crypto.seal(.control, try message.encoded()))
+  /// Returns once the frame is queued; waits while more than four frames are unsent.
+  func send(_ message: RemoteClientMessage) async throws {
+    try await enqueue(try crypto.seal(.control, try message.encoded()))
   }
 
-  /// At most 16,000 samples per frame.
-  func sendAudio(_ samples: ArraySlice<Float>) throws {
+  /// At most 16,000 samples per frame. Waits like `send`.
+  func sendAudio(_ samples: ArraySlice<Float>) async throws {
     guard (1...RemoteProtocol.maximumFrameSamples).contains(samples.count) else {
       throw fail(.protocolError)
     }
-    try enqueue(try crypto.seal(.audio, RemoteChannelCrypto.audioPayload(samples)))
+    try await enqueue(try crypto.seal(.audio, RemoteChannelCrypto.audioPayload(samples)))
   }
 
   /// The next server message. Transport and framing failures close the channel.
@@ -219,6 +229,7 @@ actor RemoteChannel {
     failure = failure ?? .closed
     outbox.removeAll()
     transport.close(code: 1000)
+    wakeSenders()
   }
 
   /// Records the first failure and closes the socket; later calls see the same error.
@@ -230,19 +241,44 @@ actor RemoteChannel {
       outbox.removeAll()
       transport.close(code: 1000)
     }
+    wakeSenders()
     return failure ?? error
   }
 
-  private func enqueue(_ frame: Data) throws {
+  /// Queued frames plus the one the socket is still writing.
+  private var unsentFrames: Int { outbox.count + (inFlight ? 1 : 0) }
+
+  /// Queues the frame at once, so frames go out in seal order, then waits until at most
+  /// four are unsent. A retry or reconnect flushes a whole recording through here, so
+  /// the socket's pace, not a fixed count, limits it.
+  private func enqueue(_ frame: Data) async throws {
     if let failure { throw failure }
-    // Queued frames plus the one the socket is still writing.
-    guard outbox.count + (inFlight ? 1 : 0) < Self.maximumUnsentFrames else {
-      throw fail(.timeout)
-    }
     outbox.append(frame)
-    guard !sending else { return }
-    sending = true
-    Task { await drain() }
+    if !sending {
+      sending = true
+      Task { await drain() }
+    }
+    while failure == nil, unsentFrames > Self.maximumUnsentFrames {
+      let progress = sentFrames
+      let watchdog = Task {
+        guard (try? await Task.sleep(for: stallTimeout)) != nil else { return }
+        self.stalled(since: progress)
+      }
+      await withCheckedContinuation { waitingSenders.append($0) }
+      watchdog.cancel()
+    }
+    if let failure { throw failure }
+  }
+
+  private func stalled(since progress: Int) {
+    guard sentFrames == progress, failure == nil else { return }
+    fail(.timeout)
+  }
+
+  private func wakeSenders() {
+    let waiting = waitingSenders
+    waitingSenders = []
+    for sender in waiting { sender.resume() }
   }
 
   private func drain() async {
@@ -253,6 +289,8 @@ actor RemoteChannel {
         fail(.unreachable)
       }
       inFlight = false
+      sentFrames += 1
+      wakeSenders()
     }
     sending = false
   }
@@ -270,7 +308,9 @@ final class URLSessionRemoteTransport: RemoteTransport, @unchecked Sendable {
     configuration.httpCookieStorage = nil
     configuration.urlCache = nil
     configuration.urlCredentialStorage = nil
-    configuration.timeoutIntervalForRequest = 15
+    // Idle time between received messages. Well above the server's 15 s ping, so a quiet
+    // channel is not timed out just before the next ping arrives.
+    configuration.timeoutIntervalForRequest = 45
     session = URLSession(configuration: configuration)
     task = session.webSocketTask(with: url)
     task.maximumMessageSize = RemoteChannelCrypto.maximumMessageBytes

@@ -130,25 +130,42 @@ func (x *Session) Results() <-chan Outcome { return x.results }
 // the session ends: Submit returns ErrBusy and Results delivers a final
 // outcome with ErrBusy. After the session has ended Submit returns the reason.
 func (x *Session) Submit(w Window) error {
+	_, err := x.submit(w, true)
+	return err
+}
+
+// TrySubmit queues the next window if the user has fewer than
+// MaxWaitingPerUser windows waiting and otherwise returns false, leaving the
+// session open; the caller holds the window and tries again after its next
+// result. A client uploading faster than real time (a retry, a reconnect)
+// waits this way instead of being refused. Other errors are Submit's.
+func (x *Session) TrySubmit(w Window) (bool, error) {
+	return x.submit(w, false)
+}
+
+func (x *Session) submit(w Window, busyEnds bool) (bool, error) {
 	s := x.s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
 	case x.err != nil:
-		return x.err
+		return false, x.err
 	case s.closed:
-		return ErrWorkerUnavailable
+		return false, ErrWorkerUnavailable
 	case w.Index != x.next:
-		return ErrOutOfOrder
+		return false, ErrOutOfOrder
 	case len(w.Samples) < 1 || len(w.Samples) > MaxSampleCount:
-		return ErrInvalidRecognition
+		return false, ErrInvalidRecognition
 	case w.Index >= MaxSessionWindows:
-		return ErrTooManyWindows
+		return false, ErrTooManyWindows
 	}
 	if len(s.queues[x.user]) >= MaxWaitingPerUser {
+		if !busyEnds {
+			return false, nil
+		}
 		s.c.Logger.Printf("speech busy user=%d channel=%d window=%d waiting=%d", x.user, x.channel, w.Index, s.waiting)
 		s.endLocked(x, ErrBusy, &Outcome{Index: w.Index, SampleStart: w.SampleStart, SampleCount: len(w.Samples), Err: ErrBusy})
-		return ErrBusy
+		return false, ErrBusy
 	}
 	x.next++
 	x.queued++
@@ -164,7 +181,7 @@ func (x *Session) Submit(w Window) error {
 	case s.wake <- struct{}{}:
 	default:
 	}
-	return nil
+	return true, nil
 }
 
 // Cancel ends the session: waiting windows are dropped, a running window's

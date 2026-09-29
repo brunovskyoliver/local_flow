@@ -211,12 +211,36 @@ final class RemoteChannelTests: XCTestCase {
     }
   }
 
-  func testMoreThanFourUnsentFramesFailWithTimeout() async throws {
+  func testSendersWaitForTheSocketInsteadOfFailing() async throws {
     let transport = FakeRemoteTransport { event in
       if case .hello = event { return [.message(["type": "ready"])] }
       return []
     }
     let channel = try RemoteChannel(transport: transport, serverKey: transport.server.publicKey)
+    try await channel.open(purpose: .session, accessToken: "lfa_x")
+    transport.holdSends = true
+    // A whole recording flushed at once, as a retry or a reconnect does.
+    let sender = Task {
+      for index in 0..<12 {
+        try await channel.sendAudio(Array(repeating: Float(index), count: 1_600)[...])
+      }
+    }
+    try? await Task.sleep(for: .milliseconds(50))
+    transport.releaseSends()
+    try await sender.value
+    let delivered = await eventually { transport.audioSamples.count == 12 * 1_600 }
+    XCTAssertTrue(delivered)
+    XCTAssertEqual(transport.audioSamples.last, 11)
+  }
+
+  func testASocketThatTakesNothingFailsWithTimeout() async throws {
+    let transport = FakeRemoteTransport { event in
+      if case .hello = event { return [.message(["type": "ready"])] }
+      return []
+    }
+    let channel = try RemoteChannel(
+      transport: transport, serverKey: transport.server.publicKey,
+      stallTimeout: .milliseconds(50))
     try await channel.open(purpose: .session, accessToken: "lfa_x")
     transport.holdSends = true
     var failure: RemoteChannelError?
@@ -227,6 +251,7 @@ final class RemoteChannelTests: XCTestCase {
       }
     }
     XCTAssertEqual(failure, .timeout)
+    XCTAssertNotNil(transport.closedWith)
     transport.releaseSends()
   }
 

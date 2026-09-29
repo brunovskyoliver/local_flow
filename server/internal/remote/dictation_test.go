@@ -41,7 +41,7 @@ type fakeScheduler struct {
 }
 
 func (f *fakeScheduler) Open(user, channel int64) SpeechSession {
-	s := &fakeSession{user: user, channel: channel, results: make(chan speech.Outcome, 32)}
+	s := &fakeSession{user: user, channel: channel, results: make(chan speech.Outcome, 32), room: -1}
 	f.mu.Lock()
 	f.sessions = append(f.sessions, s)
 	f.mu.Unlock()
@@ -81,19 +81,32 @@ type fakeSession struct {
 	submitErr error
 	progress  speech.Progress
 	cancelled bool
+	room      int // see setRoom
+	answered  int // windows delivered
 }
 
-func (s *fakeSession) Submit(w speech.Window) error {
+func (s *fakeSession) TrySubmit(w speech.Window) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cancelled {
-		return speech.ErrCancelled
+		return false, speech.ErrCancelled
 	}
 	if s.submitErr != nil {
-		return s.submitErr
+		return false, s.submitErr
+	}
+	if s.room >= 0 && len(s.windows)-s.answered >= s.room {
+		return false, nil
 	}
 	s.windows = append(s.windows, w)
-	return nil
+	return true, nil
+}
+
+// setRoom limits how many submitted windows may be unanswered at once, like
+// the scheduler's per-user queue; -1 (the default) is unlimited.
+func (s *fakeSession) setRoom(n int) {
+	s.mu.Lock()
+	s.room = n
+	s.mu.Unlock()
 }
 
 func (s *fakeSession) Results() <-chan speech.Outcome { return s.results }
@@ -145,6 +158,9 @@ func (s *fakeSession) waitWindows(t *testing.T, n int) []speech.Window {
 
 // deliver answers window w with a valid worker window object.
 func (s *fakeSession) deliver(w speech.Window, text string) {
+	s.mu.Lock()
+	s.answered++
+	s.mu.Unlock()
 	s.results <- speech.Outcome{Index: w.Index, SampleStart: w.SampleStart, SampleCount: len(w.Samples),
 		Result: speech.WindowResult{Window: workerWindowJSON(len(w.Samples), text, nil), RecognitionMS: 42}}
 }
@@ -847,4 +863,77 @@ func TestDictationWithRealScheduler(t *testing.T) {
 	if jobs := recognizer.recorded(); len(jobs) != 2 || len(jobs[1].Samples) != 300 {
 		t.Fatalf("%d jobs", len(jobs))
 	}
+}
+
+// A whole recording uploaded faster than the worker runs (a queued retry or a
+// reconnect resending from sample 0) waits for the user's queue instead of
+// ending with busy.
+func TestDictationBurstUploadWaitsForTheScheduler(t *testing.T) {
+	operations := Operations{PurposeSession: {}}
+	h := newHarness(t, operations)
+	recognizer := &recordingRecognizer{gate: make(chan struct{})}
+	scheduler := speech.NewScheduler(speech.SchedulerConfig{Recognizer: recognizer})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go scheduler.Run(ctx)
+	d := NewDictation(DictationConfig{Scheduler: SchedulerSessions(scheduler), Models: &fakeModels{model: testModel(), ok: true}, Clock: h.clock})
+	operations[PurposeSession]["dictation_start"] = d.Start
+	_, _, token := h.approved("a", 1)
+	c, _ := h.hello(PurposeSession, token)
+	c.send(startMessage(1))
+	c.recv()
+	// About 90 s: six windows, while the worker holds the first.
+	total := 5*WindowSamples + 1_000
+	c.sendSamples(0, total, MaxAudioSamples)
+	c.send(DictationEnd{Op: 1, TotalSamples: int64(total)})
+	go func() {
+		for range 6 {
+			select {
+			case recognizer.gate <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	for i := range 6 {
+		r, ok := c.recvSkippingProgress().(WindowResult)
+		if !ok || r.Index != i || r.SampleStart != i*WindowSamples {
+			t.Fatalf("window %d: %#v", i, r)
+		}
+	}
+	if m, ok := c.recvSkippingProgress().(DictationComplete); !ok || m.Windows != 6 {
+		t.Fatalf("%#v", m)
+	}
+	if jobs := recognizer.recorded(); len(jobs) != 6 || len(jobs[5].Samples) != 1_000 {
+		t.Fatalf("%d jobs", len(jobs))
+	}
+}
+
+// Windows held for room are submitted as results free places, and the
+// operation completes only once every held window has been answered.
+func TestDictationHeldWindowsFollowResults(t *testing.T) {
+	h := newDictationHarness(t, nil)
+	_, _, token := h.approved("a", 1)
+	c, _ := h.hello(PurposeSession, token)
+	c.send(startMessage(1))
+	c.recv()
+	session := h.scheduler.session(t, 0)
+	session.setRoom(1)
+	total := 3 * WindowSamples
+	c.sendSamples(0, total, MaxAudioSamples)
+	c.send(DictationEnd{Op: 1, TotalSamples: int64(total)})
+	for i := range 3 {
+		windows := session.waitWindows(t, i+1)
+		if len(windows) != i+1 {
+			t.Fatalf("window %d: %d submitted with room for one", i, len(windows))
+		}
+		session.deliver(windows[i], fmt.Sprintf("w%d", i))
+		if r, ok := c.recvSkippingProgress().(WindowResult); !ok || r.Index != i {
+			t.Fatalf("%#v", r)
+		}
+	}
+	if m, ok := c.recvSkippingProgress().(DictationComplete); !ok || m.Windows != 3 {
+		t.Fatalf("%#v", m)
+	}
+	h.waitNoLive(t)
 }

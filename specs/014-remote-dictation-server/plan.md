@@ -167,7 +167,7 @@ All server bounds and overflow results are in [research.md](research.md) R11; ch
 | Resource | Bound | Overflow or failure |
 | --- | --- | --- |
 | Audio held for one dictation | the existing spool, ≤ 180 s (11.52 MB) | unchanged Feature 001 duration limit |
-| Frames in flight | the WebSocket send buffer, at most 4 unsent frames | stop sending, treat as `timeout` failure |
+| Frames in flight | the WebSocket send buffer, at most 4 unsent frames | the sender waits for the socket; no frame taken for 15 s is a `timeout` failure |
 | Pending retries | 20 rows, 24 h, ≤ 230 MB of `PendingAudio/` | ask to recognize locally, copy or discard; never dropped silently |
 | Channels | 1 per dictation, plus 1 for enrollment or refresh | serialized |
 | Remote window results | 14 windows, each within `RecognitionAdmission` limits | `invalid_result` → fallback |

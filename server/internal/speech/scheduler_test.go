@@ -637,3 +637,36 @@ func TestFairnessCancelledUserRejoinsAtBack(t *testing.T) {
 		t.Fatal(order)
 	}
 }
+
+// TrySubmit leaves a full user's session open and queues once a window of
+// theirs has gone to the worker.
+func TestSchedulerTrySubmitWaitsForRoom(t *testing.T) {
+	s, f, _ := startScheduler(t)
+	a := s.Open(1, 1)
+	submit(t, a, 1, 0)
+	running := f.next(t)
+	submit(t, a, 1, 1)
+	submit(t, a, 1, 2)
+	if queued, err := a.TrySubmit(window(1, 3)); queued || err != nil {
+		t.Fatal(queued, err)
+	}
+	if a.Progress() != ProgressRecognizing {
+		t.Fatal(a.Progress())
+	}
+	running.ok()
+	if o, _ := outcome(t, a); o.Err != nil || o.Index != 0 {
+		t.Fatalf("%+v", o)
+	}
+	f.next(t).ok() // window 1 left the queue
+	if queued, err := a.TrySubmit(window(1, 3)); !queued || err != nil {
+		t.Fatal(queued, err)
+	}
+	for want := 1; want <= 3; want++ {
+		if want > 1 {
+			f.next(t).ok()
+		}
+		if o, _ := outcome(t, a); o.Err != nil || o.Index != want {
+			t.Fatalf("want %d: %+v", want, o)
+		}
+	}
+}

@@ -225,6 +225,26 @@ final class RemoteDictationSessionTests: XCTestCase {
     XCTAssertEqual(final, .complete)
   }
 
+  func testAWholeRecordingFlushedAtReleaseReachesTheServer() async throws {
+    // A retry: 20 s of audio already recorded, sent at once over a socket that is slower
+    // than the loop that queues frames.
+    let flowd = flowd!
+    let session = session(
+      opener: FakeRemoteTransportOpener { _ in
+        let transport = flowd.transport()
+        transport.sendDelay = .milliseconds(1)
+        return transport
+      })
+    await session.start()
+    let streaming = await waitForState(session, .streaming)
+    XCTAssertTrue(streaming)
+    let result = await session.finish(totalSamples: 320_000)
+    guard case .success(let remote) = result else { return XCTFail("\(result)") }
+    XCTAssertEqual(flowd.ends, [320_000])
+    XCTAssertEqual(flowd.received.first?.count, 320_000)
+    XCTAssertEqual(Set(remote.windows.keys), [0, 239_360])
+  }
+
   func testBusyFailsAtOnce() async throws {
     flowd.behavior = .startError("busy")
     let session = session()

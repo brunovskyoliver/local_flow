@@ -118,7 +118,7 @@ The first implementation task checks the compile closure. If `ModelLifecycleCoor
 | Channels per device | 2 | `busy` |
 | Dictation sessions, total | 8 | `busy` |
 | Dictation sessions per user | 1 | `busy` |
-| Waiting window jobs per user | 2 | session ends with `busy` |
+| Waiting window jobs per user | 2 | the session holds further windows (bounded by session length) and submits them as results come back |
 | Session length | 2,880,000 samples plus one 16,000-sample frame of slack | `limit_exceeded` |
 | Audio frame | 16,000 samples (64,000 bytes) | `limit_exceeded` |
 | Control message | 65,536 bytes | `limit_exceeded` |
