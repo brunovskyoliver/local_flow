@@ -8,7 +8,11 @@ final class FakeRetryStarter: RemoteRetryStarting, @unchecked Sendable {
   let credentials = FakeSessionCredentials()
   private let lock = NSLock()
   var reachable = true
+  /// While set, a live dictation holds the user's one server session.
+  var live = false
   private(set) var boosts: [RemoteBoost?] = []
+
+  func liveDictationActive() async -> Bool { lock.withLock { live } }
 
   func makeRetrySession(
     boost: RemoteBoost?, read: @escaping RemoteDictationSession.SampleReader,
@@ -131,6 +135,29 @@ final class PendingRemoteRetrierTests: XCTestCase {
     item = try await store.get(id)
     XCTAssertEqual(item?.attempts, 2)
     XCTAssertEqual(item?.nextAttemptAt, clock.now + 120_000)
+  }
+
+  func testALiveDictationPostponesRetriesWithoutCountingAnAttempt() async throws {
+    let id = try await addPending()
+    clock.advance(10_000)
+    starter.live = true
+    let retrier = await retrier()
+    let blocked = await retrier.runDue()
+    XCTAssertEqual(blocked, 0)
+    XCTAssertTrue(starter.boosts.isEmpty, "no session while the user dictates")
+    var item = try await store.get(id)
+    XCTAssertEqual(item?.attempts, 0)
+    XCTAssertLessThanOrEqual(item?.nextAttemptAt ?? .max, clock.now, "still due")
+    // A retry cut short by a live dictation (`retryNow` skips the check above) is not
+    // a failed attempt either.
+    starter.reachable = false
+    _ = await retrier.retryNow(id: id)
+    item = try await store.get(id)
+    XCTAssertEqual(item?.attempts, 0)
+    starter.live = false
+    starter.reachable = true
+    let recovered = await retrier.runDue()
+    XCTAssertEqual(recovered, 1)
   }
 
   func testSuccessIsSavedForReviewWithPendingRetryAndNeverInserted() async throws {

@@ -96,6 +96,9 @@ actor RemoteDictationSession {
     return nil
   }
 
+  /// Still connecting, streaming or waiting for results.
+  var isActive: Bool { !isTerminal }
+
   /// Called once, at the first failure, so local model acquisition can start early.
   func onFailure(_ observer: @escaping @Sendable (RemoteFailureReason) -> Void) {
     failureObserver = observer
@@ -401,6 +404,9 @@ final class RemoteDictationRouter: RemoteDictationRouting {
   private let provisioned: @MainActor () -> Bool
   private let askAboutAudio: @MainActor (URL, Int) async -> Void
   let rewriteChannels: RemoteRewriteChannels
+  /// flowd runs one dictation per user: a live one cancels a running retry.
+  private weak var liveSession: RemoteDictationSession?
+  private weak var retrySession: RemoteDictationSession?
 
   init(
     preferences: AppPreferences, credentials: any RemoteCredentialStoring,
@@ -457,6 +463,22 @@ final class RemoteDictationRouter: RemoteDictationRouting {
     read: @escaping RemoteDictationSession.SampleReader,
     recorded: @escaping RemoteDictationSession.SampleCounter
   ) -> RemoteDictationSession? {
+    guard
+      let session = buildSession(settings: settings, boost: boost, read: read, recorded: recorded)
+    else { return nil }
+    if let retry = retrySession {
+      retrySession = nil
+      Task { await retry.cancel() }
+    }
+    liveSession = session
+    return session
+  }
+
+  private func buildSession(
+    settings: RemoteDictationSettings, boost: RemoteBoost?,
+    read: @escaping RemoteDictationSession.SampleReader,
+    recorded: @escaping RemoteDictationSession.SampleCounter
+  ) -> RemoteDictationSession? {
     guard settings.routesToServer, let origin = settings.serverOrigin,
       let url = RemoteEnrollment.channelURL(origin: origin),
       let key = try? credentials.read(.serverKey), let enrollment = enrollment()
@@ -494,8 +516,19 @@ extension RemoteDictationRouter: RemoteRetryStarting {
     boost: RemoteBoost?, read: @escaping RemoteDictationSession.SampleReader,
     recorded: @escaping RemoteDictationSession.SampleCounter
   ) async -> RemoteDictationSession? {
-    await MainActor.run {
-      makeSession(settings: settings(), boost: boost, read: read, recorded: recorded)
+    let live = await MainActor.run { liveSession }
+    if let live, await live.isActive { return nil }
+    return await MainActor.run {
+      // A key press since the check above wins.
+      guard liveSession == nil || liveSession === live else { return nil }
+      let session = buildSession(settings: settings(), boost: boost, read: read, recorded: recorded)
+      retrySession = session
+      return session
     }
+  }
+
+  nonisolated func liveDictationActive() async -> Bool {
+    guard let live = await MainActor.run(body: { liveSession }) else { return false }
+    return await live.isActive
   }
 }

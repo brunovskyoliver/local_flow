@@ -91,6 +91,40 @@ final class RemoteRewriteTransportTests: XCTestCase {
     XCTAssertNotNil(transport.closedWith)
   }
 
+  func testAParkedChannelOlderThanTheServerIdleTimeoutIsNotUsed() async throws {
+    let stale = session { _ in
+      XCTFail("the stale channel must not carry the rewrite")
+      return []
+    }
+    let parked = try RemoteChannel(transport: stale, serverKey: stale.server.publicKey)
+    try await parked.open(purpose: .session, accessToken: "lfa_1")
+    let fresh = session { object in
+      let request = object["request"] as! [String: Any]
+      return self.events(
+        op: object["op"] as! Int, requestID: request["request_id"] as! String, text: "Done.")
+    }
+    let time = ManualRemoteClock()
+    let channels = RemoteRewriteChannels(
+      open: {
+        let channel = try RemoteChannel(transport: fresh, serverKey: fresh.server.publicKey)
+        try await channel.open(purpose: .session, accessToken: "lfa_1")
+        return channel
+      }, now: { time.now() })
+    await channels.park(
+      RemoteDictationResult(
+        windows: [:],
+        model: .init(
+          engine: "FluidAudio", modelID: "m", modelRevision: "r", manifestHash: "h", sdk: "s",
+          booster: nil, workerBuild: nil), channel: parked, nextOp: 2))
+    time.advance(by: RemoteRewriteChannels.maximumParkedAge + .seconds(1))
+    let (items, error) = await collect(
+      RemoteRewriteTransport(channels: channels).rewrite(
+        request: try request(), endpoint: endpoint, timeout: .seconds(5)))
+    XCTAssertNil(error)
+    XCTAssertEqual(items.count, 4)
+    XCTAssertNotNil(stale.closedWith)
+  }
+
   func testWithoutADictationChannelANewSessionIsOpened() async throws {
     let transport = session { object in
       let request = object["request"] as! [String: Any]

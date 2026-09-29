@@ -5,22 +5,36 @@ import Foundation
 actor RemoteRewriteChannels {
   typealias Opener = @Sendable () async throws -> RemoteChannel
 
-  private var parked: (channel: RemoteChannel, nextOp: Int)?
-  private let open: Opener
+  /// flowd closes a channel after 30 s between operations, counted from before the
+  /// client parks it. An older parked channel is closed instead of used.
+  static let maximumParkedAge: Duration = .seconds(20)
+  private static let reference = ContinuousClock.now
 
-  init(open: @escaping Opener) { self.open = open }
+  private var parked: (channel: RemoteChannel, nextOp: Int, at: Duration)?
+  private let open: Opener
+  private let now: @Sendable () -> Duration
+
+  /// `now` includes time asleep, so a channel parked before sleep is not reused.
+  init(
+    open: @escaping Opener,
+    now: @escaping @Sendable () -> Duration = { RemoteRewriteChannels.reference.duration(to: .now) }
+  ) {
+    self.open = open
+    self.now = now
+  }
 
   /// The latest dictation's channel. A previous one that was never used is closed.
   func park(_ result: RemoteDictationResult) async {
     if let old = parked { await old.channel.close() }
-    parked = (result.channel, result.nextOp)
+    parked = (result.channel, result.nextOp, now())
   }
 
   /// A channel and the operation number to use on it; the caller owns and closes it.
   func take() async throws -> (RemoteChannel, Int) {
     if let current = parked {
       parked = nil
-      return current
+      if now() - current.at <= Self.maximumParkedAge { return (current.channel, current.nextOp) }
+      await current.channel.close()
     }
     return (try await open(), 1)
   }

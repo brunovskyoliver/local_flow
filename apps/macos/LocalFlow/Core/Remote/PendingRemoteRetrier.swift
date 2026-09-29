@@ -7,6 +7,9 @@ protocol RemoteRetryStarting: Sendable {
     boost: RemoteBoost?, read: @escaping RemoteDictationSession.SampleReader,
     recorded: @escaping RemoteDictationSession.SampleCounter
   ) async -> RemoteDictationSession?
+  /// True while a dictation the user is recording streams to the server. flowd runs
+  /// one dictation per user, so retries wait, and a live key press cancels a retry.
+  func liveDictationActive() async -> Bool
 }
 
 /// Feature 014 FR-018: retries dictations whose audio waits in `PendingAudio/` because
@@ -84,6 +87,8 @@ actor PendingRemoteRetrier {
         continue
       }
       guard item.nextAttemptAt <= current else { continue }
+      // The row stays due; `start` checks again a second later.
+      if await starter.liveDictationActive() { break }
       if await retry(item) { recovered += 1 }
     }
     return recovered
@@ -153,6 +158,12 @@ actor PendingRemoteRetrier {
       }
     } else {
       failure = .unreachable
+    }
+    if await starter.liveDictationActive() {
+      // Cancelled for, or refused because of, the user's own dictation: not a failed
+      // attempt, so the row stays due and retries once that dictation is done.
+      log.notice("Pending remote retry yielded to a live dictation")
+      return false
     }
     let attempts = item.attempts + 1
     try? await store.recordAttempt(
