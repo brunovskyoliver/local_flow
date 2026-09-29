@@ -120,7 +120,7 @@ final class EnrollmentJobTests: XCTestCase {
     let known = try await store.knownSpeakers()
     XCTAssertEqual(known.first?.id, knownID)
     XCTAssertEqual(known.first?.activeSampleCount, 1)
-    let rows = try await fixture.history.database.read { db in
+    let rows = try await fixture.history.database.readRows { db in
       try Row.fetchAll(db, sql: "SELECT * FROM voice_samples")
     }
     XCTAssertEqual(rows.count, 1)
@@ -340,7 +340,7 @@ final class EnrollmentJobTests: XCTestCase {
     let result = await job.run(req)
     guard case .outcome(let outcome, _) = result else { return XCTFail("\(result)") }
     XCTAssertEqual(outcome, .stored(2))
-    let rows = try await fixture.history.database.read { db in
+    let rows = try await fixture.history.database.readRows { db in
       try Row.fetchAll(db, sql: "SELECT track, consent FROM voice_samples")
     }
     XCTAssertEqual(rows.map { $0["track"] as String }, ["microphone", "microphone"])

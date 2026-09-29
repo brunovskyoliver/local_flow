@@ -530,7 +530,7 @@ final class SpeakerStoreTests: XCTestCase {
   }
 
   private func corrections(_ meeting: UUID) async throws -> [Row] {
-    try await fixture.history.database.read { db in
+    try await fixture.history.database.readRows { db in
       try Row.fetchAll(
         db, sql: "SELECT * FROM speaker_corrections WHERE meeting_id=? ORDER BY created_at, rowid",
         arguments: [meeting.uuidString])
@@ -694,7 +694,7 @@ final class SpeakerStoreTests: XCTestCase {
   }
 
   private func speakerRow(_ id: UUID) async throws -> Row {
-    try await fixture.history.database.read { db in
+    try await fixture.history.database.readRows { db in
       try Row.fetchOne(
         db, sql: "SELECT * FROM meeting_speakers WHERE id=?", arguments: [id.uuidString])!
     }
@@ -800,7 +800,7 @@ final class SpeakerStoreTests: XCTestCase {
     XCTAssertEqual(manual["color_index"] as Int, 2, "after the run's two colors")
     XCTAssertEqual(manual["first_ms"] as Int64, 2_000)
     XCTAssertEqual(manual["speech_ms"] as Int64, 0, "no turn evidence")
-    let assignments = try await fixture.history.database.read { db in
+    let assignments = try await fixture.history.database.readRows { db in
       try Row.fetchAll(
         db,
         sql: """

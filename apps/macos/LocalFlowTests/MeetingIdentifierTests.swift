@@ -178,7 +178,7 @@ final class MeetingIdentifierTests: XCTestCase {
     XCTAssertEqual(identities[meeting.clusters[1]]?.knownSpeakerID, tomas.id)
     XCTAssertEqual(identities[meeting.clusters[2]]?.state, .unknown)
     XCTAssertEqual(identities[meeting.clusters[3]]?.state, .unknown)
-    let rows = try await fixture.history.database.read { db in
+    let rows = try await fixture.history.database.readRows { db in
       try Row.fetchAll(
         db, sql: "SELECT meeting_speaker_id, tier, reasons FROM match_candidates ORDER BY tier")
     }
@@ -413,7 +413,7 @@ final class MeetingIdentifierTests: XCTestCase {
     ).map { $0.label?.text }
     _ = try await identifier.admit(meetingID: meeting.id, trigger: .manual)
     guard case .succeeded = await identifier.run(meetingID: meeting.id) else { return XCTFail() }
-    let rows = try await fixture.history.database.read { db in
+    let rows = try await fixture.history.database.readRows { db in
       try Row.fetchAll(
         db, sql: "SELECT known_speaker_id, tier FROM match_candidates WHERE meeting_speaker_id=?",
         arguments: [meeting.clusters[1].uuidString])

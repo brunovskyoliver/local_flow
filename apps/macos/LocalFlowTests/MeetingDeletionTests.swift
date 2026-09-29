@@ -185,7 +185,7 @@ final class MeetingDeletionTests: XCTestCase {
           "INSERT INTO vocabulary_entries(id,canonical_text,aliases_json,enabled) VALUES ('retained','LocalFlow','[]',1)"
       )
     }
-    let vocabularyBefore = try await fixture.history.database.read { db in
+    let vocabularyBefore = try await fixture.history.database.readRows { db in
       try Row.fetchAll(db, sql: "SELECT * FROM vocabulary_entries ORDER BY id")
     }
     let descriptorURL = fixture.directory.appendingPathComponent("model-descriptor.json")
@@ -245,7 +245,7 @@ final class MeetingDeletionTests: XCTestCase {
       id: keep.meetingID, revision: XCTUnwrap(keepMeeting).revision)
     let empty = try await transcripts.usage()
     XCTAssertEqual(empty, .init(textBytes: 0, segmentRows: 0))
-    let vocabularyAfter = try await fixture.history.database.read { db in
+    let vocabularyAfter = try await fixture.history.database.readRows { db in
       try Row.fetchAll(db, sql: "SELECT * FROM vocabulary_entries ORDER BY id")
     }
     XCTAssertEqual(vocabularyAfter, vocabularyBefore)

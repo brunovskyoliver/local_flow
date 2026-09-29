@@ -191,7 +191,7 @@ final class IdentityStoreTests: XCTestCase {
         draft(2, meeting: meetingID, speaker: clusters[1], startMs: 20_000),
       ], consent: .remember, now: 200)
     XCTAssertEqual(stored, 2)
-    let rows = try await database.read { db in
+    let rows = try await database.readRows { db in
       try Row.fetchAll(
         db, sql: "SELECT * FROM voice_samples WHERE known_speaker_id=? ORDER BY start_ms",
         arguments: [tomas.id.uuidString])
@@ -453,7 +453,7 @@ final class IdentityStoreTests: XCTestCase {
     XCTAssertEqual(identities[clusters[1]]?.knownSpeakerName, "Tomáš")
     XCTAssertEqual(identities[clusters[2]]?.state, .unknown)
     XCTAssertNil(identities[clusters[0]]?.knownSpeakerID, "The local root has no assignment")
-    let row = try await database.read { db in
+    let row = try await database.readRows { db in
       try Row.fetchOne(
         db, sql: "SELECT * FROM identity_assignments WHERE meeting_speaker_id=?",
         arguments: [clusters[1].uuidString])
@@ -605,7 +605,7 @@ final class IdentityStoreTests: XCTestCase {
     let corrections = try await count(
       "SELECT count(*) FROM speaker_corrections WHERE kind='rename' AND new_value='Tomáš Novák'")
     XCTAssertEqual(corrections, 1, "The existing name path records the rename")
-    let row = try await database.read { db in
+    let row = try await database.readRows { db in
       try Row.fetchOne(
         db, sql: "SELECT confirmed_at, score FROM identity_assignments WHERE meeting_speaker_id=?",
         arguments: [clusters[1].uuidString])
@@ -808,7 +808,7 @@ final class IdentityStoreTests: XCTestCase {
     try await store.link(
       meetingID: meetingID, speakerID: clusters[1], to: tomas.id, origin: .userConfirmation, now: 70
     )
-    var row = try await database.read { db in
+    var row = try await database.readRows { db in
       try Row.fetchOne(
         db, sql: "SELECT * FROM identity_assignments WHERE meeting_speaker_id=?",
         arguments: [clusters[1].uuidString])
@@ -821,7 +821,7 @@ final class IdentityStoreTests: XCTestCase {
     try await store.link(
       meetingID: meetingID, speakerID: clusters[1], to: lukas.id, origin: .manualCorrection, now: 71
     )
-    row = try await database.read { db in
+    row = try await database.readRows { db in
       try Row.fetchOne(
         db, sql: "SELECT * FROM identity_assignments WHERE meeting_speaker_id=?",
         arguments: [clusters[1].uuidString])

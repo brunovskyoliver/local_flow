@@ -494,3 +494,15 @@ actor FakeIdentityStore: IdentityStoring {
       state: .unknown, origin: .keptUnknown)
   }
 }
+
+/// GRDB's async `read` needs a `Sendable` result, and `Row` is not one. Tests read rows
+/// with this instead; the value only moves from GRDB's reader to the awaiting test.
+extension DatabaseReader {
+  func readRows<T>(_ value: @escaping @Sendable (Database) throws -> T) async throws -> T {
+    try await read { db in UncheckedRead(value: try value(db)) }.value
+  }
+}
+
+private struct UncheckedRead<T>: @unchecked Sendable {
+  let value: T
+}
