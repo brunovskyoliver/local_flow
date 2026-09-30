@@ -236,6 +236,16 @@ public actor TranscriptionStore {
   public func commit(reservation: Reservation, envelope: TranscriptionEnvelope) throws
     -> TranscriptionEntry
   {
+    try commit(reservation: reservation, envelope: envelope, alsoWrite: nil)
+  }
+
+  /// `alsoWrite` runs inside the insert's transaction, after the rows are written; the
+  /// phone uses it for its own table (Feature 016). It does not run for a repeated commit.
+  @discardableResult
+  public func commit(
+    reservation: Reservation, envelope: TranscriptionEnvelope,
+    alsoWrite: (@Sendable (Database) throws -> Void)?
+  ) throws -> TranscriptionEntry {
     guard reservations[reservation.id] == reservation else { throw Error.invalidReservation }
     try envelope.validate()
     let entry = envelope.entry
@@ -316,6 +326,7 @@ public actor TranscriptionStore {
         sql:
           "UPDATE history_usage SET row_count=row_count+1, payload_bytes=payload_bytes+? WHERE id=1",
         arguments: [entryBytes])
+      try alsoWrite?(db)
       return normalized
     }
     reservations.removeValue(forKey: reservation.id)

@@ -1,0 +1,5 @@
+// Copy to Signing.local.xcconfig (gitignored) and fill in both values once.
+// Never change them afterwards: a new team or prefix creates new App IDs and a new
+// app container, and the free team allows only 10 App IDs per 7 days (research R10).
+DEVELOPMENT_TEAM =
+LOCALFLOW_BUNDLE_PREFIX =

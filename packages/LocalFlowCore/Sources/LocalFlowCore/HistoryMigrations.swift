@@ -2,10 +2,10 @@ import Foundation
 import GRDB
 import LocalFlowSpeech
 
-enum HistoryMigrations {
+public enum HistoryMigrations {
   static let name = "history-v1"
 
-  static func migrator() -> DatabaseMigrator {
+  public static func migrator() -> DatabaseMigrator {
     var migrator = DatabaseMigrator()
     migrator.registerMigration(name) { db in
       try db.create(table: "transcriptions") { t in

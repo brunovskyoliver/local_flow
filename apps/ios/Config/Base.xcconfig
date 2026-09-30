@@ -1,0 +1,6 @@
+// Unsigned simulator builds use this placeholder prefix; Signing.local.xcconfig overrides it.
+LOCALFLOW_BUNDLE_PREFIX = org.localflow.unsigned
+LOCALFLOW_APP_GROUP = group.$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow
+#include? "Signing.local.xcconfig"
+// FluidAudio's text-processing library ships arm64 only, so simulators are Apple silicon.
+EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64

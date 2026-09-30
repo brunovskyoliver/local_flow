@@ -151,6 +151,8 @@ If the spike measures SwiftUI above 30 MB at rest, the keyboard switches to UIKi
 
 **Decision**: `apps/ios/LocalFlowPhone.xcodeproj` is created once in Xcode and then maintained like the Mac project. `scripts/register-xcode-sources.py` gets a `--project` argument and the iOS phase IDs. No XcodeGen or Tuist, which would be a new tool dependency for one project.
 
+**Outcome (implementation, 2026-10-01)**: the project was generated once with the XcodeGen already installed on the development Mac, and only the resulting `.xcodeproj` is committed. There is no spec file, and no script or `make` target calls XcodeGen, so it is not a dependency; the project is maintained in Xcode from here on. The project uses Xcode's synchronized folders (`App`, `Keyboard`, `Shared`, `LocalFlowPhoneTests`), so a new source file needs no registration and `register-xcode-sources.py` did not get a `--project` flag (T030). Info.plists and entitlements live in `apps/ios/Config/`, outside the synchronized folders.
+
 ## R15. Tests and checks
 
 **Decision**:

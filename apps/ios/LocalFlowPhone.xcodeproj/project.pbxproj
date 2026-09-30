@@ -1,0 +1,715 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0E71EFB63BF24287F2658C82 /* Figtree.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7A8A9ADA2BE3037D111E58B0 /* Figtree.ttf */; };
+		18A9E50189C52D4B782C5BB2 /* parakeet-ctc-110m.json in Resources */ = {isa = PBXBuildFile; fileRef = 0DE114FEA1BF3F81265635B7 /* parakeet-ctc-110m.json */; };
+		2BAACF8F9555CDC93A09AABC /* EBGaramond-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C79EF1591B83630036C0EE04 /* EBGaramond-Italic.ttf */; };
+		5A58983B3BD35A6F2BAB3DE8 /* LocalFlowCore in Frameworks */ = {isa = PBXBuildFile; productRef = F6662480A870DEFDDB361546 /* LocalFlowCore */; };
+		6B6D457C1830C313AEA988D8 /* LocalFlowKeyboard.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EFAD86AFECC005DD55703CCA /* LocalFlowKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		7D9E380AA189402AC92CC2A7 /* EBGaramond-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C79EF1591B83630036C0EE04 /* EBGaramond-Italic.ttf */; };
+		CCD460589917E19C6FB89BE8 /* EBGaramond.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2DB4E1CEA00F82D571FCB551 /* EBGaramond.ttf */; };
+		D878129FA9BB443B09533DB9 /* EBGaramond.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2DB4E1CEA00F82D571FCB551 /* EBGaramond.ttf */; };
+		DE6EF9A240D1B7902534A9EF /* LocalFlowSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = AC2E1EAAECB74A757999C159 /* LocalFlowSpeech */; };
+		EB2C7C24D6896085A78D23D5 /* parakeet-v3.json in Resources */ = {isa = PBXBuildFile; fileRef = AB060E11991A635A4D7B30BD /* parakeet-v3.json */; };
+		F417509C882B6369FB5D6B06 /* Figtree.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7A8A9ADA2BE3037D111E58B0 /* Figtree.ttf */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A0E50E56703E93A17EFBEE10 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4A44CAABE5621F4F8BCBB78C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2486D7FE7A70AF613544F2F3;
+			remoteInfo = LocalFlowPhone;
+		};
+		CA6D5736E33D066B7AE9AAB2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4A44CAABE5621F4F8BCBB78C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B453D95B421AC3B2D2BF41D5;
+			remoteInfo = LocalFlowKeyboard;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A185A3BC42D7046C328439BD /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				6B6D457C1830C313AEA988D8 /* LocalFlowKeyboard.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0DE114FEA1BF3F81265635B7 /* parakeet-ctc-110m.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "parakeet-ctc-110m.json"; sourceTree = "<group>"; };
+		243A46684246D3ACAC3C84E1 /* LocalFlowPhoneTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LocalFlowPhoneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		2572C8C12901C2C0138F693F /* LocalFlowPhone.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LocalFlowPhone.entitlements; sourceTree = "<group>"; };
+		2DB4E1CEA00F82D571FCB551 /* EBGaramond.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = EBGaramond.ttf; sourceTree = "<group>"; };
+		3B2637443DAB300E5FCB4231 /* LocalFlowPhone.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LocalFlowPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5FDACA75EE45AF62495A9BEB /* LocalFlowKeyboard.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LocalFlowKeyboard.entitlements; sourceTree = "<group>"; };
+		7A8A9ADA2BE3037D111E58B0 /* Figtree.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Figtree.ttf; sourceTree = "<group>"; };
+		8FEB53E6F1F2111A37C3C433 /* App-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "App-Info.plist"; sourceTree = "<group>"; };
+		92AC0B8285342E21F2F1EFA5 /* Signing.local.xcconfig.example */ = {isa = PBXFileReference; path = Signing.local.xcconfig.example; sourceTree = "<group>"; };
+		9526BAA494AA497DD4C9C6D4 /* LocalFlowCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LocalFlowCore; path = ../../packages/LocalFlowCore; sourceTree = SOURCE_ROOT; };
+		9EF8C519FA10C76030508356 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		AB060E11991A635A4D7B30BD /* parakeet-v3.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "parakeet-v3.json"; sourceTree = "<group>"; };
+		C79EF1591B83630036C0EE04 /* EBGaramond-Italic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "EBGaramond-Italic.ttf"; sourceTree = "<group>"; };
+		E7A7E7B46B876AC96FB5321D /* Keyboard-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "Keyboard-Info.plist"; sourceTree = "<group>"; };
+		EFAD86AFECC005DD55703CCA /* LocalFlowKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LocalFlowKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		5E259AE92B2CF8F167237334 /* Keyboard */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = Keyboard;
+			sourceTree = "<group>";
+		};
+		72FEED4E57CBCAB8B4C792E9 /* LocalFlowPhoneTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = LocalFlowPhoneTests;
+			sourceTree = "<group>";
+		};
+		7BA77499125D341DCB6859F3 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		FF5A07922F4B25B1B4FD7627 /* App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		FE97DD47604E7B6F4DF292E6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DE6EF9A240D1B7902534A9EF /* LocalFlowSpeech in Frameworks */,
+				5A58983B3BD35A6F2BAB3DE8 /* LocalFlowCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0AB2952210C90BEDA91F436A /* apps */ = {
+			isa = PBXGroup;
+			children = (
+				F4081B8F8E1D666ADA936B3D /* macos */,
+			);
+			name = apps;
+			path = ..;
+			sourceTree = "<group>";
+		};
+		12C7E5A8411A9EC8A36A4C12 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				C79EF1591B83630036C0EE04 /* EBGaramond-Italic.ttf */,
+				2DB4E1CEA00F82D571FCB551 /* EBGaramond.ttf */,
+				7A8A9ADA2BE3037D111E58B0 /* Figtree.ttf */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
+		2A4B8465E9C95C5395406667 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				8FEB53E6F1F2111A37C3C433 /* App-Info.plist */,
+				9EF8C519FA10C76030508356 /* Base.xcconfig */,
+				E7A7E7B46B876AC96FB5321D /* Keyboard-Info.plist */,
+				5FDACA75EE45AF62495A9BEB /* LocalFlowKeyboard.entitlements */,
+				2572C8C12901C2C0138F693F /* LocalFlowPhone.entitlements */,
+				92AC0B8285342E21F2F1EFA5 /* Signing.local.xcconfig.example */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		5183D127129AFA376173682B /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				12C7E5A8411A9EC8A36A4C12 /* Fonts */,
+				7A4BBFAF7E2F71DBC40E400E /* Models */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		5D02FB17CBE5A887E1570548 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				9526BAA494AA497DD4C9C6D4 /* LocalFlowCore */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		72645DD6EC56730EFBDF6952 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EFAD86AFECC005DD55703CCA /* LocalFlowKeyboard.appex */,
+				3B2637443DAB300E5FCB4231 /* LocalFlowPhone.app */,
+				243A46684246D3ACAC3C84E1 /* LocalFlowPhoneTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7A4BBFAF7E2F71DBC40E400E /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				0DE114FEA1BF3F81265635B7 /* parakeet-ctc-110m.json */,
+				AB060E11991A635A4D7B30BD /* parakeet-v3.json */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		C5036EF096019F1D9BCCF22B /* LocalFlow */ = {
+			isa = PBXGroup;
+			children = (
+				5183D127129AFA376173682B /* Resources */,
+			);
+			path = LocalFlow;
+			sourceTree = "<group>";
+		};
+		C83F0284F0AF1BB3636DDC45 = {
+			isa = PBXGroup;
+			children = (
+				FF5A07922F4B25B1B4FD7627 /* App */,
+				0AB2952210C90BEDA91F436A /* apps */,
+				2A4B8465E9C95C5395406667 /* Config */,
+				5E259AE92B2CF8F167237334 /* Keyboard */,
+				72FEED4E57CBCAB8B4C792E9 /* LocalFlowPhoneTests */,
+				5D02FB17CBE5A887E1570548 /* Packages */,
+				7BA77499125D341DCB6859F3 /* Shared */,
+				72645DD6EC56730EFBDF6952 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		F4081B8F8E1D666ADA936B3D /* macos */ = {
+			isa = PBXGroup;
+			children = (
+				C5036EF096019F1D9BCCF22B /* LocalFlow */,
+			);
+			path = macos;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2486D7FE7A70AF613544F2F3 /* LocalFlowPhone */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ADE94A87B869C098BCE62B27 /* Build configuration list for PBXNativeTarget "LocalFlowPhone" */;
+			buildPhases = (
+				231E23AE8BB657CB63EE4AD9 /* Sources */,
+				C15C6DCBF89A6D6D2862217C /* Resources */,
+				FE97DD47604E7B6F4DF292E6 /* Frameworks */,
+				A185A3BC42D7046C328439BD /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				38C71034D15C12C380F76D00 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				FF5A07922F4B25B1B4FD7627 /* App */,
+				7BA77499125D341DCB6859F3 /* Shared */,
+			);
+			name = LocalFlowPhone;
+			packageProductDependencies = (
+				AC2E1EAAECB74A757999C159 /* LocalFlowSpeech */,
+				F6662480A870DEFDDB361546 /* LocalFlowCore */,
+			);
+			productName = LocalFlowPhone;
+			productReference = 3B2637443DAB300E5FCB4231 /* LocalFlowPhone.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B453D95B421AC3B2D2BF41D5 /* LocalFlowKeyboard */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 43F57A47D6BFF83A685676C0 /* Build configuration list for PBXNativeTarget "LocalFlowKeyboard" */;
+			buildPhases = (
+				FB014260E1A68A29854D3C83 /* Sources */,
+				C728B11BC4F73A20BB028A14 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5E259AE92B2CF8F167237334 /* Keyboard */,
+				7BA77499125D341DCB6859F3 /* Shared */,
+			);
+			name = LocalFlowKeyboard;
+			packageProductDependencies = (
+			);
+			productName = LocalFlowKeyboard;
+			productReference = EFAD86AFECC005DD55703CCA /* LocalFlowKeyboard.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		DE92345EFBEED9FA5CA0DBD2 /* LocalFlowPhoneTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B84A1D531D3BADF241360EFE /* Build configuration list for PBXNativeTarget "LocalFlowPhoneTests" */;
+			buildPhases = (
+				76EDCC9597FB20574C640D79 /* Sources */,
+				E92AB911D4EA0D9A51C70A0F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A424DF707CF082CEF64C3C3C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				72FEED4E57CBCAB8B4C792E9 /* LocalFlowPhoneTests */,
+			);
+			name = LocalFlowPhoneTests;
+			packageProductDependencies = (
+			);
+			productName = LocalFlowPhoneTests;
+			productReference = 243A46684246D3ACAC3C84E1 /* LocalFlowPhoneTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4A44CAABE5621F4F8BCBB78C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					2486D7FE7A70AF613544F2F3 = {
+						ProvisioningStyle = Automatic;
+					};
+					B453D95B421AC3B2D2BF41D5 = {
+						ProvisioningStyle = Automatic;
+					};
+					DE92345EFBEED9FA5CA0DBD2 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 6CBED39068AA01D8EE84712A /* Build configuration list for PBXProject "LocalFlowPhone" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = C83F0284F0AF1BB3636DDC45;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				26981E19BA495EE71412BAC1 /* XCLocalSwiftPackageReference "../../packages/LocalFlowCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 72645DD6EC56730EFBDF6952 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B453D95B421AC3B2D2BF41D5 /* LocalFlowKeyboard */,
+				2486D7FE7A70AF613544F2F3 /* LocalFlowPhone */,
+				DE92345EFBEED9FA5CA0DBD2 /* LocalFlowPhoneTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C15C6DCBF89A6D6D2862217C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7D9E380AA189402AC92CC2A7 /* EBGaramond-Italic.ttf in Resources */,
+				D878129FA9BB443B09533DB9 /* EBGaramond.ttf in Resources */,
+				F417509C882B6369FB5D6B06 /* Figtree.ttf in Resources */,
+				18A9E50189C52D4B782C5BB2 /* parakeet-ctc-110m.json in Resources */,
+				EB2C7C24D6896085A78D23D5 /* parakeet-v3.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C728B11BC4F73A20BB028A14 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2BAACF8F9555CDC93A09AABC /* EBGaramond-Italic.ttf in Resources */,
+				CCD460589917E19C6FB89BE8 /* EBGaramond.ttf in Resources */,
+				0E71EFB63BF24287F2658C82 /* Figtree.ttf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E92AB911D4EA0D9A51C70A0F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		231E23AE8BB657CB63EE4AD9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		76EDCC9597FB20574C640D79 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FB014260E1A68A29854D3C83 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		38C71034D15C12C380F76D00 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B453D95B421AC3B2D2BF41D5 /* LocalFlowKeyboard */;
+			targetProxy = CA6D5736E33D066B7AE9AAB2 /* PBXContainerItemProxy */;
+		};
+		A424DF707CF082CEF64C3C3C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2486D7FE7A70AF613544F2F3 /* LocalFlowPhone */;
+			targetProxy = A0E50E56703E93A17EFBEE10 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0662C040145379D8AFC0994A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LOCALFLOW_BUNDLE_PREFIX).LocalFlowPhoneTests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LocalFlow.app/LocalFlow";
+			};
+			name = Debug;
+		};
+		0CD6BF6F2492CFE75098C08D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/LocalFlowKeyboard.entitlements;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Keyboard-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = LocalFlow;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow.Keyboard";
+				PRODUCT_NAME = LocalFlowKeyboard;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		3B05CEE213FA7693092210B7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LOCALFLOW_BUNDLE_PREFIX).LocalFlowPhoneTests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LocalFlow.app/LocalFlow";
+			};
+			name = Release;
+		};
+		52E9C50CBE4F6215B8D8C8FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 9EF8C519FA10C76030508356 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		58FD4E7D5D5FFCFEE8500976 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 9EF8C519FA10C76030508356 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		63573065ACBB6D1CD7E23144 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/LocalFlowPhone.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = LocalFlow;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow";
+				PRODUCT_NAME = LocalFlow;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		79ADEBFE4BB88F313C939730 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/LocalFlowKeyboard.entitlements;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Keyboard-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = LocalFlow;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow.Keyboard";
+				PRODUCT_NAME = LocalFlowKeyboard;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		84803D777C19E1A06BFA2205 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/LocalFlowPhone.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = LocalFlow;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow";
+				PRODUCT_NAME = LocalFlow;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		43F57A47D6BFF83A685676C0 /* Build configuration list for PBXNativeTarget "LocalFlowKeyboard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				79ADEBFE4BB88F313C939730 /* Debug */,
+				0CD6BF6F2492CFE75098C08D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6CBED39068AA01D8EE84712A /* Build configuration list for PBXProject "LocalFlowPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				52E9C50CBE4F6215B8D8C8FB /* Debug */,
+				58FD4E7D5D5FFCFEE8500976 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		ADE94A87B869C098BCE62B27 /* Build configuration list for PBXNativeTarget "LocalFlowPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				63573065ACBB6D1CD7E23144 /* Debug */,
+				84803D777C19E1A06BFA2205 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B84A1D531D3BADF241360EFE /* Build configuration list for PBXNativeTarget "LocalFlowPhoneTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0662C040145379D8AFC0994A /* Debug */,
+				3B05CEE213FA7693092210B7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		26981E19BA495EE71412BAC1 /* XCLocalSwiftPackageReference "../../packages/LocalFlowCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../packages/LocalFlowCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AC2E1EAAECB74A757999C159 /* LocalFlowSpeech */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LocalFlowSpeech;
+		};
+		F6662480A870DEFDDB361546 /* LocalFlowCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LocalFlowCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4A44CAABE5621F4F8BCBB78C /* Project object */;
+}

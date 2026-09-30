@@ -630,7 +630,7 @@ public final class ProvisioningProgress: @unchecked Sendable {
     defer { lock.unlock() }
     value.phase = phase
   }
-  func advance(_ bytes: Int64) {
+  public func advance(_ bytes: Int64) {
     lock.lock()
     defer { lock.unlock() }
     value.completedBytes = min(value.totalBytes, value.completedBytes + bytes)

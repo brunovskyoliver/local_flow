@@ -25,19 +25,21 @@ The spec lists US6 sixth, but the plan builds it first: every phone story needs 
 
 **Purpose**: prove on the iPhone 16 Pro that a free team can sign an app plus keyboard sharing one App Group, before any feature code exists. The spike uses the final bundle IDs so no App ID is wasted (research R10).
 
-- [ ] T001 Create `apps/ios/Config/Signing.local.xcconfig.example` with `DEVELOPMENT_TEAM =` and `LOCALFLOW_BUNDLE_PREFIX =` placeholders and a comment that both are set once and never changed (research R10). Add `apps/ios/Config/Signing.local.xcconfig` to `.gitignore`.
-- [ ] T002 Create `apps/ios/LocalFlowPhone.xcodeproj` in Xcode with two targets:
+- [X] T001 Create `apps/ios/Config/Signing.local.xcconfig.example` with `DEVELOPMENT_TEAM =` and `LOCALFLOW_BUNDLE_PREFIX =` placeholders and a comment that both are set once and never changed (research R10). Add `apps/ios/Config/Signing.local.xcconfig` to `.gitignore`.
+- [X] T002 Create `apps/ios/LocalFlowPhone.xcodeproj` in Xcode with two targets:
   - `LocalFlowPhone` (iOS 26.0, iPhone only, Swift 6 language mode), bundle ID `$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow`.
   - `LocalFlowKeyboard` (custom keyboard extension embedded in the app), bundle ID `$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow.Keyboard`.
   - Both include `Config/Signing.local.xcconfig` and share the App Group `group.$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow`.
   - `apps/ios/App/Info.plist`: `UIBackgroundModes = [audio]`, URL scheme `localflow`, `NSMicrophoneUsageDescription`.
   - `apps/ios/Keyboard/Info.plist`: `RequestsOpenAccess = YES`, `PrimaryLanguage = en-US`.
   - A `LocalFlowPhoneTests` unit-test target hosted by the app.
+  - Done: generated once (see research R14 outcome). Info.plists are `apps/ios/Config/App-Info.plist` and `Keyboard-Info.plist`; the group ID comes from `LOCALFLOW_APP_GROUP` in `Config/Base.xcconfig`, which `#include?`s the local signing file. Simulator builds exclude x86_64 because FluidAudio's text-processing library is arm64 only.
 - [ ] T003 Write throwaway spike code in `apps/ios/Spike/SpikeAppView.swift` and `apps/ios/Spike/SpikeKeyboardViewController.swift` (add the spike files in Xcode by hand; the script flag arrives in T030):
   - The keyboard writes `ping.json` to `<group>/Handoff/` and rings a Darwin notification. The app answers with `pong.json` and a second notification. The keyboard shows the round-trip time.
   - An "Open app" key walks the responder chain to `UIApplication` and calls `open(_:options:completionHandler:)` with `localflow://session/start` (research R6).
   - The app starts an `AVAudioEngine` input tap with `.playAndRecord` and `[.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker]` and keeps it running in the background (research R7).
   - The keyboard shows its own `phys_footprint` (`task_info` `TASK_VM_INFO`).
+  - Not built separately. The US1 build carries everything the spike checks (ping/pong round trip, opening the app from the keyboard, the background engine, `peak_footprint_bytes` in `keyboard-status.json`), so T004 runs quickstart §2 against the real app and keyboard. T005 has nothing to delete.
 - [ ] T004 Run quickstart §2 on the iPhone 16 Pro and record in `specs/016-ios-dictation-foundation/acceptance/spike.md`:
   - App Group round trip works on the free team (yes/no).
   - Doorbell round-trip time (median of 10).
@@ -119,41 +121,42 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 ### Build and design
 
-- [ ] T020 Add the local package reference `../../packages/LocalFlowCore` to `apps/ios/LocalFlowPhone.xcodeproj` and link `LocalFlowSpeech` and `LocalFlowCore` to `LocalFlowPhone` only. Bundle `apps/macos/LocalFlow/Resources/Models/parakeet-v3.json` and `parakeet-ctc-110m.json` into the app by file reference, not by copy.
-- [ ] T030 Add a `--project` argument to `scripts/register-xcode-sources.py`, defaulting to the Mac project, with the iOS target and phase IDs for `LocalFlowPhone`, `LocalFlowKeyboard` and `LocalFlowPhoneTests`. (Kept its ID; it runs here so T021–T029 can register their files.)
-- [ ] T021 [P] Create `apps/ios/Shared/Sotto/SottoTokens.swift`, compiled into both targets: the same hex values, radii and font names as `apps/macos/LocalFlow/UI/Appearance.swift`, built on `UIColor(dynamicProvider:)` for light and dark (research R13).
-- [ ] T022 [P] Create `apps/ios/Shared/Sotto/SottoFonts.swift`, which registers `Figtree.ttf`, `EBGaramond.ttf` and `EBGaramond-Italic.ttf` from the bundle with `CTFontManagerRegisterFontsForURL`. Add the three fonts from `apps/macos/LocalFlow/Resources/Fonts` to both targets by file reference.
-- [ ] T023 [P] Create `apps/ios/Shared/Sotto/CapsuleView.swift` and `apps/ios/Shared/Sotto/WaveformViews.swift`: the dark capsule, the scrolling bar waveform for recording and the rolling wave for working, following `apps/macos/LocalFlow/Features/Dictation/DictationIndicator.swift`. The waveform takes an array of levels as input and knows nothing about files.
-- [ ] T024 [P] Create `scripts/check-sotto-tokens.py`: extract the hex colour literals from `apps/macos/LocalFlow/UI/Appearance.swift` and `apps/ios/Shared/Sotto/SottoTokens.swift` and exit non-zero if the sets differ.
-- [ ] T025 [P] Create `scripts/check-keyboard-imports.sh`: fail if any file in `apps/ios/Keyboard` or `apps/ios/Shared` (compiled into the keyboard) imports `Network`, `FluidAudio`, `GRDB`, `LocalFlowCore` or `LocalFlowSpeech`, or mentions `URLSession`.
+- [X] T020 Add the local package reference `../../packages/LocalFlowCore` to `apps/ios/LocalFlowPhone.xcodeproj` and link `LocalFlowSpeech` and `LocalFlowCore` to `LocalFlowPhone` only. Bundle `apps/macos/LocalFlow/Resources/Models/parakeet-v3.json` and `parakeet-ctc-110m.json` into the app by file reference, not by copy.
+- [X] T030 Add a `--project` argument to `scripts/register-xcode-sources.py`, defaulting to the Mac project, with the iOS target and phase IDs for `LocalFlowPhone`, `LocalFlowKeyboard` and `LocalFlowPhoneTests`. (Kept its ID; it runs here so T021–T029 can register their files.)
+  - Not needed: the iOS project uses synchronized folders (research R14 outcome).
+- [X] T021 [P] Create `apps/ios/Shared/Sotto/SottoTokens.swift`, compiled into both targets: the same hex values, radii and font names as `apps/macos/LocalFlow/UI/Appearance.swift`, built on `UIColor(dynamicProvider:)` for light and dark (research R13).
+- [X] T022 [P] Create `apps/ios/Shared/Sotto/SottoFonts.swift`, which registers `Figtree.ttf`, `EBGaramond.ttf` and `EBGaramond-Italic.ttf` from the bundle with `CTFontManagerRegisterFontsForURL`. Add the three fonts from `apps/macos/LocalFlow/Resources/Fonts` to both targets by file reference.
+- [X] T023 [P] Create `apps/ios/Shared/Sotto/CapsuleView.swift` and `apps/ios/Shared/Sotto/WaveformViews.swift`: the dark capsule, the scrolling bar waveform for recording and the rolling wave for working, following `apps/macos/LocalFlow/Features/Dictation/DictationIndicator.swift`. The waveform takes an array of levels as input and knows nothing about files.
+- [X] T024 [P] Create `scripts/check-sotto-tokens.py`: extract the hex colour literals from `apps/macos/LocalFlow/UI/Appearance.swift` and `apps/ios/Shared/Sotto/SottoTokens.swift` and exit non-zero if the sets differ.
+- [X] T025 [P] Create `scripts/check-keyboard-imports.sh`: fail if any file in `apps/ios/Keyboard` or `apps/ios/Shared` (compiled into the keyboard) imports `Network`, `FluidAudio`, `GRDB`, `LocalFlowCore` or `LocalFlowSpeech`, or mentions `URLSession`.
 
 ### Handoff codec (contract: keyboard-handoff.md)
 
-- [ ] T026 [P] Create `apps/ios/Shared/Handoff/HandoffModels.swift` (Foundation only): `Codable` types for `session.json`, `request.json`, `result.json`, `delivery.json` and `keyboard-status.json` with snake_case keys and `v: 1`, exactly as in the contract:
+- [X] T026 [P] Create `apps/ios/Shared/Handoff/HandoffModels.swift` (Foundation only): `Codable` types for `session.json`, `request.json`, `result.json`, `delivery.json` and `keyboard-status.json` with snake_case keys and `v: 1`, exactly as in the contract:
   - `SessionFile.state` ∈ `starting`, `ready`, `recording`, `finishing`, `ended`; `end_reason` set only when `ended`; `last_request_id` and `last_outcome` ∈ `empty`, `busy`, `no_session`, `failed` or null.
   - `RequestFile.kind` ∈ `start`, `stop`, `cancel`.
   - `ResultFile` always carries `text` (`outcome` is always `text`).
   - `DeliveryFile.delivery` ∈ `inserted`, `offered`.
   - `LevelsFile`: fixed 128 bytes, a UInt32 write index then 31 UInt32 slots, each a Float32 bit pattern in 0–1.
-- [ ] T027 [P] Create `apps/ios/Shared/Handoff/HandoffStore.swift`: resolves `<group container>/Handoff/`, creates it with protection `completeUntilFirstUserAuthentication` and excluded from backup, writes whole files with `Data.write(options: .atomic)`, and returns nil for a file that is missing, unparseable, or has `v != 1`.
-- [ ] T028 [P] Create `apps/ios/Shared/Handoff/Doorbell.swift`: posts and observes the six Darwin notification names from the contract (`app.localflow.handoff.request`, `.delivery`, `.ping`, `.pong`, `.session`, `.result`) through `CFNotificationCenterGetDarwinNotifyCenter`, delivering callbacks on the main actor.
-- [ ] T029 Add `apps/ios/LocalFlowPhoneTests/HandoffCodecTests.swift`: a round trip for every file type, rejection of unknown `v`, the levels file stays 128 bytes and wraps its index, and an atomic write is never read half-written (write in a loop from one task while reading in another).
+- [X] T027 [P] Create `apps/ios/Shared/Handoff/HandoffStore.swift`: resolves `<group container>/Handoff/`, creates it with protection `completeUntilFirstUserAuthentication` and excluded from backup, writes whole files with `Data.write(options: .atomic)`, and returns nil for a file that is missing, unparseable, or has `v != 1`.
+- [X] T028 [P] Create `apps/ios/Shared/Handoff/Doorbell.swift`: posts and observes the six Darwin notification names from the contract (`app.localflow.handoff.request`, `.delivery`, `.ping`, `.pong`, `.session`, `.result`) through `CFNotificationCenterGetDarwinNotifyCenter`, delivering callbacks on the main actor.
+- [X] T029 Add `apps/ios/LocalFlowPhoneTests/HandoffCodecTests.swift`: a round trip for every file type, rejection of unknown `v`, the levels file stays 128 bytes and wraps its index, and an atomic write is never read half-written (write in a loop from one task while reading in another).
 
 ### Tooling
 
-- [ ] T031 Add an `ios` target to `Makefile` that builds the `LocalFlowPhone` scheme for an iOS simulator with `CODE_SIGNING_ALLOWED=NO`. In `scripts/test.sh`, run `scripts/check-sotto-tokens.py`, `scripts/check-keyboard-imports.sh`, and `xcodebuild build test` on a simulator with `-only-testing:LocalFlowPhoneTests`.
+- [X] T031 Add an `ios` target to `Makefile` that builds the `LocalFlowPhone` scheme for an iOS simulator with `CODE_SIGNING_ALLOWED=NO`. In `scripts/test.sh`, run `scripts/check-sotto-tokens.py`, `scripts/check-keyboard-imports.sh`, and `xcodebuild build test` on a simulator with `-only-testing:LocalFlowPhoneTests`.
 
 ### Storage
 
-- [ ] T032 Create `apps/ios/App/Storage/PhoneMigrations.swift`: takes `HistoryMigrations.migrator()` and registers `phone-dictations-v1` after it, creating `phone_dictations(transcription_id TEXT PRIMARY KEY REFERENCES transcriptions(id) ON DELETE CASCADE, source TEXT NOT NULL CHECK(source IN ('keyboard','app')), duration_ms INTEGER NOT NULL CHECK(duration_ms BETWEEN 0 AND 300000), delivery TEXT NOT NULL CHECK(delivery IN ('inserted','offered','saved_only')), end_detail TEXT CHECK(end_detail IS NULL OR end_detail IN ('limit_reached','interrupted','recovered_after_termination')), session_id TEXT)`, plus a CHECK or trigger that `source = 'app'` implies `delivery = 'saved_only'`.
-- [ ] T033 Create `apps/ios/App/Storage/PhoneDictationStore.swift` on top of the shared `TranscriptionStore` database:
+- [X] T032 Create `apps/ios/App/Storage/PhoneMigrations.swift`: takes `HistoryMigrations.migrator()` and registers `phone-dictations-v1` after it, creating `phone_dictations(transcription_id TEXT PRIMARY KEY REFERENCES transcriptions(id) ON DELETE CASCADE, source TEXT NOT NULL CHECK(source IN ('keyboard','app')), duration_ms INTEGER NOT NULL CHECK(duration_ms BETWEEN 0 AND 300000), delivery TEXT NOT NULL CHECK(delivery IN ('inserted','offered','saved_only')), end_detail TEXT CHECK(end_detail IS NULL OR end_detail IN ('limit_reached','interrupted','recovered_after_termination')), session_id TEXT)`, plus a CHECK or trigger that `source = 'app'` implies `delivery = 'saved_only'`.
+- [X] T033 Create `apps/ios/App/Storage/PhoneDictationStore.swift` on top of the shared `TranscriptionStore` database:
   - `save(dictation:)` inserts the `transcriptions` row (`created_at` in ms at stop, `delivery_state = not_inserted` for both sources (never `attempting`, which the shared store's launch repair would turn into `uncertain` + `needs_review`), `quality`/`stop_reason` per data-model.md, `target_bundle_id` NULL, `recovery_state` `resolved` or `needs_review`) and the `phone_dictations` row in one transaction. Empty text is not saved.
   - `markDelivery(dictationID:_:)` sets `phone_dictations.delivery` and `transcriptions.delivery_state` together: `inserted` ↔ `confirmed`, `offered`/`saved_only` ↔ `not_inserted`.
   - `delete(id:)` deletes the `transcriptions` row, relying on the cascade.
   - `list()` newest first, joining the phone row.
   - A write failure throws; callers log `history_write_failed` with no text (FR-023).
-- [ ] T034 Create `apps/ios/App/PhoneServices.swift`: builds `LocalFlowPaths(applicationSupport:)` from the app container, opens `TranscriptionStore` with the phone migrator (WAL, `synchronous=FULL`, 0600, 128 MB page cap, file protection `completeUntilFirstUserAuthentication`), and creates the single `ModelLifecycleCoordinator`, `VocabularyStore` and `PhoneDictationStore`, plus a `KeepReady` holder counter (`session`, `dictateScreen`) that drives `setKeepLoaded`, `loadIfIdle` and `unloadIfIdle` as the plan's model ownership section describes.
-- [ ] T035 Add `apps/ios/LocalFlowPhoneTests/PhoneMigrationTests.swift`:
+- [X] T034 Create `apps/ios/App/PhoneServices.swift`: builds `LocalFlowPaths(applicationSupport:)` from the app container, opens `TranscriptionStore` with the phone migrator (WAL, `synchronous=FULL`, 0600, 128 MB page cap, file protection `completeUntilFirstUserAuthentication`), and creates the single `ModelLifecycleCoordinator`, `VocabularyStore` and `PhoneDictationStore`, plus a `KeepReady` holder counter (`session`, `dictateScreen`) that drives `setKeepLoaded`, `loadIfIdle` and `unloadIfIdle` as the plan's model ownership section describes.
+- [X] T035 Add `apps/ios/LocalFlowPhoneTests/PhoneMigrationTests.swift`:
   - A fresh database has the 16 shared migrations followed by `phone-dictations-v1`.
   - A database that already has `phone-dictations-v1` still applies a fake later shared migration registered before it (research R5).
   - The CHECK constraints reject out-of-range `duration_ms` and unknown `delivery` values.
@@ -164,28 +167,29 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 ### Models
 
-- [ ] T036 Create `apps/ios/App/Models/ResumableModelDownloadTransport.swift` conforming to the shared `ModelProvisioner` transport protocol: one background `URLSession` download per file, one file in flight, resume data kept on error or network loss and used on the next attempt, staging under `Models/.staging/<name>` (research R8).
-- [ ] T037 Create `apps/ios/App/Models/PhoneModelState.swift`: the state machine `absent`, `downloading(progress)`, `paused`, `verifying`, `ready`, `damaged` from data-model.md §2, driven by `ModelProvisioner`. At launch it re-reads the manifest and fingerprints (no full hash) and moves to `damaged` if they fail. Promoted directories are marked `isExcludedFromBackup`. The boost model is optional: without it the state is still `ready` and V002 is skipped.
-- [ ] T038 Add `apps/ios/LocalFlowPhoneTests/ModelProvisioningTests.swift` with a fake transport: an interrupted download resumes from its resume data; a partial staging directory is never promoted; a hash mismatch yields `damaged` and deletes staging; a launch fingerprint failure yields `damaged` and leaves the database untouched.
+- [X] T036 Create `apps/ios/App/Models/ResumableModelDownloadTransport.swift` conforming to the shared `ModelProvisioner` transport protocol: one background `URLSession` download per file, one file in flight, resume data kept on error or network loss and used on the next attempt, staging under `Models/.staging/<name>` (research R8).
+  - A foreground `URLSession` with resume data kept on disk, not a background session: a download pauses while the app is suspended (`ponytail:` note in the file).
+- [X] T037 Create `apps/ios/App/Models/PhoneModelState.swift`: the state machine `absent`, `downloading(progress)`, `paused`, `verifying`, `ready`, `damaged` from data-model.md §2, driven by `ModelProvisioner`. At launch it re-reads the manifest and fingerprints (no full hash) and moves to `damaged` if they fail. Promoted directories are marked `isExcludedFromBackup`. The boost model is optional: without it the state is still `ready` and V002 is skipped.
+- [X] T038 Add `apps/ios/LocalFlowPhoneTests/ModelProvisioningTests.swift` with a fake transport: an interrupted download resumes from its resume data; a partial staging directory is never promoted; a hash mismatch yields `damaged` and deletes staging; a launch fingerprint failure yields `damaged` and leaves the database untouched.
 
 ### Capture and pipeline
 
-- [ ] T039 Create `apps/ios/App/Session/AudioCapturing.swift`: the capture protocol (`startEngine`, `beginDictation(spool:)`, `endDictation() -> EndReason`, `stopEngine`, interruption and level callbacks) and a `FakeAudioCapture` in `apps/ios/LocalFlowPhoneTests/Fakes/FakeAudioCapture.swift`.
-- [ ] T040 Create `apps/ios/App/Session/PhoneAudioCapture.swift`, conforming to `AudioCapturing`:
+- [X] T039 Create `apps/ios/App/Session/AudioCapturing.swift`: the capture protocol (`startEngine`, `beginDictation(spool:)`, `endDictation() -> EndReason`, `stopEngine`, interruption and level callbacks) and a `FakeAudioCapture` in `apps/ios/LocalFlowPhoneTests/Fakes/FakeAudioCapture.swift`.
+- [X] T040 Create `apps/ios/App/Session/PhoneAudioCapture.swift`, conforming to `AudioCapturing`:
   - `AVAudioSession` `.playAndRecord`, mode `.default`, options per the T004 decision.
   - One `AVAudioEngine` input tap for the session's lifetime, never stopped between dictations.
   - Between dictations, buffers are dropped on the audio thread without copying (FR-013).
   - While recording, convert to 16 kHz mono Float32 and push 1,600-sample chunks through a ring of capacity 1 s (16,000 samples) into an `AudioSpool` created with `maximumBytes: 19_200_000`. Ring overflow ends the dictation with `overflow`; the spool limit ends it with `duration_limit`.
   - Levels are published at about 20 Hz while recording.
   - `stopEngine` calls `setActive(false, options: .notifyOthersOnDeactivation)`.
-- [ ] T041 Create `apps/ios/App/Transcription/TextCheckerSpelling.swift`: `(String) -> Bool` backed by `UITextChecker` with language `en_US`, the iOS counterpart of `VocabularyBoostSpelling` (research R2, R16).
-- [ ] T042 Create `apps/ios/App/Transcription/PhoneDictationPipeline.swift`: takes a closed spool, runs the shared `WindowedTranscriber` with `TranscriptNormalizer` and `VocabularyBoost` by acquiring one lease per dictation with `ModelLifecycleCoordinator.acquire(session:boost:)` using the `VocabularySnapshot` current at stop, and calling `finish` when done (never touching FluidAudio managers directly), and returns normalized text plus `quality`/`stop_reason`. Wrap model load and transcription in `os_signpost` intervals. Delete the spool after completion, cancellation and failure.
-- [ ] T043 Create `apps/ios/App/Storage/OrphanSpoolRecovery.swift`: at launch, find a spool left in `TemporaryAudio/`. If the model is `ready`, transcribe it and save with `recovery_state = needs_review` and `end_detail = recovered_after_termination`, then delete it. If the model is not ready, keep the orphan and recover it when `PhoneModelState` next becomes `ready`; show "1 unrecovered recording" with Delete in the Settings speech model section (T066). If transcription fails, delete it and log one content-free line. There is at most one orphan.
-- [ ] T044 Add `apps/ios/LocalFlowPhoneTests/PipelineTests.swift` with `FakeAudioCapture` and a fake speech engine: ring overflow ends with `overflow` and still transcribes captured audio; the 19.2 MB limit ends with `duration_limit`; silence gives empty text and no History row; the spool is deleted on success, cancel and failure; an orphan spool is recovered and marked `needs_review`, and a failing orphan is deleted; an orphan found while the model is absent is kept, then recovered when the fake model state becomes `ready`, and Delete removes it.
+- [X] T041 Create `apps/ios/App/Transcription/TextCheckerSpelling.swift`: `(String) -> Bool` backed by `UITextChecker` with language `en_US`, the iOS counterpart of `VocabularyBoostSpelling` (research R2, R16).
+- [X] T042 Create `apps/ios/App/Transcription/PhoneDictationPipeline.swift`: takes a closed spool, runs the shared `WindowedTranscriber` with `TranscriptNormalizer` and `VocabularyBoost` by acquiring one lease per dictation with `ModelLifecycleCoordinator.acquire(session:boost:)` using the `VocabularySnapshot` current at stop, and calling `finish` when done (never touching FluidAudio managers directly), and returns normalized text plus `quality`/`stop_reason`. Wrap model load and transcription in `os_signpost` intervals. Delete the spool after completion, cancellation and failure.
+- [X] T043 Create `apps/ios/App/Storage/OrphanSpoolRecovery.swift`: at launch, find a spool left in `TemporaryAudio/`. If the model is `ready`, transcribe it and save with `recovery_state = needs_review` and `end_detail = recovered_after_termination`, then delete it. If the model is not ready, keep the orphan and recover it when `PhoneModelState` next becomes `ready`; show "1 unrecovered recording" with Delete in the Settings speech model section (T066). If transcription fails, delete it and log one content-free line. There is at most one orphan.
+- [X] T044 Add `apps/ios/LocalFlowPhoneTests/PipelineTests.swift` with `FakeAudioCapture` and a fake speech engine: ring overflow ends with `overflow` and still transcribes captured audio; the 19.2 MB limit ends with `duration_limit`; silence gives empty text and no History row; the spool is deleted on success, cancel and failure; an orphan spool is recovered and marked `needs_review`, and a failing orphan is deleted; an orphan found while the model is absent is kept, then recovered when the fake model state becomes `ready`, and Delete removes it.
 
 ### App shell
 
-- [ ] T045 Create `apps/ios/App/LocalFlowPhoneApp.swift` and `apps/ios/App/RootView.swift`: build `PhoneServices`, register fonts, run `OrphanSpoolRecovery` and the model launch check, and show a tab view with Dictate, History, Dictionary and Settings using Sotto tokens. Each tab is an empty placeholder until its story fills it. Create `apps/ios/App/Features/Settings/SettingsView.swift` as an empty `Form` that later stories add sections to.
+- [X] T045 Create `apps/ios/App/LocalFlowPhoneApp.swift` and `apps/ios/App/RootView.swift`: build `PhoneServices`, register fonts, run `OrphanSpoolRecovery` and the model launch check, and show a tab view with Dictate, History, Dictionary and Settings using Sotto tokens. Each tab is an empty placeholder until its story fills it. Create `apps/ios/App/Features/Settings/SettingsView.swift` as an empty `Form` that later stories add sections to.
 
 **Checkpoint**: `make ios` and `make check` pass; the pipeline turns a spool into a saved History row in tests.
 
@@ -199,7 +203,7 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 ### Tests for User Story 1
 
-- [ ] T046 [P] [US1] Add `apps/ios/LocalFlowPhoneTests/SessionControllerTests.swift` with `FakeAudioCapture` and a test clock, covering every transition in data-model.md §3:
+- [X] T046 [P] [US1] Add `apps/ios/LocalFlowPhoneTests/SessionControllerTests.swift` with `FakeAudioCapture` and a test clock, covering every transition in data-model.md §3:
   - `starting` → `ended` on mic denied, engine failure and missing model.
   - `ready` → `recording` → `finishing` → `ready` with `idle_deadline = now + timeout`; with `afterOne`, `finishing` → `ended`.
   - A start while not `ready` reports `busy`, and with no session `no_session`, through `session.json`'s `last_outcome`.
@@ -212,22 +216,24 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
   - Each dictation acquires and finishes its own lease; a Dictionary edit between two dictations in one session changes the second one's boost terms.
   - An `origin = app` session ends after its dictation with `end_reason = afterOneDictation`, even when the idle timeout is 1 h.
   - Opening the URL while a session is `starting`, `recording` or `finishing` keeps it; an `origin = app` session opened this way becomes `origin = keyboard` and returns to `ready` after its dictation.
-- [ ] T047 [P] [US1] Add `apps/ios/LocalFlowPhoneTests/InsertionPolicyTests.swift`: every combination of visible × request match × document match from the contract's insertion rules; a non-text `last_outcome` for the pending request shows its message and leaves an existing offer in place; Undo is offered only while `documentContextBeforeInput` ends with the inserted text, for at most 10 s, and until the next text change; nil context hides Undo; a result not acknowledged `inserted` is offered on next appearance.
-- [ ] T048 [P] [US1] Add `apps/ios/LocalFlowPhoneTests/HandoffServerTests.swift`: a start request leads to `session.json` saying `recording`; stop produces History save → `result.json` → `result` bell in that order; `delivery.json` with `inserted` updates History and deletes `result.json`; a result is deleted once it is 10 minutes old, checked at session end, at launch and on becoming active; an empty or busy reply updates `session.json` and leaves `result.json` untouched; `levels.bin` is written only while recording.
-- [ ] T089 [P] [US1] Add `apps/ios/LocalFlowPhoneTests/KeyboardSessionModelTests.swift` (compile `apps/ios/Keyboard/KeyboardSessionModel.swift` into the test target, as with T055) with a fake handoff store, fake doorbell and test clock: no `pong` within 500 ms, or a missing or `ended` `session.json`, gives `none`; `recording` is shown only after `session.json` says so; a pending request with no result after 15 s shows the "LocalFlow stopped" message; a matching `last_outcome` shows its message and a non-matching one is ignored; a result older than 10 minutes is not offered; without Full Access nothing is written to the group. (New ID; added after analysis.)
+- [X] T047 [P] [US1] Add `apps/ios/LocalFlowPhoneTests/InsertionPolicyTests.swift`: every combination of visible × request match × document match from the contract's insertion rules; a non-text `last_outcome` for the pending request shows its message and leaves an existing offer in place; Undo is offered only while `documentContextBeforeInput` ends with the inserted text, for at most 10 s, and until the next text change; nil context hides Undo; a result not acknowledged `inserted` is offered on next appearance.
+- [X] T048 [P] [US1] Add `apps/ios/LocalFlowPhoneTests/HandoffServerTests.swift`: a start request leads to `session.json` saying `recording`; stop produces History save → `result.json` → `result` bell in that order; `delivery.json` with `inserted` updates History and deletes `result.json`; a result is deleted once it is 10 minutes old, checked at session end, at launch and on becoming active; an empty or busy reply updates `session.json` and leaves `result.json` untouched; `levels.bin` is written only while recording.
+- [X] T089 [P] [US1] Add `apps/ios/LocalFlowPhoneTests/KeyboardSessionModelTests.swift` (compile `apps/ios/Keyboard/KeyboardSessionModel.swift` into the test target, as with T055) with a fake handoff store, fake doorbell and test clock: no `pong` within 500 ms, or a missing or `ended` `session.json`, gives `none`; `recording` is shown only after `session.json` says so; a pending request with no result after 15 s shows the "LocalFlow stopped" message; a matching `last_outcome` shows its message and a non-matching one is ignored; a result older than 10 minutes is not offered; without Full Access nothing is written to the group. (New ID; added after analysis.)
 
 ### Implementation for User Story 1
 
-- [ ] T049 [US1] Create `apps/ios/App/Session/IdleTimer.swift`: a 1 s repeating tick against an injectable clock, reporting when `idle_deadline` has passed. Idle timeouts `afterOne`, `5m` (default), `15m` and `1h`, read from `UserDefaults` key `session.idleTimeout`.
-- [ ] T050 [US1] Create `apps/ios/App/Session/SessionController.swift` (main actor): owns at most one `PhoneSession` (`id`, `origin`, `startedAt`, `idleDeadline`, `state`, `endReason`, `currentDictation`) and `ActiveDictation` (`id`, `requestID`, `source`, `startedAt`, `spool`), implementing data-model.md §3 over `AudioCapturing`, `PhoneDictationPipeline`, `PhoneDictationStore` and the coordinator. The session adds a `keepReady` hold on `ready` and drops it at end; on `didReceiveMemoryWarningNotification` when not recording it drops all holds and unloads. Each dictation acquires and finishes its own lease. It supports `origin = app` sessions that end after one dictation. Interruptions finish transcription inside `beginBackgroundTask`. It logs only IDs, states and durations.
-- [ ] T051 [US1] Create `apps/ios/App/Session/HandoffServer.swift`: observes `request`, `delivery` and `ping`, and re-reads the files whenever the app becomes active. It maps requests onto `SessionController`, writes `session.json` on every state change (and removes it on a clean launch with no session), answers `ping` with `pong`, and writes `levels.bin` at about 20 Hz while recording. On stop it follows the contract sequence: History save (`saved_only`, `not_inserted`) → `result.json` → `result` bell. A failed History write still publishes the result (FR-023). It applies `delivery.json` through `PhoneDictationStore.markDelivery`, deletes `result.json` on `inserted`, and deletes a result 10 minutes after creation, checked at session end, at launch and on becoming active. Add `os_signpost` for request → result.
-- [ ] T052 [US1] Handle `localflow://session/start?request=<uuid>` in `apps/ios/App/LocalFlowPhoneApp.swift`: if a session exists in any state other than `ended`, keep it (an `origin = app` session becomes `origin = keyboard`); otherwise start one in the foreground. In both cases show the session screen. The `request` parameter never starts a dictation.
-- [ ] T053 [US1] Create `apps/ios/App/Features/Session/SessionView.swift`: "LocalFlow is listening", the swipe-back hint ("Swipe right on the bottom bar, or tap ◀ in the top-left corner, to go back"), the idle deadline counting down, and an End session button that ends it at once (FR-012). A banner on `RootView` shows whether a session is running.
-- [ ] T054 [US1] Add an "End listening after" picker (after one dictation, 5 minutes, 15 minutes, 1 hour) to `apps/ios/App/Features/Settings/SettingsView.swift`, bound to `session.idleTimeout`.
-- [ ] T055 [US1] Create `apps/ios/Keyboard/InsertionPolicy.swift` (pure, Foundation only, also compiled into `LocalFlowPhoneTests`): `decide(visible:pendingRequestID:resultRequestID:documentIDAtStart:documentIDNow:) -> insert | offer | show(message)` and `canUndo(inserted:insertedAt:now:contextBefore:textChangedSince:)`.
-- [ ] T056 [US1] Create `apps/ios/Keyboard/KeyboardSessionModel.swift`: the keyboard state from data-model.md §4 (`sessionView` ∈ `unknown`, `none`, `ready`, `recording`, `working`, `ended(reason)`, `pendingRequest`, `lastInsertion`, `offered`). It pings on appear and treats no `pong` within 500 ms, or a missing or `ended` `session.json`, as `none`. On tap it stores `documentIdentifier`, writes `request.json` and rings. It shows `recording` only once `session.json` says so. A pending request with no result after 15 s shows "LocalFlow stopped. Open it to recover the last dictation." It applies `InsertionPolicy` to results, writes `delivery.json` and rings `delivery`. It reads `last_outcome` from `session.json` for its pending request. It never offers a result more than 10 minutes old.
-- [ ] T057 [US1] Create `apps/ios/Keyboard/KeyboardViewController.swift`: a `UIInputViewController` with one hosting controller for its lifetime, torn down in `viewDidDisappear`. The "Start LocalFlow" tap opens `localflow://session/start?request=<uuid>` through the responder chain to `UIApplication.open(_:options:completionHandler:)`. It writes `keyboard-status.json` (`has_full_access`, `last_seen`, `peak_footprint_bytes` from `TASK_VM_INFO` `phys_footprint`) on appear and disappear. If the spike chose UIKit (T004), build the view in UIKit instead of SwiftUI.
-- [ ] T058 [US1] Create `apps/ios/Keyboard/KeyboardView.swift` with Sotto tokens:
+- [X] T049 [US1] Create `apps/ios/App/Session/IdleTimer.swift`: a 1 s repeating tick against an injectable clock, reporting when `idle_deadline` has passed. Idle timeouts `afterOne`, `5m` (default), `15m` and `1h`, read from `UserDefaults` key `session.idleTimeout`.
+- [X] T050 [US1] Create `apps/ios/App/Session/SessionController.swift` (main actor): owns at most one `PhoneSession` (`id`, `origin`, `startedAt`, `idleDeadline`, `state`, `endReason`, `currentDictation`) and `ActiveDictation` (`id`, `requestID`, `source`, `startedAt`, `spool`), implementing data-model.md §3 over `AudioCapturing`, `PhoneDictationPipeline`, `PhoneDictationStore` and the coordinator. The session adds a `keepReady` hold on `ready` and drops it at end; on `didReceiveMemoryWarningNotification` when not recording it drops all holds and unloads. Each dictation acquires and finishes its own lease. It supports `origin = app` sessions that end after one dictation. Interruptions finish transcription inside `beginBackgroundTask`. It logs only IDs, states and durations.
+- [X] T051 [US1] Create `apps/ios/App/Session/HandoffServer.swift`: observes `request`, `delivery` and `ping`, and re-reads the files whenever the app becomes active. It maps requests onto `SessionController`, writes `session.json` on every state change (and removes it on a clean launch with no session), answers `ping` with `pong`, and writes `levels.bin` at about 20 Hz while recording. On stop it follows the contract sequence: History save (`saved_only`, `not_inserted`) → `result.json` → `result` bell. A failed History write still publishes the result (FR-023). It applies `delivery.json` through `PhoneDictationStore.markDelivery`, deletes `result.json` on `inserted`, and deletes a result 10 minutes after creation, checked at session end, at launch and on becoming active. Add `os_signpost` for request → result.
+- [X] T052 [US1] Handle `localflow://session/start?request=<uuid>` in `apps/ios/App/LocalFlowPhoneApp.swift`: if a session exists in any state other than `ended`, keep it (an `origin = app` session becomes `origin = keyboard`); otherwise start one in the foreground. In both cases show the session screen. The `request` parameter never starts a dictation.
+- [X] T053 [US1] Create `apps/ios/App/Features/Session/SessionView.swift`: "LocalFlow is listening", the swipe-back hint ("Swipe right on the bottom bar, or tap ◀ in the top-left corner, to go back"), the idle deadline counting down, and an End session button that ends it at once (FR-012). A banner on `RootView` shows whether a session is running.
+- [X] T054 [US1] Add an "End listening after" picker (after one dictation, 5 minutes, 15 minutes, 1 hour) to `apps/ios/App/Features/Settings/SettingsView.swift`, bound to `session.idleTimeout`.
+- [X] T055 [US1] Create `apps/ios/Keyboard/InsertionPolicy.swift` (pure, Foundation only, also compiled into `LocalFlowPhoneTests`): `decide(visible:pendingRequestID:resultRequestID:documentIDAtStart:documentIDNow:) -> insert | offer | show(message)` and `canUndo(inserted:insertedAt:now:contextBefore:textChangedSince:)`.
+  - Done in `apps/ios/Shared/KeyboardLogic/InsertionPolicy.swift`. `Shared` is compiled into the app as well, so the tests reach it with `@testable import LocalFlow` instead of compiling keyboard files into the test target. `decide` returns insert or offer; `message(for:)` covers the non-text outcomes.
+- [X] T056 [US1] Create `apps/ios/Keyboard/KeyboardSessionModel.swift`: the keyboard state from data-model.md §4 (`sessionView` ∈ `unknown`, `none`, `ready`, `recording`, `working`, `ended(reason)`, `pendingRequest`, `lastInsertion`, `offered`). It pings on appear and treats no `pong` within 500 ms, or a missing or `ended` `session.json`, as `none`. On tap it stores `documentIdentifier`, writes `request.json` and rings. It shows `recording` only once `session.json` says so. A pending request with no result after 15 s shows "LocalFlow stopped. Open it to recover the last dictation." It applies `InsertionPolicy` to results, writes `delivery.json` and rings `delivery`. It reads `last_outcome` from `session.json` for its pending request. It never offers a result more than 10 minutes old.
+  - Done in `apps/ios/Shared/KeyboardLogic/KeyboardSessionModel.swift`, for the same reason as T055. The 15 s "LocalFlow stopped" timer starts at the stop tap, because a recording can be longer than 15 s.
+- [X] T057 [US1] Create `apps/ios/Keyboard/KeyboardViewController.swift`: a `UIInputViewController` with one hosting controller for its lifetime, torn down in `viewDidDisappear`. The "Start LocalFlow" tap opens `localflow://session/start?request=<uuid>` through the responder chain to `UIApplication.open(_:options:completionHandler:)`. It writes `keyboard-status.json` (`has_full_access`, `last_seen`, `peak_footprint_bytes` from `TASK_VM_INFO` `phys_footprint`) on appear and disappear. If the spike chose UIKit (T004), build the view in UIKit instead of SwiftUI.
+- [X] T058 [US1] Create `apps/ios/Keyboard/KeyboardView.swift` with Sotto tokens:
   - The mic capsule in its live, recording (scrolling bar waveform from `levels.bin` via `CADisplayLink`, only while recording), working (rolling wave) and done states, and "Start LocalFlow" when there is no session.
   - Delete, return, space, next keyboard (`advanceToNextInputMode`), and basic punctuation keys (FR-007).
   - Undo while `InsertionPolicy.canUndo`, deleting `inserted.count` grapheme clusters with `deleteBackward()`.
@@ -377,3 +383,38 @@ Stop at each checkpoint and record the device run before moving on. Resource acc
 - **Offline and recovery**: T043/T044 (orphan spool), T038 (resumable download, damaged model), T067 (Airplane Mode), T080 (reinstall), T083 (interruptions).
 - **Local instrumentation**: signposts in T042 and T051, diagnostics in T081, keyboard peak in T057.
 - **Repeatable resource acceptance**: T085, following quickstart §10. None of T059, T067, T077, T080 or T083–T085 is marked done from simulator runs or mocks.
+
+## Implementation report: MVP (Phases 1–5), 2026-10-01
+
+**Changed**
+
+- The Mac extraction into `packages/LocalFlowCore` is done and verified (commits c24b788 and 14e289f; details in `acceptance/extraction.md`).
+- The package gained three API changes for the phone:
+  - a `TranscriptionStore.commit(reservation:envelope:alsoWrite:)` overload (the two-argument form forwards to it);
+  - a public `HistoryMigrations`;
+  - a public `ProvisioningProgress.advance`.
+- The phone foundation: `apps/ios/LocalFlowPhone.xcodeproj` with the app, keyboard and tests targets, `apps/ios/Config` xcconfigs, and the shared Handoff, Sotto and KeyboardLogic sources.
+- US1:
+  - app side: session controller, audio capture, handoff server, pipeline, orphan spool recovery and phone storage;
+  - keyboard: capsule, chips, Undo, and a DEBUG ping readout used for the T004 round-trip measurement.
+- Model provisioning is temporary: until US2 exists, Settings has a "Download speech model" button.
+- The spike (T003) was folded into the real targets instead of a throwaway `Spike/` folder, so T005 has nothing to delete. It stays open until T004 is recorded.
+- New checks run in `make check`:
+  - `scripts/check-sotto-tokens.py` (phone and Mac token hex values match);
+  - `scripts/check-keyboard-imports.sh` (the keyboard links neither package product);
+  - iOS simulator tests.
+
+**Verified**
+
+- `make check` exits 0.
+- Mac XCTest: 1700 passed, 30 skipped, 0 failed.
+- iOS simulator XCTest: 59 passed, 0 failed.
+- Both new check scripts fail when a violation is planted.
+
+**Left**
+
+- T004: the spike run on the iPhone 16 Pro (quickstart §2), then ADR 0029 → Accepted, then T005.
+- T019: the manual Mac pass (quickstart §3).
+- T059: keyboard acceptance on the device (quickstart §5).
+- Device builds need `LOCALFLOW_BUNDLE_PREFIX` and `DEVELOPMENT_TEAM` in `apps/ios/Config/Signing.local.xcconfig` (gitignored). This has not been set yet.
+- No device measurements have been collected.

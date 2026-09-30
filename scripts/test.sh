@@ -5,7 +5,7 @@ if [[ ! -f .specify/feature.json && -z "${SPECIFY_FEATURE_DIRECTORY:-}" ]]; then
   export SPECIFY_FEATURE_DIRECTORY="$PWD/specs/001-local-dictation"
 fi
 swift format lint --strict --recursive apps/macos/LocalFlow apps/macos/LocalFlowTests apps/macos/LocalFlowUITests \
-  packages/LocalFlowCore
+  packages/LocalFlowCore apps/ios
 for script in scripts/*.sh .specify/scripts/bash/*.sh; do bash -n "$script"; done
 ./scripts/check-transcript-imports.sh
 ./scripts/check-identification-imports.sh
@@ -13,6 +13,8 @@ for script in scripts/*.sh .specify/scripts/bash/*.sh; do bash -n "$script"; don
 ./scripts/check-speech-worker-imports.sh
 ./scripts/check-core-imports.sh
 swift test --package-path packages/LocalFlowCore
+python3 scripts/check-sotto-tokens.py
+./scripts/check-keyboard-imports.sh
 python3 scripts/validate-foundation.py
 python3 scripts/test-dictation-accuracy.py
 python3 scripts/test-transcription-quality.py
@@ -38,6 +40,12 @@ python3 scripts/analysis-quality.py "$analysis_eval_dir/analysis-eval.json"
 # Feature 014: the speech worker target compiles on its own.
 xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -target flowd-speech -configuration Debug \
   CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO SYMROOT="$PWD/build/SpeechWorker" build
+# Feature 016: the iPhone app, keyboard and unit tests on an iPhone simulator.
+ios_simulator="${LOCALFLOW_IOS_SIMULATOR:-$(xcrun simctl list devices available | awk -F'[()]' '/^ +iPhone/ { print $2; exit }')}"
+[[ -n "$ios_simulator" ]] || { echo "no iPhone simulator available" >&2; exit 1; }
+xcodebuild -quiet -project apps/ios/LocalFlowPhone.xcodeproj -scheme LocalFlowPhone -configuration Debug \
+  -destination "platform=iOS Simulator,id=$ios_simulator" -derivedDataPath build/iOSDerivedData \
+  CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO test -only-testing:LocalFlowPhoneTests
 .specify/scripts/bash/check-prerequisites.sh --json
 printf 'Repository checks and deterministic XCTest passed. Signed platform, dictation and hardware acceptance are separate.
 '
