@@ -203,9 +203,16 @@ final class RewriteCoordinator: RewriteRequesting {
   ) async -> (ContextPlan?, DictationContextRecord?, String?) {
     let record = try? await store.context(for: dictation)
     guard settings.sendsContext, let record, [.used, .timedOut].contains(record.outcome),
-      let json = record.snapshotJSON, let hash = record.snapshotHash,
-      let snapshot = record.snapshot
+      var json = record.snapshotJSON, var hash = record.snapshotHash,
+      var snapshot = record.snapshot
     else { return (nil, record, nil) }
+    // Rows stored before the fix may carry a local "spelling" marker, which v2 rejects.
+    let parts = Set(ContextPart.allCases.map(\.rawValue))
+    if !snapshot.truncated.allSatisfy(parts.contains) {
+      snapshot.truncated.removeAll { !parts.contains($0) }
+      json = snapshot.canonicalString
+      hash = AppContextSnapshot.hash(Data(json.utf8))
+    }
     let versions = await probeVersions(endpoint, fresh: freshProbe)
     guard versions?.contains(RewriteBounds.contextSchemaVersion) == true else {
       log("context not sent: server_unsupported")

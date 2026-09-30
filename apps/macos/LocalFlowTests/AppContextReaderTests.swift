@@ -31,6 +31,11 @@ final class ScriptedAttributeSource: ContextAttributeSource, @unchecked Sendable
     log("focused")
     return focused
   }
+  var frontmost: FrontmostWindow?
+  func frontmostWindow() -> FrontmostWindow? {
+    log("frontmost")
+    return frontmost
+  }
   func appName(_ target: CapturedTarget) -> String? {
     log("name")
     return name
@@ -275,6 +280,34 @@ final class AppContextReaderTests: XCTestCase {
       target: makeContextTarget(), settings: .disabled, source: source, deadlineReached: { false })
     XCTAssertEqual(capture.outcome, .off)
     XCTAssertEqual(source.calls, [])
+  }
+
+  func testNoTargetFallsBackToFrontmostWindowTitle() {
+    let source = ScriptedAttributeSource()
+    source.frontmost = FrontmostWindow(
+      bundleID: "com.tinyspeck.slackmacgap", appName: "Slack", windowTitle: "#release - Acme")
+    let capture = AppContextSnapshotBuilder.build(
+      target: nil, settings: enabled, source: source, deadlineReached: { false })
+    XCTAssertEqual(capture.outcome, .used)
+    XCTAssertEqual(capture.snapshot?.appName, "Slack")
+    XCTAssertEqual(capture.snapshot?.windowTitle, "#release - Acme")
+    XCTAssertEqual(capture.snapshot?.appCategory, .workChat)
+    XCTAssertNil(capture.snapshot?.beforeCursor)
+
+    source.frontmost?.windowTitle = nil
+    XCTAssertEqual(
+      AppContextSnapshotBuilder.build(
+        target: nil, settings: enabled, source: source, deadlineReached: { false }
+      ).outcome, .noTarget)
+
+    source.frontmost = FrontmostWindow(
+      bundleID: "com.1password.1password", appName: "1Password", windowTitle: "Vault")
+    var excluding = enabled
+    excluding.excludedBundleIDs = ["com.1password.1password"]
+    XCTAssertEqual(
+      AppContextSnapshotBuilder.build(
+        target: nil, settings: excluding, source: source, deadlineReached: { false }
+      ).outcome, .excludedApp)
   }
 
   func testPermissionAndTargetOutcomes() {

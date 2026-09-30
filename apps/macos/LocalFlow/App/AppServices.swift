@@ -217,6 +217,7 @@ final class AppServices {
     applyAppearance()
     localModel.observe()
     followLocalModelChoice()
+    ChromiumAccessibility.startObserving()
     defer { starting = false }
     do {
       let base = AppIdentity.current.applicationSupportDirectory

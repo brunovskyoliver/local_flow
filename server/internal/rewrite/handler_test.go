@@ -400,3 +400,29 @@ func TestV2NeedsConfiguredVersion(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 }
+
+func TestHasCommentaryKeepsDictatedOpeners(t *testing.T) {
+	cases := []struct {
+		input, output string
+		want          bool
+	}{
+		{"sure let's meet at three", "Sure, let's meet at three.", false},
+		{"Sure! Sounds good", "Sure! Sounds good.", false},
+		{"here's the plan for today", "Here's the plan for today.", false},
+		{"here is the plan", "Here is the plan.", false},
+		{"certainly we can do that", "Certainly, we can do that.", false},
+		{"tu je upravený text", "Tu je upravený text.", false},
+		{"let's meet at three", "Sure, let's meet at three.", true},
+		{"the plan for today", "Here's the plan for today.", true},
+		{"send the report", "Rewritten text: Send the report.", true},
+		{"surely not", "Sure, not.", false},
+		{"fix the build", "```\nFix the build.\n```", true},
+		{"fix the build", "<think>ok</think>Fix the build.", true},
+		{"fix the build", "Fix the build.", false},
+	}
+	for _, tc := range cases {
+		if got := hasCommentary(tc.input, tc.output); got != tc.want {
+			t.Errorf("hasCommentary(%q, %q) = %v, want %v", tc.input, tc.output, got, tc.want)
+		}
+	}
+}

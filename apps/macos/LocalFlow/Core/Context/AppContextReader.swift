@@ -8,6 +8,9 @@ protocol ContextAttributeSource: Sendable {
   func isTrusted() -> Bool
   /// Subrole of the frontmost focused element, used only when no target was captured.
   func focusedSubrole() -> String?
+  /// The frontmost app and its focused window's title, used only when no target was
+  /// captured (a web view, a document being read, an app that exposes no text range).
+  func frontmostWindow() -> FrontmostWindow?
   func appName(_ target: CapturedTarget) -> String?
   /// Sets the per-call messaging timeout on the element and its window.
   func prepare(_ target: CapturedTarget)
@@ -34,6 +37,12 @@ final class ContextReadProgress: @unchecked Sendable {
   var current: (AppContextSnapshot.Parts, String?) { lock.withLock { (parts, bundleID) } }
 }
 
+struct FrontmostWindow: Equatable, Sendable {
+  var bundleID: String
+  var appName: String?
+  var windowTitle: String?
+}
+
 enum AppContextSnapshotBuilder {
   static let secureSubrole = "AXSecureTextField"
   static let toolbarWalkLevels = 3
@@ -47,8 +56,10 @@ enum AppContextSnapshotBuilder {
     guard settings.enabled else { return .off }
     guard source.isTrusted() else { return AppContextCapture(outcome: .noPermission) }
     guard let target else {
-      return AppContextCapture(
-        outcome: source.focusedSubrole() == secureSubrole ? .secureField : .noTarget)
+      if source.focusedSubrole() == secureSubrole {
+        return AppContextCapture(outcome: .secureField)
+      }
+      return titleOnly(settings: settings, source: source, progress: progress)
     }
     let bundleID = target.bundleIdentifier
     if bundleID == settings.ownBundleID {
@@ -135,6 +146,29 @@ enum AppContextSnapshotBuilder {
     return finish(progress: progress, settings: settings, outcome: .used)
   }
 
+  /// With no text target, the frontmost app and window title still say where the user is.
+  static func titleOnly(
+    settings: ContextSettings, source: any ContextAttributeSource, progress: ContextReadProgress
+  ) -> AppContextCapture {
+    guard let front = source.frontmostWindow(), let title = front.windowTitle, !title.isEmpty
+    else { return AppContextCapture(outcome: .noTarget) }
+    if front.bundleID == settings.ownBundleID {
+      return AppContextCapture(outcome: .ownApp, bundleID: front.bundleID)
+    }
+    if settings.excludedBundleIDs.contains(front.bundleID) {
+      return AppContextCapture(outcome: .excludedApp, bundleID: front.bundleID)
+    }
+    let category = AppCategory.category(for: front.bundleID, overrides: settings.categoryOverrides)
+    progress.setBundleID(front.bundleID)
+    progress.update {
+      $0.appCategory = category
+      $0.appName = front.appName
+      $0.windowTitle = title
+      $0.fieldKind = fieldKind(role: nil, subrole: nil, category: category)
+    }
+    return finish(progress: progress, settings: settings, outcome: .used)
+  }
+
   /// Builds the bounded snapshot from what was read. `used` becomes
   /// `nothing_readable` when no text and no title survived.
   static func finish(
@@ -215,6 +249,19 @@ struct AXContextSource: ContextAttributeSource {
     AXUIElementSetMessagingTimeout(system, 0.1)
     guard let focused = element(system, kAXFocusedUIElementAttribute) else { return nil }
     return string(focused, kAXSubroleAttribute)
+  }
+
+  func frontmostWindow() -> FrontmostWindow? {
+    guard let application = NSWorkspace.shared.frontmostApplication,
+      let bundleID = application.bundleIdentifier
+    else { return nil }
+    let app = AXUIElementCreateApplication(application.processIdentifier)
+    AXUIElementSetMessagingTimeout(app, 0.1)
+    let window = element(app, kAXFocusedWindowAttribute)
+    if let window { AXUIElementSetMessagingTimeout(window, 0.1) }
+    return FrontmostWindow(
+      bundleID: bundleID, appName: application.localizedName,
+      windowTitle: window.flatMap { string($0, kAXTitleAttribute) })
   }
 
   func appName(_ target: CapturedTarget) -> String? {

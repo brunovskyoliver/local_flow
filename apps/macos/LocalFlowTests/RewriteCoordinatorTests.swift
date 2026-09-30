@@ -645,6 +645,22 @@ final class RewriteContextCoordinatorTests: XCTestCase {
     XCTAssertNil(rewriteNote)
   }
 
+  func testLegacySpellingMarkerIsDroppedBeforeSending() async throws {
+    let fixture = await makeFixture()
+    var marked = Self.snapshot
+    marked.truncated.append("spelling")
+    await fixture.store.setContext(
+      DictationContextRecord(
+        outcome: .used, captureMs: 12, appBundleID: "com.apple.mail",
+        snapshotJSON: marked.canonicalString),
+      for: fixture.dictation)
+    let outcome = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)
+    guard case .rewritten(_, let attempt) = outcome else { return XCTFail("\(outcome)") }
+    let request = try XCTUnwrap(fixture.transport.requests.first)
+    XCTAssertEqual(request.context, Data(Self.snapshot.canonicalString.utf8))
+    XCTAssertEqual(attempt.contextHash, Self.snapshot.hash)
+  }
+
   func testTimedOutSnapshotIsSentToo() async throws {
     let fixture = await makeFixture(outcome: .timedOut)
     _ = await fixture.coordinator.rewrite(dictation: fixture.dictation, text: faithful)

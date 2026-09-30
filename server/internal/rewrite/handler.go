@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"localflow/server/internal/backend"
 	"localflow/server/internal/rewrite/disfluency"
@@ -415,7 +416,7 @@ func (h *Handler) validate(req Request, raw string, jsonSchema bool, table entit
 	if len(text) > req.MaxOutputBytes() {
 		return "", 0, CodeOutputTooLarge
 	}
-	if strings.ContainsAny(text, "⟦⟧") || hasCommentary(text) || disfluency.HalfCorrected(input, text) {
+	if strings.ContainsAny(text, "⟦⟧") || hasCommentary(input, text) || disfluency.HalfCorrected(input, text) {
 		return "", 0, CodeBackendError
 	}
 	if keepSentences && disfluency.DroppedSentence(input, text) {
@@ -424,12 +425,60 @@ func (h *Handler) validate(req Request, raw string, jsonSchema bool, table entit
 	return text, restored, ""
 }
 
-func hasCommentary(text string) bool {
+// commentaryOpeners are chat-style lead-ins a model adds around a rewrite. Each
+// group lists the output prefixes and the spoken words they come from, so a
+// dictation that itself opens with "Sure, ..." or "Here's ..." is kept.
+var commentaryOpeners = []struct {
+	prefixes []string
+	spoken   []string
+}{
+	{[]string{"here is ", "here's "}, []string{"here is", "heres"}},
+	{[]string{"sure,", "sure!"}, []string{"sure"}},
+	{[]string{"certainly,", "certainly!"}, []string{"certainly"}},
+	{[]string{"rewritten text:", "rewritten version:"}, []string{"rewritten"}},
+	{[]string{"tu je prepis"}, []string{"tu je prepis"}},
+	{[]string{"tu je upraven"}, []string{"tu je upraven"}},
+	{[]string{"```", "<think>"}, nil},
+}
+
+// hasCommentary reports output that opens with a chat lead-in the dictation did not.
+func hasCommentary(input, text string) bool {
 	s := strings.ToLower(strings.TrimSpace(text))
-	for _, prefix := range []string{"here is ", "here's ", "sure,", "sure!", "certainly,", "certainly!", "rewritten text:", "rewritten version:", "```", "<think>", "tu je prepis", "tu je upraven"} {
-		if strings.HasPrefix(s, prefix) {
+	spoken := spokenWords(input)
+	for _, opener := range commentaryOpeners {
+		for _, prefix := range opener.prefixes {
+			if !strings.HasPrefix(s, prefix) {
+				continue
+			}
+			for _, words := range opener.spoken {
+				if strings.HasPrefix(spoken, words) {
+					return false
+				}
+			}
 			return true
 		}
 	}
 	return false
+}
+
+// spokenWords lowercases text and turns every run of non-letters into one space,
+// so "Sure, let's" and "sure lets" compare alike.
+func spokenWords(text string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range strings.ToLower(text) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if space && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			space = false
+			b.WriteRune(r)
+		case r == '\'' || r == '’':
+			// "here's" and "heres" are the same spoken word.
+		default:
+			space = true
+		}
+	}
+	return b.String()
 }

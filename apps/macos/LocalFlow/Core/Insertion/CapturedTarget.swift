@@ -103,6 +103,7 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
       return nil
     }
     let pid = frontmost.processIdentifier
+    ChromiumAccessibility.enable(pid)
     var raw: CFTypeRef?
     let system = Self.bounded(AXUIElementCreateSystemWide())
     let status = AXUIElementCopyAttributeValue(
@@ -447,8 +448,10 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
       let contextStatus = AXUIElementCopyParameterizedAttributeValue(
         element, kAXStringForRangeParameterizedAttribute as CFString,
         contextValue, &contextRaw)
+      // The range is bounded in UTF-16 units; a UTF-8 bound would reject any field
+      // whose last 4096 characters hold one accented letter, dash or emoji.
       guard contextStatus == .success, let value = contextRaw as? String,
-        value.utf8.count <= 4 * 1024
+        value.utf16.count <= 4_096
       else { return nil }
       context = value
     }
@@ -456,6 +459,51 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
       processIdentifier: pid, launchDate: launchDate,
       bundleIdentifier: bundleIdentifier, element: element, focusedWindow: window,
       selectedRange: range, comparisonContext: context)
+  }
+}
+
+/// Electron apps (Slack, VS Code, Notion, Obsidian) build their Accessibility tree only
+/// when asked through `AXManualAccessibility`; without it the focused element has no text
+/// range, so neither insertion nor context can find the field. Apps that do not know the
+/// attribute reject it, which is harmless. Each process is asked once.
+enum ChromiumAccessibility {
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var enabled: Set<pid_t> = []
+  nonisolated(unsafe) private static var observer: NSObjectProtocol?
+
+  static func enable(_ pid: pid_t) {
+    guard pid > 0, AXIsProcessTrusted() else { return }
+    let isNew = lock.withLock { enabled.insert(pid).inserted }
+    guard isNew else { return }
+    let application = AXUIElementCreateApplication(pid)
+    AXUIElementSetMessagingTimeout(application, 0.1)
+    _ = AXUIElementSetAttributeValue(
+      application, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+  }
+
+  /// Asks each app as it comes to the front, so the tree is built before the first press.
+  static func startObserving() {
+    lock.withLock {
+      guard observer == nil else { return }
+      let center = NSWorkspace.shared.notificationCenter
+      observer = center.addObserver(
+        forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: nil
+      ) { note in
+        guard
+          let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        else { return }
+        enable(app.processIdentifier)
+      }
+      _ = center.addObserver(
+        forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: nil
+      ) { note in
+        guard
+          let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        else { return }
+        _ = lock.withLock { enabled.remove(app.processIdentifier) }
+      }
+    }
+    if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier { enable(pid) }
   }
 }
 

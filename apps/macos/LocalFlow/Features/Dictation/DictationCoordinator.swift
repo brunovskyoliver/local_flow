@@ -969,7 +969,7 @@ final class DictationCoordinator {
     _ text: String, capture: AppContextCapture, vocabulary: VocabularySnapshot?
   ) -> (text: String, record: DictationContextRecord, changes: Int) {
     var record = DictationContextRecord(capture: capture)
-    guard var snapshot = capture.snapshot, [.used, .timedOut].contains(capture.outcome),
+    guard let snapshot = capture.snapshot, [.used, .timedOut].contains(capture.outcome),
       !text.isEmpty
     else { return (text, record, 0) }
     let dictionary = (vocabulary?.entries ?? []).filter(\.enabled).flatMap {
@@ -982,12 +982,9 @@ final class DictationCoordinator {
       json.count <= DictationContextRecord.maximumChangesBytes,
       text.utf8.count <= DictationContextRecord.maximumPreSpellingBytes
     else { return (text, record, 0) }
-    if result.truncated {
-      snapshot.truncated.append("spelling")
-      if snapshot.canonicalJSON().count <= AppContextSnapshot.maximumBytes {
-        record.snapshotJSON = snapshot.canonicalString
-      }
-    }
+    // A capped speller (`result.truncated`) is not marked in the snapshot: the stored
+    // snapshot is what the rewrite sends, and v2 allows only the four context parts in
+    // `truncated`. The stored change list already shows how many spellings were applied.
     record.preSpellingText = text
     record.spellingChangesJSON = String(decoding: json, as: UTF8.self)
     record.spellerVersion = ContextSpeller.version

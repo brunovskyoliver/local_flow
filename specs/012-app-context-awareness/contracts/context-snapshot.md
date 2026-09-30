@@ -19,7 +19,7 @@ The coordinator creates the read task immediately after `insertion.captureTarget
 
 1. `settings.enabled == false` → `off`, with no AX call.
 2. `AXIsProcessTrusted() == false` → `no_permission`.
-3. `target == nil` → `secure_field` if the frontmost focused element's subrole is `AXSecureTextField`, else `no_target`.
+3. `target == nil` → `secure_field` if the frontmost focused element's subrole is `AXSecureTextField`. Otherwise the frontmost app's focused window is read: with a non-empty title, and the app not LocalFlow or excluded, the outcome is `used` with app name, category and window title only (field kind from the category, else `unknown`); without a title → `no_target`.
 4. Bundle ID equals LocalFlow's → `own_app`. Bundle ID in exclusions → `excluded_app`.
 5. Set `AXUIElementSetMessagingTimeout` to 0.1 s on the element and window.
 6. Read the parts in this order: app name, window title, role/subrole, placeholder, character count, before, selected, after. Each read checks the deadline first. When the deadline is hit → `timed_out` with the parts read so far.
