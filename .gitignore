@@ -54,3 +54,6 @@ build/context-eval/
 
 # Exported real dictations; local reference only
 real_data/
+
+# Feature 016: per-developer signing for the iOS app (research R10).
+apps/ios/Config/Signing.local.xcconfig

@@ -4,12 +4,15 @@ cd "$(dirname "$0")/.."
 if [[ ! -f .specify/feature.json && -z "${SPECIFY_FEATURE_DIRECTORY:-}" ]]; then
   export SPECIFY_FEATURE_DIRECTORY="$PWD/specs/001-local-dictation"
 fi
-swift format lint --strict --recursive apps/macos/LocalFlow apps/macos/LocalFlowTests apps/macos/LocalFlowUITests
+swift format lint --strict --recursive apps/macos/LocalFlow apps/macos/LocalFlowTests apps/macos/LocalFlowUITests \
+  packages/LocalFlowCore
 for script in scripts/*.sh .specify/scripts/bash/*.sh; do bash -n "$script"; done
 ./scripts/check-transcript-imports.sh
 ./scripts/check-identification-imports.sh
 ./scripts/check-intelligence-imports.sh
 ./scripts/check-speech-worker-imports.sh
+./scripts/check-core-imports.sh
+swift test --package-path packages/LocalFlowCore
 python3 scripts/validate-foundation.py
 python3 scripts/test-dictation-accuracy.py
 python3 scripts/test-transcription-quality.py

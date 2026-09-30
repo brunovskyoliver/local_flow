@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Feature 014 R10: the flowd-speech worker compiles the app's recognition sources and
 # nothing that brings in UI or the history database. Its source list is read from the
-# target's sources phase in the Xcode project.
+# target's sources phase in the Xcode project, plus the LocalFlowSpeech package target it
+# links (Feature 016).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 sources="$(python3 - <<'PY'
@@ -19,6 +20,7 @@ for build in re.findall(r'"([0-9A-Z]{24})"', phase.group(1)):
 PY
 )"
 [[ -n "$sources" ]] || { echo "flowd-speech has no sources" >&2; exit 1; }
+sources+=$'\n'"$(find packages/LocalFlowCore/Sources/LocalFlowSpeech -name '*.swift' | sort)"
 status=0
 while IFS= read -r file; do
   if grep -nE '^[[:space:]]*(@preconcurrency[[:space:]]+)?import[[:space:]]+(class[[:space:]]+|struct[[:space:]]+|enum[[:space:]]+|func[[:space:]]+)?(SwiftUI|AppKit|GRDB)\b' "$file"; then

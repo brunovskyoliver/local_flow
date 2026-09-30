@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 if grep -rnE 'RewriteRequesting|RewriteCoordinator|RewriteClient' \
   apps/macos/LocalFlow/Core/Transcripts apps/macos/LocalFlow/Features/Transcripts \
-  apps/macos/LocalFlow/Core/TranscriptBoundaries.swift apps/macos/LocalFlow/Core/Storage/TranscriptStore.swift; then
+  apps/macos/LocalFlow/Core/TranscriptBoundaries.swift apps/macos/LocalFlow/Core/Storage/TranscriptStore.swift \
+  packages/LocalFlowCore/Sources/LocalFlowSpeech; then
   echo "transcript module references rewriting" >&2
   exit 1
 fi

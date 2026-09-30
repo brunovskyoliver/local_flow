@@ -97,16 +97,16 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
   - Remove the references from the Mac project, add `public` and `import LocalFlowCore` where needed.
   - Record the final moved file list in `specs/016-ios-dictation-foundation/acceptance/extraction.md`.
   - Commit: "refactor(core): move storage and Dictionary into LocalFlowCore".
-- [ ] T013 [US6] Create `packages/LocalFlowCore/Sources/LocalFlowCore/LocalFlowPaths.swift`: `public struct LocalFlowPaths { database, temporaryAudio, pendingAudio, models: URL }` plus `init(applicationSupport: URL)` for iOS. Add `LocalFlowPaths.mac(identity:)` in `apps/macos/LocalFlow/App/AppIdentity.swift`, built from the same expressions `AppIdentity` uses today. Route the moved stores' path parameters through it. The T008 paths test must still pass unchanged.
-- [ ] T014 [P] [US6] Add `packages/LocalFlowCore/Tests/LocalFlowCoreTests/LocalFlowPathsTests.swift`: `init(applicationSupport:)` puts `history.sqlite` at `LocalFlow/history.sqlite` and models under `LocalFlow/Models`.
-- [ ] T015 [US6] Update the Mac tests for the move: add `@testable import LocalFlowSpeech` and/or `@testable import LocalFlowCore` to every file in `apps/macos/LocalFlowTests/` that uses a moved type. No test deleted, no assertion changed. If `@testable` does not reach package internals in Debug (research R1), make the members the tests use `public` instead and note it in `acceptance/extraction.md`.
-- [ ] T016 [P] [US6] Create `scripts/check-core-imports.sh` enforcing the package contract rules 1–3:
+- [X] T013 [US6] Create `packages/LocalFlowCore/Sources/LocalFlowCore/LocalFlowPaths.swift`: `public struct LocalFlowPaths { database, temporaryAudio, pendingAudio, models: URL }` plus `init(applicationSupport: URL)` for iOS. Add `LocalFlowPaths.mac(identity:)` in `apps/macos/LocalFlow/App/AppIdentity.swift`, built from the same expressions `AppIdentity` uses today. Route the moved stores' path parameters through it. The T008 paths test must still pass unchanged.
+- [X] T014 [P] [US6] Add `packages/LocalFlowCore/Tests/LocalFlowCoreTests/LocalFlowPathsTests.swift`: `init(applicationSupport:)` puts `history.sqlite` at `LocalFlow/history.sqlite` and models under `LocalFlow/Models`.
+- [X] T015 [US6] Update the Mac tests for the move: add `@testable import LocalFlowSpeech` and/or `@testable import LocalFlowCore` to every file in `apps/macos/LocalFlowTests/` that uses a moved type. No test deleted, no assertion changed. If `@testable` does not reach package internals in Debug (research R1), make the members the tests use `public` instead and note it in `acceptance/extraction.md`.
+- [X] T016 [P] [US6] Create `scripts/check-core-imports.sh` enforcing the package contract rules 1–3:
   - No `import` of AppKit, UIKit, SwiftUI, Carbon, ApplicationServices, ScreenCaptureKit, ServiceManagement or Cocoa in `packages/LocalFlowCore/Sources`.
   - No `import GRDB` in `packages/LocalFlowCore/Sources/LocalFlowSpeech`.
   - No `Process`, `NSWorkspace`, `homeDirectoryForCurrentUser` or `CGPreflight` in package sources.
   - No `#if os(` in package sources (rule 4).
-- [ ] T017 [P] [US6] Update `scripts/check-speech-worker-imports.sh` and `scripts/check-transcript-imports.sh` so they also scan `packages/LocalFlowCore/Sources/LocalFlowSpeech` (the worker's sources now come partly from the package, not only from its pbxproj sources phase).
-- [ ] T018 [US6] In `scripts/test.sh`, run `scripts/check-core-imports.sh` and `swift test --package-path packages/LocalFlowCore`.
+- [X] T017 [P] [US6] Update `scripts/check-speech-worker-imports.sh` and `scripts/check-transcript-imports.sh` so they also scan `packages/LocalFlowCore/Sources/LocalFlowSpeech` (the worker's sources now come partly from the package, not only from its pbxproj sources phase).
+- [X] T018 [US6] In `scripts/test.sh`, run `scripts/check-core-imports.sh` and `swift test --package-path packages/LocalFlowCore`.
 - [ ] T019 [US6] Run `make check` and compare with `acceptance/mac-baseline.md`: all pass, test count ≥ baseline. Then run quickstart §3 by hand (`make run`, a TextEdit dictation, a rewrite, "Zabbix" dictated, a 1-minute meeting, existing History and meetings still present). Record both in `acceptance/mac-unchanged.md`.
 
 **Checkpoint**: the extraction is merged, and the Mac is verified unchanged (SC-008).

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Who this copy of the app is: the installed production app or a `dev` build that runs
 /// beside it (Feature 014, FR-033, FR-034). Every path, Keychain service, launch agent
@@ -64,17 +65,11 @@ struct AppIdentity: Sendable, Equatable {
   }
 
   // Storage below Application Support. AppServices resolves every location from these.
-  var databaseURL: URL { applicationSupportDirectory.appendingPathComponent("history.sqlite") }
-  var spoolDirectory: URL {
-    applicationSupportDirectory.appendingPathComponent("TemporaryAudio", isDirectory: true)
-  }
-  /// Feature 014: audio kept for a remote retry when no local model is installed.
-  var pendingAudioDirectory: URL {
-    applicationSupportDirectory.appendingPathComponent("PendingAudio", isDirectory: true)
-  }
-  var modelsDirectory: URL {
-    applicationSupportDirectory.appendingPathComponent("Models", isDirectory: true)
-  }
+  var paths: LocalFlowPaths { .mac(identity: self) }
+  var databaseURL: URL { paths.database }
+  var spoolDirectory: URL { paths.temporaryAudio }
+  var pendingAudioDirectory: URL { paths.pendingAudio }
+  var modelsDirectory: URL { paths.models }
 
   var keychainServicePrefix: String { bundleIdentifier }
   func keychainService(_ suffix: String) -> String { "\(keychainServicePrefix).\(suffix)" }
@@ -95,5 +90,11 @@ struct AppIdentity: Sendable, Equatable {
     #else
       false
     #endif
+  }
+}
+
+extension LocalFlowPaths {
+  static func mac(identity: AppIdentity) -> LocalFlowPaths {
+    LocalFlowPaths(root: identity.applicationSupportDirectory)
   }
 }
