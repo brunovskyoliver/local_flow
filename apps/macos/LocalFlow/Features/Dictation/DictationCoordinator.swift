@@ -324,7 +324,13 @@ final class DictationCoordinator {
     mailbox.requestStop(.keyRelease, for: tag)
     controlWake?.yield()
   }
-  func cancel() {
+  /// `source` is logged, so a recording that ends as "Cancelled" can be traced.
+  func cancel(source: String = "unspecified") {
+    if busy {
+      Logger(subsystem: "org.localflow.LocalFlow", category: "dictation").notice(
+        "Cancel requested by \(source, privacy: .public) in state \(String(describing: self.state), privacy: .public)"
+      )
+    }
     if let explicitCancellation {
       explicitCancellation()
       return

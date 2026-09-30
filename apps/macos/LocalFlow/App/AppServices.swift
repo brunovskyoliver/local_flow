@@ -670,7 +670,7 @@ final class AppServices {
         self.panel.update(
           state: state, level: coordinator.level, targetPoint: coordinator.targetDisplayPoint
         ) { [weak coordinator] in
-          coordinator?.cancel()
+          coordinator?.cancel(source: "indicator button")
         }
         self.refreshIndicatorAnimation()
       }
@@ -678,7 +678,7 @@ final class AppServices {
         self?.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         self?.refreshIndicatorAnimation()
       }
-      shortcut.onCancel = { [weak coordinator] in coordinator?.cancel() }
+      shortcut.onCancel = { [weak coordinator] in coordinator?.cancel(source: "shortcut backstop") }
       shortcut.onEvent = { [weak self, weak coordinator] event in
         switch event {
         case .pressed:
@@ -691,7 +691,7 @@ final class AppServices {
           self?.shortcut.setSessionActive(coordinator?.busy == true)
         case .released:
           coordinator?.release(bypassRewrite: self?.shortcut.releaseBypassedRewrite == true)
-        case .cancelled: coordinator?.cancel()
+        case .cancelled: coordinator?.cancel(source: "shortcut")
         }
       }
       await coordinator.refreshHistory()
@@ -1263,7 +1263,7 @@ final class AppServices {
     guard let coordinator, coordinator.state == .recording else { return }
     panel.update(
       state: .recording, level: coordinator.level, targetPoint: coordinator.targetDisplayPoint
-    ) { [weak coordinator] in coordinator?.cancel() }
+    ) { [weak coordinator] in coordinator?.cancel(source: "indicator button") }
     guard !reduceMotion else { return }
     visualTask = Task { [weak self, weak coordinator] in
       while !Task.isCancelled, let self, let coordinator, coordinator.state == .recording,
@@ -1271,7 +1271,7 @@ final class AppServices {
       {
         self.panel.updateLevel(
           coordinator.level, state: .recording, targetPoint: coordinator.targetDisplayPoint
-        ) { [weak coordinator] in coordinator?.cancel() }
+        ) { [weak coordinator] in coordinator?.cancel(source: "indicator button") }
         try? await ContinuousClock().sleep(for: .milliseconds(34))
       }
     }
@@ -1820,7 +1820,7 @@ final class AppServices {
       return
     }
     guard coordinator?.busy != true else {
-      coordinator?.cancel()
+      coordinator?.cancel(source: "quit")
       setupStatus = "Cancelling. Quit again after work stops."
       return
     }

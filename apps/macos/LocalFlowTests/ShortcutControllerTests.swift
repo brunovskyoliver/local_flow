@@ -111,7 +111,9 @@ final class ShortcutControllerTests: XCTestCase {
     XCTAssertEqual(cancellations, 1)
     controller.setSessionActive(false)
     controller.setSessionActive(true)
+    // A timeout is a stalled main thread, not a user action; the hold survives it.
     controller.receive(.tapDisabledByTimeout, flags)
+    XCTAssertEqual(cancellations, 1)
     controller.receive(.tapDisabledByUserInput, flags)
     XCTAssertEqual(cancellations, 2)
     controller.setSessionActive(false)
@@ -422,8 +424,14 @@ extension ShortcutControllerTests {
     XCTAssertEqual(events, [.pressed])
     hardwareFlags = []
     controller.pollHeldShortcut()
+    XCTAssertEqual(events, [.pressed], "one misread poll does not end the hold")
     controller.pollHeldShortcut()
-    XCTAssertEqual(events, [.pressed, .cancelled])
+    // A missed key-up ends the recording like a release, so the speech is kept.
+    XCTAssertEqual(events, [.pressed, .released])
+    // The late key-up event, if it arrives, changes nothing.
+    event.flags = []
+    controller.receive(.flagsChanged, event)
+    XCTAssertEqual(events, [.pressed, .released])
   }
 }
 
@@ -444,6 +452,7 @@ extension ShortcutControllerTests {
     XCTAssertEqual(events, [.pressed])
     physicalKeyDown = false
     controller.pollHeldShortcut()
-    XCTAssertEqual(events, [.pressed, .cancelled])
+    controller.pollHeldShortcut()
+    XCTAssertEqual(events, [.pressed, .released])
   }
 }

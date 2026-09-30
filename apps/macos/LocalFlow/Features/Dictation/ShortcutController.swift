@@ -177,8 +177,15 @@ final class ShortcutController {
       cancelHeldSession(reason: "Accessibility permission lost")
     } else if IsSecureEventInputEnabled() {
       cancelHeldSession(reason: "secure input enabled")
-    } else if tap.map({ !CGEvent.tapIsEnabled(tap: $0) }) == true {
-      cancelHeldSession(reason: "event tap disabled during polling")
+    } else if let tap, !CGEvent.tapIsEnabled(tap: tap) {
+      // Usually a timeout whose notice has not arrived yet. Secure input is checked
+      // above, so re-enabling is safe; only a tap that stays off ends the hold.
+      CGEvent.tapEnable(tap: tap, enable: true)
+      if CGEvent.tapIsEnabled(tap: tap) {
+        pollHeldShortcut()
+      } else {
+        cancelHeldSession(reason: "event tap disabled during polling")
+      }
     } else {
       pollHeldShortcut()
     }
@@ -208,9 +215,15 @@ final class ShortcutController {
     // neither cancels nor ends the hold; it is read at release instead.
     shiftHeld = bypassGestureAvailable && event.flags.contains(.maskShift)
     let event = bypassGestureAvailable ? Self.withoutShift(event) : event
-    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-      cancelHeldSession(
-        reason: type == .tapDisabledByTimeout ? "event tap timeout" : "event tap disabled")
+    if type == .tapDisabledByTimeout {
+      // The main thread stalled (a model loading beside capture). The hold stays: the
+      // re-enabled tap or the physical-state poll ends it when the key is released.
+      logger.notice("Event tap timed out; re-enabled without cancelling the hold")
+      if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+      return false
+    }
+    if type == .tapDisabledByUserInput {
+      cancelHeldSession(reason: "event tap disabled")
       if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
       return false
     }
@@ -304,12 +317,23 @@ final class ShortcutController {
         && (preference.kind == .modifierOnly
           || keyState(.hidSystemState, CGKeyCode(preference.keyCode)))
     }
-    guard !down else { return }
-    logger.notice("Shortcut cancelled: physical shortcut released without matching event")
-    emit(hold.cancel())
-    _ = hold.setHeld(false)
+    guard !down else {
+      missedReleasePolls = 0
+      return
+    }
+    // A stalled main thread can drop or reorder the key-up event while the model loads.
+    // The key is physically up, so this is the release the user made: the recording is
+    // transcribed and saved. Two polls in a row guard against a single misread.
+    missedReleasePolls += 1
+    guard missedReleasePolls >= Self.missedReleasePollLimit else { return }
+    missedReleasePolls = 0
+    logger.notice("Shortcut released: physical key up without matching event")
+    consumedKey = false
+    emit(hold.setHeld(false))
     syncHeldPolling()
   }
+  static let missedReleasePollLimit = 2
+  private var missedReleasePolls = 0
   func cancelHeldSession(reason: String = "controller reset") {
     _ = hold.cancel()
     if cancellation.cancel() {

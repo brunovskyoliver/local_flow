@@ -107,7 +107,7 @@ private struct LocalFlowMenu: View {
     MainWindowButton(services: services)
     MainWindowButton(services: services, destination: .settings)
     if services.coordinator?.busy == true {
-      Button("Cancel") { services.coordinator?.cancel() }
+      Button("Cancel") { services.coordinator?.cancel(source: "menu") }
     }
     if let meetings = services.meetingCoordinator {
       Divider()
@@ -186,7 +186,7 @@ private struct LocalFlowWindowView: View {
     }
     .foregroundStyle(SottoPalette.ink)
     .tint(SottoPalette.accent)
-    .onExitCommand { services.coordinator?.cancel() }
+    .onExitCommand { services.coordinator?.cancel(source: "Escape in window") }
     .onDisappear { services.flushMeetingNotes() }
     .task { await services.observeSettingsWhileVisible() }
     .onChange(of: services.router.selection) { _, _ in services.settingsPageChanged() }
