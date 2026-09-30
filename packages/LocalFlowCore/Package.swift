@@ -15,6 +15,7 @@ let package = Package(
   targets: [
     .target(
       name: "LocalFlowSpeech",
-      dependencies: [.product(name: "FluidAudio", package: "FluidAudio")])
+      dependencies: [.product(name: "FluidAudio", package: "FluidAudio")]),
+    .testTarget(name: "LocalFlowCoreTests", dependencies: ["LocalFlowSpeech"]),
   ]
 )

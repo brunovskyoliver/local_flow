@@ -13,6 +13,7 @@ public enum AudioSpoolError: Error, Equatable, Sendable {
 
 /// A private, bounded Float32 spool for one capture session.
 public final class AudioSpool: @unchecked Sendable {
+  /// The Mac's cap, about 262 s of 16 kHz Float32. iOS passes 19,200,000 bytes (5 min).
   public static let maximumBytes = 16 * 1024 * 1024
   public static let maximumAppendSamples = 1_600
   public static let maximumReadSamples = 239_360
@@ -23,10 +24,15 @@ public final class AudioSpool: @unchecked Sendable {
   private let stateLock = NSLock()
   private var state: State = .open
   private var byteCount = 0
+  /// This spool's cap; appends past it throw `capacityExceeded`.
+  public let maximumBytes: Int
 
   private enum State { case open, closed, failed }
 
-  public init(rootDirectory: URL, sessionID: UUID = UUID()) throws {
+  public init(
+    rootDirectory: URL, sessionID: UUID = UUID(), maximumBytes: Int = AudioSpool.maximumBytes
+  ) throws {
+    self.maximumBytes = maximumBytes
     let manager = FileManager.default
     try Self.ensurePrivateDirectory(rootDirectory, create: true)
 
@@ -99,7 +105,7 @@ public final class AudioSpool: @unchecked Sendable {
       throw state == .closed ? AudioSpoolError.closed : AudioSpoolError.failed
     }
     let bytes = samples.count * MemoryLayout<Float>.stride
-    guard byteCount <= Self.maximumBytes - bytes else { throw AudioSpoolError.capacityExceeded }
+    guard byteCount <= maximumBytes - bytes else { throw AudioSpoolError.capacityExceeded }
     let raw = UnsafeRawPointer(base)
     let descriptor = handle.fileDescriptor
     var written = 0
@@ -126,7 +132,7 @@ public final class AudioSpool: @unchecked Sendable {
       throw state == .closed ? AudioSpoolError.closed : AudioSpoolError.failed
     }
     let stride = MemoryLayout<Float>.stride
-    guard startSample <= Self.maximumBytes / stride, count <= Self.maximumBytes / stride else {
+    guard startSample <= maximumBytes / stride, count <= maximumBytes / stride else {
       throw AudioSpoolError.invalidSamples
     }
     let offset = startSample * stride
@@ -188,7 +194,7 @@ public final class AudioSpool: @unchecked Sendable {
       current.appendPathComponent(component, isDirectory: true)
       var info = stat()
       if lstat(current.path, &info) == 0 {
-        guard (info.st_mode & S_IFMT) == S_IFDIR else {
+        guard (info.st_mode & S_IFMT) == S_IFDIR || isSystemLink(info) else {
           throw AudioSpoolError.invalidPath
         }
         continue
@@ -209,8 +215,17 @@ public final class AudioSpool: @unchecked Sendable {
         if errno == ENOENT { continue }
         throw AudioSpoolError.invalidPath
       }
-      if (info.st_mode & S_IFMT) == S_IFLNK { throw AudioSpoolError.invalidPath }
+      if (info.st_mode & S_IFMT) == S_IFLNK, !isSystemLink(info) {
+        throw AudioSpoolError.invalidPath
+      }
     }
+  }
+
+  /// A root-owned symlink is part of the system layout (`/var` and `/tmp` on macOS and
+  /// iOS, where every app container path starts with `/var`). Only root can create one,
+  /// so it cannot redirect the spool.
+  private static func isSystemLink(_ info: stat) -> Bool {
+    (info.st_mode & S_IFMT) == S_IFLNK && info.st_uid == 0
   }
 
   private static func removeStaleFiles(in directory: URL) throws {
