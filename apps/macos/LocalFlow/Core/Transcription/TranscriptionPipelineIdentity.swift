@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 /// Pinned application/model identity, captured before dictation. The lifecycle factory
 /// verifies these same model artifacts before granting a lease.

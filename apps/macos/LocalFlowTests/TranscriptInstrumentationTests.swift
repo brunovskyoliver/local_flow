@@ -2,6 +2,7 @@ import AVFoundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 @MainActor
 final class TranscriptInstrumentationTests: XCTestCase {

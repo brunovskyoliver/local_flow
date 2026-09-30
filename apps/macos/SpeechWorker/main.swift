@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalFlowSpeech
 
 // flowd-speech: the speech worker flowd starts as a child process (Feature 014 R10,
 // contracts/speech-worker-ipc.md). It runs the app's own FluidAudio recognition and

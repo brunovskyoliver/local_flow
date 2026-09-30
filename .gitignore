@@ -17,6 +17,8 @@ xcuserdata/
 
 # Local tool and editor artifacts
 Packages/
+# The ignore above matches case-insensitively; the shared package lives here (ADR 0029).
+!/packages/
 Thumbs.db
 *.tmp
 *.swp

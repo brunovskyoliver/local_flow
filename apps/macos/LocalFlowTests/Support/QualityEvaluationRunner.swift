@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 actor QualityEvidenceRecorder {
   private var windows: [QualityResult.Window] = []

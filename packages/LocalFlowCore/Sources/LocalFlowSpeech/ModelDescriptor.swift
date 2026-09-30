@@ -1,6 +1,6 @@
 import Foundation
 
-enum ModelCapability: String, Codable, Equatable, Sendable {
+public enum ModelCapability: String, Codable, Equatable, Sendable {
   case speechRecognition = "speech_recognition"
   case voiceActivityDetection = "voice_activity_detection"
   case speakerDiarization = "speaker_diarization"
@@ -8,10 +8,10 @@ enum ModelCapability: String, Codable, Equatable, Sendable {
   case keywordSpotting = "keyword_spotting"
 }
 
-struct ModelFileDescriptor: Codable, Equatable, Sendable {
-  let path: String
-  let size: Int64
-  let sha256: String
+public struct ModelFileDescriptor: Codable, Equatable, Sendable {
+  public let path: String
+  public let size: Int64
+  public let sha256: String
   /// Optional pinned source when an asset comes from a different repository.
   var sourceURL: URL? = nil
 
@@ -35,23 +35,23 @@ struct ModelFileDescriptor: Codable, Equatable, Sendable {
   }
 }
 
-struct ModelDescriptor: Codable, Equatable, Sendable {
+public struct ModelDescriptor: Codable, Equatable, Sendable {
   static let currentSchemaVersion = 1
   let schemaVersion: Int
-  let modelID: String
-  let sourceRevision: String
-  let sdkCompatibility: String
-  let automaticLanguage: Bool
+  public let modelID: String
+  public let sourceRevision: String
+  public let sdkCompatibility: String
+  public let automaticLanguage: Bool
   /// Nil is the schema-v1 ASR default retained for the immutable Feature 001 manifest.
   /// Every non-ASR descriptor must state its capability explicitly.
   var capability: ModelCapability? = nil
-  let license: String
-  let files: [ModelFileDescriptor]
-  let complete: Bool
+  public let license: String
+  public let files: [ModelFileDescriptor]
+  public let complete: Bool
 
-  var effectiveCapability: ModelCapability { capability ?? .speechRecognition }
+  public var effectiveCapability: ModelCapability { capability ?? .speechRecognition }
 
-  func validate() throws {
+  public func validate() throws {
     guard complete, !files.isEmpty else { throw ModelProvisioner.Error.incompleteManifest }
     func boundedText(_ value: String, maximum: Int) -> Bool {
       !value.isEmpty && value.utf8.count <= maximum
@@ -107,7 +107,7 @@ extension ModelDescriptor {
       license, files, complete
   }
 
-  init(from decoder: Decoder) throws {
+  public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
     modelID = try values.decode(String.self, forKey: .modelID)
@@ -120,7 +120,7 @@ extension ModelDescriptor {
     complete = try values.decode(Bool.self, forKey: .complete)
   }
 
-  func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: Encoder) throws {
     var values = encoder.container(keyedBy: CodingKeys.self)
     try values.encode(schemaVersion, forKey: .schemaVersion)
     try values.encode(modelID, forKey: .modelID)
@@ -134,7 +134,7 @@ extension ModelDescriptor {
   }
 }
 
-struct LocalModelDescriptor: Sendable, Equatable {
-  let descriptor: ModelDescriptor
-  let rootURL: URL
+public struct LocalModelDescriptor: Sendable, Equatable {
+  public let descriptor: ModelDescriptor
+  public let rootURL: URL
 }

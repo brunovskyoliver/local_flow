@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import LocalFlowSpeech
 
 /// Keeps startup cleanup and local store admission exclusive for the app lifetime.
 final class AppInstanceLock: @unchecked Sendable {

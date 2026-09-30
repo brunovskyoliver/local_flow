@@ -4,6 +4,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Feature 010 acceptance (T092, T093): a synthetic 60-minute meeting with six remote
 /// roots, libraries of 10, 50 and 100 known speakers × 10 synthetic samples, the real

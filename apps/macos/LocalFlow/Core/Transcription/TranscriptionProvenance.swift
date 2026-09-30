@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalFlowSpeech
 
 /// Local immutable processing identity. Missing measurements have an explicit reason.
 struct TranscriptionProvenance: Codable, Sendable {

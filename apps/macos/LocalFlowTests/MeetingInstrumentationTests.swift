@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// FR-024, FR-026, SC-010 (deterministic half), SC-012 groundwork.
 @MainActor

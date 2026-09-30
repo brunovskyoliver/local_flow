@@ -3,10 +3,10 @@ import Foundation
 /// The sole owner of runtime creation, leases, inference and release. One lease and one
 /// resident runtime at a time, keyed by workload: speech models, diarization and the
 /// voice embedder are never resident together (FR-032, ADR 0017, ADR 0020).
-actor ModelLifecycleCoordinator {
-  enum State: Sendable, Equatable { case unloaded, preparing, active, cooling, releasing }
-  typealias Factory = @Sendable () async throws -> any TranscriptionRuntime
-  typealias DiarizationFactory = @Sendable () async throws -> any DiarizationRuntime
+public actor ModelLifecycleCoordinator {
+  public enum State: Sendable, Equatable { case unloaded, preparing, active, cooling, releasing }
+  public typealias Factory = @Sendable () async throws -> any TranscriptionRuntime
+  public typealias DiarizationFactory = @Sendable () async throws -> any DiarizationRuntime
 
   private enum Resident: Sendable {
     case speech(any TranscriptionRuntime)
@@ -41,7 +41,8 @@ actor ModelLifecycleCoordinator {
   private let factory: Factory
   /// Receives the language the acquiring pass recorded in its pipeline version, so
   /// the runtime decodes in exactly that language.
-  typealias MeetingFactory = @Sendable (MeetingLanguage) async throws -> any TranscriptionRuntime
+  public typealias MeetingFactory =
+    @Sendable (MeetingLanguage) async throws -> any TranscriptionRuntime
   private let meetingFactory: MeetingFactory
   private let diarizationFactory: DiarizationFactory
   private let voiceEmbeddingFactory: VoiceEmbeddingFactory
@@ -87,7 +88,7 @@ actor ModelLifecycleCoordinator {
     }
   }
 
-  init(
+  public init(
     clock: any DictationClock = SystemDictationClock(),
     observe: @escaping @Sendable (State, ModelWorkload, UInt64) -> Void = { _, _, _ in },
     diarizationFactory: @escaping DiarizationFactory = { throw DictationFailure.modelUnavailable },
@@ -105,24 +106,33 @@ actor ModelLifecycleCoordinator {
     self.observe = observe
   }
 
-  struct Snapshot: Sendable, Equatable {
-    let state: State
-    let loaded: Bool
-    let leased: Bool
+  public struct Snapshot: Sendable, Equatable {
+    public let state: State
+    public let loaded: Bool
+    public let leased: Bool
     let installing: Bool
-    var controlsAvailable: Bool {
+
+    public init(
+      state: ModelLifecycleCoordinator.State, loaded: Bool, leased: Bool, installing: Bool
+    ) {
+      self.state = state
+      self.loaded = loaded
+      self.leased = leased
+      self.installing = installing
+    }
+    public var controlsAvailable: Bool {
       !leased && !installing && (state == .unloaded || state == .cooling)
     }
   }
 
-  func snapshot() -> Snapshot {
+  public func snapshot() -> Snapshot {
     Snapshot(
       state: state, loaded: runtime?.workload == .speechRecognition, leased: owner != nil,
       installing: installing)
   }
 
   /// Admission and acquisition run on this actor before the first suspension.
-  func loadIfIdle() async throws {
+  public func loadIfIdle() async throws {
     guard owner == nil, !installing, state == .unloaded || state == .cooling else {
       throw DictationFailure.busy
     }
@@ -130,7 +140,7 @@ actor ModelLifecycleCoordinator {
     try await finish(lease)
   }
 
-  func unloadIfIdle() async throws {
+  public func unloadIfIdle() async throws {
     guard owner == nil, !installing, state == .unloaded || state == .cooling else {
       throw DictationFailure.busy
     }
@@ -139,7 +149,7 @@ actor ModelLifecycleCoordinator {
   }
 
   /// Application termination also joins an already-running cooldown release.
-  func shutdownIfIdle() async throws {
+  public func shutdownIfIdle() async throws {
     guard owner == nil, !installing else { throw DictationFailure.busy }
     installing = true
     defer {
@@ -157,7 +167,7 @@ actor ModelLifecycleCoordinator {
   /// runtime built for another language is released and rebuilt.
   /// `boost` is the dictation's Dictionary for the keyword spotter (Feature 013); it is
   /// bound to the returned lease and never outlives it.
-  func acquire(
+  public func acquire(
     session: UUID, workload requested: ModelWorkload = .speechRecognition,
     meetingLanguage: MeetingLanguage = .defaultLanguage, boost: VocabularyBoostTerms? = nil
   )
@@ -248,7 +258,8 @@ actor ModelLifecycleCoordinator {
     }
   }
 
-  func transcribe(_ lease: ModelLease, samples: [Float]) async throws -> TranscriptionWindow {
+  public func transcribe(_ lease: ModelLease, samples: [Float]) async throws -> TranscriptionWindow
+  {
     guard owner == lease, state == .active else {
       throw DictationFailure.staleLease
     }
@@ -282,7 +293,7 @@ actor ModelLifecycleCoordinator {
   /// Settings › Models › Test: load the workload's runtime, run one second of
   /// silence through a speech model, then release it. Loading alone proves the
   /// speaker models; silence would only exercise their empty-result path.
-  func smokeTest(_ workload: ModelWorkload) async throws {
+  public func smokeTest(_ workload: ModelWorkload) async throws {
     let lease = try await acquire(session: UUID(), workload: workload)
     do {
       if workload.isSpeech {
@@ -297,7 +308,7 @@ actor ModelLifecycleCoordinator {
 
   /// The only diarization inference entry. One window at a time; request bounds are
   /// checked before the runtime sees them.
-  func diarize(_ lease: ModelLease, window request: DiarizationWindowRequest) async throws
+  public func diarize(_ lease: ModelLease, window request: DiarizationWindowRequest) async throws
     -> DiarizationWindowResult
   {
     guard owner == lease, state == .active, case .diarization(let runtime) = self.runtime else {
@@ -321,7 +332,7 @@ actor ModelLifecycleCoordinator {
 
   /// The only voice embedding inference entry (Feature 010). One region at a time;
   /// request and result bounds are checked before and after the runtime sees them.
-  func embed(_ lease: ModelLease, region request: VoiceRegionRequest) async throws
+  public func embed(_ lease: ModelLease, region request: VoiceRegionRequest) async throws
     -> VoiceEmbedding
   {
     guard owner == lease, state == .active, case .embedding(let runtime) = self.runtime else {
@@ -346,7 +357,7 @@ actor ModelLifecycleCoordinator {
   /// Live speech cools down; meeting, diarization and identification leases release at
   /// once, then Keep model ready re-prepares the live speech runtime unless speaker
   /// work is still queued.
-  func finish(_ lease: ModelLease) async throws {
+  public func finish(_ lease: ModelLease) async throws {
     guard owner == lease else { throw DictationFailure.staleLease }
     guard inference == nil, diarizing == nil, embedding == nil, loading == nil else {
       throw DictationFailure.busy
@@ -427,7 +438,7 @@ actor ModelLifecycleCoordinator {
     for waiter in waiters { waiter.resume() }
   }
 
-  func setKeepLoaded(_ enabled: Bool) {
+  public func setKeepLoaded(_ enabled: Bool) {
     keepLoaded = enabled
     cooldownGeneration &+= 1
     cooldown?.cancel()
@@ -454,7 +465,7 @@ actor ModelLifecycleCoordinator {
     }
   }
 
-  func cancelSessionAndJoin(_ session: UUID) async {
+  public func cancelSessionAndJoin(_ session: UUID) async {
     if let lease = owner, lease.sessionID == session {
       await cancelAndJoin(lease)
     } else if release != nil {
@@ -464,7 +475,7 @@ actor ModelLifecycleCoordinator {
     }
   }
 
-  func cancelAndJoin(_ lease: ModelLease) async {
+  public func cancelAndJoin(_ lease: ModelLease) async {
     guard owner == lease else {
       if release != nil { await beginRelease() }
       return
@@ -479,7 +490,7 @@ actor ModelLifecycleCoordinator {
   /// runtime cools down exactly as after `finish`, so Keep model ready still holds. A
   /// pending load, a window that failed for any reason other than cancellation, or any
   /// other workload releases as `cancelAndJoin` does.
-  func cancelAndCool(_ lease: ModelLease) async {
+  public func cancelAndCool(_ lease: ModelLease) async {
     var healthy =
       owner == lease && lease.workload == .speechRecognition && state == .active
       && loading == nil
@@ -497,7 +508,7 @@ actor ModelLifecycleCoordinator {
   /// Cancels and joins the lease's in-flight speech window, keeping the lease and its
   /// runtime. False when that window failed for a reason other than cancellation, which
   /// callers treat as a runtime fault, or when the lease is no longer current.
-  func interruptInference(_ lease: ModelLease) async -> Bool {
+  public func interruptInference(_ lease: ModelLease) async -> Bool {
     guard owner == lease else { return false }
     guard let pending = inference else { return true }
     pending.cancel()
@@ -517,7 +528,7 @@ actor ModelLifecycleCoordinator {
     await beginRelease()
   }
 
-  func installModel(_ operation: @Sendable () async throws -> Void) async throws {
+  public func installModel(_ operation: @Sendable () async throws -> Void) async throws {
     guard owner == nil, !installing else { throw DictationFailure.busy }
     installing = true
     defer {
@@ -578,7 +589,7 @@ actor ModelLifecycleCoordinator {
 /// queued or running, coalesced to the latest value per main-actor turn and sequenced
 /// so late updates cannot overwrite newer ones.
 @MainActor
-final class SpeakerModelDemand {
+public final class SpeakerModelDemand {
   private let lifecycle: ModelLifecycleCoordinator
   private let token = UUID()
   private var pending = false
@@ -586,11 +597,11 @@ final class SpeakerModelDemand {
   private var sequence: UInt64 = 0
   private var scheduled = false
 
-  init(lifecycle: ModelLifecycleCoordinator) {
+  public init(lifecycle: ModelLifecycleCoordinator) {
     self.lifecycle = lifecycle
   }
 
-  func update(pending: Bool) {
+  public func update(pending: Bool) {
     self.pending = pending
     guard !scheduled else { return }
     scheduled = true
@@ -607,7 +618,9 @@ final class SpeakerModelDemand {
 
   /// A busy or preempted run waits for the lifecycle to free the model, bounded by
   /// `fallback` in case the release is never signalled (for example a failed finish).
-  nonisolated static func waitForRetry(_ demand: SpeakerModelDemand?, fallback: Duration) async {
+  public nonisolated static func waitForRetry(_ demand: SpeakerModelDemand?, fallback: Duration)
+    async
+  {
     guard let lifecycle = demand?.lifecycle else {
       try? await Task.sleep(for: fallback)
       return

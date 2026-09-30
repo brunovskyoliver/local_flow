@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class TranscriptSegmenterTests: XCTestCase {
   private func window(_ words: [String], gapAt: Int? = nil, timings: Bool = true) -> AssembledWindow

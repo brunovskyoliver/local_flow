@@ -3,6 +3,7 @@ import FluidAudio
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Feature 007 delivery step 1 (T015). Runs the real diarizer through
 /// `ModelLifecycleCoordinator`, no UI, over each track at each window length, and

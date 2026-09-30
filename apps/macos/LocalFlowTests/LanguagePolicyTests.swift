@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// T026 — `policy_v1` language detection.
 final class LanguagePolicyTests: XCTestCase {

@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class WindowedTranscriptionTests: XCTestCase {
   func testProductionUsesContiguousWindowsAndKeepsExactRawText() async throws {

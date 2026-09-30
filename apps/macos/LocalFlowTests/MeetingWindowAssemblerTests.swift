@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class MeetingWindowAssemblerTests: XCTestCase {
   func testContiguousWindowsAreAdjacentAndHistoryIsBounded() {

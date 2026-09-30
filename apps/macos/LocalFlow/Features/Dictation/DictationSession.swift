@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 struct DictationSession {
   enum State: String, Sendable {

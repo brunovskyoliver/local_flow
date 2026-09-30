@@ -2,6 +2,7 @@ import Darwin
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class AudioSpoolTests: XCTestCase {
   func testAppInstanceLockExcludesSecondOwnerUntilRelease() throws {

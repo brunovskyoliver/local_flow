@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Research R3: one forward pass per stretch file, exact region sample counts, missing
 /// and unreadable files.

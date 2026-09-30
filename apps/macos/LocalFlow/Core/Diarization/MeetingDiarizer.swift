@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import LocalFlowSpeech
 import OSLog
 
 /// One diarization run over a finalized meeting (contracts/diarization-pipeline.md "Run

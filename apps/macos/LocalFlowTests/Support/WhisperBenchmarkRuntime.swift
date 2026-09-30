@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Evaluation-only measurements for the external Whisper helper. The helper is
 /// deliberately outside the LocalFlow app target; this probe keeps its RSS

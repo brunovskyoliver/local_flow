@@ -4,9 +4,9 @@ import Foundation
 
 /// Stages explicit local imports or pinned downloads. Runtime replacement exclusion belongs to the caller's
 /// lifecycle installation lease, held across the entire install operation.
-actor ModelProvisioner {
-  enum State: Sendable, Equatable { case absent, staging, verifying, installed, failed }
-  enum Error: Swift.Error, Equatable {
+public actor ModelProvisioner {
+  public enum State: Sendable, Equatable { case absent, staging, verifying, installed, failed }
+  public enum Error: Swift.Error, Equatable {
     case invalidManifest, incompleteManifest, unavailable, pathEscapesRoot, symlinkNotAllowed
     case fileMissing(String)
     case sizeMismatch(String)
@@ -17,7 +17,7 @@ actor ModelProvisioner {
   static let maxTransferBufferBytes = 1 << 20
   static let maxManifestBytes = 256 << 10
   static let maxFiles = 512
-  static let maxPackageBytes: Int64 = 4 << 30
+  public static let maxPackageBytes: Int64 = 4 << 30
 
   private(set) var state: State = .absent
   private let descriptor: ModelDescriptor
@@ -26,9 +26,9 @@ actor ModelProvisioner {
   private var parentFD: Int32 = -1
   private var prepared = false
   private var operating = false
-  nonisolated let progress = ProvisioningProgress()
+  public nonisolated let progress = ProvisioningProgress()
 
-  init(descriptor: ModelDescriptor, rootURL: URL) {
+  public init(descriptor: ModelDescriptor, rootURL: URL) {
     self.descriptor = descriptor
     // Do not standardize: Foundation can rewrite /private/var into symlink /var.
     self.rootURL = rootURL
@@ -68,7 +68,7 @@ actor ModelProvisioner {
   /// Checks the install marker and inventory, then compares each file's stat fingerprint
   /// with the one recorded after the last full hash. A missing or changed fingerprint,
   /// or `fullHash`, rehashes every file. Explicit user verification passes `fullHash`.
-  func verifiedLocalDescriptor(fullHash: Bool = false) throws -> LocalModelDescriptor {
+  public func verifiedLocalDescriptor(fullHash: Bool = false) throws -> LocalModelDescriptor {
     guard !operating else { throw Error.alreadyInUse }
     do {
       try prepareWorkspace()
@@ -110,7 +110,7 @@ actor ModelProvisioner {
     }
   }
 
-  func install(from sourceURL: URL) throws -> LocalModelDescriptor {
+  public func install(from sourceURL: URL) throws -> LocalModelDescriptor {
     guard !operating else { throw Error.alreadyInUse }
     operating = true
     defer { operating = false }
@@ -166,7 +166,7 @@ actor ModelProvisioner {
   }
 
   /// Production transport has no cache or download temporary file. Only one file is in flight.
-  func download(using transport: any ModelDownloadTransport = HTTPModelDownloadTransport())
+  public func download(using transport: any ModelDownloadTransport = HTTPModelDownloadTransport())
     async throws -> LocalModelDescriptor
   {
     guard !operating else { throw Error.alreadyInUse }
@@ -599,15 +599,23 @@ actor ModelProvisioner {
 }
 
 /// One replaceable snapshot; producers never enqueue tasks or retain progress history.
-final class ProvisioningProgress: @unchecked Sendable {
-  struct Snapshot: Sendable, Equatable {
-    var phase: ModelProvisioner.State = .absent
-    var completedBytes: Int64 = 0
-    var totalBytes: Int64 = 0
+public final class ProvisioningProgress: @unchecked Sendable {
+  public struct Snapshot: Sendable, Equatable {
+    public var phase: ModelProvisioner.State = .absent
+    public var completedBytes: Int64 = 0
+    public var totalBytes: Int64 = 0
+
+    public init(
+      phase: ModelProvisioner.State = .absent, completedBytes: Int64 = 0, totalBytes: Int64 = 0
+    ) {
+      self.phase = phase
+      self.completedBytes = completedBytes
+      self.totalBytes = totalBytes
+    }
   }
   private let lock = NSLock()
   private var value = Snapshot()
-  func snapshot() -> Snapshot {
+  public func snapshot() -> Snapshot {
     lock.lock()
     defer { lock.unlock() }
     return value
@@ -629,15 +637,21 @@ final class ProvisioningProgress: @unchecked Sendable {
   }
 }
 
-protocol ModelDownloadTransport: Sendable {
+public protocol ModelDownloadTransport: Sendable {
   func transfer(url: URL, output: Int32, expectedBytes: Int64, progress: ProvisioningProgress)
     async throws
 }
 
-struct HTTPModelDownloadTransport: ModelDownloadTransport {
+public struct HTTPModelDownloadTransport: ModelDownloadTransport {
   var protocolClasses: [AnyClass]? = nil
 
-  func transfer(url: URL, output: Int32, expectedBytes: Int64, progress: ProvisioningProgress)
+  public init(protocolClasses: [AnyClass]? = nil) {
+    self.protocolClasses = protocolClasses
+  }
+
+  public func transfer(
+    url: URL, output: Int32, expectedBytes: Int64, progress: ProvisioningProgress
+  )
     async throws
   {
     let transfer = HTTPFileTransfer(

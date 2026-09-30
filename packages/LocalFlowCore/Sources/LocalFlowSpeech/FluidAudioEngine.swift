@@ -5,14 +5,29 @@ import OSLog
 
 /// Constructs the pinned Parakeet v3 runtime only from a previously verified local model.
 /// The lifecycle coordinator owns the returned runtime and is the only caller of this factory.
-struct FluidAudioEngineFactory: Sendable {
+public struct FluidAudioEngineFactory: Sendable {
   let descriptor: LocalModelDescriptor
   var evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil
   /// Feature 013: the verified keyword spotter, when installed. Loads and releases with
   /// the speech runtime; a spotter that fails to load leaves dictation unboosted.
   var boostModel: LocalModelDescriptor? = nil
+  /// The platform's English spell check for V002 (NSSpellChecker on the Mac and in the
+  /// worker, UITextChecker on iOS): given words, the ones spelled correctly.
+  let englishWords: @MainActor @Sendable (Set<String>) -> Set<String>
 
-  func makeRuntime() async throws -> any TranscriptionRuntime {
+  public init(
+    descriptor: LocalModelDescriptor,
+    evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil,
+    boostModel: LocalModelDescriptor? = nil,
+    englishWords: @escaping @MainActor @Sendable (Set<String>) -> Set<String>
+  ) {
+    self.descriptor = descriptor
+    self.evidenceObserver = evidenceObserver
+    self.boostModel = boostModel
+    self.englishWords = englishWords
+  }
+
+  public func makeRuntime() async throws -> any TranscriptionRuntime {
     try descriptor.descriptor.validate()
     guard descriptor.descriptor.modelID == "FluidInference/parakeet-tdt-0.6b-v3-coreml",
       descriptor.descriptor.sourceRevision == "7dd20fe6b1797d35f5e3307e8b1732d9a178edfe",
@@ -55,7 +70,9 @@ struct FluidAudioEngineFactory: Sendable {
           "Term booster unavailable: \(String(describing: type(of: error)), privacy: .public)")
       }
     }
-    return FluidAudioRuntime(manager: manager, evidenceObserver: evidenceObserver, booster: booster)
+    return FluidAudioRuntime(
+      manager: manager, evidenceObserver: evidenceObserver, booster: booster,
+      englishWords: englishWords)
   }
 }
 
@@ -111,7 +128,7 @@ struct VocabularyBooster: Sendable {
   }
 }
 
-actor FluidAudioRuntime: TranscriptionRuntime {
+public actor FluidAudioRuntime: TranscriptionRuntime {
   /// FluidAudio 0.15.7's v3 `language` only filters decoder tokens by script
   /// (`TokenLanguageFilter`: Latin vs Cyrillic vs Greek); English and Slovak are
   /// both Latin, so either value behaves the same and English is not constrained.
@@ -119,29 +136,32 @@ actor FluidAudioRuntime: TranscriptionRuntime {
   /// allowlist for it would still admit English words.
   nonisolated static let scriptFilter: Language = .slovak
   /// Recorded as the provenance language hint, so a dictation says which filter ran.
-  nonisolated static let languageHint = "en_sk_latin_script"
+  public nonisolated static let languageHint = "en_sk_latin_script"
 
   private let manager: AsrManager
 
   private let evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)?
   private let booster: VocabularyBooster?
+  private let englishWords: @MainActor @Sendable (Set<String>) -> Set<String>
   private var boostSession: VocabularyBooster.Session?
 
   init(
     manager: AsrManager,
     evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil,
-    booster: VocabularyBooster? = nil
+    booster: VocabularyBooster? = nil,
+    englishWords: @escaping @MainActor @Sendable (Set<String>) -> Set<String> = { _ in [] }
   ) {
     self.manager = manager
     self.evidenceObserver = evidenceObserver
     self.booster = booster
+    self.englishWords = englishWords
   }
 
-  func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+  public func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
     try await transcribe(samples, boost: nil)
   }
 
-  func transcribe(_ samples: [Float], boost: VocabularyBoostTerms?) async throws
+  public func transcribe(_ samples: [Float], boost: VocabularyBoostTerms?) async throws
     -> TranscriptionWindow
   {
     let actualCount = samples.count
@@ -171,7 +191,8 @@ actor FluidAudioRuntime: TranscriptionRuntime {
     guard result.text.utf8.count <= 65_536 else { throw DictationFailure.invalidResult }
     var hints: [VocabularyBoostHint] = []
     if let session, let boost, let spot = await spotted {
-      hints = await Self.hints(result, spot: spot, session: session, boost: boost)
+      hints = await Self.hints(
+        result, spot: spot, session: session, boost: boost, englishWords: englishWords)
     }
     return TranscriptionWindow(
       text: result.text, tokens: Array(timings), evidence: evidence, boostHints: hints)
@@ -196,7 +217,8 @@ actor FluidAudioRuntime: TranscriptionRuntime {
   /// fails a window: anything unexpected yields no hints.
   private static func hints(
     _ result: ASRResult, spot: CtcKeywordSpotter.SpotKeywordsResult,
-    session: VocabularyBooster.Session, boost: VocabularyBoostTerms
+    session: VocabularyBooster.Session, boost: VocabularyBoostTerms,
+    englishWords: @MainActor @Sendable (Set<String>) -> Set<String>
   ) async -> [VocabularyBoostHint] {
     let timings = result.tokenTimings ?? []
     guard !timings.isEmpty, !spot.logProbs.isEmpty else { return [] }
@@ -216,7 +238,7 @@ actor FluidAudioRuntime: TranscriptionRuntime {
     let language = VocabularyBoostPolicy.language(of: result.text)
     let words = Set(
       candidates.flatMap { $0.source.split { !$0.isLetter && $0 != "'" } }.map(String.init))
-    let english = await MainActor.run { VocabularyBoostPolicy.englishWords(in: words) }
+    let english = await englishWords(words)
     return candidates.compactMap { candidate in
       guard let entryID = session.entryIDs[candidate.term],
         VocabularyBoostPolicy.allows(candidate, language: language, isEnglishWord: english.contains)
@@ -269,16 +291,16 @@ actor FluidAudioRuntime: TranscriptionRuntime {
     return samples + repeatElement(0, count: 4_800 - samples.count)
   }
 
-  func shutdown() async {
+  public func shutdown() async {
     await manager.cleanup()
   }
 }
 
 /// Immutable SDK evidence, captured before word building/clamping.
-struct RecognitionEvidence: Codable, Sendable {
-  struct Timing: Codable, Sendable {
-    let value: Double?
-    let invalid: String?
+public struct RecognitionEvidence: Codable, Sendable {
+  public struct Timing: Codable, Sendable {
+    public let value: Double?
+    public let invalid: String?
     init(_ value: Double) {
       self.value = value.isFinite ? value : nil
       invalid =
@@ -286,14 +308,24 @@ struct RecognitionEvidence: Codable, Sendable {
         ? nil : (value.isNaN ? "nan" : (value > 0 ? "positive_infinity" : "negative_infinity"))
     }
   }
-  struct Token: Codable, Sendable {
-    let text: String
-    let start: Timing
-    let end: Timing
+  public struct Token: Codable, Sendable {
+    public let text: String
+    public let start: Timing
+    public let end: Timing
   }
-  let text: String
-  let samples: Int
-  let paddedSamples: Int
-  let timingsAvailable: Bool
-  let tokens: [Token]
+  public let text: String
+  public let samples: Int
+  public let paddedSamples: Int
+  public let timingsAvailable: Bool
+  public let tokens: [Token]
+
+  public init(
+    text: String, samples: Int, paddedSamples: Int, timingsAvailable: Bool, tokens: [Token]
+  ) {
+    self.text = text
+    self.samples = samples
+    self.paddedSamples = paddedSamples
+    self.timingsAvailable = timingsAvailable
+    self.tokens = tokens
+  }
 }

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalFlowSpeech
 
 /// Control messages of remote channel v1 (`contracts/remote-channel.md`,
 /// `protocol/schemas/remote-*.schema.json`). Audio travels in kind-0x01 frames and

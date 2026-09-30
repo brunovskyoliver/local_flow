@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 actor ProbeRuntime: TranscriptionRuntime {
   private(set) var calls = 0

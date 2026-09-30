@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 enum QualityArtifacts {
   static let small = 4_194_304

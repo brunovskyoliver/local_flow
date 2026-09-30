@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class AppPreferencesTests: XCTestCase {
   @MainActor func testMeetingTranscriptionDefaultsAndPersists() {

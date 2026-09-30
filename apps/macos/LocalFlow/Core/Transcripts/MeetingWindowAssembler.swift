@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 struct AssembledWindow: Sendable {
   let window: TranscriptAssembler.Window

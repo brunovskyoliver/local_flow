@@ -4,6 +4,7 @@ import OSLog
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Feature 012 in the live dictation flow: capture beside recording (T019),
 /// local context spelling (T025), consent and exclusions (T027) and content-free

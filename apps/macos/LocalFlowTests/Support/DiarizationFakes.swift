@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Scripted diarizer. Window N (1-based) returns `scripts[N-1]`, or the last script
 /// once they run out; with no scripts every window is `noSpeech`.

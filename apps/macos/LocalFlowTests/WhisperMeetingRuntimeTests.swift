@@ -3,6 +3,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
   func testOptInProductionMeetingSmoke() async throws {

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 protocol AudioCapturing: Sendable {
   func authorize() async -> Bool

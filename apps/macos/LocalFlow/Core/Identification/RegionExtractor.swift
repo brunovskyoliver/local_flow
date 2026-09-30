@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 /// Shared by `EnrollmentJob` and `MeetingIdentifier`: the accepted diarization run's
 /// turns, the display roots with their members, region selection per root, and one

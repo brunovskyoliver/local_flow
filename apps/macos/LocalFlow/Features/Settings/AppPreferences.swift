@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import LocalFlowSpeech
 import Observation
 
 @MainActor @Observable

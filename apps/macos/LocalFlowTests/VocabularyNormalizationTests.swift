@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class VocabularyNormalizationTests: XCTestCase {
   private struct Cases: Decodable {

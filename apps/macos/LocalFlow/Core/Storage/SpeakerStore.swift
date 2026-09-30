@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LocalFlowSpeech
 
 /// Every diarization table write goes through this actor, on the shared history
 /// `DatabasePool`. Each operation is one transaction except a window batch, which

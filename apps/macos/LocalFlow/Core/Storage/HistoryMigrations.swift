@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LocalFlowSpeech
 
 enum HistoryMigrations {
   static let name = "history-v1"

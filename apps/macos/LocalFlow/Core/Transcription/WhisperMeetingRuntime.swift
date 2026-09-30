@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import LocalFlowSpeech
 
 /// Owns one native worker. Blocking pipe operations stay off the cooperative executor;
 /// cancellation can kill the worker without waiting for that executor or its IO queue.

@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import LocalFlowSpeech
 import ServiceManagement
 
 /// One MTPLX model pack LocalFlow offers, pinned to a Hugging Face commit.

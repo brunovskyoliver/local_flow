@@ -3,6 +3,7 @@ import Carbon
 import CoreGraphics
 import Foundation
 import IOKit.hidsystem
+import LocalFlowSpeech
 
 struct ShortcutPreference: Codable, Equatable {
   enum Kind: String, Codable {

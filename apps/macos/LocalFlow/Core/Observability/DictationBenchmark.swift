@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 /// Opt-in driver for the Feature 001 resource protocol in
 /// `docs/performance/memory-budget.md`. It drives the same DictationCoordinator

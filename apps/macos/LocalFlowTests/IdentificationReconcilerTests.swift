@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Launch reconciliation of identification runs (T080): the reconciler takes only a
 /// store and a clock, so it cannot read audio.

@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// US1 success path through `FakeDiarizationRuntime`: tracks, windows, times, speakers
 /// and the untouched transcript, notes and audio.

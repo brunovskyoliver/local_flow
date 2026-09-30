@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 @MainActor
 final class HistoryViewModelTests: XCTestCase {

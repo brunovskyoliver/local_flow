@@ -2,22 +2,34 @@ import Foundation
 
 /// Pure, bounded assembly. Received text is never reconstructed from timing tokens.
 /// Full original SDK evidence belongs to the caller's immutable result envelope.
-struct TranscriptAssembler: Sendable {
-  static let version = "anchored_overlap_v3"
-  struct Token: Codable, Sendable {
-    let text: String
-    let utf8Start: Int
-    let utf8End: Int
-    let startSeconds: Double
-    let endSeconds: Double
+public struct TranscriptAssembler: Sendable {
+  public static let version = "anchored_overlap_v3"
+  public struct Token: Codable, Sendable {
+    public let text: String
+    public let utf8Start: Int
+    public let utf8End: Int
+    public let startSeconds: Double
+    public let endSeconds: Double
   }
-  struct Window: Codable, Sendable {
-    let sequence: Int
-    let sampleStart: Int
-    let sampleCount: Int
+  public struct Window: Codable, Sendable {
+    public let sequence: Int
+    public let sampleStart: Int
+    public let sampleCount: Int
     let paddedSampleCount: Int
-    let text: String
-    let tokens: [Token]?
+    public let text: String
+    public let tokens: [Token]?
+
+    public init(
+      sequence: Int, sampleStart: Int, sampleCount: Int, paddedSampleCount: Int, text: String,
+      tokens: [Token]?
+    ) {
+      self.sequence = sequence
+      self.sampleStart = sampleStart
+      self.sampleCount = sampleCount
+      self.paddedSampleCount = paddedSampleCount
+      self.text = text
+      self.tokens = tokens
+    }
   }
   struct RawWindow: Sendable {
     let sequence: Int
@@ -25,7 +37,7 @@ struct TranscriptAssembler: Sendable {
     let sampleCount: Int
     let text: String
   }
-  enum Reason: String, Sendable {
+  public enum Reason: String, Sendable {
     case uncertainJoin = "uncertain_join"
     case rawCapacity = "raw_capacity"
     case windowCapacity = "window_capacity"
@@ -35,40 +47,50 @@ struct TranscriptAssembler: Sendable {
     case invalidResult = "invalid_result"
     case cancelled, failed
   }
-  struct Seam: Equatable, Codable, Sendable {
-    let window: Int
-    let discardedPrefixBytes: Int
-    let decision: String
-    var basis: String = "physical_adjacency"
+  public struct Seam: Equatable, Codable, Sendable {
+    public let window: Int
+    public let discardedPrefixBytes: Int
+    public let decision: String
+    public var basis: String = "physical_adjacency"
     /// Discard audit. Lexical means the token still has text after trailing punctuation.
-    var discardedLexicalWords: Int = 0
+    public var discardedLexicalWords: Int = 0
     /// Chain positions whose own onset evidence exceeded the closed 160 ms bound.
-    var unevidencedLexicalDiscards: Int = 0
+    public var unevidencedLexicalDiscards: Int = 0
     /// Lexical tokens discarded before the anchor, justified by overlap geometry alone.
-    var preAnchorLexicalDiscards: Int = 0
-    var maximumDiscardedOnsetDelta: Double = 0
+    public var preAnchorLexicalDiscards: Int = 0
+    public var maximumDiscardedOnsetDelta: Double = 0
   }
-  struct SourceSpan: Codable, Equatable, Sendable {
+  public struct SourceSpan: Codable, Equatable, Sendable {
     let rawWindowIndex: Int
     let utf8Start: Int
     let utf8End: Int
     let outputUTF8Start: Int
     let separatorBytes: Int
+
+    public init(
+      rawWindowIndex: Int, utf8Start: Int, utf8End: Int, outputUTF8Start: Int, separatorBytes: Int
+    ) {
+      self.rawWindowIndex = rawWindowIndex
+      self.utf8Start = utf8Start
+      self.utf8End = utf8End
+      self.outputUTF8Start = outputUTF8Start
+      self.separatorBytes = separatorBytes
+    }
   }
   private(set) var sourceSpans: [SourceSpan] = []
-  private(set) var text = ""
+  public private(set) var text = ""
   private(set) var rawWindows: [RawWindow] = []
-  private(set) var seams: [Seam] = []
-  private(set) var reasons: [Reason] = []
-  private(set) var stopped = false
-  var incomplete: Bool { !reasons.isEmpty }
+  public private(set) var seams: [Seam] = []
+  public private(set) var reasons: [Reason] = []
+  public private(set) var stopped = false
+  public var incomplete: Bool { !reasons.isEmpty }
   private var rawBytes = 0
   private var previous: Window?
 
   private let maximumWindowSamples: Int
   private let maximumTotalSamples: Int
 
-  init(maximumWindowSamples: Int = 239_360) {
+  public init(maximumWindowSamples: Int = 239_360) {
     self.maximumWindowSamples = min(1_920_000, max(1, maximumWindowSamples))
     self.maximumTotalSamples = max(2_880_000, self.maximumWindowSamples * 2)
   }
@@ -84,7 +106,7 @@ struct TranscriptAssembler: Sendable {
     if !reasons.contains(reason) { reasons.append(reason) }
   }
 
-  mutating func append(_ window: Window) {
+  public mutating func append(_ window: Window) {
     guard !stopped else { return }
     guard rawWindows.count < 14 else {
       stop(.windowCapacity)
@@ -350,8 +372,9 @@ struct TranscriptAssembler: Sendable {
 
 /// Maps already-derived words to exact received bytes. No fuzzy matching or punctuation repair.
 /// Original, unclamped timing evidence must be supplied by the adapter.
-enum TranscriptSourceMapper {
-  static func map(text: String, words: [TranscriptionToken]) -> [TranscriptAssembler.Token]? {
+public enum TranscriptSourceMapper {
+  public static func map(text: String, words: [TranscriptionToken]) -> [TranscriptAssembler.Token]?
+  {
     guard text.utf8.count <= 65_536, words.count <= 16_384 else { return nil }
     var tokenBytes = 0
     for word in words {

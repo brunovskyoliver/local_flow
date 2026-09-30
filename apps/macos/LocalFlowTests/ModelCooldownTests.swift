@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// The cooldown deadline is a clock contract, not wall time. This clock returns
 /// from one sleep only after the test advances past the requested duration, so

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 import Observation
 
 /// Editor boundary over the shared store; tests substitute an in-memory double.

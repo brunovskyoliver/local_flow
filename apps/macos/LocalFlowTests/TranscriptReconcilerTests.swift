@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class TranscriptReconcilerTests: XCTestCase {
   private var fixture: MeetingTestStore!

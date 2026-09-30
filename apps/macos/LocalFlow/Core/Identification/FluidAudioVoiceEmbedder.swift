@@ -1,5 +1,6 @@
 import FluidAudio
 import Foundation
+import LocalFlowSpeech
 
 /// Research R1: voice embeddings come from the provisioned diarization models
 /// (WeSpeaker ResNet34-LM, 256-d) through FluidAudio's single-speaker offline pipeline.

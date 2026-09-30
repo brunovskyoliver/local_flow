@@ -2,6 +2,7 @@ import AVFoundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class QualityEvaluationTests: XCTestCase {
   /// Guard the evaluation entry and its private artifact helpers against diagnostic sinks.

@@ -2,6 +2,7 @@ import FluidAudio
 import Foundation
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Offline replay uses the frozen SDK evidence, never a second recognition pass.
 /// The pinned SDK word builder is used without its runtime's timing clamping.

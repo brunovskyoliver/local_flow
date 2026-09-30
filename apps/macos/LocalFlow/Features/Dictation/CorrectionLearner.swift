@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 import Observation
 
 /// Turns one observed in-place edit of inserted text into a dictionary candidate.

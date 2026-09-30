@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import LocalFlowSpeech
 
 /// Research R3: decodes each ADTS stretch file forward once, the way
 /// `MeetingDiarizer.diarizeStretch` does, and hands every requested region's samples to

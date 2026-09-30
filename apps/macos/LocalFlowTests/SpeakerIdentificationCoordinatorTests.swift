@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// The identification scheduler: enrollment ordering, triggers, the bounded queue,
 /// cancel, deletion and the past-meeting search (T029, T040, T079).

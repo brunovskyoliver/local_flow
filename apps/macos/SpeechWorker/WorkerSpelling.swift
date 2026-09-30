@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import LocalFlowSpeech
 
 extension VocabularyBoostPolicy {
   /// Correctly spelled English words, per the system spell checker: the same answer the
@@ -37,5 +38,18 @@ private final class WorkerSpellChecker {
 
   func isCorrect(_ word: String) -> Bool {
     check(checker, selector, word as NSString, 0, "en", false, 0, nil).location == NSNotFound
+  }
+}
+
+extension FluidAudioEngineFactory {
+  /// The worker passes its own English-word check to the shared factory (ADR 0029).
+  init(
+    descriptor: LocalModelDescriptor,
+    evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil,
+    boostModel: LocalModelDescriptor? = nil
+  ) {
+    self.init(
+      descriptor: descriptor, evidenceObserver: evidenceObserver, boostModel: boostModel,
+      englishWords: { VocabularyBoostPolicy.englishWords(in: $0) })
   }
 }

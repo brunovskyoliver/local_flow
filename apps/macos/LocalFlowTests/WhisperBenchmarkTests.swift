@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Opt-in Feature 002 engine comparison. This test never changes the app's
 /// default engine or writes to the transcription store. It writes only private

@@ -4,6 +4,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class ModelProvisionerTests: XCTestCase {
   private func descriptor(

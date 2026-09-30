@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 /// `tiers_v1` (research R6, FR-012): the calibrated values for one model identity.
 /// Provisional until `acceptance/calibration.md` records the corpus run (T014). No UI

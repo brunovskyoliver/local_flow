@@ -3,21 +3,26 @@ import NaturalLanguage
 
 /// Feature 013 (ADR 0027). The Dictionary's enabled canonical terms for one dictation,
 /// handed to the speech runtime so its CTC keyword spotter can check them against audio.
-struct VocabularyBoostTerms: Sendable, Equatable {
+public struct VocabularyBoostTerms: Sendable, Equatable {
   /// FluidAudio validated its rescorer up to 230 terms without latency loss. Entries are
   /// ranked by recent use when a Dictionary outgrows it (Feature 015).
-  static let maximumTerms = 256
-  struct Term: Sendable, Equatable {
-    let entryID: String
-    let canonical: String
+  public static let maximumTerms = 256
+  public struct Term: Sendable, Equatable {
+    public let entryID: String
+    public let canonical: String
+
+    public init(entryID: String, canonical: String) {
+      self.entryID = entryID
+      self.canonical = canonical
+    }
   }
-  let terms: [Term]
+  public let terms: [Term]
   /// The snapshot hash: the runtime rebuilds its rescorer only when this changes.
   let key: String
   /// Every enabled canonical and alias, folded: V001 already decides these spans.
-  let governed: Set<String>
+  public let governed: Set<String>
 
-  init(terms: [Term], key: String, governed: Set<String> = []) {
+  public init(terms: [Term], key: String, governed: Set<String> = []) {
     self.terms = terms
     self.key = key
     self.governed = governed
@@ -29,7 +34,7 @@ struct VocabularyBoostTerms: Sendable, Equatable {
     return governed.contains(Self.fold(trimmed))
   }
 
-  static func fold(_ term: String) -> String {
+  public static func fold(_ term: String) -> String {
     var view = String.UnicodeScalarView()
     view.append(contentsOf: TermFolding.fold(term))
     return String(view)
@@ -38,18 +43,24 @@ struct VocabularyBoostTerms: Sendable, Equatable {
 
 /// One accepted replacement in a raw window: `source` is the exact space-separated span
 /// of the window text the spotter matched, `canonical` the Dictionary spelling.
-struct VocabularyBoostHint: Sendable, Equatable {
-  let source: String
-  let canonical: String
-  let entryID: String
+public struct VocabularyBoostHint: Sendable, Equatable {
+  public let source: String
+  public let canonical: String
+  public let entryID: String
+
+  public init(source: String, canonical: String, entryID: String) {
+    self.source = source
+    self.canonical = canonical
+    self.entryID = entryID
+  }
 }
 
 /// Decides whether a spotter replacement may reach the transcript. Every rule was set
 /// by the Feature 013 benchmark: English and Slovak TTS corpora (tuning and held-out)
 /// plus the owner's own meeting audio, where no rule set may make any clip worse.
-enum VocabularyBoostPolicy {
-  static let ruleID = "V002"
-  static let version = "ctc110m-v1"
+public enum VocabularyBoostPolicy {
+  public static let ruleID = "V002"
+  public static let version = "ctc110m-v1"
   static let minimumSimilarity = 0.6
   static let slovakMinimumSimilarity = 0.8
   /// Parakeet is sure of what it heard: a confident word is left alone.
@@ -139,10 +150,10 @@ enum VocabularyBoostPolicy {
   }
 }
 
-enum VocabularyBoostApplier {
+public enum VocabularyBoostApplier {
   /// Applies hints in order, each after the previous one, keeping the punctuation around
   /// the replaced span. A hint whose span is no longer in the text is skipped.
-  static func apply(_ hints: [VocabularyBoostHint], to text: String) -> (
+  public static func apply(_ hints: [VocabularyBoostHint], to text: String) -> (
     text: String, entryIDs: [String], changes: [DictionaryChange]
   ) {
     guard !hints.isEmpty else { return (text, [], []) }

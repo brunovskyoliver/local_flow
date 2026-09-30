@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import Foundation
+import LocalFlowSpeech
 
 enum AudioCaptureFailure: Error, Equatable, Sendable {
   case busy, staleSession, permissionDenied, unsupportedFormat, overflow

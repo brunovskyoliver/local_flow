@@ -2,6 +2,7 @@ import AVFoundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class AudioCaptureTests: XCTestCase {
   func testRingPreservesOrderThroughWraparound() throws {

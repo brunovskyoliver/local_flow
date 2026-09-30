@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 /// Value types for the six `meetings-v5` tables plus the published status.
 /// Timestamps are Unix milliseconds unless the name ends in `Ns`.

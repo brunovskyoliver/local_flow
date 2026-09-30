@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class VocabularyBoostTests: XCTestCase {
   private let english: Set<String> = ["whether", "new", "box", "long", "horn", "network"]

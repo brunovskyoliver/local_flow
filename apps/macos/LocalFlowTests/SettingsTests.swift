@@ -2,6 +2,7 @@ import Observation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class SettingsTests: XCTestCase {
   /// Feature 011 (T038): the Meetings toggle reads the contract caption and

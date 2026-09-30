@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// `regions_v1` (research R4) at every edge: eligibility, trims, limits, spread, audio
 /// checks, labels and determinism.

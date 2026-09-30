@@ -1,5 +1,6 @@
 // Retains local actions from the Sotto-adapted preferences view. See Sotto-LICENSE.txt.
 import Carbon
+import LocalFlowSpeech
 import SwiftUI
 
 struct SettingsView: View {

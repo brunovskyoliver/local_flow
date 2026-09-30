@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GRDB
+import LocalFlowSpeech
 
 /// Corrections seen before, as digests only, never correction text. Feature 015 keeps them
 /// across restarts so a repeated fix is recognised as repeated. Bounded; the least recently

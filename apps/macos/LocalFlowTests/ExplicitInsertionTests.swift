@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 @MainActor
 final class ExplicitInsertionTests: XCTestCase {

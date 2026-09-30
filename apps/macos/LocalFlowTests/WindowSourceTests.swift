@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Feature 014 R1: the production window loop takes its windows from a source. Local
 /// recognition and windows that came back from the server run the same assembly,

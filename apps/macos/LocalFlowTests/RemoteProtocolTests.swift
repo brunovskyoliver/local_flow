@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Feature 014 control messages against the shared examples in `fixtures/remote/messages/`,
 /// which the Go server and `scripts/validate-foundation.py` check too.

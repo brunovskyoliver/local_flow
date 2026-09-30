@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 /// `policy_v1` language detection (research R10). `detect` samples at most
 /// `sampleBytes` of final segment text, spread evenly across the meeting, runs an

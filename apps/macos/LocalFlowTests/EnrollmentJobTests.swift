@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// US1, US3 and US7 enrollment paths through `FakeVoiceEmbeddingRuntime` and a real
 /// `IdentityStore` (T027, T055, T085).

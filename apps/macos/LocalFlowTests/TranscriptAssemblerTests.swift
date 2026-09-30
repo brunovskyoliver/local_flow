@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class TranscriptAssemblerTests: XCTestCase {
   func testLongMeetingWindowsHaveExplicitBoundsWithoutWideningDictation() {

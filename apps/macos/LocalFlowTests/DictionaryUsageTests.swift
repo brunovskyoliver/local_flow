@@ -3,6 +3,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Feature 015: usage rows, retirement rules, bounds and privacy.
 final class DictionaryUsageTests: XCTestCase {

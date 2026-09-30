@@ -3,6 +3,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 /// Opt-in measurement only. Kept in the unit-test target for access to the real
 /// lifecycle; UI tests cannot import the app's internal model boundary.

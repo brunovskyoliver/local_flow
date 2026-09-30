@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 /// LocalFlow rewrite protocol v1 types and the client-side validation rules from
 /// `specs/003-server-rewriting/contracts/rewrite-protocol.md`. Nothing here talks

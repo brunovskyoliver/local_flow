@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 enum TranscriptState: String, CaseIterable, Codable, Sendable {
   case notRequested = "not_requested"
