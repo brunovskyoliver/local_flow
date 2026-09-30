@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Starts retry sessions against the scripted flowd, or none while unreachable.

@@ -3,7 +3,7 @@ import GRDB
 
 /// Feature 013. Corrections the scorer only suggested, the suggestions the user dismissed,
 /// and the context terms of recent dictations. Shares the history database file.
-actor TermSuggestionStore {
+public actor TermSuggestionStore {
   static let maximumRows = 500
   /// Recent dictations whose context terms are counted.
   static let contextDictations = 1_000
@@ -13,7 +13,7 @@ actor TermSuggestionStore {
     let alias: String
     let sightings: Int
   }
-  struct Contents: Equatable, Sendable {
+  public struct Contents: Equatable, Sendable {
     var corrections: [Correction] = []
     /// `TermSuggestion.id` of every dismissed suggestion.
     var dismissed: Set<String> = []
@@ -23,9 +23,9 @@ actor TermSuggestionStore {
 
   private let database: DatabasePool
 
-  init(history: TranscriptionStore) { database = history.database }
+  public init(history: TranscriptionStore) { database = history.database }
 
-  func recordCorrection(canonical: String, alias: String, now: Int64) throws {
+  public func recordCorrection(canonical: String, alias: String, now: Int64) throws {
     guard Self.valid(canonical), alias.isEmpty || Self.valid(alias) else { return }
     try database.write { db in
       try db.execute(
@@ -38,7 +38,7 @@ actor TermSuggestionStore {
     }
   }
 
-  func dismiss(_ suggestion: TermSuggestion, now: Int64) throws {
+  public func dismiss(_ suggestion: TermSuggestion, now: Int64) throws {
     guard Self.valid(suggestion.canonical), suggestion.alias.isEmpty || Self.valid(suggestion.alias)
     else { return }
     try database.write { db in
@@ -52,7 +52,7 @@ actor TermSuggestionStore {
     }
   }
 
-  func contents() throws -> Contents {
+  public func contents() throws -> Contents {
     try database.read { db in
       var contents = Contents()
       for row in try Row.fetchAll(

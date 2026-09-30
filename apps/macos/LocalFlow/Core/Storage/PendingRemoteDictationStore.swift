@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LocalFlowCore
 import OSLog
 
 /// Feature 014: dictations whose remote recognition failed while no local speech model

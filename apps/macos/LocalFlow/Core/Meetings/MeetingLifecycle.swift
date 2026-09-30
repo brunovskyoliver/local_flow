@@ -1,31 +1,5 @@
 import Foundation
-
-/// Persisted meeting states. `completed`, `interrupted` and `failed` are terminal.
-enum MeetingState: String, CaseIterable, Sendable, Codable {
-  case created, preparing, recording, paused, finalizing, completed, interrupted, failed
-
-  /// A row in one of these states blocks a new start and is reconciled at launch.
-  var isActive: Bool {
-    switch self {
-    case .created, .preparing, .recording, .paused, .finalizing: true
-    case .completed, .interrupted, .failed: false
-    }
-  }
-  var isTerminal: Bool { !isActive }
-
-  var badgeText: String {
-    switch self {
-    case .created: "Created"
-    case .preparing: "Preparing"
-    case .recording: "Recording"
-    case .paused: "Paused"
-    case .finalizing: "Finalizing"
-    case .completed: "Completed"
-    case .interrupted: "Interrupted"
-    case .failed: "Failed"
-    }
-  }
-}
+import LocalFlowCore
 
 /// Pure transition table from `data-model.md`. Every pair not listed is rejected
 /// and mutates nothing; the store applies the check inside its write transaction.
@@ -54,23 +28,6 @@ enum MeetingLifecycle {
     guard isAllowed(from: from, to: to) else { throw Error.invalidTransition(from: from, to: to) }
     return to
   }
-}
-
-/// Shared reason set for meetings, tracks and segments. Raw values are the
-/// persisted column values; user-facing text lives in `MeetingErrorMessage`.
-enum MeetingFailureReason: String, CaseIterable, Sendable, Codable {
-  case notRunningAtLastState = "not_running_at_last_state"
-  case storageWriteFailed = "storage_write_failed"
-  case storageUnavailable = "storage_unavailable"
-  case encoderFailed = "encoder_failed"
-  case permissionRevoked = "permission_revoked"
-  case deviceLost = "device_lost"
-  case streamStopped = "stream_stopped"
-  case bothSourcesFailed = "both_sources_failed"
-  case recordMissing = "record_missing"
-  case fileMissing = "file_missing"
-  case segmentOpenFailed = "segment_open_failed"
-  case unrecoverableMedia = "unrecoverable_media"
 }
 
 /// Exact user-facing texts from `contracts/meeting-storage.md`. Nothing here

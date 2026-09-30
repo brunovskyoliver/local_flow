@@ -2,6 +2,7 @@ import AVFoundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 @MainActor
 final class TrackPlaybackTests: XCTestCase {

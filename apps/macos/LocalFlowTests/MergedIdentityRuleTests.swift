@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Research R11 (FR-026a): the effective identity of a merged display root.
 final class MergedIdentityRuleTests: XCTestCase {

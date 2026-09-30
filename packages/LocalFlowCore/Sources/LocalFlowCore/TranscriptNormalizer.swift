@@ -2,22 +2,22 @@ import Foundation
 import LocalFlowSpeech
 
 /// Formatting rules N001–N006 plus explicit vocabulary mapping V001, run to a fixed point.
-struct TranscriptNormalizer: Sendable {
-  static let version = "formatting-n001-n006-vocabulary-v001-v1"
+public struct TranscriptNormalizer: Sendable {
+  public static let version = "formatting-n001-n006-vocabulary-v001-v1"
   static let maximumTextBytes = 65_536
-  enum Reason: String, Sendable {
+  public enum Reason: String, Sendable {
     case unexpectedControl = "unexpected_control"
     case ambiguousVocabulary = "ambiguous_vocabulary"
     case normalizationCapacity = "normalization_capacity"
     case normalizationNonconvergent = "normalization_nonconvergent"
   }
-  struct Result: Sendable {
-    let text: String
+  public struct Result: Sendable {
+    public let text: String
     let appliedRuleIDs: [String]
     let appliedEntryIDs: [String]
     /// Entries whose overlapping candidates were left unchanged; detail only, never logs.
-    let ambiguousEntryIDs: [String]
-    let reasons: [Reason]
+    public let ambiguousEntryIDs: [String]
+    public let reasons: [Reason]
     /// Feature 015: the Dictionary keys V001 (and, in delivery, V002) applied.
     var dictionaryChanges: [DictionaryChange] = []
     var reason: Reason? { reasons.first }
@@ -29,7 +29,7 @@ struct TranscriptNormalizer: Sendable {
   private let maximumPasses: Int
 
   // Reduced bounds allow deterministic guard tests; callers cannot raise production limits.
-  init(
+  public init(
     vocabulary: VocabularySnapshot = .empty,
     maximumSpans: Int = 16_384, maximumMatches: Int = 8_192, maximumPasses: Int = 32
   ) {
@@ -39,7 +39,7 @@ struct TranscriptNormalizer: Sendable {
     self.maximumPasses = min(32, max(0, maximumPasses))
   }
 
-  func normalize(_ input: String) -> Result {
+  public func normalize(_ input: String) -> Result {
     func fallback(_ reason: Reason) -> Result {
       Result(
         text: input, appliedRuleIDs: [], appliedEntryIDs: [], ambiguousEntryIDs: [],

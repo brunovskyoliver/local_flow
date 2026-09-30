@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 final class MeetingLifecycleTests: XCTestCase {
   private let allowed: [(MeetingState, MeetingState)] = [

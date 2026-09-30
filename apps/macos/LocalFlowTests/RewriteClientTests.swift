@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Latency capture, bucket boundaries and the SC-011 report verdicts.

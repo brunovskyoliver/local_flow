@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import OSLog
 
 /// Credentials a dictation session needs. `RemoteEnrollment` provides them; its state

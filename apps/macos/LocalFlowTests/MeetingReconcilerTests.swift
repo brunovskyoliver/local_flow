@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 final class MeetingReconcilerTests: XCTestCase {
   private var fixture: MeetingTestStore!

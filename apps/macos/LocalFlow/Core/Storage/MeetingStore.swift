@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import GRDB
+import LocalFlowCore
 import LocalFlowSpeech
 import OSLog
 

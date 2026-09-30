@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// Boundary protocols for Feature 004. Every production implementation has a

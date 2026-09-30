@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 // MARK: - Fixture loading
 

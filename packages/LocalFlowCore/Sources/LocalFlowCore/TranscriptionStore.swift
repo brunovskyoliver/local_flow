@@ -49,7 +49,7 @@ public actor TranscriptionStore {
 
   /// Shared with every history store; all use one file, one WAL and one page ceiling.
   /// One writer connection serializes writes; readers see the last committed state.
-  nonisolated let database: DatabasePool
+  public nonisolated let database: DatabasePool
   private let databaseURL: URL
   private var reservations: [UUID: Reservation] = [:]
 
@@ -233,7 +233,7 @@ public actor TranscriptionStore {
   }
 
   @discardableResult
-  func commit(reservation: Reservation, envelope: TranscriptionEnvelope) throws
+  public func commit(reservation: Reservation, envelope: TranscriptionEnvelope) throws
     -> TranscriptionEntry
   {
     guard reservations[reservation.id] == reservation else { throw Error.invalidReservation }
@@ -336,7 +336,7 @@ public actor TranscriptionStore {
   }
 
   /// One consistent parent/detail snapshot, read only for the selected history item.
-  func selectedEnvelope(_ id: UUID) throws -> TranscriptionEnvelope {
+  public func selectedEnvelope(_ id: UUID) throws -> TranscriptionEnvelope {
     try Task.checkCancellation()
     return try database.read { db in
       guard let entry = try Self.fetch(id, db: db) else { throw Error.missingEntry }
@@ -349,7 +349,7 @@ public actor TranscriptionStore {
   }
 
   /// Call only for the selected record; legacy detail remains absent.
-  func qualityDetail(_ id: UUID) throws -> TranscriptionQualityDetail? {
+  public func qualityDetail(_ id: UUID) throws -> TranscriptionQualityDetail? {
     try database.read { db in
       guard let entry = try Self.fetch(id, db: db) else { throw Error.missingEntry }
       return try Self.fetchDetail(id, normalizedText: entry.text, db: db)
@@ -357,12 +357,12 @@ public actor TranscriptionStore {
   }
 
   /// Feature 012: the dictation's context row; nil for a legacy entry ("not recorded").
-  func context(for id: UUID) throws -> DictationContextRecord? {
+  public func context(for id: UUID) throws -> DictationContextRecord? {
     try database.read { try Self.fetchContext(id, db: $0) }
   }
 
   /// Records or clears the rewrite context note for the latest attempt only.
-  func recordRewriteNote(_ note: String?, for id: UUID) throws {
+  public func recordRewriteNote(_ note: String?, for id: UUID) throws {
     guard note == nil || note == DictationContextRecord.serverUnsupported else {
       throw Error.invalidContext
     }
@@ -580,7 +580,7 @@ public actor TranscriptionStore {
 
   /// The delivery record and the rewrite attempt it delivered are written in one
   /// transaction, so they can never disagree.
-  func recordOutcome(
+  public func recordOutcome(
     id: UUID, revision: Int64, attemptID: UUID, outcome: Outcome, delivery: RewriteDelivery
   ) throws -> TranscriptionEntry {
     try database.write { db in
@@ -751,7 +751,7 @@ public actor TranscriptionStore {
   /// Admission. One transaction re-checks the attempt limit and the in-flight
   /// rules, assigns the ordinal, reserves quota, inserts the pending row and
   /// mirrors `rewrite_state`. Any refusal throws before anything is written.
-  func begin(_ admission: RewriteAdmission) throws -> RewriteAttempt {
+  public func begin(_ admission: RewriteAdmission) throws -> RewriteAttempt {
     let id = UUID()
     let startedAt = Int64(Date().timeIntervalSince1970 * 1000)
     let reservedBytes = admission.reservedBytes
@@ -813,7 +813,9 @@ public actor TranscriptionStore {
     }
   }
 
-  func recordResult(id: UUID, result: RewriteResult, spans: RewriteSpans) throws -> RewriteAttempt {
+  public func recordResult(id: UUID, result: RewriteResult, spans: RewriteSpans) throws
+    -> RewriteAttempt
+  {
     try database.write { db in
       let current = try Self.pendingAttempt(id, db: db)
       let outputBytes = result.text.utf8.count
@@ -846,14 +848,14 @@ public actor TranscriptionStore {
     }
   }
 
-  func recordFailure(id: UUID, category: RewriteFailureCategory, spans: RewriteSpans) throws
+  public func recordFailure(id: UUID, category: RewriteFailureCategory, spans: RewriteSpans) throws
     -> RewriteAttempt
   {
     try terminate(
       id, state: category == .timeout ? .timedOut : .failed, category: category, spans: spans)
   }
 
-  func recordCancelled(id: UUID, spans: RewriteSpans) throws -> RewriteAttempt {
+  public func recordCancelled(id: UUID, spans: RewriteSpans) throws -> RewriteAttempt {
     try terminate(id, state: .cancelled, category: nil, spans: spans)
   }
 
@@ -880,14 +882,14 @@ public actor TranscriptionStore {
   }
 
   /// A late response for a non-pending or non-newest attempt: flag only, never a state change.
-  func markStale(id: UUID) throws {
+  public func markStale(id: UUID) throws {
     try database.write { db in
       try db.execute(
         sql: "UPDATE rewrite_attempts SET stale=1 WHERE id=?", arguments: [id.uuidString])
     }
   }
 
-  func attempts(for transcriptionID: UUID) throws -> [RewriteAttempt] {
+  public func attempts(for transcriptionID: UUID) throws -> [RewriteAttempt] {
     try database.read { db in
       try Self.fetchAttempts(
         db, sql: "SELECT * FROM rewrite_attempts WHERE transcription_id=? ORDER BY ordinal",
@@ -898,14 +900,14 @@ public actor TranscriptionStore {
   /// Startup: every `pending` row becomes `failed` with `interrupted`. Also runs
   /// in `init`, so a crash never leaves a resumable request behind.
   @discardableResult
-  func cancelPendingOnStartup() throws -> Int {
+  public func cancelPendingOnStartup() throws -> Int {
     // `init` already interrupted them; skip the empty fsynced write in the usual case.
     guard try database.read(Self.hasPendingAttempts) else { return 0 }
     return try database.write { db in try Self.interruptPendingAttempts(db) }
   }
 
   /// Explicit insertion of one attempt's text from history.
-  func recordDelivered(attemptID: UUID) throws {
+  public func recordDelivered(attemptID: UUID) throws {
     try database.write { db in
       guard let attempt = try Self.fetchAttempt(attemptID, db: db) else { throw Error.missingEntry }
       try Self.markDelivered(

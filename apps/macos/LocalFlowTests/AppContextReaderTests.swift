@@ -3,6 +3,7 @@ import CryptoKit
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Scripted Accessibility reads for the snapshot builder; records every call.
 final class ScriptedAttributeSource: ContextAttributeSource, @unchecked Sendable {

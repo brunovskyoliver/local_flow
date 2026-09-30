@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Evaluation-only chunk-geometry experiment. It reuses the frozen corpus and the production

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalFlowCore
 
 /// The name-free SHA-256 of everything that may influence the analysis
 /// (research R6/R8, FR-008). The canonical stream is length-prefixed so two

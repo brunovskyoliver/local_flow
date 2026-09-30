@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// Value types for the six `meetings-v5` tables plus the published status.

@@ -6,13 +6,13 @@ import LocalFlowSpeech
 /// Corrections seen before, as digests only, never correction text. Feature 015 keeps them
 /// across restarts so a repeated fix is recognised as repeated. Bounded; the least recently
 /// seen digest is dropped first.
-actor CorrectionSightingStore {
+public actor CorrectionSightingStore {
   private let database: DatabasePool
 
-  init(history: TranscriptionStore) { database = history.database }
+  public init(history: TranscriptionStore) { database = history.database }
 
   /// Records a sighting and returns how often it was seen before (0...3).
-  func observe(_ candidate: CorrectionCandidate, now: Int64) throws -> Int {
+  public func observe(_ candidate: CorrectionCandidate, now: Int64) throws -> Int {
     guard let digest = Self.digest(candidate) else { return 0 }
     return try database.write { db in
       let previous =
@@ -35,7 +35,7 @@ actor CorrectionSightingStore {
   }
 
   /// Length framing avoids ambiguous pairs. Casing is kept: canonical case is meaningful.
-  static func digest(_ candidate: CorrectionCandidate) -> Data? {
+  public static func digest(_ candidate: CorrectionCandidate) -> Data? {
     guard candidate.sourceText.utf8.count <= 256, candidate.replacementText.utf8.count <= 256 else {
       return nil
     }

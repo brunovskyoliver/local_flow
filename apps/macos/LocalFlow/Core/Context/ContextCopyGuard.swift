@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Copy guard, version 1 (research D9, FR-012). Runs on a validated v2 rewrite
 /// result. The screen may inform spelling and tone; it may not add words the

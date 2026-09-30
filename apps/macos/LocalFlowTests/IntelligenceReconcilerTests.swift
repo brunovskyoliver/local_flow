@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T070 / FR-007a: every unfinished run becomes `interrupted` at launch; a
 /// restart (through the queue, trigger `restart`) happens only for an

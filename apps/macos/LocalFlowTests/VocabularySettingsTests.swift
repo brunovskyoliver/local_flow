@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// In-memory editor boundary with the store's validation and injectable failures.
 actor FakeVocabularyStore: VocabularyEditing {

@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 016 FR-002: the Mac's schema and file locations are frozen while the portable
 /// code moves into `packages/LocalFlowCore`. These pass before the move and after it.

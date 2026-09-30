@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 014 client storage: migration `remote-dictation-v15`, the recognition path
 /// on history entries and the bounded pending-retry table with its audio files.

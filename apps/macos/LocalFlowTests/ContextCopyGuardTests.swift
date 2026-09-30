@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// `ContextCopyGuard` version 1 (research D9): a rewrite may use the screen for
 /// spelling and tone, never to add words or terms the speaker did not say.

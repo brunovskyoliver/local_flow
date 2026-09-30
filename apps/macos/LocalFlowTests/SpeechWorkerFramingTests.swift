@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 014: the worker framing in `SpeechWorker/WorkerFraming.swift` against the byte
 /// fixtures flowd's Go side generated (`fixtures/remote/worker-frames/`).

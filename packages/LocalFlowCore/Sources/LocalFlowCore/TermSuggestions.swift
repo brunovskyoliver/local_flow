@@ -1,30 +1,30 @@
 import Foundation
 
 /// Feature 013. A term the Dictionary might want; nothing changes until the user adds it.
-struct TermSuggestion: Equatable, Identifiable, Sendable {
-  enum Source: Equatable, Sendable {
+public struct TermSuggestion: Equatable, Identifiable, Sendable {
+  public enum Source: Equatable, Sendable {
     /// The user replaced `alias` with `canonical` in a dictation, but the scorer only
     /// suggested learning it.
     case correction
     /// The term was in the app around the cursor for this many dictations.
     case context
   }
-  let canonical: String
+  public let canonical: String
   /// The replaced misspelling; empty when there is none.
-  let alias: String
-  let sightings: Int
-  let source: Source
-  var id: String { Self.id(canonical: canonical, alias: alias) }
+  public let alias: String
+  public let sightings: Int
+  public let source: Source
+  public var id: String { Self.id(canonical: canonical, alias: alias) }
 
   static func id(canonical: String, alias: String) -> String { canonical + "\u{1F}" + alias }
 }
 
-enum TermSuggestionMiner {
+public enum TermSuggestionMiner {
   /// A context term needs this many dictations; one correction is the user's own spelling.
   static let minimumContextSightings = 3
   static let maximumShown = 12
 
-  static func suggestions(
+  public static func suggestions(
     _ contents: TermSuggestionStore.Contents, dictionary: [VocabularyEntry],
     isEnglishWord: (String) -> Bool
   ) -> [TermSuggestion] {

@@ -2,6 +2,7 @@ import AppKit
 @preconcurrency import ApplicationServices
 import Carbon.HIToolbox
 import Foundation
+import LocalFlowCore
 import OSLog
 
 public enum TargetIssue: Error, Equatable, Sendable {

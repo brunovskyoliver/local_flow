@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 struct DictationSession {

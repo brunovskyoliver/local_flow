@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LocalFlowCore
 
 /// Every identity table write goes through this actor, on the shared history
 /// `DatabasePool` (Feature 010, data-model.md). Each operation is one transaction.

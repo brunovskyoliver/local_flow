@@ -2,6 +2,7 @@ import CryptoKit
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// A scripted flowd for enrollment and refresh: it verifies device signatures over the
 /// channel binding and the ID token nonce, and answers as the account store would.

@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Commit failures are permanent for this store, so the coordinator must keep

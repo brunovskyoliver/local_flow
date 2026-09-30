@@ -3,6 +3,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 actor Gate {

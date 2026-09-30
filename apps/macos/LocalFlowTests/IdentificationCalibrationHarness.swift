@@ -4,6 +4,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Research R6 (FR-012, T012): enrolls every corpus speaker from one recording through

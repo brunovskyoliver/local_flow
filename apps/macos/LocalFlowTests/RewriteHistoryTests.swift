@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// US5 (T047): history rows, the detail's Rewrite section, restart survival,
 /// deletion and legacy rows, against the real store on a private file.

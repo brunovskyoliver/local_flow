@@ -3,6 +3,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 final class HistoryQueryTests: XCTestCase {
   private func makeStore() throws -> (TranscriptionStore, URL) {

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LocalFlowCore
 
 actor TranscriptStore: TranscriptStoring {
   enum Capacity: Sendable, Equatable { case meetingSegments, meetingBytes, globalBytes }

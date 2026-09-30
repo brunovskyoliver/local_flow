@@ -1,5 +1,5 @@
 {
-  "originHash" : "722b336f7f189b0f2c46e78f426918d18e56ec8ae77f5dc04dd7149da332c946",
+  "originHash" : "3481960091c3c6e1e23251cb59850a0788db098ad5bd51367e71cbaee12f7d77",
   "pins" : [
     {
       "identity" : "fluidaudio",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "41540ea237350afe5117a082b5c28eda642d0612",
         "version" : "0.15.7"
+      }
+    },
+    {
+      "identity" : "grdb.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/groue/GRDB.swift.git",
+      "state" : {
+        "revision" : "36e30a6f1ef10e4194f6af0cff90888526f0c115",
+        "version" : "7.10.0"
       }
     }
   ],

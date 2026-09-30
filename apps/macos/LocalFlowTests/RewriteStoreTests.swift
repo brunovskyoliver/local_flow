@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Migration `rewrite-v4`, attempt admission, terminal recording, quota and the
 /// startup fix-up, all against the real GRDB store on a private temporary file.

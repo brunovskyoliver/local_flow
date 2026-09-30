@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// A forwarding actor makes persistence failures deterministic without replacing the real

@@ -3,6 +3,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 final class MeetingAnalyzerTests: XCTestCase {

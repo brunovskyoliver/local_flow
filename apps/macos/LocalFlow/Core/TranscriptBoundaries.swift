@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 @MainActor protocol MeetingTranscriptionObserving: AnyObject, Sendable {
   func meetingWillStart(id: UUID, options: MeetingStartOptions) async -> TranscriptState

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// Hands a completed dictation's still-open channel to its rewrite, or opens a new

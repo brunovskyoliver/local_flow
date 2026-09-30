@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 @MainActor
 final class MeetingLibraryTests: XCTestCase {

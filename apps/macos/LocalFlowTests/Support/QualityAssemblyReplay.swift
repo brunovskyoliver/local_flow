@@ -2,6 +2,7 @@ import FluidAudio
 import Foundation
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Offline replay uses the frozen SDK evidence, never a second recognition pass.

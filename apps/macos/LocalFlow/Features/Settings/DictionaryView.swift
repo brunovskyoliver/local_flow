@@ -1,3 +1,4 @@
+import LocalFlowCore
 import SwiftUI
 
 /// Dictionary page: title, filter tabs, intro banner, one row per entry, and the

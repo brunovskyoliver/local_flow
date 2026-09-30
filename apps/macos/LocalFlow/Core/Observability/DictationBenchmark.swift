@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// Opt-in driver for the Feature 001 resource protocol in

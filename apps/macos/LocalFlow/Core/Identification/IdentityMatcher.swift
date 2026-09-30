@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// `tiers_v1` (research R6): scores one remote display root against every candidate
 /// profile and decides Recognized, Possible match or Unknown. Pure; never sees the UI

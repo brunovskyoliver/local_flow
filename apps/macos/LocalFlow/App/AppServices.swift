@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import ApplicationServices
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 import OSLog
 import Observation

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Redaction (research D8) and candidate-term extraction (research D4). Pure and
 /// bounded by the part limits of the snapshot.

@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 013 step 2: term suggestions from corrections and dictation context.
 final class TermSuggestionTests: XCTestCase {

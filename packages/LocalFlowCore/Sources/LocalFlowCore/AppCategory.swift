@@ -2,13 +2,13 @@ import Foundation
 
 /// App category sent in every snapshot (research D12). Style rules use it only
 /// when the style toggle is on.
-enum AppCategory: String, Codable, CaseIterable, Sendable {
+public enum AppCategory: String, Codable, CaseIterable, Sendable {
   case email
   case workChat = "work_chat"
   case personalChat = "personal_chat"
   case code, terminal, document, other
 
-  var title: String {
+  public var title: String {
     switch self {
     case .email: "Email"
     case .workChat: "Work chat"
@@ -20,9 +20,7 @@ enum AppCategory: String, Codable, CaseIterable, Sendable {
     }
   }
 
-  static let ownBundleID = AppIdentity.current.bundleIdentifier
-
-  static let builtIn: [String: AppCategory] = [
+  public static let builtIn: [String: AppCategory] = [
     "com.apple.mail": .email,
     "com.microsoft.Outlook": .email,
     "com.readdle.SparkDesktop": .email,
@@ -58,14 +56,14 @@ enum AppCategory: String, Codable, CaseIterable, Sendable {
   ]
 
   /// Browsers stay `other`; this list only drives the address-bar rule.
-  static let browsers: Set<String> = [
+  public static let browsers: Set<String> = [
     "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox", "com.microsoft.edgemac",
     "company.thebrowser.Browser", "com.brave.Browser", "com.operasoftware.Opera",
     "com.vivaldi.Vivaldi",
   ]
 
   /// Password managers (research D11) plus a best-effort banking list; users add more.
-  static let defaultExclusions: Set<String> = [
+  public static let defaultExclusions: Set<String> = [
     "com.apple.Passwords", "com.apple.keychainaccess", "com.1password.1password",
     "com.agilebits.onepassword7", "com.bitwarden.desktop", "com.lastpass.LastPass",
     "org.keepassxc.keepassxc", "com.dashlane.dashlanephonefinal",
@@ -74,7 +72,7 @@ enum AppCategory: String, Codable, CaseIterable, Sendable {
   ]
 
   /// Overrides win, then the built-in map, then JetBrains IDEs by prefix, else `other`.
-  static func category(for bundleID: String?, overrides: [String: AppCategory] = [:])
+  public static func category(for bundleID: String?, overrides: [String: AppCategory] = [:])
     -> AppCategory
   {
     guard let bundleID else { return .other }

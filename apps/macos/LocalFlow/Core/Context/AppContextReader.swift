@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import LocalFlowCore
 
 /// The Accessibility reads the snapshot builder needs. Production is
 /// `AXContextSource`; tests script one without live AX.

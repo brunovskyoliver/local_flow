@@ -3,6 +3,7 @@ import SwiftUI
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Opt-in rendering of synthetic data only. This does not establish signed focus,
 /// physical keyboard, VoiceOver, microphone or hardware resource acceptance.

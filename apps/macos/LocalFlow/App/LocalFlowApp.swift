@@ -1,4 +1,5 @@
 import AppKit
+import LocalFlowCore
 import SwiftUI
 
 @main

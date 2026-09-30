@@ -3,6 +3,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Serves a scripted field to the learner; counts reads so "disabled" can be proven read-free.

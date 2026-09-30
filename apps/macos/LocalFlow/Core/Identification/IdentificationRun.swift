@@ -1,64 +1,14 @@
 import Foundation
+import LocalFlowCore
 
 enum IdentificationRunState: String, CaseIterable, Sendable, Codable {
   case pending, running, succeeded, failed, interrupted, superseded
-}
-
-enum IdentificationTrigger: String, CaseIterable, Sendable, Codable {
-  case automatic, manual, retry
-  case pastSearch = "past_search"
-  case sampleChange = "sample_change"
-}
-
-enum IdentificationFailureCategory: String, CaseIterable, Sendable, Codable, Error {
-  case modelUnavailable = "model_unavailable"
-  case osUnsupported = "os_unsupported"
-  case modelLoadFailure = "model_load_failure"
-  case audioMissing = "audio_missing"
-  case audioDecodeFailure = "audio_decode_failure"
-  case runtimeFailure = "runtime_failure"
-  case diarizationChanged = "diarization_changed"
-  case persistenceFailure = "persistence_failure"
-  case persistenceCapacity = "persistence_capacity"
-  case interrupted
 }
 
 /// Derived, never stored (data-model.md "meeting_identification").
 enum MeetingIdentificationState: String, CaseIterable, Sendable {
   case notRequested = "not_requested"
   case pending, running, succeeded, failed, interrupted
-}
-
-/// FR-009: exactly one per remote display root.
-enum IdentityState: String, CaseIterable, Sendable, Codable {
-  case recognized, possible, confirmed
-  case rejectedUnknown = "rejected_unknown"
-  case unknown
-}
-
-/// FR-018.
-enum IdentityOrigin: String, CaseIterable, Sendable, Codable {
-  case automaticMatch = "automatic_match"
-  case userConfirmation = "user_confirmation"
-  case manualProfileSelection = "manual_profile_selection"
-  case newProfileCreated = "new_profile_created"
-  case manualCorrection = "manual_correction"
-  case keptUnknown = "kept_unknown"
-
-  /// Rows adoption never replaces (FR-024).
-  var isManual: Bool { self != .automaticMatch }
-}
-
-/// The explicit action that created a sample (FR-001, FR-008).
-enum SampleConsent: String, CaseIterable, Sendable, Codable {
-  case remember
-  case alsoRemember = "also_remember"
-  case localEnroll = "local_enroll"
-}
-
-enum CandidateTier: String, CaseIterable, Sendable, Codable {
-  case recognized, possible, below
-  case localEvidence = "local_evidence"
 }
 
 enum CandidateReason: String, CaseIterable, Sendable, Codable {

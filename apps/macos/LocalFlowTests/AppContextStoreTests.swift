@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 012 storage: migration `app-context-v11`, the context row in the entry's
 /// commit transaction, cascade deletion and the `rewrite_attempts` rebuild.

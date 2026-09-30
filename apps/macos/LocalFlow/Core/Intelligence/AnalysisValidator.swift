@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Client-side result validation (contracts/client-analysis.md). Runs after the
 /// transport's structural decode on every result. The pipeline order is fixed —

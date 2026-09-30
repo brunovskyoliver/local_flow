@@ -54,7 +54,7 @@ The spec lists US6 sixth, but the plan builds it first: every phone story needs 
 
 ## Phase 2: ADR
 
-- [ ] T006 Write `docs/adr/0029-ios-companion-and-shared-core.md`: an iOS companion app, the local package `packages/LocalFlowCore` with the targets `LocalFlowSpeech` and `LocalFlowCore`, why this amends ADR 0001's warning about early packages, and the rejected alternatives (shared file references, one target) from plan "Complexity tracking". Add it to `docs/adr/README.md`. Update the scope line in `AGENTS.md` ("Keep this one native macOS app…") to name the iOS companion and the shared package, so agents do not treat the phone app as out of scope.
+- [X] T006 Write `docs/adr/0029-ios-companion-and-shared-core.md`: an iOS companion app, the local package `packages/LocalFlowCore` with the targets `LocalFlowSpeech` and `LocalFlowCore`, why this amends ADR 0001's warning about early packages, and the rejected alternatives (shared file references, one target) from plan "Complexity tracking". Add it to `docs/adr/README.md`. Update the scope line in `AGENTS.md` ("Keep this one native macOS app…") to name the iOS companion and the shared package, so agents do not treat the phone app as out of scope.
 
 ---
 
@@ -66,19 +66,19 @@ The spec lists US6 sixth, but the plan builds it first: every phone story needs 
 
 Land this phase as its own commit series (plan build order step 3) and merge it before Phase 4 starts.
 
-- [ ] T007 [US6] Run `make check` on the current `main` state and save the output and the Mac test count to `specs/016-ios-dictation-foundation/acceptance/mac-baseline.md`.
-- [ ] T008 [US6] Add the pinning tests before anything moves, in `apps/macos/LocalFlowTests/MacCompatibilityTests.swift`:
+- [X] T007 [US6] Run `make check` on the current `main` state and save the output and the Mac test count to `specs/016-ios-dictation-foundation/acceptance/mac-baseline.md`.
+- [X] T008 [US6] Add the pinning tests before anything moves, in `apps/macos/LocalFlowTests/MacCompatibilityTests.swift`:
   - The migration identifiers from `HistoryMigrations.migrator()` equal a frozen list of the 16 current names, `history-v1` through `dictionary-usage-v16`, in order.
   - The database, temporary audio, pending audio and model URLs from `AppIdentity` for the everyday and Dev builds equal hard-coded expected strings.
   - They must pass on today's code.
-- [ ] T009 [US6] Create `packages/LocalFlowCore/Package.swift`:
+- [X] T009 [US6] Create `packages/LocalFlowCore/Package.swift`:
   - `swift-tools-version: 6.0`, platforms `.macOS(.v14)` and `.iOS(.v26)`.
   - Dependencies `GRDB.swift` `exact: "7.10.0"` and `FluidAudio` `exact: "0.15.7"`.
   - Library products and targets `LocalFlowSpeech` (depends on FluidAudio) and `LocalFlowCore` (depends on `LocalFlowSpeech` and GRDB).
   - Test target `LocalFlowCoreTests` depending on both.
   - Add an `XCLocalSwiftPackageReference` to `../../packages/LocalFlowCore` in `apps/macos/LocalFlow.xcodeproj/project.pbxproj`. Link `LocalFlowSpeech` and `LocalFlowCore` to the `LocalFlow` target and `LocalFlowSpeech` only to `flowd-speech`. Keep the existing GRDB and FluidAudio package references for code that stays in the app.
   - Commit: "build(core): add LocalFlowCore package".
-- [ ] T010 [US6] `git mv` the `LocalFlowSpeech` set into `packages/LocalFlowCore/Sources/LocalFlowSpeech/`:
+- [X] T010 [US6] `git mv` the `LocalFlowSpeech` set into `packages/LocalFlowCore/Sources/LocalFlowSpeech/`:
   - From `apps/macos/LocalFlow/Core/`: `SpeechBoundaries.swift`, `ModelWorkloadBoundaries.swift`.
   - From `Core/Transcription/`: `FluidAudioEngine.swift`, `VocabularyBoost.swift`, `MeetingLanguage.swift`, `TranscriptNormalizer.swift`, `ChunkPlanner.swift`, `TranscriptAssembler.swift`, `TranscriptionProvenance.swift`, `WindowedTranscriber.swift`.
   - From `Core/Models/`: `ModelLifecycleCoordinator.swift`, `ModelDescriptor.swift`, `ModelProvisioner.swift`.
@@ -89,8 +89,8 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
   - `VocabularyBoostSpelling.swift` (NSSpellChecker) and `SpeechWorker/WorkerSpelling.swift` stay where they are and keep supplying the `(String) -> Bool` English-word check.
   - Add `import LocalFlowSpeech` to Mac and worker files that need it.
   - Commit: "refactor(core): move speech sources into LocalFlowSpeech".
-- [ ] T011 [US6] Change `AudioSpool` in `packages/LocalFlowCore/Sources/LocalFlowSpeech/AudioSpool.swift` so `maximumBytes` is an init parameter, `AudioSpool(rootDirectory:sessionID:maximumBytes: Int = 16 * 1_048_576)`. Existing Mac call sites pass nothing. Add `packages/LocalFlowCore/Tests/LocalFlowCoreTests/AudioSpoolCapacityTests.swift`: the default is 16 MiB, `19_200_000` stops at exactly that byte count, and writes past the cap are refused the same way the old static cap refused them.
-- [ ] T012 [US6] `git mv` the `LocalFlowCore` set into `packages/LocalFlowCore/Sources/LocalFlowCore/`:
+- [X] T011 [US6] Change `AudioSpool` in `packages/LocalFlowCore/Sources/LocalFlowSpeech/AudioSpool.swift` so `maximumBytes` is an init parameter, `AudioSpool(rootDirectory:sessionID:maximumBytes: Int = 16 * 1_048_576)`. Existing Mac call sites pass nothing. Add `packages/LocalFlowCore/Tests/LocalFlowCoreTests/AudioSpoolCapacityTests.swift`: the default is 16 MiB, `19_200_000` stops at exactly that byte count, and writes past the cap are refused the same way the old static cap refused them.
+- [X] T012 [US6] `git mv` the `LocalFlowCore` set into `packages/LocalFlowCore/Sources/LocalFlowCore/`:
   - From `apps/macos/LocalFlow/Core/Storage/`: `TranscriptionStore.swift`, `TranscriptionEntry.swift`, `HistoryMigrations.swift`, `VocabularyStore.swift`, `DictionaryUsageStore.swift`, `TermSuggestionStore.swift`.
   - The `Core/Corrections/` files these stores need (start from `CorrectionCandidate.swift`, `CorrectionCandidateHistory.swift`, `CorrectionCandidateScorer.swift`, `CorrectionStopwords.swift`, `TermSuggestions.swift`, `UsageClassifier.swift`, and move only what the compiler requires).
   - The value types the migrator and stores reference, moved as whole files only when the file has no Mac-only code; otherwise split the type into its own file first with `git mv` plus a minimal cut. Candidates: `Core/Rewrite/RewriteAttempt.swift`, the failure-reason enum in `Core/Remote/RemoteProtocol.swift`, the app context record, and the meeting state enums in `Core/Meetings/MeetingModels.swift` and `Core/Meetings/MeetingLifecycle.swift`.

@@ -36,7 +36,7 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     case notRequested = "not_requested"
     case pending, succeeded, failed, cancelled
     case timedOut = "timed_out"
-    init(_ state: RewriteAttemptState) {
+    public init(_ state: RewriteAttemptState) {
       switch state {
       case .pending: self = .pending
       case .succeeded: self = .succeeded

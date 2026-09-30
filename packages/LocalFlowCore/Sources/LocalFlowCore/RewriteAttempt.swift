@@ -7,17 +7,23 @@ public enum DeliveredSource: String, Sendable, Codable, Equatable {
 
 /// What `recordOutcome` writes beside the delivery state: the source, the
 /// attempt whose output was inserted, and the commit-to-handoff duration.
-struct RewriteDelivery: Sendable, Equatable {
-  let source: DeliveredSource
-  let attemptID: UUID?
+public struct RewriteDelivery: Sendable, Equatable {
+  public let source: DeliveredSource
+  public let attemptID: UUID?
   let durationMilliseconds: Int?
-  static let faithful = RewriteDelivery(
+  public static let faithful = RewriteDelivery(
     source: .faithful, attemptID: nil, durationMilliseconds: nil)
+
+  public init(source: DeliveredSource, attemptID: UUID?, durationMilliseconds: Int?) {
+    self.source = source
+    self.attemptID = attemptID
+    self.durationMilliseconds = durationMilliseconds
+  }
 }
 
 /// Input to `RewriteAttemptStoring.begin`: everything an admitted row needs
 /// that the store cannot derive itself.
-struct RewriteAdmission: Sendable, Equatable {
+public struct RewriteAdmission: Sendable, Equatable {
   let transcriptionID: UUID
   let mode: RewriteMode
   let inputText: String
@@ -25,6 +31,18 @@ struct RewriteAdmission: Sendable, Equatable {
   let insecureOverride: Bool
   /// Feature 012: the snapshot hash when this attempt sends protocol v2; nil for v1.
   var contextHash: String? = nil
+
+  public init(
+    transcriptionID: UUID, mode: RewriteMode, inputText: String, endpointOrigin: String,
+    insecureOverride: Bool, contextHash: String? = nil
+  ) {
+    self.transcriptionID = transcriptionID
+    self.mode = mode
+    self.inputText = inputText
+    self.endpointOrigin = endpointOrigin
+    self.insecureOverride = insecureOverride
+    self.contextHash = contextHash
+  }
 
   var protocolVersion: Int {
     contextHash == nil ? RewriteBounds.schemaVersion : RewriteBounds.contextSchemaVersion
@@ -37,14 +55,15 @@ struct RewriteAdmission: Sendable, Equatable {
 }
 
 /// Persisted derivations of the five client instants plus content-free byte counts.
-struct RewriteSpans: Sendable, Equatable {
-  var durationMilliseconds: Int?
-  var firstByteMilliseconds: Int?
-  var networkMilliseconds: Int?
-  var requestBytes: Int?
-  var responseBytes: Int?
+public struct RewriteSpans: Sendable, Equatable {
+  public var durationMilliseconds: Int?
+  public var firstByteMilliseconds: Int?
+  public var networkMilliseconds: Int?
+  public var requestBytes: Int?
+  public var responseBytes: Int?
+
   static let none = RewriteSpans()
-  init(
+  public init(
     durationMilliseconds: Int? = nil, firstByteMilliseconds: Int? = nil,
     networkMilliseconds: Int? = nil, requestBytes: Int? = nil, responseBytes: Int? = nil
   ) {
@@ -58,7 +77,7 @@ struct RewriteSpans: Sendable, Equatable {
 
 /// Who produced a result; copied from the `result` event so every stored attempt
 /// and every report is reproducible.
-struct RewriteIdentity: Sendable, Equatable {
+public struct RewriteIdentity: Sendable, Equatable {
   var serverName: String?
   var serverVersion: String?
   var backendKind: String?
@@ -67,7 +86,7 @@ struct RewriteIdentity: Sendable, Equatable {
   var shieldVersion: Int?
   static let unknown = RewriteIdentity()
 
-  init(
+  public init(
     serverName: String? = nil, serverVersion: String? = nil, backendKind: String? = nil,
     backendModel: String? = nil, promptVersion: Int? = nil, shieldVersion: Int? = nil
   ) {
@@ -78,7 +97,7 @@ struct RewriteIdentity: Sendable, Equatable {
     self.promptVersion = promptVersion
     self.shieldVersion = shieldVersion
   }
-  init(result: RewriteResult) {
+  public init(result: RewriteResult) {
     self.init(
       serverName: result.serverName, serverVersion: result.serverVersion,
       backendKind: result.backendKind, backendModel: result.backendModel,
@@ -86,47 +105,47 @@ struct RewriteIdentity: Sendable, Equatable {
   }
 
   /// Grouping key for latency and metric reports.
-  var groupKey: String {
+  public var groupKey: String {
     "\(backendModel ?? "unknown")+p\(promptVersion.map(String.init) ?? "unknown")+s\(shieldVersion.map(String.init) ?? "unknown")"
   }
 }
 
-enum RewriteAttemptState: String, Sendable, Codable, CaseIterable {
+public enum RewriteAttemptState: String, Sendable, Codable, CaseIterable {
   case pending, succeeded, failed, cancelled
   case timedOut = "timed_out"
   var isTerminal: Bool { self != .pending }
 }
 
 /// One row of `rewrite_attempts`. Exists only for an admitted attempt.
-struct RewriteAttempt: Identifiable, Sendable, Equatable {
-  static let maximumPerDictation = 10
-  static let maximumPendingOverall = 2
+public struct RewriteAttempt: Identifiable, Sendable, Equatable {
+  public static let maximumPerDictation = 10
+  public static let maximumPendingOverall = 2
 
-  let id: UUID
-  let transcriptionID: UUID
-  let ordinal: Int
-  let mode: RewriteMode
-  let state: RewriteAttemptState
-  let inputText: String
+  public let id: UUID
+  public let transcriptionID: UUID
+  public let ordinal: Int
+  public let mode: RewriteMode
+  public let state: RewriteAttemptState
+  public let inputText: String
   let inputHash: String
-  let outputText: String?
+  public let outputText: String?
   let outputHash: String?
   let unchanged: Bool
-  let failureCategory: RewriteFailureCategory?
-  let stale: Bool
+  public let failureCategory: RewriteFailureCategory?
+  public let stale: Bool
   let startedAtMilliseconds: Int64
-  let spans: RewriteSpans
+  public let spans: RewriteSpans
   let serverQueueMilliseconds: Int?
   let backendFirstTokenMilliseconds: Int?
   let backendMilliseconds: Int?
   let protocolVersion: Int
-  let identity: RewriteIdentity
+  public let identity: RewriteIdentity
   let endpointOrigin: String
   let insecureOverride: Bool
-  let delivered: Bool
+  public let delivered: Bool
   /// Feature 012: hash of the snapshot sent with a protocol v2 request; nil for v1.
-  var contextHash: String? = nil
+  public var contextHash: String? = nil
 
   /// The text this attempt can deliver, or nil unless it succeeded.
-  var deliverableText: String? { state == .succeeded ? outputText : nil }
+  public var deliverableText: String? { state == .succeeded ? outputText : nil }
 }

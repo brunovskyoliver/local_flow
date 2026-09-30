@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// The meeting domain's view of speaker diarization. Nothing here imports FluidAudio.
 

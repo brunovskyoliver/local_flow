@@ -1,3 +1,4 @@
+import LocalFlowCore
 import SwiftUI
 
 /// Displays one persisted envelope without reprocessing or reconstructing missing stages.

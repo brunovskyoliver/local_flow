@@ -1,6 +1,7 @@
 import AVFoundation
 import Dispatch
 import Foundation
+import LocalFlowCore
 import OSLog
 
 /// Per-track serial loop (contracts/meeting-capture.md, "Track worker loop").

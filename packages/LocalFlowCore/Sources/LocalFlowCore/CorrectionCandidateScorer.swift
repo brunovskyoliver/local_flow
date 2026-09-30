@@ -1,8 +1,10 @@
 import Foundation
 
 /// Pure, bounded orthographic rules. Hard exclusions cannot be overcome by repetition.
-struct CorrectionCandidateScorer: CorrectionCandidateScoring {
-  func assess(_ candidate: CorrectionCandidate, context: CorrectionCandidateContext)
+public struct CorrectionCandidateScorer: CorrectionCandidateScoring {
+  public init() {}
+
+  public func assess(_ candidate: CorrectionCandidate, context: CorrectionCandidateContext)
     -> CorrectionCandidateAssessment
   {
     typealias Reason = CorrectionCandidateAssessment.Reason

@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Every client validation rule in `contracts/rewrite-protocol.md`, exercised
 /// against authored event bytes. No network and no fake server are involved.

@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 final class AppIdentityTests: XCTestCase {
   private let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)

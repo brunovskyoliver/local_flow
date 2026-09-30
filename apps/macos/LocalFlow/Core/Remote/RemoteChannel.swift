@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalFlowCore
 
 /// Why a channel ended. Every case maps to a failure reason code (FR-017).
 enum RemoteChannelError: Error, Equatable, Sendable {

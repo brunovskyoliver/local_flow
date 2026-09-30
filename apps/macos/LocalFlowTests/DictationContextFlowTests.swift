@@ -4,6 +4,7 @@ import OSLog
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Feature 012 in the live dictation flow: capture beside recording (T019),

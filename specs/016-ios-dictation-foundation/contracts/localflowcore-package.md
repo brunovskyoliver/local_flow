@@ -12,8 +12,8 @@
 
 | Product / target | Contains | Depends on | Linked by |
 | --- | --- | --- | --- |
-| `LocalFlowSpeech` | Speech and model boundaries, the FluidAudio engine, vocabulary boost, meeting language, the lifecycle coordinator, model descriptor and provisioner, dictionary change, transcript normalizer, chunk planner, transcript assembler, provenance, windowed transcriber, audio spool | FluidAudio | Mac app, `flowd-speech`, iOS app |
-| `LocalFlowCore` | `LocalFlowPaths`, the transcription store and entry, history migrations, vocabulary, dictionary usage and term suggestion stores, the correction types they need, and the value types the migrator and stores reference (rewrite attempt models, remote failure reason, app context record, meeting state enums) | `LocalFlowSpeech`, GRDB | Mac app, iOS app |
+| `LocalFlowSpeech` | Speech and model boundaries, the FluidAudio engine, vocabulary boost, meeting language, the lifecycle coordinator, model descriptor and provisioner, dictionary change, chunk planner, transcript assembler, audio spool | FluidAudio | Mac app, `flowd-speech`, iOS app |
+| `LocalFlowCore` | `LocalFlowPaths`, the transcription store and entry, history migrations, vocabulary, dictionary usage and term suggestion stores, the correction types they need, the transcript normalizer, provenance, windowed transcriber and pipeline identity (they need `VocabularySnapshot`), and the value types the migrator and stores reference (rewrite attempt models, remote failure reason, app context record, meeting state enums) | `LocalFlowSpeech`, GRDB | Mac app, iOS app |
 | `LocalFlowCoreTests` | Tests for code introduced by this feature only | both | `swift test` |
 
 The keyboard extension links neither product.
@@ -24,7 +24,7 @@ The keyboard extension links neither product.
 2. No `import GRDB` in `Sources/LocalFlowSpeech`.
 3. No `Process`, `NSWorkspace`, `homeDirectoryForCurrentUser` or `CGPreflight*` in package sources.
 4. Platform services enter through parameters, never through `#if os(...)` branches:
-   - the English-word check is passed as `(String) -> Bool`
+   - the English-word check is passed to `FluidAudioEngineFactory` as `(Set<String>) -> Set<String>`
    - paths come in as `LocalFlowPaths`
    - spool capacity is an init parameter
    - capture and insertion stay in each app

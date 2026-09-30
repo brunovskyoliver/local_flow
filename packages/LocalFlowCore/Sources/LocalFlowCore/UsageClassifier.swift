@@ -4,11 +4,11 @@ import LocalFlowSpeech
 /// Feature 015, `contracts/usage-classification.md`. Decides whether the user kept or undid
 /// each Dictionary change of one insertion, from reads of the field made while the
 /// correction learner watched it. Pure; no Accessibility.
-enum UsageClassifier {
+public enum UsageClassifier {
   /// Above this many words on either side, nothing is classified.
   static let maximumWords = 1_024
 
-  static func classify(
+  public static func classify(
     changes: [DictionaryChange], inserted: String, before: String, leadingCut: Bool,
     reads: [String]
   ) -> [(DictionaryChange, UsageOutcome)] {

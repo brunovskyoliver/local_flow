@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 014 R14: rewrite over the remote channel yields what the HTTP client yields.
 final class RemoteRewriteTransportTests: XCTestCase {

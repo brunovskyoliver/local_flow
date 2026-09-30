@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// The meeting domain's view of persistent speaker identification (Feature 010,
 /// contracts/identification-pipeline.md). Nothing here imports FluidAudio; every value

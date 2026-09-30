@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LocalFlowCore
 import OSLog
 
 /// Every analysis-table write goes through this actor. It shares the history

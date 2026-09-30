@@ -1,4 +1,5 @@
 import AppKit
+import LocalFlowCore
 import SwiftUI
 
 /// The Summary tab (`contracts/ui.md` "States" and "Layout"). One fixed header

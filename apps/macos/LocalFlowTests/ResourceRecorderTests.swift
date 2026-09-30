@@ -2,6 +2,7 @@ import Darwin
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 final class ResourceRecorderTests: XCTestCase {
   func testTranscriptMetricsAcceptOnlyClosedTranscriptKeys() throws {

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// LocalFlow meeting analysis protocol v1 types and the client-side bounded
 /// decoder (`specs/011-meeting-intelligence/contracts/analysis-protocol.md`).

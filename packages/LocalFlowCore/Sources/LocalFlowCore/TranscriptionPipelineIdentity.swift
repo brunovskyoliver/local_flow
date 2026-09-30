@@ -3,7 +3,7 @@ import LocalFlowSpeech
 
 /// Pinned application/model identity, captured before dictation. The lifecycle factory
 /// verifies these same model artifacts before granting a lease.
-struct TranscriptionPipelineIdentity: Sendable {
+public struct TranscriptionPipelineIdentity: Sendable {
   private var windowSamples = 239_360
   private var engine = "unrecorded_runtime"
   private var descriptor: ModelDescriptor?
@@ -22,9 +22,9 @@ struct TranscriptionPipelineIdentity: Sendable {
   private var remoteModelID: String?
   private var remoteRevision: String?
 
-  init() {}
+  public init() {}
 
-  init(remote model: RemoteModelIdentity, build: String?) {
+  public init(remote model: RemoteModelIdentity, build: String?) {
     func valid(_ value: String) -> String? {
       (try? TranscriptionQualityDetail.validateID(value)) == nil ? nil : value
     }
@@ -38,7 +38,7 @@ struct TranscriptionPipelineIdentity: Sendable {
 
   var recordedBuild: String? { build }
 
-  init(
+  public init(
     descriptor: ModelDescriptor, manifestHash: String, build: String?,
     engine: String = "FluidAudio", windowSamples: Int = 239_360, languageHint: String? = nil
   ) throws {
@@ -53,7 +53,7 @@ struct TranscriptionPipelineIdentity: Sendable {
     try provenance(sampleCount: 0, recognition: 0, assembly: 0).validate()
   }
 
-  func provenance(sampleCount: Int, recognition: Double, assembly: Double)
+  public func provenance(sampleCount: Int, recognition: Double, assembly: Double)
     -> TranscriptionProvenance
   {
     var missing: [TranscriptionProvenance.Unavailable] = [

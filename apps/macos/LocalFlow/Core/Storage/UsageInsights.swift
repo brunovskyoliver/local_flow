@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LocalFlowCore
 
 /// Where a dictation was delivered, grouped the way the Insights page reports it.
 enum UsageCategory: String, CaseIterable, Sendable {

@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 import OSLog
 

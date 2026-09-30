@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// The run pipeline through `FakeVoiceEmbeddingRuntime`: success, the zero-candidate

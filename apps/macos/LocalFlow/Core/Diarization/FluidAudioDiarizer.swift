@@ -1,5 +1,6 @@
 import FluidAudio
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// Builds the pinned offline diarizer from a verified local model only. The lifecycle

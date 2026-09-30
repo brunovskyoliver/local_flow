@@ -1,5 +1,6 @@
 import FluidAudio
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// Research R1: voice embeddings come from the provisioned diarization models

@@ -7,15 +7,20 @@ let package = Package(
   name: "LocalFlowCore",
   platforms: [.macOS(.v14), .iOS("26.0")],
   products: [
-    .library(name: "LocalFlowSpeech", targets: ["LocalFlowSpeech"])
+    .library(name: "LocalFlowSpeech", targets: ["LocalFlowSpeech"]),
+    .library(name: "LocalFlowCore", targets: ["LocalFlowCore"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7")
+    .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.10.0"),
+    .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7"),
   ],
   targets: [
     .target(
       name: "LocalFlowSpeech",
       dependencies: [.product(name: "FluidAudio", package: "FluidAudio")]),
-    .testTarget(name: "LocalFlowCoreTests", dependencies: ["LocalFlowSpeech"]),
+    .target(
+      name: "LocalFlowCore",
+      dependencies: ["LocalFlowSpeech", .product(name: "GRDB", package: "GRDB.swift")]),
+    .testTarget(name: "LocalFlowCoreTests", dependencies: ["LocalFlowSpeech", "LocalFlowCore"]),
   ]
 )

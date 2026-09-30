@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 protocol AudioCapturing: Sendable {
@@ -46,24 +47,6 @@ extension TextInsertionService: TextInserting {}
 protocol AppContextReading: Sendable {
   func read(target: CapturedTarget?, settings: ContextSettings, deadline: Duration) async
     -> AppContextCapture
-}
-
-/// One immutable result travels through save/retry; summaries never contain the detail.
-struct TranscriptionEnvelope: Sendable {
-  let entry: TranscriptionEntry
-  let detail: TranscriptionQualityDetail?
-  /// Feature 012: the context row, committed in the entry's transaction. Nil for
-  /// legacy entries and for callers that predate the feature.
-  var context: DictationContextRecord? = nil
-
-  func validate() throws {
-    try context?.validate()
-    guard let detail else { return }
-    try detail.validate(normalizedText: entry.text)
-    guard !detail.incomplete || entry.quality != .complete else {
-      throw TranscriptionQualityDetail.Failure.invalidMetadata
-    }
-  }
 }
 
 protocol TranscriptionStoring: Sendable {

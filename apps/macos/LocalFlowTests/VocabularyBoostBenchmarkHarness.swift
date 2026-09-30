@@ -2,6 +2,7 @@ import AVFoundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Feature 013 opt-in before/after benchmark through the production runtime.

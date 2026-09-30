@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Local context spelling, version 1 (research D5). A transcript span of 1–3 words
 /// takes a candidate term's exact form when their fold keys match, or, for

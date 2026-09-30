@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// `identities-v8` and `IdentityStore`: schema, known speakers, samples, runs,
 /// assignments, corrections, deletion and restart persistence (T015, T019, T053, T067,

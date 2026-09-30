@@ -1,4 +1,5 @@
 import AppKit
+import LocalFlowCore
 import Observation
 
 /// Holds one reviewed entry and one target. No recording or history mutation may

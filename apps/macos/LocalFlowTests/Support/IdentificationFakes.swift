@@ -3,6 +3,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Scripted voice embedder. Region N (1-based) returns `scripts[N-1]`, or the last

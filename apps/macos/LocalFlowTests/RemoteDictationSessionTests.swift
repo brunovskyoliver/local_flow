@@ -2,6 +2,7 @@ import CryptoKit
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// A scripted flowd for dictation: it cuts contiguous 239,360-sample windows from the
 /// audio it receives and answers each with a `window_result`.

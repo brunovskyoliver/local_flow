@@ -4,6 +4,7 @@ import FluidAudio
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 final class RuntimeCompatibilityTests: XCTestCase {

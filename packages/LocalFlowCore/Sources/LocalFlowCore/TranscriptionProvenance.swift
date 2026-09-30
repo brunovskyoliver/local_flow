@@ -3,40 +3,40 @@ import Foundation
 import LocalFlowSpeech
 
 /// Local immutable processing identity. Missing measurements have an explicit reason.
-struct TranscriptionProvenance: Codable, Sendable {
-  struct Unavailable: Codable, Sendable {
-    enum Reason: String, Codable, Sendable {
+public struct TranscriptionProvenance: Codable, Sendable {
+  public struct Unavailable: Codable, Sendable {
+    public enum Reason: String, Codable, Sendable {
       case notRecorded = "not_recorded"
       case notApplicable = "not_applicable"
       case invalidEvidence = "invalid_evidence"
       case rejectedWindow = "rejected_window"
     }
-    let field: String
-    let reason: Reason
+    public let field: String
+    public let reason: Reason
   }
-  let engine: String
-  let sdkVersion: String?
-  let modelID: String?
-  let modelRevision: String?
-  let modelManifestHash: String?
-  let artifactHashes: [String: String]
-  let build: String?
-  let dirty: Bool?
-  let languageHint: String?
-  let automaticLanguage: Bool
-  let sampleRate: Int
-  let channels: Int
-  let inputSamples: Int
-  let inputDurationSeconds: Double
-  let inputSampleFormat: String
-  let windowSamples: Int
-  let overlapSamples: Int
-  let strideSamples: Int
-  let minimumPaddedSamples: Int
-  let operatingSystem: String?
-  let foldingRuntime: String?
-  private(set) var stageDurations: [String: Double]
-  private(set) var unavailableMetadata: [Unavailable]
+  public let engine: String
+  public let sdkVersion: String?
+  public let modelID: String?
+  public let modelRevision: String?
+  public let modelManifestHash: String?
+  public let artifactHashes: [String: String]
+  public let build: String?
+  public let dirty: Bool?
+  public let languageHint: String?
+  public let automaticLanguage: Bool
+  public let sampleRate: Int
+  public let channels: Int
+  public let inputSamples: Int
+  public let inputDurationSeconds: Double
+  public let inputSampleFormat: String
+  public let windowSamples: Int
+  public let overlapSamples: Int
+  public let strideSamples: Int
+  public let minimumPaddedSamples: Int
+  public let operatingSystem: String?
+  public let foldingRuntime: String?
+  public private(set) var stageDurations: [String: Double]
+  public private(set) var unavailableMetadata: [Unavailable]
 
   func recordingNormalization(seconds: Double) -> Self {
     var value = self
@@ -91,20 +91,20 @@ struct TranscriptionProvenance: Codable, Sendable {
 }
 
 /// Stored separately from summary rows, so history paging never retains raw evidence.
-struct TranscriptionQualityDetail: Codable, Sendable {
+public struct TranscriptionQualityDetail: Codable, Sendable {
   static let schemaVersion = 1
   static let maximumMetadataBytes = 131_072
   static let terminalReserveBytes = 4_096
   static let maximumSerializedBytes = 262_144
-  static let emptyVocabularyHash = hash("localflow-vocabulary-v1:[]")
+  public static let emptyVocabularyHash = hash("localflow-vocabulary-v1:[]")
 
   enum Failure: Error { case invalidMetadata, invalidHash, capacity, invalidText }
-  enum TimingValidation: String, Codable, Sendable { case valid, invalid, unavailable }
+  public enum TimingValidation: String, Codable, Sendable { case valid, invalid, unavailable }
   enum InvalidTiming: String, Codable, Sendable { case nan, positiveInfinity, negativeInfinity }
   struct Timing: Codable, Sendable {
     let seconds: Double?
     let invalid: InvalidTiming?
-    init(_ value: Double) {
+    public init(_ value: Double) {
       seconds = value.isFinite ? value : nil
       invalid =
         value.isFinite
@@ -116,22 +116,22 @@ struct TranscriptionQualityDetail: Codable, Sendable {
       }
     }
   }
-  struct TimingToken: Codable, Sendable {
+  public struct TimingToken: Codable, Sendable {
     let text: String
     let start: Timing
     let end: Timing
   }
-  struct RawWindow: Codable, Sendable {
-    let sequence: Int
-    let sampleStart: Int
-    let sampleCount: Int
-    let paddedSampleCount: Int
-    let text: String
-    let textHash: String
-    let timings: [TimingToken]?
-    let timingValidation: TimingValidation
+  public struct RawWindow: Codable, Sendable {
+    public let sequence: Int
+    public let sampleStart: Int
+    public let sampleCount: Int
+    public let paddedSampleCount: Int
+    public let text: String
+    public let textHash: String
+    public let timings: [TimingToken]?
+    public let timingValidation: TimingValidation
 
-    init(
+    public init(
       sequence: Int, sampleStart: Int, sampleCount: Int, paddedSampleCount: Int,
       text: String, timings: [TimingToken]?, timingValidation: TimingValidation
     ) {
@@ -145,8 +145,8 @@ struct TranscriptionQualityDetail: Codable, Sendable {
       self.timingValidation = timingValidation
     }
   }
-  struct CompletionReason: Codable, Sendable, Equatable, Hashable {
-    enum Code: String, Codable, Sendable {
+  public struct CompletionReason: Codable, Sendable, Equatable, Hashable {
+    public enum Code: String, Codable, Sendable {
       case uncertainJoin = "uncertain_join"
       case rawCapacity = "raw_capacity"
       case windowCapacity = "window_capacity"
@@ -164,19 +164,19 @@ struct TranscriptionQualityDetail: Codable, Sendable {
       case ambiguousVocabulary = "ambiguous_vocabulary"
       case emptyRecognition = "empty_recognition"
     }
-    let code: Code
-    let window: Int?
-    init(_ code: Code, window: Int? = nil) {
+    public let code: Code
+    public let window: Int?
+    public init(_ code: Code, window: Int? = nil) {
       self.code = code
       self.window = window
     }
   }
-  struct Attempt: Codable, Sendable {
-    enum Status: String, Codable, Sendable { case completed, failed, cancelled }
+  public struct Attempt: Codable, Sendable {
+    public enum Status: String, Codable, Sendable { case completed, failed, cancelled }
     let id: String
-    let engine: String
-    let status: Status
-    let duration: Double?
+    public let engine: String
+    public let status: Status
+    public let duration: Double?
     let unavailableReason: TranscriptionProvenance.Unavailable.Reason?
   }
   private struct Content: Codable, Sendable {
@@ -201,27 +201,27 @@ struct TranscriptionQualityDetail: Codable, Sendable {
     let ambiguousEntryIDs: [String]?
   }
   private let content: Content
-  let contentHash: String
-  var rawWindows: [RawWindow] { content.rawWindows }
-  var assembledText: String { content.assembledText }
-  var assembledHash: String { content.assembledHash }
-  var normalizedHash: String { content.normalizedHash }
-  var assemblyVersion: String { content.assemblyVersion }
-  var normalizationVersion: String { content.normalizationVersion }
-  var appliedRuleIDs: [String] { content.appliedRuleIDs }
-  var appliedEntryIDs: [String] { content.appliedEntryIDs }
-  var ambiguousEntryIDs: [String] { content.ambiguousEntryIDs ?? [] }
-  var vocabularyRevision: Int64 { content.vocabularyRevision }
-  var vocabularyHash: String { content.vocabularyHash }
-  var attempts: [Attempt] { content.attempts }
-  var selectedAttempt: Int { content.selectedAttempt }
-  var seams: [TranscriptAssembler.Seam] { content.seams ?? [] }
-  var provenance: TranscriptionProvenance { content.provenance }
-  var completionReasons: [CompletionReason] { content.completionReasons }
-  var incomplete: Bool { !completionReasons.isEmpty }
-  var payloadBytes: Int { (try? serialized().count) ?? Int.max }
+  public let contentHash: String
+  public var rawWindows: [RawWindow] { content.rawWindows }
+  public var assembledText: String { content.assembledText }
+  public var assembledHash: String { content.assembledHash }
+  public var normalizedHash: String { content.normalizedHash }
+  public var assemblyVersion: String { content.assemblyVersion }
+  public var normalizationVersion: String { content.normalizationVersion }
+  public var appliedRuleIDs: [String] { content.appliedRuleIDs }
+  public var appliedEntryIDs: [String] { content.appliedEntryIDs }
+  public var ambiguousEntryIDs: [String] { content.ambiguousEntryIDs ?? [] }
+  public var vocabularyRevision: Int64 { content.vocabularyRevision }
+  public var vocabularyHash: String { content.vocabularyHash }
+  public var attempts: [Attempt] { content.attempts }
+  public var selectedAttempt: Int { content.selectedAttempt }
+  public var seams: [TranscriptAssembler.Seam] { content.seams ?? [] }
+  public var provenance: TranscriptionProvenance { content.provenance }
+  public var completionReasons: [CompletionReason] { content.completionReasons }
+  public var incomplete: Bool { !completionReasons.isEmpty }
+  public var payloadBytes: Int { (try? serialized().count) ?? Int.max }
 
-  init(
+  public init(
     rawWindows: [RawWindow], assembledText: String, normalizedText: String,
     assemblyVersion: String, normalizationVersion: String,
     appliedRuleIDs: [String] = [], appliedEntryIDs: [String] = [],
@@ -262,7 +262,7 @@ struct TranscriptionQualityDetail: Codable, Sendable {
 
   /// Feature 012: the same evidence sealed for a changed delivered text (context
   /// spelling). `addingCompletionReasons` returns early with no reasons, so it cannot.
-  func resealed(normalizedText: String) throws -> Self {
+  public func resealed(normalizedText: String) throws -> Self {
     try Self(
       rawWindows: content.rawWindows, assembledText: content.assembledText,
       normalizedText: normalizedText, assemblyVersion: content.assemblyVersion,
@@ -274,7 +274,8 @@ struct TranscriptionQualityDetail: Codable, Sendable {
       ambiguousEntryIDs: content.ambiguousEntryIDs ?? [])
   }
 
-  func addingCompletionReasons(_ reasons: [CompletionReason], normalizedText: String) throws -> Self
+  public func addingCompletionReasons(_ reasons: [CompletionReason], normalizedText: String) throws
+    -> Self
   {
     guard !reasons.isEmpty else { return self }
     var combined = content.completionReasons
@@ -329,8 +330,8 @@ struct TranscriptionQualityDetail: Codable, Sendable {
     return unique
   }
 
-  static func hash(_ text: String) -> String { hash(Data(text.utf8)) }
-  static func hash(_ data: Data) -> String {
+  public static func hash(_ text: String) -> String { hash(Data(text.utf8)) }
+  public static func hash(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
   static func isHash(_ value: String) -> Bool {

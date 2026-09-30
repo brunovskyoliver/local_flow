@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// The meeting domain's view of meeting intelligence (Feature 011,
 /// contracts/client-analysis.md). "Analysis" here means meeting intelligence; the
@@ -105,10 +106,6 @@ struct WireSourceRef: Sendable, Equatable, Hashable, Encodable {
 
 // MARK: - Validated and stored analysis
 
-enum AnalysisLanguage: String, Sendable, Equatable, Codable, CaseIterable {
-  case sk, en, mixed
-}
-
 struct ValidatedSummary: Sendable, Equatable {
   var text: String
   var sources: [SourceRef]
@@ -120,14 +117,6 @@ struct ValidatedTopic: Sendable, Equatable {
   var summary: String
   var bullets: [String]
   var sources: [SourceRef]
-}
-
-enum AnalysisItemKind: String, Sendable, Equatable, CaseIterable {
-  case decision
-  case actionItem = "action_item"
-  case nextStep = "next_step"
-  case openQuestion = "open_question"
-  case risk
 }
 
 enum EvidenceClass: String, Sendable, Equatable, Encodable {
@@ -274,16 +263,6 @@ struct StoredAnalysis: Sendable, Equatable {
 }
 
 // MARK: - Overlays
-
-enum OverlayField: String, Sendable, Equatable, CaseIterable {
-  case summaryText = "summary_text"
-  case taskText = "task_text"
-  case decisionText = "decision_text"
-  case nextStepText = "next_step_text"
-  case owner
-  case dueDate = "due_date"
-  case status
-}
 
 enum OverlayTarget: Sendable, Equatable {
   case summary

@@ -1,4 +1,5 @@
 import AppKit
+import LocalFlowCore
 import SwiftUI
 
 /// A note reader with a persistent draft, paged transcript and an inline playback footer.

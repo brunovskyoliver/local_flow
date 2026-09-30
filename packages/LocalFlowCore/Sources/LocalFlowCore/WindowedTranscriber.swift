@@ -65,21 +65,21 @@ struct WindowTextAssembler {
   }
 }
 
-struct TranscriptionResult: Sendable {
-  let text: String
-  let incomplete: Bool
-  var detail: TranscriptionQualityDetail? = nil
-  var rawWindows: [TranscriptionQualityDetail.RawWindow] = []
-  var completionReasons: [TranscriptionQualityDetail.CompletionReason] = []
+public struct TranscriptionResult: Sendable {
+  public let text: String
+  public let incomplete: Bool
+  public var detail: TranscriptionQualityDetail? = nil
+  public var rawWindows: [TranscriptionQualityDetail.RawWindow] = []
+  public var completionReasons: [TranscriptionQualityDetail.CompletionReason] = []
   var needsNormalization = false
   /// Feature 013 keyword-spotter replacements, in window order.
   var boostHints: [VocabularyBoostHint] = []
   /// Feature 015: Dictionary keys V002 and V001 applied, set by `normalizedForDelivery`.
-  var dictionaryChanges: [DictionaryChange] = []
+  public var dictionaryChanges: [DictionaryChange] = []
 
   /// The session's admission-time snapshot decides V001; later edits never reach it.
   /// Spotter hints apply first, as V002, so V001 and formatting see the boosted text.
-  func normalizedForDelivery(vocabulary: VocabularySnapshot = .empty) -> Self {
+  public func normalizedForDelivery(vocabulary: VocabularySnapshot = .empty) -> Self {
     guard needsNormalization, let detail else { return self }
     let start = ProcessInfo.processInfo.systemUptime
     let boosted = VocabularyBoostApplier.apply(boostHints, to: detail.assembledText)
@@ -111,12 +111,17 @@ struct TranscriptionResult: Sendable {
 }
 
 /// A full window recognized while capture continued, replayed by the final pass.
-struct PrefetchedWindow: Sendable {
-  let window: TranscriptionWindow
+public struct PrefetchedWindow: Sendable {
+  public let window: TranscriptionWindow
   let recognitionSeconds: Double
+
+  public init(window: TranscriptionWindow, recognitionSeconds: Double) {
+    self.window = window
+    self.recognitionSeconds = recognitionSeconds
+  }
 }
 
-protocol DictationTranscribing: Sendable {
+public protocol DictationTranscribing: Sendable {
   func transcribe(spool: AudioSpool, lease: ModelLease, sampleCount: Int) async
     -> TranscriptionResult
   /// Samples in a window that is final once recorded; nil when nothing can be
@@ -155,20 +160,31 @@ extension DictationTranscribing {
   }
 }
 
-struct WindowedTranscriber: DictationTranscribing {
-  enum Profile: Sendable { case production, historical }
+public struct WindowedTranscriber: DictationTranscribing {
+  public enum Profile: Sendable { case production, historical }
   static let productionAssemblyVersion = "contiguous_fixed239360_preserve_v1"
   let lifecycle: ModelLifecycleCoordinator
   var profile: Profile = .production
   var identity = TranscriptionPipelineIdentity()
   var evidenceObserver: (@Sendable (Int, Int, Bool) async throws -> Void)? = nil
-  static let productionWindowSamples = 239_360
+  public static let productionWindowSamples = 239_360
+
+  public init(
+    lifecycle: ModelLifecycleCoordinator, profile: Profile = .production,
+    identity: TranscriptionPipelineIdentity = TranscriptionPipelineIdentity(),
+    evidenceObserver: (@Sendable (Int, Int, Bool) async throws -> Void)? = nil
+  ) {
+    self.lifecycle = lifecycle
+    self.profile = profile
+    self.identity = identity
+    self.evidenceObserver = evidenceObserver
+  }
 
   /// Production windows are contiguous, so each full one is final once recorded.
   /// Historical windows overlap and are recognized only after capture stops.
-  var liveWindowSamples: Int? { profile == .production ? Self.productionWindowSamples : nil }
+  public var liveWindowSamples: Int? { profile == .production ? Self.productionWindowSamples : nil }
 
-  func recognizeWindow(spool: AudioSpool, lease: ModelLease, startSample: Int) async throws
+  public func recognizeWindow(spool: AudioSpool, lease: ModelLease, startSample: Int) async throws
     -> PrefetchedWindow
   {
     guard profile == .production else { throw DictationFailure.invalidAudio }
@@ -182,13 +198,13 @@ struct WindowedTranscriber: DictationTranscribing {
       window: window, recognitionSeconds: ProcessInfo.processInfo.systemUptime - began)
   }
 
-  func transcribe(spool: AudioSpool, lease: ModelLease, sampleCount: Int) async
+  public func transcribe(spool: AudioSpool, lease: ModelLease, sampleCount: Int) async
     -> TranscriptionResult
   {
     await transcribe(spool: spool, lease: lease, sampleCount: sampleCount, prefetched: [:])
   }
 
-  func transcribe(
+  public func transcribe(
     spool: AudioSpool, lease: ModelLease, sampleCount: Int,
     prefetched: [Int: PrefetchedWindow]
   ) async -> TranscriptionResult {
@@ -240,7 +256,7 @@ struct WindowedTranscriber: DictationTranscribing {
 
   /// Supplies the recognized window at `(sampleStart, sampleCount)`. Local recognition
   /// reads the spool; remote dictation returns the window the server sent (Feature 014).
-  typealias WindowSource = @Sendable (Int, Int) async throws -> PrefetchedWindow
+  public typealias WindowSource = @Sendable (Int, Int) async throws -> PrefetchedWindow
 
   private func transcribeProduction(
     spool: AudioSpool, lease: ModelLease, sampleCount: Int,
@@ -260,7 +276,9 @@ struct WindowedTranscriber: DictationTranscribing {
     }
   }
 
-  func transcribe(sampleCount: Int, remote: [Int: PrefetchedWindow], model: RemoteModelIdentity)
+  public func transcribe(
+    sampleCount: Int, remote: [Int: PrefetchedWindow], model: RemoteModelIdentity
+  )
     async -> TranscriptionResult
   {
     var server = self
@@ -273,7 +291,7 @@ struct WindowedTranscriber: DictationTranscribing {
 
   /// The production loop over contiguous windows from sample 0. Assembly, admission,
   /// quality detail and boost hints are the same whichever source produced the windows.
-  func transcribe(sampleCount: Int, source: WindowSource) async -> TranscriptionResult {
+  public func transcribe(sampleCount: Int, source: WindowSource) async -> TranscriptionResult {
     guard (0...2_880_000).contains(sampleCount) else {
       return .init(text: "", incomplete: true, completionReasons: [.init(.invalidResult)])
     }
@@ -387,13 +405,13 @@ struct WindowedTranscriber: DictationTranscribing {
 }
 
 /// Whole-window evidence admission with explicit geometry and processing metadata headroom.
-struct RecognitionAdmission {
+public struct RecognitionAdmission: Sendable {
   struct Failure: Error {
     let reason: TranscriptionQualityDetail.CompletionReason.Code
   }
   let strideSamples: Int
   let processingReserveBytes: Int
-  init(strideSamples: Int = 207_360, processingReserveBytes: Int = 0) {
+  public init(strideSamples: Int = 207_360, processingReserveBytes: Int = 0) {
     self.strideSamples = strideSamples
     self.processingReserveBytes = processingReserveBytes
   }
@@ -401,7 +419,9 @@ struct RecognitionAdmission {
   private var rawBytes = 0
   private var metadataBytes = 2
 
-  mutating func append(_ result: TranscriptionWindow, sampleStart: Int, sampleCount: Int) throws {
+  public mutating func append(_ result: TranscriptionWindow, sampleStart: Int, sampleCount: Int)
+    throws
+  {
     guard [207_360, 239_360].contains(strideSamples),
       (0...24_576).contains(processingReserveBytes)
     else { throw Failure(reason: .invalidResult) }

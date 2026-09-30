@@ -1,5 +1,6 @@
 // Presentation adapted from Sotto HistoryPage.swift; see Resources/Sotto-LICENSE.txt.
 // Local history, search and recovery follow LocalFlow's Feature 001 contract.
+import LocalFlowCore
 import SwiftUI
 
 struct HistoryView: View {

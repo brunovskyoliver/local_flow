@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// Shared by `EnrollmentJob` and `MeetingIdentifier`: the accepted diarization run's

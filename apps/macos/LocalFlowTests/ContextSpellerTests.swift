@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 final class ContextSpellerTests: XCTestCase {
   private func name(_ text: String, _ source: ContextPart = .beforeCursor) -> ContextTerm {

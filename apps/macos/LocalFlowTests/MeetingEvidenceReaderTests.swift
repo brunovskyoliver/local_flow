@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T053 — `MeetingEvidenceReader`: the Feature 010 certainty → participant
 /// table, paged segment reads, effective roots after manual assignment and

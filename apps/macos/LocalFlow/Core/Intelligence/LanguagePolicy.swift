@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// `policy_v1` language detection (research R10). `detect` samples at most

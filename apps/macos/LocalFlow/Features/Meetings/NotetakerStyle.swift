@@ -1,3 +1,4 @@
+import LocalFlowCore
 import SwiftUI
 
 /// Shared, deliberately quiet controls for the reference Notetaker layout.

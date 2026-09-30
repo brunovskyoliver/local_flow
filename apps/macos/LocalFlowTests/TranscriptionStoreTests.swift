@@ -3,6 +3,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Deletes a test database with the WAL and shared-memory files SQLite leaves beside it.
 func removeDatabase(at url: URL) {

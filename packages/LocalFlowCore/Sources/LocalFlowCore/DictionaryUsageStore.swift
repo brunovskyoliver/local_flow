@@ -6,32 +6,32 @@ import OSLog
 /// Feature 015. What each Dictionary key did in real dictations and whether the user kept
 /// it. Rows hold identifiers, digests, counts and times only (FR-017). Shares the history
 /// database file; every call is one transaction.
-actor DictionaryUsageStore {
-  struct KeyUsage: Equatable, Sendable {
+public actor DictionaryUsageStore {
+  public struct KeyUsage: Equatable, Sendable {
     let entryID: String
-    let keyID: String
-    var state: KeyState
-    var applied = 0
-    var kept = 0
-    var reverted = 0
-    var lastUsedAt: Int64?
+    public let keyID: String
+    public var state: KeyState
+    public var applied = 0
+    public var kept = 0
+    public var reverted = 0
+    public var lastUsedAt: Int64?
     var retiredAt: Int64?
     var noticeShown = false
   }
 
-  struct RetiredKey: Hashable, Sendable {
-    let entryID: String
-    let keyID: String
+  public struct RetiredKey: Hashable, Sendable {
+    public let entryID: String
+    public let keyID: String
   }
 
   /// What the snapshot needs on every press: retired keys and use per entry.
-  struct Summary: Equatable, Sendable {
+  public struct Summary: Equatable, Sendable {
     var revision: Int64 = 0
     var retired: Set<RetiredKey> = []
     /// Latest use of any key and total applied, per entry.
     var use: [String: (lastUsedAt: Int64, applied: Int)] = [:]
 
-    static func == (lhs: Self, rhs: Self) -> Bool {
+    public static func == (lhs: Self, rhs: Self) -> Bool {
       lhs.revision == rhs.revision && lhs.retired == rhs.retired
         && lhs.use.keys == rhs.use.keys
         && lhs.use.allSatisfy { key, value in
@@ -43,12 +43,12 @@ actor DictionaryUsageStore {
 
   private let database: DatabasePool
 
-  init(history: TranscriptionStore) { database = history.database }
+  public init(history: TranscriptionStore) { database = history.database }
 
   /// Counts one dictation's changes as applied. A key without a row starts provisional
   /// when its entry was learned, established otherwise. Entries deleted since the
   /// dictation began are skipped.
-  func recordApplied(dictationID: UUID, changes: [DictionaryChange], now: Int64) throws {
+  public func recordApplied(dictationID: UUID, changes: [DictionaryChange], now: Int64) throws {
     guard !changes.isEmpty else { return }
     try database.write { db in
       for change in changes {
@@ -73,7 +73,7 @@ actor DictionaryUsageStore {
 
   /// Records what the user did with each change and applies the retirement rules.
   /// Returns keys that became retired. A change is counted at most once per dictation.
-  func classify(
+  public func classify(
     dictationID: UUID, outcomes: [(DictionaryChange, UsageOutcome)], now: Int64
   ) throws -> [RetiredKey] {
     guard !outcomes.isEmpty else { return [] }
@@ -120,7 +120,7 @@ actor DictionaryUsageStore {
   }
 
   /// Makes a retired key active again, trusted, with its revert count started over.
-  func restore(entryID: String, keyID: String) throws {
+  public func restore(entryID: String, keyID: String) throws {
     try database.write { db in
       try db.execute(
         sql: """
@@ -134,7 +134,7 @@ actor DictionaryUsageStore {
       "Dictionary key restored")
   }
 
-  func markNoticeShown(entryID: String, keyID: String) throws {
+  public func markNoticeShown(entryID: String, keyID: String) throws {
     try database.write { db in
       try db.execute(
         sql: "UPDATE dictionary_key_usage SET notice_shown = 1 WHERE entry_id = ? AND key_id = ?",
@@ -143,7 +143,7 @@ actor DictionaryUsageStore {
   }
 
   /// Every usage row, grouped by entry.
-  func usage() throws -> [String: [KeyUsage]] {
+  public func usage() throws -> [String: [KeyUsage]] {
     try database.read { db in
       var result: [String: [KeyUsage]] = [:]
       for row in try Row.fetchAll(db, sql: "SELECT * FROM dictionary_key_usage") {
@@ -154,7 +154,7 @@ actor DictionaryUsageStore {
     }
   }
 
-  func summary() throws -> Summary { try database.read(Self.summary) }
+  public func summary() throws -> Summary { try database.read(Self.summary) }
 
   // MARK: Shared with VocabularyStore (same database, its own transactions)
 

@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T023: `evidence_v1` determinism and the change matrix from research R8 —
 /// names are out, identity state is in, and the length-prefixed framing makes

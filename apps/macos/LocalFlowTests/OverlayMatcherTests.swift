@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T028 — `overlay_match_v1` re-matching after a regeneration.
 final class OverlayMatcherTests: XCTestCase {

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Five monotonic instants per attempt, captured on the main actor. The persisted
 /// spans and the metric records are derived here; the raw instants are not stored.

@@ -1,8 +1,13 @@
 import Foundation
 
-struct CorrectionCandidate: Equatable, Sendable {
+public struct CorrectionCandidate: Equatable, Sendable {
   let sourceText: String
   let replacementText: String
+
+  public init(sourceText: String, replacementText: String) {
+    self.sourceText = sourceText
+    self.replacementText = replacementText
+  }
   var sourceTokens: [String] {
     sourceText.precomposedStringWithCanonicalMapping.split(whereSeparator: \.isWhitespace).map(
       String.init)
@@ -13,27 +18,33 @@ struct CorrectionCandidate: Equatable, Sendable {
   }
 }
 
-enum CorrectionCandidateDisposition: String, Sendable {
+public enum CorrectionCandidateDisposition: String, Sendable {
   case autoLearn, suggest, ignore
 }
 
-struct CorrectionCandidateAssessment: Equatable, Sendable {
-  enum Reason: String, Sendable {
+public struct CorrectionCandidateAssessment: Equatable, Sendable {
+  public enum Reason: String, Sendable {
     case invalidSpan, protectedLiteral, formattingOnly, functionWords, commonWords
     case ordinaryEdit, lowSimilarity, technicalShape, canonicalMatch, closeSpelling, repeated
     case firstSighting
   }
-  let score: Int
-  let disposition: CorrectionCandidateDisposition
+  public let score: Int
+
+  public let disposition: CorrectionCandidateDisposition
   let reasons: [Reason]
 }
 
-struct CorrectionCandidateContext: Sendable {
+public struct CorrectionCandidateContext: Sendable {
   var canonicalTerms: [String] = []
   var previousObservations: Int = 0
+
+  public init(canonicalTerms: [String] = [], previousObservations: Int = 0) {
+    self.canonicalTerms = canonicalTerms
+    self.previousObservations = previousObservations
+  }
 }
 
-protocol CorrectionCandidateScoring: Sendable {
+public protocol CorrectionCandidateScoring: Sendable {
   func assess(_ candidate: CorrectionCandidate, context: CorrectionCandidateContext)
     -> CorrectionCandidateAssessment
 }

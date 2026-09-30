@@ -4,18 +4,18 @@ import LocalFlowSpeech
 import OSLog
 
 /// One preferred spelling. Canonical text is replacement output; aliases are explicit sources.
-struct VocabularyEntry: Codable, Sendable, Equatable, Identifiable {
-  static let maximumAliases = 8
-  static let maximumTermBytes = 256
+public struct VocabularyEntry: Codable, Sendable, Equatable, Identifiable {
+  public static let maximumAliases = 8
+  public static let maximumTermBytes = 256
   static let maximumTermScalars = 64
-  let id: String
-  let canonical: String
-  let aliases: [String]
-  let enabled: Bool
+  public let id: String
+  public let canonical: String
+  public let aliases: [String]
+  public let enabled: Bool
   /// Milliseconds since 1970 when the entry was learned from an observed correction; nil if manual.
-  let learnedAt: Int64?
+  public let learnedAt: Int64?
 
-  init(
+  public init(
     id: String = UUID().uuidString, canonical: String, aliases: [String] = [], enabled: Bool = true,
     learnedAt: Int64? = nil
   ) {
@@ -25,27 +25,27 @@ struct VocabularyEntry: Codable, Sendable, Equatable, Identifiable {
     self.enabled = enabled
     self.learnedAt = learnedAt
   }
-  var isLearned: Bool { learnedAt != nil }
+  public var isLearned: Bool { learnedAt != nil }
 }
 
 /// Revision and content hash identify the whole stored set, including disabled entries.
-struct VocabularyState: Sendable, Equatable {
+public struct VocabularyState: Sendable, Equatable {
   static let schemaVersion = 1
-  let revision: Int64
-  let contentHash: String
+  public let revision: Int64
+  public let contentHash: String
   let payloadBytes: Int
 }
 
 /// A field-addressed rejection. Codes carry no term text so they are safe to log.
-struct VocabularyEditError: Error, Equatable, Sendable {
-  enum Field: Equatable, Hashable, Sendable {
+public struct VocabularyEditError: Error, Equatable, Sendable {
+  public enum Field: Equatable, Hashable, Sendable {
     case canonical
     case alias(Int)
     case aliases
     case entry
     case store
   }
-  enum Code: String, Sendable {
+  public enum Code: String, Sendable {
     case empty
     case multiline
     case control
@@ -67,11 +67,17 @@ struct VocabularyEditError: Error, Equatable, Sendable {
     case invalidID = "invalid_id"
     case damaged
   }
-  let field: Field
-  let code: Code
-  var conflictingEntryID: String? = nil
+  public let field: Field
+  public let code: Code
+  public var conflictingEntryID: String? = nil
 
-  var message: String {
+  public init(field: Field, code: Code, conflictingEntryID: String? = nil) {
+    self.field = field
+    self.code = code
+    self.conflictingEntryID = conflictingEntryID
+  }
+
+  public var message: String {
     switch code {
     case .empty: return "Enter a term."
     case .multiline: return "Use one line."
@@ -97,13 +103,13 @@ struct VocabularyEditError: Error, Equatable, Sendable {
   }
 }
 
-enum VocabularyValidation {
+public enum VocabularyValidation {
   /// NFC plus locale-independent simple lowercase mapping per scalar. No diacritic,
   /// compatibility or multi-character folding: `ß` stays distinct from `ss`.
-  static func fold(_ term: String) -> [Unicode.Scalar] { TermFolding.fold(term) }
+  public static func fold(_ term: String) -> [Unicode.Scalar] { TermFolding.fold(term) }
 
   /// Letter, mark, number or underscore: a whole-term match cannot touch one of these.
-  static func isTermScalar(_ scalar: Unicode.Scalar) -> Bool {
+  public static func isTermScalar(_ scalar: Unicode.Scalar) -> Bool {
     if scalar == "_" { return true }
     switch scalar.properties.generalCategory {
     case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
@@ -114,7 +120,7 @@ enum VocabularyValidation {
     }
   }
 
-  static func termCode(_ term: String) -> VocabularyEditError.Code? {
+  public static func termCode(_ term: String) -> VocabularyEditError.Code? {
     let scalars = Array(term.unicodeScalars)
     guard !scalars.isEmpty else { return .empty }
     if scalars.contains(where: { $0 == "\n" || $0 == "\r" }) { return .multiline }
@@ -334,7 +340,7 @@ enum VocabularyValidation {
 }
 
 /// Immutable per-session view: revision/hash of the whole set plus enabled matching keys.
-struct VocabularySnapshot: Sendable {
+public struct VocabularySnapshot: Sendable {
   static let maximumKeys = 4_608
   struct Key: Sendable {
     let scalars: [Unicode.Scalar]
@@ -343,24 +349,24 @@ struct VocabularySnapshot: Sendable {
     /// Feature 015: `DictionaryChange.keyID(for:)` of this term.
     var keyID = ""
   }
-  let revision: Int64
-  let hash: String
-  let entries: [VocabularyEntry]
+  public let revision: Int64
+  public let hash: String
+  public let entries: [VocabularyEntry]
   let keysByFirstScalar: [Unicode.Scalar: [Key]]
   /// Feature 015: keys the user kept undoing. V001 and the boost skip them.
   private(set) var retired: Set<DictionaryUsageStore.RetiredKey> = []
   /// Feature 015: latest use and applied total per entry, for boost ranking.
   var use: [String: (lastUsedAt: Int64, applied: Int)] = [:]
-  var isEmpty: Bool { keysByFirstScalar.isEmpty }
-  var retiredBoostEntryIDs: Set<String> {
+  public var isEmpty: Bool { keysByFirstScalar.isEmpty }
+  public var retiredBoostEntryIDs: Set<String> {
     Set(retired.filter { $0.keyID == DictionaryChange.boostKeyID }.map(\.entryID))
   }
-  func isRetired(entryID: String, term: String) -> Bool {
+  public func isRetired(entryID: String, term: String) -> Bool {
     !retired.isEmpty
       && retired.contains(.init(entryID: entryID, keyID: DictionaryChange.keyID(for: term)))
   }
 
-  static let empty = VocabularySnapshot(
+  public static let empty = VocabularySnapshot(
     revision: 0, hash: TranscriptionQualityDetail.emptyVocabularyHash, keys: [], entries: [])
 
   private init(revision: Int64, hash: String, keys: [Key], entries: [VocabularyEntry]) {
@@ -381,7 +387,7 @@ struct VocabularySnapshot: Sendable {
   }
 
   /// Validates every stored entry, including disabled ones, then keeps enabled keys.
-  init(
+  public init(
     revision: Int64, hash: String, entries: [VocabularyEntry], verifyFormatting: Bool = true,
     retired: Set<DictionaryUsageStore.RetiredKey> = []
   ) throws {
@@ -413,21 +419,21 @@ struct VocabularySnapshot: Sendable {
 }
 
 extension VocabularySnapshot: Equatable {
-  static func == (lhs: Self, rhs: Self) -> Bool {
+  public static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.revision == rhs.revision && lhs.hash == rhs.hash && lhs.entries == rhs.entries
       && lhs.retired == rhs.retired
   }
 }
 
 /// Shares the history database file and its 128 MiB ceiling; every edit is one transaction.
-actor VocabularyStore {
-  static let maximumEntries = 512
+public actor VocabularyStore {
+  public static let maximumEntries = 512
   static let maximumPayloadBytes = 1_048_576
   static let serializationPrefix = "localflow-vocabulary-v1:"
 
-  struct Contents: Sendable, Equatable {
-    let state: VocabularyState
-    let entries: [VocabularyEntry]
+  public struct Contents: Sendable, Equatable {
+    public let state: VocabularyState
+    public let entries: [VocabularyEntry]
   }
 
   private let database: DatabasePool
@@ -439,10 +445,10 @@ actor VocabularyStore {
     (state: VocabularyState, usageRevision: Int64, snapshot: VocabularySnapshot)?
   private var usageFailureLogged = false
 
-  init(history: TranscriptionStore) { database = history.database }
+  public init(history: TranscriptionStore) { database = history.database }
 
   /// The editor's single current view: every entry, validated as stored.
-  func contents() throws -> Contents {
+  public func contents() throws -> Contents {
     let cached = validated
     let loaded = try database.read { db in try Self.load(db, cached: cached) }
     validated = (loaded.contents.state.contentHash, loaded.table)
@@ -452,7 +458,7 @@ actor VocabularyStore {
   /// Enabled entries under the current revision, or a load failure that blocks admission.
   /// Called on every dictation press, so it reads only the state row when a cached
   /// snapshot exists and rebuilds (reload, re-serialize, re-hash) only after a change.
-  func snapshot() throws -> VocabularySnapshot {
+  public func snapshot() throws -> VocabularySnapshot {
     let usageRevision = usageRead(DictionaryUsageStore.revision) ?? -1
     if let cached = cachedSnapshot, cached.usageRevision == usageRevision,
       try database.read(Self.loadState) == cached.state
@@ -507,13 +513,15 @@ actor VocabularyStore {
 
   /// A save from the Dictionary editor: every key of the entry becomes established.
   @discardableResult
-  func save(_ entry: VocabularyEntry, expectedRevision: Int64? = nil) throws -> VocabularyState {
+  public func save(_ entry: VocabularyEntry, expectedRevision: Int64? = nil) throws
+    -> VocabularyState
+  {
     try save(entry, expectedRevision: expectedRevision, keyState: .established)
   }
 
   /// A save from the correction learner: the entry's keys start provisional (Feature 015).
   @discardableResult
-  func saveLearned(_ entry: VocabularyEntry, expectedRevision: Int64? = nil) throws
+  public func saveLearned(_ entry: VocabularyEntry, expectedRevision: Int64? = nil) throws
     -> VocabularyState
   {
     try save(entry, expectedRevision: expectedRevision, keyState: .provisional)
@@ -548,7 +556,7 @@ actor VocabularyStore {
   }
 
   @discardableResult
-  func setEnabled(id: String, enabled: Bool, expectedRevision: Int64? = nil) throws
+  public func setEnabled(id: String, enabled: Bool, expectedRevision: Int64? = nil) throws
     -> VocabularyState
   {
     try mutate(expectedRevision: expectedRevision) { entries, _ in
@@ -568,7 +576,7 @@ actor VocabularyStore {
   }
 
   @discardableResult
-  func delete(id: String, expectedRevision: Int64? = nil) throws -> VocabularyState {
+  public func delete(id: String, expectedRevision: Int64? = nil) throws -> VocabularyState {
     try mutate(expectedRevision: expectedRevision) { entries, _ in
       guard entries.contains(where: { $0.id == id }) else {
         throw VocabularyEditError(field: .entry, code: .missingEntry)
@@ -685,7 +693,7 @@ extension VocabularyBoostTerms {
   /// Enabled entries whose boost is not retired, most recently used first (Feature 015),
   /// then unused ones by ID as in Feature 013; at most 256. The key names the chosen set,
   /// so the rescorer rebuilds when ranking, retirement or content changes it.
-  init?(snapshot: VocabularySnapshot?) {
+  public init?(snapshot: VocabularySnapshot?) {
     guard let snapshot, !snapshot.entries.isEmpty else { return nil }
     let retiredBoosts = snapshot.retiredBoostEntryIDs
     let enabled = snapshot.entries.filter(\.enabled)

@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// The `RewriteSettings` snapshot rules from `data-model.md`, "Rewrite settings".
 @MainActor

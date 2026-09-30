@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Immutable snapshot of the rewrite preferences captured on the main actor at
 /// admission time. Later Settings changes never alter an admitted attempt. The

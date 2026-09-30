@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 
 /// Owns one native worker. Blocking pipe operations stay off the cooperative executor;

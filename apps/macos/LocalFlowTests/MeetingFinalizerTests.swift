@@ -3,6 +3,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// FR-010 to FR-012, FR-018 and US5/US6: the final pass over durable audio.

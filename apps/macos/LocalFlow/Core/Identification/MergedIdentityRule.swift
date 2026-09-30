@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Research R11 (FR-026a): the effective identity of a display root with merged members.
 /// A `merged` resolution row wins; otherwise the `self` rows of the root and its members

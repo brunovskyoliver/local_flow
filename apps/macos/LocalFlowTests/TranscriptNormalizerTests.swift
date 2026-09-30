@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 final class TranscriptNormalizerTests: XCTestCase {
   func testScalarBufferPreservesAllUTF8Widths() {

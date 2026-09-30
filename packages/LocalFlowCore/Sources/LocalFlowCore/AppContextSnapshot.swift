@@ -2,14 +2,14 @@ import CryptoKit
 import Foundation
 
 /// Field kind of the focused element (`contracts/context-snapshot.md`).
-enum FieldKind: String, Codable, CaseIterable, Sendable {
+public enum FieldKind: String, Codable, CaseIterable, Sendable {
   case singleLine = "single_line"
   case multiLine = "multi_line"
   case search, code, terminal, unknown
 }
 
 /// One capture outcome per dictation; stored in `dictation_contexts.outcome`.
-enum ContextOutcome: String, Codable, CaseIterable, Sendable {
+public enum ContextOutcome: String, Codable, CaseIterable, Sendable {
   case used, off
   case excludedApp = "excluded_app"
   case ownApp = "own_app"
@@ -21,44 +21,68 @@ enum ContextOutcome: String, Codable, CaseIterable, Sendable {
 }
 
 /// The four text parts a snapshot can carry, in wire spelling.
-enum ContextPart: String, Codable, CaseIterable, Sendable {
+public enum ContextPart: String, Codable, CaseIterable, Sendable {
   case windowTitle = "window_title"
   case beforeCursor = "before_cursor"
   case afterCursor = "after_cursor"
   case selectedText = "selected_text"
 }
 
-struct ContextTerm: Codable, Equatable, Hashable, Sendable {
-  enum Kind: String, Codable, Sendable { case name, identifier }
-  static let maximumBytes = 64
-  let text: String
-  let source: ContextPart
-  let kind: Kind
+public struct ContextTerm: Codable, Equatable, Hashable, Sendable {
+  public enum Kind: String, Codable, Sendable { case name, identifier }
+  public static let maximumBytes = 64
+  public let text: String
+  public let source: ContextPart
+  public let kind: Kind
+
+  public init(text: String, source: ContextPart, kind: Kind) {
+    self.text = text
+    self.source = source
+    self.kind = kind
+  }
 }
 
 /// The bounded, redacted snapshot. Its canonical JSON is exactly what is stored
 /// and what a v2 rewrite request carries; the bundle ID is never part of it.
-struct AppContextSnapshot: Codable, Equatable, Sendable {
+public struct AppContextSnapshot: Codable, Equatable, Sendable {
   static let schemaVersion = 1
-  static let maximumBytes = 8_192
-  static let maximumTerms = 40
-  static let appNameBytes = 128
-  static let windowTitleCharacters = 200
-  static let beforeCharacters = 1_000
-  static let afterCharacters = 300
-  static let selectedCharacters = 2_000
+  public static let maximumBytes = 8_192
+  public static let maximumTerms = 40
+  public static let appNameBytes = 128
+  public static let windowTitleCharacters = 200
+  public static let beforeCharacters = 1_000
+  public static let afterCharacters = 300
+  public static let selectedCharacters = 2_000
 
   var schemaVersion = AppContextSnapshot.schemaVersion
-  var appName: String?
-  var appCategory: AppCategory
-  var fieldKind: FieldKind
-  var windowTitle: String?
-  var beforeCursor: String?
-  var afterCursor: String?
-  var selectedText: String?
-  var terms: [ContextTerm] = []
-  var truncated: [String] = []
-  var styleHints = false
+  public var appName: String?
+  public var appCategory: AppCategory
+  public var fieldKind: FieldKind
+  public var windowTitle: String?
+  public var beforeCursor: String?
+  public var afterCursor: String?
+  public var selectedText: String?
+  public var terms: [ContextTerm] = []
+  public var truncated: [String] = []
+  public var styleHints = false
+
+  public init(
+    appName: String? = nil, appCategory: AppCategory, fieldKind: FieldKind,
+    windowTitle: String? = nil, beforeCursor: String? = nil, afterCursor: String? = nil,
+    selectedText: String? = nil, terms: [ContextTerm] = [], truncated: [String] = [],
+    styleHints: Bool = false
+  ) {
+    self.appName = appName
+    self.appCategory = appCategory
+    self.fieldKind = fieldKind
+    self.windowTitle = windowTitle
+    self.beforeCursor = beforeCursor
+    self.afterCursor = afterCursor
+    self.selectedText = selectedText
+    self.terms = terms
+    self.truncated = truncated
+    self.styleHints = styleHints
+  }
 
   enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
@@ -74,77 +98,39 @@ struct AppContextSnapshot: Codable, Equatable, Sendable {
   }
 
   /// Raw parts as read, before redaction and bounds.
-  struct Parts: Sendable, Equatable {
-    var appName: String?
-    var appCategory: AppCategory = .other
-    var fieldKind: FieldKind = .unknown
-    var windowTitle: String?
-    var beforeCursor: String?
-    var afterCursor: String?
-    var selectedText: String?
+  public struct Parts: Sendable, Equatable {
+    public var appName: String?
+    public var appCategory: AppCategory = .other
+    public var fieldKind: FieldKind = .unknown
+    public var windowTitle: String?
+    public var beforeCursor: String?
+    public var afterCursor: String?
+    public var selectedText: String?
     /// The selection was longer than the bound and was not read.
-    var selectedTooLarge = false
-  }
+    public var selectedTooLarge = false
 
-  /// Redacts, bounds each part, extracts terms and enforces the serialized limit.
-  static func make(_ parts: Parts, styleHints: Bool = false) -> AppContextSnapshot {
-    var truncated: [String] = []
-    func note(_ part: ContextPart) {
-      if !truncated.contains(part.rawValue) { truncated.append(part.rawValue) }
+    public init(
+      appName: String? = nil, appCategory: AppCategory = .other, fieldKind: FieldKind = .unknown,
+      windowTitle: String? = nil, beforeCursor: String? = nil, afterCursor: String? = nil,
+      selectedText: String? = nil, selectedTooLarge: Bool = false
+    ) {
+      self.appName = appName
+      self.appCategory = appCategory
+      self.fieldKind = fieldKind
+      self.windowTitle = windowTitle
+      self.beforeCursor = beforeCursor
+      self.afterCursor = afterCursor
+      self.selectedText = selectedText
+      self.selectedTooLarge = selectedTooLarge
     }
-    func clean(_ text: String?) -> String? {
-      guard let text else { return nil }
-      let redacted = ContextTermExtractor.redact(text.precomposedStringWithCanonicalMapping)
-      return redacted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : redacted
-    }
-    var snapshot = AppContextSnapshot(
-      appName: parts.appName.flatMap { $0.isEmpty ? nil : prefix($0, bytes: appNameBytes) },
-      appCategory: parts.appCategory, fieldKind: parts.fieldKind, styleHints: styleHints)
-    if let title = clean(parts.windowTitle) {
-      if title.count > windowTitleCharacters { note(.windowTitle) }
-      snapshot.windowTitle = String(title.prefix(windowTitleCharacters))
-    }
-    if let before = clean(parts.beforeCursor) {
-      if before.count > beforeCharacters { note(.beforeCursor) }
-      snapshot.beforeCursor = String(before.suffix(beforeCharacters))
-    }
-    if let after = clean(parts.afterCursor) {
-      if after.count > afterCharacters { note(.afterCursor) }
-      snapshot.afterCursor = String(after.prefix(afterCharacters))
-    }
-    if parts.selectedTooLarge {
-      note(.selectedText)
-    } else if let selected = clean(parts.selectedText) {
-      if selected.count > selectedCharacters {
-        note(.selectedText)
-      } else {
-        snapshot.selectedText = selected
-      }
-    }
-    snapshot.terms = ContextTermExtractor.terms(
-      windowTitle: snapshot.windowTitle, before: snapshot.beforeCursor,
-      after: snapshot.afterCursor, selected: snapshot.selectedText)
-    snapshot.truncated = truncated
-    // Fixed drop order until the canonical bytes fit.
-    for part in [ContextPart.afterCursor, .beforeCursor, .selectedText, .windowTitle] {
-      guard snapshot.canonicalJSON().count > maximumBytes else { break }
-      switch part {
-      case .afterCursor: snapshot.afterCursor = nil
-      case .beforeCursor: snapshot.beforeCursor = nil
-      case .selectedText: snapshot.selectedText = nil
-      case .windowTitle: snapshot.windowTitle = nil
-      }
-      if !snapshot.truncated.contains(part.rawValue) { snapshot.truncated.append(part.rawValue) }
-    }
-    return snapshot
   }
 
   /// True when any text part or the title survived.
-  var hasText: Bool {
+  public var hasText: Bool {
     windowTitle != nil || beforeCursor != nil || afterCursor != nil || selectedText != nil
   }
 
-  func text(of part: ContextPart) -> String? {
+  public func text(of part: ContextPart) -> String? {
     switch part {
     case .windowTitle: windowTitle
     case .beforeCursor: beforeCursor
@@ -154,20 +140,20 @@ struct AppContextSnapshot: Codable, Equatable, Sendable {
   }
 
   /// Sorted keys, no whitespace, absent parts omitted.
-  func canonicalJSON() -> Data {
+  public func canonicalJSON() -> Data {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     // Every field is a string, bool, int or array of those; encoding cannot fail.
     return (try? encoder.encode(self)) ?? Data()
   }
 
-  var canonicalString: String { String(decoding: canonicalJSON(), as: UTF8.self) }
+  public var canonicalString: String { String(decoding: canonicalJSON(), as: UTF8.self) }
 
-  static func hash(_ data: Data) -> String {
+  public static func hash(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 
-  var hash: String { Self.hash(canonicalJSON()) }
+  public var hash: String { Self.hash(canonicalJSON()) }
 
   static func decode(_ json: String) throws -> AppContextSnapshot {
     let snapshot = try JSONDecoder().decode(AppContextSnapshot.self, from: Data(json.utf8))
@@ -179,7 +165,7 @@ struct AppContextSnapshot: Codable, Equatable, Sendable {
   }
 
   /// Longest prefix of whole characters within `bytes` UTF-8 bytes.
-  static func prefix(_ text: String, bytes: Int) -> String {
+  public static func prefix(_ text: String, bytes: Int) -> String {
     guard text.utf8.count > bytes else { return text }
     var result = ""
     var used = 0
@@ -194,43 +180,49 @@ struct AppContextSnapshot: Codable, Equatable, Sendable {
 }
 
 /// What one read produced. `durationMs` covers the whole read.
-struct AppContextCapture: Sendable, Equatable {
-  let outcome: ContextOutcome
-  var snapshot: AppContextSnapshot?
+public struct AppContextCapture: Sendable, Equatable {
+  public let outcome: ContextOutcome
+  public var snapshot: AppContextSnapshot?
   var bundleID: String?
-  var durationMs: Int?
+  public var durationMs: Int?
 
-  static let off = AppContextCapture(outcome: .off)
-}
-
-/// Immutable settings taken at the press, so a change applies to the next dictation.
-struct ContextSettings: Sendable, Equatable {
-  var enabled = false
-  var rewriteEnabled = false
-  var styleEnabled = false
-  var excludedBundleIDs: Set<String> = AppCategory.defaultExclusions
-  var categoryOverrides: [String: AppCategory] = [:]
-  var ownBundleID = AppCategory.ownBundleID
-
-  static let disabled = ContextSettings()
-
-  func isExcluded(_ bundleID: String) -> Bool {
-    bundleID == ownBundleID || excludedBundleIDs.contains(bundleID)
+  public init(
+    outcome: ContextOutcome, snapshot: AppContextSnapshot? = nil, bundleID: String? = nil,
+    durationMs: Int? = nil
+  ) {
+    self.outcome = outcome
+    self.snapshot = snapshot
+    self.bundleID = bundleID
+    self.durationMs = durationMs
   }
+
+  public static let off = AppContextCapture(outcome: .off)
 }
 
 /// One local spelling change (`data-model.md`, "Context spelling change").
-struct ContextSpellingChange: Codable, Equatable, Sendable {
-  enum Match: String, Codable, Sendable {
+public struct ContextSpellingChange: Codable, Equatable, Sendable {
+  public enum Match: String, Codable, Sendable {
     case exactFold = "exact_fold"
     case nearName = "near_name"
   }
-  let original: String
-  let replacement: String
-  let sourcePart: ContextPart
-  let start: Int
-  let length: Int
+  public let original: String
+  public let replacement: String
+  public let sourcePart: ContextPart
+  public let start: Int
+  public let length: Int
   let match: Match
+
+  public init(
+    original: String, replacement: String, sourcePart: ContextPart, start: Int, length: Int,
+    match: Match
+  ) {
+    self.original = original
+    self.replacement = replacement
+    self.sourcePart = sourcePart
+    self.start = start
+    self.length = length
+    self.match = match
+  }
 
   enum CodingKeys: String, CodingKey {
     case original, replacement
@@ -240,24 +232,26 @@ struct ContextSpellingChange: Codable, Equatable, Sendable {
 }
 
 /// The `dictation_contexts` row. Written once, in the entry's commit transaction.
-struct DictationContextRecord: Sendable, Equatable {
-  static let maximumPreSpellingBytes = 65_536
-  static let maximumChangesBytes = 32_768
+public struct DictationContextRecord: Sendable, Equatable {
+  public static let maximumPreSpellingBytes = 65_536
+  public static let maximumChangesBytes = 32_768
 
-  var outcome: ContextOutcome
+  public var outcome: ContextOutcome
   var captureMs: Int?
   var appBundleID: String?
-  var snapshotJSON: String?
-  var preSpellingText: String?
-  var spellingChangesJSON: String?
-  var spellerVersion: Int?
-  var rewriteNote: String?
+  public var snapshotJSON: String?
+  public var preSpellingText: String?
+  public var spellingChangesJSON: String?
+  public var spellerVersion: Int?
+  public var rewriteNote: String?
 
-  var snapshotHash: String? { snapshotJSON.map { AppContextSnapshot.hash(Data($0.utf8)) } }
+  public var snapshotHash: String? { snapshotJSON.map { AppContextSnapshot.hash(Data($0.utf8)) } }
 
-  var snapshot: AppContextSnapshot? { snapshotJSON.flatMap { try? AppContextSnapshot.decode($0) } }
+  public var snapshot: AppContextSnapshot? {
+    snapshotJSON.flatMap { try? AppContextSnapshot.decode($0) }
+  }
 
-  var spellingChanges: [ContextSpellingChange] {
+  public var spellingChanges: [ContextSpellingChange] {
     guard let spellingChangesJSON else { return [] }
     return
       (try? JSONDecoder().decode([ContextSpellingChange].self, from: Data(spellingChangesJSON.utf8)))
@@ -291,10 +285,10 @@ struct DictationContextRecord: Sendable, Equatable {
     }
   }
 
-  static let serverUnsupported = "server_unsupported"
+  public static let serverUnsupported = "server_unsupported"
 
   /// Row for a capture with no spelling applied.
-  init(capture: AppContextCapture) {
+  public init(capture: AppContextCapture) {
     guard capture.outcome != .off else {
       self.init(outcome: .off)
       return
@@ -308,7 +302,7 @@ struct DictationContextRecord: Sendable, Equatable {
       snapshotJSON: capture.snapshot?.canonicalString)
   }
 
-  init(
+  public init(
     outcome: ContextOutcome, captureMs: Int? = nil, appBundleID: String? = nil,
     snapshotJSON: String? = nil, preSpellingText: String? = nil,
     spellingChangesJSON: String? = nil, spellerVersion: Int? = nil, rewriteNote: String? = nil
