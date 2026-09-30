@@ -34,7 +34,7 @@ python3 scripts/analysis-quality.py "$analysis_eval_dir/analysis-eval.json"
   "$log_scan_dir/go-remote.log"
 # Feature 014: the speech worker target compiles on its own.
 xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -target flowd-speech -configuration Debug \
-  CODE_SIGNING_ALLOWED=NO SYMROOT="$PWD/build/SpeechWorker" build
+  CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO SYMROOT="$PWD/build/SpeechWorker" build
 .specify/scripts/bash/check-prerequisites.sh --json
 printf 'Repository checks and deterministic XCTest passed. Signed platform, dictation and hardware acceptance are separate.
 '
