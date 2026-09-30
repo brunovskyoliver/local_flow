@@ -68,6 +68,11 @@ struct CorrectionCandidateScorer: CorrectionCandidateScoring {
       score += 2
       reasons.append(.repeated)
     }
+    // Feature 015: one observed edit only suggests, unless it spells a known canonical;
+    // the same correction seen again (even after a restart) may learn.
+    if score >= 6, context.previousObservations == 0, !canonical {
+      return .init(score: score, disposition: .suggest, reasons: reasons + [.firstSighting])
+    }
     return .init(score: score, disposition: score >= 6 ? .autoLearn : .suggest, reasons: reasons)
   }
 

@@ -266,10 +266,26 @@ final class WaveformHistory {
   }
 }
 
-/// "Added to dictionary" in the indicator's capsule, with Undo ringed by a draining countdown.
+/// "Added to dictionary" with Undo, or (Feature 015) a retired alias with Restore, in the
+/// indicator's capsule; the action is ringed by a draining countdown.
 struct LearnedNoticeView: View {
   let notice: LearnedNotice
   let undo: () -> Void
+
+  private var message: String {
+    switch notice.kind {
+    case .learned: "Added to dictionary"
+    case .retired(_, let alias) where alias == notice.canonical:
+      "Stopped listening for \u{2018}\(notice.canonical)\u{2019}"
+    case .retired(_, let alias):
+      "Stopped changing \u{2018}\(alias)\u{2019} to \u{2018}\(notice.canonical)\u{2019}"
+    }
+  }
+  private var actionTitle: String { notice.kind == .learned ? "Undo" : "Restore" }
+  private var actionLabel: String {
+    notice.kind == .learned
+      ? "Undo adding \(notice.canonical) to dictionary" : "Restore \(notice.canonical)"
+  }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var remaining: Double = 1
 
@@ -277,12 +293,12 @@ struct LearnedNoticeView: View {
     HStack(spacing: 10) {
       Image(systemName: "sparkles").font(.flow(size: 11, weight: .semibold))
         .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255).opacity(0.9))
-      Text("Added to dictionary").font(.flow(size: 12, weight: .medium))
+      Text(message).font(.flow(size: 12, weight: .medium))
         .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255))
-        .lineLimit(1)
+        .lineLimit(1).truncationMode(.middle).frame(maxWidth: 360, alignment: .leading)
       Spacer(minLength: 4)
       Button(action: undo) {
-        Text("Undo").font(.flow(size: 11, weight: .semibold))
+        Text(actionTitle).font(.flow(size: 11, weight: .semibold))
           .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255))
           .padding(.horizontal, 12).padding(.vertical, 6)
           .background(.white.opacity(0.1), in: Capsule())
@@ -297,8 +313,9 @@ struct LearnedNoticeView: View {
           .padding(1)
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("Undo adding \(notice.canonical) to dictionary")
-      .accessibilityIdentifier("dictionary.notice.undo")
+      .accessibilityLabel(actionLabel)
+      .accessibilityIdentifier(
+        notice.kind == .learned ? "dictionary.notice.undo" : "dictionary.notice.restore")
     }
     .padding(.leading, 14).padding(.trailing, 5)
     .frame(height: 38)
@@ -306,7 +323,9 @@ struct LearnedNoticeView: View {
     .background(Color(red: 36 / 255, green: 37 / 255, blue: 34 / 255), in: Capsule())
     .overlay { Capsule().strokeBorder(.white.opacity(0.13), lineWidth: 1) }
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("Added \(notice.canonical) to dictionary")
+    .accessibilityLabel(
+      notice.kind == .learned ? "Added \(notice.canonical) to dictionary" : message
+    )
     .onAppear {
       guard !reduceMotion else { return }
       withAnimation(.linear(duration: LearnedNotice.undoWindow.seconds)) { remaining = 0 }

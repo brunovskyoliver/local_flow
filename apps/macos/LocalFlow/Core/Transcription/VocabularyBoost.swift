@@ -4,8 +4,8 @@ import NaturalLanguage
 /// Feature 013 (ADR 0027). The Dictionary's enabled canonical terms for one dictation,
 /// handed to the speech runtime so its CTC keyword spotter can check them against audio.
 struct VocabularyBoostTerms: Sendable, Equatable {
-  /// FluidAudio validated its rescorer up to 230 terms without latency loss.
-  // ponytail: first 256 enabled entries by ID; rank by use if a Dictionary ever outgrows it.
+  /// FluidAudio validated its rescorer up to 230 terms without latency loss. Entries are
+  /// ranked by recent use when a Dictionary outgrows it (Feature 015).
   static let maximumTerms = 256
   struct Term: Sendable, Equatable {
     let entryID: String
@@ -143,12 +143,13 @@ enum VocabularyBoostApplier {
   /// Applies hints in order, each after the previous one, keeping the punctuation around
   /// the replaced span. A hint whose span is no longer in the text is skipped.
   static func apply(_ hints: [VocabularyBoostHint], to text: String) -> (
-    text: String, entryIDs: [String]
+    text: String, entryIDs: [String], changes: [DictionaryChange]
   ) {
-    guard !hints.isEmpty else { return (text, []) }
+    guard !hints.isEmpty else { return (text, [], []) }
     var tokens = text.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
     var cursor = 0
     var applied: [String] = []
+    var changes = Set<DictionaryChange>()
     for hint in hints {
       let span = hint.source.split(separator: " ").map(String.init)
       guard !span.isEmpty, cursor + span.count <= tokens.count else { continue }
@@ -163,7 +164,10 @@ enum VocabularyBoostApplier {
         start..<(start + span.count), with: [lead + hint.canonical + String(trail.reversed())])
       cursor = start + 1
       applied.append(hint.entryID)
+      changes.insert(
+        DictionaryChange(
+          entryID: hint.entryID, keyID: DictionaryChange.boostKeyID, canonical: hint.canonical))
     }
-    return (tokens.joined(separator: " "), applied)
+    return (tokens.joined(separator: " "), applied, DictionaryChange.sorted(changes))
   }
 }

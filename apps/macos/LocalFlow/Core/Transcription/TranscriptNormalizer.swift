@@ -17,6 +17,8 @@ struct TranscriptNormalizer: Sendable {
     /// Entries whose overlapping candidates were left unchanged; detail only, never logs.
     let ambiguousEntryIDs: [String]
     let reasons: [Reason]
+    /// Feature 015: the Dictionary keys V001 (and, in delivery, V002) applied.
+    var dictionaryChanges: [DictionaryChange] = []
     var reason: Reason? { reasons.first }
     var incomplete: Bool { !reasons.isEmpty }
   }
@@ -49,6 +51,7 @@ struct TranscriptNormalizer: Sendable {
     var applied = Set<String>()
     var appliedEntries = Set<String>()
     var ambiguousEntries = Set<String>()
+    var changes = Set<DictionaryChange>()
     let unexpectedControl = input.unicodeScalars.contains {
       ($0.properties.generalCategory == .control || $0.properties.generalCategory == .format)
         && $0 != "\r" && $0 != "\n" && $0 != "\t"
@@ -66,7 +69,8 @@ struct TranscriptNormalizer: Sendable {
           case 4: next = try commas(text)
           default:
             next = try vocabularyTerms(
-              text, appliedEntries: &appliedEntries, ambiguousEntries: &ambiguousEntries)
+              text, appliedEntries: &appliedEntries, ambiguousEntries: &ambiguousEntries,
+              changes: &changes)
           }
           if !next.utf8.elementsEqual(text.utf8) {
             applied.insert(rule == 5 ? "V001" : "N00\(rule)")
@@ -80,7 +84,8 @@ struct TranscriptNormalizer: Sendable {
           if !ambiguousEntries.isEmpty { reasons.append(.ambiguousVocabulary) }
           return Result(
             text: text, appliedRuleIDs: applied.sorted(), appliedEntryIDs: appliedEntries.sorted(),
-            ambiguousEntryIDs: ambiguousEntries.sorted(), reasons: reasons)
+            ambiguousEntryIDs: ambiguousEntries.sorted(), reasons: reasons,
+            dictionaryChanges: DictionaryChange.sorted(changes))
         }
       }
       return fallback(.normalizationNonconvergent)
@@ -279,12 +284,14 @@ struct TranscriptNormalizer: Sendable {
     let range: Range<Int>
     let entryID: String
     let canonical: String
+    var keyID = ""
   }
 
   /// V001: literal folded whole-term matches against a stable pass input. Overlapping
   /// candidates are never ranked; the whole group stays unchanged and is reported.
   private func vocabularyTerms(
-    _ input: String, appliedEntries: inout Set<String>, ambiguousEntries: inout Set<String>
+    _ input: String, appliedEntries: inout Set<String>, ambiguousEntries: inout Set<String>,
+    changes: inout Set<DictionaryChange>
   ) throws -> String {
     ambiguousEntries.removeAll()
     guard !vocabulary.isEmpty else { return input }
@@ -329,7 +336,7 @@ struct TranscriptNormalizer: Sendable {
           continue
         }
         let candidate = Candidate(
-          range: sourceRange, entryID: key.entryID, canonical: key.canonical)
+          range: sourceRange, entryID: key.entryID, canonical: key.canonical, keyID: key.keyID)
         guard
           seen.insert(Candidate(range: sourceRange, entryID: "", canonical: key.canonical))
             .inserted
@@ -365,6 +372,9 @@ struct TranscriptNormalizer: Sendable {
       for position in cursor..<candidate.range.lowerBound { try output.append(source[position]) }
       try output.append(candidate.canonical)
       applied.insert(candidate.entryID)
+      changes.insert(
+        DictionaryChange(
+          entryID: candidate.entryID, keyID: candidate.keyID, canonical: candidate.canonical))
       cursor = candidate.range.upperBound
     }
     for position in cursor..<source.count { try output.append(source[position]) }

@@ -318,4 +318,36 @@ final class VocabularyNormalizationTests: XCTestCase {
     XCTAssertEqual(result.reasons, [.unexpectedControl, .ambiguousVocabulary])
     XCTAssertEqual(result.text, "a b c\u{0001}")
   }
+
+  // MARK: Feature 015
+
+  func testV001ReportsTheMatchedKey() throws {
+    let snapshot = try snapshot([
+      VocabularyEntry(id: "john", canonical: "John", aliases: ["jon"]),
+      VocabularyEntry(id: "zabbix", canonical: "Zabbix"),
+    ])
+    let result = TranscriptNormalizer(vocabulary: snapshot).normalize("ask jon about zabbix")
+    XCTAssertEqual(result.text, "ask John about Zabbix")
+    XCTAssertEqual(
+      result.dictionaryChanges,
+      [
+        DictionaryChange(
+          entryID: "john", keyID: DictionaryChange.keyID(for: "jon"), canonical: "John"),
+        DictionaryChange(
+          entryID: "zabbix", keyID: DictionaryChange.keyID(for: "Zabbix"), canonical: "Zabbix"),
+      ])
+    XCTAssertEqual(DictionaryChange.keyID(for: "JON"), DictionaryChange.keyID(for: "jon"))
+    XCTAssertEqual(DictionaryChange.keyID(for: "jon").count, 32)
+  }
+
+  func testV001ReportsNothingForCanonicalTextOrAmbiguousOverlaps() throws {
+    let snapshot = try snapshot([
+      VocabularyEntry(id: "john", canonical: "John", aliases: ["jon"]),
+      VocabularyEntry(id: "a", canonical: "A B", aliases: []),
+      VocabularyEntry(id: "b", canonical: "B C", aliases: []),
+    ])
+    let normalizer = TranscriptNormalizer(vocabulary: snapshot)
+    XCTAssertEqual(normalizer.normalize("ask John").dictionaryChanges, [])
+    XCTAssertEqual(normalizer.normalize("a b c").dictionaryChanges, [])
+  }
 }

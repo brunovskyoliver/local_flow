@@ -73,6 +73,8 @@ struct TranscriptionResult: Sendable {
   var needsNormalization = false
   /// Feature 013 keyword-spotter replacements, in window order.
   var boostHints: [VocabularyBoostHint] = []
+  /// Feature 015: Dictionary keys V002 and V001 applied, set by `normalizedForDelivery`.
+  var dictionaryChanges: [DictionaryChange] = []
 
   /// The session's admission-time snapshot decides V001; later edits never reach it.
   /// Spotter hints apply first, as V002, so V001 and formatting see the boosted text.
@@ -91,9 +93,12 @@ struct TranscriptionResult: Sendable {
       let updated = try detail.normalized(
         normalized,
         duration: ProcessInfo.processInfo.systemUptime - start, vocabulary: vocabulary)
-      return Self(
+      var result = Self(
         text: normalized.text, incomplete: incomplete || updated.incomplete,
         detail: updated, rawWindows: rawWindows, completionReasons: updated.completionReasons)
+      result.dictionaryChanges = DictionaryChange.sorted(
+        Set(boosted.changes + formatted.dictionaryChanges))
+      return result
     } catch {
       // Keep the entire admitted envelope if formatting metadata cannot be committed.
       // The coordinator adds the terminal failure to its reserved diagnostic space.

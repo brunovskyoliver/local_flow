@@ -200,6 +200,10 @@ struct DictionaryView: View {
         ForEach(entries) { entry in
           DictionaryRow(
             entry: entry, busy: model.saving,
+            usage: model.usageSummary(for: entry),
+            provisional: model.isProvisional(entry),
+            retired: model.retiredTerms(for: entry),
+            restore: { term in Task { await model.restore(entry, term) } },
             edit: { model.beginEdit(entry) },
             toggle: { Task { await model.setEnabled(entry, !entry.enabled) } },
             delete: { confirmingDelete = entry })
@@ -216,19 +220,76 @@ struct DictionaryView: View {
 private struct DictionaryRow: View {
   let entry: VocabularyEntry
   let busy: Bool
+  /// Feature 015: how the entry is doing, whether it is still being tried, and retired keys.
+  let usage: String
+  let provisional: Bool
+  let retired: [VocabularyViewModel.RetiredTerm]
+  let restore: (VocabularyViewModel.RetiredTerm) -> Void
   let edit: () -> Void
   let toggle: () -> Void
   let delete: () -> Void
   @State private var hovering = false
 
+  private var retiredAliases: Set<String> {
+    Set(retired.filter { !$0.isBoost && $0.term != entry.canonical }.map(\.term))
+  }
+
   var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      header
+      HStack(spacing: 8) {
+        Text(verbatim: usage).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+          .accessibilityIdentifier("dictionary.entry.usage")
+        ForEach(retired) { term in
+          Button {
+            restore(term)
+          } label: {
+            Text(term.isBoost ? "Boost off · Restore" : "Restore \u{2018}\(term.term)\u{2019}")
+              .font(.flow(size: 11, weight: .medium))
+          }
+          .buttonStyle(DictionaryPillButtonStyle()).disabled(busy)
+          .help("Stopped after you undid it. Restore to use it again.")
+          .accessibilityIdentifier("dictionary.alias.restore")
+        }
+      }
+    }
+    .font(.flow(size: 15))
+    .foregroundStyle(entry.enabled ? SottoPalette.ink : SottoPalette.muted)
+    .padding(.horizontal, 18).padding(.vertical, 10)
+    .frame(minHeight: 53)
+    .contentShape(Rectangle())
+    .onHover { hovering = $0 }
+    .contextMenu {
+      Button("Edit", action: edit)
+      Button(entry.enabled ? "Disable" : "Enable", action: toggle)
+      Button("Delete", role: .destructive, action: delete)
+    }
+    .accessibilityElement(children: .contain)
+  }
+
+  private var header: some View {
     HStack(spacing: 10) {
       if entry.aliases.isEmpty {
         Text(verbatim: entry.canonical)
+          .strikethrough(retired.contains { $0.term == entry.canonical && !$0.isBoost })
       } else {
-        Text(verbatim: entry.aliases.joined(separator: ", "))
+        HStack(spacing: 0) {
+          ForEach(Array(entry.aliases.enumerated()), id: \.offset) { index, alias in
+            Text(verbatim: alias).strikethrough(retiredAliases.contains(alias))
+              .opacity(retiredAliases.contains(alias) ? 0.55 : 1)
+            if index < entry.aliases.count - 1 { Text(verbatim: ", ") }
+          }
+        }
         Image(systemName: "arrow.right").font(.flow(size: 10, weight: .semibold))
         Text(verbatim: entry.canonical)
+      }
+      if provisional {
+        Text("Learning").font(.flow(size: 11)).foregroundStyle(SottoPalette.muted)
+          .padding(.horizontal, 6).padding(.vertical, 2)
+          .background(SottoPalette.tint, in: Capsule())
+          .help(
+            "Learned from one correction. Kept three times, it is trusted; undone once, it turns off."
+          )
       }
       if entry.isLearned {
         Image(systemName: "sparkles").font(.flow(size: 10))
@@ -252,18 +313,6 @@ private struct DictionaryRow: View {
         .buttonStyle(DictionaryPillButtonStyle()).disabled(busy)
       }
     }
-    .font(.flow(size: 15))
-    .foregroundStyle(entry.enabled ? SottoPalette.ink : SottoPalette.muted)
-    .padding(.horizontal, 18).padding(.vertical, 12)
-    .frame(minHeight: 53)
-    .contentShape(Rectangle())
-    .onHover { hovering = $0 }
-    .contextMenu {
-      Button("Edit", action: edit)
-      Button(entry.enabled ? "Disable" : "Enable", action: toggle)
-      Button("Delete", role: .destructive, action: delete)
-    }
-    .accessibilityElement(children: .contain)
   }
 }
 

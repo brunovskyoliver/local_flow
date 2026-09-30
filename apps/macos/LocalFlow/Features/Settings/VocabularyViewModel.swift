@@ -8,6 +8,16 @@ protocol VocabularyEditing: Sendable {
   func setEnabled(id: String, enabled: Bool, expectedRevision: Int64?) async throws
     -> VocabularyState
   func delete(id: String, expectedRevision: Int64?) async throws -> VocabularyState
+  /// Feature 015: a save by the correction learner, whose keys start provisional.
+  func saveLearned(_ entry: VocabularyEntry, expectedRevision: Int64?) async throws
+    -> VocabularyState
+}
+extension VocabularyEditing {
+  func saveLearned(_ entry: VocabularyEntry, expectedRevision: Int64?) async throws
+    -> VocabularyState
+  {
+    try await save(entry, expectedRevision: expectedRevision)
+  }
 }
 extension VocabularyStore: VocabularyEditing {}
 
@@ -45,6 +55,9 @@ final class VocabularyViewModel {
   private(set) var status: String?
   /// Feature 013: terms to approve; empty without a suggestion store.
   private(set) var suggestions: [TermSuggestion] = []
+  /// Feature 015: usage rows per entry; empty without a usage store.
+  private(set) var usageByEntry: [String: [DictionaryUsageStore.KeyUsage]] = [:]
+  @ObservationIgnored var usage: DictionaryUsageStore?
   @ObservationIgnored private let store: any VocabularyEditing
   @ObservationIgnored private let suggestionStore: TermSuggestionStore?
 
@@ -88,7 +101,84 @@ final class VocabularyViewModel {
       loadError = DictationErrorMessage.describe(error)
     }
     loaded = true
+    // Usage is advisory like suggestions: a read failure hides it.
+    usageByEntry = (try? await usage?.usage()) ?? [:]
     await refreshSuggestions()
+  }
+
+  // MARK: Feature 015 usage
+
+  /// A retired key of an entry, with the text it matches (the canonical for a boost).
+  struct RetiredTerm: Equatable, Identifiable {
+    let keyID: String
+    let term: String
+    var isBoost: Bool { keyID == DictionaryChange.boostKeyID }
+    var id: String { keyID }
+  }
+
+  func usageSummary(for entry: VocabularyEntry, now: Date = Date(), locale: Locale = .current)
+    -> String
+  {
+    let rows = usageByEntry[entry.id] ?? []
+    return Self.usageText(
+      applied: rows.map(\.applied).reduce(0, +), kept: rows.map(\.kept).reduce(0, +),
+      reverted: rows.map(\.reverted).reduce(0, +), lastUsedAt: rows.compactMap(\.lastUsedAt).max(),
+      now: now, locale: locale)
+  }
+
+  nonisolated static func usageText(
+    applied: Int, kept: Int, reverted: Int, lastUsedAt: Int64?, now: Date = Date(),
+    locale: Locale = .current
+  ) -> String {
+    guard applied > 0 else { return "Unused" }
+    var parts = ["Used \(applied)"]
+    if kept + reverted == 0 {
+      parts.append("not checked yet")
+    } else {
+      parts.append("kept \(kept)")
+      if reverted > 0 { parts.append("undone \(reverted)") }
+    }
+    if let lastUsedAt {
+      let date = Date(timeIntervalSince1970: Double(lastUsedAt) / 1000)
+      var style = Date.FormatStyle(locale: locale).day().month(.abbreviated)
+      if !Calendar.current.isDate(date, equalTo: now, toGranularity: .year) {
+        style = style.year()
+      }
+      parts.append(date.formatted(style))
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  /// Learned entries are provisional until kept; a row decides once one exists.
+  func isProvisional(_ entry: VocabularyEntry) -> Bool {
+    let rows = (usageByEntry[entry.id] ?? []).filter { $0.keyID != DictionaryChange.boostKeyID }
+    guard !rows.isEmpty else { return entry.isLearned }
+    return rows.contains { $0.state == .provisional }
+  }
+
+  func retiredTerms(for entry: VocabularyEntry) -> [RetiredTerm] {
+    let retired = Set((usageByEntry[entry.id] ?? []).filter { $0.state == .retired }.map(\.keyID))
+    guard !retired.isEmpty else { return [] }
+    var terms = ([entry.canonical] + entry.aliases).compactMap { term -> RetiredTerm? in
+      let keyID = DictionaryChange.keyID(for: term)
+      return retired.contains(keyID) ? RetiredTerm(keyID: keyID, term: term) : nil
+    }
+    if retired.contains(DictionaryChange.boostKeyID) {
+      terms.append(RetiredTerm(keyID: DictionaryChange.boostKeyID, term: entry.canonical))
+    }
+    return terms
+  }
+
+  func restore(_ entry: VocabularyEntry, _ term: RetiredTerm) async {
+    guard let usage else { return }
+    do {
+      try await usage.restore(entryID: entry.id, keyID: term.keyID)
+    } catch {
+      status = "Could not restore \(term.term). Try again."
+      return
+    }
+    status = term.isBoost ? "Listening for \(entry.canonical) again." : "Restored \(term.term)."
+    await refresh()
   }
 
   /// Suggestions are advisory: a read failure hides them and leaves the Dictionary usable.

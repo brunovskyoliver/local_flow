@@ -69,6 +69,12 @@ final class VocabularyBoostTests: XCTestCase {
       hints, to: "It speaks TR069, and (Swift UI. works) in Swift UI.")
     XCTAssertEqual(result.text, "It speaks TR-069, and (SwiftUI. works) in Swift UI.")
     XCTAssertEqual(result.entryIDs, ["tr", "swift"])
+    XCTAssertEqual(
+      result.changes,
+      [
+        DictionaryChange(entryID: "swift", keyID: "boost", canonical: "SwiftUI"),
+        DictionaryChange(entryID: "tr", keyID: "boost", canonical: "TR-069"),
+      ])
   }
 
   func testApplierReplacesRepeatedSpansInWindowOrder() {
@@ -85,12 +91,50 @@ final class VocabularyBoostTests: XCTestCase {
     ])
     let terms = try XCTUnwrap(VocabularyBoostTerms(snapshot: snapshot))
     XCTAssertEqual(terms.terms, [.init(entryID: "b", canonical: "Wispr Flow")])
-    XCTAssertEqual(terms.key, snapshot.hash)
+    XCTAssertTrue(terms.key.hasPrefix(snapshot.hash + ":"))
     XCTAssertTrue(terms.governs("Whisperflow,"))
     XCTAssertTrue(terms.governs("wispr flow"))
     XCTAssertFalse(terms.governs("Keycloak"))
     XCTAssertNil(VocabularyBoostTerms(snapshot: .empty))
     XCTAssertNil(VocabularyBoostTerms(snapshot: nil))
+  }
+
+  // MARK: Feature 015 ranking
+
+  func testBoostRanksRecentlyUsedEntriesFirstAndDropsRetiredBoosts() throws {
+    let entries = (0..<300).map {
+      VocabularyEntry(id: String(format: "e%03d", $0), canonical: "Term\($0)x")
+    }
+    var snapshot = try VocabularySnapshot(
+      revision: 1, hash: TranscriptionQualityDetail.hash(VocabularyValidation.serialize(entries)),
+      entries: entries, verifyFormatting: false,
+      retired: [.init(entryID: "e299", keyID: DictionaryChange.boostKeyID)])
+    snapshot.use = [
+      "e250": (lastUsedAt: 200, applied: 1), "e260": (lastUsedAt: 300, applied: 1),
+      "e270": (lastUsedAt: 200, applied: 5), "e299": (lastUsedAt: 900, applied: 9),
+    ]
+    let terms = try XCTUnwrap(VocabularyBoostTerms(snapshot: snapshot))
+    XCTAssertEqual(terms.terms.count, VocabularyBoostTerms.maximumTerms)
+    XCTAssertEqual(terms.terms.prefix(4).map(\.entryID), ["e260", "e270", "e250", "e000"])
+    XCTAssertFalse(terms.terms.contains { $0.entryID == "e299" })
+
+    var restored = try VocabularySnapshot(
+      revision: 1, hash: snapshot.hash, entries: entries, verifyFormatting: false)
+    restored.use = snapshot.use
+    XCTAssertNotEqual(try XCTUnwrap(VocabularyBoostTerms(snapshot: restored)).key, terms.key)
+  }
+
+  func testRetiredAliasIsNotAppliedAndNotGoverned() throws {
+    let entries = [VocabularyEntry(id: "john", canonical: "John", aliases: ["jon", "jhon"])]
+    let snapshot = try VocabularySnapshot(
+      revision: 1, hash: TranscriptionQualityDetail.hash(VocabularyValidation.serialize(entries)),
+      entries: entries,
+      retired: [.init(entryID: "john", keyID: DictionaryChange.keyID(for: "jon"))])
+    let normalizer = TranscriptNormalizer(vocabulary: snapshot)
+    XCTAssertEqual(normalizer.normalize("ask jon and jhon").text, "ask jon and John")
+    let terms = try XCTUnwrap(VocabularyBoostTerms(snapshot: snapshot))
+    XCTAssertFalse(terms.governs("jon"))
+    XCTAssertTrue(terms.governs("jhon"))
   }
 
   func testLifecycleHandsTheLeaseDictionaryToTheRuntime() async throws {

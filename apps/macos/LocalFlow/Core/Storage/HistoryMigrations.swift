@@ -893,6 +893,48 @@ enum HistoryMigrations {
           );
           """)
     }
+    // Feature 015: what each Dictionary key does in real dictations, and corrections
+    // seen before. Identifiers, digests, counts and times only; never text.
+    migrator.registerMigration("dictionary-usage-v16") { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE dictionary_key_usage (
+            entry_id TEXT NOT NULL REFERENCES vocabulary_entries(id) ON DELETE CASCADE,
+            key_id TEXT NOT NULL CHECK(length(key_id) BETWEEN 1 AND 32),
+            state TEXT NOT NULL CHECK(state IN ('provisional','established','retired')),
+            applied INTEGER NOT NULL DEFAULT 0 CHECK(applied >= 0),
+            kept INTEGER NOT NULL DEFAULT 0 CHECK(kept >= 0),
+            reverted INTEGER NOT NULL DEFAULT 0 CHECK(reverted >= 0),
+            last_used_at INTEGER,
+            retired_at INTEGER,
+            retired_from TEXT CHECK(retired_from IS NULL OR retired_from IN ('provisional','established')),
+            notice_shown INTEGER NOT NULL DEFAULT 0 CHECK(notice_shown IN (0,1)),
+            PRIMARY KEY(entry_id, key_id),
+            CHECK((state = 'retired') = (retired_at IS NOT NULL))
+          ) WITHOUT ROWID;
+          CREATE INDEX dictionary_key_usage_last_used ON dictionary_key_usage(last_used_at);
+          CREATE TABLE dictionary_usage_events (
+            id INTEGER PRIMARY KEY,
+            dictation_id TEXT NOT NULL,
+            entry_id TEXT NOT NULL,
+            key_id TEXT NOT NULL,
+            outcome TEXT NOT NULL CHECK(outcome IN ('applied','kept','reverted','unclassified')),
+            at INTEGER NOT NULL,
+            UNIQUE(dictation_id, entry_id, key_id)
+          );
+          CREATE INDEX dictionary_usage_events_entry ON dictionary_usage_events(entry_id);
+          CREATE TABLE dictionary_usage_state (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            revision INTEGER NOT NULL CHECK(revision >= 0)
+          );
+          INSERT INTO dictionary_usage_state (id, revision) VALUES (1, 0);
+          CREATE TABLE correction_sightings (
+            digest BLOB PRIMARY KEY CHECK(length(digest) = 32),
+            count INTEGER NOT NULL CHECK(count BETWEEN 1 AND 3),
+            last_seen INTEGER NOT NULL
+          ) WITHOUT ROWID;
+          """)
+    }
     return migrator
   }
 

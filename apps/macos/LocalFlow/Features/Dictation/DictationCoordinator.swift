@@ -179,8 +179,11 @@ final class DictationCoordinator {
   var successfulDictation: ((TranscriptionEntry) -> Void)?
   var historyChanged: (() -> Void)?
   var sessionStarted: ((UUID) -> Void)?
-  /// Fires once automatic insertion is confirmed, with the inserted text and its target.
-  var insertionConfirmed: ((String, CapturedTarget) -> Void)?
+  /// Fires once automatic insertion is confirmed, with the inserted text, its target, the
+  /// dictation and the Dictionary keys that shaped the text (Feature 015).
+  var insertionConfirmed: ((String, CapturedTarget, UUID, [DictionaryChange]) -> Void)?
+  /// Feature 015: fires once per committed dictation whose text a Dictionary key changed.
+  var dictionaryApplied: ((UUID, [DictionaryChange]) -> Void)?
   /// Fires when saved text did not land in a field; the text is on the clipboard by then.
   var clipboardFallback: ((ClipboardNotice) -> Void)?
   @ObservationIgnored private var explicitCancellation: (() -> Void)?
@@ -671,6 +674,7 @@ final class DictationCoordinator {
         ).normalizedForDelivery(vocabulary: session.vocabulary ?? .empty)
       }
       recognized = (result, audio.sampleCount)
+      let dictionaryChanges = result.dictionaryChanges
       consumeControls()
       if cancelled { contextRead?.cancel() }
       let capture = await contextRead?.value ?? .off
@@ -715,6 +719,9 @@ final class DictationCoordinator {
           persistenceNanoseconds = DispatchTime.now().uptimeNanoseconds &- persistStarted
           session.reservation = nil
           successfulDictation?(saved)
+          if !dictionaryChanges.isEmpty {
+            dictionaryApplied?(saved.id, dictionaryChanges)
+          }
         } catch {
           unsavedEnvelope = envelope
           unsavedReservation = session.reservation
@@ -826,7 +833,7 @@ final class DictationCoordinator {
           if let notice { setRewriteNotice(notice) }
           // Correction learning reads the field back, which a terminal paste never allows.
           if outcome == .confirmed, target.delivery == .typing {
-            insertionConfirmed?(textToInsert, target)
+            insertionConfirmed?(textToInsert, target, saved.id, dictionaryChanges)
           }
           if outcome != .confirmed {
             offerClipboard(

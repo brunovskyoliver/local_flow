@@ -586,16 +586,72 @@ final class AppServices {
       let suggestionStore = TermSuggestionStore(history: paths.1)
       let vocabularyModel = VocabularyViewModel(store: vocabulary, suggestions: suggestionStore)
       self.vocabularyModel = vocabularyModel
+      let usage = DictionaryUsageStore(history: paths.1)
+      vocabularyModel.usage = usage
       let learner = CorrectionLearner(
         reader: insertion, store: vocabulary,
-        isEnabled: { [weak self] in self?.preferences.learnCorrections ?? false })
+        isEnabled: { [weak self] in self?.preferences.learnCorrections ?? false },
+        sightings: CorrectionSightingStore(history: paths.1))
       self.learner = learner
       learner.noticeChanged = { [weak self, weak learner] notice in
         guard let self else { return }
         self.panel.showNotice(notice, targetPoint: self.coordinator?.targetDisplayPoint) {
-          Task { await learner?.undo() }
+          guard let notice else { return }
+          switch notice.kind {
+          case .learned: Task { await learner?.undo() }
+          case .retired(let keyID, _):
+            learner?.dismiss()
+            Task {
+              try? await usage.restore(entryID: notice.entryID, keyID: keyID)
+              vocabularyModel.reload()
+            }
+          }
         }
         if notice == nil { vocabularyModel.reload() }
+      }
+      // Feature 015: count what each Dictionary key did, and retire keys the user undoes.
+      coordinator.dictionaryApplied = { id, changes in
+        Task.detached {
+          do {
+            try await usage.recordApplied(
+              dictationID: id, changes: changes, now: Int64(Date().timeIntervalSince1970 * 1000))
+          } catch {
+            Logger(subsystem: "org.localflow.LocalFlow", category: "dictionary").error(
+              "Dictionary usage not recorded")
+          }
+        }
+      }
+      learner.classified = { [weak learner, weak vocabularyModel] id, outcomes in
+        Task { @MainActor in
+          let retired: [DictionaryUsageStore.RetiredKey]
+          do {
+            retired = try await usage.classify(
+              dictationID: id, outcomes: outcomes, now: Int64(Date().timeIntervalSince1970 * 1000))
+          } catch {
+            Logger(subsystem: "org.localflow.LocalFlow", category: "dictionary").error(
+              "Dictionary usage not classified")
+            return
+          }
+          let counts = Dictionary(grouping: outcomes, by: \.1.rawValue).mapValues(\.count)
+          Logger(subsystem: "org.localflow.LocalFlow", category: "dictionary").notice(
+            "Dictionary changes classified: \(counts.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "), privacy: .public) retired=\(retired.count)"
+          )
+          guard !retired.isEmpty else { return }
+          let entries = (try? await vocabulary.contents().entries) ?? []
+          for key in retired {
+            guard let entry = entries.first(where: { $0.id == key.entryID }) else { continue }
+            let alias =
+              ([entry.canonical] + entry.aliases).first {
+                DictionaryChange.keyID(for: $0) == key.keyID
+              } ?? entry.canonical
+            learner?.showRetired(
+              LearnedNotice(
+                entryID: entry.id, canonical: entry.canonical, shownAt: ContinuousClock().now,
+                kind: .retired(keyID: key.keyID, alias: alias)))
+            try? await usage.markNoticeShown(entryID: key.entryID, keyID: key.keyID)
+          }
+          vocabularyModel?.reload()
+        }
       }
       learner.stopped = { [weak vocabularyModel] reason in
         Logger(subsystem: "org.localflow.LocalFlow", category: "dictionary").notice(
@@ -609,8 +665,8 @@ final class AppServices {
           vocabularyModel?.reload()
         }
       }
-      coordinator.insertionConfirmed = { [weak learner] text, target in
-        learner?.observe(inserted: text, target: target)
+      coordinator.insertionConfirmed = { [weak learner] text, target, id, changes in
+        learner?.observe(inserted: text, target: target, changes: changes, dictationID: id)
       }
       historyModel = HistoryViewModel(store: paths.1, rewriter: rewriteCoordinator)
       // Feature 014: dictations waiting for the server and the recognition path label.

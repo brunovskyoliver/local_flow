@@ -85,12 +85,62 @@ enum CorrectionDetector {
   }
 }
 
-/// One "Added to dictionary" bubble with its undo deadline.
+/// One Dictionary bubble with its action deadline: "Added to dictionary" with Undo, or
+/// (Feature 015) a retired alias with Restore.
 struct LearnedNotice: Equatable, Sendable {
+  enum Kind: Equatable, Sendable {
+    case learned
+    /// `alias` is the retired key's text; the canonical spelling itself for a boost.
+    case retired(keyID: String, alias: String)
+  }
   static let undoWindow: Duration = .seconds(6)
   let entryID: String
   let canonical: String
   let shownAt: ContinuousClock.Instant
+  var kind: Kind = .learned
+}
+
+/// Where corrections seen before are counted. Production persists digests (Feature 015).
+protocol CorrectionSightingRecording: Sendable {
+  func observe(_ candidate: CorrectionCandidate, now: Int64) async throws -> Int
+}
+extension CorrectionSightingStore: CorrectionSightingRecording {}
+
+/// Session-only sightings, for tests and for a store that could not be opened.
+actor InMemoryCorrectionSightings: CorrectionSightingRecording {
+  private var counts: [Data: Int] = [:]
+  func observe(_ candidate: CorrectionCandidate, now: Int64) -> Int {
+    guard let digest = CorrectionSightingStore.digest(candidate) else { return 0 }
+    let previous = counts[digest] ?? 0
+    if counts[digest] == nil, counts.count >= DictionaryUsagePolicy.maximumSightings {
+      counts.removeAll()
+    }
+    counts[digest] = min(previous + 1, 3)
+    return previous
+  }
+}
+
+/// What an observation saw, for Feature 015 classification of Dictionary changes.
+struct ObservedInsertion: Sendable {
+  static let maximumReads = 8
+  let dictationID: UUID
+  let changes: [DictionaryChange]
+  let inserted: String
+  var before = ""
+  var leadingCut = false
+  /// Distinct polls after the baseline, oldest first, at most `maximumReads`.
+  var reads: [String] = []
+
+  mutating func record(_ read: String) {
+    guard reads.last != read else { return }
+    reads.append(read)
+    if reads.count > Self.maximumReads { reads.removeFirst() }
+  }
+
+  func outcomes() -> [(DictionaryChange, UsageOutcome)] {
+    UsageClassifier.classify(
+      changes: changes, inserted: inserted, before: before, leadingCut: leadingCut, reads: reads)
+  }
 }
 
 /// Watches the field a confirmed insertion went into, for a bounded time, and learns one
@@ -121,8 +171,10 @@ final class CorrectionLearner {
   var stopped: ((StopReason) -> Void)?
   /// A correction worth suggesting: canonical spelling and the replaced text ("" if none).
   var suggested: ((_ canonical: String, _ alias: String) -> Void)?
+  /// Feature 015: what the user did with each Dictionary change of the observed insertion.
+  var classified: ((UUID, [(DictionaryChange, UsageOutcome)]) -> Void)?
   @ObservationIgnored private let scorer: any CorrectionCandidateScoring
-  @ObservationIgnored private var candidateHistory = CorrectionCandidateHistory()
+  @ObservationIgnored private let sightings: any CorrectionSightingRecording
   @ObservationIgnored private let reader: any TextInserting
   @ObservationIgnored private let store: any VocabularyEditing
   @ObservationIgnored private let isEnabled: @MainActor () -> Bool
@@ -131,6 +183,7 @@ final class CorrectionLearner {
   @ObservationIgnored private let undoWindow: Duration
   @ObservationIgnored private var task: Task<Void, Never>?
   @ObservationIgnored private var noticeTask: Task<Void, Never>?
+  @ObservationIgnored private var pendingNotices: [LearnedNotice] = []
 
   /// Durations are injectable so tests run in milliseconds; production uses the constants.
   init(
@@ -138,9 +191,11 @@ final class CorrectionLearner {
     isEnabled: @escaping @MainActor () -> Bool,
     pollInterval: Duration = pollInterval, observationWindow: Duration = observationWindow,
     undoWindow: Duration = LearnedNotice.undoWindow,
-    scorer: any CorrectionCandidateScoring = CorrectionCandidateScorer()
+    scorer: any CorrectionCandidateScoring = CorrectionCandidateScorer(),
+    sightings: any CorrectionSightingRecording = InMemoryCorrectionSightings()
   ) {
     self.scorer = scorer
+    self.sightings = sightings
     self.reader = reader
     self.store = store
     self.isEnabled = isEnabled
@@ -149,8 +204,12 @@ final class CorrectionLearner {
     self.undoWindow = undoWindow
   }
 
-  /// Call after an insertion was confirmed at `target.selectedRange.location`.
-  func observe(inserted text: String, target: CapturedTarget) {
+  /// Call after an insertion was confirmed at `target.selectedRange.location`. `changes`
+  /// are the Dictionary keys that shaped the text; they are classified when observation ends.
+  func observe(
+    inserted text: String, target: CapturedTarget, changes: [DictionaryChange] = [],
+    dictationID: UUID = UUID()
+  ) {
     cancelObservation(.cancelled)
     lastAssessment = nil
     guard isEnabled() else {
@@ -166,7 +225,10 @@ final class CorrectionLearner {
     lastStop = nil
     task = Task { [weak self] in
       guard let self else { return }
-      let reason = await self.run(text: text, target: target, length: length)
+      var record = ObservedInsertion(dictationID: dictationID, changes: changes, inserted: text)
+      let reason = await self.run(text: text, target: target, length: length, record: &record)
+      // Every stop, including a new dictation, classifies from the reads made so far.
+      if !record.changes.isEmpty { self.classified?(record.dictationID, record.outcomes()) }
       guard !Task.isCancelled else { return }
       self.finish(reason)
     }
@@ -179,10 +241,18 @@ final class CorrectionLearner {
   }
 
   func undo() async {
-    guard let notice else { return }
+    guard let notice, notice.kind == .learned else { return }
     dismissNotice()
     _ = try? await store.delete(id: notice.entryID, expectedRevision: nil)
   }
+
+  /// Feature 015: shows a retired-key notice now, or after the current one ends.
+  func showRetired(_ value: LearnedNotice) {
+    if notice == nil { show(value) } else { pendingNotices.append(value) }
+  }
+
+  /// Dismisses the bubble after its action ran elsewhere (Restore).
+  func dismiss() { dismissNotice() }
 
   private func cancelObservation(_ reason: StopReason) {
     guard let running = task else { return }
@@ -198,7 +268,9 @@ final class CorrectionLearner {
     stopped?(reason)
   }
 
-  private func run(text: String, target: CapturedTarget, length: Int) async -> StopReason {
+  private func run(
+    text: String, target: CapturedTarget, length: Int, record: inout ObservedInsertion
+  ) async -> StopReason {
     let start = max(0, target.selectedRange.location - Self.marginUnits)
     let leading = target.selectedRange.location - start
     let baselineLength = leading + length + Self.marginUnits
@@ -226,6 +298,8 @@ final class CorrectionLearner {
       }
     }
     let leadingCut = start > 0
+    record.before = before
+    record.leadingCut = leadingCut
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: observationWindow)
     var pending: CorrectionDetector.Candidate?
@@ -251,6 +325,7 @@ final class CorrectionLearner {
         }
         return reason
       }
+      record.record(current)
       let candidate = CorrectionDetector.candidate(
         inserted: text, before: before, after: after, current: current, leadingCut: leadingCut,
         openEnded: openEnded)
@@ -286,11 +361,15 @@ final class CorrectionLearner {
       guard isEnabled() else { return .disabled }
       let span = CorrectionCandidate(
         sourceText: candidate.misspelling, replacementText: candidate.correction)
+      // A sighting store failure counts as a first sighting: it can only suggest.
+      let previous =
+        (try? await sightings.observe(span, now: Int64(Date().timeIntervalSince1970 * 1000))) ?? 0
+      guard !Task.isCancelled else { return .cancelled }
       let assessment = scorer.assess(
         span,
         context: .init(
           canonicalTerms: contents.entries.filter(\.enabled).map(\.canonical),
-          previousObservations: candidateHistory.observe(span)))
+          previousObservations: previous))
       lastAssessment = assessment
       // An entry that already maps this misspelling (or is this word) means nothing to learn.
       for existing in contents.entries {
@@ -304,7 +383,7 @@ final class CorrectionLearner {
         }
         return .rejected
       }
-      _ = try await store.save(entry, expectedRevision: contents.state.revision)
+      _ = try await store.saveLearned(entry, expectedRevision: contents.state.revision)
     } catch {
       return .rejected
     }
@@ -332,5 +411,6 @@ final class CorrectionLearner {
     guard notice != nil else { return }
     notice = nil
     noticeChanged?(nil)
+    if !pendingNotices.isEmpty { show(pendingNotices.removeFirst()) }
   }
 }

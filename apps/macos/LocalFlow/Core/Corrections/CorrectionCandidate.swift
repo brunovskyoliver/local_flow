@@ -21,6 +21,7 @@ struct CorrectionCandidateAssessment: Equatable, Sendable {
   enum Reason: String, Sendable {
     case invalidSpan, protectedLiteral, formattingOnly, functionWords, commonWords
     case ordinaryEdit, lowSimilarity, technicalShape, canonicalMatch, closeSpelling, repeated
+    case firstSighting
   }
   let score: Int
   let disposition: CorrectionCandidateDisposition

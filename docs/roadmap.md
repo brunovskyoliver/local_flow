@@ -15,3 +15,4 @@ Each item gets its own Spec Kit cycle. Dependencies may refine numbering; these 
 11. Application-aware dictation context.
 12. True multi-device synchronization, only if later required.
 13. Opt-in remote inference on a self-hosted, multi-user server with approved accounts (ADR 0028).
+14. Adaptive Dictionary: count what each entry does, retire aliases the user keeps undoing, learn a correction on its second sighting (Feature 015).

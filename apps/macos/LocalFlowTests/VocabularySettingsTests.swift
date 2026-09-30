@@ -307,3 +307,40 @@ final class VocabularySettingsTests: XCTestCase {
     XCTAssertEqual(model.entries.map(\.canonical), ["Alpha", "beta", "zeta", "Číslo"])
   }
 }
+
+// MARK: Feature 015 usage display
+
+final class DictionaryUsageDisplayTests: XCTestCase {
+  func testUsageText() throws {
+    let locale = Locale(identifier: "en_GB")
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .current
+    let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 30)))
+    let used = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 29)))
+    let usedMs = Int64(used.timeIntervalSince1970 * 1000)
+    typealias Model = VocabularyViewModel
+    XCTAssertEqual(
+      Model.usageText(applied: 0, kept: 0, reverted: 0, lastUsedAt: nil, now: now, locale: locale),
+      "Unused")
+    XCTAssertEqual(
+      Model.usageText(
+        applied: 3, kept: 0, reverted: 0, lastUsedAt: usedMs, now: now, locale: locale),
+      "Used 3 · not checked yet · 29 Sep")
+    XCTAssertEqual(
+      Model.usageText(
+        applied: 12, kept: 9, reverted: 1, lastUsedAt: usedMs, now: now, locale: locale),
+      "Used 12 · kept 9 · undone 1 · 29 Sep")
+    XCTAssertEqual(
+      Model.usageText(applied: 4, kept: 4, reverted: 0, lastUsedAt: nil, now: now, locale: locale),
+      "Used 4 · kept 4")
+  }
+
+  @MainActor func testProvisionalAndRetiredTermsFromUsage() async throws {
+    let model = VocabularyViewModel(store: FakeVocabularyStore())
+    let learned = VocabularyEntry(id: "z", canonical: "Zabbix", aliases: ["zabix"], learnedAt: 1)
+    let typed = VocabularyEntry(id: "j", canonical: "John", aliases: ["jon", "jhon"])
+    XCTAssertTrue(model.isProvisional(learned))
+    XCTAssertFalse(model.isProvisional(typed))
+    XCTAssertEqual(model.retiredTerms(for: typed), [])
+  }
+}

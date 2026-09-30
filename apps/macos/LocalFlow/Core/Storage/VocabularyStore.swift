@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import OSLog
 
 /// One preferred spelling. Canonical text is replacement output; aliases are explicit sources.
 struct VocabularyEntry: Codable, Sendable, Equatable, Identifiable {
@@ -338,12 +339,25 @@ struct VocabularySnapshot: Sendable {
     let scalars: [Unicode.Scalar]
     let entryID: String
     let canonical: String
+    /// Feature 015: `DictionaryChange.keyID(for:)` of this term.
+    var keyID = ""
   }
   let revision: Int64
   let hash: String
   let entries: [VocabularyEntry]
   let keysByFirstScalar: [Unicode.Scalar: [Key]]
+  /// Feature 015: keys the user kept undoing. V001 and the boost skip them.
+  private(set) var retired: Set<DictionaryUsageStore.RetiredKey> = []
+  /// Feature 015: latest use and applied total per entry, for boost ranking.
+  var use: [String: (lastUsedAt: Int64, applied: Int)] = [:]
   var isEmpty: Bool { keysByFirstScalar.isEmpty }
+  var retiredBoostEntryIDs: Set<String> {
+    Set(retired.filter { $0.keyID == DictionaryChange.boostKeyID }.map(\.entryID))
+  }
+  func isRetired(entryID: String, term: String) -> Bool {
+    !retired.isEmpty
+      && retired.contains(.init(entryID: entryID, keyID: DictionaryChange.keyID(for: term)))
+  }
 
   static let empty = VocabularySnapshot(
     revision: 0, hash: TranscriptionQualityDetail.emptyVocabularyHash, keys: [], entries: [])
@@ -366,9 +380,10 @@ struct VocabularySnapshot: Sendable {
   }
 
   /// Validates every stored entry, including disabled ones, then keeps enabled keys.
-  init(revision: Int64, hash: String, entries: [VocabularyEntry], verifyFormatting: Bool = true)
-    throws
-  {
+  init(
+    revision: Int64, hash: String, entries: [VocabularyEntry], verifyFormatting: Bool = true,
+    retired: Set<DictionaryUsageStore.RetiredKey> = []
+  ) throws {
     guard revision >= 0, TranscriptionQualityDetail.isHash(hash),
       entries.count <= VocabularyStore.maximumEntries
     else { throw VocabularyEditError(field: .store, code: .damaged) }
@@ -383,19 +398,23 @@ struct VocabularySnapshot: Sendable {
       try table.register(entry)
       guard entry.enabled else { continue }
       for term in [entry.canonical] + entry.aliases {
+        let keyID = DictionaryChange.keyID(for: term)
+        if retired.contains(.init(entryID: entry.id, keyID: keyID)) { continue }
         keys.append(
           Key(
-            scalars: VocabularyValidation.fold(term), entryID: entry.id, canonical: entry.canonical)
-        )
+            scalars: VocabularyValidation.fold(term), entryID: entry.id, canonical: entry.canonical,
+            keyID: keyID))
       }
     }
     self.init(revision: revision, hash: hash, keys: keys, entries: entries.filter(\.enabled))
+    self.retired = retired
   }
 }
 
 extension VocabularySnapshot: Equatable {
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.revision == rhs.revision && lhs.hash == rhs.hash && lhs.entries == rhs.entries
+      && lhs.retired == rhs.retired
   }
 }
 
@@ -415,7 +434,9 @@ actor VocabularyStore {
   private var validated: (hash: String, table: VocabularyValidation.KeyTable)?
   /// The last snapshot and the state row it was built from. Every edit through this
   /// store bumps the state row, so a matching row means the entries are unchanged.
-  private var cachedSnapshot: (state: VocabularyState, snapshot: VocabularySnapshot)?
+  private var cachedSnapshot:
+    (state: VocabularyState, usageRevision: Int64, snapshot: VocabularySnapshot)?
+  private var usageFailureLogged = false
 
   init(history: TranscriptionStore) { database = history.database }
 
@@ -431,16 +452,43 @@ actor VocabularyStore {
   /// Called on every dictation press, so it reads only the state row when a cached
   /// snapshot exists and rebuilds (reload, re-serialize, re-hash) only after a change.
   func snapshot() throws -> VocabularySnapshot {
-    if let cached = cachedSnapshot, try database.read(Self.loadState) == cached.state {
-      return cached.snapshot
+    let usageRevision = usageRead(DictionaryUsageStore.revision) ?? -1
+    if let cached = cachedSnapshot, cached.usageRevision == usageRevision,
+      try database.read(Self.loadState) == cached.state
+    {
+      return withUse(cached.snapshot)
     }
     cachedSnapshot = nil
     let contents = try contents()
     let snapshot = try VocabularySnapshot(
       revision: contents.state.revision, hash: contents.state.contentHash,
-      entries: contents.entries, verifyFormatting: false)
-    cachedSnapshot = (contents.state, snapshot)
-    return snapshot
+      entries: contents.entries, verifyFormatting: false,
+      retired: usageRead(DictionaryUsageStore.retired) ?? [])
+    cachedSnapshot = (contents.state, usageRevision, snapshot)
+    return withUse(snapshot)
+  }
+
+  /// Use only ranks the boost when there are more entries than it holds, so it is read
+  /// only then (Feature 015, SC-005).
+  private func withUse(_ snapshot: VocabularySnapshot) -> VocabularySnapshot {
+    guard snapshot.entries.count > VocabularyBoostTerms.maximumTerms else { return snapshot }
+    var ranked = snapshot
+    ranked.use = usageRead(DictionaryUsageStore.use) ?? [:]
+    return ranked
+  }
+
+  /// A damaged usage table is logged once and read as empty; it never blocks dictation.
+  private func usageRead<T>(_ read: (Database) throws -> T) -> T? {
+    do {
+      return try database.read(read)
+    } catch {
+      if !usageFailureLogged {
+        usageFailureLogged = true
+        Logger(subsystem: "org.localflow.LocalFlow", category: "dictionary").error(
+          "Dictionary usage unreadable; nothing is retired for now")
+      }
+      return nil
+    }
   }
 
   private static func loadState(_ db: Database) throws -> VocabularyState? {
@@ -456,8 +504,23 @@ actor VocabularyStore {
       payloadBytes: row["payload_bytes"])
   }
 
+  /// A save from the Dictionary editor: every key of the entry becomes established.
   @discardableResult
   func save(_ entry: VocabularyEntry, expectedRevision: Int64? = nil) throws -> VocabularyState {
+    try save(entry, expectedRevision: expectedRevision, keyState: .established)
+  }
+
+  /// A save from the correction learner: the entry's keys start provisional (Feature 015).
+  @discardableResult
+  func saveLearned(_ entry: VocabularyEntry, expectedRevision: Int64? = nil) throws
+    -> VocabularyState
+  {
+    try save(entry, expectedRevision: expectedRevision, keyState: .provisional)
+  }
+
+  private func save(_ entry: VocabularyEntry, expectedRevision: Int64?, keyState: KeyState) throws
+    -> VocabularyState
+  {
     try VocabularyValidation.validateFields(entry)
     let aliases = VocabularyValidation.encodeAliases(entry.aliases)
     return try mutate(expectedRevision: expectedRevision) { entries, table in
@@ -479,6 +542,7 @@ actor VocabularyStore {
             learned_at=excluded.learned_at
           """,
         arguments: [entry.id, entry.canonical, aliases, entry.enabled, entry.learnedAt])
+      try DictionaryUsageStore.entrySaved(db, entry: entry, state: keyState)
     }
   }
 
@@ -511,6 +575,7 @@ actor VocabularyStore {
       return entries.filter { $0.id != id }
     } write: { db in
       try db.execute(sql: "DELETE FROM vocabulary_entries WHERE id=?", arguments: [id])
+      try DictionaryUsageStore.entryDeleted(db, entryID: id)
     }
   }
 
@@ -616,17 +681,39 @@ actor VocabularyStore {
 }
 
 extension VocabularyBoostTerms {
-  /// The first 256 enabled entries by ID, keyed by the snapshot hash (Feature 013).
+  /// Enabled entries whose boost is not retired, most recently used first (Feature 015),
+  /// then unused ones by ID as in Feature 013; at most 256. The key names the chosen set,
+  /// so the rescorer rebuilds when ranking, retirement or content changes it.
   init?(snapshot: VocabularySnapshot?) {
     guard let snapshot, !snapshot.entries.isEmpty else { return nil }
-    let terms = snapshot.entries.filter(\.enabled)
-      .sorted { $0.id.utf8.lexicographicallyPrecedes($1.id.utf8) }
+    let retiredBoosts = snapshot.retiredBoostEntryIDs
+    let enabled = snapshot.entries.filter(\.enabled)
+    let terms = enabled.filter { !retiredBoosts.contains($0.id) }
+      .sorted { lhs, rhs in
+        let left = snapshot.use[lhs.id]
+        let right = snapshot.use[rhs.id]
+        switch (left, right) {
+        case (let left?, let right?):
+          if left.lastUsedAt != right.lastUsedAt { return left.lastUsedAt > right.lastUsedAt }
+          if left.applied != right.applied { return left.applied > right.applied }
+        case (.some, nil): return true
+        case (nil, .some): return false
+        case (nil, nil): break
+        }
+        return lhs.id.utf8.lexicographicallyPrecedes(rhs.id.utf8)
+      }
       .prefix(Self.maximumTerms)
       .map { Term(entryID: $0.id, canonical: $0.canonical) }
     guard !terms.isEmpty else { return nil }
+    let chosen = terms.map(\.entryID).sorted().joined(separator: "\n")
     self.init(
-      terms: Array(terms), key: snapshot.hash,
+      terms: Array(terms),
+      key: snapshot.hash + ":" + TranscriptionQualityDetail.hash(Data(chosen.utf8)),
       governed: Set(
-        snapshot.entries.filter(\.enabled).flatMap { [$0.canonical] + $0.aliases }.map(Self.fold)))
+        enabled.flatMap { entry in
+          ([entry.canonical] + entry.aliases).filter {
+            !snapshot.isRetired(entryID: entry.id, term: $0)
+          }
+        }.map(Self.fold)))
   }
 }

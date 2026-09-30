@@ -53,7 +53,8 @@ private struct IndicatorHost: View {
         ).transition(transition)
       case .learned:
         if let notice = presentation.notice {
-          LearnedNoticeView(notice: notice, undo: presentation.undo).id(notice.entryID)
+          LearnedNoticeView(notice: notice, undo: presentation.undo)
+            .id("\(notice.entryID)-\(notice.shownAt)")
             .transition(transition)
         }
       case .clipboard:
@@ -243,8 +244,12 @@ final class IndicatorPanel: NSPanel {
     let previous = presentation.notice
     presentation.notice = notice
     presentation.undo = undo
-    if let notice, previous?.entryID != notice.entryID {
-      announce("Added \(notice.canonical) to dictionary.")
+    if let notice, previous != notice {
+      switch notice.kind {
+      case .learned: announce("Added \(notice.canonical) to dictionary.")
+      case .retired(_, let alias):
+        announce("Stopped changing \(alias) to \(notice.canonical). Restore is available.")
+      }
     }
     if let targetPoint, notice != nil { self.targetPoint = targetPoint }
     refresh()

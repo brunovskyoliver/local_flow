@@ -58,7 +58,7 @@ A key's initial state is *provisional* when its entry has `learned_at` set and t
 
 ## R7. How a retired key stops applying
 
-**Decision**: `VocabularySnapshot` gains the set of retired `(entry_id, key_id)` and uses it to skip V001 keys and boost terms. The retired set and a `usage_revision` are read with the vocabulary state row. The cached snapshot is reused only when both the vocabulary state and the usage revision are unchanged. `VocabularyBoostTerms.key` becomes the snapshot hash plus a digest of the retired boost set, so the rescorer rebuilds when a boost is retired or restored.
+**Decision**: `VocabularySnapshot` gains the set of retired `(entry_id, key_id)` and uses it to skip V001 keys and boost terms. On each press only `usage_revision` is read beside the vocabulary state row. The cached snapshot is reused when both are unchanged, and the retired set is reloaded only when either changes. Per-entry use for ranking is read only when more entries are enabled than the boost holds (measured in tasks.md, T030). `VocabularyBoostTerms.key` becomes the snapshot hash plus a digest of the retired boost set, so the rescorer rebuilds when a boost is retired or restored.
 
 A retired key is left out of `governed` too, so the boost no longer treats that span as owned by V001.
 

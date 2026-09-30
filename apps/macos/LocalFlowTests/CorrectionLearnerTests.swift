@@ -127,13 +127,21 @@ final class CorrectionLearnerTests: XCTestCase {
       selectedRange: CFRange(location: location, length: 0), comparisonContext: "")
   }
 
+  /// `seen` corrections count as sighted once before (Feature 015: a first sighting only
+  /// suggests).
   private func makeLearner(
     reader: FakeFieldReader, store: FakeVocabularyStore, enabled: Bool = true,
-    window: Duration = .milliseconds(600), undo: Duration = .milliseconds(300)
-  ) -> CorrectionLearner {
+    window: Duration = .milliseconds(600), undo: Duration = .milliseconds(300),
+    seen: [(String, String)] = []
+  ) async -> CorrectionLearner {
+    let sightings = InMemoryCorrectionSightings()
+    for (source, replacement) in seen {
+      _ = await sightings.observe(.init(sourceText: source, replacementText: replacement), now: 0)
+    }
     let learner = CorrectionLearner(
       reader: reader, store: store, isEnabled: { enabled },
-      pollInterval: .milliseconds(40), observationWindow: window, undoWindow: undo)
+      pollInterval: .milliseconds(40), observationWindow: window, undoWindow: undo,
+      sightings: sightings)
     lastStopForDiagnostics = { learner.lastStop }
     return learner
   }
@@ -163,7 +171,8 @@ final class CorrectionLearnerTests: XCTestCase {
   func testSettledCorrectionIsLearnedOnceAndShowsNotice() async throws {
     let reader = FakeFieldReader(field: "Dear team, open local flow settings please")
     let store = FakeVocabularyStore()
-    let learner = makeLearner(reader: reader, store: store)
+    let learner = await makeLearner(
+      reader: reader, store: store, seen: [("local flow", "LocalFlow")])
     var notices: [LearnedNotice?] = []
     learner.noticeChanged = { notices.append($0) }
     learner.observe(inserted: "open local flow settings", target: target(location: 11))
@@ -191,7 +200,8 @@ final class CorrectionLearnerTests: XCTestCase {
   func testUndoRemovesTheEntryBeforeTheCountdownEnds() async throws {
     let reader = FakeFieldReader(field: "say odoo")
     let store = FakeVocabularyStore()
-    let learner = makeLearner(reader: reader, store: store, undo: .seconds(5))
+    let learner = await makeLearner(
+      reader: reader, store: store, undo: .seconds(5), seen: [("odoo", "Odoo")])
     learner.observe(inserted: "say odoo", target: target(location: 0))
     try await awaitBaseline(reader)
     await reader.setField("say Odoo")
@@ -209,7 +219,7 @@ final class CorrectionLearnerTests: XCTestCase {
   func testDisabledLearningNeverReadsTheField() async throws {
     let reader = FakeFieldReader(field: "say hello")
     let store = FakeVocabularyStore()
-    let learner = makeLearner(reader: reader, store: store, enabled: false)
+    let learner = await makeLearner(reader: reader, store: store, enabled: false)
     learner.observe(inserted: "say hello", target: target(location: 0))
     XCTAssertFalse(learner.observing)
     XCTAssertEqual(learner.lastStop, .disabled)
@@ -221,20 +231,20 @@ final class CorrectionLearnerTests: XCTestCase {
   func testWindowFocusLossAndNewDictationStopObservation() async throws {
     let reader = FakeFieldReader(field: "say hello")
     let store = FakeVocabularyStore()
-    let elapsed = makeLearner(reader: reader, store: store, window: .milliseconds(120))
+    let elapsed = await makeLearner(reader: reader, store: store, window: .milliseconds(120))
     elapsed.observe(inserted: "say hello", target: target(location: 0))
     try await waitUntil { elapsed.lastStop == .windowElapsed }
-    let unfocused = makeLearner(reader: reader, store: store)
+    let unfocused = await makeLearner(reader: reader, store: store)
     unfocused.observe(inserted: "say hello", target: target(location: 0))
     try await awaitBaseline(reader)
     await reader.loseFocus()
     try await waitUntil { unfocused.lastStop == .focusChanged }
-    let cancelled = makeLearner(reader: FakeFieldReader(field: "say hello"), store: store)
+    let cancelled = await makeLearner(reader: FakeFieldReader(field: "say hello"), store: store)
     cancelled.observe(inserted: "say hello", target: target(location: 0))
     cancelled.cancel()
     XCTAssertEqual(cancelled.lastStop, .cancelled)
     XCTAssertFalse(cancelled.observing)
-    let moved = makeLearner(reader: FakeFieldReader(field: "something else"), store: store)
+    let moved = await makeLearner(reader: FakeFieldReader(field: "something else"), store: store)
     moved.observe(inserted: "say hello", target: target(location: 0))
     try await waitUntil { moved.lastStop == .passageMoved }
     let empty = await store.entries
@@ -246,7 +256,7 @@ final class CorrectionLearnerTests: XCTestCase {
     await store.externalChange(
       VocabularyEntry(id: "lf", canonical: "LocalFlow", aliases: ["local flow"]))
     let reader = FakeFieldReader(field: "open local flow now")
-    let learner = makeLearner(reader: reader, store: store)
+    let learner = await makeLearner(reader: reader, store: store)
     learner.observe(inserted: "open local flow now", target: target(location: 0))
     try await awaitBaseline(reader)
     await reader.setField("open Local-Flow now")
@@ -260,7 +270,8 @@ final class CorrectionLearnerTests: XCTestCase {
   func testFixThenSendLearnsTheLastReadBeforeTheFieldClears() async throws {
     let reader = FakeFieldReader(field: "open key clock now")
     let store = FakeVocabularyStore()
-    let learner = makeLearner(reader: reader, store: store)
+    let learner = await makeLearner(
+      reader: reader, store: store, seen: [("key clock", "Keycloak")])
     learner.observe(inserted: "open key clock now", target: target(location: 0))
     try await awaitBaseline(reader)
     await reader.setField("open Keycloak now")
@@ -277,7 +288,7 @@ final class CorrectionLearnerTests: XCTestCase {
   func testMomentaryEditsAreNotLearnedUntilSettled() async throws {
     let reader = FakeFieldReader(field: "say hello")
     let store = FakeVocabularyStore()
-    let learner = makeLearner(reader: reader, store: store, window: .milliseconds(300))
+    let learner = await makeLearner(reader: reader, store: store, window: .milliseconds(300))
     learner.observe(inserted: "say hello", target: target(location: 0))
     try await awaitBaseline(reader)
     // Each poll sees a different in-progress edit; none repeats, so none is learned.
@@ -302,9 +313,12 @@ final class CorrectionCandidateScorerTests: XCTestCase {
       ("mac os", "macOS"), ("ncs55al", "NCS55A1"),
     ] {
       let candidate = CorrectionCandidate(sourceText: source, replacementText: replacement)
-      let result = scorer.assess(candidate, context: .init())
+      let first = scorer.assess(candidate, context: .init())
+      XCTAssertEqual(first.disposition, .suggest, "\(source): \(first)")
+      XCTAssertTrue(first.reasons.contains(.firstSighting))
+      let result = scorer.assess(candidate, context: .init(previousObservations: 1))
       XCTAssertEqual(result.disposition, .autoLearn, "\(source): \(result)")
-      XCTAssertEqual(result, scorer.assess(candidate, context: .init()))
+      XCTAssertEqual(result, scorer.assess(candidate, context: .init(previousObservations: 1)))
     }
   }
 
@@ -354,24 +368,21 @@ final class CorrectionCandidateScorerTests: XCTestCase {
       scorer.assess(alias, context: .init(canonicalTerms: ["zeta"])).disposition, .autoLearn)
   }
 
-  func testHistoryIsBoundedSaturatingAndEvictsLeastRecentlyObserved() {
-    var history = CorrectionCandidateHistory()
+  func testInMemorySightingsSaturateAtThree() async {
+    let sightings = InMemoryCorrectionSightings()
     let candidate = CorrectionCandidate(sourceText: "nexora", replacementText: "Nexium")
-    XCTAssertEqual(history.observe(candidate), 0)
-    XCTAssertEqual(history.observe(candidate), 1)
-    for _ in 0..<10 { _ = history.observe(candidate) }
-    XCTAssertEqual(history.observe(candidate), 3)
-    for i in 0..<CorrectionCandidateHistory.maximumEntries {
-      _ = history.observe(.init(sourceText: "source\(i)", replacementText: "Target\(i)"))
-      XCTAssertLessThanOrEqual(history.count, CorrectionCandidateHistory.maximumEntries)
-    }
-    XCTAssertEqual(history.observe(candidate), 0)
-    XCTAssertEqual(history.count, CorrectionCandidateHistory.maximumEntries)
-    XCTAssertEqual(
-      history.observe(.init(sourceText: String(repeating: "a", count: 257), replacementText: "A")),
-      0)
-    XCTAssertEqual(history.count, CorrectionCandidateHistory.maximumEntries)
+    var seen = await sightings.observe(candidate, now: 0)
+    XCTAssertEqual(seen, 0)
+    seen = await sightings.observe(candidate, now: 0)
+    XCTAssertEqual(seen, 1)
+    for _ in 0..<10 { _ = await sightings.observe(candidate, now: 0) }
+    seen = await sightings.observe(candidate, now: 0)
+    XCTAssertEqual(seen, 3)
+    seen = await sightings.observe(
+      .init(sourceText: String(repeating: "a", count: 257), replacementText: "A"), now: 0)
+    XCTAssertEqual(seen, 0)
   }
+
 }
 
 @MainActor
@@ -387,7 +398,7 @@ extension CorrectionLearnerTests {
     ] {
       let reader = FakeFieldReader(field: "use \(source) now")
       let store = FakeVocabularyStore()
-      let learner = makeLearner(reader: reader, store: store)
+      let learner = await makeLearner(reader: reader, store: store)
       learner.observe(inserted: "use \(source) now", target: target(location: 0))
       try await awaitBaseline(reader)
       await reader.setField("use \(replacement) now")
@@ -402,7 +413,7 @@ extension CorrectionLearnerTests {
   func testRepeatedSuggestionLearnsOnlyAcrossSeparateInsertions() async throws {
     let reader = FakeFieldReader(field: "use nexora now")
     let store = FakeVocabularyStore()
-    let learner = makeLearner(reader: reader, store: store)
+    let learner = await makeLearner(reader: reader, store: store)
     var suggested: [String] = []
     learner.suggested = { suggested.append("\($1) → \($0)") }
     for occurrence in 0..<2 {
@@ -428,7 +439,8 @@ extension CorrectionLearnerTests {
     let reader = FakeFieldReader(field: "use proxmocks now")
     let store = FakeVocabularyStore()
     await store.setWriteError(VocabularyEditError(field: .entry, code: .tooManyEntries))
-    let learner = makeLearner(reader: reader, store: store)
+    let learner = await makeLearner(
+      reader: reader, store: store, seen: [("proxmocks", "Proxmox")])
     learner.observe(inserted: "use proxmocks now", target: target(location: 0))
     try await awaitBaseline(reader)
     await reader.setField("use Proxmox now")
@@ -447,7 +459,7 @@ extension CorrectionLearnerTests {
       let reader = FakeFieldReader(field: "use net bird now")
       let store = FakeVocabularyStore()
       await store.externalChange(.init(canonical: "NetBird", aliases: aliases))
-      let learner = makeLearner(reader: reader, store: store)
+      let learner = await makeLearner(reader: reader, store: store)
       learner.observe(inserted: "use net bird now", target: target(location: 0))
       try await awaitBaseline(reader)
       await reader.setField("use NetBird now")
@@ -468,7 +480,7 @@ extension CorrectionLearnerTests {
     ] {
       let reader = FakeFieldReader(field: original)
       let store = FakeVocabularyStore()
-      let learner = makeLearner(reader: reader, store: store, window: .milliseconds(180))
+      let learner = await makeLearner(reader: reader, store: store, window: .milliseconds(180))
       learner.observe(inserted: inserted, target: target(location: location))
       try await awaitBaseline(reader)
       await reader.setField(edited)
@@ -495,5 +507,87 @@ extension CorrectionLearnerTests {
     XCTAssertNil(learner.lastAssessment)
     let writes = await store.writes
     XCTAssertEqual(writes, 0)
+  }
+}
+
+// MARK: Feature 015 classification
+
+extension CorrectionLearnerTests {
+  private var johnChange: DictionaryChange {
+    DictionaryChange(entryID: "j", keyID: DictionaryChange.keyID(for: "jon"), canonical: "John")
+  }
+
+  private func classify(
+    field: String, inserted: String, edits: [String], cancelAfterEdits: Bool = false
+  ) async throws -> [UsageOutcome]? {
+    let reader = FakeFieldReader(field: field)
+    let store = FakeVocabularyStore()
+    let learner = await makeLearner(reader: reader, store: store, window: .milliseconds(400))
+    var result: [UsageOutcome]?
+    learner.classified = { _, outcomes in result = outcomes.map(\.1) }
+    learner.observe(
+      inserted: inserted, target: target(location: 0), changes: [johnChange], dictationID: UUID())
+    try await awaitBaseline(reader)
+    for edit in edits {
+      await reader.setField(edit)
+      let seen = await reader.reads
+      while await reader.reads < seen + 1 { try await Task.sleep(for: .milliseconds(5)) }
+    }
+    if cancelAfterEdits { learner.cancel() }
+    try await waitUntil { result != nil }
+    return result
+  }
+
+  func testRevertedAliasIsClassifiedReverted() async throws {
+    let outcomes = try await classify(
+      field: "Ask John about it.", inserted: "Ask John about it.", edits: ["Ask jon about it."])
+    XCTAssertEqual(outcomes, [.reverted])
+  }
+
+  func testUntouchedAliasIsClassifiedKept() async throws {
+    let outcomes = try await classify(
+      field: "Ask John about it.", inserted: "Ask John about it.", edits: [])
+    XCTAssertEqual(outcomes, [.kept])
+  }
+
+  func testClearedFieldIsNotClassified() async throws {
+    let outcomes = try await classify(
+      field: "Ask John about it.", inserted: "Ask John about it.", edits: ["x"])
+    XCTAssertEqual(outcomes, [.unclassified])
+  }
+
+  func testNewDictationStillClassifiesFromReadsSoFar() async throws {
+    let outcomes = try await classify(
+      field: "Ask John about it.", inserted: "Ask John about it.", edits: ["Ask jon about it."],
+      cancelAfterEdits: true)
+    XCTAssertEqual(outcomes, [.reverted])
+  }
+
+  func testNoChangesMeansNoClassification() async throws {
+    let reader = FakeFieldReader(field: "say hello")
+    let store = FakeVocabularyStore()
+    let learner = await makeLearner(reader: reader, store: store, window: .milliseconds(120))
+    var called = false
+    learner.classified = { _, _ in called = true }
+    learner.observe(inserted: "say hello", target: target(location: 0))
+    try await waitUntil { !learner.observing }
+    XCTAssertFalse(called)
+  }
+
+  func testRetiredNoticeWaitsForTheCurrentOneAndHasNoUndo() async throws {
+    let store = FakeVocabularyStore()
+    let learner = await makeLearner(
+      reader: FakeFieldReader(field: ""), store: store, undo: .milliseconds(150))
+    let first = LearnedNotice(
+      entryID: "a", canonical: "A", shownAt: .now, kind: .retired(keyID: "k", alias: "a"))
+    let second = LearnedNotice(
+      entryID: "b", canonical: "B", shownAt: .now, kind: .retired(keyID: "k", alias: "b"))
+    learner.showRetired(first)
+    learner.showRetired(second)
+    XCTAssertEqual(learner.notice?.entryID, "a")
+    await learner.undo()
+    XCTAssertEqual(learner.notice?.entryID, "a", "Undo does not apply to a retired notice")
+    try await waitUntil { learner.notice?.entryID == "b" }
+    try await waitUntil { learner.notice == nil }
   }
 }

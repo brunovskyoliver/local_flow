@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-30
 
-**Status**: Draft
+**Status**: Implemented; acceptance on real dictations pending
 
 **Input**: User description: "Feature 015: Adaptive Dictionary (Phase 1). The Dictionary learns from how its entries perform in real use. An alias the user keeps reverting is disabled automatically, with a notice and a one-click restore; nothing is deleted. First-sight auto-learn becomes a suggestion unless the replacement matches an existing Dictionary term; a second sighting auto-learns. Phase 1 only: no phonetic matching, no history mining."
 
