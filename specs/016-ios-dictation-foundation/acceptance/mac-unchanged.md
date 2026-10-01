@@ -20,4 +20,6 @@ Baseline was 1697 passed and 30 skipped (`mac-baseline.md`). The 3 extra tests a
 
 ## Manual pass (quickstart §3)
 
-Not run yet. It needs the owner at the Mac: `make run`, one TextEdit dictation, one rewrite, "Zabbix" dictated, a 1-minute meeting, and a check that existing History, Dictionary and meetings are still there.
+Closed on the owner's call on 2026-10-01, with the owner approving the override. No manual pass is recorded here (`make run`, a TextEdit dictation, a rewrite, "Zabbix" dictated, a 1-minute meeting, existing History, Dictionary and meetings), so SC-008's manual half is owner-attested, not observed. The automated half above is the evidence.
+
+The Mac code has been used daily since the extraction, and later changes to shared code kept the Mac paths unchanged: `ModelProvisioner(trustedBase:)` defaults to the old walk from `/`, covered by `ModelProvisionerTests`.

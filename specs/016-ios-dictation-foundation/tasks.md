@@ -110,7 +110,8 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
   - No `#if os(` in package sources (rule 4).
 - [X] T017 [P] [US6] Update `scripts/check-speech-worker-imports.sh` and `scripts/check-transcript-imports.sh` so they also scan `packages/LocalFlowCore/Sources/LocalFlowSpeech` (the worker's sources now come partly from the package, not only from its pbxproj sources phase).
 - [X] T018 [US6] In `scripts/test.sh`, run `scripts/check-core-imports.sh` and `swift test --package-path packages/LocalFlowCore`.
-- [ ] T019 [US6] Run `make check` and compare with `acceptance/mac-baseline.md`: all pass, test count ≥ baseline. Then run quickstart §3 by hand (`make run`, a TextEdit dictation, a rewrite, "Zabbix" dictated, a 1-minute meeting, existing History and meetings still present). Record both in `acceptance/mac-unchanged.md`.
+- [X] T019 [US6] Run `make check` and compare with `acceptance/mac-baseline.md`: all pass, test count ≥ baseline. Then run quickstart §3 by hand (`make run`, a TextEdit dictation, a rewrite, "Zabbix" dictated, a 1-minute meeting, existing History and meetings still present). Record both in `acceptance/mac-unchanged.md`.
+  - Closed 2026-10-01 on the owner's call. The automated half passed (1700 passed, 30 skipped, 0 failed; baseline 1697). The manual pass is owner-attested, not recorded (`acceptance/mac-unchanged.md`).
 
 **Checkpoint**: the extraction is merged, and the Mac is verified unchanged (SC-008).
 
