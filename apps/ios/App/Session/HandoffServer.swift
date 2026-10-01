@@ -66,6 +66,9 @@ final class HandoffServer {
       Task { await controller.stop(requestID: request.requestID) }
     case .cancel:
       controller.cancel(requestID: request.requestID)
+    case .end:
+      // The guard above already requires the current `session_id`.
+      controller.end(.userEnded)
     }
   }
 

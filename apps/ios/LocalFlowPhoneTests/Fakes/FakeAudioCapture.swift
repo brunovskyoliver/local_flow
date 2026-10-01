@@ -12,7 +12,9 @@ final class FakeAudioCapture: AudioCapturing {
   var onLevel: ((Float) -> Void)?
   var onCaptureEnded: ((CaptureEnd) -> Void)?
   var onInterruption: (() -> Void)?
+  var onRouteChange: (() -> Void)?
 
+  var inputName: String? = "iPhone Microphone"
   var permission = true
   var startFails = false
   var samples = [Float](repeating: 0.1, count: 16_000)

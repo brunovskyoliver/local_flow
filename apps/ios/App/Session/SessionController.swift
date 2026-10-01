@@ -20,6 +20,10 @@ final class SessionController {
     var idleDeadline: Date?
     var state: SessionFile.State
     var endReason: SessionFile.EndReason?
+    /// Set in `recording`, cleared otherwise (017 data-model §2).
+    var recordingStartedAt: Date?
+    /// The input port name in `recording`, refreshed on route change.
+    var inputName: String?
   }
 
   struct ActiveDictation {
@@ -91,6 +95,7 @@ final class SessionController {
     capture.onInterruption = { [weak self] in
       Task { await self?.interrupted() }
     }
+    capture.onRouteChange = { [weak self] in self?.routeChanged() }
   }
 
   var isActive: Bool { session.map { $0.state != .ended } ?? false }
@@ -140,6 +145,8 @@ final class SessionController {
     live.state = .ended
     live.endReason = reason
     live.idleDeadline = nil
+    live.recordingStartedAt = nil
+    live.inputName = nil
     session = live
     Self.log.notice("Session ended: \(reason.rawValue, privacy: .public)")
     changed()
@@ -184,6 +191,8 @@ final class SessionController {
     }
     live.state = .recording
     live.idleDeadline = nil
+    live.recordingStartedAt = now()
+    live.inputName = capture.inputName
     session = live
     changed()
     return .started
@@ -216,6 +225,8 @@ final class SessionController {
   func finish(_ end: CaptureEnd) async {
     guard let dictation = current, var live = session, live.state == .recording else { return }
     live.state = .finishing
+    live.recordingStartedAt = nil
+    live.inputName = nil
     session = live
     lastStopAt = now()
     changed()
@@ -272,7 +283,19 @@ final class SessionController {
   private func setReady() {
     guard var live = session else { return }
     live.state = .ready
-    live.idleDeadline = now().addingTimeInterval(idleTimeout().seconds)
+    // `never` stores no deadline, so `tick()` never ends the session.
+    live.idleDeadline = idleTimeout().seconds.map { now().addingTimeInterval($0) }
+    live.recordingStartedAt = nil
+    live.inputName = nil
+    session = live
+    changed()
+  }
+
+  private func routeChanged() {
+    guard var live = session, live.state == .recording else { return }
+    let name = capture.inputName
+    guard name != live.inputName else { return }
+    live.inputName = name
     session = live
     changed()
   }
@@ -293,6 +316,9 @@ final class SessionController {
       idleDeadline: session.idleDeadline.map(Handoff.milliseconds),
       idleTimeout: idleTimeout().rawValue, dictationID: current?.id,
       endReason: session.endReason, lastRequestID: lastRequestID, lastOutcome: lastOutcome,
-      updatedAt: Handoff.milliseconds(now()))
+      updatedAt: Handoff.milliseconds(now()),
+      recordingStartedAt: session.recordingStartedAt.map(Handoff.milliseconds),
+      inputName: session.inputName,
+      dictationSource: current.flatMap { SessionFile.Source(rawValue: $0.source.rawValue) })
   }
 }

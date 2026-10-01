@@ -12,12 +12,16 @@ final class PhoneAudioCapture: AudioCapturing {
   var onLevel: ((Float) -> Void)?
   var onCaptureEnded: ((CaptureEnd) -> Void)?
   var onInterruption: (() -> Void)?
+  var onRouteChange: (() -> Void)?
+
+  var inputName: String? { AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName }
 
   private let engine = AVAudioEngine()
   private let sink = CaptureSink()
   private let worker = DispatchQueue(label: "org.localflow.phone-capture", qos: .userInitiated)
   private var drainTimer: DispatchSourceTimer?
   private var interruptionObserver: NSObjectProtocol?
+  private var routeObserver: NSObjectProtocol?
 
   func requestPermission() async -> Bool {
     await AVAudioApplication.requestRecordPermission()
@@ -47,6 +51,11 @@ final class PhoneAudioCapture: AudioCapturing {
       let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
       guard raw == AVAudioSession.InterruptionType.began.rawValue else { return }
       MainActor.assumeIsolated { self?.onInterruption?() }
+    }
+    routeObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.routeChangeNotification, object: session, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.onRouteChange?() }
     }
   }
 
@@ -83,6 +92,8 @@ final class PhoneAudioCapture: AudioCapturing {
     engine.stop()
     if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
     interruptionObserver = nil
+    if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
+    routeObserver = nil
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
   }
 

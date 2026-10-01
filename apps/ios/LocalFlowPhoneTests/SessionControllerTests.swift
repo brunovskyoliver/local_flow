@@ -136,6 +136,59 @@ final class SessionControllerTests: XCTestCase {
     XCTAssertTrue(harness.keepReady.holders.isEmpty)
   }
 
+  func testNeverSessionHasNoDeadlineAndEndsOnlyWhenTheUserEndsIt() async {
+    harness.timeout = .never
+    await controller.open(origin: .keyboard)
+    XCTAssertEqual(controller.session?.state, .ready)
+    XCTAssertNil(controller.session?.idleDeadline)
+    await dictate()
+    XCTAssertEqual(controller.session?.state, .ready)
+    XCTAssertNil(controller.session?.idleDeadline)
+    harness.now += 24 * 60 * 60
+    controller.tick()
+    XCTAssertEqual(controller.session?.state, .ready)
+    XCTAssertEqual(controller.sessionFile()?.idleTimeout, "never")
+    controller.end(.userEnded)
+    XCTAssertEqual(controller.session?.endReason, .userEnded)
+  }
+
+  func testRecordingStartAndInputNameLastOnlyWhileRecording() async throws {
+    harness.capture.inputName = "AirPods Pro"
+    await controller.open(origin: .keyboard)
+    XCTAssertNil(controller.session?.recordingStartedAt)
+    XCTAssertNil(controller.session?.inputName)
+    let request = UUID()
+    let startedAt = harness.now
+    controller.start(requestID: request)
+    XCTAssertEqual(controller.session?.recordingStartedAt, startedAt)
+    XCTAssertEqual(controller.session?.inputName, "AirPods Pro")
+    let file = try XCTUnwrap(controller.sessionFile())
+    XCTAssertEqual(file.recordingStartedAt, Handoff.milliseconds(startedAt))
+    XCTAssertEqual(file.inputName, "AirPods Pro")
+    XCTAssertEqual(file.dictationSource, .keyboard)
+
+    harness.capture.inputName = "iPhone Microphone"
+    harness.capture.onRouteChange?()
+    XCTAssertEqual(controller.session?.inputName, "iPhone Microphone")
+
+    harness.now += 5
+    await controller.stop(requestID: request)
+    XCTAssertNil(controller.session?.recordingStartedAt)
+    XCTAssertNil(controller.session?.inputName)
+    XCTAssertNil(controller.sessionFile()?.dictationSource)
+
+    controller.start(requestID: UUID())
+    controller.end(.userEnded)
+    XCTAssertNil(controller.session?.recordingStartedAt)
+    XCTAssertNil(controller.session?.inputName)
+  }
+
+  func testRouteChangeOutsideRecordingKeepsNoInputName() async {
+    await controller.open(origin: .keyboard)
+    harness.capture.onRouteChange?()
+    XCTAssertNil(controller.session?.inputName)
+  }
+
   func testInterruptionWhileRecordingSavesThenEnds() async throws {
     await controller.open(origin: .keyboard)
     controller.start(requestID: UUID())
