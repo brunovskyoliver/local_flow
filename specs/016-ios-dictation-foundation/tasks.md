@@ -241,11 +241,12 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
   - Undo while `InsertionPolicy.canUndo`, deleting `inserted.count` grapheme clusters with `deleteBackward()`.
   - "Insert last dictation" when an offer is pending.
   - Short messages for "Didn't catch that", "Dictation failed", and "Limit reached" (when `limit_reached` is true).
-- [ ] T059 [US1] Run quickstart §5 on the iPhone 16 Pro (SC-001 10 runs of 15 s, SC-002 20 dictations in a row, SC-009 indicator off within 10 s of the deadline, Undo) and record the results in `specs/016-ios-dictation-foundation/acceptance/keyboard.md`.
+- [X] T059 [US1] Run quickstart §5 on the iPhone 16 Pro (SC-001 10 runs of 15 s, SC-002 20 dictations in a row, SC-009 indicator off within 10 s of the deadline, Undo) and record the results in `specs/016-ios-dictation-foundation/acceptance/keyboard.md`.
   - Carried over from T004: the app still answers after 2 minutes in the background; the orange indicator and whether music keeps playing with `.mixWithOthers` (drop it if background input dies, R7); the keyboard footprint at rest (UIKit if above 30 MB, R11).
   - Also carried over from T004: the doorbell round-trip time, median of 10, read from the keyboard's Debug `ping` readout (hide and show the keyboard 10 times). R7 depends on it: if the first word is clipped, the keyboard shows recording only after the app confirms.
   - Read the keyboard footprint in the app: Settings → Diagnostics on → Memory. "At last report" right after the 3 s at-rest write is the at-rest figure; "Peak" is the process peak (built ahead of T081, 2026-10-01).
   - Footprint at rest done (2026-10-01): peak 9.9 MB, last report 8.9 MB, so the keyboard stays SwiftUI (R11). See `acceptance/keyboard.md`.
+  - Closed 2026-10-01 on the owner's call: the owner ran the remaining checks on the device and reported them fine, approving the close without per-check figures. Only the footprint has recorded numbers; SC-001, SC-002, SC-004 and SC-009 figures and the round-trip time were not recorded. See `acceptance/keyboard.md`.
 
 **Checkpoint**: keyboard dictation works end to end on the device.
 
