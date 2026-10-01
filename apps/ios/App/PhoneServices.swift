@@ -20,7 +20,7 @@ final class PhoneServices {
   let keepReady: KeepReady
 
   init(applicationSupport: URL, bundle: Bundle = .main) throws {
-    paths = LocalFlowPaths(applicationSupport: applicationSupport)
+    paths = LocalFlowPaths(applicationSupport: try Self.physical(applicationSupport))
     let root = paths.database.deletingLastPathComponent()
     // New files inherit the folder's protection, so History stays writable while the
     // phone is locked after first unlock (research R5).
@@ -34,12 +34,14 @@ final class PhoneServices {
 
     let speechData = try Self.descriptorData("parakeet-v3", bundle: bundle)
     let speechDescriptor = try JSONDecoder().decode(ModelDescriptor.self, from: speechData)
+    let modelsBase = paths.models
     let speechRoot = paths.models.appendingPathComponent("parakeet-v3", isDirectory: true)
     let boostRoot = paths.models.appendingPathComponent("parakeet-ctc-110m", isDirectory: true)
-    let speech = ModelProvisioner(descriptor: speechDescriptor, rootURL: speechRoot)
+    let speech = ModelProvisioner(
+      descriptor: speechDescriptor, rootURL: speechRoot, trustedBase: modelsBase)
     let boost = (try? Self.descriptorData("parakeet-ctc-110m", bundle: bundle))
       .flatMap { try? JSONDecoder().decode(ModelDescriptor.self, from: $0) }
-      .map { ModelProvisioner(descriptor: $0, rootURL: boostRoot) }
+      .map { ModelProvisioner(descriptor: $0, rootURL: boostRoot, trustedBase: modelsBase) }
     try FileManager.default.createDirectory(at: paths.models, withIntermediateDirectories: true)
     model = PhoneModelState(
       speech: speech, boost: boost,
@@ -71,6 +73,17 @@ final class PhoneServices {
       vocabulary: vocabulary)
     orphans = OrphanSpoolRecovery(root: paths.temporaryAudio)
     keepReady = KeepReady(lifecycle: lifecycle)
+  }
+
+  /// The container path with its symlinks resolved. iOS hands out `/var/mobile/...`, and
+  /// `/var` is a symlink to `/private/var`; the resolved models folder is the provisioner's
+  /// `trustedBase`, which must be symlink-free. `URL.resolvingSymlinksInPath` strips
+  /// `/private` again, so this uses `realpath`.
+  static func physical(_ url: URL) throws -> URL {
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    guard let resolved = realpath(url.path, nil) else { throw CocoaError(.fileNoSuchFile) }
+    defer { free(resolved) }
+    return URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
   }
 
   private static func descriptorData(_ name: String, bundle: Bundle) throws -> Data {

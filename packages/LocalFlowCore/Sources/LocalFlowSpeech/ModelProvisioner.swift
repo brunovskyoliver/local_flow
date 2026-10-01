@@ -22,16 +22,22 @@ public actor ModelProvisioner {
   private(set) var state: State = .absent
   private let descriptor: ModelDescriptor
   private let rootURL: URL
+  private let trustedBase: String?
   private var ownerFD: Int32 = -1
   private var parentFD: Int32 = -1
   private var prepared = false
   private var operating = false
   public nonisolated let progress = ProvisioningProgress()
 
-  public init(descriptor: ModelDescriptor, rootURL: URL) {
+  /// `trustedBase` is a symlink-free directory the walk starts from instead of `/`. The
+  /// iOS sandbox refuses to open the directories above the app container (EPERM), so the
+  /// phone passes its resolved Application Support; the Mac passes nothing and walks from
+  /// `/` as before. Components below the base are still opened with `O_NOFOLLOW`.
+  public init(descriptor: ModelDescriptor, rootURL: URL, trustedBase: URL? = nil) {
     self.descriptor = descriptor
     // Do not standardize: Foundation can rewrite /private/var into symlink /var.
     self.rootURL = rootURL
+    self.trustedBase = trustedBase?.path
   }
 
   deinit {
@@ -246,7 +252,7 @@ public actor ModelProvisioner {
 
   private func prepareWorkspace() throws {
     if prepared {
-      let current = try Self.openDirectory(parentURL.path)
+      let current = try Self.openDirectory(parentURL.path, from: trustedBase)
       defer { close(current) }
       var old = stat()
       var new = stat()
@@ -255,7 +261,7 @@ public actor ModelProvisioner {
       else { throw Error.pathEscapesRoot }
       return
     }
-    let parent = try Self.openDirectory(parentURL.path, create: true)
+    let parent = try Self.openDirectory(parentURL.path, create: true, from: trustedBase)
     defer { close(parent) }
     let lockName = ".\(rootURL.lastPathComponent).import.lock"
     guard !rootURL.lastPathComponent.isEmpty, rootURL.lastPathComponent != ".",
@@ -529,12 +535,24 @@ public actor ModelProvisioner {
     return fd
   }
 
-  private static func openDirectory(_ path: String, create: Bool = false) throws -> Int32 {
+  private static func openDirectory(_ path: String, create: Bool = false, from base: String? = nil)
+    throws -> Int32
+  {
     guard path.hasPrefix("/"), !path.utf8.contains(0) else { throw Error.pathEscapesRoot }
-    var directory = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-    guard directory >= 0 else { throw Error.unavailable }
+    var start = "/"
+    var remainder = Substring(path)
+    if let base {
+      let trimmed = base.hasSuffix("/") ? String(base.dropLast()) : base
+      guard trimmed.hasPrefix("/"), !trimmed.utf8.contains(0),
+        path == trimmed || path.hasPrefix(trimmed + "/")
+      else { throw Error.pathEscapesRoot }
+      start = trimmed
+      remainder = path.dropFirst(trimmed.count)
+    }
+    var directory = open(start, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    guard directory >= 0 else { throw errno == ELOOP ? Error.symlinkNotAllowed : Error.unavailable }
     do {
-      for part in path.split(separator: "/") {
+      for part in remainder.split(separator: "/") {
         guard part != ".", part != ".." else { throw Error.pathEscapesRoot }
         let component = String(part)
         if create && mkdirat(directory, component, 0o700) != 0 && errno != EEXIST {

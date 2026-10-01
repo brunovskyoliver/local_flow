@@ -34,7 +34,9 @@ final class PhoneAudioCapture: AudioCapturing {
     guard format.sampleRate > 0, format.channelCount > 0 else { throw CaptureError.noInput }
     try sink.prepare(inputFormat: format)
     let sink = sink
-    input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
+    // `@Sendable` keeps the block off the main actor: it runs on the audio thread, and
+    // an inherited `@MainActor` isolation traps there at runtime.
+    input.installTap(onBus: 0, bufferSize: 1_024, format: format) { @Sendable buffer, _ in
       sink.process(buffer)
     }
     engine.prepare()
@@ -52,7 +54,7 @@ final class PhoneAudioCapture: AudioCapturing {
     sink.begin()
     let timer = DispatchSource.makeTimerSource(queue: worker)
     timer.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(50))
-    timer.setEventHandler { [weak self, sink] in
+    timer.setEventHandler { @Sendable [weak self, sink] in
       let (end, level) = sink.drain(into: spool)
       Task { @MainActor [weak self] in
         guard let self else { return }

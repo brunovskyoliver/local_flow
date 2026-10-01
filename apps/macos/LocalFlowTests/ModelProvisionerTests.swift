@@ -332,6 +332,42 @@ final class ModelProvisionerTests: XCTestCase {
     XCTAssertEqual(provisioner.progress.snapshot().phase, .installed)
   }
 
+  /// Feature 016: the iOS sandbox refuses to open the directories above the app container,
+  /// so the phone starts the walk at a trusted base instead of `/`.
+  func testTrustedBaseDownloadsAndStillRefusesSymlinksBelowIt() async throws {
+    let f = try fixture()
+    defer { try? FileManager.default.removeItem(at: f.base) }
+    let provisioner = ModelProvisioner(
+      descriptor: descriptor(for: f.bytes), rootURL: f.root, trustedBase: f.base)
+    _ = try await provisioner.download(using: SyntheticTransport(data: f.bytes))
+    XCTAssertEqual(
+      try Data(contentsOf: f.root.appendingPathComponent("Preprocessor/model.bin")), f.bytes)
+
+    let target = f.base.appendingPathComponent("target", isDirectory: true)
+    try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+    let link = f.base.appendingPathComponent("link", isDirectory: true)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+    let throughLink = ModelProvisioner(
+      descriptor: descriptor(for: f.bytes),
+      rootURL: link.appendingPathComponent("installed", isDirectory: true), trustedBase: f.base)
+    do {
+      _ = try await throughLink.download(using: SyntheticTransport(data: f.bytes))
+      XCTFail("A symlink below the trusted base must fail")
+    } catch { XCTAssertEqual(error as? ModelProvisioner.Error, .symlinkNotAllowed) }
+  }
+
+  func testTrustedBaseMustContainTheRoot() async throws {
+    let f = try fixture()
+    defer { try? FileManager.default.removeItem(at: f.base) }
+    let provisioner = ModelProvisioner(
+      descriptor: descriptor(for: f.bytes), rootURL: f.root,
+      trustedBase: f.source.appendingPathComponent("Preprocessor", isDirectory: true))
+    do {
+      _ = try await provisioner.download(using: SyntheticTransport(data: f.bytes))
+      XCTFail("A root outside the trusted base must fail")
+    } catch { XCTAssertEqual(error as? ModelProvisioner.Error, .pathEscapesRoot) }
+  }
+
   func testDownloadSupportsPinnedAssetFromSeparateRepository() async throws {
     let f = try fixture()
     defer { try? FileManager.default.removeItem(at: f.base) }

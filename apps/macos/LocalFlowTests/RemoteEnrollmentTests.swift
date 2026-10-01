@@ -213,6 +213,9 @@ final class RemoteEnrollmentTests: XCTestCase {
     flowd.enrollAnswer = .enrolled(.approved)
     try await enrollment.enroll(provider: .apple)
     XCTAssertEqual(flowd.refreshCount, 1)
+    // The refresh timer must be asleep before the clock moves, or its deadline starts late.
+    let scheduled = await eventually { @MainActor in self.clock.sleeperCount > 0 }
+    XCTAssertTrue(scheduled)
     // Within 12 minutes the stored token is used as it is.
     clock.advance(by: .seconds(11 * 60))
     let cached = await enrollment.accessToken()

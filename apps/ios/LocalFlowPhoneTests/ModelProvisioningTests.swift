@@ -60,6 +60,49 @@ final class ModelProvisioningTests: XCTestCase {
       .filter { $0.hasSuffix(".staging") }
   }
 
+  /// The async `URLSession.download` never reported progress, so the phone showed 0% for
+  /// the whole 580 MB download.
+  func testTransportReportsProgressWhileDownloading() async throws {
+    let output = models.appendingPathComponent("out.bin")
+    FileManager.default.createFile(atPath: output.path, contents: nil)
+    let handle = try FileHandle(forWritingTo: output)
+    defer { try? handle.close() }
+    let progress = ProvisioningProgress()
+    progress.reset(total: Int64(ChunkedStubProtocol.body.count))
+    let transport = ResumableModelDownloadTransport(
+      resumeDirectory: models, protocolClasses: [ChunkedStubProtocol.self])
+    try await transport.transfer(
+      url: URL(string: "https://huggingface.co/stub/model.bin")!,
+      output: handle.fileDescriptor, expectedBytes: Int64(ChunkedStubProtocol.body.count),
+      progress: progress)
+    XCTAssertEqual(progress.snapshot().completedBytes, Int64(ChunkedStubProtocol.body.count))
+    XCTAssertEqual(try Data(contentsOf: output), ChunkedStubProtocol.body)
+  }
+
+  /// On the device the container is under `/var`, a symlink to `/private/var`, and the
+  /// provisioner refuses every symlinked path component.
+  func testDownloadSucceedsUnderASymlinkedContainerOnceResolved() async throws {
+    let base: URL = models
+    defer { try? FileManager.default.removeItem(at: base) }
+    let target = models.appendingPathComponent("real", isDirectory: true)
+    let link = models.appendingPathComponent("link", isDirectory: true)
+    try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+    models = link
+    let unresolved = try state()
+    unresolved.startDownload()
+    try await settle(unresolved)
+    XCTAssertEqual(unresolved.state, .paused, "the symlinked path is refused")
+
+    models = try PhoneServices.physical(link)
+    XCTAssertEqual(models.lastPathComponent, "real")
+    let resolved = try state()
+    resolved.startDownload()
+    try await settle(resolved)
+    XCTAssertEqual(resolved.state, .ready)
+  }
+
   func testInterruptedDownloadPausesThenCompletes() async throws {
     let model = try state()
     transport.failure = URLError(.networkConnectionLost)
@@ -105,4 +148,27 @@ final class ModelProvisioningTests: XCTestCase {
     await model.launchCheck()
     XCTAssertEqual(model.state, .absent)
   }
+}
+
+/// Serves a fixed body in four chunks with a Content-Length, like the model host.
+private final class ChunkedStubProtocol: URLProtocol {
+  static let body = Data((0..<256_000).map { UInt8($0 % 251) })
+
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    let response = HTTPURLResponse(
+      url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+      headerFields: ["Content-Length": "\(Self.body.count)"])!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    let size = Self.body.count / 4
+    for start in stride(from: 0, to: Self.body.count, by: size) {
+      client?.urlProtocol(
+        self, didLoad: Self.body.subdata(in: start..<min(start + size, Self.body.count)))
+    }
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {}
 }

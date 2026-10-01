@@ -77,11 +77,17 @@ final class PhoneModelState {
         excludeFromBackup()
         set(.ready)
       } catch let error as ModelProvisioner.Error {
+        Self.log.error(
+          "Speech model download stopped: \(String(describing: error), privacy: .public)")
         switch error {
         case .hashMismatch, .sizeMismatch, .fileMissing, .invalidManifest: state = .damaged
         default: state = .paused
         }
       } catch {
+        let code = (error as NSError).code
+        let domain = (error as NSError).domain
+        Self.log.error(
+          "Speech model download paused: \(domain, privacy: .public) \(code, privacy: .public)")
         state = .paused
       }
       download = nil
