@@ -460,20 +460,7 @@ final class RemoteDictationRouter: RemoteDictationRouting {
 
   /// Opens a fresh background channel and times it to `ready`, which also refreshes
   /// the capabilities (Feature 018 FR-006); nil when the server can't be reached.
-  func ping() async -> Duration? {
-    do {
-      var started = ContinuousClock.now
-      var (channel, op) = try await channels.lease(.background)
-      if op > 1 {
-        // A parked channel proves nothing about the server now.
-        await channels.release(.background, channel: channel, nextOp: nil)
-        started = .now
-        (channel, _) = try await channels.lease(.background)
-      }
-      await channels.release(.background, channel: channel, nextOp: 1)
-      return started.duration(to: .now)
-    } catch { return nil }
-  }
+  func ping() async -> Duration? { try? await channels.roundTrip(.background) }
 
   /// Where and with what a new session channel connects, or nil when this device
   /// cannot use the server now.

@@ -71,6 +71,22 @@ actor RemoteChannelPool {
     }
   }
 
+  /// Opens a fresh channel for `role`, times it to `ready` and closes it (Feature 018
+  /// FR-006). A parked channel is closed first: reusing it proves nothing about the server.
+  func roundTrip(_ role: Role) async throws -> Duration {
+    while leased.contains(role) {
+      await withCheckedContinuation { waiters[role, default: []].append($0) }
+    }
+    leased.insert(role)
+    defer { handOff(role) }
+    if let current = parked.removeValue(forKey: role) { await current.channel.close() }
+    let started = now()
+    let channel = try await open()
+    let elapsed = now() - started
+    await channel.close()
+    return elapsed
+  }
+
   /// Closes every idle channel, including the parked interactive one.
   func closeAll() async {
     for (_, current) in parked { await current.channel.close() }

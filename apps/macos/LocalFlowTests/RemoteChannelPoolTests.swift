@@ -47,6 +47,24 @@ final class RemoteChannelPoolTests: XCTestCase {
     await pool.release(.live, channel: live, nextOp: 2)
   }
 
+  /// Check connection: every round trip opens a channel; a parked one is never timed.
+  func testARoundTripAlwaysOpensAFreshChannel() async throws {
+    let (open, transports) = opener()
+    let pool = RemoteChannelPool(open: open)
+    let (parked, _) = try await pool.lease(.background)
+    await pool.release(.background, channel: parked, nextOp: 1)
+    _ = try await pool.roundTrip(.background)
+    XCTAssertEqual(transports.openCount, 2)
+    XCTAssertNotNil(transports.opened[0].closedWith, "the parked channel is closed, not reused")
+    XCTAssertNotNil(transports.opened[1].closedWith, "the timed channel is not parked")
+    _ = try await pool.roundTrip(.background)
+    XCTAssertEqual(transports.openCount, 3)
+    let (next, op) = try await pool.lease(.background)
+    XCTAssertEqual(op, 1, "nothing was left parked")
+    XCTAssertEqual(transports.openCount, 4)
+    await pool.release(.background, channel: next, nextOp: nil)
+  }
+
   func testAStaleParkedChannelIsClosedAndReplaced() async throws {
     let (open, transports) = opener()
     let time = ManualRemoteClock()

@@ -72,7 +72,7 @@ for path in sorted(Path("fixtures/intelligence").rglob("*.json")):
         if phrase := first_words(text):
             phrases.setdefault(phrase, "analysis text")
 # Product names that also name components in operational log lines.
-operational = {"MTPLX", "LocalFlow"}
+operational = {"MTPLX", "LocalFlow", "FluidAudio"}
 terms = set()
 for corpus in ("tuning", "heldout"):
     data = json.loads(Path(f"fixtures/vocabulary-boost/{corpus}.json").read_text())

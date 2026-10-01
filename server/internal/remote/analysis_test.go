@@ -392,6 +392,15 @@ func TestLogScanFindsContent(t *testing.T) {
 	}
 }
 
+// Engine names that are also Dictionary terms (FluidAudio) are not content:
+// the dictation worker's ready line, as logged on the Mac mini, scans clean.
+func TestLogScanAllowsOperationalNames(t *testing.T) {
+	line := "flowd 2026/10/01 20:02:36 speech worker_ready engine=FluidAudio model_id=FluidInference/parakeet-tdt-0.6b-v3-coreml model_revision=7dd20fe6b1797d35f5e3307e8b1732d9a178edfe booster=ctc110m-v1\n"
+	if report, clean := scanLogs(t, line); !clean {
+		t.Errorf("operational line reported:\n%s", report)
+	}
+}
+
 // FR-029: the analysis operation's log lines, and the analysis handler's
 // own, carry no request or event text, over a request refused, one that
 // runs on the server's backend, a busy one and a fragmented result.

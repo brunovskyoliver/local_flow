@@ -61,6 +61,8 @@ The same install serves summaries and meeting work; there is no extra setting. T
 - runs `flowd-speech provision --models "$DATA/Models" --meeting`, which downloads Whisper Turbo (with its VAD file) and the offline diarization and voice models once and verifies every file against the pinned hashes on each later run;
 - no longer passes `--analysis=false`, and passes `--meeting-helper` to flowd, which starts `flowd-speech meeting --models <--meeting-models> --helper <--meeting-helper>` beside the dictation worker. flowd's `--meeting-models` defaults to the `--speech-models` directory and `--meeting-helper` to `localflow-whisper-engine` beside flowd, so the installer sets only the helper.
 
+Upgrading a running server stops flowd before provisioning, because its workers hold the models' import locks, and starts it again once both agents are reloaded; remote dictation is down for that time (33 s on the Mac mini on 2026-10-01, with the meeting models downloading). If provisioning fails, flowd is started again with its earlier plist.
+
 `ready.capabilities` then lists `analysis`, `live_window` and `meeting_job` with the three model identities. If the meeting models or the helper are missing, the meeting worker reports what is missing in `flowd.log` (`meeting` prefix) and the server stops offering meeting jobs; dictation and rewriting are unaffected.
 
 Licences copied with the install, in `bin/WhisperLicenses/`: Sotto (the helper's source), whisper.cpp (MIT), the Whisper model weights (MIT), Silero VAD (MIT), nlohmann JSON (MIT) and miniaudio. The offline diarization and voice models are downloaded from their source at provisioning, not shipped, and are not modified. Attribution: `FluidInference/speaker-diarization-coreml` at revision `1ed7a662fdc7109e36d822db793ee6eebdaf8594`, a CoreML conversion of pyannote `speaker-diarization-community-1` and the WeSpeaker ResNet34 embedding, all licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The licence review and the pinned model card are in `docs/licenses/speaker-diarization-coreml.md` and `docs/licenses/speaker-diarization-coreml-model-card.md`; `THIRD_PARTY_NOTICES.md` carries the same notice.
@@ -120,6 +122,19 @@ curl -s https://mac-mini.tailf15b6.ts.net/v1/remote/identity   # same fingerprin
 ```
 
 `--bg` keeps the configuration across restarts. In the app, enter `https://mac-mini.tailf15b6.ts.net` as the server.
+
+### Tailnet only (the Mac mini since 2026-10-01)
+
+To serve only devices on the tailnet, replace Funnel with Serve under the same name. Clients then keep their URL, pinned key and enrollment (ADR 0028, amendment of 2026-10-01):
+
+```sh
+T=/opt/homebrew/bin/tailscale
+$T funnel --https=443 off                          # this also removes the 443 handler
+$T serve --bg --https=443 http://127.0.0.1:8090    # the same proxy, tailnet only
+$T serve status                                    # "(tailnet only)", no "Funnel on"
+```
+
+A client off the tailnet then gets no answer and dictates locally. On 2026-10-01 the owner's MacBook reached the mini over a WireGuard tunnel (an iPhone hotspot underneath) in about 62 ms for a TCP connect and about 230 ms for a whole HTTPS request.
 
 ## Clients
 

@@ -38,7 +38,8 @@ for file in "$recordings"/*.wav "$recordings"/*.m4a "$recordings"/*.caf; do
   count=$((count + 1))
 done
 (( count > 0 )) || { echo "No .wav, .m4a or .caf recordings in $recordings" >&2; exit 1; }
-result="$PWD/$outdir/remote-benchmark-$stamp.json"
+# The app writes the result, so the path must be absolute whatever --output was.
+result="$(cd "$outdir" && pwd)/remote-benchmark-$stamp.json"
 meta="$outdir/conditions-$stamp.txt"
 {
   printf 'utc=%s\n' "$stamp"
@@ -79,7 +80,8 @@ for boost in (False, True):
     if concurrent and remote:
         print(f"boost={boost}: concurrent median {concurrent['medianMilliseconds']:.0f} ms, "
               f"added wait {concurrent['medianMilliseconds'] - remote['medianMilliseconds']:.0f} ms per user")
-failures = [r for r in report["rows"] if r["failure"] and r["mode"] != "fallback"]
+# A row that succeeded has no "failure" key.
+failures = [r for r in report["rows"] if r.get("failure") and r["mode"] != "fallback"]
 print(f"rows={len(report['rows'])} remote_failures={len(failures)} transcript_differences={len(report['transcriptDifferences'])}")
 for name in report["transcriptDifferences"]:
     print(f"  differs: {name}")

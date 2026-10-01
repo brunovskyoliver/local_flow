@@ -56,3 +56,14 @@ The owner chose Tailscale Funnel over Cloudflare Tunnel for the Mac mini: `tails
 ## Amendment: every service on the server (2026-10-01)
 
 ADR 0031 (Feature 018) extends this decision to summaries, live meeting preview, final meeting transcription, speaker labels and voice embeddings, and supersedes the line "meeting audio uploads as the existing ADTS AAC segments": the Mac sends prepared 16-bit windows instead.
+
+## Amendment: tailnet only, no Funnel (2026-10-01, later the same day)
+
+The owner turned Funnel off for the Mac mini. Port 443 is now a tailnet-only `tailscale serve --bg --https=443 http://127.0.0.1:8090`, under the same name `https://mac-mini.tailf15b6.ts.net`, so clients keep their pinned key and enrollment. A client reaches the server only from inside the tailnet: through Tailscale, or, for the owner's MacBook, through a WireGuard tunnel that routes `100.74.87.3` and resolves `tailf15b6.ts.net`. From the public internet the name no longer answers (checked: the old Funnel address timed out).
+
+This departs from the decision's goal "reachable without a VPN": every client now needs a tailnet path. The owner accepts that for now, as the only clients are the owner's own devices. Cloudflare Tunnel and Funnel stay documented, and either can be turned back on without a client change, provided the hostname stays the same.
+
+Constitution check:
+- Principle 4 (local-first operation): off the tailnet the server is unreachable, so dictation falls back to local models or keeps the audio for a retry, as before.
+- Principle 5 (privacy): TLS still terminates on the mini, now inside WireGuard. The HPKE inner channel is unchanged. No third party terminates TLS.
+- Principles 8 and 15 are unchanged: flowd authenticates every user and device, and only the remote listener is served (not 8091).

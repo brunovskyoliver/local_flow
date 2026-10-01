@@ -233,7 +233,7 @@ description: "Task list for Feature 018: one server for everything"
 
 Never marked done from fakes. Record measured values only in `specs/018-one-server/acceptance/`.
 
-- [ ] T092 Quickstart §2 on the Mac mini: install with every workload; both workers ready; `ready` lists `analysis`, `live_window`, `meeting_job` and three model identities. Record in `acceptance/server-install.md`.
+- [X] T092 Quickstart §2 on the Mac mini: install with every workload; both workers ready; `ready` lists `analysis`, `live_window`, `meeting_job` and three model identities. Record in `acceptance/server-install.md`.
 - [ ] T093 Quickstart §3 on the MacBook (US1, US2, US4): upgraded install with ai-vm kept as the summaries override; dictation, rewrite, 5-minute meeting and summary all on the server; no `localflow-mtplx` within 10 s, 10 of 10 trials (SC-003); custom summaries server and its fallback. Record in `acceptance/one-switch.md`.
 - [ ] T094 Quickstart §4 failure and retry (US3, SC-008): every row of the table, with `progress_sequence` and segment counts compared. Record in `acceptance/failure-retry.md`.
 - [ ] T095 Quickstart §5 resources and timing (SC-002, SC-005, SC-007): Mac RSS at idle, during and after a 20-minute remote meeting; server working sets per worker and resident model; 20-minute and 2-hour finalization time on server vs MacBook; upload bytes; second-user dictation added wait; Funnel latency. Record in `acceptance/resources.md`.

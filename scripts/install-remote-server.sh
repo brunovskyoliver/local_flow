@@ -364,9 +364,31 @@ then run this script again."
   fi
 fi
 
+stop_agent() {
+  local agent_label="$1"
+  if [ "$dry_run" -eq 1 ]; then
+    echo "+ launchctl bootout $domain/$agent_label   (only if loaded)"
+  elif launchctl print "$domain/$agent_label" >/dev/null 2>&1; then
+    launchctl bootout "$domain/$agent_label"
+    # bootstrap fails with error 5 while the old job is still being torn down.
+    local attempt
+    for attempt in $(seq 1 50); do
+      launchctl print "$domain/$agent_label" >/dev/null 2>&1 || break
+      sleep 0.2
+    done
+  fi
+}
+
 # 4b. Download and verify the meeting models once (Whisper Turbo with its VAD, and the
-# offline diarization and voice models); later runs only verify them.
-run "$bin_dir/flowd-speech" provision --models "$data_dir/Models" --meeting
+# offline diarization and voice models); later runs only verify them. A running server's
+# workers hold the models' import locks, so flowd stops first; step 5 starts it again.
+# If provisioning fails, the earlier agent is started again rather than left down.
+stop_agent "$label"
+if ! run "$bin_dir/flowd-speech" provision --models "$data_dir/Models" --meeting; then
+  [ -f "$plist" ] && launchctl bootstrap "$domain" "$plist" || true
+  echo "error: model provisioning failed; $label was started again with its earlier plist." >&2
+  exit 1
+fi
 
 # 5. Render and load both agents, replacing only earlier copies of these labels.
 # MTPLX first, so flowd's backend probe finds it.
@@ -381,17 +403,7 @@ install_agent() {
     plutil -lint "$stage/agent.plist" >/dev/null
     install -m 0644 "$stage/agent.plist" "$agent_plist"
   fi
-  if [ "$dry_run" -eq 1 ]; then
-    echo "+ launchctl bootout $domain/$agent_label   (only if loaded)"
-  elif launchctl print "$domain/$agent_label" >/dev/null 2>&1; then
-    launchctl bootout "$domain/$agent_label"
-    # bootstrap fails with error 5 while the old job is still being torn down.
-    local attempt
-    for attempt in $(seq 1 50); do
-      launchctl print "$domain/$agent_label" >/dev/null 2>&1 || break
-      sleep 0.2
-    done
-  fi
+  stop_agent "$agent_label"
   run launchctl bootstrap "$domain" "$agent_plist"
 }
 install_agent "$mtplx_label" "$mtplx_plist" render_mtplx_plist
