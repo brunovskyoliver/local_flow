@@ -20,6 +20,10 @@
 		DE6EF9A240D1B7902534A9EF /* LocalFlowSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = AC2E1EAAECB74A757999C159 /* LocalFlowSpeech */; };
 		EB2C7C24D6896085A78D23D5 /* parakeet-v3.json in Resources */ = {isa = PBXBuildFile; fileRef = AB060E11991A635A4D7B30BD /* parakeet-v3.json */; };
 		F417509C882B6369FB5D6B06 /* Figtree.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7A8A9ADA2BE3037D111E58B0 /* Figtree.ttf */; };
+		1A7E00170000000000A00003 /* LocalFlowWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1A7E00170000000000A00002 /* LocalFlowWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1A7E00170000000000A00011 /* EBGaramond-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C79EF1591B83630036C0EE04 /* EBGaramond-Italic.ttf */; };
+		1A7E00170000000000A00012 /* EBGaramond.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2DB4E1CEA00F82D571FCB551 /* EBGaramond.ttf */; };
+		1A7E00170000000000A00013 /* Figtree.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7A8A9ADA2BE3037D111E58B0 /* Figtree.ttf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -37,6 +41,13 @@
 			remoteGlobalIDString = B453D95B421AC3B2D2BF41D5;
 			remoteInfo = LocalFlowKeyboard;
 		};
+		1A7E00170000000000A00004 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4A44CAABE5621F4F8BCBB78C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1A7E00170000000000A00001;
+			remoteInfo = LocalFlowWidgets;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -47,6 +58,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				6B6D457C1830C313AEA988D8 /* LocalFlowKeyboard.appex in Embed Foundation Extensions */,
+				1A7E00170000000000A00003 /* LocalFlowWidgets.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -71,9 +83,45 @@
 		C79EF1591B83630036C0EE04 /* EBGaramond-Italic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "EBGaramond-Italic.ttf"; sourceTree = "<group>"; };
 		E7A7E7B46B876AC96FB5321D /* Keyboard-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "Keyboard-Info.plist"; sourceTree = "<group>"; };
 		EFAD86AFECC005DD55703CCA /* LocalFlowKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LocalFlowKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A7E00170000000000A00002 /* LocalFlowWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LocalFlowWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A7E00170000000000A0000F /* Widgets-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "Widgets-Info.plist"; sourceTree = "<group>"; };
+		1A7E00170000000000A00010 /* LocalFlowWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LocalFlowWidgets.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		1A7E00170000000000A0000E /* Exceptions for "Shared" folder in "LocalFlowWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Diagnostics/Footprint.swift,
+				Handoff/Doorbell.swift,
+				Handoff/HandoffModels.swift,
+				Handoff/HandoffStore.swift,
+				KeyboardLogic/InsertionPolicy.swift,
+				KeyboardLogic/KeyboardSessionModel.swift,
+			);
+			target = 1A7E00170000000000A00001 /* LocalFlowWidgets */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		1A7E00170000000000A0000D /* Intents */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = Intents;
+			sourceTree = "<group>";
+		};
+		1A7E00170000000000A0000C /* Widgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = Widgets;
+			sourceTree = "<group>";
+		};
 		5E259AE92B2CF8F167237334 /* Keyboard */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			explicitFileTypes = {
@@ -94,6 +142,9 @@
 		};
 		7BA77499125D341DCB6859F3 /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				1A7E00170000000000A0000E /* Exceptions for "Shared" folder in "LocalFlowWidgets" target */,
+			);
 			explicitFileTypes = {
 			};
 			explicitFolders = (
@@ -119,6 +170,13 @@
 			files = (
 				DE6EF9A240D1B7902534A9EF /* LocalFlowSpeech in Frameworks */,
 				5A58983B3BD35A6F2BAB3DE8 /* LocalFlowCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1A7E00170000000000A00008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -154,7 +212,9 @@
 				E7A7E7B46B876AC96FB5321D /* Keyboard-Info.plist */,
 				5FDACA75EE45AF62495A9BEB /* LocalFlowKeyboard.entitlements */,
 				2572C8C12901C2C0138F693F /* LocalFlowPhone.entitlements */,
+				1A7E00170000000000A00010 /* LocalFlowWidgets.entitlements */,
 				92AC0B8285342E21F2F1EFA5 /* Signing.local.xcconfig.example */,
+				1A7E00170000000000A0000F /* Widgets-Info.plist */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -182,6 +242,7 @@
 				EFAD86AFECC005DD55703CCA /* LocalFlowKeyboard.appex */,
 				3B2637443DAB300E5FCB4231 /* LocalFlowPhone.app */,
 				243A46684246D3ACAC3C84E1 /* LocalFlowPhoneTests.xctest */,
+				1A7E00170000000000A00002 /* LocalFlowWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -209,10 +270,12 @@
 				FF5A07922F4B25B1B4FD7627 /* App */,
 				0AB2952210C90BEDA91F436A /* apps */,
 				2A4B8465E9C95C5395406667 /* Config */,
+				1A7E00170000000000A0000D /* Intents */,
 				5E259AE92B2CF8F167237334 /* Keyboard */,
 				72FEED4E57CBCAB8B4C792E9 /* LocalFlowPhoneTests */,
 				5D02FB17CBE5A887E1570548 /* Packages */,
 				7BA77499125D341DCB6859F3 /* Shared */,
+				1A7E00170000000000A0000C /* Widgets */,
 				72645DD6EC56730EFBDF6952 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -241,9 +304,11 @@
 			);
 			dependencies = (
 				38C71034D15C12C380F76D00 /* PBXTargetDependency */,
+				1A7E00170000000000A00005 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				FF5A07922F4B25B1B4FD7627 /* App */,
+				1A7E00170000000000A0000D /* Intents */,
 				7BA77499125D341DCB6859F3 /* Shared */,
 			);
 			name = LocalFlowPhone;
@@ -299,6 +364,30 @@
 			productReference = 243A46684246D3ACAC3C84E1 /* LocalFlowPhoneTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		1A7E00170000000000A00001 /* LocalFlowWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A7E00170000000000A00009 /* Build configuration list for PBXNativeTarget "LocalFlowWidgets" */;
+			buildPhases = (
+				1A7E00170000000000A00006 /* Sources */,
+				1A7E00170000000000A00007 /* Resources */,
+				1A7E00170000000000A00008 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1A7E00170000000000A0000D /* Intents */,
+				7BA77499125D341DCB6859F3 /* Shared */,
+				1A7E00170000000000A0000C /* Widgets */,
+			);
+			name = LocalFlowWidgets;
+			packageProductDependencies = (
+			);
+			productName = LocalFlowWidgets;
+			productReference = 1A7E00170000000000A00002 /* LocalFlowWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -315,6 +404,9 @@
 						ProvisioningStyle = Automatic;
 					};
 					DE92345EFBEED9FA5CA0DBD2 = {
+						ProvisioningStyle = Automatic;
+					};
+					1A7E00170000000000A00001 = {
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -339,6 +431,7 @@
 				B453D95B421AC3B2D2BF41D5 /* LocalFlowKeyboard */,
 				2486D7FE7A70AF613544F2F3 /* LocalFlowPhone */,
 				DE92345EFBEED9FA5CA0DBD2 /* LocalFlowPhoneTests */,
+				1A7E00170000000000A00001 /* LocalFlowWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -375,6 +468,16 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1A7E00170000000000A00007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A7E00170000000000A00011 /* EBGaramond-Italic.ttf in Resources */,
+				1A7E00170000000000A00012 /* EBGaramond.ttf in Resources */,
+				1A7E00170000000000A00013 /* Figtree.ttf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -399,6 +502,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1A7E00170000000000A00006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -411,6 +521,11 @@
 			isa = PBXTargetDependency;
 			target = 2486D7FE7A70AF613544F2F3 /* LocalFlowPhone */;
 			targetProxy = A0E50E56703E93A17EFBEE10 /* PBXContainerItemProxy */;
+		};
+		1A7E00170000000000A00005 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1A7E00170000000000A00001 /* LocalFlowWidgets */;
+			targetProxy = 1A7E00170000000000A00004 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -660,6 +775,46 @@
 			};
 			name = Release;
 		};
+		1A7E00170000000000A0000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/LocalFlowWidgets.entitlements;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Widgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = LocalFlow;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow.Widgets";
+				PRODUCT_NAME = LocalFlowWidgets;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		1A7E00170000000000A0000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/LocalFlowWidgets.entitlements;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Widgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = LocalFlow;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow.Widgets";
+				PRODUCT_NAME = LocalFlowWidgets;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -695,6 +850,15 @@
 			buildConfigurations = (
 				0662C040145379D8AFC0994A /* Debug */,
 				3B05CEE213FA7693092210B7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1A7E00170000000000A00009 /* Build configuration list for PBXNativeTarget "LocalFlowWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A7E00170000000000A0000A /* Debug */,
+				1A7E00170000000000A0000B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
