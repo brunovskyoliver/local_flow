@@ -5,7 +5,7 @@ if [[ ! -f .specify/feature.json && -z "${SPECIFY_FEATURE_DIRECTORY:-}" ]]; then
   export SPECIFY_FEATURE_DIRECTORY="$PWD/specs/001-local-dictation"
 fi
 swift format lint --strict --recursive apps/macos/LocalFlow apps/macos/LocalFlowTests apps/macos/LocalFlowUITests \
-  packages/LocalFlowCore apps/ios
+  apps/macos/LocalFlowServer apps/macos/LocalFlowServerTests packages/LocalFlowCore apps/ios
 for script in scripts/*.sh .specify/scripts/bash/*.sh; do bash -n "$script"; done
 ./scripts/check-transcript-imports.sh
 ./scripts/check-identification-imports.sh
@@ -40,6 +40,10 @@ python3 scripts/analysis-quality.py "$analysis_eval_dir/analysis-eval.json"
 # Feature 014: the speech worker target compiles on its own.
 xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -target flowd-speech -configuration Debug \
   CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO SYMROOT="$PWD/build/SpeechWorker" build
+# ADR 0032: the LocalFlow Server menu bar app and its unit tests.
+xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -scheme LocalFlowServer -configuration Debug \
+  -destination "platform=macOS,arch=arm64" -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO \
+  COMPILER_INDEX_STORE_ENABLE=NO test
 # Feature 016: the iPhone app, keyboard and unit tests on an iPhone simulator.
 ios_simulator="${LOCALFLOW_IOS_SIMULATOR:-$(xcrun simctl list devices available | awk -F'[()]' '/^ +iPhone/ { print $2; exit }')}"
 [[ -n "$ios_simulator" ]] || { echo "no iPhone simulator available" >&2; exit 1; }

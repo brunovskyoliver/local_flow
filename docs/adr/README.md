@@ -42,3 +42,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0029: iOS companion app and a shared LocalFlowCore package](0029-ios-companion-and-shared-core.md)
 
 - [0031: One server for every service, and one specification for it](0031-one-server-for-every-service.md)
+
+- [0032: LocalFlow Server, a menu bar app that manages the server](0032-server-menu-bar-app.md)
