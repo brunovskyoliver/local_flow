@@ -30,6 +30,10 @@ type isolationHarness struct {
 	deviceA    accounts.Device
 	deviceB    accounts.Device
 	refreshB   string
+	analysis   *fakeAnalysis
+	live       *fakeLiveScheduler
+	meeting    *fakeMeetingWorker
+	attempts   int // cross_user_attempt rows expected for alice
 
 	mu       sync.Mutex
 	received map[string][]string // messages each user's clients received, as JSON
@@ -54,7 +58,16 @@ func newIsolationHarness(t *testing.T) *isolationHarness {
 	operations[PurposeSession]["dictation_start"] = NewDictation(DictationConfig{
 		Scheduler: SchedulerSessions(scheduler), Models: &fakeModels{model: testModel(), ok: true}, Clock: h.clock}).Start
 	operations[PurposeSession]["rewrite"] = NewRewriter(RewriteConfig{Runner: handler, Windows: scheduler}).Start
-	x := &isolationHarness{harness: h, recognizer: recognizer, backend: b, received: map[string][]string{}}
+	// Feature 018 ops, over fakes that hand each request to the test.
+	fa := newFakeAnalysis(`{"type":"result"}`)
+	fa.hold = make(chan struct{})
+	operations[PurposeSession]["analysis"] = NewAnalyzer(AnalysisConfig{Runner: fa, Clock: h.clock}).Start
+	live := &fakeLiveScheduler{calls: make(chan *liveCall, 8)}
+	operations[PurposeSession]["live_window"] = NewLive(LiveConfig{Scheduler: live, Clock: h.clock}).Start
+	meeting := &fakeMeetingWorker{calls: make(chan *meetingCall, 8), state: speech.StateReady}
+	operations[PurposeSession]["meeting_job"] = NewMeeting(MeetingConfig{Worker: meeting, Queue: speech.NewMeetingQueue(nil), Clock: h.clock}).Start
+	x := &isolationHarness{harness: h, recognizer: recognizer, backend: b, analysis: fa, live: live, meeting: meeting,
+		received: map[string][]string{}}
 	x.userA, x.deviceA, x.tokenA = h.approved("alice", 1)
 	x.userB, x.deviceB, x.tokenB = h.approved("bob", 2)
 	refresh, _, err := h.store.IssueRefresh(context.Background(), x.deviceB.ID)
@@ -104,6 +117,33 @@ func (x *isolationHarness) crossUserRows() map[string]int {
 	return out
 }
 
+// expectRefused sends frames on a fresh channel of alice's and expects
+// error{op, code}; audited says whether a cross_user_attempt row is due.
+func (x *isolationHarness) expectRefused(name string, op int64, code ErrorCode, audited bool, frames ...Frame) {
+	x.t.Helper()
+	ca, _ := x.hello(PurposeSession, x.tokenA)
+	for _, frame := range frames {
+		ca.sendFrame(frame)
+	}
+	// Replies to alice's own operations (accepted, progress, cancelled)
+	// come first.
+	m := x.recv("alice", ca)
+	for m.MessageType() != "error" {
+		m = x.recv("alice", ca)
+	}
+	e, ok := m.(ErrorMessage)
+	if !ok || e.Code != code || e.Op != op {
+		x.t.Fatalf("%s: %#v", name, m)
+	}
+	if audited {
+		x.attempts++
+	}
+	if got := x.crossUserRows()[accounts.DeviceActor(x.deviceA.ID)]; got != x.attempts {
+		x.t.Fatalf("%s: %d cross_user_attempt rows, want %d", name, got, x.attempts)
+	}
+	ca.ws.CloseNow()
+}
+
 // sendSigned sends n samples with values sign*(first+i+1): alice's audio is
 // positive, bob's negative, so every job shows whose audio it carries.
 func sendSigned(c *testClient, sign float32, first, n int) {
@@ -138,7 +178,6 @@ func p256Key(t *testing.T) []byte {
 // audit row for identifiers on an authenticated channel.
 func TestIsolationTwoUsers(t *testing.T) {
 	x := newIsolationHarness(t)
-	actorA := accounts.DeviceActor(x.deviceA.ID)
 
 	// Bob starts a dictation (op 2 on his channel) and keeps it open.
 	cb, _ := x.hello(PurposeSession, x.tokenB)
@@ -150,32 +189,7 @@ func TestIsolationTwoUsers(t *testing.T) {
 	}
 	sendSigned(cb, -1, 0, 1000)
 
-	attempts := 0
-	// expectRefused sends frames on a fresh channel of alice's and expects
-	// error{op, code}; audited says whether a cross_user_attempt row is due.
-	expectRefused := func(name string, op int64, code ErrorCode, audited bool, frames ...Frame) {
-		t.Helper()
-		ca, _ := x.hello(PurposeSession, x.tokenA)
-		for _, frame := range frames {
-			ca.sendFrame(frame)
-		}
-		// Replies to alice's own operations (accepted, cancelled) come first.
-		m := x.recv("alice", ca)
-		for m.MessageType() != "error" {
-			m = x.recv("alice", ca)
-		}
-		e, ok := m.(ErrorMessage)
-		if !ok || e.Code != code || e.Op != op {
-			t.Fatalf("%s: %#v", name, m)
-		}
-		if audited {
-			attempts++
-		}
-		if got := x.crossUserRows()[actorA]; got != attempts {
-			t.Fatalf("%s: %d cross_user_attempt rows, want %d", name, got, attempts)
-		}
-		ca.ws.CloseNow()
-	}
+	expectRefused := x.expectRefused
 	aliceStart := startMessage(1)
 	aliceStart.Boost = boostFor("AlphaTerm")
 	// Alice's audio is positive, like all of hers.
@@ -407,5 +421,106 @@ func TestNextOperationRightAfterTheLastReply(t *testing.T) {
 	}
 	if audited != 0 {
 		t.Fatalf("%d audit rows", audited)
+	}
+}
+
+// FR-028 (Feature 018 T084): analysis, analysis_part, live_window,
+// meeting_job and meeting_cancel naming another user's op are refused with
+// invalid_message and a cross_user_attempt row, and return none of that
+// user's data; the other user's operations run on untouched.
+func TestIsolationFeature018Ops(t *testing.T) {
+	x := newIsolationHarness(t)
+
+	// Bob holds an analysis (op 2), a live window (op 3) and a meeting job
+	// (op 4) open, each half received, on his three channels.
+	body := analysisRequest(t, 2, nil)
+	cut := len(body) / 2
+	for body[cut]&0xc0 == 0x80 {
+		cut--
+	}
+	bobAnalysis, _ := x.hello(PurposeSession, x.tokenB)
+	bobAnalysis.send(AnalysisPart{Op: 2, Index: 0, Data: string(body[:cut])})
+	bobLive, _ := x.hello(PurposeSession, x.tokenB)
+	bobLive.send(LiveWindow{Op: 3, SampleCount: 4, Format: SampleFormat})
+	bobLive.sendS16(-200, 2, 2)
+	bobMeeting, _ := x.hello(PurposeSession, x.tokenB)
+	bobMeeting.send(MeetingJob{Op: 4, Kind: "transcribe", SampleCount: 4, Format: SampleFormat})
+	bobMeeting.sendS16(-300, 2, 2)
+
+	sum := hexSHA256([]byte("x"))
+	foreignClose := control(t, Analysis{Op: 2, Parts: 1, Bytes: 1, SHA256: sum})
+	foreignPart := control(t, AnalysisPart{Op: 2, Index: 1, Data: "x"})
+	aliceAnalysis := control(t, AnalysisPart{Op: 1, Index: 0, Data: "{"})
+	aliceLive := control(t, LiveWindow{Op: 1, SampleCount: 4, Format: SampleFormat})
+	aliceMeeting := control(t, MeetingJob{Op: 1, Kind: "transcribe", SampleCount: 4, Format: SampleFormat})
+	samples := Frame{KindSamples, []byte{1, 0}}
+
+	// On alice's idle channel: messages that continue or end an op.
+	x.expectRefused("analysis with bob's op", 0, CodeInvalidMessage, true, foreignClose)
+	x.expectRefused("analysis_part fragment 1 with bob's op", 0, CodeInvalidMessage, true, foreignPart)
+	x.expectRefused("meeting_cancel with bob's op", 0, CodeInvalidMessage, true, control(t, MeetingCancel{Op: 4}))
+	// During alice's own operations.
+	x.expectRefused("analysis_part with bob's op during alice's analysis", 1, CodeInvalidMessage, true, aliceAnalysis, foreignPart)
+	x.expectRefused("analysis with bob's op during alice's analysis", 1, CodeInvalidMessage, true, aliceAnalysis, foreignClose)
+	x.expectRefused("live_window with bob's op during alice's live window", 1, CodeInvalidMessage, true,
+		aliceLive, control(t, LiveWindow{Op: 3, SampleCount: 4, Format: SampleFormat}))
+	x.expectRefused("meeting_cancel with bob's op during alice's meeting job", 1, CodeInvalidMessage, true,
+		aliceMeeting, control(t, MeetingCancel{Op: 4}))
+	x.expectRefused("meeting_job with bob's op during alice's meeting job", 1, CodeInvalidMessage, true,
+		aliceMeeting, control(t, MeetingJob{Op: 4, Kind: "transcribe", SampleCount: 4, Format: SampleFormat}))
+	x.expectRefused("meeting_cancel with a stale op", 0, CodeInvalidMessage, true,
+		aliceMeeting, control(t, MeetingCancel{Op: 1}), control(t, MeetingCancel{Op: 1}))
+	// Samples outside a collecting operation of alice's own carry no op.
+	x.expectRefused("samples with no operation", 0, CodeInvalidMessage, false, samples)
+	x.expectRefused("samples during alice's analysis", 1, CodeInvalidMessage, false, aliceAnalysis, samples)
+
+	// Nothing of alice's reached the fakes.
+	select {
+	case c := <-x.live.calls:
+		t.Fatalf("live window of user %d ran", c.user)
+	default:
+	}
+	x.meeting.none(t)
+
+	// Bob's operations complete with his own data.
+	bobAnalysis.send(AnalysisPart{Op: 2, Index: 1, Data: string(body[cut:])})
+	bobAnalysis.send(Analysis{Op: 2, Parts: 2, Bytes: len(body), SHA256: hexSHA256(body)})
+	if req := <-x.analysis.seen; req.RequestID != analysisUUID(0x100) {
+		t.Fatalf("analysis %s", req.RequestID)
+	}
+	close(x.analysis.hold)
+	if events, _ := bobAnalysis.analysisEvents(2); len(events) != 1 {
+		t.Fatalf("%d events", len(events))
+	}
+	bobLive.sendS16(-198, 2, 2)
+	call := x.live.next(t)
+	if call.user != x.userB.ID || call.samples[0] != -200.0/32768 {
+		t.Fatalf("live window of user %d, first sample %v", call.user, call.samples[0])
+	}
+	call.answer(liveWindowJSON(4, "BobLive"), nil)
+	if m, ok := x.recv("bob", bobLive).(LiveResult); !ok || m.Window.Text != "BobLive" {
+		t.Fatalf("%#v", m)
+	}
+	bobMeeting.sendS16(-298, 2, 2)
+	expectProgress(t, x.recv("bob", bobMeeting), 4, "running")
+	job := x.meeting.next(t)
+	if len(job.job.Samples) != 8 || int16(binary.LittleEndian.Uint16(job.job.Samples)) != -300 {
+		t.Fatalf("meeting job samples %v", job.job.Samples)
+	}
+	job.reply <- meetingAnswer{result: transcribeResult}
+	if m, ok := x.recv("bob", bobMeeting).(MeetingResult); !ok || m.Op != 4 {
+		t.Fatalf("%#v", m)
+	}
+	if x.crossUserRows()[accounts.DeviceActor(x.deviceB.ID)] != 0 {
+		t.Fatal("bob's channels were audited")
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	for _, message := range x.received["alice"] {
+		for _, marker := range []string{"BobLive", "Secret words", "analysis_event", "meeting_result", "live_result"} {
+			if strings.Contains(message, marker) {
+				t.Fatalf("alice received %q: %s", marker, message)
+			}
+		}
 	}
 }

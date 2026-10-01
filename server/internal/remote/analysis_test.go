@@ -2,10 +2,15 @@ package remote
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -221,8 +226,7 @@ func TestAnalysisAssemblyRefusals(t *testing.T) {
 		frames []Frame
 		code   ErrorCode
 	}{
-		"first fragment not index 0": {[]Frame{control(t, AnalysisPart{Op: 1, Index: 1, Data: "{"})}, CodeInvalidMessage},
-		"fragment out of order":      {[]Frame{control(t, first), control(t, AnalysisPart{Op: 1, Index: 2, Data: "x"})}, CodeInvalidMessage},
+		"fragment out of order": {[]Frame{control(t, first), control(t, AnalysisPart{Op: 1, Index: 2, Data: "x"})}, CodeInvalidMessage},
 		"parts mismatch": {[]Frame{control(t, first), control(t, second),
 			control(t, Analysis{Op: 1, Parts: 3, Bytes: len(body), SHA256: sum})}, CodeInvalidMessage},
 		"bytes mismatch": {[]Frame{control(t, first), control(t, second),
@@ -267,8 +271,8 @@ func TestAnalysisAssemblyRefusals(t *testing.T) {
 		h.waitReleased(t)
 		c.ws.CloseNow()
 	}
-	if len(h.runner.seen) != 9 {
-		t.Fatalf("runner ran %d times, want only the 9 follow-up ops", len(h.runner.seen))
+	if len(h.runner.seen) != 8 {
+		t.Fatalf("runner ran %d times, want only the 8 follow-up ops", len(h.runner.seen))
 	}
 }
 
@@ -310,5 +314,130 @@ func TestAnalysisBusyAndCancel(t *testing.T) {
 	c2.sendAnalysis(2, body, MaxAnalysisPartBytes)
 	if events, _ := c2.analysisEvents(2); len(events) != 2 {
 		t.Fatalf("%d events", len(events))
+	}
+}
+
+// repoFile is path relative to the repository root.
+func repoFile(path string) string { return filepath.Join("..", "..", "..", path) }
+
+// readFixture decodes a JSON fixture into v.
+func readFixture(t *testing.T, path string, v any) {
+	t.Helper()
+	data, err := os.ReadFile(repoFile(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fixtureSegments is the segment text of fixtures/intelligence/english.json.
+func fixtureSegments(t *testing.T) []string {
+	t.Helper()
+	var meeting struct {
+		Segments []struct {
+			Text string `json:"normalized_text"`
+		} `json:"segments"`
+	}
+	readFixture(t, "fixtures/intelligence/english.json", &meeting)
+	out := make([]string, len(meeting.Segments))
+	for i, s := range meeting.Segments {
+		out[i] = s.Text
+	}
+	return out
+}
+
+// scanLogs runs scripts/check-remote-logs.sh over text and returns its
+// report; clean is false when it found anything (Feature 018 FR-029).
+func scanLogs(t *testing.T, text string) (report string, clean bool) {
+	t.Helper()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not found; the log scan needs it")
+	}
+	file := filepath.Join(t.TempDir(), "flowd.log")
+	if err := os.WriteFile(file, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("bash", repoFile("scripts/check-remote-logs.sh"), file).CombinedOutput()
+	if _, failed := err.(*exec.ExitError); err != nil && !failed {
+		t.Fatal(err)
+	}
+	return string(out), err == nil
+}
+
+// The log scan finds each kind of content the new operations carry, so the
+// clean scans below mean something.
+func TestLogScanFindsContent(t *testing.T) {
+	var manifest struct {
+		Fixtures []struct {
+			Reference string `json:"reference"`
+		} `json:"fixtures"`
+	}
+	readFixture(t, "fixtures/audio/manifest.json", &manifest)
+	payload := make([]byte, 48)
+	_, _ = rand.Read(payload)
+	lines := map[string]string{
+		"transcript text":  "result " + manifest.Fixtures[0].Reference,
+		"analysis text":    "summary: " + fixtureSegments(t)[0],
+		"embedding vector": "centroid [0.123456 -0.5 0.25 1e-3]",
+		"sample payload":   fmt.Sprintf("frame %v", payload),
+	}
+	lines["sample payload "] = "frame " + base64.StdEncoding.EncodeToString(append(payload, payload...))
+	for kind, line := range lines {
+		report, clean := scanLogs(t, "remote meeting channel=1 op=1 code=ok\n"+line+"\n")
+		if clean || !strings.Contains(report, ":2: "+strings.TrimSpace(kind)) {
+			t.Errorf("%s not found:\n%s", kind, report)
+		}
+	}
+}
+
+// FR-029: the analysis operation's log lines, and the analysis handler's
+// own, carry no request or event text, over a request refused, one that
+// runs on the server's backend, a busy one and a fragmented result.
+func TestAnalysisLogsCarryNoContent(t *testing.T) {
+	segments := fixtureSegments(t)
+	list := make([]any, len(segments))
+	for i, text := range segments {
+		list[i] = map[string]any{"id": analysisUUID(i + 2), "start_ms": i * 1000, "end_ms": i*1000 + 1000, "speaker_id": nil, "text": text}
+	}
+	body := analysisRequest(t, 0, map[string]any{"segments": list})
+
+	operations := Operations{PurposeSession: {}}
+	h := newHarness(t, operations)
+	handler := analysis.NewHandler(analysis.HandlerConfig{Backend: &echoBackend{}, Limits: analysis.DefaultLimits(), Logger: h.listener.cfg.Logger})
+	a := NewAnalyzer(AnalysisConfig{Runner: handler, Clock: h.clock, Logger: h.listener.cfg.Logger})
+	operations[PurposeSession]["analysis"] = a.Start
+	_, _, token := h.approved("a", 1)
+	c, _ := h.hello(PurposeSession, token)
+	// The backend echoes its prompt, so the result fails validation.
+	c.sendAnalysis(1, body, 64)
+	c.analysisEvents(1)
+	// A refused assembly.
+	c.send(AnalysisPart{Op: 2, Index: 0, Data: string(body)})
+	c.send(Analysis{Op: 2, Parts: 1, Bytes: len(body), SHA256: strings.Repeat("0", 64)})
+	expectError(t, c.recv(), 2, CodeInvalidMessage)
+
+	// A fragmented result and a busy second analysis, over a fake runner.
+	result, _ := json.Marshal(map[string]any{"schema_version": 1, "type": "result", "request_id": "x",
+		"summary": strings.Repeat(segments[0]+" ", 2*MaxAnalysisPartBytes/len(segments[0]))})
+	runner := newFakeAnalysis(string(result))
+	runner.hold = make(chan struct{})
+	operations[PurposeSession]["analysis"] = NewAnalyzer(AnalysisConfig{Runner: runner, Clock: h.clock, Logger: h.listener.cfg.Logger}).Start
+	c.sendAnalysis(3, body, MaxAnalysisPartBytes)
+	other, _ := h.hello(PurposeSession, token)
+	other.send(AnalysisPart{Op: 1, Index: 0, Data: string(body)})
+	expectError(t, other.recv(), 1, CodeBusy)
+	close(runner.hold)
+	if _, fragments := c.analysisEvents(3); fragments < 2 {
+		t.Fatalf("%d fragments", fragments)
+	}
+
+	logs := h.logs.String()
+	if !strings.Contains(logs, "remote analysis") || !strings.Contains(logs, "request_id=") {
+		t.Fatalf("missing log lines:\n%s", logs)
+	}
+	if report, clean := scanLogs(t, logs); !clean {
+		t.Fatalf("log scan:\n%s", report)
 	}
 }

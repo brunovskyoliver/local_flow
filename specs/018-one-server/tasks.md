@@ -213,10 +213,10 @@ description: "Task list for Feature 018: one server for everything"
 
 **Independent Test**: Run one user's finalization while another dictates, rewrites and summarizes; measure the added wait; run the extended isolation suite.
 
-- [ ] T084 [P] [US5] Extend `server/internal/remote/isolation_test.go` with every new request type (`analysis`, `analysis_part`, `live_window`, `meeting_job`, `meeting_cancel`) using another user's `op` numbers: `invalid_message` plus a `cross_user_attempt` audit row, no data returned (FR-028).
-- [ ] T085 [P] [US5] Write a Go test in `server/internal/remote/worker_integration_test.go` with fake workers and a fake clock: user A's meeting job running, user B's dictation window waits at most one meeting job; rewrite preempts B's or A's analysis; a saturated meeting queue answers `busy` (FR-027, SC-007 logic only).
-- [ ] T086 [US5] Fix any failures from T084 and T085 in `server/internal/remote/analysis.go`, `live.go`, `meeting.go` or `server/internal/speech/meeting_queue.go`.
-- [ ] T087 [P] [US5] Extend `scripts/check-remote-logs.sh` with patterns for analysis text, transcript text, embedding vectors and sample payloads, and add a Go test in `server/internal/remote/analysis_test.go` and `meeting_test.go` that captures logs from each new op and asserts none of them match (FR-029).
+- [X] T084 [P] [US5] Extend `server/internal/remote/isolation_test.go` with every new request type (`analysis`, `analysis_part`, `live_window`, `meeting_job`, `meeting_cancel`) using another user's `op` numbers: `invalid_message` plus a `cross_user_attempt` audit row, no data returned (FR-028).
+- [X] T085 [P] [US5] Write a Go test in `server/internal/remote/worker_integration_test.go` with fake workers and a fake clock: user A's meeting job running, user B's dictation window waits at most one meeting job; rewrite preempts B's or A's analysis; a saturated meeting queue answers `busy` (FR-027, SC-007 logic only).
+- [X] T086 [US5] Fix any failures from T084 and T085 in `server/internal/remote/analysis.go`, `live.go`, `meeting.go` or `server/internal/speech/meeting_queue.go`.
+- [X] T087 [P] [US5] Extend `scripts/check-remote-logs.sh` with patterns for analysis text, transcript text, embedding vectors and sample payloads, and add a Go test in `server/internal/remote/analysis_test.go` and `meeting_test.go` that captures logs from each new op and asserts none of them match (FR-029).
 
 ---
 
@@ -332,3 +332,40 @@ US3 (T057–T083), meetings on the server:
 - No licence file is installed for the diarization models (CC BY 4.0). They are downloaded at provisioning, not shipped, but the attribution should still go in `WhisperLicenses/` or the docs.
 - Voice enrollment (`EnrollmentJob`) always runs on this Mac.
 - `live_window` has no cancel message, so cancelling a live window closes the live channel; the next window opens a new one.
+
+## Report (2026-10-01): Phase 7, T084–T087
+
+**What changed.**
+
+- T084 (FR-028): `TestIsolationFeature018Ops` in `isolation_test.go`. Bob keeps an analysis, a live window and a meeting job half received. Alice then sends `analysis`, `analysis_part`, `live_window`, `meeting_job` and `meeting_cancel` with Bob's op numbers: on an idle channel, during her own analysis, live window and meeting job, and with a stale op. Each gets `invalid_message` and a `cross_user_attempt` row. Samples outside an op get `invalid_message` with no row. None of Alice's requests reach a worker, Bob's three ops finish with his own data, and Alice receives no event, result or text of his. The isolation harness now registers the three Feature 018 ops over fakes, and `expectRefused` is a harness method shared with `TestIsolationTwoUsers`.
+- T085 (FR-027, SC-007 logic only): three tests in `worker_integration_test.go`. They use the real `MeetingQueue`, speech scheduler, rewrite and analysis handlers and rewrite-first gate, with fake workers on one shared device and the manual clock.
+  - `TestDictationWaitsAtMostOneMeetingJob`: user A's job holds the device, and user C's job has started. User B's window waits for A's job only (one job of clock time). C's job and A's queued one reach the worker only after B's dictation ends.
+  - `TestRewritePreemptsAnalysis`: a rewrite from the other user or the same user ends a running analysis with `preempted`.
+  - `TestSaturatedMeetingQueueAnswersBusy`: one running and two waiting jobs make the next one `busy`. Other users' jobs and dictation are still admitted, and the user can queue again once a slot frees.
+- T086: one fix, in `server/internal/remote/listener.go`. An `analysis_part` with index > 0 on an idle channel used to start an analysis and get `error{op}` with no audit row. Now only fragment 0 starts one, and a later fragment is refused like any op the channel does not hold: `invalid_message`, a `cross_user_attempt` row, channel closed (contract "Isolation"). The old "first fragment not index 0" case in `TestAnalysisAssemblyRefusals` expected the old reply and was removed; the isolation test covers it. T085 exposed nothing, so `analysis.go`, `live.go`, `meeting.go` and `meeting_queue.go` are unchanged.
+- T087 (FR-029): `scripts/check-remote-logs.sh` also reports:
+  - transcript text (the audio fixtures' reference phrases, formerly "fixture phrase")
+  - analysis text (segments, notes and response strings of `fixtures/intelligence`)
+  - embedding vectors (four or more decimals in brackets)
+  - sample payloads (byte-slice dumps, base64 runs of 64+ characters in mixed case, so lower-case hex digests don't match)
+
+  Go tests run the script over captured logs:
+  - `TestLogScanFindsContent` checks that each kind is found.
+  - `TestAnalysisLogsCarryNoContent` covers the real analysis handler, a refused assembly, a busy request and a fragmented result, all with fixture text.
+  - `TestMeetingLogsCarryNoContent` covers every job kind with fixture transcript, vectors and Dictionary terms, plus an oversized result, a cancel, a busy refusal and a live window.
+
+  `server/README.md` describes the new kinds.
+
+**How it was verified.**
+- In `server/`: gofmt clean, `go vet ./...` and `go test -count=1 ./...` pass. The new and changed tests pass 10 runs with `-race`.
+- Mutation checks, each reverted:
+  - With the meeting gate removed, the dictation test fails.
+  - Logging the analysis body, the meeting result or the samples makes the log tests fail with the matching kind.
+- The extended script finds nothing in the existing verbose Go log of the remote packages.
+- `make check` passed on 2026-10-01, including its log scan ("no tokens, JWTs, transcript or analysis text, Dictionary terms, vectors or samples in 2 file(s)").
+
+**What is left.**
+- Nothing was measured. SC-007's added wait on real hardware is T095, and the acceptance log scan is T096.
+- The shared-device model in T085 is a fake. The tests show that no further meeting job starts during dictation, not how long the GPU or ANE contention actually takes.
+- The script's phrase lists come from the repository fixtures. Real meeting content in acceptance logs is caught only by the generic vector and payload patterns, or if it matches a fixture.
+- Phases 8–9 are not done.

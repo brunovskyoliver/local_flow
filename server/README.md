@@ -162,8 +162,8 @@ tunnel hostname at the remote listener.
 
 Logs carry identifiers, counts, durations and codes only; the worker's own stderr is
 content-free, and FluidAudio's console output inside the worker is discarded.
-`scripts/check-remote-logs.sh` scans logs for tokens, JWTs, fixture phrases and
-Dictionary terms. Opt-in check of the real worker against the Go side:
+`scripts/check-remote-logs.sh` scans logs for tokens, JWTs, transcript and analysis
+text from the fixtures, Dictionary terms, embedding vectors and sample payloads. Opt-in check of the real worker against the Go side:
 
 ```sh
 LOCALFLOW_SPEECH_WORKER=<path to flowd-speech> LOCALFLOW_SPEECH_MODELS=<Models dir> \

@@ -673,6 +673,11 @@ func (c *Conn) handle(ctx context.Context, frame Frame) bool {
 	if c.purpose == PurposeSession {
 		name, offerable = sessionStarts[name]
 	}
+	// Only fragment 0 begins an analysis; a later one continues an op this
+	// channel does not hold (Feature 018 T086).
+	if part, isPart := message.(AnalysisPart); isPart && part.Index != 0 {
+		name, offerable = "", false
+	}
 	start, known := c.listener.cfg.Operations[c.purpose][name]
 	c.mu.Lock()
 	fresh := ok && numbered.OpNumber() > c.lastOp

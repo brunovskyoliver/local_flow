@@ -330,3 +330,88 @@ func TestMeetingCapabilities(t *testing.T) {
 		t.Fatalf("%#v", first)
 	}
 }
+
+// FR-029: the meeting_job, meeting_cancel and live_window operations log no
+// transcript text, vocabulary terms, vectors or samples, over every kind,
+// an oversized result, a cancelled job and a busy refusal.
+func TestMeetingLogsCarryNoContent(t *testing.T) {
+	h := newMeetingHarness(t)
+	live := &fakeLiveScheduler{calls: make(chan *liveCall, 8)}
+	h.listener.cfg.Operations[PurposeSession]["live_window"] = NewLive(LiveConfig{Scheduler: live, Clock: h.clock, Logger: h.listener.cfg.Logger}).Start
+	user, _, token := h.approved("sub", 1)
+	c, _ := h.hello(PurposeSession, token)
+
+	var manifest struct {
+		Fixtures []struct {
+			Reference string `json:"reference"`
+		} `json:"fixtures"`
+	}
+	readFixture(t, "fixtures/audio/manifest.json", &manifest)
+	var corpus struct {
+		Vocabulary []struct {
+			Canonical string `json:"canonical"`
+		} `json:"vocabulary"`
+	}
+	readFixture(t, "fixtures/vocabulary-boost/tuning.json", &corpus)
+	var terms []string
+	for _, entry := range corpus.Vocabulary {
+		if len(entry.Canonical) >= 4 && entry.Canonical != "MTPLX" && entry.Canonical != "LocalFlow" && len(terms) < 3 {
+			terms = append(terms, entry.Canonical)
+		}
+	}
+	quoted, _ := json.Marshal(manifest.Fixtures[0].Reference)
+	transcript := `{"text":` + string(quoted) + `,"tokens":[],"timings_available":false,"retry_depth":0}`
+	speakers := 2
+	op := int64(0)
+	for _, tc := range []struct {
+		job    MeetingJob
+		result string
+	}{
+		{MeetingJob{Kind: "transcribe", SampleCount: 32, Language: "auto", VocabularyTerms: terms, Pipeline: "w120"}, transcript},
+		{MeetingJob{Kind: "diarize", SampleCount: 40000, NumSpeakers: &speakers},
+			`{"turns":[{"cluster":0,"start":0,"end":1.5}],"centroids":[{"cluster":0,"vector":[0.123456,-0.25,0.5,0.75]}]}`},
+		{MeetingJob{Kind: "embed", SampleCount: 48000}, `{"vector":[0.654321,-0.125,0.375,0.875],"speech_seconds":3}`},
+		{MeetingJob{Kind: "transcribe", SampleCount: 32}, `{"text":"` + strings.Repeat(manifest.Fixtures[1].Reference, 1000)[:70000] + `"}`},
+	} {
+		op++
+		tc.job.Op, tc.job.Format = op, SampleFormat
+		c.send(tc.job)
+		c.sendS16(-1000, tc.job.SampleCount, MaxSampleFrameSamples)
+		expectProgress(t, c.recv(), op, "running")
+		h.worker.next(t).reply <- meetingAnswer{result: tc.result}
+		c.recv()
+	}
+	// A cancelled job and a busy one.
+	op++
+	c.send(MeetingJob{Op: op, Kind: "transcribe", SampleCount: 32, Format: SampleFormat, VocabularyTerms: terms})
+	c.send(MeetingCancel{Op: op})
+	if m, ok := c.recv().(Cancelled); !ok || m.Op != op {
+		t.Fatalf("%#v", m)
+	}
+	for range speech.MaxMeetingWaitingPerUser {
+		if _, err := h.queue.Enqueue(user.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	op++
+	c.send(MeetingJob{Op: op, Kind: "transcribe", SampleCount: 32, Format: SampleFormat, VocabularyTerms: terms})
+	expectError(t, c.recv(), op, CodeBusy)
+	// A live window.
+	op++
+	c.send(LiveWindow{Op: op, SampleCount: 32, Format: SampleFormat})
+	c.sendS16(-1000, 32, 32)
+	live.next(t).answer(liveWindowJSON(32, manifest.Fixtures[2].Reference), nil)
+	if m, ok := c.recv().(LiveResult); !ok || m.Op != op {
+		t.Fatalf("%#v", m)
+	}
+
+	logs := h.logs.String()
+	for _, want := range []string{"kind=diarize", "code=cancelled", "code=busy", "result_bytes=", "remote live"} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("no %q in the log:\n%s", want, logs)
+		}
+	}
+	if report, clean := scanLogs(t, logs); !clean {
+		t.Fatalf("log scan:\n%s", report)
+	}
+}
