@@ -87,7 +87,7 @@ final class PhoneHarness {
   var modelReady = true
   var spoolRoot: URL { root.appendingPathComponent("TemporaryAudio", isDirectory: true) }
 
-  init() throws {
+  init(clock: any DictationClock = SystemDictationClock()) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "phone-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -96,7 +96,7 @@ final class PhoneHarness {
     vocabulary = VocabularyStore(history: history)
     dictations = PhoneDictationStore(history: history)
     let runtime = runtime
-    lifecycle = ModelLifecycleCoordinator(factory: { runtime })
+    lifecycle = ModelLifecycleCoordinator(clock: clock, factory: { runtime })
     pipeline = PhoneDictationPipeline(
       lifecycle: lifecycle, transcriber: WindowedTranscriber(lifecycle: lifecycle),
       vocabulary: vocabulary)
@@ -133,4 +133,31 @@ final class PhoneHarness {
   }
 
   deinit { try? FileManager.default.removeItem(at: root) }
+}
+
+/// A clock whose sleeps return only once the test advances past them, so the
+/// coordinator's 30 s cooldown runs without waiting.
+actor ManualClock: DictationClock {
+  private var elapsed: Duration = .zero
+  private var waiters: [(Duration, CheckedContinuation<Void, Error>)] = []
+  private(set) var sleeps = 0
+
+  func sleep(for duration: Duration) async throws {
+    let deadline = elapsed + duration
+    sleeps += 1
+    try await withCheckedThrowingContinuation { continuation in
+      if elapsed >= deadline {
+        continuation.resume()
+      } else {
+        waiters.append((deadline, continuation))
+      }
+    }
+  }
+
+  func advance(by duration: Duration) {
+    elapsed += duration
+    let due = waiters.filter { $0.0 <= elapsed }
+    waiters.removeAll { $0.0 <= elapsed }
+    for waiter in due { waiter.1.resume() }
+  }
 }

@@ -81,7 +81,14 @@ Over 50 keyboard dictations in mixed apps (Messages, Notes, Safari, Mail, WhatsA
 
 ## 8. Mac and phone parity (SC-003)
 
-1. Fetch the dictation fixtures listed in `fixtures/audio/manifest.json` with `scripts/download-speech-fixtures.py`, and transcribe them on the Mac through the production dictation path. The parity task names the exact command, because the older replay tooling has been removed.
+1. Fetch the dictation fixtures listed in `fixtures/audio/manifest.json` with `scripts/download-speech-fixtures.py`, and transcribe them on the Mac through the production dictation path:
+
+   ```sh
+   ./scripts/transcribe-dictation-fixtures.sh            # writes build/speech-fixtures/transcripts/mac/<id>.txt
+   ./scripts/transcribe-dictation-fixtures.sh OUTPUT_DIR # or one text file per fixture in OUTPUT_DIR
+   ```
+
+   The script hash-checks or downloads the fixtures into `build/speech-fixtures`, then runs `RuntimeCompatibilityTests/testOptInSpeechFixtures` with `LOCALFLOW_SPEECH_PROFILE=production`: the production `WindowedTranscriber`, `TranscriptAssembler` and `normalizedForDelivery` with an empty Dictionary, so the booster has no terms. The model comes from the installed app (`~/Library/Application Support/LocalFlow/Models/parakeet-v3`); set `LOCALFLOW_MODEL_ROOT` to use another copy. `results.json` beside the text files keeps the incomplete flag and the raw windows.
 2. Transcribe the same set on the phone using the diagnostics "Transcribe fixture" action. It is available in Debug builds only, and the files are copied in through Xcode's device file sharing.
 3. Diff the text per fixture, and explain any difference in `acceptance/parity.md`. Report the sk, en and mixed groups separately (FR-018).
 

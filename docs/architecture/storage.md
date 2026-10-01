@@ -124,3 +124,13 @@ inputs a summary depends on, with display names excluded. `evidenceDidChange`
 recomputes it: a changed value marks the accepted run's analysis `stale` (readable,
 bannered, regenerable), while a display-name-only rename leaves the version untouched.
 See [the data model](../../specs/011-meeting-intelligence/data-model.md).
+
+## Phone database (Feature 016)
+
+The iOS app keeps its own `history.sqlite` under `Application Support/LocalFlow/` in the app container, created with file protection `completeUntilFirstUserAuthentication` so History stays writable while the phone is locked after first unlock. `TranscriptionStore` opens it with the Mac settings (WAL, `synchronous=FULL`, 0600, 128 MB page cap). The two databases are separate files; nothing is synchronized between Mac and phone.
+
+The migrator is shared. `HistoryMigrations` lives in `packages/LocalFlowCore` and both apps run its 16 migrations unchanged. `PhoneMigrations` appends one phone-only migration, `phone-dictations-v1`, after them; the Mac never registers it, so the Mac schema does not change. GRDB applies every registered migration that has not run yet, so a shared migration added later still applies on a phone that already has `phone-dictations-v1`.
+
+`phone-dictations-v1` adds `phone_dictations`, one row per phone dictation: `transcription_id` (primary key, `REFERENCES transcriptions(id) ON DELETE CASCADE`), `source` (`keyboard` or `app`), `duration_ms` (0–300,000), `delivery` (`inserted`, `offered`, `saved_only`), an optional `end_detail` (`limit_reached`, `interrupted`, `recovered_after_termination`) and `session_id`. A CHECK forces `source = 'app'` rows to `saved_only`. `delivery` and `transcriptions.delivery_state` are written in one transaction; the phone writes only `confirmed` and `not_inserted`, never `attempting`, so the shared launch repair never rewrites phone rows. Deleting an entry deletes the `transcriptions` row and the cascade removes the phone row.
+
+The Dictionary uses the existing vocabulary tables through `VocabularyStore` with the Mac's limits. Saves go through the editor path, which marks each key `established` in `dictionary_key_usage` as on the Mac; the phone records no usage events and retires no terms. Settings live in `UserDefaults`. See [the data model](../../specs/016-ios-dictation-foundation/data-model.md).

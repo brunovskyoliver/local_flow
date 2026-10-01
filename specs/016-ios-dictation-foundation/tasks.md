@@ -259,13 +259,15 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 **Independent test**: install on a clean phone, complete setup, turn on Airplane Mode, force-quit the app, and dictate from the keyboard (quickstart §4).
 
-- [ ] T060 [P] [US2] Add `apps/ios/LocalFlowPhoneTests/SetupChecklistTests.swift`: the step states are derived from `setup.completedSteps`, `keyboard-status.json` (missing → "not detected yet"; `has_full_access` false → Full Access missing), microphone authorization and `PhoneModelState`; they survive a relaunch; and the space check refuses when available capacity is below the descriptors' total plus 10%.
-- [ ] T061 [US2] Create `apps/ios/App/Features/Setup/SetupChecklistModel.swift`: steps `keyboard`, `fullAccess`, `microphone`, `model`, `firstDictation` stored in `UserDefaults` key `setup.completedSteps`. `keyboard` and `fullAccess` are re-checked at launch from `keyboard-status.json`.
-- [ ] T062 [US2] Create `apps/ios/App/Models/ModelSetupViewModel.swift`: checks `volumeAvailableCapacityForImportantUsage` against the descriptors' total size plus 10% and says how much space is needed; starts, pauses and resumes the download through `PhoneModelState` with visible progress; offers a new download when the state is `damaged`.
-- [ ] T063 [US2] Create `apps/ios/App/Features/Setup/SetupView.swift`: four steps in the order "Add the keyboard and allow Full Access" (with the plain explanation that Full Access is used only to share state with the app and to open it, and that the keyboard sends nothing to the network), "Allow the microphone", "Download the speech model" (progress, space needed) and "Try a first dictation". Deep links go to Settings where possible. Setup shows on launch until all steps are done and can be reopened from Settings.
-- [ ] T064 [US2] Show missing prerequisites in the keyboard, in `apps/ios/Keyboard/KeyboardView.swift`: without Full Access, a message saying what is missing and how to turn it on, with no writes to the group; a `failed` result caused by a missing model or a denied microphone shows a hint to open LocalFlow (FR-009).
-- [ ] T065 [US2] Handle a denied microphone in the app: in `apps/ios/App/Session/SessionController.swift`, end the session with `permissionDenied`, and show an explanation with a link to Settings in `apps/ios/App/Features/Session/SessionView.swift` and on the Dictate screen.
-- [ ] T066 [US2] Add a Speech model section to `apps/ios/App/Features/Settings/SettingsView.swift`: state, size on disk, revision, and Delete (confirmation, drops keep-ready and unloads the model, removes the promoted directories, state becomes `absent`; History and Dictionary untouched). While an orphan spool waits for the model (T043), show "1 unrecovered recording" with its own Delete.
+- [X] T060 [P] [US2] Add `apps/ios/LocalFlowPhoneTests/SetupChecklistTests.swift`: the step states are derived from `setup.completedSteps`, `keyboard-status.json` (missing → "not detected yet"; `has_full_access` false → Full Access missing), microphone authorization and `PhoneModelState`; they survive a relaunch; and the space check refuses when available capacity is below the descriptors' total plus 10%.
+- [X] T061 [US2] Create `apps/ios/App/Features/Setup/SetupChecklistModel.swift`: steps `keyboard`, `fullAccess`, `microphone`, `model`, `firstDictation` stored in `UserDefaults` key `setup.completedSteps`. `keyboard` and `fullAccess` are re-checked at launch from `keyboard-status.json`.
+- [X] T062 [US2] Create `apps/ios/App/Models/ModelSetupViewModel.swift`: checks `volumeAvailableCapacityForImportantUsage` against the descriptors' total size plus 10% and says how much space is needed; starts, pauses and resumes the download through `PhoneModelState` with visible progress; offers a new download when the state is `damaged`.
+- [X] T063 [US2] Create `apps/ios/App/Features/Setup/SetupView.swift`: four steps in the order "Add the keyboard and allow Full Access" (with the plain explanation that Full Access is used only to share state with the app and to open it, and that the keyboard sends nothing to the network), "Allow the microphone", "Download the speech model" (progress, space needed) and "Try a first dictation". Deep links go to Settings where possible. Setup shows on launch until all steps are done and can be reopened from Settings.
+- [X] T064 [US2] Show missing prerequisites in the keyboard, in `apps/ios/Keyboard/KeyboardView.swift`: without Full Access, a message saying what is missing and how to turn it on, with no writes to the group; a `failed` result caused by a missing model or a denied microphone shows a hint to open LocalFlow (FR-009).
+  - Done in `apps/ios/Shared/KeyboardLogic/KeyboardSessionModel.swift`, whose `message` `KeyboardView` already shows: a clearer Full Access message, and a hint to open LocalFlow when `session.json` ended with `modelUnavailable`, `permissionDenied` or `audioFailure`. A start that fails is reported through `last_outcome = failed`, which already had a message.
+- [X] T065 [US2] Handle a denied microphone in the app: in `apps/ios/App/Session/SessionController.swift`, end the session with `permissionDenied`, and show an explanation with a link to Settings in `apps/ios/App/Features/Session/SessionView.swift` and on the Dictate screen.
+- [X] T066 [US2] Add a Speech model section to `apps/ios/App/Features/Settings/SettingsView.swift`: state, size on disk, revision, and Delete (confirmation, drops keep-ready and unloads the model, removes the promoted directories, state becomes `absent`; History and Dictionary untouched). While an orphan spool waits for the model (T043), show "1 unrecovered recording" with its own Delete.
+  - Delete is disabled while a session runs. It drops both keep-ready holders, waits for the unload, then removes the promoted directories.
 - [ ] T067 [US2] Run quickstart §4 on the device (setup timed excluding download, SC-007; download interrupted and resumed; Airplane Mode plus force-quit then keyboard dictation, SC-005; Full Access off; microphone denied) and record the results in `specs/016-ios-dictation-foundation/acceptance/setup-offline.md`.
 
 **Checkpoint**: a clean install reaches offline dictation through setup alone.
@@ -278,12 +280,13 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 **Independent test**: dictate two notes in the app and one through the keyboard; all three are in History and each can be copied and deleted.
 
-- [ ] T068 [P] [US3] Add `apps/ios/LocalFlowPhoneTests/DictateViewModelTests.swift` with `FakeAudioCapture` and a test clock: a dictation saves a note with `source = app`, `delivery = saved_only`; keep-ready is held while the screen is visible and the model unloads 30 s after it disappears (coordinator cooldown, test clock); with no session running a dictation starts an `origin = app` session that ends afterwards and turns the engine off; the 5-minute limit stops and keeps the text; a dictation cannot start while a keyboard session is recording (returns busy).
-- [ ] T069 [US3] Create `apps/ios/App/Features/Dictate/DictateViewModel.swift`: runs an in-app dictation through `SessionController`: it uses a `ready` session if one exists, otherwise starts an `origin = app` one-shot session, with a fresh request ID and `source = app` (sharing the one-at-a-time rule). It holds `keepReady` (`dictateScreen`) while visible and drops it on disappear.
-- [ ] T070 [US3] Create `apps/ios/App/Features/Dictate/DictateView.swift`: a large Dictate button using the capsule and waveform views, the last note's text with a one-tap Copy, and the limit and "didn't catch that" messages.
-- [ ] T071 [P] [US3] Create `apps/ios/App/Features/History/HistoryViewModel.swift` over `PhoneDictationStore.list()` and `delete(id:)`, newest first, showing time, source, delivery, target app when not NULL, and a "needs review" mark for recovered entries.
-- [ ] T072 [US3] Create `apps/ios/App/Features/History/HistoryView.swift`: the list, with Copy, Share (`ShareLink`) and Delete (swipe and context menu) per entry.
-- [ ] T073 [US3] Add `apps/ios/LocalFlowPhoneTests/HistoryViewModelTests.swift`: ordering, keyboard and app entries both listed, and delete removes the `transcriptions` and `phone_dictations` rows.
+- [X] T068 [P] [US3] Add `apps/ios/LocalFlowPhoneTests/DictateViewModelTests.swift` with `FakeAudioCapture` and a test clock: a dictation saves a note with `source = app`, `delivery = saved_only`; keep-ready is held while the screen is visible and the model unloads 30 s after it disappears (coordinator cooldown, test clock); with no session running a dictation starts an `origin = app` session that ends afterwards and turns the engine off; the 5-minute limit stops and keeps the text; a dictation cannot start while a keyboard session is recording (returns busy).
+- [X] T069 [US3] Create `apps/ios/App/Features/Dictate/DictateViewModel.swift`: runs an in-app dictation through `SessionController`: it uses a `ready` session if one exists, otherwise starts an `origin = app` one-shot session, with a fresh request ID and `source = app` (sharing the one-at-a-time rule). It holds `keepReady` (`dictateScreen`) while visible and drops it on disappear.
+  - In-app results go to `SessionController.onNote`, never to `onResult`, so a note is not written to `result.json` or offered by the keyboard.
+- [X] T070 [US3] Create `apps/ios/App/Features/Dictate/DictateView.swift`: a large Dictate button using the capsule and waveform views, the last note's text with a one-tap Copy, and the limit and "didn't catch that" messages.
+- [X] T071 [P] [US3] Create `apps/ios/App/Features/History/HistoryViewModel.swift` over `PhoneDictationStore.list()` and `delete(id:)`, newest first, showing time, source, delivery, target app when not NULL, and a "needs review" mark for recovered entries.
+- [X] T072 [US3] Create `apps/ios/App/Features/History/HistoryView.swift`: the list, with Copy, Share (`ShareLink`) and Delete (swipe and context menu) per entry.
+- [X] T073 [US3] Add `apps/ios/LocalFlowPhoneTests/HistoryViewModelTests.swift`: ordering, keyboard and app entries both listed, and delete removes the `transcriptions` and `phone_dictations` rows.
 
 **Checkpoint**: in-app notes and History work without the keyboard.
 
@@ -295,9 +298,9 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 **Independent test**: add "Zabbix" and "Homarr" (with an alias), dictate a fixed sentence containing them, and check the spellings (quickstart §7).
 
-- [ ] T074 [P] [US4] Add `apps/ios/LocalFlowPhoneTests/PhoneDictionaryTests.swift`: through the shared `VocabularyStore` on the phone database, a canonical term and an alias are applied by `TranscriptNormalizer` exactly as on the Mac (reuse the expected strings of one Mac `TranscriptNormalizerTests` case); editing or disabling an entry bumps `vocabulary_state.revision` and the next snapshot reflects it; the Mac limits (≤ 512 entries, ≤ 4,608 keys) return the Mac errors; saves use the `.editor` origin so usage rows stay unused.
-- [ ] T075 [US4] Create `apps/ios/App/Features/Dictionary/DictionaryViewModel.swift` over `VocabularyStore`: list, add, edit, enable/disable and delete, using the Mac validation messages.
-- [ ] T076 [US4] Create `apps/ios/App/Features/Dictionary/DictionaryListView.swift` and `apps/ios/App/Features/Dictionary/DictionaryEditorView.swift`: canonical spelling, aliases, enabled toggle, delete, in Sotto style.
+- [X] T074 [P] [US4] Add `apps/ios/LocalFlowPhoneTests/PhoneDictionaryTests.swift`: through the shared `VocabularyStore` on the phone database, a canonical term and an alias are applied by `TranscriptNormalizer` exactly as on the Mac (reuse the expected strings of one Mac `TranscriptNormalizerTests` case); editing or disabling an entry bumps `vocabulary_state.revision` and the next snapshot reflects it; the Mac limits (≤ 512 entries, ≤ 4,608 keys) return the Mac errors; saves use the `.editor` origin so usage rows stay unused.
+- [X] T075 [US4] Create `apps/ios/App/Features/Dictionary/DictionaryViewModel.swift` over `VocabularyStore`: list, add, edit, enable/disable and delete, using the Mac validation messages.
+- [X] T076 [US4] Create `apps/ios/App/Features/Dictionary/DictionaryListView.swift` and `apps/ios/App/Features/Dictionary/DictionaryEditorView.swift`: canonical spelling, aliases, enabled toggle, delete, in Sotto style.
 - [ ] T077 [US4] Run quickstart §7 on the device and record the result in `specs/016-ios-dictation-foundation/acceptance/dictionary.md`.
 
 **Checkpoint**: Dictionary edits change the next phone dictation.
@@ -310,8 +313,8 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 **Independent test**: record data, reinstall the same build over itself, and check everything remains with no new setup (quickstart §9).
 
-- [ ] T078 [US5] Audit the storage locations and fix any that fall outside the containers a reinstall keeps: the database and models under the app's `Application Support/LocalFlow`, settings in `UserDefaults.standard`, handoff files in the App Group, nothing in `Caches` or `tmp` that must survive. Write the list, and the rule that `DEVELOPMENT_TEAM` and `LOCALFLOW_BUNDLE_PREFIX` must never change, to `apps/ios/README.md` together with the weekly reinstall steps.
-- [ ] T079 [US5] Make the setup checklist in `apps/ios/App/Features/Setup/SetupChecklistModel.swift` treat an already provisioned model, granted microphone and detected keyboard as done after a reinstall, so no step is asked for again unless iOS reset it.
+- [X] T078 [US5] Audit the storage locations and fix any that fall outside the containers a reinstall keeps: the database and models under the app's `Application Support/LocalFlow`, settings in `UserDefaults.standard`, handoff files in the App Group, nothing in `Caches` or `tmp` that must survive. Write the list, and the rule that `DEVELOPMENT_TEAM` and `LOCALFLOW_BUNDLE_PREFIX` must never change, to `apps/ios/README.md` together with the weekly reinstall steps.
+- [X] T079 [US5] Make the setup checklist in `apps/ios/App/Features/Setup/SetupChecklistModel.swift` treat an already provisioned model, granted microphone and detected keyboard as done after a reinstall, so no step is asked for again unless iOS reset it.
 - [ ] T080 [US5] Run quickstart §9 three times, plus once after letting the profile expire, and record the counts in `specs/016-ios-dictation-foundation/acceptance/reinstall.md` (SC-006).
 
 **Checkpoint**: three reinstall cycles lose nothing.
@@ -320,16 +323,20 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 ## Phase 10: Polish, acceptance and resource report
 
-- [ ] T081 [P] Create `apps/ios/App/Features/Settings/DiagnosticsView.swift` (visible when `diagnostics.enabled` is true, toggled in Settings): the app's current `phys_footprint`, the coordinator snapshot (`loaded`, `leased`, `state`) and the keep-ready holders, the keyboard's last `peak_footprint_bytes` from `keyboard-status.json`, and timestamps for the last stop → result → delivery. In Debug builds only, add a "Transcribe fixture" action that runs `PhoneDictationPipeline` on audio files copied into the app's Documents through Xcode file sharing and writes the text next to them.
+- [X] T081 [P] Create `apps/ios/App/Features/Settings/DiagnosticsView.swift` (visible when `diagnostics.enabled` is true, toggled in Settings): the app's current `phys_footprint`, the coordinator snapshot (`loaded`, `leased`, `state`) and the keep-ready holders, the keyboard's last `peak_footprint_bytes` from `keyboard-status.json`, and timestamps for the last stop → result → delivery. In Debug builds only, add a "Transcribe fixture" action that runs `PhoneDictationPipeline` on audio files copied into the app's Documents through Xcode file sharing and writes the text next to them.
   - Partly built ahead of T059 (2026-10-01): `App/Features/Settings/DiagnosticsView.swift` behind the `diagnostics.enabled` toggle shows the keyboard's footprint at last report and its peak, and the app's footprint and peak. `keyboard-status.json` gained an optional `footprint_bytes`, written on appear, 3 s later and on disappear. Still to do: lease state, stop → result → delivery timestamps, and the Debug "Transcribe fixture" action.
   - Memory readout confirmed working on the iPhone 16 Pro (2026-10-01, commit a563b9b). First reading is in `acceptance/keyboard.md`.
-- [ ] T082 [P] Add a Mac-side fixture transcription command for SC-003 at `scripts/transcribe-dictation-fixtures.sh`: it fetches the fixtures from `fixtures/audio/manifest.json` with `scripts/download-speech-fixtures.py` and transcribes them through the Mac production dictation path, writing one text file per fixture. Document the command in quickstart §8.
+  - Finished 2026-10-01: model state, loaded and leased, the keep-ready holders, and the last stop, result and delivery times (delivery read from `delivery.json` for the same dictation). The Debug "Transcribe fixture" action writes `<name>.txt` with one trailing newline, matching the Mac script.
+- [X] T082 [P] Add a Mac-side fixture transcription command for SC-003 at `scripts/transcribe-dictation-fixtures.sh`: it fetches the fixtures from `fixtures/audio/manifest.json` with `scripts/download-speech-fixtures.py` and transcribes them through the Mac production dictation path, writing one text file per fixture. Document the command in quickstart §8.
+  - Reuses `RuntimeCompatibilityTests/testOptInSpeechFixtures` with `LOCALFLOW_SPEECH_PROFILE=production` (production `WindowedTranscriber`, `normalizedForDelivery` with an empty Dictionary). Ran once on the Mac: 30 transcripts in 38 s; `sk-02`, `mixed-01`, `mixed-04` and `mixed-07` were flagged incomplete, not yet investigated.
 - [ ] T083 Run quickstart §6 on the device (every robustness case plus 50 keyboard dictations across Messages, Notes, Safari, Mail and WhatsApp) and record each case's outcome (inserted, offered or saved) and the keyboard peak in `specs/016-ios-dictation-foundation/acceptance/robustness.md` (SC-004, SC-010).
 - [ ] T084 Run quickstart §8 and record per-fixture diffs and explanations in `specs/016-ios-dictation-foundation/acceptance/parity.md` (SC-003). The fixture set includes `sk-01…10`, `en-01…10` and `mixed-01…10`; report each group separately so FR-018 (English and Slovak without choosing a language) is checked explicitly.
 - [ ] T085 Measure quickstart §10 with Instruments and the diagnostics screen, and write `docs/performance/ios-dictation.md` with hardware, iOS version, build SHA and model revision: footprint idle, in a ready session, while recording, with the model loaded; cold and warm model load; transcription time for 15 s and 60 s; keyboard peak; and footprint after the model is released. Only measured numbers.
-- [ ] T086 [P] Update `docs/architecture/overview.md`, `docs/architecture/storage.md` and `docs/architecture/model-lifecycle.md` for the package, the phone database with `phone-dictations-v1`, and the phone’s per-dictation lease and keep-ready rules.
-- [ ] T087 [P] Add `docs/licenses/parakeet-ctc-110m-model-card.md` for the CTC 110M boost model, and extend the scope of `THIRD_PARTY_NOTICES.md` to the iOS app (Figtree, EB Garamond, GRDB, FluidAudio, Parakeet v3).
-- [ ] T088 Run `make check` and `make ios` and confirm the Mac test count is still at least the baseline in `acceptance/mac-baseline.md`.
+- [X] T086 [P] Update `docs/architecture/overview.md`, `docs/architecture/storage.md` and `docs/architecture/model-lifecycle.md` for the package, the phone database with `phone-dictations-v1`, and the phone’s per-dictation lease and keep-ready rules.
+- [X] T087 [P] Add `docs/licenses/parakeet-ctc-110m-model-card.md` for the CTC 110M boost model, and extend the scope of `THIRD_PARTY_NOTICES.md` to the iOS app (Figtree, EB Garamond, GRDB, FluidAudio, Parakeet v3).
+  - Also fixed two gaps found while writing the notice: `Package.swift` now declares FluidAudio with `traits: []` (the extraction had dropped the Mac project's `traits = ()`, which linked NeMo text processing again), and the app bundles `OFL-Figtree.txt` and `OFL-EBGaramond.txt`.
+- [X] T088 Run `make check` and `make ios` and confirm the Mac test count is still at least the baseline in `acceptance/mac-baseline.md`.
+  - 2026-10-01, uncommitted changes on top of `2f2221a`: `make check` exit 0 with Mac XCTest 1702 passed, 30 skipped, 0 failed (baseline 1697) and iOS simulator XCTest 81 passed; `make ios` exit 0.
 
 ---
 
@@ -432,3 +439,29 @@ Stop at each checkpoint and record the device run before moving on. Resource acc
 - Changed: signing on the paid team `944A459UC3` with the prefix `com.brunovsky` (set in the gitignored `Signing.local.xcconfig`). Three device fixes: the container path is resolved with `realpath` and passed as `ModelProvisioner`'s `trustedBase`; the download reports progress; the audio tap and drain timer blocks are `@Sendable` (they trapped off the main actor). ADR 0029 is Accepted. Also fixed a race in `RemoteEnrollmentTests.testRefreshFollowsTheMonotonicClockAndTokenExpiry`, which failed under full-suite load because the refresh timer's sleep could start after the clock advanced.
 - Verified: a dictation from the keyboard works on the iPhone 16 Pro. `make check` exits 0; the enrollment test passed 5 runs in a row on its own.
 - Left: the doorbell time was not measured. The background, indicator, music and footprint checks moved to T059. See `acceptance/spike.md`.
+
+## Implementation report: US2–US5 and Phase 10 code, 2026-10-01
+
+**Changed**
+
+- US2 setup: `SetupChecklistModel` (steps from `setup.completedSteps`, `keyboard-status.json`, live microphone and model state), `ModelSetupViewModel` (space check at total + 10%, start, pause, resume, download again when damaged), and `SetupView`, shown inline at launch until every step is done and reopened from Settings.
+- The keyboard explains missing Full Access, and hints to open LocalFlow when a session ended for a missing model, a denied microphone or a failed engine. The session screen and the Dictate screen link to Settings when the microphone is denied.
+- Settings › Speech model shows state, size on disk and revision, and deletes the model after confirmation (disabled while a session runs).
+- US3: `DictateViewModel` and `DictateView` for in-app notes, `HistoryViewModel` and `HistoryView` with Copy, Share and Delete. In-app results go through a new `SessionController.onNote`, so they never reach `result.json`.
+- US4: `DictionaryViewModel`, `DictionaryListView` and `DictionaryEditorView` over the shared `VocabularyStore`, with the Mac's messages.
+- US5: `apps/ios/README.md` lists every storage location, the never-change signing rule and the weekly reinstall steps. The audit found nothing that must survive kept in `Caches` or `tmp`.
+- Phase 10: the rest of the Diagnostics screen (T081), `scripts/transcribe-dictation-fixtures.sh` (T082), the architecture docs (T086), the CTC 110M model card and the iOS notice (T087).
+- Two fixes outside the task list: `packages/LocalFlowCore/Package.swift` declares FluidAudio with `traits: []` again (tools version 6.1), because the extraction had brought FluidAudio's NeMo text-processing library back into the Mac and iOS builds; and the iOS app now bundles the two OFL licence texts. After the trait change, an existing `packages/LocalFlowCore/.build` must be deleted once, or `swift test` fails to link with missing `nemo_*` symbols.
+
+**Verified**
+
+- `make check` exit 0: Mac XCTest 1702 passed, 30 skipped, 0 failed; iOS simulator XCTest 81 passed (new: `SetupChecklistTests`, `DictateViewModelTests`, `HistoryViewModelTests`, `PhoneDictionaryTests`, one keyboard hint test). `make ios` exit 0.
+- The Mac Debug app exports no `nemo_*` symbols.
+- `DictateViewModelTests` (including the 30 s cooldown on a manual clock) passed 5 runs in a row.
+- `scripts/transcribe-dictation-fixtures.sh` ran once on the Mac: 30 transcripts in 38 s.
+
+**Left (device runs, not done)**
+
+- T067 setup and offline, T077 Dictionary, T080 reinstall, T083 robustness, T084 parity, T085 resource report. Each needs the iPhone. None is marked done, and no phone numbers were measured in this pass.
+- The Mac fixture run flagged `sk-02`, `mixed-01`, `mixed-04` and `mixed-07` as incomplete. Nobody has looked into why yet; T084 should.
+

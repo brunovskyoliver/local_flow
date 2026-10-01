@@ -1,11 +1,14 @@
 import SwiftUI
 
 struct SettingsView: View {
+  let app: PhoneApp
   let model: PhoneModelState
   let orphans: OrphanSpoolRecovery
   @AppStorage(IdleTimeout.key) private var idleTimeout = IdleTimeout.default.rawValue
   @AppStorage(DiagnosticsView.enabledKey) private var diagnostics = false
   @State private var orphanPresent = false
+  @State private var sizeOnDisk: Int64 = 0
+  @State private var confirmDelete = false
 
   var body: some View {
     NavigationStack {
@@ -15,16 +18,17 @@ struct SettingsView: View {
             ForEach(IdleTimeout.allCases) { Text($0.title).tag($0.rawValue) }
           }
         }
-        // ponytail: temporary until US2's setup flow (T062, T066) owns the download.
-        Section("Speech model") {
+        Section {
           LabeledContent("State", value: stateText)
-          switch model.state {
-          case .absent, .paused, .damaged:
-            Button("Download speech model") { model.startDownload() }
-          case .downloading:
-            Button("Pause download") { model.pauseDownload() }
-          case .verifying, .ready:
-            EmptyView()
+          if model.state == .ready {
+            LabeledContent("On disk", value: ModelSetupViewModel.format(sizeOnDisk))
+          }
+          if let revision = model.revision {
+            LabeledContent("Revision", value: String(revision.prefix(7)))
+          }
+          if model.state == .ready {
+            Button("Delete speech model", role: .destructive) { confirmDelete = true }
+              .disabled(app.controller?.isActive == true)
           }
           if orphanPresent {
             LabeledContent("1 unrecovered recording") {
@@ -34,17 +38,46 @@ struct SettingsView: View {
               }
             }
           }
+        } header: {
+          Text("Speech model")
+        } footer: {
+          if model.state == .ready, app.controller?.isActive == true {
+            Text("End the listening session to delete the model.")
+          }
+        }
+        Section {
+          Button("Open setup") { app.showSetup = true }
         }
         Section {
           Toggle("Diagnostics", isOn: $diagnostics)
           if diagnostics {
-            NavigationLink("Memory") { DiagnosticsView() }
+            NavigationLink("Diagnostics") { DiagnosticsView(app: app) }
           }
         }
       }
       .navigationTitle("Settings")
-      .onAppear { orphanPresent = orphans.hasOrphan }
+      .onAppear(perform: refresh)
+      .onChange(of: model.state) { refresh() }
+      .confirmationDialog(
+        "Delete the speech model?", isPresented: $confirmDelete, titleVisibility: .visible
+      ) {
+        Button("Delete", role: .destructive) {
+          Task {
+            await app.deleteModel()
+            refresh()
+          }
+        }
+      } message: {
+        Text(
+          "Dictation stops working until you download it again. History and the Dictionary stay."
+        )
+      }
     }
+  }
+
+  private func refresh() {
+    orphanPresent = orphans.hasOrphan
+    sizeOnDisk = model.state == .ready ? model.sizeOnDisk() : 0
   }
 
   private var stateText: String {

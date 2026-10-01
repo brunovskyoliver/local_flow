@@ -312,9 +312,19 @@ final class RuntimeCompatibilityTests: XCTestCase {
         let lease = try await lifecycle.acquire(session: UUID())
         lastLease = lease
         do {
-          let result = await WindowedTranscriber(lifecycle: lifecycle, profile: .historical)
-            .transcribe(
-              spool: spool, lease: lease, sampleCount: samples)
+          // Feature 016 SC-003: LOCALFLOW_SPEECH_PROFILE=production runs the Mac dictation
+          // path (contiguous windows, assembler, empty-Dictionary normalizer). The default
+          // stays the historical profile so earlier evidence reproduces unchanged.
+          let result: TranscriptionResult
+          if environment["LOCALFLOW_SPEECH_PROFILE"] == "production" {
+            result = await WindowedTranscriber(lifecycle: lifecycle)
+              .transcribe(spool: spool, lease: lease, sampleCount: samples)
+              .normalizedForDelivery(vocabulary: .empty)
+          } else {
+            result = await WindowedTranscriber(lifecycle: lifecycle, profile: .historical)
+              .transcribe(
+                spool: spool, lease: lease, sampleCount: samples)
+          }
           outputs.append(
             SpeechOutput(
               id: fixture.id, text: result.text, incomplete: result.incomplete, samples: samples,

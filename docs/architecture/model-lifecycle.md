@@ -93,3 +93,17 @@ ASR afterwards. Observed phases: `modelLoading(identification)`,
 `modelActive(identification)`, `modelReleasing(identification)`; `identifying` samples
 RSS every 10 s during a run or an enrollment. See
 [ADR 0020](../adr/0020-persistent-speaker-identification.md).
+
+## Phone leases and keep-ready (Feature 016)
+
+`ModelLifecycleCoordinator` moved into `LocalFlowSpeech` (`packages/LocalFlowCore`, [ADR 0029](../adr/0029-ios-companion-and-shared-core.md)); the Mac and the iOS app each create one. On the phone, `PhoneServices` builds it once at launch with a factory that loads the verified Parakeet v3 files and, when verified, the optional CTC 110M booster. The keyboard extension never loads a model.
+
+Leases are per dictation. `PhoneDictationPipeline` acquires one with `acquire(session:boost:)` for the dictation ID, passing the Dictionary snapshot read at stop, runs the shared `WindowedTranscriber` and `normalizedForDelivery`, then calls `finish`. No lease outlives a dictation, and the phone runs only the speech recognition workload.
+
+Keeping the model resident between dictations is separate from the lease. `KeepReady` counts two holders, `session` (a listening session has its audio engine running) and `dictateScreen` (the in-app Dictate screen is visible). The first holder calls `setKeepLoaded(true)` and `loadIfIdle()`. When the last holder leaves:
+
+- session end: `setKeepLoaded(false)`, then `unloadIfIdle()`, so the model is released at once
+- Dictate screen gone: `setKeepLoaded(false)`, and the normal 30-second cooldown releases it
+- memory warning while not recording or finishing: both holders are dropped, then `unloadIfIdle()`
+
+Deleting the model in Settings drops both holders and waits for the unload before removing files. `KeepReady` runs its calls in order, so a quick hold and release cannot reorder at the coordinator.

@@ -39,15 +39,18 @@ final class PhoneServices {
     let boostRoot = paths.models.appendingPathComponent("parakeet-ctc-110m", isDirectory: true)
     let speech = ModelProvisioner(
       descriptor: speechDescriptor, rootURL: speechRoot, trustedBase: modelsBase)
-    let boost = (try? Self.descriptorData("parakeet-ctc-110m", bundle: bundle))
+    let boostDescriptor = (try? Self.descriptorData("parakeet-ctc-110m", bundle: bundle))
       .flatMap { try? JSONDecoder().decode(ModelDescriptor.self, from: $0) }
-      .map { ModelProvisioner(descriptor: $0, rootURL: boostRoot, trustedBase: modelsBase) }
+    let boost = boostDescriptor.map {
+      ModelProvisioner(descriptor: $0, rootURL: boostRoot, trustedBase: modelsBase)
+    }
     try FileManager.default.createDirectory(at: paths.models, withIntermediateDirectories: true)
     model = PhoneModelState(
       speech: speech, boost: boost,
       transport: ResumableModelDownloadTransport(
         resumeDirectory: paths.models.appendingPathComponent(".staging", isDirectory: true)),
-      directories: [speechRoot, boostRoot])
+      directories: [speechRoot, boostRoot],
+      descriptors: [speechDescriptor] + (boostDescriptor.map { [$0] } ?? []))
 
     let log = Logger(subsystem: "org.localflow.LocalFlowPhone", category: "model")
     lifecycle = ModelLifecycleCoordinator(

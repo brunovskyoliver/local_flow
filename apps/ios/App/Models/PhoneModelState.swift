@@ -20,6 +20,8 @@ final class PhoneModelState {
 
   let speech: ModelProvisioner
   let boost: ModelProvisioner?
+  /// The speech and boost descriptors, for the space check and Settings.
+  let descriptors: [ModelDescriptor]
   private let transport: any ModelDownloadTransport
   private let directories: [URL]
   private var download: Task<Void, Never>?
@@ -27,10 +29,11 @@ final class PhoneModelState {
 
   init(
     speech: ModelProvisioner, boost: ModelProvisioner?, transport: any ModelDownloadTransport,
-    directories: [URL]
+    directories: [URL], descriptors: [ModelDescriptor] = []
   ) {
     self.speech = speech
     self.boost = boost
+    self.descriptors = descriptors
     self.transport = transport
     self.directories = directories
   }
@@ -95,6 +98,38 @@ final class PhoneModelState {
   }
 
   func pauseDownload() { download?.cancel() }
+
+  /// Bytes the descriptors list, speech and boost together.
+  var totalBytes: Int64 { descriptors.flatMap(\.files).reduce(0) { $0 + $1.size } }
+
+  /// The speech model's pinned revision.
+  var revision: String? { descriptors.first?.sourceRevision }
+
+  /// What the promoted directories take on disk now.
+  func sizeOnDisk() -> Int64 {
+    let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .isRegularFileKey]
+    var total: Int64 = 0
+    for directory in directories {
+      guard
+        let files = FileManager.default.enumerator(
+          at: directory, includingPropertiesForKeys: Array(keys))
+      else { continue }
+      for case let file as URL in files {
+        guard let values = try? file.resourceValues(forKeys: keys), values.isRegularFile == true
+        else { continue }
+        total += Int64(values.totalFileAllocatedSize ?? 0)
+      }
+    }
+    return total
+  }
+
+  /// Removes the promoted directories (T066). The caller drops keep-ready and unloads
+  /// first; History and the Dictionary are not touched.
+  func delete() {
+    guard download == nil else { return }
+    for directory in directories { try? FileManager.default.removeItem(at: directory) }
+    state = .absent
+  }
 
   private func set(_ ready: State) {
     state = ready

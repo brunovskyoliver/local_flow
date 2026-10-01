@@ -21,6 +21,10 @@ struct SessionView: View {
         }
       } else if let reason = controller.session?.endReason {
         Text(Self.explanation(reason)).font(.flow(size: 16)).foregroundStyle(SottoPalette.muted)
+        if reason == .permissionDenied {
+          Button("Open Settings", action: SystemSettings.open)
+            .font(.flow(size: 16, weight: .medium))
+        }
       }
       Spacer()
       Button(controller.isActive ? "End session" : "Close") {
@@ -56,8 +60,10 @@ struct SessionView: View {
 
   static func explanation(_ reason: SessionFile.EndReason) -> String {
     switch reason {
-    case .modelUnavailable: "The speech model isn't downloaded yet. Download it in Settings."
-    case .permissionDenied: "LocalFlow needs the microphone. Allow it in Settings › LocalFlow."
+    case .modelUnavailable:
+      "The speech model isn't downloaded yet. Download it in Settings › Open setup."
+    case .permissionDenied:
+      "LocalFlow needs the microphone. Turn it on in Settings › LocalFlow › Microphone."
     case .audioFailure: "The microphone couldn't start. Try again."
     case .interrupted: "Another app took the microphone."
     case .idleTimeout, .afterOneDictation, .userEnded: "Tap the LocalFlow key to start again."

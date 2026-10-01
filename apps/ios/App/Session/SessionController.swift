@@ -44,9 +44,16 @@ final class SessionController {
   private(set) var lastOutcome: SessionFile.Outcome?
   private(set) var level: Float = 0
   @ObservationIgnored private(set) var current: ActiveDictation?
+  /// Diagnostics: when the last dictation stopped and when its text was ready.
+  private(set) var lastStopAt: Date?
+  private(set) var lastResultAt: Date?
+  private(set) var lastResultID: UUID?
 
   @ObservationIgnored var onChange: (() -> Void)?
+  /// Keyboard dictations, for `result.json`.
   @ObservationIgnored var onResult: ((DictationResult) -> Void)?
+  /// In-app notes, which never go to the keyboard.
+  @ObservationIgnored var onNote: ((DictationResult) -> Void)?
   @ObservationIgnored var onLevel: ((Float) -> Void)?
 
   private let capture: AudioCapturing
@@ -210,6 +217,7 @@ final class SessionController {
     guard let dictation = current, var live = session, live.state == .recording else { return }
     live.state = .finishing
     session = live
+    lastStopAt = now()
     changed()
     let samples = capture.endDictation()
     let stopReason: TranscriptionEntry.StopReason =
@@ -239,10 +247,12 @@ final class SessionController {
         } catch {
           Self.log.error("history_write_failed")
         }
-        onResult?(
-          DictationResult(
-            requestID: dictation.requestID, dictationID: dictation.id, text: output.text,
-            limitReached: end == .durationLimit))
+        let result = DictationResult(
+          requestID: dictation.requestID, dictationID: dictation.id, text: output.text,
+          limitReached: end == .durationLimit)
+        lastResultAt = now()
+        lastResultID = dictation.id
+        if dictation.source == .app { onNote?(result) } else { onResult?(result) }
       }
     } catch {
       Self.log.error("Dictation failed")

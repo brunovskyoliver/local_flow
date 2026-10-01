@@ -177,4 +177,19 @@ final class KeyboardSessionModelTests: XCTestCase {
     XCTAssertTrue(rung.isEmpty)
     XCTAssertFalse(FileManager.default.fileExists(atPath: store.directory.path))
   }
+
+  /// FR-009: a session that ended for a missing model or microphone says to open the app.
+  func testEndedSessionForAMissingPrerequisiteShowsAHint() throws {
+    try store.write(
+      SessionFile(
+        sessionID: sessionID, state: .ended, idleTimeout: "5m", endReason: .modelUnavailable,
+        updatedAt: 0), .session)
+    let model = model()
+    model.appear()
+    model.pong()
+    XCTAssertEqual(model.sessionView, .none)
+    XCTAssertEqual(model.message, KeyboardSessionModel.hint(for: .modelUnavailable))
+    XCTAssertNotNil(KeyboardSessionModel.hint(for: .permissionDenied))
+    XCTAssertNil(KeyboardSessionModel.hint(for: .idleTimeout))
+  }
 }

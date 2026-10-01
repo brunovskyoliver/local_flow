@@ -38,7 +38,18 @@ final class KeyboardSessionModel {
   static let resultTimeout = Duration.seconds(15)
   static let stoppedMessage = "LocalFlow stopped. Open it to recover the last dictation."
   static let fullAccessMessage =
-    "Turn on Allow Full Access for LocalFlow in Settings › General › Keyboard › Keyboards."
+    "Full Access is off, so this keyboard can't reach LocalFlow. Turn on Allow Full Access "
+    + "in Settings › General › Keyboard › Keyboards › LocalFlow."
+
+  /// FR-009: a session that could not start says what to fix in the app.
+  static func hint(for reason: SessionFile.EndReason?) -> String? {
+    switch reason {
+    case .modelUnavailable: "LocalFlow needs its speech model. Open LocalFlow to download it."
+    case .permissionDenied: "LocalFlow can't use the microphone. Open LocalFlow to allow it."
+    case .audioFailure: "LocalFlow couldn't start the microphone. Open LocalFlow to try again."
+    default: nil
+    }
+  }
 
   private(set) var sessionView = SessionView.unknown
   private(set) var pending: Pending?
@@ -125,6 +136,7 @@ final class KeyboardSessionModel {
     }
     guard let file, file.state != .ended else {
       sessionView = .none
+      if message == nil { message = Self.hint(for: file?.endReason) }
       return
     }
     switch file.state {

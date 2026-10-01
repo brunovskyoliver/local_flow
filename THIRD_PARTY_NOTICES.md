@@ -131,3 +131,39 @@ generator are not linked. Preserve each license text.
 
 `modernc.org/libc` also carries notices for the C sources it was translated from (musl and
 others): [modernc-libc-v1.75.7-third-party.md](docs/licenses/modernc-libc-v1.75.7-third-party.md).
+
+## Feature 016 iOS companion
+
+The iOS app (`LocalFlowPhone`) links `packages/LocalFlowCore`, which pins FluidAudio 0.15.7
+(commit `41540ea237350afe5117a082b5c28eda642d0612`, [Apache-2.0](docs/licenses/FluidAudio-0.15.7.txt),
+with the [fastcluster notice](docs/licenses/fastcluster.md)) and GRDB.swift 7.10.0 (commit
+`36e30a6f1ef10e4194f6af0cff90888526f0c115`, [MIT](docs/licenses/GRDB-7.10.0.txt)) exactly, as
+recorded in `packages/LocalFlowCore/Package.resolved`. The `LocalFlowKeyboard` extension links
+neither package.
+
+`Package.swift` declares FluidAudio with `traits: []`, as the Mac project did before the
+extraction, so the NeMo text-processing dependency stays out of the resolved graph.
+
+Both the app and the keyboard bundle Figtree and EB Garamond from
+`apps/macos/LocalFlow/Resources/Fonts`, under the SIL Open Font License 1.1 described under
+Interface fonts above. The app bundle also carries `OFL-Figtree.txt` and `OFL-EBGaramond.txt`;
+the keyboard ships inside it.
+
+The app downloads the same model artifacts as the Mac, from the same descriptors, into its own
+container; no weights are bundled. Parakeet v3 is covered by the Feature 001 section and its
+open license review above.
+
+The optional term booster is `FluidInference/parakeet-ctc-110m-coreml` at revision
+`accdafd8cf8a2ff1cabe3c11e54416b405d409aa` (Feature 013, [ADR 0027](docs/adr/0027-dictionary-term-boosting.md)),
+used by both the Mac and the iOS app. Its descriptor and repository metadata declare CC-BY-4.0.
+It is a FluidInference CoreML conversion of NVIDIA's `nvidia/parakeet-tdt_ctc-110m`, whose
+repository also declares CC-BY-4.0. Every file has a pinned size and SHA-256 in the descriptor;
+the assets are installed by the user, not bundled, and not modified. Preserve the
+[pinned model card](docs/licenses/parakeet-ctc-110m-model-card.md) (README.md at the pinned
+revision, SHA-256 `1aa99e33e37d4d36f01f15b7d81f878a43a85210c184aebebf1f27d5a4c3b189`) and the
+[CC BY 4.0 attribution terms](https://creativecommons.org/licenses/by/4.0/).
+
+Review note: as with Parakeet v3, the pinned card's YAML declares `cc-by-4.0` while its License
+section says the conversion is released under Apache 2.0, "same as the original NVIDIA model".
+The NVIDIA repository declares CC-BY-4.0, so that sentence does not match the upstream metadata.
+Keep both notices and do not relabel the weights as Apache-only.
