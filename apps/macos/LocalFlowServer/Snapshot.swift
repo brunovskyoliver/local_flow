@@ -29,11 +29,16 @@ enum Snapshot {
       await save(
         DevicesView(model: devices).padding(), size: size,
         to: directory.appending(path: "devices.png"))
+      await save(
+        ModelsView(model: ModelsModel()).padding(), size: size, settle: .seconds(6),
+        to: directory.appending(path: "models.png"))
       exit(0)  // NSApp.terminate can wait on SwiftUI scene teardown
     }
   }
 
-  static func save(_ view: some View, size: CGSize? = nil, to url: URL) async {
+  static func save(
+    _ view: some View, size: CGSize? = nil, settle: Duration = .milliseconds(800), to url: URL
+  ) async {
     let host = NSHostingView(
       rootView: view.background(Color(nsColor: .windowBackgroundColor)).environment(
         \.colorScheme, .light))
@@ -43,7 +48,7 @@ enum Snapshot {
     window.contentView = host
     window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
     window.orderFrontRegardless()
-    try? await Task.sleep(for: .milliseconds(800))
+    try? await Task.sleep(for: settle)
     guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
     host.cacheDisplay(in: host.bounds, to: rep)
     try? rep.representation(using: .png, properties: [:])?.write(to: url)
