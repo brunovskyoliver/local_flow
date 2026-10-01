@@ -52,7 +52,11 @@ struct LogLine: Identifiable, Sendable {
       tokens = tokens.dropFirst()
     }
     for token in tokens {
-      guard let eq = token.firstIndex(of: "=") else { continue }
+      guard let eq = token.firstIndex(of: "=") else {
+        // An unquoted value with a space (`worker_build=flowd-speech 1`).
+        if let last = fields.popLast() { fields.append((last.0, last.1 + " " + token)) }
+        continue
+      }
       var value = String(token[token.index(after: eq)...])
       if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") {
         value = String(value.dropFirst().dropLast())

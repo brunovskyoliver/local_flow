@@ -50,8 +50,9 @@ struct WorkerStates: Equatable, Sendable {
     }
     if line.subject == "speech worker_ready" {
       if line.meeting {
-        if let model = line["model_id"] {
-          meetingModels = (meetingModels + [model]).suffix(3)
+        if let model = line["model_id"], let engine = line["engine"] {
+          let name = model.split(separator: "/").last.map(String.init) ?? model
+          meetingModels = (meetingModels + ["\(name) (\(engine))"]).suffix(3)
         }
       } else {
         speechReady = Dictionary(uniqueKeysWithValues: line.fields.map { ($0.key, $0.value) })

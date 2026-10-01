@@ -15,6 +15,9 @@ struct LocalFlowServerApp: App {
         .accessibilityLabel("LocalFlow Server: \(monitor.overall.title)")
     }
     .menuBarExtraStyle(.window)
+    Window("LocalFlow Server", id: "main") {
+      MainWindow(monitor: monitor)
+    }
   }
 
   init() {
@@ -44,6 +47,7 @@ extension Health {
 
 struct MenuContent: View {
   let monitor: ServerMonitor
+  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -73,6 +77,11 @@ struct MenuContent: View {
       HStack {
         Button("Restart flowd") { restart("flowd", Server.label) }
         Button("Restart MTPLX") { restart("MTPLX", Server.mtplxLabel) }
+        Spacer()
+        Button("Open Window") {
+          openWindow(id: "main")
+          NSApp.activate()
+        }
       }
       HStack {
         Button("Open Logs") { NSWorkspace.shared.open(Server.log) }

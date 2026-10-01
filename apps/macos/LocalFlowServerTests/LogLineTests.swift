@@ -77,7 +77,8 @@ final class LogLineTests: XCTestCase {
   func testWorkerStatesResetWhenFlowdRestarts() {
     var states = WorkerStates()
     for raw in [
-      "flowd 2026/10/01 20:02:36 speech worker_ready engine=FluidAudio model_id=parakeet booster=ctc110m-v1 worker_build=flowd-speech",
+      "flowd 2026/10/01 20:02:36 speech worker_ready engine=FluidAudio model_id=parakeet booster=ctc110m-v1 worker_build=flowd-speech 1",
+      "flowd meeting 2026/10/01 20:02:35 speech worker_ready engine=whisper.cpp model_id=ggerganov/whisper.cpp-large-v3-turbo model_revision=5359",
       "flowd 2026/10/01 20:02:36 speech worker_state=ready",
       "flowd meeting 2026/10/01 20:02:37 speech worker_state=unavailable",
     ] {
@@ -86,6 +87,8 @@ final class LogLineTests: XCTestCase {
     XCTAssertEqual(states.speech, "ready")
     XCTAssertEqual(states.meeting, "unavailable")
     XCTAssertEqual(states.speechReady["model_id"], "parakeet")
+    XCTAssertEqual(states.speechReady["worker_build"], "flowd-speech 1")
+    XCTAssertEqual(states.meetingModels, ["whisper.cpp-large-v3-turbo (whisper.cpp)"])
     states.apply(LogLine("flowd 2026/10/01 21:00:00 version=0.3.0 listening=127.0.0.1:8091"))
     XCTAssertNil(states.speech)
     XCTAssertNil(states.meeting)

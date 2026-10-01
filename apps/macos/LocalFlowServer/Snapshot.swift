@@ -11,6 +11,10 @@ enum Snapshot {
       try? await Task.sleep(for: .seconds(8))  // a few polls and the log backlog
       try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       await save(MenuContent(monitor: monitor), to: directory.appending(path: "menu.png"))
+      let size = CGSize(width: 820, height: 640)
+      await save(
+        OverviewView(monitor: monitor).padding(), size: size,
+        to: directory.appending(path: "overview.png"))
       NSApp.terminate(nil)
     }
   }

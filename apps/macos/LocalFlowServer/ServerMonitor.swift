@@ -11,6 +11,8 @@ final class ServerMonitor {
   private(set) var snapshot = ServerSnapshot()
   private(set) var statuses: [ServiceStatus] = []
   private(set) var lines: [LogLine] = []
+  private(set) var processes: [ProcessRow] = []
+  private(set) var swap: (used: UInt64, total: UInt64)?
   var overall: Health { ServerSnapshot.overall(statuses) }
 
   @ObservationIgnored private var reader = LogReader.fromStart(
@@ -49,6 +51,38 @@ final class ServerMonitor {
     next.analysisBackend = AgentPlist.arguments(Server.plist)?.value(after: "--analysis-backend")
     snapshot = next
     statuses = next.statuses
+    let (flowdPID, mtplxPID) = (next.flowd?.pid, next.mtplx?.pid)
+    (processes, swap) = await Task.detached {
+      (ProcessStats.serverProcesses(flowd: flowdPID, mtplx: mtplxPID), ProcessStats.swap())
+    }.value
+  }
+
+  /// The model each service runs, from the workers' ready lines and the agents' plists.
+  var models: [(String, String)] {
+    let ready = snapshot.workers.speechReady
+    let dictation = ready["model_id"].map { id in
+      ready["booster"].map { "\(id), booster \($0)" } ?? id
+    }
+    let flowdArguments = AgentPlist.arguments(Server.plist) ?? []
+    let rewrite = AgentPlist.arguments(Server.mtplxPlist)?.value(after: "--model")
+    let summaries = flowdArguments.value(after: "--analysis-model").map { model in
+      "\(model) at \(flowdArguments.value(after: "--analysis-backend") ?? "?")"
+    }
+    return [
+      ("Dictation", dictation ?? "–"),
+      ("Meetings", snapshot.workers.meetingModels.joined(separator: "\n").nonEmpty ?? "–"),
+      ("Rewriting", rewrite.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "–"),
+      ("Summaries", summaries ?? "the rewrite model"),
+    ]
+  }
+
+  var versions: [(String, String)] {
+    let app = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+    return [
+      ("LocalFlow Server", app ?? "–"),
+      ("flowd", snapshot.rewriteHealth?.server.version ?? "–"),
+      ("flowd-speech", snapshot.workers.speechReady["worker_build"] ?? "–"),
+    ]
   }
 
   private func readLog() async {
@@ -92,4 +126,8 @@ final class ServerMonitor {
   nonisolated private static func answers(_ url: URL) async -> Bool {
     (try? await URLSession.shared.data(for: request(url))) != nil
   }
+}
+
+extension String {
+  var nonEmpty: String? { isEmpty ? nil : self }
 }
