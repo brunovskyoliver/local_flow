@@ -2,7 +2,7 @@ import XCTest
 
 @testable import LocalFlow
 
-/// Feature 018 T040/T041: Settings › Server, its rows and the connection check.
+/// Feature 018 T040/T041: Settings › Server, where services run and the connection check.
 @MainActor
 final class ServerSettingsViewModelTests: XCTestCase {
   private var suite = ""
@@ -66,13 +66,17 @@ final class ServerSettingsViewModelTests: XCTestCase {
     XCTAssertEqual(
       places(model),
       ["On your server", "On your server", "On your server", "Not offered by this server"])
-    XCTAssertEqual(model.accessibilityLabel(.rewriting), "Rewriting, on your server")
+    XCTAssertEqual(
+      model.placement,
+      "On your server: Dictation, Rewriting, Summaries · Not offered by this server: Meetings")
     XCTAssertTrue(model.hidesRewriteServerFields)
     XCTAssertTrue(model.hidesSummaryServerFields)
     model.useForEverything = false
     // Feature 014 unchanged: dictation and rewriting still use the server.
     XCTAssertEqual(
       places(model), ["On your server", "On your server", "On this Mac", "On this Mac"])
+    XCTAssertEqual(
+      model.placement, "On your server: Dictation, Rewriting · On this Mac: Summaries, Meetings")
     XCTAssertFalse(model.hidesRewriteServerFields)
     XCTAssertFalse(model.hidesSummaryServerFields)
   }
@@ -90,7 +94,7 @@ final class ServerSettingsViewModelTests: XCTestCase {
     XCTAssertFalse(model.localRewriteModelStopped)
   }
 
-  func testAKeptCustomSummariesServerShowsAsCustom() {
+  func testACustomSummariesServerShowsAsCustom() {
     approve()
     preferences.summaryServer = .remote
     preferences.summaryServerURL = "http://ai-vm:8000/v1"
@@ -138,17 +142,14 @@ final class ServerSettingsViewModelTests: XCTestCase {
     XCTAssertFalse(model.hidesRewriteServerFields, "switch off: the sections are as before")
   }
 
-  func testTheMigrationNoticeShowsOnce() {
-    preferences.serverMigrationNotice = [
-      "Kept your summaries server ai-vm as a custom server for Summaries."
-    ]
-    let first = model()
-    first.takeNotice()
-    XCTAssertEqual(first.notice.count, 1)
-    XCTAssertEqual(preferences.serverMigrationNotice, [])
-    let second = model()
-    second.takeNotice()
-    XCTAssertEqual(second.notice, [])
+  func testEverythingInOnePlaceReadsAsOnePhrase() {
+    XCTAssertEqual(model().placement, "Everything on this Mac")
+    approve(
+      ops: ["dictation_start", "rewrite", "analysis", "live_window", "meeting_job"])
+    preferences.serverCapabilities = RemoteCapabilities(
+      ops: ["dictation_start", "rewrite", "analysis", "live_window", "meeting_job"],
+      meetingJobs: ["transcribe", "diarize", "embed"], models: nil)
+    XCTAssertEqual(model().placement, "Everything on your server")
   }
 
   func testTheCheckTimesOneRoundTripForServedServices() async {
@@ -156,9 +157,9 @@ final class ServerSettingsViewModelTests: XCTestCase {
     let model = model()
     await model.check()
     XCTAssertEqual(pings, 1)
-    XCTAssertEqual(model.checkResults[.dictation], "Answered in 42 ms")
-    XCTAssertEqual(model.checkResults[.summaries], "Answered in 42 ms")
-    XCTAssertEqual(model.checkResults[.meetings], "Not offered by this server")
+    XCTAssertEqual(model.checkResult, "Answered in 42 ms")
+    model.useForEverything = false
+    XCTAssertNil(model.checkResult, "a routing change clears the old answer")
   }
 
   func testAServerThatIsDownReportsTheFallback() async {
@@ -166,14 +167,13 @@ final class ServerSettingsViewModelTests: XCTestCase {
     answer = nil
     let model = model()
     await model.check()
-    XCTAssertEqual(model.checkResults[.rewriting], "Server unreachable · uses this Mac")
-    XCTAssertEqual(model.checkResults[.summaries], "Server unreachable · waits for your server")
+    XCTAssertEqual(model.checkResult, "Server unreachable")
   }
 
   func testNothingServedSendsNothing() async {
     let model = model()
     await model.check()
     XCTAssertEqual(pings, 0)
-    XCTAssertEqual(model.checkResults[.rewriting], "On this Mac")
+    XCTAssertEqual(model.checkResult, "Nothing runs on your server")
   }
 }

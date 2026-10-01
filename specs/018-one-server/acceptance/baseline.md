@@ -21,3 +21,12 @@ Taken from [plan.md](../plan.md#constitution-check): every principle passes, wit
 ## Measurements
 
 No SC-001 to SC-009 figure has been measured. Latency, memory, residency timing and log scans (quickstart §5) need the Mac mini server and the hardware runs; nothing in this directory claims a measured value.
+
+## Validation (T091, 2026-10-01)
+
+After Phases 1–8, on commit `beb8533` plus the Phase 8 documentation changes:
+
+- `make check` (`scripts/test.sh`): **pass**, exit 0. It ran swift format lint, gofmt, `go vet` and `go test` for `server/`, the LocalFlowCore tests, the foundation validation (schemas and `fixtures/remote/messages/`), the remote log scan ("no tokens, JWTs, transcript or analysis text, Dictionary terms, vectors or samples in 2 file(s)"), the macOS XCTest suite, the `flowd-speech` target build, and the iPhone app, keyboard and `LocalFlowPhoneTests` on a simulator. No failure needed fixing.
+- T090: `make ios` built the app and keyboard for the simulator, and `LocalFlowPhoneTests` ran on its own: 81 tests, 0 failures.
+
+These are deterministic checks only. No SC-001 to SC-009 figure was measured.

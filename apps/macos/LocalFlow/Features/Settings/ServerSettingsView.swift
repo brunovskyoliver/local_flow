@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Settings › Server (Feature 018, contracts/settings-ui.md): the Feature 014 setup
-/// flow, the switch **Use this server for everything**, where each service runs, and
-/// the connection check.
+/// flow, the switch **Use this server for everything**, one line saying where the
+/// services run, and the connection check.
 @MainActor @Observable
 final class ServerSettingsModel {
   enum Row: String, CaseIterable {
@@ -25,9 +25,8 @@ final class ServerSettingsModel {
   let remote: RemoteDictationModel
   @ObservationIgnored private let preferences: AppPreferences
   @ObservationIgnored private let ping: @MainActor () async -> Duration?
-  private(set) var notice: [String] = []
   private(set) var checking = false
-  private(set) var checkResults: [Row: String] = [:]
+  private(set) var checkResult: String?
 
   init(
     remote: RemoteDictationModel, preferences: AppPreferences,
@@ -47,7 +46,7 @@ final class ServerSettingsModel {
     get { preferences.useServerForEverything }
     set {
       preferences.useServerForEverything = newValue
-      checkResults = [:]
+      checkResult = nil
     }
   }
 
@@ -61,9 +60,23 @@ final class ServerSettingsModel {
     }
   }
 
-  /// Read as "Rewriting, on your server".
-  func accessibilityLabel(_ row: Row) -> String {
-    "\(row.rawValue), \(place(row).prefix(1).lowercased() + place(row).dropFirst())"
+  /// One line for all four services: "Everything on your server", or each place with
+  /// its services, "On your server: Dictation, Rewriting · Not offered by this server: Meetings".
+  var placement: String {
+    var groups: [(place: String, rows: [String])] = []
+    for row in Row.allCases {
+      let place = place(row)
+      if let index = groups.firstIndex(where: { $0.place == place }) {
+        groups[index].rows.append(row.rawValue)
+      } else {
+        groups.append((place, [row.rawValue]))
+      }
+    }
+    if groups.count == 1, groups[0].place.hasPrefix("On ") {
+      return "Everything on " + groups[0].place.dropFirst(3)
+    }
+    return groups.map { "\($0.place): \($0.rows.joined(separator: ", "))" }
+      .joined(separator: " · ")
   }
 
   /// FR-005: with the switch on, the Rewriting and Summaries sections show no server
@@ -77,7 +90,7 @@ final class ServerSettingsModel {
     get { preferences.serverRewriteOverride }
     set {
       preferences.serverRewriteOverride = newValue
-      checkResults = [:]
+      checkResult = nil
     }
   }
 
@@ -87,7 +100,7 @@ final class ServerSettingsModel {
     set {
       preferences.serverSummariesOverride = newValue
       if newValue == .custom { preferences.summaryServer = .remote }
-      checkResults = [:]
+      checkResult = nil
     }
   }
 
@@ -96,7 +109,7 @@ final class ServerSettingsModel {
     get { preferences.serverMeetingsOverride }
     set {
       preferences.serverMeetingsOverride = newValue
-      checkResults = [:]
+      checkResult = nil
     }
   }
 
@@ -121,41 +134,25 @@ final class ServerSettingsModel {
   /// The server serves rewriting and summaries, so MTPLX is stopped (R10).
   var localRewriteModelStopped: Bool { routing.localRewriteModelUnneeded }
 
-  /// The migration notice (research R13) shows once: taken on first appearance.
-  func takeNotice() {
-    guard !preferences.serverMigrationNotice.isEmpty else { return }
-    notice = preferences.serverMigrationNotice
-    preferences.serverMigrationNotice = []
-  }
-
-  /// FR-006: one request on each served service's real path. Served services share
-  /// the server's channel, so one timed round trip answers for all of them; services
-  /// on this Mac or a custom server send nothing here (Rewriting › Test connection
-  /// still checks a custom rewrite server).
+  /// FR-006: served services share the server's channel, so one timed round trip
+  /// answers for all of them. Services on this Mac or a custom server send nothing here
+  /// (Rewriting › Test connection still checks a custom rewrite server).
   func check() async {
     guard !checking else { return }
+    guard Row.allCases.contains(where: { routing.path(for: $0.service) == .server }) else {
+      checkResult = "Nothing runs on your server"
+      return
+    }
     checking = true
     defer { checking = false }
-    let served = Row.allCases.filter { routing.path(for: $0.service) == .server }
-    let elapsed = served.isEmpty ? nil : await ping()
-    var results: [Row: String] = [:]
-    for row in Row.allCases {
-      if served.contains(row) {
-        if let elapsed {
-          let ms =
-            elapsed.components.seconds * 1_000
-            + elapsed.components.attoseconds / 1_000_000_000_000_000
-          results[row] = "Answered in \(ms) ms"
-        } else {
-          results[row] =
-            row == .summaries
-            ? "Server unreachable · waits for your server" : "Server unreachable · uses this Mac"
-        }
-      } else {
-        results[row] = place(row)
-      }
+    guard let elapsed = await ping() else {
+      checkResult = "Server unreachable"
+      return
     }
-    checkResults = results
+    let ms =
+      elapsed.components.seconds * 1_000
+      + elapsed.components.attoseconds / 1_000_000_000_000_000
+    checkResult = "Answered in \(ms) ms"
   }
 }
 
@@ -169,11 +166,6 @@ struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      ForEach(model.notice, id: \.self) { line in
-        Text(line).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
-          .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 14)
-          .accessibilityIdentifier("settings.serverMigrationNotice")
-      }
       RemoteDictationView(model: model.remote)
       if model.approved {
         SottoPalette.line.frame(height: 1)
@@ -192,29 +184,27 @@ struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
               .accessibilityIdentifier("settings.serverConsentUpdate")
           }
         }
-        ForEach(ServerSettingsModel.Row.allCases, id: \.self) { row in
-          SottoPalette.line.frame(height: 1)
-          SettingsRow(row.rawValue, detail: model.checkResults[row] ?? model.place(row)) {
-            EmptyView()
-          }
-          .accessibilityElement(children: .combine)
-          .accessibilityLabel(model.accessibilityLabel(row))
-        }
         SottoPalette.line.frame(height: 1)
-        SettingsRow("Connection") {
-          Button(model.checking ? "Checking…" : "Check connection") {
-            Task { await model.check() }
+        SettingsRow("Services", detail: model.placement) {
+          HStack(spacing: 10) {
+            if let result = model.checkResult {
+              Text(result).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+                .accessibilityIdentifier("settings.serverCheckResult")
+            }
+            Button(model.checking ? "Checking…" : "Check connection") {
+              Task { await model.check() }
+            }
+            .disabled(model.checking)
+            .accessibilityIdentifier("settings.serverCheckConnection")
           }
-          .disabled(model.checking)
-          .accessibilityIdentifier("settings.serverCheckConnection")
         }
+        .accessibilityIdentifier("settings.serverServices")
         SottoPalette.line.frame(height: 1)
         DisclosureGroup("Advanced", isExpanded: $showingAdvanced) { advanced }
           .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted).padding(.vertical, 14)
           .accessibilityIdentifier("settings.serverAdvanced")
       }
     }
-    .onAppear { model.takeNotice() }
     .sheet(isPresented: .constant(model.remote.showingConsentUpdate)) { consentUpdate }
   }
 
@@ -243,11 +233,11 @@ struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
       .accessibilityLabel("Remote dictation fallback threshold in milliseconds")
       .accessibilityIdentifier("settings.serverFallbackThreshold")
     }
-    SottoPalette.line.frame(height: 1)
-    SettingsRow("Remote dictation") {
-      Button("Turn Off…", role: .destructive) { model.remote.requestTurnOff() }
-        .accessibilityLabel("Turn off remote dictation")
-        .accessibilityIdentifier("settings.serverTurnOff")
+    if let fingerprint = model.remote.pinnedFingerprint {
+      SottoPalette.line.frame(height: 1)
+      SettingsRow("Server fingerprint", detail: fingerprint) { EmptyView() }
+        .textSelection(.enabled)
+        .accessibilityIdentifier("settings.serverFingerprint")
     }
   }
 

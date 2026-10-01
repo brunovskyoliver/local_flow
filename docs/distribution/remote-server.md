@@ -59,11 +59,11 @@ The same install serves summaries and meeting work; there is no extra setting. T
 - builds the Whisper helper with `scripts/build-meeting-whisper.sh` (the pinned whisper.cpp revision) and installs it as `bin/localflow-whisper-engine`, or takes a prebuilt one with `--meeting-helper PATH`;
 - installs `whisper-large-v3-turbo.json` and `speaker-diarization-offline.json` beside `flowd-speech`;
 - runs `flowd-speech provision --models "$DATA/Models" --meeting`, which downloads Whisper Turbo (with its VAD file) and the offline diarization and voice models once and verifies every file against the pinned hashes on each later run;
-- no longer passes `--analysis=false`, and passes `--meeting-helper` to flowd, which starts `flowd-speech meeting` beside the dictation worker.
+- no longer passes `--analysis=false`, and passes `--meeting-helper` to flowd, which starts `flowd-speech meeting --models <--meeting-models> --helper <--meeting-helper>` beside the dictation worker. flowd's `--meeting-models` defaults to the `--speech-models` directory and `--meeting-helper` to `localflow-whisper-engine` beside flowd, so the installer sets only the helper.
 
 `ready.capabilities` then lists `analysis`, `live_window` and `meeting_job` with the three model identities. If the meeting models or the helper are missing, the meeting worker reports what is missing in `flowd.log` (`meeting` prefix) and the server stops offering meeting jobs; dictation and rewriting are unaffected.
 
-Licences copied with the install, in `bin/WhisperLicenses/`: Sotto (the helper's source), whisper.cpp (MIT), the Whisper model weights (MIT), Silero VAD (MIT), nlohmann JSON (MIT) and miniaudio. The offline diarization and voice models (FluidInference `speaker-diarization-coreml`) are CC BY 4.0; their descriptor names the source and licence, and the files are downloaded from that source rather than shipped in the repository.
+Licences copied with the install, in `bin/WhisperLicenses/`: Sotto (the helper's source), whisper.cpp (MIT), the Whisper model weights (MIT), Silero VAD (MIT), nlohmann JSON (MIT) and miniaudio. The offline diarization and voice models are downloaded from their source at provisioning, not shipped, and are not modified. Attribution: `FluidInference/speaker-diarization-coreml` at revision `1ed7a662fdc7109e36d822db793ee6eebdaf8594`, a CoreML conversion of pyannote `speaker-diarization-community-1` and the WeSpeaker ResNet34 embedding, all licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The licence review and the pinned model card are in `docs/licenses/speaker-diarization-coreml.md` and `docs/licenses/speaker-diarization-coreml-model-card.md`; `THIRD_PARTY_NOTICES.md` carries the same notice.
 
 ## Choosing the rewrite model
 
@@ -130,7 +130,9 @@ LOCALFLOW_GOOGLE_CLIENT_ID=<client ID> make run        # everyday app
 LOCALFLOW_GOOGLE_CLIENT_ID=<dev client ID> make run-dev   # LocalFlow Dev, beside it
 ```
 
-In the app: Settings › Remote dictation › Turn on, confirm the consent sheet, enter `https://flow.<your-domain>`, check the fingerprint, and sign in. The app shows "Waiting for approval" and keeps dictating locally.
+In the app: Settings › Server, turn on Remote dictation, confirm the consent sheet, enter `https://flow.<your-domain>`, check the fingerprint, and sign in. The app shows "Waiting for approval" and keeps dictating locally.
+
+Once the device is approved, the Server section shows **Use this server for everything** and a Services row saying where dictation, rewriting, summaries and meetings run. With the switch on, all four go to this server; a service the server does not list in `ready.capabilities` shows as "Not offered by this server" and stays on the Mac. **Check connection** times one round trip over the channel and shows "Answered in N ms". Advanced (collapsed) can send Rewriting or Summaries to this Mac or to a custom server, and Meetings to this Mac. A device that confirmed the Feature 014 consent is asked once to confirm the updated one before summaries and meetings go to the server. The app side is described in `apps/macos/README.md`.
 
 ## Administration
 

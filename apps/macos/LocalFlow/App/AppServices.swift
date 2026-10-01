@@ -219,8 +219,6 @@ final class AppServices {
     guard coordinator == nil, !starting else { return }
     starting = true
     applyAppearance()
-    // Feature 018 (R13): existing summaries and rewrite servers become overrides, once.
-    ServerRouting.migrate(preferences, credentials: rewriteCredentials)
     localModel.observe()
     followLocalModelChoice()
     ChromiumAccessibility.startObserving()

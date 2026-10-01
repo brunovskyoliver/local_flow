@@ -139,14 +139,14 @@ My partner and I both use the Mac mini. If my meeting is being finalized when sh
 - **FR-003**: With the switch on and the device approved, dictation recognition, rewriting, meeting summaries and notes analysis, live meeting preview, final meeting transcription, speaker labels and voice comparison data MUST be requested from the server over the authenticated, encrypted channel, except for services with a per-service override.
 - **FR-004**: When the device is not approved, the server is unreachable, or the server does not offer a service, that service MUST use its local path or keep its work for a retry as FR-030 and FR-031 define, without user configuration.
 - **FR-005**: With the switch on, the Rewriting and Summaries sections MUST NOT show server address, secret or model fields; they keep their behaviour settings.
-- **FR-006**: The connection check MUST test each service on the path it would actually use, and report per service whether it answered, which path it used and why it fell back if it did.
+- **FR-006**: The connection check MUST test the services the server serves on the path they actually use, and report whether the server answered; Settings MUST show for each service which path it uses and why, if it does not use the server. *(Amended 2026-10-01 by the owner: served services share one channel, so one answer covers them, and the per-service rows were folded into one line.)*
 - **FR-007**: Every dictation, rewrite, summary and meeting MUST record whether it was produced on the server or locally, and why it fell back, in the same way Feature 014 does for dictation.
 
 **Per-service overrides**
 
 - **FR-008**: An Advanced area in the Server section MUST let the user override each service: rewriting (server, this Mac, custom server), summaries (server, this Mac, custom OpenAI-compatible server with model and key), and meeting transcription (server, this Mac). Dictation follows Feature 014's own switch.
 - **FR-009**: A summaries custom server MUST keep ADR 0021's behaviour: it is tried first, and the LocalFlow server (or this Mac when the switch is off) is the fallback when it fails before producing a result.
-- **FR-010**: On first start after upgrade, existing settings MUST migrate without loss: a Remote summaries server, model and key become the summaries override; a non-local rewrite address and its secret become a custom-server rewrite override; local defaults become "use the server" when the switch turns on. The user MUST be told once which overrides were kept.
+- **FR-010**: On first start after upgrade, existing settings MUST be kept without loss but MUST NOT become overrides: with the switch on, every service goes to the server. A Remote summaries server's address, model and key and an off-Mac rewrite address and its secret stay stored, and apply again when the user picks Custom server for that service in Server › Advanced. *(Amended 2026-10-01 by the owner: the first version kept them as custom overrides and showed a one-time notice. On the owner's install that sent summaries to the old server under a switch named "everything", so the migration and its notice were removed.)*
 
 **Local model residency**
 

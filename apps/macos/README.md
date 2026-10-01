@@ -139,6 +139,8 @@ the audio in `PendingAudio/` and retries it (History › Waiting for server). Hi
 labels each entry Server, Local, or Local after server failure. Turning remote dictation
 off deletes this Mac's tokens, device key and pinned key; history stays.
 
+Feature 018 moved this switch into Settings › Server, the first section; see below.
+
 `Core/Remote/` holds the channel (CryptoKit HPKE), messages, Keychain store, enrollment,
 the dictation session, the retry queue and the rewrite transport. The `flowd-speech`
 target (`SpeechWorker/`) is the server's speech worker; it compiles the recognition
@@ -146,3 +148,54 @@ sources plus `Core/SpeechBoundaries.swift` and `Core/ModelWorkloadBoundaries.swi
 `scripts/check-speech-worker-imports.sh` keeps SwiftUI, AppKit and GRDB out of it.
 `scripts/add-speech-worker-target.py` created the target;
 `scripts/register-xcode-sources.py --target flowd-speech` adds files to it.
+
+## One server (Feature 018)
+
+Settings › Server is the first section. It holds the Remote dictation setup above, and
+once the device is approved:
+
+- **Use this server for everything** sends dictation, rewriting, summaries and meetings
+  to the server. The Services row says in one line where they run: "Everything on your
+  server", or each place with its services ("On your custom server", "On this Mac", or
+  "Not offered by this server" when `ready.capabilities` does not list it). While the
+  switch applies, the Rewriting section hides its server fields and the Summaries section
+  is hidden.
+- A device that confirmed the Feature 014 consent sees **Review…** and confirms the
+  updated consent before summaries and meetings leave the Mac. Dictation and rewriting
+  keep working on the old consent.
+- **Check connection**, on the Services row, times one round trip over the channel,
+  which all served services share, and shows "Answered in N ms" or "Server unreachable".
+  Services on this Mac or a custom server send nothing; Rewriting › Test connection still
+  checks a custom rewrite server.
+- **Advanced**, collapsed by default:
+  - Rewriting: Your server, This Mac (loopback flowd and MTPLX, which may load again)
+    or Custom server, with the address, the Keychain secret and the insecure-HTTP
+    override.
+  - Summaries: Your server, This Mac or Custom server, with the address, model and API
+    key. A custom server that fails before any result is retried once on your server
+    ("Your server is used if this server fails"); after a partial result it is not.
+  - Meetings ("Transcripts, speaker labels and voice matching"): Your server or This Mac.
+  - The fallback threshold for dictation, 250–10,000 ms, and the pinned server
+    fingerprint.
+- An upgrade keeps the old summaries and rewrite servers stored but does not use them;
+  picking Custom server in Advanced brings them back.
+
+Settings › Models shows where each model's work runs. Parakeet and the term booster stay
+on this Mac for the fallback; Whisper Turbo and Speaker labels read "On your server" once
+the server offers meeting jobs. MTPLX stops while the server
+serves both rewriting and summaries, and Parakeet is not kept loaded while dictation is
+served ("Applies when dictating on this Mac"). Local Load, Unload and Test stay, since
+they test the fallback.
+
+`MeetingInferenceRouter` picks the local or the remote runtimes once per run, when the
+lease is taken. The remote runtimes send 16 kHz s16le samples on the live and background
+channel roles (the pool has three: interactive, live, background) and load no weights on
+the Mac. When the server is busy, unreachable or has no meeting worker, the run stays
+pending and the meeting shows **Waiting for your server**; it retries after 30 s,
+doubling up to 10 min, and the wait resets on a network change or a newly opened channel.
+Summaries wait the same way. A live preview window the server cannot take becomes a
+`server_unavailable` gap and recording carries on. **Run on this Mac**, in the library
+row and the meeting detail, runs that meeting's remaining transcript, speaker labels,
+identification and summary locally; the choice is stored per meeting and recorded as
+`local_after_server_failure` with `server_failure = user_ran_locally`. The detail view
+shows where each stage ran. Voice enrollment always runs on this Mac.

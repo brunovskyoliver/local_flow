@@ -385,13 +385,9 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertEqual(preferences.serverRewriteOverride, .server)
     XCTAssertEqual(preferences.serverSummariesOverride, .server)
     XCTAssertEqual(preferences.serverMeetingsOverride, .server)
-    XCTAssertEqual(preferences.serverMigrationVersion, 0)
-    XCTAssertEqual(preferences.serverMigrationNotice, [])
     preferences.serverRewriteOverride = .thisMac
     preferences.serverSummariesOverride = .custom
     preferences.serverMeetingsOverride = .custom
-    preferences.serverMigrationNotice = ["kept"]
-    preferences.markServerMigrated()
     preferences.serverCapabilities = RemoteCapabilities(
       ops: ["rewrite", "analysis"], meetingJobs: [], models: nil)
     let reloaded = AppPreferences(defaults: defaults)
@@ -400,8 +396,6 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertEqual(reloaded.serverSummariesOverride, .custom)
     // Meetings have no custom server.
     XCTAssertEqual(reloaded.serverMeetingsOverride, .server)
-    XCTAssertEqual(reloaded.serverMigrationVersion, 1)
-    XCTAssertEqual(reloaded.serverMigrationNotice, ["kept"])
     XCTAssertEqual(reloaded.serverCapabilities?.ops, ["rewrite", "analysis"])
     for key in ["server.override.rewrite", "server.override.summaries", "server.override.meetings"]
     {

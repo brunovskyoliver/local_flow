@@ -10,10 +10,10 @@ Shown always; contents depend on remote dictation enrollment (Feature 014).
 | --- | --- |
 | Remote dictation off | One line: "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run." and **Set up…** (opens the existing consent and enrollment flow) |
 | Pending | Server address, "Waiting for approval", fingerprint. Every service runs on this Mac |
-| Approved | Server address, "Approved", fingerprint, the switch **Use this server for everything** (FR-001), and a status row per service: Dictation, Rewriting, Summaries, Meetings, each "On your server", "On this Mac" or "Not offered by this server" |
+| Approved | Server address and "Approved", the switch **Use this server for everything** (FR-001), and one **Services** row saying where the four services run: "Everything on your server", or each place with its services, e.g. "On your server: Dictation, Rewriting, Summaries · Not offered by this server: Meetings". Places are "On your server", "On your custom server", "On this Mac" and "Not offered by this server" |
 | Rejected / revoked / pin mismatch | The state in words and **Set up again…**; every service runs on this Mac |
 
-Below the rows: **Check connection** (FR-006) runs one request per served service on its real path and shows per row "Answered in N ms" or why it fell back.
+**Check connection** (FR-006) sits on the Services row. Served services share the channel, so it times one round trip and shows "Answered in N ms", "Server unreachable", or "Nothing runs on your server" beside the button. *(Amended 2026-10-01 by the owner: the four status rows, each repeating the same answer, were folded into this row; the fingerprint moved to Advanced; the duplicate Turn off row was removed, since the Remote dictation switch does the same.)*
 
 **Advanced** (disclosure, collapsed by default):
 
@@ -23,9 +23,9 @@ Below the rows: **Check connection** (FR-006) runs one request per served servic
 | Summaries | Your server · This Mac · Custom server | Custom: address, model, API key (Keychain); note "Your server is used if this server fails" |
 | Meetings | Your server · This Mac | — |
 | Fallback threshold | the existing remote dictation threshold | — |
-| Turn off remote dictation | existing destructive action | — |
+| Server fingerprint | the pinned fingerprint, selectable | — |
 
-The migration notice (research R13) appears once at the top of the Server section: "Kept your summaries server ai-vm … as a custom server for Summaries."
+There is no migration notice: research R13 was withdrawn on 2026-10-01 and nothing becomes an override on upgrade.
 
 ## Rewriting
 
@@ -33,12 +33,13 @@ Keeps **Enable rewriting**, **Default mode** and style settings. The Server URL,
 
 ## Summaries
 
-Keeps its behaviour settings. The Server picker, URL, Model and API key move to Server › Advanced › Summaries. With the switch off they render here as before.
+The section holds only the Server picker and its URL, Model and API key, which move to Server › Advanced › Summaries, so with the switch on the section is hidden. With the switch off it renders as before.
 
 ## Models
 
 Each model row gains its place: "On your server", "On this Mac", or "On this Mac (used if the server is unreachable)". While the server serves the matching service:
 
+- Parakeet and the term booster read "On this Mac (used if the server is unreachable)": the server has its own copies, and these serve the fallback. Whisper Turbo and Speaker labels read "On your server" once the server offers meeting jobs.
 - **Keep Parakeet loaded** shows the caption "Applies when dictating on this Mac" and stays editable.
 - **Unload rewrite model** and **Unload during games** are hidden when the local rewrite model is stopped by the server (R10).
 - Load/Unload/Test buttons for local models stay, since they test the fallback.

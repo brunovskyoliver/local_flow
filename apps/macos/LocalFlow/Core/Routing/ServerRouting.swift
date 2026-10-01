@@ -119,39 +119,6 @@ struct ServerRouting: Sendable, Equatable {
   var localRewriteModelUnneeded: Bool {
     servedByServer(.rewrite) && servedByServer(.summaries)
   }
-
-  // MARK: Migration (research R13)
-
-  static func migrationNotice(summariesHost host: String) -> String {
-    "Kept your summaries server \(host) as a custom server for Summaries."
-  }
-
-  static func migrationNotice(rewriteHost host: String) -> String {
-    "Kept your rewrite server \(host) as a custom server for Rewriting."
-  }
-
-  /// Runs once: a Remote summaries server and an off-Mac rewrite address with a stored
-  /// secret become custom overrides. Nothing is deleted, from defaults or Keychain.
-  @MainActor
-  static func migrate(_ preferences: AppPreferences, credentials: any RewriteCredentialStoring) {
-    guard preferences.serverMigrationVersion < AppPreferences.serverMigrationVersion else {
-      return
-    }
-    var notice: [String] = []
-    if let host = preferences.customSummariesHost {
-      preferences.serverSummariesOverride = .custom
-      notice.append(migrationNotice(summariesHost: host))
-    }
-    if let origin = RewriteSettings.normalizedOrigin(preferences.rewriteEndpoint),
-      !RewriteSettings.isLoopbackHost(RewriteSettings.host(of: origin)),
-      credentials.exists(origin: origin)
-    {
-      preferences.serverRewriteOverride = .custom
-      notice.append(migrationNotice(rewriteHost: RewriteSettings.host(of: origin)))
-    }
-    preferences.serverMigrationNotice = notice
-    preferences.markServerMigrated()
-  }
 }
 
 extension AppPreferences {

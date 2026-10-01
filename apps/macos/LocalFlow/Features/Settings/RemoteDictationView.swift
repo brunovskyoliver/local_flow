@@ -48,6 +48,8 @@ final class RemoteDictationModel {
   /// What the next step is: trust a fetched identity, sign in, or nothing.
   var needsTrust: Bool { identity != nil && state != .pinned }
   var needsSignIn: Bool { isOn && state == .pinned && identity == nil }
+  /// An approved device has nothing left to set up; Server › Advanced shows its fingerprint.
+  var showsSetupDetails: Bool { isOn && (state != .approved || identity != nil || error != nil) }
 
   /// The one-line state, or nil when remote dictation is off.
   var statusText: String? {
@@ -166,7 +168,7 @@ struct RemoteDictationView: View {
         .labelsHidden().toggleStyle(.switch)
         .accessibilityIdentifier("settings.remoteEnabled")
       }
-      if model.isOn {
+      if model.showsSetupDetails {
         SottoPalette.line.frame(height: 1)
         VStack(alignment: .leading, spacing: 12) {
           if let identity = model.identity {
@@ -178,7 +180,7 @@ struct RemoteDictationView: View {
               .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
             Button("Trust This Server") { model.trustServer() }
               .accessibilityIdentifier("settings.remoteTrust")
-          } else if let pinned = model.pinnedFingerprint {
+          } else if model.state != .approved, let pinned = model.pinnedFingerprint {
             Text("Pinned fingerprint  \(pinned)").font(.system(size: 12, design: .monospaced))
               .foregroundStyle(SottoPalette.muted).textSelection(.enabled)
           }

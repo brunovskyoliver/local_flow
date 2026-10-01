@@ -122,6 +122,8 @@ Decisions that the specification left to the plan. Code references are to the tr
 
 The migration runs once (a version key in preferences) and never deletes a value.
 
+**Withdrawn 2026-10-01** (owner, after reviewing the release build): keeping the old servers as overrides contradicted the switch's name. Nothing is migrated; the stored values stay and apply again when the user picks Custom server in Server › Advanced. FR-010 is amended to match. The `server.migrationVersion` and `server.migrationNotice` keys are no longer read or written.
+
 ## R14. Exposure and threat model changes
 
 Exposure stays Tailscale Funnel on the remote listener (ADR 0028 amendment). New threats and their answers:

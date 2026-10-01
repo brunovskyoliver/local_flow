@@ -222,10 +222,10 @@ description: "Task list for Feature 018: one server for everything"
 
 ## Phase 8: Polish & cross-cutting
 
-- [ ] T088 [P] Update `docs/distribution/remote-server.md` and `apps/macos/README.md` for the Server section, overrides and meeting provisioning.
-- [ ] T089 [P] Update `protocol/README.md` for the new message types and frame kind `0x02`.
-- [ ] T090 Confirm iOS dictation and rewriting over the server are unaffected: build `apps/ios` and run its existing remote tests (no iOS changes in this feature).
-- [ ] T091 Run `make check` and fix every failure; record the result in `specs/018-one-server/acceptance/baseline.md`.
+- [X] T088 [P] Update `docs/distribution/remote-server.md` and `apps/macos/README.md` for the Server section, overrides and meeting provisioning.
+- [X] T089 [P] Update `protocol/README.md` for the new message types and frame kind `0x02`.
+- [X] T090 Confirm iOS dictation and rewriting over the server are unaffected: build `apps/ios` and run its existing remote tests (no iOS changes in this feature).
+- [X] T091 Run `make check` and fix every failure; record the result in `specs/018-one-server/acceptance/baseline.md`.
 
 ---
 
@@ -369,3 +369,45 @@ US3 (T057–T083), meetings on the server:
 - The shared-device model in T085 is a fake. The tests show that no further meeting job starts during dictation, not how long the GPU or ANE contention actually takes.
 - The script's phrase lists come from the repository fixtures. Real meeting content in acceptance logs is caught only by the generic vector and payload patterns, or if it matches a fixture.
 - Phases 8–9 are not done.
+
+## Report (2026-10-01): Phase 8, T088–T091
+
+**What changed.**
+
+- T088, `docs/distribution/remote-server.md`. The Phases 5–6 commit had already described meeting provisioning, the meeting worker and the `WhisperLicenses/` list, so these parts were not repeated. Added:
+  - flowd's `--meeting-models` (defaults to the `--speech-models` directory) next to `--meeting-helper`, and why the installer sets only the helper.
+  - The CC BY 4.0 attribution for the diarization and voice models: `FluidInference/speaker-diarization-coreml` at its pinned revision, converted from pyannote `speaker-diarization-community-1` and WeSpeaker ResNet34, with links to the licence review and model card in `docs/licenses/` and to `THIRD_PARTY_NOTICES.md`. This closes the attribution item left by Phases 5–6.
+  - Clients: enrollment now starts from Settings › Server. A short paragraph covers the switch, the four service rows, **Check connection**, Advanced and the consent update, and points to the app README.
+- T088, `apps/macos/README.md`: a "One server (Feature 018)" section. It covers the switch and the row texts, **Review…** for the consent update, what **Check connection** measures and its unreachable texts, the Advanced rows (Rewriting, Summaries with the one retry on your server, Meetings, fallback threshold, Turn Off…), the migration notice, Settings › Models, and meetings on the server: `MeetingInferenceRouter`, the three channel roles, **Waiting for your server** with its backoff, `server_unavailable` gaps, and **Run on this Mac** with how it is recorded. The Feature 014 section notes that its switch moved.
+- T089, `protocol/README.md`: a "Remote channel additions (Feature 018)" section covering frame kind `0x02`, `ready.capabilities`, `analysis_part` and `analysis`, `analysis_event_part` and `analysis_event`, `live_window` and `live_result`, `meeting_job`, `meeting_progress`, `meeting_result` and `meeting_cancel`, the three channels per device, `not_offered`, and isolation. Every bound comes from `server/internal/remote/protocol.go`, `channel.go`, `analysis.go`, `server/internal/speech/meeting_queue.go` and `supervisor.go`, or from `contracts/remote-channel.md`. The contract lists the op names; the code accepts any lowercase name, so the README says "today" for the list.
+- T090: no code changes. `apps/ios` has no remote dictation or rewriting: Feature 016 left rewriting out, and the only server in the app is the local keyboard handoff (`HandoffServer`). There are no remote tests to run. The build and the full `LocalFlowPhoneTests` suite still show that Feature 018's shared-package changes (the runtimes moved to `LocalFlowSpeech`, migration 17) did not break the phone app.
+- T091: recorded in `acceptance/baseline.md`. Nothing needed fixing.
+
+**How it was verified.**
+- `make ios` built; `LocalFlowPhoneTests` on an iPhone simulator ran 81 tests with 0 failures.
+- `make check` passed on 2026-10-01, including the foundation validation of the new message fixtures and the log scan.
+- The doc text was checked against the code: the Settings strings in `ServerSettingsView.swift`, `MeetingLibraryView.swift` and `MeetingDetailView.swift`, and the protocol bounds in the files above.
+
+**What is left.**
+- Nothing was measured. Phase 9 (T092–T096) needs the Mac mini and the MacBook.
+- T090 could not show iOS dictation or rewriting over the server, because the iPhone app does neither yet.
+- `contracts/settings-ui.md` describes **Set up…** for the off state and **Set up again…** for a rejected device. The app keeps the Feature 014 Remote dictation switch and **Enroll Again**, and the docs describe what the app does.
+- The open items from earlier reports still stand: live preview rows record the local engine identity; the retry after `not_offered` is recorded as `local`; voice enrollment always runs on this Mac; `live_window` has no cancel message.
+
+## Follow-up (2026-10-01): Settings review of the release build
+
+The owner reviewed `make release` and found the Server section cluttered and the summaries server unexpected.
+
+**What changed.**
+- R13 migration withdrawn (FR-010 amended): an upgrade no longer turns the old summaries or rewrite server into a custom override, and there is no migration notice. The stored values stay and apply again when Custom server is picked in Advanced. `ServerRouting.migrate`, `server.migrationVersion`, `server.migrationNotice` and `ServerSettingsMigrationTests` are gone. On the owner's Mac, `server.override.summaries` was set back to `server` and the two keys were deleted, with the app closed.
+- Settings › Server (FR-006 and `contracts/settings-ui.md` amended): the four service rows and the separate Connection row became one Services row ("Everything on your server", or each place with its services) with **Check connection** and its one answer beside it. The pinned fingerprint moved to Advanced. Advanced › Turn Off… was removed, since the Remote dictation switch does the same. An approved device shows no empty setup block.
+- The Summaries section is hidden while the switch applies, because its only content moved to Server › Advanced. Its "Your server, set in Server" row is gone.
+- Settings › Models: the term booster shows its place like Parakeet ("On this Mac (used if the server is unreachable)").
+- `apps/macos/README.md` and `docs/distribution/remote-server.md` describe the new layout.
+
+**How it was verified.** ServerSettingsViewModelTests now cover the one-line placement and the single check result. `make check` passed on 2026-10-01 on the second run; the first failed once in `VocabularyStoreTests.testExactLimitsAndOneOver`, which does not touch these files and passed 3 of 3 runs alone. `make release` installed the build.
+
+**What is left.**
+- Whisper Turbo and Speaker labels read "On this Mac" because the Mac mini does not offer meeting jobs yet; T092 installs that.
+- The Mac mini's last `ready` offered only `dictation_start` and `rewrite`, so until T092 summaries run on this Mac ("Not offered by this server") instead of on ai-vm.
+- `VocabularyStoreTests.testExactLimitsAndOneOver` failed once under the full suite. Cause not investigated.

@@ -68,7 +68,9 @@ struct SettingsView: View {
         contextSection
         modelSection
         rewriteSection
-        summarySection
+        // Feature 018: the section holds only the server choice, which Server › Advanced
+        // takes over while the switch is on.
+        if model.server?.hidesSummaryServerFields != true { summarySection }
         permissionsSection
         if let recordingError {
           Text(recordingError).foregroundStyle(SottoPalette.warning).padding(.top, 16)
@@ -342,20 +344,16 @@ struct SettingsView: View {
     VStack(alignment: .leading, spacing: 0) {
       sectionTitle("Summaries")
       settingsGroup {
-        if model.server?.hidesSummaryServerFields == true {
-          SettingsRow("Server", detail: "Your server, set in Server") { EmptyView() }
-        } else {
-          SettingsRow("Server") {
-            Picker("Server", selection: $preferences.summaryServer) {
-              ForEach(SummaryServer.allCases) { Text($0.title).tag($0) }
-            }
-            .labelsHidden().tint(SottoPalette.ink).frame(width: 110).accessibilityIdentifier(
-              "settings.summaryServer")
+        SettingsRow("Server") {
+          Picker("Server", selection: $preferences.summaryServer) {
+            ForEach(SummaryServer.allCases) { Text($0.title).tag($0) }
           }
-          if preferences.summaryServer == .remote {
-            separator
-            summaryServerFields
-          }
+          .labelsHidden().tint(SottoPalette.ink).frame(width: 110).accessibilityIdentifier(
+            "settings.summaryServer")
+        }
+        if preferences.summaryServer == .remote {
+          separator
+          summaryServerFields
         }
       }
     }
@@ -476,7 +474,8 @@ struct SettingsView: View {
         separator
         SettingsRow(
           "Term booster",
-          detail: "Dictionary terms in dictation · \(model.snapshot.boostModelReadiness)"
+          detail:
+            "\(role("Dictionary terms in dictation", .dictation)) · \(model.snapshot.boostModelReadiness)"
         ) {
           if !model.snapshot.boostModelInstalled && !model.snapshot.boostModelInstalling {
             Button("Download") { Task { await model.run(.downloadBoostModel) } }

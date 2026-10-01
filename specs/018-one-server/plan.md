@@ -105,7 +105,7 @@ packages/LocalFlowCore/Sources/LocalFlowCore/HistoryMigrations.swift   # one-ser
 apps/macos/LocalFlow/
 ├── Core/Remote/  RemoteAnalysisTransport.swift, RemoteMeetingRuntimes.swift, RemoteLiveRecognizer.swift,
 │                 RemoteCapabilities.swift, RemoteProtocol.swift (new messages), RemoteChannelPool (3 roles)
-├── Core/Routing/ServerRouting.swift            # servedByServer, overrides, migration R13
+├── Core/Routing/ServerRouting.swift            # servedByServer, overrides (R13 migration withdrawn)
 ├── Core/Intelligence/AnalysisClient.swift      # RoutingAnalysisTransport, primary-only header
 ├── Core/LocalAI/LocalAIRuntime.swift           # residency conditions R10
 ├── Core/Transcripts/, Core/Diarization/, Core/Identification/  # waitingForServer handling, inference_path

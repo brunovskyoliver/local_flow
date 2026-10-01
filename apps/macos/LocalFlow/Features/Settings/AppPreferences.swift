@@ -241,7 +241,6 @@ final class AppPreferences {
     case server, thisMac, custom
     var id: String { rawValue }
   }
-  static let serverMigrationVersion = 1
   /// Unset until the user changes it; then it reads as on once this device is approved.
   private var storedUseServerForEverything: Bool? {
     didSet { defaults.set(storedUseServerForEverything, forKey: "server.useForEverything") }
@@ -263,13 +262,6 @@ final class AppPreferences {
       defaults.set(serverMeetingsOverride.rawValue, forKey: "server.override.meetings")
     }
   }
-  private(set) var serverMigrationVersion: Int {
-    didSet { defaults.set(serverMigrationVersion, forKey: "server.migrationVersion") }
-  }
-  /// Overrides the R13 migration kept, shown once in Settings › Server.
-  var serverMigrationNotice: [String] {
-    didSet { defaults.set(serverMigrationNotice, forKey: "server.migrationNotice") }
-  }
   /// The last `ready.capabilities`, so routing is known at launch before a channel opens.
   var serverCapabilities: RemoteCapabilities? {
     didSet {
@@ -277,8 +269,6 @@ final class AppPreferences {
         serverCapabilities.flatMap { try? JSONEncoder().encode($0) }, forKey: "server.capabilities")
     }
   }
-
-  func markServerMigrated() { serverMigrationVersion = Self.serverMigrationVersion }
 
   static func isValidBundleID(_ id: String) -> Bool {
     !id.isEmpty && id.utf8.count <= 255 && !id.contains { $0.isWhitespace || $0.isNewline }
@@ -314,8 +304,6 @@ final class AppPreferences {
     serverSummariesOverride = override("server.override.summaries")
     let meetings = override("server.override.meetings")
     serverMeetingsOverride = meetings == .custom ? .server : meetings
-    serverMigrationVersion = defaults.integer(forKey: "server.migrationVersion")
-    serverMigrationNotice = defaults.stringArray(forKey: "server.migrationNotice") ?? []
     serverCapabilities = defaults.data(forKey: "server.capabilities").flatMap {
       try? JSONDecoder().decode(RemoteCapabilities.self, from: $0)
     }

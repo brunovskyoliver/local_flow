@@ -10,7 +10,7 @@ The client stays authoritative (ADR 0006). The server adds no stored user data: 
 | `server.override.rewrite` | `server` \| `thisMac` \| `custom` | `server` | `custom` uses the existing `rewriteEndpoint` and its Keychain secret |
 | `server.override.summaries` | `server` \| `thisMac` \| `custom` | `server` | `custom` uses the existing `summaryServerURL`, `summaryServerModel` and Keychain account `summary-server` |
 | `server.override.meetings` | `server` \| `thisMac` | `server` | Live preview, final transcript, speaker labels and voice regions together |
-| `server.migrationVersion` | Int | 0 → 1 | R13 migration ran; never re-runs |
+| ~~`server.migrationVersion`~~ | Int | — | Removed 2026-10-01 with the R13 migration (research R13) |
 | `server.migrationNotice` | [String] | empty | Overrides kept by the migration, shown once |
 
 Dictation keeps Feature 014's `remote.enabled` switch. Existing keys (`rewriteEndpoint`, `summaryServer*`, `keepModelReady`, `localModelIdleUnload`) stay and keep their meaning when the switch is off.
