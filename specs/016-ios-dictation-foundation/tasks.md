@@ -34,13 +34,13 @@ The spec lists US6 sixth, but the plan builds it first: every phone story needs 
   - `apps/ios/Keyboard/Info.plist`: `RequestsOpenAccess = YES`, `PrimaryLanguage = en-US`.
   - A `LocalFlowPhoneTests` unit-test target hosted by the app.
   - Done: generated once (see research R14 outcome). Info.plists are `apps/ios/Config/App-Info.plist` and `Keyboard-Info.plist`; the group ID comes from `LOCALFLOW_APP_GROUP` in `Config/Base.xcconfig`, which `#include?`s the local signing file. Simulator builds exclude x86_64 because FluidAudio's text-processing library is arm64 only.
-- [ ] T003 Write throwaway spike code in `apps/ios/Spike/SpikeAppView.swift` and `apps/ios/Spike/SpikeKeyboardViewController.swift` (add the spike files in Xcode by hand; the script flag arrives in T030):
+- [X] T003 Write throwaway spike code in `apps/ios/Spike/SpikeAppView.swift` and `apps/ios/Spike/SpikeKeyboardViewController.swift` (add the spike files in Xcode by hand; the script flag arrives in T030):
   - The keyboard writes `ping.json` to `<group>/Handoff/` and rings a Darwin notification. The app answers with `pong.json` and a second notification. The keyboard shows the round-trip time.
   - An "Open app" key walks the responder chain to `UIApplication` and calls `open(_:options:completionHandler:)` with `localflow://session/start` (research R6).
   - The app starts an `AVAudioEngine` input tap with `.playAndRecord` and `[.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker]` and keeps it running in the background (research R7).
   - The keyboard shows its own `phys_footprint` (`task_info` `TASK_VM_INFO`).
   - Not built separately. The US1 build carries everything the spike checks (ping/pong round trip, opening the app from the keyboard, the background engine, `peak_footprint_bytes` in `keyboard-status.json`), so T004 runs quickstart §2 against the real app and keyboard. T005 has nothing to delete.
-- [ ] T004 Run quickstart §2 on the iPhone 16 Pro and record in `specs/016-ios-dictation-foundation/acceptance/spike.md`:
+- [X] T004 Run quickstart §2 on the iPhone 16 Pro and record in `specs/016-ios-dictation-foundation/acceptance/spike.md`:
   - App Group round trip works on the free team (yes/no).
   - Doorbell round-trip time (median of 10).
   - The app opens from the keyboard.
@@ -48,7 +48,8 @@ The spec lists US6 sixth, but the plan builds it first: every phone story needs 
   - Whether the orange indicator shows, and whether music keeps playing with `.mixWithOthers`.
   - Keyboard footprint at rest with a SwiftUI hosting controller.
   - Decision: if the group fails, choose the R4 fallback. If `.mixWithOthers` kills background input, drop it (R7). If SwiftUI is above 30 MB at rest, the keyboard uses UIKit (R11). Update research.md with the outcome before continuing.
-- [ ] T005 Delete `apps/ios/Spike/` and its target membership once T004 is recorded. Keep the project, targets, entitlements and signing config.
+  - Closed 2026-10-01 on the paid team (`944A459UC3`, prefix `com.brunovsky`): the group round trip, opening the app and a full dictation work on the device. Three device defects fixed on the way (symlinked container, download progress, a main-actor trap in the audio tap). Not measured: the doorbell time, the 2-minute background check, the orange indicator and music, and the keyboard footprint; the last three move to T059. See `acceptance/spike.md`.
+- [X] T005 Delete `apps/ios/Spike/` and its target membership once T004 is recorded. Keep the project, targets, entitlements and signing config.
 
 **Checkpoint**: spike passed and recorded, or the plan was updated with the chosen fallback.
 
@@ -169,6 +170,7 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
 
 - [X] T036 Create `apps/ios/App/Models/ResumableModelDownloadTransport.swift` conforming to the shared `ModelProvisioner` transport protocol: one background `URLSession` download per file, one file in flight, resume data kept on error or network loss and used on the next attempt, staging under `Models/.staging/<name>` (research R8).
   - A foreground `URLSession` with resume data kept on disk, not a background session: a download pauses while the app is suspended (`ponytail:` note in the file).
+  - Device fixes (2026-10-01): a download task with a session-level delegate, because the async API reported no progress. The container path is resolved with `realpath` and passed to `ModelProvisioner` as `trustedBase`, because the sandbox refuses to open `/private`. See `acceptance/spike.md`.
 - [X] T037 Create `apps/ios/App/Models/PhoneModelState.swift`: the state machine `absent`, `downloading(progress)`, `paused`, `verifying`, `ready`, `damaged` from data-model.md §2, driven by `ModelProvisioner`. At launch it re-reads the manifest and fingerprints (no full hash) and moves to `damaged` if they fail. Promoted directories are marked `isExcludedFromBackup`. The boost model is optional: without it the state is still `ready` and V002 is skipped.
 - [X] T038 Add `apps/ios/LocalFlowPhoneTests/ModelProvisioningTests.swift` with a fake transport: an interrupted download resumes from its resume data; a partial staging directory is never promoted; a hash mismatch yields `damaged` and deletes staging; a launch fingerprint failure yields `damaged` and leaves the database untouched.
 
@@ -240,6 +242,9 @@ Land this phase as its own commit series (plan build order step 3) and merge it 
   - "Insert last dictation" when an offer is pending.
   - Short messages for "Didn't catch that", "Dictation failed", and "Limit reached" (when `limit_reached` is true).
 - [ ] T059 [US1] Run quickstart §5 on the iPhone 16 Pro (SC-001 10 runs of 15 s, SC-002 20 dictations in a row, SC-009 indicator off within 10 s of the deadline, Undo) and record the results in `specs/016-ios-dictation-foundation/acceptance/keyboard.md`.
+  - Carried over from T004: the app still answers after 2 minutes in the background; the orange indicator and whether music keeps playing with `.mixWithOthers` (drop it if background input dies, R7); the keyboard footprint at rest (UIKit if above 30 MB, R11).
+  - Also carried over from T004: the doorbell round-trip time, median of 10, read from the keyboard's Debug `ping` readout (hide and show the keyboard 10 times). R7 depends on it: if the first word is clipped, the keyboard shows recording only after the app confirms.
+  - The footprint needs a way to read it first: either the footprint line of T081's diagnostics screen, built ahead of T059, or Instruments attached to `LocalFlowKeyboard` from the Mac while the keyboard is open. The group container is not reachable with `devicectl`.
 
 **Checkpoint**: keyboard dictation works end to end on the device.
 
@@ -413,8 +418,12 @@ Stop at each checkpoint and record the device run before moving on. Resource acc
 
 **Left**
 
-- T004: the spike run on the iPhone 16 Pro (quickstart §2), then ADR 0029 → Accepted, then T005.
 - T019: the manual Mac pass (quickstart §3).
 - T059: keyboard acceptance on the device (quickstart §5).
-- Device builds need `LOCALFLOW_BUNDLE_PREFIX` and `DEVELOPMENT_TEAM` in `apps/ios/Config/Signing.local.xcconfig` (gitignored). This has not been set yet.
 - No device measurements have been collected.
+
+**T004 (2026-10-01)**
+
+- Changed: signing on the paid team `944A459UC3` with the prefix `com.brunovsky` (set in the gitignored `Signing.local.xcconfig`). Three device fixes: the container path is resolved with `realpath` and passed as `ModelProvisioner`'s `trustedBase`; the download reports progress; the audio tap and drain timer blocks are `@Sendable` (they trapped off the main actor). ADR 0029 is Accepted. Also fixed a race in `RemoteEnrollmentTests.testRefreshFollowsTheMonotonicClockAndTokenExpiry`, which failed under full-suite load because the refresh timer's sleep could start after the clock advanced.
+- Verified: a dictation from the keyboard works on the iPhone 16 Pro. `make check` exits 0; the enrollment test passed 5 runs in a row on its own.
+- Left: the doorbell time was not measured. The background, indicator, music and footprint checks moved to T059. See `acceptance/spike.md`.

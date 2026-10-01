@@ -56,6 +56,8 @@ The move is mechanical except for three places where Mac-only APIs leak into oth
 - Writes are atomic (`Data.write(options: .atomic)`, which renames), so a reader never sees a half file. Each file has one writer. No SQLite in the group (R5).
 - The keyboard needs Full Access to write the group container and to open the app. Without it, writes fail silently, so the keyboard checks `hasFullAccess` first (FR-009).
 
+**Spike result (2026-10-01)**: the group works for keyboard ↔ app dictation on the device, on the paid team. No fallback.
+
 **Fallback if the group fails on the free team**: the keyboard opens the app with a URL for every start and stop (unusable for SC-002), or keychain access groups as the data channel with Darwin doorbells. The spike decides; nothing else is built until it passes.
 
 **Alternatives considered**: shared `UserDefaults(suiteName:)` (works but caches in each process and has no atomic multi-field write), pasteboard (visible to other apps, rejected on privacy), GRDB in the group (R5).
@@ -95,6 +97,8 @@ The responder-chain call is not undocumented API: it calls the public `UIApplica
 - Session end: stop the engine, `setActive(false, options: .notifyOthersOnDeactivation)`, drop the session's keep-ready hold and unload the model. The orange indicator then goes away (SC-009).
 - Interruption began (call, Siri): if recording, close the spool and transcribe what was captured under `beginBackgroundTask`; then end the session with reason `interrupted`. No automatic resume, because resuming input from the background is not allowed.
 
+**Spike result (2026-10-01)**: dictation works with these options. The background, orange indicator and music checks were not run; they move to T059.
+
 **Alternatives considered**: stopping the engine between dictations (cannot restart from background), a pre-roll ring buffer to avoid clipping the first word (conflicts with FR-013). If the spike shows the first word clipped because of doorbell latency, the fix is to start the keyboard's recording state only after the app confirms, not to keep audio.
 
 ## R8. Model provisioning on the phone
@@ -120,6 +124,8 @@ The responder-chain call is not undocumented API: it calls the public `UIApplica
 
 Reinstalling from Xcode with the same team and bundle ID keeps both the app container and the group container. After the 7-day expiry the app will not launch but its data stays until the app is deleted. Changing team or bundle ID creates a new container, which is why the IDs are pinned and documented. Confidence: medium-high (general iOS behaviour, Apple forum 69248). SC-006 checks it over three cycles.
 
+**Update (2026-10-01)**: signing moved to a paid team (`944A459UC3`). The free team still owns the `com.oliverbrunovsky` identifiers and its App Group, and Apple refuses a group already registered by another team, so the prefix is now `com.brunovsky`. The 7-day expiry and the free-team App ID limits no longer apply; SC-006 still checks that reinstalls keep both containers.
+
 ## R11. Keyboard memory and UI
 
 **Decision**: The keyboard is a `UIInputViewController` hosting a SwiftUI view, with a hard budget of **40 MB `phys_footprint` peak**. The limit reported for iOS 26 is about 60 MB (medium confidence; older figures 30–50 MB). Rules:
@@ -131,6 +137,8 @@ Reinstalling from Xcode with the same team and bundle ID keeps both the app cont
 - The keyboard writes its own peak footprint into a diagnostics file on each dismissal, so SC-004 can be read from the app after 50 dictations.
 
 If the spike measures SwiftUI above 30 MB at rest, the keyboard switches to UIKit before feature work. No numbers are claimed until measured.
+
+**Spike result (2026-10-01)**: the footprint was not measured. The keyboard stays SwiftUI; T059 measures it (SC-004) and applies the 30 MB rule.
 
 ## R12. Insertion rules in the keyboard (FR-006, FR-007)
 

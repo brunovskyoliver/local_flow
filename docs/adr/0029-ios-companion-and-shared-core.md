@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-10-01. Amends ADR 0001. It becomes Accepted once the signing and handoff spike on the iPhone (Feature 016, `specs/016-ios-dictation-foundation/acceptance/spike.md`) passes.
+Accepted, 2026-10-01. Amends ADR 0001. The signing and handoff spike passed on the iPhone (Feature 016, `specs/016-ios-dictation-foundation/acceptance/spike.md`).
 
 ## Context
 
