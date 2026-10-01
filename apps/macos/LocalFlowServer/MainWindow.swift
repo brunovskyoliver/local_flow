@@ -2,11 +2,13 @@ import SwiftUI
 
 struct MainWindow: View {
   let monitor: ServerMonitor
+  let stats: StatsModel
 
   var body: some View {
     TabView {
       OverviewView(monitor: monitor).tabItem { Text("Overview") }
       LogsView(monitor: monitor).tabItem { Text("Logs") }
+      StatsView(stats: stats, monitor: monitor).tabItem { Text("Stats") }
     }
     .padding()
     .frame(minWidth: 720, minHeight: 480)

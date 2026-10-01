@@ -6,7 +6,7 @@ import SwiftUI
 /// `LOCALFLOW_SERVER_SNAPSHOT_DIR=<dir>`; drawing its own views needs no permission.
 @MainActor
 enum Snapshot {
-  static func schedule(monitor: ServerMonitor, into directory: URL) {
+  static func schedule(monitor: ServerMonitor, stats: StatsModel, into directory: URL) {
     Task {
       try? await Task.sleep(for: .seconds(8))  // a few polls and the log backlog
       try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -17,7 +17,11 @@ enum Snapshot {
         to: directory.appending(path: "overview.png"))
       await save(
         LogsView(monitor: monitor).padding(), size: size, to: directory.appending(path: "logs.png"))
-      NSApp.terminate(nil)
+      stats.days = 30
+      await save(
+        StatsView(stats: stats, monitor: monitor).padding(), size: size,
+        to: directory.appending(path: "stats.png"))
+      exit(0)  // NSApp.terminate can wait on SwiftUI scene teardown
     }
   }
 

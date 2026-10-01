@@ -6,6 +6,7 @@ import SwiftUI
 @main
 struct LocalFlowServerApp: App {
   private let monitor = ServerMonitor()
+  private let stats = StatsModel()
 
   var body: some Scene {
     MenuBarExtra {
@@ -16,13 +17,13 @@ struct LocalFlowServerApp: App {
     }
     .menuBarExtraStyle(.window)
     Window("LocalFlow Server", id: "main") {
-      MainWindow(monitor: monitor)
+      MainWindow(monitor: monitor, stats: stats)
     }
   }
 
   init() {
     if let directory = ProcessInfo.processInfo.environment["LOCALFLOW_SERVER_SNAPSHOT_DIR"] {
-      Snapshot.schedule(monitor: monitor, into: URL(fileURLWithPath: directory))
+      Snapshot.schedule(monitor: monitor, stats: stats, into: URL(fileURLWithPath: directory))
     }
   }
 }
