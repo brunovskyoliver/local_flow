@@ -40,3 +40,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0028: Opt-in remote inference on a self-hosted multi-user server](0028-remote-inference-server.md)
 
 - [0029: iOS companion app and a shared LocalFlowCore package](0029-ios-companion-and-shared-core.md)
+
+- [0030: iOS system entry points in a widget extension](0030-ios-system-entry-points.md)

@@ -52,9 +52,9 @@ The plan builds in two milestones. Milestone A (US2–US4) is accepted on the de
 
 ## Phase 2: ADR and build boundaries
 
-- [ ] T006 Write `docs/adr/0030-ios-system-entry-points.md`: the third iOS target `LocalFlowWidgets`, the `Intents/` folder compiled into the app and the widget, intents running in the app process through `@Dependency`, background recording limited to visible, user-started recordings (App Review 2.5.4, FR-030), and the rejected alternatives from plan "Complexity tracking". Add it to `docs/adr/README.md`.
-- [ ] T007 [P] Update the scope paragraph in `AGENTS.md` to name the `LocalFlowWidgets` extension (control and Live Activity) among the iOS targets.
-- [ ] T008 [P] Extend `scripts/check-keyboard-imports.sh` (research R11): also scan `apps/ios/Widgets` and `apps/ios/Intents` for `Network`, `FluidAudio`, `GRDB`, `LocalFlowCore`, `LocalFlowSpeech`, `URLSession`, `AVFAudio` and `AVFoundation`; fail if `apps/ios/Keyboard` or `apps/ios/Shared` imports `ActivityKit` or `AppIntents`; and fail if `AVFAudio` or `AVFoundation` appears in `apps/ios/Keyboard`. Skip directories that do not exist yet. Update the header comment to name Feature 017.
+- [X] T006 Write `docs/adr/0030-ios-system-entry-points.md`: the third iOS target `LocalFlowWidgets`, the `Intents/` folder compiled into the app and the widget, intents running in the app process through `@Dependency`, background recording limited to visible, user-started recordings (App Review 2.5.4, FR-030), and the rejected alternatives from plan "Complexity tracking". Add it to `docs/adr/README.md`.
+- [X] T007 [P] Update the scope paragraph in `AGENTS.md` to name the `LocalFlowWidgets` extension (control and Live Activity) among the iOS targets.
+- [X] T008 [P] Extend `scripts/check-keyboard-imports.sh` (research R11): also scan `apps/ios/Widgets` and `apps/ios/Intents` for `Network`, `FluidAudio`, `GRDB`, `LocalFlowCore`, `LocalFlowSpeech`, `URLSession`, `AVFAudio` and `AVFoundation`; fail if `apps/ios/Keyboard` or `apps/ios/Shared` imports `ActivityKit` or `AppIntents`; and fail if `AVFAudio` or `AVFoundation` appears in `apps/ios/Keyboard`. Skip directories that do not exist yet. Update the header comment to name Feature 017.
 - [x] T009 [P] Correct the "Live Activity duration limit" edge case in `specs/017-ios-keyboard-entry-points/spec.md` per research R3: the activity returns when LocalFlow next comes forward or the control is used, not at the next keyboard recording. Done during analyze (2026-10-01).
 
 ---
