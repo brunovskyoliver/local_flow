@@ -6,6 +6,9 @@ import SwiftUI
 /// `LOCALFLOW_SERVER_SNAPSHOT_DIR=<dir>`; drawing its own views needs no permission.
 @MainActor
 enum Snapshot {
+  /// Snapshots redact user names and emails; they end up in the repository.
+  static let active = ProcessInfo.processInfo.environment["LOCALFLOW_SERVER_SNAPSHOT_DIR"] != nil
+
   static func schedule(monitor: ServerMonitor, stats: StatsModel, into directory: URL) {
     Task {
       try? await Task.sleep(for: .seconds(8))  // a few polls and the log backlog
@@ -21,6 +24,11 @@ enum Snapshot {
       await save(
         StatsView(stats: stats, monitor: monitor).padding(), size: size,
         to: directory.appending(path: "stats.png"))
+      let devices = DevicesModel()
+      await devices.reload()
+      await save(
+        DevicesView(model: devices).padding(), size: size,
+        to: directory.appending(path: "devices.png"))
       exit(0)  // NSApp.terminate can wait on SwiftUI scene teardown
     }
   }
