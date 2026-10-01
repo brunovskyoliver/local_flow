@@ -404,7 +404,15 @@ final class RemoteDictationRouter: RemoteDictationRouting {
   private let pending: @MainActor () -> PendingRemoteDictationStore?
   private let provisioned: @MainActor () -> Bool
   private let askAboutAudio: @MainActor (URL, Int) async -> Void
-  let rewriteChannels: RemoteRewriteChannels
+  /// Feature 018: the interactive, live and background channels.
+  let channels: RemoteChannelPool
+  var rewriteChannels: RemoteRewriteChannels { channels.interactive }
+  private let opened = ChannelOpenedSignal()
+  /// Called on the main actor after any session channel opens.
+  var channelOpened: (@MainActor () -> Void)? {
+    get { opened.handler }
+    set { opened.handler = newValue }
+  }
   /// flowd runs one dictation per user: a live one cancels a running retry.
   private weak var liveSession: RemoteDictationSession?
   private weak var retrySession: RemoteDictationSession?
@@ -425,17 +433,46 @@ final class RemoteDictationRouter: RemoteDictationRouting {
     self.pending = pending
     provisioned = localModelProvisioned
     self.askAboutAudio = askAboutAudio
-    // A rewrite with no dictation channel left opens its own session channel.
-    let open: RemoteRewriteChannels.Opener = { [weak preferences, credentials, transports] in
+    // A rewrite with no dictation channel left opens its own session channel; so do
+    // summaries and meeting work. Each `ready` refreshes what the server offers.
+    let open: RemoteRewriteChannels.Opener = {
+      [weak preferences, credentials, transports, opened] in
       guard
         let (url, key, token) = await Self.sessionInputs(
           preferences: preferences, credentials: credentials, enrollment: enrollment)
       else { throw RemoteChannelError.unreachable }
       let channel = try RemoteChannel(transport: try await transports.open(url), serverKey: key)
       try await channel.open(purpose: .session, accessToken: token)
+      let offered = await channel.capabilities
+      await MainActor.run {
+        preferences?.noteServerCapabilities(offered)
+        opened.handler?()
+      }
       return channel
     }
-    rewriteChannels = RemoteRewriteChannels(open: open)
+    channels = RemoteChannelPool(open: open)
+  }
+
+  /// Opens one session channel to learn what the server offers, then closes it.
+  /// False when the device can't reach or use the server now.
+  @discardableResult
+  func refreshCapabilities() async -> Bool { await ping() != nil }
+
+  /// Opens a fresh background channel and times it to `ready`, which also refreshes
+  /// the capabilities (Feature 018 FR-006); nil when the server can't be reached.
+  func ping() async -> Duration? {
+    do {
+      var started = ContinuousClock.now
+      var (channel, op) = try await channels.lease(.background)
+      if op > 1 {
+        // A parked channel proves nothing about the server now.
+        await channels.release(.background, channel: channel, nextOp: nil)
+        started = .now
+        (channel, _) = try await channels.lease(.background)
+      }
+      await channels.release(.background, channel: channel, nextOp: 1)
+      return started.duration(to: .now)
+    } catch { return nil }
   }
 
   /// Where and with what a new session channel connects, or nil when this device
@@ -532,4 +569,8 @@ extension RemoteDictationRouter: RemoteRetryStarting {
     guard let live = await MainActor.run(body: { liveSession }) else { return false }
     return await live.isActive
   }
+}
+
+@MainActor private final class ChannelOpenedSignal {
+  var handler: (@MainActor () -> Void)?
 }

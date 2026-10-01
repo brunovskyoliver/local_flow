@@ -86,7 +86,7 @@ func TestEveryMessageTypeHasFixtures(t *testing.T) {
 			}
 		}
 	}
-	if len(MessageTypes) != 16 {
+	if len(MessageTypes) != 26 {
 		t.Fatalf("%d message types", len(MessageTypes))
 	}
 }
@@ -319,7 +319,7 @@ func TestEncodeMessage(t *testing.T) {
 }
 
 func TestErrorCodes(t *testing.T) {
-	if len(ErrorCodes) != 10 {
+	if len(ErrorCodes) != 11 {
 		t.Fatal(len(ErrorCodes))
 	}
 	seen := map[string]bool{}
@@ -335,5 +335,90 @@ func TestErrorCodes(t *testing.T) {
 	}
 	if ErrorCode("teapot").Message() != CodeInternal.Message() {
 		t.Fatal("unknown code message")
+	}
+}
+
+// Feature 018 T005: the new messages' per-kind bounds. Sample counts and
+// formats outside the contract are invalid_message; fragments over their
+// byte bounds are limit_exceeded.
+func TestFeature018Rejections(t *testing.T) {
+	cases := []struct {
+		name    string
+		fixture string
+		mutate  func(m map[string]any)
+		code    ErrorCode
+	}{
+		{"live 0 samples", "live_window", func(m map[string]any) { m["sample_count"] = 0 }, CodeInvalidMessage},
+		{"live 96,001 samples", "live_window", func(m map[string]any) { m["sample_count"] = 96001 }, CodeInvalidMessage},
+		{"live f32le", "live_window", func(m map[string]any) { m["format"] = "f32le" }, CodeInvalidMessage},
+		{"live language", "live_window", func(m map[string]any) { m["language"] = "Slovak" }, CodeInvalidMessage},
+		{"transcribe 0 samples", "meeting_job", func(m map[string]any) { m["sample_count"] = 0 }, CodeInvalidMessage},
+		{"transcribe 1,920,001 samples", "meeting_job", func(m map[string]any) { m["sample_count"] = 1920001 }, CodeInvalidMessage},
+		{"transcribe f32le", "meeting_job", func(m map[string]any) { m["format"] = "f32le" }, CodeInvalidMessage},
+		{"transcribe num_speakers", "meeting_job", func(m map[string]any) { m["num_speakers"] = 2 }, CodeInvalidMessage},
+		{"transcribe 257 terms", "meeting_job", func(m map[string]any) {
+			terms := make([]any, 257)
+			for i := range terms {
+				terms[i] = "t"
+			}
+			m["vocabulary_terms"] = terms
+		}, CodeInvalidMessage},
+		{"transcribe term over 128 bytes", "meeting_job", func(m map[string]any) { m["vocabulary_terms"] = []any{strings.Repeat("ž", 65)} }, CodeInvalidMessage},
+		{"unknown kind", "meeting_job", func(m map[string]any) { m["kind"] = "summarize" }, CodeInvalidMessage},
+		{"diarize 9,600,001 samples", "meeting_job-diarize", func(m map[string]any) { m["sample_count"] = 9600001 }, CodeInvalidMessage},
+		{"diarize pipeline", "meeting_job-diarize", func(m map[string]any) { m["pipeline"] = "p" }, CodeInvalidMessage},
+		{"diarize 0 speakers", "meeting_job-diarize", func(m map[string]any) { m["num_speakers"] = 0 }, CodeInvalidMessage},
+		{"embed 47,999 samples", "meeting_job-embed", func(m map[string]any) { m["sample_count"] = 47999 }, CodeInvalidMessage},
+		{"embed 320,001 samples", "meeting_job-embed", func(m map[string]any) { m["sample_count"] = 320001 }, CodeInvalidMessage},
+		{"embed language", "meeting_job-embed", func(m map[string]any) { m["language"] = "sk" }, CodeInvalidMessage},
+		{"analysis_part over 49,152 bytes", "analysis_part", func(m map[string]any) { m["data"] = strings.Repeat("a", MaxAnalysisPartBytes+1) }, CodeLimitExceeded},
+		{"analysis_part empty", "analysis_part", func(m map[string]any) { m["data"] = "" }, CodeInvalidMessage},
+		{"analysis_part index 64", "analysis_part", func(m map[string]any) { m["index"] = 64 }, CodeInvalidMessage},
+		{"analysis over 262,144 bytes", "analysis", func(m map[string]any) { m["bytes"] = MaxAnalysisBytes + 1 }, CodeLimitExceeded},
+		{"analysis 0 parts", "analysis", func(m map[string]any) { m["parts"] = 0 }, CodeInvalidMessage},
+		{"analysis uppercase sha256", "analysis", func(m map[string]any) { m["sha256"] = strings.ToUpper(m["sha256"].(string)) }, CodeInvalidMessage},
+		{"analysis_event_part over 49,152 bytes", "analysis_event_part", func(m map[string]any) { m["data"] = strings.Repeat("a", MaxAnalysisPartBytes+1) }, CodeLimitExceeded},
+		{"analysis_event neither form", "analysis_event", func(m map[string]any) { delete(m, "event") }, CodeInvalidMessage},
+		{"analysis_event parts without sha256", "analysis_event-parts", func(m map[string]any) { delete(m, "sha256") }, CodeInvalidMessage},
+		{"analysis_event event and parts", "analysis_event", func(m map[string]any) { m["parts"] = 2 }, CodeInvalidMessage},
+		{"live_result negative token time", "live_result", func(m map[string]any) {
+			m["window"].(map[string]any)["tokens"] = []any{map[string]any{"text": "a", "start": -1, "end": 0}}
+		}, CodeInvalidMessage},
+		{"meeting_progress position -1", "meeting_progress", func(m map[string]any) { m["position"] = -1 }, CodeInvalidMessage},
+		{"meeting_result diarize result for embed", "meeting_result-embed", func(m map[string]any) {
+			m["result"] = map[string]any{"turns": []any{}, "centroids": []any{}}
+		}, CodeInvalidMessage},
+		{"meeting_result retry depth 3", "meeting_result", func(m map[string]any) { m["result"].(map[string]any)["retry_depth"] = 3 }, CodeInvalidMessage},
+		{"meeting_result turn end before start", "meeting_result-diarize", func(m map[string]any) {
+			m["result"].(map[string]any)["turns"] = []any{map[string]any{"cluster": 0, "start": 2.0, "end": 1.0}}
+		}, CodeInvalidMessage},
+		{"meeting_result empty vector", "meeting_result-embed", func(m map[string]any) { m["result"].(map[string]any)["vector"] = []any{} }, CodeInvalidMessage},
+		{"meeting_result model without engine", "meeting_result", func(m map[string]any) { delete(m["model"].(map[string]any), "engine") }, CodeInvalidMessage},
+		{"capabilities null ops", "ready-capabilities", func(m map[string]any) { m["capabilities"].(map[string]any)["ops"] = nil }, CodeInvalidMessage},
+		{"capabilities duplicate op", "ready-capabilities", func(m map[string]any) {
+			m["capabilities"].(map[string]any)["ops"] = []any{"rewrite", "rewrite"}
+		}, CodeInvalidMessage},
+		{"capabilities voice without dimension", "ready-capabilities", func(m map[string]any) {
+			delete(m["capabilities"].(map[string]any)["models"].(map[string]any)["voice"].(map[string]any), "dimension")
+		}, CodeInvalidMessage},
+	}
+	for _, tc := range cases {
+		object := loadObject(t, tc.fixture)
+		tc.mutate(object)
+		_, err := DecodeMessage(mustJSON(t, object))
+		if CodeOf(err) != tc.code {
+			t.Errorf("%s: code %q, want %q (%v)", tc.name, CodeOf(err), tc.code, err)
+		}
+	}
+	// A Feature 014 ready, without capabilities, still decodes.
+	if m, err := DecodeMessage([]byte(`{"schema_version":1,"type":"ready"}`)); err != nil || m.(Ready).Capabilities != nil {
+		t.Fatalf("%#v %v", m, err)
+	}
+	m, err := DecodeMessage(mustJSON(t, loadObject(t, "ready-capabilities")))
+	if err != nil || m.(Ready).Capabilities.Models.Voice.Dimension != 256 {
+		t.Fatalf("%#v %v", m, err)
+	}
+	if data, err := EncodeMessage(NewError(4, CodeNotOffered)); err != nil || !strings.Contains(string(data), `"code":"not_offered"`) {
+		t.Fatalf("%s %v", data, err)
 	}
 }

@@ -365,4 +365,75 @@ final class AppPreferencesTests: XCTestCase {
       AppIdentity(infoDictionary: [:], home: home).allowsDeveloperSettings,
       AppIdentity.isDebugBuild)
   }
+
+  /// Feature 018 T019: the switch, the overrides, the migration keys and the capabilities.
+  @MainActor func testServerKeysDefaultPersistAndFallBack() {
+    let suite = "LocalFlow-server-keys-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    // Off before remote dictation is approved, on once it is, until the user chooses.
+    XCTAssertFalse(preferences.useServerForEverything)
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.confirmRemoteConsent()
+    preferences.remoteEnabled = true
+    preferences.remoteState = .approved
+    XCTAssertTrue(preferences.useServerForEverything)
+    XCTAssertNil(defaults.object(forKey: "server.useForEverything"))
+    preferences.useServerForEverything = false
+    XCTAssertEqual(defaults.object(forKey: "server.useForEverything") as? Bool, false)
+    XCTAssertEqual(preferences.serverRewriteOverride, .server)
+    XCTAssertEqual(preferences.serverSummariesOverride, .server)
+    XCTAssertEqual(preferences.serverMeetingsOverride, .server)
+    XCTAssertEqual(preferences.serverMigrationVersion, 0)
+    XCTAssertEqual(preferences.serverMigrationNotice, [])
+    preferences.serverRewriteOverride = .thisMac
+    preferences.serverSummariesOverride = .custom
+    preferences.serverMeetingsOverride = .custom
+    preferences.serverMigrationNotice = ["kept"]
+    preferences.markServerMigrated()
+    preferences.serverCapabilities = RemoteCapabilities(
+      ops: ["rewrite", "analysis"], meetingJobs: [], models: nil)
+    let reloaded = AppPreferences(defaults: defaults)
+    XCTAssertFalse(reloaded.useServerForEverything)
+    XCTAssertEqual(reloaded.serverRewriteOverride, .thisMac)
+    XCTAssertEqual(reloaded.serverSummariesOverride, .custom)
+    // Meetings have no custom server.
+    XCTAssertEqual(reloaded.serverMeetingsOverride, .server)
+    XCTAssertEqual(reloaded.serverMigrationVersion, 1)
+    XCTAssertEqual(reloaded.serverMigrationNotice, ["kept"])
+    XCTAssertEqual(reloaded.serverCapabilities?.ops, ["rewrite", "analysis"])
+    for key in ["server.override.rewrite", "server.override.summaries", "server.override.meetings"]
+    {
+      defaults.set("elsewhere", forKey: key)
+    }
+    defaults.set("custom", forKey: "server.override.meetings")
+    let unknown = AppPreferences(defaults: defaults)
+    XCTAssertEqual(unknown.serverRewriteOverride, .server)
+    XCTAssertEqual(unknown.serverSummariesOverride, .server)
+    XCTAssertEqual(unknown.serverMeetingsOverride, .server)
+    // Existing keys keep their meaning; turning remote dictation off forgets the server's offer.
+    XCTAssertEqual(unknown.keepModelReady, false)
+    XCTAssertEqual(unknown.localModelIdleUnload, .never)
+    unknown.resetRemote()
+    XCTAssertNil(unknown.serverCapabilities)
+    XCTAssertNil(defaults.object(forKey: "server.capabilities"))
+  }
+
+  /// FR-033: the new consent version keeps dictation for devices that confirmed version 1.
+  @MainActor func testTheFirstConsentVersionStillAllowsDictation() {
+    let suite = "LocalFlow-consent-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set(1, forKey: "remote.consentVersion")
+    defaults.set(true, forKey: "remote.enabled")
+    defaults.set("https://mini.example.com", forKey: "remote.serverURL")
+    defaults.set("approved", forKey: "remote.state")
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertTrue(preferences.remoteSettings().routesToServer)
+    XCTAssertFalse(preferences.remoteConsentCurrent)
+    preferences.confirmRemoteConsent()
+    XCTAssertTrue(preferences.remoteConsentCurrent)
+    XCTAssertEqual(AppPreferences.remoteConsentVersion, 2)
+  }
 }

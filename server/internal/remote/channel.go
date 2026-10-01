@@ -18,8 +18,9 @@ import (
 //	every later frame:      seq (8, BE) | Seal(aad = seq, plaintext)
 //
 // Every plaintext except the hello starts with a kind byte: 0x00 control JSON
-// (at most 65,536 bytes) or 0x01 audio (1…16,000 f32le samples, client to
-// server only). The server-to-client context is an HPKE sender to the hello's
+// (at most 65,536 bytes), 0x01 audio (1…16,000 f32le samples) or 0x02
+// samples (1…32,000 s16le samples, Feature 018), the last two client to
+// server only. The server-to-client context is an HPKE sender to the hello's
 // reply_key with info = c2s.Export("localflow v1 s2c info", 32), so only a
 // holder of the client-to-server context can derive it.
 const (
@@ -28,6 +29,9 @@ const (
 	MaxBinaryMessage      = 70000
 	KindControl      byte = 0x00
 	KindAudio        byte = 0x01
+	KindSamples      byte = 0x02
+	// MaxSampleFrameSamples bounds one kind 0x02 frame (64,000 bytes).
+	MaxSampleFrameSamples = 32000
 	// CloseHelloRefused is the WebSocket close code for a hello the server
 	// cannot open; the client reports pin_mismatch.
 	CloseHelloRefused websocket.StatusCode = 4001
@@ -186,6 +190,7 @@ func (c *Channel) Seal(f Frame) ([]byte, error) {
 	switch {
 	case f.Kind == KindControl && len(f.Payload) <= MaxControlBytes:
 	case f.Kind == KindAudio && c.client && validAudio(f.Payload) == nil:
+	case f.Kind == KindSamples && c.client && validSamples(f.Payload) == nil:
 	default:
 		return nil, invalid("frame not sendable")
 	}
@@ -268,6 +273,11 @@ func validateFrame(f Frame, client bool) error {
 			return invalid("audio from the server")
 		}
 		return validAudio(f.Payload)
+	case KindSamples:
+		if client {
+			return invalid("samples from the server")
+		}
+		return validSamples(f.Payload)
 	default:
 		return invalid("unknown frame kind")
 	}
@@ -279,6 +289,15 @@ func validAudio(payload []byte) error {
 		return invalid("audio not whole f32le samples")
 	case len(payload)/4 > MaxAudioSamples:
 		return &Error{CodeLimitExceeded, "audio frame over 16,000 samples"}
+	}
+	return nil
+}
+
+// validSamples accepts 1…32,000 whole s16le samples. Unlike f32le, an
+// oversized frame is invalid_message (Feature 018 contract).
+func validSamples(payload []byte) error {
+	if len(payload) == 0 || len(payload)%2 != 0 || len(payload)/2 > MaxSampleFrameSamples {
+		return invalid("samples not 1…32,000 whole s16le samples")
 	}
 	return nil
 }

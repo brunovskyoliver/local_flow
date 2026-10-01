@@ -497,6 +497,13 @@ enum LocalModelIdleUnload: Int, CaseIterable, Identifiable {
     self.busy = busy
   }
 
+  /// Whether the app runs the model at all: rewriting points at this Mac and the user's
+  /// server does not serve both rewriting and summaries (Feature 018 R10). While false the
+  /// model is stopped and `wake()` does nothing; it starts again when this turns true.
+  nonisolated static func wanted(rewriteEndpoint: String, routing: ServerRouting) -> Bool {
+    rewriteEndpoint == LocalAIInstaller.rewriteEndpoint && !routing.localRewriteModelUnneeded
+  }
+
   /// Follows app activation, game quits, memory pressure and the two settings.
   func observe() {
     let center = NSWorkspace.shared.notificationCenter

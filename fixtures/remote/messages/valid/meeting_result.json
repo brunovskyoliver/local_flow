@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "type": "meeting_result",
+  "op": 9,
+  "kind": "transcribe",
+  "result": {
+    "text": "Zabbix hlási zelené alarmy.",
+    "tokens": [
+      {
+        "text": "Zabbix",
+        "start": 0.5,
+        "end": 1.1
+      },
+      {
+        "text": " hlási",
+        "start": 1.1,
+        "end": 1.6
+      },
+      {
+        "text": " zelené",
+        "start": 1.6,
+        "end": 2.2
+      },
+      {
+        "text": " alarmy.",
+        "start": 2.2,
+        "end": 2.9
+      }
+    ],
+    "timings_available": true,
+    "language": "sk",
+    "retry_depth": 0,
+    "pipeline": "per_track_fixed1920000_turbo_level_v2"
+  },
+  "processing_ms": 41250,
+  "model": {
+    "engine": "whisper.cpp",
+    "model_id": "ggml-large-v3-turbo",
+    "model_revision": "4af2b29d7a4b8e1c",
+    "manifest_hash": "9f2c1e0b7a6d5c4b3a29181706f5e4d3c2b1a09f8e7d6c5b4a3928170615f4e3"
+  }
+}

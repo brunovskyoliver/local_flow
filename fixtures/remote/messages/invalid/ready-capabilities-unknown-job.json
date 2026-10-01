@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "type": "ready",
+  "capabilities": {
+    "ops": [
+      "meeting_job"
+    ],
+    "meeting_jobs": [
+      "summarize"
+    ]
+  }
+}

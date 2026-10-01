@@ -11,6 +11,18 @@ import XCTest
 /// cleanup blocks the next capture instead of silently recording again.
 @MainActor
 final class ResourceLifecycleTests: XCTestCase {
+  /// Feature 018 T046: Parakeet stays loaded only while dictation runs on this Mac.
+  func testKeepLoadedFollowsWhereDictationRuns() {
+    var routing = ServerRouting(
+      remote: RemoteDictationSettings(
+        enabled: true, serverOrigin: URL(string: "https://mini.example.com"), state: .approved),
+      useForEverything: true, consentCurrent: true)
+    XCTAssertFalse(AppServices.keepsParakeetLoaded(keepModelReady: true, routing: routing))
+    routing.remote.state = .revoked
+    XCTAssertTrue(AppServices.keepsParakeetLoaded(keepModelReady: true, routing: routing))
+    XCTAssertFalse(AppServices.keepsParakeetLoaded(keepModelReady: false, routing: routing))
+  }
+
   private enum TestTimeout: Error { case expired }
   private var ownedDirectories: [URL] = []
   private var restorePermissions: [URL] = []

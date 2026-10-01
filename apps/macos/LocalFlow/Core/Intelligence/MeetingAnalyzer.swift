@@ -139,6 +139,8 @@ struct MeetingAnalyzer: Sendable {
     let run = try await store.admit(
       meetingID: meetingID, trigger: trigger, evidence: prepared.version,
       passID: prepared.passID, policy: prepared.policy, now: clock.nowMilliseconds)
+    try await store.recordInferencePath(
+      runID: run.id, path: prepared.endpoint.analysisInferencePath)
     return Admission(
       run: run, passID: prepared.passID, meeting: prepared.meeting,
       language: prepared.language, policy: prepared.policy,

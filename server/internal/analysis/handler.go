@@ -262,7 +262,7 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request, b BackendAdapt
 	if DebugBuild && h.config.DumpDir != "" && len(body) > 0 {
 		dumpRequestBody(h.config.DumpDir, body)
 	}
-	req, err := DecodeRequestBytes(body, h.config.Limits.InputBytes)
+	req, err := h.DecodeRequest(body)
 	if err != nil {
 		var re *RequestError
 		if errors.As(err, &re) {
@@ -276,13 +276,7 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request, b BackendAdapt
 		}
 		return
 	}
-	supported := false
-	for _, v := range h.config.ProtocolVersions {
-		if v == SchemaVersion {
-			supported = true
-		}
-	}
-	if !supported {
+	if !h.supports(req.SchemaVersion) {
 		httpError(w, 400, CodeUnsupportedVersion)
 		return
 	}
@@ -299,6 +293,66 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request, b BackendAdapt
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	h.run(r.Context(), req, b, start, func(data []byte) error { return writeEvent(w, data) })
+}
+
+// RunCancelled is Run's result when the transport stopped taking events; it
+// is a log outcome, never a wire code.
+const RunCancelled Code = "cancelled"
+
+// DecodeRequest decodes and validates one request body with the handler's
+// input limit.
+func (h *Handler) DecodeRequest(body []byte) (*Request, error) {
+	return DecodeRequestBytes(body, h.config.Limits.InputBytes)
+}
+
+func (h *Handler) supports(version int) bool {
+	for _, v := range h.config.ProtocolVersions {
+		if v == version {
+			return true
+		}
+	}
+	return false
+}
+
+// Run serves one decoded request for a transport other than HTTP (the remote
+// channel, Feature 018). emit gets exactly one NDJSON line per event, as the
+// HTTP route writes them; refusals the route answers with an HTTP status
+// (admission, version, context size) are one error event here. Run always
+// uses the configured Backend and never Route, so a caller cannot name
+// another server (research R9). It returns "" on success, RunCancelled when
+// emit failed or ctx ended, and the error code otherwise.
+func (h *Handler) Run(ctx context.Context, req *Request, emit func(line []byte) error) Code {
+	refuse := func(c Code) Code {
+		data, err := encodeLine(Error(req.RequestID, c))
+		if err != nil || emit(data) != nil {
+			return RunCancelled
+		}
+		return c
+	}
+	start := time.Now()
+	select {
+	case h.slots <- struct{}{}:
+		defer func() { <-h.slots }()
+	default:
+		return refuse(CodeServerBusy)
+	}
+	if !h.supports(req.SchemaVersion) {
+		return refuse(CodeUnsupportedVersion)
+	}
+	b := h.config.Backend
+	if req.Stage != StageChunk {
+		defer h.clearBackendCache(b)
+	}
+	if h.config.Limits.ExceedsContext(req.InputTextBytes(), req.Stage) {
+		return refuse(CodeTooLarge)
+	}
+	return h.run(ctx, req, b, start, emit)
+}
+
+// run streams one admitted, decoded and checked request through emit and
+// logs it.
+func (h *Handler) run(ctx context.Context, req *Request, b BackendAdapter, start time.Time, emit func([]byte) error) (result Code) {
 	code := "succeeded"
 	// Content-free reason behind a failure code: our own sentinel and reason
 	// strings (a backend HTTP status, a stream shape, a validation rule).
@@ -322,13 +376,16 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request, b BackendAdapt
 			req.RequestID, req.RunID, req.Stage, req.InputTextBytes(), outputBytes,
 			time.Since(start).Milliseconds(), queueMS, preemptions, attempts, served,
 			reasons, code, detail)
+		if code != "succeeded" {
+			result = Code(code)
+		}
 	}()
 	send := func(v any) bool {
 		data, err := encodeLine(v)
 		if err != nil || len(data) > MaxLineBytes {
 			return false
 		}
-		return writeEvent(w, data) == nil
+		return emit(data) == nil
 	}
 	fail := func(c Code) {
 		code = string(c)
@@ -338,7 +395,7 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request, b BackendAdapt
 		code = "cancelled"
 		return
 	}
-	ctx := r.Context()
+	var err error
 	// A backend that gates its own local calls skips the request-wide gate.
 	if _, guarded := b.(localGuarded); !guarded {
 		ctx, err = h.config.Gate.Enter(ctx)
@@ -475,9 +532,10 @@ func (h *Handler) meeting(w http.ResponseWriter, r *http.Request, b BackendAdapt
 		fail(CodeOutputTooLarge)
 		return
 	}
-	if writeEvent(w, data) != nil {
+	if emit(data) != nil {
 		code = "cancelled"
 	}
+	return
 }
 
 // dumpRequestBody writes one request body to <dir>/<request_id>.json with

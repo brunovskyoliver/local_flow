@@ -495,6 +495,11 @@ final class FakeAnalysisStore: AnalysisStoring, @unchecked Sendable {
   /// before the transport sees a request (T088).
   var recordPlanHook: ((UUID, Int) -> Void)?
 
+  private(set) var inferencePaths: [UUID: AnalysisInferencePath] = [:]
+  func recordInferencePath(runID: UUID, path: AnalysisInferencePath) async throws {
+    lock.withLock { inferencePaths[runID] = path }
+  }
+
   func recordPlan(runID: UUID, chunkCount: Int) async throws {
     try check("recordPlan")
     updateRun(runID) { $0.chunkCount = chunkCount }

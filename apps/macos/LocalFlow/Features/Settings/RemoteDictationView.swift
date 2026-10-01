@@ -6,8 +6,9 @@ import SwiftUI
 /// credentials but not its history.
 @MainActor @Observable
 final class RemoteDictationModel {
+  /// Version `AppPreferences.remoteConsentVersion` (Feature 018 FR-033).
   static let consentText =
-    "Dictation audio, transcripts, Dictionary terms and rewrite text will leave this Mac for the server below while remote dictation is on. The server's administrator can see audio while it is being processed. Dictation stays local until the administrator approves this device, and whenever the server can't be reached."
+    "Dictation audio, transcripts, Dictionary terms and rewrite text will leave this Mac for the server below while remote dictation is on. With Use this server for everything, so will meeting audio, meeting transcripts and the text summaries are made from. The server's administrator can see audio while it is being processed. Nothing is sent until the administrator approves this device; dictation stays local whenever the server can't be reached."
 
   private(set) var showingConsent = false
   private(set) var confirmingTurnOff = false
@@ -57,7 +58,7 @@ final class RemoteDictationModel {
     case .pinned:
       return preferences.remoteNotice == .signInAgain ? "Sign in again" : "Sign in to finish"
     case .pending: return "Waiting for approval"
-    case .approved: return "Approved · dictation uses your server"
+    case .approved: return "Approved"
     case .rejected: return "Rejected"
     case .revoked: return "Removed from the server"
     case .pinMismatch: return "Server identity changed"
@@ -126,6 +127,17 @@ final class RemoteDictationModel {
     } catch {
       self.error = "The server could not be reached. Try again."
     }
+  }
+
+  /// Approved under the first consent text: summaries and meetings stay on this Mac
+  /// until the current text is confirmed once.
+  var needsConsentUpdate: Bool { isOn && !preferences.remoteConsentCurrent }
+  private(set) var showingConsentUpdate = false
+  func reviewConsentUpdate() { showingConsentUpdate = true }
+  func cancelConsentUpdate() { showingConsentUpdate = false }
+  func confirmConsentUpdate() {
+    preferences.confirmRemoteConsent()
+    showingConsentUpdate = false
   }
 
   func requestTurnOff() { confirmingTurnOff = true }
@@ -204,7 +216,9 @@ struct RemoteDictationView: View {
   }
 
   private var detail: String {
-    guard model.isOn else { return "Recognize and rewrite on a LocalFlow server you run." }
+    guard model.isOn else {
+      return "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run."
+    }
     return [model.serverURL, model.statusText].compactMap { $0 }.filter { !$0.isEmpty }
       .joined(separator: " · ")
   }

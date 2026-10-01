@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "type": "meeting_cancel",
+  "op": 9
+}

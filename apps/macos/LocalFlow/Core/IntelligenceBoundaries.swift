@@ -453,6 +453,11 @@ extension AnalysisTransporting {
   func pinned(_ endpoint: RewriteEndpoint) -> RewriteEndpoint { endpoint }
 }
 
+/// Feature 018: where a summary run's requests went.
+enum AnalysisInferencePath: String, Sendable, Equatable {
+  case local, server, custom
+}
+
 /// Every analysis table write goes through one implementation of this.
 protocol AnalysisStoring: Sendable {
   func analysis(meetingID: UUID) async throws -> MeetingAnalysisPointer?
@@ -463,6 +468,8 @@ protocol AnalysisStoring: Sendable {
   func start(runID: UUID, now: Int64) async throws -> AnalysisRun
   /// The plan's chunk count, fixed before the first request (T090).
   func recordPlan(runID: UUID, chunkCount: Int) async throws
+  /// Feature 018: where the run's requests go (`analysis_runs.inference_path`).
+  func recordInferencePath(runID: UUID, path: AnalysisInferencePath) async throws
   func recordRequest(runID: UUID, inputBytes: Int, outputBytes: Int, retried: Bool, preempted: Bool)
     async throws
   /// One transaction: supersede the previous accepted run, delete its content,

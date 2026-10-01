@@ -4,6 +4,7 @@ import ApplicationServices
 import Foundation
 import LocalFlowCore
 import LocalFlowSpeech
+import Network
 import OSLog
 import Observation
 import UserNotifications
@@ -92,6 +93,7 @@ final class AppServices {
   private(set) var setupStatus = "Starting…"
   private(set) var isReadyToTerminate = false
   @ObservationIgnored private var localModelWanted: Bool?
+  @ObservationIgnored private var networkMonitor: NWPathMonitor?
   @ObservationIgnored private var localModelCommand: Task<Void, Never>?
   private(set) var modelInstalled = false
   private(set) var installing = false
@@ -154,7 +156,7 @@ final class AppServices {
   /// consent step (FR-001, FR-002). Nil before that, so nothing remote can connect.
   func remoteEnrollment() -> RemoteEnrollment? {
     guard preferences.remoteEnabled,
-      preferences.remoteConsentVersion >= AppPreferences.remoteConsentVersion
+      preferences.remoteConsentVersion >= AppPreferences.remoteDictationConsentVersion
     else { return nil }
     if let remoteEnrollmentInstance { return remoteEnrollmentInstance }
     let enrollment = RemoteEnrollment(
@@ -217,6 +219,8 @@ final class AppServices {
     guard coordinator == nil, !starting else { return }
     starting = true
     applyAppearance()
+    // Feature 018 (R13): existing summaries and rewrite servers become overrides, once.
+    ServerRouting.migrate(preferences, credentials: rewriteCredentials)
     localModel.observe()
     followLocalModelChoice()
     ChromiumAccessibility.startObserving()
@@ -469,7 +473,30 @@ final class AppServices {
           return runtime
         })
       self.lifecycle = lifecycle
-      await lifecycle.setKeepLoaded(preferences.keepModelReady && allowsPreferenceWarmup)
+      await lifecycle.setKeepLoaded(
+        Self.keepsParakeetLoaded(
+          keepModelReady: preferences.keepModelReady && allowsPreferenceWarmup,
+          routing: preferences.serverRouting))
+      // Feature 014/018: the router connects only for an approved device with remote
+      // dictation on. Built before the meeting stages, whose summaries may use its channels.
+      let remoteRouter = RemoteDictationRouter(
+        preferences: preferences, credentials: remoteCredentials,
+        transports: URLSessionRemoteTransportOpener(),
+        enrollment: { [weak self] in self?.remoteEnrollment() },
+        pending: { [weak self] in self?.pendingRemoteStore },
+        localModelProvisioned: { [weak self] in self?.modelInstalled == true },
+        askAboutAudio: { [weak self] audio, count in
+          await self?.askAboutUnkeptAudio(audio, sampleCount: count)
+        })
+      self.remoteRouter = remoteRouter
+      remoteRouter.channelOpened = { [weak self] in
+        self?.meetingIntelligence?.serverMayBeReachable()
+      }
+      if preferences.remoteSettings().routesToServer {
+        Task { await remoteRouter.refreshCapabilities() }
+      }
+      preferences.observeServerRouting { [weak self] in self?.serverRoutingChanged() }
+      watchNetworkPath()
       let transcriptIdentity = try TranscriptionPipelineIdentity(
         descriptor: descriptor, manifestHash: TranscriptionQualityDetail.hash(descriptorData),
         build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
@@ -489,17 +516,7 @@ final class AppServices {
         database: paths.1.database, directory: AppIdentity.current.pendingAudioDirectory)
       _ = try? await pendingStore.reconcile()
       pendingRemoteStore = pendingStore
-      let remoteRouter = RemoteDictationRouter(
-        preferences: preferences, credentials: remoteCredentials,
-        transports: URLSessionRemoteTransportOpener(),
-        enrollment: { [weak self] in self?.remoteEnrollment() },
-        pending: { [weak self] in self?.pendingRemoteStore },
-        localModelProvisioned: { [weak self] in self?.modelInstalled == true },
-        askAboutAudio: { [weak self] audio, count in
-          await self?.askAboutUnkeptAudio(audio, sampleCount: count)
-        })
-      self.remoteRouter = remoteRouter
-      settings.remote = RemoteDictationModel(
+      let remoteModel = RemoteDictationModel(
         preferences: preferences, enrollment: { [weak self] in self?.remoteEnrollment() },
         turnOff: { [weak self] in self?.turnOffRemoteDictation() },
         signInAvailable: { provider in
@@ -507,6 +524,8 @@ final class AppServices {
             || !((Bundle.main.object(forInfoDictionaryKey: "LocalFlowGoogleClientID") as? String)?
               .isEmpty ?? true)
         })
+      settings.server = ServerSettingsModel(
+        remote: remoteModel, preferences: preferences, ping: { await remoteRouter.ping() })
       // Always wired: whether a dictation is rewritten is read from the per-attempt
       // settings snapshot, so the Settings toggle applies without relaunch. With remote
       // dictation on and this device approved, rewrites use the remote channel (FR-020).
@@ -517,10 +536,7 @@ final class AppServices {
           remote: RemoteRewriteTransport(channels: remoteRouter.rewriteChannels)),
         store: paths.1)
       rewriteCoordinator.remoteRewriteOrigin = { [weak preferences] in
-        guard let settings = preferences?.remoteSettings(), settings.routesToServer else {
-          return nil
-        }
-        return settings.serverOrigin
+        preferences?.serverRouting.rewriteChannelOrigin
       }
       self.rewriteCoordinator = rewriteCoordinator
       rewriteCoordinator.metricRecorded = { [weak self] metric in
@@ -936,22 +952,26 @@ final class AppServices {
       transcripts: transcripts, speakers: speakers, identities: identities,
       meetings: store)
     self.meetingEvidenceReader = evidenceReader
+    // Feature 018: summaries go over the background channel while the server serves them.
+    let analysisTransport: any AnalysisTransporting =
+      remoteRouter.map { router in
+        RoutingAnalysisTransport(
+          http: analysisClient,
+          remote: RemoteAnalysisTransport(
+            pool: router.channels,
+            notOffered: { [weak self] in
+              await MainActor.run { self?.preferences.noteNotOffered(op: "analysis") }
+            }))
+      } ?? analysisClient
     let analyzer = MeetingAnalyzer(
       evidence: evidenceReader,
-      transport: analysisClient,
+      transport: analysisTransport,
       store: analysisStore, clock: clock,
       endpoint: { [weak self] in
         guard let self else { return nil }
-        return RewriteEndpoint(
-          settings: RewriteSettings.capture(
-            preferences: self.preferences, credentialStore: self.rewriteCredentials))
+        return RewriteEndpoint(settings: self.summarySettings())
       },
-      settings: { [weak self] in
-        self.map {
-          RewriteSettings.capture(
-            preferences: $0.preferences, credentialStore: $0.rewriteCredentials)
-        }
-      },
+      settings: { [weak self] in self?.summarySettings() },
       recorder: recorder)
     self.meetingAnalyzer = analyzer
     let intelligence = MeetingIntelligenceCoordinator(
@@ -1482,7 +1502,8 @@ final class AppServices {
 
   private func warmModelIfRequested() async {
     guard allowsPreferenceWarmup, preferences.keepModelReady, modelInstalled, !installing,
-      !modelCommandInProgress, !quitting, coordinator?.busy == false
+      !modelCommandInProgress, !quitting, coordinator?.busy == false,
+      !preferences.serverRouting.servedByServer(.dictation)
     else { return }
     do {
       try await performSetting(.load)
@@ -1528,8 +1549,10 @@ final class AppServices {
       modelCommandInProgress = true
       defer { modelCommandInProgress = false }
       preferences.keepModelReady = enabled
-      await lifecycle.setKeepLoaded(enabled)
-      if enabled && modelInstalled { try await prepareModel(using: lifecycle) }
+      let keep = Self.keepsParakeetLoaded(
+        keepModelReady: enabled, routing: preferences.serverRouting)
+      await lifecycle.setKeepLoaded(keep)
+      if keep && modelInstalled { try await prepareModel(using: lifecycle) }
     case .unload:
       guard let lifecycle, !installing, !modelCommandInProgress, coordinator?.busy == false else {
         throw DictationFailure.busy
@@ -1845,7 +1868,8 @@ final class AppServices {
   /// that choice flips, not on every keystroke in the address field.
   private func followLocalModelChoice() {
     withObservationTracking {
-      let wanted = preferences.rewriteEndpoint == LocalAIInstaller.rewriteEndpoint
+      let wanted = LocalModelResidency.wanted(
+        rewriteEndpoint: preferences.rewriteEndpoint, routing: preferences.serverRouting)
       guard wanted != localModelWanted, !quitting else { return }
       localModelWanted = wanted
       setLocalModel(running: wanted)
@@ -1853,6 +1877,53 @@ final class AppServices {
     } onChange: {
       Task { @MainActor [weak self] in self?.followLocalModelChoice() }
     }
+  }
+
+  /// Feature 018 (R10): Parakeet stays loaded only while dictation runs on this Mac.
+  nonisolated static func keepsParakeetLoaded(keepModelReady: Bool, routing: ServerRouting)
+    -> Bool
+  {
+    keepModelReady && !routing.servedByServer(.dictation)
+  }
+
+  /// The rewrite settings summaries use: the server's channel while it serves them,
+  /// otherwise the Rewriting settings, as before Feature 018.
+  private func summarySettings() -> RewriteSettings {
+    let settings = RewriteSettings.capture(
+      preferences: preferences, credentialStore: rewriteCredentials)
+    let routing = preferences.serverRouting
+    guard routing.servedByServer(.summaries), let origin = routing.remote.serverOrigin else {
+      return settings
+    }
+    return settings.routedToRemote(origin: origin)
+  }
+
+  /// Routing inputs changed: Parakeet's residency follows at once (FR-012, FR-015).
+  /// The local rewrite model follows through `followLocalModelChoice`.
+  private func serverRoutingChanged() {
+    guard let lifecycle, !quitting else { return }
+    let keep = Self.keepsParakeetLoaded(
+      keepModelReady: preferences.keepModelReady && allowsPreferenceWarmup,
+      routing: preferences.serverRouting)
+    Task {
+      await lifecycle.setKeepLoaded(keep)
+      if keep {
+        await warmModelIfRequested()
+      } else if preferences.serverRouting.servedByServer(.dictation), coordinator?.busy != true {
+        try? await lifecycle.unloadIfIdle()
+      }
+    }
+  }
+
+  /// A network change retries summaries waiting for the server (FR-031).
+  private func watchNetworkPath() {
+    let monitor = NWPathMonitor()
+    monitor.pathUpdateHandler = { [weak self] path in
+      guard path.status == .satisfied else { return }
+      Task { @MainActor in self?.meetingIntelligence?.serverMayBeReachable() }
+    }
+    monitor.start(queue: .global(qos: .utility))
+    networkMonitor = monitor
   }
 
   /// `launchctl` calls run one at a time, in order, off the main actor.

@@ -9,9 +9,13 @@ final class RemoteProtocolTests: XCTestCase {
   private let serverTypes: Set = [
     "ready", "enrolled", "tokens", "dictation_accepted", "window_result", "progress",
     "dictation_complete", "cancelled", "rewrite_event", "error",
+    // Feature 018
+    "analysis_event_part", "analysis_event", "live_result", "meeting_progress", "meeting_result",
   ]
   private let clientTypes: Set = [
     "enroll", "refresh", "dictation_start", "dictation_end", "dictation_cancel", "rewrite",
+    // Feature 018
+    "analysis_part", "analysis", "live_window", "meeting_job", "meeting_cancel",
   ]
 
   private func messages(_ folder: String) throws -> [(name: String, data: Data)] {
@@ -68,6 +72,28 @@ final class RemoteProtocolTests: XCTestCase {
       case "dictation_end":
         message = .dictationEnd(op: op, totalSamples: fixture["total_samples"] as! Int)
       case "dictation_cancel": message = .dictationCancel(op: op)
+      case "analysis_part":
+        message = .analysisPart(
+          op: op, index: fixture["index"] as! Int, data: fixture["data"] as! String)
+      case "analysis":
+        message = .analysis(
+          op: op, parts: fixture["parts"] as! Int, bytes: fixture["bytes"] as! Int,
+          sha256: fixture["sha256"] as! String)
+      case "live_window":
+        message = .liveWindow(
+          op: op, sampleCount: fixture["sample_count"] as! Int,
+          language: fixture["language"] as? String)
+      case "meeting_job":
+        message = .meetingJob(
+          op: op,
+          job: RemoteMeetingJob(
+            kind: RemoteMeetingJob.Kind(rawValue: fixture["kind"] as! String)!,
+            sampleCount: fixture["sample_count"] as! Int,
+            language: fixture["language"] as? String,
+            vocabularyTerms: fixture["vocabulary_terms"] as? [String],
+            pipeline: fixture["pipeline"] as? String,
+            numSpeakers: fixture["num_speakers"] as? Int))
+      case "meeting_cancel": message = .meetingCancel(op: op)
       default:
         message = .rewrite(
           op: op, request: try JSONSerialization.data(withJSONObject: fixture["request"]!))
@@ -232,5 +258,52 @@ final class RemoteProtocolTests: XCTestCase {
     let name = RemoteClientMessage.deviceName(String(repeating: "č", count: 40))
     XCTAssertLessThanOrEqual(name.utf8.count, 64)
     XCTAssertEqual(name.count, 32)
+  }
+
+  /// Feature 018 T009: results decode into the types the local runtimes return.
+  func testMeetingAndLiveResultsMapToRuntimeTypes() throws {
+    let valid = Dictionary(uniqueKeysWithValues: try messages("valid"))
+    guard
+      case .liveResult(7, let window, 88) = try RemoteServerMessage.decode(
+        valid["live_result.json"]!)
+    else { return XCTFail("live_result") }
+    XCTAssertEqual(window.text, "zabix alerts are green")
+    XCTAssertEqual(window.tokens.first, TranscriptionToken(text: "zabix", start: 0.12, end: 0.4))
+    XCTAssertEqual(window.evidence?.samples, 96_000)
+    guard
+      case .meetingResult(9, .transcription(let final, "sk", 0), _, let model) =
+        try RemoteServerMessage.decode(valid["meeting_result.json"]!)
+    else { return XCTFail("transcribe") }
+    XCTAssertEqual(final.text, "Zabbix hlási zelené alarmy.")
+    XCTAssertEqual(final.tokens.count, 4)
+    XCTAssertEqual(model.engine, "whisper.cpp")
+    guard
+      case .meetingResult(_, .diarization(let turns), _, _) = try RemoteServerMessage.decode(
+        valid["meeting_result-diarize.json"]!)
+    else { return XCTFail("diarize") }
+    XCTAssertEqual(turns.turns.count, 2)
+    XCTAssertEqual(turns.turns[0].quality, 0.82)
+    XCTAssertNil(turns.turns[1].quality)
+    XCTAssertEqual(turns.centroids[0]?.count, 256)
+    guard
+      case .meetingResult(_, .embedding(let embedding), _, let voice) =
+        try RemoteServerMessage.decode(
+          valid["meeting_result-embed.json"]!)
+    else { return XCTFail("embed") }
+    XCTAssertTrue(embedding.isValid)
+    XCTAssertEqual(voice.dimension, 256)
+    guard
+      case .meetingProgress(_, "queued", _) = try RemoteServerMessage.decode(
+        valid["meeting_progress.json"]!)
+    else { return XCTFail("meeting_progress") }
+  }
+
+  func testS16FramesClampAndAreLittleEndian() {
+    let payload = RemoteChannelCrypto.s16Payload([0, 1, -1, 2, -3, 0.5, .nan][...])
+    let values = stride(from: 0, to: payload.count, by: 2).map {
+      Int16(littleEndian: payload[$0..<$0 + 2].withUnsafeBytes { $0.loadUnaligned(as: Int16.self) })
+    }
+    XCTAssertEqual(values, [0, 32_767, -32_767, 32_767, -32_767, 16_384, 0])
+    XCTAssertEqual(payload.prefix(4), Data([0x00, 0x00, 0xFF, 0x7F]))
   }
 }

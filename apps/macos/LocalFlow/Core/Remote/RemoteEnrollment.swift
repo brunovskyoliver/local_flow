@@ -111,7 +111,7 @@ final class RemoteEnrollment {
   }
 
   private var origin: URL? {
-    guard preferences.remoteConsentVersion >= AppPreferences.remoteConsentVersion,
+    guard preferences.remoteConsentVersion >= AppPreferences.remoteDictationConsentVersion,
       preferences.remoteEnabled
     else { return nil }
     return RemoteDictationSettings.origin(preferences.remoteServerURL)

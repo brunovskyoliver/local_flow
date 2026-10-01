@@ -16,6 +16,11 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
   /// Health probes after an automatic run found the server unreachable; the
   /// first success re-queues the run once, otherwise it stays failed.
   static let unreachableProbeDelays: [Duration] = [.seconds(30), .seconds(60), .seconds(120)]
+  /// Feature 018 (FR-031): a run that found the user's server busy or unreachable waits
+  /// and retries, 30 s doubling to 10 min, and never falls back to this Mac on its own.
+  static func waitingDelay(attempt: Int) -> Duration {
+    .seconds(min(600, 30 << min(attempt, 5)))
+  }
 
   /// The displayed meeting's status; see `observe(meetingID:)`.
   private(set) var status: AnalysisStatus?
@@ -43,6 +48,8 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
   /// used its one re-queue.
   @ObservationIgnored private var unreachableRequeued: Set<UUID> = []
   @ObservationIgnored private var requeueTasks: [UUID: Task<Void, Never>] = [:]
+  /// Meetings waiting for the server, with the retries used so far.
+  @ObservationIgnored private var waitingAttempts: [UUID: Int] = [:]
   @ObservationIgnored private let logger = Logger(
     subsystem: "org.localflow.LocalFlow", category: "intelligence")
   @ObservationIgnored private let recorder: ResourceRecorder?
@@ -262,6 +269,21 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     progress[id] = nil
     triggers[id] = nil
     cancelled.remove(id)
+    if let run, run.state == .failed, run.failureCategory == .serverUnreachable,
+      run.failureDetail == RemoteAnalysisTransport.waitingDetail
+    {
+      let attempt = waitingAttempts[id, default: 0]
+      waitingAttempts[id] = attempt + 1
+      requeueTasks[id] = Task { [weak self] in
+        try? await self?.clock.sleep(for: Self.waitingDelay(attempt: attempt))
+        guard !Task.isCancelled else { return }
+        await self?.requeue(id)
+      }
+      await refresh(id)
+      pump()
+      return
+    }
+    waitingAttempts[id] = nil
     // contracts/client-analysis.md step 6: `server_busy` (or HTTP 429) is a
     // re-queue request — the run re-enters the queue once after 30 s; a
     // second busy answer stays `server_unavailable`.
@@ -301,6 +323,18 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     enqueue(id, trigger: .retry)
   }
 
+  /// A channel opened or the network changed: runs waiting for the server retry now,
+  /// and their backoff starts again.
+  func serverMayBeReachable() {
+    for id in waitingAttempts.keys where requeueTasks[id] != nil {
+      requeueTasks[id]?.cancel()
+      waitingAttempts[id] = 0
+      requeue(id)
+    }
+  }
+
+  var waitingForServer: Set<UUID> { Set(waitingAttempts.keys) }
+
   private func requeueWhenReachable(_ id: UUID, trigger: AnalysisTrigger) async {
     for delay in Self.unreachableProbeDelays {
       do { try await clock.sleep(for: delay) } catch { return }
@@ -321,6 +355,7 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
     requeueTasks[id] = nil
     busyRequeued.remove(id)
     unreachableRequeued.remove(id)
+    waitingAttempts[id] = nil
   }
 
   private func report(_ id: UUID, progress value: AnalysisProgress?) {

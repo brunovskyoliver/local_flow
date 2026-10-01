@@ -158,7 +158,7 @@ final class RemoteRewriteTransport: RewriteTransporting, @unchecked Sendable {
     case .server(let code):
       switch code {
       case .unauthorized, .tokenExpired, .notApproved, .revoked: .authenticationFailed
-      case .busy, .workerUnavailable: .backendUnavailable
+      case .busy, .workerUnavailable, .notOffered: .backendUnavailable
       case .unsupportedVersion: .unsupportedSchemaVersion
       case .invalidMessage, .limitExceeded: .serverValidationFailed
       case .internal: .transportError

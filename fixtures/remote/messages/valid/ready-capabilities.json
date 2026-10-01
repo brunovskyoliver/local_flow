@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "type": "ready",
+  "capabilities": {
+    "ops": [
+      "analysis",
+      "dictation_start",
+      "live_window",
+      "meeting_job",
+      "rewrite"
+    ],
+    "meeting_jobs": [
+      "transcribe",
+      "diarize",
+      "embed"
+    ],
+    "models": {
+      "transcription": {
+        "engine": "whisper.cpp",
+        "model_id": "ggml-large-v3-turbo",
+        "model_revision": "4af2b29d7a4b8e1c",
+        "manifest_hash": "9f2c1e0b7a6d5c4b3a29181706f5e4d3c2b1a09f8e7d6c5b4a3928170615f4e3"
+      },
+      "diarization": {
+        "engine": "FluidAudio",
+        "model_id": "FluidInference/speaker-diarization-coreml",
+        "model_revision": "b1d4f0c2e3a5",
+        "manifest_hash": "9f2c1e0b7a6d5c4b3a29181706f5e4d3c2b1a09f8e7d6c5b4a3928170615f4e3"
+      },
+      "voice": {
+        "engine": "FluidAudio",
+        "model_id": "FluidInference/speaker-diarization-coreml",
+        "model_revision": "b1d4f0c2e3a5",
+        "manifest_hash": "9f2c1e0b7a6d5c4b3a29181706f5e4d3c2b1a09f8e7d6c5b4a3928170615f4e3",
+        "dimension": 256
+      }
+    }
+  }
+}

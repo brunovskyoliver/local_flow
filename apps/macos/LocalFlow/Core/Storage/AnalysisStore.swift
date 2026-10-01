@@ -105,6 +105,14 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
+  func recordInferencePath(runID: UUID, path: AnalysisInferencePath) throws {
+    try database.write { db in
+      try db.execute(
+        sql: "UPDATE analysis_runs SET inference_path=? WHERE id=?",
+        arguments: [path.rawValue, runID.uuidString])
+    }
+  }
+
   /// The plan's chunk count, fixed before the first request (T090).
   func recordPlan(runID: UUID, chunkCount: Int) throws {
     try database.write { db in

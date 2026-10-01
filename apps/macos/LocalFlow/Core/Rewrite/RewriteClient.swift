@@ -36,6 +36,12 @@ struct RewriteEndpoint: Sendable, Equatable {
     self.origin = origin
   }
 
+  /// Feature 018: the server's channel, the custom summaries server, or this Mac's flowd.
+  var analysisInferencePath: AnalysisInferencePath {
+    if viaRemoteChannel { return .server }
+    return summaryHeaders?.isEmpty == false ? .custom : .local
+  }
+
   var rewriteURL: URL { url.appendingPathComponent("v1/rewrite") }
   var healthURL: URL { url.appendingPathComponent("v1/rewrite/health") }
   var analysisURL: URL { url.appendingPathComponent("v1/analysis/meeting") }

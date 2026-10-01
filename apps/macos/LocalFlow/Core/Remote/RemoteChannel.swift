@@ -39,6 +39,8 @@ struct RemoteChannelCrypto {
   enum Kind: UInt8 {
     case control = 0x00
     case audio = 0x01
+    /// Feature 018: meeting windows as 16 kHz mono little-endian signed 16-bit samples.
+    case audioS16 = 0x02
   }
 
   private var sender: HPKE.Sender
@@ -131,6 +133,16 @@ struct RemoteChannelCrypto {
     }
     return data
   }
+
+  /// Little-endian `Int16`, clamped to [-1, 1] first (Feature 018 R2).
+  static func s16Payload(_ samples: ArraySlice<Float>) -> Data {
+    var data = Data(capacity: samples.count * 2)
+    for sample in samples {
+      let value = Int16((min(1, max(-1, sample.isNaN ? 0 : sample)) * 32_767).rounded())
+      withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+    }
+    return data
+  }
 }
 
 /// One encrypted channel over a WebSocket: hello, then sequential operations.
@@ -151,6 +163,8 @@ actor RemoteChannel {
   private var waitingSenders: [CheckedContinuation<Void, Never>] = []
   private var failure: RemoteChannelError?
   private var closed = false
+  /// What the server offered in `ready`; the Feature 014 set until then.
+  private(set) var capabilities = RemoteCapabilities.feature014
 
   init(transport: any RemoteTransport, serverKey: Data, stallTimeout: Duration = .seconds(15))
     throws
@@ -175,7 +189,7 @@ actor RemoteChannel {
     let frame = try crypto.helloFrame(try encoder.encode(hello))
     try await enqueue(frame)
     switch try await receive() {
-    case .ready: return
+    case .ready(let offered): capabilities = offered
     case .error(_, let code): throw fail(.server(code))
     default: throw fail(.protocolError)
     }
@@ -192,6 +206,14 @@ actor RemoteChannel {
       throw fail(.protocolError)
     }
     try await enqueue(try crypto.seal(.audio, RemoteChannelCrypto.audioPayload(samples)))
+  }
+
+  /// At most 32,000 s16le samples per frame (Feature 018). Waits like `send`.
+  func sendS16(_ samples: ArraySlice<Float>) async throws {
+    guard (1...RemoteProtocol.maximumS16FrameSamples).contains(samples.count) else {
+      throw fail(.protocolError)
+    }
+    try await enqueue(try crypto.seal(.audioS16, RemoteChannelCrypto.s16Payload(samples)))
   }
 
   /// The next server message. Transport and framing failures close the channel.

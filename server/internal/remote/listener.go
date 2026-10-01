@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,7 @@ const (
 	MaxChannels           = 32
 	MaxAnonymousChannels  = 16
 	MaxAnonymousPerClient = 4
-	MaxChannelsPerDevice  = 2
+	MaxChannelsPerDevice  = 3
 	HelloTimeout          = 10 * time.Second
 	IdleTimeout           = 30 * time.Second
 	EnrollIdleTimeout     = 5 * time.Minute
@@ -64,8 +65,9 @@ type OperationStart func(ctx context.Context, c *Conn, m Message) (Operation, er
 
 // Operation is a running operation. The listener delivers every later frame
 // of the channel to it until Done is closed: control messages with the same op
-// to Control, audio payloads to Audio. Errors from either behave as the
-// OperationStart errors. Close is called exactly once when the operation ends
+// to Control, f32le audio payloads to Audio, and s16le payloads (kind 0x02)
+// to Samples when the operation is a SampleCollector. Errors from any of them
+// behave as the OperationStart errors. Close is called exactly once when the operation ends
 // for any reason, including the channel closing, and must release everything
 // the operation holds.
 type Operation interface {
@@ -75,8 +77,41 @@ type Operation interface {
 	Close()
 }
 
-// Operations maps a hello purpose and an operation's first message type to its
-// start function, e.g. {PurposeSession: {"dictation_start": …, "rewrite": …}}.
+// SampleCollector is an Operation that takes s16le frames (Feature 018:
+// live_window and meeting_job). Samples refuses a frame once the operation
+// has all it asked for; an operation that is not a SampleCollector ends with
+// invalid_message on the first such frame.
+type SampleCollector interface {
+	Samples(ctx context.Context, samples []byte) error
+}
+
+// sessionStarts maps each client message that may begin a session operation
+// to the operation's name in Operations and ready.capabilities. A session
+// op the server has not registered is answered not_offered.
+var sessionStarts = map[string]string{
+	"dictation_start": "dictation_start",
+	"rewrite":         "rewrite",
+	"analysis_part":   "analysis",
+	"live_window":     "live_window",
+	"meeting_job":     "meeting_job",
+}
+
+// SessionCapabilities lists the session operations registered in ops, so the
+// advertisement cannot drift from what is served (research R11). Meeting job
+// kinds and models are empty until a meeting worker exists.
+func SessionCapabilities(ops map[string]OperationStart) *Capabilities {
+	names := make([]string, 0, len(ops))
+	for name := range ops {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return &Capabilities{Ops: names, MeetingJobs: []string{}}
+}
+
+// Operations maps a hello purpose and an operation's name to its start
+// function, e.g. {PurposeSession: {"dictation_start": …, "rewrite": …}}. The
+// name is the first message type, except for session operations named in
+// sessionStarts (analysis starts with analysis_part).
 // A purpose other than session with no operations is answered
 // unsupported_version at the hello.
 type Operations map[Purpose]map[string]OperationStart
@@ -395,7 +430,11 @@ func (l *Listener) serveChannel(ctx context.Context, c *Conn) {
 	c.mu.Lock()
 	c.readyAt = l.cfg.Clock.Now()
 	c.mu.Unlock()
-	if err := c.Send(ctx, Ready{}); err != nil {
+	ready := Ready{}
+	if hello.Purpose == PurposeSession {
+		ready.Capabilities = SessionCapabilities(l.cfg.Operations[PurposeSession])
+	}
+	if err := c.Send(ctx, ready); err != nil {
 		return
 	}
 	c.armIdle()
@@ -595,12 +634,19 @@ func (c *Conn) handle(ctx context.Context, frame Frame) bool {
 		default:
 		}
 	}
-	if frame.Kind == KindAudio {
+	if frame.Kind == KindAudio || frame.Kind == KindSamples {
 		if running == nil {
 			c.Fail(0, CodeInvalidMessage)
 			return false
 		}
-		return c.operationResult(op, running, running.Audio(ctx, frame.Payload))
+		if frame.Kind == KindAudio {
+			return c.operationResult(op, running, running.Audio(ctx, frame.Payload))
+		}
+		collector, ok := running.(SampleCollector)
+		if !ok {
+			return c.operationResult(op, running, invalid("samples outside a collecting operation"))
+		}
+		return c.operationResult(op, running, collector.Samples(ctx, frame.Payload))
 	}
 	message, err := DecodeMessage(frame.Payload)
 	if err != nil {
@@ -616,7 +662,11 @@ func (c *Conn) handle(ctx context.Context, frame Frame) bool {
 		}
 		return c.operationResult(op, running, running.Control(ctx, message))
 	}
-	start, known := c.listener.cfg.Operations[c.purpose][message.MessageType()]
+	name, offerable := message.MessageType(), false
+	if c.purpose == PurposeSession {
+		name, offerable = sessionStarts[name]
+	}
+	start, known := c.listener.cfg.Operations[c.purpose][name]
 	c.mu.Lock()
 	fresh := ok && numbered.OpNumber() > c.lastOp
 	if fresh {
@@ -624,12 +674,15 @@ func (c *Conn) handle(ctx context.Context, frame Frame) bool {
 		c.operations++
 	}
 	c.mu.Unlock()
-	if !known || !fresh {
+	if !fresh || (!known && !offerable) {
 		c.auditCrossUser()
 		c.Fail(0, CodeInvalidMessage)
 		return false
 	}
 	op = numbered.OpNumber()
+	if !known {
+		return c.operationResult(op, nil, &Error{CodeNotOffered, "operation not offered"})
+	}
 	c.stopIdle()
 	operation, err := start(ctx, c, message)
 	if operation != nil {
@@ -775,7 +828,7 @@ func (r *Registry) add(c *Conn) {
 	r.conns[c.id] = c
 }
 
-// bind scopes c to principal, refusing a third channel for one device.
+// bind scopes c to principal, refusing a fourth channel for one device.
 func (r *Registry) bind(c *Conn, principal accounts.Principal) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -21,6 +21,10 @@ struct SettingsView: View {
     PrototypePage {
       VStack(alignment: .leading, spacing: 0) {
         Text("Settings").font(.flow(size: 26, weight: .medium)).tracking(-0.4)
+        if let server = model.server {
+          sectionTitle("Server")
+          settingsGroup { ServerSettingsView(model: server) }
+        }
         sectionTitle("General")
         settingsGroup {
           SettingsRow(
@@ -60,10 +64,6 @@ struct SettingsView: View {
         contextSection
         modelSection
         rewriteSection
-        if let remote = model.remote {
-          sectionTitle("Remote dictation")
-          settingsGroup { RemoteDictationView(model: remote) }
-        }
         summarySection
         permissionsSection
         if let recordingError {
@@ -146,6 +146,8 @@ struct SettingsView: View {
     }
   }
 
+  private var rewriteServed: Bool { model.server?.hidesRewriteServerFields == true }
+
   var rewriteSection: some View {
     VStack(alignment: .leading, spacing: 0) {
       sectionTitle("Rewriting")
@@ -175,40 +177,43 @@ struct SettingsView: View {
           .help(SettingsViewModel.rewriteModeDefinition(model.rewriteMode))
           .accessibilityHint(SettingsViewModel.rewriteModeDefinition(model.rewriteMode))
         }
-        separator
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Server URL").font(.flow(size: 12, weight: .medium))
-            .foregroundStyle(SottoPalette.muted)
-          RewriteInputSurface(symbol: "link") {
-            TextField("http://127.0.0.1:8080", text: $model.rewriteEndpoint)
-              .accessibilityLabel("Rewrite server endpoint")
-              .accessibilityIdentifier("settings.rewriteEndpoint")
-          }
-        }.padding(.top, 18).padding(.bottom, 14)
-        rewriteCredentialControls
-        if model.showsInsecureOverride {
+        // Feature 018 FR-005: no address, secret or connection test while the server serves it.
+        if !rewriteServed {
           separator
-          SettingsRow("Allow unencrypted connection") {
-            Toggle(
-              "Allow unencrypted connection to this server (insecure)",
-              isOn: $model.rewriteInsecureOverride
-            )
-            .labelsHidden().toggleStyle(.switch)
-            .accessibilityIdentifier("settings.rewriteInsecureOverride")
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Server URL").font(.flow(size: 12, weight: .medium))
+              .foregroundStyle(SottoPalette.muted)
+            RewriteInputSurface(symbol: "link") {
+              TextField("http://127.0.0.1:8080", text: $model.rewriteEndpoint)
+                .accessibilityLabel("Rewrite server endpoint")
+                .accessibilityIdentifier("settings.rewriteEndpoint")
+            }
+          }.padding(.top, 18).padding(.bottom, 14)
+          rewriteCredentialControls
+          if model.showsInsecureOverride {
+            separator
+            SettingsRow("Allow unencrypted connection") {
+              Toggle(
+                "Allow unencrypted connection to this server (insecure)",
+                isOn: $model.rewriteInsecureOverride
+              )
+              .labelsHidden().toggleStyle(.switch)
+              .accessibilityIdentifier("settings.rewriteInsecureOverride")
+            }
           }
-        }
-        separator
-        SettingsRow("Connection", detail: model.connectionResult?.statusText) {
-          Button(model.connectionTesting ? "Testing…" : "Test connection") {
-            Task { await model.testConnection() }
+          separator
+          SettingsRow("Connection", detail: model.connectionResult?.statusText) {
+            Button(model.connectionTesting ? "Testing…" : "Test connection") {
+              Task { await model.testConnection() }
+            }
+            .disabled(model.connectionTesting || model.rewriteSettings?.isEndpointValid != true)
+            .accessibilityIdentifier("settings.rewriteTestConnection")
           }
-          .disabled(model.connectionTesting || model.rewriteSettings?.isEndpointValid != true)
-          .accessibilityIdentifier("settings.rewriteTestConnection")
-        }
-        if let analysis = model.analysisStatus {
-          Text(analysis).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("settings.analysisStatus")
+          if let analysis = model.analysisStatus {
+            Text(analysis).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .accessibilityIdentifier("settings.analysisStatus")
+          }
         }
         separator
         DisclosureGroup("Advanced") {
@@ -219,7 +224,7 @@ struct SettingsView: View {
             .accessibilityLabel("Rewrite timeout in seconds")
             .accessibilityIdentifier("settings.rewriteTimeout")
           }
-          if let result = model.connectionResult, result.category == .connected {
+          if !rewriteServed, let result = model.connectionResult, result.category == .connected {
             Text(result.identityText).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
               .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
               .padding(.bottom, 12)
@@ -327,56 +332,60 @@ struct SettingsView: View {
     VStack(alignment: .leading, spacing: 0) {
       sectionTitle("Summaries")
       settingsGroup {
-        SettingsRow("Server") {
-          Picker("Server", selection: $preferences.summaryServer) {
-            ForEach(SummaryServer.allCases) { Text($0.title).tag($0) }
+        if model.server?.hidesSummaryServerFields == true {
+          SettingsRow("Server", detail: "Your server, set in Server") { EmptyView() }
+        } else {
+          SettingsRow("Server") {
+            Picker("Server", selection: $preferences.summaryServer) {
+              ForEach(SummaryServer.allCases) { Text($0.title).tag($0) }
+            }
+            .labelsHidden().tint(SottoPalette.ink).frame(width: 110).accessibilityIdentifier(
+              "settings.summaryServer")
           }
-          .labelsHidden().tint(SottoPalette.ink).frame(width: 110).accessibilityIdentifier(
-            "settings.summaryServer")
-        }
-        if preferences.summaryServer == .remote {
-          separator
-          VStack(alignment: .leading, spacing: 14) {
-            fieldLabel("Server URL")
-            RewriteInputSurface(symbol: "link") {
-              TextField("http://host:8000/v1", text: $preferences.summaryServerURL)
-                .accessibilityIdentifier("settings.summaryServerURL")
-            }
-            fieldLabel("Model")
-            RewriteInputSurface(symbol: "cpu") {
-              TextField("Model", text: $preferences.summaryServerModel)
-                .accessibilityIdentifier("settings.summaryServerModel")
-            }
-            fieldLabel("API key")
-            if model.summaryKeySaved && !editingSummaryKey {
-              HStack(spacing: 8) {
-                RewriteInputSurface(symbol: "key") {
-                  Text("••••••••••••").tracking(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityLabel("API key saved")
-                }
-                Button("Edit") { editingSummaryKey = true }
+          if preferences.summaryServer == .remote {
+            separator
+            VStack(alignment: .leading, spacing: 14) {
+              fieldLabel("Server URL")
+              RewriteInputSurface(symbol: "link") {
+                TextField("http://host:8000/v1", text: $preferences.summaryServerURL)
+                  .accessibilityIdentifier("settings.summaryServerURL")
               }
-            } else {
-              HStack(spacing: 8) {
-                RewriteInputSurface(symbol: "key") {
-                  SecureField("API key", text: $summaryKeyDraft)
-                    .accessibilityIdentifier("settings.summaryServerKey")
-                    .onSubmit(saveSummaryKey)
+              fieldLabel("Model")
+              RewriteInputSurface(symbol: "cpu") {
+                TextField("Model", text: $preferences.summaryServerModel)
+                  .accessibilityIdentifier("settings.summaryServerModel")
+              }
+              fieldLabel("API key")
+              if model.summaryKeySaved && !editingSummaryKey {
+                HStack(spacing: 8) {
+                  RewriteInputSurface(symbol: "key") {
+                    Text("••••••••••••").tracking(2)
+                      .frame(maxWidth: .infinity, alignment: .leading)
+                      .accessibilityLabel("API key saved")
+                  }
+                  Button("Edit") { editingSummaryKey = true }
                 }
-                Button("Save", action: saveSummaryKey).disabled(summaryKeyDraft.isEmpty)
-                if model.summaryKeySaved {
-                  Button("Cancel") {
-                    summaryKeyDraft = ""
-                    editingSummaryKey = false
+              } else {
+                HStack(spacing: 8) {
+                  RewriteInputSurface(symbol: "key") {
+                    SecureField("API key", text: $summaryKeyDraft)
+                      .accessibilityIdentifier("settings.summaryServerKey")
+                      .onSubmit(saveSummaryKey)
+                  }
+                  Button("Save", action: saveSummaryKey).disabled(summaryKeyDraft.isEmpty)
+                  if model.summaryKeySaved {
+                    Button("Cancel") {
+                      summaryKeyDraft = ""
+                      editingSummaryKey = false
+                    }
                   }
                 }
               }
-            }
-            if let error = model.summaryKeyError {
-              Text(error).font(.flow(size: 12)).foregroundStyle(SottoPalette.warning)
-            }
-          }.padding(.vertical, 18)
+              if let error = model.summaryKeyError {
+                Text(error).font(.flow(size: 12)).foregroundStyle(SottoPalette.warning)
+              }
+            }.padding(.vertical, 18)
+          }
         }
       }
     }
@@ -407,7 +416,8 @@ struct SettingsView: View {
       sectionTitle("Models")
       settingsGroup {
         modelRow(
-          "Parakeet", role: "Dictation", status: model.snapshot.modelReadiness, test: .speech,
+          "Parakeet", role: role("Dictation", .dictation), status: model.snapshot.modelReadiness,
+          test: .speech,
           installed: model.snapshot.modelInstalled
         ) {
           if model.snapshot.modelInstalled {
@@ -425,7 +435,7 @@ struct SettingsView: View {
         }
         separator
         modelRow(
-          "Whisper Turbo", role: "Meeting transcripts",
+          "Whisper Turbo", role: role("Meeting transcripts", .finalTranscript),
           status: model.snapshot.meetingModelReadiness,
           test: .meeting, installed: model.snapshot.meetingModelInstalled
         ) {
@@ -437,7 +447,8 @@ struct SettingsView: View {
         .accessibilityIdentifier("settings.meetingModel")
         separator
         modelRow(
-          "Speaker labels", role: "Who said what", status: model.snapshot.speakerModelReadiness,
+          "Speaker labels", role: role("Who said what", .diarization),
+          status: model.snapshot.speakerModelReadiness,
           test: .speaker, installed: model.snapshot.speakerModelInstalled
         ) {
           if !model.snapshot.speakerModelInstalled && !model.snapshot.speakerModelInstalling {
@@ -457,7 +468,10 @@ struct SettingsView: View {
         }
         .accessibilityIdentifier("settings.boostModel")
         separator
-        SettingsRow("Keep Parakeet loaded") {
+        SettingsRow(
+          "Keep Parakeet loaded",
+          detail: model.server?.dictationServed == true ? "Applies when dictating on this Mac" : nil
+        ) {
           Toggle(
             "Keep Parakeet loaded",
             isOn: Binding(
@@ -468,7 +482,9 @@ struct SettingsView: View {
           .toggleStyle(.switch)
           .disabled(!model.modelControlsAvailable)
         }
-        if preferences.rewriteEndpoint == LocalAIInstaller.rewriteEndpoint {
+        if preferences.rewriteEndpoint == LocalAIInstaller.rewriteEndpoint,
+          model.server?.localRewriteModelStopped != true
+        {
           separator
           SettingsRow("Unload rewrite model") {
             Picker("Unload rewrite model", selection: $preferences.localModelIdleUnload) {
@@ -495,6 +511,11 @@ struct SettingsView: View {
           ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
         } ?? "Download size unavailable.")
     }
+  }
+
+  /// "Dictation · On your server" once this device is approved (Feature 018 FR-016).
+  private func role(_ role: String, _ service: ServerService) -> String {
+    model.server?.modelPlace(service).map { "\(role) · \($0)" } ?? role
   }
 
   private func modelRow<Extra: View>(

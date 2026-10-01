@@ -164,7 +164,10 @@ final class AppPreferences {
 
   // Feature 014: remote dictation. Off by default; `remoteEnabled` is set only after
   // the consent step. Tokens and keys live in Keychain (RemoteCredentialStore), never here.
-  static let remoteConsentVersion = 1
+  /// Feature 018 (FR-033): version 2 names meeting audio, meeting transcripts and summaries.
+  static let remoteConsentVersion = 2
+  /// The version dictation and rewriting need; a device that confirmed it keeps them.
+  static let remoteDictationConsentVersion = 1
   static let remoteKeys = [
     "remote.enabled", "remote.serverURL", "remote.state", "remote.consentVersion",
     "remote.fallbackThresholdMs", "remote.notice",
@@ -200,6 +203,9 @@ final class AppPreferences {
 
   func confirmRemoteConsent() { remoteConsentVersion = Self.remoteConsentVersion }
 
+  /// The current consent text was confirmed: summaries and meetings may go to the server.
+  var remoteConsentCurrent: Bool { remoteConsentVersion >= Self.remoteConsentVersion }
+
   /// Turning remote dictation off: every `remote.*` default goes except `remote.enabled = false`.
   func resetRemote() {
     remoteEnabled = false
@@ -208,6 +214,7 @@ final class AppPreferences {
     remoteNotice = nil
     remoteConsentVersion = 0
     remoteFallbackThresholdMs = 1_500
+    serverCapabilities = nil
     // The observed values are reset above; the stored ones go, except the switch.
     for key in Self.remoteKeys where key != "remote.enabled" { defaults.removeObject(forKey: key) }
   }
@@ -222,10 +229,56 @@ final class AppPreferences {
   /// The immutable press-time snapshot for remote dictation.
   func remoteSettings() -> RemoteDictationSettings {
     RemoteDictationSettings(
-      enabled: remoteEnabled && remoteConsentVersion >= Self.remoteConsentVersion,
+      enabled: remoteEnabled && remoteConsentVersion >= Self.remoteDictationConsentVersion,
       serverOrigin: RemoteDictationSettings.origin(remoteServerURL), state: remoteState,
       fallbackThreshold: remoteFallbackThreshold)
   }
+
+  // Feature 018: one server for every service (data-model.md). These matter only while
+  // remote dictation routes to the server; the Rewriting and Summaries settings keep
+  // their meaning otherwise.
+  enum ServerOverride: String, CaseIterable, Identifiable, Sendable {
+    case server, thisMac, custom
+    var id: String { rawValue }
+  }
+  static let serverMigrationVersion = 1
+  /// Unset until the user changes it; then it reads as on once this device is approved.
+  private var storedUseServerForEverything: Bool? {
+    didSet { defaults.set(storedUseServerForEverything, forKey: "server.useForEverything") }
+  }
+  var useServerForEverything: Bool {
+    get { storedUseServerForEverything ?? remoteSettings().routesToServer }
+    set { storedUseServerForEverything = newValue }
+  }
+  var serverRewriteOverride: ServerOverride {
+    didSet { defaults.set(serverRewriteOverride.rawValue, forKey: "server.override.rewrite") }
+  }
+  var serverSummariesOverride: ServerOverride {
+    didSet { defaults.set(serverSummariesOverride.rawValue, forKey: "server.override.summaries") }
+  }
+  /// `server` or `thisMac`; meetings have no custom server.
+  var serverMeetingsOverride: ServerOverride {
+    didSet {
+      if serverMeetingsOverride == .custom { serverMeetingsOverride = .server }
+      defaults.set(serverMeetingsOverride.rawValue, forKey: "server.override.meetings")
+    }
+  }
+  private(set) var serverMigrationVersion: Int {
+    didSet { defaults.set(serverMigrationVersion, forKey: "server.migrationVersion") }
+  }
+  /// Overrides the R13 migration kept, shown once in Settings › Server.
+  var serverMigrationNotice: [String] {
+    didSet { defaults.set(serverMigrationNotice, forKey: "server.migrationNotice") }
+  }
+  /// The last `ready.capabilities`, so routing is known at launch before a channel opens.
+  var serverCapabilities: RemoteCapabilities? {
+    didSet {
+      defaults.set(
+        serverCapabilities.flatMap { try? JSONEncoder().encode($0) }, forKey: "server.capabilities")
+    }
+  }
+
+  func markServerMigrated() { serverMigrationVersion = Self.serverMigrationVersion }
 
   static func isValidBundleID(_ id: String) -> Bool {
     !id.isEmpty && id.utf8.count <= 255 && !id.contains { $0.isWhitespace || $0.isNewline }
@@ -253,6 +306,19 @@ final class AppPreferences {
     remoteConsentVersion = defaults.integer(forKey: "remote.consentVersion")
     remoteFallbackThresholdMs =
       defaults.object(forKey: "remote.fallbackThresholdMs") as? Int ?? 1_500
+    storedUseServerForEverything = defaults.object(forKey: "server.useForEverything") as? Bool
+    let override = { (key: String) in
+      ServerOverride(rawValue: defaults.string(forKey: key) ?? "") ?? .server
+    }
+    serverRewriteOverride = override("server.override.rewrite")
+    serverSummariesOverride = override("server.override.summaries")
+    let meetings = override("server.override.meetings")
+    serverMeetingsOverride = meetings == .custom ? .server : meetings
+    serverMigrationVersion = defaults.integer(forKey: "server.migrationVersion")
+    serverMigrationNotice = defaults.stringArray(forKey: "server.migrationNotice") ?? []
+    serverCapabilities = defaults.data(forKey: "server.capabilities").flatMap {
+      try? JSONDecoder().decode(RemoteCapabilities.self, from: $0)
+    }
     // Transcription, speaker labels, identification and summaries always run;
     // Settings has no switches for them, so an old stored value is removed.
     for key in Self.retiredKeys where defaults.object(forKey: key) != nil {

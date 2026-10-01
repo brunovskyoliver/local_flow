@@ -12,6 +12,8 @@ enum RemoteProtocol {
   static let suite = "x25519-hkdfsha256-chacha20poly1305"
   static let maximumControlBytes = 65_536
   static let maximumFrameSamples = 16_000
+  /// Feature 018: kind-0x02 meeting frames.
+  static let maximumS16FrameSamples = 32_000
   static let windowSamples = WindowedTranscriber.productionWindowSamples
   /// 180 s of 16 kHz audio: the dictation limit, so at most 13 windows.
   static let maximumSessionSamples = 2_880_000
@@ -32,6 +34,8 @@ enum RemoteErrorCode: String, Codable, Sendable, CaseIterable {
   case unsupportedVersion = "unsupported_version"
   case limitExceeded = "limit_exceeded"
   case workerUnavailable = "worker_unavailable"
+  /// Feature 018: the server does not serve this op or meeting job kind.
+  case notOffered = "not_offered"
   case `internal`
 
   /// The code a dictation records when the server answered with this error.
@@ -43,7 +47,7 @@ enum RemoteErrorCode: String, Codable, Sendable, CaseIterable {
     case .busy: .busy
     case .limitExceeded: .limitExceeded
     case .workerUnavailable: .workerUnavailable
-    case .invalidMessage, .unsupportedVersion, .internal: .protocolError
+    case .invalidMessage, .unsupportedVersion, .notOffered, .internal: .protocolError
     }
   }
 }
@@ -154,6 +158,14 @@ enum RemoteClientMessage: Sendable, Equatable {
   case dictationCancel(op: Int)
   /// `request` is the unchanged rewrite request JSON (v1 or v2).
   case rewrite(op: Int, request: Data)
+  /// Feature 018: one fragment of the analysis request JSON, then the closing `analysis`.
+  case analysisPart(op: Int, index: Int, data: String)
+  case analysis(op: Int, parts: Int, bytes: Int, sha256: String)
+  /// A live-preview window of `sampleCount` s16le samples, sent next as kind-0x02 frames.
+  case liveWindow(op: Int, sampleCount: Int, language: String?)
+  /// A meeting job of `sampleCount` s16le samples; options per kind (contract table).
+  case meetingJob(op: Int, job: RemoteMeetingJob)
+  case meetingCancel(op: Int)
 
   func encoded() throws -> Data {
     var object: [String: Any] = ["schema_version": RemoteProtocol.schemaVersion]
@@ -185,6 +197,28 @@ enum RemoteClientMessage: Sendable, Equatable {
     case .rewrite(let op, let request):
       let parsed = try JSONSerialization.jsonObject(with: request)
       object.merge(["type": "rewrite", "op": op, "request": parsed]) { $1 }
+    case .analysisPart(let op, let index, let data):
+      object.merge(["type": "analysis_part", "op": op, "index": index, "data": data]) { $1 }
+    case .analysis(let op, let parts, let bytes, let sha256):
+      object.merge([
+        "type": "analysis", "op": op, "parts": parts, "bytes": bytes, "sha256": sha256,
+      ]) { $1 }
+    case .liveWindow(let op, let sampleCount, let language):
+      object.merge([
+        "type": "live_window", "op": op, "sample_count": sampleCount, "format": "s16le",
+      ]) { $1 }
+      if let language { object["language"] = language }
+    case .meetingJob(let op, let job):
+      object.merge([
+        "type": "meeting_job", "op": op, "kind": job.kind.rawValue,
+        "sample_count": job.sampleCount, "format": "s16le",
+      ]) { $1 }
+      if let language = job.language { object["language"] = language }
+      if let terms = job.vocabularyTerms { object["vocabulary_terms"] = terms }
+      if let pipeline = job.pipeline { object["pipeline"] = pipeline }
+      if let speakers = job.numSpeakers { object["num_speakers"] = speakers }
+    case .meetingCancel(let op):
+      object.merge(["type": "meeting_cancel", "op": op]) { $1 }
     }
     let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     guard data.count <= RemoteProtocol.maximumControlBytes else {
@@ -324,7 +358,7 @@ struct RemoteWindowCollector: Sendable {
 
 /// A message flowd sends.
 enum RemoteServerMessage: Sendable {
-  case ready
+  case ready(RemoteCapabilities)
   case enrolled(op: Int, state: RemoteEnrollmentState, refreshToken: String?)
   case tokens(op: Int, accessToken: String, expiresIn: Int, refreshToken: String)
   case dictationAccepted(op: Int, windowSamples: Int, model: RemoteModelIdentity)
@@ -334,6 +368,14 @@ enum RemoteServerMessage: Sendable {
   case cancelled(op: Int)
   /// The rewrite event object, re-encoded, exactly as one NDJSON line of the HTTP route.
   case rewriteEvent(op: Int, event: Data)
+  /// Feature 018: one fragment of an analysis event line too large for one message.
+  case analysisEventPart(op: Int, index: Int, data: String)
+  /// An analysis event inline (`event`), or closing its fragments (`parts`, `sha256`).
+  case analysisEvent(op: Int, event: Data?, parts: Int?, sha256: String?)
+  case liveResult(op: Int, window: TranscriptionWindow, recognitionMs: Int)
+  case meetingProgress(op: Int, state: String, position: Int?)
+  case meetingResult(
+    op: Int, result: RemoteMeetingResult, processingMs: Int, model: RemoteCapabilities.Model)
   case error(op: Int?, code: RemoteErrorCode)
 
   var op: Int? {
@@ -341,7 +383,8 @@ enum RemoteServerMessage: Sendable {
     case .ready: nil
     case .enrolled(let op, _, _), .tokens(let op, _, _, _), .dictationAccepted(let op, _, _),
       .progress(let op, _), .dictationComplete(let op, _), .cancelled(let op),
-      .rewriteEvent(let op, _):
+      .rewriteEvent(let op, _), .analysisEventPart(let op, _, _), .analysisEvent(let op, _, _, _),
+      .liveResult(let op, _, _), .meetingProgress(let op, _, _), .meetingResult(let op, _, _, _):
       op
     case .windowResult(let result): result.op
     case .error(let op, _): op
@@ -375,7 +418,7 @@ enum RemoteServerMessage: Sendable {
     }
     do {
       switch type {
-      case "ready": return .ready
+      case "ready": return .ready(try RemoteCapabilities.ready(object["capabilities"]))
       case "enrolled":
         guard let state = RemoteEnrollmentState(rawValue: try string("state")) else {
           throw RemoteProtocolError.invalidMessage
@@ -419,6 +462,44 @@ enum RemoteServerMessage: Sendable {
         }
         return .rewriteEvent(
           op: try op(), event: try JSONSerialization.data(withJSONObject: event))
+      case "analysis_event_part":
+        let index = try int("index")
+        guard index >= 0 else { throw RemoteProtocolError.invalidMessage }
+        return .analysisEventPart(op: try op(), index: index, data: try string("data"))
+      case "analysis_event":
+        if let event = object["event"] as? [String: Any] {
+          guard object["parts"] == nil, object["sha256"] == nil else {
+            throw RemoteProtocolError.invalidMessage
+          }
+          return .analysisEvent(
+            op: try op(), event: try JSONSerialization.data(withJSONObject: event), parts: nil,
+            sha256: nil)
+        }
+        let parts = try int("parts")
+        let sha256 = try string("sha256")
+        guard parts >= 1, sha256.utf8.count == 64 else { throw RemoteProtocolError.invalidMessage }
+        return .analysisEvent(op: try op(), event: nil, parts: parts, sha256: sha256)
+      case "live_result":
+        guard let window = object["window"] else { throw RemoteProtocolError.invalidMessage }
+        let decoded = try decoder.decode(
+          RemoteLiveWindow.self, from: JSONSerialization.data(withJSONObject: window))
+        return .liveResult(
+          op: try op(), window: decoded.window, recognitionMs: try int("recognition_ms"))
+      case "meeting_progress":
+        let state = try string("state")
+        guard ["queued", "running"].contains(state) else {
+          throw RemoteProtocolError.invalidMessage
+        }
+        return .meetingProgress(op: try op(), state: state, position: integer(object["position"]))
+      case "meeting_result":
+        guard let kind = RemoteMeetingJob.Kind(rawValue: try string("kind")),
+          let result = object["result"] as? [String: Any], let model = object["model"]
+        else { throw RemoteProtocolError.invalidMessage }
+        return .meetingResult(
+          op: try op(), result: try RemoteMeetingResult.decode(kind: kind, result),
+          processingMs: try int("processing_ms"),
+          model: try decoder.decode(
+            RemoteCapabilities.Model.self, from: JSONSerialization.data(withJSONObject: model)))
       case "error":
         guard let code = RemoteErrorCode(rawValue: try string("code")) else {
           throw RemoteProtocolError.invalidMessage
@@ -431,6 +512,109 @@ enum RemoteServerMessage: Sendable {
       throw error
     } catch {
       throw RemoteProtocolError.invalidMessage
+    }
+  }
+}
+
+/// Feature 018: one meeting model call for the server's meeting worker.
+struct RemoteMeetingJob: Sendable, Equatable {
+  enum Kind: String, Sendable, CaseIterable {
+    case transcribe, diarize, embed
+  }
+  let kind: Kind
+  let sampleCount: Int
+  /// Transcribe only.
+  var language: String?
+  var vocabularyTerms: [String]?
+  var pipeline: String?
+  /// Diarize only.
+  var numSpeakers: Int?
+}
+
+/// `live_result.window`: the dictation window form without boost hints.
+private struct RemoteLiveWindow: Decodable {
+  let text: String
+  let tokens: [RemoteWindowResult.Token]
+  let evidence: RemoteWindowResult.Evidence?
+
+  var window: TranscriptionWindow {
+    TranscriptionWindow(
+      text: text, tokens: tokens.map { .init(text: $0.text, start: $0.start, end: $0.end) },
+      evidence: evidence.map {
+        RecognitionEvidence(
+          text: $0.text, samples: $0.samples, paddedSamples: $0.paddedSamples,
+          timingsAvailable: $0.timingsAvailable, tokens: $0.tokens)
+      })
+  }
+}
+
+/// `meeting_result.result` mapped to the types the local runtimes return.
+enum RemoteMeetingResult: Sendable {
+  case transcription(TranscriptionWindow, language: String?, retryDepth: Int)
+  case diarization(DiarizationWindowResult)
+  case embedding(VoiceEmbedding)
+
+  private struct Transcribed: Decodable {
+    let text: String
+    let tokens: [RemoteWindowResult.Token]
+    let language: String?
+    let retryDepth: Int
+    enum CodingKeys: String, CodingKey {
+      case text, tokens, language
+      case retryDepth = "retry_depth"
+    }
+  }
+  private struct Diarized: Decodable {
+    struct Turn: Decodable {
+      let cluster: Int
+      let start: Double
+      let end: Double
+      let quality: Float?
+    }
+    struct Centroid: Decodable {
+      let cluster: Int
+      let vector: [Float]
+    }
+    let turns: [Turn]
+    let centroids: [Centroid]
+  }
+  private struct Embedded: Decodable {
+    let vector: [Float]
+    let speechSeconds: Double
+    enum CodingKeys: String, CodingKey {
+      case vector
+      case speechSeconds = "speech_seconds"
+    }
+  }
+
+  static func decode(kind: RemoteMeetingJob.Kind, _ object: [String: Any]) throws
+    -> RemoteMeetingResult
+  {
+    let data = try JSONSerialization.data(withJSONObject: object)
+    let decoder = JSONDecoder()
+    switch kind {
+    case .transcribe:
+      let value = try decoder.decode(Transcribed.self, from: data)
+      return .transcription(
+        TranscriptionWindow(
+          text: value.text,
+          tokens: value.tokens.map { .init(text: $0.text, start: $0.start, end: $0.end) }),
+        language: value.language, retryDepth: value.retryDepth)
+    case .diarize:
+      let value = try decoder.decode(Diarized.self, from: data)
+      let result = DiarizationWindowResult(
+        turns: value.turns.map {
+          .init(
+            cluster: $0.cluster, startSeconds: $0.start, endSeconds: $0.end, quality: $0.quality)
+        },
+        centroids: Dictionary(value.centroids.map { ($0.cluster, $0.vector) }) { $1 })
+      guard result.isValid else { throw RemoteProtocolError.invalidResult }
+      return .diarization(result)
+    case .embed:
+      let value = try decoder.decode(Embedded.self, from: data)
+      let embedding = VoiceEmbedding(vector: value.vector, speechSeconds: value.speechSeconds)
+      guard embedding.isValid else { throw RemoteProtocolError.invalidResult }
+      return .embedding(embedding)
     }
   }
 }

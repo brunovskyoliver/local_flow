@@ -418,6 +418,62 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
       clock.sleepCount, MeetingIntelligenceCoordinator.unreachableProbeDelays.count)
   }
 
+  /// Feature 018 T034 (FR-031): a run that found the server busy or unreachable waits
+  /// and retries with backoff, whatever started it; a working channel retries at once.
+  func testARunWaitingForTheServerRetriesWithBackoff() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let batch = try XCTUnwrap(
+      IntelligenceFixtures.response("deployment-valid")[.full]?.first)
+    let waiting = AnalysisFailure(
+      .serverUnreachable, detail: RemoteAnalysisTransport.waitingDetail)
+    let clock = FakeMeetingClock()
+    let (coordinator, store, transport, _) = try makeCoordinator(
+      fixture: fixture, clock: clock, viaChannel: true)
+    transport.script(
+      .full,
+      [.failure(waiting), .failure(waiting), .failure(waiting), .lines(.init(value: batch))])
+    _ = await coordinator.observe(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
+    await waitUntil { coordinator.status?.state == .failed }
+    XCTAssertEqual(coordinator.waitingForServer, [fixture.id])
+    XCTAssertEqual(
+      MeetingIntelligenceCoordinator.waitingDelay(attempt: 0), .seconds(30))
+    XCTAssertEqual(
+      MeetingIntelligenceCoordinator.waitingDelay(attempt: 1), .seconds(60))
+    XCTAssertEqual(
+      MeetingIntelligenceCoordinator.waitingDelay(attempt: 9), .seconds(600))
+
+    await clock.waitForSleepers(1)
+    await clock.advance(by: .seconds(29))
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertEqual(store.admitCalls, 1, "still waiting")
+    await clock.advance(by: .seconds(1))
+    await waitUntil { store.admitCalls == 2 && coordinator.status?.state == .failed }
+    // The second wait is 60 s; a channel that opens in the meantime retries now.
+    await clock.waitForSleepers(1)
+    await clock.advance(by: .seconds(30))
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertEqual(store.admitCalls, 2)
+    coordinator.serverMayBeReachable()
+    await waitUntil { store.admitCalls == 3 && coordinator.status?.state == .failed }
+    coordinator.serverMayBeReachable()
+    await waitUntil { store.adoptCalls == 1 }
+    XCTAssertEqual(coordinator.waitingForServer, [])
+    let runs = try await store.runs(meetingID: fixture.id, limit: 10)
+    XCTAssertEqual(runs.map(\.trigger), [.manual, .retry, .retry, .retry])
+    XCTAssertEqual(Set(store.inferencePaths.values), [.server])
+  }
+
+  /// The run records where its requests went.
+  func testARunRecordsItsInferencePath() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (coordinator, store, _, _) = try makeCoordinator(fixture: fixture)
+    _ = await coordinator.observe(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
+    await waitUntil { store.adoptCalls == 1 }
+    XCTAssertEqual(Array(store.inferencePaths.values), [.local])
+  }
+
   /// While a run is active the pill reports "Summarizing…" with the queued
   /// count; it opens the meeting's Summary tab.
   func testSummarizingNoticeCarriesQueuedCount() {
@@ -436,7 +492,7 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
 
   private func makeCoordinator(
     fixture: IntelligenceFixture? = nil, automatic: Bool = true,
-    clock: FakeMeetingClock = FakeMeetingClock()
+    clock: FakeMeetingClock = FakeMeetingClock(), viaChannel: Bool = false
   ) throws -> (
     MeetingIntelligenceCoordinator, FakeAnalysisStore, FakeAnalysisTransport,
     FakeEvidenceReader
@@ -449,7 +505,9 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
       evidence: reader, transport: transport, store: store,
       clock: FakeMeetingClock(),
       endpoint: {
-        RewriteEndpoint(url: URL(string: "http://127.0.0.1:8765")!, origin: "test")
+        var endpoint = RewriteEndpoint(url: URL(string: "http://127.0.0.1:8765")!, origin: "test")
+        endpoint.viaRemoteChannel = viaChannel
+        return endpoint
       },
       settings: { nil })
     return (

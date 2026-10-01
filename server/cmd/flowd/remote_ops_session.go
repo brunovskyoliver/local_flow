@@ -48,6 +48,10 @@ func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Stor
 		rewriter := remote.NewRewriter(remote.RewriteConfig{Runner: r.rewrite, Windows: scheduler, Logger: logger})
 		operations["rewrite"] = rewriter.Start
 	}
+	if r.analysis != nil {
+		analyzer := remote.NewAnalyzer(remote.AnalysisConfig{Runner: r.analysis, Logger: logger})
+		operations["analysis"] = analyzer.Start
+	}
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {

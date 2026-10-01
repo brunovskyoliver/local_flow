@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "type": "live_window",
+  "op": 7,
+  "sample_count": 96000,
+  "format": "f32le"
+}

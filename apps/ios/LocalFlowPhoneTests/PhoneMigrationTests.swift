@@ -25,7 +25,7 @@ final class PhoneMigrationTests: XCTestCase {
 
   func testFreshDatabaseHasTheSharedMigrationsThenThePhoneTable() throws {
     let shared = HistoryMigrations.migrator().migrations
-    XCTAssertEqual(shared.count, 16)
+    XCTAssertEqual(shared.count, 17)
     XCTAssertEqual(
       Set(try applied(harness.history.database)), Set(shared + [PhoneMigrations.identifier]))
     XCTAssertEqual(PhoneMigrations.migrator().migrations, shared + [PhoneMigrations.identifier])
@@ -33,11 +33,11 @@ final class PhoneMigrationTests: XCTestCase {
 
   func testLaterSharedMigrationStillAppliesAfterThePhoneOne() throws {
     var shared = HistoryMigrations.migrator()
-    shared.registerMigration("future-shared-v17") { db in
+    shared.registerMigration("future-shared-v18") { db in
       try db.execute(sql: "CREATE TABLE future_shared(id INTEGER PRIMARY KEY)")
     }
     try PhoneMigrations.migrator(shared: shared).migrate(harness.history.database)
-    XCTAssertTrue(try applied(harness.history.database).contains("future-shared-v17"))
+    XCTAssertTrue(try applied(harness.history.database).contains("future-shared-v18"))
     // The Mac's migrator opening the same file tolerates the phone's extra identifier.
     try HistoryMigrations.migrator().migrate(harness.history.database)
   }

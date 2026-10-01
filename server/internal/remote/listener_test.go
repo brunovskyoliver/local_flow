@@ -481,7 +481,7 @@ func TestAuthenticatedChannelsLeaveTheAnonymousBudget(t *testing.T) {
 	sessions := 0
 	for device := 1; sessions < MaxChannels; device++ {
 		_, _, token := h.approved(fmt.Sprintf("user-%d", device), byte(device))
-		for range MaxChannelsPerDevice {
+		for range min(MaxChannelsPerDevice, MaxChannels-sessions) {
 			if _, first := h.helloFrom("192.0.2.1", PurposeSession, token); first.MessageType() != "ready" {
 				t.Fatalf("session %d: %#v", sessions, first)
 			}
@@ -513,7 +513,10 @@ func TestSessionHello(t *testing.T) {
 	h := newHarness(t, Operations{})
 	user, device, token := h.approved("sub", 1)
 	c, first := h.hello(PurposeSession, token)
-	if _, ok := first.(Ready); !ok {
+	// Feature 018 T011: a session ready carries the capabilities, here an
+	// empty operation map and no meeting worker.
+	if ready, ok := first.(Ready); !ok || ready.Capabilities == nil || len(ready.Capabilities.Ops) != 0 ||
+		ready.Capabilities.MeetingJobs == nil || len(ready.Capabilities.MeetingJobs) != 0 || ready.Capabilities.Models != nil {
 		t.Fatalf("%#v", first)
 	}
 	conns := h.listener.Registry().Device(device.ID)
@@ -608,8 +611,12 @@ func TestHelloDecodeFailures(t *testing.T) {
 	}
 }
 
-// Two session channels per device; the third is busy.
+// Three session channels per device (Feature 018 R6: interactive, live,
+// background); the fourth is busy. The server-wide cap stays 32.
 func TestChannelsPerDevice(t *testing.T) {
+	if MaxChannelsPerDevice != 3 || MaxChannels != 32 {
+		t.Fatalf("per device %d, server-wide %d", MaxChannelsPerDevice, MaxChannels)
+	}
 	h := newHarness(t, Operations{})
 	_, _, token := h.approved("sub", 1)
 	for range MaxChannelsPerDevice {
@@ -804,6 +811,125 @@ func TestOperationRefusals(t *testing.T) {
 			expectError(t, c.recv(), 7, CodeInvalidMessage)
 		}
 		c.ws.CloseNow()
+	}
+}
+
+// fakeLive stands in for a live_window operation: it collects s16le samples
+// and answers live_result once it has sample_count of them.
+type fakeLive struct {
+	conn      *Conn
+	op        int64
+	want, got int
+	done      chan struct{}
+}
+
+func (l *fakeLive) Control(context.Context, Message) error { return invalid("unexpected message") }
+func (l *fakeLive) Audio(context.Context, []byte) error    { return invalid("f32le during a live window") }
+func (l *fakeLive) Done() <-chan struct{}                  { return l.done }
+func (l *fakeLive) Close()                                 {}
+
+func (l *fakeLive) Samples(ctx context.Context, samples []byte) error {
+	if l.got += len(samples) / 2; l.got > l.want {
+		return invalid("more samples than sample_count")
+	}
+	if l.got == l.want {
+		close(l.done)
+		return l.conn.Send(ctx, LiveResult{Op: l.op, Window: LiveWindowResult{Text: "", Tokens: []Token{}}})
+	}
+	return nil
+}
+
+// Feature 018 T007: s16le frames reach only an operation that collects
+// samples; outside one they end the operation (or, with none running, the
+// channel) with invalid_message. f32le frames are unchanged.
+func TestSampleFrames(t *testing.T) {
+	operations := Operations{PurposeSession: {
+		"dictation_start": func(ctx context.Context, c *Conn, m Message) (Operation, error) {
+			return &fakeDictation{conn: c, op: m.(DictationStart).Op, done: make(chan struct{})}, nil
+		},
+		"live_window": func(ctx context.Context, c *Conn, m Message) (Operation, error) {
+			start := m.(LiveWindow)
+			return &fakeLive{conn: c, op: start.Op, want: start.SampleCount, done: make(chan struct{})}, nil
+		},
+	}}
+	h := newHarness(t, operations)
+	_, _, token := h.approved("sub", 1)
+	samples := func(n int) Frame { return Frame{KindSamples, make([]byte, 2*n)} }
+
+	c, _ := h.hello(PurposeSession, token)
+	c.send(LiveWindow{Op: 1, SampleCount: 40000, Format: SampleFormat})
+	c.sendFrame(samples(MaxSampleFrameSamples))
+	c.sendFrame(samples(8000))
+	if m, ok := c.recv().(LiveResult); !ok || m.Op != 1 {
+		t.Fatalf("%#v", m)
+	}
+	// During an operation that does not collect samples: that operation
+	// ends and the channel stays open.
+	c.send(DictationStart{Op: 2, Format: AudioFormat, SampleRate: SampleRate})
+	c.sendFrame(samples(10))
+	expectError(t, c.recv(), 2, CodeInvalidMessage)
+	// f32le frames still reach a dictation.
+	c.send(DictationStart{Op: 3, Format: AudioFormat, SampleRate: SampleRate})
+	c.sendFrame(Frame{KindAudio, make([]byte, 40)})
+	c.send(DictationEnd{Op: 3, TotalSamples: 10})
+	if m, ok := c.recv().(DictationComplete); !ok || m.Op != 3 {
+		t.Fatalf("%#v", m)
+	}
+	// f32le during a live window is the operation's refusal.
+	c.send(LiveWindow{Op: 4, SampleCount: 10, Format: SampleFormat})
+	c.sendFrame(Frame{KindAudio, make([]byte, 40)})
+	expectError(t, c.recv(), 4, CodeInvalidMessage)
+	c.ws.CloseNow()
+
+	// With no operation running the channel closes, as for f32le.
+	c, _ = h.hello(PurposeSession, token)
+	c.sendFrame(samples(10))
+	expectError(t, c.recv(), 0, CodeInvalidMessage)
+	if status := c.closed(); status != websocket.StatusNormalClosure {
+		t.Fatal(status)
+	}
+
+	// A malformed s16le frame is invalid_message for the running op.
+	c, _ = h.hello(PurposeSession, token)
+	c.send(LiveWindow{Op: 1, SampleCount: 96000, Format: SampleFormat})
+	sealed, _ := c.channel.sealPlaintext(append([]byte{KindSamples}, make([]byte, 3)...))
+	_ = c.ws.Write(context.Background(), websocket.MessageBinary, sealed)
+	expectError(t, c.recv(), 1, CodeInvalidMessage)
+	c.ws.CloseNow()
+}
+
+// Feature 018 T011/T012: a session op the server does not register is
+// answered not_offered with its op, writes no audit row and leaves the
+// channel open; a stray type is still invalid_message.
+func TestNotOffered(t *testing.T) {
+	h := newHarness(t, Operations{PurposeSession: {
+		"dictation_start": func(ctx context.Context, c *Conn, m Message) (Operation, error) {
+			return &fakeDictation{conn: c, op: m.(DictationStart).Op, done: make(chan struct{})}, nil
+		},
+	}})
+	audited := 0
+	h.listener.cfg.Audit = func(accounts.AuditEntry) { audited++ }
+	_, _, token := h.approved("sub", 1)
+	c, first := h.hello(PurposeSession, token)
+	if ops := first.(Ready).Capabilities.Ops; len(ops) != 1 || ops[0] != "dictation_start" {
+		t.Fatal(ops)
+	}
+	c.send(LiveWindow{Op: 1, SampleCount: 10, Format: SampleFormat})
+	expectError(t, c.recv(), 1, CodeNotOffered)
+	c.send(MeetingJob{Op: 2, Kind: "embed", SampleCount: 48000, Format: SampleFormat})
+	expectError(t, c.recv(), 2, CodeNotOffered)
+	c.send(Rewrite{Op: 3, Request: json.RawMessage(`{}`)})
+	expectError(t, c.recv(), 3, CodeNotOffered)
+	c.send(AnalysisPart{Op: 4, Index: 0, Data: "{"})
+	expectError(t, c.recv(), 4, CodeNotOffered)
+	if audited != 0 {
+		t.Fatalf("%d audit rows", audited)
+	}
+	// The closing analysis message cannot start an operation.
+	c.send(Analysis{Op: 5, Parts: 1, Bytes: 1, SHA256: strings.Repeat("0", 64)})
+	expectError(t, c.recv(), 0, CodeInvalidMessage)
+	if status := c.closed(); status != websocket.StatusNormalClosure || audited != 1 {
+		t.Fatal(status, audited)
 	}
 }
 

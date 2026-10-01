@@ -936,6 +936,39 @@ public enum HistoryMigrations {
           ) WITHOUT ROWID;
           """)
     }
+    // Feature 018: where each meeting pass and summary ran, the per-meeting "Run on this
+    // Mac" choice, and a live gap for a window the server could not take. The gap reason
+    // has a CHECK constraint, so that table is rebuilt with its rows and index.
+    migrator.registerMigration("one-server-v17") { db in
+      let failures = "'unreachable','busy','worker_unavailable','not_offered','user_ran_locally'"
+      for table in [
+        "meeting_transcriptions", "diarization_runs", "identification_runs", "analysis_runs",
+      ] {
+        let custom = table == "analysis_runs" ? ",'custom'" : ""
+        try db.execute(
+          sql: """
+            ALTER TABLE \(table) ADD COLUMN inference_path TEXT NOT NULL DEFAULT 'local'
+              CHECK (inference_path IN ('local','server','local_after_server_failure'\(custom)));
+            ALTER TABLE \(table) ADD COLUMN server_failure TEXT
+              CHECK (server_failure IS NULL OR (inference_path != 'server' AND server_failure IN (\(failures))));
+            """)
+      }
+      try db.execute(
+        sql: """
+          ALTER TABLE meetings ADD COLUMN run_locally INTEGER NOT NULL DEFAULT 0 CHECK (run_locally IN (0,1));
+          CREATE TABLE transcript_live_gaps_v17 (
+            id TEXT PRIMARY KEY NOT NULL, meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            pass_id TEXT NOT NULL, stretch_sequence INTEGER NOT NULL CHECK(stretch_sequence>=1),
+            start_ms INTEGER NOT NULL CHECK(start_ms>=0), end_ms INTEGER NOT NULL CHECK(end_ms>start_ms),
+            reason TEXT NOT NULL CHECK(reason IN ('backpressure','suspended','tap_overflow','pause_drain','stop_drain','model_reload','server_unavailable')),
+            covered_by_final INTEGER NOT NULL DEFAULT 0 CHECK(covered_by_final IN (0,1)), created_at INTEGER NOT NULL
+          );
+          INSERT INTO transcript_live_gaps_v17 SELECT * FROM transcript_live_gaps;
+          DROP TABLE transcript_live_gaps;
+          ALTER TABLE transcript_live_gaps_v17 RENAME TO transcript_live_gaps;
+          CREATE INDEX transcript_live_gaps_fk_meeting_id ON transcript_live_gaps(meeting_id);
+          """)
+    }
     return migrator
   }
 

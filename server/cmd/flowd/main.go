@@ -175,21 +175,24 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/rewrite", rewriteHandler)
 	mux.Handle("/v1/rewrite/health", rewriteHandler)
+	// Built always: the remote channel's analysis op uses it; its HTTP
+	// routes are mounted only with --analysis.
+	analysisHandler := analysis.NewHandler(analysis.HandlerConfig{
+		Backend: adapter, Token: c.token, ProtocolVersions: c.versions,
+		Route: (&analysis.Router{
+			Local: adapter, Gate: gate,
+			FirstTokenTimeout: c.backend.FirstTokenTimeout, Timeout: c.backend.Timeout,
+		}).For,
+		Limits: c.analysis, Gate: gate, Logger: logger, DumpDir: c.dumpDir,
+	})
 	if c.analysis.Enabled {
-		analysisHandler := analysis.NewHandler(analysis.HandlerConfig{
-			Backend: adapter, Token: c.token, ProtocolVersions: c.versions,
-			Route: (&analysis.Router{
-				Local: adapter, Gate: gate,
-				FirstTokenTimeout: c.backend.FirstTokenTimeout, Timeout: c.backend.Timeout,
-			}).For,
-			Limits: c.analysis, Gate: gate, Logger: logger, DumpDir: c.dumpDir,
-		})
 		mux.Handle("/v1/analysis/meeting", analysisHandler)
 		mux.Handle("/v1/analysis/health", analysisHandler)
 	}
 	var remoteServer *remoteServer
 	if c.remote.listen != "" {
 		c.remote.rewrite = rewriteHandler
+		c.remote.analysis = analysisHandler
 		if remoteServer, err = startRemote(ctx, c.remote, logger); err != nil {
 			return err
 		}

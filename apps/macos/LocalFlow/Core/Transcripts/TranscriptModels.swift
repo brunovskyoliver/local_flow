@@ -28,6 +28,8 @@ enum LiveGapReason: String, CaseIterable, Codable, Sendable {
   case pauseDrain = "pause_drain"
   case stopDrain = "stop_drain"
   case modelReload = "model_reload"
+  /// Feature 018: the server was busy or unreachable for this live window.
+  case serverUnavailable = "server_unavailable"
 }
 struct AnalysisStreamDescriptor: Codable, Sendable, Equatable {
   enum Source: String, Codable, Sendable {

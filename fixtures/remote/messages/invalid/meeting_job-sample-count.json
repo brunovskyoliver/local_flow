@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "type": "meeting_job",
+  "op": 9,
+  "kind": "transcribe",
+  "sample_count": 1920001,
+  "format": "s16le"
+}

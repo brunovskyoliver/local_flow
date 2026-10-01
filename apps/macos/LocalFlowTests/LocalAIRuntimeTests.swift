@@ -166,6 +166,43 @@ final class LocalModelResidencyTests: XCTestCase {
     XCTAssertEqual(commands, [false])
   }
 
+  /// Feature 018 R10 (T044): MTPLX runs only while rewriting points at this Mac and the
+  /// server does not serve both rewriting and summaries.
+  func testTheServerServingRewritesAndSummariesStopsTheLocalModel() {
+    let local = LocalAIInstaller.rewriteEndpoint
+    func routing(rewrite: AppPreferences.ServerOverride = .server, on: Bool = true)
+      -> ServerRouting
+    {
+      ServerRouting(
+        remote: RemoteDictationSettings(
+          enabled: true, serverOrigin: URL(string: "https://mini.example.com"), state: .approved),
+        useForEverything: on, rewrite: rewrite,
+        capabilities: RemoteCapabilities(
+          ops: ["dictation_start", "rewrite", "analysis"], meetingJobs: [], models: nil),
+        consentCurrent: true)
+    }
+    XCTAssertFalse(LocalModelResidency.wanted(rewriteEndpoint: local, routing: routing()))
+    XCTAssertTrue(
+      LocalModelResidency.wanted(rewriteEndpoint: local, routing: routing(rewrite: .thisMac)))
+    XCTAssertTrue(LocalModelResidency.wanted(rewriteEndpoint: local, routing: routing(on: false)))
+    XCTAssertFalse(
+      LocalModelResidency.wanted(
+        rewriteEndpoint: "https://studio.example.com", routing: routing(on: false)))
+  }
+
+  /// While the server holds MTPLX stopped, dictation's `wake()` starts nothing; once
+  /// rewriting returns to this Mac it works again without a restart (FR-011, FR-015).
+  func testWakeDoesNothingWhileUnmanaged() {
+    let residency = residency(clock: HourClock())
+    residency.managed = false
+    commands = []
+    residency.wake()
+    XCTAssertEqual(commands, [])
+    residency.managed = true
+    residency.wake()
+    XCTAssertEqual(commands, [true])
+  }
+
   func testGameCategoryComesFromInfoPlist() throws {
     let plist = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: plist) }

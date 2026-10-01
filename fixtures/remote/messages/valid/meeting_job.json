@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "type": "meeting_job",
+  "op": 9,
+  "kind": "transcribe",
+  "sample_count": 1920000,
+  "format": "s16le",
+  "language": "sk",
+  "vocabulary_terms": [
+    "Zabbix",
+    "SAPGUI"
+  ],
+  "pipeline": "per_track_fixed1920000_turbo_level_v2"
+}

@@ -1,7 +1,8 @@
 // Package remote implements flowd's remote channel v1: the loopback listener
 // behind the owner's Cloudflare Tunnel, the HPKE-sealed WebSocket channel and
 // its control messages. The wire contract is
-// specs/014-remote-dictation-server/contracts/remote-channel.md and the JSON
+// specs/014-remote-dictation-server/contracts/remote-channel.md with the
+// additions in specs/018-one-server/contracts/remote-channel.md, and the JSON
 // shapes are protocol/schemas/remote-*.schema.json.
 package remote
 
@@ -43,6 +44,30 @@ const (
 	maxExpiresIn         = 86400
 )
 
+// Feature 018 bounds (specs/018-one-server/contracts/remote-channel.md).
+const (
+	SampleFormat         = "s16le"
+	MaxLiveSamples       = 96000
+	MaxAnalysisPartBytes = 49152
+	MaxAnalysisBytes     = 262144
+	MaxAnalysisParts     = 64
+	maxCapabilityOps     = 16
+	maxVocabularyTerms   = 256
+	maxSpeakers          = 64
+	maxQueuePosition     = 1024
+	maxTurns             = 20000
+	maxClusters          = 256
+	maxVectorLength      = 4096
+	maxRetryDepth        = 2
+)
+
+// MeetingSamples is the sample_count range of each meeting job kind.
+var MeetingSamples = map[string][2]int{
+	"transcribe": {1, 1920000},
+	"diarize":    {1, 9600000},
+	"embed":      {48000, 320000},
+}
+
 // ErrorCode is one of the channel contract's error codes.
 type ErrorCode string
 
@@ -57,12 +82,14 @@ const (
 	CodeLimitExceeded      ErrorCode = "limit_exceeded"
 	CodeWorkerUnavailable  ErrorCode = "worker_unavailable"
 	CodeInternal           ErrorCode = "internal"
+	CodeNotOffered         ErrorCode = "not_offered"
 )
 
 // ErrorCodes lists every code in contract order.
 var ErrorCodes = []ErrorCode{
 	CodeUnauthorized, CodeTokenExpired, CodeNotApproved, CodeRevoked, CodeBusy,
 	CodeInvalidMessage, CodeUnsupportedVersion, CodeLimitExceeded, CodeWorkerUnavailable, CodeInternal,
+	CodeNotOffered,
 }
 
 var errorMessages = map[ErrorCode]string{
@@ -76,6 +103,7 @@ var errorMessages = map[ErrorCode]string{
 	CodeLimitExceeded:      "A size or length limit was exceeded.",
 	CodeWorkerUnavailable:  "Speech recognition is unavailable on the server.",
 	CodeInternal:           "The server could not complete the request.",
+	CodeNotOffered:         "The server does not offer this operation.",
 }
 
 // Message is the fixed sentence sent with the code; it is never derived from
@@ -173,10 +201,40 @@ type opMessage interface {
 var MessageTypes = []string{
 	"ready", "enroll", "enrolled", "refresh", "tokens", "dictation_start", "dictation_accepted",
 	"window_result", "progress", "dictation_end", "dictation_cancel", "dictation_complete",
-	"cancelled", "rewrite", "rewrite_event", "error",
+	"cancelled", "rewrite", "rewrite_event", "analysis_part", "analysis", "analysis_event_part",
+	"analysis_event", "live_window", "live_result", "meeting_job", "meeting_progress", "meeting_result",
+	"meeting_cancel", "error",
 }
 
-type Ready struct{}
+// Ready carries Capabilities on session channels (Feature 018); a ready
+// without them is a Feature 014 server.
+type Ready struct {
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+}
+
+// Capabilities lists the session ops served and, once a meeting worker is
+// ready, its job kinds and models (research R11).
+type Capabilities struct {
+	Ops         []string          `json:"ops"`
+	MeetingJobs []string          `json:"meeting_jobs"`
+	Models      *CapabilityModels `json:"models,omitempty"`
+}
+
+type CapabilityModels struct {
+	Transcription *MeetingModel `json:"transcription,omitempty"`
+	Diarization   *MeetingModel `json:"diarization,omitempty"`
+	Voice         *MeetingModel `json:"voice,omitempty"`
+}
+
+// MeetingModel is a meeting model's engine identity; Dimension is the voice
+// embedding length and required for the voice model only.
+type MeetingModel struct {
+	Engine        string `json:"engine"`
+	ModelID       string `json:"model_id"`
+	ModelRevision string `json:"model_revision"`
+	ManifestHash  string `json:"manifest_hash"`
+	Dimension     int    `json:"dimension,omitempty"`
+}
 
 type Enroll struct {
 	Op         int64  `json:"op"`
@@ -321,6 +379,125 @@ type RewriteEvent struct {
 	Event json.RawMessage `json:"event"`
 }
 
+// AnalysisPart is one fragment of a UTF-8 JSON analysis request.
+type AnalysisPart struct {
+	Op    int64  `json:"op"`
+	Index int    `json:"index"`
+	Data  string `json:"data"`
+}
+
+// Analysis closes an analysis request: the fragment count, the assembled
+// size and its lowercase hex SHA-256.
+type Analysis struct {
+	Op     int64  `json:"op"`
+	Parts  int    `json:"parts"`
+	Bytes  int    `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// AnalysisEventPart is one fragment of an analysis event line.
+type AnalysisEventPart struct {
+	Op    int64  `json:"op"`
+	Index int    `json:"index"`
+	Data  string `json:"data"`
+}
+
+// AnalysisEvent carries one event inline in Event, or closes its fragments
+// with Parts and SHA256.
+type AnalysisEvent struct {
+	Op     int64           `json:"op"`
+	Event  json.RawMessage `json:"event,omitempty"`
+	Parts  int             `json:"parts,omitempty"`
+	SHA256 string          `json:"sha256,omitempty"`
+}
+
+type LiveWindow struct {
+	Op          int64  `json:"op"`
+	SampleCount int    `json:"sample_count"`
+	Format      string `json:"format"`
+	Language    string `json:"language,omitempty"`
+}
+
+type LiveResult struct {
+	Op            int64            `json:"op"`
+	Window        LiveWindowResult `json:"window"`
+	RecognitionMS int64            `json:"recognition_ms"`
+}
+
+// LiveWindowResult is window_result's window object: text, tokens, evidence.
+type LiveWindowResult struct {
+	Text     string    `json:"text"`
+	Tokens   []Token   `json:"tokens"`
+	Evidence *Evidence `json:"evidence,omitempty"`
+}
+
+// MeetingJob is one meeting model call. Language, VocabularyTerms and
+// Pipeline are for transcribe only, NumSpeakers for diarize only.
+type MeetingJob struct {
+	Op              int64    `json:"op"`
+	Kind            string   `json:"kind"`
+	SampleCount     int      `json:"sample_count"`
+	Format          string   `json:"format"`
+	Language        string   `json:"language,omitempty"`
+	VocabularyTerms []string `json:"vocabulary_terms,omitempty"`
+	Pipeline        string   `json:"pipeline,omitempty"`
+	NumSpeakers     *int     `json:"num_speakers,omitempty"`
+}
+
+type MeetingProgress struct {
+	Op       int64  `json:"op"`
+	State    string `json:"state"`
+	Position *int   `json:"position,omitempty"`
+}
+
+// MeetingResult carries the result object of its kind: TranscribeResult,
+// DiarizeResult or EmbedResult.
+type MeetingResult struct {
+	Op           int64           `json:"op"`
+	Kind         string          `json:"kind"`
+	Result       json.RawMessage `json:"result"`
+	ProcessingMS int64           `json:"processing_ms"`
+	Model        MeetingModel    `json:"model"`
+}
+
+// TranscribeResult is the wire form of a final-transcription window.
+type TranscribeResult struct {
+	Text             string  `json:"text"`
+	Tokens           []Token `json:"tokens"`
+	TimingsAvailable bool    `json:"timings_available"`
+	Language         string  `json:"language,omitempty"`
+	RetryDepth       int     `json:"retry_depth"`
+	Pipeline         string  `json:"pipeline,omitempty"`
+}
+
+// DiarizeResult is the wire form of DiarizationWindowResult.
+type DiarizeResult struct {
+	Turns     []DiarizationTurn `json:"turns"`
+	Centroids []Centroid        `json:"centroids"`
+}
+
+type DiarizationTurn struct {
+	Cluster int      `json:"cluster"`
+	Start   float64  `json:"start"`
+	End     float64  `json:"end"`
+	Quality *float64 `json:"quality,omitempty"`
+}
+
+type Centroid struct {
+	Cluster int       `json:"cluster"`
+	Vector  []float64 `json:"vector"`
+}
+
+// EmbedResult is the wire form of VoiceEmbedding.
+type EmbedResult struct {
+	Vector        []float64 `json:"vector"`
+	SpeechSeconds float64   `json:"speech_seconds"`
+}
+
+type MeetingCancel struct {
+	Op int64 `json:"op"`
+}
+
 // ErrorMessage is the error control message. Op is 0 (absent) for hello errors.
 type ErrorMessage struct {
 	Op      int64     `json:"op,omitempty"`
@@ -348,6 +525,16 @@ func (DictationComplete) MessageType() string { return "dictation_complete" }
 func (Cancelled) MessageType() string         { return "cancelled" }
 func (Rewrite) MessageType() string           { return "rewrite" }
 func (RewriteEvent) MessageType() string      { return "rewrite_event" }
+func (AnalysisPart) MessageType() string      { return "analysis_part" }
+func (Analysis) MessageType() string          { return "analysis" }
+func (AnalysisEventPart) MessageType() string { return "analysis_event_part" }
+func (AnalysisEvent) MessageType() string     { return "analysis_event" }
+func (LiveWindow) MessageType() string        { return "live_window" }
+func (LiveResult) MessageType() string        { return "live_result" }
+func (MeetingJob) MessageType() string        { return "meeting_job" }
+func (MeetingProgress) MessageType() string   { return "meeting_progress" }
+func (MeetingResult) MessageType() string     { return "meeting_result" }
+func (MeetingCancel) MessageType() string     { return "meeting_cancel" }
 func (ErrorMessage) MessageType() string      { return "error" }
 
 func (m Enroll) OpNumber() int64            { return m.Op }
@@ -364,27 +551,47 @@ func (m DictationComplete) OpNumber() int64 { return m.Op }
 func (m Cancelled) OpNumber() int64         { return m.Op }
 func (m Rewrite) OpNumber() int64           { return m.Op }
 func (m RewriteEvent) OpNumber() int64      { return m.Op }
+func (m AnalysisPart) OpNumber() int64      { return m.Op }
+func (m Analysis) OpNumber() int64          { return m.Op }
+func (m AnalysisEventPart) OpNumber() int64 { return m.Op }
+func (m AnalysisEvent) OpNumber() int64     { return m.Op }
+func (m LiveWindow) OpNumber() int64        { return m.Op }
+func (m LiveResult) OpNumber() int64        { return m.Op }
+func (m MeetingJob) OpNumber() int64        { return m.Op }
+func (m MeetingProgress) OpNumber() int64   { return m.Op }
+func (m MeetingResult) OpNumber() int64     { return m.Op }
+func (m MeetingCancel) OpNumber() int64     { return m.Op }
 func (m ErrorMessage) OpNumber() int64      { return m.Op }
 
 // decoders maps a wire type to a function decoding the strict object (without
 // schema_version and type) and validating it.
 var decoders = map[string]func([]byte) (Message, error){
-	"ready":              decodeAs[Ready],
-	"enroll":             decodeAs[Enroll],
-	"enrolled":           decodeAs[Enrolled],
-	"refresh":            decodeAs[Refresh],
-	"tokens":             decodeAs[Tokens],
-	"dictation_start":    decodeAs[DictationStart],
-	"dictation_accepted": decodeAs[DictationAccepted],
-	"window_result":      decodeAs[WindowResult],
-	"progress":           decodeAs[Progress],
-	"dictation_end":      decodeAs[DictationEnd],
-	"dictation_cancel":   decodeAs[DictationCancel],
-	"dictation_complete": decodeAs[DictationComplete],
-	"cancelled":          decodeAs[Cancelled],
-	"rewrite":            decodeAs[Rewrite],
-	"rewrite_event":      decodeAs[RewriteEvent],
-	"error":              decodeAs[ErrorMessage],
+	"ready":               decodeAs[Ready],
+	"enroll":              decodeAs[Enroll],
+	"enrolled":            decodeAs[Enrolled],
+	"refresh":             decodeAs[Refresh],
+	"tokens":              decodeAs[Tokens],
+	"dictation_start":     decodeAs[DictationStart],
+	"dictation_accepted":  decodeAs[DictationAccepted],
+	"window_result":       decodeAs[WindowResult],
+	"progress":            decodeAs[Progress],
+	"dictation_end":       decodeAs[DictationEnd],
+	"dictation_cancel":    decodeAs[DictationCancel],
+	"dictation_complete":  decodeAs[DictationComplete],
+	"cancelled":           decodeAs[Cancelled],
+	"rewrite":             decodeAs[Rewrite],
+	"rewrite_event":       decodeAs[RewriteEvent],
+	"analysis_part":       decodeAs[AnalysisPart],
+	"analysis":            decodeAs[Analysis],
+	"analysis_event_part": decodeAs[AnalysisEventPart],
+	"analysis_event":      decodeAs[AnalysisEvent],
+	"live_window":         decodeAs[LiveWindow],
+	"live_result":         decodeAs[LiveResult],
+	"meeting_job":         decodeAs[MeetingJob],
+	"meeting_progress":    decodeAs[MeetingProgress],
+	"meeting_result":      decodeAs[MeetingResult],
+	"meeting_cancel":      decodeAs[MeetingCancel],
+	"error":               decodeAs[ErrorMessage],
 }
 
 type validator interface{ validate() (Message, error) }
@@ -674,7 +881,54 @@ func SanitizeDeviceName(name string) string {
 
 func textWithin(s string, min, max int) bool { return len(s) >= min && len(s) <= max }
 
-func (m Ready) validate() (Message, error) { return m, nil }
+func (m Ready) validate() (Message, error) {
+	c := m.Capabilities
+	if c == nil {
+		return m, nil
+	}
+	if len(c.Ops) > maxCapabilityOps || !distinct(c.Ops, validOpName) {
+		return nil, invalid("capabilities ops")
+	}
+	if len(c.MeetingJobs) > len(MeetingSamples) || !distinct(c.MeetingJobs, func(kind string) bool { _, ok := MeetingSamples[kind]; return ok }) {
+		return nil, invalid("capabilities meeting_jobs")
+	}
+	if models := c.Models; models != nil {
+		for _, model := range []*MeetingModel{models.Transcription, models.Diarization, models.Voice} {
+			if model != nil && !model.valid() {
+				return nil, invalid("capabilities model identity")
+			}
+		}
+		if models.Voice != nil && models.Voice.Dimension == 0 {
+			return nil, invalid("voice model without dimension")
+		}
+	}
+	return m, nil
+}
+
+// distinct reports whether every item is valid and appears once.
+func distinct(items []string, valid func(string) bool) bool {
+	seen := map[string]bool{}
+	for _, item := range items {
+		if !valid(item) || seen[item] {
+			return false
+		}
+		seen[item] = true
+	}
+	return true
+}
+
+func validOpName(s string) bool {
+	return textWithin(s, 1, 32) && strings.Trim(s, "abcdefghijklmnopqrstuvwxyz_") == ""
+}
+
+func (m MeetingModel) valid() bool {
+	for _, field := range []string{m.Engine, m.ModelID, m.ModelRevision, m.ManifestHash} {
+		if !textWithin(field, 1, maxIdentityBytes) {
+			return false
+		}
+	}
+	return m.Dimension >= 0 && m.Dimension <= maxVectorLength
+}
 
 func (m Enroll) validate() (Message, error) {
 	if m.Provider != "apple" && m.Provider != "google" {
@@ -791,34 +1045,46 @@ func (m WindowResult) validate() (Message, error) {
 		m.SampleCount < 1 || m.SampleCount > WindowSamples || m.RecognitionMS < 0 || m.RecognitionMS > maxRecognitionMS {
 		return nil, invalid("window bounds")
 	}
-	if len(m.Text) > MaxControlBytes || len(m.Tokens) > maxTokens || len(m.BoostHints) > MaxBoostTerms {
+	if len(m.BoostHints) > MaxBoostTerms {
 		return nil, invalid("window content bounds")
 	}
-	for _, token := range m.Tokens {
-		if !finiteNonNegative(token.Start) || !finiteNonNegative(token.End) {
-			return nil, invalid("token timing")
-		}
+	if err := validWindow(m.Text, m.Tokens, m.Evidence); err != nil {
+		return nil, err
 	}
 	for _, hint := range m.BoostHints {
 		if !textWithin(hint.Source, 1, 512) || !textWithin(hint.Canonical, 1, MaxTermBytes) || !textWithin(hint.EntryID, 1, MaxTermBytes) {
 			return nil, invalid("boost hint length")
 		}
 	}
-	if e := m.Evidence; e != nil {
+	return m, nil
+}
+
+// validWindow checks the text, tokens and evidence shared by window_result,
+// live_result and the transcribe result.
+func validWindow(text string, tokens []Token, e *Evidence) error {
+	if len(text) > MaxControlBytes || len(tokens) > maxTokens {
+		return invalid("window content bounds")
+	}
+	for _, token := range tokens {
+		if !finiteNonNegative(token.Start) || !finiteNonNegative(token.End) {
+			return invalid("token timing")
+		}
+	}
+	if e != nil {
 		if e.Samples < 0 || e.PaddedSamples < 0 || len(e.Tokens) > maxTokens {
-			return nil, invalid("evidence bounds")
+			return invalid("evidence bounds")
 		}
 		for _, token := range e.Tokens {
 			for _, timing := range []Timing{token.Start, token.End} {
 				switch timing.Invalid {
 				case "", "nan", "positive_infinity", "negative_infinity":
 				default:
-					return nil, invalid("evidence timing marker")
+					return invalid("evidence timing marker")
 				}
 			}
 		}
 	}
-	return m, nil
+	return nil
 }
 
 func finiteNonNegative(v float64) bool { return v >= 0 && !math.IsInf(v, 0) && !math.IsNaN(v) }
@@ -866,6 +1132,173 @@ func isObject(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	return len(trimmed) > 0 && trimmed[0] == '{'
 }
+
+// validPart checks an analysis_part or analysis_event_part fragment.
+func validPart(index int, data string) error {
+	switch {
+	case index < 0 || index >= MaxAnalysisParts || data == "":
+		return invalid("analysis fragment")
+	case len(data) > MaxAnalysisPartBytes:
+		return &Error{CodeLimitExceeded, "analysis fragment over 49,152 bytes"}
+	}
+	return nil
+}
+
+func validSHA256(s string) bool {
+	return len(s) == 64 && strings.Trim(s, "0123456789abcdef") == ""
+}
+
+func (m AnalysisPart) validate() (Message, error) { return m, validPart(m.Index, m.Data) }
+
+func (m Analysis) validate() (Message, error) {
+	switch {
+	case m.Parts < 1 || m.Parts > MaxAnalysisParts || m.Bytes < 1 || !validSHA256(m.SHA256):
+		return nil, invalid("analysis close")
+	case m.Bytes > MaxAnalysisBytes:
+		return nil, &Error{CodeLimitExceeded, "analysis request over 262,144 bytes"}
+	}
+	return m, nil
+}
+
+func (m AnalysisEventPart) validate() (Message, error) { return m, validPart(m.Index, m.Data) }
+
+func (m AnalysisEvent) validate() (Message, error) {
+	if len(m.Event) > 0 {
+		if m.Parts != 0 || m.SHA256 != "" || !isObject(m.Event) {
+			return nil, invalid("analysis event inline")
+		}
+		return m, nil
+	}
+	if m.Parts < 1 || m.Parts > MaxAnalysisParts || !validSHA256(m.SHA256) {
+		return nil, invalid("analysis event close")
+	}
+	return m, nil
+}
+
+// validLanguage accepts a two- or three-letter lowercase code, and "auto"
+// where the client may leave the choice to the model.
+func validLanguage(s string, auto bool) bool {
+	return (auto && s == "auto") || (textWithin(s, 2, 3) && strings.Trim(s, "abcdefghijklmnopqrstuvwxyz") == "")
+}
+
+func (m LiveWindow) validate() (Message, error) {
+	if m.SampleCount < 1 || m.SampleCount > MaxLiveSamples || m.Format != SampleFormat {
+		return nil, invalid("live window samples")
+	}
+	if m.Language != "" && !validLanguage(m.Language, true) {
+		return nil, invalid("live window language")
+	}
+	return m, nil
+}
+
+func (m LiveResult) validate() (Message, error) {
+	if m.RecognitionMS < 0 || m.RecognitionMS > maxRecognitionMS {
+		return nil, invalid("live result bounds")
+	}
+	return m, validWindow(m.Window.Text, m.Window.Tokens, m.Window.Evidence)
+}
+
+func (m MeetingJob) validate() (Message, error) {
+	bounds, ok := MeetingSamples[m.Kind]
+	if !ok || m.SampleCount < bounds[0] || m.SampleCount > bounds[1] || m.Format != SampleFormat {
+		return nil, invalid("meeting job samples")
+	}
+	transcribeOptions := m.Language != "" || m.VocabularyTerms != nil || m.Pipeline != ""
+	if (m.Kind != "transcribe" && transcribeOptions) || (m.Kind != "diarize" && m.NumSpeakers != nil) {
+		return nil, invalid("meeting job option for another kind")
+	}
+	if (m.Language != "" && !validLanguage(m.Language, true)) || len(m.Pipeline) > maxIdentityBytes ||
+		len(m.VocabularyTerms) > maxVocabularyTerms {
+		return nil, invalid("meeting job options")
+	}
+	for _, term := range m.VocabularyTerms {
+		if !textWithin(term, 1, MaxTermBytes) {
+			return nil, invalid("vocabulary term length")
+		}
+	}
+	if m.NumSpeakers != nil && (*m.NumSpeakers < 1 || *m.NumSpeakers > maxSpeakers) {
+		return nil, invalid("num_speakers out of range")
+	}
+	return m, nil
+}
+
+func (m MeetingProgress) validate() (Message, error) {
+	if (m.State != "queued" && m.State != "running") || (m.Position != nil && (*m.Position < 0 || *m.Position > maxQueuePosition)) {
+		return nil, invalid("meeting progress")
+	}
+	return m, nil
+}
+
+func (m MeetingResult) validate() (Message, error) {
+	if m.ProcessingMS < 0 || m.ProcessingMS > maxRecognitionMS || !m.Model.valid() {
+		return nil, invalid("meeting result bounds")
+	}
+	var err error
+	switch m.Kind {
+	case "transcribe":
+		var r TranscribeResult
+		if err = strictDecode(m.Result, &r); err == nil {
+			err = r.validate()
+		}
+	case "diarize":
+		var r DiarizeResult
+		if err = strictDecode(m.Result, &r); err == nil {
+			err = r.validate()
+		}
+	case "embed":
+		var r EmbedResult
+		if err = strictDecode(m.Result, &r); err == nil {
+			err = validVector(r.Vector)
+		}
+		if err == nil && !finiteNonNegative(r.SpeechSeconds) {
+			err = invalid("speech_seconds")
+		}
+	default:
+		err = invalid("meeting result kind")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (r TranscribeResult) validate() error {
+	if r.RetryDepth < 0 || r.RetryDepth > maxRetryDepth || (r.Language != "" && !validLanguage(r.Language, false)) ||
+		len(r.Pipeline) > maxIdentityBytes {
+		return invalid("transcribe result fields")
+	}
+	return validWindow(r.Text, r.Tokens, nil)
+}
+
+func (r DiarizeResult) validate() error {
+	if len(r.Turns) > maxTurns || len(r.Centroids) > maxClusters {
+		return invalid("diarize result bounds")
+	}
+	for _, turn := range r.Turns {
+		if turn.Cluster < 0 || turn.Cluster >= maxClusters || !finiteNonNegative(turn.Start) || !(turn.Start < turn.End) {
+			return invalid("diarization turn")
+		}
+	}
+	for _, centroid := range r.Centroids {
+		if centroid.Cluster < 0 || centroid.Cluster >= maxClusters {
+			return invalid("centroid cluster")
+		}
+		if err := validVector(centroid.Vector); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validVector bounds an embedding or centroid; JSON numbers are always finite.
+func validVector(v []float64) error {
+	if len(v) < 1 || len(v) > maxVectorLength {
+		return invalid("vector length")
+	}
+	return nil
+}
+
+func (m MeetingCancel) validate() (Message, error) { return m, nil }
 
 func (m ErrorMessage) validate() (Message, error) {
 	if _, ok := errorMessages[m.Code]; !ok {

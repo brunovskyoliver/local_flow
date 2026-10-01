@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "type": "meeting_job",
+  "op": 10,
+  "kind": "diarize",
+  "sample_count": 9600000,
+  "format": "s16le",
+  "num_speakers": 1
+}

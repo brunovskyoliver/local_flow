@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "type": "live_result",
+  "op": 7,
+  "window": {
+    "text": "zabix alerts are green",
+    "tokens": [
+      {
+        "text": "zabix",
+        "start": 0.12,
+        "end": 0.4
+      },
+      {
+        "text": " alerts",
+        "start": 0.48,
+        "end": 0.9
+      }
+    ],
+    "evidence": {
+      "text": "zabix alerts are green",
+      "samples": 96000,
+      "padded_samples": 96000,
+      "timings_available": true,
+      "tokens": [
+        {
+          "text": "zabix",
+          "start": {
+            "value": 0.12
+          },
+          "end": {
+            "value": 0.4
+          }
+        },
+        {
+          "text": " alerts",
+          "start": {
+            "value": 0.48
+          },
+          "end": {
+            "value": 0.9
+          }
+        }
+      ]
+    }
+  },
+  "recognition_ms": 88
+}

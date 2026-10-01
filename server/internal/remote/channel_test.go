@@ -224,7 +224,7 @@ func TestFramePayloadRules(t *testing.T) {
 		code      ErrorCode
 	}{
 		{"empty plaintext", nil, CodeInvalidMessage},
-		{"unknown kind", []byte{0x02, '{', '}'}, CodeInvalidMessage},
+		{"unknown kind", []byte{0x03, '{', '}'}, CodeInvalidMessage},
 		{"empty audio", []byte{KindAudio}, CodeInvalidMessage},
 		{"audio not a multiple of 4", append([]byte{KindAudio}, make([]byte, 6)...), CodeInvalidMessage},
 		{"16,001 samples", append([]byte{KindAudio}, make([]byte, (MaxAudioSamples+1)*4)...), CodeLimitExceeded},
@@ -261,6 +261,46 @@ func TestFramePayloadRules(t *testing.T) {
 	}
 	if _, err := client.Seal(Frame{KindControl, make([]byte, MaxControlBytes+1)}); err == nil {
 		t.Fatal("oversized control sealed")
+	}
+}
+
+// Feature 018 T007: kind 0x02 carries 1…32,000 s16le samples (an even byte
+// count) from the client only; anything else is invalid_message.
+func TestSampleFramePayloadRules(t *testing.T) {
+	for name, payload := range map[string][]byte{
+		"empty":          {},
+		"odd byte count": make([]byte, 3),
+		"32,001 samples": make([]byte, (MaxSampleFrameSamples+1)*2),
+	} {
+		client, server := pair(t)
+		sealed, err := client.sealPlaintext(append([]byte{KindSamples}, payload...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := server.Open(sealed); CodeOf(err) != CodeInvalidMessage || errors.Is(err, ErrChannelFailed) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if _, err := client.Seal(Frame{KindSamples, payload}); err == nil {
+			t.Errorf("%s: client sealed it", name)
+		}
+	}
+	for _, samples := range []int{1, MaxSampleFrameSamples} {
+		client, server := pair(t)
+		sealed, err := client.Seal(Frame{KindSamples, make([]byte, samples*2)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame, err := server.Open(sealed); err != nil || frame.Kind != KindSamples || len(frame.Payload) != samples*2 {
+			t.Errorf("%d samples: %v", samples, err)
+		}
+	}
+	client, server := pair(t)
+	sealed, _ := server.sealPlaintext(append([]byte{KindSamples}, make([]byte, 4)...))
+	if _, err := client.Open(sealed); CodeOf(err) != CodeInvalidMessage {
+		t.Fatalf("samples from the server: %v", err)
+	}
+	if _, err := server.Seal(Frame{KindSamples, make([]byte, 4)}); err == nil {
+		t.Fatal("server sealed samples")
 	}
 }
 

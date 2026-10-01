@@ -569,7 +569,7 @@ final class RemoteDictationSettingsTests: XCTestCase {
       preferences: preferences,
       enrollment: { [self] in
         guard preferences.remoteEnabled,
-          preferences.remoteConsentVersion >= AppPreferences.remoteConsentVersion
+          preferences.remoteConsentVersion >= AppPreferences.remoteDictationConsentVersion
         else { return nil }
         if enrollmentInstance == nil {
           enrollmentInstance = RemoteEnrollment(
@@ -612,6 +612,32 @@ final class RemoteDictationSettingsTests: XCTestCase {
     XCTAssertTrue(RemoteDictationModel.consentText.contains("Dictionary terms"))
     XCTAssertTrue(RemoteDictationModel.consentText.contains("rewrite text"))
     XCTAssertTrue(RemoteDictationModel.consentText.contains("administrator can see audio"))
+  }
+
+  /// Feature 018 FR-033: the text names meeting work, and a device that confirmed the
+  /// first text keeps dictation but must confirm the new one once for summaries.
+  func testTheConsentUpdateCoversMeetingsAndSummaries() {
+    for phrase in ["meeting audio", "meeting transcripts", "summaries"] {
+      XCTAssertTrue(RemoteDictationModel.consentText.contains(phrase), phrase)
+    }
+    XCTAssertGreaterThan(
+      AppPreferences.remoteConsentVersion, AppPreferences.remoteDictationConsentVersion)
+    defaults.set(AppPreferences.remoteDictationConsentVersion, forKey: "remote.consentVersion")
+    preferences = AppPreferences(defaults: defaults)
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.remoteEnabled = true
+    let model = model()
+    XCTAssertTrue(model.isOn)
+    XCTAssertTrue(model.needsConsentUpdate)
+    XCTAssertFalse(preferences.serverRouting.consentCurrent)
+    model.reviewConsentUpdate()
+    model.cancelConsentUpdate()
+    XCTAssertTrue(model.needsConsentUpdate)
+    model.reviewConsentUpdate()
+    model.confirmConsentUpdate()
+    XCTAssertFalse(model.showingConsentUpdate)
+    XCTAssertFalse(model.needsConsentUpdate)
+    XCTAssertTrue(preferences.serverRouting.consentCurrent)
   }
 
   func testConsentNeedsAnHTTPSOrigin() async throws {
@@ -658,7 +684,7 @@ final class RemoteDictationSettingsTests: XCTestCase {
       (.pinMismatch, nil, "Server identity changed"),
       (.pinned, .signInAgain, "Sign in again"),
       (.approved, .updateRequired, "Update LocalFlow or the server"),
-      (.approved, nil, "Approved · dictation uses your server"),
+      (.approved, nil, "Approved"),
     ]
     for (state, notice, text) in expected {
       preferences.remoteState = state

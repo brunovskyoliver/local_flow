@@ -50,6 +50,36 @@
       "$ref": "#/$defs/rewrite_event"
     },
     {
+      "$ref": "#/$defs/analysis_part"
+    },
+    {
+      "$ref": "#/$defs/analysis"
+    },
+    {
+      "$ref": "#/$defs/analysis_event_part"
+    },
+    {
+      "$ref": "#/$defs/analysis_event"
+    },
+    {
+      "$ref": "#/$defs/live_window"
+    },
+    {
+      "$ref": "#/$defs/live_result"
+    },
+    {
+      "$ref": "#/$defs/meeting_job"
+    },
+    {
+      "$ref": "#/$defs/meeting_progress"
+    },
+    {
+      "$ref": "#/$defs/meeting_result"
+    },
+    {
+      "$ref": "#/$defs/meeting_cancel"
+    },
+    {
       "$ref": "#/$defs/error"
     }
   ],
@@ -72,7 +102,8 @@
         "unsupported_version",
         "limit_exceeded",
         "worker_unavailable",
-        "internal"
+        "internal",
+        "not_offered"
       ]
     },
     "b64url": {
@@ -89,7 +120,7 @@
     "ready": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Server: the hello was accepted; operations may start.",
+      "description": "Server: the hello was accepted; operations may start. capabilities is sent on session channels from Feature 018 on; without it the server serves dictation_start and rewrite only.",
       "required": [
         "schema_version",
         "type"
@@ -100,6 +131,9 @@
         },
         "type": {
           "const": "ready"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/capabilities"
         }
       }
     },
@@ -471,120 +505,10 @@
           "maxLength": 65536
         },
         "tokens": {
-          "type": "array",
-          "maxItems": 16384,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "text",
-              "start",
-              "end"
-            ],
-            "properties": {
-              "text": {
-                "type": "string",
-                "maxLength": 65536
-              },
-              "start": {
-                "type": "number",
-                "minimum": 0
-              },
-              "end": {
-                "type": "number",
-                "minimum": 0
-              }
-            }
-          }
+          "$ref": "#/$defs/window_tokens"
         },
         "evidence": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "text",
-            "samples",
-            "padded_samples",
-            "timings_available",
-            "tokens"
-          ],
-          "properties": {
-            "text": {
-              "type": "string",
-              "maxLength": 65536
-            },
-            "samples": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "padded_samples": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "timings_available": {
-              "type": "boolean"
-            },
-            "tokens": {
-              "type": "array",
-              "maxItems": 16384,
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "text",
-                  "start",
-                  "end"
-                ],
-                "properties": {
-                  "text": {
-                    "type": "string",
-                    "maxLength": 65536
-                  },
-                  "start": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "description": "Finite SDK timing in value, or a non-finite marker in invalid.",
-                    "properties": {
-                      "value": {
-                        "type": [
-                          "number",
-                          "null"
-                        ]
-                      },
-                      "invalid": {
-                        "type": "string",
-                        "enum": [
-                          "nan",
-                          "positive_infinity",
-                          "negative_infinity"
-                        ]
-                      }
-                    }
-                  },
-                  "end": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "description": "Finite SDK timing in value, or a non-finite marker in invalid.",
-                    "properties": {
-                      "value": {
-                        "type": [
-                          "number",
-                          "null"
-                        ]
-                      },
-                      "invalid": {
-                        "type": "string",
-                        "enum": [
-                          "nan",
-                          "positive_infinity",
-                          "negative_infinity"
-                        ]
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
+          "$ref": "#/$defs/window_evidence"
         },
         "boost_hints": {
           "type": "array",
@@ -791,6 +715,914 @@
         },
         "event": {
           "$ref": "rewrite-event.schema.json"
+        }
+      }
+    },
+    "model_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Engine identity of a meeting model (Feature 018). dimension is the voice embedding length.",
+      "required": [
+        "engine",
+        "model_id",
+        "model_revision",
+        "manifest_hash"
+      ],
+      "properties": {
+        "engine": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "manifest_hash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "dimension": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Feature 018 research R11: the session ops the server serves, built from its registered operations; meeting_jobs is empty and models absent while the meeting worker is unavailable.",
+      "required": [
+        "ops",
+        "meeting_jobs"
+      ],
+      "properties": {
+        "ops": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z_]{1,32}$"
+          }
+        },
+        "meeting_jobs": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "transcribe",
+              "diarize",
+              "embed"
+            ]
+          }
+        },
+        "models": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "transcription": {
+              "$ref": "#/$defs/model_identity"
+            },
+            "diarization": {
+              "$ref": "#/$defs/model_identity"
+            },
+            "voice": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/model_identity"
+                },
+                {
+                  "required": [
+                    "dimension"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "window_tokens": {
+      "type": "array",
+      "maxItems": 16384,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "start": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "window_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "samples",
+        "padded_samples",
+        "timings_available",
+        "tokens"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "padded_samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timings_available": {
+          "type": "boolean"
+        },
+        "tokens": {
+          "type": "array",
+          "maxItems": 16384,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text",
+              "start",
+              "end"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "start": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Finite SDK timing in value, or a non-finite marker in invalid.",
+                "properties": {
+                  "value": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "invalid": {
+                    "type": "string",
+                    "enum": [
+                      "nan",
+                      "positive_infinity",
+                      "negative_infinity"
+                    ]
+                  }
+                }
+              },
+              "end": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Finite SDK timing in value, or a non-finite marker in invalid.",
+                "properties": {
+                  "value": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "invalid": {
+                    "type": "string",
+                    "enum": [
+                      "nan",
+                      "positive_infinity",
+                      "negative_infinity"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "analysis_part": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client: one fragment of the UTF-8 JSON analysis request (Feature 011), in order from index 0.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "index",
+        "data"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "analysis_part"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 49152,
+          "description": "1 to 49,152 UTF-8 bytes; maxLength approximates the byte bound (larger is limit_exceeded)."
+        }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client: closes the analysis request. parts, bytes and sha256 describe the assembled fragments; a mismatch is invalid_message.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "parts",
+        "bytes",
+        "sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "analysis"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "parts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144,
+          "description": "Assembled size; over 262,144 is limit_exceeded."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Lowercase hex SHA-256 of the assembled UTF-8 bytes."
+        }
+      }
+    },
+    "analysis_event_part": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: one fragment of an analysis event line too large for one control message, in order from index 0.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "index",
+        "data"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "analysis_event_part"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 49152,
+          "description": "1 to 49,152 UTF-8 bytes; maxLength approximates the byte bound (larger is limit_exceeded)."
+        }
+      }
+    },
+    "analysis_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: one analysis event (accepted, progress, result, error), inline in event or closing its analysis_event_part fragments with parts and sha256. The op ends after the result or error event.",
+      "required": [
+        "schema_version",
+        "type",
+        "op"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "analysis_event"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "event": {
+          "$ref": "analysis-event.schema.json"
+        },
+        "parts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Lowercase hex SHA-256 of the assembled UTF-8 bytes."
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "event"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "parts"
+                ]
+              },
+              {
+                "required": [
+                  "sha256"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "parts",
+            "sha256"
+          ],
+          "not": {
+            "required": [
+              "event"
+            ]
+          }
+        }
+      ]
+    },
+    "live_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client: one live-preview window; exactly sample_count s16le samples follow in 0x02 frames.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "sample_count",
+        "format"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "live_window"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 96000
+        },
+        "format": {
+          "const": "s16le"
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^(auto|[a-z]{2,3})$"
+        }
+      }
+    },
+    "live_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: the recognized live-preview window, in the window_result wire form.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "window",
+        "recognition_ms"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "live_result"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "text",
+            "tokens"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 65536
+            },
+            "tokens": {
+              "$ref": "#/$defs/window_tokens"
+            },
+            "evidence": {
+              "$ref": "#/$defs/window_evidence"
+            }
+          }
+        },
+        "recognition_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        }
+      }
+    },
+    "meeting_job": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client: one meeting model call; exactly sample_count s16le samples follow in 0x02 frames. language, vocabulary_terms and pipeline are for transcribe only, num_speakers for diarize only.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "kind",
+        "sample_count",
+        "format"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "meeting_job"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "transcribe",
+            "diarize",
+            "embed"
+          ]
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9600000
+        },
+        "format": {
+          "const": "s16le"
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^(auto|[a-z]{2,3})$"
+        },
+        "vocabulary_terms": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/term_text"
+          }
+        },
+        "pipeline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "num_speakers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "transcribe"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sample_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1920000
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "num_speakers"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "diarize"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "language"
+                  ]
+                },
+                {
+                  "required": [
+                    "vocabulary_terms"
+                  ]
+                },
+                {
+                  "required": [
+                    "pipeline"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "embed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sample_count": {
+                "type": "integer",
+                "minimum": 48000,
+                "maximum": 320000
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "language"
+                  ]
+                },
+                {
+                  "required": [
+                    "vocabulary_terms"
+                  ]
+                },
+                {
+                  "required": [
+                    "pipeline"
+                  ]
+                },
+                {
+                  "required": [
+                    "num_speakers"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "meeting_progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: the meeting job is queued (with its optional queue position) or running.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "state"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "meeting_progress"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running"
+          ]
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        }
+      }
+    },
+    "transcribe_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "TranscriptionWindow of a final-transcription window. timings_available is false when the model's timing was discarded (tokens then empty); retry_depth is the repetition-retry depth reached; language is the confident detection, if any; pipeline echoes the job's.",
+      "required": [
+        "text",
+        "tokens",
+        "timings_available",
+        "retry_depth"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "tokens": {
+          "$ref": "#/$defs/window_tokens"
+        },
+        "timings_available": {
+          "type": "boolean"
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2,3}$"
+        },
+        "retry_depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "pipeline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "diarize_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "DiarizationWindowResult: turns in seconds from the window start and one L2-normalized centroid per cluster.",
+      "required": [
+        "turns",
+        "centroids"
+      ],
+      "properties": {
+        "turns": {
+          "type": "array",
+          "maxItems": 20000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "cluster",
+              "start",
+              "end"
+            ],
+            "properties": {
+              "cluster": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "start": {
+                "type": "number",
+                "minimum": 0
+              },
+              "end": {
+                "type": "number",
+                "minimum": 0
+              },
+              "quality": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "centroids": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "cluster",
+              "vector"
+            ],
+            "properties": {
+              "cluster": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "vector": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 4096,
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "embed_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "VoiceEmbedding: the L2-normalized vector and the seconds of speech found in the region.",
+      "required": [
+        "vector",
+        "speech_seconds"
+      ],
+      "properties": {
+        "vector": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": {
+            "type": "number"
+          }
+        },
+        "speech_seconds": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "meeting_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: the meeting job's result for its kind, the processing time and the model that produced it.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "kind",
+        "result",
+        "processing_ms",
+        "model"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "meeting_result"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "transcribe",
+            "diarize",
+            "embed"
+          ]
+        },
+        "result": {
+          "type": "object"
+        },
+        "processing_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "model": {
+          "$ref": "#/$defs/model_identity"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "transcribe"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/transcribe_result"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "diarize"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/diarize_result"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "embed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/embed_result"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "meeting_cancel": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client: drop the meeting job; the server deletes its samples and answers cancelled.",
+      "required": [
+        "schema_version",
+        "type",
+        "op"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "meeting_cancel"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
         }
       }
     },

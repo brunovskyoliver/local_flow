@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"localflow/server/internal/accounts"
+	"localflow/server/internal/analysis"
 	"localflow/server/internal/remote"
 	"localflow/server/internal/rewrite"
 )
@@ -36,6 +37,10 @@ type remoteConfig struct {
 	// channel's rewrite operation shares its in-flight limit and analysis
 	// gate (Feature 014 T070). Not a flag.
 	rewrite *rewrite.Handler
+	// analysis is the main listener's analysis handler, built even without
+	// --analysis: the channel's analysis operation shares its slots and gate
+	// and runs on the server's own backend (Feature 018 R8, R9). Not a flag.
+	analysis *analysis.Handler
 }
 
 // validate checks the remote flags that need no file system or Keychain

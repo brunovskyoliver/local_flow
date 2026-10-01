@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "type": "meeting_job",
+  "op": 11,
+  "kind": "embed",
+  "sample_count": 48000,
+  "format": "s16le"
+}

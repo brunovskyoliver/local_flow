@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -561,5 +562,97 @@ func TestGuardedBackendGatesOnlyLocalCalls(t *testing.T) {
 	defer release()
 	if lines := <-done; lines[len(lines)-1]["code"] != "preempted" {
 		t.Fatalf("local call was not preempted: %v", lines)
+	}
+}
+
+// collect runs one request through Run and returns its decoded events.
+func collect(t *testing.T, h *Handler, req *Request) ([]map[string]any, Code) {
+	t.Helper()
+	var lines []map[string]any
+	code := h.Run(context.Background(), req, func(line []byte) error {
+		var event map[string]any
+		if !bytes.HasSuffix(line, []byte("\n")) || len(line) > MaxLineBytes || json.Unmarshal(line, &event) != nil {
+			t.Errorf("not one NDJSON line: %q", line)
+		}
+		lines = append(lines, event)
+		return nil
+	})
+	return lines, code
+}
+
+// Feature 018 T027: Run serves a decoded request over any transport with the
+// HTTP route's events and validation, always on the configured backend: it
+// never consults Route, so a client cannot name a primary (research R9).
+func TestRunMatchesHTTP(t *testing.T) {
+	h := NewHandler(HandlerConfig{
+		Backend: newFakeBackend(), ProtocolVersions: []int{1}, Limits: DefaultLimits(),
+		Route: func(*http.Request) (BackendAdapter, error) { return nil, fmt.Errorf("Run must not route") },
+	})
+	req, err := h.DecodeRequest(requestBody(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, code := collect(t, h, req)
+	if code != "" || len(lines) != 2 || lines[0]["type"] != "accepted" || lines[1]["type"] != "result" {
+		t.Fatalf("%q %v", code, lines)
+	}
+	_, httpLines, _ := post(t, serve(t, newFakeBackend(), "").URL, requestBody(t), "")
+	if len(httpLines) != 2 || fmt.Sprint(httpLines[1]["analysis"]) != fmt.Sprint(lines[1]["analysis"]) {
+		t.Fatalf("HTTP %v, Run %v", httpLines, lines)
+	}
+	// The same request validation as the route.
+	for body, want := range map[string]Code{
+		"{": CodeInvalidRequest,
+		string(make([]byte, MaxRequestBodyBytes+1)): CodeTooLarge,
+	} {
+		var re *RequestError
+		if _, err := h.DecodeRequest([]byte(body)); !errors.As(err, &re) || re.Code != want {
+			t.Errorf("%d bytes: %v", len(body), err)
+		}
+	}
+	// A transport that stops taking events ends the run as cancelled.
+	if code := h.Run(context.Background(), req, func([]byte) error { return io.ErrClosedPipe }); code != RunCancelled {
+		t.Fatal(code)
+	}
+}
+
+// Refusals over Run are one error event: an unsupported version, the
+// admission slot taken, and the rewrite-first gate preempting the call.
+func TestRunRefusals(t *testing.T) {
+	h := NewHandler(HandlerConfig{Backend: newFakeBackend(), ProtocolVersions: []int{2}, Limits: DefaultLimits()})
+	req, err := h.DecodeRequest(requestBody(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines, code := collect(t, h, req); code != CodeUnsupportedVersion || len(lines) != 1 || lines[0]["code"] != "unsupported_version" {
+		t.Fatalf("%q %v", code, lines)
+	}
+
+	b := newFakeBackend()
+	b.block = make(chan struct{})
+	gate := NewGate(50*time.Millisecond, true)
+	h = NewHandler(HandlerConfig{Backend: b, ProtocolVersions: []int{1}, Limits: DefaultLimits(), Gate: gate})
+	done := make(chan []map[string]any, 1)
+	go func() {
+		lines, _ := collect(t, h, req)
+		done <- lines
+	}()
+	select {
+	case <-b.requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request never reached backend")
+	}
+	if lines, code := collect(t, h, req); code != CodeServerBusy || len(lines) != 1 || lines[0]["code"] != "server_busy" {
+		t.Fatalf("%q %v", code, lines)
+	}
+	release := gate.RewriteStart()
+	defer release()
+	select {
+	case lines := <-done:
+		if len(lines) != 2 || lines[1]["code"] != "preempted" {
+			t.Fatalf("want preempted, got %v", lines)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no event after preemption")
 	}
 }
