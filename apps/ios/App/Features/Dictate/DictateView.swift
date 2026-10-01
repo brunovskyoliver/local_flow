@@ -71,6 +71,7 @@ struct DictateView: View {
 }
 
 /// The app's page in the Settings app: microphone, and Keyboards › Full Access.
+@MainActor
 enum SystemSettings {
   static func open() {
     guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
