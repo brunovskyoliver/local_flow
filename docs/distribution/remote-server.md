@@ -178,6 +178,10 @@ F="$DATA/bin/flowd"; A=(admin --data-dir "$DATA")
 
 After approval, the device's next dictation starts the check, and the one after it goes to the server; no restart is needed.
 
+## The LocalFlow Server app
+
+`scripts/install-server-app.sh <ssh-host>` builds the LocalFlow Server menu bar app on a Mac with Xcode and installs it in the server's `/Applications` (ADR 0032). It shows flowd, both speech workers, MTPLX and oMLX as Ready, Loading or Down, restarts flowd and MTPLX, tails `flowd.log`, keeps request stats that survive log rotation, approves and revokes devices with the commands above (it runs in the GUI session, so the Keychain is unlocked), and switches the rewrite model and the summaries backend with a rollback if the agent doesn't come back healthy. The installer starts flowd with `--admin-listen 127.0.0.1:8093` for it; the token is in `$DATA/admin-token` (0600), and the admin routes are not on 8090 or 8091. See [server-app.md](server-app.md).
+
 ## Uninstall
 
 ```sh

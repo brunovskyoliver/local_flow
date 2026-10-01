@@ -39,6 +39,7 @@ type configuration struct {
 	analysis        analysis.Limits
 	dumpDir         string
 	logFile         string
+	adminListen     string
 	remote          remoteConfig
 }
 
@@ -70,6 +71,7 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.DurationVar(&c.analysis.QueueWait, "analysis-queue-wait", 30*time.Second, "rewrite-first gate window")
 	fs.BoolVar(&c.analysis.Preempt, "analysis-preempt", true, "cancel an in-flight analysis call when a rewrite arrives")
 	fs.StringVar(&c.logFile, "log-file", "", "append the request log to this file, rotated at 1 MiB to <file>.1")
+	fs.StringVar(&c.adminListen, "admin-listen", "", "loopback host:port for the LocalFlow Server app's admin API (token in <data-dir>/admin-token); off when unset")
 	fs.StringVar(&c.dumpDir, "analysis-dump-requests", "", "debug builds only: write each analysis request body to this directory")
 	fs.StringVar(&c.remote.listen, "remote-listen", "", "loopback host:port for /v1/remote/*; remote serving is off when unset")
 	fs.StringVar(&c.remote.dataDir, "data-dir", "", "remote server data directory (required with --remote-listen)")
@@ -148,6 +150,9 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	if err := c.remote.validate(c.listen, *appleAudience, *googleClientIDs); err != nil {
 		return c, err
 	}
+	if err := validateAdminListen(c.adminListen, c.listen, c.remote.listen, c.remote.dataDir); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 func parseVersions(list string) ([]int, error) {
@@ -190,7 +195,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		defer file.Close()
 		logOutput = file
 	}
-	logger := log.New(logOutput, "flowd ", log.LstdFlags)
+	counters := &requestCounters{}
+	logger := log.New(io.MultiWriter(logOutput, counters), "flowd ", log.LstdFlags)
 	gate := analysis.NewGate(c.analysis.QueueWait, c.analysis.Preempt)
 	rewriteHandler := rewrite.NewHandler(rewrite.HandlerConfig{Backend: adapter, Token: c.token, Shield: c.shield, ProtocolVersions: c.rewriteVersions, Logger: logger, Gate: gate})
 	mux := http.NewServeMux()
@@ -202,23 +208,19 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		Local: adapter, Gate: gate,
 		FirstTokenTimeout: c.backend.FirstTokenTimeout, Timeout: c.backend.Timeout,
 	}
-	var analysisBackend analysis.BackendAdapter = adapter
-	route := router.For
+	// Summaries go to --analysis-backend with the rewrite model as fallback, or to
+	// the rewrite model alone; the admin API can switch between them at run time.
+	analysisBackend := &switchableAnalysis{local: adapter, firstToken: c.backend.FirstTokenTimeout, total: c.backend.Timeout}
 	if c.analysisBackend.BaseURL != "" {
-		primary, err := backend.New(c.analysisBackend)
-		if err != nil {
+		if err := analysisBackend.set(c.analysisBackend); err != nil {
 			return err
 		}
-		defer primary.Close()
-		// NewHandler hands the gate to the fallback, so only analysis calls
-		// that land on the rewrite model wait for dictation.
-		analysisBackend = &backend.Fallback{Primary: primary, Secondary: adapter}
-		route = func(r *http.Request) (analysis.BackendAdapter, error) {
-			if r.Header.Get(analysis.HeaderPrimaryURL) == "" {
-				return analysisBackend, nil
-			}
-			return router.For(r)
+	}
+	route := func(r *http.Request) (analysis.BackendAdapter, error) {
+		if r.Header.Get(analysis.HeaderPrimaryURL) == "" {
+			return analysisBackend, nil
 		}
+		return router.For(r)
 	}
 	analysisHandler := analysis.NewHandler(analysis.HandlerConfig{
 		Backend: analysisBackend, Token: c.token, ProtocolVersions: c.versions,
@@ -237,6 +239,15 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 			return err
 		}
 	}
+	var adminServer *http.Server
+	if c.adminListen != "" {
+		token, err := adminToken(c.remote.dataDir)
+		if err != nil {
+			return err
+		}
+		adminServer = &http.Server{Handler: &adminAPI{token: token, dataDir: c.remote.dataDir, started: time.Now(), counters: counters, analysis: analysisBackend},
+			ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8192}
+	}
 	server := &http.Server{Addr: c.listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: c.analysis.Timeout + 10*time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384, BaseContext: func(net.Listener) context.Context { return ctx }}
 	listener, err := net.Listen("tcp", c.listen)
 	if err != nil {
@@ -245,9 +256,23 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		}
 		return errors.New("could not open listener")
 	}
-	finished := make(chan error, 2)
+	finished := make(chan error, 3)
 	serving := 1
 	go func() { finished <- server.Serve(listener) }()
+	if adminServer != nil {
+		adminListener, err := net.Listen("tcp", c.adminListen)
+		if err != nil {
+			_ = server.Close()
+			<-finished
+			if remoteServer != nil {
+				remoteServer.shutdown(context.Background())
+			}
+			return errors.New("could not open admin listener")
+		}
+		serving++
+		go func() { finished <- adminServer.Serve(adminListener) }()
+		logger.Printf("admin listening=%s", adminListener.Addr())
+	}
 	if remoteServer != nil {
 		serving++
 		go func() { finished <- remoteServer.server.Serve(remoteServer.net) }()
@@ -269,6 +294,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 	}
 	if err := server.Shutdown(shutdown); err != nil {
 		_ = server.Close()
+	}
+	if adminServer != nil {
+		if err := adminServer.Shutdown(shutdown); err != nil {
+			_ = adminServer.Close()
+		}
 	}
 	for ; serving > 0; serving-- {
 		<-finished

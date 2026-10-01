@@ -60,6 +60,14 @@ struct OverviewView: View {
             ),
           ])
         }
+        if let status = monitor.adminStatus {
+          GroupBox("Requests since flowd started (\(status.startedAt), admin API)") {
+            pairs(
+              status.counters.sorted { $0.key < $1.key }.map {
+                ($0.key, "\($0.value.requests) requests, \($0.value.failures) failed")
+              })
+          }
+        }
         GroupBox("Models") { pairs(monitor.models) }
         GroupBox("Versions") { pairs(monitor.versions) }
       }

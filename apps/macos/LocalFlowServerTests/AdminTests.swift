@@ -40,4 +40,14 @@ final class AdminTests: XCTestCase {
     XCTAssertEqual(Admin.actions(kind: "device", state: "revoked"), ["approve"])
     XCTAssertEqual(Admin.actions(kind: "device", state: "rejected"), [])
   }
+
+  func testDecodesAdminStatus() throws {
+    let json = """
+      {"analysis":{"backend":"http://127.0.0.1:8443/v1","model":"smart"},"counters":{"dictation":{"requests":3,"failures":1},"rewrite":{"requests":2,"failures":0}},"started_at":"2026-10-01T21:00:00Z","version":"0.3.0"}
+      """
+    let status = try JSONDecoder().decode(AdminStatus.self, from: Data(json.utf8))
+    XCTAssertEqual(status.counters["dictation"], AdminStatus.Count(requests: 3, failures: 1))
+    XCTAssertEqual(status.analysis.model, "smart")
+    XCTAssertEqual(status.startedAt, "2026-10-01T21:00:00Z")
+  }
 }

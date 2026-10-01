@@ -18,7 +18,8 @@
 # which stays loaded while the agent runs and does not depend on any LocalFlow app
 # running. Its API key is generated once into <data-dir>/mtplx-api-key (0600); flowd
 # starts through <data-dir>/bin/localflow-remote-flowd, which reads that key, so the
-# key never appears in a plist. The MTPLX runtime and model default to the ones the
+# key never appears in a plist. flowd also opens the LocalFlow Server app's admin API on
+# 127.0.0.1:8093/18093 (ADR 0032), with its bearer token in <data-dir>/admin-token (0600). The MTPLX runtime and model default to the ones the
 # installed LocalFlow app set up (--mtplx, --model override them). Logs go to
 # ~/Library/Logs/LocalFlow Server[ Dev]/. cloudflared stays the owner's own
 # configuration and points the tunnel hostname at the remote listener.
@@ -124,6 +125,7 @@ if [ "$dev" -eq 1 ]; then
   remote_listen="127.0.0.1:18090"
   listen="127.0.0.1:18091"
   mtplx_port=18092
+  admin_listen="127.0.0.1:18093"
   data_dir="$HOME/Library/Application Support/LocalFlow Server Dev"
   log_dir="$HOME/Library/Logs/LocalFlow Server Dev"
   dev_flag=("--dev")
@@ -132,6 +134,7 @@ else
   remote_listen="127.0.0.1:8090"
   listen="127.0.0.1:8091"
   mtplx_port=8092
+  admin_listen="127.0.0.1:8093"
   data_dir="$HOME/Library/Application Support/LocalFlow Server"
   log_dir="$HOME/Library/Logs/LocalFlow Server"
   dev_flag=()
@@ -232,6 +235,7 @@ render_plist() {
     --speech-worker "$bin_dir/flowd-speech"
     --meeting-helper "$bin_dir/localflow-whisper-engine"
     --log-file "$log_dir/flowd.log"
+    --admin-listen "$admin_listen"
     ${dev_flag[@]+"${dev_flag[@]}"}
   )
   [ -z "$google_client_ids" ] || arguments+=(--google-client-id "$google_client_ids")

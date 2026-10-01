@@ -12,6 +12,8 @@ final class ServerMonitor {
   private(set) var statuses: [ServiceStatus] = []
   private(set) var lines: [LogLine] = []
   private(set) var processes: [ProcessRow] = []
+  /// flowd's live counters, when it runs with --admin-listen.
+  private(set) var adminStatus: AdminStatus?
   private(set) var swap: (used: UInt64, total: UInt64)?
   var overall: Health { ServerSnapshot.overall(statuses) }
 
@@ -51,6 +53,7 @@ final class ServerMonitor {
     next.analysisBackend = AgentPlist.arguments(Server.plist)?.value(after: "--analysis-backend")
     snapshot = next
     statuses = next.statuses
+    adminStatus = await AdminAPI.status()
     let (flowdPID, mtplxPID) = (next.flowd?.pid, next.mtplx?.pid)
     (processes, swap) = await Task.detached {
       (ProcessStats.serverProcesses(flowd: flowdPID, mtplx: mtplxPID), ProcessStats.swap())

@@ -87,9 +87,25 @@ final class ModelsModel {
       backend = AnalysisBackend(
         url: Self.omlxBackend, model: omlxModel, keyFile: keyFile ? Self.analysisKeyFile.path : nil)
     }
+    let changed = AgentArguments.setting(backend, in: arguments)
+    // With flowd's admin API the switch needs no restart; the plist keeps it for the next start.
+    if await AdminAPI.status() != nil {
+      guard
+        let status = await AdminAPI.setAnalysis(backend: Self.omlxBackend, model: backend?.model)
+      else { return finish(.failed("flowd's admin API refused the switch; nothing changed.")) }
+      do { try AgentPlist.write(changed, to: Server.plist) } catch {
+        return finish(
+          .failed("Switched in flowd, but could not save the plist: \(error.localizedDescription)"))
+      }
+      progress = nil
+      busy = false
+      outcome =
+        "Switched without a restart to \(status.analysis.model.nonEmpty ?? "the rewrite model")."
+      return await load()
+    }
     let outcome = await AgentChange.apply(
       label: Server.label, plist: Server.plist,
-      arguments: AgentArguments.setting(backend, in: arguments),
+      arguments: changed,
       progress: { self.progress = $0 },
       healthy: { previous in
         guard let job = await Launchctl.job(Server.label), job.running, job.pid != previous
