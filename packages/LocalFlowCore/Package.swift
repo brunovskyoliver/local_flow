@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 import PackageDescription
 
 // Portable code shared by the Mac app, the flowd-speech worker and the iOS app (ADR 0029).
@@ -12,7 +12,9 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.10.0"),
-    .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7"),
+    // No default traits: the NeMo text-processing library stays out, as it was when the
+    // Mac project referenced FluidAudio directly (`traits = ()`).
+    .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7", traits: []),
   ],
   targets: [
     .target(

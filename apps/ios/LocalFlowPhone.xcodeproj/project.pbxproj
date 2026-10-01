@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		513397BAA7D8A33F3225262A /* OFL-Figtree.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4F63C6D66C6064CC585AF42F /* OFL-Figtree.txt */; };
+		2C08681CE5B1C6B509D74343 /* OFL-EBGaramond.txt in Resources */ = {isa = PBXBuildFile; fileRef = D72EB73D4692617C0070C306 /* OFL-EBGaramond.txt */; };
 		0E71EFB63BF24287F2658C82 /* Figtree.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7A8A9ADA2BE3037D111E58B0 /* Figtree.ttf */; };
 		18A9E50189C52D4B782C5BB2 /* parakeet-ctc-110m.json in Resources */ = {isa = PBXBuildFile; fileRef = 0DE114FEA1BF3F81265635B7 /* parakeet-ctc-110m.json */; };
 		2BAACF8F9555CDC93A09AABC /* EBGaramond-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C79EF1591B83630036C0EE04 /* EBGaramond-Italic.ttf */; };
@@ -52,6 +54,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		4F63C6D66C6064CC585AF42F /* OFL-Figtree.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = OFL-Figtree.txt; sourceTree = "<group>"; };
+		D72EB73D4692617C0070C306 /* OFL-EBGaramond.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = OFL-EBGaramond.txt; sourceTree = "<group>"; };
 		0DE114FEA1BF3F81265635B7 /* parakeet-ctc-110m.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "parakeet-ctc-110m.json"; sourceTree = "<group>"; };
 		243A46684246D3ACAC3C84E1 /* LocalFlowPhoneTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LocalFlowPhoneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2572C8C12901C2C0138F693F /* LocalFlowPhone.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LocalFlowPhone.entitlements; sourceTree = "<group>"; };
@@ -136,6 +140,8 @@
 				C79EF1591B83630036C0EE04 /* EBGaramond-Italic.ttf */,
 				2DB4E1CEA00F82D571FCB551 /* EBGaramond.ttf */,
 				7A8A9ADA2BE3037D111E58B0 /* Figtree.ttf */,
+				D72EB73D4692617C0070C306 /* OFL-EBGaramond.txt */,
+				4F63C6D66C6064CC585AF42F /* OFL-Figtree.txt */,
 			);
 			path = Fonts;
 			sourceTree = "<group>";
@@ -345,6 +351,8 @@
 				7D9E380AA189402AC92CC2A7 /* EBGaramond-Italic.ttf in Resources */,
 				D878129FA9BB443B09533DB9 /* EBGaramond.ttf in Resources */,
 				F417509C882B6369FB5D6B06 /* Figtree.ttf in Resources */,
+				2C08681CE5B1C6B509D74343 /* OFL-EBGaramond.txt in Resources */,
+				513397BAA7D8A33F3225262A /* OFL-Figtree.txt in Resources */,
 				18A9E50189C52D4B782C5BB2 /* parakeet-ctc-110m.json in Resources */,
 				EB2C7C24D6896085A78D23D5 /* parakeet-v3.json in Resources */,
 			);
