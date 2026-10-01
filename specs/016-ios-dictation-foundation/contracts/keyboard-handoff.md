@@ -82,10 +82,12 @@ The `app.localflow` prefix is used only for notification names. It is not a bund
 ### `keyboard-status.json` (writer: keyboard)
 
 ```json
-{ "v": 1, "has_full_access": true, "last_seen": 1790000000000, "peak_footprint_bytes": 31457280 }
+{ "v": 1, "has_full_access": true, "last_seen": 1790000000000, "peak_footprint_bytes": 31457280,
+  "footprint_bytes": 20971520 }
 ```
 
-- The keyboard writes this file when it appears and again when it disappears.
+- The keyboard writes this file when it appears, 3 s later if still visible (the at-rest reading), and when it disappears.
+- `footprint_bytes` is `phys_footprint` at the time of writing; `peak_footprint_bytes` is the process's peak. `footprint_bytes` is optional, so files from older keyboards still decode.
 - The app uses it for the setup checklist (keyboard added, Full Access allowed) and to record keyboard memory for SC-004.
 - If the file is missing, the setup step shows "not detected yet: open the LocalFlow keyboard once".
 

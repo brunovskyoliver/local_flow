@@ -7,6 +7,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
   private var model: KeyboardSessionModel!
   private var hosting: UIHostingController<KeyboardView>?
   private let store = HandoffStore.group()
+  private var restReading: DispatchWorkItem?
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -48,10 +49,16 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     self.hosting = hosting
     model.appear()
     writeStatus()
+    // SC-004 "at rest": once the keyboard has settled, before the owner taps anything.
+    let rest = DispatchWorkItem { [weak self] in self?.writeStatus() }
+    restReading = rest
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: rest)
   }
 
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
+    restReading?.cancel()
+    restReading = nil
     model.disappear()
     hosting?.willMove(toParent: nil)
     hosting?.view.removeFromSuperview()
@@ -83,25 +90,14 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     }
   }
 
-  /// SC-004: the keyboard's own peak footprint, for the app's diagnostics screen.
+  /// SC-004: the keyboard's own footprint and peak, for the app's diagnostics screen.
   private func writeStatus() {
     guard hasFullAccess, let store else { return }
+    let footprint = Footprint.read()
     try? store.write(
       KeyboardStatusFile(
         hasFullAccess: true, lastSeen: Handoff.milliseconds(Date()),
-        peakFootprintBytes: Self.peakFootprint()), .keyboardStatus)
-  }
-
-  private static func peakFootprint() -> UInt64 {
-    var info = task_vm_info_data_t()
-    var count = mach_msg_type_number_t(
-      MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
-    let result = withUnsafeMutablePointer(to: &info) {
-      $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-        task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
-      }
-    }
-    return result == KERN_SUCCESS ? UInt64(max(0, info.ledger_phys_footprint_peak)) : 0
+        peakFootprintBytes: footprint.peak, footprintBytes: footprint.current), .keyboardStatus)
   }
 
   // MARK: KeyboardHost

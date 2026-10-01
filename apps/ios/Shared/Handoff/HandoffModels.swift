@@ -109,12 +109,16 @@ struct KeyboardStatusFile: HandoffFile, Equatable {
   var hasFullAccess: Bool
   var lastSeen: Int64
   var peakFootprintBytes: UInt64
+  /// `phys_footprint` when the file was written. Optional so files from older keyboards
+  /// still decode.
+  var footprintBytes: UInt64?
 
   enum CodingKeys: String, CodingKey {
     case v
     case hasFullAccess = "has_full_access"
     case lastSeen = "last_seen"
     case peakFootprintBytes = "peak_footprint_bytes"
+    case footprintBytes = "footprint_bytes"
   }
 }
 

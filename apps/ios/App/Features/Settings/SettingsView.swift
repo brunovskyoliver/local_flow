@@ -4,6 +4,7 @@ struct SettingsView: View {
   let model: PhoneModelState
   let orphans: OrphanSpoolRecovery
   @AppStorage(IdleTimeout.key) private var idleTimeout = IdleTimeout.default.rawValue
+  @AppStorage(DiagnosticsView.enabledKey) private var diagnostics = false
   @State private var orphanPresent = false
 
   var body: some View {
@@ -32,6 +33,12 @@ struct SettingsView: View {
                 orphanPresent = orphans.hasOrphan
               }
             }
+          }
+        }
+        Section {
+          Toggle("Diagnostics", isOn: $diagnostics)
+          if diagnostics {
+            NavigationLink("Memory") { DiagnosticsView() }
           }
         }
       }

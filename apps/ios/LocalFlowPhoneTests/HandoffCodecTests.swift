@@ -36,6 +36,26 @@ final class HandoffCodecTests: XCTestCase {
     XCTAssertEqual(store.read(KeyboardStatusFile.self, .keyboardStatus), status)
   }
 
+  func testKeyboardStatusCarriesTheCurrentFootprintAndReadsOlderFiles() throws {
+    let status = KeyboardStatusFile(
+      hasFullAccess: true, lastSeen: 8, peakFootprintBytes: 31_457_280,
+      footprintBytes: 20_971_520)
+    let json = try XCTUnwrap(String(data: try JSONEncoder().encode(status), encoding: .utf8))
+    XCTAssertTrue(json.contains("\"footprint_bytes\":20971520"))
+    XCTAssertEqual(try JSONDecoder().decode(KeyboardStatusFile.self, from: Data(json.utf8)), status)
+
+    let older = #"{"v":1,"has_full_access":true,"last_seen":8,"peak_footprint_bytes":31457280}"#
+    let decoded = try JSONDecoder().decode(KeyboardStatusFile.self, from: Data(older.utf8))
+    XCTAssertNil(decoded.footprintBytes)
+    XCTAssertEqual(decoded.peakFootprintBytes, 31_457_280)
+  }
+
+  func testFootprintReadsThisProcess() {
+    let reading = Footprint.read()
+    XCTAssertGreaterThan(reading.current, 0)
+    XCTAssertGreaterThanOrEqual(reading.peak, reading.current)
+  }
+
   func testWireKeysAreSnakeCase() throws {
     let result = ResultFile(
       requestID: UUID(), dictationID: UUID(), text: "x", limitReached: false, createdAt: 1)
