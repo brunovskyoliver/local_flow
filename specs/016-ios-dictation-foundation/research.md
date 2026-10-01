@@ -140,6 +140,8 @@ If the spike measures SwiftUI above 30 MB at rest, the keyboard switches to UIKi
 
 **Spike result (2026-10-01)**: the footprint was not measured. The keyboard stays SwiftUI; T059 measures it (SC-004) and applies the 30 MB rule.
 
+**Measured (2026-10-01, T059)**: keyboard peak 9.9 MB, last report 8.9 MB, with the SwiftUI keyboard at rest (`acceptance/keyboard.md`). Under 30 MB, so the keyboard stays SwiftUI. SC-004 (50 dictations) is still to run.
+
 ## R12. Insertion rules in the keyboard (FR-006, FR-007)
 
 **Decision**:
