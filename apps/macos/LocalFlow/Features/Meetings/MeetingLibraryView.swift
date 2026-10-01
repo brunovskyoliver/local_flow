@@ -210,6 +210,8 @@ struct MeetingLibraryView: View {
         NoteListRow(
           row: row, coordinator: coordinator, focusedID: $focusedID,
           deletionPending: model.isDeletionPending(row.id),
+          waitingForServer: model.waitsForServer(row.id),
+          runOnThisMac: { Task { await model.runLocally(row.id) } },
           open: { Task { await model.open(row.id) } },
           delete: { deleting = row },
           hoverStarted: { previewRequestID = row.id })
@@ -255,6 +257,9 @@ private struct NoteListRow: View {
   let coordinator: MeetingCoordinator
   var focusedID: FocusState<UUID?>.Binding
   let deletionPending: Bool
+  /// Feature 018: the meeting's work waits for the user's server.
+  var waitingForServer = false
+  var runOnThisMac: () -> Void = {}
   let open: () -> Void
   let delete: () -> Void
   let hoverStarted: () -> Void
@@ -281,6 +286,9 @@ private struct NoteListRow: View {
           if let status = coordinator.status, coordinator.activeMeetingID == row.id {
             LiveRecordingBadge(state: status.state, elapsed: coordinator.elapsed)
               .padding(.trailing, 6)
+          } else if waitingForServer {
+            Text(MeetingLibraryViewModel.waitingText)
+              .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
           } else if row.state != .completed {
             Text(row.state.badgeText).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
           }
@@ -292,6 +300,12 @@ private struct NoteListRow: View {
       }
       .buttonStyle(.plain).focused(focusedID, equals: row.id)
       .accessibilityIdentifier("notetaker.note.\(row.id)")
+      if waitingForServer {
+        Button("Run on this Mac", action: runOnThisMac)
+          .font(.flow(size: 12))
+          .accessibilityLabel("Run \(row.displayTitle) on this Mac")
+          .accessibilityIdentifier("notetaker.runOnThisMac.\(row.id)")
+      }
       NoteOverflowMenu(canDelete: row.state.isTerminal, delete: delete)
         .padding(.horizontal, 8)
         .opacity(highlighted ? 1 : 0)

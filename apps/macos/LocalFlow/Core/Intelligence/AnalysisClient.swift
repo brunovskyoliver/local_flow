@@ -19,6 +19,8 @@ enum SummaryServer: String, CaseIterable, Identifiable, Sendable {
   static let primaryURLHeader = "X-LocalFlow-Primary-URL"
   static let primaryModelHeader = "X-LocalFlow-Primary-Model"
   static let primaryKeyHeader = "X-LocalFlow-Primary-Key"
+  /// Feature 018 (R9): flowd uses the primary alone, without its local fallback.
+  static let primaryOnlyHeader = "X-LocalFlow-Primary-Only"
 
   /// flowd's primary-backend headers for the current choice; empty for This Mac
   /// or an incomplete Remote entry. An analysis run reads them once, at
@@ -129,7 +131,9 @@ final class AnalysisClient: AnalysisTransporting, @unchecked Sendable {
 
   /// Captures the summary-server headers once, at admission, so every request
   /// of a run goes to the same primary backend even if Settings change mid-run.
+  /// An endpoint that already carries its headers (Feature 018 routing) keeps them.
   func pinned(_ endpoint: RewriteEndpoint) -> RewriteEndpoint {
+    guard endpoint.summaryHeaders == nil else { return endpoint }
     var pinned = endpoint
     pinned.summaryHeaders = SummaryServer.headers(defaults: defaults, credentials: credentials)
     return pinned

@@ -1,3 +1,4 @@
+import LocalFlowSpeech
 import XCTest
 
 @testable import LocalFlow
@@ -114,5 +115,125 @@ final class SpeechWorkerFramingTests: XCTestCase {
     XCTAssertThrowsError(try WorkerFraming.read(reader(frame.prefix(frame.count - 1))))
     XCTAssertThrowsError(
       try WorkerFraming.encode(["type": "x", "pad": String(repeating: "a", count: 65_537)]))
+  }
+
+  // MARK: Feature 018: the meeting worker (contracts/meeting-worker-ipc.md)
+
+  private func job(
+    _ type: String, count: Int, payloadSamples: Int? = nil, extra: [String: Any] = [:]
+  )
+    throws -> Data
+  {
+    var header: [String: Any] = ["type": type, "job": 7, "sample_count": count]
+    header.merge(extra) { $1 }
+    return try WorkerFraming.encode(
+      header, payload: Data(count: (payloadSamples ?? count) * 4))
+  }
+
+  /// Each meeting job kind has its own sample range; outside it the frame is fatal.
+  func testMeetingJobSampleRanges() throws {
+    let ranges: [(String, ClosedRange<Int>)] = [
+      ("transcribe", 1...1_920_000), ("diarize", 1...9_600_000), ("embed", 48_000...320_000),
+    ]
+    for (type, range) in ranges {
+      XCTAssertEqual(WorkerFraming.sampleRange(type), range, type)
+      let low = try XCTUnwrap(
+        try WorkerFraming.read(reader(job(type, count: range.lowerBound))), type)
+      XCTAssertEqual(low.payload.count, range.lowerBound * 4, type)
+      for count in [range.lowerBound - 1, range.upperBound + 1] {
+        XCTAssertThrowsError(
+          try WorkerFraming.read(reader(job(type, count: count, payloadSamples: 0))),
+          "\(type) \(count)"
+        ) { XCTAssertEqual($0 as? WorkerFraming.Failure, .sampleCountOutOfRange) }
+      }
+      XCTAssertThrowsError(
+        try WorkerFraming.read(
+          reader(job(type, count: range.lowerBound, payloadSamples: range.lowerBound + 1))),
+        type
+      ) { XCTAssertEqual($0 as? WorkerFraming.Failure, .payloadLengthMismatch) }
+    }
+    // A full transcription window, with its options.
+    let window = try XCTUnwrap(
+      try WorkerFraming.read(
+        reader(
+          job(
+            "transcribe", count: 1_920_000,
+            extra: [
+              "language": "auto", "vocabulary_terms": ["SAPGUI"],
+              "pipeline": "per_track_fixed1920000_turbo_level_v2",
+            ]))))
+    XCTAssertEqual(window.header["vocabulary_terms"] as? [String], ["SAPGUI"])
+    XCTAssertEqual(window.integer("sample_count"), 1_920_000)
+    let diarize = try XCTUnwrap(
+      try WorkerFraming.read(reader(job("diarize", count: 16_000, extra: ["num_speakers": 1]))))
+    XCTAssertEqual(diarize.integer("num_speakers"), 1)
+  }
+
+  /// What the meeting worker sends: every message flowd reads from it, round-tripped.
+  func testMeetingWorkerMessagesRoundTrip() throws {
+    let identity: [String: Any] = [
+      "engine": "whisper.cpp", "model_id": "m", "model_revision": "r",
+      "manifest_hash": String(repeating: "a", count: 64),
+    ]
+    let messages: [[String: Any]] =
+      [
+        MeetingWorkerMessages.ready(
+          transcription: identity, diarization: identity,
+          voice: identity.merging(["dimension": 256]) { $1 }),
+        MeetingWorkerMessages.unavailable(missing: ["whisper-large-v3-turbo", "helper"]),
+        MeetingWorkerMessages.result(
+          job: 3, kind: "embed", result: ["vector": [Float(0.5)], "speech_seconds": 3.5],
+          processingMs: 12),
+        MeetingWorkerMessages.state("loading"),
+      ] + MeetingWorkerMessages.errorCodes.map { MeetingWorkerMessages.error(job: 4, code: $0) }
+    XCTAssertEqual(
+      MeetingWorkerMessages.errorCodes,
+      ["model_unavailable", "invalid_audio", "repetition", "failed"])
+    for message in messages {
+      let read = try XCTUnwrap(try WorkerFraming.read(reader(WorkerFraming.encode(message))))
+      XCTAssertEqual(read.type, message["type"] as? String)
+      XCTAssertTrue(read.payload.isEmpty)
+    }
+    let ready = messages[0]
+    XCTAssertEqual(ready["protocol"] as? Int, 1)
+    XCTAssertEqual(
+      ((ready["models"] as? [String: Any])?["voice"] as? [String: Any])?["dimension"] as? Int, 256)
+    XCTAssertEqual(messages[1]["reason"] as? String, "model_missing")
+  }
+
+  /// Results are compact: a Float written as its shortest decimal reads back as the same
+  /// Float, so a centroid costs about 11 bytes per value, not 20.
+  func testMeetingResultFloatsRoundTripExactly() throws {
+    let values: [Float] = [0.012345679, -0.70710677, 1, 0, 3.4028235e38]
+    let encoded = try WorkerFraming.encode([
+      "type": "x", "v": MeetingWorkerMessages.compact(values),
+    ])
+    let read = try XCTUnwrap(try WorkerFraming.read(reader(encoded)))
+    let decoded = (read.header["v"] as? [NSNumber])?.map(\.floatValue)
+    XCTAssertEqual(decoded, values)
+    XCTAssertLessThan(encoded.count, 80)
+  }
+
+  func testDiarizationAndTranscriptionResultsMatchTheClientDecoder() throws {
+    let diarized = MeetingWorkerMessages.diarization(
+      DiarizationWindowResult(
+        turns: [.init(cluster: 0, startSeconds: 0.5, endSeconds: 2, quality: 0.9)],
+        centroids: [0: [Float](repeating: 0.0625, count: 256)]))
+    guard case .diarization(let result) = try RemoteMeetingResult.decode(kind: .diarize, diarized)
+    else { return XCTFail("not a diarization") }
+    XCTAssertEqual(result.turns.first?.endSeconds, 2)
+    XCTAssertEqual(result.centroids[0]?.count, 256)
+    let transcribed = MeetingWorkerMessages.transcription(
+      TranscriptionWindow(text: "ahoj", tokens: [.init(text: "ahoj", start: 0, end: 0.4)]),
+      language: "sk")
+    guard
+      case .transcription(let window, let language, let depth) = try RemoteMeetingResult.decode(
+        kind: .transcribe, transcribed)
+    else { return XCTFail("not a transcription") }
+    XCTAssertEqual(window.text, "ahoj")
+    XCTAssertEqual(language, "sk")
+    XCTAssertEqual(depth, 0)
+    // No speech in a voice region travels as an empty vector.
+    XCTAssertEqual(MeetingWorkerMessages.noSpeech["vector"] as? [Float], [])
   }
 }

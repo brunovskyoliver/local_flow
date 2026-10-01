@@ -670,3 +670,126 @@ func TestSchedulerTrySubmitWaitsForRoom(t *testing.T) {
 		}
 	}
 }
+
+// live submits one live-preview window for user and returns its answer.
+func live(s *Scheduler, ctx context.Context, user int64, tag int) chan answer {
+	out := make(chan answer, 1)
+	go func() {
+		r, err := s.Live(ctx, user, 100+user, []float32{float32(tag), 0})
+		out <- answer{result: r, err: err}
+	}()
+	return out
+}
+
+func waitLive(t *testing.T, s *Scheduler, n int) {
+	t.Helper()
+	eventually(t, "live windows waiting", func() bool { return s.LiveWaiting() == n })
+}
+
+// Dictation windows run before live-preview windows; inside each class
+// users are served round robin (Feature 018 R3, R7).
+func TestSchedulerDictationBeforeLive(t *testing.T) {
+	s, f, _ := startScheduler(t)
+	a := s.Open(1, 10)
+	submit(t, a, 1, 0)
+	first := f.next(t)
+	l2 := live(s, context.Background(), 2, 200)
+	waitLive(t, s, 1)
+	l3 := live(s, context.Background(), 3, 300)
+	waitLive(t, s, 2)
+	d := s.Open(4, 40)
+	submit(t, d, 4, 0)
+	submit(t, a, 1, 1)
+	first.ok()
+	// Both dictation windows, round robin, then the live windows in order.
+	for _, want := range []int{400, 101, 200, 300} {
+		c := f.next(t)
+		if c.id() != want {
+			t.Fatalf("ran %d, want %d", c.id(), want)
+		}
+		c.ok()
+	}
+	for _, l := range []chan answer{l2, l3} {
+		if a := <-l; a.err != nil || a.result.RecognitionMS != 3 {
+			t.Fatalf("%+v", a)
+		}
+	}
+}
+
+// At most one live window per user waits; a second is busy. A running one
+// does not count.
+func TestSchedulerLiveOneWaitingPerUser(t *testing.T) {
+	s, f, _ := startScheduler(t)
+	running := live(s, context.Background(), 1, 1)
+	c := f.next(t)
+	waiting := live(s, context.Background(), 1, 2)
+	waitLive(t, s, 1)
+	if _, err := s.Live(context.Background(), 1, 101, []float32{3}); !errors.Is(err, ErrBusy) {
+		t.Fatal(err)
+	}
+	// Another user is not affected.
+	other := live(s, context.Background(), 2, 4)
+	waitLive(t, s, 2)
+	c.ok()
+	for _, want := range []int{2, 4} {
+		c := f.next(t)
+		if c.id() != want {
+			t.Fatalf("ran %d, want %d", c.id(), want)
+		}
+		c.ok()
+	}
+	for _, l := range []chan answer{running, waiting, other} {
+		if a := <-l; a.err != nil {
+			t.Fatal(a.err)
+		}
+	}
+	if _, err := s.Live(context.Background(), 1, 101, nil); !errors.Is(err, ErrInvalidRecognition) {
+		t.Fatal(err)
+	}
+}
+
+// A live window whose caller gives up leaves the queue at once and never
+// reaches the worker; live windows never hold back a rewrite.
+func TestSchedulerLiveCancelAndRewriteGate(t *testing.T) {
+	s, f, _ := startScheduler(t)
+	a := s.Open(1, 10)
+	submit(t, a, 1, 0)
+	first := f.next(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	l := live(s, ctx, 2, 200)
+	waitLive(t, s, 1)
+	if err := s.WaitForNoDictationWindows(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if got := <-l; !errors.Is(got.err, context.Canceled) {
+		t.Fatal(got.err)
+	}
+	waitLive(t, s, 0)
+	first.ok()
+	f.none(t)
+}
+
+// Run returning answers waiting live windows with worker_unavailable.
+func TestSchedulerLiveOnStop(t *testing.T) {
+	f := newFakeRecognizer()
+	s := NewScheduler(SchedulerConfig{Recognizer: f})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); s.Run(ctx) }()
+	running := live(s, context.Background(), 1, 1)
+	c := f.next(t)
+	waiting := live(s, context.Background(), 2, 2)
+	waitLive(t, s, 1)
+	cancel()
+	c.fail(ErrWorkerUnavailable)
+	for _, l := range []chan answer{running, waiting} {
+		if a := <-l; !errors.Is(a.err, ErrWorkerUnavailable) {
+			t.Fatal(a.err)
+		}
+	}
+	<-done
+	if _, err := s.Live(context.Background(), 1, 1, []float32{1}); !errors.Is(err, ErrWorkerUnavailable) {
+		t.Fatal(err)
+	}
+}

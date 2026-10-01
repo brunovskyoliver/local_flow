@@ -134,6 +134,52 @@ final class ServerRoutingTests: XCTestCase {
     XCTAssertNil(self.routing(state: .pending).rewriteChannelOrigin)
   }
 
+  /// T054 (US4): with the switch on, This Mac means loopback flowd and its model and
+  /// Custom the stored rewrite address; with the switch off the stored address stays.
+  func testRewriteOverridesPickTheirEndpoint() {
+    let stored = "https://rewrite.example.com"
+    var routing = routing()
+    XCTAssertEqual(routing.rewriteEndpoint(stored), stored, "served over the channel")
+    routing.rewrite = .thisMac
+    XCTAssertEqual(routing.rewriteEndpoint(stored), LocalAIInstaller.rewriteEndpoint)
+    XCTAssertTrue(routing.localRewriteModelWanted(rewriteEndpoint: stored))
+    XCTAssertTrue(routing.servedByServer(.summaries), "other services stay on the server")
+    routing.rewrite = .custom
+    routing.customRewrite = true
+    XCTAssertEqual(routing.rewriteEndpoint(stored), stored)
+    XCTAssertFalse(routing.localRewriteModelWanted(rewriteEndpoint: stored))
+    routing.useForEverything = false
+    routing.rewrite = .thisMac
+    XCTAssertEqual(routing.rewriteEndpoint(stored), stored, "switch off: Feature 014")
+  }
+
+  /// T052 (US4, R9): This Mac and Custom summaries and what each needs locally.
+  func testSummaryOverridesAndTheLocalModel() {
+    let loopback = LocalAIInstaller.rewriteEndpoint
+    var routing = routing()
+    XCTAssertFalse(routing.localRewriteModelWanted(rewriteEndpoint: loopback))
+    routing.summaries = .thisMac
+    XCTAssertEqual(routing.path(for: .summaries), .thisMac)
+    XCTAssertTrue(
+      routing.localRewriteModelWanted(rewriteEndpoint: "https://x.example.com"),
+      "summaries on this Mac need the local model")
+    routing.summaries = .custom
+    XCTAssertEqual(routing.path(for: .summaries), .thisMac, "an incomplete custom server")
+    routing.customSummaries = true
+    XCTAssertEqual(routing.path(for: .summaries), .custom)
+    XCTAssertTrue(routing.summariesFallBackToServer)
+    XCTAssertFalse(
+      routing.localRewriteModelWanted(rewriteEndpoint: loopback),
+      "a custom server is primary-only, then the channel")
+    routing.consentCurrent = false
+    XCTAssertFalse(routing.summariesFallBackToServer)
+    routing.consentCurrent = true
+    routing.useForEverything = false
+    XCTAssertFalse(routing.summariesFallBackToServer, "switch off: this Mac, as before")
+    XCTAssertTrue(routing.localRewriteModelWanted(rewriteEndpoint: loopback))
+    XCTAssertFalse(routing.localRewriteModelWanted(rewriteEndpoint: "https://x.example.com"))
+  }
+
   @MainActor func testPreferencesFeedTheSnapshot() {
     let suite = "LocalFlow-routing-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!

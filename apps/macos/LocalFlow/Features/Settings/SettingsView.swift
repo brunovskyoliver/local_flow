@@ -23,7 +23,11 @@ struct SettingsView: View {
         Text("Settings").font(.flow(size: 26, weight: .medium)).tracking(-0.4)
         if let server = model.server {
           sectionTitle("Server")
-          settingsGroup { ServerSettingsView(model: server) }
+          settingsGroup {
+            ServerSettingsView(
+              model: server, rewriteFields: { rewriteServerFields },
+              summaryFields: { summaryServerFields })
+          }
         }
         sectionTitle("General")
         settingsGroup {
@@ -177,43 +181,10 @@ struct SettingsView: View {
           .help(SettingsViewModel.rewriteModeDefinition(model.rewriteMode))
           .accessibilityHint(SettingsViewModel.rewriteModeDefinition(model.rewriteMode))
         }
-        // Feature 018 FR-005: no address, secret or connection test while the server serves it.
+        // Feature 018 FR-005: with the switch on these fields live in Server › Advanced.
         if !rewriteServed {
           separator
-          VStack(alignment: .leading, spacing: 8) {
-            Text("Server URL").font(.flow(size: 12, weight: .medium))
-              .foregroundStyle(SottoPalette.muted)
-            RewriteInputSurface(symbol: "link") {
-              TextField("http://127.0.0.1:8080", text: $model.rewriteEndpoint)
-                .accessibilityLabel("Rewrite server endpoint")
-                .accessibilityIdentifier("settings.rewriteEndpoint")
-            }
-          }.padding(.top, 18).padding(.bottom, 14)
-          rewriteCredentialControls
-          if model.showsInsecureOverride {
-            separator
-            SettingsRow("Allow unencrypted connection") {
-              Toggle(
-                "Allow unencrypted connection to this server (insecure)",
-                isOn: $model.rewriteInsecureOverride
-              )
-              .labelsHidden().toggleStyle(.switch)
-              .accessibilityIdentifier("settings.rewriteInsecureOverride")
-            }
-          }
-          separator
-          SettingsRow("Connection", detail: model.connectionResult?.statusText) {
-            Button(model.connectionTesting ? "Testing…" : "Test connection") {
-              Task { await model.testConnection() }
-            }
-            .disabled(model.connectionTesting || model.rewriteSettings?.isEndpointValid != true)
-            .accessibilityIdentifier("settings.rewriteTestConnection")
-          }
-          if let analysis = model.analysisStatus {
-            Text(analysis).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .accessibilityIdentifier("settings.analysisStatus")
-          }
+          rewriteServerFields
         }
         separator
         DisclosureGroup("Advanced") {
@@ -253,6 +224,45 @@ struct SettingsView: View {
             .announcement: warning, .priority: NSAccessibilityPriorityLevel.medium.rawValue,
           ])
       }
+    }
+  }
+
+  /// The rewrite server's address, secret, override and test: in Rewriting, or in
+  /// Server › Advanced › Custom server while the switch is on.
+  @ViewBuilder private var rewriteServerFields: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Server URL").font(.flow(size: 12, weight: .medium))
+        .foregroundStyle(SottoPalette.muted)
+      RewriteInputSurface(symbol: "link") {
+        TextField("http://127.0.0.1:8080", text: $model.rewriteEndpoint)
+          .accessibilityLabel("Rewrite server endpoint")
+          .accessibilityIdentifier("settings.rewriteEndpoint")
+      }
+    }.padding(.top, 18).padding(.bottom, 14)
+    rewriteCredentialControls
+    if model.showsInsecureOverride {
+      separator
+      SettingsRow("Allow unencrypted connection") {
+        Toggle(
+          "Allow unencrypted connection to this server (insecure)",
+          isOn: $model.rewriteInsecureOverride
+        )
+        .labelsHidden().toggleStyle(.switch)
+        .accessibilityIdentifier("settings.rewriteInsecureOverride")
+      }
+    }
+    separator
+    SettingsRow("Connection", detail: model.connectionResult?.statusText) {
+      Button(model.connectionTesting ? "Testing…" : "Test connection") {
+        Task { await model.testConnection() }
+      }
+      .disabled(model.connectionTesting || model.rewriteSettings?.isEndpointValid != true)
+      .accessibilityIdentifier("settings.rewriteTestConnection")
+    }
+    if let analysis = model.analysisStatus {
+      Text(analysis).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("settings.analysisStatus")
     }
   }
 
@@ -344,51 +354,57 @@ struct SettingsView: View {
           }
           if preferences.summaryServer == .remote {
             separator
-            VStack(alignment: .leading, spacing: 14) {
-              fieldLabel("Server URL")
-              RewriteInputSurface(symbol: "link") {
-                TextField("http://host:8000/v1", text: $preferences.summaryServerURL)
-                  .accessibilityIdentifier("settings.summaryServerURL")
-              }
-              fieldLabel("Model")
-              RewriteInputSurface(symbol: "cpu") {
-                TextField("Model", text: $preferences.summaryServerModel)
-                  .accessibilityIdentifier("settings.summaryServerModel")
-              }
-              fieldLabel("API key")
-              if model.summaryKeySaved && !editingSummaryKey {
-                HStack(spacing: 8) {
-                  RewriteInputSurface(symbol: "key") {
-                    Text("••••••••••••").tracking(2)
-                      .frame(maxWidth: .infinity, alignment: .leading)
-                      .accessibilityLabel("API key saved")
-                  }
-                  Button("Edit") { editingSummaryKey = true }
-                }
-              } else {
-                HStack(spacing: 8) {
-                  RewriteInputSurface(symbol: "key") {
-                    SecureField("API key", text: $summaryKeyDraft)
-                      .accessibilityIdentifier("settings.summaryServerKey")
-                      .onSubmit(saveSummaryKey)
-                  }
-                  Button("Save", action: saveSummaryKey).disabled(summaryKeyDraft.isEmpty)
-                  if model.summaryKeySaved {
-                    Button("Cancel") {
-                      summaryKeyDraft = ""
-                      editingSummaryKey = false
-                    }
-                  }
-                }
-              }
-              if let error = model.summaryKeyError {
-                Text(error).font(.flow(size: 12)).foregroundStyle(SottoPalette.warning)
-              }
-            }.padding(.vertical, 18)
+            summaryServerFields
           }
         }
       }
     }
+  }
+
+  /// The custom summaries server's address, model and key: in Summaries, or in
+  /// Server › Advanced › Custom server while the switch is on.
+  private var summaryServerFields: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      fieldLabel("Server URL")
+      RewriteInputSurface(symbol: "link") {
+        TextField("http://host:8000/v1", text: $preferences.summaryServerURL)
+          .accessibilityIdentifier("settings.summaryServerURL")
+      }
+      fieldLabel("Model")
+      RewriteInputSurface(symbol: "cpu") {
+        TextField("Model", text: $preferences.summaryServerModel)
+          .accessibilityIdentifier("settings.summaryServerModel")
+      }
+      fieldLabel("API key")
+      if model.summaryKeySaved && !editingSummaryKey {
+        HStack(spacing: 8) {
+          RewriteInputSurface(symbol: "key") {
+            Text("••••••••••••").tracking(2)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .accessibilityLabel("API key saved")
+          }
+          Button("Edit") { editingSummaryKey = true }
+        }
+      } else {
+        HStack(spacing: 8) {
+          RewriteInputSurface(symbol: "key") {
+            SecureField("API key", text: $summaryKeyDraft)
+              .accessibilityIdentifier("settings.summaryServerKey")
+              .onSubmit(saveSummaryKey)
+          }
+          Button("Save", action: saveSummaryKey).disabled(summaryKeyDraft.isEmpty)
+          if model.summaryKeySaved {
+            Button("Cancel") {
+              summaryKeyDraft = ""
+              editingSummaryKey = false
+            }
+          }
+        }
+      }
+      if let error = model.summaryKeyError {
+        Text(error).font(.flow(size: 12)).foregroundStyle(SottoPalette.warning)
+      }
+    }.padding(.vertical, 18)
   }
 
   private func fieldLabel(_ title: String) -> some View {

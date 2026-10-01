@@ -51,6 +51,9 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   @ObservationIgnored private let recorder: ResourceRecorder?
   @ObservationIgnored private var rssTask: Task<Void, Never>?
   static let rssInterval: Duration = .seconds(10)
+  /// Feature 018 (FR-031): meetings whose run waits for the server.
+  private var serverWaits = ServerWaits()
+  var waitingForServer: Set<UUID> { serverWaits.ids }
   @ObservationIgnored private var queue: [UUID] = [] {
     didSet { demandDidChange() }
   }
@@ -296,7 +299,16 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     rssTask = nil
     let echoProfile = activeEchoProfile
     activeEchoProfile = nil
+    if case .waitingForServer = outcome {
+      waitForServer(id)
+    } else {
+      serverWaits.remove(id)
+    }
     switch outcome {
+    case .waitingForServer:
+      // The run is pending again; it re-enters the queue after the backoff. The echo
+      // profile is kept for it.
+      if let echoProfile, echoProfiles[id] == nil { keepEchoProfile(echoProfile, for: id) }
     case .preempted, .busy:
       // Back to the head; the model is someone else's for now. The retry gets the
       // same echo profile, unless a newer pass handed one over meanwhile.
@@ -330,6 +342,30 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
     }
     cancelled.remove(id)
     await refresh(id)
+    pump()
+  }
+
+  private func waitForServer(_ id: UUID) {
+    serverWaits.wait(id, clock: clock) { [weak self] in
+      guard let self else { return }
+      self.serverWaits.retried(id)
+      if !self.queue.contains(id), self.activeMeetingID != id { self.queue.append(id) }
+      self.pump()
+    }
+  }
+
+  /// A channel opened or the network changed: waiting runs retry now.
+  func serverMayBeReachable() {
+    for id in serverWaits.reachable() where !queue.contains(id) && activeMeetingID != id {
+      queue.append(id)
+    }
+    pump()
+  }
+
+  /// **Run on this Mac**: the meeting is already marked; its run goes next, locally.
+  func runLocally(_ id: UUID) {
+    guard serverWaits.remove(id) else { return }
+    if !queue.contains(id), activeMeetingID != id { queue.insert(id, at: 0) }
     pump()
   }
 

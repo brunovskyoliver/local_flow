@@ -139,6 +139,40 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
+  /// Feature 018: **Run on this Mac**. One way: the meeting's remaining work never goes
+  /// back to the server.
+  func setRunLocally(meetingID: UUID, now: Int64) throws {
+    try database.write { db in
+      try db.execute(
+        sql: "UPDATE meetings SET run_locally=1, updated_at=? WHERE id=?",
+        arguments: [now, meetingID.uuidString])
+    }
+  }
+
+  /// Feature 018: where the meeting's accepted transcript, speaker labels and summary
+  /// were produced (`inference_path` of each), nil where there is none yet.
+  func provenance(meetingID: UUID) throws -> MeetingProvenance {
+    try database.read { db in
+      let id = meetingID.uuidString
+      func path(_ sql: String) throws -> String? {
+        try String.fetchOne(db, sql: sql, arguments: [id])
+      }
+      return MeetingProvenance(
+        transcript: try path(
+          "SELECT inference_path FROM meeting_transcriptions WHERE meeting_id=? AND state='final'"),
+        speakers: try path(
+          """
+          SELECT r.inference_path FROM meeting_diarization m
+          JOIN diarization_runs r ON r.id=m.accepted_run_id WHERE m.meeting_id=?
+          """),
+        summary: try path(
+          """
+          SELECT r.inference_path FROM meeting_analysis m
+          JOIN analysis_runs r ON r.id=m.accepted_run_id WHERE m.meeting_id=?
+          """))
+    }
+  }
+
   // MARK: Segments
 
   func openSegment(_ segment: MeetingSegment, now: Int64) throws -> MeetingSegment {
@@ -760,7 +794,7 @@ actor MeetingStore: MeetingStoring {
   static func meeting(_ row: Row) -> Meeting? {
     guard let id = UUID(uuidString: row["id"]), let state = MeetingState(rawValue: row["state"])
     else { return nil }
-    return Meeting(
+    var meeting = Meeting(
       id: id, state: state, title: row["title"], createdAt: row["created_at"],
       startedAt: row["started_at"], stoppedAt: row["stopped_at"], completedAt: row["completed_at"],
       wallClockMs: row["wall_clock_ms"], recordedMs: row["recorded_ms"],
@@ -768,6 +802,8 @@ actor MeetingStore: MeetingStoring {
       failureReason: (row["failure_reason"] as String?).flatMap(MeetingFailureReason.init),
       failureDetail: row["failure_detail"], updatedAt: row["updated_at"], revision: row["revision"],
       language: MeetingLanguage(storedValue: row["language"]))
+    meeting.runLocally = (row["run_locally"] as Bool?) ?? false
+    return meeting
   }
 
   static func track(_ row: Row) -> MeetingTrack? {

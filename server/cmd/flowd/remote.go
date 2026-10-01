@@ -22,10 +22,14 @@ import (
 // remoteConfig holds the remote serving flags (contracts/flowd-cli.md).
 // Remote serving is off when listen is empty.
 type remoteConfig struct {
-	listen          string
-	dataDir         string
-	speechWorker    string
-	speechModels    string
+	listen       string
+	dataDir      string
+	speechWorker string
+	speechModels string
+	// The meeting worker runs as <speechWorker> meeting --models
+	// <meetingModels> --helper <meetingHelper> (Feature 018).
+	meetingModels   string
+	meetingHelper   string
 	appleAudience   []string
 	googleClientIDs []string
 	dev             bool
@@ -70,12 +74,22 @@ func (r *remoteConfig) validate(mainListen string, appleAudience, googleClientID
 	if r.speechModels == "" {
 		r.speechModels = filepath.Join(r.dataDir, "Models")
 	}
-	if r.speechWorker == "" {
+	if r.meetingModels == "" {
+		r.meetingModels = r.speechModels
+	}
+	for _, path := range []struct {
+		value *string
+		flag  string
+		name  string
+	}{{&r.speechWorker, "--speech-worker", "flowd-speech"}, {&r.meetingHelper, "--meeting-helper", "localflow-whisper-engine"}} {
+		if *path.value != "" {
+			continue
+		}
 		executable, err := os.Executable()
 		if err != nil {
-			return errors.New("cannot locate flowd; pass --speech-worker")
+			return errors.New("cannot locate flowd; pass " + path.flag)
 		}
-		r.speechWorker = filepath.Join(filepath.Dir(executable), "flowd-speech")
+		*path.value = filepath.Join(filepath.Dir(executable), path.name)
 	}
 	return nil
 }
@@ -152,7 +166,7 @@ func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remo
 		store.Close()
 		return nil, err
 	}
-	operations, stopOperations, err := remoteOperations(ctx, r, store, s.watcher, logger)
+	operations, meetingCapabilities, stopOperations, err := remoteOperations(ctx, r, store, s.watcher, logger)
 	if err != nil {
 		s.watcher.Close()
 		store.Close()
@@ -161,7 +175,7 @@ func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remo
 	s.stopOperations = stopOperations
 	s.listener = remote.NewListener(remote.Config{
 		Identity: identity, Accounts: s.watcher, ServerVersion: rewrite.ServerVersion, Logger: logger,
-		Operations: operations,
+		Operations: operations, MeetingCapabilities: meetingCapabilities,
 		// cross_user_attempt rows (Feature 014 T085); content-free.
 		Audit: func(entry accounts.AuditEntry) {
 			if err := store.Audit(context.Background(), entry); err != nil {
@@ -205,24 +219,25 @@ func (s *remoteServer) shutdown(ctx context.Context) {
 }
 
 // remoteOperations merges the operations of each hello purpose: enrollment and
-// refresh (remote_ops_accounts.go) and the session channel's dictation and rewrite
-// (remote_ops_session.go). The returned stop function releases what they own.
+// refresh (remote_ops_accounts.go) and the session channel's operations
+// (remote_ops_session.go), with the meeting worker's live capabilities. The
+// returned stop function releases what they own.
 func remoteOperations(ctx context.Context, r remoteConfig, store *accounts.Store,
-	watcher *accounts.Watcher, logger *log.Logger) (remote.Operations, func(), error) {
+	watcher *accounts.Watcher, logger *log.Logger) (remote.Operations, func() ([]string, *remote.CapabilityModels), func(), error) {
 	operations := remote.Operations{}
 	accountOps, err := accountOperations(r, store, watcher, logger)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for purpose, starts := range accountOps {
 		operations[purpose] = starts
 	}
-	session, stop, err := sessionOperations(ctx, r, store, watcher, logger)
+	session, meetingCapabilities, stop, err := sessionOperations(ctx, r, store, watcher, logger)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(session) > 0 {
 		operations[remote.PurposeSession] = session
 	}
-	return operations, stop, nil
+	return operations, meetingCapabilities, stop, nil
 }

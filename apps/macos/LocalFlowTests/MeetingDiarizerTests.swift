@@ -439,6 +439,45 @@ final class MeetingDiarizerTests: XCTestCase {
     XCTAssertFalse(leased)
   }
 
+  /// Feature 018 T078: a server that cannot take a window leaves the run pending for
+  /// the retry, recorded on the server path with the server's model.
+  func testABusyServerLeavesTheRunPendingForTheRetry() async throws {
+    struct BusyServer: DiarizationRuntime {
+      func diarize(_ request: DiarizationWindowRequest) async throws -> DiarizationWindowResult {
+        throw RemoteMeetingWaiting(code: "busy")
+      }
+      func shutdown() async {}
+    }
+    let local = FakeDiarizationRuntime(scripts: threeSpeakers)
+    let localLifecycle = ModelLifecycleCoordinator(
+      diarizationFactory: { local }, factory: { FakeTranscriptionRuntime() })
+    let remote = ModelLifecycleCoordinator(
+      diarizationFactory: { BusyServer() }, factory: { FakeTranscriptionRuntime() })
+    let diarizer = MeetingDiarizer(
+      speakers: speakers, transcripts: transcripts, meetings: fixture.store,
+      storageRoot: fixture.root, lifecycle: localLifecycle,
+      inference: RouterInputs().router(local: localLifecycle, background: remote),
+      identity: DiarizationTestSupport.identity, clock: FakeMeetingClock())
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
+    try await DiarizationTestSupport.finalTranscript(
+      transcripts, meetingID: meeting.meetingID, segments: [(0, 100)])
+    let run = try await diarizer.admit(
+      meetingID: meeting.meetingID, trigger: .manual, expectedRevision: nil)
+    let outcome = await diarizer.run(meetingID: meeting.meetingID)
+    XCTAssertEqual(outcome, .waitingForServer("busy"))
+    let stored = try await speakers.run(id: run.id)
+    XCTAssertEqual(stored?.state, .pending)
+    let stored18 = try await fixture.history.database.read { db -> [String] in
+      let row = try Row.fetchOne(
+        db, sql: "SELECT inference_path, model_revision FROM diarization_runs WHERE id=?",
+        arguments: [run.id.uuidString])
+      return [row?["inference_path"] ?? "", row?["model_revision"] ?? ""]
+    }
+    XCTAssertEqual(stored18, ["server", "server-r1"])
+    let localRequests = await local.requests
+    XCTAssertEqual(localRequests.count, 0, "this Mac's model never ran")
+  }
+
   // MARK: US2 — uncertain speech stays Unknown (T040)
 
   /// `(auto_kind, top_coverage, second_coverage, label)` per segment, in ordinal order.

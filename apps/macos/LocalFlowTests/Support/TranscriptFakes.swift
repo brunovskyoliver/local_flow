@@ -109,7 +109,11 @@ actor FakeTranscriptStore: TranscriptStoring {
     if to != .live { row.liveState = nil }
     for effect in effects {
       switch effect {
-      case .setIdentity(let engine, let model, let pipeline, let planner, let vocabulary):
+      case .setIdentity(
+        let engine, let model, let pipeline, let planner, let vocabulary, let path,
+        let serverFailure):
+        row.inferencePath = path
+        row.serverFailure = serverFailure
         row.engine = engine
         row.modelID = model.id
         row.modelRevision = model.revision

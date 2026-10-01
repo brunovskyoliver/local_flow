@@ -354,4 +354,46 @@ extension RewriteSettingsTests {
     XCTAssertEqual(model.connectionResult?.diagnostic, "transport_error")
     XCTAssertFalse(model.connectionResult?.statusText.contains(secret) == true)
   }
+
+  /// T054 (US4): with the switch on, the rewrite override decides what an attempt uses;
+  /// the other services stay on the server.
+  func testRewriteOverridesWithTheSwitchOn() throws {
+    let preferences = makePreferences()
+    preferences.rewriteEnabled = true
+    preferences.rewriteEndpoint = "http://rewrite.lan:8080"
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.confirmRemoteConsent()
+    preferences.remoteEnabled = true
+    preferences.remoteState = .approved
+    preferences.serverCapabilities = RemoteCapabilities(
+      ops: ["dictation_start", "rewrite", "analysis"], meetingJobs: [], models: nil)
+    let store = FakeRewriteCredentialStore()
+    try store.write(origin: "http://rewrite.lan:8080", secret: "s3cret")
+    preferences.setInsecureOverride(true, for: "http://rewrite.lan:8080")
+
+    preferences.serverRewriteOverride = .thisMac
+    var captured = RewriteSettings.capture(preferences: preferences, credentialStore: store)
+    XCTAssertTrue(captured.isLoopback)
+    XCTAssertTrue(captured.canSend)
+    XCTAssertNil(preferences.serverRouting.rewriteChannelOrigin)
+    XCTAssertTrue(
+      LocalModelResidency.wanted(
+        rewriteEndpoint: preferences.rewriteEndpoint, routing: preferences.serverRouting),
+      "This Mac lets the local model load")
+    XCTAssertTrue(preferences.serverRouting.servedByServer(.summaries))
+
+    preferences.serverRewriteOverride = .custom
+    captured = RewriteSettings.capture(preferences: preferences, credentialStore: store)
+    XCTAssertEqual(captured.endpointOrigin, "http://rewrite.lan:8080")
+    XCTAssertTrue(captured.credentialPresent)
+    XCTAssertTrue(captured.insecureOverride)
+    XCTAssertTrue(captured.canSend)
+    XCTAssertFalse(captured.viaRemoteChannel)
+    XCTAssertNil(preferences.serverRouting.rewriteChannelOrigin)
+    XCTAssertFalse(
+      LocalModelResidency.wanted(
+        rewriteEndpoint: preferences.rewriteEndpoint, routing: preferences.serverRouting))
+    XCTAssertTrue(preferences.serverRouting.servedByServer(.summaries))
+    XCTAssertTrue(preferences.serverRouting.servedByServer(.dictation))
+  }
 }

@@ -31,7 +31,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   var analysisGapRangeCount: Int { recognizer?.gapRangeCount ?? 0 }
 
   private let store: any TranscriptStoring
-  private let lifecycle: ModelLifecycleCoordinator
+  /// The live preview's coordinator, chosen per live start (Feature 018).
+  private var lifecycle: ModelLifecycleCoordinator
+  private let inference: MeetingInferenceRouter
   private let vocabulary: any VocabularyProviding
   private let identity: TranscriptionPipelineIdentity
   private let clock: any MeetingClock
@@ -44,6 +46,10 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     let revision: Int64?
   }
   private var finalizationQueue: [FinalizationRequest] = []
+  /// Feature 018 (FR-031): meetings whose final pass waits for the server, by attempt.
+  /// Their rows stay `finalizing` with their progress, so a restart resumes them too.
+  private var serverWaits = ServerWaits()
+  var waitingForServer: Set<UUID> { serverWaits.ids }
   private var finalizationTask: Task<Void, Never>?
   private var rssTask: Task<Void, Never>?
   /// Stopped meetings whose drain finished before `meetingDidComplete` arrived.
@@ -78,7 +84,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   private var stopped = false
   private var paused = false
   private var latestSequence = 1
-  private var loadTask: Task<(VocabularySnapshot, ModelLease), Error>?
+  private var loadTask: Task<(VocabularySnapshot, ModelLease, ModelLifecycleCoordinator), Error>?
   private var descriptor = AnalysisStreamDescriptor(source: .livePCMTee)
   private struct PendingStart {
     let id: UUID
@@ -94,6 +100,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
 
   init(
     store: any TranscriptStoring, lifecycle: ModelLifecycleCoordinator,
+    inference: MeetingInferenceRouter? = nil,
     vocabulary: any VocabularyProviding = EmptyVocabularyProvider(),
     identity: TranscriptionPipelineIdentity = .init(),
     clock: any MeetingClock = SystemMeetingClock(), recorder: ResourceRecorder? = nil,
@@ -105,6 +112,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   ) {
     self.store = store
     self.lifecycle = lifecycle
+    self.inference = inference ?? .local(lifecycle)
     self.vocabulary = vocabulary
     self.identity = identity
     self.clock = clock
@@ -238,7 +246,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
         let preceding = boundaryTask
         let reload = status?.state == .live
         let retainedSnapshot = snapshot
-        let lifecycle = lifecycle
+        let inference = inference
         let vocabulary = vocabulary
         let yielding = finalizationTask
         let loading = Task.detached {
@@ -254,8 +262,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
             throw LoadError.vocabulary
           }
           try Task.checkCancellation()
+          let lifecycle = await inference.choose(.livePreview, meeting: id).lifecycle
           let lease = try await lifecycle.acquire(session: id)
-          return (snapshot, lease)
+          return (snapshot, lease, lifecycle)
         }
         loadTask = loading
         startTask = Task { [weak self] in
@@ -266,11 +275,12 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
           do {
             let acquired = try await loading.value
             guard let self, self.meetingID == id, !self.stopped else {
-              try? await lifecycle.finish(acquired.1)
+              try? await acquired.2.finish(acquired.1)
               return
             }
             self.snapshot = acquired.0
             self.lease = acquired.1
+            self.lifecycle = acquired.2
             if reload { self.mixer = nextMixer }
             if reload {
               let row = try await self.store.updateLiveMetadata(
@@ -487,6 +497,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
 
   private func flush(force: Bool) async throws {
     guard !flushing, let id = meetingID, let recognizer else { return }
+    for range in recognizer.takeServerGaps(all: force) {
+      try await recordGap(range, reason: .serverUnavailable, recognizer: recognizer)
+    }
     let elapsed = clock.monotonicNanoseconds &- lastFlush
     guard recognizer.pendingCount > 0,
       force || recognizer.pendingCount >= 50 || elapsed >= 2_000_000_000
@@ -802,6 +815,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
               self.status?.progress = fraction
             }
           })
+        self.serverWaits.remove(id)
         // Kept for inspection only; the echo profile goes to diarization below and
         // is not retained here.
         self.lastFinalization = outcome.withoutEchoProfile
@@ -847,7 +861,14 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
           }
         case .meetingActive:
           self.logSink("finalization skipped: meeting not terminal")
+        case .waitingForServer(let code):
+          self.logSink("finalization waiting for the server: \(code)")
+          self.waitForServer(id)
+          if let row = try? await store.transcription(meetingID: id) {
+            self.publish(row, phase: .transcriptFinalizing)
+          }
         case .failed(let category, _):
+          self.serverWaits.remove(id)
           self.noticePublished?(TranscriptErrorMessage.message(for: category, finalMeeting: true))
           if let row = try? await store.transcription(meetingID: id) {
             self.publish(row, phase: .transcriptFinalizing)
@@ -859,6 +880,25 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
         }
       }
     }
+  }
+
+  private func waitForServer(_ id: UUID) {
+    serverWaits.wait(id, clock: clock) { [weak self] in
+      self?.serverWaits.retried(id)
+      self?.enqueueFinalization(.init(meetingID: id, revision: nil))
+    }
+  }
+
+  /// A channel opened or the network changed: waiting passes retry now and their backoff
+  /// starts again.
+  func serverMayBeReachable() {
+    for id in serverWaits.reachable() { enqueueFinalization(.init(meetingID: id, revision: nil)) }
+  }
+
+  /// **Run on this Mac**: the meeting is already marked; its pass resumes locally now.
+  func runLocally(_ id: UUID) {
+    guard serverWaits.remove(id) else { return }
+    enqueueFinalization(.init(meetingID: id, revision: nil), atHead: true)
   }
 
   private func startRSSSampler() {
@@ -877,6 +917,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     if deletedMeetings.count >= 1_000 { deletedMeetings.removeAll() }
     deletedMeetings.insert(id)
     finalizationQueue.removeAll { $0.meetingID == id }
+    serverWaits.remove(id)
     awaitingCompletion.remove(id)
     completedMeetings.remove(id)
     stopBeganAt.removeValue(forKey: id)
@@ -900,7 +941,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     let oldStart = startTask
     let oldPump = pumpTask
     let oldBoundary = boundaryTask
-    await lifecycle.cancelSessionAndJoin(id)
+    await inference.cancelSessionAndJoin(id)
     await oldStart?.value
     await oldPump?.value
     await oldBoundary?.value
@@ -928,7 +969,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     }
     guard meetingID == id else { return }
     loadTask?.cancel()
-    await lifecycle.cancelSessionAndJoin(id)
+    await inference.cancelSessionAndJoin(id)
     guard meetingID == id else { return }
     lease = nil
     recognizer = nil

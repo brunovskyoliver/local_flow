@@ -6,14 +6,14 @@ The steps that worked in the provisional run on 2026-09-28 (Feature 014, ADR 002
 
 | Launch agent | Listens on | Role |
 | --- | --- | --- |
-| `org.localflow.LocalFlow.remote` | 127.0.0.1:8090 (remote channel), 127.0.0.1:8091 | flowd: accounts, the encrypted channel, scheduling; starts `flowd-speech` |
+| `org.localflow.LocalFlow.remote` | 127.0.0.1:8090 (remote channel), 127.0.0.1:8091 | flowd: accounts, the encrypted channel, scheduling, summaries; starts `flowd-speech serve` (dictation, live meeting preview) and `flowd-speech meeting` (Whisper Turbo final transcripts, speaker labels, voice regions) |
 | `org.localflow.LocalFlow.remote.mtplx` | 127.0.0.1:8092 | the server's own MTPLX rewrite model, with its own key |
 
 Data: `~/Library/Application Support/LocalFlow Server` (the account database, identity key, MTPLX key and speech models; mode 0700). Logs: `~/Library/Logs/LocalFlow Server`. Neither agent touches a LocalFlow app installed on the same Mac.
 
 ## Prerequisites
 
-1. Xcode, to build `flowd-speech`, and Go 1.26 (`brew install go`).
+1. Xcode, to build `flowd-speech`, Go 1.26 (`brew install go`) and CMake for the Whisper helper (`brew install cmake`).
 2. An MTPLX runtime and model. The simplest way is to install LocalFlow.app on the Mac mini and let onboarding set up local AI; the installer then reuses its runtime and model. Otherwise pass `--mtplx PATH --model DIR`.
 3. A permanent HTTPS hostname. For Cloudflare, that is a domain whose DNS Cloudflare runs, and `brew install cloudflared`. A quick tunnel (`cloudflared tunnel --url …`) changes its address on every start, and every address change means signing in and approval again.
 4. A Google OAuth client of type iOS for each client bundle ID: `org.localflow.LocalFlow` for the everyday app, and `org.localflow.LocalFlow.dev` for development builds. The client ID is not secret.
@@ -36,15 +36,58 @@ scripts/install-remote-server.sh --google-client-id "$GOOGLE"
 # 3. Download and verify the speech models (Parakeet v3 and the term booster).
 "$DATA/bin/flowd-speech" provision --models "$DATA/Models" --booster
 
-# 4. Load both agents. Reuse the worker from step 1 instead of building it again.
-scripts/install-remote-server.sh --google-client-id "$GOOGLE" --speech-worker "$DATA/bin/flowd-speech"
+# 4. Load both agents. Reuse the worker and the Whisper helper from step 1 instead of
+#    building them again. This run also downloads and verifies the meeting models.
+scripts/install-remote-server.sh --google-client-id "$GOOGLE" --speech-worker "$DATA/bin/flowd-speech" \
+  --meeting-helper "$DATA/bin/localflow-whisper-engine"
 
 # 5. Check: backend "ready" and the identity answers.
 curl -s http://127.0.0.1:8091/v1/rewrite/health
 curl -s http://127.0.0.1:8090/v1/remote/identity
 ```
 
-On the first dictation after install, the worker compiles the CoreML model, which took about 25 s on an M5.
+On the first start after install or an update, the worker compiles the CoreML model, which took about 25 s on an M5 and 10 s on the M5 Pro mini. It then runs one silent window before taking jobs (`state=warm` in `flowd.log`, about 280 ms), so the first dictation doesn't pay the first-inference cost (3.3 s right after install, about 0.3 s on later starts).
+
+Over SSH, `flowd admin init` fails with "keychain access failed": the identity key goes into the login Keychain, which only the logged-in GUI session has unlocked. Run `init` in that session, for example in Screen Sharing or as a one-shot job in the `gui/$(id -u)` launchd domain. flowd itself already runs there.
+
+Xcode isn't needed on the server: build `flowd-speech` on another Apple silicon Mac (`xcodebuild -project apps/macos/LocalFlow.xcodeproj -target flowd-speech -configuration Release`), copy it with its `FluidAudio_FluidAudio.bundle` and pass `--speech-worker`. Without LocalFlow.app, create the MTPLX runtime the way the app does (`LocalAIInstaller`): the pinned python-build-standalone in `~/Library/Application Support/LocalFlow/LocalAI/python`, a `venv` beside it installed with `pip --require-hashes --no-deps --only-binary :all: -r apps/macos/LocalFlow/Resources/LocalAI/mtplx-requirements.txt`, then `mtplx pull <id> --revision <commit>` from the `LocalAIModel` catalog.
+
+## Meetings and summaries (Feature 018)
+
+The same install serves summaries and meeting work; there is no extra setting. The script:
+
+- builds the Whisper helper with `scripts/build-meeting-whisper.sh` (the pinned whisper.cpp revision) and installs it as `bin/localflow-whisper-engine`, or takes a prebuilt one with `--meeting-helper PATH`;
+- installs `whisper-large-v3-turbo.json` and `speaker-diarization-offline.json` beside `flowd-speech`;
+- runs `flowd-speech provision --models "$DATA/Models" --meeting`, which downloads Whisper Turbo (with its VAD file) and the offline diarization and voice models once and verifies every file against the pinned hashes on each later run;
+- no longer passes `--analysis=false`, and passes `--meeting-helper` to flowd, which starts `flowd-speech meeting` beside the dictation worker.
+
+`ready.capabilities` then lists `analysis`, `live_window` and `meeting_job` with the three model identities. If the meeting models or the helper are missing, the meeting worker reports what is missing in `flowd.log` (`meeting` prefix) and the server stops offering meeting jobs; dictation and rewriting are unaffected.
+
+Licences copied with the install, in `bin/WhisperLicenses/`: Sotto (the helper's source), whisper.cpp (MIT), the Whisper model weights (MIT), Silero VAD (MIT), nlohmann JSON (MIT) and miniaudio. The offline diarization and voice models (FluidInference `speaker-diarization-coreml`) are CC BY 4.0; their descriptor names the source and licence, and the files are downloaded from that source rather than shipped in the repository.
+
+## Choosing the rewrite model
+
+Measured on the Mac mini (M5 Pro, 24 GB, macOS 27.0) on 2026-10-01 with `scripts/rewrite-quality.py fixtures/rewrite/corpus-v1.json` against `http://127.0.0.1:8091`, 40 items × 3 modes per model:
+
+| Model | Median total, short / ordinary | Median first token | Protected-entity failures |
+| --- | --- | --- | --- |
+| Qwen 3.5 4B Speed | 280–300 / 413–491 ms | 151–183 ms | 0 |
+| Qwen 3.5 9B Speed | 517–519 / 718–877 ms | 246–309 ms | 1 |
+| Bonsai 2 27B | 1,164–1,311 / 1,929–2,309 ms | 632–806 ms | 2 |
+
+The 4B model is the one to serve. Faster isn't the only reason: in the spot-checked outputs, the 9B model translated mixed Slovak and English dictation into English ("Pošli the report na dev@example.com prosím" became "Please send the report to dev@example.com."), and Bonsai wrote Czech forms into Slovak text ("Pošlu", "je potřeba prověřit"). `mtplx tune` picked draft depth 2 for the 4B model on this Mac: 142.6 tok/s against 87.8 tok/s without speculation. The first rewrite after 11 idle minutes took 354 ms, so the 4B model needs no extra GPU keepalive.
+
+## Tuning the Mac mini
+
+The machine needs auto-login (and therefore FileVault off), because both agents are `Aqua` LaunchAgents and start only once the user is logged in. Then, with sudo:
+
+```sh
+pmset -a sleep 0 disksleep 0 powernap 0 autorestart 1 womp 1 powermode 2   # never sleep, come back after a power cut
+defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false
+mdutil -a -i off                                                          # no Spotlight indexing
+```
+
+Install macOS updates by hand. An update clears the CoreML cache, so the worker's next start compiles again. Keep one Tailscale: the standalone Tailscale.app is enough with auto-login, and a second `tailscaled` daemon only competes with it for DNS and routes. Leave `iogpu.wired_limit_mb` at its default: the 24 GB machine already gives the GPU about 18 GB, far more than the 4B model's 3.3 GB.
 
 ## Tunnel (Cloudflare, permanent hostname)
 
@@ -65,6 +108,18 @@ curl -s https://flow.<your-domain>/v1/remote/identity   # same fingerprint as st
 ```
 
 The client pins the server key, and audio and text are encrypted inside the channel, so Cloudflare sees only ciphertext.
+
+## Tailscale Funnel instead of Cloudflare
+
+The Mac mini uses Funnel (ADR 0028 amendment). Approve Funnel for the node once in the Tailscale admin console (the first `tailscale funnel` prints the link), then:
+
+```sh
+/opt/homebrew/bin/tailscale funnel --bg 8090        # over SSH; Tailscale.app's own CLI needs the GUI
+/opt/homebrew/bin/tailscale funnel status
+curl -s https://mac-mini.tailf15b6.ts.net/v1/remote/identity   # same fingerprint as step 2
+```
+
+`--bg` keeps the configuration across restarts. In the app, enter `https://mac-mini.tailf15b6.ts.net` as the server.
 
 ## Clients
 

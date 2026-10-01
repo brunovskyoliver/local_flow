@@ -49,7 +49,11 @@ actor TranscriptStore: TranscriptStoring {
       }
       for effect in effects {
         switch effect {
-        case .setIdentity(let engine, let model, let pipeline, let planner, let vocabulary):
+        case .setIdentity(
+          let engine, let model, let pipeline, let planner, let vocabulary, let path,
+          let serverFailure):
+          row.inferencePath = path
+          row.serverFailure = serverFailure
           row.engine = engine
           row.modelID = model.id
           row.modelRevision = model.revision
@@ -305,7 +309,11 @@ actor TranscriptStore: TranscriptStoring {
       row.failureDetail = nil
       for effect in effects {
         switch effect {
-        case .setIdentity(let engine, let model, let pipeline, let planner, let vocabulary):
+        case .setIdentity(
+          let engine, let model, let pipeline, let planner, let vocabulary, let path,
+          let serverFailure):
+          row.inferencePath = path
+          row.serverFailure = serverFailure
           row.engine = engine
           row.modelID = model.id
           row.modelRevision = model.revision
@@ -602,7 +610,7 @@ actor TranscriptStore: TranscriptStoring {
     }
     try db.execute(
       sql:
-        "UPDATE meeting_transcriptions SET state=?,live_requested=?,live_state=?,pass_id=?,pass_kind=?,engine=?,model_id=?,model_revision=?,model_manifest_hash=?,pipeline_version=?,planner_version=?,vocabulary_revision=?,vocabulary_hash=?,analysis_descriptor_json=?,started_at=?,live_started_at=?,finalization_started_at=?,finalized_at=?,progress_sequence=?,progress_sample=?,covered_ms=?,recorded_ms_at_pass=?,replaced_provisional_count=?,model_reload_count=?,failure_category=?,failure_detail=?,segment_count=?,text_bytes=?,updated_at=?,revision=? WHERE meeting_id=?",
+        "UPDATE meeting_transcriptions SET state=?,live_requested=?,live_state=?,pass_id=?,pass_kind=?,engine=?,model_id=?,model_revision=?,model_manifest_hash=?,pipeline_version=?,planner_version=?,vocabulary_revision=?,vocabulary_hash=?,inference_path=?,server_failure=?,analysis_descriptor_json=?,started_at=?,live_started_at=?,finalization_started_at=?,finalized_at=?,progress_sequence=?,progress_sample=?,covered_ms=?,recorded_ms_at_pass=?,replaced_provisional_count=?,model_reload_count=?,failure_category=?,failure_detail=?,segment_count=?,text_bytes=?,updated_at=?,revision=? WHERE meeting_id=?",
       arguments: [
         row.state.rawValue,
         row.liveRequested,
@@ -617,6 +625,8 @@ actor TranscriptStore: TranscriptStoring {
         row.plannerVersion,
         row.vocabularyRevision,
         row.vocabularyHash,
+        row.inferencePath.rawValue,
+        row.serverFailure,
         descriptor,
         row.startedAt,
         row.liveStartedAt,
@@ -653,6 +663,9 @@ actor TranscriptStore: TranscriptStoring {
     value.plannerVersion = r["planner_version"]
     value.vocabularyRevision = r["vocabulary_revision"]
     value.vocabularyHash = r["vocabulary_hash"]
+    value.inferencePath =
+      (r["inference_path"] as String?).flatMap(MeetingInferencePath.init(rawValue:)) ?? .local
+    value.serverFailure = r["server_failure"]
     value.analysisDescriptor = try (r["analysis_descriptor_json"] as String?).map {
       try JSONDecoder().decode(AnalysisStreamDescriptor.self, from: Data($0.utf8))
     }

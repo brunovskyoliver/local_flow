@@ -23,6 +23,9 @@ final class LiveRecognizer {
   static let maximumGapRanges = 64
   @ObservationIgnored private var holes: [Range<Int>] = []
   var gapRangeCount: Int { holes.count }
+  /// Feature 018: windows the server could not take, waiting for their gap rows.
+  /// Adjacent windows merge, so a long outage stays one range.
+  @ObservationIgnored private(set) var serverGaps: [Range<Int>] = []
   var stretchSequence: Int { sequence }
   var stretchBaseMs: Int64 { baseMs }
   var lag: Int { max(0, streamEnd - consumedEnd) }
@@ -194,6 +197,9 @@ final class LiveRecognizer {
         lease, samples: count == samples.count ? samples : Array(samples.prefix(count)))
     } catch is CancellationError { throw CancellationError() } catch DictationFailure.cancelled {
       throw CancellationError()
+    } catch is RemoteMeetingWaiting, is RemoteMeetingNotOffered {
+      skipUnserved(window.sampleStart..<window.sampleStart + count)
+      return true
     } catch { throw Failure.runtimeFailure }
     let assembled = assembler.append(
       window: .init(
@@ -223,6 +229,27 @@ final class LiveRecognizer {
       phase: .transcriptLive, durationNanoseconds: lastLatencyNanoseconds,
       metric: .transcriptLiveLatency)
     return true
+  }
+
+  /// The window is dropped from the preview; the final transcript still covers it.
+  private func skipUnserved(_ range: Range<Int>) {
+    consumedEnd = range.upperBound
+    assembler = MeetingWindowAssembler()
+    if let last = serverGaps.last, last.upperBound == range.lowerBound {
+      serverGaps[serverGaps.count - 1] = last.lowerBound..<range.upperBound
+    } else {
+      serverGaps.append(range)
+    }
+  }
+
+  /// Finished server gaps; the last one stays while the outage goes on, unless `all`.
+  func takeServerGaps(all: Bool) -> [Range<Int>] {
+    var taken = serverGaps
+    serverGaps = []
+    if !all, let last = taken.last, last.upperBound == consumedEnd {
+      serverGaps = [taken.removeLast()]
+    }
+    return taken
   }
 
   func pendingBatch() -> [TranscriptSegmentDraft] { Array(drafts.prefix(50)) }

@@ -14,6 +14,9 @@ struct RewriteEndpoint: Sendable, Equatable {
   var summaryHeaders: [String: String]? = nil
   /// Feature 014: the request travels over the remote dictation channel, not HTTP.
   var viaRemoteChannel = false
+  /// Feature 018 (R9): a request to the custom summaries server that fails before any
+  /// result is sent again over the channel.
+  var channelFallback = false
 
   /// Which primary backend a pinned endpoint reaches: origin, URL and model,
   /// never the key. Keys the analysis partial cache.

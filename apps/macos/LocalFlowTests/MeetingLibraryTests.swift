@@ -287,4 +287,44 @@ final class MeetingLibraryTests: XCTestCase {
     XCTAssertEqual(model.selectedID, ids[1])
   }
 
+  // MARK: Feature 018 (contracts/settings-ui.md §Meetings)
+
+  func testAWaitingMeetingOffersRunOnThisMac() async throws {
+    let ids = try await seedCompleted(2)
+    let model = MeetingLibraryViewModel(store: store)
+    var waiting: Set<UUID> = [ids[0]]
+    var ranLocally: [UUID] = []
+    model.waitingForServer = { waiting.contains($0) }
+    model.runOnThisMac = { id in
+      ranLocally.append(id)
+      waiting.remove(id)
+    }
+    XCTAssertTrue(model.waitsForServer(ids[0]))
+    XCTAssertFalse(model.waitsForServer(ids[1]))
+    XCTAssertEqual(MeetingLibraryViewModel.waitingText, "Waiting for your server")
+    await model.runLocally(ids[0])
+    XCTAssertEqual(ranLocally, [ids[0]])
+    XCTAssertFalse(model.waitsForServer(ids[0]))
+  }
+
+  func testTheMeetingInfoSaysWhereEachResultWasProduced() async throws {
+    let ids = try await seedCompleted(1, transcription: true)
+    let empty = try await store.provenance(meetingID: ids[0])
+    XCTAssertNil(empty.text, "nothing produced yet")
+    try await fixture.history.database.write { db in
+      try db.execute(
+        sql:
+          "UPDATE meeting_transcriptions SET state='final', inference_path='server' WHERE meeting_id=?",
+        arguments: [ids[0].uuidString])
+    }
+    let produced = try await store.provenance(meetingID: ids[0])
+    XCTAssertEqual(produced.transcript, "server")
+    XCTAssertEqual(produced.text, "Transcript: your server")
+    XCTAssertEqual(
+      MeetingProvenance(
+        transcript: "local_after_server_failure", speakers: "local", summary: "custom"
+      ).text,
+      "Transcript: this Mac (server unavailable) · Speaker labels: this Mac"
+        + " · Summary: your custom server")
+  }
 }

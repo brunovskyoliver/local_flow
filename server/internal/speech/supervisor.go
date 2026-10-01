@@ -16,7 +16,11 @@ import (
 
 // Supervisor defaults (research R11, FR-030).
 const (
-	DefaultJobDeadline      = 30 * time.Second
+	DefaultJobDeadline = 30 * time.Second
+	// MeetingJobDeadline is the meeting worker's job deadline: a 120 s
+	// Whisper window with repetition retries or a 10-minute diarization
+	// window (Feature 018 R7).
+	MeetingJobDeadline      = 300 * time.Second
 	DefaultUnavailableRetry = 60 * time.Second
 	DefaultBackoffInitial   = time.Second
 	DefaultBackoffMax       = 60 * time.Second
@@ -32,7 +36,9 @@ const (
 // worker_unavailable.
 var ErrWorkerUnavailable = errors.New("speech: worker unavailable")
 
-// ErrInvalidRecognition rejects a job with no samples or more than one window.
+// ErrInvalidRecognition rejects a job with no samples or more than one window,
+// a meeting job outside its kind's sample range, and a job of the other
+// worker's kind.
 var ErrInvalidRecognition = errors.New("speech: sample count out of range")
 
 // WorkerError is the worker's own error answer to one job. The worker stays up.
@@ -62,6 +68,28 @@ type Recognition struct {
 type WindowResult struct {
 	Window        json.RawMessage
 	RecognitionMS int
+}
+
+// MeetingJob is one meeting worker job. Samples are the client's s16le
+// samples; they are converted to f32le while being written to the worker.
+// Language, VocabularyTerms and Pipeline are for transcribe, NumSpeakers for
+// diarize.
+type MeetingJob struct {
+	Kind            string
+	Samples         []byte
+	Language        string
+	VocabularyTerms []string
+	Pipeline        string
+	NumSpeakers     *int
+}
+
+// MeetingResult is the meeting worker's answer: its result object, unparsed,
+// the processing time and the identity of the model of the job's kind from
+// that worker's ready.
+type MeetingResult struct {
+	Result       json.RawMessage
+	ProcessingMS int
+	Model        MeetingModel
 }
 
 // Recognizer runs one job at a time. Supervisor implements it; the scheduler
@@ -105,7 +133,14 @@ type SupervisorConfig struct {
 	Clock  Clock
 	// OnState, when set, is called on every state change from the supervisor
 	// goroutine. It must not block.
-	OnState          func(State)
+	OnState func(State)
+	// Meeting selects the meeting worker contract: ready carries models and
+	// jobs are MeetingJobs. Otherwise the worker is the dictation worker.
+	Meeting bool
+	// Gate, when set, is consulted before each job is written: while the
+	// channel it returns is open the job waits (the meeting worker waits
+	// for interactive work, MeetingQueue.InteractiveIdle).
+	Gate             func() <-chan struct{}
 	JobDeadline      time.Duration
 	UnavailableRetry time.Duration
 	BackoffInitial   time.Duration
@@ -124,16 +159,24 @@ type Supervisor struct {
 	stopped chan struct{}
 	state   atomic.Value // State
 	model   atomic.Pointer[ModelIdentity]
+	models  atomic.Pointer[MeetingModels]
 	nextJob uint64
 }
 
+// request is one job: its header without the job ID, its payload length and
+// a function that writes the payload.
 type request struct {
-	r     Recognition
-	reply chan answer
+	ctx     context.Context
+	header  Header
+	size    int
+	payload func(io.Writer) error
+	reply   chan answer
 }
 
 type answer struct {
 	result WindowResult
+	frame  Header // the worker's result, for a meeting job
+	models *MeetingModels
 	err    error
 }
 
@@ -176,6 +219,16 @@ func (s *Supervisor) Model() (ModelIdentity, bool) {
 	return *m, true
 }
 
+// MeetingModels returns the models from the current meeting worker's ready;
+// ok is false unless the worker is ready.
+func (s *Supervisor) MeetingModels() (MeetingModels, bool) {
+	m := s.models.Load()
+	if m == nil {
+		return MeetingModels{}, false
+	}
+	return *m, true
+}
+
 func (s *Supervisor) setState(st State) {
 	s.state.Store(st)
 	s.c.Logger.Printf("speech worker_state=%s", st)
@@ -190,25 +243,72 @@ func (s *Supervisor) setState(st State) {
 // until the first is answered. ctx bounds only the wait to be sent; once sent,
 // the job is answered by the worker, the deadline or a failure.
 func (s *Supervisor) Recognize(ctx context.Context, r Recognition) (WindowResult, error) {
-	if len(r.Samples) < 1 || len(r.Samples) > MaxSampleCount {
+	if s.c.Meeting || len(r.Samples) < 1 || len(r.Samples) > MaxSampleCount {
 		return WindowResult{}, ErrInvalidRecognition
 	}
-	if s.State() != StateReady {
-		return WindowResult{}, ErrWorkerUnavailable
+	payload := EncodeSamples(r.Samples)
+	a := s.send(ctx, false, request{
+		header: Header{Type: TypeRecognize, SampleCount: len(r.Samples), Boost: r.Boost},
+		size:   len(payload),
+		payload: func(w io.Writer) error {
+			_, err := w.Write(payload)
+			return err
+		},
+	})
+	return a.result, a.err
+}
+
+// Meeting sends one meeting job and waits for its answer, like Recognize,
+// except that ctx also ends the wait for the answer: the worker cannot be
+// interrupted, so the job still runs to completion and its result is
+// dropped. The samples are not copied; the caller must not change them until
+// Meeting returns.
+func (s *Supervisor) Meeting(ctx context.Context, j MeetingJob) (MeetingResult, error) {
+	bounds, ok := MeetingSampleRange[j.Kind]
+	n := len(j.Samples) / 2
+	if !s.c.Meeting || !ok || len(j.Samples)%2 != 0 || n < bounds[0] || n > bounds[1] {
+		return MeetingResult{}, ErrInvalidRecognition
 	}
-	req := request{r: r, reply: make(chan answer, 1)}
+	header := Header{Type: j.Kind, SampleCount: n, NumSpeakers: j.NumSpeakers}
+	if j.Kind == TypeTranscribe {
+		header.Language, header.VocabularyTerms, header.Pipeline = j.Language, j.VocabularyTerms, j.Pipeline
+	}
+	a := s.send(ctx, true, request{
+		header:  header,
+		size:    4 * n,
+		payload: func(w io.Writer) error { return WriteS16AsF32(w, j.Samples) },
+	})
+	if a.err != nil {
+		return MeetingResult{}, a.err
+	}
+	return MeetingResult{Result: a.frame.Result, ProcessingMS: *a.frame.ProcessingMS, Model: a.models.For(j.Kind)}, nil
+}
+
+// send hands req to the worker loop and waits for the answer. ctx bounds the
+// wait to be sent and, when whole is set, the wait for the answer too.
+func (s *Supervisor) send(ctx context.Context, whole bool, req request) answer {
+	if s.State() != StateReady {
+		return answer{err: ErrWorkerUnavailable}
+	}
+	req.ctx, req.reply = ctx, make(chan answer, 1)
 	select {
 	case s.reqs <- req:
 	case <-ctx.Done():
-		return WindowResult{}, ctx.Err()
+		return answer{err: ctx.Err()}
 	case <-s.stopped:
-		return WindowResult{}, ErrWorkerUnavailable
+		return answer{err: ErrWorkerUnavailable}
+	}
+	var cancelled <-chan struct{}
+	if whole {
+		cancelled = ctx.Done()
 	}
 	select {
 	case a := <-req.reply:
-		return a.result, a.err
+		return a
+	case <-cancelled:
+		return answer{err: ctx.Err()}
 	case <-s.stopped:
-		return WindowResult{}, ErrWorkerUnavailable
+		return answer{err: ErrWorkerUnavailable}
 	}
 }
 
@@ -280,6 +380,7 @@ func (s *Supervisor) runOnce(ctx context.Context, backoff *time.Duration) runOut
 	}
 	defer p.stop(s.c.Logger)
 	defer s.model.Store(nil)
+	defer s.models.Store(nil)
 
 	var readyTimeout <-chan time.Time
 	if s.c.ReadyTimeout > 0 {
@@ -295,13 +396,24 @@ func (s *Supervisor) runOnce(ctx context.Context, backoff *time.Duration) runOut
 			}
 			switch h := ev.frame.Header; h.Type {
 			case TypeReady:
-				model := *h.Model
-				s.model.Store(&model)
-				s.c.Logger.Printf("speech worker_ready engine=%.64s model_id=%.64s model_revision=%.64s booster=%.64s worker_build=%.64s", model.Engine, model.ModelID, model.ModelRevision, model.Booster, model.WorkerBuild)
+				if (h.Models != nil) != s.c.Meeting {
+					return s.fail("wrong_ready")
+				}
+				if h.Models != nil {
+					models := *h.Models
+					s.models.Store(&models)
+					for _, m := range []*MeetingModel{models.Transcription, models.Diarization, models.Voice} {
+						s.c.Logger.Printf("speech worker_ready engine=%.64s model_id=%.64s model_revision=%.64s", m.Engine, m.ModelID, m.ModelRevision)
+					}
+				} else {
+					model := *h.Model
+					s.model.Store(&model)
+					s.c.Logger.Printf("speech worker_ready engine=%.64s model_id=%.64s model_revision=%.64s booster=%.64s worker_build=%.64s", model.Engine, model.ModelID, model.ModelRevision, model.Booster, model.WorkerBuild)
+				}
 				s.setState(StateReady)
 				ready = true
 			case TypeUnavailable:
-				s.c.Logger.Printf("speech worker_unavailable reason=%.32s", h.Reason)
+				s.c.Logger.Printf("speech worker_unavailable reason=%.32s missing=%d", h.Reason, len(h.Missing))
 				return runUnavailable
 			default:
 				return s.fail("not_ready_first")
@@ -325,6 +437,12 @@ func (s *Supervisor) runOnce(ctx context.Context, backoff *time.Duration) runOut
 			}
 			s.c.Logger.Printf("speech worker_runtime=%s", ev.frame.Header.State)
 		case req := <-s.reqs:
+			if o, done := s.gate(ctx, p, &req); done {
+				return o
+			}
+			if req.reply == nil {
+				continue
+			}
 			if o, done := s.job(ctx, p, req, backoff); done {
 				return o
 			}
@@ -335,28 +453,72 @@ func (s *Supervisor) runOnce(ctx context.Context, backoff *time.Duration) runOut
 	}
 }
 
-// job sends one recognize and waits for its answer. done reports that the
-// worker is gone and runOnce must return o.
+// gate holds req until the Gate opens. It answers req itself, and clears
+// req.reply, when the caller gives up meanwhile; done reports that the worker
+// is gone and runOnce must return o.
+func (s *Supervisor) gate(ctx context.Context, p *process, req *request) (o runOutcome, done bool) {
+	for s.c.Gate != nil {
+		select {
+		case <-s.c.Gate():
+			return 0, false
+		case <-req.ctx.Done():
+			req.reply <- answer{err: req.ctx.Err()}
+			req.reply = nil
+			return 0, false
+		case ev := <-p.frames:
+			if ev.err == nil && ev.frame.Header.Type == TypeState {
+				s.c.Logger.Printf("speech worker_runtime=%s", ev.frame.Header.State)
+				continue
+			}
+			req.reply <- answer{err: ErrWorkerUnavailable}
+			if ev.err != nil {
+				return s.fail(frameFailure(ev.err)), true
+			}
+			return s.fail("unsolicited_" + ev.frame.Header.Type), true
+		case <-ctx.Done():
+			req.reply <- answer{err: ErrWorkerUnavailable}
+			return runStopped, true
+		}
+	}
+	return 0, false
+}
+
+// job sends one job and waits for its answer. done reports that the worker
+// is gone and runOnce must return o.
 func (s *Supervisor) job(ctx context.Context, p *process, req request, backoff *time.Duration) (o runOutcome, done bool) {
+	if err := req.ctx.Err(); err != nil {
+		// The caller gave up before the job was written.
+		req.reply <- answer{err: err}
+		return 0, false
+	}
 	s.nextJob++
 	id := s.nextJob
-	data, err := EncodeFrame(Header{Type: TypeRecognize, Job: id, SampleCount: len(req.r.Samples), Boost: req.r.Boost}, EncodeSamples(req.r.Samples))
+	header := req.header
+	header.Job = id
+	prefix, err := encodePrefix(header, req.size)
 	if err != nil {
 		// Nothing was written; the worker is unaffected.
 		req.reply <- answer{err: err}
 		return 0, false
 	}
 	start := time.Now()
+	samples := header.SampleCount
 	unavailable := func(reason string) (runOutcome, bool) {
-		s.c.Logger.Printf("speech job=%d samples=%d duration_ms=%d code=worker_unavailable", id, len(req.r.Samples), time.Since(start).Milliseconds())
+		s.c.Logger.Printf("speech job=%d kind=%s samples=%d duration_ms=%d code=worker_unavailable", id, header.Type, samples, time.Since(start).Milliseconds())
 		req.reply <- answer{err: ErrWorkerUnavailable}
 		return s.fail(reason), true
 	}
 	// The write runs aside so a worker that stops reading cannot outlive the
-	// deadline; stop closes stdin, which ends it.
+	// deadline; stop closes stdin, which ends it. Only the writer holds the
+	// payload, so it is released once written.
 	written := make(chan error, 1)
+	payload := req.payload
+	req.payload = nil
 	go func() {
-		_, err := p.stdin.Write(data)
+		_, err := p.stdin.Write(prefix)
+		if err == nil {
+			err = payload(p.stdin)
+		}
 		written <- err
 	}()
 	deadline := s.c.Clock.NewTimer(s.c.JobDeadline)
@@ -365,7 +527,7 @@ func (s *Supervisor) job(ctx context.Context, p *process, req request, backoff *
 	code := ""
 	for {
 		if reply != nil && written == nil {
-			s.c.Logger.Printf("speech job=%d samples=%d duration_ms=%d code=%s", id, len(req.r.Samples), time.Since(start).Milliseconds(), code)
+			s.c.Logger.Printf("speech job=%d kind=%s samples=%d duration_ms=%d code=%s", id, header.Type, samples, time.Since(start).Milliseconds(), code)
 			*backoff = s.c.BackoffInitial
 			req.reply <- *reply
 			return 0, false
@@ -388,7 +550,15 @@ func (s *Supervisor) job(ctx context.Context, p *process, req request, backoff *
 				return unavailable("unsolicited_" + h.Type)
 			case h.Job != id:
 				return unavailable("wrong_job")
+			case h.Type == TypeResult && s.c.Meeting:
+				if h.Kind != header.Type {
+					return unavailable("wrong_kind")
+				}
+				reply, code = &answer{frame: h, models: s.models.Load()}, "ok"
 			case h.Type == TypeResult:
+				if h.Kind != "" {
+					return unavailable("wrong_kind")
+				}
 				reply, code = &answer{result: WindowResult{Window: h.Window, RecognitionMS: *h.RecognitionMS}}, "ok"
 			default:
 				reply, code = &answer{err: &WorkerError{Code: h.Code}}, h.Code

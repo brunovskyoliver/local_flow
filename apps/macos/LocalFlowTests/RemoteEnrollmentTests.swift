@@ -33,7 +33,7 @@ final class FakeFlowdAccounts: @unchecked Sendable {
         return [.message(["type": "ready"])]
       case .control(let object):
         return lock.withLock { answer(object, binding: binding) }
-      case .audio:
+      case .audio, .s16:
         return [.close(1008)]
       }
     }

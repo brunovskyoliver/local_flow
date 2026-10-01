@@ -21,12 +21,13 @@ import (
 func TestSessionOperations(t *testing.T) {
 	var logs bytes.Buffer
 	logger := log.New(&logs, "", 0)
-	r := remoteConfig{speechWorker: filepath.Join(t.TempDir(), "missing-flowd-speech"), speechModels: t.TempDir()}
-	ops, stop, err := sessionOperations(context.Background(), r, nil, nil, logger)
+	r := remoteConfig{speechWorker: filepath.Join(t.TempDir(), "missing-flowd-speech"), speechModels: t.TempDir(),
+		meetingModels: t.TempDir(), meetingHelper: filepath.Join(t.TempDir(), "localflow-whisper-engine")}
+	ops, meetingCapabilities, stop, err := sessionOperations(context.Background(), r, nil, nil, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ops["dictation_start"] == nil || ops["rewrite"] != nil || len(ops) != 1 {
+	if ops["dictation_start"] == nil || ops["live_window"] == nil || ops["meeting_job"] == nil || ops["rewrite"] != nil || len(ops) != 3 {
 		t.Fatalf("without a rewrite handler: %v", len(ops))
 	}
 	stopped := make(chan struct{})
@@ -39,7 +40,7 @@ func TestSessionOperations(t *testing.T) {
 	stop()
 
 	r.rewrite = rewrite.NewHandler(rewrite.HandlerConfig{})
-	ops, stop, err = sessionOperations(context.Background(), r, nil, nil, logger)
+	ops, meetingCapabilities, stop, err = sessionOperations(context.Background(), r, nil, nil, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,18 +50,21 @@ func TestSessionOperations(t *testing.T) {
 	}
 
 	r.analysis = analysis.NewHandler(analysis.HandlerConfig{})
-	ops, stop, err = sessionOperations(context.Background(), r, nil, nil, logger)
+	ops, meetingCapabilities, stop, err = sessionOperations(context.Background(), r, nil, nil, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stop()
 	capabilities := remote.SessionCapabilities(ops)
-	if strings.Join(capabilities.Ops, ",") != "analysis,dictation_start,rewrite" || len(ops) != 3 ||
-		capabilities.MeetingJobs == nil || len(capabilities.MeetingJobs) != 0 || capabilities.Models != nil {
+	if strings.Join(capabilities.Ops, ",") != "analysis,dictation_start,live_window,meeting_job,rewrite" || len(ops) != 5 {
 		t.Fatalf("capabilities %+v", capabilities)
 	}
+	// No meeting worker binary: no job kinds and no models.
+	if jobs, models := meetingCapabilities(); jobs == nil || len(jobs) != 0 || models != nil {
+		t.Fatalf("meeting capabilities %v %+v", jobs, models)
+	}
 	// Both supervisors have stopped, so the log is no longer written.
-	if strings.Contains(logs.String(), r.speechModels) {
+	if strings.Contains(logs.String(), r.speechModels) || strings.Contains(logs.String(), r.meetingModels) {
 		t.Fatal("paths in logs")
 	}
 }

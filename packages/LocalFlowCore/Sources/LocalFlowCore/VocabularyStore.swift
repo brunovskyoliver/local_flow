@@ -6,7 +6,7 @@ import OSLog
 /// One preferred spelling. Canonical text is replacement output; aliases are explicit sources.
 public struct VocabularyEntry: Codable, Sendable, Equatable, Identifiable {
   public static let maximumAliases = 8
-  public static let maximumTermBytes = 256
+  public static let maximumTermBytes = VocabularyLimits.maximumTermBytes
   static let maximumTermScalars = 64
   public let id: String
   public let canonical: String

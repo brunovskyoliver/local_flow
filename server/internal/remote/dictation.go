@@ -62,6 +62,10 @@ type DictationConfig struct {
 	// DebugBusy answers every dictation_start with busy (--debug-busy,
 	// debug builds only).
 	DebugBusy bool
+	// Interactive, when set, is told when a dictation starts; the function
+	// it returns is called when the dictation ends. Meeting jobs do not
+	// start in between (speech.MeetingQueue.BeginInteractive).
+	Interactive func() (end func())
 }
 
 // Dictation runs dictation_start operations on session channels and holds the
@@ -177,6 +181,9 @@ func (d *Dictation) Start(ctx context.Context, c *Conn, m Message) (Operation, e
 		}
 		o.boost = boost
 	}
+	if d.cfg.Interactive != nil {
+		o.endInteractive = d.cfg.Interactive()
+	}
 	d.mu.Lock()
 	d.live[o] = struct{}{}
 	d.mu.Unlock()
@@ -218,6 +225,9 @@ type dictationOp struct {
 	session SpeechSession
 	started time.Time
 	done    chan struct{}
+	// endInteractive ends the dictation's interactive work; nil without
+	// DictationConfig.Interactive.
+	endInteractive func()
 
 	mu         sync.Mutex
 	buffer     []float32   // samples after the last full window; < one window
@@ -264,6 +274,9 @@ func (o *dictationOp) terminateLocked(code string) bool {
 	}
 	o.buffer = nil
 	o.held = nil
+	if o.endInteractive != nil {
+		o.endInteractive()
+	}
 	if o.d != nil {
 		o.d.release(o)
 		now := o.d.cfg.Clock.Now()

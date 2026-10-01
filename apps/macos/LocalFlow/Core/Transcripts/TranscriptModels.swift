@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 enum SegmentFinality: String, Codable, Sendable { case provisional, final }
 enum TranscriptPassKind: String, Codable, Sendable { case live, final }
@@ -140,6 +141,9 @@ struct LiveGap: Sendable, Equatable, Identifiable {
   var coveredByFinal = false
   let createdAt: Int64
 }
+/// Where a meeting pass ran (`inference_path` on the meeting tables, Feature 018).
+typealias MeetingInferencePath = TranscriptionEntry.RecognitionPath
+
 struct MeetingTranscription: Sendable, Equatable {
   let meetingID: UUID
   var state: TranscriptState
@@ -155,6 +159,9 @@ struct MeetingTranscription: Sendable, Equatable {
   var plannerVersion: String?
   var vocabularyRevision: Int64?
   var vocabularyHash: String?
+  /// Feature 018: where the pass ran; `serverFailure` says why it left the server.
+  var inferencePath: MeetingInferencePath = .local
+  var serverFailure: String?
   var analysisDescriptor: AnalysisStreamDescriptor?
   var startedAt: Int64?
   var liveStartedAt: Int64?

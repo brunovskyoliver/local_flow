@@ -1,5 +1,6 @@
 import Foundation
 import LocalFlowCore
+import LocalFlowSpeech
 
 /// The meeting domain's view of persistent speaker identification (Feature 010,
 /// contracts/identification-pipeline.md). Nothing here imports FluidAudio; every value
@@ -208,6 +209,10 @@ protocol IdentityStoring: Sendable {
     async throws
   func interrupt(runID: UUID, now: Int64) async throws
   func requeue(runID: UUID) async throws
+  /// Feature 018: where the run's regions go, and the server's model on that path.
+  func recordInferencePath(
+    runID: UUID, path: MeetingInferencePath, serverFailure: String?,
+    model: RemoteCapabilities.Model?) async throws
   func cancel(runID: UUID) async throws
   func activeRuns(limit: Int) async throws -> [IdentificationRun]
   /// The newest run that is not `superseded`, for the status line's failure.
@@ -247,4 +252,12 @@ protocol IdentityStoring: Sendable {
   /// speaker evidence has settled for the summary pass.
   @discardableResult func diarizationDidAdopt(meetingID: UUID) -> Bool
   func meetingWillDelete(id: UUID) async
+}
+
+extension IdentityStoring {
+  /// Stores without the Feature 018 columns record nothing.
+  func recordInferencePath(
+    runID: UUID, path: MeetingInferencePath, serverFailure: String?,
+    model: RemoteCapabilities.Model?
+  ) async throws {}
 }

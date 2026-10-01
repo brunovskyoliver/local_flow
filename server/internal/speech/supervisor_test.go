@@ -71,6 +71,8 @@ func fakeWorker(mode string) int {
 		return 0
 	case "no-booster":
 		model.Booster = ""
+	case "meeting", "meeting-unavailable":
+		return fakeMeetingWorker(mode)
 	}
 	send(Header{Type: TypeReady, Protocol: ProtocolVersion, Model: model}, nil)
 	if mode == "ready-then-exit" {
@@ -198,15 +200,24 @@ type harness struct {
 
 func startSupervisor(t *testing.T, mode string, env ...string) *harness {
 	t.Helper()
+	return startSupervisorWith(t, mode, nil, env...)
+}
+
+func startSupervisorWith(t *testing.T, mode string, configure func(*SupervisorConfig), env ...string) *harness {
+	t.Helper()
 	h := &harness{clock: newFakeClock(), logs: &syncBuffer{}, states: make(chan State, 256), done: make(chan struct{})}
-	h.s = NewSupervisor(SupervisorConfig{
+	c := SupervisorConfig{
 		Command:      []string{os.Args[0]},
 		Env:          append(append(os.Environ(), "SPEECH_FAKE_WORKER="+mode), env...),
 		Logger:       log.New(h.logs, "", 0),
 		Clock:        h.clock,
 		ReadyTimeout: -1,
 		OnState:      func(s State) { h.states <- s },
-	})
+	}
+	if configure != nil {
+		configure(&c)
+	}
+	h.s = NewSupervisor(c)
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
 	go func() {
@@ -504,5 +515,227 @@ func TestSchedulerOnSupervisorDeadline(t *testing.T) {
 	}
 	if o := <-c.Results(); o.Err != nil || sampleCount(t, o.Result) != 3 {
 		t.Fatalf("%+v", o)
+	}
+}
+
+// Meeting job behaviours, selected by the first s16le sample.
+const (
+	meetingHang         = 100 // never answer
+	meetingNoModel      = 101 // answer error model_unavailable
+	meetingInvalidAudio = 102 // answer error invalid_audio
+)
+
+// fakeMeetingWorker speaks the meeting worker contract. Its result echoes the
+// kind, the sample count and the first sample scaled back to s16.
+func fakeMeetingWorker(mode string) int {
+	send := func(h Header) {
+		if err := WriteFrame(os.Stdout, h, nil); err != nil {
+			os.Exit(5)
+		}
+	}
+	if mode == "meeting-unavailable" {
+		send(Header{Type: TypeUnavailable, Reason: "model_missing", Missing: []string{"whisper-turbo"}})
+		return 0
+	}
+	send(Header{Type: TypeReady, Protocol: ProtocolVersion, Models: testMeetingModels()})
+	for {
+		f, err := ReadFrame(os.Stdin)
+		if err != nil {
+			return 0
+		}
+		if f.Header.Type == TypeShutdown {
+			return 0
+		}
+		samples, _ := DecodeSamples(f.Payload)
+		fmt.Fprintf(os.Stderr, "job=%d kind=%s samples=%d\n", f.Header.Job, f.Header.Type, len(samples))
+		send(Header{Type: TypeState, State: "loading"})
+		switch int(samples[0] * 32768) {
+		case meetingHang:
+			time.Sleep(time.Hour)
+		case meetingNoModel:
+			send(Header{Type: TypeError, Job: f.Header.Job, Code: CodeModelUnavailable})
+			continue
+		case meetingInvalidAudio:
+			send(Header{Type: TypeError, Job: f.Header.Job, Code: CodeInvalidAudio})
+			continue
+		}
+		ms := 11
+		result := fmt.Sprintf(`{"kind":%q,"samples":%d,"first":%g,"language":%q,"speakers":%d}`,
+			f.Header.Type, len(samples), samples[0]*32768, f.Header.Language, deref(f.Header.NumSpeakers))
+		send(Header{Type: TypeResult, Job: f.Header.Job, Kind: f.Header.Type, Result: json.RawMessage(result), ProcessingMS: &ms})
+	}
+}
+
+func deref(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func s16(values ...int16) []byte {
+	out := make([]byte, 2*len(values))
+	for i, v := range values {
+		out[2*i], out[2*i+1] = byte(v), byte(uint16(v)>>8)
+	}
+	return out
+}
+
+func meetingSupervisor(t *testing.T, mode string, configure func(*SupervisorConfig)) *harness {
+	t.Helper()
+	return startSupervisorWith(t, mode, func(c *SupervisorConfig) {
+		c.Meeting = true
+		c.JobDeadline = MeetingJobDeadline
+		if configure != nil {
+			configure(c)
+		}
+	})
+}
+
+func TestMeetingSupervisorJobs(t *testing.T) {
+	h := meetingSupervisor(t, "meeting", nil)
+	h.await(t, StateReady)
+	models, ok := h.s.MeetingModels()
+	if !ok || models.Voice.Dimension != 256 || models.Transcription.ModelID != "whisper-turbo" {
+		t.Fatalf("%+v %v", models, ok)
+	}
+	if _, ok := h.s.Model(); ok {
+		t.Fatal("meeting worker reported a dictation model")
+	}
+	speakers := 2
+	for _, tc := range []struct {
+		job   MeetingJob
+		model string
+		want  string
+	}{
+		{MeetingJob{Kind: TypeTranscribe, Samples: s16(7, 1), Language: "auto", VocabularyTerms: []string{"Secretterm"}}, "whisper-turbo", `"first":7,"kind":"transcribe","language":"auto","samples":2`},
+		{MeetingJob{Kind: TypeDiarize, Samples: s16(-9), NumSpeakers: &speakers}, "pyannote", `"first":-9,"kind":"diarize","language":"","samples":1,"speakers":2`},
+		{MeetingJob{Kind: TypeEmbed, Samples: make([]byte, 2*48000)}, "wespeaker", `"first":0,"kind":"embed","language":"","samples":48000`},
+	} {
+		r, err := h.s.Meeting(context.Background(), tc.job)
+		if err != nil || !strings.Contains(string(r.Result), tc.want) || r.ProcessingMS != 11 || r.Model.ModelID != tc.model {
+			t.Fatalf("%s: %s %+v %v", tc.job.Kind, r.Result, r.Model, err)
+		}
+	}
+	for _, bad := range []MeetingJob{
+		{Kind: TypeEmbed, Samples: make([]byte, 2*47999)},
+		{Kind: TypeTranscribe, Samples: nil},
+		{Kind: TypeRecognize, Samples: s16(1)},
+		{Kind: TypeTranscribe, Samples: []byte{1, 2, 3}},
+	} {
+		if _, err := h.s.Meeting(context.Background(), bad); !errors.Is(err, ErrInvalidRecognition) {
+			t.Fatalf("%s %d bytes: %v", bad.Kind, len(bad.Samples), err)
+		}
+	}
+	_, err := h.s.Meeting(context.Background(), MeetingJob{Kind: TypeTranscribe, Samples: s16(meetingNoModel)})
+	var workerErr *WorkerError
+	if !errors.As(err, &workerErr) || workerErr.Code != CodeModelUnavailable {
+		t.Fatal(err)
+	}
+	// A dictation recognize is not a meeting job.
+	if _, err := recognize(t, h.s, 1); !errors.Is(err, ErrInvalidRecognition) {
+		t.Fatal(err)
+	}
+	eventually(t, "worker log line", func() bool { return strings.Contains(h.logs.String(), "worker job=1 kind=transcribe samples=2") })
+	if strings.Contains(h.logs.String(), "Secretterm") {
+		t.Fatal("term leaked into the log")
+	}
+}
+
+// The meeting worker's deadline is 300 s (the dictation worker keeps 30 s):
+// on it the worker is killed, the job answers worker_unavailable and the
+// worker restarts after the Feature 014 backoff.
+func TestMeetingSupervisorDeadline(t *testing.T) {
+	h := meetingSupervisor(t, "meeting", nil)
+	h.await(t, StateReady)
+	errs := make(chan error, 1)
+	go func() {
+		_, err := h.s.Meeting(context.Background(), MeetingJob{Kind: TypeDiarize, Samples: s16(meetingHang, 0, 0)})
+		errs <- err
+	}()
+	h.clock.await(t, 300*time.Second).fire()
+	if err := <-errs; !errors.Is(err, ErrWorkerUnavailable) {
+		t.Fatal(err)
+	}
+	h.await(t, StateRestarting)
+	if _, ok := h.s.MeetingModels(); ok {
+		t.Fatal("models reported while restarting")
+	}
+	h.clock.await(t, time.Second).fire()
+	h.await(t, StateReady)
+	if r, err := h.s.Meeting(context.Background(), MeetingJob{Kind: TypeEmbed, Samples: make([]byte, 2*48000)}); err != nil || r.ProcessingMS != 11 {
+		t.Fatal(err)
+	}
+}
+
+// unavailable at start-up: no models, so no meeting job kinds are offered.
+func TestMeetingSupervisorUnavailable(t *testing.T) {
+	h := meetingSupervisor(t, "meeting-unavailable", nil)
+	h.await(t, StateUnavailable)
+	if _, ok := h.s.MeetingModels(); ok {
+		t.Fatal("models while unavailable")
+	}
+	if _, err := h.s.Meeting(context.Background(), MeetingJob{Kind: TypeTranscribe, Samples: s16(1)}); !errors.Is(err, ErrWorkerUnavailable) {
+		t.Fatal(err)
+	}
+	eventually(t, "missing count", func() bool { return strings.Contains(h.logs.String(), "reason=model_missing missing=1") })
+}
+
+// Each supervisor accepts only its own worker's ready.
+func TestSupervisorRefusesTheOtherWorkersReady(t *testing.T) {
+	for _, tc := range []struct {
+		mode    string
+		meeting bool
+	}{{"meeting", false}, {"serve", true}} {
+		h := startSupervisorWith(t, tc.mode, func(c *SupervisorConfig) { c.Meeting = tc.meeting })
+		h.await(t, StateRestarting)
+		if !strings.Contains(h.logs.String(), "worker_failure=wrong_ready") {
+			t.Fatal(h.logs.String())
+		}
+		h.stop()
+	}
+}
+
+// While the gate is closed (interactive work in flight) no job is sent to
+// the worker; a job waiting for it can still be abandoned.
+func TestSupervisorGate(t *testing.T) {
+	var mu sync.Mutex
+	gate := make(chan struct{})
+	h := meetingSupervisor(t, "meeting", func(c *SupervisorConfig) {
+		c.Gate = func() <-chan struct{} {
+			mu.Lock()
+			defer mu.Unlock()
+			return gate
+		}
+	})
+	h.await(t, StateReady)
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() {
+		_, err := h.s.Meeting(ctx, MeetingJob{Kind: TypeTranscribe, Samples: s16(1)})
+		errs <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if strings.Contains(h.logs.String(), "worker job=") {
+		t.Fatal("job sent through a closed gate")
+	}
+	cancel()
+	if err := <-errs; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := h.s.Meeting(context.Background(), MeetingJob{Kind: TypeTranscribe, Samples: s16(2)})
+		result <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	close(gate)
+	mu.Unlock()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(h.logs.String(), "worker job=") != 1 {
+		t.Fatal("abandoned job reached the worker")
 	}
 }

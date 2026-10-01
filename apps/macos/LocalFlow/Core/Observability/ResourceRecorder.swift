@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import LocalFlowCore
+import LocalFlowSpeech
 
 /// Local, content-free measurements. Producers never perform file IO or enqueue
 /// per-sample tasks. A fixed ring feeds one coalescing serial writer.

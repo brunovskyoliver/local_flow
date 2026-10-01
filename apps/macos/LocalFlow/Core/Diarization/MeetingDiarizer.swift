@@ -26,7 +26,12 @@ actor MeetingDiarizer {
     case busy
     /// No pending run for the meeting.
     case nothingToRun
+    /// Feature 018: the server could not take a window; the run is `pending` again.
+    case waitingForServer(String)
   }
+
+  /// A window the server could not take (FR-031).
+  private struct Waiting: Swift.Error { let code: String }
 
   static let decodeFrames: AVAudioFrameCount = 4_096
   /// Segments aligned per page. The page API returns at most 200 rows, inside the
@@ -38,7 +43,9 @@ actor MeetingDiarizer {
   private let transcripts: any TranscriptStoring
   private let meetings: any MeetingStoring
   private let storageRoot: MeetingStorageRoot
-  private let lifecycle: ModelLifecycleCoordinator
+  /// The coordinator of the current run: local, or the server's (Feature 018).
+  private var lifecycle: ModelLifecycleCoordinator
+  private let inference: MeetingInferenceRouter
   private let identity: DiarizationIdentity
   private let clock: any MeetingClock
   /// FR-037: content-free run metrics; nil in tests that do not measure.
@@ -56,7 +63,8 @@ actor MeetingDiarizer {
   init(
     speakers: any SpeakerStoring, transcripts: any TranscriptStoring,
     meetings: any MeetingStoring, storageRoot: MeetingStorageRoot,
-    lifecycle: ModelLifecycleCoordinator, identity: DiarizationIdentity,
+    lifecycle: ModelLifecycleCoordinator, inference: MeetingInferenceRouter? = nil,
+    identity: DiarizationIdentity,
     clock: any MeetingClock = SystemMeetingClock(), recorder: ResourceRecorder? = nil
   ) {
     self.speakers = speakers
@@ -64,6 +72,7 @@ actor MeetingDiarizer {
     self.meetings = meetings
     self.storageRoot = storageRoot
     self.lifecycle = lifecycle
+    self.inference = inference ?? .local(lifecycle)
     self.identity = identity
     self.clock = clock
     self.recorder = recorder
@@ -164,6 +173,8 @@ actor MeetingDiarizer {
     }
     guard hasTrackAudio(detail) else { return await fail(pending.id, Failure(.audioMissing)) }
     // Acquire before `start`, so a busy model leaves the run pending with no progress.
+    let choice = await inference.choose(.diarization, meeting: meetingID)
+    lifecycle = choice.lifecycle
     let lease: ModelLease
     do {
       lease = try await lifecycle.acquire(session: meetingID, workload: .diarization)
@@ -184,6 +195,9 @@ actor MeetingDiarizer {
     var context: Context
     do {
       let started = try await speakers.start(runID: pending.id, now: clock.nowMilliseconds)
+      try await speakers.recordInferencePath(
+        runID: pending.id, path: choice.path, serverFailure: choice.serverFailure,
+        model: choice.model)
       context = Context(
         run: started, lease: lease, progress: progress, planned: Self.plannedWindows(detail),
         startedNs: clock.monotonicNanoseconds)
@@ -468,6 +482,8 @@ actor MeetingDiarizer {
     } catch {
       if Task.isCancelled { throw CancellationError() }
       if error is CancellationError { throw Preempted() }
+      if let waiting = error as? RemoteMeetingWaiting { throw Waiting(code: waiting.code) }
+      if error is RemoteMeetingNotOffered { throw Waiting(code: "not_offered") }
       switch error as? DictationFailure {
       case .cancelled, .staleLease: throw Preempted()
       default: throw Failure(.runtimeFailure, "window")
@@ -693,6 +709,15 @@ actor MeetingDiarizer {
       do { try await lifecycle.finish(lease) } catch { await lifecycle.cancelAndJoin(lease) }
     }
     if Task.isCancelled || error is CancellationError { return await cancel(runID) }
+    if let waiting = error as? Waiting {
+      // Back to pending: the coordinator retries once the server may be back.
+      do {
+        try await speakers.requeue(runID: runID)
+        return .waitingForServer(waiting.code)
+      } catch {
+        return await fail(runID, Failure(.persistenceFailure))
+      }
+    }
     let revoked =
       error as? DictationFailure == .cancelled || error as? DictationFailure == .staleLease
     if error is Preempted || revoked {

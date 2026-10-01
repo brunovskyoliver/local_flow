@@ -474,6 +474,24 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     XCTAssertEqual(Array(store.inferencePaths.values), [.local])
   }
 
+  /// T052: a run admitted for the custom server records `custom`, and `server` once a
+  /// request falls back to the channel.
+  func testACustomRunRecordsTheServerAfterAFallback() async throws {
+    let fixture = try IntelligenceFixtures.meeting("deployment")
+    let (custom, customStore, _, _) = try makeCoordinator(fixture: fixture, custom: true)
+    _ = await custom.observe(meetingID: fixture.id)
+    custom.requestRun(meetingID: fixture.id)
+    await waitUntil { customStore.adoptCalls == 1 }
+    XCTAssertEqual(Array(customStore.inferencePaths.values), [.custom])
+
+    let (coordinator, store, _, _) = try makeCoordinator(
+      fixture: fixture, custom: true, wrap: { FallingBack(inner: $0) })
+    _ = await coordinator.observe(meetingID: fixture.id)
+    coordinator.requestRun(meetingID: fixture.id)
+    await waitUntil { store.adoptCalls == 1 }
+    XCTAssertEqual(Array(store.inferencePaths.values), [.server])
+  }
+
   /// While a run is active the pill reports "Summarizing…" with the queued
   /// count; it opens the meeting's Summary tab.
   func testSummarizingNoticeCarriesQueuedCount() {
@@ -492,7 +510,9 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
 
   private func makeCoordinator(
     fixture: IntelligenceFixture? = nil, automatic: Bool = true,
-    clock: FakeMeetingClock = FakeMeetingClock(), viaChannel: Bool = false
+    clock: FakeMeetingClock = FakeMeetingClock(), viaChannel: Bool = false,
+    custom: Bool = false,
+    wrap: (FakeAnalysisTransport) -> any AnalysisTransporting = { $0 }
   ) throws -> (
     MeetingIntelligenceCoordinator, FakeAnalysisStore, FakeAnalysisTransport,
     FakeEvidenceReader
@@ -502,11 +522,12 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
     let transport = FakeAnalysisTransport(fixture: fixture)
     if fixture != nil { try transport.script(response: "deployment-valid") }
     let analyzer = MeetingAnalyzer(
-      evidence: reader, transport: transport, store: store,
+      evidence: reader, transport: wrap(transport), store: store,
       clock: FakeMeetingClock(),
       endpoint: {
         var endpoint = RewriteEndpoint(url: URL(string: "http://127.0.0.1:8765")!, origin: "test")
         endpoint.viaRemoteChannel = viaChannel
+        if custom { endpoint.summaryHeaders = [SummaryServer.primaryURLHeader: "http://ai-vm"] }
         return endpoint
       },
       settings: { nil })
@@ -529,4 +550,28 @@ final class MeetingIntelligenceCoordinatorTests: XCTestCase {
       try? await Task.sleep(for: .milliseconds(5))
     }
   }
+}
+
+/// Says every request fell back to the channel, then streams the inner transport.
+private struct FallingBack: AnalysisTransporting {
+  let inner: FakeAnalysisTransport
+  func analyze(request: AnalysisRequest, endpoint: RewriteEndpoint, timeout: Duration)
+    -> AsyncThrowingStream<AnalysisTransportItem, Error>
+  {
+    let stream = inner.analyze(request: request, endpoint: endpoint, timeout: timeout)
+    return AsyncThrowingStream { continuation in
+      let task = Task {
+        continuation.yield(.fellBackToServer)
+        do {
+          for try await item in stream { continuation.yield(item) }
+          continuation.finish()
+        } catch { continuation.finish(throwing: error) }
+      }
+      continuation.onTermination = { _ in task.cancel() }
+    }
+  }
+  func health(endpoint: RewriteEndpoint) async throws -> AnalysisHealth {
+    try await inner.health(endpoint: endpoint)
+  }
+  func invalidate() {}
 }

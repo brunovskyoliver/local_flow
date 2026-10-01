@@ -1,32 +1,34 @@
 import FluidAudio
 import Foundation
-import LocalFlowCore
-import LocalFlowSpeech
 
 /// Builds the pinned offline diarizer from a verified local model only. The lifecycle
 /// coordinator owns the returned runtime and is the only caller.
-struct FluidAudioDiarizerFactory: Sendable {
-  static let modelID = "FluidInference/speaker-diarization-coreml"
-  static let revision = "1ed7a662fdc7109e36d822db793ee6eebdaf8594"
+public struct FluidAudioDiarizerFactory: Sendable {
+  public static let modelID = "FluidInference/speaker-diarization-coreml"
+  public static let revision = "1ed7a662fdc7109e36d822db793ee6eebdaf8594"
   /// ModelHub appends `Repo.diarizer.folderName` (the repository name without
   /// "-coreml") to the directory it is given.
-  static let folderName = "speaker-diarization"
+  public static let folderName = "speaker-diarization"
 
   let descriptor: LocalModelDescriptor
   var offlineMode: @Sendable () -> Bool = { ModelHub.offlineMode }
   var operatingSystem = ProcessInfo.processInfo.operatingSystemVersion
 
+  public init(descriptor: LocalModelDescriptor) {
+    self.descriptor = descriptor
+  }
+
   /// Set once at launch (AppServices) so no FluidAudio path can reach the network.
-  static func enableOfflineMode() { ModelHub.offlineMode = true }
+  public static func enableOfflineMode() { ModelHub.offlineMode = true }
 
   /// `<models>/speaker-diarization-offline/speaker-diarization`: the provisioner owns the
   /// leaf, and the loader is given its parent.
-  static func installRoot(models: URL) -> URL {
+  public static func installRoot(models: URL) -> URL {
     models.appendingPathComponent("speaker-diarization-offline", isDirectory: true)
       .appendingPathComponent(folderName, isDirectory: true)
   }
 
-  func makeRuntime() async throws -> any DiarizationRuntime {
+  public func makeRuntime() async throws -> any DiarizationRuntime {
     // Offline mode is what stops ModelHub from downloading or purging (research R2).
     guard offlineMode() else { throw DiarizationFailureCategory.modelUnavailable }
     // macOS 14 BNNS crash in Core ML predictions (FluidAudio #878).
@@ -58,12 +60,12 @@ struct FluidAudioDiarizerFactory: Sendable {
 /// `OfflineDiarizerManager` fixes its config at construction, so the one-speaker
 /// microphone constraint gets its own manager over the same loaded models.
 /// Unchecked: `ModelLifecycleCoordinator.diarize` admits one window at a time.
-final class FluidAudioDiarizer: DiarizationRuntime, @unchecked Sendable {
+public final class FluidAudioDiarizer: DiarizationRuntime, @unchecked Sendable {
   // ponytail: two managers share one OfflineDiarizerModels; no second model load.
   private let unconstrained: OfflineDiarizerManager
   private let singleSpeaker: OfflineDiarizerManager
 
-  init(models: OfflineDiarizerModels) {
+  public init(models: OfflineDiarizerModels) {
     var config = OfflineDiarizerConfig(exposeChunkEmbeddings: true)
     config.postProcessing.exclusiveSegments = false
     unconstrained = OfflineDiarizerManager(config: config)
@@ -73,7 +75,7 @@ final class FluidAudioDiarizer: DiarizationRuntime, @unchecked Sendable {
     singleSpeaker.initialize(models: models)
   }
 
-  func diarize(_ request: DiarizationWindowRequest) async throws -> DiarizationWindowResult {
+  public func diarize(_ request: DiarizationWindowRequest) async throws -> DiarizationWindowResult {
     guard request.numSpeakers == nil || request.numSpeakers == 1 else {
       throw DictationFailure.invalidAudio
     }
@@ -87,7 +89,7 @@ final class FluidAudioDiarizer: DiarizationRuntime, @unchecked Sendable {
 
   /// "S1…" become clusters 0…; centroids are the L2-normalized means of each cluster's
   /// chunk embeddings. A cluster without chunk embeddings gets no centroid.
-  static func map(_ result: DiarizationResult) throws -> DiarizationWindowResult {
+  public static func map(_ result: DiarizationResult) throws -> DiarizationWindowResult {
     guard result.segments.count <= DiarizationWindowResult.maxTurns else {
       throw DictationFailure.invalidResult
     }
@@ -125,14 +127,14 @@ final class FluidAudioDiarizer: DiarizationRuntime, @unchecked Sendable {
     return mapped
   }
 
-  static func cluster(_ speakerID: String) -> Int? {
+  public static func cluster(_ speakerID: String) -> Int? {
     guard speakerID.hasPrefix("S"), let value = Int(speakerID.dropFirst()), value >= 1,
       value <= 10_000
     else { return nil }
     return value - 1
   }
 
-  func shutdown() async {
+  public func shutdown() async {
     // The managers hold only Core ML models; dropping the runtime releases them.
   }
 }

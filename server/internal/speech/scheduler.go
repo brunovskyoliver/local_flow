@@ -17,6 +17,9 @@ const (
 	// MaxSessionWindows caps the windows of one session. A session of at
 	// most 2,880,000 + 16,000 samples needs 13 windows of 239,360.
 	MaxSessionWindows = 16
+	// MaxLiveWaitingPerUser is the number of live-preview windows a user may
+	// have waiting, besides one running (Feature 018 R7).
+	MaxLiveWaitingPerUser = 1
 )
 
 var (
@@ -73,7 +76,9 @@ type SchedulerConfig struct {
 // queue of at most MaxWaitingPerUser waiting windows, and users with waiting
 // windows are served round-robin, so with N users releasing together a user's
 // tail window waits behind at most one window from each other user. Rewrites
-// wait for WaitForNoDictationWindows before starting.
+// wait for WaitForNoDictationWindows before starting. Live-preview windows
+// (Feature 018) form a second class served only while no dictation window
+// waits; with one waiting window per user, their FIFO is round robin.
 type Scheduler struct {
 	c    SchedulerConfig
 	wake chan struct{}
@@ -84,12 +89,18 @@ type Scheduler struct {
 	waiting int
 	idle    chan struct{} // closed while no window waits
 	closed  bool          // Run has returned
+	live    []*job        // waiting live-preview windows, FIFO
 }
 
+// job is a dictation window (session set) or a live-preview window (reply
+// set).
 type job struct {
 	session  *Session
 	w        Window
 	queuedAt time.Time
+
+	user, channel int64
+	reply         chan answer
 }
 
 // NewScheduler returns a scheduler; call Run to start dispatching.
@@ -215,6 +226,60 @@ func (s *Scheduler) Waiting() int {
 	return s.waiting
 }
 
+// LiveWaiting is the number of live-preview windows waiting, across users.
+func (s *Scheduler) LiveWaiting() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.live)
+}
+
+// Live runs one live-preview window after every waiting dictation window and
+// returns its answer. It returns ErrBusy when the user already has
+// MaxLiveWaitingPerUser live windows waiting. When ctx ends first, a waiting
+// window leaves the queue and a running one's result is dropped.
+func (s *Scheduler) Live(ctx context.Context, user, channel int64, samples []float32) (WindowResult, error) {
+	if len(samples) < 1 || len(samples) > MaxSampleCount {
+		return WindowResult{}, ErrInvalidRecognition
+	}
+	j := &job{w: Window{Samples: samples}, queuedAt: time.Now(), user: user, channel: channel, reply: make(chan answer, 1)}
+	s.mu.Lock()
+	waiting := 0
+	for _, other := range s.live {
+		if other.user == user {
+			waiting++
+		}
+	}
+	switch {
+	case s.closed:
+		s.mu.Unlock()
+		return WindowResult{}, ErrWorkerUnavailable
+	case waiting >= MaxLiveWaitingPerUser:
+		s.c.Logger.Printf("speech live_busy user=%d channel=%d live_waiting=%d", user, channel, len(s.live))
+		s.mu.Unlock()
+		return WindowResult{}, ErrBusy
+	}
+	s.live = append(s.live, j)
+	s.mu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+	select {
+	case a := <-j.reply:
+		return a.result, a.err
+	case <-ctx.Done():
+		s.mu.Lock()
+		for i, other := range s.live {
+			if other == j {
+				s.live = append(s.live[:i], s.live[i+1:]...)
+				break
+			}
+		}
+		s.mu.Unlock()
+		return WindowResult{}, ctx.Err()
+	}
+}
+
 // WaitForNoDictationWindows returns once no dictation window is waiting for
 // the worker (a running window does not count), or ctx is done. A rewrite
 // calls it before starting so dictation windows run ahead of rewrites.
@@ -296,6 +361,11 @@ func (s *Scheduler) pickLocked() *job {
 		j.session.running = true
 		return j
 	}
+	if len(s.live) > 0 {
+		j := s.live[0]
+		s.live = s.live[1:]
+		return j
+	}
 	return nil
 }
 
@@ -320,6 +390,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 				return
 			}
 		}
+		if ctx.Err() != nil && j.reply != nil {
+			j.reply <- answer{err: ErrWorkerUnavailable}
+			return
+		}
 		if ctx.Err() != nil {
 			s.mu.Lock()
 			j.session.running = false
@@ -334,6 +408,21 @@ func (s *Scheduler) Run(ctx context.Context) {
 func (s *Scheduler) run(ctx context.Context, j *job) {
 	started := time.Now()
 	result, err := s.c.Recognizer.Recognize(ctx, Recognition{Samples: j.w.Samples, Boost: j.w.Boost})
+	if j.reply != nil {
+		// A live window answers only itself; the next job finds a failed
+		// worker on its own.
+		if errors.Is(err, context.Canceled) {
+			err = ErrWorkerUnavailable
+		}
+		j.reply <- answer{result: result, err: err}
+		code := "ok"
+		if err != nil {
+			code = errorCode(err)
+		}
+		s.c.Logger.Printf("speech live user=%d channel=%d samples=%d queue_ms=%d duration_ms=%d code=%s live_waiting=%d",
+			j.user, j.channel, len(j.w.Samples), started.Sub(j.queuedAt).Milliseconds(), time.Since(started).Milliseconds(), code, s.LiveWaiting())
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	x := j.session
@@ -362,8 +451,15 @@ func (s *Scheduler) run(ctx context.Context, j *job) {
 }
 
 // failWaitingLocked ends every session that has a waiting window, answering
-// its first waiting window with err.
+// its first waiting window with err. On Run's return it also answers waiting
+// live windows.
 func (s *Scheduler) failWaitingLocked(err error) {
+	if s.closed {
+		for _, j := range s.live {
+			j.reply <- answer{err: err}
+		}
+		s.live = nil
+	}
 	var first []*job
 	seen := map[*Session]bool{}
 	for _, user := range s.ring {

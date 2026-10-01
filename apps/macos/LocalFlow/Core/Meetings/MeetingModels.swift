@@ -78,11 +78,36 @@ struct Meeting: Sendable, Equatable, Identifiable {
   var revision: Int64
   /// The language the final transcript is decoded in; nil is the Settings default.
   var language: MeetingLanguage?
+  /// Feature 018: **Run on this Mac** — the meeting's remaining work stays local.
+  var runLocally = false
   /// IANA name of the zone the meeting is analyzed in — the capture zone;
   /// not persisted, defaults to the current zone.
   var timeZone: String = TimeZone.current.identifier
 
   var displayTitle: String { title ?? fallbackTitle(createdAt: createdAt) }
+}
+
+/// Feature 018: the stored `inference_path` of a meeting's results.
+struct MeetingProvenance: Sendable, Equatable {
+  var transcript: String?
+  var speakers: String?
+  var summary: String?
+
+  /// "Transcript: your server · Speaker labels: this Mac", or nil when nothing is done.
+  var text: String? {
+    let parts = [("Transcript", transcript), ("Speaker labels", speakers), ("Summary", summary)]
+      .compactMap { name, path in path.map { "\(name): \(Self.place($0))" } }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+
+  static func place(_ path: String) -> String {
+    switch path {
+    case "server": "your server"
+    case "custom": "your custom server"
+    case "local_after_server_failure": "this Mac (server unavailable)"
+    default: "this Mac"
+    }
+  }
 }
 
 struct MeetingTrack: Sendable, Equatable, Identifiable {

@@ -27,6 +27,8 @@ struct MeetingDetailView: View {
   var initialTab: NoteDetailTab = .thoughts
   @State private var tab: NoteDetailTab = .thoughts
   @State private var summaryModel: SummaryModel?
+  /// Feature 018: where this meeting's transcript, labels and summary were produced.
+  @State private var provenance: MeetingProvenance?
   @State private var retainedEditor: MeetingNotesEditor?
   @State private var explainingSharing = false
   @State private var transcriptQuery = ""
@@ -87,9 +89,22 @@ struct MeetingDetailView: View {
           }
         }.font(.flow(size: 12)).padding(12)
       }
+      if model.waitsForServer(meeting.id) {
+        HStack(spacing: 12) {
+          Text(MeetingLibraryViewModel.waitingText).foregroundStyle(SottoPalette.muted)
+          Button("Run on this Mac") { Task { await model.runLocally(meeting.id) } }
+            .accessibilityLabel("Run this meeting on this Mac")
+            .accessibilityIdentifier("notetaker.detail.runOnThisMac")
+        }
+        .font(.flow(size: 12)).padding(12)
+      }
       ScrollViewReader { proxy in
         ScrollView {
           VStack(alignment: .leading, spacing: 16) {
+            if let produced = provenance?.text {
+              Text(produced).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+                .accessibilityLabel("Produced on: \(produced)")
+            }
             switch tab {
             case .thoughts: NoteThoughtsSection(editor: editor)
             case .transcript: transcriptSection
@@ -141,6 +156,9 @@ struct MeetingDetailView: View {
       titleDraft = meeting.displayTitle
       stopPlayback()
       closeSearch()
+    }
+    .task(id: ProvenanceKey(meeting: meeting.id, finalized: transcription?.status?.state)) {
+      provenance = await model.provenance?(meeting.id)
     }
     .task(id: meeting.id) {
       let created = summaryModelFactory?(meeting.id)
@@ -1024,4 +1042,10 @@ private struct SelectableTextEditor: NSViewRepresentable {
       text.wrappedValue = value
     }
   }
+}
+
+/// Reloads the provenance line when the note or its transcript state changes.
+private struct ProvenanceKey: Hashable {
+  let meeting: UUID
+  let finalized: TranscriptState?
 }

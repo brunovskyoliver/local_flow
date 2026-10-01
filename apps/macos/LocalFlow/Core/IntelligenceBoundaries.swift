@@ -433,6 +433,8 @@ struct MeetingAnalysisReadModel: Sendable, Equatable {
 // MARK: - Boundaries
 
 enum AnalysisTransportItem: Sendable, Equatable {
+  /// Feature 018 (R9): the custom summaries server failed; the channel answers instead.
+  case fellBackToServer
   case firstByte
   case event(AnalysisEvent)
   case completed(requestBytes: Int, responseBytes: Int)
@@ -456,6 +458,8 @@ extension AnalysisTransporting {
 /// Feature 018: where a summary run's requests went.
 enum AnalysisInferencePath: String, Sendable, Equatable {
   case local, server, custom
+  /// **Run on this Mac** after the server could not take it (`user_ran_locally`).
+  case localAfterServerFailure = "local_after_server_failure"
 }
 
 /// Every analysis table write goes through one implementation of this.

@@ -22,6 +22,8 @@ actor MeetingIdentifier {
     case nothingToRun
     /// Past search: no remote root was Unknown, so nothing was admitted.
     case skipped
+    /// Feature 018: the server could not take a region; the run is `pending` again.
+    case waitingForServer(String)
   }
 
   private let store: any IdentityStoring
@@ -29,7 +31,9 @@ actor MeetingIdentifier {
   private let transcripts: any TranscriptStoring
   private let meetings: any MeetingStoring
   private let storageRoot: MeetingStorageRoot
-  private let lifecycle: ModelLifecycleCoordinator
+  /// The coordinator of the current run: local, or the server's (Feature 018).
+  private var lifecycle: ModelLifecycleCoordinator
+  private let inference: MeetingInferenceRouter
   private let identity: VoiceModelIdentity
   private let clock: any MeetingClock
   private let recorder: ResourceRecorder?
@@ -39,7 +43,8 @@ actor MeetingIdentifier {
   init(
     store: any IdentityStoring, speakers: any SpeakerStoring, transcripts: any TranscriptStoring,
     meetings: any MeetingStoring, storageRoot: MeetingStorageRoot,
-    lifecycle: ModelLifecycleCoordinator, identity: VoiceModelIdentity,
+    lifecycle: ModelLifecycleCoordinator, inference: MeetingInferenceRouter? = nil,
+    identity: VoiceModelIdentity,
     clock: any MeetingClock = SystemMeetingClock(), recorder: ResourceRecorder? = nil
   ) {
     self.store = store
@@ -48,6 +53,7 @@ actor MeetingIdentifier {
     self.meetings = meetings
     self.storageRoot = storageRoot
     self.lifecycle = lifecycle
+    self.inference = inference ?? .local(lifecycle)
     self.identity = identity
     self.clock = clock
     self.recorder = recorder
@@ -136,6 +142,14 @@ actor MeetingIdentifier {
       }
     }
     // 3. The lease, before `start`, so a busy model leaves the run pending.
+    let choice = await inference.choose(.voiceRegions, meeting: meetingID)
+    lifecycle = choice.lifecycle
+    // FR-023: vectors from another model never meet this library's profiles.
+    let queryModel = choice.model.map {
+      VoiceModelIdentity(
+        engine: $0.engine, modelID: $0.modelID, modelRevision: $0.modelRevision,
+        manifestHash: $0.manifestHash, dimension: $0.dimension ?? 0)
+    }
     let lease: ModelLease
     do {
       lease = try await lifecycle.acquire(session: meetingID, workload: .speakerIdentification)
@@ -154,6 +168,9 @@ actor MeetingIdentifier {
     let context: Context
     do {
       let started = try await store.start(runID: pending.id, now: clock.nowMilliseconds)
+      try await store.recordInferencePath(
+        runID: pending.id, path: choice.path, serverFailure: choice.serverFailure,
+        model: choice.model)
       context = Context(run: started, roots: roots, startedNs: clock.monotonicNanoseconds)
     } catch {
       try? await lifecycle.finish(lease)
@@ -197,7 +214,7 @@ actor MeetingIdentifier {
         }
         let decision = IdentityMatcher.decide(
           query: query, profiles: profiles, rejected: rejected[root.id] ?? [],
-          thresholds: thresholds)
+          thresholds: thresholds, queryModel: queryModel ?? identity, libraryModel: identity)
         decisions[root.id] = decision
         drafts += decision.candidates.map {
           MatchCandidateDraft(
@@ -260,6 +277,15 @@ actor MeetingIdentifier {
       do { try await lifecycle.finish(lease) } catch { await lifecycle.cancelAndJoin(lease) }
     }
     if Task.isCancelled || error is CancellationError { return await cancel(runID) }
+    if error is RemoteMeetingWaiting || error is RemoteMeetingNotOffered {
+      // Back to pending: the coordinator retries once the server may be back.
+      do {
+        try await store.requeue(runID: runID)
+        return .waitingForServer((error as? RemoteMeetingWaiting)?.code ?? "not_offered")
+      } catch {
+        return await fail(runID, .persistenceFailure)
+      }
+    }
     let revoked =
       error as? DictationFailure == .cancelled || error as? DictationFailure == .staleLease
     if error is RegionExtractor.Preempted || revoked {

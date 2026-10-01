@@ -91,6 +91,7 @@ final class FakeFlowdDictation: @unchecked Sendable {
             windowsSent += 1
           }
           return replies
+        case .s16: return [.close(1008)]
         }
       }
     }

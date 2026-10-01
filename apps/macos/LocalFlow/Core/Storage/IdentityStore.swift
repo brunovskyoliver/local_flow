@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import LocalFlowCore
+import LocalFlowSpeech
 
 /// Every identity table write goes through this actor, on the shared history
 /// `DatabasePool` (Feature 010, data-model.md). Each operation is one transaction.
@@ -582,6 +583,17 @@ actor IdentityStore: IdentityStoring {
   }
 
   /// Preempted by a speech workload: back to pending with no progress.
+  func recordInferencePath(
+    runID: UUID, path: MeetingInferencePath, serverFailure: String?,
+    model: RemoteCapabilities.Model?
+  ) throws {
+    try write { db in
+      try MeetingRunProvenance.record(
+        db, table: "identification_runs", runID: runID, path: path,
+        serverFailure: serverFailure, model: model)
+    }
+  }
+
   func requeue(runID: UUID) throws {
     try write { db in
       _ = try Self.transition(runID, to: .pending, db: db)

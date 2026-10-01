@@ -32,8 +32,13 @@ enum IdentityMatcher {
 
   static func decide(
     query: [QueryRegion], profiles: [CandidateProfile], rejected: Set<UUID>,
-    thresholds: IdentificationThresholds
+    thresholds: IdentificationThresholds, queryModel: VoiceModelIdentity? = nil,
+    libraryModel: VoiceModelIdentity? = nil
   ) -> Decision {
+    // FR-023: vectors from a different model, version or dimension are not comparable.
+    if let queryModel, let libraryModel, !queryModel.isCompatible(with: libraryModel) {
+      return .unknown
+    }
     let regions = query.filter { $0.weightMs > 0 && !$0.vector.isEmpty }
     let totalMs = regions.reduce(Int64(0)) { $0 + $1.weightMs }
     struct Scored {

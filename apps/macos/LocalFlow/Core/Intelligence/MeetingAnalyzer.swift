@@ -18,6 +18,10 @@ struct MeetingAnalyzer: Sendable {
   private let clock: any MeetingClock
   private let endpoint: @MainActor @Sendable () -> RewriteEndpoint?
   private let settings: @MainActor @Sendable () -> RewriteSettings?
+  /// Feature 018: this Mac's endpoint for a meeting marked **Run on this Mac** while the
+  /// server serves summaries; nil otherwise.
+  private let localEndpoint: @MainActor @Sendable () -> RewriteEndpoint?
+  private let runsLocally: @Sendable (UUID) async -> Bool
   private let recorder: ResourceRecorder?
   private let partials: AnalysisPartialCache
   private let languages = ResolvedLanguageCache()
@@ -31,6 +35,8 @@ struct MeetingAnalyzer: Sendable {
     store: any AnalysisStoring, clock: any MeetingClock = SystemMeetingClock(),
     endpoint: @escaping @MainActor @Sendable () -> RewriteEndpoint?,
     settings: @escaping @MainActor @Sendable () -> RewriteSettings?,
+    localEndpoint: @escaping @MainActor @Sendable () -> RewriteEndpoint? = { nil },
+    runsLocally: @escaping @Sendable (UUID) async -> Bool = { _ in false },
     recorder: ResourceRecorder? = nil,
     partials: AnalysisPartialCache = AnalysisPartialCache()
   ) {
@@ -40,6 +46,8 @@ struct MeetingAnalyzer: Sendable {
     self.clock = clock
     self.endpoint = endpoint
     self.settings = settings
+    self.localEndpoint = localEndpoint
+    self.runsLocally = runsLocally
     self.recorder = recorder
     self.partials = partials
   }
@@ -73,6 +81,8 @@ struct MeetingAnalyzer: Sendable {
     var policy: AnalysisPolicy
     var endpoint: RewriteEndpoint
     var version: EvidenceVersion
+    /// Run on this Mac after the server could not take it.
+    var ranLocally = false
   }
 
   private func prepare(meetingID: UUID) async throws -> Prepared {
@@ -87,7 +97,15 @@ struct MeetingAnalyzer: Sendable {
     {
       throw AnalysisFailure(Self.mapPreflight(refusal))
     }
-    guard let configured = await endpoint() else {
+    var ranLocally = false
+    var chosen: RewriteEndpoint?
+    if await runsLocally(meetingID), let local = await localEndpoint() {
+      chosen = local
+      ranLocally = true
+    } else {
+      chosen = await endpoint()
+    }
+    guard let configured = chosen else {
       throw AnalysisFailure(.serverUnavailable, detail: AnalysisClient.unavailableMessage)
     }
     // The summary backend is fixed here for the whole run (health included).
@@ -108,7 +126,7 @@ struct MeetingAnalyzer: Sendable {
       language: language, policy: policy)
     return Prepared(
       passID: passID, meeting: meeting, snapshot: snapshot, language: language,
-      policy: policy, endpoint: endpoint, version: version)
+      policy: policy, endpoint: endpoint, version: version, ranLocally: ranLocally)
   }
 
   /// Eligibility, preflight, evidence snapshot and the `pending` row.
@@ -140,7 +158,9 @@ struct MeetingAnalyzer: Sendable {
       meetingID: meetingID, trigger: trigger, evidence: prepared.version,
       passID: prepared.passID, policy: prepared.policy, now: clock.nowMilliseconds)
     try await store.recordInferencePath(
-      runID: run.id, path: prepared.endpoint.analysisInferencePath)
+      runID: run.id,
+      path: prepared.ranLocally ? .localAfterServerFailure : prepared.endpoint.analysisInferencePath
+    )
     return Admission(
       run: run, passID: prepared.passID, meeting: prepared.meeting,
       language: prepared.language, policy: prepared.policy,
@@ -695,6 +715,8 @@ struct MeetingAnalyzer: Sendable {
     for try await item in stream {
       try Task.checkCancellation()
       switch item {
+      case .fellBackToServer:
+        try await store.recordInferencePath(runID: runID, path: .server)
       case .firstByte:
         progress?(meetingID, AnalysisProgress(label: label, fraction: 0.05))
       case .event(let event):

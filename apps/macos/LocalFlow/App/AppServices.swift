@@ -489,9 +489,7 @@ final class AppServices {
           await self?.askAboutUnkeptAudio(audio, sampleCount: count)
         })
       self.remoteRouter = remoteRouter
-      remoteRouter.channelOpened = { [weak self] in
-        self?.meetingIntelligence?.serverMayBeReachable()
-      }
+      remoteRouter.channelOpened = { [weak self] in self?.serverMayBeReachable() }
       if preferences.remoteSettings().routesToServer {
         Task { await remoteRouter.refreshCapabilities() }
       }
@@ -887,15 +885,37 @@ final class AppServices {
     #if DEBUG
       if options.debugFailPersistence { liveStore = FailingPersistenceStore(base: transcripts) }
     #endif
+    // Feature 018 (R5): each meeting stage picks this Mac or the server when it takes
+    // its lease.
+    var inference = MeetingInferenceRouter.local(lifecycle)
+    if let remoteRouter {
+      let remote = MeetingInferenceRouter.remoteCoordinators(
+        pool: remoteRouter.channels,
+        terms: {
+          (try? await vocabulary.snapshot().entries)?.filter(\.enabled).map(\.canonical) ?? []
+        },
+        notOffered: { [weak self] kind in
+          await MainActor.run {
+            self?.preferences.noteNotOffered(op: "meeting_job", kind: kind.rawValue)
+          }
+        },
+        liveNotOffered: { [weak self] in
+          await MainActor.run { self?.preferences.noteNotOffered(op: "live_window") }
+        })
+      inference.live = remote.live
+      inference.background = remote.background
+      inference.routing = { [weak self] in await MainActor.run { self?.preferences.serverRouting } }
+      inference.runsLocally = { id in (try? await store.meeting(id: id))?.runLocally ?? false }
+    }
     let finalizer = MeetingFinalizer(
       store: transcripts, meetings: store, storageRoot: root, lifecycle: lifecycle,
-      vocabulary: vocabulary, identity: finalIdentity, configuration: .turbo,
+      inference: inference, vocabulary: vocabulary, identity: finalIdentity, configuration: .turbo,
       defaultLanguage: { [weak self] in
         await MainActor.run { self?.preferences.meetingLanguage ?? .defaultLanguage }
       },
       clock: clock, recorder: recorder)
     let transcription = MeetingTranscriptionCoordinator(
-      store: liveStore, lifecycle: lifecycle, vocabulary: vocabulary,
+      store: liveStore, lifecycle: lifecycle, inference: inference, vocabulary: vocabulary,
       identity: identity, clock: clock, recorder: recorder, finalizer: finalizer)
     transcription.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
     meetingTranscription = transcription
@@ -904,7 +924,7 @@ final class AppServices {
     let diarization = SpeakerDiarizationCoordinator(
       diarizer: MeetingDiarizer(
         speakers: speakers, transcripts: transcripts, meetings: store, storageRoot: root,
-        lifecycle: lifecycle,
+        lifecycle: lifecycle, inference: inference,
         identity: diarizationIdentity
           ?? DiarizationIdentity(
             engine: "fluidaudio_offline_diarizer", modelID: FluidAudioDiarizerFactory.modelID,
@@ -931,7 +951,8 @@ final class AppServices {
     let identification = SpeakerIdentificationCoordinator(
       identifier: MeetingIdentifier(
         store: identities, speakers: speakers, transcripts: transcripts, meetings: store,
-        storageRoot: root, lifecycle: lifecycle, identity: voiceIdentity, clock: clock,
+        storageRoot: root, lifecycle: lifecycle, inference: inference, identity: voiceIdentity,
+        clock: clock,
         recorder: recorder),
       enrollment: EnrollmentJob(
         store: identities, speakers: speakers, transcripts: transcripts, meetings: store,
@@ -967,11 +988,10 @@ final class AppServices {
       evidence: evidenceReader,
       transport: analysisTransport,
       store: analysisStore, clock: clock,
-      endpoint: { [weak self] in
-        guard let self else { return nil }
-        return RewriteEndpoint(settings: self.summarySettings())
-      },
+      endpoint: { [weak self] in self?.summaryEndpoint() },
       settings: { [weak self] in self?.summarySettings() },
+      localEndpoint: { [weak self] in self?.localSummaryEndpoint() },
+      runsLocally: { id in (try? await store.meeting(id: id))?.runLocally ?? false },
       recorder: recorder)
     self.meetingAnalyzer = analyzer
     let intelligence = MeetingIntelligenceCoordinator(
@@ -1060,6 +1080,10 @@ final class AppServices {
       coordinator?.activeMeetingID
     }
     meetingLibrary?.intelligence = intelligence
+    meetingLibrary?.waitingForServer = { [weak self] id in self?.meetingWaitsForServer(id) ?? false
+    }
+    meetingLibrary?.runOnThisMac = { [weak self] id in await self?.runMeetingOnThisMac(id) }
+    meetingLibrary?.provenance = { id in try? await store.provenance(meetingID: id) }
     meetingLibrary?.activeMeetingDidChange = { [weak coordinator] id in
       await coordinator?.meetingDidChange(id: id)
     }
@@ -1886,16 +1910,49 @@ final class AppServices {
     keepModelReady && !routing.servedByServer(.dictation)
   }
 
-  /// The rewrite settings summaries use: the server's channel while it serves them,
-  /// otherwise the Rewriting settings, as before Feature 018.
+  /// The rewrite settings summaries use: the server's channel while it serves them;
+  /// with the switch on otherwise this Mac's flowd (This Mac, or a custom server flowd
+  /// reaches); with it off the Rewriting settings, as before Feature 018.
   private func summarySettings() -> RewriteSettings {
     let settings = RewriteSettings.capture(
       preferences: preferences, credentialStore: rewriteCredentials)
     let routing = preferences.serverRouting
-    guard routing.servedByServer(.summaries), let origin = routing.remote.serverOrigin else {
-      return settings
+    if routing.servedByServer(.summaries), let origin = routing.remote.serverOrigin {
+      return settings.routedToRemote(origin: origin)
     }
-    return settings.routedToRemote(origin: origin)
+    return routing.switchApplies ? settings.routedToLocalFlowd() : settings
+  }
+
+  /// Where a summary run goes (US4, R9). A custom server is asked through flowd alone,
+  /// with the channel as its fallback; This Mac sends no summary-server headers.
+  private func summaryEndpoint() -> RewriteEndpoint? {
+    guard var endpoint = RewriteEndpoint(settings: summarySettings()) else { return nil }
+    let routing = preferences.serverRouting
+    guard routing.switchApplies, !endpoint.viaRemoteChannel else { return endpoint }
+    switch routing.path(for: .summaries) {
+    case .custom:
+      var headers = SummaryServer.headers(defaults: .standard, credentials: rewriteCredentials)
+      headers[SummaryServer.primaryOnlyHeader] = "1"
+      endpoint.summaryHeaders = headers
+      endpoint.channelFallback = routing.summariesFallBackToServer
+    case .thisMac, .server:
+      endpoint.summaryHeaders = [:]
+    }
+    return endpoint
+  }
+
+  /// This Mac's flowd and model, for a meeting marked Run on this Mac while the server
+  /// serves summaries; nil when summaries do not go to the server anyway.
+  private func localSummaryEndpoint() -> RewriteEndpoint? {
+    let routing = preferences.serverRouting
+    guard routing.servedByServer(.summaries) else { return nil }
+    let settings = RewriteSettings.capture(
+      preferences: preferences, credentialStore: rewriteCredentials)
+    guard var endpoint = RewriteEndpoint(settings: settings.routedToLocalFlowd()) else {
+      return nil
+    }
+    endpoint.summaryHeaders = [:]
+    return endpoint
   }
 
   /// Routing inputs changed: Parakeet's residency follows at once (FR-012, FR-015).
@@ -1915,12 +1972,45 @@ final class AppServices {
     }
   }
 
-  /// A network change retries summaries waiting for the server (FR-031).
+  /// A channel opened or the network changed: meeting work waiting for the server
+  /// retries now (FR-031).
+  private func serverMayBeReachable() {
+    meetingTranscription?.serverMayBeReachable()
+    speakerDiarization?.serverMayBeReachable()
+    speakerIdentification?.serverMayBeReachable()
+    meetingIntelligence?.serverMayBeReachable()
+  }
+
+  /// **Run on this Mac** (FR-031): the meeting's remaining transcript, speaker and summary
+  /// work runs here, recorded as `local_after_server_failure`.
+  func runMeetingOnThisMac(_ id: UUID) async {
+    guard let meetingStore else { return }
+    do {
+      try await meetingStore.setRunLocally(meetingID: id, now: SystemMeetingClock().nowMilliseconds)
+    } catch {
+      showMeetingNotice("This meeting can't be moved to this Mac right now.")
+      return
+    }
+    meetingTranscription?.runLocally(id)
+    speakerDiarization?.runLocally(id)
+    speakerIdentification?.runLocally(id)
+    meetingIntelligence?.runLocally(id)
+  }
+
+  /// Meeting work for `id` waits for the user's server.
+  func meetingWaitsForServer(_ id: UUID) -> Bool {
+    meetingTranscription?.waitingForServer.contains(id) == true
+      || speakerDiarization?.waitingForServer.contains(id) == true
+      || speakerIdentification?.waitingForServer.contains(id) == true
+      || meetingIntelligence?.waitingForServer.contains(id) == true
+  }
+
+  /// A network change retries work waiting for the server (FR-031).
   private func watchNetworkPath() {
     let monitor = NWPathMonitor()
     monitor.pathUpdateHandler = { [weak self] path in
       guard path.status == .satisfied else { return }
-      Task { @MainActor in self?.meetingIntelligence?.serverMayBeReachable() }
+      Task { @MainActor in self?.serverMayBeReachable() }
     }
     monitor.start(queue: .global(qos: .utility))
     networkMonitor = monitor
@@ -2624,3 +2714,42 @@ struct MeetingRuntimeOptions: Equatable, Sendable {
     func shutdown() async { await runtime.shutdown() }
   }
 #endif
+
+extension WhisperMeetingRuntime {
+  /// The helper the app bundles; the server's meeting worker passes its own (R4).
+  static var bundledHelperURL: URL {
+    Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/localflow-whisper-engine")
+  }
+
+  static func make(
+    model: LocalModelDescriptor, language: MeetingLanguage = .defaultLanguage,
+    promptTerms: [String] = []
+  ) async throws -> WhisperMeetingRuntime {
+    try await make(
+      model: model, helperURL: bundledHelperURL, language: language, promptTerms: promptTerms)
+  }
+
+  static func make(
+    model: LocalModelDescriptor, helperURL: URL, language: MeetingLanguage = .defaultLanguage,
+    promptTerms: [String] = [], startupTimeout: TimeInterval = 120,
+    inferenceTimeout: TimeInterval = 300
+  ) async throws -> WhisperMeetingRuntime {
+    try await make(
+      model: model, helperURL: helperURL, language: language, promptTerms: promptTerms,
+      startupTimeout: startupTimeout, inferenceTimeout: inferenceTimeout, launch: launchProcess)
+  }
+
+  /// Runs the helper as a Foundation `Process`, which also reaps it.
+  @Sendable static func launchProcess(
+    _ helper: URL, _ arguments: [String], _ input: Pipe, _ output: Pipe
+  ) throws -> (pid: pid_t, owner: AnyObject) {
+    let process = Process()
+    process.executableURL = helper
+    process.arguments = arguments
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    return (process.processIdentifier, process)
+  }
+}

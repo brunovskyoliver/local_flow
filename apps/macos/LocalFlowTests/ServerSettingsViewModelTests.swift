@@ -98,7 +98,44 @@ final class ServerSettingsViewModelTests: XCTestCase {
     preferences.serverSummariesOverride = .custom
     let model = model()
     XCTAssertEqual(model.place(.summaries), "On your custom server")
-    XCTAssertFalse(model.hidesSummaryServerFields)
+    // The fields move to Server › Advanced while the switch is on (contracts/settings-ui.md).
+    XCTAssertTrue(model.hidesSummaryServerFields)
+    XCTAssertTrue(model.showsSummaryCustomFields)
+  }
+
+  /// T056: Server › Advanced moves one service at a time; Custom shows its fields there.
+  func testAdvancedOverrides() {
+    approve()
+    let model = model()
+    XCTAssertEqual(model.rewriteOverride, .server)
+    XCTAssertFalse(model.showsRewriteCustomFields)
+    model.rewriteOverride = .thisMac
+    XCTAssertEqual(preferences.serverRewriteOverride, .thisMac)
+    XCTAssertEqual(model.place(.rewriting), "On this Mac")
+    XCTAssertEqual(model.place(.summaries), "On your server")
+    XCTAssertFalse(model.localRewriteModelStopped)
+    model.rewriteOverride = .custom
+    XCTAssertTrue(model.showsRewriteCustomFields)
+    XCTAssertEqual(model.place(.rewriting), "On your custom server")
+    XCTAssertTrue(model.hidesRewriteServerFields, "the fields live in Advanced")
+    model.summariesOverride = .custom
+    XCTAssertEqual(preferences.summaryServer, .remote, "Custom names the summaries server")
+    XCTAssertTrue(model.showsSummaryCustomFields)
+    XCTAssertEqual(model.place(.summaries), "On this Mac", "no address yet")
+    preferences.serverCapabilities = RemoteCapabilities(
+      ops: ["dictation_start", "rewrite", "analysis", "meeting_job"],
+      meetingJobs: ["transcribe", "diarize", "embed"], models: nil)
+    XCTAssertEqual(model.place(.meetings), "On your server")
+    model.meetingsOverride = .thisMac
+    XCTAssertEqual(preferences.serverMeetingsOverride, .thisMac)
+    XCTAssertEqual(model.place(.meetings), "On this Mac")
+    XCTAssertFalse(preferences.serverRouting.servedByServer(.diarization))
+    model.fallbackThresholdMs = 2_000
+    XCTAssertEqual(preferences.remoteFallbackThresholdMs, 2_000)
+    model.useForEverything = false
+    XCTAssertFalse(model.showsRewriteCustomFields)
+    XCTAssertFalse(model.showsSummaryCustomFields)
+    XCTAssertFalse(model.hidesRewriteServerFields, "switch off: the sections are as before")
   }
 
   func testTheMigrationNoticeShowsOnce() {

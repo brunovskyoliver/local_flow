@@ -124,6 +124,10 @@ type Config struct {
 	Clock         Clock
 	Logger        *log.Logger
 	Operations    Operations
+	// MeetingCapabilities, when set, reports ready.capabilities' meeting
+	// job kinds and models at each session hello (MeetingCapabilities); nil
+	// means no meeting worker.
+	MeetingCapabilities func() (jobs []string, models *CapabilityModels)
 	// Audit, when set, records a content-free audit row. The listener uses
 	// it for cross_user_attempt on authenticated channels (Feature 014 T085).
 	Audit func(accounts.AuditEntry)
@@ -433,6 +437,9 @@ func (l *Listener) serveChannel(ctx context.Context, c *Conn) {
 	ready := Ready{}
 	if hello.Purpose == PurposeSession {
 		ready.Capabilities = SessionCapabilities(l.cfg.Operations[PurposeSession])
+		if l.cfg.MeetingCapabilities != nil {
+			ready.Capabilities.MeetingJobs, ready.Capabilities.Models = l.cfg.MeetingCapabilities()
+		}
 	}
 	if err := c.Send(ctx, ready); err != nil {
 		return

@@ -1,6 +1,6 @@
 # Contract: meeting worker IPC (Feature 018)
 
-`flowd-speech meeting --models <dir> --helper <path>` is a second child process of flowd, supervised like the dictation worker ([Feature 014 speech worker IPC](../../014-remote-dictation-server/contracts/speech-worker-ipc.md)). Framing is unchanged: `u32 header_len | JSON header (≤ 65,536) | u32 payload_len | payload`, little-endian lengths.
+`flowd-speech meeting --models <dir> --helper <path>` is a second child process of flowd, supervised like the dictation worker ([Feature 014 speech worker IPC](../../014-remote-dictation-server/contracts/speech-worker-ipc.md)). Framing is unchanged: `u32 header_len | JSON header (≤ 65,536) | u32 payload_len | payload`, big-endian lengths as in Feature 014; samples are little-endian f32.
 
 ## Start-up
 

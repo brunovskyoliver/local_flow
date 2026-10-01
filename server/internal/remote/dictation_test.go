@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -937,4 +938,48 @@ func TestDictationHeldWindowsFollowResults(t *testing.T) {
 		t.Fatalf("%#v", m)
 	}
 	h.waitNoLive(t)
+}
+
+// interactiveCounter stands in for MeetingQueue.BeginInteractive.
+type interactiveCounter struct{ begun, active atomic.Int32 }
+
+func (i *interactiveCounter) begin() func() {
+	i.begun.Add(1)
+	i.active.Add(1)
+	var once sync.Once
+	return func() { once.Do(func() { i.active.Add(-1) }) }
+}
+
+func (i *interactiveCounter) waitIdle(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for i.active.Load() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d interactive operations still in flight", i.active.Load())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A dictation is interactive work from its start until it ends, so meeting
+// jobs wait for it (Feature 018 R7); a refused start is not.
+func TestDictationIsInteractiveWork(t *testing.T) {
+	counter := &interactiveCounter{}
+	h := newDictationHarness(t, func(c *DictationConfig) { c.Interactive = counter.begin })
+	_, _, token := h.approved("a", 1)
+	c, _ := h.hello(PurposeSession, token)
+	c.send(startMessage(1))
+	c.recv()
+	if counter.active.Load() != 1 {
+		t.Fatal(counter.active.Load())
+	}
+	c.send(DictationCancel{Op: 1})
+	c.recvSkippingProgress()
+	counter.waitIdle(t)
+	h.models.ok = false
+	c.send(startMessage(2))
+	expectError(t, c.recv(), 2, CodeWorkerUnavailable)
+	if counter.begun.Load() != 1 {
+		t.Fatal(counter.begun.Load())
+	}
 }

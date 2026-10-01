@@ -318,3 +318,102 @@ func TestWorkerFrameFixtures(t *testing.T) {
 		}
 	}
 }
+
+// Feature 018 meeting worker frames (specs/018-one-server/contracts/meeting-worker-ipc.md).
+
+func testMeetingModels() *MeetingModels {
+	model := func(engine, id string) *MeetingModel {
+		return &MeetingModel{Engine: engine, ModelID: id, ModelRevision: "rev-1", ManifestHash: "sha256-" + id}
+	}
+	voice := model("FluidAudio", "wespeaker")
+	voice.Dimension = 256
+	return &MeetingModels{Transcription: model("whisper.cpp", "whisper-turbo"), Diarization: model("FluidAudio", "pyannote"), Voice: voice}
+}
+
+func TestMeetingFramesRoundTrip(t *testing.T) {
+	ms := 900
+	speakers := 3
+	for _, tc := range []struct {
+		h       Header
+		payload []byte
+	}{
+		{Header{Type: TypeReady, Protocol: ProtocolVersion, Models: testMeetingModels()}, nil},
+		{Header{Type: TypeUnavailable, Reason: "model_missing", Missing: []string{"whisper-turbo"}}, nil},
+		{Header{Type: TypeTranscribe, Job: 1, SampleCount: 2, Language: "auto", VocabularyTerms: []string{"Zabbix"}, Pipeline: "w120"}, make([]byte, 8)},
+		{Header{Type: TypeDiarize, Job: 2, SampleCount: 1, NumSpeakers: &speakers}, make([]byte, 4)},
+		{Header{Type: TypeEmbed, Job: 3, SampleCount: 48000}, make([]byte, 4*48000)},
+		{Header{Type: TypeResult, Job: 1, Kind: TypeTranscribe, Result: json.RawMessage(`{"text":"x"}`), ProcessingMS: &ms}, nil},
+		{Header{Type: TypeError, Job: 1, Code: CodeRepetition}, nil},
+		{Header{Type: TypeState, State: "loading"}, nil},
+	} {
+		data, err := EncodeFrame(tc.h, tc.payload)
+		if err != nil {
+			t.Fatal(tc.h.Type, err)
+		}
+		f, err := ReadFrame(bytes.NewReader(data))
+		if err != nil || f.Header.Type != tc.h.Type || len(f.Payload) != len(tc.payload) {
+			t.Fatal(tc.h.Type, err)
+		}
+	}
+	header, _ := EncodeHeader(Header{Type: TypeDiarize, Job: 2, SampleCount: 1, NumSpeakers: &speakers})
+	if string(header) != `{"job":2,"num_speakers":3,"sample_count":1,"type":"diarize"}` {
+		t.Fatal(string(header))
+	}
+}
+
+func TestMeetingFramesMalformed(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"ready models without voice dimension": frame(`{"models":{"diarization":{"engine":"e","manifest_hash":"h","model_id":"m","model_revision":"r"},"transcription":{"engine":"e","manifest_hash":"h","model_id":"m","model_revision":"r"},"voice":{"engine":"e","manifest_hash":"h","model_id":"m","model_revision":"r"}},"protocol":1,"type":"ready"}`, nil),
+		"ready models missing one":             frame(`{"models":{"transcription":{"engine":"e","manifest_hash":"h","model_id":"m","model_revision":"r"}},"protocol":1,"type":"ready"}`, nil),
+		"transcribe over 120 s":                frame(`{"job":1,"sample_count":1920001,"type":"transcribe"}`, nil),
+		"diarize over 10 min":                  frame(`{"job":1,"sample_count":9600001,"type":"diarize"}`, nil),
+		"embed under 3 s":                      frame(`{"job":1,"sample_count":47999,"type":"embed"}`, make([]byte, 4*47999)),
+		"embed payload mismatch":               frame(`{"job":1,"sample_count":48000,"type":"embed"}`, make([]byte, 4)),
+		"result unknown kind":                  frame(`{"job":1,"kind":"recognize","processing_ms":1,"result":{},"type":"result"}`, nil),
+		"result kind without processing_ms":    frame(`{"job":1,"kind":"embed","result":{},"type":"result"}`, nil),
+		"result kind result not object":        frame(`{"job":1,"kind":"embed","processing_ms":1,"result":[],"type":"result"}`, nil),
+	} {
+		if _, err := ReadFrame(bytes.NewReader(data)); !errors.Is(err, ErrMalformedFrame) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// A meeting payload is converted from s16le to f32le while it is written, in
+// bounded chunks, so no f32 copy of the whole payload exists (a diarization
+// payload would be 38.4 MB).
+func TestWriteS16AsF32Streams(t *testing.T) {
+	const n = 100000
+	s16 := make([]byte, 2*n)
+	values := []int16{0, 16384, -16384, math.MaxInt16, math.MinInt16}
+	for i := range n {
+		binary.LittleEndian.PutUint16(s16[2*i:], uint16(values[i%len(values)]))
+	}
+	w := &chunkRecorder{}
+	if err := WriteS16AsF32(w, s16); err != nil {
+		t.Fatal(err)
+	}
+	if w.largest > s16ChunkSamples*4 || w.out.Len() != 4*n {
+		t.Fatalf("largest write %d, total %d", w.largest, w.out.Len())
+	}
+	got, _ := DecodeSamples(w.out.Bytes())
+	for i, want := range []float32{0, 0.5, -0.5, 32767.0 / 32768, -1} {
+		if got[i] != want || got[i+len(values)] != want {
+			t.Fatalf("sample %d: %v, want %v", i, got[i], want)
+		}
+	}
+	allocs := testing.AllocsPerRun(5, func() { _ = WriteS16AsF32(io.Discard, s16) })
+	if allocs > 1 {
+		t.Fatalf("%v allocations per conversion", allocs)
+	}
+}
+
+type chunkRecorder struct {
+	out     bytes.Buffer
+	largest int
+}
+
+func (c *chunkRecorder) Write(p []byte) (int, error) {
+	c.largest = max(c.largest, len(p))
+	return c.out.Write(p)
+}

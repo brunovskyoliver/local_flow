@@ -45,7 +45,8 @@ struct RewriteSettings: Sendable, Equatable {
   static func capture(preferences: AppPreferences, credentialStore: any RewriteCredentialStoring)
     -> RewriteSettings
   {
-    let raw = preferences.rewriteEndpoint
+    // Feature 018 (US4): a This Mac override sends rewrites to loopback flowd.
+    let raw = preferences.serverRouting.rewriteEndpoint(preferences.rewriteEndpoint)
     let origin = normalizedOrigin(raw)
     let url = origin == nil ? nil : URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines))
     return RewriteSettings(
@@ -76,6 +77,16 @@ struct RewriteSettings: Sendable, Equatable {
     if isEndpointValid && requiresCredential && !credentialPresent { return .missingCredential }
     if !isEndpointValid { return .invalidSettings }
     return nil
+  }
+
+  /// The same choices sent to this Mac's flowd (Feature 018: summaries on This Mac or
+  /// a custom summaries server, which flowd reaches for the app).
+  func routedToLocalFlowd() -> RewriteSettings {
+    let loopback = LocalAIInstaller.rewriteEndpoint
+    return RewriteSettings(
+      enabled: enabled, mode: mode, endpoint: URL(string: loopback),
+      endpointOrigin: Self.normalizedOrigin(loopback) ?? "", timeoutSeconds: timeoutSeconds,
+      insecureOverride: false, credentialPresent: false, sendsContext: sendsContext)
   }
 
   /// The same choices sent to the remote server over its channel (FR-020).

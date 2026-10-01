@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import LocalFlowCore
+import LocalFlowSpeech
 
 /// Why a channel ended. Every case maps to a failure reason code (FR-017).
 enum RemoteChannelError: Error, Equatable, Sendable {
@@ -241,6 +242,9 @@ actor RemoteChannel {
       return try RemoteServerMessage.decode(json)
     } catch RemoteProtocolError.unsupportedVersion {
       throw fail(.server(.unsupportedVersion))
+    } catch let failure as VoiceEmbeddingFailure {
+      // Feature 018: an embed job's answer for a region without speech.
+      throw failure
     } catch {
       throw fail(.protocolError)
     }

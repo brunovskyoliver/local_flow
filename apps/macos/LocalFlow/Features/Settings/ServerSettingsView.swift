@@ -16,7 +16,7 @@ final class ServerSettingsModel {
       case .dictation: .dictation
       case .rewriting: .rewrite
       case .summaries: .summaries
-      // ponytail: the final transcript stands for all meeting work until US3 splits it.
+      // The final transcript stands for the row; each stage still routes on its own.
       case .meetings: .finalTranscript
       }
     }
@@ -66,9 +66,49 @@ final class ServerSettingsModel {
     "\(row.rawValue), \(place(row).prefix(1).lowercased() + place(row).dropFirst())"
   }
 
-  /// FR-005: while the server serves a service, its own section shows no server fields.
-  var hidesRewriteServerFields: Bool { routing.servedByServer(.rewrite) }
-  var hidesSummaryServerFields: Bool { routing.servedByServer(.summaries) }
+  /// FR-005: with the switch on, the Rewriting and Summaries sections show no server
+  /// fields; a custom server is set in Server › Advanced instead.
+  var hidesRewriteServerFields: Bool { routing.switchApplies }
+  var hidesSummaryServerFields: Bool { routing.switchApplies }
+
+  // MARK: Advanced (US4)
+
+  var rewriteOverride: AppPreferences.ServerOverride {
+    get { preferences.serverRewriteOverride }
+    set {
+      preferences.serverRewriteOverride = newValue
+      checkResults = [:]
+    }
+  }
+
+  /// Custom names the Summaries section's server, so its address, model and key apply.
+  var summariesOverride: AppPreferences.ServerOverride {
+    get { preferences.serverSummariesOverride }
+    set {
+      preferences.serverSummariesOverride = newValue
+      if newValue == .custom { preferences.summaryServer = .remote }
+      checkResults = [:]
+    }
+  }
+
+  /// Meetings: Your server or This Mac (no custom server for meeting audio).
+  var meetingsOverride: AppPreferences.ServerOverride {
+    get { preferences.serverMeetingsOverride }
+    set {
+      preferences.serverMeetingsOverride = newValue
+      checkResults = [:]
+    }
+  }
+
+  var showsRewriteCustomFields: Bool { routing.switchApplies && rewriteOverride == .custom }
+  var showsSummaryCustomFields: Bool { routing.switchApplies && summariesOverride == .custom }
+  static let customSummariesNote = "Your server is used if this server fails"
+
+  /// The Feature 014 threshold before dictation falls back to this Mac.
+  var fallbackThresholdMs: Int {
+    get { preferences.remoteFallbackThresholdMs }
+    set { preferences.remoteFallbackThresholdMs = min(10_000, max(250, newValue)) }
+  }
 
   /// Settings › Models (FR-016): where a model's work runs, or nil before approval.
   func modelPlace(_ service: ServerService) -> String? {
@@ -119,8 +159,13 @@ final class ServerSettingsModel {
   }
 }
 
-struct ServerSettingsView: View {
+/// The Server section. `rewriteFields` and `summaryFields` are the Rewriting and
+/// Summaries sections' own server fields, shown under Advanced for a custom server.
+struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
   @Bindable var model: ServerSettingsModel
+  @ViewBuilder var rewriteFields: RewriteFields
+  @ViewBuilder var summaryFields: SummaryFields
+  @State private var showingAdvanced = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -163,10 +208,60 @@ struct ServerSettingsView: View {
           .disabled(model.checking)
           .accessibilityIdentifier("settings.serverCheckConnection")
         }
+        SottoPalette.line.frame(height: 1)
+        DisclosureGroup("Advanced", isExpanded: $showingAdvanced) { advanced }
+          .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted).padding(.vertical, 14)
+          .accessibilityIdentifier("settings.serverAdvanced")
       }
     }
     .onAppear { model.takeNotice() }
     .sheet(isPresented: .constant(model.remote.showingConsentUpdate)) { consentUpdate }
+  }
+
+  @ViewBuilder private var advanced: some View {
+    SettingsRow("Rewriting") {
+      overridePicker("Rewriting", selection: $model.rewriteOverride, custom: true)
+    }
+    if model.showsRewriteCustomFields { rewriteFields }
+    SottoPalette.line.frame(height: 1)
+    SettingsRow(
+      "Summaries",
+      detail: model.showsSummaryCustomFields ? ServerSettingsModel.customSummariesNote : nil
+    ) {
+      overridePicker("Summaries", selection: $model.summariesOverride, custom: true)
+    }
+    if model.showsSummaryCustomFields { summaryFields }
+    SottoPalette.line.frame(height: 1)
+    SettingsRow("Meetings", detail: "Transcripts, speaker labels and voice matching") {
+      overridePicker("Meetings", selection: $model.meetingsOverride, custom: false)
+    }
+    SottoPalette.line.frame(height: 1)
+    SettingsRow("Fallback threshold", detail: "Dictation uses this Mac after this wait") {
+      Stepper(value: $model.fallbackThresholdMs, in: 250...10_000, step: 250) {
+        Text("\(model.fallbackThresholdMs) ms").monospacedDigit()
+      }
+      .accessibilityLabel("Remote dictation fallback threshold in milliseconds")
+      .accessibilityIdentifier("settings.serverFallbackThreshold")
+    }
+    SottoPalette.line.frame(height: 1)
+    SettingsRow("Remote dictation") {
+      Button("Turn Off…", role: .destructive) { model.remote.requestTurnOff() }
+        .accessibilityLabel("Turn off remote dictation")
+        .accessibilityIdentifier("settings.serverTurnOff")
+    }
+  }
+
+  private func overridePicker(
+    _ service: String, selection: Binding<AppPreferences.ServerOverride>, custom: Bool
+  ) -> some View {
+    Picker(service, selection: selection) {
+      Text("Your server").tag(AppPreferences.ServerOverride.server)
+      Text("This Mac").tag(AppPreferences.ServerOverride.thisMac)
+      if custom { Text("Custom server").tag(AppPreferences.ServerOverride.custom) }
+    }
+    .labelsHidden().tint(SottoPalette.ink).frame(width: 150)
+    .accessibilityLabel("\(service) runs on")
+    .accessibilityIdentifier("settings.serverOverride.\(service.lowercased())")
   }
 
   private var consentUpdate: some View {

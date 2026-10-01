@@ -62,6 +62,9 @@ struct ServerRouting: Sendable, Equatable {
     }
   }
 
+  /// The device is approved and the switch is on: the overrides decide every path.
+  var switchApplies: Bool { remote.routesToServer && useForEverything }
+
   /// Rewrites use the channel: always under Feature 014 with the switch off, and with
   /// the switch on whenever the server serves them.
   var rewritesOverChannel: Bool {
@@ -78,14 +81,38 @@ struct ServerRouting: Sendable, Equatable {
     switch service {
     case .rewrite:
       if rewritesOverChannel { return .server }
+      if switchApplies, rewrite != .server { return rewrite == .custom ? .custom : .thisMac }
       return customRewrite ? .custom : .thisMac
     case .summaries:
-      // ponytail: an explicit This Mac override keeps the stored Summaries choice until
-      // Server › Advanced (US4) routes it to loopback flowd.
+      // With the switch on, only Server › Advanced names a custom server; off, the
+      // Summaries section does, as before Feature 018.
+      if switchApplies, summaries != .custom { return .thisMac }
       return customSummaries ? .custom : .thisMac
     case .dictation, .livePreview, .finalTranscript, .diarization, .voiceRegions:
       return .thisMac
     }
+  }
+
+  /// The address rewrites use over HTTP: loopback flowd for a This Mac override, the
+  /// stored `rewriteEndpoint` otherwise (US4).
+  func rewriteEndpoint(_ stored: String) -> String {
+    switchApplies && rewrite == .thisMac ? LocalAIInstaller.rewriteEndpoint : stored
+  }
+
+  /// A custom summaries server that fails before any result retries over the channel
+  /// (R9); with the switch off, flowd falls back to this Mac as before.
+  var summariesFallBackToServer: Bool {
+    switchApplies && consentCurrent && offered(.summaries)
+  }
+
+  /// Whether the local rewrite model (MTPLX) should run (R10): with the switch on, when
+  /// rewriting or summaries run on this Mac's flowd; off, when rewriting points at it.
+  func localRewriteModelWanted(rewriteEndpoint stored: String) -> Bool {
+    guard switchApplies else { return stored == LocalAIInstaller.rewriteEndpoint }
+    return
+      (path(for: .rewrite) == .thisMac
+      && rewriteEndpoint(stored) == LocalAIInstaller.rewriteEndpoint)
+      || path(for: .summaries) == .thisMac
   }
 
   /// Rewriting and summaries both run on the server: the local rewrite model can stop (R10).

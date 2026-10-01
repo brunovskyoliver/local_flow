@@ -31,6 +31,8 @@ enum FakeClientEvent: @unchecked Sendable {
   case hello(purpose: String, accessToken: String?, binding: Data)
   case control([String: Any])
   case audio([Float])
+  /// Feature 018: a kind-0x02 frame of little-endian `Int16` samples.
+  case s16([Int16])
 
   var type: String? {
     if case .control(let object) = self { return object["type"] as? String }
@@ -125,6 +127,15 @@ final class FakeRemoteServer: @unchecked Sendable {
           }.littleEndian)
       }
       return .audio(samples)
+    case 0x02:
+      let samples = stride(from: payload.startIndex, to: payload.endIndex, by: 2).map { start in
+        Int16(
+          littleEndian: payload[start..<start + 2].withUnsafeBytes {
+            $0.loadUnaligned(as: Int16.self)
+          }
+        )
+      }
+      return .s16(samples)
     default: return nil
     }
   }
@@ -175,6 +186,12 @@ final class FakeRemoteTransport: RemoteTransport, @unchecked Sendable {
 
   var receivedEvents: [FakeClientEvent] { lock.withLock { events } }
   var controlTypes: [String] { receivedEvents.compactMap(\.type) }
+  var s16Samples: [Int16] {
+    receivedEvents.flatMap { event -> [Int16] in
+      if case .s16(let samples) = event { return samples }
+      return []
+    }
+  }
   var audioSamples: [Float] {
     receivedEvents.flatMap { event -> [Float] in
       if case .audio(let samples) = event { return samples }

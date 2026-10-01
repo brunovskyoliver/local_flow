@@ -501,7 +501,7 @@ enum LocalModelIdleUnload: Int, CaseIterable, Identifiable {
   /// server does not serve both rewriting and summaries (Feature 018 R10). While false the
   /// model is stopped and `wake()` does nothing; it starts again when this turns true.
   nonisolated static func wanted(rewriteEndpoint: String, routing: ServerRouting) -> Bool {
-    rewriteEndpoint == LocalAIInstaller.rewriteEndpoint && !routing.localRewriteModelUnneeded
+    routing.localRewriteModelWanted(rewriteEndpoint: rewriteEndpoint)
   }
 
   /// Follows app activation, game quits, memory pressure and the two settings.

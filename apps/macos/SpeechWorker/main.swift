@@ -8,10 +8,14 @@ import LocalFlowSpeech
 // stdin/stdout, and logs job IDs, sample counts, durations, states and codes to stderr.
 //
 //   flowd-speech serve --models <dir> [--descriptors <dir>]
-//   flowd-speech provision --models <dir> [--booster] [--descriptors <dir>]
+//   flowd-speech meeting --models <dir> --helper <path> [--descriptors <dir>]
+//   flowd-speech provision --models <dir> [--booster] [--meeting] [--descriptors <dir>]
 //
-// Descriptors default to the pinned parakeet-v3.json and parakeet-ctc-110m.json next to
-// the executable, which scripts/install-remote-server.sh installs there.
+// Descriptors default to the pinned parakeet-v3.json, parakeet-ctc-110m.json,
+// whisper-large-v3-turbo.json and speaker-diarization-offline.json next to the
+// executable, which scripts/install-remote-server.sh installs there. `meeting` is the
+// Feature 018 meeting worker (contracts/meeting-worker-ipc.md): Whisper Turbo through
+// the Sotto helper at --helper, diarization and voice embeddings.
 
 let workerBuild = "flowd-speech 1"
 
@@ -52,6 +56,28 @@ struct Descriptors {
   }
 }
 
+/// Feature 018: the meeting worker's pinned descriptors and their manifest hashes.
+struct MeetingDescriptors {
+  let whisper: ModelDescriptor
+  let whisperHash: String
+  let diarization: ModelDescriptor
+  let diarizationHash: String
+
+  init(directory: URL) throws {
+    func load(_ name: String) throws -> (ModelDescriptor, String) {
+      let data = try Data(contentsOf: directory.appendingPathComponent(name))
+      return (
+        try JSONDecoder().decode(ModelDescriptor.self, from: data),
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+      )
+    }
+    (whisper, whisperHash) = try load("whisper-large-v3-turbo.json")
+    (diarization, diarizationHash) = try load("speaker-diarization-offline.json")
+  }
+
+  var whisperRoot: (URL) -> URL { { $0.appendingPathComponent("whisper-large-v3-turbo") } }
+}
+
 /// Serializes frames to stdout; lifecycle observations and job answers share it.
 final class FrameWriter: @unchecked Sendable {
   private let lock = NSLock()
@@ -65,14 +91,20 @@ final class FrameWriter: @unchecked Sendable {
   }
 
   func send(_ header: [String: Any]) {
-    if ["ready", "unavailable"].contains(header["type"] as? String) {
-      lock.withLock { readySent = true }
-    }
-    guard let frame = try? WorkerFraming.encode(header) else {
+    guard trySend(header) else {
       log("frame_encode_failed type=\(header["type"] as? String ?? "?")")
       exit(1)
     }
+  }
+
+  /// False when the header does not fit one frame; nothing is written.
+  func trySend(_ header: [String: Any]) -> Bool {
+    guard let frame = try? WorkerFraming.encode(header) else { return false }
+    if ["ready", "unavailable"].contains(header["type"] as? String) {
+      lock.withLock { readySent = true }
+    }
     lock.withLock { FileHandle.standardOutput.write(frame) }
+    return true
   }
 }
 
@@ -199,6 +231,19 @@ func serve(models: URL, descriptors: Descriptors) async -> Int32 {
   if boostModel != nil { model["booster"] = VocabularyBoostPolicy.version }
   writer.send(["type": "ready", "protocol": 1, "model": model])
 
+  // The first inference pays the CoreML/ANE specialization (3.3 s on an M5 Pro
+  // after install, about 0.3 s on later starts); pay it on one silent full window
+  // (flowd's WindowSamples) instead of in the first dictation. A job sent meanwhile
+  // waits in stdin, well inside flowd's 30 s job deadline.
+  let warmupStarted = ContinuousClock.now
+  if let lease = try? await lifecycle.acquire(session: UUID(), boost: nil) {
+    do {
+      _ = try await lifecycle.transcribe(lease, samples: [Float](repeating: 0, count: 239_360))
+      try await lifecycle.finish(lease)
+    } catch { await lifecycle.cancelAndJoin(lease) }
+  }
+  log("state=warm warmup_ms=\((ContinuousClock.now - warmupStarted).milliseconds)")
+
   do {
     for try await box in FrameReader().frames {
       guard let frame = box.frame else { break }
@@ -257,18 +302,242 @@ func serve(models: URL, descriptors: Descriptors) async -> Int32 {
   return 0
 }
 
-func provision(models: URL, descriptors: Descriptors, booster: Bool) async -> Int32 {
-  var targets = [("parakeet-v3", descriptors.speech)]
+/// The Dictionary terms the resident Whisper runtime was built with. The runtime takes
+/// its prompt terms at creation, so a job with other terms rebuilds it.
+final class PromptTerms: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: [String] = []
+  var current: [String] {
+    get { lock.withLock { value } }
+    set { lock.withLock { value = newValue } }
+  }
+}
+
+/// Feature 018: the meeting worker. One coordinator owns Whisper Turbo, the diarizer and
+/// the voice embedder, one resident at a time; nothing loads until the first job, and
+/// the resident model is released after 10 idle minutes. One job at a time.
+func meeting(models: URL, helper: URL, descriptors: MeetingDescriptors) async -> Int32 {
+  let writer = FrameWriter()
+  FluidAudioDiarizerFactory.enableOfflineMode()
+  let whisperProvisioner = ModelProvisioner(
+    descriptor: descriptors.whisper, rootURL: descriptors.whisperRoot(models))
+  let diarizationProvisioner = ModelProvisioner(
+    descriptor: descriptors.diarization,
+    rootURL: FluidAudioDiarizerFactory.installRoot(models: models))
+  var missing: [String] = []
+  let whisper = try? await whisperProvisioner.verifiedLocalDescriptor()
+  if whisper == nil { missing.append("whisper-large-v3-turbo") }
+  let diarization = try? await diarizationProvisioner.verifiedLocalDescriptor()
+  if diarization == nil { missing.append("speaker-diarization-offline") }
+  if !FileManager.default.isExecutableFile(atPath: helper.path) { missing.append("helper") }
+  guard let whisper, let diarization, missing.isEmpty else {
+    log("state=unavailable reason=model_missing missing=\(missing.joined(separator: ","))")
+    writer.send(MeetingWorkerMessages.unavailable(missing: missing))
+    return 0
+  }
+  let terms = PromptTerms()
+  let lifecycle = ModelLifecycleCoordinator(
+    observe: { state, _, duration in
+      guard duration == 0 else { return }
+      switch state {
+      case .preparing: writer.sendState("loading")
+      case .active: writer.sendState("active")
+      case .releasing: writer.sendState("releasing")
+      default: break
+      }
+    },
+    diarizationFactory: {
+      try await FluidAudioDiarizerFactory(descriptor: diarization).makeRuntime()
+    },
+    voiceEmbeddingFactory: {
+      try await FluidAudioVoiceEmbedderFactory(descriptor: diarization).makeRuntime()
+    },
+    meetingFactory: { language in
+      try await WhisperMeetingRuntime.make(
+        model: whisper, helperURL: helper, language: language, promptTerms: terms.current
+      ) { helper, arguments, input, output in
+        let process = Process()
+        process.executableURL = helper
+        process.arguments = arguments
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        return (process.processIdentifier, process)
+      }
+    },
+    factory: { throw DictationFailure.modelUnavailable })
+  // The worker's own idle timer releases the model; the coordinator's 30 s cooldown
+  // would reload Whisper between a meeting's windows.
+  await lifecycle.setKeepLoaded(true)
+  func identity(_ engine: String, _ descriptor: ModelDescriptor, _ hash: String) -> [String: Any] {
+    [
+      "engine": engine, "model_id": descriptor.modelID,
+      "model_revision": descriptor.sourceRevision, "manifest_hash": hash,
+    ]
+  }
+  var voice = identity(
+    FluidAudioVoiceEmbedderFactory.engine, descriptors.diarization, descriptors.diarizationHash)
+  voice["dimension"] = VoiceEmbedding.dimension
+  writer.send(
+    MeetingWorkerMessages.ready(
+      transcription: identity("whisper.cpp", descriptors.whisper, descriptors.whisperHash),
+      diarization: identity(
+        "fluidaudio_offline_diarizer", descriptors.diarization, descriptors.diarizationHash),
+      voice: voice))
+  log("state=ready")
+
+  var idle: Task<Void, Never>?
+  defer { idle?.cancel() }
+  do {
+    for try await box in FrameReader().frames {
+      guard let frame = box.frame else { break }
+      idle?.cancel()
+      switch frame.type {
+      case "transcribe", "diarize", "embed":
+        guard let job = frame.integer("job") else {
+          log("frame_malformed")
+          return 1
+        }
+        let kind = frame.type
+        let samples = WorkerFraming.samples(frame.payload)
+        let started = ContinuousClock.now
+        let code: String
+        do {
+          let result = try await runMeetingJob(
+            kind, frame: frame, samples: samples, lifecycle: lifecycle, terms: terms)
+          let elapsed = Int((ContinuousClock.now - started).milliseconds)
+          if writer.trySend(
+            MeetingWorkerMessages.result(
+              job: job, kind: kind, result: result, processingMs: elapsed))
+          {
+            log("job=\(job) kind=\(kind) samples=\(samples.count) ms=\(elapsed)")
+            code = ""
+          } else {
+            code = "failed"
+            log("job=\(job) kind=\(kind) result_too_large")
+          }
+        } catch {
+          code = meetingErrorCode(error)
+        }
+        if !code.isEmpty {
+          writer.send(MeetingWorkerMessages.error(job: job, code: code))
+          log("job=\(job) kind=\(kind) samples=\(samples.count) code=\(code)")
+        }
+        idle = Task {
+          try? await Task.sleep(for: .seconds(600))
+          guard !Task.isCancelled else { return }
+          try? await lifecycle.unloadIfIdle()
+          log("state=idle_release")
+        }
+      case "shutdown":
+        log("state=shutdown")
+        try? await lifecycle.shutdownIfIdle()
+        return 0
+      default:
+        log("frame_unknown_type")
+        return 1
+      }
+    }
+  } catch {
+    log("frame_malformed")
+    return 1
+  }
+  try? await lifecycle.shutdownIfIdle()
+  return 0
+}
+
+/// One job under its own lease; the lease ends with the job.
+func runMeetingJob(
+  _ kind: String, frame: WorkerFraming.Frame, samples: [Float],
+  lifecycle: ModelLifecycleCoordinator, terms: PromptTerms
+) async throws -> [String: Any] {
+  guard samples.allSatisfy(\.isFinite) else { throw DictationFailure.invalidAudio }
+  let workload: ModelWorkload
+  var language = MeetingLanguage.defaultLanguage
+  switch kind {
+  case "transcribe":
+    workload = .meetingTranscription
+    let code = frame.header["language"] as? String ?? "auto"
+    guard let chosen = MeetingLanguage.allCases.first(where: { $0.whisperCode == code }) else {
+      throw DictationFailure.invalidAudio
+    }
+    language = chosen
+    let wanted = (frame.header["vocabulary_terms"] as? [String]) ?? []
+    if wanted != terms.current {
+      // Another meeting's Dictionary: rebuild Whisper with these prompt terms.
+      terms.current = wanted
+      try? await lifecycle.unloadIfIdle()
+    }
+  case "diarize": workload = .diarization
+  default: workload = .speakerIdentification
+  }
+  let lease = try await lifecycle.acquire(
+    session: UUID(), workload: workload, meetingLanguage: language)
+  do {
+    let result: [String: Any]
+    switch kind {
+    case "transcribe":
+      let window = try await lifecycle.transcribe(lease, samples: samples)
+      result = MeetingWorkerMessages.transcription(
+        window, language: language == .automatic ? nil : language.whisperCode)
+    case "diarize":
+      let speakers = frame.integer("num_speakers")
+      result = MeetingWorkerMessages.diarization(
+        try await lifecycle.diarize(
+          lease, window: DiarizationWindowRequest(samples: samples, numSpeakers: speakers)))
+    default:
+      do {
+        result = MeetingWorkerMessages.embedding(
+          try await lifecycle.embed(lease, region: VoiceRegionRequest(samples: samples)))
+      } catch VoiceEmbeddingFailure.noSpeech {
+        result = MeetingWorkerMessages.noSpeech
+      }
+    }
+    try await lifecycle.finish(lease)
+    return result
+  } catch {
+    await lifecycle.cancelAndJoin(lease)
+    throw error
+  }
+}
+
+/// The contract's four codes; nothing else (no paths or messages) leaves the worker.
+func meetingErrorCode(_ error: any Error) -> String {
+  switch error {
+  case DictationFailure.invalidAudio: return "invalid_audio"
+  case DictationFailure.modelUnavailable, WhisperMeetingRuntime.Failure.unavailable,
+    DiarizationFailureCategory.modelUnavailable, DiarizationFailureCategory.modelLoadFailure,
+    DiarizationFailureCategory.osUnsupported, IdentificationFailureCategory.modelUnavailable,
+    IdentificationFailureCategory.modelLoadFailure, IdentificationFailureCategory.osUnsupported:
+    return "model_unavailable"
+  case WhisperMeetingRuntime.Failure.repetition: return "repetition"
+  default: return "failed"
+  }
+}
+
+func provision(
+  models: URL, descriptors: Descriptors, booster: Bool, meeting: MeetingDescriptors?
+) async -> Int32 {
+  var targets = [(models.appendingPathComponent("parakeet-v3"), "parakeet-v3", descriptors.speech)]
   if booster {
     guard let descriptor = descriptors.booster else {
       log("provision booster_descriptor_missing")
       return 1
     }
-    targets.append(("parakeet-ctc-110m", descriptor))
+    targets.append(
+      (models.appendingPathComponent("parakeet-ctc-110m"), "parakeet-ctc-110m", descriptor))
   }
-  for (name, descriptor) in targets {
-    let provisioner = ModelProvisioner(
-      descriptor: descriptor, rootURL: models.appendingPathComponent(name))
+  if let meeting {
+    targets.append((meeting.whisperRoot(models), "whisper-large-v3-turbo", meeting.whisper))
+    targets.append(
+      (
+        FluidAudioDiarizerFactory.installRoot(models: models), "speaker-diarization-offline",
+        meeting.diarization
+      ))
+  }
+  for (root, name, descriptor) in targets {
+    let provisioner = ModelProvisioner(descriptor: descriptor, rootURL: root)
     do {
       if (try? await provisioner.verifiedLocalDescriptor(fullHash: true)) == nil {
         log("provision model=\(name) state=downloading")
@@ -292,9 +561,11 @@ extension Duration {
 
 _ = workerLog
 let arguments = CommandLine.arguments
-let usage = "usage: flowd-speech serve|provision --models <dir> [--booster] [--descriptors <dir>]"
-guard arguments.count >= 2, ["serve", "provision"].contains(arguments[1]),
-  let modelsPath = option("--models", in: arguments)
+let usage =
+  "usage: flowd-speech serve|meeting|provision --models <dir> [--helper <path>] [--booster] [--meeting] [--descriptors <dir>]"
+guard arguments.count >= 2, ["serve", "meeting", "provision"].contains(arguments[1]),
+  let modelsPath = option("--models", in: arguments),
+  arguments[1] != "meeting" || option("--helper", in: arguments) != nil
 else {
   log(usage)
   exit(64)
@@ -304,15 +575,32 @@ let executableDirectory = URL(fileURLWithPath: arguments[0]).resolvingSymlinksIn
 let descriptorDirectory =
   option("--descriptors", in: arguments).map { URL(fileURLWithPath: $0, isDirectory: true) }
   ?? executableDirectory
-let descriptors: Descriptors
-do { descriptors = try Descriptors(directory: descriptorDirectory) } catch {
+let models = URL(fileURLWithPath: modelsPath, isDirectory: true)
+let wantsMeeting = arguments[1] == "meeting" || arguments.contains("--meeting")
+let meetingDescriptors: MeetingDescriptors?
+do {
+  meetingDescriptors = wantsMeeting ? try MeetingDescriptors(directory: descriptorDirectory) : nil
+} catch {
   log("descriptor_missing")
   exit(1)
 }
-let models = URL(fileURLWithPath: modelsPath, isDirectory: true)
-let status =
-  arguments[1] == "serve"
-  ? await serve(models: models, descriptors: descriptors)
-  : await provision(
-    models: models, descriptors: descriptors, booster: arguments.contains("--booster"))
+let status: Int32
+if arguments[1] == "meeting", let meetingDescriptors,
+  let helper = option("--helper", in: arguments)
+{
+  status = await meeting(
+    models: models, helper: URL(fileURLWithPath: helper), descriptors: meetingDescriptors)
+} else {
+  let descriptors: Descriptors
+  do { descriptors = try Descriptors(directory: descriptorDirectory) } catch {
+    log("descriptor_missing")
+    exit(1)
+  }
+  status =
+    arguments[1] == "serve"
+    ? await serve(models: models, descriptors: descriptors)
+    : await provision(
+      models: models, descriptors: descriptors, booster: arguments.contains("--booster"),
+      meeting: meetingDescriptors)
+}
 exit(status)

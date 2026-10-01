@@ -335,6 +335,13 @@ final class MeetingIntelligenceCoordinator: IntelligenceObserving {
 
   var waitingForServer: Set<UUID> { Set(waitingAttempts.keys) }
 
+  /// **Run on this Mac**: the meeting is already marked; its summary runs locally now.
+  func runLocally(_ id: UUID) {
+    guard waitingAttempts.removeValue(forKey: id) != nil else { return }
+    requeueTasks.removeValue(forKey: id)?.cancel()
+    requeue(id)
+  }
+
   private func requeueWhenReachable(_ id: UUID, trigger: AnalysisTrigger) async {
     for delay in Self.unreachableProbeDelays {
       do { try await clock.sleep(for: delay) } catch { return }

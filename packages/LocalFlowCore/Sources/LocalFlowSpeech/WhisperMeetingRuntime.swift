@@ -1,15 +1,18 @@
 import Darwin
 import Foundation
-import LocalFlowCore
-import LocalFlowSpeech
 
 /// Owns one native worker. Blocking pipe operations stay off the cooperative executor;
 /// cancellation can kill the worker without waiting for that executor or its IO queue.
-final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
-  enum Failure: Error { case unavailable, protocolFailure, timeout, repetition, stopped }
-  static var bundledHelperURL: URL {
-    Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/localflow-whisper-engine")
-  }
+/// Shared by the app and the server's meeting worker (Feature 018 R4); each passes the
+/// helper it ships.
+public final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
+  public enum Failure: Error { case unavailable, protocolFailure, timeout, repetition, stopped }
+  /// Starts `helper` with `arguments`, its standard input and output on the two pipes and
+  /// standard error discarded. Returns the child's PID and an object to keep while it
+  /// runs. LocalFlowCore builds for iOS, so the Mac app and the worker pass this in.
+  public typealias Launch =
+    @Sendable (_ helper: URL, _ arguments: [String], _ input: Pipe, _ output: Pipe) throws
+    -> (pid: pid_t, owner: AnyObject)
   private let queue = DispatchQueue(label: "org.localflow.meeting-whisper")
   private let lock = NSLock()
   private var stopped = false
@@ -17,7 +20,10 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
   private var launchedPID: pid_t = 0
   // Accessed only on the serial IO queue.
   private var shutdownJoined = false
-  private let process = Process()
+  private let launch: Launch
+  private let helperURL: URL
+  private let arguments: [String]
+  private var child: AnyObject?
   private let input = Pipe()
   private let output = Pipe()
   private var pending = Data()
@@ -38,13 +44,16 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
 
   private init(
     model: LocalModelDescriptor, helperURL: URL, language: MeetingLanguage,
-    promptTerms: [String], startupTimeout: TimeInterval, inferenceTimeout: TimeInterval
+    promptTerms: [String], startupTimeout: TimeInterval, inferenceTimeout: TimeInterval,
+    launch: @escaping Launch
   ) throws {
+    self.launch = launch
+    self.helperURL = helperURL
     self.startupTimeout = startupTimeout
     self.inferenceTimeout = inferenceTimeout
     self.language = language
     self.promptTerms = Array(
-      promptTerms.filter { !$0.isEmpty && $0.utf8.count <= VocabularyEntry.maximumTermBytes }
+      promptTerms.filter { !$0.isEmpty && $0.utf8.count <= VocabularyLimits.maximumTermBytes }
         .prefix(Self.maximumPromptTerms))
     directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("localflow-meeting-whisper", isDirectory: true)
@@ -54,23 +63,20 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
     guard FileManager.default.isExecutableFile(atPath: helperURL.path),
       [weights, vad].allSatisfy({ FileManager.default.isReadableFile(atPath: $0.path) })
     else { throw Failure.unavailable }
-    process.executableURL = helperURL
-    process.arguments = ["--model", weights.path, "--vad-model", vad.path, "--threads", "8"]
-    process.standardInput = input
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
+    arguments = ["--model", weights.path, "--vad-model", vad.path, "--threads", "8"]
   }
 
-  static func make(
-    model: LocalModelDescriptor, helperURL: URL = bundledHelperURL,
+  public static func make(
+    model: LocalModelDescriptor, helperURL: URL,
     language: MeetingLanguage = .defaultLanguage, promptTerms: [String] = [],
-    startupTimeout: TimeInterval = 120, inferenceTimeout: TimeInterval = 300
+    startupTimeout: TimeInterval = 120, inferenceTimeout: TimeInterval = 300,
+    launch: @escaping Launch
   )
     async throws -> WhisperMeetingRuntime
   {
     let runtime = try WhisperMeetingRuntime(
       model: model, helperURL: helperURL, language: language, promptTerms: promptTerms,
-      startupTimeout: startupTimeout, inferenceTimeout: inferenceTimeout)
+      startupTimeout: startupTimeout, inferenceTimeout: inferenceTimeout, launch: launch)
     do {
       try await runtime.perform {
         try Self.removeAbandonedDirectories(under: runtime.directory.deletingLastPathComponent())
@@ -79,8 +85,10 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
           withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try runtime.lock.withLock {
           guard !runtime.stopped else { throw CancellationError() }
-          try runtime.process.run()
-          runtime.launchedPID = runtime.process.processIdentifier
+          let launched = try runtime.launch(
+            runtime.helperURL, runtime.arguments, runtime.input, runtime.output)
+          runtime.child = launched.owner
+          runtime.launchedPID = launched.pid
         }
         let event = try runtime.readEvent(
           deadline: ProcessInfo.processInfo.systemUptime + startupTimeout)
@@ -93,7 +101,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
     }
   }
 
-  func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+  public func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
     guard !samples.isEmpty, samples.count <= 120 * 16_000,
       samples.allSatisfy(\.isFinite)
     else { throw DictationFailure.invalidAudio }
@@ -142,7 +150,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
   }
 
   /// Four consecutive copies of a phrase of at least three words are suspect.
-  static func hasRepetition(_ text: String) -> Bool {
+  public static func hasRepetition(_ text: String) -> Bool {
     let words = text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(
       String.init)
     guard words.count >= 12 else { return false }
@@ -380,7 +388,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
     }
   }
 
-  func shutdown() async {
+  public func shutdown() async {
     stop()
     await withCheckedContinuation { continuation in
       queue.async {
@@ -436,7 +444,7 @@ final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Sendable {
   /// A 32-bit float mono 16 kHz WAV: the 44-byte header, then the samples straight
   /// from the array's storage. Private scratch read once by the helper, so no atomic
   /// temporary copy and no second in-memory copy of the window.
-  static func writeWAV(_ samples: [Float], to url: URL) throws {
+  public static func writeWAV(_ samples: [Float], to url: URL) throws {
     var header = Data(capacity: 44)
     func append<T: FixedWidthInteger>(_ value: T) {
       var little = value.littleEndian

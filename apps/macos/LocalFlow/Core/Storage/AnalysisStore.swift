@@ -108,8 +108,11 @@ actor AnalysisStore: AnalysisStoring {
   func recordInferencePath(runID: UUID, path: AnalysisInferencePath) throws {
     try database.write { db in
       try db.execute(
-        sql: "UPDATE analysis_runs SET inference_path=? WHERE id=?",
-        arguments: [path.rawValue, runID.uuidString])
+        sql: "UPDATE analysis_runs SET inference_path=?, server_failure=? WHERE id=?",
+        arguments: [
+          path.rawValue, path == .localAfterServerFailure ? "user_ran_locally" : nil,
+          runID.uuidString,
+        ])
     }
   }
 

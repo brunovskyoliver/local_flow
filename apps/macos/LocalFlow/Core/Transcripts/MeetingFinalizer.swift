@@ -14,6 +14,9 @@ actor MeetingFinalizer {
   enum Error: Swift.Error, Equatable {
     case staleRevision, meetingActive, noSourceAudio
     case failed(TranscriptFailureCategory, detail: String?)
+    /// Feature 018: the server could not take the pass (`unreachable`, `busy`,
+    /// `worker_unavailable`, `not_offered`). Rows and progress stay for a later resume.
+    case waitingForServer(String)
   }
   struct Outcome: Sendable, Equatable {
     let row: MeetingTranscription
@@ -72,7 +75,10 @@ actor MeetingFinalizer {
   private let store: any TranscriptStoring
   private let meetings: any MeetingStoring
   private let storageRoot: MeetingStorageRoot
-  private let lifecycle: ModelLifecycleCoordinator
+  /// The coordinator of the current run: local, or the server's (Feature 018).
+  private var lifecycle: ModelLifecycleCoordinator
+  private let inference: MeetingInferenceRouter
+  private var choice: MeetingInferenceRouter.Choice
   private let vocabulary: any VocabularyProviding
   private let identity: TranscriptionPipelineIdentity
   private let configuration: Configuration
@@ -86,7 +92,7 @@ actor MeetingFinalizer {
 
   init(
     store: any TranscriptStoring, meetings: any MeetingStoring, storageRoot: MeetingStorageRoot,
-    lifecycle: ModelLifecycleCoordinator,
+    lifecycle: ModelLifecycleCoordinator, inference: MeetingInferenceRouter? = nil,
     vocabulary: any VocabularyProviding = EmptyVocabularyProvider(),
     identity: TranscriptionPipelineIdentity = .init(),
     configuration: Configuration = .parakeet,
@@ -103,6 +109,9 @@ actor MeetingFinalizer {
     self.meetings = meetings
     self.storageRoot = storageRoot
     self.lifecycle = lifecycle
+    let inference = inference ?? .local(lifecycle)
+    self.inference = inference
+    self.choice = .init(lifecycle: lifecycle, path: .local, serverFailure: nil, model: nil)
     self.vocabulary = vocabulary
     self.identity = identity
     self.configuration = configuration
@@ -217,6 +226,9 @@ actor MeetingFinalizer {
         language = await defaultLanguage()
       }
     }
+    // The path is chosen once per run, before admission, so a resume never mixes paths.
+    choice = await inference.choose(.finalTranscript, meeting: meetingID)
+    lifecycle = choice.lifecycle
     var replacementLease: ModelLease?
     if let existing = try await store.transcription(meetingID: meetingID), existing.state == .final
     {
@@ -304,6 +316,11 @@ actor MeetingFinalizer {
       try? await flush(&context, force: true)
       try? await lifecycle.finish(lease)
       throw CancellationError()
+    } catch Error.waitingForServer(let code) {
+      // Like a cancellation: the stored windows and progress stay for the retry.
+      try? await flush(&context, force: true)
+      try? await lifecycle.finish(lease)
+      throw Error.waitingForServer(code)
     } catch {
       let (category, detail) = Self.category(for: error)
       throw await fail(meetingID, category, detail: detail, lease: lease)
@@ -323,8 +340,9 @@ actor MeetingFinalizer {
     func identityEffects(expected: Int64) -> [TranscriptTransitionEffect] {
       [
         .setIdentity(
-          engine: provenance.engine, model: modelIdentity, pipeline: pipelineVersion,
-          planner: configuration.geometry, vocabulary: snapshot ?? .empty),
+          engine: engine, model: modelIdentity, pipeline: pipelineVersion,
+          planner: configuration.geometry, vocabulary: snapshot ?? .empty, path: choice.path,
+          serverFailure: choice.serverFailure),
         .setTimestamps(
           startedAt: row.startedAt ?? now, finalizationStartedAt: now,
           recordedMsAtPass: detail.meeting.recordedMs, expectedRevision: expected),
@@ -382,18 +400,26 @@ actor MeetingFinalizer {
   private func matches(
     _ row: MeetingTranscription, snapshot: VocabularySnapshot, pipelineVersion: String
   ) -> Bool {
-    row.engine == provenance.engine && row.modelID == modelIdentity.id
+    row.engine == engine && row.modelID == modelIdentity.id
       && row.modelRevision == modelIdentity.revision
       && row.modelManifestHash == modelIdentity.manifestHash
       && row.pipelineVersion == pipelineVersion
       && row.plannerVersion == configuration.geometry && row.vocabularyRevision == snapshot.revision
       && row.vocabularyHash == snapshot.hash
+      // Local and server Whisper may share an identity; the path keeps them apart.
+      && (row.inferencePath == .server) == choice.remote
   }
 
   private var provenance: TranscriptionProvenance {
     identity.provenance(sampleCount: 0, recognition: 0, assembly: 0)
   }
+  private var engine: String { choice.model?.engine ?? provenance.engine }
   private var modelIdentity: TranscriptModelIdentity {
+    // A server pass records the server's model (`ready.capabilities.models`).
+    if let model = choice.model {
+      return .init(
+        id: model.modelID, revision: model.modelRevision, manifestHash: model.manifestHash)
+    }
     let provenance = provenance
     return .init(
       id: provenance.modelID ?? "unrecorded", revision: provenance.modelRevision ?? "unrecorded",
@@ -786,6 +812,10 @@ actor MeetingFinalizer {
       throw CancellationError()
     } catch DictationFailure.cancelled {
       throw CancellationError()
+    } catch let waiting as RemoteMeetingWaiting {
+      throw Error.waitingForServer(waiting.code)
+    } catch is RemoteMeetingNotOffered {
+      throw Error.waitingForServer("not_offered")
     } catch {
       if Task.isCancelled { throw CancellationError() }
       throw PassFailure(category: .runtimeFailure, detail: nil)
@@ -811,7 +841,7 @@ actor MeetingFinalizer {
     let model = modelIdentity
     for index in drafts.indices {
       drafts[index].finality = .final
-      drafts[index].engine = provenance.engine
+      drafts[index].engine = engine
       drafts[index].modelID = model.id
       drafts[index].modelRevision = model.revision
       drafts[index].pipelineVersion = context.pipelineVersion

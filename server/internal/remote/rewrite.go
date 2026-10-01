@@ -36,8 +36,12 @@ type RewriteConfig struct {
 	Runner RewriteRunner
 	// Windows, when set, delays each rewrite while dictation windows wait.
 	Windows DictationWindows
-	Clock   Clock
-	Logger  *log.Logger
+	// Interactive, when set, is told when a rewrite is admitted; the
+	// function it returns is called when the rewrite ends. Meeting jobs do
+	// not start in between (speech.MeetingQueue.BeginInteractive).
+	Interactive func() (end func())
+	Clock       Clock
+	Logger      *log.Logger
 }
 
 // Rewriter runs rewrite operations on session channels.
@@ -125,7 +129,10 @@ func (r *Rewriter) Start(_ context.Context, c *Conn, m Message) (Operation, erro
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	o := &rewriteOp{r: r, conn: c, op: message.Op, user: principal.UserID, device: principal.DeviceID,
-		cancel: cancel, done: make(chan struct{}), started: r.cfg.Clock.Now()}
+		cancel: cancel, done: make(chan struct{}), started: r.cfg.Clock.Now(), endInteractive: func() {}}
+	if r.cfg.Interactive != nil {
+		o.endInteractive = r.cfg.Interactive()
+	}
 	go o.run(ctx, req)
 	return o, nil
 }
@@ -143,6 +150,8 @@ type rewriteOp struct {
 	done    chan struct{}
 	started time.Time
 	release sync.Once
+	// endInteractive ends the rewrite's interactive work.
+	endInteractive func()
 
 	mu    sync.Mutex
 	ended bool
@@ -169,7 +178,12 @@ func (o *rewriteOp) run(ctx context.Context, req rewrite.Request) {
 	o.finish(outcome, waited)
 }
 
-func (o *rewriteOp) releaseSlot() { o.release.Do(func() { o.r.release(o.user) }) }
+func (o *rewriteOp) releaseSlot() {
+	o.release.Do(func() {
+		o.r.release(o.user)
+		o.endInteractive()
+	})
+}
 
 // endLocked closes done once and reports whether this call did.
 func (o *rewriteOp) endLocked() bool {

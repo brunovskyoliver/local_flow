@@ -920,6 +920,134 @@ final class MeetingFinalizerTests: XCTestCase {
 
   // MARK: Helpers
 
+  // MARK: Feature 018: the server path
+
+  private func serverFinalizer(
+    server: any TranscriptionRuntime, inputs: RouterInputs, local: ProbeRuntime = ProbeRuntime()
+  ) -> MeetingFinalizer {
+    let localLifecycle = ModelLifecycleCoordinator(
+      meetingFactory: { _ in local }, factory: { local })
+    let remote = ModelLifecycleCoordinator(meetingFactory: { _ in server }, factory: { server })
+    return MeetingFinalizer(
+      store: store, meetings: fixture.store, storageRoot: fixture.root, lifecycle: localLifecycle,
+      inference: inputs.router(local: localLifecycle, background: remote), configuration: .turbo)
+  }
+
+  /// T076: a server pass records the server path and the server's model; this Mac's
+  /// model is never loaded for it (FR-013).
+  func testAServerPassRecordsTheServerPathAndIdentity() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(microphone: .blocks(8), system: .missing)])
+    let server = FlakyServerRuntime()
+    let local = ProbeRuntime()
+    let finalizer = serverFinalizer(server: server, inputs: RouterInputs(), local: local)
+    let outcome = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    XCTAssertEqual(outcome.row.state, .final)
+    XCTAssertEqual(outcome.row.inferencePath, .server)
+    XCTAssertNil(outcome.row.serverFailure)
+    XCTAssertEqual(outcome.row.engine, "whisper.cpp")
+    XCTAssertEqual(outcome.row.modelRevision, "server-r1")
+    XCTAssertEqual(outcome.row.modelManifestHash, String(repeating: "b", count: 64))
+    let rows = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    XCTAssertFalse(rows.isEmpty)
+    XCTAssertTrue(rows.allSatisfy { $0.draft.modelRevision == "server-r1" })
+    let serverCalls = await server.calls
+    let localCalls = await local.calls
+    XCTAssertGreaterThan(serverCalls, 0)
+    XCTAssertEqual(localCalls, 0)
+  }
+
+  /// T076/T078: a busy server stops the pass with its rows and progress kept; the retry
+  /// resumes the same pass and stores no window twice.
+  func testWaitingForTheServerKeepsProgressAndResumes() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture,
+      stretches: [
+        .init(microphone: .blocks(8), system: .missing),
+        .init(microphone: .blocks(8), system: .missing),
+      ])
+    let inputs = RouterInputs()
+    let busy = serverFinalizer(server: FlakyServerRuntime(failOn: 2), inputs: inputs)
+    do {
+      _ = try await busy.run(
+        meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+      XCTFail("the server was busy")
+    } catch MeetingFinalizer.Error.waitingForServer(let code) {
+      XCTAssertEqual(code, "busy")
+    }
+    let waitingValue = try await store.transcription(meetingID: meeting.meetingID)
+    let waiting = try XCTUnwrap(waitingValue)
+    XCTAssertEqual(waiting.state, .finalizing, "not failed")
+    XCTAssertEqual(waiting.progressSequence, 1)
+    XCTAssertEqual(waiting.inferencePath, .server)
+    let kept = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    XCTAssertFalse(kept.isEmpty)
+
+    let server = FlakyServerRuntime()
+    let retry = serverFinalizer(server: server, inputs: inputs)
+    let outcome = try await retry.run(meetingID: meeting.meetingID, revision: waiting.revision)
+    XCTAssertEqual(outcome.row.passID, waiting.passID, "the same pass resumes")
+    let calls = await server.calls
+    XCTAssertEqual(calls, 1, "only the second stretch")
+    let all = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    XCTAssertEqual(Array(all.prefix(kept.count)), kept)
+    XCTAssertEqual(all.map(\.ordinal), Array(0..<all.count))
+  }
+
+  /// T076/T074: local and server Whisper may share an identity, but a pass never resumes
+  /// across paths. Turning the switch off mid-pass runs the rest locally in a new pass,
+  /// so nothing is stored twice.
+  func testAServerPassNeverResumesLocallyOrTheReverse() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture,
+      stretches: [
+        .init(microphone: .blocks(8), system: .missing),
+        .init(microphone: .blocks(8), system: .missing),
+      ])
+    let inputs = RouterInputs()
+    let busy = serverFinalizer(server: FlakyServerRuntime(failOn: 2), inputs: inputs)
+    _ = try? await busy.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    let waitingValue = try await store.transcription(meetingID: meeting.meetingID)
+    let waiting = try XCTUnwrap(waitingValue)
+    inputs.routing = .servingMeetings(on: false)
+    let local = ProbeRuntime()
+    let finalizer = serverFinalizer(server: FlakyServerRuntime(), inputs: inputs, local: local)
+    let outcome = try await finalizer.run(meetingID: meeting.meetingID, revision: waiting.revision)
+    XCTAssertEqual(outcome.row.state, .final)
+    XCTAssertNotEqual(outcome.row.passID, waiting.passID, "a new local pass")
+    XCTAssertEqual(outcome.row.inferencePath, .local)
+    let localCalls = await local.calls
+    XCTAssertEqual(localCalls, 2, "both stretches again, locally")
+    let rows = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    XCTAssertTrue(rows.allSatisfy { $0.passID == outcome.row.passID })
+  }
+
+  /// T078: Run on this Mac finishes the pass locally and says why.
+  func testRunOnThisMacRecordsLocalAfterServerFailure() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(microphone: .blocks(8), system: .missing)])
+    let inputs = RouterInputs()
+    let busy = serverFinalizer(server: FlakyServerRuntime(failOn: 1), inputs: inputs)
+    _ = try? await busy.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    inputs.runLocally(meeting.meetingID)
+    let local = ProbeRuntime()
+    let finalizer = serverFinalizer(server: FlakyServerRuntime(), inputs: inputs, local: local)
+    let outcome = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    XCTAssertEqual(outcome.row.state, .final)
+    XCTAssertEqual(outcome.row.inferencePath, .localAfterServerFailure)
+    XCTAssertEqual(outcome.row.serverFailure, "user_ran_locally")
+    let localCalls = await local.calls
+    XCTAssertEqual(localCalls, 1)
+  }
+
   private func wait(_ condition: @escaping @Sendable () async -> Bool) async {
     for _ in 0..<1_000 {
       if await condition() { return }

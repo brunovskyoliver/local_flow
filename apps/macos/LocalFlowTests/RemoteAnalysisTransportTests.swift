@@ -224,6 +224,152 @@ final class RemoteAnalysisTransportTests: XCTestCase {
   }
 }
 
+/// Feature 018 T052 (R9): a custom summaries server first, the channel when it fails
+/// before any result.
+final class CustomSummariesFallbackTests: XCTestCase {
+  private let custom: RewriteEndpoint = {
+    var endpoint = RewriteEndpoint(
+      url: URL(string: "http://127.0.0.1:8091")!, origin: "http://127.0.0.1:8091")
+    endpoint.summaryHeaders = [
+      SummaryServer.primaryURLHeader: "http://ai-vm:8000/v1",
+      SummaryServer.primaryModelHeader: "qwen", SummaryServer.primaryOnlyHeader: "1",
+    ]
+    endpoint.channelFallback = true
+    return endpoint
+  }()
+
+  private static let accepted = AnalysisTransportItem.event(.accepted(requestID: nil, server: nil))
+  private static let done = AnalysisTransportItem.completed(requestBytes: 1, responseBytes: 2)
+
+  private func request() -> AnalysisRequest {
+    AnalysisRequest(
+      requestID: UUID(), runID: UUID(), stage: .full, chunk: nil,
+      meeting: AnalysisRequest.Meeting(
+        id: UUID(), title: "Weekly", startedAt: "2026-09-20T09:00:00Z", durationMs: 60_000,
+        timeZone: "UTC",
+        languagePolicy: AnalysisRequest.LanguagePolicyValue(output: .en, preserveTerms: true)),
+      participants: [], segments: [], notes: [], partials: nil)
+  }
+
+  private func run(_ routing: RoutingAnalysisTransport, _ endpoint: RewriteEndpoint) async
+    -> ([AnalysisTransportItem], (any Error)?)
+  {
+    var items: [AnalysisTransportItem] = []
+    do {
+      for try await item in routing.analyze(
+        request: request(), endpoint: endpoint, timeout: .seconds(5))
+      {
+        items.append(item)
+      }
+      return (items, nil)
+    } catch { return (items, error) }
+  }
+
+  func testAFailureBeforeAnyResultRetriesOverTheChannel() async {
+    let failures: [Scripted] = [
+      Scripted([.firstByte, Self.accepted], failure: AnalysisFailure(.serverUnreachable)),
+      Scripted([.firstByte, .event(.error(requestID: nil, code: "backend_unavailable"))]),
+    ]
+    for http in failures {
+      let remote = Scripted([.firstByte, Self.done])
+      let (items, error) = await run(RoutingAnalysisTransport(http: http, remote: remote), custom)
+      XCTAssertNil(error)
+      XCTAssertEqual(items, [.fellBackToServer, .firstByte, Self.done])
+      XCTAssertEqual(remote.endpoints.count, 1)
+      XCTAssertEqual(remote.endpoints.first?.viaRemoteChannel, true)
+      XCTAssertEqual(remote.endpoints.first?.summaryHeaders, [:], "never the custom server's key")
+    }
+  }
+
+  func testAFailureAfterAPartialResultDoesNotRetry() async {
+    let http = Scripted(
+      [.firstByte, Self.accepted, .event(.progress(requestID: nil, stage: nil, chars: 40))],
+      failure: AnalysisFailure(.serverUnreachable))
+    let remote = Scripted([Self.done])
+    let (items, error) = await run(RoutingAnalysisTransport(http: http, remote: remote), custom)
+    XCTAssertEqual((error as? AnalysisFailure)?.category, .serverUnreachable)
+    XCTAssertEqual(items.count, 3)
+    XCTAssertEqual(remote.endpoints.count, 0)
+  }
+
+  func testWithoutChannelFallbackTheFailureStands() async {
+    var endpoint = custom
+    endpoint.channelFallback = false
+    let http = Scripted([.firstByte], failure: AnalysisFailure(.serverUnreachable))
+    let remote = Scripted([Self.done])
+    let (_, error) = await run(RoutingAnalysisTransport(http: http, remote: remote), endpoint)
+    XCTAssertNotNil(error)
+    XCTAssertEqual(remote.endpoints.count, 0)
+  }
+
+  /// Both unreachable: the channel's waiting answer reaches the coordinator (FR-031).
+  func testBothUnreachableWaitsForTheServer() async {
+    let http = Scripted([], failure: AnalysisFailure(.serverUnreachable))
+    let remote = Scripted(
+      [],
+      failure: AnalysisFailure(.serverUnreachable, detail: RemoteAnalysisTransport.waitingDetail))
+    let (_, error) = await run(RoutingAnalysisTransport(http: http, remote: remote), custom)
+    XCTAssertEqual((error as? AnalysisFailure)?.detail, RemoteAnalysisTransport.waitingDetail)
+  }
+
+  func testHealthFallsBackWhenTheCustomServerIsNotReady() async throws {
+    let remote = Scripted([])
+    let down = Scripted([], health: .failure(AnalysisFailure(.serverUnreachable)))
+    var health = try await RoutingAnalysisTransport(http: down, remote: remote)
+      .health(endpoint: custom)
+    XCTAssertEqual(health.serverName, "remote")
+    let stopped = Scripted([], health: .success(Scripted.health(state: "unavailable", name: "x")))
+    health = try await RoutingAnalysisTransport(http: stopped, remote: remote)
+      .health(endpoint: custom)
+    XCTAssertEqual(health.serverName, "remote")
+    let ready = Scripted([], health: .success(Scripted.health(state: "ready", name: "custom")))
+    health = try await RoutingAnalysisTransport(http: ready, remote: remote)
+      .health(endpoint: custom)
+    XCTAssertEqual(health.serverName, "custom")
+  }
+}
+
+/// A transport that yields `items`, then finishes or throws `failure`.
+private final class Scripted: AnalysisTransporting, @unchecked Sendable {
+  private let lock = NSLock()
+  private let items: [AnalysisTransportItem]
+  private let failure: (any Error)?
+  private let healthResult: Result<AnalysisHealth, Error>
+  private var seen: [RewriteEndpoint] = []
+  var endpoints: [RewriteEndpoint] { lock.withLock { seen } }
+
+  init(
+    _ items: [AnalysisTransportItem], failure: (any Error)? = nil,
+    health: Result<AnalysisHealth, Error> = .success(
+      Scripted.health(state: "ready", name: "remote"))
+  ) {
+    self.items = items
+    self.failure = failure
+    healthResult = health
+  }
+
+  static func health(state: String, name: String) -> AnalysisHealth {
+    AnalysisHealth(
+      schemaVersion: 1, service: AnalysisHealth.serviceName, protocolVersions: [1],
+      serverName: name, serverVersion: nil,
+      backend: .init(state: state, kind: nil, model: nil, jsonSchema: true), promptVersions: [:],
+      resultSchemaVersion: AnalysisBounds.schemaVersion, limits: nil, caps: nil)
+  }
+
+  func analyze(request: AnalysisRequest, endpoint: RewriteEndpoint, timeout: Duration)
+    -> AsyncThrowingStream<AnalysisTransportItem, Error>
+  {
+    lock.withLock { seen.append(endpoint) }
+    return AsyncThrowingStream { continuation in
+      for item in items { continuation.yield(item) }
+      continuation.finish(throwing: failure)
+    }
+  }
+
+  func health(endpoint: RewriteEndpoint) async throws -> AnalysisHealth { try healthResult.get() }
+  func invalidate() {}
+}
+
 private final class Assembled: @unchecked Sendable {
   private let lock = NSLock()
   private var parts: [(Int, String)] = []

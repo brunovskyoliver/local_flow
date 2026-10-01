@@ -1,5 +1,6 @@
 import Foundation
 import LocalFlowCore
+import LocalFlowSpeech
 
 enum IdentificationRunState: String, CaseIterable, Sendable, Codable {
   case pending, running, succeeded, failed, interrupted, superseded
@@ -121,4 +122,14 @@ struct MeetingIdentification: Sendable, Equatable {
   var acceptedRunID: UUID?
   var currentRunID: UUID?
   var updatedAt: Int64
+}
+
+extension FluidAudioVoiceEmbedderFactory {
+  /// The identity stored with every sample and run this embedder produces.
+  static func identity(descriptor: ModelDescriptor?, manifestHash: String) -> VoiceModelIdentity {
+    VoiceModelIdentity(
+      engine: engine, modelID: descriptor?.modelID ?? FluidAudioDiarizerFactory.modelID,
+      modelRevision: descriptor?.sourceRevision ?? FluidAudioDiarizerFactory.revision,
+      manifestHash: manifestHash, dimension: VoiceEmbedding.dimension)
+  }
 }

@@ -400,3 +400,25 @@ func TestSharedTokenGrantsNothing(t *testing.T) {
 		t.Fatal("the shared token reached the rewrite handler")
 	}
 }
+
+// A rewrite is interactive work from admission, including its wait behind
+// dictation windows, until it ends.
+func TestRewriteIsInteractiveWork(t *testing.T) {
+	windows := newWindowGate(false)
+	h := newRewriteHarness(t, nil, windows)
+	counter := &interactiveCounter{}
+	h.rewriter.cfg.Interactive = counter.begin
+	_, _, token := h.approved("a", 1)
+	c, _ := h.hello(PurposeSession, token)
+	c.send(Rewrite{Op: 1, Request: json.RawMessage(rewriteBody("hello there"))})
+	deadline := time.Now().Add(5 * time.Second)
+	for windows.waiting.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if counter.active.Load() != 1 {
+		t.Fatal(counter.active.Load())
+	}
+	windows.release()
+	c.rewriteEvents(1)
+	counter.waitIdle(t)
+}

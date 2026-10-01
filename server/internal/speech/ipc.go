@@ -1,7 +1,8 @@
-// Package speech runs the speech worker child process and schedules window
-// recognition jobs on it. The worker contract is
-// specs/014-remote-dictation-server/contracts/speech-worker-ipc.md; this
-// package depends only on those messages, never on flowd-speech itself
+// Package speech runs the speech worker child processes and schedules jobs on
+// them. The worker contracts are
+// specs/014-remote-dictation-server/contracts/speech-worker-ipc.md and, for
+// the meeting worker, specs/018-one-server/contracts/meeting-worker-ipc.md;
+// this package depends only on those messages, never on flowd-speech itself
 // (FR-029).
 package speech
 
@@ -33,13 +34,29 @@ const (
 	TypeResult      = "result"
 	TypeError       = "error"
 	TypeState       = "state"
+	// Meeting worker jobs (Feature 018). A result names its job's kind.
+	TypeTranscribe = "transcribe"
+	TypeDiarize    = "diarize"
+	TypeEmbed      = "embed"
 )
+
+// MeetingSampleRange is the sample_count range of each meeting job kind.
+var MeetingSampleRange = map[string][2]int{
+	TypeTranscribe: {1, 1920000},
+	TypeDiarize:    {1, 9600000},
+	TypeEmbed:      {48000, 320000},
+}
+
+// maxPayloadBytes is the largest payload of any frame: a diarization window.
+const maxPayloadBytes = 4 * 9600000
 
 // Worker error codes in an error message.
 const (
 	CodeInvalidAudio     = "invalid_audio"
 	CodeModelUnavailable = "model_unavailable"
 	CodeFailed           = "failed"
+	// CodeRepetition: the meeting worker's transcription kept repeating.
+	CodeRepetition = "repetition"
 )
 
 // ErrMalformedFrame wraps every framing or schema violation. It is fatal: the
@@ -63,6 +80,39 @@ type ModelIdentity struct {
 	WorkerBuild   string `json:"worker_build"`
 }
 
+// MeetingModel is one meeting model's identity from the meeting worker's
+// ready. Dimension is the voice embedding length, voice model only.
+type MeetingModel struct {
+	Engine        string `json:"engine"`
+	ModelID       string `json:"model_id"`
+	ModelRevision string `json:"model_revision"`
+	ManifestHash  string `json:"manifest_hash"`
+	Dimension     int    `json:"dimension,omitempty"`
+}
+
+func (m *MeetingModel) valid() bool {
+	return m != nil && m.Engine != "" && m.ModelID != "" && m.ModelRevision != "" && m.ManifestHash != ""
+}
+
+// MeetingModels are the meeting worker's three models; a ready carries all of
+// them.
+type MeetingModels struct {
+	Transcription *MeetingModel `json:"transcription"`
+	Diarization   *MeetingModel `json:"diarization"`
+	Voice         *MeetingModel `json:"voice"`
+}
+
+// For returns the model that serves a job kind.
+func (m MeetingModels) For(kind string) MeetingModel {
+	switch kind {
+	case TypeTranscribe:
+		return *m.Transcription
+	case TypeDiarize:
+		return *m.Diarization
+	}
+	return *m.Voice
+}
+
 // BoostTerm is one Dictionary entry sent with a recognize job.
 type BoostTerm struct {
 	EntryID   string `json:"entry_id"`
@@ -76,19 +126,34 @@ type Boost struct {
 }
 
 // Header is the JSON header of every message; which fields are set depends on
-// Type. Window is the worker's window object, passed through unparsed.
+// Type. Window and Result are the worker's objects, passed through unparsed.
+// A dictation ready carries Model, a meeting ready Models.
 type Header struct {
-	Type          string          `json:"type"`
-	Protocol      int             `json:"protocol,omitempty"`
-	Model         *ModelIdentity  `json:"model,omitempty"`
-	Reason        string          `json:"reason,omitempty"`
-	Job           uint64          `json:"job,omitempty"`
-	SampleCount   int             `json:"sample_count,omitempty"`
-	Boost         *Boost          `json:"boost,omitempty"`
-	Window        json.RawMessage `json:"window,omitempty"`
-	RecognitionMS *int            `json:"recognition_ms,omitempty"`
-	Code          string          `json:"code,omitempty"`
-	State         string          `json:"state,omitempty"`
+	Type            string          `json:"type"`
+	Protocol        int             `json:"protocol,omitempty"`
+	Model           *ModelIdentity  `json:"model,omitempty"`
+	Models          *MeetingModels  `json:"models,omitempty"`
+	Reason          string          `json:"reason,omitempty"`
+	Missing         []string        `json:"missing,omitempty"`
+	Job             uint64          `json:"job,omitempty"`
+	SampleCount     int             `json:"sample_count,omitempty"`
+	Boost           *Boost          `json:"boost,omitempty"`
+	Language        string          `json:"language,omitempty"`
+	VocabularyTerms []string        `json:"vocabulary_terms,omitempty"`
+	Pipeline        string          `json:"pipeline,omitempty"`
+	NumSpeakers     *int            `json:"num_speakers,omitempty"`
+	Window          json.RawMessage `json:"window,omitempty"`
+	RecognitionMS   *int            `json:"recognition_ms,omitempty"`
+	Kind            string          `json:"kind,omitempty"`
+	Result          json.RawMessage `json:"result,omitempty"`
+	ProcessingMS    *int            `json:"processing_ms,omitempty"`
+	Code            string          `json:"code,omitempty"`
+	State           string          `json:"state,omitempty"`
+}
+
+func isObject(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{'
 }
 
 // Frame is one decoded message.
@@ -110,6 +175,12 @@ func (h Header) validate(payloadLength uint32) error {
 		if h.Protocol != ProtocolVersion {
 			return malformed("ready protocol %d", h.Protocol)
 		}
+		if m := h.Models; m != nil {
+			if h.Model != nil || !m.Transcription.valid() || !m.Diarization.valid() || !m.Voice.valid() || m.Voice.Dimension < 1 {
+				return malformed("ready without meeting model identities")
+			}
+			break
+		}
 		m := h.Model
 		if m == nil || m.Engine == "" || m.ModelID == "" || m.ModelRevision == "" || m.ManifestHash == "" || m.SDK == "" || m.WorkerBuild == "" {
 			return malformed("ready without model identity")
@@ -126,12 +197,27 @@ func (h Header) validate(payloadLength uint32) error {
 			return malformed("sample_count %d out of range", h.SampleCount)
 		}
 		want = uint32(h.SampleCount) * 4
+	case TypeTranscribe, TypeDiarize, TypeEmbed:
+		bounds := MeetingSampleRange[h.Type]
+		if h.Job == 0 {
+			return malformed("%s without job", h.Type)
+		}
+		if h.SampleCount < bounds[0] || h.SampleCount > bounds[1] {
+			return malformed("sample_count %d out of range", h.SampleCount)
+		}
+		want = uint32(h.SampleCount) * 4
 	case TypeShutdown:
 	case TypeResult:
+		if h.Kind != "" {
+			if _, ok := MeetingSampleRange[h.Kind]; !ok || h.Job == 0 || h.ProcessingMS == nil || *h.ProcessingMS < 0 || !isObject(h.Result) {
+				return malformed("meeting result without job, kind, result or processing_ms")
+			}
+			break
+		}
 		if h.Job == 0 || h.RecognitionMS == nil || *h.RecognitionMS < 0 {
 			return malformed("result without job or recognition_ms")
 		}
-		if trimmed := bytes.TrimSpace(h.Window); len(trimmed) == 0 || trimmed[0] != '{' {
+		if !isObject(h.Window) {
 			return malformed("result window not an object")
 		}
 	case TypeError:
@@ -139,12 +225,12 @@ func (h Header) validate(payloadLength uint32) error {
 			return malformed("error without job")
 		}
 		switch h.Code {
-		case CodeInvalidAudio, CodeModelUnavailable, CodeFailed:
+		case CodeInvalidAudio, CodeModelUnavailable, CodeFailed, CodeRepetition:
 		default:
 			return malformed("unknown error code")
 		}
 	case TypeState:
-		if h.State != "active" && h.State != "releasing" {
+		if h.State != "active" && h.State != "releasing" && h.State != "loading" {
 			return malformed("unknown state")
 		}
 	default:
@@ -182,10 +268,20 @@ func EncodeHeader(h Header) ([]byte, error) {
 // EncodeFrame builds one complete frame. It refuses anything ReadFrame would
 // reject, so flowd never sends a malformed frame.
 func EncodeFrame(h Header, payload []byte) ([]byte, error) {
-	if len(payload) > 4*MaxSampleCount {
-		return nil, fmt.Errorf("speech: payload %d bytes over limit", len(payload))
+	prefix, err := encodePrefix(h, len(payload))
+	if err != nil {
+		return nil, err
 	}
-	if err := h.validate(uint32(len(payload))); err != nil {
+	return append(prefix, payload...), nil
+}
+
+// encodePrefix builds everything of a frame before its payload, with room
+// for the payload when it is small enough to append (a recognize window).
+func encodePrefix(h Header, payloadLength int) ([]byte, error) {
+	if payloadLength > maxPayloadBytes {
+		return nil, fmt.Errorf("speech: payload %d bytes over limit", payloadLength)
+	}
+	if err := h.validate(uint32(payloadLength)); err != nil {
 		return nil, err
 	}
 	header, err := EncodeHeader(h)
@@ -195,11 +291,14 @@ func EncodeFrame(h Header, payload []byte) ([]byte, error) {
 	if len(header) > MaxHeaderBytes {
 		return nil, ErrHeaderTooLarge
 	}
-	out := make([]byte, 0, 8+len(header)+len(payload))
+	capacity := 8 + len(header)
+	if payloadLength <= 4*MaxSampleCount {
+		capacity += payloadLength
+	}
+	out := make([]byte, 0, capacity)
 	out = binary.BigEndian.AppendUint32(out, uint32(len(header)))
 	out = append(out, header...)
-	out = binary.BigEndian.AppendUint32(out, uint32(len(payload)))
-	return append(out, payload...), nil
+	return binary.BigEndian.AppendUint32(out, uint32(payloadLength)), nil
 }
 
 // WriteFrame encodes and writes one frame in a single Write.
@@ -269,6 +368,31 @@ func EncodeSamples(samples []float32) []byte {
 		binary.LittleEndian.PutUint32(out[4*i:], math.Float32bits(s))
 	}
 	return out
+}
+
+// s16ChunkSamples is how many samples WriteS16AsF32 converts per write.
+const s16ChunkSamples = 16384
+
+// WriteS16AsF32 writes s16le samples to w as f32le (sample / 32768), one
+// bounded chunk at a time, so a meeting payload is never held twice: flowd
+// keeps the client's s16le samples and streams the worker's f32le payload.
+func WriteS16AsF32(w io.Writer, s16 []byte) error {
+	if len(s16)%2 != 0 {
+		return errors.New("speech: s16le payload not a whole number of samples")
+	}
+	chunk := make([]byte, 4*min(s16ChunkSamples, len(s16)/2))
+	for len(s16) > 0 {
+		n := min(s16ChunkSamples, len(s16)/2)
+		for i := range n {
+			sample := int16(binary.LittleEndian.Uint16(s16[2*i:]))
+			binary.LittleEndian.PutUint32(chunk[4*i:], math.Float32bits(float32(sample)/32768))
+		}
+		if _, err := w.Write(chunk[:4*n]); err != nil {
+			return err
+		}
+		s16 = s16[2*n:]
+	}
+	return nil
 }
 
 // DecodeSamples parses a Float32 little-endian payload.

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowSpeech
 
 /// flowd ↔ speech worker framing (`contracts/speech-worker-ipc.md`), compiled into
 /// `flowd-speech` and `LocalFlowTests`:
@@ -7,6 +8,18 @@ import Foundation
 enum WorkerFraming {
   static let maximumHeaderBytes = 65_536
   static let maximumSampleCount = 239_360
+
+  /// Samples per job type: `recognize` (Feature 014) and the meeting worker's three
+  /// kinds (Feature 018, contracts/meeting-worker-ipc.md).
+  static func sampleRange(_ type: String) -> ClosedRange<Int>? {
+    switch type {
+    case "recognize": 1...maximumSampleCount
+    case "transcribe": 1...1_920_000
+    case "diarize": 1...9_600_000
+    case "embed": 48_000...320_000
+    default: nil
+    }
+  }
 
   enum Failure: Error, Equatable {
     case headerTooLarge
@@ -49,8 +62,8 @@ enum WorkerFraming {
       header["type"] is String
     else { throw Failure.malformedHeader }
     let frame = Frame(header: header, payload: Data())
-    if frame.type == "recognize" {
-      guard let count = frame.integer("sample_count"), (1...maximumSampleCount).contains(count)
+    if let range = sampleRange(frame.type) {
+      guard let count = frame.integer("sample_count"), range.contains(count)
       else { throw Failure.sampleCountOutOfRange }
       guard payloadLength == count * 4 else { throw Failure.payloadLengthMismatch }
     } else if payloadLength > maximumSampleCount * 4 {
@@ -69,7 +82,7 @@ enum WorkerFraming {
     return uint32(json.count) + json + uint32(payload.count) + payload
   }
 
-  /// Float32 little-endian samples of a `recognize` payload.
+  /// Float32 little-endian samples of a job payload.
   static func samples(_ payload: Data) -> [Float] {
     payload.withUnsafeBytes { raw in
       (0..<payload.count / 4).map {
@@ -85,4 +98,74 @@ enum WorkerFraming {
   private static func uint32(_ value: Int) -> Data {
     withUnsafeBytes(of: UInt32(value).bigEndian) { Data($0) }
   }
+}
+
+/// Feature 018: what the meeting worker sends flowd (contracts/meeting-worker-ipc.md). The
+/// result objects are `meeting_result.result` on the remote channel, so they match the
+/// app's `RemoteMeetingResult` decoder.
+enum MeetingWorkerMessages {
+  static let errorCodes = ["model_unavailable", "invalid_audio", "repetition", "failed"]
+
+  static func ready(
+    transcription: [String: Any], diarization: [String: Any], voice: [String: Any]
+  ) -> [String: Any] {
+    [
+      "type": "ready", "protocol": 1,
+      "models": ["transcription": transcription, "diarization": diarization, "voice": voice],
+    ]
+  }
+
+  static func unavailable(missing: [String]) -> [String: Any] {
+    ["type": "unavailable", "reason": "model_missing", "missing": missing]
+  }
+
+  static func result(job: Int, kind: String, result: [String: Any], processingMs: Int)
+    -> [String: Any]
+  {
+    ["type": "result", "job": job, "kind": kind, "result": result, "processing_ms": processingMs]
+  }
+
+  static func error(job: Int, code: String) -> [String: Any] {
+    ["type": "error", "job": job, "code": code]
+  }
+
+  static func state(_ state: String) -> [String: Any] { ["type": "state", "state": state] }
+
+  /// Each Float as its shortest decimal, which reads back as the same Float: a 256-value
+  /// vector takes about 3 KB of the 64 KB header instead of 5 KB.
+  static func compact(_ values: [Float]) -> [Double] {
+    values.map { Double($0.description) ?? Double($0) }
+  }
+
+  static func transcription(_ window: TranscriptionWindow, language: String?) -> [String: Any] {
+    var result: [String: Any] = [
+      "text": window.text,
+      "tokens": window.tokens.map { ["text": $0.text, "start": $0.start, "end": $0.end] },
+      "timings_available": window.evidence?.timingsAvailable ?? !window.tokens.isEmpty,
+      "retry_depth": 0,
+    ]
+    if let language { result["language"] = language }
+    return result
+  }
+
+  static func diarization(_ result: DiarizationWindowResult) -> [String: Any] {
+    [
+      "turns": result.turns.map { turn -> [String: Any] in
+        [
+          "cluster": turn.cluster, "start": turn.startSeconds, "end": turn.endSeconds,
+          "quality": turn.quality.map { Double($0.description) ?? Double($0) } as Any? ?? NSNull(),
+        ]
+      },
+      "centroids": result.centroids.keys.sorted().map {
+        ["cluster": $0, "vector": compact(result.centroids[$0] ?? [])]
+      },
+    ]
+  }
+
+  static func embedding(_ embedding: VoiceEmbedding) -> [String: Any] {
+    ["vector": compact(embedding.vector), "speech_seconds": embedding.speechSeconds]
+  }
+
+  /// A region without speech (`VoiceEmbeddingFailure.noSpeech`) is an empty vector.
+  static var noSpeech: [String: Any] { ["vector": [Float](), "speech_seconds": 0] }
 }

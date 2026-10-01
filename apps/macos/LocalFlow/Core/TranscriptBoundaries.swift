@@ -58,7 +58,8 @@ protocol TranscriptStoring: Sendable {
 enum TranscriptTransitionEffect: Sendable {
   case setIdentity(
     engine: String, model: TranscriptModelIdentity, pipeline: String, planner: String,
-    vocabulary: VocabularySnapshot)
+    vocabulary: VocabularySnapshot, path: MeetingInferencePath = .local,
+    serverFailure: String? = nil)
   case setDescriptor(AnalysisStreamDescriptor)
   case setPass(id: UUID, kind: TranscriptPassKind)
   case setFailure(category: TranscriptFailureCategory, detail: String?)

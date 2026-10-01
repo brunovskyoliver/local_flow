@@ -3,6 +3,7 @@ package analysis
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,10 +17,15 @@ const (
 	HeaderPrimaryURL   = "X-LocalFlow-Primary-URL"
 	HeaderPrimaryModel = "X-LocalFlow-Primary-Model"
 	HeaderPrimaryKey   = "X-LocalFlow-Primary-Key"
+	// HeaderPrimaryOnly "1" sends the request to the primary alone: no
+	// fallback onto the loopback backend (Feature 018 R9). The client then
+	// retries over its channel to the LocalFlow server.
+	HeaderPrimaryOnly = "X-LocalFlow-Primary-Only"
 )
 
 // Router picks each analysis request's backend: the client's primary with
-// the loopback backend as fallback, or the loopback backend alone.
+// the loopback backend as fallback, the primary alone, or the loopback
+// backend alone.
 type Router struct {
 	Local                      *backend.OpenAI
 	Gate                       *Gate
@@ -27,7 +33,7 @@ type Router struct {
 
 	mu      sync.Mutex
 	key     string
-	current *backend.Fallback
+	current BackendAdapter
 }
 
 // For returns the request's backend. The last primary is reused while the
@@ -42,7 +48,8 @@ func (r *Router) For(req *http.Request) (BackendAdapter, error) {
 	if model == "" || len(model) > 128 || len(token) > 4096 || strings.ContainsAny(token, "\r\n") {
 		return nil, errors.New("invalid primary backend")
 	}
-	key := url + "\x00" + model + "\x00" + token
+	only := req.Header.Get(HeaderPrimaryOnly) == "1"
+	key := url + "\x00" + model + "\x00" + token + "\x00" + strconv.FormatBool(only)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if key == r.key {
@@ -55,8 +62,11 @@ func (r *Router) For(req *http.Request) (BackendAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	fallback := &backend.Fallback{Primary: primary, Secondary: r.Local}
-	fallback.GuardLocal(r.Gate.Guard)
-	r.key, r.current = key, fallback
-	return fallback, nil
+	r.key, r.current = key, primary
+	if !only {
+		fallback := &backend.Fallback{Primary: primary, Secondary: r.Local}
+		fallback.GuardLocal(r.Gate.Guard)
+		r.current = fallback
+	}
+	return r.current, nil
 }

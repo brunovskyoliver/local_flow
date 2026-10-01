@@ -1,5 +1,6 @@
 import Foundation
 import LocalFlowCore
+import LocalFlowSpeech
 
 /// The meeting domain's view of speaker diarization. Nothing here imports FluidAudio.
 
@@ -25,6 +26,10 @@ protocol SpeakerStoring: Sendable {
     async throws
   func interrupt(runID: UUID, now: Int64) async throws
   func requeue(runID: UUID) async throws
+  /// Feature 018: where the run's windows go, and the server's model on that path.
+  func recordInferencePath(
+    runID: UUID, path: MeetingInferencePath, serverFailure: String?,
+    model: RemoteCapabilities.Model?) async throws
   func cancel(runID: UUID) async throws
   func run(id: UUID) async throws -> DiarizationRun?
   func meetingState(meetingID: UUID) async throws -> MeetingDiarizationState
@@ -62,6 +67,12 @@ protocol SpeakerStoring: Sendable {
 }
 
 extension SpeakerStoring {
+  /// Stores without the Feature 018 columns record nothing.
+  func recordInferencePath(
+    runID: UUID, path: MeetingInferencePath, serverFailure: String?,
+    model: RemoteCapabilities.Model?
+  ) async throws {}
+
   func speakerRoots(meetingID: UUID) async throws -> [SpeakerRoot] {
     try await speakerSummaries(meetingID: meetingID).map {
       SpeakerRoot(id: $0.id, source: $0.source, members: $0.includes.map(\.id))

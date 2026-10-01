@@ -154,6 +154,8 @@ enum RegionExtractor {
         } catch {
           if Task.isCancelled { throw CancellationError() }
           if error is CancellationError { throw Preempted() }
+          // Feature 018: the server could not take the region; the run waits.
+          if error is RemoteMeetingWaiting || error is RemoteMeetingNotOffered { throw error }
           switch error as? DictationFailure {
           case .cancelled, .staleLease: throw Preempted()
           case .invalidAudio, .invalidResult: await collector.reject()

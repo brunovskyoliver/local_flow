@@ -39,6 +39,17 @@ final class MeetingLibraryViewModel {
   var activeMeetingDidChange: (@MainActor (UUID) async -> Void)?
   @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
 
+  /// Feature 018 (contracts/settings-ui.md §Meetings): work waiting for the user's
+  /// server, **Run on this Mac**, and where a meeting's results were produced.
+  @ObservationIgnored var waitingForServer: @MainActor (UUID) -> Bool = { _ in false }
+  @ObservationIgnored var runOnThisMac: (@MainActor (UUID) async -> Void)?
+  @ObservationIgnored var provenance: (@MainActor (UUID) async -> MeetingProvenance?)?
+  static let waitingText = "Waiting for your server"
+
+  func waitsForServer(_ id: UUID) -> Bool { waitingForServer(id) }
+
+  func runLocally(_ id: UUID) async { await runOnThisMac?(id) }
+
   init(store: any MeetingStoring, activeMeetingID: @escaping @MainActor () -> UUID? = { nil }) {
     self.store = store
     self.activeMeetingID = activeMeetingID

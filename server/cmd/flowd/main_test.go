@@ -234,18 +234,21 @@ func TestRemoteFlags(t *testing.T) {
 	}
 	dir := t.TempDir()
 	c, err = parse([]string{"--remote-listen=127.0.0.1:18090", "--data-dir=" + dir, "--apple-audience=org.localflow.LocalFlow,org.localflow.LocalFlow.dev",
-		"--google-client-id=a.apps.googleusercontent.com,b.apps.googleusercontent.com", "--speech-worker=/opt/flowd-speech", "--speech-models=/opt/models", "--dev"}, none, io.Discard)
+		"--google-client-id=a.apps.googleusercontent.com,b.apps.googleusercontent.com", "--speech-worker=/opt/flowd-speech", "--speech-models=/opt/models", "--dev",
+		"--meeting-models=/opt/meeting-models", "--meeting-helper=/opt/localflow-whisper-engine"}, none, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := c.remote
 	if r.listen != "127.0.0.1:18090" || r.dataDir != dir || len(r.appleAudience) != 2 || r.appleAudience[1] != "org.localflow.LocalFlow.dev" ||
-		len(r.googleClientIDs) != 2 || r.speechWorker != "/opt/flowd-speech" || r.speechModels != "/opt/models" || !r.dev {
+		len(r.googleClientIDs) != 2 || r.speechWorker != "/opt/flowd-speech" || r.speechModels != "/opt/models" || !r.dev ||
+		r.meetingModels != "/opt/meeting-models" || r.meetingHelper != "/opt/localflow-whisper-engine" {
 		t.Fatalf("%+v", r)
 	}
 	c, err = parse([]string{"--remote-listen=[::1]:8090", "--data-dir=" + dir}, none, io.Discard)
 	executable, _ := os.Executable()
-	if err != nil || c.remote.speechModels != filepath.Join(dir, "Models") || c.remote.speechWorker != filepath.Join(filepath.Dir(executable), "flowd-speech") {
+	if err != nil || c.remote.speechModels != filepath.Join(dir, "Models") || c.remote.speechWorker != filepath.Join(filepath.Dir(executable), "flowd-speech") ||
+		c.remote.meetingModels != c.remote.speechModels || c.remote.meetingHelper != filepath.Join(filepath.Dir(executable), "localflow-whisper-engine") {
 		t.Fatalf("defaults %+v %v", c.remote, err)
 	}
 	for _, args := range [][]string{

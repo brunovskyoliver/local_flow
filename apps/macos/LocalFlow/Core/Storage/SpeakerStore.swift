@@ -379,6 +379,17 @@ actor SpeakerStore: SpeakerStoring {
     try end(runID, as: .interrupted, category: .interrupted, detail: nil, now: now)
   }
 
+  func recordInferencePath(
+    runID: UUID, path: MeetingInferencePath, serverFailure: String?,
+    model: RemoteCapabilities.Model?
+  ) throws {
+    try write { db in
+      try MeetingRunProvenance.record(
+        db, table: "diarization_runs", runID: runID, path: path, serverFailure: serverFailure,
+        model: model)
+    }
+  }
+
   /// Preempted by speech recognition: back to pending at no progress. Embeddings are
   /// never persisted, so the run restarts from its first window.
   func requeue(runID: UUID) throws {
@@ -1092,5 +1103,25 @@ actor SpeakerStore: SpeakerStoring {
       track: MeetingTrackKind(rawValue: row["track"]) ?? .system,
       startMs: row["start_ms"], endMs: row["end_ms"], engineQuality: row["engine_quality"],
       overlapped: row["overlapped"])
+  }
+}
+
+/// Feature 018: `inference_path`, `server_failure` and, on the server path, the server's
+/// model identity on a diarization or identification run.
+enum MeetingRunProvenance {
+  static func record(
+    _ db: Database, table: String, runID: UUID, path: MeetingInferencePath,
+    serverFailure: String?, model: RemoteCapabilities.Model?
+  ) throws {
+    try db.execute(
+      sql: "UPDATE \(table) SET inference_path=?, server_failure=? WHERE id=?",
+      arguments: [path.rawValue, path == .server ? nil : serverFailure, runID.uuidString])
+    guard let model else { return }
+    try db.execute(
+      sql:
+        "UPDATE \(table) SET engine=?, model_id=?, model_revision=?, model_manifest_hash=? WHERE id=?",
+      arguments: [
+        model.engine, model.modelID, model.modelRevision, model.manifestHash, runID.uuidString,
+      ])
   }
 }

@@ -1,29 +1,23 @@
 import FluidAudio
 import Foundation
-import LocalFlowCore
-import LocalFlowSpeech
 
 /// Research R1: voice embeddings come from the provisioned diarization models
 /// (WeSpeaker ResNet34-LM, 256-d) through FluidAudio's single-speaker offline pipeline.
 /// The factory verifies the same pinned descriptor `FluidAudioDiarizerFactory` does,
 /// loads from the local directory only and never calls a download path. The lifecycle
 /// coordinator owns the returned runtime and is the only caller.
-struct FluidAudioVoiceEmbedderFactory: Sendable {
-  static let engine = IdentificationThresholds.wespeakerEngine
+public struct FluidAudioVoiceEmbedderFactory: Sendable {
+  public static let engine = "wespeaker_resnet34lm_256"
 
   let descriptor: LocalModelDescriptor
   var offlineMode: @Sendable () -> Bool = { ModelHub.offlineMode }
   var operatingSystem = ProcessInfo.processInfo.operatingSystemVersion
 
-  /// The identity stored with every sample and run this embedder produces.
-  static func identity(descriptor: ModelDescriptor?, manifestHash: String) -> VoiceModelIdentity {
-    VoiceModelIdentity(
-      engine: engine, modelID: descriptor?.modelID ?? FluidAudioDiarizerFactory.modelID,
-      modelRevision: descriptor?.sourceRevision ?? FluidAudioDiarizerFactory.revision,
-      manifestHash: manifestHash, dimension: VoiceEmbedding.dimension)
+  public init(descriptor: LocalModelDescriptor) {
+    self.descriptor = descriptor
   }
 
-  func makeRuntime() async throws -> any VoiceEmbeddingRuntime {
+  public func makeRuntime() async throws -> any VoiceEmbeddingRuntime {
     guard offlineMode() else { throw IdentificationFailureCategory.modelUnavailable }
     // macOS 14 BNNS crash in Core ML predictions (FluidAudio #878).
     guard operatingSystem.majorVersion >= 15 else {
@@ -56,10 +50,10 @@ struct FluidAudioVoiceEmbedderFactory: Sendable {
 
 /// One single-speaker `OfflineDiarizerManager` over the loaded models. Unchecked:
 /// `ModelLifecycleCoordinator.embed` admits one region at a time.
-final class FluidAudioVoiceEmbedder: VoiceEmbeddingRuntime, @unchecked Sendable {
+public final class FluidAudioVoiceEmbedder: VoiceEmbeddingRuntime, @unchecked Sendable {
   private let manager: OfflineDiarizerManager
 
-  init(models: OfflineDiarizerModels) {
+  public init(models: OfflineDiarizerModels) {
     var config = OfflineDiarizerConfig(exposeChunkEmbeddings: true)
     config.postProcessing.exclusiveSegments = false
     config.clustering.numSpeakers = 1
@@ -67,7 +61,7 @@ final class FluidAudioVoiceEmbedder: VoiceEmbeddingRuntime, @unchecked Sendable 
     manager.initialize(models: models)
   }
 
-  func embed(_ request: VoiceRegionRequest) async throws -> VoiceEmbedding {
+  public func embed(_ request: VoiceRegionRequest) async throws -> VoiceEmbedding {
     let result: DiarizationResult
     do {
       result = try await manager.process(audio: request.samples)
@@ -81,7 +75,7 @@ final class FluidAudioVoiceEmbedder: VoiceEmbeddingRuntime, @unchecked Sendable 
   /// The duration-weighted, L2-normalized mean of the dominant cluster's chunk
   /// embeddings; the cluster with the most segment time wins. Nil when there is no
   /// speech or no embedding.
-  static func reduce(_ result: DiarizationResult) -> VoiceEmbedding? {
+  public static func reduce(_ result: DiarizationResult) -> VoiceEmbedding? {
     var speech: [String: Double] = [:]
     for segment in result.segments {
       let length = Double(segment.endTimeSeconds) - Double(segment.startTimeSeconds)
@@ -107,7 +101,7 @@ final class FluidAudioVoiceEmbedder: VoiceEmbeddingRuntime, @unchecked Sendable 
     return embedding.isValid ? embedding : nil
   }
 
-  func shutdown() async {
+  public func shutdown() async {
     // The manager holds only Core ML models; dropping the runtime releases them.
   }
 }

@@ -156,4 +156,59 @@ final class IdentityMatcherTests: XCTestCase {
     XCTAssertEqual(first, second)
     XCTAssertEqual(first.candidates.count, 2)
   }
+
+  // MARK: Feature 018 (FR-023)
+
+  private let library = VoiceModelIdentity(
+    engine: "FluidAudio", modelID: "wespeaker_resnet34lm_256", modelRevision: "r1",
+    manifestHash: String(repeating: "a", count: 64), dimension: 256)
+
+  /// Server vectors from another model, version or dimension never meet the library.
+  func testServerVectorsFromAnotherModelGiveNoSuggestion() {
+    let profiles = [profile(alice, cosine: 0.95), profile(bob, cosine: 0.3)]
+    let others = [
+      VoiceModelIdentity(
+        engine: "Other", modelID: library.modelID, modelRevision: "r1",
+        manifestHash: library.manifestHash, dimension: 256),
+      VoiceModelIdentity(
+        engine: library.engine, modelID: library.modelID, modelRevision: "r2",
+        manifestHash: library.manifestHash, dimension: 256),
+      VoiceModelIdentity(
+        engine: library.engine, modelID: library.modelID, modelRevision: "r1",
+        manifestHash: library.manifestHash, dimension: 192),
+    ]
+    for server in others {
+      let decision = IdentityMatcher.decide(
+        query: query(), profiles: profiles, rejected: [], thresholds: thresholds,
+        queryModel: server, libraryModel: library)
+      XCTAssertEqual(decision, .unknown, "\(server)")
+    }
+    // The same model, however it was reached, follows the local rules exactly.
+    let same = IdentityMatcher.decide(
+      query: query(), profiles: profiles, rejected: [], thresholds: thresholds,
+      queryModel: library, libraryModel: library)
+    let local = IdentityMatcher.decide(
+      query: query(), profiles: profiles, rejected: [], thresholds: thresholds)
+    XCTAssertEqual(same, local)
+    XCTAssertEqual(same.state, .recognized)
+  }
+
+  /// No speaker name or profile goes into any remote message: an embed job carries the
+  /// sample count and nothing else.
+  func testNoNameOrProfileIsSerializedForTheServer() throws {
+    let messages: [RemoteClientMessage] = [
+      .meetingJob(op: 3, job: RemoteMeetingJob(kind: .embed, sampleCount: 48_000)),
+      .meetingJob(
+        op: 4, job: RemoteMeetingJob(kind: .diarize, sampleCount: 16_000, numSpeakers: 2)),
+      .meetingCancel(op: 4),
+    ]
+    for message in messages {
+      let object = try XCTUnwrap(
+        try JSONSerialization.jsonObject(with: message.encoded()) as? [String: Any])
+      XCTAssertTrue(
+        Set(object.keys).isSubset(of: [
+          "schema_version", "type", "op", "kind", "sample_count", "format", "num_speakers",
+        ]), "\(object.keys)")
+    }
+  }
 }

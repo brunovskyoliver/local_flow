@@ -69,6 +69,8 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.StringVar(&c.remote.dataDir, "data-dir", "", "remote server data directory (required with --remote-listen)")
 	fs.StringVar(&c.remote.speechWorker, "speech-worker", "", "speech worker executable (default <flowd dir>/flowd-speech)")
 	fs.StringVar(&c.remote.speechModels, "speech-models", "", "model directory passed to the speech worker (default <data-dir>/Models)")
+	fs.StringVar(&c.remote.meetingModels, "meeting-models", "", "model directory passed to the meeting worker (default: the --speech-models directory)")
+	fs.StringVar(&c.remote.meetingHelper, "meeting-helper", "", "Whisper helper executable passed to the meeting worker (default <flowd dir>/localflow-whisper-engine)")
 	appleAudience := fs.String("apple-audience", "org.localflow.LocalFlow", "comma-separated accepted Apple aud values")
 	googleClientIDs := fs.String("google-client-id", "", "comma-separated accepted Google aud values; Google sign-in is refused when unset")
 	fs.BoolVar(&c.remote.dev, "dev", false, "development variant: read the remote identity key from the "+accounts.ServiceDevelopment+" Keychain service")

@@ -1,5 +1,6 @@
 import Foundation
 import LocalFlowCore
+import LocalFlowSpeech
 
 enum DiarizationRunState: String, CaseIterable, Sendable, Codable {
   case pending, running, succeeded, failed, interrupted, superseded

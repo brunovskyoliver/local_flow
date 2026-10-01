@@ -510,6 +510,8 @@ enum RemoteServerMessage: Sendable {
       }
     } catch let error as RemoteProtocolError {
       throw error
+    } catch let error as VoiceEmbeddingFailure {
+      throw error
     } catch {
       throw RemoteProtocolError.invalidMessage
     }
@@ -612,6 +614,8 @@ enum RemoteMeetingResult: Sendable {
       return .diarization(result)
     case .embed:
       let value = try decoder.decode(Embedded.self, from: data)
+      // The worker's answer for a region without speech.
+      if value.vector.isEmpty { throw VoiceEmbeddingFailure.noSpeech }
       let embedding = VoiceEmbedding(vector: value.vector, speechSeconds: value.speechSeconds)
       guard embedding.isValid else { throw RemoteProtocolError.invalidResult }
       return .embedding(embedding)

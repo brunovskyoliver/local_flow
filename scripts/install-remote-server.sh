@@ -3,6 +3,10 @@
 # launch agent, per specs/014-remote-dictation-server/contracts/flowd-cli.md:
 # builds flowd and the flowd-speech worker, installs both under
 # <data-dir>/bin and loads two agents: flowd and the server's own MTPLX.
+# Feature 018: flowd also serves summaries and meeting work. The Whisper helper
+# (localflow-whisper-engine) and the meeting model descriptors go beside
+# flowd-speech, the meeting models are downloaded and verified once into
+# <data-dir>/Models, and flowd starts the meeting worker next to the speech worker.
 #
 #   variant      label                               remote listener   local listener   MTPLX            data directory
 #   production   org.localflow.LocalFlow.remote      127.0.0.1:8090    127.0.0.1:8091   127.0.0.1:8092   ~/Library/Application Support/LocalFlow Server
@@ -27,11 +31,14 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 usage: scripts/install-remote-server.sh [--dev] [--dry-run] [--speech-worker PATH]
-         [--google-client-id IDS] [--apple-audience IDS] [--mtplx PATH] [--model DIR]
+         [--meeting-helper PATH] [--google-client-id IDS] [--apple-audience IDS]
+         [--mtplx PATH] [--model DIR]
 
   --dev                 install the development variant
   --dry-run             print what would be done; build, install and load nothing
   --speech-worker PATH  install this prebuilt flowd-speech instead of building it
+  --meeting-helper PATH install this prebuilt Whisper helper (scripts/build-meeting-whisper.sh
+                        output) instead of building it
   --google-client-id IDS  comma-separated Google OAuth client IDs to accept; without it
                           flowd refuses Google sign-in
   --apple-audience IDS    comma-separated app bundle IDs to accept for Sign in with Apple;
@@ -45,6 +52,7 @@ USAGE
 dev=0
 dry_run=0
 prebuilt_worker=""
+prebuilt_helper=""
 google_client_ids=""
 apple_audience=""
 app_state="$HOME/Library/Application Support/LocalFlow/LocalAI"
@@ -57,6 +65,11 @@ while [ $# -gt 0 ]; do
     --speech-worker)
       [ $# -ge 2 ] || { usage >&2; exit 1; }
       prebuilt_worker="$2"
+      shift
+      ;;
+    --meeting-helper)
+      [ $# -ge 2 ] || { usage >&2; exit 1; }
+      prebuilt_helper="$2"
       shift
       ;;
     --google-client-id)
@@ -198,7 +211,7 @@ render_plist() {
     --data-dir "$data_dir"
     --backend "$backend" --model localflow
     --speech-worker "$bin_dir/flowd-speech"
-    --analysis=false
+    --meeting-helper "$bin_dir/localflow-whisper-engine"
     --log-file "$log_dir/flowd.log"
     ${dev_flag[@]+"${dev_flag[@]}"}
   )
@@ -261,6 +274,21 @@ else
     SYMROOT="$stage/xcode" build
 fi
 
+# 2b. The Whisper helper for meeting transcripts (Feature 018), built from the pinned
+# whisper.cpp revision with its licences.
+helper="$stage/meeting-whisper-native/Engine/sotto-engine"
+if [ -n "$prebuilt_helper" ]; then
+  if [ ! -x "$prebuilt_helper" ]; then
+    echo "error: --meeting-helper $prebuilt_helper is not an executable file" >&2
+    exit 1
+  fi
+  helper="$prebuilt_helper"
+  echo "Using prebuilt Whisper helper: $helper"
+else
+  echo "Building the Whisper helper"
+  run env TEMP_DIR="$stage" "$repository/scripts/build-meeting-whisper.sh"
+fi
+
 # 3. Install under <data-dir>/bin; the data directory is private (0700).
 run mkdir -p "$bin_dir"
 run chmod 0700 "$data_dir"
@@ -271,8 +299,26 @@ worker_installed=0
 if [ -e "$bin_dir/flowd-speech" ] && [ "$worker" -ef "$bin_dir/flowd-speech" ]; then worker_installed=1; fi
 [ "$worker_installed" -eq 1 ] || run install -m 0755 "$worker" "$bin_dir/flowd-speech"
 # The worker reads the pinned descriptors next to itself (flowd-speech provision/serve).
-run install -m 0644 "$repository/apps/macos/LocalFlow/Resources/Models/parakeet-v3.json" \
-  "$repository/apps/macos/LocalFlow/Resources/Models/parakeet-ctc-110m.json" "$bin_dir/"
+models_src="$repository/apps/macos/LocalFlow/Resources/Models"
+run install -m 0644 "$models_src/parakeet-v3.json" "$models_src/parakeet-ctc-110m.json" \
+  "$models_src/whisper-large-v3-turbo.json" "$models_src/speaker-diarization-offline.json" \
+  "$bin_dir/"
+# flowd starts `flowd-speech meeting --helper <bin>/localflow-whisper-engine`. The helper
+# and model licences travel with the install (ADR 0019).
+if ! { [ -e "$bin_dir/localflow-whisper-engine" ] && [ "$helper" -ef "$bin_dir/localflow-whisper-engine" ]; }; then
+  run install -m 0755 "$helper" "$bin_dir/localflow-whisper-engine"
+fi
+whisper_license="$repository/third_party/sotto/vendor/whisper.cpp/LICENSE"
+if [ ! -f "$whisper_license" ] && [ "$dry_run" -eq 0 ]; then
+  echo "error: $whisper_license is missing; run scripts/build-meeting-whisper.sh once." >&2
+  exit 1
+fi
+run mkdir -p "$bin_dir/WhisperLicenses"
+run install -m 0644 "$repository/third_party/sotto/LICENSE" "$bin_dir/WhisperLicenses/Sotto-LICENSE.txt"
+run install -m 0644 "$whisper_license" "$bin_dir/WhisperLicenses/whisper-LICENSE.txt"
+for name in Whisper-model Silero JSON miniaudio; do
+  run install -m 0644 "$repository/third_party/sotto/Resources/$name-LICENSE.txt" "$bin_dir/WhisperLicenses/"
+done
 worker_bundle="$(dirname "$worker")/FluidAudio_FluidAudio.bundle"
 if [ "$worker_installed" -eq 0 ] && { [ -d "$worker_bundle" ] || [ "$dry_run" -eq 1 ]; }; then
   run rm -rf "$bin_dir/FluidAudio_FluidAudio.bundle"
@@ -317,6 +363,10 @@ then run this script again."
     exit 1
   fi
 fi
+
+# 4b. Download and verify the meeting models once (Whisper Turbo with its VAD, and the
+# offline diarization and voice models); later runs only verify them.
+run "$bin_dir/flowd-speech" provision --models "$data_dir/Models" --meeting
 
 # 5. Render and load both agents, replacing only earlier copies of these labels.
 # MTPLX first, so flowd's backend probe finds it.

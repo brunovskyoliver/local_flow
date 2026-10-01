@@ -12,40 +12,52 @@ import (
 	"localflow/server/internal/speech"
 )
 
-// sessionOperations starts the speech worker supervisor and the window
-// scheduler and returns the session channel's operations (dictation and
-// rewrite, User Story 1) with a function that stops what they own. The worker
-// runs as `<--speech-worker> serve --models <--speech-models>`; while it is
-// not ready, dictations are answered worker_unavailable and flowd keeps
-// serving. Logs carry IDs, counts, durations, states and codes only: the
-// scheduler logs each window's queue time, duration and queue depth, the
-// supervisor each worker state change, and the dictation operation each
-// session's windows, duration and release latency.
+// sessionOperations starts the speech and meeting worker supervisors and the
+// window scheduler and returns the session channel's operations (dictation,
+// rewrite, analysis, live_window and meeting_job), the meeting worker's live
+// capabilities and a function that stops what they own. The workers run as
+// `<--speech-worker> serve --models <--speech-models>` and
+// `<--speech-worker> meeting --models <--meeting-models> --helper
+// <--meeting-helper>`; while one is not ready its operations are answered
+// worker_unavailable (or not_offered, for a meeting worker without models)
+// and flowd keeps serving. Logs carry IDs, counts, durations, states and codes
+// only; the meeting worker's lines carry a "meeting " prefix.
 func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Store,
-	watcher *accounts.Watcher, logger *log.Logger) (map[string]remote.OperationStart, func(), error) {
+	watcher *accounts.Watcher, logger *log.Logger) (map[string]remote.OperationStart, func() ([]string, *remote.CapabilityModels), func(), error) {
 	supervisor := speech.NewSupervisor(speech.SupervisorConfig{
 		Command: []string{r.speechWorker, "serve", "--models", r.speechModels},
 		Env:     workerEnvironment(os.Environ()),
 		Logger:  logger,
 	})
 	scheduler := speech.NewScheduler(speech.SchedulerConfig{Recognizer: supervisor, Logger: logger})
+	meetingLogger := log.New(logger.Writer(), logger.Prefix()+"meeting ", logger.Flags())
+	queue := speech.NewMeetingQueue(meetingLogger)
+	meetingWorker := speech.NewSupervisor(speech.SupervisorConfig{
+		Command:     []string{r.speechWorker, "meeting", "--models", r.meetingModels, "--helper", r.meetingHelper},
+		Env:         workerEnvironment(os.Environ()),
+		Logger:      meetingLogger,
+		Meeting:     true,
+		JobDeadline: speech.MeetingJobDeadline,
+		Gate:        queue.InteractiveIdle,
+	})
 	runCtx, cancel := context.WithCancel(ctx)
 	var running sync.WaitGroup
-	running.Add(2)
-	go func() {
-		defer running.Done()
-		supervisor.Run(runCtx)
-	}()
-	go func() {
-		defer running.Done()
-		scheduler.Run(runCtx)
-	}()
+	for _, run := range []func(context.Context){supervisor.Run, scheduler.Run, meetingWorker.Run} {
+		running.Add(1)
+		go func() {
+			defer running.Done()
+			run(runCtx)
+		}()
+	}
 	dictation := remote.NewDictation(remote.DictationConfig{
 		Scheduler: remote.SchedulerSessions(scheduler), Models: supervisor, Logger: logger, DebugBusy: r.debugBusy,
+		Interactive: queue.BeginInteractive,
 	})
-	operations := map[string]remote.OperationStart{"dictation_start": dictation.Start}
+	live := remote.NewLive(remote.LiveConfig{Scheduler: scheduler, Logger: logger})
+	meeting := remote.NewMeeting(remote.MeetingConfig{Worker: meetingWorker, Queue: queue, Logger: meetingLogger})
+	operations := map[string]remote.OperationStart{"dictation_start": dictation.Start, "live_window": live.Start, "meeting_job": meeting.Start}
 	if r.rewrite != nil {
-		rewriter := remote.NewRewriter(remote.RewriteConfig{Runner: r.rewrite, Windows: scheduler, Logger: logger})
+		rewriter := remote.NewRewriter(remote.RewriteConfig{Runner: r.rewrite, Windows: scheduler, Interactive: queue.BeginInteractive, Logger: logger})
 		operations["rewrite"] = rewriter.Start
 	}
 	if r.analysis != nil {
@@ -59,7 +71,7 @@ func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Stor
 			running.Wait()
 		})
 	}
-	return operations, stop, nil
+	return operations, remote.MeetingCapabilities(meetingWorker), stop, nil
 }
 
 // workerEnvironment is flowd's environment without its credentials: the
