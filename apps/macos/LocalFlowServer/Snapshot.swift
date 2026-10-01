@@ -15,6 +15,8 @@ enum Snapshot {
       await save(
         OverviewView(monitor: monitor).padding(), size: size,
         to: directory.appending(path: "overview.png"))
+      await save(
+        LogsView(monitor: monitor).padding(), size: size, to: directory.appending(path: "logs.png"))
       NSApp.terminate(nil)
     }
   }

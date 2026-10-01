@@ -6,6 +6,7 @@ struct MainWindow: View {
   var body: some View {
     TabView {
       OverviewView(monitor: monitor).tabItem { Text("Overview") }
+      LogsView(monitor: monitor).tabItem { Text("Logs") }
     }
     .padding()
     .frame(minWidth: 720, minHeight: 480)
