@@ -414,3 +414,18 @@ func TestSizeRefusal(t *testing.T) {
 		}
 	}
 }
+
+// oMLX's keepalive chunks name the model "keepalive"; they are skipped, while
+// any other foreign model is still refused.
+func TestKeepaliveChunkSkipped(t *testing.T) {
+	keepalive := `data: {"id":"c","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}` + "\n\n"
+	for model, ok := range map[string]bool{"test": true, "other": false} {
+		body := keepalive + `data: {"model":"` + model + `","choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}` + "\n\ndata: [DONE]\n\n"
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
+		out, err := adapter(t, s.URL, nil).Generate(context.Background(), Input{Text: "t", MaxOutputBytes: 100})
+		s.Close()
+		if ok != (err == nil && out.Text == "hi" && out.Model == "test") {
+			t.Fatal(model, out, err)
+		}
+	}
+}

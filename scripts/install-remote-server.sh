@@ -32,7 +32,7 @@ usage() {
   cat <<'USAGE'
 usage: scripts/install-remote-server.sh [--dev] [--dry-run] [--speech-worker PATH]
          [--meeting-helper PATH] [--google-client-id IDS] [--apple-audience IDS]
-         [--mtplx PATH] [--model DIR]
+         [--mtplx PATH] [--model DIR] [--analysis-backend URL --analysis-model ID]
 
   --dev                 install the development variant
   --dry-run             print what would be done; build, install and load nothing
@@ -46,6 +46,11 @@ usage: scripts/install-remote-server.sh [--dev] [--dry-run] [--speech-worker PAT
   --mtplx PATH            the mtplx executable to serve rewrites with (default: the
                           installed LocalFlow app's runtime)
   --model DIR             the MTPLX model directory (default: the installed app's model)
+  --analysis-backend URL  an OpenAI-compatible server (base URL with /v1, e.g. oMLX) for
+                          summaries and meeting analysis; rewriting stays on MTPLX, which
+                          also takes over while that server is down. Its API key, if any,
+                          goes in <data-dir>/analysis-api-key (0600)
+  --analysis-model ID     the model id --analysis-backend serves
 USAGE
 }
 
@@ -58,6 +63,8 @@ apple_audience=""
 app_state="$HOME/Library/Application Support/LocalFlow/LocalAI"
 mtplx="$app_state/venv/bin/mtplx"
 model=""
+analysis_backend=""
+analysis_model=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dev) dev=1 ;;
@@ -92,11 +99,23 @@ while [ $# -gt 0 ]; do
       model="$2"
       shift
       ;;
+    --analysis-backend)
+      [ $# -ge 2 ] || { usage >&2; exit 1; }
+      analysis_backend="$2"
+      shift
+      ;;
+    --analysis-model)
+      [ $# -ge 2 ] || { usage >&2; exit 1; }
+      analysis_model="$2"
+      shift
+      ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 1 ;;
   esac
   shift
 done
+
+[ -z "$analysis_backend" ] || [ -n "$analysis_model" ] || { echo "error: --analysis-backend needs --analysis-model" >&2; exit 1; }
 
 repository="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -217,6 +236,10 @@ render_plist() {
   )
   [ -z "$google_client_ids" ] || arguments+=(--google-client-id "$google_client_ids")
   [ -z "$apple_audience" ] || arguments+=(--apple-audience "$apple_audience")
+  if [ -n "$analysis_backend" ]; then
+    arguments+=(--analysis-backend "$analysis_backend" --analysis-model "$analysis_model")
+    [ ! -s "$data_dir/analysis-api-key" ] || arguments+=(--analysis-backend-key-file "$data_dir/analysis-api-key")
+  fi
   render_agent "$label" flowd "$log_dir/flowd.stdout.log" "${arguments[@]}"
 }
 

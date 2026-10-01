@@ -25,10 +25,13 @@ import (
 )
 
 type configuration struct {
-	listen   string
-	backend  backend.Config
-	shield   bool
-	versions []int // analysis
+	listen  string
+	backend backend.Config
+	// analysisBackend, when its BaseURL is set, serves summaries and meeting
+	// analysis; rewriting stays on backend, which is also the fallback.
+	analysisBackend backend.Config
+	shield          bool
+	versions        []int // analysis
 	// rewriteVersions defaults to 1,2; an explicit --protocol-versions without
 	// --rewrite-protocol-versions applies to rewrite too (acceptance double).
 	rewriteVersions []int
@@ -47,6 +50,9 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.StringVar(&c.listen, "listen", "127.0.0.1:8080", "HTTP listen address")
 	fs.StringVar(&c.backend.BaseURL, "backend", "http://127.0.0.1:8000/v1", "OpenAI-compatible API base URL, including /v1")
 	fs.StringVar(&c.backend.Model, "model", "youssofal-qwen3.5-4b-mtplx-optimized-speed", "served model id")
+	fs.StringVar(&c.analysisBackend.BaseURL, "analysis-backend", "", "OpenAI-compatible API base URL for summaries and meeting analysis; --backend serves them when unset or down")
+	fs.StringVar(&c.analysisBackend.Model, "analysis-model", "", "model id served by --analysis-backend")
+	analysisKeyFile := fs.String("analysis-backend-key-file", "", "file holding the --analysis-backend API key")
 	shield := fs.String("shield", "on", "entity shielding: on or off")
 	versions := fs.String("protocol-versions", "1", "comma-separated analysis protocol versions; also rewrite's unless --rewrite-protocol-versions is set (acceptance double)")
 	rewriteVersions := fs.String("rewrite-protocol-versions", "1,2", "comma-separated rewrite protocol versions advertised and accepted")
@@ -108,7 +114,20 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	}
 	c.token = getenv("LOCALFLOW_REWRITE_TOKEN")
 	c.backend.Token = getenv("LOCALFLOW_BACKEND_TOKEN")
-	for _, token := range []string{c.token, c.backend.Token} {
+	if c.analysisBackend.BaseURL != "" {
+		if c.analysisBackend.Model == "" {
+			return c, errors.New("--analysis-backend requires --analysis-model")
+		}
+		if *analysisKeyFile != "" {
+			key, err := os.ReadFile(*analysisKeyFile)
+			if err != nil {
+				return c, errors.New("cannot read --analysis-backend-key-file")
+			}
+			c.analysisBackend.Token = strings.TrimSpace(string(key))
+		}
+		c.analysisBackend.FirstTokenTimeout, c.analysisBackend.Timeout = c.backend.FirstTokenTimeout, c.backend.Timeout
+	}
+	for _, token := range []string{c.token, c.backend.Token, c.analysisBackend.Token} {
 		if len(token) > 4096 || strings.ContainsAny(token, "\r\n") {
 			return c, errors.New("invalid credential")
 		}
@@ -179,12 +198,31 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 	mux.Handle("/v1/rewrite/health", rewriteHandler)
 	// Built always: the remote channel's analysis op uses it; its HTTP
 	// routes are mounted only with --analysis.
+	router := &analysis.Router{
+		Local: adapter, Gate: gate,
+		FirstTokenTimeout: c.backend.FirstTokenTimeout, Timeout: c.backend.Timeout,
+	}
+	var analysisBackend analysis.BackendAdapter = adapter
+	route := router.For
+	if c.analysisBackend.BaseURL != "" {
+		primary, err := backend.New(c.analysisBackend)
+		if err != nil {
+			return err
+		}
+		defer primary.Close()
+		// NewHandler hands the gate to the fallback, so only analysis calls
+		// that land on the rewrite model wait for dictation.
+		analysisBackend = &backend.Fallback{Primary: primary, Secondary: adapter}
+		route = func(r *http.Request) (analysis.BackendAdapter, error) {
+			if r.Header.Get(analysis.HeaderPrimaryURL) == "" {
+				return analysisBackend, nil
+			}
+			return router.For(r)
+		}
+	}
 	analysisHandler := analysis.NewHandler(analysis.HandlerConfig{
-		Backend: adapter, Token: c.token, ProtocolVersions: c.versions,
-		Route: (&analysis.Router{
-			Local: adapter, Gate: gate,
-			FirstTokenTimeout: c.backend.FirstTokenTimeout, Timeout: c.backend.Timeout,
-		}).For,
+		Backend: analysisBackend, Token: c.token, ProtocolVersions: c.versions,
+		Route:  route,
 		Limits: c.analysis, Gate: gate, Logger: logger, DumpDir: c.dumpDir,
 	})
 	if c.analysis.Enabled {

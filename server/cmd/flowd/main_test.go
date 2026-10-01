@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -373,5 +374,69 @@ func TestRemoteServe(t *testing.T) {
 	}
 	if status, _ := get("http://" + addr + "/v1/rewrite/health"); status != 200 {
 		t.Fatal("rewrite health", status)
+	}
+}
+
+// --analysis-backend serves analysis and falls back to --backend when down;
+// its key comes from a file and never from the environment.
+func TestAnalysisBackend(t *testing.T) {
+	models := func(id, key string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer "+key {
+				w.WriteHeader(401)
+				return
+			}
+			fmt.Fprintf(w, `{"data":[{"id":%q}]}`, id)
+		}))
+	}
+	rewriteModel, smart := models("localflow", "mtplx-key"), models("smart", "omlx-key")
+	defer rewriteModel.Close()
+	keyFile := filepath.Join(t.TempDir(), "analysis-api-key")
+	if err := os.WriteFile(keyFile, []byte("omlx-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := func(k string) string { return map[string]string{"LOCALFLOW_BACKEND_TOKEN": "mtplx-key"}[k] }
+	for _, args := range [][]string{{"--analysis-backend=" + smart.URL}, {"--analysis-backend=" + smart.URL, "--analysis-model=smart", "--analysis-backend-key-file=/missing"}} {
+		if _, err := parse(args, env, io.Discard); err == nil {
+			t.Fatal(args)
+		}
+	}
+	addr := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, []string{"serve", "--listen=" + addr, "--backend=" + rewriteModel.URL, "--model=localflow",
+			"--analysis-backend=" + smart.URL, "--analysis-model=smart", "--analysis-backend-key-file=" + keyFile}, env, io.Discard)
+	}()
+	model := func(path string) string {
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			resp, err := http.Get("http://" + addr + path)
+			if err != nil {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			defer resp.Body.Close()
+			var h struct{ Backend struct{ State, Model string } }
+			_ = json.NewDecoder(resp.Body).Decode(&h)
+			return h.Backend.State + " " + h.Backend.Model
+		}
+		t.Fatal("flowd did not start")
+		return ""
+	}
+	if got := model("/v1/analysis/health"); got != "ready smart" {
+		t.Fatal("analysis:", got)
+	}
+	if got := model("/v1/rewrite/health"); !strings.Contains(got, "localflow") {
+		t.Fatal("rewrite:", got)
+	}
+	smart.Close()
+	time.Sleep(5 * time.Second) // the handler caches a probe for 5 s
+	if got := model("/v1/analysis/health"); got != "ready localflow" {
+		t.Fatal("fallback:", got)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

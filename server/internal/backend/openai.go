@@ -386,6 +386,11 @@ func (a *OpenAI) Generate(parent context.Context, in Input) (Completion, error) 
 		if event.Choices == nil {
 			return Completion{}, fmt.Errorf("%w: sse_no_choices", ErrBackend)
 		}
+		// oMLX's default keepalive is an empty chunk with model "keepalive"
+		// (sse_keepalive_mode "chunk"); it carries no content.
+		if event.Model == "keepalive" {
+			continue
+		}
 		if event.Model != "" {
 			if event.Model != a.config.Model {
 				return Completion{}, fmt.Errorf("%w: model_mismatch", ErrBackend)

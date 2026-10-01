@@ -79,6 +79,21 @@ Measured on the Mac mini (M5 Pro, 24 GB, macOS 27.0) on 2026-10-01 with `scripts
 
 The 4B model is the one to serve. Faster isn't the only reason: in the spot-checked outputs, the 9B model translated mixed Slovak and English dictation into English ("Pošli the report na dev@example.com prosím" became "Please send the report to dev@example.com."), and Bonsai wrote Czech forms into Slovak text ("Pošlu", "je potřeba prověřit"). `mtplx tune` picked draft depth 2 for the 4B model on this Mac: 142.6 tok/s against 87.8 tok/s without speculation. The first rewrite after 11 idle minutes took 354 ms, so the 4B model needs no extra GPU keepalive.
 
+## A second model for summaries (oMLX)
+
+Rewriting stays on the 4B MTPLX model. Summaries and meeting analysis can go to any other OpenAI-compatible server on the Mac mini, such as oMLX:
+
+```sh
+DATA="$HOME/Library/Application Support/LocalFlow Server"
+(umask 077 && printf '%s' '<oMLX API key>' >"$DATA/analysis-api-key")
+scripts/install-remote-server.sh --google-client-id "$GOOGLE" --speech-worker "$DATA/bin/flowd-speech" \
+  --meeting-helper "$DATA/bin/localflow-whisper-engine" \
+  --analysis-backend http://127.0.0.1:8443/v1 --analysis-model smart
+curl -s http://127.0.0.1:8091/v1/analysis/health   # backend.model is the oMLX model
+```
+
+The model ID is one oMLX lists in `GET /v1/models`: a model, its alias (`smart` is the alias of `Qwen3.5-9B-MLX-4bit` on the Mac mini) or a profile exposed as a model (`smart:fast`). flowd sets temperature 0 and turns thinking off itself, so the alias with its 32K context is the one to use. flowd skips oMLX's keepalive chunks (`"model":"keepalive"`). While oMLX is down or answers with an error, analysis runs on MTPLX as before; flowd checks oMLX again on every request, at most every 5 s. Only those fallback calls wait for dictation rewrites; calls served by oMLX run beside them on the same GPU. flowd plans meeting analysis for `--analysis-context-tokens` (32,768 by default), so set the oMLX model's context window to at least that, or pass a lower value. If other machines use oMLX too, keep it off the public internet and give it a long random API key; flowd only needs 127.0.0.1.
+
 ## Tuning the Mac mini
 
 The machine needs auto-login (and therefore FileVault off), because both agents are `Aqua` LaunchAgents and start only once the user is logged in. Then, with sudo:
