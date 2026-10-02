@@ -34,6 +34,7 @@ jobs:
         env:
           P12: ${{ secrets.DEVELOPER_ID_P12 }}
           P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
           keychain="$RUNNER_TEMP/signing.keychain-db"
           password="$(uuidgen)"
@@ -45,6 +46,7 @@ jobs:
           rm "$RUNNER_TEMP/developer-id.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          (umask 077 && printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8")
       - name: Package signed and notarized application
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -52,9 +54,9 @@ jobs:
           # The production iOS OAuth client (not secret); without it Google sign-in is hidden.
           LOCALFLOW_GOOGLE_CLIENT_ID: ${{ vars.LOCALFLOW_GOOGLE_CLIENT_ID }}
           LOCALFLOW_SIGNING_IDENTITY: 'Developer ID Application: e-Net, s.r.o. (944A459UC3)'
-          LOCALFLOW_NOTARY_APPLE_ID: ${{ vars.NOTARY_APPLE_ID }}
-          LOCALFLOW_NOTARY_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
-          LOCALFLOW_NOTARY_TEAM_ID: 944A459UC3
+          LOCALFLOW_NOTARY_KEY: ${{ runner.temp }}/notary.p8
+          LOCALFLOW_NOTARY_KEY_ID: ${{ vars.NOTARY_KEY_ID }}
+          LOCALFLOW_NOTARY_ISSUER: ${{ vars.NOTARY_ISSUER_ID }}
         run: |
           mkdir -p build
           ./scripts/package-macos.sh "${RELEASE_TAG#v}" "$BUILD_NUMBER" 2>&1 | tee build/release-build.log
