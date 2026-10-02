@@ -34,6 +34,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           BUILD_NUMBER: ${{ github.run_number }}
+          # The production iOS OAuth client (not secret); without it Google sign-in is hidden.
+          LOCALFLOW_GOOGLE_CLIENT_ID: ${{ vars.LOCALFLOW_GOOGLE_CLIENT_ID }}
         run: |
           mkdir -p build
           ./scripts/package-macos.sh "${RELEASE_TAG#v}" "$BUILD_NUMBER" 2>&1 | tee build/release-build.log

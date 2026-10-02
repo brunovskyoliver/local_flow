@@ -36,6 +36,49 @@ Ad-hoc signatures change between builds. Approval may be needed again. If
 shortcuts or insertion stop working, remove and re-add LocalFlow in the relevant
 Privacy & Security list, then restart the app.
 
+## Use a shared LocalFlow server
+
+A Homebrew install can send dictation, rewriting, summaries and meetings to a
+LocalFlow server, such as the owner's Mac mini, instead of running models locally.
+The server serves only its tailnet (`tailscale serve`, see
+[remote-server.md](remote-server.md)), so each user first needs a route to it.
+
+The server owner:
+
+1. In the Tailscale admin console, open Machines › mac-mini › Share and send the
+   invite link. Sharing gives the user that one machine and nothing else of the
+   tailnet; shared users don't count against the plan's user limit.
+2. Limit shared users to the HTTPS port in the tailnet policy, so they can't reach
+   SSH, oMLX (8443) or other services on the machine. If the policy still has the
+   default allow-all rule, change its `src` from `*` to `autogroup:member` first.
+
+   ```json
+   {"grants": [{"src": ["autogroup:shared"], "dst": ["*"], "ip": ["tcp:443"]}]}
+   ```
+
+3. Approve each user and device in the LocalFlow Server app (Devices tab) or
+   with `flowd admin approve user|device <id>`.
+
+The user:
+
+1. Install Tailscale (`brew install --cask tailscale-app`, or the Mac App Store),
+   sign in with any account and accept the share invite.
+   `curl -s https://mac-mini.tailf15b6.ts.net/v1/remote/identity` should answer.
+2. Install LocalFlow as above and grant its permissions.
+3. In Settings › Server, turn on Remote dictation, confirm the consent sheet and
+   enter `https://mac-mini.tailf15b6.ts.net`. Check that the fingerprint matches
+   the one the owner gives you, then sign in with Google. Sign in with Apple
+   needs an Apple-signed build and does not work in the Homebrew release.
+4. The app shows "Waiting for approval" and dictates locally until the owner
+   approves. Then turn on **Use this server for everything**. Check connection
+   times one round trip.
+
+Without Tailscale running, the app finds the server unreachable and dictates
+locally. Local models are then needed only for that fallback.
+
+The server must be at least as new as the app: flowd rejects request fields it
+doesn't know. Update the server before publishing an app release.
+
 Quit LocalFlow before `brew uninstall --cask localflow`. The cask preserves
 Application Support data, including recordings, transcripts, models and settings.
 There is deliberately no destructive `zap` stanza.
@@ -46,7 +89,9 @@ There is deliberately no destructive `zap` stanza.
    assets must be publicly readable for these installation commands.
 2. Ensure GitHub Actions can write repository contents in both repositories.
    The app workflow publishes releases; the tap workflow updates its own main
-   branch. No cross-repository token is required.
+   branch. No cross-repository token is required. Set the repository variable
+   `LOCALFLOW_GOOGLE_CLIENT_ID` to the iOS OAuth client of `org.localflow.LocalFlow`;
+   without it the release can't sign in to a server.
 3. Push a new version tag, such as `v0.1.0`. Use increasing X.Y.Z versions.
    To retry a failed release after fixing CI, run the release workflow manually
    from main with the original tag. This preserves the tagged source commit.

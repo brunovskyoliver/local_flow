@@ -11,7 +11,8 @@ output="$PWD/build/distribution/$version"
 mkdir -p "$output"
 xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -scheme LocalFlow \
   -configuration Release -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath build/DistributionDerivedData CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath build/DistributionDerivedData CODE_SIGNING_ALLOWED=NO \
+  LOCALFLOW_GOOGLE_CLIENT_ID="${LOCALFLOW_GOOGLE_CLIENT_ID:-}" build
 stage="$(mktemp -d "$output/stage.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 app="$stage/LocalFlow.app"
