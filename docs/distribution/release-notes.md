@@ -1,8 +1,9 @@
 LocalFlow for Apple Silicon. The app targets macOS 14 or later.
 
-This build is signed with Developer ID (e-Net, s.r.o.) and notarized by Apple.
-If you are updating from an ad-hoc 0.1.x build, macOS may ask for Input Monitoring
-and Accessibility once more.
+This build is ad-hoc signed and is not signed with an Apple Developer ID or
+notarized by Apple. If you trust the download, open LocalFlow once, then use
+System Settings > Privacy & Security > Open Anyway to approve it. Managed Macs
+may prohibit this. Approval and privacy permissions may need renewing after updates.
 
 Homebrew installation (after the tap syncs this release):
 
