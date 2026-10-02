@@ -14,7 +14,7 @@ The keyboard compiles neither `Intents/` nor `Widgets/`. `make check` enforces t
 
 ## Intents
 
-All intents run in the app process (research R2). `perform()` resolves `@Dependency var handler: IntentHandler`. If no handler is registered (the widget process), it throws `LocalFlowIntentError.unavailable`.
+All intents run in the app process (research R2). `perform()` reads `IntentHandlers.current`, which only the app sets at launch. If it is nil (the widget process), it throws `LocalFlowIntentError.unavailable`. (`@Dependency` traps when nothing is registered, so it is not used.)
 
 | Intent | Protocols | Title | Effect |
 | --- | --- | --- | --- |
@@ -28,7 +28,7 @@ All intents run in the app process (research R2). `perform()` resolves `@Depende
 protocol IntentHandler: Sendable {
   func toggleDictation() async throws -> ToggleOutcome   // .started, .stopped
   func endSession() async
-  func copyLast() async throws
+  func copyLast() async throws -> Bool  // false: iOS dropped the write, the app holds it
 }
 ```
 
@@ -64,7 +64,7 @@ ponytail: a button, not a toggle. The Live Activity shows whether it is recordin
 
 | Presentation | Shows |
 | --- | --- |
-| Lock Screen / banner | Phase label (Ready · Recording · Transcribing · Copied), elapsed session time, remaining time or "No timeout", Stop; in `result`, the 120-character preview and Copy |
+| Lock Screen / banner | Phase label (Ready · Recording · Transcribing · Copied), elapsed session time, remaining time or "No timeout", Stop; Copy once a dictation has finished (`canCopy`); in `result`, the 120-character preview and Copy |
 | Dynamic Island compact | leading: mic glyph tinted by phase; trailing: recording timer while recording, else remaining time or ∞ |
 | Dynamic Island minimal | mic glyph tinted by phase |
 | Dynamic Island expanded | as the Lock Screen |

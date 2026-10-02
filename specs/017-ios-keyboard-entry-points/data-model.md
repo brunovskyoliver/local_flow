@@ -67,6 +67,7 @@ State machine: unchanged from 016 except for the extra `origin`. A `control` dic
 | content state | `recordingStartedAt` | Date? | recording elapsed time and the 5-minute countdown |
 | content state | `preview` | String? | first 120 characters of the last transcript, `result` phase only |
 | content state | `message` | String? | short failure text ("Didn't catch that", "Microphone unavailable") |
+| content state | `canCopy` | Bool | a finished dictation exists, so the session activity shows Copy (US5 AS3) without putting transcript text on the Lock Screen |
 
 Transitions: the session's `idle` ↔ `recording` → `transcribing` → `idle`. A `control` activity goes `recording` → `transcribing` → `result` or `failed`, then ends with dismissal after 5 minutes. A session activity ends `.immediate` when the session ends. At most one LocalFlow activity exists: before requesting one, the app ends any it finds in `Activity<DictationActivityAttributes>.activities`.
 

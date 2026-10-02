@@ -6,10 +6,12 @@ import LocalFlowCore
 /// always written together (data-model.md §1). The phone writes only `not_inserted` and
 /// `confirmed`, never `attempting`, so the shared launch repair never touches its rows.
 actor PhoneDictationStore {
-  enum Source: String, Sendable { case keyboard, app }
+  enum Source: String, Sendable { case keyboard, app, control }
   enum Delivery: String, Sendable {
     case inserted, offered
     case savedOnly = "saved_only"
+    /// A `control` dictation put on the clipboard (Feature 017).
+    case copied
 
     var deliveryState: TranscriptionEntry.DeliveryState {
       self == .inserted ? .confirmed : .notInserted
@@ -101,6 +103,17 @@ actor PhoneDictationStore {
         sql: "UPDATE transcriptions SET delivery_state=?, revision=revision+1 WHERE id=?",
         arguments: [delivery.deliveryState.rawValue, dictationID.uuidString])
     }
+  }
+
+  /// A `control` dictation whose clipboard write took. The shared state stays
+  /// `not_inserted`.
+  func markCopied(dictationID: UUID) async throws {
+    try await markDelivery(dictationID: dictationID, .copied)
+  }
+
+  /// The newest dictation, for Copy after a relaunch emptied `lastResult`.
+  func newestTranscript() async throws -> (id: UUID, text: String)? {
+    try await list(limit: 1).first.map { ($0.id, $0.entry.text) }
   }
 
   /// Deletes through the shared store, which keeps the usage counters; the phone row

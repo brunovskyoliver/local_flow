@@ -52,6 +52,9 @@ final class SessionController {
   private(set) var lastStopAt: Date?
   private(set) var lastResultAt: Date?
   private(set) var lastResultID: UUID?
+  /// The newest result from any source, for Live Activity Copy (017 data-model §2).
+  /// Memory only: after a relaunch Copy reads History instead.
+  private(set) var lastResult: DictationResult?
   /// Why the last dictation failed, for the keyboard's "Open LocalFlow to see why".
   /// Cleared by the next result.
   private(set) var lastFailure: String?
@@ -267,6 +270,7 @@ final class SessionController {
           limitReached: end == .durationLimit)
         lastResultAt = now()
         lastResultID = dictation.id
+        lastResult = result
         lastFailure = nil
         if dictation.source == .app { onNote?(result) } else { onResult?(result) }
       }

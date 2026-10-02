@@ -44,17 +44,26 @@ final class HistoryViewModel {
     }
   }
 
+  private static func source(_ source: PhoneDictationStore.Source) -> String {
+    switch source {
+    case .keyboard: "Keyboard"
+    case .app: "Note"
+    case .control: "Control"
+    }
+  }
+
   static func item(_ row: PhoneDictationStore.Row) -> Item {
     let delivery =
       switch row.delivery {
       case .inserted: "Inserted"
       case .offered: "Offered"
       case .savedOnly: "Saved"
+      case .copied: "Copied"
       }
     return Item(
       id: row.id, text: row.entry.text,
       date: Date(timeIntervalSince1970: Double(row.entry.createdAtMilliseconds) / 1000),
-      source: row.source == .app ? "Note" : "Keyboard", delivery: delivery,
+      source: Self.source(row.source), delivery: delivery,
       targetApp: row.entry.targetBundleID,
       needsReview: row.entry.recoveryState == .needsReview)
   }

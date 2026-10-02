@@ -35,6 +35,8 @@ final class PhoneApp {
   let history: HistoryViewModel?
   let dictionary: DictionaryViewModel?
   @ObservationIgnored private(set) var server: HandoffServer?
+  @ObservationIgnored private var activity: ActivityController?
+  @ObservationIgnored private var intents: PhoneIntentHandler?
   @ObservationIgnored private let idleTimer = IdleTimer()
   @ObservationIgnored private var memoryObserver: NSObjectProtocol?
   private static let log = Logger(subsystem: "org.localflow.LocalFlowPhone", category: "app")
@@ -57,6 +59,12 @@ final class PhoneApp {
       history = HistoryViewModel(store: services.dictations)
       dictionary = DictionaryViewModel(store: services.vocabulary)
       failure = nil
+      activity = ActivityController(controller: controller, requester: SystemActivityRequester())
+      // Set before any intent can run: a control press may be what launched the app.
+      let intents = PhoneIntentHandler(
+        controller: controller, dictations: services.dictations, pasteboard: SystemPasteboard())
+      self.intents = intents
+      IntentHandlers.current = intents
       // Unsigned simulator builds have no App Group; the app still works on its own.
       if let store = HandoffStore.group() {
         server = HandoffServer(
@@ -81,6 +89,8 @@ final class PhoneApp {
     services.orphans.adopt()
     server?.start()
     server?.launched()
+    // After the server, which sets `onChange` first.
+    activity?.start()
     services.model.becameReady = { [services, weak self] in
       Task {
         await services.orphans.recover(pipeline: services.pipeline, store: services.dictations)
@@ -115,6 +125,8 @@ final class PhoneApp {
 
   func becameActive() {
     server?.becameActive()
+    activity?.becameActive()
+    intents?.becameActive()
     Task { await refreshSetup() }
   }
 

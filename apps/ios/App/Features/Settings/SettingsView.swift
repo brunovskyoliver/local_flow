@@ -1,3 +1,4 @@
+import ActivityKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -9,6 +10,8 @@ struct SettingsView: View {
   @State private var orphanPresent = false
   @State private var sizeOnDisk: Int64 = 0
   @State private var confirmDelete = false
+  @State private var liveActivities = true
+  @Environment(\.scenePhase) private var phase
 
   var body: some View {
     NavigationStack {
@@ -22,6 +25,19 @@ struct SettingsView: View {
         } footer: {
           if idleTimeout == IdleTimeout.never.rawValue {
             Text("The microphone stays available until you end the session.")
+          }
+        }
+        if !liveActivities {
+          Section {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+              Link("Open LocalFlow in Settings", destination: url)
+            }
+          } header: {
+            Text("Live Activities")
+          } footer: {
+            Text(
+              "Live Activities are off. Sessions still work, but the LocalFlow control can't record."
+            )
           }
         }
         Section {
@@ -41,6 +57,7 @@ struct SettingsView: View {
               Button("Delete", role: .destructive) {
                 orphans.delete()
                 orphanPresent = orphans.hasOrphan
+                liveActivities = ActivityAuthorizationInfo().areActivitiesEnabled
               }
             }
           }
@@ -64,6 +81,8 @@ struct SettingsView: View {
       .navigationTitle("Settings")
       .onAppear(perform: refresh)
       .onChange(of: model.state) { refresh() }
+      // Back from the system Settings, where Live Activities may have been turned on.
+      .onChange(of: phase) { if phase == .active { refresh() } }
       .confirmationDialog(
         "Delete the speech model?", isPresented: $confirmDelete, titleVisibility: .visible
       ) {
@@ -83,6 +102,7 @@ struct SettingsView: View {
 
   private func refresh() {
     orphanPresent = orphans.hasOrphan
+    liveActivities = ActivityAuthorizationInfo().areActivitiesEnabled
     sizeOnDisk = model.state == .ready ? model.sizeOnDisk() : 0
   }
 
