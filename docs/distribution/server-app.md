@@ -65,7 +65,7 @@ Every request needs `Authorization: Bearer <token>` with the token from `<data-d
 
 ## What's left
 
-- The Mac mini still runs flowd from 283ebe6. Its Models tab shows the summaries switch as unavailable and there is no admin API until the server is updated (`git pull` in `~/local-flow` after a push, then the installer with `--speech-worker` and `--meeting-helper` pointing at the installed copies; this restarts both agents).
+- On 2026-10-02 the Mac mini's flowd was replaced with a build of 605bee8 and `--admin-listen 127.0.0.1:8093` was added to its plist by hand (the previous binary is `<data-dir>/bin/flowd.283ebe6`). Health, both workers, the token file (0600), the status JSON on 8093 and 404 on 8090 were checked afterwards. MTPLX was not restarted. The installer has not been re-run there; its next run renders the same flag.
 - Restart flowd/MTPLX, Apply in Models and the device buttons were not clicked on the mini; each was exercised through the same code path as described above.
 - Two log rotations between reads (more than 1 MiB of log within a minute) lose the middle file's stats.
 - The admin API counts from log lines; if a `remote <service>` line changes shape, the counters and the Stats tab miss it together.
