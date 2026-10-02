@@ -13,13 +13,21 @@ struct SessionView: View {
       if controller.isActive {
         Text("Swipe right on the bottom bar, or tap ◀ in the top-left corner, to go back.")
           .font(.flow(size: 16)).foregroundStyle(SottoPalette.muted)
-        if let deadline = controller.session?.idleDeadline {
+        if controller.sessionFile()?.idleTimeout == IdleTimeout.never.rawValue {
+          Text("This session won’t end on its own. End it here or from the keyboard’s ☰ menu.")
+            .font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
+        } else if let deadline = controller.session?.idleDeadline {
           TimelineView(.periodic(from: .now, by: 1)) { context in
             Text("Stops listening in \(Self.remaining(until: deadline, now: context.date))")
               .font(.flow(size: 14)).monospacedDigit().foregroundStyle(SottoPalette.muted)
           }
         }
-      } else if let reason = controller.session?.endReason {
+      }
+      if let failure = controller.lastFailure {
+        Text("Last dictation failed: \(failure)")
+          .font(.flow(size: 14)).foregroundStyle(SottoPalette.warning)
+      }
+      if !controller.isActive, let reason = controller.session?.endReason {
         Text(Self.explanation(reason)).font(.flow(size: 16)).foregroundStyle(SottoPalette.muted)
         if reason == .permissionDenied {
           Button("Open Settings", action: SystemSettings.open)
@@ -34,6 +42,7 @@ struct SessionView: View {
       .font(.flow(size: 16, weight: .medium))
       .foregroundStyle(SottoPalette.onPrimary)
       .padding(.horizontal, 24).padding(.vertical, 12)
+      .frame(maxWidth: controller.isActive ? .infinity : nil)
       .background(SottoPalette.primary, in: RoundedRectangle(cornerRadius: SottoRadius.control))
     }
     .multilineTextAlignment(.center)

@@ -52,6 +52,9 @@ final class SessionController {
   private(set) var lastStopAt: Date?
   private(set) var lastResultAt: Date?
   private(set) var lastResultID: UUID?
+  /// Why the last dictation failed, for the keyboard's "Open LocalFlow to see why".
+  /// Cleared by the next result.
+  private(set) var lastFailure: String?
 
   @ObservationIgnored var onChange: (() -> Void)?
   /// Keyboard dictations, for `result.json`.
@@ -185,7 +188,8 @@ final class SessionController {
       current = ActiveDictation(
         id: id, requestID: requestID, source: source, startedAt: now(), spool: spool)
     } catch {
-      Self.log.error("Dictation could not start")
+      Self.log.error("Dictation could not start: \(String(describing: error), privacy: .public)")
+      lastFailure = Self.failureText(error)
       report(requestID, .failed)
       return .failed
     }
@@ -263,10 +267,13 @@ final class SessionController {
           limitReached: end == .durationLimit)
         lastResultAt = now()
         lastResultID = dictation.id
+        lastFailure = nil
         if dictation.source == .app { onNote?(result) } else { onResult?(result) }
       }
     } catch {
-      Self.log.error("Dictation failed")
+      // Errors carry no transcript text, so the detail is public.
+      Self.log.error("Dictation failed: \(String(describing: error), privacy: .public)")
+      lastFailure = Self.failureText(error)
       report(dictation.requestID, .failed, notify: false)
     }
     current = nil
@@ -275,6 +282,18 @@ final class SessionController {
       self.end(end == .interrupted ? .interrupted : .afterOneDictation)
     } else {
       setReady()
+    }
+  }
+
+  static func failureText(_ error: any Error) -> String {
+    switch error as? DictationFailure {
+    case .modelUnavailable:
+      "The speech model couldn't be loaded. Check it in Settings › Speech model."
+    case .busy: "The speech model was busy loading. Try again in a moment."
+    case .cancelled, .staleLease: "The speech model was released while transcribing. Try again."
+    case .invalidAudio: "The recording couldn't be read."
+    case .invalidResult: "The speech model returned no usable text."
+    case nil: "Transcription failed (\(String(describing: error)))."
     }
   }
 

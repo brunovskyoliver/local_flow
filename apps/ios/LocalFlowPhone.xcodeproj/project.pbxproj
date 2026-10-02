@@ -96,6 +96,7 @@
 				Handoff/Doorbell.swift,
 				Handoff/HandoffModels.swift,
 				Handoff/HandoffStore.swift,
+				KeyboardLogic/BarStatus.swift,
 				KeyboardLogic/InsertionPolicy.swift,
 				KeyboardLogic/KeyboardSessionModel.swift,
 			);

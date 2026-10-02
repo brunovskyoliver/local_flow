@@ -13,9 +13,15 @@ struct SettingsView: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section("Listening") {
+        Section {
           Picker("End listening after", selection: $idleTimeout) {
             ForEach(IdleTimeout.allCases) { Text($0.title).tag($0.rawValue) }
+          }
+        } header: {
+          Text("Listening")
+        } footer: {
+          if idleTimeout == IdleTimeout.never.rawValue {
+            Text("The microphone stays available until you end the session.")
           }
         }
         Section {

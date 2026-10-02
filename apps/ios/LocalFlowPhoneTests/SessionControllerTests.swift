@@ -1,3 +1,4 @@
+import LocalFlowSpeech
 import XCTest
 
 @testable import LocalFlow
@@ -109,6 +110,33 @@ final class SessionControllerTests: XCTestCase {
     XCTAssertEqual(controller.sessionFile()?.lastOutcome, .empty)
     XCTAssertEqual(controller.sessionFile()?.lastRequestID, request)
     XCTAssertEqual(try harness.rowCount(), 0)
+  }
+
+  /// The keyboard says "Open LocalFlow to see why", so the app keeps the reason.
+  func testFailedDictationKeepsAReasonUntilTheNextResult() async throws {
+    await harness.runtime.set(loadFails: true)
+    await controller.open(origin: .keyboard)
+    let request = UUID()
+    await dictate(request)
+    XCTAssertEqual(controller.sessionFile()?.lastOutcome, .failed)
+    XCTAssertEqual(
+      controller.lastFailure, SessionController.failureText(DictationFailure.modelUnavailable))
+    await harness.runtime.set(loadFails: false)
+    await dictate()
+    XCTAssertNil(controller.lastFailure)
+    XCTAssertEqual(results.count, 1)
+  }
+
+  /// A dictation that stops while keep-ready is still loading the model waits for it.
+  func testDictationStoppedWhileTheModelLoadsWaitsForIt() async throws {
+    await harness.runtime.set(loadDelay: .milliseconds(300))
+    await controller.open(origin: .keyboard)
+    try await Task.sleep(for: .milliseconds(50))
+    let loading = await harness.lifecycle.snapshot().leased
+    XCTAssertTrue(loading, "keep-ready is still loading the model")
+    await dictate()
+    XCTAssertNil(controller.lastFailure)
+    XCTAssertEqual(results.count, 1)
   }
 
   func testLimitAndOverflowEndTheDictationAndKeepTheText() async throws {

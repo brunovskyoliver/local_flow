@@ -97,11 +97,17 @@ final class PhoneApp {
   }
 
   /// `localflow://session/start?request=<uuid>` opens or keeps a session. The request
-  /// never starts a dictation (contract "Opening the app").
+  /// never starts a dictation. `localflow://settings` shows Settings and starts nothing
+  /// (contract "Opening the app").
   func open(_ url: URL) {
-    guard url.scheme == "localflow", url.host() == "session", url.path() == "/start",
-      let controller
-    else { return }
+    guard url.scheme == "localflow" else { return }
+    if url.host() == "settings" {
+      showSetup = false
+      showSession = false
+      tab = .settings
+      return
+    }
+    guard url.host() == "session", url.path() == "/start", let controller else { return }
     showSetup = false
     showSession = true
     Task { await controller.open(origin: .keyboard) }

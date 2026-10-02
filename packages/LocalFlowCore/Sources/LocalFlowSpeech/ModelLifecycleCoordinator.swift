@@ -408,8 +408,8 @@ public actor ModelLifecycleCoordinator {
 
   /// Returns once no lease is held and no install is running, or at once when that is
   /// already true or the caller is cancelled. Speaker coordinators await this after a
-  /// busy acquire instead of polling on a timer.
-  func waitUntilAvailable() async {
+  /// busy acquire instead of polling on a timer, and so does the phone's dictation pipeline.
+  public func waitUntilAvailable() async {
     guard owner != nil || installing, !Task.isCancelled,
       availabilityWaiters.count < Self.availabilityWaiterCapacity
     else { return }

@@ -18,6 +18,11 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     doorbell.observe(.pong) { [weak self] in self?.model.pong() }
     doorbell.observe(.session) { [weak self] in self?.model.refresh() }
     doorbell.observe(.result) { [weak self] in self?.model.checkResult() }
+    // One height for the keys and the listening view; 999 so the system can still win
+    // during rotation without a constraint conflict (research R10).
+    let height = view.heightAnchor.constraint(equalToConstant: KeyboardView.height)
+    height.priority = UILayoutPriority(999)
+    height.isActive = true
   }
 
   override func viewWillAppear(_ animated: Bool) {
@@ -28,6 +33,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
       needsGlobe: needsInputModeSwitchKey,
       actions: .init(
         tap: { [weak self] in self?.tap() },
+        settings: { [weak self] in self?.openSettings() },
         space: { [weak self] in self?.textDocumentProxy.insertText(" ") },
         delete: { [weak self] in self?.textDocumentProxy.deleteBackward() },
         newline: { [weak self] in self?.textDocumentProxy.insertText("\n") },
@@ -35,7 +41,6 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
         nextKeyboard: { [weak self] in self?.advanceToNextInputMode() }))
     let hosting = UIHostingController(rootView: view)
     hosting.view.backgroundColor = .clear
-    hosting.sizingOptions = .intrinsicContentSize
     addChild(hosting)
     hosting.view.translatesAutoresizingMaskIntoConstraints = false
     self.view.addSubview(hosting.view)
@@ -53,6 +58,12 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     let rest = DispatchWorkItem { [weak self] in self?.writeStatus() }
     restReading = rest
     DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: rest)
+  }
+
+  /// A dismissed keyboard never leaves a recording without a visible owner (FR-026).
+  override func viewWillDisappear(_ animated: Bool) {
+    super.viewWillDisappear(animated)
+    model.stop()
   }
 
   override func viewDidDisappear(_ animated: Bool) {
@@ -74,6 +85,15 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
 
   private func tap() {
     guard case .openApp(let url) = model.tap() else { return }
+    open(url)
+  }
+
+  private func openSettings() {
+    guard case .openApp(let url) = model.openSettings() else { return }
+    open(url)
+  }
+
+  private func open(_ url: URL) {
     // Research R6: the public UIApplication.open(_:options:completionHandler:), reached
     // through the responder chain. Extensions must build extension-API-only, so the call
     // goes through the runtime instead of the compile-time declaration.
