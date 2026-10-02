@@ -118,6 +118,9 @@ func TestHandoffRoundTrip(t *testing.T) {
 	expectCode(t, send(Handoff{Action: "start", Meeting: handoffMeeting}), CodeInvalidMessage)
 	audio := []byte("aac")
 	put("mic-0001.aac", 0, audio, hexSum(audio))
+	if r := put("mic-0000.aac", 0, nil, hexSum(nil)); *r.Offset != 0 {
+		t.Fatalf("empty file: %+v", r)
+	}
 	dir := filepath.Join(s.userDir(user.ID), handoffMeeting)
 	if got, _ := os.ReadFile(filepath.Join(dir, handoffMeeting, "mic-0001.aac")); !bytes.Equal(got, audio) {
 		t.Fatal("audio not stored under <UUID>/")

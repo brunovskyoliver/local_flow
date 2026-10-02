@@ -29,6 +29,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   /// Set while the server takes whole meetings: a stopped meeting goes up once and
   /// its transcript, labels and summary come back processed.
   @ObservationIgnored var handoff: MeetingHandoff?
+  /// Server only: no local model may load, so a live preview the server does not run
+  /// is skipped and the meeting still gets its final pass at stop.
+  @ObservationIgnored var livePreviewOptional: (@Sendable () async -> Bool)?
   var analysisQueueHighWater: Int { recognizer?.queue.highWater ?? 0 }
   var pendingSegmentCount: Int { recognizer?.pendingCount ?? 0 }
   var analysisGapRangeCount: Int { recognizer?.gapRangeCount ?? 0 }
@@ -315,6 +318,14 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
             guard !self.stopped else { return }
             if error is LoadError {
               await self.fail(.runtimeFailure, detail: "vocabulary_unavailable")
+            } else if case DictationFailure.modelUnavailable = error,
+              await self.livePreviewOptional?() == true
+            {
+              // The row stays pending; `meetingDidStop` queues the final pass.
+              self.stopped = true
+              self.detach(self.taps)
+              self.taps = [:]
+              self.mixer = nil
             } else {
               await self.fail(.acquisition(error))
             }

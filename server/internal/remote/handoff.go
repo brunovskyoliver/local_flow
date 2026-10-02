@@ -253,6 +253,10 @@ func (s *Handoffs) put(userDir, dir string, req Handoff, reply HandoffReply) (Ha
 			_ = os.Chtimes(dir, now, now) // the retention sweep reads the dir's time
 		}
 		if req.SHA256 != "" {
+			// A zero-byte file never had a data put to create it.
+			if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600); err == nil {
+				_ = f.Close()
+			}
 			if sum, err := hashFile(path); err != nil || sum != req.SHA256 {
 				if os.Truncate(path, 0) != nil {
 					return reply, errHandoffStorage
@@ -437,6 +441,9 @@ func (s *Handoffs) process(ctx, runCtx context.Context, dir, meeting string) {
 	s.running, s.cancel = "", nil
 	if current, _ := readState(dir); current == "processing" && state != "processing" {
 		if writeState(dir, state, detail) != nil {
+			// Left as processing, the client would wait until the 7-day sweep.
+			// Gone, it sees missing and uploads again or runs the meeting itself.
+			_ = os.RemoveAll(dir)
 			code = "state_write_failed"
 		}
 	}

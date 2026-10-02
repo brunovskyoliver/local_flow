@@ -1021,6 +1021,24 @@ final class MeetingTranscriptionCoordinatorTests: XCTestCase {
     await coordinator.shutdown()
   }
 
+  func testServerOnlySkipsAnUnavailableLivePreviewWithoutFailingTheMeeting() async throws {
+    let lifecycle = ModelLifecycleCoordinator { throw DictationFailure.modelUnavailable }
+    let store = FakeTranscriptStore()
+    let id = UUID()
+    await store.seed(id)
+    let coordinator = MeetingTranscriptionCoordinator(store: store, lifecycle: lifecycle)
+    coordinator.livePreviewOptional = { true }
+    _ = await coordinator.meetingWillStart(id: id, options: .init(transcription: true))
+    _ = coordinator.stretchDidStart(
+      meetingID: id, sequence: 1,
+      tracks: [.microphone: .init(sampleRate: 48_000, channels: 1)])
+    await settle { coordinator.installedTapCount == 0 }
+    let row = await store.transcription(meetingID: id)
+    XCTAssertNotEqual(row?.state, .failed, "the final pass still runs at stop")
+    XCTAssertNil(row?.failureCategory)
+    await coordinator.shutdown()
+  }
+
   func testFailureIsPublishedOnlyAfterTheRowCommitted() async throws {
     let gate = TranscriptBatchGate()
     let store = FakeTranscriptStore()

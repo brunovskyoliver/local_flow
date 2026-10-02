@@ -68,7 +68,14 @@ actor MeetingHandoff {
       case .queued: return .waiting("queued")
       case .processing: return .waiting("processing")
       case .done:
-        let labeled = try await merge(id, from: try await download(id))
+        let result = try await download(id)
+        let labeled: Bool
+        do { labeled = try await merge(id, from: result) } catch {
+          // A local database error repeats on every retry: finalize here instead
+          // of downloading the result again forever.
+          await abandon(id)
+          return .notHandedOff
+        }
         _ = try? await call(.init(action: .delete, meeting: id))
         forget(id)
         return .merged(labeled: labeled)

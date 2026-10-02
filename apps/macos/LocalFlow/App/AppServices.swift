@@ -924,6 +924,9 @@ final class AppServices {
       store: liveStore, lifecycle: lifecycle, inference: inference, vocabulary: vocabulary,
       identity: identity, clock: clock, recorder: recorder, finalizer: finalizer)
     transcription.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
+    transcription.livePreviewOptional = { [weak self] in
+      await MainActor.run { self?.preferences.serverOnly == true }
+    }
     if let remoteRouter {
       // The whole meeting goes to the server when it runs transcripts and summaries.
       transcription.handoff = MeetingHandoff(
