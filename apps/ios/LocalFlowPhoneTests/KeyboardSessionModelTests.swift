@@ -116,8 +116,41 @@ final class KeyboardSessionModelTests: XCTestCase {
     model.refresh()
     _ = model.tap()
     runScheduled(KeyboardSessionModel.resultTimeout)
+    XCTAssertEqual(rung.last, .ping)
+    runScheduled(KeyboardSessionModel.pongTimeout)
     XCTAssertEqual(model.message, KeyboardSessionModel.stoppedMessage)
     XCTAssertNil(model.pending)
+  }
+
+  /// A first model load after an install takes up to a minute; a live LocalFlow that is
+  /// still finishing keeps the keyboard waiting, up to `resultWaits` rounds.
+  func testAnsweredResultTimeoutKeepsWaitingThenGivesUp() throws {
+    let (model, requestID) = try startedModel()
+    try writeSession(.recording)
+    model.refresh()
+    _ = model.tap()
+    try writeSession(.finishing)
+    for _ in 0..<KeyboardSessionModel.resultWaits {
+      runScheduled(KeyboardSessionModel.resultTimeout)
+      model.pong()
+      runScheduled(KeyboardSessionModel.pongTimeout)
+      XCTAssertEqual(model.surface, .transcribing)
+    }
+    try store.write(result(requestID, "Late."), .result)
+    model.checkResult()
+    XCTAssertEqual(host.text, "Late.")
+
+    let (other, _) = try startedModel()
+    try writeSession(.recording)
+    other.refresh()
+    _ = other.tap()
+    try writeSession(.finishing)
+    for _ in 0..<KeyboardSessionModel.resultWaits {
+      runScheduled(KeyboardSessionModel.resultTimeout)
+      other.pong()
+    }
+    runScheduled(KeyboardSessionModel.resultTimeout)
+    XCTAssertEqual(other.message, KeyboardSessionModel.stoppedMessage)
   }
 
   func testMatchingOutcomeShowsItsMessageAndOtherOutcomesAreIgnored() throws {
@@ -316,6 +349,7 @@ final class KeyboardSessionModelTests: XCTestCase {
     model.refresh()
     _ = model.tap()
     runScheduled(KeyboardSessionModel.resultTimeout)
+    runScheduled(KeyboardSessionModel.pongTimeout)
     XCTAssertEqual(model.surface, .keys)
   }
 

@@ -26,6 +26,8 @@ final class KeyboardSessionModel {
     let sessionID: UUID
     let documentID: UUID?
     var stopped = false
+    /// Result timeouts that LocalFlow answered with a pong, so the keyboard kept waiting.
+    var waits = 0
   }
 
   /// What the listening area says instead of a waveform (FR-022).
@@ -50,6 +52,9 @@ final class KeyboardSessionModel {
 
   static let pongTimeout = Duration.milliseconds(500)
   static let resultTimeout = Duration.seconds(15)
+  /// The first model load after an install or update took 37–50 s on the iPhone 16 Pro
+  /// (device log 2026-10-02), so a live LocalFlow gets up to 8 × 15 s = 2 minutes.
+  static let resultWaits = 8
   /// A start that has not reached `recording` by then means LocalFlow isn't running.
   static let startTimeout = Duration.seconds(2)
   static let noticeTimeout = Duration.seconds(4)
@@ -91,6 +96,8 @@ final class KeyboardSessionModel {
   private let schedule: (Duration, @escaping @MainActor () -> Void) -> Void
   private var visible = false
   private var awaitingPong = false
+  /// The request whose result timeout is asking whether LocalFlow is still alive.
+  private var awaitingResultPong: UUID?
   private var pingSent: Date?
   private var handledDictationID: UUID?
   private var cancelledRequestID: UUID?
@@ -155,6 +162,12 @@ final class KeyboardSessionModel {
       lastRoundTrip = .milliseconds(Int(now().timeIntervalSince(pingSent) * 1000))
     }
     awaitingPong = false
+    if let requestID = awaitingResultPong {
+      awaitingResultPong = nil
+      if pending?.requestID == requestID {
+        schedule(Self.resultTimeout) { [weak self] in self?.resultTimedOut(requestID) }
+      }
+    }
     refresh()
   }
 
@@ -296,8 +309,25 @@ final class KeyboardSessionModel {
     return true
   }
 
+  /// No result yet: keep waiting while LocalFlow answers a ping (a slow model load),
+  /// give up when it doesn't or after `resultWaits` rounds.
   func resultTimedOut(_ requestID: UUID) {
-    guard pending?.requestID == requestID else { return }
+    guard var request = pending, request.requestID == requestID else { return }
+    guard request.waits < Self.resultWaits else { return giveUp() }
+    request.waits += 1
+    pending = request
+    awaitingResultPong = requestID
+    ring(.ping)
+    schedule(Self.pongTimeout) { [weak self] in self?.resultPongTimedOut(requestID) }
+  }
+
+  func resultPongTimedOut(_ requestID: UUID) {
+    guard awaitingResultPong == requestID else { return }
+    awaitingResultPong = nil
+    if pending?.requestID == requestID { giveUp() }
+  }
+
+  private func giveUp() {
     pending = nil
     sessionView = .none
     message = Self.stoppedMessage
