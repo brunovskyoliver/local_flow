@@ -94,6 +94,8 @@ final class AppServices {
   private(set) var isReadyToTerminate = false
   @ObservationIgnored private var localModelWanted: Bool?
   @ObservationIgnored private var networkMonitor: NWPathMonitor?
+  /// The current path is expensive (an iPhone hotspot); live rewrites give up sooner.
+  @ObservationIgnored private var onExpensiveNetwork = false
   @ObservationIgnored private var localModelCommand: Task<Void, Never>?
   private(set) var modelInstalled = false
   private(set) var installing = false
@@ -540,6 +542,7 @@ final class AppServices {
           http: rewriteClient,
           remote: RemoteRewriteTransport(channels: remoteRouter.rewriteChannels)),
         store: paths.1)
+      rewriteCoordinator.onHotspot = { [weak self] in self?.onExpensiveNetwork ?? false }
       rewriteCoordinator.remoteRewriteOrigin = { [weak preferences] in
         preferences?.serverRouting.rewriteChannelOrigin
       }
@@ -2050,6 +2053,8 @@ final class AppServices {
   private func watchNetworkPath() {
     let monitor = NWPathMonitor()
     monitor.pathUpdateHandler = { [weak self] path in
+      let expensive = path.isExpensive
+      Task { @MainActor in self?.onExpensiveNetwork = expensive }
       guard path.status == .satisfied else { return }
       Task { @MainActor in self?.serverMayBeReachable() }
     }

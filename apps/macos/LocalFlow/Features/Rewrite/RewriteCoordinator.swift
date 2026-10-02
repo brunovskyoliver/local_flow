@@ -68,6 +68,23 @@ final class RewriteCoordinator: RewriteRequesting {
   @ObservationIgnored private var failedProbe: (origin: String, until: ContinuousClock.Instant)?
   /// Injectable for tests.
   @ObservationIgnored var now: () -> ContinuousClock.Instant = { .now }
+  /// A live rewrite on an expensive network path (an iPhone hotspot) gives up after
+  /// this and the original text goes in, instead of waiting out a stalled uplink.
+  static let hotspotTimeout: Duration = .seconds(3)
+  /// True while the network path is expensive; set by the app's path monitor.
+  @ObservationIgnored var onHotspot: () -> Bool = { false }
+
+  /// The whole request's limit: `hotspotTimeout` for a live rewrite off this Mac on a
+  /// hotspot, the Rewriting setting otherwise.
+  static func requestTimeout(
+    settings: RewriteSettings, context: RewriteNotice.Context, onHotspot: Bool
+  ) -> Duration {
+    // ponytail: bounds the whole rewrite, not the first reply; a very long dictation's
+    // rewrite (over ~3 s on the server) also falls back on a hotspot. Race the
+    // `accepted` event instead if that shows up.
+    context == .live && onHotspot && !settings.isLoopback
+      ? hotspotTimeout : .seconds(settings.timeoutSeconds)
+  }
 
   /// Feature 012: what a v2 attempt sends and checks against. Built from the
   /// committed context row only, so a retry sends the same bytes (FR-014).
@@ -177,12 +194,13 @@ final class RewriteCoordinator: RewriteRequesting {
       }
     }
     let instants = RewriteInstants(committed: committed)
+    let timeout = Self.requestTimeout(settings: settings, context: context, onHotspot: onHotspot())
     let completion = Completion()
     let task = Task { [weak self] in
       let outcome =
         await self?.run(
           attempt: attempt, endpoint: endpoint, settings: settings, instants: instants,
-          plan: plan)
+          plan: plan, timeout: timeout)
         ?? .cancelled(faithful: attempt.inputText)
       self?.resolve(attempt.id, outcome: outcome, completion: completion)
       return outcome
@@ -373,7 +391,7 @@ final class RewriteCoordinator: RewriteRequesting {
 
   private func run(
     attempt: RewriteAttempt, endpoint: RewriteEndpoint, settings: RewriteSettings,
-    instants: RewriteInstants, plan: ContextPlan?
+    instants: RewriteInstants, plan: ContextPlan?, timeout: Duration
   ) async -> RewriteOutcome {
     var instants = instants
     // Retain one terminal payload; progress and deltas never accumulate.
@@ -394,7 +412,7 @@ final class RewriteCoordinator: RewriteRequesting {
     var outcome: Result<RewriteResult, RewriteFailure>
     do {
       let stream = transport.rewrite(
-        request: request, endpoint: endpoint, timeout: .seconds(settings.timeoutSeconds))
+        request: request, endpoint: endpoint, timeout: timeout)
       for try await item in stream {
         guard pendingAttempts[attempt.id] != nil, !cancelledAttempts.contains(attempt.id) else {
           return await discard(attempt)

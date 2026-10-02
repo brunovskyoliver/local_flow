@@ -36,6 +36,20 @@ final class RewriteSettingsTests: XCTestCase {
     return RewriteSettings.capture(preferences: preferences, credentialStore: store)
   }
 
+  func testOnlyALiveRemoteRewriteOnAHotspotGetsTheShortTimeout() {
+    let remote = snapshot(endpoint: "https://mini.example.com/v1/rewrite", timeout: 20)
+    let loopback = snapshot(endpoint: LocalAIInstaller.rewriteEndpoint, timeout: 20)
+    func timeout(_ settings: RewriteSettings, _ context: RewriteNotice.Context, _ hotspot: Bool)
+      -> Duration
+    {
+      RewriteCoordinator.requestTimeout(settings: settings, context: context, onHotspot: hotspot)
+    }
+    XCTAssertEqual(timeout(remote, .live, true), .seconds(3))
+    XCTAssertEqual(timeout(remote, .live, false), .seconds(20), "proper network")
+    XCTAssertEqual(timeout(remote, .history, true), .seconds(20), "a retry from History waits")
+    XCTAssertEqual(timeout(loopback, .live, true), .seconds(20), "this Mac needs no network")
+  }
+
   func testSnapshotCarriesPresenceOnlyAndNeverTheSecret() {
     let secret = "s3cr3t-token-value-\(UUID().uuidString)"
     let settings = snapshot(endpoint: "https://rewrite.example.net", credential: secret)
