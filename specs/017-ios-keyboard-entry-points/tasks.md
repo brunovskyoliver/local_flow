@@ -163,6 +163,8 @@ Done 2026-10-02 (T044): the keyboard samples `phys_footprint` once a second whil
 
 Done 2026-10-02 (T045): 14.1 MB at rest and 13.1 MB while listening, recorded in `acceptance/keyboard-footprint.md`. The same device run led to three changes: the key row and the ☰ drawer were removed (owner, `5236f42`, spec scope note 2026-10-02); the keyboard now keeps waiting past 15 s while LocalFlow answers a ping, because the first model load after an install takes 37–50 s (`0d97f27`); and the transcribing view says so after the first 15 s (`bfa799e`).
 
+Owner decision 2026-10-02: Milestone B (Phase 9 onward) starts with T043 still open. The owner runs the SC-004/SC-005 50-dictation count, the SC-006 two-hour Never session and the error cases in everyday use and reports them later.
+
 
 ---
 
