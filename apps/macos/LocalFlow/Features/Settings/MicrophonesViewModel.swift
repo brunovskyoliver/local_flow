@@ -90,6 +90,15 @@ final class MicrophonesViewModel {
     move(fromOffsets: [index], toOffset: index + 2)
   }
 
+  /// Drag and drop: `id` takes `target`'s place, pushing it down (or up when moving down).
+  func move(_ id: UUID, onto target: UUID) {
+    let entries = store.entries
+    guard id != target, let from = entries.firstIndex(where: { $0.id == id }),
+      let to = entries.firstIndex(where: { $0.id == target })
+    else { return }
+    move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
+  }
+
   func add(_ item: AddItem) {
     try? store.add(item.input)
     refresh()

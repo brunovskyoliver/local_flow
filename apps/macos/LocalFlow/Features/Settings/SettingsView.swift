@@ -91,7 +91,10 @@ struct SettingsView: View {
         }
         if let microphones = model.microphones {
           sectionTitle("Microphones").id(SettingsAnchor.microphones)
-          MicrophonesSection(model: microphones)
+          Text("LocalFlow records from the first microphone on this list that is connected.")
+            .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+            .fixedSize(horizontal: false, vertical: true).padding(.bottom, 12)
+          settingsGroup { MicrophonesSection(model: microphones) }
         }
         contextSection
         modelSection

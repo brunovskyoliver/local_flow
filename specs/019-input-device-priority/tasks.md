@@ -323,3 +323,9 @@ Task: "Two atomics in AudioCaptureRing.c/.h (T033)"
 - T030, T043, T044, T053, T061, T063, T064: device runs and the resource report.
 - T065: `docs/performance/input-devices.md` exists with every value marked unmeasured; fill it in from T044.
 - T062: `make check`.
+
+### Owner changes, 2026-10-02 (after merge)
+
+- The pill no longer shows which microphone is in use. The caption ("Connecting to …", "<name>", "Using <name>") and the once-per-change fallback notice are removed from the panel and from the coordinator. This drops the indicator half of FR-011 and all of FR-012. History still records the device, and the pill still has its connecting pulse and the "Microphones…" failure notice.
+- The iPhone help line and the "Apple's requirements ›" link are removed from Settings › Microphones.
+- Settings › Microphones is rebuilt from the same parts as the other sections (`SettingsRow` inside the shared grouped card, a 12 pt muted intro line, a "Remove" button and an "Add…" menu in the prototype button style). Rows reorder by dragging one onto another (`move(_:onto:)`), replacing the `List`/`onMove` version; Move up / Move down stay as accessibility actions.

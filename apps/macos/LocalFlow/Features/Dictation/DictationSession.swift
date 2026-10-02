@@ -18,8 +18,6 @@ struct DictationSession {
     let uid: String?
     /// Position in the ranked list, from 1.
     let rank: Int
-    /// An entry ranked above it was unavailable or failed in this key-hold.
-    let isFallback: Bool
   }
   let id: UUID
   var state: State = .preparing
