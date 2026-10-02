@@ -1,3 +1,4 @@
+import CoreAudio
 import GRDB
 import XCTest
 
@@ -727,10 +728,10 @@ final class DictationCoordinatorTests: XCTestCase {
     try await waitUntil { !coordinator.busy }
   }
 
+  /// A capture-reported device loss inserts its audio since Feature 019 (FR-013); see
+  /// `testDeviceLostAfterAudioFlowedIsTranscribedSavedAndInserted`.
   func testFullEnvelopeRemainsReviewOnlyForDurationAndCaptureFailures() async throws {
-    for reason: AudioCaptureStopReason in [
-      .durationLimit, .failure(.permissionRevoked), .failure(.deviceLost),
-    ] {
+    for reason: AudioCaptureStopReason in [.durationLimit, .failure(.permissionRevoked)] {
       let store = try makeStore()
       let authored = try makeQualityEnvelope()
       let insertion = FakeInsertion()
@@ -1395,7 +1396,9 @@ private actor StreamingCapture: AudioCapturing {
 
   func authorize() async -> Bool { true }
 
-  func start(sessionID: UUID, spool: AudioSpool) async throws {
+  func start(sessionID: UUID, spool: AudioSpool, input: InputBinding) async throws
+    -> CaptureStarted
+  {
     var offset = 0
     while offset < total {
       let count = min(AudioSpool.maximumAppendSamples, total - offset)
@@ -1404,9 +1407,10 @@ private actor StreamingCapture: AudioCapturing {
     }
     self.sessionID = sessionID
     self.spool = spool
+    return CaptureStarted(boundDevice: 0)
   }
 
-  func stop(sessionID: UUID) async throws -> AudioCaptureResult {
+  func stop(sessionID: UUID, tail: Duration?) async throws -> AudioCaptureResult {
     try result(sessionID, .keyRelease)
   }
 
@@ -1417,7 +1421,8 @@ private actor StreamingCapture: AudioCapturing {
   func snapshot() async -> AudioCaptureSnapshot? {
     guard let sessionID else { return nil }
     return AudioCaptureSnapshot(
-      sessionID: sessionID, sampleCount: total, level: 0, terminalReason: nil)
+      sessionID: sessionID, sampleCount: total, level: 0, terminalReason: nil,
+      audioFlowingSince: 1, maxDeliveryDelay: .zero)
   }
 
   private func result(_ id: UUID, _ reason: AudioCaptureStopReason) throws -> AudioCaptureResult {
@@ -1434,4 +1439,311 @@ private actor CountingWindowRuntime: TranscriptionRuntime {
     return .init(text: ["jeden", "dva", "tri"][min(counts.count - 1, 2)], tokens: [])
   }
   func shutdown() async {}
+}
+
+// MARK: - Feature 019: input device priority (contracts/input-device-capture.md)
+
+extension DictationCoordinatorTests {
+  fileprivate static let usb = ConnectedInput.fake(10, "Blue Yeti", kind: .usb)
+  fileprivate static let macbook = ConnectedInput.fake(
+    20, "MacBook Pro Microphone", kind: .builtIn)
+  fileprivate static let airpods = ConnectedInput.fake(30, "AirPods Pro", kind: .bluetooth)
+
+  fileprivate struct InputRig {
+    let coordinator: DictationCoordinator
+    let capture: FakeCapture
+    let catalog: FakeInputCatalog
+    let devices: FakeInputDevicePriorityStore
+    let store: TranscriptionStore
+    let insertion: FakeInsertion
+    let spoolRoot: URL
+  }
+
+  fileprivate final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = 0
+    var value: Int { lock.withLock { stored } }
+    func increment() { lock.withLock { stored += 1 } }
+  }
+
+  private func makeInputRig(
+    capture: FakeCapture = FakeCapture(defaultDevice: 20),
+    inputs: [ConnectedInput] = [usb, macbook], defaultInput: AudioDeviceID? = 20,
+    entries: [RankedInputEntry] = [.fake(usb), .fake(macbook), .systemDefault()],
+    connectLimit: Duration = .milliseconds(250),
+    lifecycle: ModelLifecycleCoordinator? = nil
+  ) throws -> InputRig {
+    let store = try makeStore()
+    let insertion = FakeInsertion(store: store)
+    let spoolRoot = try makeSpoolRoot()
+    ownedDirectories.append(spoolRoot)
+    let catalog = FakeInputCatalog(inputs: inputs, defaultInput: defaultInput)
+    if defaultInput == nil {
+      catalog.set(
+        InputDeviceSnapshot(inputs: inputs, defaultInput: nil, clamshell: false, generation: 1))
+    }
+    let devices = FakeInputDevicePriorityStore(entries)
+    let coordinator = DictationCoordinator(
+      store: store, lifecycle: lifecycle ?? ModelLifecycleCoordinator { FakeRuntime() },
+      capture: capture, insertion: insertion, spoolRoot: spoolRoot,
+      rewriter: makeRig(store: store).coordinator, inputCatalog: catalog,
+      inputDevices: devices, connectLimit: connectLimit)
+    return InputRig(
+      coordinator: coordinator, capture: capture, catalog: catalog, devices: devices,
+      store: store, insertion: insertion, spoolRoot: spoolRoot)
+  }
+
+  private func dictate(_ rig: InputRig) async throws {
+    rig.coordinator.begin()
+    try await waitUntil { rig.coordinator.state == .recording }
+    rig.coordinator.release()
+    try await waitUntil { !rig.coordinator.busy }
+  }
+
+  /// Session spools left under the root; the root's own `.owner.lock` is not one.
+  private func spoolFiles(_ rig: InputRig) throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: rig.spoolRoot.path)
+      .filter { !$0.hasPrefix(".") }
+  }
+
+  // MARK: US1 (T021)
+
+  func testNoCandidatesFailsBeforeCaptureWithNoSpoolLeft() async throws {
+    let rig = try makeInputRig(inputs: [], defaultInput: nil)
+    var states: [DictationSession.State] = []
+    rig.coordinator.stateChanged = { states.append($0) }
+    rig.coordinator.begin()
+    try await waitUntil { !rig.coordinator.busy }
+    XCTAssertEqual(states, [.preparing, .failed])
+    XCTAssertEqual(rig.coordinator.status, "No microphone available")
+    XCTAssertTrue(rig.coordinator.offersMicrophoneSettings)
+    let starts = await rig.capture.starts
+    XCTAssertEqual(starts, 0)
+    XCTAssertEqual(try spoolFiles(rig), [])
+  }
+
+  func testRankedUSBRecordsEvenWhenTheDefaultIsAnotherDevice() async throws {
+    let rig = try makeInputRig()
+    try await dictate(rig)
+    let inputs = await rig.capture.inputs
+    XCTAssertEqual(inputs, [.device(Self.usb.deviceID)])
+    let entry = try await rig.store.recent().first
+    XCTAssertEqual(entry?.inputDevice?.name, "Blue Yeti")
+    XCTAssertEqual(entry?.inputDevice?.kind, .usb)
+  }
+
+  func testMissingUSBRecordsFromTheMacBookMic() async throws {
+    let rig = try makeInputRig(inputs: [Self.macbook])
+    try await dictate(rig)
+    let inputs = await rig.capture.inputs
+    XCTAssertEqual(inputs, [.device(Self.macbook.deviceID)])
+    XCTAssertEqual(rig.devices.entries.first?.uid, Self.usb.uid, "the USB entry stays first")
+  }
+
+  func testOnlySystemDefaultStartsTheDefaultPathAndRecordsTheBoundDevice() async throws {
+    let rig = try makeInputRig(entries: [.systemDefault()])
+    try await dictate(rig)
+    let inputs = await rig.capture.inputs
+    XCTAssertEqual(inputs, [.systemDefault])
+    let entry = try await rig.store.recent().first
+    XCTAssertEqual(entry?.inputDevice?.name, "MacBook Pro Microphone")
+    XCTAssertEqual(entry?.inputDevice?.kind, .systemDefault)
+  }
+
+  func testPermissionDeniedKeepsThePermissionMessage() async throws {
+    let rig = try makeInputRig(
+      capture: FakeCapture(authorized: false), inputs: [], defaultInput: nil)
+    rig.coordinator.begin()
+    try await waitUntil { !rig.coordinator.busy }
+    XCTAssertTrue(rig.coordinator.status.contains("Microphone access is not allowed"))
+    XCTAssertFalse(rig.coordinator.status.contains("No microphone available"))
+    XCTAssertFalse(rig.coordinator.offersMicrophoneSettings)
+  }
+
+  func testAFailingStartIsSkippedAndTheNextStartsOnTheSameEmptySpool() async throws {
+    let rig = try makeInputRig()
+    await rig.capture.setBehavior(.failsToStart, for: .device(Self.usb.deviceID))
+    try await dictate(rig)
+    let inputs = await rig.capture.inputs
+    let bytes = await rig.capture.spoolBytesAtStart
+    XCTAssertEqual(inputs, [.device(Self.usb.deviceID), .device(Self.macbook.deviceID)])
+    XCTAssertEqual(bytes, [0, 0])
+    let entry = try await rig.store.recent().first
+    XCTAssertEqual(entry?.inputDevice?.name, "MacBook Pro Microphone")
+  }
+
+  // MARK: FR-013 regression (T022)
+
+  func testDeviceLostAfterAudioFlowedIsTranscribedSavedAndInserted() async throws {
+    let rig = try makeInputRig(capture: FakeCapture(reason: .failure(.deviceLost)))
+    rig.coordinator.begin()
+    try await waitUntil { !rig.coordinator.busy }
+    let entry = try await rig.store.recent().first
+    XCTAssertEqual(entry?.stopReason, .deviceLoss)
+    XCTAssertEqual(entry?.text, "hello")
+    XCTAssertEqual(rig.insertion.insertedTexts, ["hello"])
+    XCTAssertEqual(entry?.deliveryState, .confirmed)
+  }
+
+  // MARK: US2 (T032)
+
+  func testAFlowingDeviceGoesThroughConnectingToRecording() async throws {
+    let rig = try makeInputRig()
+    var states: [DictationSession.State] = []
+    rig.coordinator.stateChanged = { states.append($0) }
+    try await dictate(rig)
+    let index = try XCTUnwrap(states.firstIndex(of: .connecting))
+    XCTAssertEqual(states[index + 1], .recording)
+    XCTAssertEqual(states.filter { $0 == .connecting }.count, 1)
+  }
+
+  func testASilentFirstDeviceFallsBackOnTheSameSpoolInTheSameKeyHold() async throws {
+    let rig = try makeInputRig()
+    await rig.capture.setBehavior(.silent, for: .device(Self.usb.deviceID))
+    var captions: [InputCaption?] = []
+    rig.coordinator.inputCaptionChanged = { captions.append($0) }
+    try await dictate(rig)
+    let inputs = await rig.capture.inputs
+    let bytes = await rig.capture.spoolBytesAtStart
+    let cancels = await rig.capture.cancels
+    XCTAssertEqual(inputs, [.device(Self.usb.deviceID), .device(Self.macbook.deviceID)])
+    XCTAssertEqual(bytes, [0, 0])
+    XCTAssertEqual(cancels, 1)
+    XCTAssertTrue(
+      captions.contains(InputCaption(kind: .connecting, deviceName: "Blue Yeti")))
+    XCTAssertTrue(
+      captions.contains(
+        InputCaption(kind: .fallbackNotice, deviceName: "MacBook Pro Microphone")))
+    let entry = try await rig.store.recent().first
+    XCTAssertEqual(entry?.inputDevice?.name, "MacBook Pro Microphone")
+    XCTAssertEqual(rig.insertion.insertedTexts.count, 1)
+  }
+
+  func testAllSilentDevicesFailWithTheLastNameAndRemoveTheSpool() async throws {
+    let rig = try makeInputRig(entries: [.fake(Self.usb), .fake(Self.macbook)])
+    await rig.capture.setBehavior(.silent, for: .device(Self.usb.deviceID))
+    await rig.capture.setBehavior(.silent, for: .device(Self.macbook.deviceID))
+    // The list always ends with System default, here the MacBook mic again.
+    await rig.capture.setBehavior(.silent, for: .systemDefault)
+    rig.coordinator.begin()
+    try await waitUntil { !rig.coordinator.busy }
+    XCTAssertEqual(rig.coordinator.state, .failed)
+    XCTAssertEqual(rig.coordinator.status, "MacBook Pro Microphone didn't respond")
+    XCTAssertTrue(rig.coordinator.offersMicrophoneSettings)
+    XCTAssertEqual(rig.insertion.dispatchCount, 0)
+    let entries = try await rig.store.recent()
+    XCTAssertTrue(entries.isEmpty)
+    XCTAssertEqual(try spoolFiles(rig), [])
+  }
+
+  func testSleepWhileConnectingIsTodaysSleepFailure() async throws {
+    let rig = try makeInputRig(
+      capture: FakeCapture(reason: .failure(.sleep), defaultDevice: 20),
+      connectLimit: .seconds(4))
+    await rig.capture.setBehavior(.silent, for: .device(Self.usb.deviceID))
+    rig.coordinator.begin()
+    try await waitUntil { !rig.coordinator.busy }
+    XCTAssertEqual(rig.coordinator.state, .failed)
+    XCTAssertTrue(rig.coordinator.status.contains("Mac went to sleep"))
+    XCTAssertFalse(rig.coordinator.offersMicrophoneSettings)
+    let inputs = await rig.capture.inputs
+    XCTAssertEqual(inputs.count, 1, "no fallback after sleep")
+    XCTAssertEqual(rig.insertion.dispatchCount, 0)
+    XCTAssertEqual(try spoolFiles(rig), [])
+  }
+
+  func testReleaseWhileConnectingCancelsAndInsertsNothing() async throws {
+    let rig = try makeInputRig(connectLimit: .seconds(4))
+    await rig.capture.setBehavior(.silent, for: .device(Self.usb.deviceID))
+    var states: [DictationSession.State] = []
+    rig.coordinator.stateChanged = { states.append($0) }
+    rig.coordinator.begin()
+    try await waitUntil { rig.coordinator.state == .connecting }
+    rig.coordinator.release()
+    try await waitUntil { !rig.coordinator.busy }
+    XCTAssertEqual(rig.coordinator.state, .idle)
+    XCTAssertEqual(Array(states.suffix(2)), [.cancelling, .idle])
+    XCTAssertEqual(rig.coordinator.status, "Cancelled")
+    let cancels = await rig.capture.cancels
+    XCTAssertGreaterThanOrEqual(cancels, 1)
+    XCTAssertEqual(rig.insertion.dispatchCount, 0)
+    let entries = try await rig.store.recent()
+    XCTAssertTrue(entries.isEmpty)
+    XCTAssertEqual(try spoolFiles(rig), [])
+  }
+
+  func testReleaseTailFollowsTheMeasuredDelay() async throws {
+    XCTAssertNil(DictationCoordinator.releaseTail(maxDelay: .milliseconds(30)))
+    XCTAssertNil(DictationCoordinator.releaseTail(maxDelay: .milliseconds(50)))
+    XCTAssertEqual(
+      DictationCoordinator.releaseTail(maxDelay: .milliseconds(320)), .milliseconds(345))
+    XCTAssertEqual(
+      DictationCoordinator.releaseTail(maxDelay: .milliseconds(900)), .milliseconds(500))
+    for (delay, expected) in [
+      (Duration.milliseconds(30), Duration?.none), (.milliseconds(320), .milliseconds(345)),
+      (.milliseconds(900), .milliseconds(500)),
+    ] {
+      let rig = try makeInputRig()
+      await rig.capture.setMaxDeliveryDelay(delay)
+      rig.coordinator.begin()
+      try await waitUntil { rig.coordinator.state == .recording }
+      // One recording poll reads the delay before release.
+      try await ContinuousClock().sleep(for: .milliseconds(80))
+      rig.coordinator.release()
+      try await waitUntil { !rig.coordinator.busy }
+      let tails = await rig.capture.tails
+      XCTAssertEqual(tails, [expected])
+    }
+  }
+
+  func testCancelNeverPassesATail() async throws {
+    let rig = try makeInputRig()
+    await rig.capture.setMaxDeliveryDelay(.milliseconds(400))
+    rig.coordinator.begin()
+    try await waitUntil { rig.coordinator.state == .recording }
+    rig.coordinator.cancel()
+    try await waitUntil { !rig.coordinator.busy }
+    let tails = await rig.capture.tails
+    XCTAssertEqual(tails, [], "cancel never calls stop")
+  }
+
+  func testAConnectLimitFallbackKeepsTheModelLease() async throws {
+    let loads = Counter()
+    let lifecycle = ModelLifecycleCoordinator {
+      loads.increment()
+      return FakeRuntime()
+    }
+    let rig = try makeInputRig(lifecycle: lifecycle)
+    await rig.capture.setBehavior(.silent, for: .device(Self.usb.deviceID))
+    try await dictate(rig)
+    XCTAssertEqual(loads.value, 1, "only capture restarted")
+    XCTAssertEqual(rig.insertion.insertedTexts.count, 1)
+  }
+
+  // MARK: US3 (T045)
+
+  func testFallbackNoticeShowsOncePerAvailableSet() async throws {
+    let rig = try makeInputRig(inputs: [Self.macbook])
+    var notices = 0
+    rig.coordinator.inputCaptionChanged = { if $0?.kind == .fallbackNotice { notices += 1 } }
+    try await dictate(rig)
+    try await dictate(rig)
+    XCTAssertEqual(notices, 1, "same available set: once")
+    // No default input any more: System default leaves the available set.
+    rig.catalog.set(
+      InputDeviceSnapshot(
+        inputs: [Self.macbook, Self.airpods], defaultInput: nil, clamshell: false, generation: 2))
+    try await dictate(rig)
+    XCTAssertEqual(notices, 2, "the available set changed: again")
+  }
+
+  func testNoNoticeWithoutAFallback() async throws {
+    let rig = try makeInputRig()
+    var captions: [InputCaption?] = []
+    rig.coordinator.inputCaptionChanged = { captions.append($0) }
+    try await dictate(rig)
+    XCTAssertFalse(captions.contains { $0?.kind == .fallbackNotice })
+    XCTAssertTrue(captions.contains(InputCaption(kind: .recording, deviceName: "Blue Yeti")))
+    XCTAssertNil(rig.coordinator.inputCaption, "the caption clears after recording")
+  }
 }

@@ -270,7 +270,8 @@ final class MeetingCoordinator {
           let segment = MeetingSegment(
             id: UUID(), trackID: trackIDs[kind]!, sequence: 1, relativePath: handle.relativePath,
             startOffsetMs: 0, startedAt: deps.clock.nowMilliseconds,
-            hostStartNs: Int64(clamping: deps.clock.monotonicNanoseconds), openReason: .start)
+            hostStartNs: Int64(clamping: deps.clock.monotonicNanoseconds), openReason: .start,
+            inputDeviceName: kind == .microphone ? await source.currentDeviceName() : nil)
           let worker = try makeWorker(
             kind: kind, segment: segment, handle: handle, ring: ring, encoder: encoder)
           runtimesToStart[kind] = TrackRuntime(
@@ -430,7 +431,8 @@ final class MeetingCoordinator {
           id: UUID(), trackID: trackIDs[kind]!, sequence: sequence,
           relativePath: handle.relativePath,
           startOffsetMs: trackOffsets[kind] ?? 0, startedAt: deps.clock.nowMilliseconds,
-          hostStartNs: Int64(clamping: deps.clock.monotonicNanoseconds), openReason: .resume)
+          hostStartNs: Int64(clamping: deps.clock.monotonicNanoseconds), openReason: .resume,
+          inputDeviceName: kind == .microphone ? await source.currentDeviceName() : nil)
         let worker = try makeWorker(
           kind: kind, segment: segment, handle: handle, ring: ring, encoder: encoder)
         started[kind] = TrackRuntime(
@@ -686,7 +688,8 @@ final class MeetingCoordinator {
       let segment = MeetingSegment(
         id: UUID(), trackID: runtime.trackID, sequence: sequence, relativePath: handle.relativePath,
         startOffsetMs: trackOffsets[kind] ?? 0, startedAt: deps.clock.nowMilliseconds,
-        hostStartNs: Int64(clamping: deps.clock.monotonicNanoseconds), openReason: .deviceChanged)
+        hostStartNs: Int64(clamping: deps.clock.monotonicNanoseconds), openReason: .deviceChanged,
+        inputDeviceName: kind == .microphone ? await runtime.source.currentDeviceName() : nil)
       let worker = try makeWorker(
         kind: kind, segment: segment, handle: handle, ring: ring, encoder: encoder)
       _ = try await deps.store.openSegment(segment, now: deps.clock.nowMilliseconds)

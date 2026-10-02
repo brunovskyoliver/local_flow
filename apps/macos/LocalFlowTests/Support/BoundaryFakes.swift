@@ -1,4 +1,5 @@
 @preconcurrency import ApplicationServices
+import CoreAudio
 import Foundation
 import XCTest
 
@@ -46,6 +47,16 @@ actor FakeRuntime: TranscriptionRuntime {
 }
 
 actor FakeCapture: AudioCapturing {
+  /// Feature 019: how one input behaves once started.
+  enum InputBehavior: Sendable, Equatable {
+    /// Audio flows at once: samples are written and `audioFlowingSince` is set.
+    case flows
+    /// The engine starts but delivers only digital silence.
+    case silent
+    /// `start` throws `deviceLost`.
+    case failsToStart
+  }
+
   let resultReason: AudioCaptureStopReason
   let samples: [Float]
   let authorized: Bool
@@ -56,13 +67,26 @@ actor FakeCapture: AudioCapturing {
   private(set) var starts = 0
   private(set) var stops = 0
   private(set) var cancels = 0
+  /// Every binding `start` was called with, in order.
+  private(set) var inputs: [InputBinding] = []
+  /// Every `tail` `stop` was called with, in order.
+  private(set) var tails: [Duration?] = []
+  /// Spool bytes at each `start`: a fallback must reuse an empty spool.
+  private(set) var spoolBytesAtStart: [Int] = []
+  private var behaviors: [InputBinding: InputBehavior] = [:]
+  private var maxDeliveryDelay: Duration = .zero
+  private var flowing = false
+  /// A stale fake still reports this session once, so the coordinator sees audio flow.
+  private var reportedFlowing = false
+  /// The device a System default start reports as bound.
+  let defaultDevice: AudioDeviceID
   private var spool: AudioSpool?
   private var sessionID: UUID?
 
   init(
     reason: AudioCaptureStopReason = .keyRelease, samples: [Float] = [0, 0, 0, 0],
     authorized: Bool = true, startGate: Gate? = nil, staleSnapshot: Bool = false,
-    staleResult: Bool = false
+    staleResult: Bool = false, defaultDevice: AudioDeviceID = 900
   ) {
     self.resultReason = reason
     self.samples = samples
@@ -70,22 +94,41 @@ actor FakeCapture: AudioCapturing {
     self.startGate = startGate
     self.staleSnapshot = staleSnapshot
     self.staleResult = staleResult
+    self.defaultDevice = defaultDevice
   }
+
+  func setBehavior(_ behavior: InputBehavior, for input: InputBinding) {
+    behaviors[input] = behavior
+  }
+
+  func setMaxDeliveryDelay(_ delay: Duration) { maxDeliveryDelay = delay }
 
   func authorize() async -> Bool { authorized }
   func waitUntilStarting() async { await enteredStart.wait() }
 
-  func start(sessionID: UUID, spool: AudioSpool) async throws {
+  func start(sessionID: UUID, spool: AudioSpool, input: InputBinding) async throws
+    -> CaptureStarted
+  {
     starts += 1
+    inputs.append(input)
+    spoolBytesAtStart.append(spool.bytesWritten)
     await enteredStart.openGate()
     await startGate?.wait()
+    let behavior = behaviors[input] ?? .flows
+    if behavior == .failsToStart { throw AudioCaptureFailure.deviceLost }
     self.sessionID = sessionID
     self.spool = spool
-    if !samples.isEmpty { try spool.append(normalizedSamples: samples) }
+    flowing = behavior == .flows
+    if flowing, !samples.isEmpty { try spool.append(normalizedSamples: samples) }
+    switch input {
+    case .systemDefault: return CaptureStarted(boundDevice: defaultDevice)
+    case .device(let id): return CaptureStarted(boundDevice: id)
+    }
   }
 
-  func stop(sessionID: UUID) async throws -> AudioCaptureResult {
+  func stop(sessionID: UUID, tail: Duration?) async throws -> AudioCaptureResult {
     stops += 1
+    tails.append(tail)
     return try makeResult(sessionID: sessionID, reason: resultReason)
   }
 
@@ -96,9 +139,16 @@ actor FakeCapture: AudioCapturing {
 
   func snapshot() async -> AudioCaptureSnapshot? {
     guard let sessionID else { return nil }
+    if staleSnapshot, flowing, !reportedFlowing {
+      reportedFlowing = true
+      return AudioCaptureSnapshot(
+        sessionID: sessionID, sampleCount: samples.count, level: 0, terminalReason: nil,
+        audioFlowingSince: 1, maxDeliveryDelay: maxDeliveryDelay)
+    }
     return AudioCaptureSnapshot(
-      sessionID: staleSnapshot ? UUID() : sessionID, sampleCount: samples.count, level: 0,
-      terminalReason: resultReason == .keyRelease ? nil : resultReason)
+      sessionID: staleSnapshot ? UUID() : sessionID, sampleCount: flowing ? samples.count : 0,
+      level: 0, terminalReason: resultReason == .keyRelease ? nil : resultReason,
+      audioFlowingSince: flowing ? 1 : nil, maxDeliveryDelay: maxDeliveryDelay)
   }
 
   private func makeResult(sessionID: UUID, reason: AudioCaptureStopReason) throws
@@ -106,8 +156,85 @@ actor FakeCapture: AudioCapturing {
   {
     guard let spool else { throw AudioCaptureFailure.staleSession }
     return AudioCaptureResult(
-      sessionID: staleResult ? UUID() : sessionID, spool: spool, sampleCount: samples.count,
-      reason: reason)
+      sessionID: staleResult ? UUID() : sessionID, spool: spool,
+      sampleCount: flowing ? samples.count : 0, reason: reason)
+  }
+}
+
+/// Feature 019: a catalog whose snapshot the test sets and whose changes it yields.
+final class FakeInputCatalog: InputDeviceCataloging, @unchecked Sendable {
+  private let lock = NSLock()
+  private var current: InputDeviceSnapshot
+  private let broadcaster = NewestValueBroadcaster<InputDeviceSnapshot>()
+
+  init(_ snapshot: InputDeviceSnapshot = .empty) { current = snapshot }
+
+  /// A snapshot of these inputs; `defaultInput` defaults to the first one.
+  convenience init(
+    inputs: [ConnectedInput], defaultInput: AudioDeviceID? = nil, clamshell: Bool = false
+  ) {
+    self.init(
+      InputDeviceSnapshot(
+        inputs: inputs, defaultInput: defaultInput ?? inputs.first?.deviceID,
+        clamshell: clamshell, generation: 1))
+  }
+
+  func set(_ snapshot: InputDeviceSnapshot) { lock.withLock { current = snapshot } }
+
+  /// Sets the snapshot and yields it to every subscriber.
+  func yield(_ snapshot: InputDeviceSnapshot) {
+    set(snapshot)
+    broadcaster.yield(snapshot)
+  }
+
+  func snapshot() -> InputDeviceSnapshot { lock.withLock { current } }
+  func changes() -> AsyncStream<InputDeviceSnapshot> { broadcaster.stream() }
+  func name(of deviceID: AudioDeviceID) -> String? {
+    lock.withLock { current.input(deviceID)?.name }
+  }
+}
+
+/// Feature 019: the list rules of the live store, kept in memory.
+@MainActor
+final class FakeInputDevicePriorityStore: InputDevicePriorityStoring {
+  private(set) var entries: [RankedInputEntry]
+  private(set) var reconcileCount = 0
+
+  init(_ entries: [RankedInputEntry] = [.systemDefault()]) {
+    self.entries = InputDevicePriorityRules.validated(entries)
+  }
+
+  func move(fromOffsets: IndexSet, toOffset: Int) {
+    entries.move(fromOffsets: fromOffsets, toOffset: toOffset)
+  }
+  func add(_ input: ConnectedInput) throws {
+    entries = try InputDevicePriorityRules.adding(input, to: entries, now: Date())
+  }
+  func remove(id: UUID) throws {
+    entries = try InputDevicePriorityRules.removing(id: id, from: entries)
+  }
+  func reconcile(with snapshot: InputDeviceSnapshot) {
+    reconcileCount += 1
+    entries = InputDevicePriorityRules.reconciled(entries, with: snapshot, now: Date())
+  }
+}
+
+extension ConnectedInput {
+  static func fake(
+    _ deviceID: AudioDeviceID, _ name: String, kind: InputDeviceKind, uid: String? = nil,
+    modelUID: String? = nil, alive: Bool = true
+  ) -> ConnectedInput {
+    ConnectedInput(
+      deviceID: deviceID, uid: uid ?? "uid-\(deviceID)", modelUID: modelUID, name: name,
+      kind: kind, isAlive: alive)
+  }
+}
+
+extension RankedInputEntry {
+  static func fake(_ input: ConnectedInput) -> RankedInputEntry {
+    RankedInputEntry(
+      kind: input.kind, uid: input.uid, modelUID: input.modelUID, name: input.name,
+      lastSeenAt: nil)
   }
 }
 

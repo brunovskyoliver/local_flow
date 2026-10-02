@@ -225,7 +225,8 @@ actor PendingRemoteRetrier {
           id: item.id, text: result.text, createdAtMilliseconds: item.createdAt,
           recoveryState: .needsReview,
           quality: result.incomplete ? .incomplete : .complete, stopReason: .keyRelease,
-          targetBundleID: item.targetBundleID, recognitionPath: path, serverFailure: failure)
+          targetBundleID: item.targetBundleID, recognitionPath: path, serverFailure: failure,
+          inputDevice: item.inputDevice)
         let saved: TranscriptionEntry
         do {
           saved = try await history.commit(

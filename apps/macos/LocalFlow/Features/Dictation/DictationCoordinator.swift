@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import Foundation
 import LocalFlowCore
 import LocalFlowSpeech
@@ -65,6 +66,47 @@ struct ContextMetrics: Sendable, Equatable {
   let partBytes: [ContextPart: Int]
   let termCount: Int
   let spellingChanges: Int
+}
+
+/// Feature 019: content-free input measurements for one dictation (research R11).
+/// Labelled with the device kind only; never a name or UID.
+struct InputDeviceMetrics: Sendable, Equatable {
+  let sessionID: UUID
+  let kind: InputDeviceKind
+  let connect: Duration
+  let maxDeliveryDelay: Duration
+  let tail: Duration
+  let fallbacks: Int
+}
+
+/// Feature 019: the caption under the pill while a microphone connects or records.
+struct InputCaption: Sendable, Equatable {
+  enum Kind: Sendable, Equatable { case connecting, recording, fallbackNotice }
+  let kind: Kind
+  let deviceName: String
+
+  var text: String {
+    switch kind {
+    case .connecting: "Connecting to \(deviceName)…"
+    case .recording: deviceName
+    case .fallbackNotice: "Using \(deviceName)"
+    }
+  }
+}
+
+/// Feature 019: why no microphone could record. Shown with a "Microphones…" action.
+enum InputDeviceFailure: Error, Equatable {
+  /// No ranked entry is available.
+  case noMicrophone
+  /// Every available entry was tried and none delivered audio; the last one's name.
+  case didNotRespond(String)
+
+  var message: String {
+    switch self {
+    case .noMicrophone: "No microphone available"
+    case .didNotRespond(let name): "\(name) didn't respond"
+    }
+  }
 }
 
 /// One dictation's model lease and early recognition. The lease is acquired beside
@@ -205,6 +247,16 @@ final class DictationCoordinator {
   var admissionRefused: ((String) -> Void)?
   @ObservationIgnored private var pendingRewriteAttemptID: UUID?
   @ObservationIgnored private var bypassRewriteRequested = false
+  /// Feature 019: the microphone caption under the pill; nil outside connecting/recording.
+  private(set) var inputCaption: InputCaption?
+  var inputCaptionChanged: ((InputCaption?) -> Void)?
+  /// The last failure is fixed in Settings › Microphones ("Microphones…" button).
+  private(set) var offersMicrophoneSettings = false
+  /// Fires once per dictation that recorded, at stop.
+  var inputMeasured: ((InputDeviceMetrics) -> Void)?
+  /// Hash of the available set at the last "Using <name>" notice; memory only.
+  @ObservationIgnored private var lastAnnouncedAvailableSet: Int?
+  @ObservationIgnored private var captionReset: Task<Void, Never>?
 
   @ObservationIgnored private let store: any TranscriptionStoring
   @ObservationIgnored private let vocabulary: any VocabularyProviding
@@ -217,6 +269,12 @@ final class DictationCoordinator {
   @ObservationIgnored private let contextSettings: @MainActor () -> ContextSettings
   /// Feature 014. Nil keeps the local-only flow; no remote object exists then.
   @ObservationIgnored private let remote: (any RemoteDictationRouting)?
+  /// Feature 019. Without a catalog and list every dictation uses System default.
+  @ObservationIgnored private let inputCatalog: (any InputDeviceCataloging)?
+  @ObservationIgnored private let inputDevices: (any InputDevicePriorityStoring)?
+  @ObservationIgnored private let inputTimings: InputDeviceTimingStore?
+  /// How long a started device may stay silent before the next one is tried (R5).
+  @ObservationIgnored private let connectLimit: Duration
   /// Fires once per dictation whose context was read, before commit.
   var contextMeasured: ((ContextMetrics) -> Void)?
   @ObservationIgnored private let spoolRoot: URL
@@ -246,9 +304,17 @@ final class DictationCoordinator {
     rewriter: (any RewriteRequesting)? = nil,
     contextReader: (any AppContextReading)? = nil,
     contextSettings: @escaping @MainActor () -> ContextSettings = { .disabled },
-    remote: (any RemoteDictationRouting)? = nil
+    remote: (any RemoteDictationRouting)? = nil,
+    inputCatalog: (any InputDeviceCataloging)? = nil,
+    inputDevices: (any InputDevicePriorityStoring)? = nil,
+    inputTimings: InputDeviceTimingStore? = nil,
+    connectLimit: Duration = .seconds(3)
   ) {
     self.remote = remote
+    self.inputCatalog = inputCatalog
+    self.inputDevices = inputDevices
+    self.inputTimings = inputTimings
+    self.connectLimit = connectLimit
     self.store = store
     self.rewriter = rewriter
     self.contextReader = contextReader
@@ -282,6 +348,7 @@ final class DictationCoordinator {
     controlConsumer?.cancel()
     pendingRewriteAttemptID = nil
     bypassRewriteRequested = false
+    offersMicrophoneSettings = false
     busy = true
     stopRequested = false
     recordingStarted = false
@@ -424,7 +491,199 @@ final class DictationCoordinator {
 
   private func transition(_ value: DictationSession.State) {
     state = value
+    if value != .connecting, value != .recording { setInputCaption(nil) }
     stateChanged?(value)
+  }
+
+  private func setInputCaption(_ caption: InputCaption?) {
+    captionReset?.cancel()
+    captionReset = nil
+    guard inputCaption != caption else { return }
+    inputCaption = caption
+    inputCaptionChanged?(caption)
+  }
+
+  /// Release tail (research R6): none at or under 50 ms of delivery delay, else the
+  /// delay plus one 25 ms poll, at most 500 ms.
+  static func releaseTail(maxDelay: Duration) -> Duration? {
+    guard maxDelay > .milliseconds(50) else { return nil }
+    return min(maxDelay + .milliseconds(25), .milliseconds(500))
+  }
+
+  /// The available entries in rank order at this key-down (memory reads only).
+  private func inputCandidates() -> (candidates: [InputCandidate], snapshot: InputDeviceSnapshot?) {
+    guard let inputCatalog, let inputDevices else {
+      return (
+        [
+          InputCandidate(
+            entry: .systemDefault(), deviceID: nil, rank: 1,
+            displayName: RankedInputEntry.systemDefaultName)
+        ], nil
+      )
+    }
+    let snapshot = inputCatalog.snapshot()
+    return (
+      InputDeviceResolver.candidates(entries: inputDevices.entries, snapshot: snapshot), snapshot
+    )
+  }
+
+  private struct InputConnection {
+    let candidate: InputCandidate
+    let started: CaptureStarted
+    let connect: Duration
+    let failures: Int
+  }
+
+  private enum ConnectOutcome {
+    case flowing, released, timedOut
+    case ended(AudioCaptureStopReason)
+  }
+
+  /// A key release or cancel while the microphone was still connecting: nothing was
+  /// recorded, so the dictation is cancelled (spool removed, lease cooled).
+  private func cancelWhileConnecting() -> DictationFailure {
+    if !cancelled {
+      cancelled = true
+      stopRequested = true
+      transition(.cancelling)
+    }
+    return .cancelled
+  }
+
+  /// Research R5: starts each candidate in turn on the same empty spool, waits up to
+  /// `connectLimit` for flowing audio, and moves on when a start fails or stays silent.
+  /// Each entry is tried at most once per key-hold.
+  private func connectInput(
+    candidates: [InputCandidate], firstStart: Task<CaptureStarted, any Error>,
+    sessionID: UUID, spool: AudioSpool, remoteSession: RemoteDictationSession?
+  ) async throws -> InputConnection {
+    let clock = ContinuousClock()
+    var pending: Task<CaptureStarted, any Error>? = firstStart
+    var failures = 0
+    for (index, candidate) in candidates.enumerated() {
+      let isLast = index == candidates.count - 1
+      let startedAt = clock.now
+      let task =
+        pending
+        ?? Task { [capture] in
+          try await capture.start(sessionID: sessionID, spool: spool, input: candidate.binding)
+        }
+      pending = nil
+      let started: CaptureStarted
+      do {
+        started = try await task.value
+      } catch let failure as AudioCaptureFailure
+        where failure == .deviceLost || failure == .unsupportedFormat
+      {
+        Logger.inputDevice.notice(
+          "input kind=\(candidate.entry.kind.rawValue, privacy: .public) rank=\(candidate.rank) did not start"
+        )
+        failures += 1
+        consumeControls()
+        if stopRequested || Task.isCancelled { throw cancelWhileConnecting() }
+        if isLast { throw InputDeviceFailure.didNotRespond(candidate.displayName) }
+        continue
+      }
+      consumeControls()
+      if !stopRequested {
+        transition(.connecting)
+        status = "Connecting to \(candidate.displayName)…"
+        setInputCaption(InputCaption(kind: .connecting, deviceName: candidate.displayName))
+      }
+      var outcome = ConnectOutcome.timedOut
+      while true {
+        if stopRequested || Task.isCancelled {
+          outcome = .released
+          break
+        }
+        if let snapshot = await capture.snapshot(), snapshot.sessionID == sessionID {
+          if snapshot.audioFlowingSince != nil {
+            outcome = .flowing
+            break
+          }
+          if let reason = snapshot.terminalReason {
+            outcome = .ended(reason)
+            break
+          }
+        }
+        if clock.now - startedAt >= connectLimit { break }
+        try? await clock.sleep(for: .milliseconds(25))
+        consumeControls()
+      }
+      switch outcome {
+      case .flowing:
+        return InputConnection(
+          candidate: candidate, started: started, connect: clock.now - startedAt,
+          failures: failures)
+      case .released:
+        throw cancelWhileConnecting()
+      case .ended(.failure(.sleep)):
+        await remoteSession?.systemWillSleep()
+        throw AudioCaptureFailure.sleep
+      case .ended(.failure(.permissionRevoked)):
+        throw AudioCaptureFailure.permissionRevoked
+      case .ended, .timedOut:
+        _ = try? await capture.cancel(sessionID: sessionID)
+        if case .timedOut = outcome {
+          inputTimings?.recordTimeout(
+            uid: candidate.entry.uid ?? "systemDefault", kind: candidate.entry.kind)
+          Logger.inputDevice.notice(
+            "input kind=\(candidate.entry.kind.rawValue, privacy: .public) rank=\(candidate.rank) connect limit passed"
+          )
+        }
+        failures += 1
+        if isLast { throw InputDeviceFailure.didNotRespond(candidate.displayName) }
+      }
+    }
+    throw InputDeviceFailure.noMicrophone
+  }
+
+  /// The caption for a device that started recording; a fallback says so once per
+  /// change in the available set (FR-012).
+  private func announce(
+    _ device: DictationSession.InputDevice, availableSet: Int, tag: ControlMailbox.Tag
+  ) {
+    guard device.isFallback, availableSet != lastAnnouncedAvailableSet else {
+      setInputCaption(InputCaption(kind: .recording, deviceName: device.name))
+      return
+    }
+    lastAnnouncedAvailableSet = availableSet
+    setInputCaption(InputCaption(kind: .fallbackNotice, deviceName: device.name))
+    captionReset = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(3))
+      guard !Task.isCancelled, let self, self.controlTag == tag,
+        self.inputCaption?.kind == .fallbackNotice
+      else { return }
+      self.captionReset = nil
+      self.inputCaption = InputCaption(kind: .recording, deviceName: device.name)
+      self.inputCaptionChanged?(self.inputCaption)
+    }
+  }
+
+  /// One log line, the timing profile and the resource metrics for a recorded dictation.
+  private func recordInput(
+    _ device: DictationSession.InputDevice, connection: InputConnection, sessionID: UUID,
+    snapshot: InputDeviceSnapshot?, maxDelay: Duration, tail: Duration?
+  ) {
+    func milliseconds(_ duration: Duration) -> Int {
+      let parts = duration.components
+      return Int(clamping: parts.seconds * 1_000 + parts.attoseconds / 1_000_000_000_000_000)
+    }
+    let connectMs = milliseconds(connection.connect)
+    let delayMs = milliseconds(maxDelay)
+    let tailMs = tail.map(milliseconds) ?? 0
+    Logger.inputDevice.notice(
+      "input kind=\(device.kind.rawValue, privacy: .public) rank=\(device.rank) fallbacks=\(connection.failures) connect_ms=\(connectMs) delay_max_ms=\(delayMs) tail_ms=\(tailMs) name=\(device.name, privacy: .private)"
+    )
+    let bound = snapshot?.input(connection.started.boundDevice)
+    if let uid = device.uid ?? bound?.uid {
+      inputTimings?.recordUse(
+        uid: uid, kind: bound?.kind ?? device.kind, connectMs: connectMs, delayMs: delayMs)
+    }
+    inputMeasured?(
+      InputDeviceMetrics(
+        sessionID: sessionID, kind: device.kind, connect: connection.connect,
+        maxDeliveryDelay: maxDelay, tail: tail ?? .zero, fallbacks: connection.failures))
   }
 
   private func run(
@@ -488,6 +747,11 @@ final class DictationCoordinator {
       guard await capture.authorize() else { throw AudioCaptureFailure.permissionDenied }
       consumeControls()
       guard !stopRequested, !Task.isCancelled else { throw DictationFailure.cancelled }
+      // Feature 019: the ranked list against the catalog's in-memory snapshot. Permission
+      // is checked first, so a denial never reads as "No microphone available".
+      failureStage = "choosing a microphone"
+      let (candidates, inputSnapshot) = inputCandidates()
+      guard !candidates.isEmpty else { throw InputDeviceFailure.noMicrophone }
       let root = spoolRoot
       let id = session.id
       failureStage = "creating temporary audio storage"
@@ -527,7 +791,10 @@ final class DictationCoordinator {
         live.acquire(lifecycle, session: session.id, boost: boost)
       }
       failureStage = "starting the microphone"
-      let starting = Task { [capture] in try await capture.start(sessionID: id, spool: spool) }
+      let first = candidates[0]
+      let starting = Task { [capture] in
+        try await capture.start(sessionID: id, spool: spool, input: first.binding)
+      }
       // Target capture (bounded Accessibility calls) overlaps the engine start.
       session.target = await insertion.captureTarget()
       // The read runs beside recording and is awaited only after recognition.
@@ -539,7 +806,17 @@ final class DictationCoordinator {
         }
       }
       targetDisplayPoint = IndicatorPanel.displayPoint(for: session.target)
-      try await starting.value
+      let connection = try await connectInput(
+        candidates: candidates, firstStart: starting, sessionID: id, spool: spool,
+        remoteSession: remoteSession)
+      let chosen = connection.candidate
+      let device = DictationSession.InputDevice(
+        name: chosen.deviceID == nil
+          ? (inputCatalog?.name(of: connection.started.boundDevice) ?? chosen.displayName)
+          : chosen.displayName,
+        kind: chosen.entry.kind, uid: chosen.entry.uid, rank: chosen.rank,
+        isFallback: chosen.rank > 1)
+      session.inputDevice = device
       if remoteSession == nil { live.startPrefetch(transcriber, spool: spool) }
       consumeControls()
       session.startedAt = .now
@@ -548,10 +825,14 @@ final class DictationCoordinator {
         recordingStarted = true
         transition(.recording)
         status = "Recording"
+        announce(
+          device, availableSet: InputDeviceResolver.availableSetHash(candidates), tag: tag)
       }
+      var maxDelay = Duration.zero
       while !stopRequested, !Task.isCancelled, live.failure == nil {
         if let snapshot = await capture.snapshot(), snapshot.sessionID == session.id {
           live.recordedSamples = snapshot.sampleCount
+          maxDelay = max(maxDelay, snapshot.maxDeliveryDelay)
           mailbox.publishPresentation(.init(tag: tag, value: .audioLevel(snapshot.level)))
           if let reason = snapshot.terminalReason {
             // The Mac is going to sleep: the remote session is abandoned at once.
@@ -569,9 +850,16 @@ final class DictationCoordinator {
         throw failure
       }
       failureStage = "finishing microphone capture"
+      // A cancel never waits for a tail.
+      let tail = cancelled ? nil : Self.releaseTail(maxDelay: maxDelay)
       let audio =
         try await
-        (cancelled ? capture.cancel(sessionID: session.id) : capture.stop(sessionID: session.id))
+        (cancelled
+        ? capture.cancel(sessionID: session.id)
+        : capture.stop(sessionID: session.id, tail: tail))
+      recordInput(
+        device, connection: connection, sessionID: session.id, snapshot: inputSnapshot,
+        maxDelay: maxDelay, tail: tail)
       consumeControls()
       // A cancelled recording is never transcribed, so its early windows are dropped.
       if cancelled { await live.discardPrefetch(lifecycle) } else { await live.finishPrefetch() }
@@ -709,7 +997,7 @@ final class DictationCoordinator {
           createdAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1000),
           quality: session.quality, stopReason: session.stopReason,
           targetBundleID: session.target?.bundleIdentifier, recognitionPath: recognitionPath,
-          serverFailure: serverFailure)
+          serverFailure: serverFailure, inputDevice: session.storedInputDevice)
         var terminalReasons = result.completionReasons
         if cancelled { terminalReasons.append(.init(.cancelled)) }
         if session.stopReason == .durationLimit { terminalReasons.append(.init(.durationLimit)) }
@@ -743,8 +1031,14 @@ final class DictationCoordinator {
         }
         let committedAt = ContinuousClock.now
         consumeControls()
-        if allowsAutomaticInsertion, session.quality == .complete,
-          session.stopReason == .keyRelease,
+        // FR-013 (Feature 019): when the microphone disappears mid-dictation, the audio
+        // already captured is transcribed and inserted. Every other incomplete stop keeps
+        // the review path.
+        let insertsAfterDeviceLoss =
+          session.stopReason == .deviceLoss && audio.reason == .failure(.deviceLost)
+        if allowsAutomaticInsertion,
+          (session.quality == .complete && session.stopReason == .keyRelease)
+            || insertsAfterDeviceLoss,
           let target = session.target
         {
           // The faithful transcript is saved and the ASR lease is released before
@@ -924,6 +1218,10 @@ final class DictationCoordinator {
       if storageBlocked {
         status = "Delivery status could not be saved. Retry storage before another dictation."
       }
+      if let failure = error as? InputDeviceFailure, !cancelled {
+        status = failure.message
+        offersMicrophoneSettings = true
+      }
       transition(cancelled && unsaved == nil ? .idle : .failed)
     }
     if let spool = session.audio {
@@ -951,7 +1249,8 @@ final class DictationCoordinator {
       do {
         try await remote.keepForRetry(
           id: session.id, audio: spool.audioFileURL, sampleCount: audio.sampleCount,
-          failure: reason, targetBundleID: session.target?.bundleIdentifier)
+          failure: reason, targetBundleID: session.target?.bundleIdentifier,
+          inputDevice: session.storedInputDevice)
         status =
           "Your server is unavailable. The dictation is waiting in History and will be retried."
       } catch {
@@ -1164,5 +1463,12 @@ final class DictationCoordinator {
     do { try await deleteOrThrow(entry) } catch {
       status = "Could not delete this entry. It remains saved."
     }
+  }
+}
+
+extension DictationSession {
+  /// The history record of the microphone (data-model "Dictation device record").
+  var storedInputDevice: DictationInputDevice? {
+    inputDevice.flatMap { DictationInputDevice(name: $0.name, kind: $0.kind) }
   }
 }

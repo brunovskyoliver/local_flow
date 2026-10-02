@@ -11,7 +11,8 @@ final class ResourceRecorder: @unchecked Sendable {
   static let maximumFileBytes = 5 * 1024 * 1024
 
   enum Phase: String, Codable, Sendable {
-    case idle, preparing, recording, transcribing, persisting, rewriting, inserting, cancelling,
+    case idle, preparing, connecting, recording, transcribing, persisting, rewriting, inserting,
+      cancelling,
       recovery, failed
     case modelUnloaded, modelLoading, modelActive, modelCooling, modelReleasing
     case baseline, settled, captureOnly
@@ -110,6 +111,8 @@ final class ResourceRecorder: @unchecked Sendable {
     // the outcome or the part name, both closed sets; never text or a bundle ID.
     case contextCaptureDuration, contextOutcome, contextPartBytes, contextTermCount
     case contextSpellingChanges
+    // Feature 019: one set per recorded dictation, keyed by the device kind only (R11).
+    case inputConnectDuration, inputDeliveryDelay, inputTailDuration, inputFallbackCount
 
     var kind: Kind {
       switch self {
@@ -124,7 +127,7 @@ final class ResourceRecorder: @unchecked Sendable {
         .diarizationRealTimeFactor, .diarizationEchoProfileDuration,
         .identificationModelLoadDuration, .identificationModelReleaseDuration,
         .identificationDuration, .analysisRunDuration, .analysisStageDuration,
-        .contextCaptureDuration:
+        .contextCaptureDuration, .inputConnectDuration, .inputDeliveryDelay, .inputTailDuration:
         return .duration
       case .rawTextBytes, .assembledTextBytes, .normalizedTextBytes, .metadataBytes,
         .rewriteRequestBytes, .rewriteResponseBytes, .meetingBytesWritten, .meetingSegmentBytes,
@@ -154,7 +157,7 @@ final class ResourceRecorder: @unchecked Sendable {
         .analysisDroppedUnsupportedCount, .analysisIdentityDowngradeCount,
         .analysisUnresolvedOwnerCount, .analysisFailure, .analysisStaleCount,
         .analysisOverlayOrphanCount, .analysisQueueDepth, .contextOutcome, .contextTermCount,
-        .contextSpellingChanges:
+        .contextSpellingChanges, .inputFallbackCount:
         return .count
       }
     }
@@ -202,6 +205,8 @@ final class ResourceRecorder: @unchecked Sendable {
       case .contextOutcome: return 1
       case .contextTermCount: return UInt32(AppContextSnapshot.maximumTerms)
       case .contextSpellingChanges: return UInt32(ContextSpeller.maximumChanges)
+      // Each ranked entry is tried at most once per key-hold.
+      case .inputFallbackCount: return UInt32(InputDevicePriorityRules.capacity)
       default: return ResourceRecorder.maximumItemCount
       }
     }
@@ -259,6 +264,10 @@ final class ResourceRecorder: @unchecked Sendable {
     static let allContextCases: [Metric] = [
       .contextCaptureDuration, .contextOutcome, .contextPartBytes, .contextTermCount,
       .contextSpellingChanges,
+    ]
+    var isInput: Bool { rawValue.hasPrefix("input") }
+    static let allInputCases: [Metric] = [
+      .inputConnectDuration, .inputDeliveryDelay, .inputTailDuration, .inputFallbackCount,
     ]
     var isAnalysis: Bool { rawValue.hasPrefix("analysis") }
     static let allAnalysisCases: [Metric] = [
@@ -490,6 +499,8 @@ final class ResourceRecorder: @unchecked Sendable {
           ContextOutcome(rawValue: meetingKey) != nil
         } else if metric == .contextPartBytes {
           ContextPart(rawValue: meetingKey) != nil
+        } else if metric?.isInput == true {
+          InputDeviceKind(rawValue: meetingKey) != nil
         } else {
           metric?.isMeeting == true && Self.isValidMeetingKey(meetingKey)
         }
@@ -663,6 +674,29 @@ final class ResourceRecorder: @unchecked Sendable {
     record(
       phase: phase, cycleID: cycle, metric: .contextSpellingChanges,
       itemCount: UInt32(clamping: max(0, metrics.spellingChanges)))
+  }
+
+  /// Feature 019: durations and a counter, keyed by the device kind; never a name.
+  func record(input metrics: InputDeviceMetrics, phase: Phase = .idle) {
+    let cycle = metrics.sessionID
+    let key = metrics.kind.rawValue
+    func nanoseconds(_ duration: Duration) -> UInt64 {
+      let parts = duration.components
+      guard parts.seconds >= 0, parts.attoseconds >= 0 else { return 0 }
+      return UInt64(parts.seconds) * 1_000_000_000 + UInt64(parts.attoseconds / 1_000_000_000)
+    }
+    record(
+      phase: phase, cycleID: cycle, durationNanoseconds: nanoseconds(metrics.connect),
+      metric: .inputConnectDuration, meetingKey: key)
+    record(
+      phase: phase, cycleID: cycle, durationNanoseconds: nanoseconds(metrics.maxDeliveryDelay),
+      metric: .inputDeliveryDelay, meetingKey: key)
+    record(
+      phase: phase, cycleID: cycle, durationNanoseconds: nanoseconds(metrics.tail),
+      metric: .inputTailDuration, meetingKey: key)
+    record(
+      phase: phase, cycleID: cycle, metric: .inputFallbackCount,
+      itemCount: UInt32(clamping: max(0, metrics.fallbacks)), meetingKey: key)
   }
 
   /// Capture duration percentiles (unmeasured under 20 samples, the SC-005

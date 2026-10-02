@@ -969,6 +969,25 @@ public enum HistoryMigrations {
           CREATE INDEX transcript_live_gaps_fk_meeting_id ON transcript_live_gaps(meeting_id);
           """)
     }
+    // Feature 019: the microphone each dictation, pending remote dictation and meeting
+    // microphone segment used. Additive; existing rows keep NULL ("Not recorded").
+    migrator.registerMigration("input-device-v18") { db in
+      try db.execute(
+        sql: """
+          ALTER TABLE transcriptions ADD COLUMN input_device_name TEXT
+            CHECK (input_device_name IS NULL OR length(input_device_name) BETWEEN 1 AND 128);
+          ALTER TABLE transcriptions ADD COLUMN input_device_kind TEXT
+            CHECK (input_device_kind IS NULL OR input_device_kind IN
+              ('builtIn','usb','bluetooth','iPhone','virtual','other','systemDefault'));
+          ALTER TABLE meeting_segments ADD COLUMN input_device_name TEXT
+            CHECK (input_device_name IS NULL OR length(input_device_name) BETWEEN 1 AND 128);
+          ALTER TABLE pending_remote_dictations ADD COLUMN input_device_name TEXT
+            CHECK (input_device_name IS NULL OR length(input_device_name) BETWEEN 1 AND 128);
+          ALTER TABLE pending_remote_dictations ADD COLUMN input_device_kind TEXT
+            CHECK (input_device_kind IS NULL OR input_device_kind IN
+              ('builtIn','usb','bluetooth','iPhone','virtual','other','systemDefault'));
+          """)
+    }
     return migrator
   }
 

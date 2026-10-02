@@ -9,6 +9,8 @@ final class SettingsViewModel {
   /// Feature 014: Settings › Remote dictation, wired by the app; nil in previews and tests
   /// that do not exercise it.
   var server: ServerSettingsModel?
+  /// Feature 019: Settings › Microphones; nil until the app has started its catalog.
+  var microphones: MicrophonesViewModel?
   enum Permission: String {
     case unknown = "Not determined"
     case denied = "Not allowed"

@@ -536,12 +536,14 @@ final class RemoteDictationRouter: RemoteDictationRouting {
   var localModelProvisioned: Bool { provisioned() }
 
   func keepForRetry(
-    id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?
+    id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?,
+    inputDevice: DictationInputDevice?
   ) async throws {
     guard let store = pending() else { throw PendingRemoteDictationStore.Failure.missing }
     _ = try await store.add(
       id: id, audio: audio, sampleCount: sampleCount, failure: failure,
-      targetBundleID: targetBundleID, now: Int64(Date().timeIntervalSince1970 * 1_000))
+      targetBundleID: targetBundleID, inputDevice: inputDevice,
+      now: Int64(Date().timeIntervalSince1970 * 1_000))
   }
 
   func retryQueueFull(audio: URL, sampleCount: Int) async {

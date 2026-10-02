@@ -33,4 +33,13 @@ uint64_t LFAudioRingDroppedFrames(const LFAudioRing *ring);
 // Slots currently queued (head - tail); a bounded measurement, never blocking.
 uint32_t LFAudioRingOccupancy(const LFAudioRing *ring);
 uint64_t LFAudioCaptureNow(void);
+// Feature 019, producer side, lock- and allocation-free. The first push holding a
+// non-zero sample records LFAudioCaptureNow() once; 0 means no audio has flowed.
+uint64_t LFAudioRingFirstAudioNanoseconds(const LFAudioRing *ring);
+// Keeps the session maximum of the per-callback delivery delay the producer reports.
+void LFAudioRingRecordDeliveryDelay(LFAudioRing *ring, uint64_t nanoseconds);
+uint64_t LFAudioRingMaxDeliveryDelayNanoseconds(const LFAudioRing *ring);
+// Host-time ticks (AVAudioTime.hostTime, mach_absolute_time) to nanoseconds.
+uint64_t LFAudioHostTicksToNanoseconds(uint64_t ticks);
+uint64_t LFAudioHostTicksNow(void);
 #endif

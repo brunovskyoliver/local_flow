@@ -122,6 +122,12 @@ final class AppServices {
   @ObservationIgnored private var recorder: ResourceRecorder?
   @ObservationIgnored private var measurementTask: Task<Void, Never>?
   @ObservationIgnored private var quitting = false
+  /// Feature 019: one catalog, one ranked list and one timing store, shared by
+  /// dictation and the meeting microphone.
+  @ObservationIgnored let inputCatalog = CoreAudioInputCatalog()
+  @ObservationIgnored private(set) lazy var inputDevices = UserDefaultsInputDevicePriorityStore()
+  @ObservationIgnored private lazy var inputTimings = InputDeviceTimingStore()
+  @ObservationIgnored private var inputReconcile: Task<Void, Never>?
   @ObservationIgnored private var lastInputMonitoringAllowed = false
   @ObservationIgnored private var lastAccessibilityAllowed = false
   @ObservationIgnored private var settingsWake: AsyncStream<Void>.Continuation?
@@ -217,6 +223,19 @@ final class AppServices {
       content.body = "Your server recognized a dictation that was waiting. Review it in History."
       center.add(
         UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+  }
+
+  /// Feature 019: registers the Core Audio listeners once and keeps the ranked list's
+  /// names and UIDs in step with each snapshot (M1–M3).
+  private func startInputCatalog() {
+    guard inputReconcile == nil else { return }
+    inputCatalog.start()
+    inputDevices.reconcile(with: inputCatalog.snapshot())
+    settings.microphones = MicrophonesViewModel(store: inputDevices, catalog: inputCatalog)
+    let changes = inputCatalog.changes()
+    inputReconcile = Task { [weak self] in
+      for await snapshot in changes { self?.inputDevices.reconcile(with: snapshot) }
     }
   }
 
@@ -554,6 +573,7 @@ final class AppServices {
           self?.recorder?.record(refusal: reason, bucket: bucket)
         }
       }
+      startInputCatalog()
       let coordinator = DictationCoordinator(
         store: paths.1, lifecycle: lifecycle,
         capture: AudioCaptureService(), insertion: insertion,
@@ -569,8 +589,13 @@ final class AppServices {
         // Feature 012: read at each press; off by default, so no AX read happens.
         contextReader: SystemAppContextReader(),
         contextSettings: { [weak preferences] in preferences?.contextSettings() ?? .disabled },
-        remote: remoteRouter)
+        remote: remoteRouter, inputCatalog: inputCatalog, inputDevices: inputDevices,
+        inputTimings: inputTimings)
       self.coordinator = coordinator
+      coordinator.inputMeasured = { [weak self] metrics in self?.recorder?.record(input: metrics) }
+      coordinator.inputCaptionChanged = { [weak self] caption in
+        self?.panel.updateInputCaption(caption)
+      }
       let retrier = PendingRemoteRetrier(
         store: pendingStore, history: paths.1, vocabulary: vocabulary, starter: remoteRouter,
         transcriber: WindowedTranscriber(lifecycle: lifecycle, identity: transcriptIdentity))
@@ -753,12 +778,20 @@ final class AppServices {
         guard let self, let coordinator else { return }
         self.recordTransition(state, cycleID: coordinator.controlTag?.sessionID)
         self.shortcut.setSessionActive(
-          [.preparing, .recording, .transcribing, .persisting, .rewriting, .inserting, .cancelling]
-            .contains(state))
+          [
+            .preparing, .connecting, .recording, .transcribing, .persisting, .rewriting,
+            .inserting, .cancelling,
+          ]
+          .contains(state))
         self.panel.update(
           state: state, level: coordinator.level, targetPoint: coordinator.targetDisplayPoint
         ) { [weak coordinator] in
           coordinator?.cancel(source: "indicator button")
+        }
+        if state == .failed, coordinator.offersMicrophoneSettings {
+          self.panel.showMicrophoneNotice(MicrophoneNotice(message: coordinator.status)) {
+            [weak self] in self?.router.showSettings(at: .microphones)
+          }
         }
         self.refreshIndicatorAnimation()
       }
@@ -1098,12 +1131,22 @@ final class AppServices {
         #endif
       }
     }
+    // Feature 019: the meeting microphone follows the same ranked list as dictation.
+    let inputCatalog = self.inputCatalog
+    let rankedInputs = inputDevices.shared
     let coordinator = MeetingCoordinator(
       dependencies: .init(
         store: store, writer: FileSegmentWriter(root: root), permissions: .live,
         clock: SystemMeetingClock(), recorder: recorder, storageRoot: root,
         sourceFactory: { kind -> any MeetingAudioSourcing in
-          kind == .microphone ? MicrophoneMeetingSource() : SystemAudioMeetingSource()
+          kind == .microphone
+            ? MicrophoneMeetingSource(
+              resolve: {
+                InputDeviceResolver.candidates(
+                  entries: rankedInputs.value, snapshot: inputCatalog.snapshot())
+              },
+              deviceName: { inputCatalog.name(of: $0) })
+            : SystemAudioMeetingSource()
         },
         isDictationBusy: { [weak self] in self?.coordinator?.busy == true },
         reconciliationGate: { await gate.wait() }, options: options, transcription: transcription))
@@ -2100,6 +2143,9 @@ final class AppServices {
     }
     quitting = true
     shortcut.remove()
+    inputReconcile?.cancel()
+    inputReconcile = nil
+    inputCatalog.stop()
     measurementTask?.cancel()
     measurementTask = nil
     Task {

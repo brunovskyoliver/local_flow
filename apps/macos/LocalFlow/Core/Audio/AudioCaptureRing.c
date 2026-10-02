@@ -1,4 +1,5 @@
 #include "AudioCaptureRing.h"
+#include <mach/mach_time.h>
 #include <math.h>
 #include <sched.h>
 #include <stdatomic.h>
@@ -27,6 +28,8 @@ struct LFAudioRing {
     _Atomic int dropOnOverflow;
     _Atomic uint64_t dropped;
     _Atomic uint64_t sourceFrames;
+    _Atomic uint64_t firstAudio;
+    _Atomic uint64_t maxDelay;
     uint64_t consumedThrough; // Single consumer, never accessed by the producer.
     uint32_t channels;
     struct LFSlot slots[LF_SLOTS];
@@ -62,6 +65,8 @@ LFAudioRing *LFAudioRingCreate(uint32_t channels, double sampleRate) {
     atomic_init(&ring->dropOnOverflow, 0);
     atomic_init(&ring->dropped, 0);
     atomic_init(&ring->sourceFrames, 0);
+    atomic_init(&ring->firstAudio, 0);
+    atomic_init(&ring->maxDelay, 0);
     ring->channels = channels;
     return ring;
 }
@@ -88,11 +93,32 @@ static bool valid(const AudioBufferList *buffers, uint32_t channels, uint32_t fr
     return true;
 }
 
+// Scans only until audio has flowed once; afterwards this is one relaxed load.
+static void noteFirstAudio(LFAudioRing *ring, const AudioBufferList *buffers, uint32_t frames) {
+    if (atomic_load_explicit(&ring->firstAudio, memory_order_relaxed)) return;
+    bool found = false;
+    if (buffers->mNumberBuffers == 1) {
+        const float *source = buffers->mBuffers[0].mData;
+        size_t count = (size_t)frames * ring->channels;
+        for (size_t i = 0; i < count && !found; ++i) found = source[i] != 0.0f;
+    } else {
+        for (uint32_t channel = 0; channel < ring->channels && !found; ++channel) {
+            const float *source = buffers->mBuffers[channel].mData;
+            for (uint32_t frame = 0; frame < frames && !found; ++frame) found = source[frame] != 0.0f;
+        }
+    }
+    if (!found) return;
+    uint64_t now = LFAudioCaptureNow();
+    uint64_t expected = 0;
+    atomic_compare_exchange_strong(&ring->firstAudio, &expected, now ? now : 1);
+}
+
 bool LFAudioRingPush(LFAudioRing *ring, const AudioBufferList *buffers, uint32_t frames) {
     atomic_fetch_add(&ring->copying, 1);
     bool accepted = false;
     if (!atomic_load(&ring->accepting)) goto done;
     if (!valid(buffers, ring->channels, frames)) { fail(ring, 2); goto done; }
+    noteFirstAudio(ring, buffers, frames);
     uint64_t sourceStart = atomic_fetch_add_explicit(&ring->sourceFrames, frames, memory_order_relaxed);
     unsigned head = atomic_load_explicit(&ring->head, memory_order_relaxed);
     unsigned tail = atomic_load_explicit(&ring->tail, memory_order_acquire);
@@ -225,3 +251,31 @@ uint32_t LFAudioRingOccupancy(const LFAudioRing *ring) {
     unsigned tail = atomic_load_explicit(&ring->tail, memory_order_acquire);
     return (uint32_t)(head - tail);
 }
+
+uint64_t LFAudioRingFirstAudioNanoseconds(const LFAudioRing *ring) {
+    if (!ring) return 0;
+    return atomic_load_explicit(&ring->firstAudio, memory_order_acquire);
+}
+
+void LFAudioRingRecordDeliveryDelay(LFAudioRing *ring, uint64_t nanoseconds) {
+    if (!ring) return;
+    uint64_t current = atomic_load_explicit(&ring->maxDelay, memory_order_relaxed);
+    while (nanoseconds > current &&
+           !atomic_compare_exchange_weak_explicit(&ring->maxDelay, &current, nanoseconds,
+                                                  memory_order_relaxed, memory_order_relaxed)) {
+    }
+}
+
+uint64_t LFAudioRingMaxDeliveryDelayNanoseconds(const LFAudioRing *ring) {
+    if (!ring) return 0;
+    return atomic_load_explicit(&ring->maxDelay, memory_order_relaxed);
+}
+
+uint64_t LFAudioHostTicksToNanoseconds(uint64_t ticks) {
+    // A local read each call: no shared static written from the realtime thread.
+    mach_timebase_info_data_t timebase;
+    if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0) return ticks;
+    return ticks / timebase.denom * timebase.numer + ticks % timebase.denom * timebase.numer / timebase.denom;
+}
+
+uint64_t LFAudioHostTicksNow(void) { return mach_absolute_time(); }

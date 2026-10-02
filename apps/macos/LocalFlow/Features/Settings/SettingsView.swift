@@ -7,6 +7,8 @@ import SwiftUI
 struct SettingsView: View {
   @Bindable var model: SettingsViewModel
   @Bindable var preferences: AppPreferences
+  /// A section to scroll to once shown, set by `MainWindowRouter` (Feature 019).
+  var anchor: Binding<SettingsAnchor?> = .constant(nil)
   @State private var recorder: ShortcutRecorder?
   @State private var recordingError: String?
   @State private var confirmingDownload = false
@@ -18,6 +20,22 @@ struct SettingsView: View {
   @FocusState private var focusTarget: FocusTarget?
 
   var body: some View {
+    ScrollViewReader { proxy in
+      page
+        .onAppear { scroll(proxy) }
+        .onChange(of: anchor.wrappedValue) { scroll(proxy) }
+    }
+  }
+
+  private func scroll(_ proxy: ScrollViewProxy) {
+    guard let target = anchor.wrappedValue else { return }
+    Task { @MainActor in
+      withAnimation(PillStyle.morph) { proxy.scrollTo(target, anchor: .top) }
+      anchor.wrappedValue = nil
+    }
+  }
+
+  private var page: some View {
     PrototypePage {
       VStack(alignment: .leading, spacing: 0) {
         Text("Settings").font(.flow(size: 26, weight: .medium)).tracking(-0.4)
@@ -70,6 +88,10 @@ struct SettingsView: View {
             .labelsHidden().tint(SottoPalette.ink).frame(width: 210).accessibilityIdentifier(
               "settings.meetingLanguage")
           }
+        }
+        if let microphones = model.microphones {
+          sectionTitle("Microphones").id(SettingsAnchor.microphones)
+          MicrophonesSection(model: microphones)
         }
         contextSection
         modelSection

@@ -63,6 +63,12 @@ protocol MeetingAudioSourcing: AnyObject, Sendable {
   /// True once after a device change the source recovered from by restarting
   /// itself; the coordinator then rolls the segment with reason `device_changed`.
   func consumeDeviceChange() async -> Bool
+  /// Feature 019: the device the source records from now; nil for system audio.
+  func currentDeviceName() async -> String?
+}
+
+extension MeetingAudioSourcing {
+  func currentDeviceName() async -> String? { nil }
 }
 
 // MARK: - Encoder and writer

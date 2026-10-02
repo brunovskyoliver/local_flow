@@ -94,15 +94,37 @@ final class PendingRemoteRetrierTests: XCTestCase {
     return retrier
   }
 
-  private func addPending(samples: Int = 1_600) async throws -> UUID {
+  private func addPending(samples: Int = 1_600, inputDevice: DictationInputDevice? = nil)
+    async throws -> UUID
+  {
     let file = root.appendingPathComponent("\(UUID().uuidString).f32")
     let values = (0..<samples).map { Float($0 % 100) / 100 }
     try values.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: file)
     let id = UUID()
     _ = try await store.add(
       id: id, audio: file, sampleCount: samples, failure: .unreachable,
-      targetBundleID: "com.example.editor", now: clock.now)
+      targetBundleID: "com.example.editor", inputDevice: inputDevice, now: clock.now)
     return id
+  }
+
+  /// Feature 019 T046: the device queued with a dictation survives reopening the store
+  /// and reaches the final history row; a row queued without one reads nil.
+  func testRecoveredDictationKeepsTheMicrophoneItWasQueuedWith() async throws {
+    let device = try XCTUnwrap(DictationInputDevice(name: "Blue Yeti", kind: .usb))
+    let withDevice = try await addPending(inputDevice: device)
+    let without = try await addPending()
+    store = try PendingRemoteDictationStore(
+      database: history.database, directory: root.appendingPathComponent("PendingAudio"))
+    clock.advance(10_000)
+    let retrier = await retrier()
+    var recovered = 0
+    for _ in 0..<4 where recovered < 2 { recovered += await retrier.runDue() }
+    XCTAssertEqual(recovered, 2)
+    let saved = try await history.get(withDevice)
+    XCTAssertEqual(saved?.inputDevice, device)
+    let old = try await history.get(without)
+    XCTAssertNotNil(old)
+    XCTAssertNil(old?.inputDevice)
   }
 
   func testBackoffIsTenThirtySecondsTwoMinutesThenTenMinutes() {

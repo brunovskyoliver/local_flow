@@ -29,6 +29,9 @@ actor PendingRemoteDictationStore {
     let nextAttemptAt: Int64
     let lastFailure: RemoteFailureReason?
     let targetBundleID: String?
+    /// Feature 019: the microphone, copied into the final history row. Nil for rows
+    /// queued before `input-device-v18`.
+    var inputDevice: DictationInputDevice? = nil
 
     func isExpired(now: Int64) -> Bool {
       now - createdAt >= PendingRemoteDictationStore.maximumAgeMilliseconds
@@ -58,7 +61,7 @@ actor PendingRemoteDictationStore {
   /// where it was. Throws `full` when 20 dictations are already waiting.
   func add(
     id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason,
-    targetBundleID: String?, now: Int64
+    targetBundleID: String?, inputDevice: DictationInputDevice? = nil, now: Int64
   ) throws -> Item {
     guard (1...RemoteProtocol.maximumSessionSamples).contains(sampleCount) else {
       throw Failure.invalidAudio
@@ -70,7 +73,7 @@ actor PendingRemoteDictationStore {
     let item = Item(
       id: id, audioFile: "\(id.uuidString).f32", sampleCount: sampleCount, createdAt: now,
       attempts: 0, nextAttemptAt: now + Self.firstRetryMilliseconds, lastFailure: failure,
-      targetBundleID: targetBundleID)
+      targetBundleID: targetBundleID, inputDevice: inputDevice)
     let destination = audioURL(item)
     try FileManager.default.moveItem(at: audio, to: destination)
     do {
@@ -81,12 +84,12 @@ actor PendingRemoteDictationStore {
         try db.execute(
           sql: """
             INSERT INTO pending_remote_dictations
-              (id,audio_file,sample_count,created_at,attempts,next_attempt_at,last_failure,target_bundle_id)
-            VALUES (?,?,?,?,0,?,?,?)
+              (id,audio_file,sample_count,created_at,attempts,next_attempt_at,last_failure,target_bundle_id,input_device_name,input_device_kind)
+            VALUES (?,?,?,?,0,?,?,?,?,?)
             """,
           arguments: [
             id.uuidString, item.audioFile, sampleCount, now, item.nextAttemptAt, failure.rawValue,
-            targetBundleID,
+            targetBundleID, inputDevice?.name, inputDevice?.kind.rawValue,
           ])
       }
     } catch {
@@ -197,6 +200,8 @@ actor PendingRemoteDictationStore {
       id: id, audioFile: name, sampleCount: row["sample_count"], createdAt: row["created_at"],
       attempts: row["attempts"], nextAttemptAt: row["next_attempt_at"],
       lastFailure: failure.flatMap(RemoteFailureReason.init(rawValue:)),
-      targetBundleID: row["target_bundle_id"])
+      targetBundleID: row["target_bundle_id"],
+      inputDevice: DictationInputDevice(
+        storedName: row["input_device_name"], storedKind: row["input_device_kind"]))
   }
 }

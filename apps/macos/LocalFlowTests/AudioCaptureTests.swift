@@ -201,4 +201,153 @@ final class AudioCaptureTests: XCTestCase {
     XCTAssertEqual(ring.queuePeak.highWater, 32, "A rejected push cannot raise the peak")
     XCTAssertLessThanOrEqual(ring.queuePeak.highWater, ring.queuePeak.capacity)
   }
+
+  // MARK: Feature 019 — input binding (T008)
+
+  private func makeSpool() throws -> (AudioSpool, URL) {
+    let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+      UUID().uuidString)
+    return (try AudioSpool(rootDirectory: root), root)
+  }
+
+  func testDeviceBindingFailureIsDeviceLossAndLeavesTheSpoolEmpty() async throws {
+    let (spool, root) = try makeSpool()
+    defer {
+      try? spool.cleanup()
+      try? FileManager.default.removeItem(at: root)
+    }
+    struct BindFailure: Error {}
+    let service = AudioCaptureService(
+      bindInput: { _, _ in throw BindFailure() }, permission: { .authorized })
+    do {
+      _ = try await service.start(sessionID: UUID(), spool: spool, input: .device(42))
+      XCTFail("binding must fail")
+    } catch {
+      XCTAssertEqual(error as? AudioCaptureFailure, .deviceLost)
+    }
+    XCTAssertEqual(spool.bytesWritten, 0)
+    let snapshot = await service.snapshot()
+    XCTAssertNil(snapshot, "no session was left behind")
+  }
+
+  func testPermissionIsCheckedBeforeBinding() async throws {
+    let (spool, root) = try makeSpool()
+    defer {
+      try? spool.cleanup()
+      try? FileManager.default.removeItem(at: root)
+    }
+    let bound = AtomicFlag()
+    let service = AudioCaptureService(
+      bindInput: { _, _ in bound.set(true) }, permission: { .denied })
+    do {
+      _ = try await service.start(sessionID: UUID(), spool: spool, input: .device(42))
+      XCTFail("permission must fail")
+    } catch {
+      XCTAssertEqual(error as? AudioCaptureFailure, .permissionDenied)
+    }
+    XCTAssertFalse(bound.value)
+  }
+
+  func testStopWithAndWithoutTailIsStaleForAnUnknownSessionAndNeverWaits() async throws {
+    let service = AudioCaptureService(permission: { .authorized })
+    let clock = ContinuousClock()
+    let started = clock.now
+    for tail in [nil, Duration.milliseconds(400)] {
+      do {
+        _ = try await service.stop(sessionID: UUID(), tail: tail)
+        XCTFail("no session")
+      } catch {
+        XCTAssertEqual(error as? AudioCaptureFailure, .staleSession)
+      }
+    }
+    XCTAssertLessThan(clock.now - started, .milliseconds(300), "no tail without a session")
+  }
+
+  func testALatchedFailureWinsOverKeyReleaseAndCancel() {
+    for cancelling in [false, true] {
+      XCTAssertEqual(
+        AudioCaptureService.stopReason(
+          ringFailure: .deviceLost, authorized: true, running: true, limitReached: false,
+          cancelling: cancelling), .failure(.deviceLost))
+    }
+    XCTAssertEqual(
+      AudioCaptureService.stopReason(
+        ringFailure: nil, authorized: true, running: true, limitReached: false, cancelling: false),
+      .keyRelease)
+    XCTAssertEqual(
+      AudioCaptureService.stopReason(
+        ringFailure: nil, authorized: true, running: false, limitReached: false,
+        cancelling: false), .failure(.deviceLost))
+    XCTAssertEqual(
+      AudioCaptureService.stopReason(
+        ringFailure: nil, authorized: true, running: true, limitReached: true, cancelling: false),
+      .durationLimit)
+  }
+
+  // MARK: Feature 019 — first-audio gate and delivery delay (T031)
+
+  func testAllZeroPushesLeaveFirstAudioUnsetAndTheFirstNonZeroSetsItOnce() throws {
+    let ring = try AudioCaptureStaging(channels: 2, sampleRate: 48_000)
+    XCTAssertTrue(ring.pushForTesting(Array(repeating: 0, count: 64), frames: 32))
+    XCTAssertNil(ring.firstAudioNanoseconds)
+    var samples = Array(repeating: Float(0), count: 64)
+    samples[63] = 0.001
+    XCTAssertTrue(ring.pushForTesting(samples, frames: 32))
+    let first = try XCTUnwrap(ring.firstAudioNanoseconds)
+    XCTAssertTrue(ring.pushForTesting(Array(repeating: 0.5, count: 64), frames: 32))
+    XCTAssertEqual(ring.firstAudioNanoseconds, first)
+  }
+
+  func testMaxDeliveryDelayKeepsTheSessionMaximum() throws {
+    let ring = try AudioCaptureStaging(channels: 1, sampleRate: 48_000)
+    XCTAssertEqual(ring.maxDeliveryDelay, .zero)
+    ring.recordDeliveryDelay(nanoseconds: 30_000_000)
+    ring.recordDeliveryDelay(nanoseconds: 320_000_000)
+    ring.recordDeliveryDelay(nanoseconds: 40_000_000)
+    XCTAssertEqual(ring.maxDeliveryDelay, .milliseconds(320))
+  }
+
+  func testLeadingSilenceIsNotSpooledAndTheBudgetStartsWhenAudioFlows() throws {
+    let (spool, root) = try makeSpool()
+    defer {
+      try? spool.cleanup()
+      try? FileManager.default.removeItem(at: root)
+    }
+    let format = try XCTUnwrap(
+      AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false))
+    let normalizer = try AudioCaptureNormalizer(format: format, spool: spool)
+    normalizer.budget = .notStarted
+    let channel = try XCTUnwrap(normalizer.input.floatChannelData?[0])
+    normalizer.input.frameLength = 1_024
+    for index in 0..<1_024 { channel[index] = 0 }
+    XCTAssertFalse(normalizer.admitInput(flowingAt: 100))
+    XCTAssertNil(normalizer.flowingSince)
+    XCTAssertEqual(spool.bytesWritten, 0, "a cancel now leaves an empty spool")
+    XCTAssertFalse(normalizer.budget.deadlineReached(at: .max - 1), "no clock before audio")
+    channel[512] = 0.25
+    XCTAssertTrue(normalizer.admitInput(flowingAt: 5_000))
+    try normalizer.convert(endOfStream: false)
+    try normalizer.convert(endOfStream: true)
+    XCTAssertEqual(normalizer.flowingSince, 5_000)
+    XCTAssertEqual(normalizer.budget.startNanoseconds, 5_000)
+    XCTAssertGreaterThan(spool.bytesWritten, 0)
+    for index in 0..<1_024 { channel[index] = 0 }
+    XCTAssertTrue(normalizer.admitInput(flowingAt: 9_000), "after audio flows, silence is kept")
+    XCTAssertEqual(normalizer.flowingSince, 5_000, "set once")
+    XCTAssertTrue(normalizer.budget.deadlineReached(at: 5_000 + 180_000_000_000))
+  }
+
+  func testInterleavedSilenceIsDetected() throws {
+    let format = try XCTUnwrap(
+      AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: true))
+    let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16))
+    buffer.frameLength = 16
+    let data = try XCTUnwrap(buffer.floatChannelData?[0])
+    for index in 0..<32 { data[index] = 0 }
+    XCTAssertFalse(AudioCaptureNormalizer.containsAudio(buffer))
+    data[31] = -0.1
+    XCTAssertTrue(AudioCaptureNormalizer.containsAudio(buffer))
+  }
 }
