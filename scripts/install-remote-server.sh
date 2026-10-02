@@ -32,7 +32,8 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 usage: scripts/install-remote-server.sh [--dev] [--dry-run] [--speech-worker PATH]
-         [--meeting-helper PATH] [--google-client-id IDS] [--apple-audience IDS]
+         [--meeting-helper PATH] [--meeting-processor PATH]
+         [--google-client-id IDS] [--apple-audience IDS]
          [--mtplx PATH] [--model DIR] [--analysis-backend URL --analysis-model ID]
 
   --dev                 install the development variant
@@ -40,6 +41,8 @@ usage: scripts/install-remote-server.sh [--dev] [--dry-run] [--speech-worker PAT
   --speech-worker PATH  install this prebuilt flowd-speech instead of building it
   --meeting-helper PATH install this prebuilt Whisper helper (scripts/build-meeting-whisper.sh
                         output) instead of building it
+  --meeting-processor PATH  install this prebuilt flowd-meeting (meeting handoff processor)
+                            instead of building it
   --google-client-id IDS  comma-separated Google OAuth client IDs to accept; without it
                           flowd refuses Google sign-in
   --apple-audience IDS    comma-separated app bundle IDs to accept for Sign in with Apple;
@@ -59,6 +62,7 @@ dev=0
 dry_run=0
 prebuilt_worker=""
 prebuilt_helper=""
+prebuilt_processor=""
 google_client_ids=""
 apple_audience=""
 app_state="$HOME/Library/Application Support/LocalFlow/LocalAI"
@@ -78,6 +82,11 @@ while [ $# -gt 0 ]; do
     --meeting-helper)
       [ $# -ge 2 ] || { usage >&2; exit 1; }
       prebuilt_helper="$2"
+      shift
+      ;;
+    --meeting-processor)
+      [ $# -ge 2 ] || { usage >&2; exit 1; }
+      prebuilt_processor="$2"
       shift
       ;;
     --google-client-id)
@@ -234,6 +243,7 @@ render_plist() {
     --backend "$backend" --model localflow
     --speech-worker "$bin_dir/flowd-speech"
     --meeting-helper "$bin_dir/localflow-whisper-engine"
+    --meeting-processor "$bin_dir/flowd-meeting"
     --log-file "$log_dir/flowd.log"
     --admin-listen "$admin_listen"
     ${dev_flag[@]+"${dev_flag[@]}"}
@@ -301,6 +311,21 @@ else
     SYMROOT="$stage/xcode" build
 fi
 
+# 2a. flowd-meeting, the meeting handoff processor, from the same Xcode project.
+processor="$stage/xcode/Release/flowd-meeting"
+if [ -n "$prebuilt_processor" ]; then
+  if [ ! -x "$prebuilt_processor" ]; then
+    echo "error: --meeting-processor $prebuilt_processor is not an executable file" >&2
+    exit 1
+  fi
+  processor="$prebuilt_processor"
+  echo "Using prebuilt flowd-meeting: $processor"
+else
+  echo "Building flowd-meeting"
+  run xcodebuild -project "$repository/apps/macos/LocalFlow.xcodeproj" -target flowd-meeting -configuration Release \
+    SYMROOT="$stage/xcode" build
+fi
+
 # 2b. The Whisper helper for meeting transcripts (Feature 018), built from the pinned
 # whisper.cpp revision with its licences.
 helper="$stage/meeting-whisper-native/Engine/sotto-engine"
@@ -325,6 +350,9 @@ run install -m 0755 "$stage/flowd" "$bin_dir/flowd"
 worker_installed=0
 if [ -e "$bin_dir/flowd-speech" ] && [ "$worker" -ef "$bin_dir/flowd-speech" ]; then worker_installed=1; fi
 [ "$worker_installed" -eq 1 ] || run install -m 0755 "$worker" "$bin_dir/flowd-speech"
+if ! { [ -e "$bin_dir/flowd-meeting" ] && [ "$processor" -ef "$bin_dir/flowd-meeting" ]; }; then
+  run install -m 0755 "$processor" "$bin_dir/flowd-meeting"
+fi
 # The worker reads the pinned descriptors next to itself (flowd-speech provision/serve).
 models_src="$repository/apps/macos/LocalFlow/Resources/Models"
 run install -m 0644 "$models_src/parakeet-v3.json" "$models_src/parakeet-ctc-110m.json" \

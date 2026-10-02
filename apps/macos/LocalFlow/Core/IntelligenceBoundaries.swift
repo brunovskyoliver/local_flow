@@ -64,6 +64,8 @@ struct EvidenceParticipant: Sendable, Equatable {
   var knownSpeakerID: UUID?
   var name: String?
   var isLocalUser = false
+  /// How the app shows the root unnamed ("Speaker 2", "You"); the model sees it.
+  var label: String?
 }
 
 /// One paragraph of `meeting_notes.text` (research R7): ordinal starts at 1,

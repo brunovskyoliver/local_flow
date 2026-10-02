@@ -61,6 +61,12 @@ actor MeetingEvidenceReader: MeetingEvidenceReading {
     let identityMap = try await identities.identities(meetingID: meetingID)
     let localProfile = try localUserProfile()
     return roots.map { root in
+      var participant = participant(root)
+      participant.label = SpeakerPalette.text(
+        source: root.source, ordinal: root.labelOrdinal, name: nil, inRoom: root.inRoom)
+      return participant
+    }
+    func participant(_ root: MeetingSpeaker) -> EvidenceParticipant {
       if root.source == .local {
         return EvidenceParticipant(
           speakerID: root.id, certainty: .localUser, origin: "none",

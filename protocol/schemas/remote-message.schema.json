@@ -80,6 +80,12 @@
       "$ref": "#/$defs/meeting_cancel"
     },
     {
+      "$ref": "#/$defs/handoff"
+    },
+    {
+      "$ref": "#/$defs/handoff_reply"
+    },
+    {
       "$ref": "#/$defs/error"
     }
   ],
@@ -1624,6 +1630,418 @@
         "op": {
           "$ref": "#/$defs/op"
         }
+      }
+    },
+    "handoff_meeting_id": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$",
+      "description": "Meeting UUID, uppercase canonical form."
+    },
+    "handoff_state": {
+      "type": "string",
+      "enum": [
+        "receiving",
+        "queued",
+        "processing",
+        "done",
+        "failed",
+        "missing"
+      ]
+    },
+    "handoff_detail": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]{1,64}$",
+      "description": "failed only: a short code such as exit_3, timeout or start_failed; never content."
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client: one meeting handoff request, answered by one handoff_reply (or error). put appends data at offset to the named file of a receiving meeting (creating the meeting) and, with sha256, checks the whole file; start queues a complete upload for processing; get reads the processed bundle.sqlite at offset; delete removes the meeting; list names the user's meetings.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "action"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "handoff"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "put",
+            "start",
+            "list",
+            "get",
+            "delete"
+          ]
+        },
+        "meeting": {
+          "$ref": "#/$defs/handoff_meeting_id"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^(bundle\\.sqlite|(mic|system)-[0-9]{4}\\.aac)$"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1073741824
+        },
+        "data": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/b64url"
+            },
+            {
+              "maxLength": 64000
+            }
+          ],
+          "description": "1 to 48,000 bytes (base64url of 48,000 bytes is 64,000 characters); larger is limit_exceeded."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "meeting"
+                  ]
+                },
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "offset"
+                  ]
+                },
+                {
+                  "required": [
+                    "data"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "put"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "meeting",
+              "name",
+              "offset"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "get"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "meeting",
+              "offset"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "data"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "start"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "meeting"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "offset"
+                  ]
+                },
+                {
+                  "required": [
+                    "data"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "delete"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "meeting"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "offset"
+                  ]
+                },
+                {
+                  "required": [
+                    "data"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "handoff_reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: the meeting's state after a handoff. put echoes name and the file's stored size in offset; get carries up to 48,000 bytes of bundle.sqlite from offset (data absent at the end) with the whole file's size and sha256; a list reply has meetings (at most 64) and no state.",
+      "required": [
+        "schema_version",
+        "type",
+        "op"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "handoff_reply"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "state": {
+          "$ref": "#/$defs/handoff_state"
+        },
+        "meeting": {
+          "$ref": "#/$defs/handoff_meeting_id"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^(bundle\\.sqlite|(mic|system)-[0-9]{4}\\.aac)$"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "data": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/b64url"
+            },
+            {
+              "maxLength": 64000
+            }
+          ],
+          "description": "1 to 48,000 bytes (base64url of 48,000 bytes is 64,000 characters); larger is limit_exceeded."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "detail": {
+          "$ref": "#/$defs/handoff_detail"
+        },
+        "meetings": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "meeting",
+              "state"
+            ],
+            "properties": {
+              "meeting": {
+                "$ref": "#/$defs/handoff_meeting_id"
+              },
+              "state": {
+                "$ref": "#/$defs/handoff_state"
+              },
+              "detail": {
+                "$ref": "#/$defs/handoff_detail"
+              }
+            },
+            "if": {
+              "required": [
+                "detail"
+              ]
+            },
+            "then": {
+              "properties": {
+                "state": {
+                  "const": "failed"
+                }
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "required": [
+          "meetings"
+        ]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "state"
+              ]
+            },
+            {
+              "required": [
+                "meeting"
+              ]
+            },
+            {
+              "required": [
+                "name"
+              ]
+            },
+            {
+              "required": [
+                "offset"
+              ]
+            },
+            {
+              "required": [
+                "data"
+              ]
+            },
+            {
+              "required": [
+                "size"
+              ]
+            },
+            {
+              "required": [
+                "sha256"
+              ]
+            },
+            {
+              "required": [
+                "detail"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "state"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "detail"
+              ]
+            },
+            "then": {
+              "properties": {
+                "state": {
+                  "const": "failed"
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "error": {

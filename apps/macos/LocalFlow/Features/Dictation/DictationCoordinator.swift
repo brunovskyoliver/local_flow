@@ -520,6 +520,8 @@ final class DictationCoordinator {
           Task { @MainActor in live.acquire(lifecycle, session: sessionID, boost: boost) }
         }
         await started.start()
+      } else if !remoteSettings.localModelsAllowed {
+        throw ServerOnlyFailure.serverUnavailable
       } else {
         // A cold model load runs beside capture; recording never waits for it.
         live.acquire(lifecycle, session: session.id, boost: boost)
@@ -629,7 +631,7 @@ final class DictationCoordinator {
         }
       }
       transition(cancelled ? .cancelling : .transcribing)
-      var remoteWindows: RemoteDictationResult?
+      var serverResult: TranscriptionResult?
       if let started = remoteSession, !cancelled {
         status = "Transcribing on your server…"
         failureStage = "recognizing on the server"
@@ -639,30 +641,39 @@ final class DictationCoordinator {
         } else {
           switch await started.finish(totalSamples: audio.sampleCount) {
           case .success(let result):
-            remoteWindows = result
-            recognitionPath = .server
+            let assembled = await transcriber.transcribe(
+              sampleCount: audio.sampleCount, remote: result.windows, model: result.model
+            ).normalizedForDelivery(vocabulary: session.vocabulary ?? .empty)
+            remote?.completed(result, dictation: session.id)
+            if assembled.incomplete,
+              assembled.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+              // Failed windows and no text: a server failure, not silence. Falling
+              // through keeps the audio (local model or retry) instead of deleting it.
+              recognitionPath = .localAfterServerFailure
+              serverFailure = .protocolError
+            } else {
+              serverResult = assembled
+              recognitionPath = .server
+            }
           case .failure(let reason):
             recognitionPath = .localAfterServerFailure
             serverFailure = reason
           }
         }
-        if remoteWindows == nil, let remote, !remote.localModelProvisioned {
+        if serverResult == nil, let remote, !remote.localModelProvisioned {
           // No local model: keep the audio for a retry; nothing is inserted (FR-018).
           await keepForRetry(
             session: &session, audio: audio, reason: serverFailure ?? .unreachable,
             remote: remote)
           return
         }
-        if remoteWindows == nil { live.acquire(lifecycle, session: session.id, boost: boost) }
+        if serverResult == nil { live.acquire(lifecycle, session: session.id, boost: boost) }
       }
       status = cancelled ? "Cancelling…" : "Transcribing locally…"
       let result: TranscriptionResult
-      if let remoteWindows {
-        failureStage = "assembling the server's windows"
-        result = await transcriber.transcribe(
-          sampleCount: audio.sampleCount, remote: remoteWindows.windows, model: remoteWindows.model
-        ).normalizedForDelivery(vocabulary: session.vocabulary ?? .empty)
-        remote?.completed(remoteWindows, dictation: session.id)
+      if let serverResult {
+        result = serverResult
       } else {
         // A key release during a cold load still transcribes; a cancel stops the load.
         failureStage = "loading the speech model"

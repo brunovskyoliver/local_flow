@@ -43,9 +43,18 @@ final class ServerSettingsModel {
   var approved: Bool { routing.remote.routesToServer }
 
   var useForEverything: Bool {
-    get { preferences.useServerForEverything }
+    get { preferences.useServerForEverything || serverOnly }
     set {
       preferences.useServerForEverything = newValue
+      checkResult = nil
+    }
+  }
+
+  /// No model loads on this Mac; it forces the switch and every override to the server.
+  var serverOnly: Bool {
+    get { preferences.serverOnly }
+    set {
+      preferences.serverOnly = newValue
       checkResult = nil
     }
   }
@@ -55,9 +64,15 @@ final class ServerSettingsModel {
     case .server: return "On your server"
     case .custom: return "On your custom server"
     case .thisMac:
+      if serverOnly { return approved && consentMissing(row) ? "Needs consent" : "Unavailable" }
       return approved && useForEverything && !routing.offered(row.service)
         ? "Not offered by this server" : "On this Mac"
     }
+  }
+
+  private func consentMissing(_ row: Row) -> Bool {
+    (row == .summaries || row == .meetings) && !routing.consentCurrent
+      && routing.offered(row.service)
   }
 
   /// One line for all four services: "Everything on your server", or each place with
@@ -87,7 +102,7 @@ final class ServerSettingsModel {
   // MARK: Advanced (US4)
 
   var rewriteOverride: AppPreferences.ServerOverride {
-    get { preferences.serverRewriteOverride }
+    get { serverOnly ? .server : preferences.serverRewriteOverride }
     set {
       preferences.serverRewriteOverride = newValue
       checkResult = nil
@@ -96,7 +111,7 @@ final class ServerSettingsModel {
 
   /// Custom names the Summaries section's server, so its address, model and key apply.
   var summariesOverride: AppPreferences.ServerOverride {
-    get { preferences.serverSummariesOverride }
+    get { serverOnly ? .server : preferences.serverSummariesOverride }
     set {
       preferences.serverSummariesOverride = newValue
       if newValue == .custom { preferences.summaryServer = .remote }
@@ -106,7 +121,7 @@ final class ServerSettingsModel {
 
   /// Meetings: Your server or This Mac (no custom server for meeting audio).
   var meetingsOverride: AppPreferences.ServerOverride {
-    get { preferences.serverMeetingsOverride }
+    get { serverOnly ? .server : preferences.serverMeetingsOverride }
     set {
       preferences.serverMeetingsOverride = newValue
       checkResult = nil
@@ -126,8 +141,8 @@ final class ServerSettingsModel {
   /// Settings › Models (FR-016): where a model's work runs, or nil before approval.
   func modelPlace(_ service: ServerService) -> String? {
     guard approved else { return nil }
-    guard routing.servedByServer(service) else { return "On this Mac" }
-    return service == .dictation
+    guard routing.servedByServer(service) else { return serverOnly ? "Unavailable" : "On this Mac" }
+    return service == .dictation && !serverOnly
       ? "On this Mac (used if the server is unreachable)" : "On your server"
   }
   var dictationServed: Bool { routing.servedByServer(.dictation) }
@@ -174,6 +189,21 @@ struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
             .labelsHidden().toggleStyle(.switch)
             .accessibilityIdentifier("settings.serverUseForEverything")
         }
+        .disabled(model.serverOnly)
+      }
+      if model.approved || model.serverOnly {
+        SottoPalette.line.frame(height: 1)
+        SettingsRow(
+          "Server only",
+          detail:
+            "Never load models on this Mac. Without the server, dictation keeps the audio for a retry and meetings wait."
+        ) {
+          Toggle("Server only", isOn: $model.serverOnly)
+            .labelsHidden().toggleStyle(.switch)
+            .accessibilityIdentifier("settings.serverOnly")
+        }
+      }
+      if model.approved {
         if model.remote.needsConsentUpdate && model.useForEverything {
           SottoPalette.line.frame(height: 1)
           SettingsRow(
@@ -250,6 +280,7 @@ struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
       if custom { Text("Custom server").tag(AppPreferences.ServerOverride.custom) }
     }
     .labelsHidden().tint(SottoPalette.ink).frame(width: 150)
+    .disabled(model.serverOnly)
     .accessibilityLabel("\(service) runs on")
     .accessibilityIdentifier("settings.serverOverride.\(service.lowercased())")
   }

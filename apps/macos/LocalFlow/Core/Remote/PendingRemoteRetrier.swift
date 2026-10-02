@@ -106,8 +106,10 @@ actor PendingRemoteRetrier {
     running = Task {
       while !Task.isCancelled {
         await self.runDue()
+        // ponytail: polls every 10 s so a row added after this sleep began (due in
+        // 10 s) is not left for 10 min; add a wake call if the poll ever shows up.
         let wait = await self.millisecondsUntilNextDue()
-        do { try await sleep(.milliseconds(min(wait, 600_000))) } catch { return }
+        do { try await sleep(.milliseconds(min(wait, 10_000))) } catch { return }
       }
     }
   }
@@ -133,7 +135,11 @@ actor PendingRemoteRetrier {
   private func retry(_ item: PendingRemoteDictationStore.Item) async -> Bool {
     let url = store.audioURL(item)
     guard let samples = try? Self.readSamples(url, count: item.sampleCount) else {
+      // Retrying cannot fix the file: stop and let the user decide.
       log.error("Pending remote audio unreadable")
+      try? await store.recordAttempt(
+        id: item.id, failure: item.lastFailure ?? .unreachable, nextAttemptAt: Int64.max)
+      onDecisionNeeded?(item)
       return false
     }
     // The Dictionary is read again at retry time, not taken from the failed attempt.
@@ -151,7 +157,11 @@ actor PendingRemoteRetrier {
         let recognized = await transcriber.transcribe(
           sampleCount: samples.count, remote: result.windows, model: result.model
         ).normalizedForDelivery(vocabulary: snapshot)
-        if await save(recognized, item: item, path: .server, failure: .pendingRetry) {
+        // Failed windows and no text keep the audio waiting; `save` would delete it.
+        let failedEmpty =
+          recognized.incomplete
+          && recognized.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if !failedEmpty, await save(recognized, item: item, path: .server, failure: .pendingRetry) {
           return true
         }
         failure = .protocolError

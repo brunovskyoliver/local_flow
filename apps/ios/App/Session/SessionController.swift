@@ -232,7 +232,8 @@ final class SessionController {
         spool: dictation.spool, sampleCount: samples, dictationID: dictation.id,
         stopReason: stopReason)
       if output.text.isEmpty {
-        report(dictation.requestID, .empty, notify: false)
+        // A failed recognition with no text is a failure, not silence.
+        report(dictation.requestID, output.quality == .incomplete ? .failed : .empty, notify: false)
       } else {
         // History first; a failed write still delivers the text (FR-023).
         do {

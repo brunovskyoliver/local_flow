@@ -239,6 +239,9 @@ protocol ResourceRecording: Sendable {
   func record(_ sample: MeasurementSample)
 }
 
+/// Server only is on and no server session could start; the local model never loads.
+enum ServerOnlyFailure: Error { case serverUnavailable }
+
 /// Bounded, content-free explanations suitable for both UI and local diagnostics.
 enum DictationErrorMessage {
   static func describe(_ error: Error) -> String {
@@ -281,6 +284,9 @@ enum DictationErrorMessage {
       case .staleLease: return "The speech model session expired. Try again."
       case .cancelled: return "The operation was cancelled."
       }
+    }
+    if error is ServerOnlyFailure {
+      return "Server only is on, but this Mac can't use your server. Check Settings › Server."
     }
     if let failure = error as? VocabularyEditError {
       switch failure.code {

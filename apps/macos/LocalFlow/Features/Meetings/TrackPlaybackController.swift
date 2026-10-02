@@ -33,6 +33,10 @@ final class TrackPlaybackController {
   @ObservationIgnored private var items: [ObjectIdentifier: QueuedSegment] = [:]
   @ObservationIgnored private var timeObserver: Any?
   @ObservationIgnored private var endObserver: NSObjectProtocol?
+  /// Tests play real audio; muted keeps `make check` silent.
+  @ObservationIgnored private let muted: Bool
+
+  init(muted: Bool = false) { self.muted = muted }
 
   var hasPlayableAudio: Bool { !queued.isEmpty }
   /// The queued segment the position lies in; nil until something is loaded.
@@ -80,6 +84,7 @@ final class TrackPlaybackController {
     guard !newItems.isEmpty else { return }
     let player = AVQueuePlayer(items: newItems)
     player.actionAtItemEnd = .advance
+    player.isMuted = muted
     self.player = player
     timeObserver = player.addPeriodicTimeObserver(
       forInterval: CMTime(value: 1, timescale: 4), queue: .main

@@ -21,6 +21,7 @@ PHASES = {
     "tests": "B00000000000000000000068",
     # Created by scripts/add-speech-worker-target.py.
     "flowd-speech": "F0145000000000000000000B",
+    "flowd-meeting": "F0146000000000000000000B",
 }
 
 

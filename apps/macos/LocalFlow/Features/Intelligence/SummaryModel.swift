@@ -38,6 +38,9 @@ final class SummaryModel {
   /// `MeetingDetailView` sets this once; it switches the tab and reveals the
   /// segment or paragraph. Nil makes `openSource` a no-op.
   var onOpenSource: (@MainActor (SourceRequest) -> Void)?
+  /// A click on a speaker's name: the detail view opens Assign speakers on that root.
+  var onOpenSpeaker: (@MainActor (UUID) -> Void)?
+  static let speakerLinkScheme = "localflow-speaker"
 
   /// "Generated 20 Sep, 10:14 · AI-generated" — the succeeded header's second
   /// half. The AI-generated tag is always part of it (FR-037).
@@ -284,17 +287,39 @@ final class SummaryModel {
     SpeakerMentionMatcher(speakers: speakers).mentions(in: text)
   }
 
-  /// Summary text with every speaker's name in the color the transcript gives them.
+  /// Summary text with every speaker's name in the color the transcript gives them,
+  /// linked to Assign speakers. A summary written before a speaker was named says
+  /// "Speaker 1"; it shows the current name instead.
   func highlighted(_ text: String) -> Text {
     if let cached = highlightCache[text] { return Text(cached) }
-    var attributed = AttributedString(text)
-    for mention in speakerMentions(in: text) {
+    let choices = ownerChoices
+    let shown = Self.renamed(
+      text, zip(speakerSummaries, choices).map { ($0.anonymousLabel, $1.label) })
+    var attributed = AttributedString(shown)
+    for mention in speakerMentions(in: shown) {
       guard let range = Range(mention.range, in: attributed) else { continue }
       attributed[range].foregroundColor = SpeakerPalette.color(mention.colorIndex)
+      // ponytail: the color index names the speaker; two roots sharing a palette slot
+      // link to the first. Carry the root id through the matcher if that happens.
+      if let id = choices.first(where: { $0.colorIndex == mention.colorIndex })?.id {
+        attributed[range].link = URL(string: "\(Self.speakerLinkScheme)://\(id.uuidString)")
+      }
     }
     if highlightCache.count >= Self.highlightCacheCapacity { highlightCache.removeAll() }
     highlightCache[text] = attributed
     return Text(attributed)
+  }
+
+  /// `text` with each anonymous label ("Speaker 1", not "Speaker 10") replaced by the
+  /// speaker's current name.
+  static func renamed(_ text: String, _ labels: [(anonymous: String, name: String)]) -> String {
+    labels.reduce(text) { shown, label in
+      guard label.anonymous != label.name else { return shown }
+      return shown.replacingOccurrences(
+        of: "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: label.anonymous)
+          + "(?![\\p{L}\\p{N}])",
+        with: NSRegularExpression.escapedTemplate(for: label.name), options: .regularExpression)
+    }
   }
 
   /// Sorted `s:`/`n:` ids joined by `,` — the re-match input R13 compares
@@ -716,7 +741,10 @@ struct SpeakerMentionMatcher {
     for speaker in speakers where speaker.name != "You" {
       let name = speaker.name.replacingOccurrences(of: " (You)", with: "")
       names.append((name, speaker.colorIndex))
-      if let first = name.split(separator: " ").first, first.count >= 3, first != name[...] {
+      // "Speaker 1" has no first name: a bare "Speaker" is not a mention.
+      if let first = name.split(separator: " ").first, first.count >= 3, first != name[...],
+        name.last?.isNumber != true
+      {
         names.append((String(first), speaker.colorIndex))
       }
     }
@@ -724,7 +752,8 @@ struct SpeakerMentionMatcher {
       // ponytail: up to three trailing lowercase letters cover Slovak case endings
       // ("Olivera"); a stemmer if names in other languages slip through.
       let pattern =
-        "(?<!\\p{L})" + NSRegularExpression.escapedPattern(for: name) + "\\p{Ll}{0,3}(?!\\p{L})"
+        "(?<!\\p{L})" + NSRegularExpression.escapedPattern(for: name)
+        + "\\p{Ll}{0,3}(?![\\p{L}\\p{N}])"
       guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
       return (regex, colorIndex)
     }

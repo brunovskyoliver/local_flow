@@ -116,6 +116,9 @@ type Participant struct {
 	Origin         string  `json:"origin"`
 	KnownSpeakerID *string `json:"known_speaker_id"`
 	Name           *string `json:"name"`
+	// Label is how the app shows an unnamed speaker ("Speaker 2", "You"), so the
+	// summary's "Speaker 2" is the transcript's Speaker 2.
+	Label *string `json:"label"`
 }
 
 type Segment struct {
@@ -256,6 +259,9 @@ func (r *Request) validate(inputLimit int) error {
 		}
 		if len(p.Origin) > MaxOriginBytes {
 			return invalid("origin over 32 bytes")
+		}
+		if p.Label != nil && (len(*p.Label) < 1 || len(*p.Label) > MaxNameBytes) {
+			return invalid("participant label must be 1..80 bytes")
 		}
 	}
 	textBytes := 0

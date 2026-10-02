@@ -166,6 +166,8 @@ enum RemoteClientMessage: Sendable, Equatable {
   /// A meeting job of `sampleCount` s16le samples; options per kind (contract table).
   case meetingJob(op: Int, job: RemoteMeetingJob)
   case meetingCancel(op: Int)
+  /// A handed-off meeting: upload, start, poll, download or delete (one reply each).
+  case handoff(op: Int, request: RemoteHandoffRequest)
 
   func encoded() throws -> Data {
     var object: [String: Any] = ["schema_version": RemoteProtocol.schemaVersion]
@@ -219,6 +221,13 @@ enum RemoteClientMessage: Sendable, Equatable {
       if let speakers = job.numSpeakers { object["num_speakers"] = speakers }
     case .meetingCancel(let op):
       object.merge(["type": "meeting_cancel", "op": op]) { $1 }
+    case .handoff(let op, let request):
+      object.merge(["type": "handoff", "op": op, "action": request.action.rawValue]) { $1 }
+      if let meeting = request.meeting { object["meeting"] = meeting.uuidString }
+      if let name = request.name { object["name"] = name }
+      if let offset = request.offset { object["offset"] = offset }
+      if let data = request.data { object["data"] = data.base64URL }
+      if let sha256 = request.sha256 { object["sha256"] = sha256 }
     }
     let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     guard data.count <= RemoteProtocol.maximumControlBytes else {
@@ -376,6 +385,7 @@ enum RemoteServerMessage: Sendable {
   case meetingProgress(op: Int, state: String, position: Int?)
   case meetingResult(
     op: Int, result: RemoteMeetingResult, processingMs: Int, model: RemoteCapabilities.Model)
+  case handoffReply(op: Int, reply: RemoteHandoffReply)
   case error(op: Int?, code: RemoteErrorCode)
 
   var op: Int? {
@@ -384,7 +394,8 @@ enum RemoteServerMessage: Sendable {
     case .enrolled(let op, _, _), .tokens(let op, _, _, _), .dictationAccepted(let op, _, _),
       .progress(let op, _), .dictationComplete(let op, _), .cancelled(let op),
       .rewriteEvent(let op, _), .analysisEventPart(let op, _, _), .analysisEvent(let op, _, _, _),
-      .liveResult(let op, _, _), .meetingProgress(let op, _, _), .meetingResult(let op, _, _, _):
+      .liveResult(let op, _, _), .meetingProgress(let op, _, _), .meetingResult(let op, _, _, _),
+      .handoffReply(let op, _):
       op
     case .windowResult(let result): result.op
     case .error(let op, _): op
@@ -500,6 +511,8 @@ enum RemoteServerMessage: Sendable {
           processingMs: try int("processing_ms"),
           model: try decoder.decode(
             RemoteCapabilities.Model.self, from: JSONSerialization.data(withJSONObject: model)))
+      case "handoff_reply":
+        return .handoffReply(op: try op(), reply: try RemoteHandoffReply(object))
       case "error":
         guard let code = RemoteErrorCode(rawValue: try string("code")) else {
           throw RemoteProtocolError.invalidMessage
@@ -656,5 +669,102 @@ extension Data {
       of: "_", with: "/")
     base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
     self.init(base64Encoded: base64)
+  }
+}
+
+/// `handoff`: one action on a meeting handed to the server (or `list`, on none).
+struct RemoteHandoffRequest: Sendable, Equatable {
+  enum Action: String, Sendable { case put, start, list, get, delete }
+  var action: Action
+  var meeting: UUID?
+  var name: String?
+  var offset: Int?
+  var data: Data?
+  var sha256: String?
+}
+
+/// `handoff_reply`. `state` is absent only on a `list` reply, which has `meetings`.
+struct RemoteHandoffReply: Sendable, Equatable {
+  enum State: String, Sendable { case receiving, queued, processing, done, failed, missing }
+  struct Entry: Sendable, Equatable {
+    let meeting: UUID
+    let state: State
+    let detail: String?
+  }
+  var state: State?
+  var meeting: UUID?
+  var name: String?
+  var offset: Int?
+  var data: Data?
+  var size: Int?
+  var sha256: String?
+  var detail: String?
+  var meetings: [Entry]?
+
+  init(
+    state: State? = nil, meeting: UUID? = nil, name: String? = nil, offset: Int? = nil,
+    data: Data? = nil, size: Int? = nil, sha256: String? = nil, detail: String? = nil,
+    meetings: [Entry]? = nil
+  ) {
+    self.state = state
+    self.meeting = meeting
+    self.name = name
+    self.offset = offset
+    self.data = data
+    self.size = size
+    self.sha256 = sha256
+    self.detail = detail
+    self.meetings = meetings
+  }
+
+  init(_ object: [String: Any]) throws {
+    func state(_ value: Any?) throws -> State? {
+      guard let value else { return nil }
+      guard let raw = value as? String, let state = State(rawValue: raw) else {
+        throw RemoteProtocolError.invalidMessage
+      }
+      return state
+    }
+    func uuid(_ value: Any?) throws -> UUID? {
+      guard let value else { return nil }
+      guard let raw = value as? String, let id = UUID(uuidString: raw) else {
+        throw RemoteProtocolError.invalidMessage
+      }
+      return id
+    }
+    func count(_ key: String) throws -> Int? {
+      guard let value = object[key] else { return nil }
+      guard let number = integer(value), number >= 0 else {
+        throw RemoteProtocolError.invalidMessage
+      }
+      return number
+    }
+    self.state = try state(object["state"])
+    meeting = try uuid(object["meeting"])
+    name = object["name"] as? String
+    offset = try count("offset")
+    size = try count("size")
+    sha256 = object["sha256"] as? String
+    detail = object["detail"] as? String
+    if let text = object["data"] {
+      guard let text = text as? String, let decoded = Data(base64URL: text) else {
+        throw RemoteProtocolError.invalidMessage
+      }
+      data = decoded
+    }
+    if let list = object["meetings"] {
+      guard let list = list as? [[String: Any]] else { throw RemoteProtocolError.invalidMessage }
+      meetings = try list.map { entry in
+        guard let id = try uuid(entry["meeting"]), let state = try state(entry["state"]) else {
+          throw RemoteProtocolError.invalidMessage
+        }
+        let detail = entry["detail"] as? String
+        guard detail == nil || state == .failed else { throw RemoteProtocolError.invalidMessage }
+        return Entry(meeting: id, state: state, detail: detail)
+      }
+    }
+    guard (self.state == nil) == (meetings != nil), detail == nil || self.state == .failed else {
+      throw RemoteProtocolError.invalidMessage
+    }
   }
 }

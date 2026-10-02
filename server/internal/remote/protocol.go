@@ -14,6 +14,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -59,6 +60,15 @@ const (
 	maxClusters          = 256
 	maxVectorLength      = 4096
 	maxRetryDepth        = 2
+)
+
+// Meeting handoff bounds. A chunk is 48,000 bytes, not 49,152: base64url of
+// 49,152 bytes alone fills the 65,536-byte control message.
+const (
+	MaxHandoffChunkBytes = 48000
+	MaxHandoffFileBytes  = 1 << 30
+	maxHandoffList       = 64
+	maxHandoffDetail     = 64
 )
 
 // MeetingSamples is the sample_count range of each meeting job kind.
@@ -203,7 +213,7 @@ var MessageTypes = []string{
 	"window_result", "progress", "dictation_end", "dictation_cancel", "dictation_complete",
 	"cancelled", "rewrite", "rewrite_event", "analysis_part", "analysis", "analysis_event_part",
 	"analysis_event", "live_window", "live_result", "meeting_job", "meeting_progress", "meeting_result",
-	"meeting_cancel", "error",
+	"meeting_cancel", "handoff", "handoff_reply", "error",
 }
 
 // Ready carries Capabilities on session channels (Feature 018); a ready
@@ -498,6 +508,41 @@ type MeetingCancel struct {
 	Op int64 `json:"op"`
 }
 
+// Handoff is one meeting handoff request: put a chunk of a file, start
+// processing, list, get a chunk of the processed bundle, or delete. Meeting is
+// absent for list only; Name and Offset belong to put (Offset also to get);
+// Data and SHA256 to put only.
+type Handoff struct {
+	Op      int64  `json:"op"`
+	Action  string `json:"action"`
+	Meeting string `json:"meeting,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Offset  *int64 `json:"offset,omitempty"`
+	Data    Base64 `json:"data,omitempty"`
+	SHA256  string `json:"sha256,omitempty"`
+}
+
+// HandoffReply answers one handoff. State is absent exactly when Meetings
+// (the list reply) is present.
+type HandoffReply struct {
+	Op       int64             `json:"op"`
+	State    string            `json:"state,omitempty"`
+	Meeting  string            `json:"meeting,omitempty"`
+	Name     string            `json:"name,omitempty"`
+	Offset   *int64            `json:"offset,omitempty"`
+	Data     Base64            `json:"data,omitempty"`
+	Size     *int64            `json:"size,omitempty"`
+	SHA256   string            `json:"sha256,omitempty"`
+	Detail   string            `json:"detail,omitempty"`
+	Meetings *[]HandoffMeeting `json:"meetings,omitempty"`
+}
+
+type HandoffMeeting struct {
+	Meeting string `json:"meeting"`
+	State   string `json:"state"`
+	Detail  string `json:"detail,omitempty"`
+}
+
 // ErrorMessage is the error control message. Op is 0 (absent) for hello errors.
 type ErrorMessage struct {
 	Op      int64     `json:"op,omitempty"`
@@ -535,6 +580,8 @@ func (MeetingJob) MessageType() string        { return "meeting_job" }
 func (MeetingProgress) MessageType() string   { return "meeting_progress" }
 func (MeetingResult) MessageType() string     { return "meeting_result" }
 func (MeetingCancel) MessageType() string     { return "meeting_cancel" }
+func (Handoff) MessageType() string           { return "handoff" }
+func (HandoffReply) MessageType() string      { return "handoff_reply" }
 func (ErrorMessage) MessageType() string      { return "error" }
 
 func (m Enroll) OpNumber() int64            { return m.Op }
@@ -561,6 +608,8 @@ func (m MeetingJob) OpNumber() int64        { return m.Op }
 func (m MeetingProgress) OpNumber() int64   { return m.Op }
 func (m MeetingResult) OpNumber() int64     { return m.Op }
 func (m MeetingCancel) OpNumber() int64     { return m.Op }
+func (m Handoff) OpNumber() int64           { return m.Op }
+func (m HandoffReply) OpNumber() int64      { return m.Op }
 func (m ErrorMessage) OpNumber() int64      { return m.Op }
 
 // decoders maps a wire type to a function decoding the strict object (without
@@ -591,6 +640,8 @@ var decoders = map[string]func([]byte) (Message, error){
 	"meeting_progress":    decodeAs[MeetingProgress],
 	"meeting_result":      decodeAs[MeetingResult],
 	"meeting_cancel":      decodeAs[MeetingCancel],
+	"handoff":             decodeAs[Handoff],
+	"handoff_reply":       decodeAs[HandoffReply],
 	"error":               decodeAs[ErrorMessage],
 }
 
@@ -1299,6 +1350,82 @@ func validVector(v []float64) error {
 }
 
 func (m MeetingCancel) validate() (Message, error) { return m, nil }
+
+var handoffName = regexp.MustCompile(`^(bundle\.sqlite|(mic|system)-[0-9]{4}\.aac)$`)
+
+// validMeetingID accepts an uppercase canonical UUID.
+func validMeetingID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, r := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if r != '-' {
+				return false
+			}
+		} else if !strings.ContainsRune("0123456789ABCDEF", r) {
+			return false
+		}
+	}
+	return true
+}
+
+func validHandoffState(s string) bool {
+	switch s {
+	case "receiving", "queued", "processing", "done", "failed", "missing":
+		return true
+	}
+	return false
+}
+
+// validHandoffDetail allows a short lowercase code, on failed only.
+func validHandoffDetail(state, detail string) bool {
+	return detail == "" || (state == "failed" && textWithin(detail, 1, maxHandoffDetail) &&
+		strings.Trim(detail, "abcdefghijklmnopqrstuvwxyz0123456789_") == "")
+}
+
+func (m Handoff) validate() (Message, error) {
+	put, get := m.Action == "put", m.Action == "get"
+	switch m.Action {
+	case "put", "start", "list", "get", "delete":
+	default:
+		return nil, invalid("handoff action")
+	}
+	switch {
+	case (m.Action == "list") != (m.Meeting == "") || (m.Meeting != "" && !validMeetingID(m.Meeting)):
+		return nil, invalid("handoff meeting")
+	case put != (m.Name != "") || (put && !handoffName.MatchString(m.Name)):
+		return nil, invalid("handoff name")
+	case (put || get) != (m.Offset != nil) || (m.Offset != nil && (*m.Offset < 0 || *m.Offset > MaxHandoffFileBytes)):
+		return nil, invalid("handoff offset")
+	case m.Data != nil && (!put || len(m.Data) == 0), m.SHA256 != "" && (!put || !validSHA256(m.SHA256)):
+		return nil, invalid("handoff data")
+	case len(m.Data) > MaxHandoffChunkBytes:
+		return nil, &Error{CodeLimitExceeded, "handoff chunk over 48,000 bytes"}
+	}
+	return m, nil
+}
+
+func (m HandoffReply) validate() (Message, error) {
+	if m.Meetings != nil {
+		if m.State != "" || m.Meeting != "" || m.Name != "" || m.Offset != nil || m.Data != nil || m.Size != nil ||
+			m.SHA256 != "" || m.Detail != "" || len(*m.Meetings) > maxHandoffList {
+			return nil, invalid("handoff list reply")
+		}
+		for _, entry := range *m.Meetings {
+			if !validMeetingID(entry.Meeting) || !validHandoffState(entry.State) || !validHandoffDetail(entry.State, entry.Detail) {
+				return nil, invalid("handoff list entry")
+			}
+		}
+		return m, nil
+	}
+	if !validHandoffState(m.State) || (m.Meeting != "" && !validMeetingID(m.Meeting)) || !validHandoffDetail(m.State, m.Detail) ||
+		(m.Name != "" && !handoffName.MatchString(m.Name)) || (m.Offset != nil && *m.Offset < 0) || (m.Size != nil && *m.Size < 0) ||
+		(m.SHA256 != "" && !validSHA256(m.SHA256)) || len(m.Data) > MaxHandoffChunkBytes {
+		return nil, invalid("handoff reply")
+	}
+	return m, nil
+}
 
 func (m ErrorMessage) validate() (Message, error) {
 	if _, ok := errorMessages[m.Code]; !ok {

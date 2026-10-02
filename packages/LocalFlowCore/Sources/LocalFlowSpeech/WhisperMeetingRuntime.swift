@@ -122,10 +122,15 @@ public final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Senda
 
   /// At most 11 requests: one full window, two halves, then four pieces per
   /// failing half. The final retry is at most 15 seconds for a 120-second input.
+  /// A split piece that still loops is dropped as unrecognizable, like a silence
+  /// hallucination, so one bad stretch no longer fails a whole meeting.
   private func recognize(_ samples: [Float], depth: Int) throws -> TranscriptionWindow {
     let result = try request(samples)
     guard Self.hasRepetition(result.text) else { return result }
-    guard depth < 2, samples.count >= 6_400 else { throw Failure.repetition }
+    guard depth < 2, samples.count >= 6_400 else {
+      if depth > 0 { return TranscriptionWindow(text: "", tokens: []) }
+      throw Failure.repetition
+    }
     let parts = depth == 0 ? 2 : min(4, samples.count / 3_200)
     var text: [String] = []
     var tokens: [TranscriptionToken] = []
@@ -145,8 +150,28 @@ public final class WhisperMeetingRuntime: TranscriptionRuntime, @unchecked Senda
       }
     }
     let combined = text.joined(separator: " ")
-    guard !Self.hasRepetition(combined) else { throw Failure.repetition }
-    return TranscriptionWindow(text: combined, tokens: tokens)
+    guard Self.hasRepetition(combined) else {
+      return TranscriptionWindow(text: combined, tokens: tokens)
+    }
+    // Pieces that loop only together repeat a stock phrase across their seams ("Thank
+    // you for watching."). The speech around it stays; the words lose their timing, so
+    // assembly places the text by the window's bounds.
+    return TranscriptionWindow(text: Self.withoutRepeatedSentences(combined) ?? "", tokens: [])
+  }
+
+  /// `text` without the sentences that repeat a neighbouring one, or nil when what is
+  /// left still loops. ponytail: a real "Yes. Yes." inside a looping window goes too.
+  static func withoutRepeatedSentences(_ text: String) -> String? {
+    var sentences: [String] = []
+    text.enumerateSubstrings(in: text.startIndex..., options: .bySentences) { sentence, _, _, _ in
+      if let sentence { sentences.append(sentence.trimmingCharacters(in: .whitespaces)) }
+    }
+    let keys = sentences.map { $0.lowercased().filter { $0.isLetter || $0.isNumber } }
+    let kept = sentences.indices.filter { index in
+      !keys[index].isEmpty && (index == 0 || keys[index - 1] != keys[index])
+        && (index == keys.count - 1 || keys[index + 1] != keys[index])
+    }.map { sentences[$0] }.joined(separator: " ")
+    return hasRepetition(kept) ? nil : kept
   }
 
   /// Four consecutive copies of a phrase of at least three words are suspect.

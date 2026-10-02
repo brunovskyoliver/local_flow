@@ -102,6 +102,19 @@ func TestNotesBecomePartial(t *testing.T) {
 	}
 }
 
+// An unnamed speaker reaches the model by the app's label, not its position, so
+// the summary's "Speaker 3" is the transcript's Speaker 3.
+func TestAppLabelNamesUnnamedSpeaker(t *testing.T) {
+	req := pipelineRequest("We agreed the invoice template.", "Martin will send it.", "Who approves?")
+	label := "Speaker 3"
+	req.Participants[1].Label = &label
+	s := &scripted{answer: func(string, string, float64) (string, error) { return "## Discussed\n- Invoices\n", nil }}
+	runPipeline(t, req, s)
+	if !strings.Contains(s.calls[0], "Speaker 3: Martin will") {
+		t.Fatalf("transcript: %s", s.calls[0])
+	}
+}
+
 // A part the server refuses for size splits in half until it fits.
 func TestTooLargePartSplits(t *testing.T) {
 	req := pipelineRequest("Alpha budget approved.", "Beta budget approved.", "Gamma budget approved.", "Delta budget approved.")

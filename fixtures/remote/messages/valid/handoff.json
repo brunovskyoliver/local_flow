@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "type": "handoff",
+  "op": 3,
+  "action": "put",
+  "meeting": "5F1C3A2E-9B4D-4E21-8A7C-0D6B2F8E1A93",
+  "name": "mic-0001.aac",
+  "offset": 0,
+  "data": "dGVzdA",
+  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+}

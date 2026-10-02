@@ -2,10 +2,10 @@ import Foundation
 
 /// Deterministic protected-literal verification (research R5, FR-027).
 /// Extracts literals from model text and checks each against the evidence
-/// the item cites: numeric, address and identifier classes match verbatim;
-/// proper nouns match by the stem rule so Slovak inflection survives.
-/// Participant owner names are excluded — they come from the speaker
-/// record, not from model text.
+/// the item cites: numeric, address and identifier classes match verbatim.
+/// Names are not checked: the model sees speaker labels ("Speaker 2",
+/// "Lukáš Kocman") the transcript never says, and Slovak inflection and product
+/// names made the capitalized-word rule drop correct sentences.
 enum ProtectedLiteralDetector {
 
   /// One literal that does not appear in the checked evidence.
@@ -13,22 +13,13 @@ enum ProtectedLiteralDetector {
     var literal: String
   }
 
-  /// Literals in `text` absent from `evidence`. `excluding` names (owner
-  /// names rendered from the speaker record) are skipped by folded equality
-  /// or the stem rule.
-  static func violations(
-    in text: String, evidence: String, excluding names: Set<String> = []
-  ) -> [Violation] {
-    let literals = extract(from: text, excluding: names)
+  /// Literals in `text` absent from `evidence`.
+  static func violations(in text: String, evidence: String) -> [Violation] {
+    let literals = extract(from: text)
     guard !literals.isEmpty else { return [] }
     let haystack = collapseSpaces(evidence)
-    let evidenceTokens = wordTokens(of: evidence)
-    return literals.compactMap { literal in
-      if literal.stem {
-        return evidenceTokens.contains { stemMatch(literal.value, $0) }
-          ? nil : Violation(literal: literal.value)
-      }
-      return haystack.contains(literal.value) ? nil : Violation(literal: literal.value)
+    return literals.compactMap {
+      haystack.contains($0) ? nil : Violation(literal: $0)
     }
   }
 
@@ -56,23 +47,14 @@ enum ProtectedLiteralDetector {
 
   // MARK: Extraction
 
-  private struct Literal {
-    var value: String
-    /// Proper nouns verify by stem; every other class verifies verbatim.
-    var stem = false
-  }
-
-  private static func extract(from text: String, excluding names: Set<String>)
-    -> [Literal]
-  {
-    var literals: [Literal] = []
+  private static func extract(from text: String) -> [String] {
+    var literals: [String] = []
     var covered: [NSRange] = []
     let nsText = text as NSString
 
     for regex in Self.multiTokenRegexes {
       for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
-        literals.append(
-          Literal(value: match.range.length > 0 ? nsText.substring(with: match.range) : ""))
+        literals.append(match.range.length > 0 ? nsText.substring(with: match.range) : "")
         covered.append(match.range)
       }
     }
@@ -81,47 +63,11 @@ enum ProtectedLiteralDetector {
     where !covered.contains(where: { NSIntersectionRange($0, range).length == range.length }) {
       let inner = token.trimmingCharacters(in: edgePunctuation)
       guard !inner.isEmpty else { continue }
-      if Self.tokenClasses.contains(where: { $0(inner) }) {
-        literals.append(Literal(value: inner))
-      } else if isProperNoun(inner, range: range, text: text) {
-        guard !isExcluded(inner, names: names) else { continue }
-        literals.append(Literal(value: inner, stem: true))
-      }
+      if Self.tokenClasses.contains(where: { $0(inner) }) { literals.append(inner) }
     }
 
     var seen: Set<String> = []
-    return literals.filter { !$0.value.isEmpty && seen.insert($0.value).inserted }
-  }
-
-  private static func isExcluded(_ token: String, names: Set<String>) -> Bool {
-    names.contains { name in
-      fold(name) == fold(token)
-        || name.split(whereSeparator: { $0.isWhitespace }).contains {
-          stemMatch(String($0), token)
-        }
-    }
-  }
-
-  /// Capitalized, ≥ 2 characters, not at sentence start, not a stopword.
-  private static func isProperNoun(
-    _ inner: String, range: NSRange, text: String
-  ) -> Bool {
-    guard inner.count >= 2, let first = inner.first, first.isUppercase else {
-      return false
-    }
-    guard !stopWords.contains(fold(inner)) else { return false }
-    var index = range.location
-    let scalars = (text as NSString)
-    while index > 0 {
-      let character = scalars.character(at: index - 1)
-      guard let scalar = Unicode.Scalar(character) else { break }
-      if Character(scalar).isWhitespace {
-        index -= 1
-        continue
-      }
-      return !".!?".contains(Character(scalar))
-    }
-    return false  // first token of the text
+    return literals.filter { !$0.isEmpty && seen.insert($0).inserted }
   }
 
   // MARK: Classes

@@ -35,6 +35,11 @@ final class AppPreferences {
   var unloadLocalModelDuringGames: Bool {
     didSet { defaults.set(unloadLocalModelDuringGames, forKey: "unloadLocalModelDuringGames") }
   }
+  /// The bottom-of-screen pill for finalizing, labeling and summarizing meetings.
+  /// On by default; dictation always shows its pill.
+  var showsBackgroundProgress: Bool {
+    didSet { defaults.set(showsBackgroundProgress, forKey: "showsBackgroundProgress") }
+  }
   /// Off by default: turning it on is the consent to read back the field after insertion.
   var learnCorrections: Bool {
     didSet { defaults.set(learnCorrections, forKey: "learnCorrections") }
@@ -231,7 +236,7 @@ final class AppPreferences {
     RemoteDictationSettings(
       enabled: remoteEnabled && remoteConsentVersion >= Self.remoteDictationConsentVersion,
       serverOrigin: RemoteDictationSettings.origin(remoteServerURL), state: remoteState,
-      fallbackThreshold: remoteFallbackThreshold)
+      fallbackThreshold: remoteFallbackThreshold, localModelsAllowed: !serverOnly)
   }
 
   // Feature 018: one server for every service (data-model.md). These matter only while
@@ -248,6 +253,11 @@ final class AppPreferences {
   var useServerForEverything: Bool {
     get { storedUseServerForEverything ?? remoteSettings().routesToServer }
     set { storedUseServerForEverything = newValue }
+  }
+  /// Server only: no speech or language model loads on this Mac, whatever else is set.
+  /// Work goes to the server, waits for it, or fails.
+  var serverOnly: Bool {
+    didSet { defaults.set(serverOnly, forKey: "server.only") }
   }
   var serverRewriteOverride: ServerOverride {
     didSet { defaults.set(serverRewriteOverride.rawValue, forKey: "server.override.rewrite") }
@@ -297,6 +307,7 @@ final class AppPreferences {
     remoteFallbackThresholdMs =
       defaults.object(forKey: "remote.fallbackThresholdMs") as? Int ?? 1_500
     storedUseServerForEverything = defaults.object(forKey: "server.useForEverything") as? Bool
+    serverOnly = defaults.bool(forKey: "server.only")
     let override = { (key: String) in
       ServerOverride(rawValue: defaults.string(forKey: key) ?? "") ?? .server
     }
@@ -330,6 +341,7 @@ final class AppPreferences {
     unloadLocalModelDuringGames =
       defaults.object(forKey: "unloadLocalModelDuringGames") as? Bool ?? true
     learnCorrections = defaults.bool(forKey: "learnCorrections")
+    showsBackgroundProgress = defaults.object(forKey: "showsBackgroundProgress") as? Bool ?? true
     setupVersion = defaults.integer(forKey: "setupVersion")
     rewriteEnabled = defaults.bool(forKey: "rewriteEnabled")
     rewriteEndpoint = defaults.string(forKey: "rewriteEndpoint") ?? ""

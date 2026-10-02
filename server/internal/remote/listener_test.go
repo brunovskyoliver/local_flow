@@ -1004,3 +1004,20 @@ func TestLogsAreContentFree(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+func TestRecentFrameKeepsChannelAliveWithoutPong(t *testing.T) {
+	clock := &manualClock{now: time.Unix(1_000, 0)}
+	c := &Conn{listener: &Listener{cfg: Config{Clock: clock}}}
+	if c.heardWithin(PingInterval) {
+		t.Fatal("a channel that never sent a frame counts as heard")
+	}
+	c.lastFrame.Store(clock.Now().UnixNano())
+	clock.Advance(PingInterval - time.Second)
+	if !c.heardWithin(PingInterval) {
+		t.Fatal("a frame inside the interval does not count")
+	}
+	clock.Advance(2 * time.Second)
+	if c.heardWithin(PingInterval) {
+		t.Fatal("a frame older than the interval still counts")
+	}
+}

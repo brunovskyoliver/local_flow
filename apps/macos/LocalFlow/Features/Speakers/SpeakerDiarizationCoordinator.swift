@@ -120,6 +120,14 @@ final class SpeakerDiarizationCoordinator: DiarizationObserving {
   /// After `final` is published and the finalization lease has finished. The
   /// summary is told once speaker work settles — a run that ends here, or at
   /// once when diarization is off, unavailable or refused (FR-002).
+  func meetingDidReturnFromServer(id: UUID, labeled: Bool) {
+    // The same follow-up as a run that succeeded here; the server's run is adopted.
+    let identifying = labeled && (identification?.diarizationDidAdopt(meetingID: id) ?? false)
+    if labeled { intelligence?.evidenceDidChange(meetingID: id) }
+    if !identifying { intelligence?.meetingSpeakersDidSettle(id: id) }
+    Task { await refresh(id) }
+  }
+
   func meetingTranscriptDidFinalize(id: UUID, echoProfile: EchoGate.Profile?) {
     if let echoProfile { keepEchoProfile(echoProfile, for: id) }
     guard automaticEnabled() else {

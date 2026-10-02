@@ -81,12 +81,13 @@ struct AnalysisRequest: Encodable, Sendable, Equatable {
     let origin: String
     let knownSpeakerID: UUID?
     let name: String?
+    var label: String? = nil
 
     enum CodingKeys: String, CodingKey {
       case speakerID = "speaker_id"
       case certainty, origin
       case knownSpeakerID = "known_speaker_id"
-      case name
+      case name, label
     }
   }
 

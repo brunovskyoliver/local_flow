@@ -46,6 +46,7 @@ struct MeetingDetailView: View {
   @State private var playingKind: MeetingTrackKind?
   @State private var pager: TranscriptPager?
   @State private var assigningSpeakers: AssignSpeakersModel?
+  @State private var assigningFocus: UUID?
   /// FR-023a: the one-time "Look for this voice in past meetings?" prompt.
   @State private var pastSearchPrompt: PastSearchPrompt?
   /// Marks the enrollment callback this note installed, so it clears only its own.
@@ -174,6 +175,7 @@ struct MeetingDetailView: View {
           editor.reveal(paragraph: ordinal, hash: hash)
         }
       }
+      created?.onOpenSpeaker = { id in openAssignSpeakers(focus: id) }
       summaryModel = created
       guard let transcriptStore else { return }
       let loaded = TranscriptPager(
@@ -238,7 +240,11 @@ struct MeetingDetailView: View {
             }
           },
           structureChanged: { Task { await pager?.refreshLabels() } },
-          close: { assigningSpeakers = nil }
+          close: {
+            assigningSpeakers = nil
+            Task { await summaryModel?.refresh() }
+          },
+          initialFocus: assigningFocus
         )
         .transition(.opacity)
       }
@@ -606,8 +612,9 @@ struct MeetingDetailView: View {
     Task { await diarization?.requestRun(meetingID: id, revision: nil, trigger: trigger) }
   }
 
-  private func openAssignSpeakers() {
+  private func openAssignSpeakers(focus: UUID? = nil) {
     guard let diarization else { return }
+    assigningFocus = focus
     guard showsIdentification, let coordinator = identification else {
       let model = AssignSpeakersModel(meetingID: meeting.id, store: diarization.store)
       model.intelligence = intelligence
