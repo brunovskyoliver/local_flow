@@ -130,11 +130,13 @@ final class KeyboardSessionModelTests: XCTestCase {
     model.refresh()
     _ = model.tap()
     try writeSession(.finishing)
+    XCTAssertFalse(model.slowResult)
     for _ in 0..<KeyboardSessionModel.resultWaits {
       runScheduled(KeyboardSessionModel.resultTimeout)
       model.pong()
       runScheduled(KeyboardSessionModel.pongTimeout)
       XCTAssertEqual(model.surface, .transcribing)
+      XCTAssertTrue(model.slowResult)
     }
     try store.write(result(requestID, "Late."), .result)
     model.checkResult()

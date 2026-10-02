@@ -66,6 +66,13 @@ struct ListeningView: View {
       VStack(spacing: 10) {
         RollingWave(ink: SottoPalette.ink, scale: 3)
         Text("Transcribing").font(.flow(size: 16, weight: .medium))
+        if model.slowResult {
+          Text(
+            "Preparing the speech model. The first dictation after an update can take a minute."
+          )
+          .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+          .multilineTextAlignment(.center).padding(.horizontal, 24)
+        }
       }
       .accessibilityElement(children: .combine)
     case .notice(let notice):

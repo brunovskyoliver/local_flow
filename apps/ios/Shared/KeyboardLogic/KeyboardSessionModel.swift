@@ -151,6 +151,10 @@ final class KeyboardSessionModel {
       inputName: session.inputName)
   }
 
+  /// Past the first 15 s with LocalFlow still answering: almost always the first model
+  /// load after an install or update.
+  var slowResult: Bool { (pending?.waits ?? 0) > 0 }
+
   func barStatus(now: Date) -> String? {
     guard hasFullAccess else { return "Full Access is off" }
     guard sessionView != .none else { return nil }

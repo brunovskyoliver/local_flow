@@ -14,7 +14,7 @@ struct SessionView: View {
         Text("Swipe right on the bottom bar, or tap ◀ in the top-left corner, to go back.")
           .font(.flow(size: 16)).foregroundStyle(SottoPalette.muted)
         if controller.sessionFile()?.idleTimeout == IdleTimeout.never.rawValue {
-          Text("This session won’t end on its own. End it here or from the keyboard’s ☰ menu.")
+          Text("This session won’t end on its own. End it here.")
             .font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
         } else if let deadline = controller.session?.idleDeadline {
           TimelineView(.periodic(from: .now, by: 1)) { context in
