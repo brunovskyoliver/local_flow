@@ -94,6 +94,7 @@ var sessionStarts = map[string]string{
 	"analysis_part":   "analysis",
 	"live_window":     "live_window",
 	"meeting_job":     "meeting_job",
+	"handoff":         "handoff",
 }
 
 // SessionCapabilities lists the session operations registered in ops, so the
@@ -493,8 +494,12 @@ type Conn struct {
 	idle       Timer
 	ping       Timer
 	outcome    string
-	closeOnce  sync.Once
-	done       chan struct{}
+	// lastFrame is when the client's last frame arrived (Clock nanoseconds). A
+	// client uploading meeting audio over a slow link answers pings late, behind
+	// its own queued frames; arriving frames prove it is alive.
+	lastFrame atomic.Int64
+	closeOnce sync.Once
+	done      chan struct{}
 }
 
 // ID is the channel's process-local number, for logs.
@@ -628,6 +633,7 @@ func (c *Conn) runningOp() int64 {
 // handle dispatches one authentic frame after ready. It returns false once
 // the channel has been closed.
 func (c *Conn) handle(ctx context.Context, frame Frame) bool {
+	c.lastFrame.Store(c.Now().UnixNano())
 	op, running := c.running()
 	// Feature 014 T085: an operation that has already ended (Done closed, for
 	// example right after dictation_complete) is finished before dispatch, so
@@ -803,7 +809,8 @@ func (c *Conn) stopIdle() {
 	}
 }
 
-// armPing pings every 15 s; a ping that gets no pong closes the channel.
+// armPing pings every 15 s; a ping that gets no pong closes the channel unless
+// a frame arrived within the last interval.
 func (c *Conn) armPing() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -815,11 +822,17 @@ func (c *Conn) armPing() {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), PingInterval)
 			defer cancel()
-			if err := c.socket.ws.Ping(ctx); err != nil && !c.closed() {
+			err := c.socket.ws.Ping(ctx)
+			if err != nil && !c.closed() && !c.heardWithin(PingInterval) {
 				c.closeWith(websocket.StatusPolicyViolation, "ping")
 			}
 		}()
 	})
+}
+
+func (c *Conn) heardWithin(d time.Duration) bool {
+	last := c.lastFrame.Load()
+	return last != 0 && c.Now().Sub(time.Unix(0, last)) < d
 }
 
 // Registry holds live channels, by user and device once authenticated.

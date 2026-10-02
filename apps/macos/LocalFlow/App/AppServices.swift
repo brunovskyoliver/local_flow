@@ -142,7 +142,9 @@ final class AppServices {
     guard coordinator != nil else { return setupStatus }
     if installing { return "Installing speech model…" }
     if modelCommandInProgress { return "Preparing speech model…" }
-    guard modelInstalled else { return "Install the local speech model in Settings." }
+    guard modelInstalled || preferences.serverOnly else {
+      return "Install the local speech model in Settings."
+    }
     guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
       return "Allow Microphone in Settings."
     }
@@ -339,6 +341,10 @@ final class AppServices {
       self.meetingModelProvisioner = meetingProvisioner
       let recorder = recorder
       let vocabulary = VocabularyStore(history: paths.1)
+      // Server only: every local model refuses to load, whoever asks for it.
+      let localModelsOff: @Sendable () async -> Bool = { [weak self] in
+        await MainActor.run { self?.preferences.serverOnly == true }
+      }
       let lifecycle = ModelLifecycleCoordinator(
         observe: { state, workload, duration in
           if duration == 0 {
@@ -384,7 +390,7 @@ final class AppServices {
           }
         },
         diarizationFactory: {
-          guard let diarizationProvisioner else {
+          guard await !localModelsOff(), let diarizationProvisioner else {
             throw DiarizationFailureCategory.modelUnavailable
           }
           let local: LocalModelDescriptor
@@ -411,7 +417,7 @@ final class AppServices {
           return runtime
         },
         voiceEmbeddingFactory: {
-          guard let diarizationProvisioner else {
+          guard await !localModelsOff(), let diarizationProvisioner else {
             throw IdentificationFailureCategory.modelUnavailable
           }
           let local: LocalModelDescriptor
@@ -426,6 +432,7 @@ final class AppServices {
           return try await FluidAudioVoiceEmbedderFactory(descriptor: local).makeRuntime()
         },
         meetingFactory: { [weak self] language in
+          guard await !localModelsOff() else { throw DictationFailure.modelUnavailable }
           let local: LocalModelDescriptor
           do {
             local = try await meetingProvisioner.verifiedLocalDescriptor()
@@ -444,6 +451,7 @@ final class AppServices {
             model: local, language: language, promptTerms: terms ?? [])
         },
         factory: { [weak self] in
+          guard await !localModelsOff() else { throw DictationFailure.modelUnavailable }
           let local: LocalModelDescriptor
           do {
             local = try await provisioner.verifiedLocalDescriptor()
@@ -482,7 +490,7 @@ final class AppServices {
         transports: URLSessionRemoteTransportOpener(),
         enrollment: { [weak self] in self?.remoteEnrollment() },
         pending: { [weak self] in self?.pendingRemoteStore },
-        localModelProvisioned: { [weak self] in self?.modelInstalled == true },
+        localModelProvisioned: { [weak self] in self?.localSpeechAvailable == true },
         askAboutAudio: { [weak self] audio, count in
           await self?.askAboutUnkeptAudio(audio, sampleCount: count)
         })
@@ -691,7 +699,7 @@ final class AppServices {
       historyModel?.pendingRemote = HistoryViewModel.PendingRemoteActions(
         load: { (try? await pendingStore.all()) ?? [] },
         recognizeLocally: { [weak self] id in
-          guard self?.modelInstalled == true, let retrier = self?.pendingRetrier else {
+          guard self?.localSpeechAvailable == true, let retrier = self?.pendingRetrier else {
             throw DictationFailure.modelUnavailable
           }
           _ = try await retrier.recognizeLocally(
@@ -699,7 +707,7 @@ final class AppServices {
         },
         export: { id, url in try await pendingStore.exportWAV(id: id, to: url) },
         discard: { id in try await pendingStore.remove(id: id) },
-        localModelProvisioned: { [weak self] in self?.modelInstalled == true })
+        localModelProvisioned: { [weak self] in self?.localSpeechAvailable == true })
       insightsModel = InsightsModel(store: paths.1)
       coordinator.historyChanged = { [weak self] in
         self?.historyModel?.refresh()
@@ -754,7 +762,7 @@ final class AppServices {
         switch event {
         case .pressed:
           if self?.installing == false, self?.modelCommandInProgress == false,
-            self?.modelInstalled == true,
+            self?.modelInstalled == true || self?.preferences.serverOnly == true,
             AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
           {
             coordinator?.begin()
@@ -916,6 +924,21 @@ final class AppServices {
       store: liveStore, lifecycle: lifecycle, inference: inference, vocabulary: vocabulary,
       identity: identity, clock: clock, recorder: recorder, finalizer: finalizer)
     transcription.noticePublished = { [weak self] text in self?.showMeetingNotice(text) }
+    if let remoteRouter {
+      // The whole meeting goes to the server when it runs transcripts and summaries.
+      transcription.handoff = MeetingHandoff(
+        pool: remoteRouter.channels, database: history.database, root: root,
+        eligible: { [weak self] id in
+          guard let routing = await MainActor.run(body: { self?.preferences.serverRouting }),
+            routing.servedByServer(.finalTranscript), routing.servedByServer(.summaries),
+            routing.capabilities.offers(op: "handoff")
+          else { return false }
+          return !((try? await store.meeting(id: id))?.runLocally ?? false)
+        },
+        defaultLanguage: { [weak self] in
+          await MainActor.run { self?.preferences.meetingLanguage ?? .defaultLanguage }
+        })
+    }
     meetingTranscription = transcription
     let speakers = SpeakerStore(history: history, recorder: recorder)
     speakerStore = speakers
@@ -1102,7 +1125,8 @@ final class AppServices {
   /// the same progress). `withObservationTracking` re-arms itself after every change.
   private func observeBackgroundWork() {
     withObservationTracking {
-      panel.suppressesBackgroundNotice = router.isMainWindowFocused
+      panel.suppressesBackgroundNotice =
+        router.isMainWindowFocused || !preferences.showsBackgroundProgress
       let notice = Self.backgroundNotice(
         finalizing: meetingTranscription?.finalizingMeetingID,
         progress: meetingTranscription?.status.flatMap { status in
@@ -1525,7 +1549,7 @@ final class AppServices {
   private func warmModelIfRequested() async {
     guard allowsPreferenceWarmup, preferences.keepModelReady, modelInstalled, !installing,
       !modelCommandInProgress, !quitting, coordinator?.busy == false,
-      !preferences.serverRouting.servedByServer(.dictation)
+      Self.keepsParakeetLoaded(keepModelReady: true, routing: preferences.serverRouting)
     else { return }
     do {
       try await performSetting(.load)
@@ -1905,8 +1929,11 @@ final class AppServices {
   nonisolated static func keepsParakeetLoaded(keepModelReady: Bool, routing: ServerRouting)
     -> Bool
   {
-    keepModelReady && !routing.servedByServer(.dictation)
+    keepModelReady && routing.remote.localModelsAllowed && !routing.servedByServer(.dictation)
   }
+
+  /// The local speech model can recognize: installed, and Server only is off.
+  private var localSpeechAvailable: Bool { modelInstalled && !preferences.serverOnly }
 
   /// The rewrite settings summaries use: the server's channel while it serves them;
   /// with the switch on otherwise this Mac's flowd (This Mac, or a custom server flowd
@@ -1964,7 +1991,9 @@ final class AppServices {
       await lifecycle.setKeepLoaded(keep)
       if keep {
         await warmModelIfRequested()
-      } else if preferences.serverRouting.servedByServer(.dictation), coordinator?.busy != true {
+      } else if !Self.keepsParakeetLoaded(keepModelReady: true, routing: preferences.serverRouting),
+        coordinator?.busy != true
+      {
         try? await lifecycle.unloadIfIdle()
       }
     }
@@ -1982,6 +2011,11 @@ final class AppServices {
   /// **Run on this Mac** (FR-031): the meeting's remaining transcript, speaker and summary
   /// work runs here, recorded as `local_after_server_failure`.
   func runMeetingOnThisMac(_ id: UUID) async {
+    guard !preferences.serverOnly else {
+      showMeetingNotice(
+        "Server only is on, so this Mac doesn't run models. Change it in Settings › Server.")
+      return
+    }
     guard let meetingStore else { return }
     do {
       try await meetingStore.setRunLocally(meetingID: id, now: SystemMeetingClock().nowMilliseconds)

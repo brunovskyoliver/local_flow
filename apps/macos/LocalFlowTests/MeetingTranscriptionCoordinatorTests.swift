@@ -1093,6 +1093,7 @@ final class MeetingTranscriptionCoordinatorTests: XCTestCase {
       finalized.append(id)
       profiles.append(echoProfile)
     }
+    func meetingDidReturnFromServer(id: UUID, labeled: Bool) {}
     func meetingWillDelete(id: UUID) async {}
   }
 

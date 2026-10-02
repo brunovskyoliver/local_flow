@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "type": "handoff_reply",
+  "op": 2,
+  "state": "done",
+  "meetings": []
+}

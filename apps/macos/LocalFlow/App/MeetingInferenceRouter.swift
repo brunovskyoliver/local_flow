@@ -40,7 +40,8 @@ struct MeetingInferenceRouter: Sendable {
     guard let routing = await routing(), let remote, routing.servedByServer(service) else {
       return Choice(lifecycle: local, path: .local, serverFailure: nil, model: nil)
     }
-    if await runsLocally(meeting) {
+    // Server only ignores an earlier Run on this Mac.
+    if routing.remote.localModelsAllowed, await runsLocally(meeting) {
       return Choice(
         lifecycle: local, path: .localAfterServerFailure, serverFailure: "user_ran_locally",
         model: nil)

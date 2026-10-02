@@ -26,6 +26,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   /// Feature 007: told once a final transcript is published and its lease finished.
   @ObservationIgnored weak var diarization: (any DiarizationObserving)?
   @ObservationIgnored weak var intelligence: (any IntelligenceObserving)?
+  /// Set while the server takes whole meetings: a stopped meeting goes up once and
+  /// its transcript, labels and summary come back processed.
+  @ObservationIgnored var handoff: MeetingHandoff?
   var analysisQueueHighWater: Int { recognizer?.queue.highWater ?? 0 }
   var pendingSegmentCount: Int { recognizer?.pendingCount ?? 0 }
   var analysisGapRangeCount: Int { recognizer?.gapRangeCount ?? 0 }
@@ -807,6 +810,26 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
             durationNanoseconds: clock.monotonicNanoseconds &- stopBegan,
             metric: .transcriptFinalizationWaitDuration)
         }
+        if let handoff = self.handoff {
+          switch await handoff.step(id) {
+          case .notHandedOff: break
+          case .waiting(let code):
+            self.logSink("meeting handed to the server: \(code)")
+            self.waitForServer(id)
+            return
+          case .merged(let labeled):
+            self.serverWaits.remove(id)
+            if let merged = try? await store.transcription(meetingID: id) {
+              self.publish(merged, phase: .transcriptFinalizing)
+            }
+            if let diarization = self.diarization {
+              diarization.meetingDidReturnFromServer(id: id, labeled: labeled)
+            } else {
+              self.intelligence?.meetingSpeakersDidSettle(id: id)
+            }
+            return
+          }
+        }
         let outcome = try await finalizer.run(
           meetingID: id, revision: request.revision ?? row.revision,
           progress: { [weak self] fraction in
@@ -918,6 +941,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     deletedMeetings.insert(id)
     finalizationQueue.removeAll { $0.meetingID == id }
     serverWaits.remove(id)
+    await handoff?.meetingWillDelete(id: id)
     awaitingCompletion.remove(id)
     completedMeetings.remove(id)
     stopBeganAt.removeValue(forKey: id)

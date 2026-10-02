@@ -11,11 +11,12 @@ final class RemoteProtocolTests: XCTestCase {
     "dictation_complete", "cancelled", "rewrite_event", "error",
     // Feature 018
     "analysis_event_part", "analysis_event", "live_result", "meeting_progress", "meeting_result",
+    "handoff_reply",
   ]
   private let clientTypes: Set = [
     "enroll", "refresh", "dictation_start", "dictation_end", "dictation_cancel", "rewrite",
     // Feature 018
-    "analysis_part", "analysis", "live_window", "meeting_job", "meeting_cancel",
+    "analysis_part", "analysis", "live_window", "meeting_job", "meeting_cancel", "handoff",
   ]
 
   private func messages(_ folder: String) throws -> [(name: String, data: Data)] {
@@ -94,6 +95,15 @@ final class RemoteProtocolTests: XCTestCase {
             pipeline: fixture["pipeline"] as? String,
             numSpeakers: fixture["num_speakers"] as? Int))
       case "meeting_cancel": message = .meetingCancel(op: op)
+      case "handoff":
+        message = .handoff(
+          op: op,
+          request: RemoteHandoffRequest(
+            action: RemoteHandoffRequest.Action(rawValue: fixture["action"] as! String)!,
+            meeting: (fixture["meeting"] as? String).flatMap(UUID.init(uuidString:)),
+            name: fixture["name"] as? String, offset: fixture["offset"] as? Int,
+            data: (fixture["data"] as? String).flatMap { Data(base64URL: $0) },
+            sha256: fixture["sha256"] as? String))
       default:
         message = .rewrite(
           op: op, request: try JSONSerialization.data(withJSONObject: fixture["request"]!))

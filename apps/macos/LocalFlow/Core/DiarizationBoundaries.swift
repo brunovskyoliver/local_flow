@@ -86,5 +86,8 @@ extension SpeakerStoring {
   /// one; the diarizer rebases and calibrates it instead of decoding the tracks
   /// again. nil means "profile yourselves" (mixed layout or an older build).
   func meetingTranscriptDidFinalize(id: UUID, echoProfile: EchoGate.Profile?)
+  /// A meeting handed to the server came back with its transcript and labels merged;
+  /// `labeled` is false when the server's diarization did not succeed.
+  func meetingDidReturnFromServer(id: UUID, labeled: Bool)
   func meetingWillDelete(id: UUID) async
 }

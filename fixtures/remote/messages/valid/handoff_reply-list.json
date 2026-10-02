@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "type": "handoff_reply",
+  "op": 2,
+  "meetings": [
+    {
+      "meeting": "5F1C3A2E-9B4D-4E21-8A7C-0D6B2F8E1A93",
+      "state": "failed",
+      "detail": "exit_3"
+    },
+    {
+      "meeting": "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D",
+      "state": "processing"
+    }
+  ]
+}

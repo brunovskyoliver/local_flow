@@ -137,4 +137,11 @@ extension ModelDescriptor {
 public struct LocalModelDescriptor: Sendable, Equatable {
   public let descriptor: ModelDescriptor
   public let rootURL: URL
+
+  /// Files another process already verified and holds the install lock on, such as
+  /// the server's meeting models while its speech worker runs.
+  public init(descriptor: ModelDescriptor, rootURL: URL) {
+    self.descriptor = descriptor
+    self.rootURL = rootURL
+  }
 }

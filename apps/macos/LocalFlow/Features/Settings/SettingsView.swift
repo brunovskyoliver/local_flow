@@ -57,6 +57,12 @@ struct SettingsView: View {
               .accessibilityIdentifier("settings.learnCorrections")
           }
           separator
+          SettingsRow("Show meeting progress") {
+            Toggle("Show meeting progress", isOn: $preferences.showsBackgroundProgress)
+              .labelsHidden().toggleStyle(.switch)
+              .accessibilityIdentifier("settings.showsBackgroundProgress")
+          }
+          separator
           SettingsRow("Meeting language") {
             Picker("Meeting language", selection: $preferences.meetingLanguage) {
               ForEach(MeetingLanguage.allCases) { Text($0.title).tag($0) }

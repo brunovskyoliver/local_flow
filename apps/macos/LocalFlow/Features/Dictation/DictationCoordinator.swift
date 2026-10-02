@@ -520,6 +520,8 @@ final class DictationCoordinator {
           Task { @MainActor in live.acquire(lifecycle, session: sessionID, boost: boost) }
         }
         await started.start()
+      } else if !remoteSettings.localModelsAllowed {
+        throw ServerOnlyFailure.serverUnavailable
       } else {
         // A cold model load runs beside capture; recording never waits for it.
         live.acquire(lifecycle, session: session.id, boost: boost)

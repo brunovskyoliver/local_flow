@@ -196,4 +196,38 @@ final class ServerRoutingTests: XCTestCase {
     XCTAssertFalse(preferences.serverRouting.servedByServer(.summaries))
     XCTAssertTrue(preferences.serverRouting.rewritesOverChannel)
   }
+
+  @MainActor func testServerOnlySendsEverythingToTheServerAndLoadsNothingHere() {
+    let suite = "LocalFlow-server-only-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.confirmRemoteConsent()
+    preferences.remoteEnabled = true
+    preferences.remoteState = .approved
+    preferences.serverCapabilities = Self.everything
+    preferences.useServerForEverything = false
+    preferences.serverRewriteOverride = .thisMac
+    preferences.serverMeetingsOverride = .thisMac
+    let loopback = LocalAIInstaller.rewriteEndpoint
+    XCTAssertTrue(preferences.serverRouting.localRewriteModelWanted(rewriteEndpoint: loopback))
+    XCTAssertTrue(preferences.remoteSettings().localModelsAllowed)
+
+    preferences.serverOnly = true
+    let routing = preferences.serverRouting
+    for service in ServerService.allCases {
+      XCTAssertEqual(routing.path(for: service), .server, "\(service)")
+    }
+    XCTAssertFalse(preferences.remoteSettings().localModelsAllowed)
+    XCTAssertFalse(routing.localRewriteModelWanted(rewriteEndpoint: loopback))
+    XCTAssertFalse(AppServices.keepsParakeetLoaded(keepModelReady: true, routing: routing))
+    XCTAssertTrue(AppPreferences(defaults: defaults).serverOnly, "persisted")
+
+    // Not approved: nothing is served, and still nothing loads here.
+    preferences.remoteState = .revoked
+    XCTAssertFalse(preferences.serverRouting.localRewriteModelWanted(rewriteEndpoint: loopback))
+    XCTAssertFalse(
+      AppServices.keepsParakeetLoaded(keepModelReady: true, routing: preferences.serverRouting))
+  }
 }

@@ -49,7 +49,7 @@ final class TrackPlaybackTests: XCTestCase {
     let s4 = segment(4, state: .open, durationMs: 0)
     try ADTSFixtures.write(first, to: root.resolve(relativePath: s1.relativePath)!)
     try ADTSFixtures.write(second, to: root.resolve(relativePath: s3.relativePath)!)
-    let controller = TrackPlaybackController()
+    let controller = TrackPlaybackController(muted: true)
     controller.load(track: track([s3, s1, s4, s2]), root: root)
     XCTAssertEqual(controller.queued.map(\.segment.sequence), [1, 3])
     XCTAssertEqual(controller.queued.map(\.offsetMs), [0, 1_024])
@@ -69,7 +69,7 @@ final class TrackPlaybackTests: XCTestCase {
     let bytes = try ADTSFixtures.encodedTone(blocks: 24)
     let s1 = segment(1, state: .finalized, durationMs: 2_048)
     try ADTSFixtures.write(bytes, to: root.resolve(relativePath: s1.relativePath)!)
-    let controller = TrackPlaybackController()
+    let controller = TrackPlaybackController(muted: true)
     controller.load(track: track([s1]), root: root)
     controller.play()
     XCTAssertTrue(controller.isPlaying)
@@ -101,7 +101,7 @@ final class TrackPlaybackTests: XCTestCase {
     XCTAssertEqual(
       TrackPlaybackController.assetOptions.keys.sorted(),
       [AVURLAssetPreferPreciseDurationAndTimingKey])
-    let controller = TrackPlaybackController()
+    let controller = TrackPlaybackController(muted: true)
     controller.load(track: track([s1, s2]), root: root)
     XCTAssertEqual(controller.openedURLs, [url1, url2])
     controller.play()
@@ -128,7 +128,7 @@ final class TrackPlaybackTests: XCTestCase {
     let s2 = segment(2, state: .finalized, durationMs: 512)
     try ADTSFixtures.write(first, to: root.resolve(relativePath: s1.relativePath)!)
     try ADTSFixtures.write(second, to: root.resolve(relativePath: s2.relativePath)!)
-    let controller = TrackPlaybackController()
+    let controller = TrackPlaybackController(muted: true)
     XCTAssertFalse(controller.seek(toMs: 500), "nothing loaded")
     XCTAssertEqual(controller.positionMs, 0)
     controller.load(track: track([s1, s2]), root: root)
@@ -146,7 +146,7 @@ final class TrackPlaybackTests: XCTestCase {
     XCTAssertTrue(controller.seek(toMs: 1_100), "seeking while playing keeps playing")
     XCTAssertTrue(controller.isPlaying)
     controller.stop()
-    let empty = TrackPlaybackController()
+    let empty = TrackPlaybackController(muted: true)
     empty.load(
       track: track([segment(1, state: .unrecoverable, durationMs: 0, reason: .fileMissing)]),
       root: root)
@@ -155,7 +155,7 @@ final class TrackPlaybackTests: XCTestCase {
   }
 
   func testTrackWithNoPlayableSegmentsReportsNoPlayableAudio() {
-    let controller = TrackPlaybackController()
+    let controller = TrackPlaybackController(muted: true)
     controller.load(
       track: track([segment(1, state: .unrecoverable, durationMs: 0, reason: .fileMissing)]),
       root: root)

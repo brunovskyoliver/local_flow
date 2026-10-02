@@ -253,11 +253,10 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
       let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
       do {
         for _ in 0..<2 {
-          _ = try await runtime.transcribe(Array(repeating: repeated ? 0.1 : 0, count: 80_000))
+          let result = try await runtime.transcribe(
+            Array(repeating: repeated ? 0.1 : 0, count: 80_000))
+          if repeated { XCTAssertEqual(result.text, "") }
         }
-        XCTAssertFalse(repeated)
-      } catch WhisperMeetingRuntime.Failure.repetition {
-        XCTAssertTrue(repeated)
       } catch { XCTFail("Rejected output changed fallback: \(error)") }
       await runtime.shutdown()
     }
@@ -477,7 +476,48 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
     await runtime.shutdown()
   }
 
-  func testRepeatedOutputRetriesTwoWindowsAndRejectsPersistentLoop() async throws {
+  func testPiecesThatLoopOnlyTogetherAreDropped() async throws {
+    let (root, model, helper) = try fixture(
+      body: """
+        import os
+        full = os.path.getsize(request['path']) > 44 + 15 * 16000 * 4
+        text = 'we configured the proxy. ' * 5 if full else 'Thank you for watching.'
+        print(json.dumps({'type':'result', 'id':request['id'], 'text':text,
+          'segments':[{'text':text, 'startSeconds':0.0, 'endSeconds':1.0}]}), flush=True)
+        """)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+    let result = try await runtime.transcribe(Array(repeating: 0.1, count: 120 * 16_000))
+    XCTAssertEqual(result.text, "")
+    await runtime.shutdown()
+  }
+
+  func testSpeechBesideALoopAcrossHalvesIsKept() async throws {
+    // Requests: the window, its first half, that half's four pieces, its second half.
+    // The first half alone holds three stock phrases; the fourth is in the second.
+    let (root, model, helper) = try fixture(
+      body: """
+        n += 1
+        text = {3: 'We ship on Friday.', 7: 'Thank you for watching. The budget is approved.'}.get(n,
+          'we configured the proxy. ' * 5 if n < 3 else 'Thank you for watching.')
+        print(json.dumps({'type':'result', 'id':request['id'], 'text':text,
+          'segments':[{'text':text, 'startSeconds':0.0, 'endSeconds':1.0}]}), flush=True)
+        """, startup: "n = 0")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
+    let result = try await runtime.transcribe(Array(repeating: 0.1, count: 120 * 16_000))
+    XCTAssertEqual(result.text, "We ship on Friday. The budget is approved.")
+    XCTAssertEqual(result.tokens.count, 0)
+    await runtime.shutdown()
+  }
+
+  func testRepeatedSentencesAreDroppedOnlyWhereTheyRepeat() {
+    XCTAssertEqual(
+      WhisperMeetingRuntime.withoutRepeatedSentences("Hi. Bye. Bye. Bye. Bye. Done."), "Hi. Done.")
+    XCTAssertNil(WhisperMeetingRuntime.withoutRepeatedSentences("a b c a b c a b c a b c"))
+  }
+
+  func testRepeatedOutputRetriesTwoWindowsAndDropsPersistentLoop() async throws {
     let (root, model, helper) = try fixture(
       body: """
         print(json.dumps({'type':'result', 'id':request['id'],
@@ -485,10 +525,9 @@ final class WhisperMeetingRuntimeTests: XCTestCase, @unchecked Sendable {
         """)
     defer { try? FileManager.default.removeItem(at: root) }
     let runtime = try await WhisperMeetingRuntime.make(model: model, helperURL: helper)
-    do {
-      _ = try await runtime.transcribe(Array(repeating: 0.1, count: 120 * 16_000))
-      XCTFail("Expected persistent repetition rejection")
-    } catch WhisperMeetingRuntime.Failure.repetition {} catch { XCTFail("Unexpected failure type") }
+    let result = try await runtime.transcribe(Array(repeating: 0.1, count: 120 * 16_000))
+    XCTAssertEqual(result.text, "")
+    XCTAssertEqual(result.tokens.count, 0)
     await runtime.shutdown()
   }
 

@@ -28,11 +28,13 @@ type remoteConfig struct {
 	speechModels string
 	// The meeting worker runs as <speechWorker> meeting --models
 	// <meetingModels> --helper <meetingHelper> (Feature 018).
-	meetingModels   string
-	meetingHelper   string
-	appleAudience   []string
-	googleClientIDs []string
-	dev             bool
+	meetingModels string
+	meetingHelper string
+	// meetingProcessor runs uploaded meetings (the handoff op); off when empty.
+	meetingProcessor string
+	appleAudience    []string
+	googleClientIDs  []string
+	dev              bool
 	// Debug builds only (-tags localflow_debug).
 	testIssuer string
 	testJWKS   string

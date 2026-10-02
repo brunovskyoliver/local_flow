@@ -108,6 +108,7 @@ struct ServerRouting: Sendable, Equatable {
   /// Whether the local rewrite model (MTPLX) should run (R10): with the switch on, when
   /// rewriting or summaries run on this Mac's flowd; off, when rewriting points at it.
   func localRewriteModelWanted(rewriteEndpoint stored: String) -> Bool {
+    guard remote.localModelsAllowed else { return false }
     guard switchApplies else { return stored == LocalAIInstaller.rewriteEndpoint }
     return
       (path(for: .rewrite) == .thisMac
@@ -127,10 +128,13 @@ extension AppPreferences {
     let customRewrite = RewriteSettings.normalizedOrigin(rewriteEndpoint).map {
       !RewriteSettings.isLoopbackHost(RewriteSettings.host(of: $0))
     }
+    // Server only sends every service to the server, whatever the switch and overrides say.
     return ServerRouting(
-      remote: remoteSettings(), useForEverything: useServerForEverything,
-      rewrite: serverRewriteOverride, summaries: serverSummariesOverride,
-      meetings: serverMeetingsOverride, capabilities: serverCapabilities ?? .feature014,
+      remote: remoteSettings(), useForEverything: useServerForEverything || serverOnly,
+      rewrite: serverOnly ? .server : serverRewriteOverride,
+      summaries: serverOnly ? .server : serverSummariesOverride,
+      meetings: serverOnly ? .server : serverMeetingsOverride,
+      capabilities: serverCapabilities ?? .feature014,
       consentCurrent: remoteConsentCurrent, customRewrite: customRewrite ?? false,
       customSummaries: customSummariesHost != nil)
   }

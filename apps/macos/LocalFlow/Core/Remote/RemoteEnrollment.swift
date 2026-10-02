@@ -26,6 +26,9 @@ struct RemoteDictationSettings: Sendable, Equatable {
   var serverOrigin: URL?
   var state: RemoteDictationState = .off
   var fallbackThreshold = RemoteDictationSettings.defaultFallbackThreshold
+  /// False under Settings › Server › Server only: a failed or missing server never
+  /// falls back to the local model.
+  var localModelsAllowed = true
 
   static let off = RemoteDictationSettings()
 
