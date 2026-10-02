@@ -240,7 +240,7 @@ Done 2026-10-02 (T053–T059): `ActivityControllerTests` (7) and `PhoneIntentHan
 - [X] T068 [US6] Add `LocalFlowShortcuts: AppShortcutsProvider` to `apps/ios/App/LocalFlowPhoneApp.swift`: `ToggleDictationIntent` with "Dictate a \(.applicationName) note", "Start \(.applicationName)", "Stop \(.applicationName)"; `EndSessionIntent` with "End \(.applicationName) session".
 - [X] T069 [US6] In the keyboard, read `dictation_source` in `apps/ios/Shared/KeyboardLogic/KeyboardSessionModel.swift`: with no pending request and `control`, show "LocalFlow is recording elsewhere" in the bar and keep the mic disabled until `ready` (contract `session.json`).
 - [X] T070 [US6] Show the control's stop → result time in `apps/ios/App/Features/Settings/DiagnosticsView.swift` (plan principle 13).
-- [ ] T071 [US6] Run quickstart §7 on the iPhone 16 Pro (SC-008 ten Action Button runs from the locked Lock Screen, including with LocalFlow killed, SC-009 Live Activity visible each time, Siri and Shortcuts, control during a keyboard dictation and during a `ready` keyboard session (not covered by the spike), notification Copy while locked, Live Activities off, model deleted, before first unlock) and record in `specs/017-ios-keyboard-entry-points/acceptance/control.md`.
+- [X] T071 [US6] Run quickstart §7 on the iPhone 16 Pro (SC-008 ten Action Button runs from the locked Lock Screen, including with LocalFlow killed, SC-009 Live Activity visible each time, Siri and Shortcuts, control during a keyboard dictation and during a `ready` keyboard session (not covered by the spike), notification Copy while locked, Live Activities off, model deleted, before first unlock) and record in `specs/017-ios-keyboard-entry-points/acceptance/control.md`.
 
 **Checkpoint**: all six stories accepted on the device.
 
@@ -262,7 +262,7 @@ Done 2026-10-02 (T061–T070): `PhoneIntentHandlerTests` gained 10 control tests
   - A new control recording dismisses the last note's result card first, so its old text no longer stays on the Lock Screen (`testANewControlRecordingDismissesTheLastResultCard`). Transcribing uses the same centred one-row island as recording.
   - Orphan recovery now writes its spool under `TemporaryAudio/Recovery/`. Reinstalling mid-recording left an orphan, and recovery held the shared spool lock through the 37–50 s first model load, so a dictation started then failed `alreadyInUse` (regression test `testADictationCanStartWhileAnOrphanIsTranscribed`).
 
-Open: T071 on the iPhone 16 Pro.
+T071 done 2026-10-02, owner-attested with no figures (`acceptance/control.md`). The SC-008 count and times, SC-009 per run, and which of steps 4–9 ran were not captured.
 
 ---
 
