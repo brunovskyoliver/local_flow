@@ -18,6 +18,18 @@ final class SummaryModelTests: XCTestCase {
     XCTAssertEqual(found.map(\.1), [1, 3, 1, 3])
   }
 
+  /// A speaker named after the summary was written shows by name; "Speaker 10" and an
+  /// unnamed speaker stay, and an anonymous label is not split into "Speaker".
+  func testAnonymousLabelsShowCurrentNames() {
+    let text = "Speaker 1 asked Speaker 10; Speaker 2 agreed with Speaker 1."
+    XCTAssertEqual(
+      SummaryModel.renamed(text, [("Speaker 1", "Ján"), ("Speaker 2", "Speaker 2")]),
+      "Ján asked Speaker 10; Speaker 2 agreed with Ján.")
+    let mentions = SummaryModel.speakerMentions(
+      in: "Speaker 10 and Speaker said", speakers: [("Speaker 1", 1)])
+    XCTAssertTrue(mentions.isEmpty)
+  }
+
   // MARK: Deployment read model
 
   /// The stored deployment analysis renders summary, one decision and three

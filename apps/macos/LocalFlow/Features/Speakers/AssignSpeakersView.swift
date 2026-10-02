@@ -16,6 +16,8 @@ struct AssignSpeakersView: View {
   var structureChanged: () -> Void = {}
   /// Removes the dialog; the owner drops the model with it.
   var close: () -> Void = {}
+  /// The speaker whose field takes focus, scrolled into view; the first otherwise.
+  var initialFocus: UUID?
   @FocusState private var focused: UUID?
 
   var body: some View {
@@ -38,7 +40,7 @@ struct AssignSpeakersView: View {
     .onExitCommand { close() }
     .task {
       await model.load()
-      focused = model.sections.first?.id
+      focused = model.sections.first { $0.id == initialFocus }?.id ?? model.sections.first?.id
     }
     .onChange(of: model.structureRevision) { _, _ in structureChanged() }
     .task(id: focusedDraft) {
@@ -60,25 +62,30 @@ struct AssignSpeakersView: View {
           .buttonStyle(.plain).padding(.top, 22).padding(.trailing, 22)
           .accessibilityLabel("Close")
         }
-      ScrollView {
-        VStack(alignment: .leading, spacing: 28) {
-          ForEach(model.reviews) { review in reviewRow(review) }
-          if model.isLoading, model.sections.isEmpty {
-            ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(20)
-          } else if model.sections.isEmpty {
-            Text("There are no speakers to name.").font(.flow(size: 14))
-              .foregroundStyle(SottoPalette.muted)
+      ScrollViewReader { proxy in
+        ScrollView {
+          VStack(alignment: .leading, spacing: 28) {
+            ForEach(model.reviews) { review in reviewRow(review) }
+            if model.isLoading, model.sections.isEmpty {
+              ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(20)
+            } else if model.sections.isEmpty {
+              Text("There are no speakers to name.").font(.flow(size: 14))
+                .foregroundStyle(SottoPalette.muted)
+            }
+            ForEach(Array(model.sections.enumerated()), id: \.element.id) { index, section in
+              sectionView(section, position: index + 1).id(section.id)
+            }
           }
-          ForEach(Array(model.sections.enumerated()), id: \.element.id) { index, section in
-            sectionView(section, position: index + 1)
-          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 32).padding(.top, 20).padding(.bottom, 28)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 32).padding(.top, 20).padding(.bottom, 28)
+        .scrollIndicators(.never)
+        .hideScrollers()
+        .frame(minHeight: 160, maxHeight: 480)
+        .onChange(of: model.sections.isEmpty) { _, _ in
+          if let initialFocus { proxy.scrollTo(initialFocus, anchor: .top) }
+        }
       }
-      .scrollIndicators(.never)
-      .hideScrollers()
-      .frame(minHeight: 160, maxHeight: 480)
       NotetakerStyle.rule.frame(height: 1)
       HStack(spacing: 10) {
         if let notice = model.notice {

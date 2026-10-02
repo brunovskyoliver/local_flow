@@ -70,9 +70,12 @@ func newPipeline(req *Request, c call, limits Limits, deadline time.Time) *pipel
 	p := &pipeline{req: req, call: c, limits: limits, deadline: deadline,
 		labels: map[string]string{}, tokens: map[string][]string{}}
 	for i, participant := range req.Participants {
-		if participant.Name != nil {
+		switch {
+		case participant.Name != nil:
 			p.labels[participant.SpeakerID] = *participant.Name
-		} else {
+		case participant.Label != nil:
+			p.labels[participant.SpeakerID] = *participant.Label
+		default: // an app without labels
 			p.labels[participant.SpeakerID] = "Speaker " + strconv.Itoa(i+1)
 		}
 	}

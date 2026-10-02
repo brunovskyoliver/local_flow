@@ -677,6 +677,29 @@ extension AnalysisValidatorTests {
     }
   }
 
+  /// The model writes the labels it was given ("Speaker 2", "Lukáš Kocman"), which
+  /// the transcript never says: a sentence or item using them survives. A number
+  /// that is in neither the transcript nor a label still drops its item.
+  func testSpeakerLabelsAreEvidence() throws {
+    var evidence = literalEvidence()
+    evidence.participants = [
+      EvidenceParticipant(
+        speakerID: UUID(), certainty: .localName, origin: "none", name: "Lukáš Kocman"),
+      EvidenceParticipant(speakerID: UUID(), certainty: .unknown, origin: "none"),
+    ]
+    var res = result(decisions: [
+      wireItem("Deploy on Monday as Speaker 2 agreed", sources: [.segment(segB)]),
+      wireItem("Deploy on Monday for $9,999", sources: [.segment(segB)]),
+    ])
+    res.summary = WireSummary(
+      text: "Lukáš Kocman and Speaker 2 planned the release.", sources: [], wholeMeeting: true)
+    let (validated, counts) = try AnalysisValidator.validate(
+      result: res, against: evidence, policy: policy)
+    XCTAssertEqual(validated.summary.text, "Lukáš Kocman and Speaker 2 planned the release.")
+    XCTAssertEqual(validated.decisions.map(\.text), ["Deploy on Monday as Speaker 2 agreed"])
+    XCTAssertEqual(counts.droppedLiteralCount, 1)
+  }
+
   /// An item none of whose content tokens occur in its referenced sources is
   /// dropped and counted `dropped_unsupported`.
   func testUnrelatedSourcesDropItemCounted() throws {

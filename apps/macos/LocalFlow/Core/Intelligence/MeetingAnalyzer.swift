@@ -621,7 +621,11 @@ struct MeetingAnalyzer: Sendable {
               String(
                 decoding: $0.utf8.prefix(AnalysisBounds.maxParticipantNameBytes), as: UTF8.self)
             }
-            : nil)
+            : nil,
+          label: participant.label.map {
+            String(
+              decoding: $0.utf8.prefix(AnalysisBounds.maxParticipantNameBytes), as: UTF8.self)
+          })
       },
       segments: segments?.map { segment in
         AnalysisRequest.Segment(

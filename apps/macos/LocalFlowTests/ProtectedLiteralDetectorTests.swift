@@ -2,15 +2,11 @@ import XCTest
 
 @testable import LocalFlow
 
-/// T063: the protected-literal detector's classes, verbatim matching, the
-/// stem rule and the owner-name exclusion (research R5).
+/// T063: the protected-literal detector's classes and verbatim matching (research R5).
 final class ProtectedLiteralDetectorTests: XCTestCase {
 
-  private func violations(
-    in text: String, evidence: String, excluding names: Set<String> = []
-  ) -> [String] {
-    ProtectedLiteralDetector.violations(in: text, evidence: evidence, excluding: names)
-      .map(\.literal)
+  private func violations(in text: String, evidence: String) -> [String] {
+    ProtectedLiteralDetector.violations(in: text, evidence: evidence).map(\.literal)
   }
 
   // MARK: Address and identifier classes
@@ -80,44 +76,13 @@ final class ProtectedLiteralDetectorTests: XCTestCase {
 
   // MARK: Proper nouns and the stem rule
 
-  /// A capitalized token not at sentence start and not in the stoplist is a
-  /// protected proper noun; Slovak inflection survives through the stem
-  /// rule (shared prefix ≥ max(4, length − 3), diacritics preserved).
-  func testProperNounStemRule() {
+  /// Names are not literals: the model repeats speaker labels and names the
+  /// transcript never says, and Slovak inflects the ones it does.
+  func testNamesAreNotProtected() {
     XCTAssertTrue(
-      violations(in: "Pošle to Martinovi.", evidence: "Martin to posle").isEmpty)
-    XCTAssertTrue(
-      violations(in: "Talked s Odoom about it", evidence: "we use Odoo").isEmpty)
-    // "Odoom"/"Odoo" shares 4 chars — the minimum for a 4-letter stem.
-    XCTAssertEqual(
-      violations(in: "Talked to Odomovici", evidence: "we use Odoo"),
-      ["Odomovici"])
-  }
-
-  /// A capitalized word at sentence start is not a proper-noun candidate.
-  func testSentenceStartIsNotAProperNoun() {
-    XCTAssertTrue(
-      violations(in: "Deployment moves to Monday.", evidence: "nothing").isEmpty)
-  }
-
-  /// Weekdays and function words are in the stoplist, never literals.
-  func testStoplistIsNotProtected() {
+      violations(in: "Pošle to Lukášovi a Speaker 2 súhlasí.", evidence: "nothing").isEmpty)
     XCTAssertTrue(
       violations(in: "It ships on Friday in September.", evidence: "nothing").isEmpty)
-    XCTAssertTrue(
-      violations(in: "Nasleduje v piatok.", evidence: "nič").isEmpty)
-  }
-
-  // MARK: Owner-name exclusion
-
-  /// Participant owner names are rendered from the speaker record, not from
-  /// model text — they are never checked.
-  func testExcludedOwnerNamesAreSkipped() {
-    XCTAssertTrue(
-      violations(
-        in: "Pošle to Martinovi.", evidence: "nothing",
-        excluding: ["Martin"]
-      ).isEmpty)
   }
 
   /// Feature 012 (T007): the redaction classes come from the same matchers, and

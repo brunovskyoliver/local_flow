@@ -25,6 +25,16 @@ struct SummaryTabView: View {
       bodyContent
     }
     .accessibilityIdentifier("meeting.summary")
+    .environment(
+      \.openURL,
+      OpenURLAction { url in
+        guard url.scheme == SummaryModel.speakerLinkScheme,
+          let id = url.host().flatMap(UUID.init(uuidString:))
+        else { return .systemAction }
+        model.onOpenSpeaker?(id)
+        return .handled
+      }
+    )
     .task { await model.refresh() }
     // Progress-only changes do not reload; the running header reads progress directly.
     .onChange(of: model.reloadKey) { _, _ in Task { await model.refresh() } }

@@ -217,7 +217,7 @@ enum AnalysisValidator {
   // MARK: 5. Protected literals (T067)
 
   /// Numeric, address and identifier literals must appear verbatim in the
-  /// item's referenced sources (proper nouns by the stem rule); the summary
+  /// item's referenced sources or the speaker labels the model saw; the summary
   /// and topics are checked against all evidence (R5). A summary sentence
   /// with an unsupported literal is removed; only a summary left empty fails
   /// the run `protected_literal`. Dropped items and topics count
@@ -229,9 +229,10 @@ enum AnalysisValidator {
     risks: inout [ValidatedItem], evidence: AnalysisEvidence,
     counts: inout ValidationCounts
   ) throws {
+    let labels = speakerLabels(evidence)
     let allEvidence = sourceText(
       evidence.segmentText.values.sorted()
-        + evidence.notes.sorted { $0.ordinal < $1.ordinal }.map(\.text))
+        + evidence.notes.sorted { $0.ordinal < $1.ordinal }.map(\.text) + [labels])
     // Sentence by sentence: one invented name costs its sentence, not the
     // whole result, and the invented literal is still never shown.
     var sentences: [String] = []
@@ -248,11 +249,19 @@ enum AnalysisValidator {
 
     counts.droppedLiteralCount +=
       dropTopics(&topics, evidence: allEvidence)
-      + dropItems(&decisions, evidence: evidence)
-      + dropActionItems(&actionItems, evidence: evidence)
-      + dropItems(&nextSteps, evidence: evidence)
-      + dropItems(&openQuestions, evidence: evidence)
-      + dropItems(&risks, evidence: evidence)
+      + dropItems(&decisions, evidence: evidence, labels: labels)
+      + dropActionItems(&actionItems, evidence: evidence, labels: labels)
+      + dropItems(&nextSteps, evidence: evidence, labels: labels)
+      + dropItems(&openQuestions, evidence: evidence, labels: labels)
+      + dropItems(&risks, evidence: evidence, labels: labels)
+  }
+
+  /// How the server names each participant to the model (`pipeline.go`): the
+  /// name, else the app's label. The model repeats them.
+  private static func speakerLabels(_ evidence: AnalysisEvidence) -> String {
+    evidence.participants.enumerated().map { index, participant in
+      participant.name ?? participant.label ?? "Speaker \(index + 1)"
+    }.joined(separator: "\n")
   }
 
   /// Concatenated text of the sources an item cites — the evidence its
@@ -292,11 +301,11 @@ enum AnalysisValidator {
   }
 
   private static func dropItems(
-    _ items: inout [ValidatedItem], evidence: AnalysisEvidence
+    _ items: inout [ValidatedItem], evidence: AnalysisEvidence, labels: String
   ) -> Int {
     let keep = items.filter {
       ProtectedLiteralDetector.violations(
-        in: $0.text, evidence: sourceText(of: $0.sources, evidence: evidence)
+        in: $0.text, evidence: sourceText(of: $0.sources, evidence: evidence) + "\n" + labels
       ).isEmpty
     }
     let dropped = items.count - keep.count
@@ -305,28 +314,16 @@ enum AnalysisValidator {
   }
 
   private static func dropActionItems(
-    _ items: inout [ValidatedActionItem], evidence: AnalysisEvidence
+    _ items: inout [ValidatedActionItem], evidence: AnalysisEvidence, labels: String
   ) -> Int {
     let keep = items.filter {
       ProtectedLiteralDetector.violations(
-        in: $0.text, evidence: sourceText(of: $0.sources, evidence: evidence),
-        excluding: ownerNames(of: $0.owner, evidence: evidence)
+        in: $0.text, evidence: sourceText(of: $0.sources, evidence: evidence) + "\n" + labels
       ).isEmpty
     }
     let dropped = items.count - keep.count
     items = keep
     return dropped
-  }
-
-  /// The participant names an owner resolves to — rendered from the speaker
-  /// record, so excluded from the literal check (R5).
-  private static func ownerNames(
-    of owner: ValidatedOwner, evidence: AnalysisEvidence
-  ) -> Set<String> {
-    guard case .participant(let speakerID, _, _) = owner,
-      let name = evidence.participants.first(where: { $0.speakerID == speakerID })?.name
-    else { return [] }
-    return [name]
   }
 
   // MARK: 6. Support (T067)

@@ -114,6 +114,12 @@
             "minLength": 1,
             "maxLength": 80,
             "description": "At most 80 UTF-8 bytes; permitted only with confirmed, recognized, local_name or local_user."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "How the app shows the speaker when unnamed (\"Speaker 2\", \"You\"); the model sees it instead of a positional label."
           }
         },
         "allOf": [
