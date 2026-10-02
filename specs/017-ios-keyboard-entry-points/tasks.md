@@ -157,9 +157,11 @@ Done 2026-10-01 (T028–T042): tests written first and seen failing on the missi
 ## Phase 8: Milestone A gate — keyboard footprint (SC-003)
 
 - [X] T044 Record the keyboard's footprint per surface: `apps/ios/Keyboard/KeyboardViewController.swift` writes optional `footprint_rest_bytes` and `footprint_listening_bytes` (peak `phys_footprint` while each surface is shown) to `keyboard-status.json`; add the fields to `apps/ios/Shared/Handoff/HandoffModels.swift` with a codec test in `apps/ios/LocalFlowPhoneTests/HandoffCodecTests.swift`; show them in `apps/ios/App/Features/Settings/DiagnosticsView.swift`.
-- [ ] T045 Measure on the iPhone 16 Pro the keyboard footprint at rest and with the listening view up (each under 40 MB, SC-003), and record build, iOS version and conditions in `specs/017-ios-keyboard-entry-points/acceptance/keyboard-footprint.md`. Milestone B does not start until this and T043 are recorded.
+- [X] T045 Measure on the iPhone 16 Pro the keyboard footprint at rest and with the listening view up (each under 40 MB, SC-003), and record build, iOS version and conditions in `specs/017-ios-keyboard-entry-points/acceptance/keyboard-footprint.md`. Milestone B does not start until this and T043 are recorded.
 
 Done 2026-10-02 (T044): the keyboard samples `phys_footprint` once a second while visible and keeps the highest value per surface for the life of its process. Every surface except the keys (listening, transcribing, notices) counts as "listening". It rewrites `keyboard-status.json` whenever either peak rises. Diagnostics shows "Peak at rest" and "Peak while listening". `testKeyboardStatusCarriesTheSurfaceFootprintsAndReadsOlderFiles` passes, and so does `make check`. Limit: with a 1 s sample, a spike shorter than a second can be missed; the process-wide "Peak" row still catches it. Open: T045 and T043 on the device.
+
+Done 2026-10-02 (T045): 14.1 MB at rest and 13.1 MB while listening, recorded in `acceptance/keyboard-footprint.md`. The same device run led to three changes: the key row and the ☰ drawer were removed (owner, `5236f42`, spec scope note 2026-10-02); the keyboard now keeps waiting past 15 s while LocalFlow answers a ping, because the first model load after an install takes 37–50 s (`0d97f27`); and the transcribing view says so after the first 15 s (`bfa799e`).
 
 
 ---
