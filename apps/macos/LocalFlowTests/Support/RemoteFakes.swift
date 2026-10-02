@@ -171,6 +171,8 @@ final class FakeRemoteTransport: RemoteTransport, @unchecked Sendable {
   private var heldSends: [CheckedContinuation<Void, Never>] = []
   /// Each `send` takes this long, like a real socket on a slow uplink.
   var sendDelay: Duration?
+  /// Runs before each `send`, for example to move a manual clock forward.
+  var onSend: (@Sendable () -> Void)?
 
   init(
     server: FakeRemoteServer = FakeRemoteServer(),
@@ -201,6 +203,7 @@ final class FakeRemoteTransport: RemoteTransport, @unchecked Sendable {
 
   func send(_ data: Data) async throws {
     if let delay = lock.withLock({ sendDelay }) { try? await Task.sleep(for: delay) }
+    lock.withLock { onSend }?()
     let hold = lock.withLock { holdSends }
     if hold {
       await withCheckedContinuation { continuation in

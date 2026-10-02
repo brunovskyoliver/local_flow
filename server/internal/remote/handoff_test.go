@@ -208,10 +208,13 @@ func queue(t *testing.T, s *Handoffs, meeting, state string) string {
 // timeout, a meeting left processing is requeued at start, and meeting
 // dirs older than the retention are swept.
 func TestHandoffRunner(t *testing.T) {
+	// Only the overrun gets a short timeout: a loaded machine can take longer than
+	// that just to start the shell.
 	for _, tc := range []struct {
 		body, state, detail string
-	}{{"exit 3", "failed", "exit_3"}, {"exec sleep 30", "failed", "timeout"}, {"exit 0", "done", ""}} {
-		s := NewHandoffs(HandoffConfig{Dir: t.TempDir(), Processor: fakeProcessor(t, tc.body), Timeout: 200 * time.Millisecond})
+		timeout             time.Duration
+	}{{"exit 3", "failed", "exit_3", 10 * time.Second}, {"exec sleep 30", "failed", "timeout", 200 * time.Millisecond}, {"exit 0", "done", "", 10 * time.Second}} {
+		s := NewHandoffs(HandoffConfig{Dir: t.TempDir(), Processor: fakeProcessor(t, tc.body), Timeout: tc.timeout})
 		queue(t, s, handoffMeeting, "processing")
 		runHandoffs(t, s)
 		if detail := waitState(t, s, 1, handoffMeeting, tc.state); detail != tc.detail {

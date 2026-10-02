@@ -160,7 +160,7 @@ actor RemoteChannel {
   private var sending = false
   private var inFlight = false
   /// Frames the socket has taken; a waiting sender checks it for progress.
-  private var sentFrames = 0
+  private(set) var sentFrames = 0
   private var waitingSenders: [CheckedContinuation<Void, Never>] = []
   private var failure: RemoteChannelError?
   private var closed = false
@@ -273,7 +273,7 @@ actor RemoteChannel {
   }
 
   /// Queued frames plus the one the socket is still writing.
-  private var unsentFrames: Int { outbox.count + (inFlight ? 1 : 0) }
+  var unsentFrames: Int { outbox.count + (inFlight ? 1 : 0) }
 
   /// Queues the frame at once, so frames go out in seal order, then waits until at most
   /// four are unsent. A retry or reconnect flushes a whole recording through here, so

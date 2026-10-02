@@ -247,6 +247,27 @@ final class RemoteDictationSessionTests: XCTestCase {
     XCTAssertEqual(Set(remote.windows.keys), [0, 239_360])
   }
 
+  func testAnUploadSlowerThanTheThresholdIsNotATimeout() async throws {
+    // The 33 s retry that failed every time: each frame takes 200 ms of a 300 ms
+    // threshold to send, and the server says nothing until a window fills.
+    let flowd = flowd!
+    let clock = clock!
+    let session = session(
+      threshold: .milliseconds(300),
+      opener: FakeRemoteTransportOpener { _ in
+        let transport = flowd.transport()
+        transport.onSend = { clock.advance(by: .milliseconds(200)) }
+        return transport
+      })
+    await session.start()
+    let streaming = await waitForState(session, .streaming)
+    XCTAssertTrue(streaming)
+    let result = await session.finish(totalSamples: 529_600)
+    guard case .success(let remote) = result else { return XCTFail("\(result)") }
+    XCTAssertEqual(flowd.ends, [529_600])
+    XCTAssertEqual(remote.windows.count, 3)
+  }
+
   func testBusyFailsAtOnce() async throws {
     flowd.behavior = .startError("busy")
     let session = session()

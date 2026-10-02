@@ -204,8 +204,9 @@ final class AppServices {
   }
 
   /// A retried dictation was saved for review; nothing was inserted (ADR 0014).
-  private func announceRecoveredDictation() {
+  private func announceRecoveredDictation(notify: Bool) {
     historyModel?.refresh()
+    guard notify else { return }
     let center = UNUserNotificationCenter.current()
     center.requestAuthorization(options: [.alert]) { granted, _ in
       guard granted else { return }
@@ -571,8 +572,13 @@ final class AppServices {
         store: pendingStore, history: paths.1, vocabulary: vocabulary, starter: remoteRouter,
         transcriber: WindowedTranscriber(lifecycle: lifecycle, identity: transcriptIdentity))
       await retrier.setHandlers(
-        recovered: { [weak self] _ in
-          Task { @MainActor in self?.announceRecoveredDictation() }
+        recovered: { [weak self, history = paths.1] entry in
+          Task { @MainActor in
+            // Dictated something since? The user most likely said it again: the
+            // recovered one waits in History without a notification.
+            let newest = try? await history.recent(limit: 1).first
+            self?.announceRecoveredDictation(notify: newest?.id == entry.id)
+          }
         }, decisionNeeded: { [weak self] _ in Task { @MainActor in self?.historyModel?.refresh() } }
       )
       await retrier.start()

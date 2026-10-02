@@ -735,6 +735,9 @@ func TestSupervisorGate(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
+	// The worker's own log line arrives after the result; wait for it.
+	eventually(t, "worker log", func() bool { return strings.Contains(h.logs.String(), "worker job=") })
+	time.Sleep(20 * time.Millisecond)
 	if strings.Count(h.logs.String(), "worker job=") != 1 {
 		t.Fatal("abandoned job reached the worker")
 	}

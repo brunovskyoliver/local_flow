@@ -72,6 +72,7 @@ actor RemoteDictationSession {
   private var pumping = false
   private var pumpAgain = false
   private var lastFrame: Duration = .zero
+  private var lastSentFrames = 0
   private var tasks: [Task<Void, Never>] = []
   private var waiters:
     [CheckedContinuation<Result<RemoteDictationResult, RemoteFailureReason>, Never>] = []
@@ -330,12 +331,27 @@ actor RemoteDictationSession {
         while await !self.isTerminal {
           let remaining = await self.remainingThreshold()
           if remaining <= .zero {
+            if await self.uploadProgressed() { continue }
             await self.fail(.timeout)
             return
           }
           do { try await self.clock.sleep(for: remaining) } catch { return }
         }
       })
+  }
+
+  /// While audio still waits to go out, a frame the socket took since the last check
+  /// is progress: a retry, or a backlog after a stall, still uploads after release and
+  /// the server says nothing until a window fills. A stalled socket takes no frame, and
+  /// once the upload drains the threshold applies as before.
+  private func uploadProgressed() async -> Bool {
+    guard let channel else { return false }
+    let sent = await channel.sentFrames
+    let uploading = await channel.unsentFrames > 0
+    defer { lastSentFrames = sent }
+    guard uploading, sent != lastSentFrames else { return false }
+    noteFrame()
+    return true
   }
 
   private func remainingThreshold() -> Duration {
