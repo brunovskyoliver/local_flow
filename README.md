@@ -12,10 +12,7 @@ Install on Apple Silicon with Homebrew:
 brew install --cask brunovskyoliver/tap/localflow
 ```
 
-The app is ad-hoc signed, without an Apple Developer ID or notarization. On first
-launch, if macOS blocks it and you trust the download, use System Settings >
-Privacy & Security > Open Anyway. Updates may require renewed approval and privacy
-permissions. See the [installation and release guide](docs/distribution/homebrew.md).
+The app is signed with Developer ID (e-Net, s.r.o.) and notarized by Apple. See the [installation and release guide](docs/distribution/homebrew.md).
 
 ## Development
 

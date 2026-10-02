@@ -30,12 +30,33 @@ jobs:
           test "$(uname -m)" = arm64
           xcodebuild -version
           brew install cmake
-      - name: Package ad-hoc signed application
+      - name: Import Developer ID certificate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          (umask 077 && printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8")
+      - name: Package signed and notarized application
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           BUILD_NUMBER: ${{ github.run_number }}
           # The production iOS OAuth client (not secret); without it Google sign-in is hidden.
           LOCALFLOW_GOOGLE_CLIENT_ID: ${{ vars.LOCALFLOW_GOOGLE_CLIENT_ID }}
+          LOCALFLOW_SIGNING_IDENTITY: 'Developer ID Application: e-Net, s.r.o. (944A459UC3)'
+          LOCALFLOW_NOTARY_KEY: ${{ runner.temp }}/notary.p8
+          LOCALFLOW_NOTARY_KEY_ID: ${{ vars.NOTARY_KEY_ID }}
+          LOCALFLOW_NOTARY_ISSUER: ${{ vars.NOTARY_ISSUER_ID }}
         run: |
           mkdir -p build
           ./scripts/package-macos.sh "${RELEASE_TAG#v}" "$BUILD_NUMBER" 2>&1 | tee build/release-build.log
