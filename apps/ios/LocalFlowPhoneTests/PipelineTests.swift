@@ -98,6 +98,20 @@ final class PipelineTests: XCTestCase {
     XCTAssertEqual(try harness.rowCount(), 1)
   }
 
+  /// Regression: recovery transcribing through the first model load (37–50 s after an
+  /// install) held the spool lock, so a dictation started then failed `alreadyInUse`.
+  func testADictationCanStartWhileAnOrphanIsTranscribed() async throws {
+    await harness.runtime.set(loadDelay: .milliseconds(300))
+    let recovery = try leaveOrphan()
+    let recovering = Task {
+      await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    }
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertNoThrow(try spool())
+    await recovering.value
+    XCTAssertEqual(try harness.rowCount(), 1)
+  }
+
   func testDeletingAWaitingOrphan() throws {
     let recovery = try leaveOrphan()
     recovery.delete()

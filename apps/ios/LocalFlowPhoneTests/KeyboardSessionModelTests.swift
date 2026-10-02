@@ -316,6 +316,21 @@ final class KeyboardSessionModelTests: XCTestCase {
     XCTAssertEqual(model.barStatus(now: now), BarStatus.elsewhere)
   }
 
+  /// T069: a control recording shows in the bar and keeps the mic off until `ready`.
+  func testAControlRecordingDisablesTheMicUntilReady() throws {
+    try writeSession(.recording, source: .control)
+    let model = model()
+    model.appear()
+    model.pong()
+    XCTAssertEqual(model.sessionView, .working)
+    XCTAssertEqual(model.barStatus(now: now), BarStatus.elsewhere)
+    XCTAssertEqual(model.tap(), .none)
+    XCTAssertNil(store.read(RequestFile.self, .request))
+    try writeSession(.ready)
+    model.refresh()
+    XCTAssertEqual(model.sessionView, .ready)
+  }
+
   func testCancelReturnsToKeysAndIgnoresALateResult() throws {
     let (model, requestID) = try startedModel()
     try writeSession(.recording)

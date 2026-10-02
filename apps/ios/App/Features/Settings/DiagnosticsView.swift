@@ -15,6 +15,7 @@ struct DiagnosticsView: View {
   @State private var lifecycle: ModelLifecycleCoordinator.Snapshot?
   @State private var hasGroup = true
   @State private var fixtureStatus: String?
+  @State private var controlStopToResult: TimeInterval?
 
   var body: some View {
     Form {
@@ -60,10 +61,14 @@ struct DiagnosticsView: View {
         LabeledContent("Stop", value: Self.time(app.controller?.lastStopAt))
         LabeledContent("Result", value: Self.time(app.controller?.lastResultAt))
         LabeledContent("Delivery", value: Self.time(deliveryDate))
+        LabeledContent("Control stop → result", value: Self.seconds(controlStopToResult))
       } header: {
         Text("Last dictation")
       } footer: {
-        Text("Delivery is the keyboard's time for the same dictation; in-app notes have none.")
+        Text(
+          "Delivery is the keyboard's time for the same dictation; in-app notes have none. "
+            + "Control stop → result is for the last dictation from the control, Action "
+            + "Button or Shortcuts since LocalFlow started.")
       }
       #if DEBUG
         Section {
@@ -102,12 +107,17 @@ struct DiagnosticsView: View {
     keyboard = store?.read(KeyboardStatusFile.self, .keyboardStatus)
     delivery = store?.read(DeliveryFile.self, .delivery)
     footprint = Footprint.read()
+    controlStopToResult = app.intents?.lastControlStopToResult
     Task { lifecycle = await app.services?.lifecycle.snapshot() }
   }
 
   static func megabytes(_ bytes: UInt64?) -> String {
     guard let bytes, bytes > 0 else { return "—" }
     return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+  }
+
+  static func seconds(_ interval: TimeInterval?) -> String {
+    interval.map { String(format: "%.2f s", $0) } ?? "—"
   }
 
   static func time(_ date: Date?) -> String {

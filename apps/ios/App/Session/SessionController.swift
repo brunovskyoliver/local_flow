@@ -11,7 +11,9 @@ import os
 @MainActor
 @Observable
 final class SessionController {
-  enum Origin: Sendable { case keyboard, app }
+  /// `control`: a one-shot session started by the control with none running. It ends
+  /// after its dictation, like `app` (017 data-model §2).
+  enum Origin: Sendable { case keyboard, app, control }
 
   struct PhoneSession: Equatable {
     let id: UUID
@@ -43,6 +45,14 @@ final class SessionController {
 
   enum StartOutcome: Equatable { case started, busy, noSession, failed }
 
+  /// A result History could not take: before the first unlock after a restart the
+  /// database is unreadable. Its spool stays until the retried save succeeds, so a process
+  /// death leaves an orphan that 016 recovery transcribes again (017 data-model §1).
+  struct PendingSave {
+    let dictation: PhoneDictationStore.Dictation
+    let spool: AudioSpool
+  }
+
   private(set) var session: PhoneSession?
   private(set) var lastRequestID: UUID?
   private(set) var lastOutcome: SessionFile.Outcome?
@@ -58,12 +68,17 @@ final class SessionController {
   /// Why the last dictation failed, for the keyboard's "Open LocalFlow to see why".
   /// Cleared by the next result.
   private(set) var lastFailure: String?
+  /// At most one; a second dictation's spool cannot open while it holds its own.
+  @ObservationIgnored private(set) var pendingSave: PendingSave?
 
   @ObservationIgnored var onChange: (() -> Void)?
   /// Keyboard dictations, for `result.json`.
   @ObservationIgnored var onResult: ((DictationResult) -> Void)?
   /// In-app notes, which never go to the keyboard.
   @ObservationIgnored var onNote: ((DictationResult) -> Void)?
+  /// Control dictations: clipboard, Live Activity card and notification. Awaited before a
+  /// one-shot control session ends.
+  @ObservationIgnored var onControlResult: ((DictationResult) async -> Void)?
   @ObservationIgnored var onLevel: ((Float) -> Void)?
 
   private let capture: AudioCapturing
@@ -112,7 +127,7 @@ final class SessionController {
   /// into a keyboard session that follows the idle timeout.
   func open(origin: Origin) async {
     if var live = session, live.state != .ended {
-      if origin == .keyboard, live.origin == .app {
+      if origin == .keyboard, live.origin != .keyboard {
         live.origin = .keyboard
         session = live
         changed()
@@ -245,25 +260,28 @@ final class SessionController {
       case .overflow: .overflow
       case .interrupted, .failed: .failure
       }
+    var keepSpool = false
     do {
       let output = try await pipeline.run(
         spool: dictation.spool, sampleCount: samples, dictationID: dictation.id,
-        stopReason: stopReason)
+        stopReason: stopReason, deletesSpool: false)
       if output.text.isEmpty {
         report(dictation.requestID, .empty, notify: false)
       } else {
         // History first; a failed write still delivers the text (FR-023).
+        let record = PhoneDictationStore.Dictation(
+          id: dictation.id, text: output.text, createdAt: now(), source: dictation.source,
+          durationMilliseconds: samples / 16, quality: output.quality,
+          stopReason: output.stopReason,
+          endDetail: end == .durationLimit
+            ? .limitReached : end == .interrupted ? .interrupted : nil,
+          sessionID: live.id, detail: output.detail)
         do {
-          try await store.save(
-            .init(
-              id: dictation.id, text: output.text, createdAt: now(), source: dictation.source,
-              durationMilliseconds: samples / 16, quality: output.quality,
-              stopReason: output.stopReason,
-              endDetail: end == .durationLimit
-                ? .limitReached : end == .interrupted ? .interrupted : nil,
-              sessionID: live.id, detail: output.detail))
+          try await store.save(record)
         } catch {
           Self.log.error("history_write_failed")
+          pendingSave = PendingSave(dictation: record, spool: dictation.spool)
+          keepSpool = true
         }
         let result = DictationResult(
           requestID: dictation.requestID, dictationID: dictation.id, text: output.text,
@@ -272,7 +290,11 @@ final class SessionController {
         lastResultID = dictation.id
         lastResult = result
         lastFailure = nil
-        if dictation.source == .app { onNote?(result) } else { onResult?(result) }
+        switch dictation.source {
+        case .app: onNote?(result)
+        case .control: await onControlResult?(result)
+        case .keyboard: onResult?(result)
+        }
       }
     } catch {
       // Errors carry no transcript text, so the detail is public.
@@ -280,13 +302,27 @@ final class SessionController {
       lastFailure = Self.failureText(error)
       report(dictation.requestID, .failed, notify: false)
     }
+    if !keepSpool { try? dictation.spool.cleanup() }
     current = nil
     guard session?.state == .finishing else { return }
-    if session?.origin == .app || idleTimeout() == .afterOne || end == .interrupted {
+    if session?.origin != .keyboard || idleTimeout() == .afterOne || end == .interrupted {
       self.end(end == .interrupted ? .interrupted : .afterOneDictation)
     } else {
       setReady()
     }
+  }
+
+  /// On `protectedDataDidBecomeAvailable` and when LocalFlow becomes active.
+  func retryPendingSave() async {
+    guard let pending = pendingSave else { return }
+    do {
+      try await store.save(pending.dictation)
+    } catch {
+      Self.log.error("history_write_failed")
+      return
+    }
+    try? pending.spool.cleanup()
+    pendingSave = nil
   }
 
   static func failureText(_ error: any Error) -> String {

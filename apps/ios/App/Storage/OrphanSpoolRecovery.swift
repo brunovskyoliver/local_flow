@@ -36,7 +36,11 @@ struct OrphanSpoolRecovery: Sendable {
     guard hasOrphan else { return }
     let id = UUID()
     do {
-      let spool = try AudioSpool(rootDirectory: root, sessionID: id, maximumBytes: Self.spoolBytes)
+      // Its own folder: a spool holds its root's lock until cleanup, and this one lasts
+      // through the first model load, which blocked a dictation started meanwhile.
+      let spool = try AudioSpool(
+        rootDirectory: root.appendingPathComponent("Recovery", isDirectory: true), sessionID: id,
+        maximumBytes: Self.spoolBytes)
       let samples = try copy(into: spool)
       delete()
       let output = try await pipeline.run(

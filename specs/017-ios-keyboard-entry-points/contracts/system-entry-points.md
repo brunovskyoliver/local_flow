@@ -77,10 +77,11 @@ Owner: `ActivityController` in `App/System/`, observing `SessionController.onCha
 
 ## Notification
 
-- Category `dictation.result`, action `copy` ("Copy", `.authenticationRequired` not set, runs in the background).
+- Category `dictation.result`, action `copy` ("Copy", `.foreground`: it opens LocalFlow, because iOS drops background clipboard writes, research R4).
 - Posted after a `control` dictation when `notifications.dictationResults` is on and permission is granted.
 - Title "LocalFlow note", body the first 120 characters, thread `localflow.dictation`.
-- The `copy` action writes the full transcript, read by dictation ID from History, to the clipboard. Per research R4 it is a foreground action unless the device shows a background write works.
+- The `copy` action writes the full transcript, read by dictation ID from History, to the clipboard, and marks a `control` row `copied`.
+- Owner: `ResultNotifier` in `App/System/`, the `UNUserNotificationCenter` delegate, built by `PhoneApp` next to the intent handler (the session controller lives there, not in `PhoneServices`).
 
 ## Tests
 

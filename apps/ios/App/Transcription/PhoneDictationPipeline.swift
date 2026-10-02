@@ -21,12 +21,13 @@ struct PhoneDictationPipeline: Sendable {
   private static let signposts = OSSignposter(
     subsystem: "org.localflow.LocalFlowPhone", category: "dictation")
 
-  /// Deletes the spool after completion, cancellation and failure.
+  /// Deletes the spool after completion, cancellation and failure, unless the caller
+  /// keeps it until the text is in History (`deletesSpool: false`).
   func run(
     spool: AudioSpool, sampleCount: Int, dictationID: UUID,
-    stopReason: TranscriptionEntry.StopReason
+    stopReason: TranscriptionEntry.StopReason, deletesSpool: Bool = true
   ) async throws -> Output {
-    defer { try? spool.cleanup() }
+    defer { if deletesSpool { try? spool.cleanup() } }
     let snapshot = (try? await vocabulary?.snapshot()) ?? .empty
     let interval = Self.signposts.beginInterval("transcribe")
     defer { Self.signposts.endInterval("transcribe", interval) }

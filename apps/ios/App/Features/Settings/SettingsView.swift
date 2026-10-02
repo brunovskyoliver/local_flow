@@ -1,5 +1,6 @@
 import ActivityKit
 import SwiftUI
+import UserNotifications
 
 struct SettingsView: View {
   let app: PhoneApp
@@ -7,6 +8,8 @@ struct SettingsView: View {
   let orphans: OrphanSpoolRecovery
   @AppStorage(IdleTimeout.key) private var idleTimeout = IdleTimeout.default.rawValue
   @AppStorage(DiagnosticsView.enabledKey) private var diagnostics = false
+  @AppStorage(ResultNotifier.enabledKey) private var notifyResults = false
+  @State private var notificationsDenied = false
   @State private var orphanPresent = false
   @State private var sizeOnDisk: Int64 = 0
   @State private var confirmDelete = false
@@ -26,6 +29,16 @@ struct SettingsView: View {
           if idleTimeout == IdleTimeout.never.rawValue {
             Text("The microphone stays available until you end the session.")
           }
+        }
+        Section {
+          Toggle("Notify when a note is ready", isOn: $notifyResults)
+          if notificationsDenied, let url = URL(string: UIApplication.openSettingsURLString) {
+            Link("Allow notifications in Settings", destination: url)
+          }
+        } footer: {
+          Text(
+            "After a dictation from the control, the Action Button or Shortcuts. Copy in the notification opens LocalFlow."
+          )
         }
         if !liveActivities {
           Section {
@@ -81,6 +94,18 @@ struct SettingsView: View {
       .navigationTitle("Settings")
       .onAppear(perform: refresh)
       .onChange(of: model.state) { refresh() }
+      // Asked here, in the foreground, never from the control (research R5).
+      .onChange(of: notifyResults) {
+        guard notifyResults else { return }
+        Task {
+          let granted =
+            (try? await UNUserNotificationCenter.current().requestAuthorization(options: [
+              .alert, .sound,
+            ])) ?? false
+          notificationsDenied = !granted
+          if !granted { notifyResults = false }
+        }
+      }
       // Back from the system Settings, where Live Activities may have been turned on.
       .onChange(of: phase) { if phase == .active { refresh() } }
       .confirmationDialog(

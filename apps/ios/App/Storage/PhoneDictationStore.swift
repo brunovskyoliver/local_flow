@@ -106,9 +106,20 @@ actor PhoneDictationStore {
   }
 
   /// A `control` dictation whose clipboard write took. The shared state stays
-  /// `not_inserted`.
+  /// `not_inserted`. Any other source is left alone: Copy works for every dictation, but
+  /// only a control row records it.
   func markCopied(dictationID: UUID) async throws {
-    try await markDelivery(dictationID: dictationID, .copied)
+    try await history.database.write { db in
+      try db.execute(
+        sql:
+          "UPDATE phone_dictations SET delivery='copied' WHERE transcription_id=? AND source='control'",
+        arguments: [dictationID.uuidString])
+      guard db.changesCount == 1 else { return }
+      try db.execute(
+        sql:
+          "UPDATE transcriptions SET delivery_state='not_inserted', revision=revision+1 WHERE id=?",
+        arguments: [dictationID.uuidString])
+    }
   }
 
   /// The newest dictation, for Copy after a relaunch emptied `lastResult`.
