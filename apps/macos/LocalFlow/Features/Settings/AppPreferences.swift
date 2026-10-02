@@ -236,7 +236,8 @@ final class AppPreferences {
     RemoteDictationSettings(
       enabled: remoteEnabled && remoteConsentVersion >= Self.remoteDictationConsentVersion,
       serverOrigin: RemoteDictationSettings.origin(remoteServerURL), state: remoteState,
-      fallbackThreshold: remoteFallbackThreshold, localModelsAllowed: !serverOnly)
+      fallbackThreshold: remoteFallbackThreshold, localModelsAllowed: !serverOnly,
+      dictationOnThisMac: !serverOnly && serverDictationOverride == .thisMac)
   }
 
   // Feature 018: one server for every service (data-model.md). These matter only while
@@ -258,6 +259,13 @@ final class AppPreferences {
   /// Work goes to the server, waits for it, or fails.
   var serverOnly: Bool {
     didSet { defaults.set(serverOnly, forKey: "server.only") }
+  }
+  /// `server` or `thisMac`; dictation has no custom server.
+  var serverDictationOverride: ServerOverride {
+    didSet {
+      if serverDictationOverride == .custom { serverDictationOverride = .server }
+      defaults.set(serverDictationOverride.rawValue, forKey: "server.override.dictation")
+    }
   }
   var serverRewriteOverride: ServerOverride {
     didSet { defaults.set(serverRewriteOverride.rawValue, forKey: "server.override.rewrite") }
@@ -311,6 +319,8 @@ final class AppPreferences {
     let override = { (key: String) in
       ServerOverride(rawValue: defaults.string(forKey: key) ?? "") ?? .server
     }
+    let dictation = override("server.override.dictation")
+    serverDictationOverride = dictation == .custom ? .server : dictation
     serverRewriteOverride = override("server.override.rewrite")
     serverSummariesOverride = override("server.override.summaries")
     let meetings = override("server.override.meetings")

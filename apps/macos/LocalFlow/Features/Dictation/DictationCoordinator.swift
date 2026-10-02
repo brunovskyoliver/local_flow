@@ -505,7 +505,7 @@ final class DictationCoordinator {
       let boost = VocabularyBoostTerms(snapshot: session.vocabulary)
       // Feature 014: an approved device streams to the server instead of loading the
       // local model; the lease is acquired only once the remote path fails.
-      if remoteSettings.routesToServer, let remote,
+      if remoteSettings.streamsDictation, let remote,
         let started = remote.makeSession(
           settings: remoteSettings, boost: RemoteBoost(boost),
           read: { start, count in try spool.readWindow(startSample: start, count: count) },

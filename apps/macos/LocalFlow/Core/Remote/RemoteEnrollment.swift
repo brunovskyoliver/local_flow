@@ -29,11 +29,16 @@ struct RemoteDictationSettings: Sendable, Equatable {
   /// False under Settings › Server › Server only: a failed or missing server never
   /// falls back to the local model.
   var localModelsAllowed = true
+  /// Settings › Server › Advanced › Dictation: This Mac. Speech stays on this Mac while
+  /// rewriting and the rest still use the server.
+  var dictationOnThisMac = false
 
   static let off = RemoteDictationSettings()
 
   /// Remote recognition is attempted only for an approved device with a pinned server.
   var routesToServer: Bool { enabled && serverOrigin != nil && state == .approved }
+  /// Dictation audio streams to the server.
+  var streamsDictation: Bool { routesToServer && !dictationOnThisMac }
 
   /// An `https://` origin with no path, query, fragment or credentials; nil otherwise.
   static func origin(_ text: String) -> URL? {

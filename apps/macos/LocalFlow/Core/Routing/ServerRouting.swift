@@ -36,10 +36,10 @@ struct ServerRouting: Sendable, Equatable {
   var customSummaries = false
 
   /// `useForEverything` ∧ `routesToServer` ∧ capability ∧ override == `server`;
-  /// dictation depends on `routesToServer` alone, as in Feature 014.
+  /// dictation depends on `routesToServer` and its own override alone, as in Feature 014.
   func servedByServer(_ service: ServerService) -> Bool {
     guard remote.routesToServer else { return false }
-    if service == .dictation { return true }
+    if service == .dictation { return remote.streamsDictation }
     guard useForEverything, offered(service) else { return false }
     switch service {
     case .dictation: return true

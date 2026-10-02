@@ -518,7 +518,8 @@ final class RemoteDictationRouter: RemoteDictationRouting {
   private func buildSession(
     settings: RemoteDictationSettings, boost: RemoteBoost?,
     read: @escaping RemoteDictationSession.SampleReader,
-    recorded: @escaping RemoteDictationSession.SampleCounter
+    recorded: @escaping RemoteDictationSession.SampleCounter,
+    threshold: Duration? = nil
   ) -> RemoteDictationSession? {
     guard settings.routesToServer, let origin = settings.serverOrigin,
       let url = RemoteEnrollment.channelURL(origin: origin),
@@ -526,7 +527,8 @@ final class RemoteDictationRouter: RemoteDictationRouting {
     else { return nil }
     return RemoteDictationSession(
       configuration: .init(
-        channelURL: url, serverKey: key, boost: boost, threshold: settings.fallbackThreshold),
+        channelURL: url, serverKey: key, boost: boost,
+        threshold: threshold ?? settings.fallbackThreshold),
       transports: transports, credentials: enrollment, clock: clock, read: read,
       recorded: recorded)
   }
@@ -553,6 +555,9 @@ final class RemoteDictationRouter: RemoteDictationRouting {
 }
 
 extension RemoteDictationRouter: RemoteRetryStarting {
+  /// Matches `RemoteChannel`'s stall timeout.
+  static let retryThreshold: Duration = .seconds(15)
+
   nonisolated func makeRetrySession(
     boost: RemoteBoost?, read: @escaping RemoteDictationSession.SampleReader,
     recorded: @escaping RemoteDictationSession.SampleCounter
@@ -562,7 +567,12 @@ extension RemoteDictationRouter: RemoteRetryStarting {
     return await MainActor.run {
       // A key press since the check above wins.
       guard liveSession == nil || liveSession === live else { return nil }
-      let session = buildSession(settings: settings(), boost: boost, read: read, recorded: recorded)
+      // Nobody waits on a retry, so the live 1.5 s threshold does not apply. A retry
+      // hands the whole recording to the socket at once; on a slow uplink the socket
+      // takes it all and the server hears the end seconds later, after that threshold.
+      let session = buildSession(
+        settings: settings(), boost: boost, read: read, recorded: recorded,
+        threshold: Self.retryThreshold)
       retrySession = session
       return session
     }

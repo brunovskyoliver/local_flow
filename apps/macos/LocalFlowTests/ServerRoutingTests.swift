@@ -197,6 +197,33 @@ final class ServerRoutingTests: XCTestCase {
     XCTAssertTrue(preferences.serverRouting.rewritesOverChannel)
   }
 
+  @MainActor func testDictationOnThisMacKeepsTheRestOnTheServer() {
+    let suite = "LocalFlow-dictation-here-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.confirmRemoteConsent()
+    preferences.remoteEnabled = true
+    preferences.remoteState = .approved
+    preferences.serverCapabilities = Self.everything
+    preferences.serverDictationOverride = .thisMac
+    let routing = preferences.serverRouting
+    XCTAssertFalse(preferences.remoteSettings().streamsDictation)
+    XCTAssertEqual(routing.path(for: .dictation), .thisMac)
+    for service in ServerService.allCases where service != .dictation {
+      XCTAssertEqual(routing.path(for: service), .server, "\(service)")
+    }
+    XCTAssertTrue(routing.rewritesOverChannel)
+    XCTAssertTrue(AppServices.keepsParakeetLoaded(keepModelReady: true, routing: routing))
+    XCTAssertEqual(AppPreferences(defaults: defaults).serverDictationOverride, .thisMac)
+
+    // Server only wins: no model loads here, so dictation goes to the server.
+    preferences.serverOnly = true
+    XCTAssertTrue(preferences.remoteSettings().streamsDictation)
+    XCTAssertEqual(preferences.serverRouting.path(for: .dictation), .server)
+  }
+
   @MainActor func testServerOnlySendsEverythingToTheServerAndLoadsNothingHere() {
     let suite = "LocalFlow-server-only-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!

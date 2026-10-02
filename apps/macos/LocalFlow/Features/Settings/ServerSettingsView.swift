@@ -128,6 +128,16 @@ final class ServerSettingsModel {
     }
   }
 
+  /// Dictation: Your server or This Mac. This Mac keeps speech local on a slow uplink
+  /// while rewriting still uses the server.
+  var dictationOverride: AppPreferences.ServerOverride {
+    get { serverOnly ? .server : preferences.serverDictationOverride }
+    set {
+      preferences.serverDictationOverride = newValue
+      checkResult = nil
+    }
+  }
+
   var showsRewriteCustomFields: Bool { routing.switchApplies && rewriteOverride == .custom }
   var showsSummaryCustomFields: Bool { routing.switchApplies && summariesOverride == .custom }
   static let customSummariesNote = "Your server is used if this server fails"
@@ -239,6 +249,10 @@ struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
   }
 
   @ViewBuilder private var advanced: some View {
+    SettingsRow("Dictation", detail: "Speech recognition; rewriting follows its own row") {
+      overridePicker("Dictation", selection: $model.dictationOverride, custom: false)
+    }
+    SottoPalette.line.frame(height: 1)
     SettingsRow("Rewriting") {
       overridePicker("Rewriting", selection: $model.rewriteOverride, custom: true)
     }
