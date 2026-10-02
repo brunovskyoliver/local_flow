@@ -50,6 +50,88 @@ final class HandoffCodecTests: XCTestCase {
     XCTAssertEqual(decoded.peakFootprintBytes, 31_457_280)
   }
 
+  func testKeyboardStatusCarriesTheSurfaceFootprintsAndReadsOlderFiles() throws {
+    let status = KeyboardStatusFile(
+      hasFullAccess: true, lastSeen: 8, peakFootprintBytes: 31_457_280,
+      footprintBytes: 20_971_520, footprintRestBytes: 18_874_368,
+      footprintListeningBytes: 25_165_824)
+    let json = try XCTUnwrap(String(data: try JSONEncoder().encode(status), encoding: .utf8))
+    XCTAssertTrue(json.contains("\"footprint_rest_bytes\":18874368"))
+    XCTAssertTrue(json.contains("\"footprint_listening_bytes\":25165824"))
+    XCTAssertEqual(try JSONDecoder().decode(KeyboardStatusFile.self, from: Data(json.utf8)), status)
+
+    let older = #"{"v":1,"has_full_access":true,"last_seen":8,"peak_footprint_bytes":31457280}"#
+    let decoded = try JSONDecoder().decode(KeyboardStatusFile.self, from: Data(older.utf8))
+    XCTAssertNil(decoded.footprintRestBytes)
+    XCTAssertNil(decoded.footprintListeningBytes)
+  }
+
+  // MARK: Feature 017 additions (contracts/keyboard-handoff-v1-additions.md)
+
+  func testSessionFileCarriesThe017FieldsAndNever() throws {
+    let session = SessionFile(
+      sessionID: UUID(), state: .recording, idleDeadline: nil, idleTimeout: "never",
+      dictationID: UUID(), updatedAt: 1_790_000_000_000, recordingStartedAt: 1_790_000_000_000,
+      inputName: "iPhone Microphone", dictationSource: .keyboard)
+    let object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(session)) as? [String: Any])
+    XCTAssertEqual(object["idle_timeout"] as? String, "never")
+    XCTAssertEqual(object["recording_started_at"] as? Int64, 1_790_000_000_000)
+    XCTAssertEqual(object["input_name"] as? String, "iPhone Microphone")
+    XCTAssertEqual(object["dictation_source"] as? String, "keyboard")
+    for source in [SessionFile.Source.keyboard, .app, .control] {
+      var file = session
+      file.dictationSource = source
+      try store.write(file, .session)
+      XCTAssertEqual(store.read(SessionFile.self, .session), file)
+    }
+  }
+
+  func testEndRequestRoundTrips() throws {
+    let request = RequestFile(requestID: UUID(), kind: .end, sessionID: UUID(), createdAt: 5)
+    try store.write(request, .request)
+    XCTAssertEqual(store.read(RequestFile.self, .request), request)
+    let raw = #"""
+      {"v":1,"request_id":"\#(UUID())","kind":"end","session_id":"\#(UUID())","created_at":1}
+      """#
+    XCTAssertEqual(try JSONDecoder().decode(RequestFile.self, from: Data(raw.utf8)).kind, .end)
+  }
+
+  /// The 016 contract examples, written before any 017 field existed.
+  func testEvery016FileStillDecodes() throws {
+    let id = UUID().uuidString
+    let session = #"""
+      { "v": 1, "session_id": "\#(id)", "state": "ready", "idle_deadline": 1790000000000,
+        "idle_timeout": "5m", "dictation_id": null, "end_reason": null,
+        "last_request_id": "\#(id)", "last_outcome": "empty", "updated_at": 1790000000000 }
+      """#
+    let decoded = try JSONDecoder().decode(SessionFile.self, from: Data(session.utf8))
+    XCTAssertEqual(decoded.idleTimeout, "5m")
+    XCTAssertNil(decoded.recordingStartedAt)
+    XCTAssertNil(decoded.inputName)
+    XCTAssertNil(decoded.dictationSource)
+    let request = #"""
+      { "v": 1, "request_id": "\#(id)", "kind": "start", "session_id": "\#(id)",
+        "created_at": 1790000000000 }
+      """#
+    XCTAssertEqual(
+      try JSONDecoder().decode(RequestFile.self, from: Data(request.utf8)).kind, .start)
+    let result = #"""
+      { "v": 1, "request_id": "\#(id)", "dictation_id": "\#(id)", "outcome": "text",
+        "text": "…", "limit_reached": false, "created_at": 1790000000000 }
+      """#
+    XCTAssertNoThrow(try JSONDecoder().decode(ResultFile.self, from: Data(result.utf8)))
+    let delivery = #"""
+      { "v": 1, "dictation_id": "\#(id)", "delivery": "inserted", "at": 1790000000000 }
+      """#
+    XCTAssertNoThrow(try JSONDecoder().decode(DeliveryFile.self, from: Data(delivery.utf8)))
+    let status = #"""
+      { "v": 1, "has_full_access": true, "last_seen": 1790000000000, "peak_footprint_bytes": 31457280,
+        "footprint_bytes": 20971520 }
+      """#
+    XCTAssertNoThrow(try JSONDecoder().decode(KeyboardStatusFile.self, from: Data(status.utf8)))
+  }
+
   func testFootprintReadsThisProcess() {
     let reading = Footprint.read()
     XCTAssertGreaterThan(reading.current, 0)

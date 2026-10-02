@@ -134,6 +134,65 @@ final class HandoffServerTests: XCTestCase {
     XCTAssertEqual(store.read(SessionFile.self, .session)?.state, .ended)
   }
 
+  // MARK: Feature 017 additions
+
+  func testEndWithTheSessionIDEndsTheSessionAndDiscardsTheRecording() async throws {
+    await controller.open(origin: .keyboard)
+    try request(.start, UUID())
+    try request(.end, UUID())
+    XCTAssertEqual(controller.session?.endReason, .userEnded)
+    XCTAssertEqual(store.read(SessionFile.self, .session)?.state, .ended)
+    XCTAssertNil(store.read(ResultFile.self, .result))
+    XCTAssertEqual(try harness.rowCount(), 0, "the recording in progress is discarded")
+  }
+
+  func testEndWithAStaleSessionIDIsIgnored() async throws {
+    await controller.open(origin: .keyboard)
+    try store.write(
+      RequestFile(
+        requestID: UUID(), kind: .end, sessionID: UUID(),
+        createdAt: Handoff.milliseconds(harness.now)), .request)
+    server.handleRequest()
+    XCTAssertEqual(controller.session?.state, .ready)
+  }
+
+  func testCancelWritesNoResult() async throws {
+    await controller.open(origin: .keyboard)
+    let id = UUID()
+    try request(.start, id)
+    try request(.cancel, id)
+    XCTAssertEqual(controller.session?.state, .ready)
+    XCTAssertNil(store.read(ResultFile.self, .result))
+    XCTAssertFalse(rung.contains(.result))
+  }
+
+  func testSessionFileCarriesNeverAndTheRecordingFieldsOnlyWhileRecording() async throws {
+    harness.timeout = .never
+    await controller.open(origin: .keyboard)
+    var file = try XCTUnwrap(store.read(SessionFile.self, .session))
+    XCTAssertEqual(file.idleTimeout, "never")
+    XCTAssertNil(file.idleDeadline)
+    XCTAssertNil(file.recordingStartedAt)
+    XCTAssertNil(file.inputName)
+    XCTAssertNil(file.dictationSource)
+
+    let id = UUID()
+    try request(.start, id)
+    file = try XCTUnwrap(store.read(SessionFile.self, .session))
+    XCTAssertEqual(file.state, .recording)
+    XCTAssertEqual(file.recordingStartedAt, Handoff.milliseconds(harness.now))
+    XCTAssertEqual(file.inputName, harness.capture.inputName)
+    XCTAssertEqual(file.dictationSource, .keyboard)
+
+    try request(.stop, id)
+    try await waitForReady()
+    file = try XCTUnwrap(store.read(SessionFile.self, .session))
+    XCTAssertNil(file.idleDeadline)
+    XCTAssertNil(file.recordingStartedAt)
+    XCTAssertNil(file.inputName)
+    XCTAssertNil(file.dictationSource)
+  }
+
   func testCleanLaunchRemovesAStaleSessionFile() throws {
     try store.write(
       SessionFile(sessionID: UUID(), state: .ready, idleTimeout: "5m", updatedAt: 0), .session)

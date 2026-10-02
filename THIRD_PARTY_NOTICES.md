@@ -144,10 +144,11 @@ neither package.
 `Package.swift` declares FluidAudio with `traits: []`, as the Mac project did before the
 extraction, so the NeMo text-processing dependency stays out of the resolved graph.
 
-Both the app and the keyboard bundle Figtree and EB Garamond from
-`apps/macos/LocalFlow/Resources/Fonts`, under the SIL Open Font License 1.1 described under
-Interface fonts above. The app bundle also carries `OFL-Figtree.txt` and `OFL-EBGaramond.txt`;
-the keyboard ships inside it.
+The app, the keyboard and the `LocalFlowWidgets` extension (Feature 017, ADR 0030) each bundle
+Figtree and EB Garamond from `apps/macos/LocalFlow/Resources/Fonts`, under the SIL Open Font
+License 1.1 described under Interface fonts above. The app bundle also carries `OFL-Figtree.txt`
+and `OFL-EBGaramond.txt`; both extensions ship inside it. The widget extension links neither
+package and adds no third-party code.
 
 The app downloads the same model artifacts as the Mac, from the same descriptors, into its own
 container; no weights are bundled. Parakeet v3 is covered by the Feature 001 section and its

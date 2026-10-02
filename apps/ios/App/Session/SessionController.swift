@@ -11,7 +11,9 @@ import os
 @MainActor
 @Observable
 final class SessionController {
-  enum Origin: Sendable { case keyboard, app }
+  /// `control`: a one-shot session started by the control with none running. It ends
+  /// after its dictation, like `app` (017 data-model §2).
+  enum Origin: Sendable { case keyboard, app, control }
 
   struct PhoneSession: Equatable {
     let id: UUID
@@ -20,6 +22,10 @@ final class SessionController {
     var idleDeadline: Date?
     var state: SessionFile.State
     var endReason: SessionFile.EndReason?
+    /// Set in `recording`, cleared otherwise (017 data-model §2).
+    var recordingStartedAt: Date?
+    /// The input port name in `recording`, refreshed on route change.
+    var inputName: String?
   }
 
   struct ActiveDictation {
@@ -39,6 +45,14 @@ final class SessionController {
 
   enum StartOutcome: Equatable { case started, busy, noSession, failed }
 
+  /// A result History could not take: before the first unlock after a restart the
+  /// database is unreadable. Its spool stays until the retried save succeeds, so a process
+  /// death leaves an orphan that 016 recovery transcribes again (017 data-model §1).
+  struct PendingSave {
+    let dictation: PhoneDictationStore.Dictation
+    let spool: AudioSpool
+  }
+
   private(set) var session: PhoneSession?
   private(set) var lastRequestID: UUID?
   private(set) var lastOutcome: SessionFile.Outcome?
@@ -48,12 +62,23 @@ final class SessionController {
   private(set) var lastStopAt: Date?
   private(set) var lastResultAt: Date?
   private(set) var lastResultID: UUID?
+  /// The newest result from any source, for Live Activity Copy (017 data-model §2).
+  /// Memory only: after a relaunch Copy reads History instead.
+  private(set) var lastResult: DictationResult?
+  /// Why the last dictation failed, for the keyboard's "Open LocalFlow to see why".
+  /// Cleared by the next result.
+  private(set) var lastFailure: String?
+  /// At most one; a second dictation's spool cannot open while it holds its own.
+  @ObservationIgnored private(set) var pendingSave: PendingSave?
 
   @ObservationIgnored var onChange: (() -> Void)?
   /// Keyboard dictations, for `result.json`.
   @ObservationIgnored var onResult: ((DictationResult) -> Void)?
   /// In-app notes, which never go to the keyboard.
   @ObservationIgnored var onNote: ((DictationResult) -> Void)?
+  /// Control dictations: clipboard, Live Activity card and notification. Awaited before a
+  /// one-shot control session ends.
+  @ObservationIgnored var onControlResult: ((DictationResult) async -> Void)?
   @ObservationIgnored var onLevel: ((Float) -> Void)?
 
   private let capture: AudioCapturing
@@ -91,6 +116,7 @@ final class SessionController {
     capture.onInterruption = { [weak self] in
       Task { await self?.interrupted() }
     }
+    capture.onRouteChange = { [weak self] in self?.routeChanged() }
   }
 
   var isActive: Bool { session.map { $0.state != .ended } ?? false }
@@ -101,7 +127,7 @@ final class SessionController {
   /// into a keyboard session that follows the idle timeout.
   func open(origin: Origin) async {
     if var live = session, live.state != .ended {
-      if origin == .keyboard, live.origin == .app {
+      if origin == .keyboard, live.origin != .keyboard {
         live.origin = .keyboard
         session = live
         changed()
@@ -140,6 +166,8 @@ final class SessionController {
     live.state = .ended
     live.endReason = reason
     live.idleDeadline = nil
+    live.recordingStartedAt = nil
+    live.inputName = nil
     session = live
     Self.log.notice("Session ended: \(reason.rawValue, privacy: .public)")
     changed()
@@ -178,12 +206,15 @@ final class SessionController {
       current = ActiveDictation(
         id: id, requestID: requestID, source: source, startedAt: now(), spool: spool)
     } catch {
-      Self.log.error("Dictation could not start")
+      Self.log.error("Dictation could not start: \(String(describing: error), privacy: .public)")
+      lastFailure = Self.failureText(error)
       report(requestID, .failed)
       return .failed
     }
     live.state = .recording
     live.idleDeadline = nil
+    live.recordingStartedAt = now()
+    live.inputName = capture.inputName
     session = live
     changed()
     return .started
@@ -216,6 +247,8 @@ final class SessionController {
   func finish(_ end: CaptureEnd) async {
     guard let dictation = current, var live = session, live.state == .recording else { return }
     live.state = .finishing
+    live.recordingStartedAt = nil
+    live.inputName = nil
     session = live
     lastStopAt = now()
     changed()
@@ -227,44 +260,81 @@ final class SessionController {
       case .overflow: .overflow
       case .interrupted, .failed: .failure
       }
+    var keepSpool = false
     do {
       let output = try await pipeline.run(
         spool: dictation.spool, sampleCount: samples, dictationID: dictation.id,
-        stopReason: stopReason)
+        stopReason: stopReason, deletesSpool: false)
       if output.text.isEmpty {
         // A failed recognition with no text is a failure, not silence.
         report(dictation.requestID, output.quality == .incomplete ? .failed : .empty, notify: false)
       } else {
         // History first; a failed write still delivers the text (FR-023).
+        let record = PhoneDictationStore.Dictation(
+          id: dictation.id, text: output.text, createdAt: now(), source: dictation.source,
+          durationMilliseconds: samples / 16, quality: output.quality,
+          stopReason: output.stopReason,
+          endDetail: end == .durationLimit
+            ? .limitReached : end == .interrupted ? .interrupted : nil,
+          sessionID: live.id, detail: output.detail)
         do {
-          try await store.save(
-            .init(
-              id: dictation.id, text: output.text, createdAt: now(), source: dictation.source,
-              durationMilliseconds: samples / 16, quality: output.quality,
-              stopReason: output.stopReason,
-              endDetail: end == .durationLimit
-                ? .limitReached : end == .interrupted ? .interrupted : nil,
-              sessionID: live.id, detail: output.detail))
+          try await store.save(record)
         } catch {
           Self.log.error("history_write_failed")
+          pendingSave = PendingSave(dictation: record, spool: dictation.spool)
+          keepSpool = true
         }
         let result = DictationResult(
           requestID: dictation.requestID, dictationID: dictation.id, text: output.text,
           limitReached: end == .durationLimit)
         lastResultAt = now()
         lastResultID = dictation.id
-        if dictation.source == .app { onNote?(result) } else { onResult?(result) }
+        lastResult = result
+        lastFailure = nil
+        switch dictation.source {
+        case .app: onNote?(result)
+        case .control: await onControlResult?(result)
+        case .keyboard: onResult?(result)
+        }
       }
     } catch {
-      Self.log.error("Dictation failed")
+      // Errors carry no transcript text, so the detail is public.
+      Self.log.error("Dictation failed: \(String(describing: error), privacy: .public)")
+      lastFailure = Self.failureText(error)
       report(dictation.requestID, .failed, notify: false)
     }
+    if !keepSpool { try? dictation.spool.cleanup() }
     current = nil
     guard session?.state == .finishing else { return }
-    if session?.origin == .app || idleTimeout() == .afterOne || end == .interrupted {
+    if session?.origin != .keyboard || idleTimeout() == .afterOne || end == .interrupted {
       self.end(end == .interrupted ? .interrupted : .afterOneDictation)
     } else {
       setReady()
+    }
+  }
+
+  /// On `protectedDataDidBecomeAvailable` and when LocalFlow becomes active.
+  func retryPendingSave() async {
+    guard let pending = pendingSave else { return }
+    do {
+      try await store.save(pending.dictation)
+    } catch {
+      Self.log.error("history_write_failed")
+      return
+    }
+    try? pending.spool.cleanup()
+    pendingSave = nil
+  }
+
+  static func failureText(_ error: any Error) -> String {
+    switch error as? DictationFailure {
+    case .modelUnavailable:
+      "The speech model couldn't be loaded. Check it in Settings › Speech model."
+    case .busy: "The speech model was busy loading. Try again in a moment."
+    case .cancelled, .staleLease: "The speech model was released while transcribing. Try again."
+    case .invalidAudio: "The recording couldn't be read."
+    case .invalidResult: "The speech model returned no usable text."
+    case nil: "Transcription failed (\(String(describing: error)))."
     }
   }
 
@@ -273,7 +343,19 @@ final class SessionController {
   private func setReady() {
     guard var live = session else { return }
     live.state = .ready
-    live.idleDeadline = now().addingTimeInterval(idleTimeout().seconds)
+    // `never` stores no deadline, so `tick()` never ends the session.
+    live.idleDeadline = idleTimeout().seconds.map { now().addingTimeInterval($0) }
+    live.recordingStartedAt = nil
+    live.inputName = nil
+    session = live
+    changed()
+  }
+
+  private func routeChanged() {
+    guard var live = session, live.state == .recording else { return }
+    let name = capture.inputName
+    guard name != live.inputName else { return }
+    live.inputName = name
     session = live
     changed()
   }
@@ -294,6 +376,9 @@ final class SessionController {
       idleDeadline: session.idleDeadline.map(Handoff.milliseconds),
       idleTimeout: idleTimeout().rawValue, dictationID: current?.id,
       endReason: session.endReason, lastRequestID: lastRequestID, lastOutcome: lastOutcome,
-      updatedAt: Handoff.milliseconds(now()))
+      updatedAt: Handoff.milliseconds(now()),
+      recordingStartedAt: session.recordingStartedAt.map(Handoff.milliseconds),
+      inputName: session.inputName,
+      dictationSource: current.flatMap { SessionFile.Source(rawValue: $0.source.rawValue) })
   }
 }

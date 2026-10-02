@@ -13,11 +13,11 @@ struct RootView: View {
       let dictionary = app.dictionary
     {
       VStack(spacing: 0) {
-        if controller.isActive, !app.showSession {
+        if controller.isActive || controller.lastFailure != nil, !app.showSession {
           Button {
             app.showSession = true
           } label: {
-            Label("LocalFlow is listening", systemImage: "waveform")
+            Label(bannerTitle(controller), systemImage: "waveform")
               .font(.flow(size: 14, weight: .medium))
               .frame(maxWidth: .infinity).padding(10)
               .background(SottoPalette.tint)
@@ -58,6 +58,14 @@ struct RootView: View {
       .fullScreenCover(isPresented: $app.showSession) {
         SessionView(controller: controller) { app.showSession = false }
       }
+    }
+  }
+
+  private func bannerTitle(_ controller: SessionController) -> String {
+    switch (controller.isActive, controller.lastFailure != nil) {
+    case (true, false): "LocalFlow is listening"
+    case (true, true): "LocalFlow is listening · last dictation failed"
+    default: "Last dictation failed · tap for details"
     }
   }
 }

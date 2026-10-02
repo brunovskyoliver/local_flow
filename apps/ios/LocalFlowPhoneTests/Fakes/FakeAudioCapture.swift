@@ -12,7 +12,9 @@ final class FakeAudioCapture: AudioCapturing {
   var onLevel: ((Float) -> Void)?
   var onCaptureEnded: ((CaptureEnd) -> Void)?
   var onInterruption: (() -> Void)?
+  var onRouteChange: (() -> Void)?
 
+  var inputName: String? = "iPhone Microphone"
   var permission = true
   var startFails = false
   var samples = [Float](repeating: 0.1, count: 16_000)
@@ -49,10 +51,14 @@ final class FakeAudioCapture: AudioCapturing {
 actor FakeRuntime: TranscriptionRuntime {
   var text = "hello from the phone"
   var fails = false
+  var loadFails = false
+  var loadDelay: Duration = .zero
   private(set) var boostKeys: [String?] = []
 
   func set(text: String) { self.text = text }
   func set(fails: Bool) { self.fails = fails }
+  func set(loadFails: Bool) { self.loadFails = loadFails }
+  func set(loadDelay: Duration) { self.loadDelay = loadDelay }
 
   func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
     try await transcribe(samples, boost: nil)
@@ -96,7 +102,13 @@ final class PhoneHarness {
     vocabulary = VocabularyStore(history: history)
     dictations = PhoneDictationStore(history: history)
     let runtime = runtime
-    lifecycle = ModelLifecycleCoordinator(clock: clock, factory: { runtime })
+    lifecycle = ModelLifecycleCoordinator(
+      clock: clock,
+      factory: {
+        if await runtime.loadFails { throw DictationFailure.modelUnavailable }
+        try await Task.sleep(for: runtime.loadDelay)
+        return runtime
+      })
     pipeline = PhoneDictationPipeline(
       lifecycle: lifecycle, transcriber: WindowedTranscriber(lifecycle: lifecycle),
       vocabulary: vocabulary)

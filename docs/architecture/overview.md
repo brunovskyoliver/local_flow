@@ -51,3 +51,21 @@ LocalFlowKeyboard -> App Group handoff files -> LocalFlowPhone
 ```
 
 The phone uses the same windows, assembly, Dictionary rules and History schema as the Mac. See [storage](storage.md#phone-database-feature-016) and [lifecycle](model-lifecycle.md#phone-leases-and-keep-ready-feature-016).
+
+## System entry points on iOS (Feature 017)
+
+[ADR 0030](../adr/0030-ios-system-entry-points.md) adds a third iOS target, `LocalFlowWidgets`, a WidgetKit extension embedded in the app. It holds the dictation control (Control Center, Lock Screen, Action Button) and the Live Activity views for the Lock Screen and the Dynamic Island. It links neither package product and runs no audio.
+
+The intent types live in `apps/ios/Intents/` and are compiled into both the app and the widget, so the system sees one type and routes it to the app. Every intent adopts `LiveActivityIntent`; the dictation toggle also adopts `AudioRecordingIntent`. Without `LiveActivityIntent`, iOS ran `perform()` in the widget extension. `perform()` reaches the app through `IntentHandlers.current`, a static slot that only the app sets at launch; in any other process it is nil and the intent returns an error without recording.
+
+```text
+Control / Action Button / Shortcut / Live Activity button
+    -> ToggleDictationIntent, EndSessionIntent, CopyLastDictationIntent (apps/ios/Intents)
+    -> app process, launched in the background if needed
+        -> PhoneIntentHandler -> SessionController (origin = control, one-shot)
+            -> same capture, pipeline and lease as a keyboard dictation
+            -> onControlResult -> History -> clipboard (or one pending write) -> ResultNotifier
+        -> ActivityController -> ActivityKit -> LocalFlowWidgets (Live Activity views)
+```
+
+A control recording always has a Live Activity; if Live Activities are off or the request fails, the intent records nothing. iOS drops clipboard writes made while the app is in the background, so the app holds the newest transcript as one pending write and applies it when LocalFlow becomes active. History is written before any delivery, and a save that fails before the first unlock is held, retried, and keeps its spool until it lands.

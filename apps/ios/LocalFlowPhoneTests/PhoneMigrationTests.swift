@@ -26,9 +26,80 @@ final class PhoneMigrationTests: XCTestCase {
   func testFreshDatabaseHasTheSharedMigrationsThenThePhoneTable() throws {
     let shared = HistoryMigrations.migrator().migrations
     XCTAssertEqual(shared.count, 17)
-    XCTAssertEqual(
-      Set(try applied(harness.history.database)), Set(shared + [PhoneMigrations.identifier]))
-    XCTAssertEqual(PhoneMigrations.migrator().migrations, shared + [PhoneMigrations.identifier])
+    let phone = [PhoneMigrations.identifier, PhoneMigrations.identifierV2]
+    XCTAssertEqual(Set(try applied(harness.history.database)), Set(shared + phone))
+    // Frozen: the list ends with the phone's two migrations, in order.
+    XCTAssertEqual(PhoneMigrations.migrator().migrations, shared + phone)
+    XCTAssertEqual(phone, ["phone-dictations-v1", "phone-dictations-v2"])
+  }
+
+  func testV2KeepsEveryV1RowAndValue() async throws {
+    let path = harness.root.appendingPathComponent("v1.sqlite").path
+    let store = try TranscriptionStore(path: path)
+    try PhoneMigrations.migrator().migrate(store.database, upTo: PhoneMigrations.identifier)
+    let dictations = PhoneDictationStore(history: store)
+    let keyboard = try await dictations.save(dictation())
+    _ = try await dictations.save(dictation(source: .app))
+    try await dictations.markDelivery(dictationID: keyboard.id, .inserted)
+    let select = "SELECT * FROM phone_dictations ORDER BY transcription_id"
+    let before = try await store.database.read {
+      try Row.fetchAll($0, sql: select).map(\.description)
+    }
+    try PhoneMigrations.migrator().migrate(store.database)
+    let after = try await store.database.read {
+      try Row.fetchAll($0, sql: select).map(\.description)
+    }
+    XCTAssertEqual(before.count, 2)
+    XCTAssertEqual(after, before)
+    XCTAssertTrue(try applied(store.database).contains(PhoneMigrations.identifierV2))
+  }
+
+  func testV2AcceptsControlDictationsOnlyAsCopiedOrSavedOnly() async throws {
+    let saved = try await harness.dictations.save(dictation(source: .control))
+    let id = saved.id.uuidString
+    let database = harness.history.database
+    try await database.write {
+      try $0.execute(
+        sql: "UPDATE phone_dictations SET delivery = 'copied' WHERE transcription_id = ?",
+        arguments: [id])
+    }
+    for delivery in ["inserted", "offered"] {
+      do {
+        try await database.write {
+          try $0.execute(
+            sql: "UPDATE phone_dictations SET delivery = ? WHERE transcription_id = ?",
+            arguments: [delivery, id])
+        }
+        XCTFail("control accepted \(delivery)")
+      } catch {}
+    }
+    // `app` still requires `saved_only`, `copied` included.
+    let note = try await harness.dictations.save(dictation(source: .app))
+    do {
+      try await database.write {
+        try $0.execute(
+          sql: "UPDATE phone_dictations SET delivery = 'copied' WHERE transcription_id = ?",
+          arguments: [note.id.uuidString])
+      }
+      XCTFail("app accepted copied")
+    } catch {}
+  }
+
+  func testMarkCopiedAndNewestTranscript() async throws {
+    let older = try await harness.dictations.save(dictation(text: "Older."))
+    let newer = try await harness.dictations.save(
+      .init(
+        id: UUID(), text: "Newer.", createdAt: Date().addingTimeInterval(5), source: .control,
+        durationMilliseconds: 900, quality: .complete, stopReason: .keyRelease, endDetail: nil,
+        sessionID: nil, detail: nil))
+    try await harness.dictations.markCopied(dictationID: newer.id)
+    let row = try XCTUnwrap(try harness.row(newer.id))
+    XCTAssertEqual(row["delivery"] as String?, "copied")
+    XCTAssertEqual(row["delivery_state"] as String?, "not_inserted")
+    let newest = try await harness.dictations.newestTranscript()
+    XCTAssertEqual(newest?.id, newer.id)
+    XCTAssertEqual(newest?.text, "Newer.")
+    XCTAssertNotEqual(newest?.id, older.id)
   }
 
   func testLaterSharedMigrationStillAppliesAfterThePhoneOne() throws {

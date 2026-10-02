@@ -6,6 +6,7 @@ enum IdleTimeout: String, CaseIterable, Identifiable, Sendable {
   case fiveMinutes = "5m"
   case fifteenMinutes = "15m"
   case oneHour = "1h"
+  case never
 
   static let key = "session.idleTimeout"
   static let `default` = IdleTimeout.fiveMinutes
@@ -13,12 +14,13 @@ enum IdleTimeout: String, CaseIterable, Identifiable, Sendable {
   var id: String { rawValue }
 
   /// `afterOne` ends the session after its dictation; the deadline still bounds a
-  /// session in which nothing is dictated.
-  var seconds: TimeInterval {
+  /// session in which nothing is dictated. `never` has no deadline (research R6).
+  var seconds: TimeInterval? {
     switch self {
     case .afterOne, .fiveMinutes: 5 * 60
     case .fifteenMinutes: 15 * 60
     case .oneHour: 60 * 60
+    case .never: nil
     }
   }
 
@@ -28,6 +30,7 @@ enum IdleTimeout: String, CaseIterable, Identifiable, Sendable {
     case .fiveMinutes: "5 minutes"
     case .fifteenMinutes: "15 minutes"
     case .oneHour: "1 hour"
+    case .never: "Never"
     }
   }
 

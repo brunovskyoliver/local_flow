@@ -1,3 +1,4 @@
+import LocalFlowSpeech
 import XCTest
 
 @testable import LocalFlow
@@ -111,6 +112,33 @@ final class SessionControllerTests: XCTestCase {
     XCTAssertEqual(try harness.rowCount(), 0)
   }
 
+  /// The keyboard says "Open LocalFlow to see why", so the app keeps the reason.
+  func testFailedDictationKeepsAReasonUntilTheNextResult() async throws {
+    await harness.runtime.set(loadFails: true)
+    await controller.open(origin: .keyboard)
+    let request = UUID()
+    await dictate(request)
+    XCTAssertEqual(controller.sessionFile()?.lastOutcome, .failed)
+    XCTAssertEqual(
+      controller.lastFailure, SessionController.failureText(DictationFailure.modelUnavailable))
+    await harness.runtime.set(loadFails: false)
+    await dictate()
+    XCTAssertNil(controller.lastFailure)
+    XCTAssertEqual(results.count, 1)
+  }
+
+  /// A dictation that stops while keep-ready is still loading the model waits for it.
+  func testDictationStoppedWhileTheModelLoadsWaitsForIt() async throws {
+    await harness.runtime.set(loadDelay: .milliseconds(300))
+    await controller.open(origin: .keyboard)
+    try await Task.sleep(for: .milliseconds(50))
+    let loading = await harness.lifecycle.snapshot().leased
+    XCTAssertTrue(loading, "keep-ready is still loading the model")
+    await dictate()
+    XCTAssertNil(controller.lastFailure)
+    XCTAssertEqual(results.count, 1)
+  }
+
   func testLimitAndOverflowEndTheDictationAndKeepTheText() async throws {
     await controller.open(origin: .keyboard)
     await dictate(end: .durationLimit)
@@ -134,6 +162,59 @@ final class SessionControllerTests: XCTestCase {
     XCTAssertEqual(controller.session?.endReason, .idleTimeout)
     XCTAssertFalse(harness.capture.engineRunning)
     XCTAssertTrue(harness.keepReady.holders.isEmpty)
+  }
+
+  func testNeverSessionHasNoDeadlineAndEndsOnlyWhenTheUserEndsIt() async {
+    harness.timeout = .never
+    await controller.open(origin: .keyboard)
+    XCTAssertEqual(controller.session?.state, .ready)
+    XCTAssertNil(controller.session?.idleDeadline)
+    await dictate()
+    XCTAssertEqual(controller.session?.state, .ready)
+    XCTAssertNil(controller.session?.idleDeadline)
+    harness.now += 24 * 60 * 60
+    controller.tick()
+    XCTAssertEqual(controller.session?.state, .ready)
+    XCTAssertEqual(controller.sessionFile()?.idleTimeout, "never")
+    controller.end(.userEnded)
+    XCTAssertEqual(controller.session?.endReason, .userEnded)
+  }
+
+  func testRecordingStartAndInputNameLastOnlyWhileRecording() async throws {
+    harness.capture.inputName = "AirPods Pro"
+    await controller.open(origin: .keyboard)
+    XCTAssertNil(controller.session?.recordingStartedAt)
+    XCTAssertNil(controller.session?.inputName)
+    let request = UUID()
+    let startedAt = harness.now
+    controller.start(requestID: request)
+    XCTAssertEqual(controller.session?.recordingStartedAt, startedAt)
+    XCTAssertEqual(controller.session?.inputName, "AirPods Pro")
+    let file = try XCTUnwrap(controller.sessionFile())
+    XCTAssertEqual(file.recordingStartedAt, Handoff.milliseconds(startedAt))
+    XCTAssertEqual(file.inputName, "AirPods Pro")
+    XCTAssertEqual(file.dictationSource, .keyboard)
+
+    harness.capture.inputName = "iPhone Microphone"
+    harness.capture.onRouteChange?()
+    XCTAssertEqual(controller.session?.inputName, "iPhone Microphone")
+
+    harness.now += 5
+    await controller.stop(requestID: request)
+    XCTAssertNil(controller.session?.recordingStartedAt)
+    XCTAssertNil(controller.session?.inputName)
+    XCTAssertNil(controller.sessionFile()?.dictationSource)
+
+    controller.start(requestID: UUID())
+    controller.end(.userEnded)
+    XCTAssertNil(controller.session?.recordingStartedAt)
+    XCTAssertNil(controller.session?.inputName)
+  }
+
+  func testRouteChangeOutsideRecordingKeepsNoInputName() async {
+    await controller.open(origin: .keyboard)
+    harness.capture.onRouteChange?()
+    XCTAssertNil(controller.session?.inputName)
   }
 
   func testInterruptionWhileRecordingSavesThenEnds() async throws {

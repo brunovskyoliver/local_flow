@@ -26,17 +26,27 @@ struct SessionFile: HandoffFile, Equatable {
     case empty, busy, failed
     case noSession = "no_session"
   }
+  /// Who started the dictation in progress (Feature 017).
+  enum Source: String, Codable, Sendable { case keyboard, app, control }
 
   var v = Handoff.version
   var sessionID: UUID
   var state: State
   var idleDeadline: Int64?
+  /// `IdleTimeout.rawValue`: `afterOne`, `5m`, `15m`, `1h` or `never` (017).
   var idleTimeout: String
   var dictationID: UUID?
   var endReason: EndReason?
   var lastRequestID: UUID?
   var lastOutcome: Outcome?
   var updatedAt: Int64
+  // Feature 017, optional so 016 files still decode (contracts/keyboard-handoff-v1-additions.md).
+  /// While `recording` only.
+  var recordingStartedAt: Int64?
+  /// The input port name, while `recording` only.
+  var inputName: String?
+  /// While `recording` or `finishing`.
+  var dictationSource: Source?
 
   enum CodingKeys: String, CodingKey {
     case v, state
@@ -48,11 +58,15 @@ struct SessionFile: HandoffFile, Equatable {
     case lastRequestID = "last_request_id"
     case lastOutcome = "last_outcome"
     case updatedAt = "updated_at"
+    case recordingStartedAt = "recording_started_at"
+    case inputName = "input_name"
+    case dictationSource = "dictation_source"
   }
 }
 
 struct RequestFile: HandoffFile, Equatable {
-  enum Kind: String, Codable, Sendable { case start, stop, cancel }
+  /// `end` ends the session (017).
+  enum Kind: String, Codable, Sendable { case start, stop, cancel, end }
 
   var v = Handoff.version
   /// For `stop` and `cancel`, the ID of the `start` it ends.
@@ -112,6 +126,10 @@ struct KeyboardStatusFile: HandoffFile, Equatable {
   /// `phys_footprint` when the file was written. Optional so files from older keyboards
   /// still decode.
   var footprintBytes: UInt64?
+  /// SC-003 (Feature 017): peak `phys_footprint` while the keys, and while the listening
+  /// view, were up. Optional for the same reason.
+  var footprintRestBytes: UInt64?
+  var footprintListeningBytes: UInt64?
 
   enum CodingKeys: String, CodingKey {
     case v
@@ -119,6 +137,8 @@ struct KeyboardStatusFile: HandoffFile, Equatable {
     case lastSeen = "last_seen"
     case peakFootprintBytes = "peak_footprint_bytes"
     case footprintBytes = "footprint_bytes"
+    case footprintRestBytes = "footprint_rest_bytes"
+    case footprintListeningBytes = "footprint_listening_bytes"
   }
 }
 

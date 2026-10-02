@@ -15,6 +15,10 @@ protocol AudioCapturing: AnyObject {
   var onCaptureEnded: ((CaptureEnd) -> Void)? { get set }
   /// A call, Siri or another app took the audio session.
   var onInterruption: (() -> Void)? { get set }
+  /// The input route changed; read `inputName` again.
+  var onRouteChange: (() -> Void)? { get set }
+  /// The current input port name ("iPhone Microphone", a headset's name).
+  var inputName: String? { get }
 
   func requestPermission() async -> Bool
   func startEngine() throws

@@ -1,4 +1,5 @@
 import AVFAudio
+import AppIntents
 import SwiftUI
 import UIKit
 import os
@@ -19,6 +20,21 @@ struct LocalFlowPhoneApp: App {
   }
 }
 
+/// Siri and Shortcuts phrases (contracts/system-entry-points.md "App Shortcuts").
+struct LocalFlowShortcuts: AppShortcutsProvider {
+  static var appShortcuts: [AppShortcut] {
+    AppShortcut(
+      intent: ToggleDictationIntent(),
+      phrases: [
+        "Dictate a \(.applicationName) note", "Start \(.applicationName)",
+        "Stop \(.applicationName)",
+      ], shortTitle: "Dictate a note", systemImageName: "mic.fill")
+    AppShortcut(
+      intent: EndSessionIntent(), phrases: ["End \(.applicationName) session"],
+      shortTitle: "End session", systemImageName: "stop.fill")
+  }
+}
+
 /// Launch wiring: services, orphan recovery, the model check and the handoff server.
 @MainActor
 @Observable
@@ -35,8 +51,12 @@ final class PhoneApp {
   let history: HistoryViewModel?
   let dictionary: DictionaryViewModel?
   @ObservationIgnored private(set) var server: HandoffServer?
+  @ObservationIgnored private var activity: ActivityController?
+  @ObservationIgnored private(set) var intents: PhoneIntentHandler?
+  @ObservationIgnored private var notifier: ResultNotifier?
   @ObservationIgnored private let idleTimer = IdleTimer()
   @ObservationIgnored private var memoryObserver: NSObjectProtocol?
+  @ObservationIgnored private var unlockObserver: NSObjectProtocol?
   private static let log = Logger(subsystem: "org.localflow.LocalFlowPhone", category: "app")
 
   init() {
@@ -57,6 +77,20 @@ final class PhoneApp {
       history = HistoryViewModel(store: services.dictations)
       dictionary = DictionaryViewModel(store: services.vocabulary)
       failure = nil
+      let activity = ActivityController(
+        controller: controller, requester: SystemActivityRequester())
+      self.activity = activity
+      // Before the app finishes launching, so a notification's Copy reaches it.
+      let notifier = ResultNotifier(center: SystemNotificationCenter())
+      notifier.register()
+      self.notifier = notifier
+      // Set before any intent can run: a control press may be what launched the app.
+      let intents = PhoneIntentHandler(
+        controller: controller, dictations: services.dictations, pasteboard: SystemPasteboard(),
+        activity: activity, notifier: notifier)
+      notifier.onCopy = { [weak intents] in await intents?.copy(dictationID: $0) }
+      self.intents = intents
+      IntentHandlers.current = intents
       // Unsigned simulator builds have no App Group; the app still works on its own.
       if let store = HandoffStore.group() {
         server = HandoffServer(
@@ -73,7 +107,8 @@ final class PhoneApp {
       failure =
         "LocalFlow couldn't open its storage. Restart the app; if it keeps failing, free some space."
     }
-    Task { await launch() }
+    let launching = Task { await launch() }
+    intents?.launched = launching
   }
 
   private func launch() async {
@@ -81,6 +116,8 @@ final class PhoneApp {
     services.orphans.adopt()
     server?.start()
     server?.launched()
+    // After the server, which sets `onChange` first.
+    activity?.start()
     services.model.becameReady = { [services, weak self] in
       Task {
         await services.orphans.recover(pipeline: services.pipeline, store: services.dictations)
@@ -94,14 +131,25 @@ final class PhoneApp {
     memoryObserver = NotificationCenter.default.addObserver(
       forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
     ) { [weak controller] _ in MainActor.assumeIsolated { controller?.memoryWarning() } }
+    // The first unlock after a restart makes History writable again.
+    unlockObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil,
+      queue: .main
+    ) { [weak controller] _ in Task { await controller?.retryPendingSave() } }
   }
 
   /// `localflow://session/start?request=<uuid>` opens or keeps a session. The request
-  /// never starts a dictation (contract "Opening the app").
+  /// never starts a dictation. `localflow://settings` shows Settings and starts nothing
+  /// (contract "Opening the app").
   func open(_ url: URL) {
-    guard url.scheme == "localflow", url.host() == "session", url.path() == "/start",
-      let controller
-    else { return }
+    guard url.scheme == "localflow" else { return }
+    if url.host() == "settings" {
+      showSetup = false
+      showSession = false
+      tab = .settings
+      return
+    }
+    guard url.host() == "session", url.path() == "/start", let controller else { return }
     showSetup = false
     showSession = true
     Task { await controller.open(origin: .keyboard) }
@@ -109,7 +157,13 @@ final class PhoneApp {
 
   func becameActive() {
     server?.becameActive()
-    Task { await refreshSetup() }
+    activity?.becameActive()
+    Task {
+      // The save first, so a held copy of the same dictation can mark it `copied`.
+      await controller?.retryPendingSave()
+      await intents?.becameActive()
+      await refreshSetup()
+    }
   }
 
   /// Re-derives the checklist from the keyboard's status file, the microphone, the model

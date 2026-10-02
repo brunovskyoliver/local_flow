@@ -1,4 +1,6 @@
+import ActivityKit
 import SwiftUI
+import UserNotifications
 
 struct SettingsView: View {
   let app: PhoneApp
@@ -6,16 +8,49 @@ struct SettingsView: View {
   let orphans: OrphanSpoolRecovery
   @AppStorage(IdleTimeout.key) private var idleTimeout = IdleTimeout.default.rawValue
   @AppStorage(DiagnosticsView.enabledKey) private var diagnostics = false
+  @AppStorage(ResultNotifier.enabledKey) private var notifyResults = false
+  @State private var notificationsDenied = false
   @State private var orphanPresent = false
   @State private var sizeOnDisk: Int64 = 0
   @State private var confirmDelete = false
+  @State private var liveActivities = true
+  @Environment(\.scenePhase) private var phase
 
   var body: some View {
     NavigationStack {
       Form {
-        Section("Listening") {
+        Section {
           Picker("End listening after", selection: $idleTimeout) {
             ForEach(IdleTimeout.allCases) { Text($0.title).tag($0.rawValue) }
+          }
+        } header: {
+          Text("Listening")
+        } footer: {
+          if idleTimeout == IdleTimeout.never.rawValue {
+            Text("The microphone stays available until you end the session.")
+          }
+        }
+        Section {
+          Toggle("Notify when a note is ready", isOn: $notifyResults)
+          if notificationsDenied, let url = URL(string: UIApplication.openSettingsURLString) {
+            Link("Allow notifications in Settings", destination: url)
+          }
+        } footer: {
+          Text(
+            "After a dictation from the control, the Action Button or Shortcuts. Copy in the notification opens LocalFlow."
+          )
+        }
+        if !liveActivities {
+          Section {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+              Link("Open LocalFlow in Settings", destination: url)
+            }
+          } header: {
+            Text("Live Activities")
+          } footer: {
+            Text(
+              "Live Activities are off. Sessions still work, but the LocalFlow control can't record."
+            )
           }
         }
         Section {
@@ -35,6 +70,7 @@ struct SettingsView: View {
               Button("Delete", role: .destructive) {
                 orphans.delete()
                 orphanPresent = orphans.hasOrphan
+                liveActivities = ActivityAuthorizationInfo().areActivitiesEnabled
               }
             }
           }
@@ -58,6 +94,20 @@ struct SettingsView: View {
       .navigationTitle("Settings")
       .onAppear(perform: refresh)
       .onChange(of: model.state) { refresh() }
+      // Asked here, in the foreground, never from the control (research R5).
+      .onChange(of: notifyResults) {
+        guard notifyResults else { return }
+        Task {
+          let granted =
+            (try? await UNUserNotificationCenter.current().requestAuthorization(options: [
+              .alert, .sound,
+            ])) ?? false
+          notificationsDenied = !granted
+          if !granted { notifyResults = false }
+        }
+      }
+      // Back from the system Settings, where Live Activities may have been turned on.
+      .onChange(of: phase) { if phase == .active { refresh() } }
       .confirmationDialog(
         "Delete the speech model?", isPresented: $confirmDelete, titleVisibility: .visible
       ) {
@@ -77,6 +127,7 @@ struct SettingsView: View {
 
   private func refresh() {
     orphanPresent = orphans.hasOrphan
+    liveActivities = ActivityAuthorizationInfo().areActivitiesEnabled
     sizeOnDisk = model.state == .ready ? model.sizeOnDisk() : 0
   }
 

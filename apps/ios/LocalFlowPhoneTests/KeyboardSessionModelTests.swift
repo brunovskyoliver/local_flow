@@ -36,12 +36,21 @@ final class KeyboardSessionModelTests: XCTestCase {
   }
 
   private func writeSession(
-    _ state: SessionFile.State, lastRequest: UUID? = nil, outcome: SessionFile.Outcome? = nil
+    _ state: SessionFile.State, lastRequest: UUID? = nil, outcome: SessionFile.Outcome? = nil,
+    source: SessionFile.Source? = nil, recordingStartedAt: Date? = nil, inputName: String? = nil
   ) throws {
     try store.write(
       SessionFile(
         sessionID: sessionID, state: state, idleTimeout: "5m", lastRequestID: lastRequest,
-        lastOutcome: outcome, updatedAt: 0), .session)
+        lastOutcome: outcome, updatedAt: 0,
+        recordingStartedAt: recordingStartedAt.map(Handoff.milliseconds), inputName: inputName,
+        dictationSource: source ?? (state == .recording ? .keyboard : nil)), .session)
+  }
+
+  private func result(_ requestID: UUID, _ text: String) -> ResultFile {
+    ResultFile(
+      requestID: requestID, dictationID: UUID(), text: text, limitReached: false,
+      createdAt: Handoff.milliseconds(now))
   }
 
   private func runScheduled(_ delay: Duration) {
@@ -107,8 +116,43 @@ final class KeyboardSessionModelTests: XCTestCase {
     model.refresh()
     _ = model.tap()
     runScheduled(KeyboardSessionModel.resultTimeout)
+    XCTAssertEqual(rung.last, .ping)
+    runScheduled(KeyboardSessionModel.pongTimeout)
     XCTAssertEqual(model.message, KeyboardSessionModel.stoppedMessage)
     XCTAssertNil(model.pending)
+  }
+
+  /// A first model load after an install takes up to a minute; a live LocalFlow that is
+  /// still finishing keeps the keyboard waiting, up to `resultWaits` rounds.
+  func testAnsweredResultTimeoutKeepsWaitingThenGivesUp() throws {
+    let (model, requestID) = try startedModel()
+    try writeSession(.recording)
+    model.refresh()
+    _ = model.tap()
+    try writeSession(.finishing)
+    XCTAssertFalse(model.slowResult)
+    for _ in 0..<KeyboardSessionModel.resultWaits {
+      runScheduled(KeyboardSessionModel.resultTimeout)
+      model.pong()
+      runScheduled(KeyboardSessionModel.pongTimeout)
+      XCTAssertEqual(model.surface, .transcribing)
+      XCTAssertTrue(model.slowResult)
+    }
+    try store.write(result(requestID, "Late."), .result)
+    model.checkResult()
+    XCTAssertEqual(host.text, "Late.")
+
+    let (other, _) = try startedModel()
+    try writeSession(.recording)
+    other.refresh()
+    _ = other.tap()
+    try writeSession(.finishing)
+    for _ in 0..<KeyboardSessionModel.resultWaits {
+      runScheduled(KeyboardSessionModel.resultTimeout)
+      other.pong()
+    }
+    runScheduled(KeyboardSessionModel.resultTimeout)
+    XCTAssertEqual(other.message, KeyboardSessionModel.stoppedMessage)
   }
 
   func testMatchingOutcomeShowsItsMessageAndOtherOutcomesAreIgnored() throws {
@@ -119,7 +163,7 @@ final class KeyboardSessionModelTests: XCTestCase {
     XCTAssertNotNil(model.pending)
     try writeSession(.ready, lastRequest: requestID, outcome: .empty)
     model.refresh()
-    XCTAssertEqual(model.message, "Didn't catch that")
+    XCTAssertEqual(model.surface, .notice(.nothingHeard))
     XCTAssertNil(model.pending)
     XCTAssertEqual(model.sessionView, .ready)
   }
@@ -173,7 +217,8 @@ final class KeyboardSessionModelTests: XCTestCase {
     model.appear()
     XCTAssertEqual(model.sessionView, .none)
     XCTAssertEqual(model.tap(), .none)
-    XCTAssertEqual(model.message, KeyboardSessionModel.fullAccessMessage)
+    XCTAssertEqual(model.surface, .notice(.fullAccess))
+    XCTAssertEqual(model.openSettings(), .none)
     XCTAssertTrue(rung.isEmpty)
     XCTAssertFalse(FileManager.default.fileExists(atPath: store.directory.path))
   }
@@ -191,5 +236,166 @@ final class KeyboardSessionModelTests: XCTestCase {
     XCTAssertEqual(model.message, KeyboardSessionModel.hint(for: .modelUnavailable))
     XCTAssertNotNil(KeyboardSessionModel.hint(for: .permissionDenied))
     XCTAssertNil(KeyboardSessionModel.hint(for: .idleTimeout))
+  }
+
+  // MARK: Feature 017 (US2, US3)
+
+  func testEndSessionWritesEndForTheCurrentSession() throws {
+    try writeSession(.ready)
+    let model = model()
+    model.appear()
+    model.pong()
+    model.endSession()
+    let request = try XCTUnwrap(store.read(RequestFile.self, .request))
+    XCTAssertEqual(request.kind, .end)
+    XCTAssertEqual(request.sessionID, sessionID)
+    XCTAssertEqual(rung.last, .request)
+  }
+
+  func testInsertLastDictationReinsertsTheLastKeyboardResult() throws {
+    let (model, requestID) = try startedModel()
+    XCTAssertNil(model.lastInserted)
+    try store.write(result(requestID, "Hello."), .result)
+    model.checkResult()
+    XCTAssertEqual(model.lastInserted, "Hello.")
+    model.insertLast()
+    XCTAssertEqual(host.text, "Hello.Hello.")
+    model.undo()
+    XCTAssertEqual(host.text, "Hello.", "Undo removes exactly the reinserted text")
+  }
+
+  func testOfferedResultBecomesTheLastDictation() throws {
+    let (model, requestID) = try startedModel()
+    host.documentID = UUID()
+    try store.write(result(requestID, "Offered."), .result)
+    model.checkResult()
+    XCTAssertEqual(model.lastInserted, "Offered.")
+    model.insertLast()
+    XCTAssertEqual(host.text, "Offered.")
+    XCTAssertEqual(store.read(DeliveryFile.self, .delivery)?.delivery, .inserted)
+  }
+
+  func testListeningStraightAfterTheTapThenRecordingDetails() throws {
+    let (model, _) = try startedModel()
+    XCTAssertEqual(model.surface, .listening(startedAt: nil, inputName: nil))
+    let started = now.addingTimeInterval(-1)
+    try writeSession(.recording, recordingStartedAt: started, inputName: "iPhone Microphone")
+    model.refresh()
+    XCTAssertEqual(
+      model.surface,
+      .listening(
+        startedAt: Date(timeIntervalSince1970: Double(Handoff.milliseconds(started)) / 1000),
+        inputName: "iPhone Microphone"))
+  }
+
+  func testNoRecordingWithinTwoSecondsMeansNotRunning() throws {
+    let (model, _) = try startedModel()
+    XCTAssertEqual(model.startSentAt, now)
+    runScheduled(KeyboardSessionModel.startTimeout)
+    XCTAssertEqual(model.surface, .notice(.notRunning))
+    XCTAssertNil(model.pending)
+    model.dismissNotice()
+    guard case .openApp(let url) = model.tap() else { return XCTFail("expected open") }
+    XCTAssertEqual(url.host(), "session")
+  }
+
+  func testRecordingWithinTwoSecondsKeepsListening() throws {
+    let (model, _) = try startedModel()
+    try writeSession(.recording)
+    model.refresh()
+    runScheduled(KeyboardSessionModel.startTimeout)
+    if case .listening = model.surface {} else { XCTFail("expected listening") }
+  }
+
+  func testBusySaysRecordingElsewhereAndReturnsToKeys() throws {
+    let (model, requestID) = try startedModel()
+    try writeSession(.recording, lastRequest: requestID, outcome: .busy, source: .control)
+    model.refresh()
+    XCTAssertEqual(model.surface, .keys)
+    XCTAssertEqual(model.message, BarStatus.elsewhere)
+    XCTAssertEqual(model.barStatus(now: now), BarStatus.elsewhere)
+  }
+
+  /// T069: a control recording shows in the bar and keeps the mic off until `ready`.
+  func testAControlRecordingDisablesTheMicUntilReady() throws {
+    try writeSession(.recording, source: .control)
+    let model = model()
+    model.appear()
+    model.pong()
+    XCTAssertEqual(model.sessionView, .working)
+    XCTAssertEqual(model.barStatus(now: now), BarStatus.elsewhere)
+    XCTAssertEqual(model.tap(), .none)
+    XCTAssertNil(store.read(RequestFile.self, .request))
+    try writeSession(.ready)
+    model.refresh()
+    XCTAssertEqual(model.sessionView, .ready)
+  }
+
+  func testCancelReturnsToKeysAndIgnoresALateResult() throws {
+    let (model, requestID) = try startedModel()
+    try writeSession(.recording)
+    model.refresh()
+    model.cancel()
+    let cancel = try XCTUnwrap(store.read(RequestFile.self, .request))
+    XCTAssertEqual(cancel.kind, .cancel)
+    XCTAssertEqual(cancel.requestID, requestID)
+    XCTAssertEqual(model.surface, .keys)
+    try store.write(result(requestID, "Late."), .result)
+    model.checkResult()
+    XCTAssertEqual(host.text, "")
+    XCTAssertNil(model.offered)
+  }
+
+  func testTranscribingFromStopUntilTheResult() throws {
+    let (model, requestID) = try startedModel()
+    try writeSession(.recording)
+    model.refresh()
+    _ = model.tap()
+    XCTAssertEqual(model.surface, .transcribing)
+    try writeSession(.finishing)
+    model.refresh()
+    XCTAssertEqual(model.surface, .transcribing)
+    try store.write(result(requestID, "Done."), .result)
+    model.checkResult()
+    XCTAssertEqual(model.surface, .keys)
+  }
+
+  func testTranscribingEndsAfterTheResultTimeout() throws {
+    let (model, _) = try startedModel()
+    try writeSession(.recording)
+    model.refresh()
+    _ = model.tap()
+    runScheduled(KeyboardSessionModel.resultTimeout)
+    runScheduled(KeyboardSessionModel.pongTimeout)
+    XCTAssertEqual(model.surface, .keys)
+  }
+
+  func testNothingHeardAndFailedClearAfterFourSecondsOrATap() throws {
+    var (model, requestID) = try startedModel()
+    try writeSession(.ready, lastRequest: requestID, outcome: .empty)
+    model.refresh()
+    XCTAssertEqual(model.surface, .notice(.nothingHeard))
+    runScheduled(KeyboardSessionModel.noticeTimeout)
+    XCTAssertEqual(model.surface, .keys)
+
+    (model, requestID) = try startedModel()
+    try writeSession(.ready, lastRequest: requestID, outcome: .failed)
+    model.refresh()
+    guard case .notice(.failed) = model.surface else { return XCTFail("expected failed") }
+    model.dismissNotice()
+    XCTAssertEqual(model.surface, .keys)
+  }
+
+  func testDisappearingWhileRecordingSendsStop() throws {
+    let (model, requestID) = try startedModel()
+    try writeSession(.recording)
+    model.refresh()
+    model.stop()
+    let stop = try XCTUnwrap(store.read(RequestFile.self, .request))
+    XCTAssertEqual(stop.kind, .stop)
+    XCTAssertEqual(stop.requestID, requestID)
+    rung.removeAll()
+    model.stop()
+    XCTAssertTrue(rung.isEmpty, "a stopped request is not stopped twice")
   }
 }
