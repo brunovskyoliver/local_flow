@@ -1,5 +1,35 @@
 import Foundation
 
+/// Feature 019: what kind of input a microphone is. Raw values match the CHECK list
+/// of migration `input-device-v18` and the stored ranked list.
+public enum InputDeviceKind: String, Codable, Sendable, CaseIterable {
+  case builtIn, usb, bluetooth, iPhone, virtual, other, systemDefault
+}
+
+/// Feature 019: the microphone a dictation recorded from. For a System default dictation
+/// the name is the device macOS used and the kind is `systemDefault`.
+public struct DictationInputDevice: Sendable, Equatable, Codable {
+  public static let maximumNameCharacters = 128
+  public let name: String
+  public let kind: InputDeviceKind
+
+  /// Nil when the name is empty after trimming; longer names are cut to 128 characters.
+  public init?(name: String, kind: InputDeviceKind) {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    self.name = String(trimmed.prefix(Self.maximumNameCharacters))
+    self.kind = kind
+  }
+
+  /// Reads the two stored columns; nil unless both are present and valid.
+  public init?(storedName: String?, storedKind: String?) {
+    guard let storedName, let storedKind, let kind = InputDeviceKind(rawValue: storedKind) else {
+      return nil
+    }
+    self.init(name: storedName, kind: kind)
+  }
+}
+
 public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
   public enum DeliveryState: String, Sendable, Codable {
     case notAttempted = "not_attempted"
@@ -72,6 +102,8 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
   public let recognitionPath: RecognitionPath
   /// Set with `localAfterServerFailure`, and with `server` for a pending retry.
   public let serverFailure: RemoteFailureReason?
+  /// Feature 019: nil for rows from before `input-device-v18` ("Not recorded").
+  public let inputDevice: DictationInputDevice?
   public static let legacyDetailMessage = "Legacy: raw output and processing metadata unavailable"
 
   public init(
@@ -91,7 +123,8 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     deliveredSource: DeliveredSource? = nil,
     deliveredRewriteAttemptID: UUID? = nil,
     recognitionPath: RecognitionPath = .local,
-    serverFailure: RemoteFailureReason? = nil
+    serverFailure: RemoteFailureReason? = nil,
+    inputDevice: DictationInputDevice? = nil
   ) throws {
     let bytes = text.data(using: .utf8)?.count ?? Int.max
     guard !text.isEmpty, bytes <= TranscriptionStore.maximumTextBytes else {
@@ -118,5 +151,6 @@ public struct TranscriptionEntry: Identifiable, Sendable, Equatable {
     self.deliveredRewriteAttemptID = deliveredRewriteAttemptID
     self.recognitionPath = recognitionPath
     self.serverFailure = serverFailure
+    self.inputDevice = inputDevice
   }
 }

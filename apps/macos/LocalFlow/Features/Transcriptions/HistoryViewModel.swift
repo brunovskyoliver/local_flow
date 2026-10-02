@@ -53,6 +53,11 @@ final class HistoryViewModel {
   }
 
   /// FR-019: "Server", "Local" or "Local after server failure (reason)".
+  /// Feature 019: "Microphone: <name>", or "Not recorded" for rows from before it.
+  nonisolated static func microphoneLabel(for entry: TranscriptionEntry) -> String {
+    "Microphone: \(entry.inputDevice?.name ?? "Not recorded")"
+  }
+
   static func pathLabel(for entry: TranscriptionEntry, showsLocal: Bool) -> String? {
     switch entry.recognitionPath {
     case .server: "Server"

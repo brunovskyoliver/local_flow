@@ -1,5 +1,6 @@
 import AVFoundation
 import CommonCrypto
+import CoreAudio
 import Foundation
 import XCTest
 
@@ -135,6 +136,8 @@ final class FakeMeetingAudioSource: MeetingAudioSourcing, @unchecked Sendable {
   private(set) var stopCalls = 0
   private(set) var pushedFrames: Int64 = 0
   private(set) var probeCalls = 0
+  /// Feature 019: what `currentDeviceName()` reports.
+  var deviceName: String?
 
   init(
     kind: MeetingTrackKind, format: MeetingSourceFormat = .init(sampleRate: 48_000, channels: 1),
@@ -193,6 +196,8 @@ final class FakeMeetingAudioSource: MeetingAudioSourcing, @unchecked Sendable {
     }
   }
 
+  func currentDeviceName() async -> String? { lock.withLock { deviceName } }
+
   /// Pushes `blocks` blocks of 4,096 frames. Returns how many were admitted.
   @discardableResult
   func push(blocks: Int, frames: Int = MeetingSampleRing.frameCapacity) -> Int {
@@ -218,6 +223,66 @@ final class FakeMeetingAudioSource: MeetingAudioSourcing, @unchecked Sendable {
     } else {
       fail(with: .deviceLost)
     }
+  }
+}
+
+// MARK: - Microphone engine (Feature 019)
+
+/// An engine whose input device, formats and failures the test sets; a configuration
+/// change is fired by hand.
+final class FakeMicrophoneEngine: MicrophoneEngine, @unchecked Sendable {
+  static let defaultDevice: AudioDeviceID = 900
+  private let lock = NSLock()
+  private let formats: [AudioDeviceID: AVAudioFormat]
+  private let failingStarts: Set<AudioDeviceID>
+  private var device: AudioDeviceID?
+  private var running = false
+  private var handler: (@Sendable () -> Void)?
+  private(set) var tapInstalled = false
+  private(set) var binds: [AudioDeviceID?] = []
+
+  init(formats: [AudioDeviceID: AVAudioFormat] = [:], failingStarts: Set<AudioDeviceID> = []) {
+    self.formats = formats
+    self.failingStarts = failingStarts
+  }
+
+  static func format(_ rate: Double, _ channels: AVAudioChannelCount = 1) -> AVAudioFormat {
+    AVAudioFormat(standardFormatWithSampleRate: rate, channels: channels)!
+  }
+
+  var current: AudioDeviceID { lock.withLock { device ?? Self.defaultDevice } }
+
+  func bind(_ device: AudioDeviceID?) throws {
+    lock.withLock {
+      binds.append(device)
+      self.device = device
+    }
+  }
+
+  var inputFormat: AVAudioFormat { formats[current] ?? Self.format(48_000) }
+  var boundDevice: AudioDeviceID { current }
+  func installTap(format: AVAudioFormat, into ring: MeetingSampleRing) {
+    lock.withLock { tapInstalled = true }
+  }
+  func removeTap() { lock.withLock { tapInstalled = false } }
+  func start() throws {
+    guard !failingStarts.contains(current) else { throw MeetingSourceFailure.deviceLost }
+    lock.withLock { running = true }
+  }
+  func stop() { lock.withLock { running = false } }
+  var isRunning: Bool { lock.withLock { running } }
+  func observeConfigurationChanges(_ handler: @escaping @Sendable () -> Void) {
+    lock.withLock { self.handler = handler }
+  }
+  func stopObserving() { lock.withLock { handler = nil } }
+
+  /// `AVAudioEngineConfigurationChange`: the engine has stopped.
+  func fireConfigurationChange() {
+    let handler = lock.withLock {
+      running = false
+      return self.handler
+    }
+    handler?()
   }
 }
 

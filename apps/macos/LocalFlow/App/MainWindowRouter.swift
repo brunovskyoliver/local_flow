@@ -21,10 +21,17 @@ enum LocalFlowPage: String, CaseIterable, Identifiable {
   }
 }
 
+/// A Settings section the window can scroll to.
+enum SettingsAnchor: Hashable, Sendable {
+  case microphones
+}
+
 /// Window visibility never owns capture or model lifetime.
 @MainActor @Observable
 final class MainWindowRouter {
   var selection: LocalFlowPage = .history
+  /// Feature 019: Settings scrolls here once it is shown, then clears it.
+  var settingsAnchor: SettingsAnchor?
   /// True while the main window is key and the app is active: whatever the
   /// background pill would say is already on screen.
   private(set) var isMainWindowFocused = false
@@ -65,6 +72,12 @@ final class MainWindowRouter {
   /// Opens the window from anywhere (the pill, the menu bar) using the scene's opener.
   func show(_ destination: LocalFlowPage? = nil) {
     open(destination, openWindow: openMainWindow)
+  }
+
+  /// Opens Settings scrolled to `anchor` ("Microphones…" on a dictation failure).
+  func showSettings(at anchor: SettingsAnchor) {
+    settingsAnchor = anchor
+    show(.settings)
   }
 
   private func observeFocus(_ window: NSWindow) {

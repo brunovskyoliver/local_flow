@@ -1,11 +1,16 @@
+import CoreAudio
 import Foundation
 import LocalFlowCore
 import LocalFlowSpeech
 
 protocol AudioCapturing: Sendable {
   func authorize() async -> Bool
-  func start(sessionID: UUID, spool: AudioSpool) async throws
-  func stop(sessionID: UUID) async throws -> AudioCaptureResult
+  /// `.systemDefault` runs the pre-019 path; `.device` binds the engine before
+  /// `prepare()` and throws `deviceLost` when that fails (Feature 019).
+  func start(sessionID: UUID, spool: AudioSpool, input: InputBinding) async throws
+    -> CaptureStarted
+  /// Waits `tail` (none when nil) before stopping, then drains as before.
+  func stop(sessionID: UUID, tail: Duration?) async throws -> AudioCaptureResult
   func cancel(sessionID: UUID) async throws -> AudioCaptureResult
   func snapshot() async -> AudioCaptureSnapshot?
   /// Bounded raw-queue occupancy for local measurement. Adapters without a ring
@@ -190,7 +195,8 @@ protocol RemoteDictationRouting: AnyObject {
   /// Moves a failed dictation's audio into `PendingAudio/` with its retry row.
   /// Throws `PendingRemoteDictationStore.Failure.full` when 20 already wait.
   func keepForRetry(
-    id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?
+    id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?,
+    inputDevice: DictationInputDevice?
   ) async throws
   /// The recording could not be kept (twenty already wait, or the disk refused): asks
   /// the user to copy its audio or discard it. Returns once they chose; the audio is

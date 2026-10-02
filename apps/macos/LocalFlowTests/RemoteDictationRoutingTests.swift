@@ -45,12 +45,13 @@ final class FakeRemoteRouter: RemoteDictationRouting {
   var localModelProvisioned: Bool { provisioned }
 
   func keepForRetry(
-    id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?
+    id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?,
+    inputDevice: DictationInputDevice?
   ) async throws {
     if keepFails { throw PendingRemoteDictationStore.Failure.full }
     _ = try await pendingStore!.add(
       id: id, audio: audio, sampleCount: sampleCount, failure: failure,
-      targetBundleID: targetBundleID, now: 1_000)
+      targetBundleID: targetBundleID, inputDevice: inputDevice, now: 1_000)
   }
 
   func retryQueueFull(audio: URL, sampleCount: Int) async { fullCalls += 1 }

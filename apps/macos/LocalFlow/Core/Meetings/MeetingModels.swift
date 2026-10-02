@@ -146,6 +146,9 @@ struct MeetingSegment: Sendable, Equatable, Identifiable {
   var droppedFrames: Int64 = 0
   var recoveryNote: String?
   var failureReason: MeetingFailureReason?
+  /// Feature 019: the microphone this microphone-track segment recorded from; nil for
+  /// system audio and for segments from before `input-device-v18`.
+  var inputDeviceName: String? = nil
 
   var isPartFile: Bool { relativePath.hasSuffix(".part") }
 }

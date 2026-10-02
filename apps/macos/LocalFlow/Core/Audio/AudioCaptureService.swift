@@ -1,7 +1,10 @@
 import AVFoundation
 import AppKit
+import AudioToolbox
+import CoreAudio
 import Foundation
 import LocalFlowSpeech
+import OSLog
 
 enum AudioCaptureFailure: Error, Equatable, Sendable {
   case busy, staleSession, permissionDenied, unsupportedFormat, overflow
@@ -25,10 +28,22 @@ struct AudioCaptureSnapshot: Sendable {
   let sampleCount: Int
   let level: Float
   let terminalReason: AudioCaptureStopReason?
+  /// `LFAudioCaptureNow` nanoseconds of the first non-zero buffer; nil until audio
+  /// flows (research R4).
+  let audioFlowingSince: UInt64?
+  /// Session maximum of the per-buffer delivery delay (research R6).
+  let maxDeliveryDelay: Duration
+}
+
+/// What `start` opened: the device the engine is bound to.
+struct CaptureStarted: Sendable, Equatable {
+  let boundDevice: AudioDeviceID
 }
 
 struct AudioCaptureBudget {
   static let maximumSamples = 2_880_000
+  /// A budget whose clock has not started: audio has not flowed yet (research R4).
+  static let notStarted = AudioCaptureBudget(startNanoseconds: .max)
   let startNanoseconds: UInt64
   private(set) var sampleCount = 0
   var reachedLimit: Bool { sampleCount == Self.maximumSamples }
@@ -75,6 +90,20 @@ final class AudioCaptureStaging: @unchecked Sendable {
 
   var queuePeak: (highWater: UInt32, capacity: UInt32) {
     (LFAudioRingHighWater(pointer), LFAudioRingCapacity())
+  }
+
+  /// `LFAudioCaptureNow` nanoseconds of the first non-zero push, nil before.
+  var firstAudioNanoseconds: UInt64? {
+    let value = LFAudioRingFirstAudioNanoseconds(pointer)
+    return value == 0 ? nil : value
+  }
+
+  var maxDeliveryDelay: Duration {
+    .nanoseconds(Int64(clamping: LFAudioRingMaxDeliveryDelayNanoseconds(pointer)))
+  }
+
+  func recordDeliveryDelay(nanoseconds: UInt64) {
+    LFAudioRingRecordDeliveryDelay(pointer, nanoseconds)
   }
 
   // Synthetic entry points use the same C copy/pop path without an audio device.
@@ -128,12 +157,16 @@ final class AudioCaptureService: @unchecked Sendable {
     weak var spool: AudioSpool?
     let sampleCount: Int
     let reason: AudioCaptureStopReason
+    let flowingSince: UInt64?
+    let maxDeliveryDelay: Duration
 
-    init(_ result: AudioCaptureResult) {
+    init(_ result: AudioCaptureResult, flowingSince: UInt64?, maxDeliveryDelay: Duration) {
       sessionID = result.sessionID
       spool = result.spool
       sampleCount = result.sampleCount
       reason = result.reason
+      self.flowingSince = flowingSince
+      self.maxDeliveryDelay = maxDeliveryDelay
     }
 
     var result: AudioCaptureResult? {
@@ -161,16 +194,25 @@ final class AudioCaptureService: @unchecked Sendable {
     var permissionCheckedAt: UInt64 = 0
     var configurationObserver: NSObjectProtocol?
     var sleepObserver: NSObjectProtocol?
+    /// The device a `.device` binding pinned; nil on System default.
+    let pinned: AudioDeviceID?
+    let format: AVAudioFormat
+    /// Set from the notification thread when a pinned engine reported a
+    /// configuration change; the worker restarts once before trusting `isRunning`.
+    let restartPending = AtomicFlag()
+    var restarted = false
 
     init(
       id: UUID, spool: AudioSpool, engine: AVAudioEngine, ring: AudioCaptureStaging,
-      normalizer: AudioCaptureNormalizer
+      normalizer: AudioCaptureNormalizer, pinned: AudioDeviceID?, format: AVAudioFormat
     ) {
       self.id = id
       self.spool = spool
       self.engine = engine
       self.ring = ring
       self.normalizer = normalizer
+      self.pinned = pinned
+      self.format = format
     }
 
     deinit {
@@ -189,6 +231,43 @@ final class AudioCaptureService: @unchecked Sendable {
     AVCaptureDevice.authorizationStatus(for: .audio)
   }
 
+  typealias InputBinder = @Sendable (AVAudioEngine, AudioDeviceID) throws -> Void
+  private let bindInput: InputBinder
+  private let permission: @Sendable () -> AVAuthorizationStatus
+
+  /// `bindInput` points the engine's input unit at a device before `prepare()`;
+  /// tests inject a failing one. `permission` defaults to the system status.
+  init(
+    bindInput: @escaping InputBinder = AudioCaptureService.bindInputDevice,
+    permission: @escaping @Sendable () -> AVAuthorizationStatus = {
+      AudioCaptureService.permissionStatus
+    }
+  ) {
+    self.bindInput = bindInput
+    self.permission = permission
+  }
+
+  /// Sets `kAudioOutputUnitProperty_CurrentDevice` on the input node's unit
+  /// (global scope, element 0), research R2.
+  static let bindInputDevice: InputBinder = { engine, device in
+    guard let unit = engine.inputNode.audioUnit else { throw AudioCaptureFailure.deviceLost }
+    var id = device
+    let status = AudioUnitSetProperty(
+      unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id,
+      UInt32(MemoryLayout<AudioDeviceID>.size))
+    guard status == noErr else { throw AudioCaptureFailure.deviceLost }
+  }
+
+  /// The device a running engine's input unit is bound to.
+  static func boundDevice(of engine: AVAudioEngine) -> AudioDeviceID {
+    guard let unit = engine.inputNode.audioUnit else { return 0 }
+    var id = AudioDeviceID(0)
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    let status = AudioUnitGetProperty(
+      unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, &size)
+    return status == noErr ? id : 0
+  }
+
   /// Call only from an explicit recording/setup action.
   static func requestPermission() async -> Bool {
     await withCheckedContinuation { continuation in
@@ -196,19 +275,36 @@ final class AudioCaptureService: @unchecked Sendable {
     }
   }
 
-  func start(sessionID: UUID, spool: AudioSpool) async throws {
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+  func start(sessionID: UUID, spool: AudioSpool, input: InputBinding) async throws
+    -> CaptureStarted
+  {
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<CaptureStarted, Error>) in
       worker.async {
         do {
-          try self.startOnWorker(sessionID: sessionID, spool: spool)
-          continuation.resume()
+          continuation.resume(
+            returning: try self.startOnWorker(sessionID: sessionID, spool: spool, input: input))
         } catch { continuation.resume(throwing: error) }
       }
     }
   }
 
-  func stop(sessionID: UUID) async throws -> AudioCaptureResult {
-    try await finish(sessionID: sessionID, cancelling: false)
+  /// Keeps capturing for `tail` (nil or zero: none) and then stops as before. The
+  /// poll keeps running during the tail, so a failure latched then wins over the
+  /// key release. Idempotent per session.
+  func stop(sessionID: UUID, tail: Duration?) async throws -> AudioCaptureResult {
+    if let tail, tail > .zero, await isActive(sessionID) {
+      try? await Task.sleep(for: min(tail, Self.maximumTail))
+    }
+    return try await finish(sessionID: sessionID, cancelling: false)
+  }
+
+  static let maximumTail = Duration.milliseconds(500)
+
+  private func isActive(_ sessionID: UUID) async -> Bool {
+    await withCheckedContinuation { continuation in
+      worker.async { continuation.resume(returning: self.active?.id == sessionID) }
+    }
   }
 
   func cancel(sessionID: UUID) async throws -> AudioCaptureResult {
@@ -222,12 +318,15 @@ final class AudioCaptureService: @unchecked Sendable {
           continuation.resume(
             returning: AudioCaptureSnapshot(
               sessionID: session.id, sampleCount: session.budget.sampleCount,
-              level: session.level, terminalReason: nil))
+              level: session.level, terminalReason: nil,
+              audioFlowingSince: session.normalizer.flowingSince,
+              maxDeliveryDelay: session.ring.maxDeliveryDelay))
         } else if let result = self.completed {
           continuation.resume(
             returning: AudioCaptureSnapshot(
               sessionID: result.sessionID, sampleCount: result.sampleCount,
-              level: 0, terminalReason: result.reason))
+              level: 0, terminalReason: result.reason, audioFlowingSince: result.flowingSince,
+              maxDeliveryDelay: result.maxDeliveryDelay))
         } else {
           continuation.resume(returning: nil)
         }
@@ -248,11 +347,21 @@ final class AudioCaptureService: @unchecked Sendable {
     }
   }
 
-  private func startOnWorker(sessionID: UUID, spool: AudioSpool) throws {
+  private func startOnWorker(sessionID: UUID, spool: AudioSpool, input: InputBinding) throws
+    -> CaptureStarted
+  {
     guard active == nil else { throw AudioCaptureFailure.busy }
-    guard Self.permissionStatus == .authorized else { throw AudioCaptureFailure.permissionDenied }
+    guard permission() == .authorized else { throw AudioCaptureFailure.permissionDenied }
     guard spool.bytesWritten == 0 else { throw AudioCaptureFailure.disk }
     let engine = AVAudioEngine()
+    // `.systemDefault` sets nothing: exactly the pre-019 path (FR-016).
+    let pinned: AudioDeviceID?
+    if case .device(let device) = input {
+      do { try bindInput(engine, device) } catch { throw AudioCaptureFailure.deviceLost }
+      pinned = device
+    } else {
+      pinned = nil
+    }
     let node = engine.inputNode
     let format = node.outputFormat(forBus: 0)
     let normalizer = try AudioCaptureNormalizer(format: format, spool: spool)
@@ -260,10 +369,8 @@ final class AudioCaptureService: @unchecked Sendable {
       channels: Int(format.channelCount), sampleRate: format.sampleRate)
     let session = Session(
       id: sessionID, spool: spool, engine: engine, ring: ring,
-      normalizer: normalizer)
-    node.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
-      _ = LFAudioRingPush(ring.pointer, buffer.audioBufferList, buffer.frameLength)
-    }
+      normalizer: normalizer, pinned: pinned, format: format)
+    node.installTap(onBus: 0, bufferSize: 1_024, format: format, block: Self.tap(ring, format))
     do {
       engine.prepare()
       try engine.start()
@@ -274,10 +381,22 @@ final class AudioCaptureService: @unchecked Sendable {
       session.tapInstalled = false
       throw AudioCaptureFailure.deviceLost
     }
-    session.budget = AudioCaptureBudget(startNanoseconds: LFAudioCaptureNow())
+    // The 180 s clock starts when audio flows, not when the engine starts.
+    session.budget = .notStarted
+    let restartPending = session.restartPending
     session.configurationObserver = NotificationCenter.default.addObserver(
       forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-    ) { _ in LFAudioRingSignalFailure(ring.pointer, 3) }
+    ) { [weak self] _ in
+      // A pinned engine may report a change when only the macOS default moved
+      // (research R7): restart once on the same device. System default keeps
+      // today's device loss.
+      guard pinned != nil, let self else {
+        LFAudioRingSignalFailure(ring.pointer, 3)
+        return
+      }
+      restartPending.set(true)
+      self.worker.async { self.restartPinned(sessionID: sessionID) }
+    }
     session.sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
       forName: NSWorkspace.willSleepNotification, object: nil, queue: nil
     ) { _ in LFAudioRingSignalFailure(ring.pointer, 4) }
@@ -289,6 +408,56 @@ final class AudioCaptureService: @unchecked Sendable {
     completed = nil
     active = session
     timer.resume()
+    return CaptureStarted(boundDevice: pinned ?? Self.boundDevice(of: engine))
+  }
+
+  /// The tap runs on the realtime thread: one ring push and one delay record, no
+  /// allocation. Delay = callback host time − buffer host time + buffer duration.
+  private static func tap(_ ring: AudioCaptureStaging, _ format: AVAudioFormat)
+    -> AVAudioNodeTapBlock
+  {
+    let sampleRate = format.sampleRate
+    return { buffer, time in
+      _ = LFAudioRingPush(ring.pointer, buffer.audioBufferList, buffer.frameLength)
+      guard time.isHostTimeValid, sampleRate > 0 else { return }
+      let now = LFAudioHostTicksNow()
+      let late = now > time.hostTime ? LFAudioHostTicksToNanoseconds(now - time.hostTime) : 0
+      let duration = UInt64(Double(buffer.frameLength) / sampleRate * 1_000_000_000)
+      ring.recordDeliveryDelay(nanoseconds: late &+ duration)
+    }
+  }
+
+  /// Research R7: alive and same format → restart once on the same device into the
+  /// same spool; anything else is device loss.
+  private func restartPinned(sessionID: UUID) {
+    guard let session = active, session.id == sessionID, let device = session.pinned else {
+      return
+    }
+    defer { session.restartPending.set(false) }
+    guard !session.restarted, CoreAudioDevices.isAlive(device) else {
+      LFAudioRingSignalFailure(session.ring.pointer, 3)
+      return
+    }
+    session.restarted = true
+    let engine = session.engine
+    engine.stop()
+    if session.tapInstalled { engine.inputNode.removeTap(onBus: 0) }
+    session.tapInstalled = false
+    do {
+      try bindInput(engine, device)
+      let format = engine.inputNode.outputFormat(forBus: 0)
+      guard format.sampleRate == session.format.sampleRate,
+        format.channelCount == session.format.channelCount
+      else { throw AudioCaptureFailure.deviceLost }
+      engine.inputNode.installTap(
+        onBus: 0, bufferSize: 1_024, format: format, block: Self.tap(session.ring, format))
+      session.tapInstalled = true
+      engine.prepare()
+      try engine.start()
+      Logger.inputDevice.notice("Pinned input restarted after a configuration change")
+    } catch {
+      LFAudioRingSignalFailure(session.ring.pointer, 3)
+    }
   }
 
   static let pollInterval: DispatchTimeInterval = .milliseconds(25)
@@ -302,8 +471,10 @@ final class AudioCaptureService: @unchecked Sendable {
     let reason: AudioCaptureStopReason?
     if let failure = session.ring.failure {
       reason = .failure(failure)
-    } else if checkPermission, Self.permissionStatus != .authorized {
+    } else if checkPermission, permission() != .authorized {
       reason = .failure(.permissionRevoked)
+    } else if session.restartPending.value {
+      return
     } else if !session.engine.isRunning {
       reason = .failure(.deviceLost)
     } else if session.budget.deadlineReached(at: now) {
@@ -335,21 +506,28 @@ final class AudioCaptureService: @unchecked Sendable {
           continuation.resume(throwing: AudioCaptureFailure.staleSession)
           return
         }
-        let reason: AudioCaptureStopReason
-        if let failure = session.ring.failure {
-          reason = .failure(failure)
-        } else if Self.permissionStatus != .authorized {
-          reason = .failure(.permissionRevoked)
-        } else if !session.engine.isRunning {
-          reason = .failure(.deviceLost)
-        } else if session.budget.reachedLimit || session.budget.deadlineReached(at: requestedAt) {
-          reason = .durationLimit
-        } else {
-          reason = cancelling ? .cancelled : .keyRelease
-        }
+        let reason = Self.stopReason(
+          ringFailure: session.ring.failure, authorized: self.permission() == .authorized,
+          running: session.engine.isRunning || session.restartPending.value,
+          limitReached: session.budget.reachedLimit
+            || session.budget.deadlineReached(at: requestedAt),
+          cancelling: cancelling)
         continuation.resume(returning: self.finishOnWorker(session, reason: reason))
       }
     }
+  }
+
+  /// A latched failure always wins over a key release or cancel, then permission,
+  /// then a stopped engine, then the duration limit.
+  static func stopReason(
+    ringFailure: AudioCaptureFailure?, authorized: Bool, running: Bool, limitReached: Bool,
+    cancelling: Bool
+  ) -> AudioCaptureStopReason {
+    if let ringFailure { return .failure(ringFailure) }
+    if !authorized { return .failure(.permissionRevoked) }
+    if !running { return .failure(.deviceLost) }
+    if limitReached { return .durationLimit }
+    return cancelling ? .cancelled : .keyRelease
   }
 
   private func finishOnWorker(_ session: Session, reason: AudioCaptureStopReason)
@@ -387,7 +565,9 @@ final class AudioCaptureService: @unchecked Sendable {
       sessionID: session.id, spool: session.spool,
       sampleCount: session.budget.sampleCount, reason: finalReason)
     active = nil
-    completed = Completion(result)
+    completed = Completion(
+      result, flowingSince: session.normalizer.flowingSince,
+      maxDeliveryDelay: session.ring.maxDeliveryDelay)
     return result
   }
 
@@ -398,6 +578,11 @@ final class AudioCaptureService: @unchecked Sendable {
       let count = LFAudioRingPop(session.ring.pointer, session.input.mutableAudioBufferList)
       if count == 0 || session.budget.reachedLimit { return }
       session.input.frameLength = count
+      // Leading digital silence from a waking device is dropped, not spooled.
+      guard
+        session.normalizer.admitInput(
+          flowingAt: session.ring.firstAudioNanoseconds ?? LFAudioCaptureNow())
+      else { continue }
       try session.normalizer.convert(endOfStream: false)
     }
   }
@@ -413,6 +598,8 @@ final class AudioCaptureNormalizer {
   private let spool: AudioSpool
   var budget: AudioCaptureBudget
   private(set) var level: Float = 0
+  /// When the first non-zero input was admitted; nil before (research R4).
+  private(set) var flowingSince: UInt64?
 
   // AVAudioConverter invokes its input block synchronously during convert().
   // This owner makes that SDK guarantee explicit at the Sendable boundary.
@@ -440,6 +627,30 @@ final class AudioCaptureNormalizer {
     self.output = output
     self.spool = spool
     self.budget = AudioCaptureBudget(startNanoseconds: startNanoseconds)
+  }
+
+  /// The first-audio gate for the block in `input`. Before audio flows, an all-zero
+  /// block is refused; the first block with a non-zero sample opens the gate once and
+  /// starts the 180 s budget at `flowingAt`. Afterwards every block is admitted.
+  func admitInput(flowingAt: UInt64) -> Bool {
+    if flowingSince != nil { return true }
+    guard Self.containsAudio(input) else { return false }
+    flowingSince = flowingAt
+    budget = AudioCaptureBudget(startNanoseconds: flowingAt)
+    return true
+  }
+
+  static func containsAudio(_ buffer: AVAudioPCMBuffer) -> Bool {
+    let frames = Int(buffer.frameLength)
+    guard frames > 0, let channels = buffer.floatChannelData else { return false }
+    let stride = buffer.stride
+    let count = buffer.format.isInterleaved ? 1 : Int(buffer.format.channelCount)
+    let samples = buffer.format.isInterleaved ? frames * stride : frames
+    for channel in 0..<count {
+      let data = channels[channel]
+      for index in 0..<samples where data[index] != 0 { return true }
+    }
+    return false
   }
 
   func convert(endOfStream: Bool) throws {
@@ -491,4 +702,12 @@ final class AudioCaptureNormalizer {
     }
     throw AudioCaptureFailure.conversion
   }
+}
+
+/// A lock-protected flag readable from any thread; never touched by the realtime tap.
+final class AtomicFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored = false
+  var value: Bool { lock.withLock { stored } }
+  func set(_ value: Bool) { lock.withLock { stored = value } }
 }

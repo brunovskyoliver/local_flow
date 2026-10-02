@@ -73,6 +73,8 @@ struct TranscriptionDetailView: View {
       )
       Text(
         "Stopped: \(envelope.entry.stopReason.rawValue.replacingOccurrences(of: "_", with: " "))")
+      Text(verbatim: HistoryViewModel.microphoneLabel(for: envelope.entry))
+        .accessibilityIdentifier("history.detail.microphone")
     }.font(.flow(size: 13))
   }
 

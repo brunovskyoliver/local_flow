@@ -580,7 +580,8 @@ final class DictationBenchmark {
 
     var localModelProvisioned: Bool { true }
     func keepForRetry(
-      id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?
+      id: UUID, audio: URL, sampleCount: Int, failure: RemoteFailureReason, targetBundleID: String?,
+      inputDevice: DictationInputDevice?
     ) async throws {}
     func retryQueueFull(audio: URL, sampleCount: Int) async {}
     func completed(_ result: RemoteDictationResult, dictation: UUID) {}

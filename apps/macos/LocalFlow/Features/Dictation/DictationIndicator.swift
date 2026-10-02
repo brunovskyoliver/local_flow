@@ -29,6 +29,8 @@ struct DictationIndicator: View {
   static let frames = AnimationTimelineSchedule.animation(minimumInterval: 1.0 / 60)
   let state: DictationSession.State
   let level: Float
+  /// Feature 019: the microphone in use, read by VoiceOver while connecting or recording.
+  var deviceName: String? = nil
   let cancel: () -> Void
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var hovering = false
@@ -52,6 +54,13 @@ struct DictationIndicator: View {
         TimelineView(Self.frames) { timeline in
           recordingStrip(time: timeline.date.timeIntervalSinceReferenceDate)
         }
+      } else if state == .connecting && !reduceMotion {
+        // Low bars breathing slowly: the microphone is waking, nothing is heard yet.
+        TimelineView(Self.frames) { timeline in
+          bars(time: nil)
+            .opacity(Self.connectingOpacity(time: timeline.date.timeIntervalSinceReferenceDate))
+        }
+        .transition(.opacity)
       } else if Self.isProcessing(state) && !reduceMotion {
         // A soft pulse travels across low bars while the text is being made.
         TimelineView(Self.frames) { timeline in
@@ -90,13 +99,7 @@ struct DictationIndicator: View {
       setExpanded(for: state, animated: !reduceMotion)
     }
     .accessibilityElement(children: .contain)
-    .accessibilityLabel(
-      state == .recording
-        ? "Recording"
-        : state == .preparing
-          ? "Preparing, microphone off"
-          : state == .rewriting ? "Rewriting text, microphone off" : "Processing, microphone off"
-    )
+    .accessibilityLabel(Self.accessibilityLabel(state: state, deviceName: deviceName))
     .accessibilityAction(named: state == .rewriting ? "Cancel rewrite" : "Cancel dictation", cancel)
   }
 
@@ -159,17 +162,17 @@ struct DictationIndicator: View {
   /// Bars come in from the right when the pill opens; collapsing runs back at once.
   private func revealed(_ bar: some View, slot: Int) -> some View {
     bar
-      .opacity(expanded || state == .preparing ? 1 : 0)
-      .scaleEffect(y: expanded || state == .preparing ? 1 : 0.2)
+      .opacity(expanded || Self.isCompact(state) ? 1 : 0)
+      .scaleEffect(y: expanded || Self.isCompact(state) ? 1 : 0.2)
       .animation(
         reduceMotion || !expanded
           ? PillStyle.swap : PillStyle.morph.delay(Double(Self.barCount - slot) * 0.014),
         value: expanded)
   }
 
-  /// Preparing sits compact; everything after the microphone opens is full width.
+  /// Preparing and connecting sit compact; everything after audio flows is full width.
   private func setExpanded(for state: DictationSession.State, animated: Bool) {
-    let target = state != .preparing
+    let target = !Self.isCompact(state)
     guard target != expanded else { return }
     if animated {
       expanded = target
@@ -177,6 +180,27 @@ struct DictationIndicator: View {
       var transaction = Transaction()
       transaction.disablesAnimations = true
       withTransaction(transaction) { expanded = target }
+    }
+  }
+
+  static func isCompact(_ state: DictationSession.State) -> Bool {
+    state == .preparing || state == .connecting
+  }
+
+  /// One slow breath every 1.6 s, between 35 % and 100 %.
+  static func connectingOpacity(time: TimeInterval) -> Double {
+    0.675 + 0.325 * sin(time * 2 * .pi / 1.6)
+  }
+
+  /// The pill's VoiceOver label; ", <name>" while connecting or recording (FR-011).
+  static func accessibilityLabel(state: DictationSession.State, deviceName: String?) -> String {
+    let device = deviceName.map { ", \($0)" } ?? ""
+    switch state {
+    case .recording: return "Recording" + device
+    case .connecting: return "Connecting" + device
+    case .preparing: return "Preparing, microphone off"
+    case .rewriting: return "Rewriting text, microphone off"
+    default: return "Processing, microphone off"
     }
   }
 
@@ -201,7 +225,7 @@ struct DictationIndicator: View {
   {
     guard (0..<15).contains(bar) else { return 0 }
     switch state {
-    case .preparing: return 4
+    case .preparing, .connecting: return 4
     case .recording:
       let pattern = [7.0, 12, 19, 10, 23, 15, 27, 18, 11, 23, 15, 8, 18, 11, 6]
       return CGFloat(
@@ -342,17 +366,38 @@ extension Duration {
 
 /// One-line notice with a single action, in the indicator's capsule: used for
 /// rewrite fallbacks, refusals and cancellations.
+/// Feature 019: the microphone under the pill, in the pill's colors. Never takes focus.
+struct InputCaptionView: View {
+  static let maximumTextWidth: CGFloat = 260
+  let caption: InputCaption
+
+  var body: some View {
+    Text(caption.text).font(.flow(size: 11, weight: .medium))
+      .foregroundStyle(PillStyle.ink.opacity(caption.kind == .recording ? 0.82 : 1))
+      .lineLimit(1).truncationMode(.middle)
+      .frame(maxWidth: Self.maximumTextWidth)
+      .padding(.horizontal, 10)
+      .frame(height: 22)
+      .pillBackground()
+      .fixedSize()
+      .accessibilityHidden(true)
+  }
+}
+
 struct ActionNoticeView: View {
   /// The longest a one-line message grows before it truncates.
   static let maximumTextWidth: CGFloat = 420
   let message: String
   let actionTitle: String?
   let actionIdentifier: String
+  /// VoiceOver label of the action; "<title> rewrite" when nil.
+  var actionAccessibilityLabel: String? = nil
+  var symbol = "text.badge.xmark"
   let action: () -> Void
 
   var body: some View {
     HStack(spacing: 10) {
-      Image(systemName: "text.badge.xmark").font(.flow(size: 11, weight: .semibold))
+      Image(systemName: symbol).font(.flow(size: 11, weight: .semibold))
         .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255).opacity(0.9))
       Text(message).font(.flow(size: 12, weight: .medium))
         .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255))
@@ -366,7 +411,7 @@ struct ActionNoticeView: View {
             .background(.white.opacity(0.1), in: Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(actionTitle) rewrite")
+        .accessibilityLabel(actionAccessibilityLabel ?? "\(actionTitle) rewrite")
         .accessibilityIdentifier(actionIdentifier)
       }
     }

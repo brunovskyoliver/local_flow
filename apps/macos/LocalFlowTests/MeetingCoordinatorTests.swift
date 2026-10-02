@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import XCTest
 
 @testable import LocalFlow
@@ -1190,5 +1191,184 @@ final class MeetingCoordinatorTests: XCTestCase {
     let after = try await rig.detail(id)
     XCTAssertEqual(after.track(.system)?.track.failureReason, .permissionRevoked)
     XCTAssertEqual(rig.permissions.requests, ["microphone"], "only the two request closures exist")
+  }
+}
+
+// MARK: - Feature 019: the meeting microphone follows the ranked list (T054)
+
+extension MeetingCoordinatorTests {
+  fileprivate final class Candidates: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [InputCandidate]
+    init(_ candidates: [InputCandidate]) { stored = candidates }
+    var value: [InputCandidate] { lock.withLock { stored } }
+    func set(_ candidates: [InputCandidate]) { lock.withLock { stored = candidates } }
+  }
+
+  fileprivate final class Engines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var made: [FakeMicrophoneEngine] = []
+    let formats: [AudioDeviceID: AVAudioFormat]
+    init(formats: [AudioDeviceID: AVAudioFormat] = [:]) { self.formats = formats }
+    func make() -> FakeMicrophoneEngine {
+      let engine = FakeMicrophoneEngine(formats: formats)
+      lock.withLock { made.append(engine) }
+      return engine
+    }
+    var last: FakeMicrophoneEngine? { lock.withLock { made.last } }
+  }
+
+  private static let usbEntry = RankedInputEntry.fake(
+    ConnectedInput.fake(10, "Blue Yeti", kind: .usb))
+  private static let macbookEntry = RankedInputEntry.fake(
+    ConnectedInput.fake(20, "MacBook Pro Microphone", kind: .builtIn))
+  private static let defaultEntry = RankedInputEntry.systemDefault()
+
+  private static func candidate(_ entry: RankedInputEntry, _ device: AudioDeviceID?, rank: Int)
+    -> InputCandidate
+  {
+    InputCandidate(entry: entry, deviceID: device, rank: rank, displayName: entry.name)
+  }
+
+  private static let usb = candidate(usbEntry, 10, rank: 1)
+  private static let macbook = candidate(macbookEntry, 20, rank: 2)
+  private static let systemDefault = candidate(defaultEntry, nil, rank: 3)
+
+  private func source(_ candidates: Candidates, engines: Engines) -> MicrophoneMeetingSource {
+    MicrophoneMeetingSource(
+      authorization: { .authorized }, resolve: { candidates.value },
+      deviceName: { $0 == FakeMicrophoneEngine.defaultDevice ? "Default Mic" : nil },
+      makeEngine: { engines.make() })
+  }
+
+  private func started(
+    _ candidates: Candidates, engines: Engines = Engines()
+  ) async throws -> (MicrophoneMeetingSource, Engines) {
+    let source = source(candidates, engines: engines)
+    let format = try await source.probeFormat()
+    _ = try await source.start(into: try MeetingSampleRing(format: format))
+    return (source, engines)
+  }
+
+  func testMicrophoneSourceBindsTheFirstCandidateAtProbeAndStart() async throws {
+    let candidates = Candidates([Self.usb, Self.macbook, Self.systemDefault])
+    let (source, engines) = try await started(candidates)
+    XCTAssertEqual(engines.last?.binds, [10])
+    let name = await source.currentDeviceName()
+    XCTAssertEqual(name, "Blue Yeti")
+    await source.stop()
+  }
+
+  func testConfigurationChangeRestartsOnceOnTheNextCandidate() async throws {
+    let candidates = Candidates([Self.usb, Self.macbook, Self.systemDefault])
+    let (source, engines) = try await started(candidates)
+    candidates.set([Self.macbook, Self.systemDefault])
+    engines.last?.fireConfigurationChange()
+    let changed = await source.consumeDeviceChange()
+    XCTAssertTrue(changed)
+    XCTAssertEqual(engines.last?.current, 20)
+    XCTAssertEqual(engines.last?.isRunning, true)
+    let name = await source.currentDeviceName()
+    XCTAssertEqual(name, "MacBook Pro Microphone")
+    let failure = await source.failure()
+    XCTAssertNil(failure)
+    // A second change is device loss.
+    engines.last?.fireConfigurationChange()
+    let second = await source.failure()
+    XCTAssertEqual(second, .deviceLost)
+    await source.stop()
+  }
+
+  func testAFormatMismatchOrNoCandidateIsDeviceLost() async throws {
+    let mismatch = Candidates([Self.usb, Self.macbook])
+    let engines = Engines(formats: [20: FakeMicrophoneEngine.format(16_000)])
+    let (source, _) = try await started(mismatch, engines: engines)
+    mismatch.set([Self.macbook])
+    engines.last?.fireConfigurationChange()
+    let failure = await source.failure()
+    XCTAssertEqual(failure, .deviceLost)
+    await source.stop()
+
+    let none = Candidates([Self.usb])
+    let (empty, emptyEngines) = try await started(none)
+    none.set([])
+    emptyEngines.last?.fireConfigurationChange()
+    let noCandidate = await empty.failure()
+    XCTAssertEqual(noCandidate, .deviceLost)
+    await empty.stop()
+  }
+
+  func testAHigherRankedDeviceThatReappearsNeverTakesOver() async throws {
+    let candidates = Candidates([Self.macbook, Self.systemDefault])
+    let (source, engines) = try await started(candidates)
+    XCTAssertEqual(engines.last?.current, 20)
+    // The USB mic comes back: no restart without a configuration change...
+    candidates.set([Self.usb, Self.macbook, Self.systemDefault])
+    let idle = await source.consumeDeviceChange()
+    XCTAssertFalse(idle)
+    // ...and a change while the MacBook mic is still there restarts on it.
+    engines.last?.fireConfigurationChange()
+    XCTAssertEqual(engines.last?.current, 20)
+    // The roll after a change stops and starts again on the same device.
+    await source.stop()
+    let format = try await source.probeFormat()
+    _ = try await source.start(into: try MeetingSampleRing(format: format))
+    XCTAssertEqual(engines.last?.binds, [20])
+    await source.stop()
+  }
+
+  func testWithoutARankedListTheSourceFollowsTheMacOSDefaultAsBefore() async throws {
+    let engines = Engines()
+    let source = MicrophoneMeetingSource(
+      authorization: { .authorized }, deviceName: { _ in "Default Mic" },
+      makeEngine: { engines.make() })
+    let format = try await source.probeFormat()
+    _ = try await source.start(into: try MeetingSampleRing(format: format))
+    XCTAssertEqual(engines.last?.binds, [nil])
+    engines.last?.fireConfigurationChange()
+    let changed = await source.consumeDeviceChange()
+    XCTAssertTrue(changed, "one restart on the current default, as before")
+    let name = await source.currentDeviceName()
+    XCTAssertEqual(name, "Default Mic")
+    await source.stop()
+  }
+
+  func testRolledMicrophoneSegmentsRecordTheirDeviceAndSystemSegmentsDoNot() async throws {
+    let rig = try makeRig()
+    rig.microphone.deviceName = "Blue Yeti"
+    let id = try await startRecording(rig)
+    await rig.advance(seconds: 2)
+    rig.microphone.deviceName = "MacBook Pro Microphone"
+    rig.microphone.simulateDeviceChange(restartSucceeds: true)
+    await rig.advance(seconds: 1)
+    let detail = try await rig.detail(id)
+    let mic = try XCTUnwrap(detail.track(.microphone))
+    XCTAssertEqual(mic.segments.map(\.inputDeviceName), ["Blue Yeti", "MacBook Pro Microphone"])
+    XCTAssertEqual(mic.segments[1].openReason, .deviceChanged)
+    XCTAssertEqual(detail.track(.system)?.segments.map(\.inputDeviceName), [nil])
+    await rig.coordinator.stop()
+  }
+
+  func testTranscriptDividersSitBeforeTheFirstLineAfterEachSwitch() {
+    let track = UUID()
+    func segment(_ sequence: Int, offset: Int64, name: String?) -> MeetingSegment {
+      MeetingSegment(
+        id: UUID(), trackID: track, sequence: sequence, relativePath: "m/\(sequence).aac",
+        startOffsetMs: offset, startedAt: 0, hostStartNs: 0, openReason: .deviceChanged,
+        inputDeviceName: name)
+    }
+    let lines: [(id: UUID, startMs: Int64)] = [(UUID(), 0), (UUID(), 61_000), (UUID(), 90_000)]
+    let dividers = MeetingDetailView.microphoneDividers(
+      switches: [
+        segment(2, offset: 60_000, name: "MacBook Pro Microphone"),
+        segment(3, offset: 120_000, name: nil),
+      ],
+      transcript: lines)
+    XCTAssertEqual(dividers.before[lines[1].id], ["MacBook Pro Microphone"])
+    XCTAssertNil(dividers.before[lines[0].id])
+    XCTAssertEqual(dividers.trailing, [nil])
+    XCTAssertEqual(
+      MicrophoneChangeDivider(name: "MacBook Pro Microphone").text,
+      "Microphone changed to MacBook Pro Microphone")
   }
 }

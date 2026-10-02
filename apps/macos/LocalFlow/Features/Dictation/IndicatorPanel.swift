@@ -10,6 +10,11 @@ private final class IndicatorPresentation {
   var actionNotice: RewriteActionNotice?
   var clipboard: ClipboardNotice?
   var background: BackgroundNotice?
+  /// Feature 019: the microphone caption under the pill.
+  var caption: InputCaption?
+  /// Feature 019: "No microphone available" / "<name> didn't respond".
+  var microphone: MicrophoneNotice?
+  @ObservationIgnored var openMicrophones: () -> Void = {}
   @ObservationIgnored var cancel: () -> Void = {}
   @ObservationIgnored var undo: () -> Void = {}
   @ObservationIgnored var action: () -> Void = {}
@@ -21,6 +26,7 @@ private final class IndicatorPresentation {
   /// when a different notice takes the pill, so progress updates animate in place.
   enum Content: Hashable {
     case dictation
+    case microphone(UUID)
     case learned(String)
     case clipboard(UUID)
     case action(UUID)
@@ -29,12 +35,20 @@ private final class IndicatorPresentation {
   }
   var content: Content {
     if IndicatorPanel.showsPanel(state) { return .dictation }
+    if let microphone { return .microphone(microphone.id) }
     if let notice { return .learned(notice.entryID) }
     if let clipboard { return .clipboard(clipboard.id) }
     if let actionNotice { return .action(actionNotice.id) }
     if let background { return .background(background.id) }
     return .none
   }
+}
+
+/// Feature 019: a dictation could not find a working microphone.
+struct MicrophoneNotice: Equatable, Sendable {
+  static let visibleFor: Duration = .seconds(8)
+  let id = UUID()
+  let message: String
 }
 
 /// Dictation states win, then the dictation notices, then background work. A new
@@ -48,9 +62,29 @@ private struct IndicatorHost: View {
     ZStack {
       switch presentation.content {
       case .dictation:
-        DictationIndicator(
-          state: presentation.state, level: presentation.level, cancel: presentation.cancel
-        ).transition(transition)
+        // With a caption, Cancel's 35 points are mirrored on the left so the content is
+        // symmetric around the waveform and the caption sits under it. One structure
+        // either way, so the pill keeps its state when the caption comes and goes.
+        VStack(spacing: 6) {
+          DictationIndicator(
+            state: presentation.state, level: presentation.level,
+            deviceName: presentation.caption?.deviceName, cancel: presentation.cancel
+          )
+          .padding(.leading, presentation.caption == nil ? 0 : IndicatorPanel.cancelInset)
+          if let caption = presentation.caption {
+            InputCaptionView(caption: caption).transition(.opacity)
+          }
+        }
+        .transition(transition)
+      case .microphone:
+        if let notice = presentation.microphone {
+          ActionNoticeView(
+            message: notice.message, actionTitle: "Microphones…",
+            actionIdentifier: "dictation.notice.microphones",
+            actionAccessibilityLabel: "Open Microphones settings", symbol: "mic.slash",
+            action: presentation.openMicrophones
+          ).id(notice.id).transition(transition)
+        }
       case .learned:
         if let notice = presentation.notice {
           LearnedNoticeView(notice: notice, undo: presentation.undo)
@@ -122,6 +156,8 @@ final class IndicatorPanel: NSPanel {
   /// what sits on the screen's center line.
   static let indicatorWidth: CGFloat = 153
   static let indicatorVisualCenter: CGFloat = 59
+  /// The width Cancel adds to the right of the waveform.
+  static let cancelInset: CGFloat = 35
   private static let showDuration: TimeInterval = 0.3
   private static let hideDuration: TimeInterval = 0.18
   private static let resizeDuration: TimeInterval = 0.32
@@ -141,6 +177,7 @@ final class IndicatorPanel: NSPanel {
   private var hiddenBackgroundIDs: Set<UUID> = []
   private var hiddenBackgroundReset: Task<Void, Never>?
   private var clipboardDismissal: Task<Void, Never>?
+  private var microphoneDismissal: Task<Void, Never>?
   /// True while the main window is focused: background work is on screen there already.
   var suppressesBackgroundNotice = false {
     didSet { if oldValue != suppressesBackgroundNotice { refresh() } }
@@ -237,6 +274,46 @@ final class IndicatorPanel: NSPanel {
     if presentation.level != clamped { presentation.level = clamped }
     presentation.cancel = cancel
   }
+
+  /// Feature 019: the microphone caption under the pill. A fallback notice is announced.
+  func updateInputCaption(_ caption: InputCaption?) {
+    guard presentation.caption != caption else { return }
+    presentation.caption = caption
+    if let caption, caption.kind == .fallbackNotice { announce(caption.text) }
+    if isVisible, !hiding { refresh() }
+  }
+
+  /// Feature 019: a failure fixed in Settings › Microphones. Clears itself after
+  /// `MicrophoneNotice.visibleFor`; `open` runs from its "Microphones…" button.
+  func showMicrophoneNotice(_ notice: MicrophoneNotice?, open: @escaping () -> Void) {
+    let previous = presentation.microphone
+    presentation.microphone = notice
+    microphoneDismissal?.cancel()
+    microphoneDismissal = nil
+    if let notice {
+      if previous?.id != notice.id { announce(notice.message) }
+      presentation.openMicrophones = { [weak self] in
+        self?.dismissMicrophoneNotice(id: notice.id)
+        open()
+      }
+      microphoneDismissal = Task { [weak self] in
+        do { try await Task.sleep(for: MicrophoneNotice.visibleFor) } catch { return }
+        self?.dismissMicrophoneNotice(id: notice.id)
+      }
+    }
+    refresh()
+  }
+
+  func dismissMicrophoneNotice(id: UUID) {
+    guard presentation.microphone?.id == id else { return }
+    microphoneDismissal?.cancel()
+    microphoneDismissal = nil
+    presentation.microphone = nil
+    presentation.openMicrophones = {}
+    refresh()
+  }
+
+  var showsMicrophoneNotice: Bool { presentation.microphone != nil }
 
   /// The learned-correction bubble uses the same panel; dictation states take precedence.
   func showNotice(_ notice: LearnedNotice?, targetPoint: NSPoint? = nil, undo: @escaping () -> Void)
@@ -344,6 +421,7 @@ final class IndicatorPanel: NSPanel {
   private static func showsBackground(_ presentation: IndicatorPresentation) -> Bool {
     !showsPanel(presentation.state) && presentation.notice == nil
       && presentation.clipboard == nil && presentation.actionNotice == nil
+      && presentation.microphone == nil
       && presentation.background != nil
   }
 
@@ -352,6 +430,7 @@ final class IndicatorPanel: NSPanel {
     let showsWork =
       Self.showsPanel(presentation.state) || presentation.notice != nil
       || presentation.clipboard != nil || presentation.actionNotice != nil
+      || presentation.microphone != nil
     if showsWork || (Self.showsBackground(presentation) && !suppressesBackgroundNotice) {
       present()
     } else {
@@ -435,6 +514,7 @@ final class IndicatorPanel: NSPanel {
     presentation.open = {}
     presentation.hideBackground = {}
     presentation.dismissClipboard = {}
+    presentation.openMicrophones = {}
     super.orderOut(sender)
   }
 
@@ -482,7 +562,11 @@ final class IndicatorPanel: NSPanel {
       ?? NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
       ?? NSScreen.main
     let visible = screen?.visibleFrame ?? NSRect(origin: .zero, size: contentSize)
-    let centered = Self.showsPanel(presentation.state) ? Self.indicatorVisualCenter : nil
+    // With a caption the content is symmetric around the waveform, so its middle is the
+    // waveform's; without one the waveform sits 59 points in.
+    let centered =
+      Self.showsPanel(presentation.state) && presentation.caption == nil
+      ? Self.indicatorVisualCenter : nil
     return NSRect(
       origin: Self.origin(in: visible, width: contentSize.width, visualCenter: centered),
       size: contentSize)
@@ -500,8 +584,11 @@ final class IndicatorPanel: NSPanel {
   }
 
   static func showsPanel(_ state: DictationSession.State) -> Bool {
-    [.preparing, .recording, .transcribing, .persisting, .rewriting, .inserting, .cancelling]
-      .contains(state)
+    [
+      .preparing, .connecting, .recording, .transcribing, .persisting, .rewriting, .inserting,
+      .cancelling,
+    ]
+    .contains(state)
   }
 
   static func announcement(
@@ -511,6 +598,7 @@ final class IndicatorPanel: NSPanel {
     guard previous != state else { return nil }
     switch state {
     case .preparing: return "Preparing dictation. Microphone off."
+    case .connecting: return "Connecting to the microphone."
     case .recording: return "Recording."
     case .transcribing: return "Transcribing. Microphone off."
     case .persisting: return "Saving dictation."

@@ -715,15 +715,15 @@ actor MeetingStore: MeetingStoring {
       sql: """
         INSERT INTO meeting_segments (id, track_id, sequence, relative_path, state, start_offset_ms,
           duration_ms, byte_size, started_at, host_start_ns, open_reason, close_reason, dropped_frames,
-          recovery_note, failure_reason)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          recovery_note, failure_reason, input_device_name)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
       arguments: [
         segment.id.uuidString, segment.trackID.uuidString, segment.sequence, segment.relativePath,
         segment.state.rawValue, segment.startOffsetMs, segment.durationMs, segment.byteSize,
         segment.startedAt, segment.hostStartNs, segment.openReason.rawValue,
         segment.closeReason?.rawValue, segment.droppedFrames, segment.recoveryNote,
-        segment.failureReason?.rawValue,
+        segment.failureReason?.rawValue, Self.boundedDeviceName(segment.inputDeviceName),
       ])
     if let owner = try meetingID(ofTrack: segment.trackID, db: db) {
       try touch(owner, now: now, db: db)
@@ -833,7 +833,16 @@ actor MeetingStore: MeetingStoring {
       openReason: openReason,
       closeReason: (row["close_reason"] as String?).flatMap(SegmentCloseReason.init),
       droppedFrames: row["dropped_frames"], recoveryNote: row["recovery_note"],
-      failureReason: (row["failure_reason"] as String?).flatMap(MeetingFailureReason.init))
+      failureReason: (row["failure_reason"] as String?).flatMap(MeetingFailureReason.init),
+      inputDeviceName: row["input_device_name"])
+  }
+
+  /// The column's CHECK: 1–128 characters, or NULL.
+  static func boundedDeviceName(_ name: String?) -> String? {
+    guard let name else { return nil }
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty
+      ? nil : String(trimmed.prefix(DictationInputDevice.maximumNameCharacters))
   }
 
   static func pause(_ row: Row) -> PauseInterval? {

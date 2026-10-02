@@ -267,7 +267,8 @@ public actor TranscriptionStore {
           existing.createdAtMilliseconds == entry.createdAtMilliseconds,
           existing.targetBundleID == entry.targetBundleID,
           existing.recognitionPath == entry.recognitionPath,
-          existing.serverFailure == entry.serverFailure
+          existing.serverFailure == entry.serverFailure,
+          existing.inputDevice == entry.inputDevice
         else { throw Error.conflictingContent }
         // Also validate the persisted bytes rather than trusting an orphaned hash column.
         if let detail = envelope.detail {
@@ -291,11 +292,11 @@ public actor TranscriptionStore {
         deliveryState: .notAttempted, recoveryState: .needsReview, quality: entry.quality,
         stopReason: entry.stopReason, targetBundleID: entry.targetBundleID, revision: 0,
         hasQualityDetail: envelope.detail != nil, recognitionPath: entry.recognitionPath,
-        serverFailure: entry.serverFailure)
+        serverFailure: entry.serverFailure, inputDevice: entry.inputDevice)
       try db.execute(
         sql: """
-          INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id,attempt_id,attempt_started_at,revision,recognition_path,server_failure)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+          INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id,attempt_id,attempt_started_at,revision,recognition_path,server_failure,input_device_name,input_device_kind)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
           """,
         arguments: [
           normalized.id.uuidString, normalized.text, normalized.createdAtMilliseconds,
@@ -303,6 +304,7 @@ public actor TranscriptionStore {
           normalized.quality.rawValue,
           normalized.stopReason.rawValue, normalized.targetBundleID, nil, nil, normalized.revision,
           normalized.recognitionPath.rawValue, normalized.serverFailure?.rawValue,
+          normalized.inputDevice?.name, normalized.inputDevice?.kind.rawValue,
         ])
       if let detailJSON, let detail = envelope.detail {
         try db.execute(
@@ -575,7 +577,8 @@ public actor TranscriptionStore {
         revision: revision + 1, hasQualityDetail: current.hasQualityDetail,
         rewriteState: current.rewriteState, deliveredSource: current.deliveredSource,
         deliveredRewriteAttemptID: current.deliveredRewriteAttemptID,
-        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure)
+        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure,
+        inputDevice: current.inputDevice)
       try Self.update(next, db: db)
       return next
     }
@@ -617,7 +620,8 @@ public actor TranscriptionStore {
         attemptStartedAtMilliseconds: current.attemptStartedAtMilliseconds, revision: revision + 1,
         hasQualityDetail: current.hasQualityDetail, rewriteState: current.rewriteState,
         deliveredSource: delivery.source, deliveredRewriteAttemptID: deliveredAttempt,
-        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure)
+        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure,
+        inputDevice: current.inputDevice)
       try Self.update(next, db: db)
       try db.execute(
         sql:
@@ -642,7 +646,8 @@ public actor TranscriptionStore {
         hasQualityDetail: current.hasQualityDetail, rewriteState: current.rewriteState,
         deliveredSource: current.deliveredSource,
         deliveredRewriteAttemptID: current.deliveredRewriteAttemptID,
-        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure)
+        recognitionPath: current.recognitionPath, serverFailure: current.serverFailure,
+        inputDevice: current.inputDevice)
       try Self.update(next, db: db)
       return next
     }
@@ -743,7 +748,9 @@ public actor TranscriptionStore {
         deliveredSource: deliveredString.flatMap(DeliveredSource.init(rawValue:)),
         deliveredRewriteAttemptID: deliveredAttemptString.flatMap(UUID.init(uuidString:)),
         recognitionPath: path,
-        serverFailure: failureString.flatMap(RemoteFailureReason.init(rawValue:)))
+        serverFailure: failureString.flatMap(RemoteFailureReason.init(rawValue:)),
+        inputDevice: DictationInputDevice(
+          storedName: row["input_device_name"], storedKind: row["input_device_kind"]))
     }
   }
 

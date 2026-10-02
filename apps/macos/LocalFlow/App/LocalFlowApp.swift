@@ -343,7 +343,9 @@ private struct LocalFlowWindowView: View {
           description: Text(services.setupStatus))
       }
     case .settings:
-      SettingsView(model: services.settings, preferences: services.preferences)
+      SettingsView(
+        model: services.settings, preferences: services.preferences,
+        anchor: Bindable(services.router).settingsAnchor)
     }
   }
 }

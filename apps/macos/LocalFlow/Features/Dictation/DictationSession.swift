@@ -3,9 +3,23 @@ import LocalFlowCore
 import LocalFlowSpeech
 
 struct DictationSession {
+  /// `connecting` (Feature 019) sits between `preparing` and `recording`: the device
+  /// has started but no non-zero audio has arrived yet.
   enum State: String, Sendable {
-    case idle, preparing, recording, transcribing, persisting, rewriting, inserting, cancelling,
-      recovery, failed
+    case idle, preparing, connecting, recording, transcribing, persisting, rewriting, inserting,
+      cancelling, recovery, failed
+  }
+
+  /// Feature 019: the microphone this dictation records from.
+  struct InputDevice: Sendable, Equatable {
+    let name: String
+    let kind: InputDeviceKind
+    /// Nil for System default.
+    let uid: String?
+    /// Position in the ranked list, from 1.
+    let rank: Int
+    /// An entry ranked above it was unavailable or failed in this key-hold.
+    let isFallback: Bool
   }
   let id: UUID
   var state: State = .preparing
@@ -23,4 +37,5 @@ struct DictationSession {
   /// attempt row, no notice, `rewrite_state` stays `not_requested` (FR-012).
   var bypassRewrite = false
   var text = ""
+  var inputDevice: InputDevice?
 }

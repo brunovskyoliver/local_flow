@@ -499,6 +499,8 @@ struct MeetingDetailView: View {
           ? pager.segments : pager.segments.filter { pager.matches($0, query: transcriptQuery) }
         let seekable = seekableKinds
         let choices = speakerChoices
+        let dividers = Self.microphoneDividers(
+          switches: microphoneSwitches, transcript: segments.map { ($0.id, $0.startMs) })
         LazyVStack(alignment: .leading, spacing: 3) {
           // No buttons: the next page loads when its edge scrolls into view.
           if pager.hasPrevious, let first = segments.first {
@@ -510,6 +512,9 @@ struct MeetingDetailView: View {
             }
           }
           ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+            ForEach(Array((dividers.before[segment.id] ?? []).enumerated()), id: \.offset) {
+              MicrophoneChangeDivider(name: $0.element)
+            }
             NoteTranscriptBubble(
               segment: segment,
               showSource: pager.startsGroup(at: index, in: segments),
@@ -524,6 +529,9 @@ struct MeetingDetailView: View {
               confirmIdentity: showsIdentification ? { confirmIdentity(segment) } : nil
             )
             .id(segment.id)
+          }
+          ForEach(Array(dividers.trailing.enumerated()), id: \.offset) {
+            MicrophoneChangeDivider(name: $0.element)
           }
           if segments.isEmpty {
             Text("No matches.").foregroundStyle(SottoPalette.muted)
@@ -765,6 +773,30 @@ struct MeetingDetailView: View {
   }
 
   /// The track a transcript row plays from: system audio for system rows, else the microphone.
+  /// Feature 019: microphone segments opened by a device change, in track order.
+  private var microphoneSwitches: [MeetingSegment] {
+    (detail.track(.microphone)?.segments ?? [])
+      .filter { $0.openReason == .deviceChanged }
+      .sorted { $0.sequence < $1.sequence }
+  }
+
+  /// Places "Microphone changed to <name>" before the first transcript segment that
+  /// starts at or after each switch; switches after the last segment go at the end.
+  static func microphoneDividers(
+    switches: [MeetingSegment], transcript: [(id: UUID, startMs: Int64)]
+  ) -> (before: [UUID: [String?]], trailing: [String?]) {
+    var before: [UUID: [String?]] = [:]
+    var trailing: [String?] = []
+    for change in switches {
+      if let target = transcript.first(where: { $0.startMs >= change.startOffsetMs }) {
+        before[target.id, default: []].append(change.inputDeviceName)
+      } else {
+        trailing.append(change.inputDeviceName)
+      }
+    }
+    return (before, trailing)
+  }
+
   private static func playbackKind(_ segment: TranscriptSegment) -> MeetingTrackKind {
     segment.draft.analysisTracks == .system ? .system : .microphone
   }
@@ -1055,4 +1087,25 @@ private struct SelectableTextEditor: NSViewRepresentable {
 private struct ProvenanceKey: Hashable {
   let meeting: UUID
   let finalized: TranscriptState?
+}
+
+/// Feature 019: a device switch in the meeting's microphone track.
+struct MicrophoneChangeDivider: View {
+  let name: String?
+
+  var text: String { name.map { "Microphone changed to \($0)" } ?? "Microphone changed" }
+
+  var body: some View {
+    HStack(spacing: 10) {
+      SottoPalette.line.frame(height: 1)
+      Label(text, systemImage: "mic")
+        .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+        .fixedSize()
+      SottoPalette.line.frame(height: 1)
+    }
+    .padding(.vertical, 8)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(text)
+    .accessibilityIdentifier("meeting.transcript.microphoneChanged")
+  }
 }
