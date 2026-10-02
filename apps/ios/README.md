@@ -1,16 +1,23 @@
 # iOS companion
 
-`LocalFlowPhone.xcodeproj` builds the LocalFlow iPhone app (iOS 26, Swift 6) and the
-LocalFlow keyboard extension embedded in it (Feature 016, ADR 0029). The app links
-`packages/LocalFlowCore`; the keyboard links neither package product and makes no network
-call (`scripts/check-keyboard-imports.sh`).
+`LocalFlowPhone.xcodeproj` builds the LocalFlow iPhone app (iOS 26, Swift 6) and two
+extensions embedded in it: the LocalFlow keyboard (Feature 016, ADR 0029) and the
+`LocalFlowWidgets` WidgetKit extension with the dictation control and the Live Activity
+(Feature 017, ADR 0030). The app links `packages/LocalFlowCore`; neither extension links a
+package product or makes a network call (`scripts/check-keyboard-imports.sh`).
 
 - `App/`: the containing app. Session, capture, pipeline, History, Dictionary, setup and Settings.
 - `Keyboard/`: the `UIInputViewController` and its SwiftUI view.
-- `Shared/`: compiled into both targets. Handoff files and bells, keyboard logic, Sotto tokens.
+- `Shared/`: compiled into the app and the keyboard. Handoff files and bells, keyboard logic,
+  Sotto tokens. The widget compiles only `Shared/Sotto/`; every other file is excluded from it
+  one by one in the project's membership exceptions.
+- `Intents/`: compiled into the app and the widget. The App Intents (toggle dictation, end
+  session, copy last), the `IntentHandler` protocol the app implements, and the Live Activity
+  attributes.
+- `Widgets/`: the `LocalFlowWidgets` extension. The control and the Live Activity views.
 - `LocalFlowPhoneTests/`: unit tests on the simulator, run by `make check`.
 
-`make ios` builds both targets for the simulator without signing.
+`make ios` builds all three targets for the simulator without signing.
 
 ## Signing
 
@@ -33,7 +40,7 @@ app, as long as the team and prefix are unchanged.
 | Speech and boost models | app container, `Application Support/LocalFlow/Models/<name>/` | no (excluded) |
 | Download resume data | app container, `Application Support/LocalFlow/Models/.staging/` | yes |
 | Recording spool, orphan waiting for recovery | app container, `Application Support/LocalFlow/TemporaryAudio/` | yes |
-| Settings (`session.idleTimeout`, `setup.completedSteps`, `diagnostics.enabled`) | `UserDefaults.standard` of the app | yes |
+| Settings (`session.idleTimeout`, `setup.completedSteps`, `diagnostics.enabled`, `notifications.dictationResults`) | `UserDefaults.standard` of the app | yes |
 | Handoff files (`session.json`, `result.json`, `keyboard-status.json`, …) | App Group container, `Handoff/` | no (excluded) |
 
 Nothing that must survive is kept in `Caches` or `tmp`. The only `tmp` use is a finished

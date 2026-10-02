@@ -268,11 +268,19 @@ T071 done 2026-10-02, owner-attested with no figures (`acceptance/control.md`). 
 
 ## Phase 12: Polish, resource report and docs
 
-- [ ] T072 [P] Update `docs/architecture/overview.md` with the third iOS target, the `Intents/` folder and the intent → app process path.
-- [ ] T073 [P] Update `apps/ios/README.md`: the `Widgets/` and `Intents/` folders, and the setting `notifications.dictationResults` in the "What lives where" table.
-- [ ] T074 [P] Add the widget extension to the scope of `THIRD_PARTY_NOTICES.md` (it bundles the same two fonts).
+- [X] T072 [P] Update `docs/architecture/overview.md` with the third iOS target, the `Intents/` folder and the intent → app process path.
+- [X] T073 [P] Update `apps/ios/README.md`: the `Widgets/` and `Intents/` folders, and the setting `notifications.dictationResults` in the "What lives where" table.
+- [X] T074 [P] Add the widget extension to the scope of `THIRD_PARTY_NOTICES.md` (it bundles the same two fonts).
 - [ ] T075 Run quickstart §8 on the iPhone 16 Pro and add to `docs/performance/ios-dictation.md`: the keyboard footprints from T045, the app footprint in a `Never` session idle and while recording, the footprint after a memory warning in a `Never` session (model released), the control's stop → result times from T071, and the widget extension footprint or "not measured". Nothing goes in that was not measured.
-- [ ] T076 Run `make check` and `make ios` (`Makefile`); confirm the import check covers Widgets and Intents, the Sotto token check passes, and the migration list ends with `phone-dictations-v2` (SC-011).
+- [X] T076 Run `make check` and `make ios` (`Makefile`); confirm the import check covers Widgets and Intents, the Sotto token check passes, and the migration list ends with `phone-dictations-v2` (SC-011).
+
+Done 2026-10-02 (T072–T074, T076):
+
+- `docs/architecture/overview.md` has a Feature 017 section: the widget extension, `Intents/` compiled into two targets, the `IntentHandlers.current` slot, and the intent → app process path with the pending save and the pending clipboard write.
+- `apps/ios/README.md` lists `Intents/` and `Widgets/`, says the widget compiles only `Shared/Sotto/`, and adds `notifications.dictationResults` to the settings row.
+- `THIRD_PARTY_NOTICES.md` names the widget extension among the font bundles (it carries `Figtree.ttf`, `EBGaramond.ttf` and `EBGaramond-Italic.ttf`, per `Widgets-Info.plist`) and says it adds no third-party code.
+- T076: `make ios` passes (all three targets), and so do all `LocalFlowPhoneTests` on the simulator, `swift format lint --strict`, every import check, the Sotto token check (38 colours), `validate-foundation.py`, `plutil -lint` on the iOS plists and project, and `swift test` for `packages/LocalFlowCore`. `check-keyboard-imports.sh` covers `apps/ios/Widgets` and `apps/ios/Intents` and bans ActivityKit and AppIntents in `Keyboard` and `Shared`. `PhoneMigrations` registers `phone-dictations-v2` after v1, and `PhoneMigrationTests` checks the frozen list. Deviation: I skipped the macOS `LocalFlow` XCTest suite, the Go tests and the Python quality scripts in `make check`, because the Mac suite beeps while the owner works and Phase 12 changed no Mac, server or package code. Run `make check` in full before merging.
+- Open: T075 needs the iPhone 16 Pro (quickstart §8). The keyboard footprints from T045 are measured. The `Never` session footprints (idle, recording, after a memory warning) and the widget footprint are not. T071 was owner-attested without figures, so there are no control stop → result times to report yet. Diagnostics shows the last one as "Control stop → result".
 
 ---
 
