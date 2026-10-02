@@ -35,6 +35,30 @@ final class WindowSourceTests: XCTestCase {
     }
   }
 
+  func testALoneYeahInAShortTailWindowIsDropped() async throws {
+    let transcriber = WindowedTranscriber(lifecycle: ModelLifecycleCoordinator { FakeRuntime() })
+    func run(_ samples: Int, tail: String) async -> TranscriptionResult {
+      await transcriber.transcribe(sampleCount: samples) { start, _ in
+        PrefetchedWindow(
+          window: TranscriptionWindow(text: start == 0 ? "Is it done?" : tail, tokens: []),
+          recognitionSeconds: 0)
+      }
+    }
+    let dropped = await run(window + 8_000, tail: "Yeah.")
+    XCTAssertEqual(dropped.text, "Is it done?")
+    XCTAssertFalse(dropped.incomplete)
+    XCTAssertEqual(dropped.rawWindows.last?.text, "Yeah.", "the raw window stays as evidence")
+    let words = await run(window + 8_000, tail: "Right.")
+    XCTAssertEqual(words.text, "Is it done? Right.")
+    let long = await run(window + 64_000, tail: "Yeah.")
+    XCTAssertEqual(long.text, "Is it done? Yeah.")
+    let alone = await transcriber.transcribe(sampleCount: 8_000) { _, _ in
+      PrefetchedWindow(
+        window: TranscriptionWindow(text: "Yeah.", tokens: []), recognitionSeconds: 0)
+    }
+    XCTAssertEqual(alone.text, "Yeah.", "a first window is never dropped")
+  }
+
   func testRemoteShapedSourceGivesTheLocalResult() async throws {
     let entries = [
       VocabularyEntry(id: "z", canonical: "Zabbix"),

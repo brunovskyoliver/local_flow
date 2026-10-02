@@ -162,7 +162,20 @@ extension DictationTranscribing {
 
 public struct WindowedTranscriber: DictationTranscribing {
   public enum Profile: Sendable { case production, historical }
-  static let productionAssemblyVersion = "contiguous_fixed239360_preserve_v1"
+  static let productionAssemblyVersion = "contiguous_fixed239360_preserve_v2"
+
+  /// Parakeet answers a short, near-silent leftover window with a lone "Yeah." (or
+  /// "Okay.", "Yes."): 37 of 139 short tails in the owner's history. A later window
+  /// under 3 s whose whole text is one of these words is dropped from the assembled
+  /// text; its raw window stays in the evidence.
+  /// ponytail: text-only rule; an energy check on the window would also catch a lone
+  /// filler in the first window, add it if those show up.
+  static func isTailFiller(_ text: String, sampleStart: Int, sampleCount: Int) -> Bool {
+    guard sampleStart > 0, sampleCount < 48_000 else { return false }
+    let word = text.lowercased()
+      .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    return ["yeah", "yes", "okay", "ok"].contains(word)
+  }
   let lifecycle: ModelLifecycleCoordinator
   var profile: Profile = .production
   var identity = TranscriptionPipelineIdentity()
@@ -330,13 +343,15 @@ public struct WindowedTranscriber: DictationTranscribing {
         try admission.append(window, sampleStart: offset, sampleCount: count)
         boostHints += window.boostHints
         let assemblyBegan = ProcessInfo.processInfo.systemUptime
+        let filler = Self.isTailFiller(window.text, sampleStart: offset, sampleCount: count)
         assembly.append(
           .init(
             sequence: admission.windows.count - 1, sampleStart: offset,
-            sampleCount: count, paddedSampleCount: max(4_800, count), text: window.text, tokens: nil
+            sampleCount: count, paddedSampleCount: max(4_800, count),
+            text: filler ? "" : window.text, tokens: nil
           ))
         assemblySeconds += ProcessInfo.processInfo.systemUptime - assemblyBegan
-        if window.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if !filler, window.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           emptyWindows.append(admission.windows.count - 1)
         }
         // Admit into the retained envelope only after the entire detail validates.
