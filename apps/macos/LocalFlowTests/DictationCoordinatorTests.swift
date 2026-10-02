@@ -1447,7 +1447,6 @@ extension DictationCoordinatorTests {
   fileprivate static let usb = ConnectedInput.fake(10, "Blue Yeti", kind: .usb)
   fileprivate static let macbook = ConnectedInput.fake(
     20, "MacBook Pro Microphone", kind: .builtIn)
-  fileprivate static let airpods = ConnectedInput.fake(30, "AirPods Pro", kind: .bluetooth)
 
   fileprivate struct InputRig {
     let coordinator: DictationCoordinator
@@ -1600,8 +1599,6 @@ extension DictationCoordinatorTests {
   func testASilentFirstDeviceFallsBackOnTheSameSpoolInTheSameKeyHold() async throws {
     let rig = try makeInputRig()
     await rig.capture.setBehavior(.silent, for: .device(Self.usb.deviceID))
-    var captions: [InputCaption?] = []
-    rig.coordinator.inputCaptionChanged = { captions.append($0) }
     try await dictate(rig)
     let inputs = await rig.capture.inputs
     let bytes = await rig.capture.spoolBytesAtStart
@@ -1609,11 +1606,6 @@ extension DictationCoordinatorTests {
     XCTAssertEqual(inputs, [.device(Self.usb.deviceID), .device(Self.macbook.deviceID)])
     XCTAssertEqual(bytes, [0, 0])
     XCTAssertEqual(cancels, 1)
-    XCTAssertTrue(
-      captions.contains(InputCaption(kind: .connecting, deviceName: "Blue Yeti")))
-    XCTAssertTrue(
-      captions.contains(
-        InputCaption(kind: .fallbackNotice, deviceName: "MacBook Pro Microphone")))
     let entry = try await rig.store.recent().first
     XCTAssertEqual(entry?.inputDevice?.name, "MacBook Pro Microphone")
     XCTAssertEqual(rig.insertion.insertedTexts.count, 1)
@@ -1718,32 +1710,5 @@ extension DictationCoordinatorTests {
     try await dictate(rig)
     XCTAssertEqual(loads.value, 1, "only capture restarted")
     XCTAssertEqual(rig.insertion.insertedTexts.count, 1)
-  }
-
-  // MARK: US3 (T045)
-
-  func testFallbackNoticeShowsOncePerAvailableSet() async throws {
-    let rig = try makeInputRig(inputs: [Self.macbook])
-    var notices = 0
-    rig.coordinator.inputCaptionChanged = { if $0?.kind == .fallbackNotice { notices += 1 } }
-    try await dictate(rig)
-    try await dictate(rig)
-    XCTAssertEqual(notices, 1, "same available set: once")
-    // No default input any more: System default leaves the available set.
-    rig.catalog.set(
-      InputDeviceSnapshot(
-        inputs: [Self.macbook, Self.airpods], defaultInput: nil, clamshell: false, generation: 2))
-    try await dictate(rig)
-    XCTAssertEqual(notices, 2, "the available set changed: again")
-  }
-
-  func testNoNoticeWithoutAFallback() async throws {
-    let rig = try makeInputRig()
-    var captions: [InputCaption?] = []
-    rig.coordinator.inputCaptionChanged = { captions.append($0) }
-    try await dictate(rig)
-    XCTAssertFalse(captions.contains { $0?.kind == .fallbackNotice })
-    XCTAssertTrue(captions.contains(InputCaption(kind: .recording, deviceName: "Blue Yeti")))
-    XCTAssertNil(rig.coordinator.inputCaption, "the caption clears after recording")
   }
 }

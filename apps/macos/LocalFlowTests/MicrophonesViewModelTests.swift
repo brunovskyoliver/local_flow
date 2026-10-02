@@ -108,6 +108,18 @@ final class MicrophonesViewModelTests: XCTestCase {
     XCTAssertEqual(model.rows.first?.id, macbookRow)
   }
 
+  func testDroppingARowOntoAnotherTakesItsPlace() {
+    let (model, store, _) = model(
+      entries: [.fake(usb), .fake(macbook), .systemDefault()], inputs: [usb, macbook])
+    let ids = model.rows.map(\.id)
+    model.move(ids[2], onto: ids[0])
+    XCTAssertEqual(store.entries.map(\.id), [ids[2], ids[0], ids[1]])
+    model.move(ids[2], onto: ids[1])
+    XCTAssertEqual(store.entries.map(\.id), [ids[0], ids[1], ids[2]])
+    model.move(ids[0], onto: ids[0])
+    XCTAssertEqual(store.entries.map(\.id), [ids[0], ids[1], ids[2]])
+  }
+
   func testCatalogChangesRebuildTheRows() async throws {
     let (model, _, catalog) = model(entries: [.fake(usb), .systemDefault()], inputs: [])
     XCTAssertFalse(model.rows[0].isAvailable)

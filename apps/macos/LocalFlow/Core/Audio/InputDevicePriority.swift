@@ -193,15 +193,6 @@ enum InputDeviceResolver {
     }
     return result
   }
-
-  /// Identity of the available set, for the once-per-change fallback notice.
-  static func availableSetHash(_ candidates: [InputCandidate]) -> Int {
-    var hasher = Hasher()
-    for uid in candidates.map({ $0.entry.uid ?? "systemDefault" }).sorted() {
-      hasher.combine(uid)
-    }
-    return hasher.finalize()
-  }
 }
 
 enum InputDevicePriorityError: Error, Equatable {

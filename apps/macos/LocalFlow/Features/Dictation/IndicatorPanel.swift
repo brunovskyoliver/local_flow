@@ -10,8 +10,6 @@ private final class IndicatorPresentation {
   var actionNotice: RewriteActionNotice?
   var clipboard: ClipboardNotice?
   var background: BackgroundNotice?
-  /// Feature 019: the microphone caption under the pill.
-  var caption: InputCaption?
   /// Feature 019: "No microphone available" / "<name> didn't respond".
   var microphone: MicrophoneNotice?
   @ObservationIgnored var openMicrophones: () -> Void = {}
@@ -62,20 +60,9 @@ private struct IndicatorHost: View {
     ZStack {
       switch presentation.content {
       case .dictation:
-        // With a caption, Cancel's 35 points are mirrored on the left so the content is
-        // symmetric around the waveform and the caption sits under it. One structure
-        // either way, so the pill keeps its state when the caption comes and goes.
-        VStack(spacing: 6) {
-          DictationIndicator(
-            state: presentation.state, level: presentation.level,
-            deviceName: presentation.caption?.deviceName, cancel: presentation.cancel
-          )
-          .padding(.leading, presentation.caption == nil ? 0 : IndicatorPanel.cancelInset)
-          if let caption = presentation.caption {
-            InputCaptionView(caption: caption).transition(.opacity)
-          }
-        }
-        .transition(transition)
+        DictationIndicator(
+          state: presentation.state, level: presentation.level, cancel: presentation.cancel
+        ).transition(transition)
       case .microphone:
         if let notice = presentation.microphone {
           ActionNoticeView(
@@ -156,8 +143,6 @@ final class IndicatorPanel: NSPanel {
   /// what sits on the screen's center line.
   static let indicatorWidth: CGFloat = 153
   static let indicatorVisualCenter: CGFloat = 59
-  /// The width Cancel adds to the right of the waveform.
-  static let cancelInset: CGFloat = 35
   private static let showDuration: TimeInterval = 0.3
   private static let hideDuration: TimeInterval = 0.18
   private static let resizeDuration: TimeInterval = 0.32
@@ -273,14 +258,6 @@ final class IndicatorPanel: NSPanel {
     let clamped = level.isFinite ? min(1, max(0, level)) : 0
     if presentation.level != clamped { presentation.level = clamped }
     presentation.cancel = cancel
-  }
-
-  /// Feature 019: the microphone caption under the pill. A fallback notice is announced.
-  func updateInputCaption(_ caption: InputCaption?) {
-    guard presentation.caption != caption else { return }
-    presentation.caption = caption
-    if let caption, caption.kind == .fallbackNotice { announce(caption.text) }
-    if isVisible, !hiding { refresh() }
   }
 
   /// Feature 019: a failure fixed in Settings › Microphones. Clears itself after
@@ -562,11 +539,7 @@ final class IndicatorPanel: NSPanel {
       ?? NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
       ?? NSScreen.main
     let visible = screen?.visibleFrame ?? NSRect(origin: .zero, size: contentSize)
-    // With a caption the content is symmetric around the waveform, so its middle is the
-    // waveform's; without one the waveform sits 59 points in.
-    let centered =
-      Self.showsPanel(presentation.state) && presentation.caption == nil
-      ? Self.indicatorVisualCenter : nil
+    let centered = Self.showsPanel(presentation.state) ? Self.indicatorVisualCenter : nil
     return NSRect(
       origin: Self.origin(in: visible, width: contentSize.width, visualCenter: centered),
       size: contentSize)

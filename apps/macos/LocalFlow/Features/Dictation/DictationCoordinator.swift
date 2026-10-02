@@ -79,21 +79,6 @@ struct InputDeviceMetrics: Sendable, Equatable {
   let fallbacks: Int
 }
 
-/// Feature 019: the caption under the pill while a microphone connects or records.
-struct InputCaption: Sendable, Equatable {
-  enum Kind: Sendable, Equatable { case connecting, recording, fallbackNotice }
-  let kind: Kind
-  let deviceName: String
-
-  var text: String {
-    switch kind {
-    case .connecting: "Connecting to \(deviceName)…"
-    case .recording: deviceName
-    case .fallbackNotice: "Using \(deviceName)"
-    }
-  }
-}
-
 /// Feature 019: why no microphone could record. Shown with a "Microphones…" action.
 enum InputDeviceFailure: Error, Equatable {
   /// No ranked entry is available.
@@ -247,16 +232,10 @@ final class DictationCoordinator {
   var admissionRefused: ((String) -> Void)?
   @ObservationIgnored private var pendingRewriteAttemptID: UUID?
   @ObservationIgnored private var bypassRewriteRequested = false
-  /// Feature 019: the microphone caption under the pill; nil outside connecting/recording.
-  private(set) var inputCaption: InputCaption?
-  var inputCaptionChanged: ((InputCaption?) -> Void)?
   /// The last failure is fixed in Settings › Microphones ("Microphones…" button).
   private(set) var offersMicrophoneSettings = false
   /// Fires once per dictation that recorded, at stop.
   var inputMeasured: ((InputDeviceMetrics) -> Void)?
-  /// Hash of the available set at the last "Using <name>" notice; memory only.
-  @ObservationIgnored private var lastAnnouncedAvailableSet: Int?
-  @ObservationIgnored private var captionReset: Task<Void, Never>?
 
   @ObservationIgnored private let store: any TranscriptionStoring
   @ObservationIgnored private let vocabulary: any VocabularyProviding
@@ -491,16 +470,7 @@ final class DictationCoordinator {
 
   private func transition(_ value: DictationSession.State) {
     state = value
-    if value != .connecting, value != .recording { setInputCaption(nil) }
     stateChanged?(value)
-  }
-
-  private func setInputCaption(_ caption: InputCaption?) {
-    captionReset?.cancel()
-    captionReset = nil
-    guard inputCaption != caption else { return }
-    inputCaption = caption
-    inputCaptionChanged?(caption)
   }
 
   /// Release tail (research R6): none at or under 50 ms of delivery delay, else the
@@ -588,7 +558,6 @@ final class DictationCoordinator {
       if !stopRequested {
         transition(.connecting)
         status = "Connecting to \(candidate.displayName)…"
-        setInputCaption(InputCaption(kind: .connecting, deviceName: candidate.displayName))
       }
       var outcome = ConnectOutcome.timedOut
       while true {
@@ -636,28 +605,6 @@ final class DictationCoordinator {
       }
     }
     throw InputDeviceFailure.noMicrophone
-  }
-
-  /// The caption for a device that started recording; a fallback says so once per
-  /// change in the available set (FR-012).
-  private func announce(
-    _ device: DictationSession.InputDevice, availableSet: Int, tag: ControlMailbox.Tag
-  ) {
-    guard device.isFallback, availableSet != lastAnnouncedAvailableSet else {
-      setInputCaption(InputCaption(kind: .recording, deviceName: device.name))
-      return
-    }
-    lastAnnouncedAvailableSet = availableSet
-    setInputCaption(InputCaption(kind: .fallbackNotice, deviceName: device.name))
-    captionReset = Task { [weak self] in
-      try? await Task.sleep(for: .seconds(3))
-      guard !Task.isCancelled, let self, self.controlTag == tag,
-        self.inputCaption?.kind == .fallbackNotice
-      else { return }
-      self.captionReset = nil
-      self.inputCaption = InputCaption(kind: .recording, deviceName: device.name)
-      self.inputCaptionChanged?(self.inputCaption)
-    }
   }
 
   /// One log line, the timing profile and the resource metrics for a recorded dictation.
@@ -814,8 +761,7 @@ final class DictationCoordinator {
         name: chosen.deviceID == nil
           ? (inputCatalog?.name(of: connection.started.boundDevice) ?? chosen.displayName)
           : chosen.displayName,
-        kind: chosen.entry.kind, uid: chosen.entry.uid, rank: chosen.rank,
-        isFallback: chosen.rank > 1)
+        kind: chosen.entry.kind, uid: chosen.entry.uid, rank: chosen.rank)
       session.inputDevice = device
       if remoteSession == nil { live.startPrefetch(transcriber, spool: spool) }
       consumeControls()
@@ -825,8 +771,6 @@ final class DictationCoordinator {
         recordingStarted = true
         transition(.recording)
         status = "Recording"
-        announce(
-          device, availableSet: InputDeviceResolver.availableSetHash(candidates), tag: tag)
       }
       var maxDelay = Duration.zero
       while !stopRequested, !Task.isCancelled, live.failure == nil {

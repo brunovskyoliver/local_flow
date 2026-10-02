@@ -29,8 +29,6 @@ struct DictationIndicator: View {
   static let frames = AnimationTimelineSchedule.animation(minimumInterval: 1.0 / 60)
   let state: DictationSession.State
   let level: Float
-  /// Feature 019: the microphone in use, read by VoiceOver while connecting or recording.
-  var deviceName: String? = nil
   let cancel: () -> Void
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var hovering = false
@@ -99,7 +97,7 @@ struct DictationIndicator: View {
       setExpanded(for: state, animated: !reduceMotion)
     }
     .accessibilityElement(children: .contain)
-    .accessibilityLabel(Self.accessibilityLabel(state: state, deviceName: deviceName))
+    .accessibilityLabel(Self.accessibilityLabel(state: state))
     .accessibilityAction(named: state == .rewriting ? "Cancel rewrite" : "Cancel dictation", cancel)
   }
 
@@ -192,12 +190,10 @@ struct DictationIndicator: View {
     0.675 + 0.325 * sin(time * 2 * .pi / 1.6)
   }
 
-  /// The pill's VoiceOver label; ", <name>" while connecting or recording (FR-011).
-  static func accessibilityLabel(state: DictationSession.State, deviceName: String?) -> String {
-    let device = deviceName.map { ", \($0)" } ?? ""
+  static func accessibilityLabel(state: DictationSession.State) -> String {
     switch state {
-    case .recording: return "Recording" + device
-    case .connecting: return "Connecting" + device
+    case .recording: return "Recording"
+    case .connecting: return "Connecting to the microphone"
     case .preparing: return "Preparing, microphone off"
     case .rewriting: return "Rewriting text, microphone off"
     default: return "Processing, microphone off"
@@ -366,24 +362,6 @@ extension Duration {
 
 /// One-line notice with a single action, in the indicator's capsule: used for
 /// rewrite fallbacks, refusals and cancellations.
-/// Feature 019: the microphone under the pill, in the pill's colors. Never takes focus.
-struct InputCaptionView: View {
-  static let maximumTextWidth: CGFloat = 260
-  let caption: InputCaption
-
-  var body: some View {
-    Text(caption.text).font(.flow(size: 11, weight: .medium))
-      .foregroundStyle(PillStyle.ink.opacity(caption.kind == .recording ? 0.82 : 1))
-      .lineLimit(1).truncationMode(.middle)
-      .frame(maxWidth: Self.maximumTextWidth)
-      .padding(.horizontal, 10)
-      .frame(height: 22)
-      .pillBackground()
-      .fixedSize()
-      .accessibilityHidden(true)
-  }
-}
-
 struct ActionNoticeView: View {
   /// The longest a one-line message grows before it truncates.
   static let maximumTextWidth: CGFloat = 420

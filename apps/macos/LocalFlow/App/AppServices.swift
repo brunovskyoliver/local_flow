@@ -593,9 +593,6 @@ final class AppServices {
         inputTimings: inputTimings)
       self.coordinator = coordinator
       coordinator.inputMeasured = { [weak self] metrics in self?.recorder?.record(input: metrics) }
-      coordinator.inputCaptionChanged = { [weak self] caption in
-        self?.panel.updateInputCaption(caption)
-      }
       let retrier = PendingRemoteRetrier(
         store: pendingStore, history: paths.1, vocabulary: vocabulary, starter: remoteRouter,
         transcriber: WindowedTranscriber(lifecycle: lifecycle, identity: transcriptIdentity))
