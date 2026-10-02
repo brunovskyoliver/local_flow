@@ -50,6 +50,22 @@ final class HandoffCodecTests: XCTestCase {
     XCTAssertEqual(decoded.peakFootprintBytes, 31_457_280)
   }
 
+  func testKeyboardStatusCarriesTheSurfaceFootprintsAndReadsOlderFiles() throws {
+    let status = KeyboardStatusFile(
+      hasFullAccess: true, lastSeen: 8, peakFootprintBytes: 31_457_280,
+      footprintBytes: 20_971_520, footprintRestBytes: 18_874_368,
+      footprintListeningBytes: 25_165_824)
+    let json = try XCTUnwrap(String(data: try JSONEncoder().encode(status), encoding: .utf8))
+    XCTAssertTrue(json.contains("\"footprint_rest_bytes\":18874368"))
+    XCTAssertTrue(json.contains("\"footprint_listening_bytes\":25165824"))
+    XCTAssertEqual(try JSONDecoder().decode(KeyboardStatusFile.self, from: Data(json.utf8)), status)
+
+    let older = #"{"v":1,"has_full_access":true,"last_seen":8,"peak_footprint_bytes":31457280}"#
+    let decoded = try JSONDecoder().decode(KeyboardStatusFile.self, from: Data(older.utf8))
+    XCTAssertNil(decoded.footprintRestBytes)
+    XCTAssertNil(decoded.footprintListeningBytes)
+  }
+
   // MARK: Feature 017 additions (contracts/keyboard-handoff-v1-additions.md)
 
   func testSessionFileCarriesThe017FieldsAndNever() throws {

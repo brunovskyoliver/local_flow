@@ -24,6 +24,9 @@ struct DiagnosticsView: View {
         } else if let keyboard {
           LabeledContent("At last report", value: Self.megabytes(keyboard.footprintBytes))
           LabeledContent("Peak", value: Self.megabytes(keyboard.peakFootprintBytes))
+          LabeledContent("Peak at rest", value: Self.megabytes(keyboard.footprintRestBytes))
+          LabeledContent(
+            "Peak while listening", value: Self.megabytes(keyboard.footprintListeningBytes))
           LabeledContent("Reported") {
             Text(Date(timeIntervalSince1970: Double(keyboard.lastSeen) / 1000), style: .relative)
               + Text(" ago")
@@ -36,8 +39,10 @@ struct DiagnosticsView: View {
         Text("Keyboard memory")
       } footer: {
         Text(
-          "The keyboard reports when it appears, 3 seconds later (at rest), and when it is "
-            + "dismissed. Peak is the most the current keyboard process has used.")
+          "The keyboard reports when it appears, 3 seconds later (at rest), when it is "
+            + "dismissed, and when a per-surface peak rises. Peak is the most the current "
+            + "keyboard process has used; the rest and listening peaks are sampled once a "
+            + "second while the keys or the listening view are up.")
       }
       Section("App memory") {
         LabeledContent("Now", value: Self.megabytes(footprint.current))

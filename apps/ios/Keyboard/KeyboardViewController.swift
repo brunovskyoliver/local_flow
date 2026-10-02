@@ -8,6 +8,11 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
   private var hosting: UIHostingController<KeyboardView>?
   private let store = HandoffStore.group()
   private var restReading: DispatchWorkItem?
+  private var sampler: Timer?
+  /// SC-003: peak `phys_footprint` seen while each surface was up, for the life of the
+  /// keyboard process. Sampled once a second, so a spike shorter than that can be missed.
+  private static var restPeak: UInt64 = 0
+  private static var listeningPeak: UInt64 = 0
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -58,6 +63,9 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     let rest = DispatchWorkItem { [weak self] in self?.writeStatus() }
     restReading = rest
     DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: rest)
+    sampler = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { self?.sampleFootprint() }
+    }
   }
 
   /// A dismissed keyboard never leaves a recording without a visible owner (FR-026).
@@ -70,6 +78,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     super.viewDidDisappear(animated)
     restReading?.cancel()
     restReading = nil
+    sampler?.invalidate()
+    sampler = nil
     model.disappear()
     hosting?.willMove(toParent: nil)
     hosting?.view.removeFromSuperview()
@@ -110,14 +120,30 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     }
   }
 
-  /// SC-004: the keyboard's own footprint and peak, for the app's diagnostics screen.
+  /// The listening view covers every surface but the keys (listening, transcribing, notices).
+  private func sampleFootprint() {
+    let current = Footprint.read().current
+    if model.surface == .keys {
+      guard current > Self.restPeak else { return }
+      Self.restPeak = current
+    } else {
+      guard current > Self.listeningPeak else { return }
+      Self.listeningPeak = current
+    }
+    writeStatus()
+  }
+
+  /// SC-003/SC-004: the keyboard's own footprint and peaks, for the app's diagnostics screen.
   private func writeStatus() {
     guard hasFullAccess, let store else { return }
     let footprint = Footprint.read()
     try? store.write(
       KeyboardStatusFile(
         hasFullAccess: true, lastSeen: Handoff.milliseconds(Date()),
-        peakFootprintBytes: footprint.peak, footprintBytes: footprint.current), .keyboardStatus)
+        peakFootprintBytes: footprint.peak, footprintBytes: footprint.current,
+        footprintRestBytes: Self.restPeak > 0 ? Self.restPeak : nil,
+        footprintListeningBytes: Self.listeningPeak > 0 ? Self.listeningPeak : nil),
+      .keyboardStatus)
   }
 
   // MARK: KeyboardHost

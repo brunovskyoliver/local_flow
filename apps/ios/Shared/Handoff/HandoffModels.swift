@@ -126,6 +126,10 @@ struct KeyboardStatusFile: HandoffFile, Equatable {
   /// `phys_footprint` when the file was written. Optional so files from older keyboards
   /// still decode.
   var footprintBytes: UInt64?
+  /// SC-003 (Feature 017): peak `phys_footprint` while the keys, and while the listening
+  /// view, were up. Optional for the same reason.
+  var footprintRestBytes: UInt64?
+  var footprintListeningBytes: UInt64?
 
   enum CodingKeys: String, CodingKey {
     case v
@@ -133,6 +137,8 @@ struct KeyboardStatusFile: HandoffFile, Equatable {
     case lastSeen = "last_seen"
     case peakFootprintBytes = "peak_footprint_bytes"
     case footprintBytes = "footprint_bytes"
+    case footprintRestBytes = "footprint_rest_bytes"
+    case footprintListeningBytes = "footprint_listening_bytes"
   }
 }
 
