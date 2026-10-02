@@ -8,6 +8,8 @@
 
 **Scope change (2026-10-01, owner)**: after the R7 typing spike (acceptance/spike.md), the owner chose a dictation-only keyboard. User Story 1 (letter, number and symbol layouts, autocorrect, suggestions) is removed, with FR-002–FR-010, SC-001 and SC-002. The keyboard keeps the 016 key row (globe, punctuation, space, backspace, return); the owner types with the Apple keyboard through the globe key. Requirement and story numbers are kept so references stay valid.
 
+**Scope change (2026-10-02, owner)**: after the first device run, the owner dropped the key row and the ☰ drawer. The keyboard shows only a settings button (opens LocalFlow's settings), the large mic and the session status, plus the globe when iOS asks for it. End session moves out of the keyboard: it stays in the app and the Live Activity. FR-001, FR-011, FR-012, FR-025 and SC-007 below are updated; where older text mentions the key row or the drawer, this note wins.
+
 **Input**: User description: "Feature 017: LocalFlow outside the app — a full dictation keyboard plus system entry points (Live Activity, Control Center, Action Button). Feature 016 shipped the iOS companion (apps/ios: LocalFlowPhone app + LocalFlowKeyboard extension, shared package packages/LocalFlowCore per ADR 0029). Today the keyboard is a capsule with chips and Undo; dictation runs in the app through the App Group + Darwin-notification handoff. This feature makes the keyboard a real daily keyboard and lets the owner start dictation without the keyboard. Reference product: Wispr Flow's iOS keyboard as of iOS 26.4. A keyboard extension cannot use the microphone; the first tap of a session still opens LocalFlow and the user swipes back by hand; no private APIs for automatic return. P1: full keyboard (123 default, ABC, #+=, shift/caps lock, globe, return, space labelled LocalFlow, word-by-word backspace, double-space period, on-device UITextChecker autocorrect and suggestions, UITextInputTraits incl. secure fields). P1: top bar (☰ drawer with ABC/123, Settings, End session; large round mic; 'Listening · 4:12' countdown; Undo and Insert last dictation after an insertion; no style pill). P1: listening takes over the keyboard (large 15-bar scrolling waveform, timer, ✕ cancel, ✓ stop and insert; rolling wave while transcribing; keyboard stays open until text appears; offline, 5-minute-limit warning and error states). P1: session timeout 'never'. P2: Live Activity (Lock Screen and Dynamic Island; elapsed time, countdown, Stop, Save/Insert last; idle/recording/transcribing). P2: start without the keyboard (AudioRecordingIntent iOS 18+, ControlWidget for Control Center, Lock Screen and Action Button, App Shortcuts; Live Activity covers the whole recording; press to start, press to stop; text to History and clipboard, offered via notification or Live Activity Copy). Constraints: keyboard links neither LocalFlowCore nor LocalFlowSpeech; Objective-C runtime open-app path from 016 T030; keyboard memory budget 40 MB measured at rest, on letters and while listening; Sotto tokens; new widget extension target and App ID under the existing App Group and com.brunovsky prefix, registered only with the owner's go-ahead; background audio stays a real visible recording feature (App Review 2.5.4); recordings stop at 5 minutes; constitution v2.0.0 unchanged; no rewriting, style pill, sync or Mac channel (018, 019)."
 
 ## Summary
@@ -141,14 +143,14 @@ The owner is walking and has a thought. They press the Action Button (or a Local
 
 **Key row**
 
-- **FR-001**: The keyboard MUST keep the 016 key row (globe when iOS asks for it, a few punctuation marks, space, backspace, return) and MUST NOT offer letter, number or symbol layouts, suggestions or autocorrection.
+- **FR-001**: The keyboard MUST NOT offer any keys (no key row, letter, number or symbol layouts, suggestions or autocorrection); it shows the globe only when iOS asks for it.
 - **FR-002–FR-006, FR-008–FR-010**: removed with User Story 1 (2026-10-01).
 - **FR-007**: In secure fields the keyboard MUST NOT offer dictation and MUST NOT remember anything typed.
 
 **Top bar and drawer**
 
-- **FR-011**: The top bar MUST show a ☰ button on the left, a large round mic on the right and, during a session, the session status between them.
-- **FR-012**: The ☰ drawer MUST offer Settings (opens LocalFlow's settings) and End session (shown only while a session runs).
+- **FR-011**: The keyboard MUST show a settings button at the top left, a large round mic in the centre and, during a session, the session status under the mic.
+- **FR-012**: The settings button MUST open LocalFlow's settings directly; the keyboard MUST NOT show settings or a menu inside itself.
 - **FR-013**: With no session running, the mic MUST open LocalFlow to start one, as in 016, without private system interfaces.
 - **FR-014**: During a session the bar MUST show "Listening · m:ss" counting down to the idle timeout, "Listening · no timeout" for Never, and "Listening · after this dictation" for After one dictation.
 - **FR-015**: After an insertion the bar MUST show Undo (removes exactly the inserted text) and "Insert last dictation" (inserts the most recent keyboard transcript at the cursor).
@@ -167,7 +169,7 @@ The owner is walking and has a thought. They press the Action Button (or a Local
 
 - **FR-023**: Session timeout choices MUST be After one dictation, 5 minutes (default), 15 minutes, 1 hour and Never.
 - **FR-024**: A Never session MUST run until the owner ends it or the system stops LocalFlow, and the system mic indicator MUST be visible for its whole duration.
-- **FR-025**: End session MUST be reachable with one tap from LocalFlow's session screen and from the Live Activity, and from the keyboard through the ☰ drawer.
+- **FR-025**: End session MUST be reachable with one tap from LocalFlow's session screen and from the Live Activity.
 - **FR-026**: Results that cannot be inserted where dictation started MUST go to History and be offered as "Insert last dictation", as in 016.
 
 **Live Activity**
@@ -204,7 +206,7 @@ The owner is walking and has a thought. They press the Action Button (or a Local
 - **SC-004**: Over 50 keyboard dictations across several apps, the system never closes the keyboard, and the keyboard never closes between the stop tap and the text appearing.
 - **SC-005**: After a session start, 20 consecutive keyboard dictations need no trip to LocalFlow (carried from 016).
 - **SC-006**: With Never chosen, a session is still usable for dictation after 2 hours of other use, including time locked, unless iOS stopped LocalFlow, in which case the keyboard says so.
-- **SC-007**: From any running session, the owner can end it in one tap from the app or the Live Activity, and in two taps from the keyboard (☰ then End session). The mic indicator goes off within 10 seconds.
+- **SC-007**: From any running session, the owner can end it in one tap from the app or the Live Activity. The mic indicator goes off within 10 seconds.
 - **SC-008**: From the locked Lock Screen, a 15-second Action Button dictation is in History within 3 seconds of the second press, in at least 9 of 10 attempts, and on the clipboard once LocalFlow is next active (research R4). The spike kept the background cold start (research R1), so the runs include LocalFlow not running.
 - **SC-009**: In 10 of 10 control-started recordings, a Live Activity is visible from start to stop.
 - **SC-010**: No dictation text is lost in any edge case listed above; each ends inserted, offered for insertion, copied, or saved in History.

@@ -39,10 +39,6 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
       actions: .init(
         tap: { [weak self] in self?.tap() },
         settings: { [weak self] in self?.openSettings() },
-        space: { [weak self] in self?.textDocumentProxy.insertText(" ") },
-        delete: { [weak self] in self?.textDocumentProxy.deleteBackward() },
-        newline: { [weak self] in self?.textDocumentProxy.insertText("\n") },
-        character: { [weak self] in self?.textDocumentProxy.insertText($0) },
         nextKeyboard: { [weak self] in self?.advanceToNextInputMode() }))
     let hosting = UIHostingController(rootView: view)
     hosting.view.backgroundColor = .clear
