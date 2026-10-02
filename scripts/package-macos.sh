@@ -3,8 +3,10 @@
 # ad-hoc signed and needs no Apple account; with a Developer ID identity it is
 # signed with the hardened runtime, and notarized and stapled when notary
 # credentials are set: LOCALFLOW_NOTARY_PROFILE (a notarytool keychain profile)
-# or LOCALFLOW_NOTARY_KEY, LOCALFLOW_NOTARY_KEY_ID and LOCALFLOW_NOTARY_ISSUER
-# (an App Store Connect API key). Only a notarized build gets a Homebrew cask.
+# or LOCALFLOW_NOTARY_APPLE_ID, LOCALFLOW_NOTARY_PASSWORD (app-specific) and
+# LOCALFLOW_NOTARY_TEAM_ID, or LOCALFLOW_NOTARY_KEY, LOCALFLOW_NOTARY_KEY_ID and
+# LOCALFLOW_NOTARY_ISSUER (an App Store Connect API key). Only a notarized build
+# gets a Homebrew cask.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 version="${1:?Usage: scripts/package-macos.sh VERSION BUILD_NUMBER}"
@@ -48,6 +50,9 @@ codesign --verify --deep --strict "$app"
 notary=()
 if [[ -n "${LOCALFLOW_NOTARY_PROFILE:-}" ]]; then
   notary=(--keychain-profile "$LOCALFLOW_NOTARY_PROFILE")
+elif [[ -n "${LOCALFLOW_NOTARY_APPLE_ID:-}" ]]; then
+  notary=(--apple-id "$LOCALFLOW_NOTARY_APPLE_ID" --password "${LOCALFLOW_NOTARY_PASSWORD:?}"
+    --team-id "${LOCALFLOW_NOTARY_TEAM_ID:?}")
 elif [[ -n "${LOCALFLOW_NOTARY_KEY:-}" ]]; then
   notary=(--key "$LOCALFLOW_NOTARY_KEY" --key-id "${LOCALFLOW_NOTARY_KEY_ID:?}"
     --issuer "${LOCALFLOW_NOTARY_ISSUER:?}")

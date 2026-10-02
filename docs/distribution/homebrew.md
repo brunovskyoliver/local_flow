@@ -91,9 +91,10 @@ There is deliberately no destructive `zap` stanza.
    `LOCALFLOW_GOOGLE_CLIENT_ID` to the iOS OAuth client of `org.localflow.LocalFlow`;
    without it the release can't sign in to a server. Signing and notarization need
    these secrets: `DEVELOPER_ID_P12` (the Developer ID Application certificate and
-   key exported as .p12, base64), `DEVELOPER_ID_P12_PASSWORD`, and `NOTARY_KEY_P8`
-   (an App Store Connect team API key with the Developer role); and these variables:
-   `NOTARY_KEY_ID` and `NOTARY_ISSUER_ID`.
+   key exported as .p12, base64), `DEVELOPER_ID_P12_PASSWORD`, and `NOTARY_APP_PASSWORD`
+   (an app-specific password of a team member's Apple ID, from account.apple.com);
+   and the variable `NOTARY_APPLE_ID` with that Apple ID. The team's App Store
+   Connect API access is off, which is why notarization uses an Apple ID.
 3. Push a new version tag, such as `v0.1.0`. Use increasing X.Y.Z versions.
    To retry a failed release after fixing CI, run the release workflow manually
    from main with the original tag. This preserves the tagged source commit.
@@ -126,7 +127,7 @@ make check
 That package is ad-hoc signed. For a signed, notarized one, set
 `LOCALFLOW_SIGNING_IDENTITY='Developer ID Application: e-Net, s.r.o. (944A459UC3)'`
 and either `LOCALFLOW_NOTARY_PROFILE` (a `xcrun notarytool store-credentials` profile)
-or `LOCALFLOW_NOTARY_KEY`, `LOCALFLOW_NOTARY_KEY_ID` and `LOCALFLOW_NOTARY_ISSUER`.
+or `LOCALFLOW_NOTARY_APPLE_ID`, `LOCALFLOW_NOTARY_PASSWORD` and `LOCALFLOW_NOTARY_TEAM_ID`.
 
 Artifacts are written to `build/distribution/0.1.0/`. Packaging does not install
 or open the app and does not modify the source Info.plist. The existing
