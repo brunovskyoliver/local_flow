@@ -212,6 +212,19 @@ final class PhoneIntentHandlerTests: XCTestCase {
     XCTAssertNotNil(handler.lastControlStopToResult)
   }
 
+  /// The previous note's result card goes before the next recording's activity, so the
+  /// Lock Screen never shows old text over a new recording.
+  func testANewControlRecordingDismissesTheLastResultCard() async throws {
+    _ = try await toggle()
+    _ = try await toggle()
+    XCTAssertTrue(requester.isShowing, "the result card stays up")
+    let before = requester.calls.count
+    _ = try await toggle()
+    let next = Array(requester.calls[before...])
+    XCTAssertEqual(next.first, .end(nil, .immediate))
+    XCTAssertEqual(next.filter { if case .request = $0 { true } else { false } }.count, 1)
+  }
+
   /// R4: the write is dropped in the background. The row stays `saved_only` until the
   /// held write lands with LocalFlow active.
   func testADroppedControlWriteStaysSavedOnlyUntilLocalFlowIsActive() async throws {

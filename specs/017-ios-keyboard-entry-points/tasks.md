@@ -259,6 +259,7 @@ Done 2026-10-02 (T061–T070): `PhoneIntentHandlerTests` gained 10 control tests
 - Device fixes on 2026-10-02, while trying the control:
   - The expanded Dynamic Island now uses the leading, trailing and bottom regions, and every timer has a fixed width, because `Text(timerInterval:)` takes all the width it is offered.
   - While recording, the expanded island shows only a mic icon and the recording time; a tap on either runs `ToggleDictationIntent` to stop. A waveform was tried twice (static, then live at two updates a second) and rejected by the owner.
+  - A new control recording dismisses the last note's result card first, so its old text no longer stays on the Lock Screen (`testANewControlRecordingDismissesTheLastResultCard`). Transcribing uses the same centred one-row island as recording.
   - Orphan recovery now writes its spool under `TemporaryAudio/Recovery/`. Reinstalling mid-recording left an orphan, and recovery held the shared spool lock through the 37–50 s first model load, so a dictation started then failed `alreadyInUse` (regression test `testADictationCanStartWhileAnOrphanIsTranscribed`).
 
 Open: T071 on the iPhone 16 Pro.

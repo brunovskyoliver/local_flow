@@ -92,7 +92,9 @@ final class ActivityController {
 
   private func request(_ session: SessionController.PhoneSession, _ state: State) {
     guard requester.areActivitiesEnabled else { return }
-    if requester.isActive { requester.end(nil, dismissal: .immediate) }
+    // Also a control's result card from the last note, so old text never sits over a
+    // new recording.
+    if requester.isShowing { requester.end(nil, dismissal: .immediate) }
     let kind: DictationActivityAttributes.Kind = session.origin == .control ? .control : .session
     do {
       try requester.request(.init(sessionStartedAt: session.startedAt, kind: kind), state)

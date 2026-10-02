@@ -10,6 +10,8 @@ protocol ActivityRequesting: AnyObject {
   /// A LocalFlow activity exists and the system still shows it (the 8-hour limit or a
   /// swipe can end it behind the app's back).
   var isActive: Bool { get }
+  /// Active, or ended but still on screen (a control's result card).
+  var isShowing: Bool { get }
   func request(
     _ attributes: DictationActivityAttributes, _ state: DictationActivityAttributes.ContentState
   ) throws
@@ -39,6 +41,9 @@ final class SystemActivityRequester: ActivityRequesting {
 
   var areActivitiesEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
   var isActive: Bool { Live.activities.contains { $0.activityState == .active } }
+  var isShowing: Bool {
+    Live.activities.contains { [.active, .ended, .stale].contains($0.activityState) }
+  }
 
   func request(
     _ attributes: DictationActivityAttributes, _ state: DictationActivityAttributes.ContentState

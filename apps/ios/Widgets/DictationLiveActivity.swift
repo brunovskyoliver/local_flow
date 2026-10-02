@@ -25,8 +25,10 @@ struct DictationLiveActivity: Widget {
     } dynamicIsland: { context in
       let state = context.state
       // Recording: one row, the mic and the recording time, and a tap on either stops
-      // it. Otherwise the phase, the session time and the details below.
+      // it. Transcribing: one row, the phase and the session time. Otherwise that row
+      // plus the details below. One-row content is centred top to bottom.
       let recording = state.phase == .recording
+      let oneRow = recording || state.phase == .transcribing
       return DynamicIsland {
         DynamicIslandExpandedRegion(.leading) {
           if recording {
@@ -37,6 +39,10 @@ struct DictationLiveActivity: Widget {
                 .padding(.leading, Self.recordingInset)
                 .frame(maxHeight: .infinity)
             }
+          } else if oneRow {
+            PhaseLabel(state: state)
+              .padding(.leading, Self.recordingInset)
+              .frame(maxHeight: .infinity)
           } else {
             PhaseLabel(state: state).padding(.leading, 6)
           }
@@ -50,12 +56,16 @@ struct DictationLiveActivity: Widget {
                 .padding(.trailing, Self.recordingInset)
                 .frame(maxHeight: .infinity)
             }
+          } else if oneRow {
+            SessionTime(since: context.attributes.sessionStartedAt)
+              .padding(.trailing, Self.recordingInset)
+              .frame(maxHeight: .infinity)
           } else if !recording {
             SessionTime(since: context.attributes.sessionStartedAt).padding(.trailing, 6)
           }
         }
         DynamicIslandExpandedRegion(.bottom) {
-          if !recording {
+          if !oneRow {
             Detail(attributes: context.attributes, state: state)
               .padding(.horizontal, 6)
               .padding(.top, 4)

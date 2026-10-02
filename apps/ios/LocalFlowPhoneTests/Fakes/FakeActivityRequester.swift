@@ -17,7 +17,10 @@ final class FakeActivityRequester: ActivityRequesting {
   var requestFails = false
   private(set) var calls: [Call] = []
   var live = 0
+  /// Ended with a later dismissal: no longer active, still on screen.
+  var lingering = 0
   var isActive: Bool { live > 0 }
+  var isShowing: Bool { live + lingering > 0 }
 
   var requests: [Call] { calls.filter { if case .request = $0 { true } else { false } } }
   var updates: [DictationActivityAttributes.ContentState] {
@@ -37,6 +40,7 @@ final class FakeActivityRequester: ActivityRequesting {
   func end(_ state: DictationActivityAttributes.ContentState?, dismissal: ActivityUIDismissalPolicy)
   {
     calls.append(.end(state, dismissal))
+    lingering = dismissal == .immediate ? 0 : live + lingering
     live = 0
   }
 
