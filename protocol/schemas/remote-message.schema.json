@@ -1954,6 +1954,12 @@
               },
               "detail": {
                 "$ref": "#/$defs/handoff_detail"
+              },
+              "progress": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "processing only: percent of the meeting's transcription and diarization done, as the processor last reported it."
               }
             },
             "if": {

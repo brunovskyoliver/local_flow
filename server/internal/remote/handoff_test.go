@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"localflow/server/internal/speech"
 )
 
 const (
@@ -259,5 +261,51 @@ func TestHandoffShutdown(t *testing.T) {
 	}
 	if state, _ := readState(filepath.Join(s.userDir(1), handoffMeeting)); state != "processing" {
 		t.Fatal(state)
+	}
+}
+
+// A processing meeting lists the processor's percent done; the processor is
+// stopped while interactive work is in flight and continues after it.
+func TestHandoffProgressAndPause(t *testing.T) {
+	q := speech.NewMeetingQueue(nil)
+	s := NewHandoffs(HandoffConfig{Dir: t.TempDir(), Interactive: q, Processor: fakeProcessor(t, `
+echo 42 > "$2/progress"
+i=0
+while [ ! -f "$2/finish" ]; do i=$((i+1)); echo $i > "$2/ticks"; sleep 0.01; done`)})
+	dir := queue(t, s, handoffMeeting, "queued")
+	runHandoffs(t, s)
+	waitState(t, s, 1, handoffMeeting, "processing")
+	ticks := func() string { data, _ := os.ReadFile(filepath.Join(dir, "ticks")); return string(data) }
+	advancing := func() bool {
+		before := ticks()
+		time.Sleep(150 * time.Millisecond)
+		return ticks() != before
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for ticks() == "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	r, _ := s.handle(1, Handoff{Action: "list"})
+	if m := (*r.Meetings)[0]; m.Progress == nil || *m.Progress != 42 {
+		t.Fatalf("%+v", m)
+	}
+
+	end := q.BeginInteractive()
+	time.Sleep(50 * time.Millisecond)
+	if advancing() {
+		t.Fatal("processor ran during interactive work")
+	}
+	end()
+	if !advancing() {
+		t.Fatal("processor not continued")
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "finish"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, s, 1, handoffMeeting, "done")
+	r, _ = s.handle(1, Handoff{Action: "list"})
+	if m := (*r.Meetings)[0]; m.Progress != nil {
+		t.Fatalf("done meeting lists progress: %+v", m)
 	}
 }

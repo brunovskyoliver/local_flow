@@ -56,6 +56,27 @@ final class WaitingForServerTests: XCTestCase {
     XCTAssertTrue(retried, "attempt 0 again: 30 s")
   }
 
+  /// A meeting the server is processing is asked again on a fixed interval, and a later
+  /// failure backs off from 30 s again.
+  func testAProcessingItemRetriesOnItsIntervalAndResetsTheBackoff() async {
+    let clock = FakeMeetingClock()
+    var waits = ServerWaits()
+    let id = UUID()
+    for _ in 0..<3 { waits.wait(id, clock: clock) {} }
+    var retried = 0
+    waits.wait(id, clock: clock, every: .seconds(10)) { retried += 1 }
+    await clock.waitForSleepers(1)
+    await clock.advance(by: .seconds(10))
+    for _ in 0..<20 where retried == 0 { await Task.yield() }
+    XCTAssertEqual(retried, 1)
+    waits.retried(id)
+    waits.wait(id, clock: clock) { retried += 1 }
+    await clock.waitForSleepers(1)
+    await clock.advance(by: .seconds(30))
+    for _ in 0..<20 where retried == 1 { await Task.yield() }
+    XCTAssertEqual(retried, 2, "attempt 0 again: 30 s")
+  }
+
   /// Run on this Mac survives a restart: it is the meeting row's `run_locally`.
   func testRunOnThisMacIsStoredOnTheMeeting() async throws {
     let fixture = try MeetingTestStore.make()

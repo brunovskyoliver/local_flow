@@ -613,7 +613,7 @@ final class AppServices {
       coordinator.admissionGuard = { [weak self] in
         Self.dictationAdmissionReason(
           meetingActive: self?.meetingCoordinator?.isActive == true,
-          finalizing: self?.meetingTranscription?.isFinalizing == true)
+          finalizing: self?.meetingTranscription?.isFinalizingLocally == true)
       }
       coordinator.admissionRefused = { [weak self] reason in
         self?.showMeetingNotice(reason)
@@ -1249,7 +1249,8 @@ final class AppServices {
   }
 
   /// FR-027 plus Feature 005: an active meeting refuses dictation first; a
-  /// finalization holding the model lease refuses with the transcript notice.
+  /// finalization holding the model lease refuses with the transcript notice. A meeting
+  /// handed to the server holds no lease and never refuses: dictation goes first there.
   static func dictationAdmissionReason(meetingActive: Bool, finalizing: Bool) -> String? {
     if meetingActive { return MeetingErrorMessage.meetingInProgress }
     if finalizing { return TranscriptErrorMessage.finalizing }

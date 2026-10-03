@@ -42,6 +42,15 @@ final class RemoteProtocolTests: XCTestCase {
     XCTAssertEqual(seen, serverTypes)
   }
 
+  /// A processing meeting's percent done reaches the handoff step.
+  func testHandoffListCarriesProgress() throws {
+    let data = try XCTUnwrap(messages("valid").first { $0.name == "handoff_reply-list.json" }).data
+    guard case .handoffReply(_, let reply) = try RemoteServerMessage.decode(data) else {
+      return XCTFail("not a handoff_reply")
+    }
+    XCTAssertEqual(reply.meetings?.map(\.progress), [nil, 37])
+  }
+
   /// Client messages the app builds come out as the fixture, field for field.
   func testEveryValidClientMessageRoundTrips() throws {
     var seen = Set<String>()

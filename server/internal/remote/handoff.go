@@ -28,15 +28,28 @@ const (
 
 // HandoffConfig configures meeting handoff: uploaded meetings live in
 // Dir/<user id>/<MEETING-UUID>/ and the processor runs as
-// `Processor --bundle <meeting dir> --meeting <UUID> Args...`.
+// `Processor --bundle <meeting dir> --meeting <UUID> Args...`. The processor
+// may write its percent done to <meeting dir>/progress.
 type HandoffConfig struct {
 	Dir       string
 	Processor string
 	Args      []string
 	Env       []string
 	Timeout   time.Duration // HandoffTimeout when zero
-	Clock     Clock
-	Logger    *log.Logger
+	// Interactive, when set, pauses the processor (SIGSTOP to its process
+	// group) while a dictation or rewrite is in flight and resumes it after,
+	// so interactive work has the server to itself (principle 15). Normally
+	// the *speech.MeetingQueue.
+	Interactive Interactivity
+	Clock       Clock
+	Logger      *log.Logger
+}
+
+// Interactivity reports interactive work in flight: Busy is closed while
+// some is, Idle while none is.
+type Interactivity interface {
+	InteractiveBusy() <-chan struct{}
+	InteractiveIdle() <-chan struct{}
 }
 
 // Handoffs serves the handoff operation and runs the processor on queued
@@ -123,6 +136,20 @@ func readState(dir string) (state, detail string) {
 	return state, detail
 }
 
+// readProgress is the processor's percent done, nil before its first report.
+func readProgress(dir string) *int {
+	data, err := os.ReadFile(filepath.Join(dir, "progress"))
+	if err != nil {
+		return nil
+	}
+	percent, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return nil
+	}
+	percent = max(0, min(100, percent))
+	return &percent
+}
+
 func writeState(dir, state, detail string) error {
 	tmp := filepath.Join(dir, "state.tmp")
 	if err := os.WriteFile(tmp, []byte(state+"\n"+detail), 0o600); err != nil {
@@ -171,8 +198,13 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 	if req.Action == "list" {
 		list := []HandoffMeeting{}
 		for _, id := range meetings(userDir) {
-			if state, detail := readState(filepath.Join(userDir, id)); state != "missing" && len(list) < maxHandoffList {
-				list = append(list, HandoffMeeting{Meeting: id, State: state, Detail: detail})
+			dir := filepath.Join(userDir, id)
+			if state, detail := readState(dir); state != "missing" && len(list) < maxHandoffList {
+				m := HandoffMeeting{Meeting: id, State: state, Detail: detail}
+				if state == "processing" {
+					m.Progress = readProgress(dir)
+				}
+				list = append(list, m)
 			}
 		}
 		return HandoffReply{Meetings: &list}, nil
@@ -407,17 +439,14 @@ func (s *Handoffs) process(ctx, runCtx context.Context, dir, meeting string) {
 	// Its own process group, so a kill reaches anything it started. Output
 	// goes to /dev/null: it could hold meeting content.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	_ = os.Remove(filepath.Join(dir, "progress"))
 	err := cmd.Start()
 	state, detail, code := "failed", "start_failed", "start_failed"
+	pauses := 0
 	if err == nil {
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		select {
-		case err = <-done:
-		case <-runCtx.Done():
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			err = <-done
-		}
+		pauses, err = s.wait(runCtx, cmd.Process.Pid, done)
 		var exit *exec.ExitError
 		switch {
 		case ctx.Err() != nil:
@@ -447,6 +476,40 @@ func (s *Handoffs) process(ctx, runCtx context.Context, dir, meeting string) {
 			code = "state_write_failed"
 		}
 	}
-	s.cfg.Logger.Printf("remote handoff meeting=%s state=%s duration_ms=%d code=%s",
-		shortID(meeting), state, s.cfg.Clock.Now().Sub(started).Milliseconds(), code)
+	_ = os.Remove(filepath.Join(dir, "progress"))
+	s.cfg.Logger.Printf("remote handoff meeting=%s state=%s duration_ms=%d pauses=%d code=%s",
+		shortID(meeting), state, s.cfg.Clock.Now().Sub(started).Milliseconds(), pauses, code)
+}
+
+// wait returns the processor's exit, killing its process group when runCtx
+// ends. With Interactive set it stops the group while interactive work is in
+// flight and continues it once none is; pauses counts the stops.
+func (s *Handoffs) wait(runCtx context.Context, pid int, done <-chan error) (pauses int, err error) {
+	paused := false
+	for {
+		var busy, idle <-chan struct{}
+		if s.cfg.Interactive != nil {
+			if paused {
+				idle = s.cfg.Interactive.InteractiveIdle()
+			} else {
+				busy = s.cfg.Interactive.InteractiveBusy()
+			}
+		}
+		select {
+		case err = <-done:
+			return pauses, err
+		case <-runCtx.Done():
+			// SIGKILL ends a stopped group too.
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			return pauses, <-done
+		case <-busy:
+			// A failed stop means the group is gone; done comes next.
+			_ = syscall.Kill(-pid, syscall.SIGSTOP)
+			paused = true
+			pauses++
+		case <-idle:
+			_ = syscall.Kill(-pid, syscall.SIGCONT)
+			paused = false
+		}
+	}
 }

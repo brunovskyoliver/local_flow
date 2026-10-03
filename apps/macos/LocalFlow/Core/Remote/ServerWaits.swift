@@ -10,15 +10,18 @@ struct ServerWaits {
 
   var ids: Set<UUID> { Set(attempts.keys) }
 
-  /// `retry` runs on the main actor after the backoff.
+  /// `retry` runs on the main actor after the backoff, or after `interval` when given:
+  /// the server is working on the item, so the backoff starts again.
   mutating func wait(
-    _ id: UUID, clock: any MeetingClock, retry: @escaping @MainActor () -> Void
+    _ id: UUID, clock: any MeetingClock, every interval: Duration? = nil,
+    retry: @escaping @MainActor () -> Void
   ) {
     let attempt = attempts[id, default: 0]
-    attempts[id] = attempt + 1
+    attempts[id] = interval == nil ? attempt + 1 : 0
+    let delay = interval ?? MeetingIntelligenceCoordinator.waitingDelay(attempt: attempt)
     retries[id]?.cancel()
     retries[id] = Task { @MainActor in
-      try? await clock.sleep(for: MeetingIntelligenceCoordinator.waitingDelay(attempt: attempt))
+      try? await clock.sleep(for: delay)
       guard !Task.isCancelled else { return }
       retry()
     }

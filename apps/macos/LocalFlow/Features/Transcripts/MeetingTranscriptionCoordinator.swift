@@ -18,6 +18,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   var isWindowInFlight: Bool { recognizer?.isWindowInFlight ?? false }
   var isFinalizing: Bool { finalizingMeetingID != nil }
   private(set) var finalizingMeetingID: UUID?
+  /// A pass is running on this Mac and holds the model lease. A meeting handed to the
+  /// server is finalizing without it, so dictation can go ahead.
+  private(set) var isFinalizingLocally = false
   private(set) var lastFinalization: MeetingFinalizer.Outcome?
   var queuedFinalizationCount: Int { finalizationQueue.count }
   var installedTapCount: Int { taps.count }
@@ -55,6 +58,11 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   /// Feature 018 (FR-031): meetings whose final pass waits for the server, by attempt.
   /// Their rows stay `finalizing` with their progress, so a restart resumes them too.
   private var serverWaits = ServerWaits()
+  /// The server processor's last reported fraction per handed-off meeting, so each poll
+  /// starts from it instead of 0.
+  private var serverProgress: [UUID: Double] = [:]
+  /// How often a meeting the server is processing is asked for its progress.
+  static let serverProgressInterval: Duration = .seconds(10)
   var waitingForServer: Set<UUID> { serverWaits.ids }
   private var finalizationTask: Task<Void, Never>?
   private var rssTask: Task<Void, Never>?
@@ -814,7 +822,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
       do {
         guard let row = try await store.transcription(meetingID: id) else { return }
         self.publish(row, phase: .transcriptFinalizing)
-        if self.status?.meetingID == id { self.status?.progress = 0 }
+        if self.status?.meetingID == id { self.status?.progress = self.serverProgress[id] ?? 0 }
         if let stopBegan = self.stopBeganAt.removeValue(forKey: id) {
           self.recorder?.record(
             phase: .transcriptFinalizing,
@@ -828,8 +836,16 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
             self.logSink("meeting handed to the server: \(code)")
             self.waitForServer(id)
             return
+          case .processing(let fraction):
+            if let fraction {
+              self.serverProgress[id] = fraction
+              if self.status?.meetingID == id { self.status?.progress = fraction }
+            }
+            self.waitForServer(id, every: Self.serverProgressInterval)
+            return
           case .merged(let labeled):
             self.serverWaits.remove(id)
+            self.serverProgress[id] = nil
             if let merged = try? await store.transcription(meetingID: id) {
               self.publish(merged, phase: .transcriptFinalizing)
             }
@@ -841,6 +857,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
             return
           }
         }
+        self.serverProgress[id] = nil
+        self.isFinalizingLocally = true
+        defer { self.isFinalizingLocally = false }
         let outcome = try await finalizer.run(
           meetingID: id, revision: request.revision ?? row.revision,
           progress: { [weak self] fraction in
@@ -916,8 +935,8 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     }
   }
 
-  private func waitForServer(_ id: UUID) {
-    serverWaits.wait(id, clock: clock) { [weak self] in
+  private func waitForServer(_ id: UUID, every interval: Duration? = nil) {
+    serverWaits.wait(id, clock: clock, every: interval) { [weak self] in
       self?.serverWaits.retried(id)
       self?.enqueueFinalization(.init(meetingID: id, revision: nil))
     }
@@ -952,6 +971,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     deletedMeetings.insert(id)
     finalizationQueue.removeAll { $0.meetingID == id }
     serverWaits.remove(id)
+    serverProgress[id] = nil
     await handoff?.meetingWillDelete(id: id)
     awaitingCompletion.remove(id)
     completedMeetings.remove(id)

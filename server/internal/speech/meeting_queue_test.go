@@ -92,8 +92,14 @@ func TestMeetingQueueWaitsForInteractiveWork(t *testing.T) {
 	default:
 		t.Fatal("idle queue not idle")
 	}
+	idleBusy := q.InteractiveBusy()
 	dictation := q.BeginInteractive()
 	rewrite := q.BeginInteractive()
+	select {
+	case <-idleBusy:
+	default:
+		t.Fatal("busy not signalled")
+	}
 	a := enqueue(t, q, 1)
 	idle := q.InteractiveIdle()
 	dictation()
@@ -105,6 +111,11 @@ func TestMeetingQueueWaitsForInteractiveWork(t *testing.T) {
 	case <-idle:
 	case <-time.After(time.Second):
 		t.Fatal("idle not signalled")
+	}
+	select {
+	case <-q.InteractiveBusy():
+		t.Fatal("idle queue busy")
+	default:
 	}
 	q.BeginInteractive()
 	expectStarted(t, map[*MeetingTicket]bool{a: true})

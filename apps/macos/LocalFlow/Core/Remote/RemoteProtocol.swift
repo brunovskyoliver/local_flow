@@ -690,6 +690,8 @@ struct RemoteHandoffReply: Sendable, Equatable {
     let meeting: UUID
     let state: State
     let detail: String?
+    /// `processing` only: percent done, 0...100, once the processor has reported.
+    var progress: Int? = nil
   }
   var state: State?
   var meeting: UUID?
@@ -760,7 +762,11 @@ struct RemoteHandoffReply: Sendable, Equatable {
         }
         let detail = entry["detail"] as? String
         guard detail == nil || state == .failed else { throw RemoteProtocolError.invalidMessage }
-        return Entry(meeting: id, state: state, detail: detail)
+        // An out-of-range percent is dropped rather than failing the whole list.
+        let progress = entry["progress"].flatMap(integer).flatMap {
+          (0...100).contains($0) ? $0 : nil
+        }
+        return Entry(meeting: id, state: state, detail: detail, progress: progress)
       }
     }
     guard (self.state == nil) == (meetings != nil), detail == nil || self.state == .failed else {

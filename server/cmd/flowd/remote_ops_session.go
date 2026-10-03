@@ -52,7 +52,8 @@ func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Stor
 		}
 		handoffs = remote.NewHandoffs(remote.HandoffConfig{
 			Dir: dir, Processor: r.meetingProcessor, Env: workerEnvironment(os.Environ()), Logger: logger,
-			Args: []string{"--models", r.meetingModels, "--helper", r.meetingHelper},
+			Interactive: queue,
+			Args:        []string{"--models", r.meetingModels, "--helper", r.meetingHelper},
 		})
 		runs = append(runs, handoffs.Run)
 	}

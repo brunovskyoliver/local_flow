@@ -34,6 +34,7 @@ type MeetingQueue struct {
 	running     int
 	interactive int
 	idle        chan struct{} // closed while no interactive work is in flight
+	busy        chan struct{} // closed while interactive work is in flight
 }
 
 // MeetingTicket is one job's place in the queue.
@@ -60,7 +61,7 @@ func NewMeetingQueue(logger *log.Logger) *MeetingQueue {
 	}
 	idle := make(chan struct{})
 	close(idle)
-	return &MeetingQueue{logger: logger, waitingBy: map[int64]int{}, runningBy: map[int64]int{}, queues: map[int64][]*MeetingTicket{}, idle: idle}
+	return &MeetingQueue{logger: logger, waitingBy: map[int64]int{}, runningBy: map[int64]int{}, queues: map[int64][]*MeetingTicket{}, idle: idle, busy: make(chan struct{})}
 }
 
 // Enqueue takes a waiting place for a job whose samples are still arriving,
@@ -189,6 +190,7 @@ func (q *MeetingQueue) BeginInteractive() (end func()) {
 	defer q.mu.Unlock()
 	if q.interactive == 0 {
 		q.idle = make(chan struct{})
+		close(q.busy)
 	}
 	q.interactive++
 	var once sync.Once
@@ -198,6 +200,7 @@ func (q *MeetingQueue) BeginInteractive() (end func()) {
 			defer q.mu.Unlock()
 			if q.interactive--; q.interactive == 0 {
 				close(q.idle)
+				q.busy = make(chan struct{})
 				q.promoteLocked()
 			}
 		})
@@ -211,6 +214,14 @@ func (q *MeetingQueue) InteractiveIdle() <-chan struct{} {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return q.idle
+}
+
+// InteractiveBusy is closed while interactive work is in flight; meeting
+// handoff pauses its processor on it and resumes on InteractiveIdle.
+func (q *MeetingQueue) InteractiveBusy() <-chan struct{} {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.busy
 }
 
 // Waiting is the number of submitted jobs not yet started, across users.

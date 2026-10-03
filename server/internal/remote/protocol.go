@@ -538,9 +538,10 @@ type HandoffReply struct {
 }
 
 type HandoffMeeting struct {
-	Meeting string `json:"meeting"`
-	State   string `json:"state"`
-	Detail  string `json:"detail,omitempty"`
+	Meeting  string `json:"meeting"`
+	State    string `json:"state"`
+	Detail   string `json:"detail,omitempty"`
+	Progress *int   `json:"progress,omitempty"` // processing only, 0-100
 }
 
 // ErrorMessage is the error control message. Op is 0 (absent) for hello errors.

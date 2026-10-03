@@ -16,7 +16,9 @@ import LocalFlowSpeech
 // after identification, so it names people instead of "Speaker 2" (the automatic
 // summary runs once per transcript pass). Exit 0 once the transcript is final;
 // diarization is best effort. Nothing is printed: the
-// output could hold meeting content and flowd discards it anyway.
+// output could hold meeting content and flowd discards it anyway. The percent
+// done goes to <dir>/progress for flowd's handoff list: the transcript is the
+// first 80, speaker labels the rest.
 
 func argument(_ name: String) -> String? {
   let arguments = CommandLine.arguments
@@ -32,6 +34,24 @@ func descriptor(_ name: String) throws -> (ModelDescriptor, String) {
     try JSONDecoder().decode(ModelDescriptor.self, from: data),
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   )
+}
+
+/// Writes whole percents to `<dir>/progress`, atomically, each one once.
+final class ProgressFile: @unchecked Sendable {
+  private let url: URL
+  private let lock = NSLock()
+  private var last = -1
+
+  init(directory: URL) { url = directory.appendingPathComponent("progress") }
+
+  func report(_ fraction: Double) {
+    let percent = Int((min(1, max(0, fraction)) * 100).rounded(.down))
+    lock.lock()
+    defer { lock.unlock() }
+    guard percent > last else { return }
+    last = percent
+    try? Data("\(percent)\n".utf8).write(to: url, options: .atomic)
+  }
 }
 
 func process() async -> Int32 {
@@ -95,8 +115,11 @@ func process() async -> Int32 {
         engine: "whisper.cpp", windowSamples: 1_920_000),
       configuration: .turbo, defaultLanguage: { .defaultLanguage }, clock: clock)
     guard let row = try await transcripts.transcription(meetingID: meetingID) else { return 65 }
+    let progress = ProgressFile(directory: bundle)
+    progress.report(0)
     let outcome = try await finalizer.run(
-      meetingID: meetingID, revision: row.revision, progress: { _ in })
+      meetingID: meetingID, revision: row.revision,
+      progress: { progress.report($0 * 0.8) })
     guard outcome.row.state == .final else { return 66 }
 
     // 2. Speaker labels. A failed run leaves the transcript usable.
@@ -112,7 +135,11 @@ func process() async -> Int32 {
     if (try? await diarizer.admit(meetingID: meetingID, trigger: .automatic, expectedRevision: nil))
       != nil
     {
-      _ = await diarizer.run(meetingID: meetingID, echoProfile: outcome.echoProfile)
+      _ = await diarizer.run(
+        meetingID: meetingID,
+        progress: { done, planned in
+          progress.report(0.8 + 0.2 * Double(done) / Double(max(planned, 1)))
+        }, echoProfile: outcome.echoProfile)
     }
     await lifecycle.setKeepLoaded(false)
 

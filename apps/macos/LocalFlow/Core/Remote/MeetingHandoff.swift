@@ -17,8 +17,10 @@ actor MeetingHandoff {
   enum Step: Sendable, Equatable {
     /// Not eligible, or the server failed it: finalize the usual way.
     case notHandedOff
-    /// Uploaded or processing, or the server is unreachable; ask again later.
+    /// Uploaded and queued, or the server is unreachable; ask again later.
     case waiting(String)
+    /// The server is working on it: the fraction done once its processor has reported.
+    case processing(Double?)
     /// Merged. `labeled`: the server's diarization succeeded.
     case merged(labeled: Bool)
   }
@@ -60,13 +62,14 @@ actor MeetingHandoff {
     }
     do {
       let list = try await call(.init(action: .list))
-      switch list.meetings?.first(where: { $0.meeting == id })?.state ?? .missing {
+      let entry = list.meetings?.first(where: { $0.meeting == id })
+      switch entry?.state ?? .missing {
       case .missing, .receiving:
         try await upload(id)
         _ = try await call(.init(action: .start, meeting: id))
         return .waiting("queued")
       case .queued: return .waiting("queued")
-      case .processing: return .waiting("processing")
+      case .processing: return .processing(entry?.progress.map { Double($0) / 100 })
       case .done:
         let result = try await download(id)
         let labeled: Bool
