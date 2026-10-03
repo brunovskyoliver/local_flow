@@ -37,6 +37,8 @@ The UID is the saved identity. Apple documents it as persistent across launches 
 
 **Spike S2**: confirm on the target Mac that (a) setting the device on the input node records from it while the default is something else, (b) the format read afterwards matches the device, and (c) the engine starts on the iPhone Microphone. Fallback for (a)/(b): create the input node's audio unit explicitly before `prepare()` and set the device there; if that fails too, the feature stops at the spike and the plan returns to the owner.
 
+**Revised 2026-10-03**: on macOS 27 a started `AVAudioEngine` does not keep the device set on its input unit. With Bose QC Ultra 2 headphones as the default (headset mic at 16 kHz), pinning the MacBook Pro Microphone (48 kHz) either left the input node on the stale 16 kHz format, so `installTap` raised `format.sampleRate == inputHWFormat.sampleRate` and the app aborted, or the engine swapped the device for `CADefaultDeviceAggregate` at start and stopped after two configuration changes. A ranked device is now recorded through its own input-only AUHAL unit (`AudioInputUnit.c`, `PinnedAudioInput`), which pushes into the same ring and normalizer. "System default" still uses the engine tap unchanged. Meetings use the same unit for a ranked device.
+
 ## R3 What "available" means, including clamshell mode
 
 **Decision**: an entry is available when its device is in the current snapshot, is alive, and has an input stream. "System default" is available when macOS has a default input. Availability is computed each time and never stored (spec key entity).
@@ -84,6 +86,8 @@ and then stops as today (FR-010). Cancel never waits for a tail.
 **Decision**: a dictation pinned to a device does not end because the macOS default changed. **Spike S5** checks whether `AVAudioEngineConfigurationChange` fires for a pinned engine when only the default changes. If it doesn't, nothing extra is needed. If it does, the capture service reads `kAudioDevicePropertyDeviceIsAlive` for the pinned device on that notification: alive and same format → restart the engine on the same device once and keep recording into the same spool; anything else → `deviceLost` as today.
 
 Dictations on "System default" keep today's behaviour: a default change ends the dictation as `deviceLost`.
+
+**Revised 2026-10-03**: superseded for dictation and meetings. The pinned AUHAL unit is not affected when the macOS default moves, so there is no restart. A pinned device that dies or changes sample rate ends the capture as `deviceLost`.
 
 ## R8 Device lost mid-dictation keeps the audio
 

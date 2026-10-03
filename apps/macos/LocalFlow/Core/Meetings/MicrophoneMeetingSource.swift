@@ -12,7 +12,8 @@ protocol MicrophoneEngine: AnyObject {
   var inputFormat: AVAudioFormat { get }
   /// The device the input unit is bound to now.
   var boundDevice: AudioDeviceID { get }
-  func installTap(format: AVAudioFormat, into ring: MeetingSampleRing)
+  /// Throws when the engine rejects the format.
+  func installTap(format: AVAudioFormat, into ring: MeetingSampleRing) throws
   func removeTap()
   /// `prepare()` then `start()`.
   func start() throws
@@ -26,41 +27,70 @@ protocol MicrophoneEngine: AnyObject {
 final class AVMicrophoneEngine: MicrophoneEngine {
   private let engine = AVAudioEngine()
   private var observer: NSObjectProtocol?
-  private var pinned = false
+  /// A ranked device records through its own unit; the engine only ever follows the
+  /// macOS default (see `PinnedAudioInput`).
+  private var pinned: PinnedAudioInput?
+  private var pinnedDevice = AudioDeviceID(0)
+  private var pinnedRing: MeetingSampleRing?
 
-  /// A fresh engine left unbound follows the macOS default, exactly as before Feature 019.
-  /// After a pinned device failed, nil binds the current default explicitly, so the
-  /// input unit does not stay on the lost device.
   func bind(_ device: AudioDeviceID?) throws {
-    if let device {
-      try AudioCaptureService.bindInputDevice(engine, device)
-      pinned = true
-    } else if pinned {
-      guard let fallback = CoreAudioDevices.defaultInputDevice() else {
-        throw MeetingSourceFailure.deviceLost
+    pinned?.stop()
+    pinned = nil
+    pinnedRing = nil
+    guard let device else { return }
+    pinned = try PinnedAudioInput(device: device)
+    pinnedDevice = device
+  }
+
+  var inputFormat: AVAudioFormat { pinned?.format ?? engine.inputNode.outputFormat(forBus: 0) }
+  var boundDevice: AudioDeviceID {
+    pinned == nil ? AudioCaptureService.boundDevice(of: engine) : pinnedDevice
+  }
+
+  /// AVAudioEngine raises an Objective-C exception for a format that no longer
+  /// matches the hardware.
+  func installTap(format: AVAudioFormat, into ring: MeetingSampleRing) throws {
+    if pinned != nil {
+      pinnedRing = ring
+      return
+    }
+    let rejected = LFCatchException {
+      engine.inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
+        ring.push(buffer.audioBufferList, frames: buffer.frameLength)
       }
-      try AudioCaptureService.bindInputDevice(engine, fallback)
     }
+    guard let rejected else { return }
+    Logger.inputDevice.error("Meeting input tap rejected: \(rejected, privacy: .public)")
+    throw MeetingSourceFailure.deviceLost
   }
 
-  var inputFormat: AVAudioFormat { engine.inputNode.outputFormat(forBus: 0) }
-  var boundDevice: AudioDeviceID { AudioCaptureService.boundDevice(of: engine) }
-
-  func installTap(format: AVAudioFormat, into ring: MeetingSampleRing) {
-    engine.inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
-      ring.push(buffer.audioBufferList, frames: buffer.frameLength)
+  func removeTap() {
+    if pinned != nil {
+      pinned?.stop()
+      pinnedRing = nil
+    } else {
+      engine.inputNode.removeTap(onBus: 0)
     }
   }
-
-  func removeTap() { engine.inputNode.removeTap(onBus: 0) }
 
   func start() throws {
+    if let pinned {
+      guard let pinnedRing else { throw MeetingSourceFailure.deviceLost }
+      do { try pinned.start(into: pinnedRing.pointer) } catch {
+        throw MeetingSourceFailure.deviceLost
+      }
+      return
+    }
     engine.prepare()
     try engine.start()
   }
 
-  func stop() { engine.stop() }
-  var isRunning: Bool { engine.isRunning }
+  func stop() {
+    pinned?.stop()
+    engine.stop()
+  }
+
+  var isRunning: Bool { pinned?.isRunning ?? engine.isRunning }
 
   func observeConfigurationChanges(_ handler: @escaping @Sendable () -> Void) {
     stopObserving()
@@ -74,7 +104,10 @@ final class AVMicrophoneEngine: MicrophoneEngine {
     observer = nil
   }
 
-  deinit { stopObserving() }
+  deinit {
+    pinned?.stop()
+    stopObserving()
+  }
 }
 
 /// Microphone source: an engine input tap into a `MeetingSampleRing`, following the
@@ -220,7 +253,7 @@ final class MicrophoneMeetingSource: MeetingAudioSourcing, @unchecked Sendable {
     guard source.channels == ring.channels, source.sampleRate == ring.sampleRate else {
       throw MeetingSourceFailure.unsupportedFormat
     }
-    engine.installTap(format: format, into: ring)
+    try engine.installTap(format: format, into: ring)
     tapInstalled = true
     return source
   }

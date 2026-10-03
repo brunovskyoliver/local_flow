@@ -5,6 +5,14 @@ import XCTest
 @testable import LocalFlowSpeech
 
 final class AudioCaptureTests: XCTestCase {
+  func testRaisedObjectiveCExceptionIsReturnedInsteadOfCrashing() {
+    XCTAssertNil(LFCatchException {})
+    let reason = LFCatchException {
+      NSException(name: .invalidArgumentException, reason: "format mismatch").raise()
+    }
+    XCTAssertEqual(reason, "format mismatch")
+  }
+
   func testRingPreservesOrderThroughWraparound() throws {
     let ring = try AudioCaptureStaging(channels: 1, sampleRate: 16_000)
     for batch in 0..<3 {
@@ -218,7 +226,7 @@ final class AudioCaptureTests: XCTestCase {
     }
     struct BindFailure: Error {}
     let service = AudioCaptureService(
-      bindInput: { _, _ in throw BindFailure() }, permission: { .authorized })
+      openInput: { _ in throw BindFailure() }, permission: { .authorized })
     do {
       _ = try await service.start(sessionID: UUID(), spool: spool, input: .device(42))
       XCTFail("binding must fail")
@@ -238,7 +246,10 @@ final class AudioCaptureTests: XCTestCase {
     }
     let bound = AtomicFlag()
     let service = AudioCaptureService(
-      bindInput: { _, _ in bound.set(true) }, permission: { .denied })
+      openInput: { _ in
+        bound.set(true)
+        throw AudioCaptureFailure.deviceLost
+      }, permission: { .denied })
     do {
       _ = try await service.start(sessionID: UUID(), spool: spool, input: .device(42))
       XCTFail("permission must fail")

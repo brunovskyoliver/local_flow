@@ -179,7 +179,9 @@ final class AudioCaptureService: @unchecked Sendable {
   private final class Session {
     let id: UUID
     let spool: AudioSpool
-    let engine: AVAudioEngine
+    /// System default records through the engine tap, a ranked device through its own unit.
+    let engine: AVAudioEngine?
+    let pinnedInput: PinnedAudioInput?
     let ring: AudioCaptureStaging
     let normalizer: AudioCaptureNormalizer
     var input: AVAudioPCMBuffer { normalizer.input }
@@ -188,38 +190,39 @@ final class AudioCaptureService: @unchecked Sendable {
       set { normalizer.budget = newValue }
     }
     var level: Float { normalizer.level }
-    var tapInstalled = true
+    var tapInstalled: Bool
     var timer: DispatchSourceTimer?
     /// Last authorization read, in `LFAudioCaptureNow` nanoseconds.
     var permissionCheckedAt: UInt64 = 0
     var configurationObserver: NSObjectProtocol?
     var sleepObserver: NSObjectProtocol?
-    /// The device a `.device` binding pinned; nil on System default.
-    let pinned: AudioDeviceID?
-    let format: AVAudioFormat
-    /// Set from the notification thread when a pinned engine reported a
-    /// configuration change; the worker restarts once before trusting `isRunning`.
-    let restartPending = AtomicFlag()
-    var restarted = false
 
     init(
-      id: UUID, spool: AudioSpool, engine: AVAudioEngine, ring: AudioCaptureStaging,
-      normalizer: AudioCaptureNormalizer, pinned: AudioDeviceID?, format: AVAudioFormat
+      id: UUID, spool: AudioSpool, engine: AVAudioEngine?, pinnedInput: PinnedAudioInput?,
+      ring: AudioCaptureStaging, normalizer: AudioCaptureNormalizer
     ) {
       self.id = id
       self.spool = spool
       self.engine = engine
+      self.pinnedInput = pinnedInput
       self.ring = ring
       self.normalizer = normalizer
-      self.pinned = pinned
-      self.format = format
+      tapInstalled = engine != nil
+    }
+
+    var isRunning: Bool { pinnedInput?.isRunning ?? engine?.isRunning ?? false }
+
+    func stopInput() {
+      pinnedInput?.stop()
+      engine?.stop()
+      if tapInstalled { engine?.inputNode.removeTap(onBus: 0) }
+      tapInstalled = false
     }
 
     deinit {
       timer?.cancel()
       ring.closeAndJoin()
-      engine.stop()
-      if tapInstalled { engine.inputNode.removeTap(onBus: 0) }
+      stopInput()
       if let configurationObserver {
         NotificationCenter.default.removeObserver(configurationObserver)
       }
@@ -231,25 +234,26 @@ final class AudioCaptureService: @unchecked Sendable {
     AVCaptureDevice.authorizationStatus(for: .audio)
   }
 
-  typealias InputBinder = @Sendable (AVAudioEngine, AudioDeviceID) throws -> Void
-  private let bindInput: InputBinder
+  typealias InputOpener = @Sendable (AudioDeviceID) throws -> PinnedAudioInput
+  private let openInput: InputOpener
   private let permission: @Sendable () -> AVAuthorizationStatus
 
-  /// `bindInput` points the engine's input unit at a device before `prepare()`;
-  /// tests inject a failing one. `permission` defaults to the system status.
+  /// `openInput` opens a ranked device; tests inject a failing one. `permission`
+  /// defaults to the system status.
   init(
-    bindInput: @escaping InputBinder = AudioCaptureService.bindInputDevice,
+    openInput: @escaping InputOpener = { try PinnedAudioInput(device: $0) },
     permission: @escaping @Sendable () -> AVAuthorizationStatus = {
       AudioCaptureService.permissionStatus
     }
   ) {
-    self.bindInput = bindInput
+    self.openInput = openInput
     self.permission = permission
   }
 
   /// Sets `kAudioOutputUnitProperty_CurrentDevice` on the input node's unit
-  /// (global scope, element 0), research R2.
-  static let bindInputDevice: InputBinder = { engine, device in
+  /// (global scope, element 0). Only the hardware probe harness uses it: a started
+  /// engine does not keep the device, see `PinnedAudioInput`.
+  static let bindInputDevice: @Sendable (AVAudioEngine, AudioDeviceID) throws -> Void = { engine, device in
     guard let unit = engine.inputNode.audioUnit else { throw AudioCaptureFailure.deviceLost }
     var id = device
     let status = AudioUnitSetProperty(
@@ -353,50 +357,47 @@ final class AudioCaptureService: @unchecked Sendable {
     guard active == nil else { throw AudioCaptureFailure.busy }
     guard permission() == .authorized else { throw AudioCaptureFailure.permissionDenied }
     guard spool.bytesWritten == 0 else { throw AudioCaptureFailure.disk }
-    let engine = AVAudioEngine()
-    // `.systemDefault` sets nothing: exactly the pre-019 path (FR-016).
-    let pinned: AudioDeviceID?
-    if case .device(let device) = input {
-      do { try bindInput(engine, device) } catch { throw AudioCaptureFailure.deviceLost }
-      pinned = device
-    } else {
-      pinned = nil
-    }
-    let node = engine.inputNode
-    let format = node.outputFormat(forBus: 0)
-    let normalizer = try AudioCaptureNormalizer(format: format, spool: spool)
-    let ring = try AudioCaptureStaging(
-      channels: Int(format.channelCount), sampleRate: format.sampleRate)
-    let session = Session(
-      id: sessionID, spool: spool, engine: engine, ring: ring,
-      normalizer: normalizer, pinned: pinned, format: format)
-    node.installTap(onBus: 0, bufferSize: 1_024, format: format, block: Self.tap(ring, format))
-    do {
-      engine.prepare()
-      try engine.start()
-    } catch {
-      ring.closeAndJoin()
-      engine.stop()
-      node.removeTap(onBus: 0)
-      session.tapInstalled = false
-      throw AudioCaptureFailure.deviceLost
+    let session: Session
+    let bound: AudioDeviceID
+    switch input {
+    case .device(let device):
+      let unit: PinnedAudioInput
+      do { unit = try openInput(device) } catch { throw AudioCaptureFailure.deviceLost }
+      let normalizer = try AudioCaptureNormalizer(format: unit.format, spool: spool)
+      let ring = try AudioCaptureStaging(
+        channels: Int(unit.format.channelCount), sampleRate: unit.format.sampleRate)
+      session = Session(
+        id: sessionID, spool: spool, engine: nil, pinnedInput: unit, ring: ring,
+        normalizer: normalizer)
+      do { try unit.start(into: ring.pointer) } catch {
+        ring.closeAndJoin()
+        throw AudioCaptureFailure.deviceLost
+      }
+      bound = device
+    case .systemDefault:
+      // Exactly the pre-019 path (FR-016).
+      let engine = AVAudioEngine()
+      let node = engine.inputNode
+      let (ring, normalizer) = try Self.installTap(on: node, spool: spool)
+      session = Session(
+        id: sessionID, spool: spool, engine: engine, pinnedInput: nil, ring: ring,
+        normalizer: normalizer)
+      do {
+        engine.prepare()
+        try engine.start()
+      } catch {
+        ring.closeAndJoin()
+        session.stopInput()
+        throw AudioCaptureFailure.deviceLost
+      }
+      session.configurationObserver = NotificationCenter.default.addObserver(
+        forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+      ) { _ in LFAudioRingSignalFailure(ring.pointer, 3) }
+      bound = Self.boundDevice(of: engine)
     }
     // The 180 s clock starts when audio flows, not when the engine starts.
     session.budget = .notStarted
-    let restartPending = session.restartPending
-    session.configurationObserver = NotificationCenter.default.addObserver(
-      forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-    ) { [weak self] _ in
-      // A pinned engine may report a change when only the macOS default moved
-      // (research R7): restart once on the same device. System default keeps
-      // today's device loss.
-      guard pinned != nil, let self else {
-        LFAudioRingSignalFailure(ring.pointer, 3)
-        return
-      }
-      restartPending.set(true)
-      self.worker.async { self.restartPinned(sessionID: sessionID) }
-    }
+    let ring = session.ring
     session.sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
       forName: NSWorkspace.willSleepNotification, object: nil, queue: nil
     ) { _ in LFAudioRingSignalFailure(ring.pointer, 4) }
@@ -408,7 +409,31 @@ final class AudioCaptureService: @unchecked Sendable {
     completed = nil
     active = session
     timer.resume()
-    return CaptureStarted(boundDevice: pinned ?? Self.boundDevice(of: engine))
+    return CaptureStarted(boundDevice: bound)
+  }
+
+  /// AVAudioEngine raises an Objective-C exception, which Swift cannot catch, when
+  /// the tap format no longer matches the hardware, e.g. when the default input
+  /// changes between the format read and the tap. Re-reads the format once,
+  /// then reports device loss so the next candidate is tried.
+  private static func installTap(on node: AVAudioInputNode, spool: AudioSpool) throws
+    -> (AudioCaptureStaging, AudioCaptureNormalizer)
+  {
+    for attempt in 1...2 {
+      let format = node.outputFormat(forBus: 0)
+      let normalizer = try AudioCaptureNormalizer(format: format, spool: spool)
+      let ring = try AudioCaptureStaging(
+        channels: Int(format.channelCount), sampleRate: format.sampleRate)
+      let rejected = LFCatchException {
+        node.installTap(onBus: 0, bufferSize: 1_024, format: format, block: tap(ring, format))
+      }
+      guard let rejected else { return (ring, normalizer) }
+      ring.closeAndJoin()
+      Logger.inputDevice.error(
+        "Input tap rejected, attempt \(attempt): \(rejected, privacy: .public)")
+      if attempt == 1 { Thread.sleep(forTimeInterval: 0.1) }
+    }
+    throw AudioCaptureFailure.deviceLost
   }
 
   /// The tap runs on the realtime thread: one ring push and one delay record, no
@@ -427,39 +452,6 @@ final class AudioCaptureService: @unchecked Sendable {
     }
   }
 
-  /// Research R7: alive and same format → restart once on the same device into the
-  /// same spool; anything else is device loss.
-  private func restartPinned(sessionID: UUID) {
-    guard let session = active, session.id == sessionID, let device = session.pinned else {
-      return
-    }
-    defer { session.restartPending.set(false) }
-    guard !session.restarted, CoreAudioDevices.isAlive(device) else {
-      LFAudioRingSignalFailure(session.ring.pointer, 3)
-      return
-    }
-    session.restarted = true
-    let engine = session.engine
-    engine.stop()
-    if session.tapInstalled { engine.inputNode.removeTap(onBus: 0) }
-    session.tapInstalled = false
-    do {
-      try bindInput(engine, device)
-      let format = engine.inputNode.outputFormat(forBus: 0)
-      guard format.sampleRate == session.format.sampleRate,
-        format.channelCount == session.format.channelCount
-      else { throw AudioCaptureFailure.deviceLost }
-      engine.inputNode.installTap(
-        onBus: 0, bufferSize: 1_024, format: format, block: Self.tap(session.ring, format))
-      session.tapInstalled = true
-      engine.prepare()
-      try engine.start()
-      Logger.inputDevice.notice("Pinned input restarted after a configuration change")
-    } catch {
-      LFAudioRingSignalFailure(session.ring.pointer, 3)
-    }
-  }
-
   static let pollInterval: DispatchTimeInterval = .milliseconds(25)
   static let permissionIntervalNanoseconds: UInt64 = 250_000_000
 
@@ -473,9 +465,7 @@ final class AudioCaptureService: @unchecked Sendable {
       reason = .failure(failure)
     } else if checkPermission, permission() != .authorized {
       reason = .failure(.permissionRevoked)
-    } else if session.restartPending.value {
-      return
-    } else if !session.engine.isRunning {
+    } else if !session.isRunning {
       reason = .failure(.deviceLost)
     } else if session.budget.deadlineReached(at: now) {
       reason = .durationLimit
@@ -508,7 +498,7 @@ final class AudioCaptureService: @unchecked Sendable {
         }
         let reason = Self.stopReason(
           ringFailure: session.ring.failure, authorized: self.permission() == .authorized,
-          running: session.engine.isRunning || session.restartPending.value,
+          running: session.isRunning,
           limitReached: session.budget.reachedLimit
             || session.budget.deadlineReached(at: requestedAt),
           cancelling: cancelling)
@@ -539,9 +529,7 @@ final class AudioCaptureService: @unchecked Sendable {
     // Closing joins a producer that may have latched overflow concurrently with
     // the stop request. Such a failure must never become a successful release.
     var finalReason = session.ring.failure.map(AudioCaptureStopReason.failure) ?? reason
-    session.engine.stop()
-    session.engine.inputNode.removeTap(onBus: 0)
-    session.tapInstalled = false
+    session.stopInput()
     if let observer = session.configurationObserver {
       NotificationCenter.default.removeObserver(observer)
       session.configurationObserver = nil
@@ -587,6 +575,38 @@ final class AudioCaptureService: @unchecked Sendable {
     }
   }
 
+}
+
+/// An input-only AUHAL unit on one ranked device. When an `AVAudioEngine` starts,
+/// macOS replaces a device set on its input unit with `CADefaultDeviceAggregate`
+/// (the default devices), so a pinned engine records the default or nothing.
+final class PinnedAudioInput: @unchecked Sendable {
+  private let pointer: OpaquePointer
+  let format: AVAudioFormat
+
+  init(device: AudioDeviceID) throws {
+    guard let pointer = LFAudioInputCreate(device) else { throw AudioCaptureFailure.deviceLost }
+    guard
+      let format = AVAudioFormat(
+        standardFormatWithSampleRate: LFAudioInputSampleRate(pointer),
+        channels: LFAudioInputChannels(pointer))
+    else {
+      LFAudioInputDestroy(pointer)
+      throw AudioCaptureFailure.unsupportedFormat
+    }
+    self.pointer = pointer
+    self.format = format
+  }
+
+  deinit { LFAudioInputDestroy(pointer) }
+
+  /// `ring` must stay alive until `stop()`.
+  func start(into ring: OpaquePointer) throws {
+    guard LFAudioInputStart(pointer, ring) == noErr else { throw AudioCaptureFailure.deviceLost }
+  }
+
+  func stop() { LFAudioInputStop(pointer) }
+  var isRunning: Bool { LFAudioInputIsRunning(pointer) }
 }
 
 /// Used only by the serial capture worker. Synthetic tests feed the same

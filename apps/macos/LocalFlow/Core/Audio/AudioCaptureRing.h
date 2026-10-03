@@ -42,4 +42,25 @@ uint64_t LFAudioRingMaxDeliveryDelayNanoseconds(const LFAudioRing *ring);
 // Host-time ticks (AVAudioTime.hostTime, mach_absolute_time) to nanoseconds.
 uint64_t LFAudioHostTicksToNanoseconds(uint64_t ticks);
 uint64_t LFAudioHostTicksNow(void);
+// Feature 019: an input-only AUHAL unit on one device. AVAudioEngine cannot keep a
+// non-default input (macOS swaps it for its default-device aggregate at start), so a
+// ranked device is captured here and pushed into the same ring as the engine tap.
+typedef struct LFAudioInput LFAudioInput;
+// NULL when the device cannot be opened for input. The client format is Float32,
+// non-interleaved, at the device rate and channel count (1-8).
+LFAudioInput *LFAudioInputCreate(AudioDeviceID device);
+double LFAudioInputSampleRate(const LFAudioInput *input);
+uint32_t LFAudioInputChannels(const LFAudioInput *input);
+// Pushes every device callback into `ring` until stopped; the ring must outlive it.
+OSStatus LFAudioInputStart(LFAudioInput *input, LFAudioRing *ring);
+void LFAudioInputStop(LFAudioInput *input);
+// False once stopped, the device died or its sample rate changed.
+bool LFAudioInputIsRunning(const LFAudioInput *input);
+void LFAudioInputDestroy(LFAudioInput *input);
+#ifdef __OBJC__
+#import <Foundation/Foundation.h>
+// Runs `block` and returns the reason of an Objective-C exception it raised, or nil.
+// AVAudioNode.installTap raises instead of throwing when the format is rejected.
+NSString *LFCatchException(void (NS_NOESCAPE ^block)(void));
+#endif
 #endif
