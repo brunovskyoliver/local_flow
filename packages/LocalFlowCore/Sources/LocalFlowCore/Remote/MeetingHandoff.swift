@@ -26,10 +26,13 @@ public actor MeetingHandoff {
 
   public static let chunkBytes = 48_000
 
-  private let pool: RemoteChannelPool
-  private let database: DatabasePool
-  private let root: MeetingStorageRoot
-  private let directory: URL
+  /// One `handoff` request and its reply.
+  public typealias Exchange = @Sendable (RemoteHandoffRequest) async throws -> RemoteHandoffReply
+
+  private let exchange: Exchange
+  let database: DatabasePool
+  let root: MeetingStorageRoot
+  let directory: URL
   /// Server routing, the `handoff` op, and no **Run on this Mac**.
   private let eligible: @Sendable (UUID) async -> Bool
   private let defaultLanguage: @Sendable () async -> MeetingLanguage
@@ -39,7 +42,27 @@ public actor MeetingHandoff {
     eligible: @escaping @Sendable (UUID) async -> Bool,
     defaultLanguage: @escaping @Sendable () async -> MeetingLanguage
   ) {
-    self.pool = pool
+    self.init(
+      exchange: { request in
+        try await RemoteMeetingJobs.exchange(
+          pool: pool, role: .background, request: { .handoff(op: $0, request: request) },
+          samples: [], cancel: nil,
+          answer: { message, op in
+            guard case .handoffReply(op, let reply) = message else {
+              throw RemoteChannelError.protocolError
+            }
+            return reply
+          })
+      }, database: database, root: root, eligible: eligible, defaultLanguage: defaultLanguage)
+  }
+
+  /// `exchange` carries the requests; tests answer them in memory.
+  public init(
+    exchange: @escaping Exchange, database: DatabasePool, root: MeetingStorageRoot,
+    eligible: @escaping @Sendable (UUID) async -> Bool,
+    defaultLanguage: @escaping @Sendable () async -> MeetingLanguage
+  ) {
+    self.exchange = exchange
     self.database = database
     self.root = root
     directory = root.url.deletingLastPathComponent().appendingPathComponent(
@@ -121,16 +144,8 @@ public actor MeetingHandoff {
 
   // MARK: Wire
 
-  private func call(_ request: RemoteHandoffRequest) async throws -> RemoteHandoffReply {
-    try await RemoteMeetingJobs.exchange(
-      pool: pool, role: .background, request: { .handoff(op: $0, request: request) },
-      samples: [], cancel: nil,
-      answer: { message, op in
-        guard case .handoffReply(op, let reply) = message else {
-          throw RemoteChannelError.protocolError
-        }
-        return reply
-      })
+  func call(_ request: RemoteHandoffRequest) async throws -> RemoteHandoffReply {
+    try await exchange(request)
   }
 
   /// Every finalized track file, then the bundle; each resumes at the server's size.
@@ -180,22 +195,30 @@ public actor MeetingHandoff {
   private func download(_ id: UUID) async throws -> URL {
     let url = directory.appendingPathComponent(id.uuidString, isDirectory: true)
       .appendingPathComponent("result.sqlite")
+    try await fetch(id, name: nil, to: url)
+    return url
+  }
+
+  /// A done meeting's processed bundle, or with `name` one of its AAC files, written to
+  /// `url` once its size and SHA-256 match what the server announced.
+  func fetch(_ id: UUID, name: String?, to url: URL) async throws {
     var data = Data()
     var expected: (size: Int, sha256: String)?
     repeat {
-      let reply = try await call(.init(action: .get, meeting: id, offset: data.count))
+      let reply = try await call(.init(action: .get, meeting: id, name: name, offset: data.count))
       guard reply.state == .done, let size = reply.size, let sha256 = reply.sha256,
-        reply.offset == data.count, size <= 1 << 30
+        reply.offset == data.count, size <= 1 << 30,
+        expected == nil || expected! == (size, sha256)
       else { throw RemoteChannelError.protocolError }
       expected = (size, sha256)
-      if let chunk = reply.data { data.append(chunk) } else { break }
+      guard let chunk = reply.data, !chunk.isEmpty else { break }
+      data.append(chunk)
     } while data.count < expected!.size
     let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     guard let expected, data.count == expected.size, hash == expected.sha256 else {
       throw RemoteChannelError.protocolError
     }
     try data.write(to: url, options: .atomic)
-    return url
   }
 
   // MARK: Database slices
@@ -228,7 +251,7 @@ public actor MeetingHandoff {
   ]
 
   /// What comes back, parents first; deleted children first.
-  private static let outputs: [(table: String, filter: String)] = [
+  static let outputs: [(table: String, filter: String)] = [
     ("meeting_transcriptions", "meeting_id=?"),
     ("transcript_segments", "meeting_id=?"),
     ("transcript_live_gaps", "meeting_id=?"),
@@ -275,6 +298,18 @@ public actor MeetingHandoff {
     guard eligible else { return false }
     try await stage(id, tables: Self.inputs, to: url)
     return true
+  }
+
+  /// Send to Mac again (Feature 020): the meeting's recording rows and the Dictionary,
+  /// without its transcript, labels or summary, so the server processes it from the audio
+  /// once more for the Mac.
+  public func exportAgain(_ id: UUID, to url: URL) async throws {
+    try? FileManager.default.removeItem(at: url)
+    try await stage(
+      id,
+      tables: Self.inputs.filter {
+        Self.rowTables.contains($0.table) || $0.table.hasPrefix("vocabulary_")
+      }, to: url)
   }
 
   /// `rows.sqlite` (Feature 020): the meeting's own rows of `rowTables`, as they are now.
@@ -416,7 +451,7 @@ public actor MeetingHandoff {
   }
 
   /// The columns both schemas have, comma-separated, in `left`'s order.
-  private static func columns(_ db: Database, _ table: String, _ left: String, _ right: String)
+  static func columns(_ db: Database, _ table: String, _ left: String, _ right: String)
     throws -> String
   {
     let theirs = Set(

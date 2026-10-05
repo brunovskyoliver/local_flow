@@ -72,6 +72,10 @@ struct MeetingsView: View {
           Text(model.label(item))
         }
         .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+        if let upload = item.upload, upload.ready, let mac = upload.macCopyText {
+          Label(mac, systemImage: "laptopcomputer").font(.flow(size: 12))
+            .foregroundStyle(SottoPalette.muted)
+        }
       }
       Spacer(minLength: 0)
       if item.playable {

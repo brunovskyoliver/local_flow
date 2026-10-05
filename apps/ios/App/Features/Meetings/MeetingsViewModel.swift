@@ -33,9 +33,15 @@ struct MeetingUploadLine: Equatable {
   let detail: String?
   let serverProgress: Int?
   var uploaded: Double?
+  /// Feature 020 (US6): `phone_meeting_uploads.mac_copy`.
+  var macCopy = MeetingUploader.MacCopy.none
+  /// Send to Mac again is under way; the phone has its result.
+  var resending = false
 
   var text: String {
-    switch stage {
+    // The phone has its result; the upload is for the Mac only.
+    if resending { return "Ready" }
+    return switch stage {
     case .waiting: detail.map { "Waiting for server (\(Self.reason($0)))" } ?? "Waiting for server"
     case .uploading: uploaded.map { "Uploading \(Int($0 * 100))%" } ?? "Uploading"
     case .processing: serverProgress.map { "Processing \($0)%" } ?? "Processing"
@@ -45,7 +51,23 @@ struct MeetingUploadLine: Equatable {
     }
   }
 
-  var failed: Bool { stage == .failed }
+  /// The phone shows the transcript: it is ready, or only the Mac's copy is on its way.
+  var ready: Bool { stage == .ready || resending }
+
+  var failed: Bool { stage == .failed && !resending }
+
+  /// The Mac copy line (contracts/phone-ui.md), nil when no copy was asked for.
+  var macCopyText: String? {
+    switch macCopy {
+    case MeetingUploader.MacCopy.waiting: "Waiting for Mac"
+    case MeetingUploader.MacCopy.delivered: "Sent to Mac"
+    case MeetingUploader.MacCopy.expired: "Not delivered to Mac"
+    default: nil
+    }
+  }
+
+  /// The server's 7 days ran out before the Mac took the copy (FR-045).
+  var canSendToMacAgain: Bool { stage == .ready && macCopy == MeetingUploader.MacCopy.expired }
   /// The owner can fix the reason in Settings › Server (scenario 6).
   var needsServerSettings: Bool {
     guard stage == .waiting, let detail else { return false }
@@ -87,7 +109,8 @@ struct MeetingUploadLine: Equatable {
     let rows = try Row.fetchAll(
       db,
       sql: """
-        SELECT meeting_id, stage, detail, server_progress FROM phone_meeting_uploads
+        SELECT meeting_id, stage, detail, server_progress, mac_copy, released_at
+        FROM phone_meeting_uploads
         WHERE meeting_id IN (\(ids.map { _ in "?" }.joined(separator: ",")))
         """, arguments: StatementArguments(ids.map(\.uuidString)))
     var lines: [UUID: MeetingUploadLine] = [:]
@@ -95,8 +118,11 @@ struct MeetingUploadLine: Equatable {
       guard let id = UUID(uuidString: row["meeting_id"]),
         let stage = MeetingUploader.Stage(rawValue: row["stage"])
       else { continue }
+      let macCopy: String = row["mac_copy"]
       lines[id] = MeetingUploadLine(
-        stage: stage, detail: row["detail"], serverProgress: row["server_progress"])
+        stage: stage, detail: row["detail"], serverProgress: row["server_progress"],
+        macCopy: macCopy,
+        resending: macCopy == MeetingUploader.MacCopy.waiting && row["released_at"] == nil)
     }
     return lines
   }
@@ -135,6 +161,8 @@ final class MeetingsViewModel {
   let uploads: MeetingUploadStatus
   /// Retry on a failed meeting (the server queue).
   @ObservationIgnored var retry: (UUID) async -> Void = { _ in }
+  /// Send to Mac again on a meeting whose Mac copy expired (the server queue).
+  @ObservationIgnored var sendToMacAgain: (UUID) async -> Void = { _ in }
   @ObservationIgnored private var player: AVQueuePlayer?
   @ObservationIgnored private var endObserver: NSObjectProtocol?
 
@@ -173,7 +201,9 @@ final class MeetingsViewModel {
 
   /// The row's state line, with the live upload percent.
   func label(_ item: Item) -> String {
-    guard var upload = item.upload, upload.stage == .uploading else { return item.label }
+    guard var upload = item.upload, upload.stage == .uploading, !upload.resending else {
+      return item.label
+    }
     upload.uploaded = uploads.uploaded[item.id] ?? upload.uploaded
     return upload.text
   }
@@ -197,6 +227,7 @@ final class MeetingsViewModel {
       meetingID: id, store: store, root: root, uploads: uploads, player: SystemMeetingLinePlayer(),
       pasteboard: SystemPasteboard(), audioBusy: audioBusy, delete: delete)
     detail.retry = { [weak self] in await self?.retry($0) }
+    detail.sendToMacAgain = { [weak self] in await self?.sendToMacAgain($0) }
     detail.willPlay = { [weak self] in self?.stopPlayback() }
     detail.onChange = { [weak self] in Task { await self?.refresh() } }
     return detail

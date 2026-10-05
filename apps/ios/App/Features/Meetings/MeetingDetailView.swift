@@ -34,7 +34,7 @@ struct MeetingDetailView: View {
 
   var body: some View {
     List {
-      if let upload = content.upload, upload.stage != .ready {
+      if let upload = content.upload, !upload.ready {
         Section {
           Text(statusText(upload)).font(.flow(size: 15))
           if upload.failed {
@@ -42,6 +42,17 @@ struct MeetingDetailView: View {
             Button("Retry") { Task { await model.retry(model.meetingID) } }
           } else if upload.needsServerSettings {
             Button("Server settings", action: openServerSettings)
+          }
+        }
+      }
+      if let upload = content.upload, upload.ready, let mac = upload.macCopyText {
+        Section {
+          Label(mac, systemImage: "laptopcomputer").font(.flow(size: 14))
+            .foregroundStyle(SottoPalette.muted)
+            .accessibilityIdentifier("meeting.macCopy")
+          if upload.canSendToMacAgain {
+            Button("Send to Mac again") { Task { await model.sendToMacAgain(model.meetingID) } }
+              .accessibilityIdentifier("meeting.sendToMacAgain")
           }
         }
       }
@@ -55,7 +66,7 @@ struct MeetingDetailView: View {
         Section("Transcript") {
           ForEach(content.lines) { line in transcriptLine(line) }
         }
-      } else if content.upload?.stage == .ready || content.upload == nil {
+      } else if content.upload?.ready ?? true {
         Text("No transcript yet.").font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
       }
       if model.loadFailed {

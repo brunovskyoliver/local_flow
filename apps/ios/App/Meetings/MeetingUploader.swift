@@ -53,6 +53,12 @@ struct PoolHandoffChannel: MeetingHandoffChannel {
 /// soon as the server can take it, then the meeting's current rows as `rows.sqlite`, then a
 /// partial run; the server's "transcribed up to" comes back with the list. After Stop only
 /// what is left goes up, and the final run resumes where the partial runs stopped.
+///
+/// With "Copy meetings to my Mac" (User Story 6, ADR 0034) the upload carries `copy`, and
+/// after `release` the server keeps the meeting for the Mac. The list then says whether the
+/// Mac took it (`mac_copy` delivered) or the server's 7 days ran out (expired). Send to Mac
+/// again uploads the meeting once more, without its results, and the server processes it
+/// for the Mac only: the phone keeps its own transcript.
 actor MeetingUploader {
   enum Stage: String, Sendable, CaseIterable {
     case waiting, uploading, processing, merging, summarizing, ready, failed
@@ -100,6 +106,9 @@ actor MeetingUploader {
     var attempts: Int
     var updatedAt: Int64
 
+    /// Send to Mac again is under way: the phone already has its result.
+    var resending: Bool { macCopy == MacCopy.waiting && releasedAt == nil }
+
     init(_ row: Row) throws {
       guard let id = UUID(uuidString: row["meeting_id"]),
         let stage = Stage(rawValue: row["stage"])
@@ -130,6 +139,17 @@ actor MeetingUploader {
     /// A recording meeting: the server has transcribed this many milliseconds of it.
     case transcribed(UUID, Int)
   }
+
+  /// `phone_meeting_uploads.mac_copy`.
+  enum MacCopy {
+    static let none = "none"
+    static let waiting = "waiting"
+    static let delivered = "delivered"
+    static let expired = "expired"
+  }
+
+  /// The server keeps a released meeting for the Mac at most this long (ADR 0034).
+  static let macCopyRetentionMilliseconds: Int64 = 7 * 24 * 3_600_000
 
   static let pollInterval: Duration = .seconds(10)
   /// While a meeting records: segments finish every 6 minutes, a partial run takes a while.
@@ -193,7 +213,10 @@ actor MeetingUploader {
       let deletes = try await serverDeletes()
       let recording = try await recordingMeeting()
       let rows = try await active()
-      guard !rows.isEmpty || recording != nil || !deletes.isEmpty else { return nil }
+      let macCopies = try await macCopiesWaiting()
+      guard !rows.isEmpty || recording != nil || !deletes.isEmpty || !macCopies.isEmpty else {
+        return nil
+      }
       let gate = await gate()
       if let reason = gate.closed {
         for row in rows where row.detail != reason || row.stage == .uploading {
@@ -211,6 +234,8 @@ actor MeetingUploader {
         live = Self.livePollInterval
       }
       let next = await queue(rows, gate: gate, ignoringBackoff: ignoringBackoff)
+      // Checked on each pass with other work, and on every kick (launch, foreground).
+      await checkMacCopies(macCopies)
       return [deleted, live, next].compactMap { $0 }.min()
     } catch {
       Self.log.error("Upload queue: \(String(describing: error), privacy: .public)")
@@ -300,6 +325,19 @@ actor MeetingUploader {
     try await update(id, ["stage": "waiting", "detail": nil, "attempts": 0], where: "stage='failed'")
   }
 
+  /// Send to Mac again (FR-045) on a ready meeting whose Mac copy expired: the meeting goes
+  /// up again from the start with `copy`, whatever the setting says now.
+  func sendToMacAgain(_ id: UUID) async throws {
+    try await update(
+      id,
+      [
+        "stage": "waiting", "detail": nil, "attempts": 0, "confirmed_segments": "",
+        "bundle_uploaded": 0, "server_progress": nil, "copy_to_mac": 1,
+        "mac_copy": MacCopy.waiting, "released_at": nil,
+      ], where: "stage='ready' AND mac_copy='expired'")
+    forget(id)
+  }
+
   func upload(_ id: UUID) async throws -> Upload? {
     try await database.read { db in
       try Row.fetchOne(
@@ -367,6 +405,39 @@ actor MeetingUploader {
             AND EXISTS(SELECT 1 FROM meeting_segments s JOIN meeting_tracks k ON k.id=s.track_id
               WHERE k.meeting_id=m.id AND s.state='finalized')
           """, arguments: [now])
+    }
+  }
+
+  // MARK: Mac copy
+
+  /// Ready meetings released with a copy that the Mac has not taken yet.
+  private func macCopiesWaiting() async throws -> [(id: UUID, releasedAt: Int64)] {
+    try await database.read { db in
+      try Row.fetchAll(
+        db,
+        sql: """
+          SELECT meeting_id, released_at FROM phone_meeting_uploads
+          WHERE stage='ready' AND mac_copy='waiting' AND released_at IS NOT NULL
+          ORDER BY released_at
+          """
+      ).compactMap { row in
+        UUID(uuidString: row["meeting_id"]).map { ($0, row["released_at"]) }
+      }
+    }
+  }
+
+  /// Still listed: the Mac has not imported it yet. Gone within 7 days of `release`: the Mac
+  /// took it. Gone later: the server's retention removed it.
+  private func checkMacCopies(_ waiting: [(id: UUID, releasedAt: Int64)]) async {
+    guard !waiting.isEmpty,
+      let list = try? await channel.call(.init(action: .list))
+    else { return }
+    let listed = Set((list.meetings ?? []).map(\.meeting))
+    for (id, releasedAt) in waiting where !listed.contains(id) {
+      let state =
+        now() - releasedAt <= Self.macCopyRetentionMilliseconds
+        ? MacCopy.delivered : MacCopy.expired
+      try? await update(id, ["mac_copy": state], where: "mac_copy='waiting'")
     }
   }
 
@@ -450,9 +521,24 @@ actor MeetingUploader {
               ])
             onChange(.processing(id, entry?.progress))
             return .poll
+          case .done where row.resending:
+            // Processed for the Mac only: the phone keeps its own result.
+            try await release(id)
+            try await update(
+              id,
+              [
+                "stage": "ready", "detail": nil, "attempts": 0, "server_progress": nil,
+                "released_at": now(), "mac_copy": MacCopy.waiting,
+              ])
+            forget(id)
           case .done:
             try await update(id, ["stage": "merging", "detail": nil, "server_progress": 100])
           case .failed:
+            if row.resending, row.stage == .processing {
+              _ = try? await channel.call(.init(action: .delete, meeting: id))
+              try await giveUpResend(id)
+              return .finished
+            }
             if row.stage == .processing {
               try await update(
                 id,
@@ -485,9 +571,10 @@ actor MeetingUploader {
           }
         case .summarizing:
           if row.releasedAt == nil {
-            try await release(id, copy: row.copyToMac)
+            try await release(id)
             try await update(
-              id, ["released_at": now(), "mac_copy": row.copyToMac ? "waiting" : "none"])
+              id,
+              ["released_at": now(), "mac_copy": row.copyToMac ? MacCopy.waiting : MacCopy.none])
           }
           switch await summarize(id) {
           case .waiting:
@@ -505,17 +592,36 @@ actor MeetingUploader {
     } catch is CancellationError {
       return .poll
     } catch let refusal as Refusal {
-      try? await update(id, ["stage": "failed", "detail": refusal.detail])
+      if (try? await upload(id))?.resending == true {
+        try? await giveUpResend(id)
+      } else {
+        try? await update(id, ["stage": "failed", "detail": refusal.detail])
+      }
       return .finished
     } catch {
       guard let row = try? await upload(id) else { return .finished }
       let detail = Self.detail(for: error)
       if detail == Detail.serverError, row.attempts + 1 >= Self.failureAttempts {
-        try? await update(id, ["stage": "failed", "detail": detail, "attempts": 0])
+        if row.resending {
+          try? await giveUpResend(id)
+        } else {
+          try? await update(id, ["stage": "failed", "detail": detail, "attempts": 0])
+        }
         return .finished
       }
       return (try? await wait(id, row: row, detail: detail)) ?? .finished
     }
+  }
+
+  /// Send to Mac again did not get through: the meeting stays ready, its copy undelivered.
+  private func giveUpResend(_ id: UUID) async throws {
+    try await update(
+      id,
+      [
+        "stage": "ready", "detail": nil, "attempts": 0, "server_progress": nil,
+        "mac_copy": MacCopy.expired,
+      ])
+    forget(id)
   }
 
   private func wait(_ id: UUID, row: Upload, detail: String) async throws -> Outcome {
@@ -645,8 +751,9 @@ actor MeetingUploader {
       row.bundleUploaded || FileManager.default.fileExists(atPath: bundleURL(id).path)
     if row.stage != .uploading {
       var changes: [String: (any DatabaseValueConvertible)?] = ["stage": "uploading", "detail": nil]
-      // "Copy meetings to my Mac" as it was when the meeting first went up.
-      if !row.bundleUploaded && row.confirmed.isEmpty {
+      // "Copy meetings to my Mac" as it was when the meeting first went up; Send to Mac
+      // again always asks for the copy.
+      if !row.bundleUploaded && row.confirmed.isEmpty && !row.resending {
         changes["copy_to_mac"] = gate.copyToMac
         row.copyToMac = gate.copyToMac
       }
@@ -654,7 +761,13 @@ actor MeetingUploader {
     }
     let bundle = bundleURL(id)
     if !row.bundleUploaded, !FileManager.default.fileExists(atPath: bundle.path) {
-      guard try await handoff.export(id, to: bundle) else { throw Refusal(detail: Detail.notEligible) }
+      if row.resending {
+        try await handoff.exportAgain(id, to: bundle)
+      } else {
+        guard try await handoff.export(id, to: bundle) else {
+          throw Refusal(detail: Detail.notEligible)
+        }
+      }
     }
     let segments = try await database.read { db in
       try String.fetchAll(
@@ -693,17 +806,7 @@ actor MeetingUploader {
       }
     }
     onChange(.uploaded(id, 1))
-    var copy = row.copyToMac
-    let reply: RemoteHandoffReply
-    do {
-      reply = try await channel.call(.init(action: .start, meeting: id, copy: copy))
-    } catch RemoteChannelError.server(.invalidMessage) where copy {
-      // ponytail: a server without Feature 020's Mac copy (T051) refuses `copy`; the
-      // meeting is processed without it. Drop this once every server has T051.
-      copy = false
-      try await update(id, ["copy_to_mac": 0])
-      reply = try await channel.call(.init(action: .start, meeting: id))
-    }
+    let reply = try await channel.call(.init(action: .start, meeting: id, copy: row.copyToMac))
     guard let state = reply.state, [.queued, .processing, .done].contains(state) else {
       throw RemoteChannelError.protocolError
     }
@@ -776,14 +879,8 @@ actor MeetingUploader {
   }
 
   /// The phone has its result: the server keeps the meeting only for the Mac copy.
-  private func release(_ id: UUID, copy: Bool) async throws {
-    do {
-      _ = try await channel.call(.init(action: .release, meeting: id))
-    } catch RemoteChannelError.server(.invalidMessage) {
-      // ponytail: a server before Feature 020's T051 has no `release`; without a copy
-      // marker release is a delete.
-      _ = try await channel.call(.init(action: .delete, meeting: id))
-    }
+  private func release(_ id: UUID) async throws {
+    _ = try await channel.call(.init(action: .release, meeting: id))
   }
 
   // MARK: Storage

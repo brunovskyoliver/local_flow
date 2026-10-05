@@ -277,10 +277,17 @@ private struct NoteListRow: View {
             .background(SottoPalette.tint, in: .rect(cornerRadius: 8))
           VStack(alignment: .leading, spacing: 4) {
             Text(row.displayTitle).font(.flow(size: 15)).lineLimit(1)
-            Text(
-              Date(timeIntervalSince1970: Double(row.createdAt) / 1_000),
-              format: .dateTime.hour().minute()
-            )
+            HStack(spacing: 6) {
+              Text(
+                Date(timeIntervalSince1970: Double(row.createdAt) / 1_000),
+                format: .dateTime.hour().minute()
+              )
+              if row.origin == .iphone {
+                // Feature 020 (US6): a copy of a meeting recorded on the phone.
+                Label(MeetingLibraryViewModel.fromIPhoneText, systemImage: "iphone")
+                  .accessibilityIdentifier("notetaker.fromIPhone.\(row.id)")
+              }
+            }
             .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
           }
           Spacer(minLength: 0)

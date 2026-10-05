@@ -333,7 +333,7 @@ public actor MeetingStore: MeetingStoring {
     let limit = max(1, min(limit, Self.pageLimit))
     return try database.read { db in
       var sql = """
-        SELECT m.id, m.title, m.created_at, m.state, m.recorded_ms, m.revision,
+        SELECT m.*,
           EXISTS(SELECT 1 FROM meeting_tracks t WHERE t.meeting_id = m.id
                  AND t.health IN ('failed','unrecoverable')) AS warning,
           (SELECT x.state FROM meeting_transcriptions x WHERE x.meeting_id = m.id)
@@ -356,7 +356,8 @@ public actor MeetingStore: MeetingStoring {
           recordedMs: row["recorded_ms"], hasTrackWarning: (row["warning"] as Int) == 1,
           revision: row["revision"],
           transcriptState: (row["transcript_state"] as String?).flatMap(
-            TranscriptState.init(rawValue:)))
+            TranscriptState.init(rawValue:)),
+          origin: (row["origin"] as String?).flatMap(MeetingOrigin.init(rawValue:)) ?? .local)
       }
     }
   }
@@ -808,6 +809,7 @@ public actor MeetingStore: MeetingStoring {
       failureDetail: row["failure_detail"], updatedAt: row["updated_at"], revision: row["revision"],
       language: MeetingLanguage(storedValue: row["language"]))
     meeting.runLocally = (row["run_locally"] as Bool?) ?? false
+    meeting.origin = (row["origin"] as String?).flatMap(MeetingOrigin.init(rawValue:)) ?? .local
     return meeting
   }
 

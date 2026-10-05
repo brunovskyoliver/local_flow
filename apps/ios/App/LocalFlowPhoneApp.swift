@@ -126,6 +126,10 @@ final class PhoneApp {
         try? await uploader.retry(id)
         await uploader.kick()
       }
+      meetingList.sendToMacAgain = { id in
+        try? await uploader.sendToMacAgain(id)
+        await uploader.kick()
+      }
       self.uploader = uploader
       uploadBackground = background
       failure = nil

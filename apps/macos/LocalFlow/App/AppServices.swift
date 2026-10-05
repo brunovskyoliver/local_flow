@@ -986,6 +986,17 @@ final class AppServices {
         defaultLanguage: { [weak self] in
           await MainActor.run { self?.preferences.meetingLanguage ?? .defaultLanguage }
         })
+      // Feature 020 (US6): phone meetings come to this Mac whenever the server offers
+      // the handoff, whatever this Mac routes there.
+      transcription.phoneImportAllowed = { [weak self] in
+        await MainActor.run {
+          self?.preferences.serverRouting.capabilities.offers(op: "handoff") ?? false
+        }
+      }
+      transcription.phoneMeetingsImported = { [weak self] _ in
+        Task { await self?.meetingLibrary?.refresh() }
+      }
+      transcription.startPhoneImports()
     }
     meetingTranscription = transcription
     let speakers = SpeakerStore(history: history, recorder: recorder)

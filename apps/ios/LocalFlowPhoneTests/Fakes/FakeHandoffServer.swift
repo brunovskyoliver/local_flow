@@ -9,9 +9,12 @@ import XCTest
 /// flowd's handoff op in memory, with the server's rules: a `put` at the stored size
 /// appends and a `put` anywhere else writes nothing; the SHA-256 on the last chunk checks
 /// the whole file and empties it on a mismatch; `start` needs the bundle and one AAC;
-/// `get` serves the processed bundle in 48,000-byte chunks. Feature 020 US3: `rows.sqlite`
-/// is emptied by a put at offset 0, `start partial` queues a partial run, and a finished
-/// partial run returns the meeting to `receiving` with its `transcribed_ms`.
+/// `get` serves the processed bundle (or, with a name, an AAC file) in 48,000-byte chunks.
+/// Feature 020 US3: `rows.sqlite` is emptied by a put at offset 0, `start partial` queues a
+/// partial run, and a finished partial run returns the meeting to `receiving` with its
+/// `transcribed_ms`. US6: `copy` on a put or start marks the meeting; `release` works only in
+/// `done`, keeping a copy meeting as released and deleting one without; the list reports
+/// `mine` (every meeting here was put by the phone), `copy` and `released`.
 final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
   struct Meeting {
     var state: RemoteHandoffReply.State = .receiving
@@ -19,6 +22,7 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
     var progress: Int?
     var files: [String: Data] = [:]
     var copy = false
+    var released = false
     var result: Data?
     /// The queued or running run is partial.
     var partial = false
@@ -34,8 +38,6 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
   var unreachable = false
   /// Every call fails with this server error.
   var refuse: RemoteErrorCode?
-  /// A server from before Feature 020's T051: `copy` and `release` are refused.
-  var old = false
   /// A server from before Feature 020's US3: `rows.sqlite` and `partial` are refused.
   var noPartial = false
   var maximumMeetings = 16
@@ -97,9 +99,6 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
       }
       if unreachable { throw RemoteChannelError.unreachable }
       if let refuse { throw RemoteChannelError.server(refuse) }
-      if old, request.copy || request.action == .release {
-        throw RemoteChannelError.server(.invalidMessage)
-      }
       if noPartial, request.partial || request.name == "rows.sqlite" {
         throw RemoteChannelError.server(.invalidMessage)
       }
@@ -115,18 +114,22 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
             meeting: id, state: meeting.state, detail: meeting.detail,
             progress: meeting.state == .processing ? meeting.progress : nil,
             transcribedMS: meeting.state == .receiving ? meeting.transcribedMS : nil,
-            copy: meeting.copy)
+            mine: true, copy: meeting.copy, released: meeting.released)
         })
     }
     let id = request.meeting!
     var meeting = meetings[id]
     var reply = RemoteHandoffReply(state: meeting?.state ?? .missing, meeting: id)
     switch request.action {
-    case .delete, .release:
-      if request.action == .release, meeting?.copy == true {
-        meetings[id]?.state = .done
+    case .release:
+      guard meeting?.state == .done else { return reply }
+      if meeting?.copy == true {
+        meetings[id]?.released = true
         return reply
       }
+      meetings[id] = nil
+      return RemoteHandoffReply(state: .missing, meeting: id)
+    case .delete:
       meetings[id] = nil
       return RemoteHandoffReply(state: .missing, meeting: id)
     case .put:
@@ -138,6 +141,7 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
         reply.state = .receiving
       }
       guard var meeting, meeting.state == .receiving, let name = request.name else { return reply }
+      meeting.copy = meeting.copy || request.copy
       var file = meeting.files[name] ?? Data()
       if name == "rows.sqlite", request.offset == 0 { file = Data() }
       if request.offset == file.count {
@@ -163,8 +167,11 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
       reply.state = .queued
       return reply
     case .get:
-      guard let meeting, meeting.state == .done, let result = meeting.result else { return reply }
+      guard let meeting, meeting.state == .done,
+        let result = request.name.map({ meeting.files[$0] }) ?? meeting.result
+      else { return reply }
       let offset = request.offset ?? 0
+      reply.name = request.name
       reply.offset = offset
       reply.size = result.count
       reply.sha256 = Self.hex(result)

@@ -56,7 +56,9 @@ type Interactivity interface {
 // Handoffs serves the handoff operation and runs the processor on queued
 // meetings, one at a time. A meeting's state is the one-word first line of
 // <dir>/state (a failed meeting's detail is the second), so it survives
-// restarts.
+// restarts. <dir>/device holds the device ID of the first put, <dir>/copy
+// marks a meeting the owner wants copied to the Mac, and <dir>/released
+// one whose originating device has its result (Feature 020, ADR 0034).
 type Handoffs struct {
 	cfg  HandoffConfig
 	wake chan struct{}
@@ -67,7 +69,7 @@ type Handoffs struct {
 	mu      sync.Mutex
 	running string             // meeting dir being processed
 	cancel  context.CancelFunc // stops the running processor
-	hashes  map[string]string  // meeting dir -> sha256 of its done bundle
+	hashes  map[string]string  // file path -> sha256 of a done meeting's file
 }
 
 // NewHandoffs builds the operation; register Start under "handoff" and run Run.
@@ -96,7 +98,7 @@ func (s *Handoffs) Start(_ context.Context, c *Conn, m Message) (Operation, erro
 		return nil, err
 	}
 	principal := c.Principal()
-	reply, err := s.handle(principal.UserID, req)
+	reply, err := s.handle(principal.UserID, principal.DeviceID, req)
 	// Puts and gets come every 48 KB; only their refusals are logged.
 	if err != nil || (req.Action != "put" && req.Action != "get") {
 		code := "ok"
@@ -205,7 +207,25 @@ func meetings(dir string) []string {
 	return out
 }
 
-func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
+// forget drops the cached hashes of dir's files.
+func (s *Handoffs) forget(dir string) {
+	for path := range s.hashes {
+		if strings.HasPrefix(path, dir+string(filepath.Separator)) {
+			delete(s.hashes, path)
+		}
+	}
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func touch(path string) error {
+	return os.WriteFile(path, nil, 0o600)
+}
+
+func (s *Handoffs) handle(user, device int64, req Handoff) (HandoffReply, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	userDir := s.userDir(user)
@@ -214,7 +234,13 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 		for _, id := range meetings(userDir) {
 			dir := filepath.Join(userDir, id)
 			if state, detail := readState(dir); state != "missing" && len(list) < maxHandoffList {
-				m := HandoffMeeting{Meeting: id, State: state, Detail: detail}
+				owner, _ := os.ReadFile(filepath.Join(dir, "device"))
+				m := HandoffMeeting{
+					Meeting: id, State: state, Detail: detail,
+					Mine:     strings.TrimSpace(string(owner)) == strconv.FormatInt(device, 10),
+					Copy:     exists(filepath.Join(dir, "copy")),
+					Released: exists(filepath.Join(dir, "released")),
+				}
 				switch state {
 				case "processing":
 					m.Progress = readProgress(dir)
@@ -226,36 +252,45 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 		}
 		return HandoffReply{Meetings: &list}, nil
 	}
-	// ponytail: Feature 020 phase 1 adds these to the wire format only; refuse them
-	// until the handler implements them (T051), so release cannot fall into the get branch.
-	if req.Action == "release" || req.Copy || (req.Action == "get" && req.Name != "") {
-		return HandoffReply{}, invalid("handoff action not supported yet")
-	}
 	dir := filepath.Join(userDir, req.Meeting)
 	state, detail := readState(dir)
 	reply := HandoffReply{Meeting: req.Meeting, State: state, Detail: detail}
 	switch req.Action {
 	case "delete":
-		if dir == s.running {
-			s.cancel()
+		return s.delete(dir, req.Meeting)
+	case "release":
+		// The originating device has its result: without a Mac copy the
+		// meeting goes now; with one it stays done until another device
+		// deletes it or the retention sweep, counted from now, runs.
+		if state != "done" {
+			return reply, nil
 		}
-		if err := os.RemoveAll(dir); err != nil {
+		if !exists(filepath.Join(dir, "copy")) {
+			return s.delete(dir, req.Meeting)
+		}
+		if touch(filepath.Join(dir, "released")) != nil {
 			return reply, errHandoffStorage
 		}
-		delete(s.hashes, dir)
-		return HandoffReply{Meeting: req.Meeting, State: "missing"}, nil
+		now := s.cfg.Clock.Now()
+		_ = os.Chtimes(dir, now, now)
+		return reply, nil
 	case "put":
 		if state == "missing" {
 			if len(meetings(userDir)) >= MaxHandoffMeetings {
 				return reply, &Error{CodeLimitExceeded, "handoff meetings per user"}
 			}
-			if os.MkdirAll(filepath.Join(dir, req.Meeting), 0o700) != nil || writeState(dir, "receiving", "") != nil {
+			if os.MkdirAll(filepath.Join(dir, req.Meeting), 0o700) != nil ||
+				os.WriteFile(filepath.Join(dir, "device"), []byte(strconv.FormatInt(device, 10)), 0o600) != nil ||
+				writeState(dir, "receiving", "") != nil {
 				return reply, errHandoffStorage
 			}
 			reply.State = "receiving"
 		}
 		if reply.State != "receiving" {
 			return reply, nil
+		}
+		if req.Copy && touch(filepath.Join(dir, "copy")) != nil {
+			return reply, errHandoffStorage
 		}
 		return s.put(userDir, dir, req, reply)
 	case "start":
@@ -274,10 +309,10 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 		} else if err = os.Remove(marker); errors.Is(err, fs.ErrNotExist) {
 			err = nil
 		}
-		if err != nil || writeState(dir, "queued", "") != nil {
+		if err != nil || (req.Copy && touch(filepath.Join(dir, "copy")) != nil) || writeState(dir, "queued", "") != nil {
 			return reply, errHandoffStorage
 		}
-		delete(s.hashes, dir)
+		s.forget(dir)
 		select {
 		case s.wake <- struct{}{}:
 		default:
@@ -351,10 +386,32 @@ func userBytes(dir string) int64 {
 	return total
 }
 
-// get returns up to MaxHandoffChunkBytes of the done bundle from offset.
+// delete removes a meeting, stopping its processor if it runs.
+func (s *Handoffs) delete(dir, meeting string) (HandoffReply, error) {
+	if dir == s.running {
+		s.cancel()
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return HandoffReply{Meeting: meeting, State: "missing"}, errHandoffStorage
+	}
+	s.forget(dir)
+	return HandoffReply{Meeting: meeting, State: "missing"}, nil
+}
+
+// get returns up to MaxHandoffChunkBytes from offset of the done bundle or,
+// with a name, of one of the meeting's AAC files.
 func (s *Handoffs) get(dir string, req Handoff, reply HandoffReply) (HandoffReply, error) {
-	path := filepath.Join(dir, "bundle.sqlite")
+	name := req.Name
+	if name == "" {
+		name = "bundle.sqlite"
+	} else {
+		reply.Name = name
+	}
+	path := filePath(dir, req.Meeting, name)
 	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) && req.Name != "" {
+		return reply, invalid("handoff file missing")
+	}
 	if err != nil {
 		return reply, errHandoffStorage
 	}
@@ -365,14 +422,14 @@ func (s *Handoffs) get(dir string, req Handoff, reply HandoffReply) (HandoffRepl
 	}
 	size, offset := info.Size(), *req.Offset
 	if offset > size {
-		return reply, invalid("handoff offset past the bundle")
+		return reply, invalid("handoff offset past the file")
 	}
-	sum, ok := s.hashes[dir]
+	sum, ok := s.hashes[path]
 	if !ok {
 		if sum, err = hashFile(path); err != nil {
 			return reply, errHandoffStorage
 		}
-		s.hashes[dir] = sum
+		s.hashes[path] = sum
 	}
 	if offset < size {
 		reply.Data = make([]byte, min(MaxHandoffChunkBytes, size-offset))
@@ -428,7 +485,7 @@ func (s *Handoffs) requeue() {
 		if state, _ := readState(dir); err != nil || state != "processing" {
 			return
 		}
-		delete(s.hashes, dir)
+		s.forget(dir)
 		if writeState(dir, "queued", "") == nil {
 			_ = os.Chtimes(filepath.Join(dir, "state"), info.ModTime(), info.ModTime())
 		}
@@ -443,7 +500,7 @@ func (s *Handoffs) sweep() {
 	s.each(func(dir, meeting string) {
 		if info, err := os.Stat(dir); err == nil && dir != s.running && info.ModTime().Before(cutoff) {
 			if os.RemoveAll(dir) == nil {
-				delete(s.hashes, dir)
+				s.forget(dir)
 				s.cfg.Logger.Printf("remote handoff meeting=%s event=expired", shortID(meeting))
 			}
 		}

@@ -159,16 +159,16 @@
 
 ### Tests for User Story 6
 
-- [ ] T048 [P] [US6] `server/internal/remote/handoff_test.go`: `device` recorded at first put, `mine` per caller, `copy` marker, `release` keeps with copy and deletes without, `get` with `name` serves an AAC, isolation between users unchanged
-- [ ] T049 [P] [US6] `apps/macos/LocalFlowTests/MeetingHandoffImportTests.swift`: import of a foreign `done` meeting with `released` set inserts input and output rows and files in one transaction with `origin='iphone'`, skips own, unreleased and already-imported meetings, failed checksum leaves the Mac unchanged, deletes the server copy after import
-- [ ] T050 [P] [US6] `apps/ios/LocalFlowPhoneTests/MeetingUploaderTests.swift` (Mac copy cases): `waiting → delivered`, `waiting → expired`, Send to Mac again re-uploads
+- [X] T048 [P] [US6] `server/internal/remote/handoff_test.go`: `device` recorded at first put, `mine` per caller, `copy` marker, `release` keeps with copy and deletes without, `get` with `name` serves an AAC, isolation between users unchanged
+- [X] T049 [P] [US6] `apps/macos/LocalFlowTests/MeetingHandoffImportTests.swift`: import of a foreign `done` meeting with `released` set inserts input and output rows and files in one transaction with `origin='iphone'`, skips own, unreleased and already-imported meetings, failed checksum leaves the Mac unchanged, deletes the server copy after import
+- [X] T050 [P] [US6] `apps/ios/LocalFlowPhoneTests/MeetingUploaderTests.swift` (Mac copy cases): `waiting → delivered`, `waiting → expired`, Send to Mac again re-uploads
 
 ### Implementation for User Story 6
 
-- [ ] T051 [US6] Server: `device`, `copy`, `released`, `mine`, `release`, `get` by name in `server/internal/remote/protocol.go` and `handoff.go`
-- [ ] T052 [US6] `apps/macos/LocalFlow/Core/Remote/MeetingHandoff+Import.swift` (imports only `mine == false`, `copy`, `released`, `done` entries) and a call from the Mac's existing server-wait loop; then `meetingDidReturnFromServer(id:labeled:)` so identification and the summary run
-- [ ] T053 [US6] Mac list shows "From iPhone" for `origin='iphone'` meetings (`apps/macos/LocalFlow/Features/` meeting list row)
-- [ ] T054 [US6] Phone Mac-copy state and Send to Mac again in `MeetingUploader.swift` and the meeting views
+- [X] T051 [US6] Server: `device`, `copy`, `released`, `mine`, `release`, `get` by name in `server/internal/remote/protocol.go` and `handoff.go`
+- [X] T052 [US6] `apps/macos/LocalFlow/Core/Remote/MeetingHandoff+Import.swift` (imports only `mine == false`, `copy`, `released`, `done` entries) and a call from the Mac's existing server-wait loop; then `meetingDidReturnFromServer(id:labeled:)` so identification and the summary run
+- [X] T053 [US6] Mac list shows "From iPhone" for `origin='iphone'` meetings (`apps/macos/LocalFlow/Features/` meeting list row)
+- [X] T054 [US6] Phone Mac-copy state and Send to Mac again in `MeetingUploader.swift` and the meeting views
 
 ---
 

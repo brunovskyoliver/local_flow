@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"localflow/server/internal/accounts"
 	"localflow/server/internal/speech"
 )
 
@@ -150,7 +151,7 @@ func TestHandoffRoundTrip(t *testing.T) {
 	}
 	expectCode(t, send(Handoff{Action: "get", Meeting: handoffMeeting, Offset: offset(100)}), CodeInvalidMessage)
 	list := expectHandoff(t, send(Handoff{Action: "list"}), "")
-	if len(*list.Meetings) != 1 || (*list.Meetings)[0] != (HandoffMeeting{Meeting: handoffMeeting, State: "done"}) {
+	if len(*list.Meetings) != 1 || (*list.Meetings)[0] != (HandoffMeeting{Meeting: handoffMeeting, State: "done", Mine: true}) {
 		t.Fatalf("%+v", list.Meetings)
 	}
 	expectHandoff(t, send(Handoff{Action: "delete", Meeting: handoffMeeting}), "missing")
@@ -222,7 +223,7 @@ func TestHandoffRunner(t *testing.T) {
 		if detail := waitState(t, s, 1, handoffMeeting, tc.state); detail != tc.detail {
 			t.Fatalf("%s: detail %q", tc.body, detail)
 		}
-		r, _ := s.handle(1, Handoff{Action: "list"})
+		r, _ := s.handle(1, 1, Handoff{Action: "list"})
 		if (*r.Meetings)[0].Detail != tc.detail {
 			t.Fatalf("%+v", r.Meetings)
 		}
@@ -285,7 +286,7 @@ while [ ! -f "$2/finish" ]; do i=$((i+1)); echo $i > "$2/ticks"; sleep 0.01; don
 	for ticks() == "" && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	r, _ := s.handle(1, Handoff{Action: "list"})
+	r, _ := s.handle(1, 1, Handoff{Action: "list"})
 	if m := (*r.Meetings)[0]; m.Progress == nil || *m.Progress != 42 {
 		t.Fatalf("%+v", m)
 	}
@@ -304,7 +305,7 @@ while [ ! -f "$2/finish" ]; do i=$((i+1)); echo $i > "$2/ticks"; sleep 0.01; don
 		t.Fatal(err)
 	}
 	waitState(t, s, 1, handoffMeeting, "done")
-	r, _ = s.handle(1, Handoff{Action: "list"})
+	r, _ = s.handle(1, 1, Handoff{Action: "list"})
 	if m := (*r.Meetings)[0]; m.Progress != nil {
 		t.Fatalf("done meeting lists progress: %+v", m)
 	}
@@ -360,9 +361,9 @@ esac`))
 		t.Fatalf("rows.sqlite %q", got)
 	}
 	// A cached hash from an earlier done state goes when the meeting is queued again.
-	s.hashes[dir] = "stale"
+	s.hashes[filepath.Join(dir, "bundle.sqlite")] = "stale"
 	expectHandoff(t, send(Handoff{Action: "start", Meeting: handoffMeeting, Partial: true}), "queued")
-	if _, ok := s.hashes[dir]; ok {
+	if _, ok := s.hashes[filepath.Join(dir, "bundle.sqlite")]; ok {
 		t.Fatal("cached hash kept")
 	}
 	expectHandoff(t, send(Handoff{Action: "start", Meeting: handoffMeeting, Partial: true}), "queued")
@@ -428,16 +429,125 @@ func TestHandoffPartialRequeue(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "partial"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s.hashes[dir] = "stale"
+	s.hashes[filepath.Join(dir, "bundle.sqlite")] = "stale"
 	runHandoffs(t, s)
 	waitState(t, s, 1, handoffMeeting, "receiving")
 	if args, _ := os.ReadFile(filepath.Join(dir, "args")); !strings.HasSuffix(string(args), "--partial ") {
 		t.Fatalf("args %q", args)
 	}
 	s.mu.Lock()
-	_, ok := s.hashes[dir]
+	_, ok := s.hashes[filepath.Join(dir, "bundle.sqlite")]
 	s.mu.Unlock()
 	if ok {
 		t.Fatal("cached hash kept on requeue")
 	}
+}
+
+// anotherDevice approves a second device for user and returns its token.
+func (h *harness) anotherDevice(user accounts.User, key byte) string {
+	h.t.Helper()
+	ctx := context.Background()
+	public := bytes.Repeat([]byte{key}, 65)
+	public[0] = 0x04
+	device, err := h.store.AddDevice(ctx, user.ID, "iPhone", public)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	_ = h.store.SetDeviceState(ctx, device.ID, accounts.DeviceApproved, accounts.AdminActor("test"))
+	token, _, err := h.store.IssueAccess(ctx, device.ID)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.poll()
+	return token
+}
+
+// Feature 020 Mac copy: the first put records the device, list reports mine
+// per caller, copy on put or start marks the meeting, release keeps a copy
+// meeting (released) and deletes one without, get with a name serves an AAC
+// file, and another user still sees nothing.
+func TestHandoffMacCopy(t *testing.T) {
+	h, s := newHandoffHarness(t, fakeProcessor(t, `printf processed >> "$2/bundle.sqlite"`))
+	user, _, phoneToken := h.approved("sub", 1)
+	macToken := h.anotherDevice(user, 2)
+	_, _, strangerToken := h.approved("stranger", 3)
+	phone, _ := h.hello(PurposeSession, phoneToken)
+	mac, _ := h.hello(PurposeSession, macToken)
+	stranger, _ := h.hello(PurposeSession, strangerToken)
+	op := int64(0)
+	send := func(c *testClient, m Handoff) Message { op++; m.Op = op; return c.handoff(m) }
+	audio := []byte("aac-audio-bytes")
+	upload := func(meeting string, withCopy bool) {
+		t.Helper()
+		expectHandoff(t, send(phone, Handoff{Action: "put", Meeting: meeting, Name: "bundle.sqlite", Offset: offset(0), Data: []byte("b"), SHA256: hexSum([]byte("b")), Copy: withCopy}), "receiving")
+		expectHandoff(t, send(phone, Handoff{Action: "put", Meeting: meeting, Name: "mic-0001.aac", Offset: offset(0), Data: audio, SHA256: hexSum(audio)}), "receiving")
+	}
+	entry := func(c *testClient, meeting string) (HandoffMeeting, bool) {
+		t.Helper()
+		list := expectHandoff(t, send(c, Handoff{Action: "list"}), "")
+		for _, m := range *list.Meetings {
+			if m.Meeting == meeting {
+				return m, true
+			}
+		}
+		return HandoffMeeting{}, false
+	}
+	runHandoffs(t, s)
+
+	// With copy: put marks it, mine is per caller.
+	upload(handoffMeeting, true)
+	expectHandoff(t, send(phone, Handoff{Action: "release", Meeting: handoffMeeting}), "receiving")
+	expectHandoff(t, send(phone, Handoff{Action: "start", Meeting: handoffMeeting}), "queued")
+	waitState(t, s, user.ID, handoffMeeting, "done")
+	if m, _ := entry(phone, handoffMeeting); !m.Mine || !m.Copy || m.Released {
+		t.Fatalf("phone sees %+v", m)
+	}
+	if m, _ := entry(mac, handoffMeeting); m.Mine || !m.Copy || m.Released {
+		t.Fatalf("mac sees %+v", m)
+	}
+	// get by name: an AAC file, same chunking and sha256 as the bundle.
+	r := expectHandoff(t, send(mac, Handoff{Action: "get", Meeting: handoffMeeting, Name: "mic-0001.aac", Offset: offset(4)}), "done")
+	if !bytes.Equal(r.Data, audio[4:]) || *r.Size != int64(len(audio)) || r.SHA256 != hexSum(audio) || r.Name != "mic-0001.aac" {
+		t.Fatalf("%+v", r)
+	}
+	expectCode(t, send(mac, Handoff{Action: "get", Meeting: handoffMeeting, Name: "mic-0009.aac", Offset: offset(0)}), CodeInvalidMessage)
+	if r := expectHandoff(t, send(mac, Handoff{Action: "get", Meeting: handoffMeeting, Offset: offset(0)}), "done"); r.SHA256 != hexSum([]byte("bprocessed")) || r.Name != "" {
+		t.Fatalf("bundle %+v", r)
+	}
+
+	// release keeps it and marks it released.
+	expectHandoff(t, send(phone, Handoff{Action: "release", Meeting: handoffMeeting}), "done")
+	if m, ok := entry(mac, handoffMeeting); !ok || !m.Released || m.Mine {
+		t.Fatalf("mac sees %+v", m)
+	}
+	// Another user sees and touches nothing.
+	if _, ok := entry(stranger, handoffMeeting); ok {
+		t.Fatal("other user's meeting listed")
+	}
+	expectHandoff(t, send(stranger, Handoff{Action: "get", Meeting: handoffMeeting, Name: "mic-0001.aac", Offset: offset(0)}), "missing")
+	expectHandoff(t, send(stranger, Handoff{Action: "release", Meeting: handoffMeeting}), "missing")
+	// The Mac deletes it after its import.
+	expectHandoff(t, send(mac, Handoff{Action: "delete", Meeting: handoffMeeting}), "missing")
+	if _, ok := entry(phone, handoffMeeting); ok {
+		t.Fatal("imported meeting kept")
+	}
+
+	// Copy on start; without copy, release deletes like delete.
+	upload(otherMeeting, false)
+	expectHandoff(t, send(phone, Handoff{Action: "start", Meeting: otherMeeting}), "queued")
+	waitState(t, s, user.ID, otherMeeting, "done")
+	if m, _ := entry(phone, otherMeeting); m.Copy {
+		t.Fatalf("%+v", m)
+	}
+	expectHandoff(t, send(phone, Handoff{Action: "release", Meeting: otherMeeting}), "missing")
+	if _, err := os.Stat(filepath.Join(s.userDir(user.ID), otherMeeting)); !os.IsNotExist(err) {
+		t.Fatal("release without copy kept the meeting")
+	}
+	upload(otherMeeting, false)
+	expectHandoff(t, send(phone, Handoff{Action: "start", Meeting: otherMeeting, Copy: true}), "queued")
+	waitState(t, s, user.ID, otherMeeting, "done")
+	if m, _ := entry(phone, otherMeeting); !m.Copy || !m.Mine {
+		t.Fatalf("%+v", m)
+	}
+	expectHandoff(t, send(phone, Handoff{Action: "release", Meeting: otherMeeting}), "done")
 }

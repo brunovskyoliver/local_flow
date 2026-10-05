@@ -231,6 +231,8 @@ final class MeetingDetailViewModel {
   private let now: () -> Int64
   /// Retry on a failed meeting (the server queue).
   @ObservationIgnored var retry: (UUID) async -> Void = { _ in }
+  /// Send to Mac again on a meeting whose Mac copy expired (the server queue).
+  @ObservationIgnored var sendToMacAgain: (UUID) async -> Void = { _ in }
   /// Before playback starts: the list's own playback stops.
   @ObservationIgnored var willPlay: () -> Void = {}
   /// A rename: the list shows the new title.

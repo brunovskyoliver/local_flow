@@ -84,6 +84,8 @@ public struct Meeting: Sendable, Equatable, Identifiable {
   public var language: MeetingLanguage?
   /// Feature 018: **Run on this Mac** — the meeting's remaining work stays local.
   public var runLocally = false
+  /// Feature 020: `iphone` for a meeting recorded on the phone (and its Mac copy).
+  public var origin: MeetingOrigin = .local
   /// IANA name of the zone the meeting is analyzed in — the capture zone;
   /// not persisted, defaults to the current zone.
   public var timeZone: String = TimeZone.current.identifier
@@ -321,10 +323,13 @@ public struct MeetingSummary: Sendable, Equatable, Identifiable {
   public let revision: Int64
   /// Feature 005: the transcription row's state, nil for meetings without one.
   public var transcriptState: TranscriptState? = nil
+  /// Feature 020: where the meeting was recorded.
+  public var origin: MeetingOrigin = .local
 
   public init(
     id: UUID, title: String?, createdAt: Int64, state: MeetingState, recordedMs: Int64,
-    hasTrackWarning: Bool, revision: Int64, transcriptState: TranscriptState? = nil
+    hasTrackWarning: Bool, revision: Int64, transcriptState: TranscriptState? = nil,
+    origin: MeetingOrigin = .local
   ) {
     self.id = id
     self.title = title
@@ -334,6 +339,7 @@ public struct MeetingSummary: Sendable, Equatable, Identifiable {
     self.hasTrackWarning = hasTrackWarning
     self.revision = revision
     self.transcriptState = transcriptState
+    self.origin = origin
   }
 
   public var displayTitle: String { title ?? fallbackTitle(createdAt: createdAt) }

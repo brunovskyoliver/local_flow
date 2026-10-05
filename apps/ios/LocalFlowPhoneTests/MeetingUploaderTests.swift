@@ -174,10 +174,10 @@ final class MeetingUploaderTests: XCTestCase {
     XCTAssertEqual(try row(id)?["mac_copy"] as String?, "waiting")
     let handoff = harness.phone.root.appendingPathComponent("Handoff/\(id.uuidString)")
     XCTAssertFalse(FileManager.default.fileExists(atPath: handoff.path))
-    // Ready meetings are left alone.
+    // A ready meeting only has its Mac copy looked up.
     server.clearLog()
     _ = await uploader.pass()
-    XCTAssertTrue(server.requests.isEmpty)
+    XCTAssertEqual(server.requests.map(\.action), [.list])
   }
 
   func testWithoutTheMacCopyTheServerCopyIsDeleted() async throws {
@@ -193,18 +193,114 @@ final class MeetingUploaderTests: XCTestCase {
     XCTAssertEqual(try row(id)?["mac_copy"] as String?, "none")
   }
 
-  func testAnOlderServerGetsNoCopyAndADelete() async throws {
+  // MARK: Mac copy (User Story 6)
+
+  /// A ready meeting with its copy released.
+  private func readyWithMacCopy(_ uploader: MeetingUploader) async throws -> UUID {
     let id = try await record()
-    server.old = true
-    let uploader = uploader()
     _ = await uploader.pass()
-    XCTAssertEqual(try stage(id), "processing")
-    XCTAssertEqual(try row(id)?["copy_to_mac"] as Bool?, false)
     try complete(id)
     _ = await uploader.pass()
     XCTAssertEqual(try stage(id), "ready")
-    XCTAssertNil(server.stored[id])
-    XCTAssertEqual(server.requests.last?.action, .delete)
+    XCTAssertEqual(try row(id)?["mac_copy"] as String?, "waiting")
+    XCTAssertEqual(server.stored[id]?.released, true)
+    XCTAssertEqual(server.stored[id]?.state, .done)
+    return id
+  }
+
+  private func line(_ id: UUID) throws -> MeetingUploadLine? {
+    try harness.phone.history.database.read { try MeetingUploadLine.fetch([id], db: $0)[id] }
+  }
+
+  func testMacCopyWaitsUntilTheMacTakesItThenShowsDelivered() async throws {
+    let uploader = uploader()
+    let id = try await readyWithMacCopy(uploader)
+    XCTAssertEqual(try line(id)?.macCopyText, "Waiting for Mac")
+    // Still on the server: still waiting.
+    harness.clock.advance(ms: 3_600_000)
+    _ = await uploader.pass()
+    XCTAssertEqual(try row(id)?["mac_copy"] as String?, "waiting")
+    // The Mac imported it and deleted the server copy.
+    server.drop(id)
+    _ = await uploader.pass()
+    XCTAssertEqual(try row(id)?["mac_copy"] as String?, "delivered")
+    XCTAssertEqual(try line(id)?.macCopyText, "Sent to Mac")
+    XCTAssertEqual(try line(id)?.canSendToMacAgain, false)
+    server.clearLog()
+    _ = await uploader.pass()
+    XCTAssertTrue(server.requests.isEmpty, "a delivered copy is not looked up again")
+  }
+
+  func testMacCopyExpiresAndSendToMacAgainUploadsItForTheMacOnly() async throws {
+    let uploader = uploader()
+    let id = try await readyWithMacCopy(uploader)
+    // Nobody took it for longer than the server keeps it.
+    harness.clock.advance(ms: MeetingUploader.macCopyRetentionMilliseconds + 60_000)
+    server.drop(id)
+    _ = await uploader.pass()
+    XCTAssertEqual(try row(id)?["mac_copy"] as String?, "expired")
+    XCTAssertEqual(try line(id)?.macCopyText, "Not delivered to Mac")
+    XCTAssertEqual(try line(id)?.canSendToMacAgain, true)
+
+    // The setting is off now; Send to Mac again still asks for the copy.
+    gate.withLock { $0 = .open(copyToMac: false) }
+    try await uploader.sendToMacAgain(id)
+    XCTAssertEqual(try line(id)?.ready, true, "the phone keeps showing its result")
+    XCTAssertEqual(try line(id)?.text, "Ready")
+    server.clearLog()
+    _ = await uploader.pass(ignoringBackoff: true)
+    XCTAssertEqual(try stage(id), "processing")
+    let stored = try XCTUnwrap(server.stored[id])
+    XCTAssertTrue(stored.copy)
+    XCTAssertTrue(server.requests.contains { $0.action == .start && $0.copy })
+    for path in try segmentPaths(id) {
+      XCTAssertEqual(stored.files[URL(fileURLWithPath: path).lastPathComponent], try local(path))
+    }
+    // The bundle carries the recording, not the phone's transcript.
+    let bundle = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "again-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: bundle) }
+    try XCTUnwrap(stored.files["bundle.sqlite"]).write(to: bundle)
+    let queue = try DatabaseQueue(path: bundle.path)
+    try await queue.read { db in
+      XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM meetings"), 1)
+      XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM transcript_segments"), 0)
+      XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM meeting_transcriptions"), 0)
+    }
+    try queue.close()
+
+    // Processed for the Mac: released, never downloaded or merged here.
+    try server.complete(id) {
+      try FakeHandoffServer.processed(
+        $0, meeting: id, texts: ["Something else entirely."], final: true)
+    }
+    server.clearLog()
+    _ = await uploader.pass()
+    XCTAssertFalse(server.requests.contains { $0.action == .get })
+    XCTAssertEqual(server.requests.filter { $0.action == .release }.count, 1)
+    XCTAssertEqual(try stage(id), "ready")
+    XCTAssertEqual(try row(id)?["mac_copy"] as String?, "waiting")
+    XCTAssertNotNil(try row(id)?["released_at"] as Int64?)
+    XCTAssertEqual(try finalSegments(id), 2, "the phone's transcript is untouched")
+    XCTAssertEqual(server.stored[id]?.released, true)
+    XCTAssertEqual(summaries.withLock { $0 }, [id], "summarized once, the first time")
+  }
+
+  func testAFailedSendToMacAgainLeavesTheMeetingReadyAndNotDelivered() async throws {
+    let uploader = uploader()
+    let id = try await readyWithMacCopy(uploader)
+    harness.clock.advance(ms: MeetingUploader.macCopyRetentionMilliseconds + 60_000)
+    server.drop(id)
+    _ = await uploader.pass()
+    try await uploader.sendToMacAgain(id)
+    _ = await uploader.pass(ignoringBackoff: true)
+    XCTAssertEqual(try stage(id), "processing")
+    server.setState(id, .failed, detail: "exit_70")
+    _ = await uploader.pass()
+    XCTAssertEqual(try stage(id), "ready")
+    XCTAssertEqual(try row(id)?["mac_copy"] as String?, "expired")
+    XCTAssertNil(server.stored[id], "the failed copy goes")
+    XCTAssertEqual(try finalSegments(id), 2)
   }
 
   // MARK: Resume

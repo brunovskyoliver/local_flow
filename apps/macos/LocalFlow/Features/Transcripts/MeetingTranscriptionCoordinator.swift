@@ -32,6 +32,10 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   /// Set while the server takes whole meetings: a stopped meeting goes up once and
   /// its transcript, labels and summary come back processed.
   @ObservationIgnored var handoff: MeetingHandoff?
+  /// Feature 020 (US6): the server offers the handoff, so phone meetings may be imported.
+  @ObservationIgnored var phoneImportAllowed: (@Sendable () async -> Bool)?
+  /// Feature 020 (US6): phone meetings were imported; the library shows them.
+  @ObservationIgnored var phoneMeetingsImported: (@MainActor ([UUID]) -> Void)?
   /// Server only: no local model may load, so a live preview the server does not run
   /// is skipped and the meeting still gets its final pass at stop.
   @ObservationIgnored var livePreviewOptional: (@Sendable () async -> Bool)?
@@ -64,6 +68,13 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   /// How often a meeting the server is processing is asked for its progress.
   static let serverProgressInterval: Duration = .seconds(10)
   var waitingForServer: Set<UUID> { serverWaits.ids }
+  private var phoneImport: Task<Void, Never>?
+  private var phoneImportLoop: Task<Void, Never>?
+  private var lastPhoneImportAt: UInt64?
+  /// Phone meetings are looked for this often while the app runs, and on every server wait
+  /// retry trigger at most once per `phoneImportSpacing`.
+  static let phoneImportInterval: Duration = .seconds(600)
+  static let phoneImportSpacing: UInt64 = 60_000_000_000
   private var finalizationTask: Task<Void, Never>?
   private var rssTask: Task<Void, Never>?
   /// Stopped meetings whose drain finished before `meetingDidComplete` arrived.
@@ -946,6 +957,45 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   /// starts again.
   func serverMayBeReachable() {
     for id in serverWaits.reachable() { enqueueFinalization(.init(meetingID: id, revision: nil)) }
+    importPhoneMeetings()
+  }
+
+  /// Feature 020 (US6): looks for phone meetings now and every `phoneImportInterval`.
+  func startPhoneImports() {
+    guard phoneImportLoop == nil else { return }
+    let clock = clock
+    phoneImportLoop = Task { [weak self] in
+      while !Task.isCancelled {
+        self?.importPhoneMeetings(force: true)
+        do { try await clock.sleep(for: Self.phoneImportInterval) } catch { return }
+      }
+    }
+  }
+
+  /// Imports finished phone meetings waiting on the server (Feature 020, US6), then runs
+  /// the usual follow-up: identification, then the summary, as for a meeting the server
+  /// processed for this Mac.
+  func importPhoneMeetings(force: Bool = false) {
+    guard let handoff, phoneImport == nil else { return }
+    let now = clock.monotonicNanoseconds
+    if !force, let last = lastPhoneImportAt, now &- last < Self.phoneImportSpacing { return }
+    lastPhoneImportAt = now
+    let allowed = phoneImportAllowed
+    phoneImport = Task { [weak self] in
+      let imported = await allowed?() == false ? [] : await handoff.importPhoneMeetings()
+      guard let self else { return }
+      self.phoneImport = nil
+      guard !imported.isEmpty else { return }
+      self.logSink("phone meetings imported: \(imported.count)")
+      for meeting in imported {
+        if let diarization = self.diarization {
+          diarization.meetingDidReturnFromServer(id: meeting.id, labeled: meeting.labeled)
+        } else {
+          self.intelligence?.meetingSpeakersDidSettle(id: meeting.id)
+        }
+      }
+      self.phoneMeetingsImported?(imported.map(\.id))
+    }
   }
 
   /// **Run on this Mac**: the meeting is already marked; its pass resumes locally now.

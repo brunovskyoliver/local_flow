@@ -46,6 +46,8 @@ final class MeetingLibraryViewModel {
   @ObservationIgnored var runOnThisMac: (@MainActor (UUID) async -> Void)?
   @ObservationIgnored var provenance: (@MainActor (UUID) async -> MeetingProvenance?)?
   static let waitingText = "Waiting for your server"
+  /// Feature 020 (US6): the row of a meeting imported from the phone.
+  static let fromIPhoneText = "From iPhone"
 
   func waitsForServer(_ id: UUID) -> Bool { waitingForServer(id) }
 
@@ -256,6 +258,6 @@ final class MeetingLibraryViewModel {
       state: detail.meeting.state, recordedMs: detail.meeting.recordedMs,
       hasTrackWarning: detail.tracks.contains {
         $0.track.health == .failed || $0.track.health == .unrecoverable
-      }, revision: detail.meeting.revision)
+      }, revision: detail.meeting.revision, origin: detail.meeting.origin)
   }
 }
