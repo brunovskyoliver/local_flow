@@ -360,6 +360,44 @@ final class MeetingUploaderTests: XCTestCase {
     XCTAssertEqual(MeetingUploader.backoffMilliseconds(attempts: 0), 30_000)
     XCTAssertEqual(MeetingUploader.backoffMilliseconds(attempts: 4), 480_000)
     XCTAssertEqual(MeetingUploader.backoffMilliseconds(attempts: 9), 600_000)
+    // Out of reach or busy: capped at 2 minutes. Server errors keep the long wait.
+    for detail in ["unreachable", "server_busy"] {
+      XCTAssertEqual(MeetingUploader.backoffMilliseconds(attempts: 4, detail: detail), 120_000)
+      XCTAssertEqual(MeetingUploader.backoffMilliseconds(attempts: 9, detail: detail), 120_000)
+    }
+    XCTAssertEqual(
+      MeetingUploader.backoffMilliseconds(attempts: 9, detail: "server_error"), 600_000)
+  }
+
+  /// SC-004: down for half an hour, the meeting still goes on within 5 minutes of the server
+  /// coming back, with no kick.
+  func testAMeetingGoesOnWithinFiveMinutesOfAnUnreachableServerComingBack() async throws {
+    let id = try await record()
+    server.unreachable = true
+    let uploader = uploader()
+    var next = await uploader.pass()
+    let down = harness.clock.nowMilliseconds
+    while harness.clock.nowMilliseconds - down < 30 * 60_000 {
+      let wait = try XCTUnwrap(next)
+      XCTAssertLessThanOrEqual(wait, .seconds(120))
+      harness.clock.advance(ms: Int64(wait / .milliseconds(1)))
+      next = await uploader.pass()
+    }
+    XCTAssertEqual(try detail(id), "unreachable")
+    XCTAssertGreaterThan(try row(id)?["attempts"] as Int? ?? 0, 5)
+
+    // Back just after an attempt missed it: the longest wait.
+    server.unreachable = false
+    let back = harness.clock.nowMilliseconds
+    while try stage(id) != "processing" {
+      let wait = try XCTUnwrap(next)
+      harness.clock.advance(ms: Int64(wait / .milliseconds(1)))
+      next = await uploader.pass()
+    }
+    try complete(id)
+    _ = await uploader.pass()
+    XCTAssertEqual(try stage(id), "ready")
+    XCTAssertLessThanOrEqual(harness.clock.nowMilliseconds - back, 5 * 60_000)
   }
 
   // MARK: Queue order
@@ -473,6 +511,38 @@ final class MeetingUploaderTests: XCTestCase {
     _ = await uploader.pass(ignoringBackoff: true)
     XCTAssertEqual(try stage(id), "ready")
     XCTAssertFalse(server.requests.contains { $0.action == .release }, "released once")
+  }
+
+  func testRetrySummaryRunsTheSummaryAgainWithoutUploading() async throws {
+    let id = try await record(seconds: 3)
+    summary.withLock { $0 = .failed(.malformedResponse) }
+    let uploader = uploader()
+    _ = await uploader.pass()
+    try complete(id)
+    _ = await uploader.pass()
+    XCTAssertEqual(try stage(id), "ready")
+    XCTAssertEqual(try detail(id), "summary_failed")
+    XCTAssertEqual(try line(id)?.summaryFailed, true)
+    XCTAssertEqual(try line(id)?.text, "Ready")
+    // Only a meeting whose summary failed can retry it; Retry on it changes nothing.
+    try await uploader.retry(id)
+    XCTAssertEqual(try stage(id), "ready")
+
+    summary.withLock { $0 = .adopted }
+    try await uploader.retrySummary(id)
+    XCTAssertEqual(try stage(id), "summarizing")
+    server.clearLog()
+    _ = await uploader.pass(ignoringBackoff: true)
+    XCTAssertEqual(try stage(id), "ready")
+    XCTAssertNil(try detail(id))
+    XCTAssertEqual(try line(id)?.summaryFailed, false)
+    XCTAssertEqual(summaries.withLock { $0 }, [id, id])
+    XCTAssertFalse(
+      server.requests.contains { [.put, .start, .get, .release].contains($0.action) },
+      "the server's copy is already released: nothing goes up or comes down")
+    XCTAssertEqual(try finalSegments(id), 2)
+    try await uploader.retrySummary(id)
+    XCTAssertEqual(try stage(id), "ready", "a ready meeting with its summary stays ready")
   }
 
   func testOnlyStoppedPhoneMeetingsWithAudioAreQueued() async throws {

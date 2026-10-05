@@ -17,6 +17,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
   private var pasteboard: FakePasteboard!
   private var busy = false
   private let gate = OSAllocatedUnfairLock(initialState: MeetingUploader.Gate.open())
+  private let summary = OSAllocatedUnfairLock(initialState: MeetingSummarizer.Outcome.adopted)
 
   override func setUp() async throws {
     // About 17 s per segment, so a 40 s meeting has three.
@@ -52,7 +53,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         pool: pool, database: database, root: harness.root, eligible: { _ in false },
         defaultLanguage: { .automatic }),
       channel: server, gate: { [gate] in gate.withLock { $0 } },
-      summarize: { _ in .adopted }, now: { clock.nowMilliseconds })
+      summarize: { [summary] _ in summary.withLock { $0 } }, now: { clock.nowMilliseconds })
   }
 
   /// A stopped meeting with `seconds` of audio.
@@ -239,6 +240,56 @@ final class MeetingDetailViewModelTests: XCTestCase {
     model.copy()
     XCTAssertEqual(pasteboard.string, text)
     XCTAssertTrue(model.copied)
+  }
+
+  // MARK: Summary and state
+
+  func testAFailedSummaryOffersRetrySummaryThroughTheQueue() async throws {
+    let id = try await record(seconds: 10)
+    let uploader = uploader()
+    summary.withLock { $0 = .failed(.malformedResponse) }
+    _ = await uploader.pass()
+    try server.complete(id) {
+      try FakeHandoffServer.processed($0, meeting: id, texts: ["Hello there."])
+    }
+    _ = await uploader.pass()
+    let model = model(id)
+    model.retrySummary = { id in
+      try? await uploader.retrySummary(id)
+      _ = await uploader.pass(ignoringBackoff: true)
+    }
+    await model.load()
+    XCTAssertEqual(model.content.upload?.ready, true)
+    XCTAssertEqual(model.content.upload?.summaryFailed, true)
+    XCTAssertEqual(model.content.lines.map(\.text), ["Hello there."], "the transcript shows")
+
+    summary.withLock { $0 = .adopted }
+    await model.retrySummary(id)
+    await model.load()
+    XCTAssertEqual(model.content.upload?.ready, true)
+    XCTAssertEqual(model.content.upload?.summaryFailed, false)
+  }
+
+  func testARecoveredMeetingStaysMarkedAfterItEntersTheQueue() async throws {
+    let id = try await record(seconds: 10)
+    try await harness.phone.history.database.write { db in
+      try db.execute(
+        sql: "UPDATE meetings SET state='interrupted' WHERE id=?", arguments: [id.uuidString])
+    }
+    var item = MeetingsViewModel.Item(
+      id: id, title: "", date: .now, durationMs: 0, state: .interrupted)
+    XCTAssertEqual(item.label, "Recovered")
+    gate.withLock { $0 = .closed(MeetingUploader.Detail.processingOff) }
+    _ = await uploader().pass()
+    item.upload = try await harness.phone.history.database.read {
+      try MeetingUploadLine.fetch([id], db: $0)[id]
+    }
+    XCTAssertEqual(item.label, "Recovered · Waiting for server (processing is off)")
+    let model = model(id)
+    await model.load()
+    XCTAssertEqual(model.content.state, .interrupted, "the detail shows Recovered too")
+    item.upload = MeetingUploadLine(stage: .ready, detail: nil, serverProgress: nil)
+    XCTAssertEqual(item.label, "Recovered · Ready")
   }
 
   // MARK: Deleting

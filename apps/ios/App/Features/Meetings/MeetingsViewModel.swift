@@ -66,6 +66,11 @@ struct MeetingUploadLine: Equatable {
     }
   }
 
+  /// The transcript is here but the summary failed: Retry summary (FR-026).
+  var summaryFailed: Bool {
+    stage == .ready && !resending && detail == MeetingUploader.Detail.summaryFailed
+  }
+
   /// The server's 7 days ran out before the Mac took the copy (FR-045).
   var canSendToMacAgain: Bool { stage == .ready && macCopy == MeetingUploader.MacCopy.expired }
   /// The owner can fix the reason in Settings › Server (scenario 6).
@@ -143,12 +148,19 @@ final class MeetingsViewModel {
     var label: String {
       switch state {
       case .preparing, .recording, .paused: "Recording"
-      case _ where upload != nil: upload!.text
-      case .interrupted: "Recovered"
+      case _ where upload != nil: text(upload!)
+      case .interrupted: Self.recovered
       case .completed: "Saved on this iPhone"
       default: state.badgeText
       }
     }
+
+    /// A recovered meeting stays marked as recovered next to its server stage (US1/AC5).
+    func text(_ upload: MeetingUploadLine) -> String {
+      state == .interrupted ? "\(Self.recovered) · \(upload.text)" : upload.text
+    }
+
+    static let recovered = "Recovered"
     var playable: Bool { [.completed, .interrupted].contains(state) }
   }
 
@@ -163,6 +175,8 @@ final class MeetingsViewModel {
   @ObservationIgnored var retry: (UUID) async -> Void = { _ in }
   /// Send to Mac again on a meeting whose Mac copy expired (the server queue).
   @ObservationIgnored var sendToMacAgain: (UUID) async -> Void = { _ in }
+  /// Retry summary on a ready meeting whose summary failed (the server queue).
+  @ObservationIgnored var retrySummary: (UUID) async -> Void = { _ in }
   @ObservationIgnored private var player: AVQueuePlayer?
   @ObservationIgnored private var endObserver: NSObjectProtocol?
 
@@ -205,7 +219,7 @@ final class MeetingsViewModel {
       return item.label
     }
     upload.uploaded = uploads.uploaded[item.id] ?? upload.uploaded
-    return upload.text
+    return item.text(upload)
   }
 
   /// Each item's server line, with the upload fraction while it goes up.
@@ -228,6 +242,7 @@ final class MeetingsViewModel {
       pasteboard: SystemPasteboard(), audioBusy: audioBusy, delete: delete)
     detail.retry = { [weak self] in await self?.retry($0) }
     detail.sendToMacAgain = { [weak self] in await self?.sendToMacAgain($0) }
+    detail.retrySummary = { [weak self] in await self?.retrySummary($0) }
     detail.willPlay = { [weak self] in self?.stopPlayback() }
     detail.onChange = { [weak self] in Task { await self?.refresh() } }
     return detail

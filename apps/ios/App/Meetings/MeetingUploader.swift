@@ -47,7 +47,9 @@ struct PoolHandoffChannel: MeetingHandoffChannel {
 /// a network change or a suspended app resumes where the server's confirmations left off.
 ///
 /// One meeting at a time, oldest first. Nothing is sent unless the gate is open (approved,
-/// switch on, SC-008). A failed attempt waits `min(600, 30 << min(attempts, 5))` s.
+/// switch on, SC-008). A failed attempt waits `min(cap, 30 << min(attempts, 5))` s, where
+/// `cap` is 120 s while the server is unreachable or busy (it goes on within 5 minutes of the
+/// server coming back, SC-004) and 600 s after a server error.
 ///
 /// While a meeting records (User Story 3, research R3), each finished segment goes up as
 /// soon as the server can take it, then the meeting's current rows as `rows.sqlite`, then a
@@ -157,8 +159,15 @@ actor MeetingUploader {
   /// Attempts that end in a server or local error before the meeting fails for good.
   static let failureAttempts = 5
 
-  static func backoffMilliseconds(attempts: Int) -> Int64 {
-    Int64(min(600, 30 << min(attempts, 5))) * 1_000
+  /// `detail`: why the last attempt failed. Out of reach or busy keeps the wait short;
+  /// a server error or refusal waits longer.
+  static func backoffMilliseconds(attempts: Int, detail: String? = nil) -> Int64 {
+    let cap = isOutOfReach(detail) ? 120 : 600
+    return Int64(min(cap, 30 << min(attempts, 5))) * 1_000
+  }
+
+  private static func isOutOfReach(_ detail: String?) -> Bool {
+    detail == Detail.unreachable || detail == Detail.busy
   }
 
   private let database: DatabasePool
@@ -175,6 +184,10 @@ actor MeetingUploader {
   /// The server refused `rows.sqlite` or `partial` (before Feature 020's US3): meetings go
   /// up after Stop only, until the app restarts.
   private var partialUnsupported = false
+  /// For the timing log (SC-004), per meeting in this process: the last attempt that could
+  /// not reach the server, and the first one after it that did.
+  private var outOfReachAt: [UUID: Int64] = [:]
+  private var reachedAt: [UUID: Int64] = [:]
   private static let log = Logger(subsystem: "org.localflow.LocalFlowPhone", category: "upload")
 
   init(
@@ -246,13 +259,15 @@ actor MeetingUploader {
   private func queue(_ rows: [Upload], gate: Gate, ignoringBackoff: Bool) async -> Duration? {
     for row in rows {
       if !ignoringBackoff, row.attempts > 0 {
-        let due = row.updatedAt + Self.backoffMilliseconds(attempts: row.attempts)
+        let due =
+          row.updatedAt + Self.backoffMilliseconds(attempts: row.attempts, detail: row.detail)
         if now() < due { return .milliseconds(due - now()) }
       }
       switch await advance(row.meetingID, gate: gate) {
       case .finished: continue
       case .poll: return Self.pollInterval
-      case .retry(let attempts): return .milliseconds(Self.backoffMilliseconds(attempts: attempts))
+      case .retry(let attempts, let detail):
+        return .milliseconds(Self.backoffMilliseconds(attempts: attempts, detail: detail))
       }
     }
     return nil
@@ -324,6 +339,14 @@ actor MeetingUploader {
   func retry(_ id: UUID) async throws {
     try await update(
       id, ["stage": "waiting", "detail": nil, "attempts": 0], where: "stage='failed'")
+  }
+
+  /// Retry summary on a ready meeting whose summary failed (FR-026): the summary runs again
+  /// from the merged transcript. The server's copy is already released; nothing goes up.
+  func retrySummary(_ id: UUID) async throws {
+    try await update(
+      id, ["stage": "summarizing", "detail": nil, "attempts": 0],
+      where: "stage='ready' AND detail='\(Detail.summaryFailed)'")
   }
 
   /// Send to Mac again (FR-045) on a ready meeting whose Mac copy expired: the meeting goes
@@ -479,7 +502,7 @@ actor MeetingUploader {
   private enum Outcome: Equatable {
     case finished
     case poll
-    case retry(attempts: Int)
+    case retry(attempts: Int, detail: String)
   }
 
   /// A refusal that repeats on every attempt.
@@ -501,6 +524,7 @@ actor MeetingUploader {
           return .finished
         case .waiting, .uploading, .processing:
           let list = try await channel.call(.init(action: .list))
+          if reachedAt[id] == nil { reachedAt[id] = now() }
           let entry = list.meetings?.first { $0.meeting == id }
           switch entry?.state ?? .missing {
           case .missing:
@@ -582,10 +606,12 @@ actor MeetingUploader {
             return try await wait(id, row: row, detail: Detail.unreachable)
           case .adopted:
             try await update(id, ["stage": "ready", "detail": nil, "attempts": 0])
+            await logReady(id)
             forget(id)
           case .failed:
-            // The transcript is the result; the summary can be made again later.
+            // The transcript is the result; Retry summary makes the summary again.
             try await update(id, ["stage": "ready", "detail": Detail.summaryFailed, "attempts": 0])
+            await logReady(id)
             forget(id)
           }
         }
@@ -628,7 +654,32 @@ actor MeetingUploader {
   private func wait(_ id: UUID, row: Upload, detail: String) async throws -> Outcome {
     let stage = row.stage == .uploading ? "waiting" : row.stage.rawValue
     try await update(id, ["stage": stage, "detail": detail, "attempts": row.attempts + 1])
-    return .retry(attempts: row.attempts + 1)
+    if Self.isOutOfReach(detail) {
+      outOfReachAt[id] = now()
+      reachedAt[id] = nil
+    }
+    return .retry(attempts: row.attempts + 1, detail: detail)
+  }
+
+  /// Timings for SC-003 and SC-004, as numbers only: Stop to ready, and from the server
+  /// being reached again (and from the last attempt that could not reach it) to ready.
+  /// -1 when unknown, e.g. after a relaunch.
+  private func logReady(_ id: UUID) async {
+    let now = now()
+    let stopped = try? await database.read { db in
+      try Int64.fetchOne(
+        db, sql: "SELECT COALESCE(stopped_at, completed_at) FROM meetings WHERE id=?",
+        arguments: [id.uuidString])
+    }
+    let stopToReady = stopped.map { now - $0 } ?? -1
+    let reachedToReady = reachedAt[id].map { now - $0 } ?? -1
+    let outOfReachToReady = outOfReachAt[id].map { now - $0 } ?? -1
+    Self.log.notice(
+      """
+      Meeting ready: stop_to_ready_ms=\(stopToReady, privacy: .public) \
+      reachable_to_ready_ms=\(reachedToReady, privacy: .public) \
+      unreachable_to_ready_ms=\(outOfReachToReady, privacy: .public)
+      """)
   }
 
   /// A channel error during the download that says nothing about the network.
@@ -736,11 +787,13 @@ actor MeetingUploader {
     }
   }
 
-  /// The meeting's rows as they are now, replacing the server's `rows.sqlite`.
-  private func putRows(_ id: UUID) async throws {
+  /// The meeting's rows as they are now, replacing the server's `rows.sqlite`. Returns the
+  /// bytes sent.
+  @discardableResult
+  private func putRows(_ id: UUID) async throws -> Int {
     let rows = bundleURL(id).deletingLastPathComponent().appendingPathComponent("rows.sqlite")
     try await handoff.exportRows(id, to: rows)
-    try await put(id, name: "rows.sqlite", url: rows) { _ in }
+    return try await put(id, name: "rows.sqlite", url: rows) { _ in }
   }
 
   // MARK: Upload
@@ -750,6 +803,8 @@ actor MeetingUploader {
   /// recorded is followed by the rows as they are after Stop.
   private func send(_ id: UUID, row: Upload, gate: Gate) async throws {
     var row = row
+    let began = now()
+    var bytes = 0
     let liveBundle =
       row.bundleUploaded || FileManager.default.fileExists(atPath: bundleURL(id).path)
     if row.stage != .uploading {
@@ -790,22 +845,22 @@ actor MeetingUploader {
     var sent = files.filter { row.confirmed.contains($0.0) }.reduce(0) { $0 + $1.2 }
     var confirmed = row.confirmed
     for (path, url, size) in files where !confirmed.contains(path) {
-      try await put(id, name: url.lastPathComponent, url: url) { bytes in
-        onChange(.uploaded(id, Double(sent + bytes) / Double(total)))
+      bytes += try await put(id, name: url.lastPathComponent, url: url) { offset in
+        onChange(.uploaded(id, Double(sent + offset) / Double(total)))
       }
       sent += size
       confirmed.append(path)
       try await update(id, ["confirmed_segments": confirmed.joined(separator: ",")])
     }
     if !row.bundleUploaded {
-      try await put(id, name: "bundle.sqlite", url: bundle) { bytes in
-        onChange(.uploaded(id, Double(sent + bytes) / Double(total)))
+      bytes += try await put(id, name: "bundle.sqlite", url: bundle) { offset in
+        onChange(.uploaded(id, Double(sent + offset) / Double(total)))
       }
       try await update(id, ["bundle_uploaded": 1])
     }
     if liveBundle {
       do {
-        try await putRows(id)
+        bytes += try await putRows(id)
       } catch RemoteChannelError.server(.invalidMessage) {
         // A server without `rows.sqlite` never had a partial run; its bundle is from Stop.
       }
@@ -816,13 +871,17 @@ actor MeetingUploader {
       throw RemoteChannelError.protocolError
     }
     try await update(id, ["stage": "processing", "detail": nil, "attempts": 0])
+    let ms = now() - began
+    Self.log.notice("Meeting upload: bytes=\(bytes, privacy: .public) ms=\(ms, privacy: .public)")
   }
 
   /// One file, in chunks from the server's size; the last chunk carries the SHA-256, and a
-  /// mismatch (the server empties the file) sends it again from the start.
+  /// mismatch (the server empties the file) sends it again from the start. Returns the
+  /// bytes sent.
+  @discardableResult
   private func put(
     _ id: UUID, name: String, url: URL, progress: (Int) -> Void
-  ) async throws {
+  ) async throws -> Int {
     let data = try Data(contentsOf: url, options: .mappedIfSafe)
     let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     // An offset the server does not have writes nothing and returns its size.
@@ -830,6 +889,7 @@ actor MeetingUploader {
       try await channel.call(.init(action: .put, meeting: id, name: name, offset: 0)).offset ?? 0
     guard offset <= data.count else { throw RemoteChannelError.protocolError }
     var mismatches = 0
+    var sent = 0
     while true {
       try Task.checkCancellation()
       progress(offset)
@@ -842,6 +902,7 @@ actor MeetingUploader {
       guard let next = reply.offset, reply.state == .receiving else {
         throw RemoteChannelError.protocolError
       }
+      sent += end - offset
       if last && next == 0 && !data.isEmpty {
         mismatches += 1
         guard mismatches < 3 else { throw RemoteChannelError.protocolError }
@@ -849,7 +910,7 @@ actor MeetingUploader {
         continue
       }
       guard next == end else { throw RemoteChannelError.protocolError }
-      if last { return }
+      if last { return sent }
       offset = next
     }
   }
@@ -897,6 +958,8 @@ actor MeetingUploader {
 
   private func forget(_ id: UUID) {
     partialAt[id] = nil
+    outOfReachAt[id] = nil
+    reachedAt[id] = nil
     try? FileManager.default.removeItem(
       at: directory.appendingPathComponent(id.uuidString, isDirectory: true))
   }

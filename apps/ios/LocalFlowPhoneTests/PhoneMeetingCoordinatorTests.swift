@@ -47,6 +47,24 @@ final class PhoneMeetingCoordinatorTests: XCTestCase {
     XCTAssertGreaterThan(detail?.tracks.first?.track.totalDurationMs ?? 0, 800)
   }
 
+  func testLowStorageWarnsOnTheRecordingScreenWhenItDropsMidMeeting() async throws {
+    await meetings.start()
+    XCTAssertNil(meetings.lowStorageWarning)
+    XCTAssertNil(meetings.notice)
+    harness.engine.feed(seconds: 1, into: harness.recorder)
+    harness.free = 900_000_000
+    await harness.recorder.heartbeat()
+    XCTAssertTrue(meetings.isRecording)
+    XCTAssertEqual(meetings.lowStorageWarning, PhoneMeetingCoordinator.lowStorage)
+    harness.free = 5_000_000_000
+    await harness.recorder.heartbeat()
+    XCTAssertNil(meetings.lowStorageWarning, "space came back")
+    harness.free = 900_000_000
+    await harness.recorder.heartbeat()
+    await meetings.stop()
+    XCTAssertNil(meetings.lowStorageWarning, "only while recording")
+  }
+
   func testStopsAtTheFourHourCap() async throws {
     harness.makeRecorder(limits: .init(maximumRecordedMs: 500))
     await meetings.start()

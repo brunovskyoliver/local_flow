@@ -26,7 +26,7 @@ The phone uses the shared meeting schema from `HistoryMigrations` (already on th
 | `copy_to_mac` | INTEGER NOT NULL DEFAULT 1 | snapshot of the setting at first upload |
 | `mac_copy` | TEXT NOT NULL DEFAULT 'none' | `none`, `waiting`, `delivered`, `expired` (CHECK) |
 | `released_at` | INTEGER | ms since epoch, when `release` was sent |
-| `attempts` | INTEGER NOT NULL DEFAULT 0 | for backoff `min(600, 30 << min(attempts, 5))` seconds |
+| `attempts` | INTEGER NOT NULL DEFAULT 0 | for backoff `min(cap, 30 << min(attempts, 5))` seconds; `cap` is 120 after `unreachable` or `server_busy` (SC-004), 600 otherwise |
 | `updated_at` | INTEGER NOT NULL | ms since epoch |
 
 ## Phone migration `phone-meetings-v2` (PhoneMigrations, phone only)

@@ -7,9 +7,9 @@
 ## Meetings tab
 
 - Record meeting button on top; disabled with a reason while a dictation is transcribing.
-- List rows: title, date, duration, state label: Recording, Waiting for server (with reason), Uploading n%, Processing n%, Ready, Failed. Mac copy line when relevant: Waiting for Mac, Sent to Mac, Not delivered.
-- Recording screen: elapsed time, input level, input name, "Transcribed up to mm:ss" when known, Stop.
-- Meeting detail: summary (headline, topics, action items), transcript lines (speaker, time, text), tap a line to play from there, rename meeting, rename speaker, Copy, Share (plain text), Delete (confirm), Retry on failure, Send to Mac again when expired.
+- List rows: title, date, duration, state label: Recording, Waiting for server (with reason), Uploading n%, Processing n%, Ready, Failed; a recovered meeting reads "Recovered · " before its server stage. Mac copy line when relevant: Waiting for Mac, Sent to Mac, Not delivered.
+- Recording screen: elapsed time, input level, input name, "Transcribed up to mm:ss" when known, the low-storage line while under 1 GB free, Stop.
+- Meeting detail: summary (headline, topics, action items), transcript lines (speaker, time, text), tap a line to play from there, rename meeting, rename speaker, Copy, Share (plain text), Delete (confirm), Retry on failure, "The summary couldn't be made" with Retry summary when only the summary failed, Recovered for a recovered meeting, Send to Mac again when expired.
 
 ## Settings › Server (new section)
 

@@ -34,6 +34,13 @@ struct MeetingDetailView: View {
 
   var body: some View {
     List {
+      if content.state == .interrupted {
+        Section {
+          Label(MeetingsViewModel.Item.recovered, systemImage: "arrow.counterclockwise")
+            .font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
+            .accessibilityIdentifier("meeting.recovered")
+        }
+      }
       if let upload = content.upload, !upload.ready {
         Section {
           Text(statusText(upload)).font(.flow(size: 15))
@@ -43,6 +50,14 @@ struct MeetingDetailView: View {
           } else if upload.needsServerSettings {
             Button("Server settings", action: openServerSettings)
           }
+        }
+      }
+      if let upload = content.upload, upload.summaryFailed {
+        Section {
+          Text("The summary couldn't be made").font(.flow(size: 14))
+            .foregroundStyle(SottoPalette.warning)
+          Button("Retry summary") { Task { await model.retrySummary(model.meetingID) } }
+            .accessibilityIdentifier("meeting.retrySummary")
         }
       }
       if let upload = content.upload, upload.ready, let mac = upload.macCopyText {

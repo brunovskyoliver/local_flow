@@ -73,6 +73,10 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
 
   var isRecording: Bool { meetingID != nil }
 
+  /// Under 1 GB free while recording, from the recorder's heartbeat: the start check and
+  /// every 5 s after (spec Edge Cases "Storage runs low while recording").
+  var lowStorageWarning: String? { isRecording && recorder.lowStorage ? Self.lowStorage : nil }
+
   /// Why Record meeting is disabled, or nil.
   var startBlockedReason: String? {
     guard meetingID == nil else { return nil }
@@ -156,9 +160,8 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
     }
     meetingID = created
     transcribedMs = nil
-    notice =
-      endedDictation
-      ? Self.endedDictation : recorder.lowStorage ? Self.lowStorage : nil
+    // Low storage shows on the recording screen while it lasts (`lowStorageWarning`).
+    notice = endedDictation ? Self.endedDictation : nil
     revision += 1
     if let created { onStarted?(created) }
   }

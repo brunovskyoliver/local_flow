@@ -22,6 +22,10 @@ struct RecordingView: View {
       if let ms = meetings.transcribedMs {
         Text(Self.transcribed(ms)).font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
       }
+      if let warning = meetings.lowStorageWarning {
+        Text(warning).font(.flow(size: 13)).foregroundStyle(SottoPalette.warning)
+          .multilineTextAlignment(.center)
+      }
       Button {
         Task { await meetings.stop() }
       } label: {
