@@ -509,9 +509,10 @@ type MeetingCancel struct {
 }
 
 // Handoff is one meeting handoff request: put a chunk of a file, start
-// processing, list, get a chunk of the processed bundle, or delete. Meeting is
-// absent for list only; Name and Offset belong to put (Offset also to get);
-// Data and SHA256 to put only.
+// processing, list, get a chunk of the processed bundle or an AAC file,
+// delete, or release (Feature 020). Meeting is absent for list only; Name and
+// Offset belong to put (Offset also to get, Name optionally, AAC only); Data
+// and SHA256 to put only; Partial to start only; Copy to put and start.
 type Handoff struct {
 	Op      int64  `json:"op"`
 	Action  string `json:"action"`
@@ -520,6 +521,8 @@ type Handoff struct {
 	Offset  *int64 `json:"offset,omitempty"`
 	Data    Base64 `json:"data,omitempty"`
 	SHA256  string `json:"sha256,omitempty"`
+	Partial bool   `json:"partial,omitempty"`
+	Copy    bool   `json:"copy,omitempty"`
 }
 
 // HandoffReply answers one handoff. State is absent exactly when Meetings
@@ -538,10 +541,14 @@ type HandoffReply struct {
 }
 
 type HandoffMeeting struct {
-	Meeting  string `json:"meeting"`
-	State    string `json:"state"`
-	Detail   string `json:"detail,omitempty"`
-	Progress *int   `json:"progress,omitempty"` // processing only, 0-100
+	Meeting       string `json:"meeting"`
+	State         string `json:"state"`
+	Detail        string `json:"detail,omitempty"`
+	Progress      *int   `json:"progress,omitempty"`       // processing only, 0-100
+	TranscribedMS *int64 `json:"transcribed_ms,omitempty"` // after a partial run
+	Mine          bool   `json:"mine,omitempty"`           // first put came from the caller's device
+	Copy          bool   `json:"copy,omitempty"`           // the owner asked for a Mac copy
+	Released      bool   `json:"released,omitempty"`       // the originating device has its result
 }
 
 // ErrorMessage is the error control message. Op is 0 (absent) for hello errors.
@@ -1352,7 +1359,10 @@ func validVector(v []float64) error {
 
 func (m MeetingCancel) validate() (Message, error) { return m, nil }
 
-var handoffName = regexp.MustCompile(`^(bundle\.sqlite|(mic|system)-[0-9]{4}\.aac)$`)
+var (
+	handoffName  = regexp.MustCompile(`^(bundle\.sqlite|rows\.sqlite|(mic|system)-[0-9]{4}\.aac)$`)
+	handoffAudio = regexp.MustCompile(`^(mic|system)-[0-9]{4}\.aac$`)
+)
 
 // validMeetingID accepts an uppercase canonical UUID.
 func validMeetingID(s string) bool {
@@ -1379,24 +1389,28 @@ func validHandoffState(s string) bool {
 	return false
 }
 
-// validHandoffDetail allows a short lowercase code, on failed only.
+// validHandoffDetail allows a short lowercase code, on failed, and on
+// receiving after a failed partial run (partial_failed).
 func validHandoffDetail(state, detail string) bool {
-	return detail == "" || (state == "failed" && textWithin(detail, 1, maxHandoffDetail) &&
+	return detail == "" || ((state == "failed" || state == "receiving") && textWithin(detail, 1, maxHandoffDetail) &&
 		strings.Trim(detail, "abcdefghijklmnopqrstuvwxyz0123456789_") == "")
 }
 
 func (m Handoff) validate() (Message, error) {
 	put, get := m.Action == "put", m.Action == "get"
 	switch m.Action {
-	case "put", "start", "list", "get", "delete":
+	case "put", "start", "list", "get", "delete", "release":
 	default:
 		return nil, invalid("handoff action")
 	}
 	switch {
 	case (m.Action == "list") != (m.Meeting == "") || (m.Meeting != "" && !validMeetingID(m.Meeting)):
 		return nil, invalid("handoff meeting")
-	case put != (m.Name != "") || (put && !handoffName.MatchString(m.Name)):
+	case put != (m.Name != "") && !get, put && !handoffName.MatchString(m.Name),
+		get && m.Name != "" && !handoffAudio.MatchString(m.Name):
 		return nil, invalid("handoff name")
+	case m.Partial && m.Action != "start", m.Copy && !put && m.Action != "start":
+		return nil, invalid("handoff flags")
 	case (put || get) != (m.Offset != nil) || (m.Offset != nil && (*m.Offset < 0 || *m.Offset > MaxHandoffFileBytes)):
 		return nil, invalid("handoff offset")
 	case m.Data != nil && (!put || len(m.Data) == 0), m.SHA256 != "" && (!put || !validSHA256(m.SHA256)):
@@ -1414,7 +1428,8 @@ func (m HandoffReply) validate() (Message, error) {
 			return nil, invalid("handoff list reply")
 		}
 		for _, entry := range *m.Meetings {
-			if !validMeetingID(entry.Meeting) || !validHandoffState(entry.State) || !validHandoffDetail(entry.State, entry.Detail) {
+			if !validMeetingID(entry.Meeting) || !validHandoffState(entry.State) || !validHandoffDetail(entry.State, entry.Detail) ||
+				(entry.TranscribedMS != nil && *entry.TranscribedMS < 0) {
 				return nil, invalid("handoff list entry")
 			}
 		}

@@ -17,10 +17,10 @@
 
 **Purpose**: decisions, schema and wire contract that every later phase builds on.
 
-- [ ] T001 Write `docs/adr/0034-phone-meetings.md` (phone records and owns its meetings; server copy kept until the Mac imports it, at most 7 days; amends ADR 0006 and ADR 0033 retention; constitution check) and add it to `docs/adr/README.md`
-- [ ] T002 Add migration `phone-meetings-v19` to `packages/LocalFlowCore/Sources/LocalFlowCore/HistoryMigrations.swift`: rebuild `meeting_segments` with `rotated` in both reason CHECKs (rows, indexes, foreign keys preserved) and add `meetings.origin` (`local`/`iphone`) per data-model.md
-- [ ] T003 Update the frozen migration list in `apps/macos/LocalFlowTests/MacCompatibilityTests.swift` and add a migration test in `packages/LocalFlowCore/Tests/LocalFlowCoreTests/` that upgrades a v18 database with segment rows and checks they survive and `rotated` is accepted
-- [ ] T004 [P] Extend `protocol/schemas/remote-message.schema.json` per contracts/handoff-v2.md (`release`, `partial`, `copy`, `name` on `get`, `rows.sqlite`, list entry fields `transcribed_ms`, `mine`, `copy`, `released`) and add the valid/invalid fixtures under `fixtures/remote/messages/`
+- [X] T001 Write `docs/adr/0034-phone-meetings.md` (phone records and owns its meetings; server copy kept until the Mac imports it, at most 7 days; amends ADR 0006 and ADR 0033 retention; constitution check) and add it to `docs/adr/README.md`
+- [X] T002 Add migration `phone-meetings-v19` to `packages/LocalFlowCore/Sources/LocalFlowCore/HistoryMigrations.swift`: rebuild `meeting_segments` with `rotated` in both reason CHECKs (rows, indexes, foreign keys preserved) and add `meetings.origin` (`local`/`iphone`) per data-model.md
+- [X] T003 Update the frozen migration list in `apps/macos/LocalFlowTests/MacCompatibilityTests.swift` and add a migration test in `packages/LocalFlowCore/Tests/LocalFlowCoreTests/` that upgrades a v18 database with segment rows and checks they survive and `rotated` is accepted
+- [X] T004 [P] Extend `protocol/schemas/remote-message.schema.json` per contracts/handoff-v2.md (`release`, `partial`, `copy`, `name` on `get`, `rows.sqlite`, list entry fields `transcribed_ms`, `mine`, `copy`, `released`) and add the valid/invalid fixtures under `fixtures/remote/messages/`
 
 ---
 

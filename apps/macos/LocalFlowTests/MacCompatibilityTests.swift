@@ -15,7 +15,7 @@ final class MacCompatibilityTests: XCTestCase {
         "transcripts-v6", "speakers-v7", "identities-v8", "intelligence-v9",
         "meeting-language-v10", "app-context-v11", "meeting-language-en-sk-v12",
         "foreign-key-indexes-v13", "term-suggestions-v14", "remote-dictation-v15",
-        "dictionary-usage-v16", "one-server-v17", "input-device-v18",
+        "dictionary-usage-v16", "one-server-v17", "input-device-v18", "phone-meetings-v19",
       ])
   }
 

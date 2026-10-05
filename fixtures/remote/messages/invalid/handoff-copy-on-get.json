@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "type": "handoff",
+  "op": 8,
+  "action": "get",
+  "meeting": "5F1C3A2E-9B4D-4E21-8A7C-0D6B2F8E1A93",
+  "offset": 0,
+  "copy": true
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "type": "handoff_reply",
+  "op": 2,
+  "meetings": [
+    {
+      "meeting": "5F1C3A2E-9B4D-4E21-8A7C-0D6B2F8E1A93",
+      "state": "receiving",
+      "transcribed_ms": 2040000,
+      "mine": true
+    },
+    {
+      "meeting": "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D",
+      "state": "done",
+      "mine": false,
+      "copy": true,
+      "released": true
+    },
+    {
+      "meeting": "1B2C3D4E-5F6A-4B7C-8D9E-0F1A2B3C4D5E",
+      "state": "receiving",
+      "detail": "partial_failed"
+    }
+  ]
+}

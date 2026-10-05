@@ -209,6 +209,12 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 		}
 		return HandoffReply{Meetings: &list}, nil
 	}
+	// ponytail: Feature 020 phase 1 adds these to the wire format only; refuse them
+	// until the handler implements them, so release cannot fall into the get branch.
+	if req.Action == "release" || req.Partial || req.Copy || req.Name == "rows.sqlite" ||
+		(req.Action == "get" && req.Name != "") {
+		return HandoffReply{}, invalid("handoff action not supported yet")
+	}
 	dir := filepath.Join(userDir, req.Meeting)
 	state, detail := readState(dir)
 	reply := HandoffReply{Meeting: req.Meeting, State: state, Detail: detail}

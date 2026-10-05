@@ -1651,12 +1651,12 @@
     "handoff_detail": {
       "type": "string",
       "pattern": "^[a-z0-9_]{1,64}$",
-      "description": "failed only: a short code such as exit_3, timeout or start_failed; never content."
+      "description": "failed, or receiving after a failed partial run (partial_failed): a short code such as exit_3, timeout or start_failed; never content."
     },
     "handoff": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Client: one meeting handoff request, answered by one handoff_reply (or error). put appends data at offset to the named file of a receiving meeting (creating the meeting) and, with sha256, checks the whole file; start queues a complete upload for processing; get reads the processed bundle.sqlite at offset; delete removes the meeting; list names the user's meetings.",
+      "description": "Client: one meeting handoff request, answered by one handoff_reply (or error). put appends data at offset to the named file of a receiving meeting (creating the meeting) and, with sha256, checks the whole file; a put of rows.sqlite at offset 0 replaces that file. start queues a complete upload for processing, or with partial a run over the finished audio that returns the meeting to receiving; copy on put or start asks the server to keep the result for the owner's Mac. get reads the processed bundle.sqlite, or with name one AAC file, at offset; delete removes the meeting; release tells the server the sending device has its result (it deletes the meeting unless a Mac copy was asked for); list names the user's meetings.",
       "required": [
         "schema_version",
         "type",
@@ -1680,7 +1680,8 @@
             "start",
             "list",
             "get",
-            "delete"
+            "delete",
+            "release"
           ]
         },
         "meeting": {
@@ -1688,7 +1689,7 @@
         },
         "name": {
           "type": "string",
-          "pattern": "^(bundle\\.sqlite|(mic|system)-[0-9]{4}\\.aac)$"
+          "pattern": "^(bundle\\.sqlite|rows\\.sqlite|(mic|system)-[0-9]{4}\\.aac)$"
         },
         "offset": {
           "type": "integer",
@@ -1709,6 +1710,14 @@
         "sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "partial": {
+          "type": "boolean",
+          "description": "start only: process the finished audio uploaded so far and return the meeting to receiving."
+        },
+        "copy": {
+          "type": "boolean",
+          "description": "put and start only: keep the processed meeting for the owner's Mac after release, at most 7 days."
         }
       },
       "allOf": [
@@ -1747,6 +1756,16 @@
                   "required": [
                     "sha256"
                   ]
+                },
+                {
+                  "required": [
+                    "partial"
+                  ]
+                },
+                {
+                  "required": [
+                    "copy"
+                  ]
                 }
               ]
             }
@@ -1765,7 +1784,16 @@
               "meeting",
               "name",
               "offset"
-            ]
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "partial"
+                  ]
+                }
+              ]
+            }
           }
         },
         {
@@ -1785,11 +1813,6 @@
               "anyOf": [
                 {
                   "required": [
-                    "name"
-                  ]
-                },
-                {
-                  "required": [
                     "data"
                   ]
                 },
@@ -1797,8 +1820,23 @@
                   "required": [
                     "sha256"
                   ]
+                },
+                {
+                  "required": [
+                    "partial"
+                  ]
+                },
+                {
+                  "required": [
+                    "copy"
+                  ]
                 }
               ]
+            },
+            "properties": {
+              "name": {
+                "pattern": "^(mic|system)-[0-9]{4}\\.aac$"
+              }
             }
           }
         },
@@ -1873,6 +1911,64 @@
                   "required": [
                     "sha256"
                   ]
+                },
+                {
+                  "required": [
+                    "partial"
+                  ]
+                },
+                {
+                  "required": [
+                    "copy"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "release"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "meeting"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "offset"
+                  ]
+                },
+                {
+                  "required": [
+                    "data"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "partial"
+                  ]
+                },
+                {
+                  "required": [
+                    "copy"
+                  ]
                 }
               ]
             }
@@ -1883,7 +1979,7 @@
     "handoff_reply": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Server: the meeting's state after a handoff. put echoes name and the file's stored size in offset; get carries up to 48,000 bytes of bundle.sqlite from offset (data absent at the end) with the whole file's size and sha256; a list reply has meetings (at most 64) and no state.",
+      "description": "Server: the meeting's state after a handoff. put echoes name and the file's stored size in offset; get carries up to 48,000 bytes of bundle.sqlite (or the requested AAC file) from offset (data absent at the end) with the whole file's size and sha256; a list reply has meetings (at most 64) and no state.",
       "required": [
         "schema_version",
         "type",
@@ -1907,7 +2003,7 @@
         },
         "name": {
           "type": "string",
-          "pattern": "^(bundle\\.sqlite|(mic|system)-[0-9]{4}\\.aac)$"
+          "pattern": "^(bundle\\.sqlite|rows\\.sqlite|(mic|system)-[0-9]{4}\\.aac)$"
         },
         "offset": {
           "type": "integer",
@@ -1960,6 +2056,23 @@
                 "minimum": 0,
                 "maximum": 100,
                 "description": "processing only: percent of the meeting's transcription and diarization done, as the processor last reported it."
+              },
+              "transcribed_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "receiving only, after a successful partial run: milliseconds of the meeting transcribed so far."
+              },
+              "mine": {
+                "type": "boolean",
+                "description": "The meeting's first put came from the calling device."
+              },
+              "copy": {
+                "type": "boolean",
+                "description": "The owner asked for a copy on their Mac."
+              },
+              "released": {
+                "type": "boolean",
+                "description": "The device that sent the meeting has its result."
               }
             },
             "if": {
@@ -1970,7 +2083,10 @@
             "then": {
               "properties": {
                 "state": {
-                  "const": "failed"
+                  "enum": [
+                    "failed",
+                    "receiving"
+                  ]
                 }
               }
             }
@@ -2042,7 +2158,10 @@
             "then": {
               "properties": {
                 "state": {
-                  "const": "failed"
+                  "enum": [
+                    "failed",
+                    "receiving"
+                  ]
                 }
               }
             }

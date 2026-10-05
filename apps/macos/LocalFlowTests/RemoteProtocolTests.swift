@@ -51,6 +51,21 @@ final class RemoteProtocolTests: XCTestCase {
     XCTAssertEqual(reply.meetings?.map(\.progress), [nil, 37])
   }
 
+  /// Feature 020: list entries carry partial-run progress and the Mac-copy markers.
+  func testHandoffListCarriesPhoneMeetingFields() throws {
+    let data = try XCTUnwrap(messages("valid").first { $0.name == "handoff_reply-list-v2.json" })
+      .data
+    guard case .handoffReply(_, let reply) = try RemoteServerMessage.decode(data) else {
+      return XCTFail("not a handoff_reply")
+    }
+    let entries = try XCTUnwrap(reply.meetings)
+    XCTAssertEqual(entries.map(\.transcribedMS), [2_040_000, nil, nil])
+    XCTAssertEqual(entries.map(\.mine), [true, false, false])
+    XCTAssertEqual(entries.map(\.copy), [false, true, false])
+    XCTAssertEqual(entries.map(\.released), [false, true, false])
+    XCTAssertEqual(entries[2].detail, "partial_failed")
+  }
+
   /// Client messages the app builds come out as the fixture, field for field.
   func testEveryValidClientMessageRoundTrips() throws {
     var seen = Set<String>()
@@ -112,7 +127,8 @@ final class RemoteProtocolTests: XCTestCase {
             meeting: (fixture["meeting"] as? String).flatMap(UUID.init(uuidString:)),
             name: fixture["name"] as? String, offset: fixture["offset"] as? Int,
             data: (fixture["data"] as? String).flatMap { Data(base64URL: $0) },
-            sha256: fixture["sha256"] as? String))
+            sha256: fixture["sha256"] as? String, partial: fixture["partial"] as? Bool ?? false,
+            copy: fixture["copy"] as? Bool ?? false))
       default:
         message = .rewrite(
           op: op, request: try JSONSerialization.data(withJSONObject: fixture["request"]!))

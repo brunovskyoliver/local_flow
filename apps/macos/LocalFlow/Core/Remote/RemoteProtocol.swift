@@ -228,6 +228,8 @@ enum RemoteClientMessage: Sendable, Equatable {
       if let offset = request.offset { object["offset"] = offset }
       if let data = request.data { object["data"] = data.base64URL }
       if let sha256 = request.sha256 { object["sha256"] = sha256 }
+      if request.partial { object["partial"] = true }
+      if request.copy { object["copy"] = true }
     }
     let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     guard data.count <= RemoteProtocol.maximumControlBytes else {
@@ -674,13 +676,17 @@ extension Data {
 
 /// `handoff`: one action on a meeting handed to the server (or `list`, on none).
 struct RemoteHandoffRequest: Sendable, Equatable {
-  enum Action: String, Sendable { case put, start, list, get, delete }
+  enum Action: String, Sendable { case put, start, list, get, delete, release }
   var action: Action
   var meeting: UUID?
   var name: String?
   var offset: Int?
   var data: Data?
   var sha256: String?
+  /// `start` only (Feature 020): process the audio uploaded so far, then back to `receiving`.
+  var partial = false
+  /// `put` and `start` only (Feature 020): keep the result for the owner's Mac after `release`.
+  var copy = false
 }
 
 /// `handoff_reply`. `state` is absent only on a `list` reply, which has `meetings`.
@@ -692,6 +698,12 @@ struct RemoteHandoffReply: Sendable, Equatable {
     let detail: String?
     /// `processing` only: percent done, 0...100, once the processor has reported.
     var progress: Int? = nil
+    /// Feature 020: `receiving` after a partial run, milliseconds transcribed so far.
+    var transcribedMS: Int? = nil
+    /// Feature 020: sent by this device, a Mac copy was asked for, the sender has its result.
+    var mine = false
+    var copy = false
+    var released = false
   }
   var state: State?
   var meeting: UUID?
@@ -761,15 +773,23 @@ struct RemoteHandoffReply: Sendable, Equatable {
           throw RemoteProtocolError.invalidMessage
         }
         let detail = entry["detail"] as? String
-        guard detail == nil || state == .failed else { throw RemoteProtocolError.invalidMessage }
+        guard detail == nil || state == .failed || state == .receiving else {
+          throw RemoteProtocolError.invalidMessage
+        }
         // An out-of-range percent is dropped rather than failing the whole list.
         let progress = entry["progress"].flatMap(integer).flatMap {
           (0...100).contains($0) ? $0 : nil
         }
-        return Entry(meeting: id, state: state, detail: detail, progress: progress)
+        let transcribed = entry["transcribed_ms"].flatMap(integer).flatMap { $0 >= 0 ? $0 : nil }
+        return Entry(
+          meeting: id, state: state, detail: detail, progress: progress,
+          transcribedMS: transcribed, mine: entry["mine"] as? Bool ?? false,
+          copy: entry["copy"] as? Bool ?? false, released: entry["released"] as? Bool ?? false)
       }
     }
-    guard (self.state == nil) == (meetings != nil), detail == nil || self.state == .failed else {
+    guard (self.state == nil) == (meetings != nil),
+      detail == nil || self.state == .failed || self.state == .receiving
+    else {
       throw RemoteProtocolError.invalidMessage
     }
   }

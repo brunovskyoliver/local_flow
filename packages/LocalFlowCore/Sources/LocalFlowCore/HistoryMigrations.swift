@@ -988,6 +988,55 @@ public enum HistoryMigrations {
               ('builtIn','usb','bluetooth','iPhone','virtual','other','systemDefault'));
           """)
     }
+    // Feature 020: the iPhone rotates meeting segments every 6 minutes, and a meeting
+    // records which device made it. SQLite cannot widen a CHECK in place, so
+    // meeting_segments is rebuilt with its rows and indexes. No table references it. The
+    // migrator defers foreign-key checks to the end of the migration (GRDB default), so
+    // dropping the old table does not cascade into anything.
+    migrator.registerMigration("phone-meetings-v19") { db in
+      let reasons = MeetingFailureReason.allCases.map { "'\($0.rawValue)'" }
+        .joined(separator: ",")
+      let columns = try db.columns(in: "meeting_segments").map { "\"\($0.name)\"" }
+        .joined(separator: ",")
+      let indexes = try String.fetchAll(
+        db,
+        sql:
+          "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'meeting_segments' AND sql IS NOT NULL"
+      )
+      try db.execute(
+        sql: """
+          CREATE TABLE meeting_segments_v19 (
+            id TEXT NOT NULL PRIMARY KEY,
+            track_id TEXT NOT NULL REFERENCES meeting_tracks(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL CHECK (sequence >= 1),
+            relative_path TEXT NOT NULL
+              CHECK (length(cast(relative_path AS blob)) BETWEEN 1 AND 255),
+            state TEXT NOT NULL CHECK (state IN ('open','finalized','unrecoverable')),
+            start_offset_ms INTEGER NOT NULL CHECK (start_offset_ms >= 0),
+            duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+            byte_size INTEGER NOT NULL DEFAULT 0 CHECK (byte_size >= 0),
+            started_at INTEGER NOT NULL,
+            host_start_ns INTEGER NOT NULL CHECK (host_start_ns >= 0),
+            open_reason TEXT NOT NULL
+              CHECK (open_reason IN ('start','resume','device_changed','rotated')),
+            close_reason TEXT CHECK (close_reason IS NULL OR close_reason IN
+              ('pause','system_sleep','stop','source_failed','storage_failed','device_changed','recovered','rotated')),
+            dropped_frames INTEGER NOT NULL DEFAULT 0 CHECK (dropped_frames >= 0),
+            recovery_note TEXT
+              CHECK (recovery_note IS NULL OR length(cast(recovery_note AS blob)) <= 512),
+            failure_reason TEXT CHECK (failure_reason IS NULL OR failure_reason IN (\(reasons))),
+            input_device_name TEXT
+              CHECK (input_device_name IS NULL OR length(input_device_name) BETWEEN 1 AND 128),
+            CHECK ((failure_reason IS NOT NULL) = (state = 'unrecoverable'))
+          );
+          INSERT INTO meeting_segments_v19 (\(columns)) SELECT \(columns) FROM meeting_segments;
+          DROP TABLE meeting_segments;
+          ALTER TABLE meeting_segments_v19 RENAME TO meeting_segments;
+          ALTER TABLE meetings ADD COLUMN origin TEXT NOT NULL DEFAULT 'local'
+            CHECK (origin IN ('local','iphone'));
+          """)
+      for index in indexes { try db.execute(sql: index) }
+    }
     return migrator
   }
 
