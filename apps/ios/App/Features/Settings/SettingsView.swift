@@ -81,6 +81,17 @@ struct SettingsView: View {
             Text("End the listening session to delete the model.")
           }
         }
+        if let connection = app.serverConnection {
+          Section {
+            NavigationLink {
+              ServerSettingsView(connection: connection)
+            } label: {
+              LabeledContent("Server", value: connection.status.text)
+            }
+          } footer: {
+            Text("Meetings are processed on your own LocalFlow server when you turn that on.")
+          }
+        }
         Section {
           Button("Open setup") { app.showSetup = true }
         }

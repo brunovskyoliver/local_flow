@@ -1,6 +1,10 @@
 // Unsigned simulator builds use this placeholder prefix; Signing.local.xcconfig overrides it.
 LOCALFLOW_BUNDLE_PREFIX = org.localflow.unsigned
 LOCALFLOW_APP_GROUP = group.$(LOCALFLOW_BUNDLE_PREFIX).LocalFlow
+// Feature 020: the phone's own Google iOS OAuth client (public). Empty hides Google
+// sign-in; the URL scheme is the client ID reversed, as Google issues it.
+LOCALFLOW_GOOGLE_CLIENT_ID = 569511417357-6130aocbp9ggo4g5meuifjjhbsr7aavj.apps.googleusercontent.com
+LOCALFLOW_GOOGLE_URL_SCHEME = com.googleusercontent.apps.569511417357-6130aocbp9ggo4g5meuifjjhbsr7aavj
 #include? "Signing.local.xcconfig"
 // FluidAudio's text-processing library ships arm64 only, so simulators are Apple silicon.
 EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64

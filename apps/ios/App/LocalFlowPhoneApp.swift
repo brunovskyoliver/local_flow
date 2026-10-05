@@ -52,6 +52,8 @@ final class PhoneApp {
   let dictionary: DictionaryViewModel?
   let meetings: PhoneMeetingCoordinator?
   let meetingList: MeetingsViewModel?
+  /// Feature 020: Settings › Server and the channels meetings use.
+  let serverConnection: PhoneServerConnection?
   @ObservationIgnored private(set) var server: HandoffServer?
   @ObservationIgnored private var activity: ActivityController?
   @ObservationIgnored private(set) var intents: PhoneIntentHandler?
@@ -93,6 +95,7 @@ final class PhoneApp {
         audioBusy: { [weak meetings, weak controller] in
           meetings?.isRecording == true || controller?.isActive == true
         })
+      serverConnection = PhoneServerConnection.system()
       failure = nil
       let activity = ActivityController(
         controller: controller, requester: SystemActivityRequester())
@@ -123,6 +126,7 @@ final class PhoneApp {
       dictionary = nil
       meetings = nil
       meetingList = nil
+      serverConnection = nil
       failure =
         "LocalFlow couldn't open its storage. Restart the app; if it keeps failing, free some space."
     }
@@ -182,6 +186,8 @@ final class PhoneApp {
       // The save first, so a held copy of the same dictation can mark it `copied`.
       await controller?.retryPendingSave()
       await intents?.becameActive()
+      // A pending iPhone learns of its approval; an approved one of a revocation.
+      await serverConnection?.refresh()
       await refreshSetup()
     }
   }

@@ -80,13 +80,13 @@
 
 ### Tests for User Story 4
 
-- [ ] T026 [P] [US4] `apps/ios/LocalFlowPhoneTests/PhoneServerConnectionTests.swift`: with fake identity fetcher, device keys and transport: fingerprint confirm before sign-in, pending/approved/rejected/revoked states, a changed server identity blocks sending until re-confirmed, nothing opened while not approved or switch off, sign-out deletes credentials
+- [X] T026 [P] [US4] `apps/ios/LocalFlowPhoneTests/PhoneServerConnectionTests.swift`: with fake identity fetcher, device keys and transport: fingerprint confirm before sign-in, pending/approved/rejected/revoked states, a changed server identity blocks sending until re-confirmed, nothing opened while not approved or switch off, sign-out deletes credentials
 
 ### Implementation for User Story 4
 
-- [ ] T027 [US4] `apps/ios/App/Server/PhoneServerConnection.swift`: `RemoteEnrollmentSettings` conformance on UserDefaults, `RemoteCredentialStore` with `AfterFirstUnlockThisDeviceOnly`, enrollment, the channel pool opener (purpose `.session`), device name from `UIDevice`, consent version, "Process meetings on this server" and "Copy meetings to my Mac" settings
-- [ ] T028 [US4] `apps/ios/App/Features/Settings/ServerSettingsView.swift` per contracts/phone-ui.md, linked from `SettingsView.swift`
-- [ ] T029 [US4] `LocalFlowGoogleClientID` key in `apps/ios/Config/App-Info.plist` read from a build setting in `apps/ios/Config/Base.xcconfig` (default `569511417357-6130aocbp9ggo4g5meuifjjhbsr7aavj.apps.googleusercontent.com`, the phone's own Google iOS client; Google sign-in hidden when empty), and the reverse-client-ID URL scheme
+- [X] T027 [US4] `apps/ios/App/Server/PhoneServerConnection.swift`: `RemoteEnrollmentSettings` conformance on UserDefaults, `RemoteCredentialStore` with `AfterFirstUnlockThisDeviceOnly`, enrollment, the channel pool opener (purpose `.session`), device name from `UIDevice`, consent version, "Process meetings on this server" and "Copy meetings to my Mac" settings
+- [X] T028 [US4] `apps/ios/App/Features/Settings/ServerSettingsView.swift` per contracts/phone-ui.md, linked from `SettingsView.swift`
+- [X] T029 [US4] `LocalFlowGoogleClientID` key in `apps/ios/Config/App-Info.plist` read from a build setting in `apps/ios/Config/Base.xcconfig` (default `569511417357-6130aocbp9ggo4g5meuifjjhbsr7aavj.apps.googleusercontent.com`, the phone's own Google iOS client; Google sign-in hidden when empty), and the reverse-client-ID URL scheme
 
 **Checkpoint**: an approved phone holds credentials and opens a channel.
 
