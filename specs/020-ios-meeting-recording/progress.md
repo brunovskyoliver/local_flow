@@ -25,5 +25,6 @@ Updated: 2026-10-05T00:00:00Z
 - 2026-10-05 implement phase 4: T026–T029, commit 0e22e85 (PhoneServerConnection, ServerSettingsView, Google client ID build setting + URL scheme, FakeRemote ported). Verified: iPhone tests 170/170, import checks ok. Real Google sign-in needs a device (no Secure Enclave in Simulator).
 - 2026-10-05 implement phase 5: T030–T037, commit 0bef2ba (MeetingUploader + background tasks, MeetingSummarizer, phone-meetings-v1, MeetingDetailView, FakeHandoffServer). Verified: iPhone tests 193/193. Temporary ponytail fallbacks: start without copy / delete instead of release until server gets T051.
 - 2026-10-05 implement phase 6: T038–T044, commit 321757b (server partial start, rows.sqlite, transcribed_ms; MeetingFinalizer.run(partial:); processor --partial; phone live upload driver; 'Transcribed up to' on recording screen + Live Activity). Verified: go test ./... ok, Mac MeetingFinalizer/MeetingHandoff tests pass, iPhone 196/196.
+- 2026-10-05 implement phase 7: T045–T047, commit 68e4eed (detail view model: play from line across segments, rename meeting/speakers, copy/share, delete; queued server delete via new phone-meetings-v2 table). Search not built: spec lists it only as a refinement, no FR. Verified: iPhone 206/206.
 
 ## Report
