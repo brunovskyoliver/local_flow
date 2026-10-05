@@ -522,7 +522,8 @@ final class MeetingUploaderTests: XCTestCase {
     let queue = try DatabaseQueue(path: url.path)
     defer { try? queue.close() }
     return try queue.read {
-      try String.fetchOne($0, sql: "SELECT state FROM meetings WHERE id=?", arguments: [id.uuidString])
+      try String.fetchOne(
+        $0, sql: "SELECT state FROM meetings WHERE id=?", arguments: [id.uuidString])
     }
   }
 
@@ -631,7 +632,8 @@ final class MeetingUploaderTests: XCTestCase {
       .filter { $0.hasSuffix(".aac") }
     XCTAssertEqual(Array(NSOrderedSet(array: order)) as? [String], names)
     XCTAssertEqual(server.stored[id]?.partialRuns, 1, "one run for everything that caught up")
-    XCTAssertEqual(try row(id)?["confirmed_segments"] as String?, try finishedPaths(id).joined(separator: ","))
+    XCTAssertEqual(
+      try row(id)?["confirmed_segments"] as String?, try finishedPaths(id).joined(separator: ","))
     await harness.coordinator.stop()
   }
 

@@ -67,6 +67,41 @@ Upgrading a running server stops flowd before provisioning, because its workers 
 
 Licences copied with the install, in `bin/WhisperLicenses/`: Sotto (the helper's source), whisper.cpp (MIT), the Whisper model weights (MIT), Silero VAD (MIT), nlohmann JSON (MIT) and miniaudio. The offline diarization and voice models are downloaded from their source at provisioning, not shipped, and are not modified. Attribution: `FluidInference/speaker-diarization-coreml` at revision `1ed7a662fdc7109e36d822db793ee6eebdaf8594`, a CoreML conversion of pyannote `speaker-diarization-community-1` and the WeSpeaker ResNet34 embedding, all licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The licence review and the pinned model card are in `docs/licenses/speaker-diarization-coreml.md` and `docs/licenses/speaker-diarization-coreml-model-card.md`; `THIRD_PARTY_NOTICES.md` carries the same notice.
 
+## Meeting handoff and iPhone meetings (ADR 0033, Feature 020)
+
+The installer also builds `flowd-meeting`, the headless meeting processor (ADR 0033), installs it as `bin/flowd-meeting` and starts flowd with `--meeting-processor` pointing at it. Pass `--meeting-processor PATH` to install a prebuilt one instead. flowd keeps uploaded meetings in `$DATA/handoff/<user-id>/<meeting>/` and deletes them after the client has its result, or after 7 days at most.
+
+Feature 020 lets the LocalFlow iPhone app record meetings and send them here (ADR 0034). Two things change on the server.
+
+**Redeploy flowd and `flowd-meeting` together.** `flowd-meeting` opens each uploaded meeting with the clients' own database migrations, and the phone's bundles are at migration v19 (`phone-meetings-v19`). An older `flowd-meeting` fails those meetings, and an older flowd doesn't know the new handoff fields (partial start, device, copy, release). One install run from the Feature 020 branch replaces both:
+
+```sh
+scripts/install-remote-server.sh --google-client-id "$GOOGLE,$PHONE_GOOGLE" \
+  --speech-worker "$DATA/bin/flowd-speech" --meeting-helper "$DATA/bin/localflow-whisper-engine"
+```
+
+Leave out `--meeting-processor` so the script builds `flowd-meeting` from the same checkout. Keep the `--analysis-backend` and `--analysis-model` flags if the server uses oMLX. A Mac needs a Feature 020 build to import phone meetings; older Macs ignore them (ADR 0034).
+
+**Add the phone's Google client ID.** The iPhone app signs in with its own iOS OAuth client, so flowd has to accept it next to the Mac's. `--google-client-id` takes a comma-separated list:
+
+```sh
+PHONE_GOOGLE=569511417357-6130aocbp9ggo4g5meuifjjhbsr7aavj.apps.googleusercontent.com   # public
+```
+
+Without it, Google sign-in on the phone fails and the phone never shows up as a pending device.
+
+The phone reaches the server the way the Macs do. The Mac mini serves the channel on the tailnet only, so the phone needs the Tailscale app on and connected. Approve the phone like any other device (`flowd admin list`, then `approve device <id>`, or the LocalFlow Server app).
+
+A phone meeting with **Copy meetings to my Mac** on stays on the server after the phone has merged its result, until a Mac signed in as the same user imports it, and never longer than 7 days. It counts against the per-user limits (16 meetings, 8 GiB) until then. A Mac imports phone meetings only when the capabilities it last received from the server list `handoff`; it records them from the server's `ready` every time it opens a channel, so after the redeploy the next dictation or **Check connection** is enough.
+
+Check after the redeploy:
+
+```sh
+curl -s http://127.0.0.1:8090/v1/remote/identity                 # same fingerprint as before
+plutil -p "$HOME/Library/LaunchAgents/org.localflow.LocalFlow.remote.plist" | grep -A1 google-client-id   # both IDs
+ls -l "$DATA/bin/flowd" "$DATA/bin/flowd-meeting"                # both with the new timestamp
+```
+
 ## Choosing the rewrite model
 
 Measured on the Mac mini (M5 Pro, 24 GB, macOS 27.0) on 2026-10-01 with `scripts/rewrite-quality.py fixtures/rewrite/corpus-v1.json` against `http://127.0.0.1:8091`, 40 items × 3 modes per model:

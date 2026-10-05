@@ -331,7 +331,8 @@ public actor MeetingHandoff {
           let columns = try Self.columns(db, table, "main", "rows")
           try db.execute(
             sql:
-              "INSERT OR REPLACE INTO main.\(table)(\(columns)) SELECT \(columns) FROM rows.\(table)")
+              "INSERT OR REPLACE INTO main.\(table)(\(columns)) SELECT \(columns) FROM rows.\(table)"
+          )
         }
         return .commit
       }

@@ -18,3 +18,10 @@ installation guide for permissions, updates and removal.
 This release can use a shared LocalFlow server for dictation, rewriting, summaries
 and meetings (Settings › Server, Google sign-in, owner approval). The installation
 guide's "Use a shared LocalFlow server" section lists the steps, including Tailscale.
+
+Meetings recorded with the LocalFlow iPhone app can now show up in Meetings, marked
+"From iPhone". The phone sends them through the shared server, and the Mac imports them
+the next time it connects. This needs a server updated with the same release: redeploy
+`flowd` and `flowd-meeting` together (the meeting database moves to migration v19), and add
+the iPhone app's Google client ID to flowd's `--google-client-id`. The steps are in
+`docs/distribution/remote-server.md`, "Meeting handoff and iPhone meetings".

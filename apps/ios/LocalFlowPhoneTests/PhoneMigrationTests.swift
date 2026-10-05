@@ -65,7 +65,8 @@ final class PhoneMigrationTests: XCTestCase {
     let id = try await meeting(store.database)
     try await store.database.write {
       try $0.execute(
-        sql: "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
+        sql:
+          "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
         arguments: [id.uuidString])
     }
     let defaults = try await store.database.read { db in
@@ -85,7 +86,8 @@ final class PhoneMigrationTests: XCTestCase {
     let id = try await meeting(database)
     try await database.write {
       try $0.execute(
-        sql: "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
+        sql:
+          "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
         arguments: [id.uuidString])
     }
     for sql in [
@@ -104,7 +106,8 @@ final class PhoneMigrationTests: XCTestCase {
     do {
       try await database.write {
         try $0.execute(
-          sql: "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
+          sql:
+            "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
           arguments: [UUID().uuidString])
       }
       XCTFail("orphan upload row accepted")

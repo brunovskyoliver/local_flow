@@ -1102,7 +1102,8 @@ final class MeetingFinalizerTests: XCTestCase {
     XCTAssertEqual(counts.count, 1)
     var rows = try await store.page(
       meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
-    XCTAssertEqual(rows.map(\.draft), expected.filter { $0.draft.stretchSequence == 1 }.map(\.draft))
+    XCTAssertEqual(
+      rows.map(\.draft), expected.filter { $0.draft.stretchSequence == 1 }.map(\.draft))
     let released = await lifecycle.snapshot()
     XCTAssertFalse(released.leased)
 

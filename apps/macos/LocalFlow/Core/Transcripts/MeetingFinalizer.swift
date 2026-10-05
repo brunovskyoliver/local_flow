@@ -192,7 +192,8 @@ actor MeetingFinalizer {
     return MeetingDetail(
       meeting: detail.meeting,
       tracks: detail.tracks.map { track in
-        MeetingTrackDetail(track: track.track, segments: track.segments.filter { $0.sequence < cut })
+        MeetingTrackDetail(
+          track: track.track, segments: track.segments.filter { $0.sequence < cut })
       },
       pauses: detail.pauses, notes: detail.notes, outcomes: detail.outcomes)
   }

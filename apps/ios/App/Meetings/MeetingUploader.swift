@@ -322,7 +322,8 @@ actor MeetingUploader {
 
   /// Retry on a failed meeting: back to waiting with a clean attempt count.
   func retry(_ id: UUID) async throws {
-    try await update(id, ["stage": "waiting", "detail": nil, "attempts": 0], where: "stage='failed'")
+    try await update(
+      id, ["stage": "waiting", "detail": nil, "attempts": 0], where: "stage='failed'")
   }
 
   /// Send to Mac again (FR-045) on a ready meeting whose Mac copy expired: the meeting goes
@@ -699,7 +700,9 @@ actor MeetingUploader {
       }
       var confirmed = row.confirmed
       for path in finished where !confirmed.contains(path) {
-        guard let url = root.resolve(relativePath: path) else { throw MeetingUploadError.missingFile }
+        guard let url = root.resolve(relativePath: path) else {
+          throw MeetingUploadError.missingFile
+        }
         try await put(id, name: url.lastPathComponent, url: url) { _ in }
         confirmed.append(path)
         try await update(id, ["confirmed_segments": confirmed.joined(separator: ",")])
@@ -750,7 +753,9 @@ actor MeetingUploader {
     let liveBundle =
       row.bundleUploaded || FileManager.default.fileExists(atPath: bundleURL(id).path)
     if row.stage != .uploading {
-      var changes: [String: (any DatabaseValueConvertible)?] = ["stage": "uploading", "detail": nil]
+      var changes: [String: (any DatabaseValueConvertible)?] = [
+        "stage": "uploading", "detail": nil,
+      ]
       // "Copy meetings to my Mac" as it was when the meeting first went up; Send to Mac
       // again always asks for the copy.
       if !row.bundleUploaded && row.confirmed.isEmpty && !row.resending {
@@ -965,7 +970,8 @@ final class MeetingUploadBackground {
     } catch {
       // Refused (busy system, background launches off): the queue still runs while the
       // app is open.
-      Self.log.notice("Continued processing refused: \(String(describing: error), privacy: .public)")
+      Self.log.notice(
+        "Continued processing refused: \(String(describing: error), privacy: .public)")
       Task { await uploader.kick() }
     }
   }

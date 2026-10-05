@@ -105,7 +105,8 @@ struct MeetingSummarizer: Sendable {
       guard page.count == 200, let last = page.last?.segment.ordinal else { break }
       after = last
     }
-    let roots = (try await transcripts.acceptedSpeakers(meetingID: meetingID))?.speakers
+    let roots =
+      (try await transcripts.acceptedSpeakers(meetingID: meetingID))?.speakers
       .filter { $0.mergedInto == nil } ?? []
     let participants = roots.map { root in
       // A renamed speaker is the owner's own label for them (FR-014 `local_name`).
@@ -169,7 +170,8 @@ struct MeetingSummarizer: Sendable {
         }
         let payload = try await send(
           request(
-            run, evidence, stage: .chunk, chunk: .init(index: chunk.index, count: plan.chunks.count),
+            run, evidence, stage: .chunk,
+            chunk: .init(index: chunk.index, count: plan.chunks.count),
             segments: window),
           endpoint: endpoint, runID: run.id)
         inputs.append(payload.analysis)

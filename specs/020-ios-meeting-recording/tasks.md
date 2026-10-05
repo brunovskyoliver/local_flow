@@ -174,10 +174,10 @@
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T055 [P] `apps/ios/README.md`: Meetings, Server settings, "what lives where" rows, Google client ID setup, Tailscale requirement
-- [ ] T056 [P] `docs/distribution/release-notes.md` and the server deployment note: redeploy `flowd` and `flowd-meeting` together (migration v19), add the phone's Google client ID to `--google-client-id`
-- [ ] T057 [P] `specs/020-ios-meeting-recording/acceptance/measurements.md` template for SC-001–SC-009 (hardware, build, conditions, numbers to be filled on device)
-- [ ] T058 Run `make check`; fix lint and import-rule failures
+- [X] T055 [P] `apps/ios/README.md`: Meetings, Server settings, "what lives where" rows, Google client ID setup, Tailscale requirement
+- [X] T056 [P] `docs/distribution/release-notes.md` and the server deployment note: redeploy `flowd` and `flowd-meeting` together (migration v19), add the phone's Google client ID to `--google-client-id`
+- [X] T057 [P] `specs/020-ios-meeting-recording/acceptance/measurements.md` template for SC-001–SC-009 (hardware, build, conditions, numbers to be filled on device)
+- [X] T058 Run `make check`; fix lint and import-rule failures. Done as every `scripts/test.sh` step except the full Mac `LocalFlow` test, which plays an audible beep; that step was replaced by `-only-testing:` runs of the 60 LocalFlowTests classes this branch touches (all pass; SpeakerIdentificationCoordinatorTests failed once and passed on both reruns). Lint fixes: swift format line breaks in 8 Swift files from this branch.
 
 ---
 

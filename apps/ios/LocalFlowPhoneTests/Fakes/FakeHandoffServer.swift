@@ -60,7 +60,9 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
     }
   }
 
-  func setState(_ id: UUID, _ state: RemoteHandoffReply.State, detail: String? = nil, progress: Int? = nil) {
+  func setState(
+    _ id: UUID, _ state: RemoteHandoffReply.State, detail: String? = nil, progress: Int? = nil
+  ) {
     lock.withLock {
       meetings[id]?.state = state
       meetings[id]?.detail = detail
