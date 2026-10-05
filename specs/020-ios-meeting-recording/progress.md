@@ -24,5 +24,6 @@ Updated: 2026-10-05T00:00:00Z
 - 2026-10-05 implement phase 3: T015–T025 (sub-agent finished the code before the session limit; committed after resume). Recorder, coordinator, Live Activity, Meetings tab, mic ownership. Verified: iPhone unit tests 154/154 on simulator, package tests 6/6, Mac build ok, keyboard/core import checks ok; two unused try? warnings fixed.
 - 2026-10-05 implement phase 4: T026–T029, commit 0e22e85 (PhoneServerConnection, ServerSettingsView, Google client ID build setting + URL scheme, FakeRemote ported). Verified: iPhone tests 170/170, import checks ok. Real Google sign-in needs a device (no Secure Enclave in Simulator).
 - 2026-10-05 implement phase 5: T030–T037, commit 0bef2ba (MeetingUploader + background tasks, MeetingSummarizer, phone-meetings-v1, MeetingDetailView, FakeHandoffServer). Verified: iPhone tests 193/193. Temporary ponytail fallbacks: start without copy / delete instead of release until server gets T051.
+- 2026-10-05 implement phase 6: T038–T044, commit 321757b (server partial start, rows.sqlite, transcribed_ms; MeetingFinalizer.run(partial:); processor --partial; phone live upload driver; 'Transcribed up to' on recording screen + Live Activity). Verified: go test ./... ok, Mac MeetingFinalizer/MeetingHandoff tests pass, iPhone 196/196.
 
 ## Report
