@@ -1,5 +1,6 @@
 import AVFAudio
 import AppIntents
+import LocalFlowCore
 import SwiftUI
 import UIKit
 import os
@@ -54,6 +55,9 @@ final class PhoneApp {
   let meetingList: MeetingsViewModel?
   /// Feature 020: Settings › Server and the channels meetings use.
   let serverConnection: PhoneServerConnection?
+  /// Feature 020: stopped meetings go to the server and their results come back.
+  @ObservationIgnored private(set) var uploader: MeetingUploader?
+  @ObservationIgnored private var uploadBackground: MeetingUploadBackground?
   @ObservationIgnored private(set) var server: HandoffServer?
   @ObservationIgnored private var activity: ActivityController?
   @ObservationIgnored private(set) var intents: PhoneIntentHandler?
@@ -90,12 +94,37 @@ final class PhoneApp {
       controller.meetingRecording = { [weak meetings] in meetings?.isRecording ?? false }
       MeetingIntentHandlers.current = meetings
       self.meetings = meetings
-      meetingList = MeetingsViewModel(
-        store: services.meetings, root: services.meetingRoot,
+      let uploads = MeetingUploadStatus()
+      let meetingList = MeetingsViewModel(
+        store: services.meetings, root: services.meetingRoot, uploads: uploads,
         audioBusy: { [weak meetings, weak controller] in
           meetings?.isRecording == true || controller?.isActive == true
         })
-      serverConnection = PhoneServerConnection.system()
+      self.meetingList = meetingList
+      let connection = PhoneServerConnection.system()
+      serverConnection = connection
+      let uploader = Self.uploader(services: services, server: connection, status: uploads)
+      let background = MeetingUploadBackground(
+        uploader: uploader,
+        bundleIdentifier: Bundle.main.bundleIdentifier ?? "org.localflow.LocalFlowPhone")
+      background.register()
+      uploads.forward = { [weak background] in background?.handle($0) }
+      meetings.onEnded = { [weak background] id, origin in
+        // The app's own Stop is a tap in the foreground: the system's continued
+        // processing can take over. Otherwise the app may already be in the background.
+        if origin == .app {
+          background?.stoppedInApp(id, title: "Recorded meeting")
+        } else {
+          background?.stoppedInBackground()
+        }
+      }
+      connection.onChange = { Task { await uploader.kick() } }
+      meetingList.retry = { id in
+        try? await uploader.retry(id)
+        await uploader.kick()
+      }
+      self.uploader = uploader
+      uploadBackground = background
       failure = nil
       let activity = ActivityController(
         controller: controller, requester: SystemActivityRequester())
@@ -138,6 +167,11 @@ final class PhoneApp {
     guard let services, let controller else { return }
     services.orphans.adopt()
     meetings?.recover()
+    // After recovery, so a meeting a crash cut short is queued too.
+    Task { [meetings, uploader] in
+      await meetings?.waitForRecovery()
+      await uploader?.start()
+    }
     server?.start()
     server?.launched()
     // After the server, which sets `onChange` first.
@@ -188,6 +222,7 @@ final class PhoneApp {
       await intents?.becameActive()
       // A pending iPhone learns of its approval; an approved one of a revocation.
       await serverConnection?.refresh()
+      await uploader?.kick()
       await refreshSetup()
     }
   }
@@ -214,6 +249,33 @@ final class PhoneApp {
     case .denied: .denied
     default: .undetermined
     }
+  }
+
+  /// The server queue over the phone's history: `MeetingHandoff` for the bundle and the
+  /// merge, the session channel pool, and the summary through the `analysis` op.
+  private static func uploader(
+    services: PhoneServices, server: PhoneServerConnection, status: MeetingUploadStatus
+  ) -> MeetingUploader {
+    let database = services.history.database
+    let summarizer = MeetingSummarizer(
+      transcripts: TranscriptStore(database: database), meetings: services.meetings,
+      store: AnalysisStore(database: database),
+      transport: RemoteAnalysisTransport(pool: server.pool),
+      endpoint: { @MainActor in
+        guard let origin = server.settings.origin else { return nil }
+        var endpoint = RewriteEndpoint(url: origin, origin: origin.absoluteString)
+        endpoint.viaRemoteChannel = true
+        return endpoint
+      })
+    return MeetingUploader(
+      database: database, root: services.meetingRoot,
+      handoff: MeetingHandoff(
+        pool: server.pool, database: database, root: services.meetingRoot,
+        eligible: { _ in false }, defaultLanguage: { .defaultLanguage }),
+      channel: PoolHandoffChannel(pool: server.pool),
+      gate: { @MainActor in server.uploadGate },
+      summarize: { await summarizer.run(meetingID: $0) },
+      onChange: { event in Task { @MainActor in status.handle(event) } })
   }
 
   /// Settings › Speech model › Delete: drops keep-ready, unloads, then removes the files.

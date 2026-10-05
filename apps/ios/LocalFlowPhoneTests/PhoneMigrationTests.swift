@@ -26,11 +26,91 @@ final class PhoneMigrationTests: XCTestCase {
   func testFreshDatabaseHasTheSharedMigrationsThenThePhoneTable() throws {
     let shared = HistoryMigrations.migrator().migrations
     XCTAssertEqual(shared.count, 19)
-    let phone = [PhoneMigrations.identifier, PhoneMigrations.identifierV2]
+    let phone = [
+      PhoneMigrations.identifier, PhoneMigrations.identifierV2, PhoneMigrations.identifierMeetings,
+    ]
     XCTAssertEqual(Set(try applied(harness.history.database)), Set(shared + phone))
-    // Frozen: the list ends with the phone's two migrations, in order.
+    // Frozen: the list ends with the phone's migrations, in order.
     XCTAssertEqual(PhoneMigrations.migrator().migrations, shared + phone)
-    XCTAssertEqual(phone, ["phone-dictations-v1", "phone-dictations-v2"])
+    XCTAssertEqual(phone, ["phone-dictations-v1", "phone-dictations-v2", "phone-meetings-v1"])
+  }
+
+  // MARK: phone-meetings-v1 (Feature 020)
+
+  private func meeting(_ database: DatabasePool) async throws -> UUID {
+    let store = MeetingStore(
+      database: database,
+      root: MeetingStorageRoot(url: harness.root.appendingPathComponent("Meetings")))
+    return try await store.create(now: 1_000, origin: .iphone).id
+  }
+
+  /// A phone that already has the dictation tables gains the uploads table after the
+  /// shared migrations, which include `phone-meetings-v19` (`meetings.origin`).
+  func testMeetingsV1ComesAfterTheSharedMigrations() async throws {
+    let path = harness.root.appendingPathComponent("v2.sqlite").path
+    let store = try TranscriptionStore(path: path)
+    try PhoneMigrations.migrator().migrate(store.database, upTo: PhoneMigrations.identifierV2)
+    XCTAssertFalse(try applied(store.database).contains(PhoneMigrations.identifierMeetings))
+    try PhoneMigrations.migrator().migrate(store.database)
+    let order = try await store.database.read {
+      try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY rowid")
+    }
+    XCTAssertEqual(order.last, PhoneMigrations.identifierMeetings)
+    XCTAssertTrue(order.contains("phone-meetings-v19"))
+    let id = try await meeting(store.database)
+    try await store.database.write {
+      try $0.execute(
+        sql: "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
+        arguments: [id.uuidString])
+    }
+    let defaults = try await store.database.read { db in
+      try Row.fetchOne(
+        db,
+        sql: """
+          SELECT bundle_uploaded, confirmed_segments, copy_to_mac, mac_copy, attempts,
+            released_at IS NULL FROM phone_meeting_uploads
+          """
+      ).map { row in (0..<row.count).map { row[$0] as DatabaseValue }.map(\.description) }
+    }
+    XCTAssertEqual(defaults, ["0", "\"\"", "1", "\"none\"", "0", "1"])
+  }
+
+  func testMeetingsV1ChecksAndCascade() async throws {
+    let database = harness.history.database
+    let id = try await meeting(database)
+    try await database.write {
+      try $0.execute(
+        sql: "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
+        arguments: [id.uuidString])
+    }
+    for sql in [
+      "UPDATE phone_meeting_uploads SET stage = 'bogus'",
+      "UPDATE phone_meeting_uploads SET mac_copy = 'bogus'",
+      "UPDATE phone_meeting_uploads SET server_progress = 101",
+      "UPDATE phone_meeting_uploads SET attempts = -1",
+      "UPDATE phone_meeting_uploads SET bundle_uploaded = 2",
+    ] {
+      do {
+        try await database.write { try $0.execute(sql: sql) }
+        XCTFail(sql)
+      } catch {}
+    }
+    // A row needs its meeting.
+    do {
+      try await database.write {
+        try $0.execute(
+          sql: "INSERT INTO phone_meeting_uploads(meeting_id, stage, updated_at) VALUES (?, 'waiting', 1)",
+          arguments: [UUID().uuidString])
+      }
+      XCTFail("orphan upload row accepted")
+    } catch {}
+    try await database.write {
+      try $0.execute(sql: "DELETE FROM meetings WHERE id = ?", arguments: [id.uuidString])
+    }
+    let left = try await database.read {
+      try Int.fetchOne($0, sql: "SELECT count(*) FROM phone_meeting_uploads")
+    }
+    XCTAssertEqual(left, 0)
   }
 
   func testV2KeepsEveryV1RowAndValue() async throws {

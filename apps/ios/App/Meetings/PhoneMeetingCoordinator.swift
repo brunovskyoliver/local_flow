@@ -31,6 +31,11 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
   private(set) var isBusy = false
   /// Bumped when a meeting starts, stops or is recovered, so the list refreshes.
   private(set) var revision = 0
+  /// Where a stop came from: the app's own Stop can start background work from the tap;
+  /// the Live Activity and the recorder stop with the app possibly in the background.
+  enum StopOrigin: Sendable { case app, liveActivity, recorder }
+  /// A meeting ended and its audio is on disk (Feature 020: the server queue picks it up).
+  @ObservationIgnored var onEnded: ((UUID, StopOrigin) -> Void)?
 
   let recorder: MeetingRecorder
   let store: MeetingStore
@@ -146,17 +151,17 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
     revision += 1
   }
 
-  func stop() async {
+  func stop(from origin: StopOrigin = .app) async {
     guard meetingID != nil, !isBusy else { return }
     isBusy = true
     defer { isBusy = false }
     activity.update(activityState(.stopping))
     await recorder.stop()
-    ended(notice: nil)
+    ended(notice: nil, origin: origin)
   }
 
   /// The Live Activity's Stop.
-  func stopMeeting() async { await stop() }
+  func stopMeeting() async { await stop(from: .liveActivity) }
 
   func clearNotice() { notice = nil }
 
@@ -166,17 +171,19 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
 
   private func recorderEnded(_ end: MeetingRecorder.End) {
     switch end {
-    case .storageFull: ended(notice: Self.stoppedForStorage)
-    case .durationLimit: ended(notice: Self.stoppedAtLimit)
-    case .failed: ended(notice: Self.stoppedOnFailure)
+    case .storageFull: ended(notice: Self.stoppedForStorage, origin: .recorder)
+    case .durationLimit: ended(notice: Self.stoppedAtLimit, origin: .recorder)
+    case .failed: ended(notice: Self.stoppedOnFailure, origin: .recorder)
     }
   }
 
-  private func ended(notice: String?) {
+  private func ended(notice: String?, origin: StopOrigin) {
     activity.end()
+    let id = meetingID
     meetingID = nil
     self.notice = notice
     revision += 1
+    if let id { onEnded?(id, origin) }
   }
 
   private func updateActivity() {

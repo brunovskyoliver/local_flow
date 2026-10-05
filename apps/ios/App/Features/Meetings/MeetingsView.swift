@@ -6,6 +6,7 @@ import SwiftUI
 struct MeetingsView: View {
   let meetings: PhoneMeetingCoordinator
   let model: MeetingsViewModel
+  var openServerSettings: () -> Void = {}
 
   var body: some View {
     NavigationStack {
@@ -35,7 +36,14 @@ struct MeetingsView: View {
         }
         Section {
           ForEach(model.items) { item in
-            row(item).task { await model.loadMore(after: item) }
+            NavigationLink {
+              MeetingDetailView(
+                meetingID: item.id, meetings: model.store, uploads: model.uploads,
+                retry: { await model.retry($0) }, openServerSettings: openServerSettings)
+            } label: {
+              row(item)
+            }
+            .task { await model.loadMore(after: item) }
           }
         }
       }
@@ -47,7 +55,7 @@ struct MeetingsView: View {
       }
       .navigationTitle("Meetings")
       .refreshable { await model.refresh() }
-      .task(id: meetings.revision) { await model.refresh() }
+      .task(id: [meetings.revision, model.uploads.revision]) { await model.refresh() }
     }
   }
 
@@ -60,7 +68,7 @@ struct MeetingsView: View {
           Text("·")
           Text(Duration.milliseconds(item.durationMs), format: .time(pattern: .hourMinuteSecond))
           Text("·")
-          Text(item.label)
+          Text(model.label(item))
         }
         .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
       }

@@ -10,6 +10,9 @@ enum PhoneMigrations {
   /// Feature 017: `control` and `copied`. SQLite cannot change a `CHECK` in place, so the
   /// table is rebuilt; GRDB runs each migration in one transaction. v1 created no indexes.
   static let identifierV2 = "phone-dictations-v2"
+  /// Feature 020: `phone_meeting_uploads`, the phone's side of each server handoff
+  /// (specs/020-ios-meeting-recording/data-model.md).
+  static let identifierMeetings = "phone-meetings-v1"
 
   static func migrator(shared: DatabaseMigrator = HistoryMigrations.migrator()) -> DatabaseMigrator
   {
@@ -44,6 +47,25 @@ enum PhoneMigrations {
             FROM phone_dictations;
           DROP TABLE phone_dictations;
           ALTER TABLE phone_dictations_new RENAME TO phone_dictations;
+          """)
+    }
+    migrator.registerMigration(identifierMeetings) { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE phone_meeting_uploads(
+            meeting_id TEXT PRIMARY KEY NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            stage TEXT NOT NULL CHECK(stage IN ('waiting','uploading','processing','merging','summarizing','ready','failed')),
+            detail TEXT CHECK(detail IS NULL OR length(CAST(detail AS BLOB))<=256),
+            bundle_uploaded INTEGER NOT NULL DEFAULT 0 CHECK(bundle_uploaded IN (0,1)),
+            confirmed_segments TEXT NOT NULL DEFAULT '',
+            transcribed_ms INTEGER CHECK(transcribed_ms IS NULL OR transcribed_ms>=0),
+            server_progress INTEGER CHECK(server_progress IS NULL OR server_progress BETWEEN 0 AND 100),
+            copy_to_mac INTEGER NOT NULL DEFAULT 1 CHECK(copy_to_mac IN (0,1)),
+            mac_copy TEXT NOT NULL DEFAULT 'none' CHECK(mac_copy IN ('none','waiting','delivered','expired')),
+            released_at INTEGER,
+            attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
+            updated_at INTEGER NOT NULL);
+          CREATE INDEX phone_meeting_uploads_stage ON phone_meeting_uploads(stage);
           """)
     }
     return migrator

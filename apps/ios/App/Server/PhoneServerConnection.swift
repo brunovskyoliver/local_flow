@@ -152,6 +152,8 @@ final class PhoneServerConnection {
   private(set) var reachable = true
   /// What the server offered in its last `ready`.
   private(set) var capabilities: RemoteCapabilities?
+  /// Feature 020: the enrollment state or a switch changed; the meeting queue looks again.
+  @ObservationIgnored var onChange: (() -> Void)?
 
   private static let log = Logger(subsystem: "org.localflow.LocalFlowPhone", category: "server")
 
@@ -277,6 +279,7 @@ final class PhoneServerConnection {
     busy = true
     defer { busy = false }
     error = nil
+    defer { onChange?() }
     do {
       try await enrollment.enroll(provider: .google)
       reachable = true
@@ -295,6 +298,7 @@ final class PhoneServerConnection {
   /// approved; an approved one refreshes its token, which also notices a revocation.
   func refresh() async {
     guard settings.origin != nil else { return }
+    defer { onChange?() }
     switch state {
     case .pending:
       await enrollment.refreshNow()
@@ -312,6 +316,7 @@ final class PhoneServerConnection {
   func setProcessMeetings(_ on: Bool) {
     settings.setProcessMeetings(on)
     if !on { Task { await pool.closeAll() } }
+    onChange?()
   }
 
   /// Sign out (FR-012, scenario 5): the four Keychain items and the `server.*` settings
@@ -324,6 +329,7 @@ final class PhoneServerConnection {
     capabilities = nil
     addressDraft = ""
     await pool.closeAll()
+    onChange?()
     Self.log.notice("Signed out of the server")
   }
 
@@ -373,5 +379,28 @@ final class PhoneServerConnection {
         throw failure
       }
     }
+  }
+}
+
+extension PhoneServerConnection {
+  /// Whether meeting audio may go to the server now (SC-008), and why not: enrollment
+  /// state, the switch under the current consent text, and the `handoff` op.
+  var uploadGate: MeetingUploader.Gate {
+    typealias Detail = MeetingUploader.Detail
+    guard settings.origin != nil else { return .closed(Detail.notSignedIn) }
+    switch state {
+    case .off, .pinned: return .closed(Detail.notSignedIn)
+    case .pending: return .closed(Detail.pending)
+    case .rejected: return .closed(Detail.rejected)
+    case .revoked: return .closed(Detail.revoked)
+    case .pinMismatch: return .closed(Detail.identityChanged)
+    case .approved: break
+    }
+    guard settings.processMeetings, settings.consentCurrent else {
+      return .closed(Detail.processingOff)
+    }
+    if settings.remoteNotice == .updateRequired { return .closed(Detail.outdated) }
+    if let capabilities, !capabilities.offers(op: "handoff") { return .closed(Detail.outdated) }
+    return .open(copyToMac: settings.copyToMac)
   }
 }

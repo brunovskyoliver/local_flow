@@ -42,7 +42,9 @@ struct RootView: View {
               DictateView(model: dictate, controller: controller)
             }
             SwiftUI.Tab("Meetings", systemImage: "person.2.wave.2", value: .meetings) {
-              MeetingsView(meetings: meetings, model: meetingList)
+              MeetingsView(
+                meetings: meetings, model: meetingList,
+                openServerSettings: { app.tab = .settings })
             }
             SwiftUI.Tab("History", systemImage: "clock", value: .history) {
               HistoryView(model: history, lastResultID: controller.lastResultID)

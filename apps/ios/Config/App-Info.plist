@@ -6,6 +6,10 @@
 	<string>$(LOCALFLOW_APP_GROUP)</string>
 	<key>LocalFlowGoogleClientID</key>
 	<string>$(LOCALFLOW_GOOGLE_CLIENT_ID)</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).meeting-upload.*</string>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>LocalFlow listens only while a dictation session is open or a meeting you started is recording. Dictations are transcribed on this iPhone; meetings are kept here and processed only on your own LocalFlow server if you turn that on.</string>
 	<key>NSSupportsLiveActivities</key>

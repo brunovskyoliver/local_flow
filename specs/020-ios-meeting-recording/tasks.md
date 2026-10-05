@@ -100,17 +100,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T030 [P] [US2] `apps/ios/LocalFlowPhoneTests/MeetingUploaderTests.swift` against a fake handoff channel: waits with the right detail when not approved/unreachable/limit/outdated; resumes from the server offset; never resends a confirmed segment; one meeting at a time, oldest first; backoff; merge failure leaves nothing partial; release after merge; failed → Retry; a meeting the server lists as `missing` after upload (retention expired) is uploaded again
-- [ ] T031 [P] [US2] `apps/ios/LocalFlowPhoneTests/MeetingSummarizerTests.swift`: builds an `AnalysisRequest` from merged rows, rejects an invalid result, adopts a valid one
-- [ ] T032 [P] [US2] `apps/ios/LocalFlowPhoneTests/PhoneMigrationTests.swift`: `phone-meetings-v1` after the shared migrations
+- [X] T030 [P] [US2] `apps/ios/LocalFlowPhoneTests/MeetingUploaderTests.swift` against a fake handoff channel: waits with the right detail when not approved/unreachable/limit/outdated; resumes from the server offset; never resends a confirmed segment; one meeting at a time, oldest first; backoff; merge failure leaves nothing partial; release after merge; failed → Retry; a meeting the server lists as `missing` after upload (retention expired) is uploaded again
+- [X] T031 [P] [US2] `apps/ios/LocalFlowPhoneTests/MeetingSummarizerTests.swift`: builds an `AnalysisRequest` from merged rows, rejects an invalid result, adopts a valid one
+- [X] T032 [P] [US2] `apps/ios/LocalFlowPhoneTests/PhoneMigrationTests.swift`: `phone-meetings-v1` after the shared migrations
 
 ### Implementation for User Story 2
 
-- [ ] T033 [US2] `phone-meetings-v1` (`phone_meeting_uploads`) in `apps/ios/App/Storage/PhoneMigrations.swift` per data-model.md
-- [ ] T034 [US2] `apps/ios/App/Meetings/MeetingUploader.swift`: the queue driver around the moved `MeetingHandoff` (export, segments, bundle, `start`, poll `list`, `get`, merge, `release` with `copy`), stages in `phone_meeting_uploads`, backoff `min(600, 30 << min(attempts, 5))` s, eligibility from enrollment state, switch and `handoff` capability; `missing` after upload triggers a fresh upload
-- [ ] T035 [US2] `apps/ios/App/Meetings/MeetingSummarizer.swift` per research R4, run after merge
-- [ ] T036 [US2] Background execution in `apps/ios/App/Meetings/MeetingUploader.swift` and `PhoneApp`: `BGContinuedProcessingTask` on in-app Stop, `beginBackgroundTask` on Live Activity Stop, run the queue on launch and every foreground; `BGTaskSchedulerPermittedIdentifiers` in `apps/ios/Config/App-Info.plist` (research R6)
-- [ ] T037 [US2] Meeting list rows and a simple detail screen show stage, progress, failure with Retry, and the finished transcript with speaker labels and the summary (`apps/ios/App/Features/Meetings/MeetingDetailView.swift`)
+- [X] T033 [US2] `phone-meetings-v1` (`phone_meeting_uploads`) in `apps/ios/App/Storage/PhoneMigrations.swift` per data-model.md
+- [X] T034 [US2] `apps/ios/App/Meetings/MeetingUploader.swift`: the queue driver around the moved `MeetingHandoff` (export, segments, bundle, `start`, poll `list`, `get`, merge, `release` with `copy`), stages in `phone_meeting_uploads`, backoff `min(600, 30 << min(attempts, 5))` s, eligibility from enrollment state, switch and `handoff` capability; `missing` after upload triggers a fresh upload
+- [X] T035 [US2] `apps/ios/App/Meetings/MeetingSummarizer.swift` per research R4, run after merge
+- [X] T036 [US2] Background execution in `apps/ios/App/Meetings/MeetingUploader.swift` and `PhoneApp`: `BGContinuedProcessingTask` on in-app Stop, `beginBackgroundTask` on Live Activity Stop, run the queue on launch and every foreground; `BGTaskSchedulerPermittedIdentifiers` in `apps/ios/Config/App-Info.plist` (research R6)
+- [X] T037 [US2] Meeting list rows and a simple detail screen show stage, progress, failure with Retry, and the finished transcript with speaker labels and the summary (`apps/ios/App/Features/Meetings/MeetingDetailView.swift`)
 
 **Checkpoint**: MVP complete (phases 1–5).
 
