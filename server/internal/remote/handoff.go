@@ -28,8 +28,9 @@ const (
 
 // HandoffConfig configures meeting handoff: uploaded meetings live in
 // Dir/<user id>/<MEETING-UUID>/ and the processor runs as
-// `Processor --bundle <meeting dir> --meeting <UUID> Args...`. The processor
-// may write its percent done to <meeting dir>/progress.
+// `Processor --bundle <meeting dir> --meeting <UUID> Args... [--partial]`. The
+// processor may write its percent done to <meeting dir>/progress and, after a
+// partial run, the audio transcribed so far to <meeting dir>/transcribed_ms.
 type HandoffConfig struct {
 	Dir       string
 	Processor string
@@ -118,10 +119,10 @@ func (s *Handoffs) userDir(user int64) string {
 	return filepath.Join(s.cfg.Dir, strconv.FormatInt(user, 10))
 }
 
-// filePath: bundle.sqlite sits in the meeting dir, audio under <UUID>/, the
-// app's relative paths with the meeting dir as storage root.
+// filePath: bundle.sqlite and rows.sqlite sit in the meeting dir, audio under
+// <UUID>/, the app's relative paths with the meeting dir as storage root.
 func filePath(dir, meeting, name string) string {
-	if name == "bundle.sqlite" {
+	if name == "bundle.sqlite" || name == "rows.sqlite" {
 		return filepath.Join(dir, name)
 	}
 	return filepath.Join(dir, meeting, name)
@@ -134,6 +135,19 @@ func readState(dir string) (state, detail string) {
 	}
 	state, detail, _ = strings.Cut(strings.TrimSpace(string(data)), "\n")
 	return state, detail
+}
+
+// readTranscribed is the audio a partial run transcribed, nil before the first.
+func readTranscribed(dir string) *int64 {
+	data, err := os.ReadFile(filepath.Join(dir, "transcribed_ms"))
+	if err != nil {
+		return nil
+	}
+	ms, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil || ms < 0 {
+		return nil
+	}
+	return &ms
 }
 
 // readProgress is the processor's percent done, nil before its first report.
@@ -201,8 +215,11 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 			dir := filepath.Join(userDir, id)
 			if state, detail := readState(dir); state != "missing" && len(list) < maxHandoffList {
 				m := HandoffMeeting{Meeting: id, State: state, Detail: detail}
-				if state == "processing" {
+				switch state {
+				case "processing":
 					m.Progress = readProgress(dir)
+				case "receiving":
+					m.TranscribedMS = readTranscribed(dir)
 				}
 				list = append(list, m)
 			}
@@ -210,9 +227,8 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 		return HandoffReply{Meetings: &list}, nil
 	}
 	// ponytail: Feature 020 phase 1 adds these to the wire format only; refuse them
-	// until the handler implements them, so release cannot fall into the get branch.
-	if req.Action == "release" || req.Partial || req.Copy || req.Name == "rows.sqlite" ||
-		(req.Action == "get" && req.Name != "") {
+	// until the handler implements them (T051), so release cannot fall into the get branch.
+	if req.Action == "release" || req.Copy || (req.Action == "get" && req.Name != "") {
 		return HandoffReply{}, invalid("handoff action not supported yet")
 	}
 	dir := filepath.Join(userDir, req.Meeting)
@@ -250,14 +266,23 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 		if fileSize(filepath.Join(dir, "bundle.sqlite")) == 0 || len(audio) == 0 {
 			return reply, invalid("handoff upload incomplete")
 		}
-		if writeState(dir, "queued", "") != nil {
+		// <dir>/partial marks a partial run; it survives a restart with the queue.
+		marker := filepath.Join(dir, "partial")
+		var err error
+		if req.Partial {
+			err = os.WriteFile(marker, nil, 0o600)
+		} else if err = os.Remove(marker); errors.Is(err, fs.ErrNotExist) {
+			err = nil
+		}
+		if err != nil || writeState(dir, "queued", "") != nil {
 			return reply, errHandoffStorage
 		}
+		delete(s.hashes, dir)
 		select {
 		case s.wake <- struct{}{}:
 		default:
 		}
-		reply.State = "queued"
+		reply.State, reply.Detail = "queued", ""
 		return reply, nil
 	default: // get
 		if state != "done" {
@@ -269,9 +294,15 @@ func (s *Handoffs) handle(user int64, req Handoff) (HandoffReply, error) {
 
 // put appends data when the offset is the file's stored size and, with
 // sha256, checks the whole file, emptying it on a mismatch. A put at another
-// offset writes nothing, so a resent chunk cannot erase progress.
+// offset writes nothing, so a resent chunk cannot erase progress. rows.sqlite
+// is replaceable: a put at offset 0 empties it first.
 func (s *Handoffs) put(userDir, dir string, req Handoff, reply HandoffReply) (HandoffReply, error) {
 	path := filePath(dir, req.Meeting, req.Name)
+	if req.Name == "rows.sqlite" && *req.Offset == 0 {
+		if err := os.Truncate(path, 0); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return reply, errHandoffStorage
+		}
+	}
 	size := fileSize(path)
 	if *req.Offset == size {
 		if len(req.Data) > 0 {
@@ -397,6 +428,7 @@ func (s *Handoffs) requeue() {
 		if state, _ := readState(dir); err != nil || state != "processing" {
 			return
 		}
+		delete(s.hashes, dir)
 		if writeState(dir, "queued", "") == nil {
 			_ = os.Chtimes(filepath.Join(dir, "state"), info.ModTime(), info.ModTime())
 		}
@@ -438,15 +470,24 @@ func (s *Handoffs) next(ctx context.Context) (dir, meeting string, runCtx contex
 	return dir, meeting, runCtx, true
 }
 
+// process runs the processor on one meeting. A partial run (the meeting is
+// still recording on the client) returns it to receiving, with detail
+// partial_failed when the run failed, so the client keeps uploading.
 func (s *Handoffs) process(ctx, runCtx context.Context, dir, meeting string) {
 	started := s.cfg.Clock.Now()
-	cmd := exec.Command(s.cfg.Processor, append([]string{"--bundle", dir, "--meeting", meeting}, s.cfg.Args...)...)
+	_, err := os.Stat(filepath.Join(dir, "partial"))
+	partial := err == nil
+	args := append([]string{"--bundle", dir, "--meeting", meeting}, s.cfg.Args...)
+	if partial {
+		args = append(args, "--partial")
+	}
+	cmd := exec.Command(s.cfg.Processor, args...)
 	cmd.Env = s.cfg.Env
 	// Its own process group, so a kill reaches anything it started. Output
 	// goes to /dev/null: it could hold meeting content.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	_ = os.Remove(filepath.Join(dir, "progress"))
-	err := cmd.Start()
+	err = cmd.Start()
 	state, detail, code := "failed", "start_failed", "start_failed"
 	pauses := 0
 	if err == nil {
@@ -470,11 +511,19 @@ func (s *Handoffs) process(ctx, runCtx context.Context, dir, meeting string) {
 			detail, code = "killed", "killed"
 		}
 	}
+	if partial && state == "done" {
+		state, detail = "receiving", ""
+	} else if partial && state == "failed" {
+		state, detail = "receiving", "partial_failed"
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cancel()
 	s.running, s.cancel = "", nil
 	if current, _ := readState(dir); current == "processing" && state != "processing" {
+		if partial {
+			_ = os.Remove(filepath.Join(dir, "partial"))
+		}
 		if writeState(dir, state, detail) != nil {
 			// Left as processing, the client would wait until the 7-day sweep.
 			// Gone, it sees missing and uploads again or runs the meeting itself.
@@ -483,8 +532,8 @@ func (s *Handoffs) process(ctx, runCtx context.Context, dir, meeting string) {
 		}
 	}
 	_ = os.Remove(filepath.Join(dir, "progress"))
-	s.cfg.Logger.Printf("remote handoff meeting=%s state=%s duration_ms=%d pauses=%d code=%s",
-		shortID(meeting), state, s.cfg.Clock.Now().Sub(started).Milliseconds(), pauses, code)
+	s.cfg.Logger.Printf("remote handoff meeting=%s state=%s partial=%t duration_ms=%d pauses=%d code=%s",
+		shortID(meeting), state, partial, s.cfg.Clock.Now().Sub(started).Milliseconds(), pauses, code)
 }
 
 // wait returns the processor's exit, killing its process group when runCtx

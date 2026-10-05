@@ -36,6 +36,10 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
   enum StopOrigin: Sendable { case app, liveActivity, recorder }
   /// A meeting ended and its audio is on disk (Feature 020: the server queue picks it up).
   @ObservationIgnored var onEnded: ((UUID, StopOrigin) -> Void)?
+  /// A meeting started: the server queue sends its segments as they finish (User Story 3).
+  @ObservationIgnored var onStarted: ((UUID) -> Void)?
+  /// How much of the recording meeting the server has transcribed, once it says.
+  private(set) var transcribedMs: Int64?
 
   let recorder: MeetingRecorder
   let store: MeetingStore
@@ -145,10 +149,19 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
       return refuse(Self.notSaved)
     }
     meetingID = created
+    transcribedMs = nil
     notice =
       endedDictation
       ? Self.endedDictation : recorder.lowStorage ? Self.lowStorage : nil
     revision += 1
+    if let created { onStarted?(created) }
+  }
+
+  /// The server queue's "Transcribed up to" for the meeting recording now.
+  func transcribed(_ id: UUID, ms: Int) {
+    guard id == meetingID else { return }
+    transcribedMs = Int64(ms)
+    updateActivity()
   }
 
   func stop(from origin: StopOrigin = .app) async {
@@ -181,6 +194,7 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
     activity.end()
     let id = meetingID
     meetingID = nil
+    transcribedMs = nil
     self.notice = notice
     revision += 1
     if let id { onEnded?(id, origin) }
@@ -197,6 +211,8 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
     let now = Date(timeIntervalSince1970: Double(clock.nowMilliseconds) / 1_000)
     let elapsed =
       recorder.elapsedBefore + (recorder.runningSince.map { now.timeIntervalSince($0) } ?? 0)
-    return .init(phase: phase, since: now.addingTimeInterval(-elapsed), elapsed: elapsed)
+    return .init(
+      phase: phase, since: now.addingTimeInterval(-elapsed), elapsed: elapsed,
+      transcribedMs: transcribedMs)
   }
 }

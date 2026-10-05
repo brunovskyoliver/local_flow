@@ -13,6 +13,8 @@ final class MeetingUploadStatus {
   private(set) var uploaded: [UUID: Double] = [:]
   /// The background task's progress follows the same events.
   @ObservationIgnored var forward: ((MeetingUploader.Event) -> Void)?
+  /// A recording meeting's "Transcribed up to", for the recording screen and Live Activity.
+  @ObservationIgnored var onTranscribed: ((UUID, Int) -> Void)?
 
   func handle(_ event: MeetingUploader.Event) {
     forward?(event)
@@ -20,6 +22,7 @@ final class MeetingUploadStatus {
     case .changed: revision += 1
     case .uploaded(let id, let fraction): uploaded[id] = fraction
     case .processing: revision += 1
+    case .transcribed(let id, let ms): onTranscribed?(id, ms)
     }
   }
 }

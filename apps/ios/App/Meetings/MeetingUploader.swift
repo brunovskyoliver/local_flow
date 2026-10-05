@@ -48,6 +48,11 @@ struct PoolHandoffChannel: MeetingHandoffChannel {
 ///
 /// One meeting at a time, oldest first. Nothing is sent unless the gate is open (approved,
 /// switch on, SC-008). A failed attempt waits `min(600, 30 << min(attempts, 5))` s.
+///
+/// While a meeting records (User Story 3, research R3), each finished segment goes up as
+/// soon as the server can take it, then the meeting's current rows as `rows.sqlite`, then a
+/// partial run; the server's "transcribed up to" comes back with the list. After Stop only
+/// what is left goes up, and the final run resumes where the partial runs stopped.
 actor MeetingUploader {
   enum Stage: String, Sendable, CaseIterable {
     case waiting, uploading, processing, merging, summarizing, ready, failed
@@ -122,9 +127,13 @@ actor MeetingUploader {
     case uploaded(UUID, Double)
     /// The server is working on it: its percent once the processor reports one.
     case processing(UUID, Int?)
+    /// A recording meeting: the server has transcribed this many milliseconds of it.
+    case transcribed(UUID, Int)
   }
 
   static let pollInterval: Duration = .seconds(10)
+  /// While a meeting records: segments finish every 6 minutes, a partial run takes a while.
+  static let livePollInterval: Duration = .seconds(30)
   /// Attempts that end in a server or local error before the meeting fails for good.
   static let failureAttempts = 5
 
@@ -141,6 +150,11 @@ actor MeetingUploader {
   private let now: @Sendable () -> Int64
   private let onChange: @Sendable (Event) -> Void
   private let directory: URL
+  /// Per recording meeting: confirmed segments when its last partial run was accepted.
+  private var partialAt: [UUID: Int] = [:]
+  /// The server refused `rows.sqlite` or `partial` (before Feature 020's US3): meetings go
+  /// up after Stop only, until the app restarts.
+  private var partialUnsupported = false
   private static let log = Logger(subsystem: "org.localflow.LocalFlowPhone", category: "upload")
 
   init(
@@ -173,8 +187,9 @@ actor MeetingUploader {
   func pass(ignoringBackoff: Bool = false) async -> Duration? {
     do {
       try await enqueue()
+      let recording = try await recordingMeeting()
       let rows = try await active()
-      guard !rows.isEmpty else { return nil }
+      guard !rows.isEmpty || recording != nil else { return nil }
       let gate = await gate()
       if let reason = gate.closed {
         for row in rows where row.detail != reason || row.stage == .uploading {
@@ -184,22 +199,33 @@ actor MeetingUploader {
         }
         return nil
       }
-      for row in rows {
-        if !ignoringBackoff, row.attempts > 0 {
-          let due = row.updatedAt + Self.backoffMilliseconds(attempts: row.attempts)
-          if now() < due { return .milliseconds(due - now()) }
-        }
-        switch await advance(row.meetingID, gate: gate) {
-        case .finished: continue
-        case .poll: return Self.pollInterval
-        case .retry(let attempts): return .milliseconds(Self.backoffMilliseconds(attempts: attempts))
-        }
+      var live: Duration?
+      if let recording {
+        await self.live(recording, gate: gate)
+        live = Self.livePollInterval
       }
-      return nil
+      let next = await queue(rows, gate: gate, ignoringBackoff: ignoringBackoff)
+      guard let next, let live else { return next ?? live }
+      return min(next, live)
     } catch {
       Self.log.error("Upload queue: \(String(describing: error), privacy: .public)")
       return Self.pollInterval
     }
+  }
+
+  private func queue(_ rows: [Upload], gate: Gate, ignoringBackoff: Bool) async -> Duration? {
+    for row in rows {
+      if !ignoringBackoff, row.attempts > 0 {
+        let due = row.updatedAt + Self.backoffMilliseconds(attempts: row.attempts)
+        if now() < due { return .milliseconds(due - now()) }
+      }
+      switch await advance(row.meetingID, gate: gate) {
+      case .finished: continue
+      case .poll: return Self.pollInterval
+      case .retry(let attempts): return .milliseconds(Self.backoffMilliseconds(attempts: attempts))
+      }
+    }
+    return nil
   }
 
   // MARK: Loop
@@ -278,16 +304,44 @@ actor MeetingUploader {
     }
   }
 
-  /// Unfinished meetings, oldest first.
+  /// Unfinished stopped meetings, oldest first. A recording meeting's row is the live
+  /// driver's until Stop.
   private func active() async throws -> [Upload] {
     try await database.read { db in
       try Row.fetchAll(
         db,
         sql: """
           SELECT u.* FROM phone_meeting_uploads u JOIN meetings m ON m.id=u.meeting_id
-          WHERE u.stage NOT IN ('ready','failed') ORDER BY m.created_at, m.id
+          WHERE u.stage NOT IN ('ready','failed')
+            AND m.state NOT IN ('created','preparing','recording','paused','finalizing')
+          ORDER BY m.created_at, m.id
           """
       ).map(Upload.init)
+    }
+  }
+
+  /// The phone meeting recording now, if any.
+  private func recordingMeeting() async throws -> UUID? {
+    try await database.read { db in
+      try String.fetchOne(
+        db,
+        sql: """
+          SELECT id FROM meetings WHERE origin='iphone' AND state IN ('recording','paused')
+          ORDER BY created_at DESC LIMIT 1
+          """
+      ).flatMap(UUID.init(uuidString:))
+    }
+  }
+
+  /// Finalized segment files of a meeting, in recording order.
+  private func finishedSegments(_ id: UUID) async throws -> [String] {
+    try await database.read { db in
+      try String.fetchAll(
+        db,
+        sql: """
+          SELECT s.relative_path FROM meeting_segments s JOIN meeting_tracks t ON t.id=s.track_id
+          WHERE t.meeting_id=? AND s.state='finalized' ORDER BY s.sequence, t.id
+          """, arguments: [id.uuidString])
     }
   }
 
@@ -458,12 +512,98 @@ actor MeetingUploader {
     }
   }
 
+  // MARK: Live
+
+  /// One step for the recording meeting: finished segments the server has not confirmed,
+  /// then `rows.sqlite`, then the bundle the first time, then `start partial`, once per new
+  /// segment. While the server is busy with the meeting nothing is sent; a failure waits
+  /// for the next pass, which catches up. The recorder never waits for any of this.
+  private func live(_ id: UUID, gate: Gate) async {
+    do {
+      let finished = try await finishedSegments(id)
+      guard !finished.isEmpty else { return }
+      let now = now()
+      try await database.write { db in
+        try db.execute(
+          sql: """
+            INSERT OR IGNORE INTO phone_meeting_uploads(meeting_id, stage, copy_to_mac, updated_at)
+            VALUES(?, 'uploading', ?, ?)
+            """, arguments: [id.uuidString, gate.copyToMac, now])
+      }
+      guard var row = try await upload(id), [.waiting, .uploading].contains(row.stage) else {
+        return
+      }
+      let list = try await channel.call(.init(action: .list))
+      let entry = list.meetings?.first { $0.meeting == id }
+      switch entry?.state ?? .missing {
+      case .missing:
+        if row.bundleUploaded || !row.confirmed.isEmpty {
+          Self.log.notice("Server copy missing, uploading again")
+          try await update(id, ["confirmed_segments": "", "bundle_uploaded": 0])
+          row = try await upload(id) ?? row
+          partialAt[id] = nil
+        }
+      case .receiving:
+        if let ms = entry?.transcribedMS, ms != row.transcribedMS {
+          try await update(id, ["transcribed_ms": ms])
+          onChange(.transcribed(id, ms))
+        }
+      case .queued, .processing, .done, .failed:
+        // A partial run is on it; a put would write nothing.
+        return
+      }
+      var confirmed = row.confirmed
+      for path in finished where !confirmed.contains(path) {
+        guard let url = root.resolve(relativePath: path) else { throw MeetingUploadError.missingFile }
+        try await put(id, name: url.lastPathComponent, url: url) { _ in }
+        confirmed.append(path)
+        try await update(id, ["confirmed_segments": confirmed.joined(separator: ",")])
+      }
+      guard !partialUnsupported, confirmed.count > partialAt[id] ?? 0 else { return }
+      do {
+        // Before the bundle: a server without partial runs refuses the name, and the
+        // bundle then goes up after Stop as before.
+        try await putRows(id)
+      } catch RemoteChannelError.server(.invalidMessage) {
+        partialUnsupported = true
+        return
+      }
+      if !row.bundleUploaded {
+        let bundle = bundleURL(id)
+        if !FileManager.default.fileExists(atPath: bundle.path) {
+          guard try await handoff.export(id, to: bundle, recording: true) else { return }
+        }
+        try await put(id, name: "bundle.sqlite", url: bundle) { _ in }
+        try await update(id, ["bundle_uploaded": 1])
+      }
+      do {
+        _ = try await channel.call(.init(action: .start, meeting: id, partial: true))
+      } catch RemoteChannelError.server(.invalidMessage) {
+        partialUnsupported = true
+        return
+      }
+      partialAt[id] = confirmed.count
+    } catch {
+      Self.log.notice("Live upload: \(String(describing: error), privacy: .public)")
+    }
+  }
+
+  /// The meeting's rows as they are now, replacing the server's `rows.sqlite`.
+  private func putRows(_ id: UUID) async throws {
+    let rows = bundleURL(id).deletingLastPathComponent().appendingPathComponent("rows.sqlite")
+    try await handoff.exportRows(id, to: rows)
+    try await put(id, name: "rows.sqlite", url: rows) { _ in }
+  }
+
   // MARK: Upload
 
   /// Every finalized segment the server has not confirmed, then the bundle once, then
-  /// `start`. Each file resumes at the size the server has.
+  /// `start`. Each file resumes at the size the server has. A bundle made while the meeting
+  /// recorded is followed by the rows as they are after Stop.
   private func send(_ id: UUID, row: Upload, gate: Gate) async throws {
     var row = row
+    let liveBundle =
+      row.bundleUploaded || FileManager.default.fileExists(atPath: bundleURL(id).path)
     if row.stage != .uploading {
       var changes: [String: (any DatabaseValueConvertible)?] = ["stage": "uploading", "detail": nil]
       // "Copy meetings to my Mac" as it was when the meeting first went up.
@@ -505,6 +645,13 @@ actor MeetingUploader {
         onChange(.uploaded(id, Double(sent + bytes) / Double(total)))
       }
       try await update(id, ["bundle_uploaded": 1])
+    }
+    if liveBundle {
+      do {
+        try await putRows(id)
+      } catch RemoteChannelError.server(.invalidMessage) {
+        // A server without `rows.sqlite` never had a partial run; its bundle is from Stop.
+      }
     }
     onChange(.uploaded(id, 1))
     var copy = row.copyToMac
@@ -608,6 +755,7 @@ actor MeetingUploader {
   }
 
   private func forget(_ id: UUID) {
+    partialAt[id] = nil
     try? FileManager.default.removeItem(
       at: directory.appendingPathComponent(id.uuidString, isDirectory: true))
   }
@@ -706,7 +854,7 @@ final class MeetingUploadBackground {
       tasks[id]?.progress.completedUnitCount = Int64(fraction * 50)
     case .processing(let id, let percent):
       tasks[id]?.progress.completedUnitCount = 50 + Int64((percent ?? 0) / 2)
-    case .changed: break
+    case .changed, .transcribed: break
     }
   }
 

@@ -309,3 +309,135 @@ while [ ! -f "$2/finish" ]; do i=$((i+1)); echo $i > "$2/ticks"; sleep 0.01; don
 		t.Fatalf("done meeting lists progress: %+v", m)
 	}
 }
+
+// Feature 020: a partial run starts only from receiving, runs the processor
+// with --partial and returns the meeting to receiving with the transcribed_ms
+// it wrote, or with partial_failed; puts write nothing while it is queued or
+// processing; rows.sqlite is replaced by a put at offset 0; a final start
+// afterwards runs without --partial.
+func TestHandoffPartial(t *testing.T) {
+	h, s := newHandoffHarness(t, fakeProcessor(t, `
+printf '%s ' "$@" > "$2/args"
+case "$*" in *--partial*)
+  while [ ! -f "$2/finish" ]; do sleep 0.01; done
+  rm "$2/finish"
+  if [ -f "$2/fail" ]; then rm "$2/fail"; exit 9; fi
+  echo 360000 > "$2/transcribed_ms";;
+esac`))
+	user, _, token := h.approved("sub", 1)
+	c, _ := h.hello(PurposeSession, token)
+	op := int64(0)
+	send := func(m Handoff) Message { op++; m.Op = op; return c.handoff(m) }
+	put := func(name string, at int64, data []byte) Message {
+		return send(Handoff{Action: "put", Meeting: handoffMeeting, Name: name, Offset: offset(at), Data: data, SHA256: hexSum(data)})
+	}
+	dir := filepath.Join(s.userDir(user.ID), handoffMeeting)
+	listed := func() HandoffMeeting {
+		t.Helper()
+		list := expectHandoff(t, send(Handoff{Action: "list"}), "")
+		if len(*list.Meetings) != 1 {
+			t.Fatalf("%+v", list.Meetings)
+		}
+		return (*list.Meetings)[0]
+	}
+	finish := func() {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "finish"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	expectHandoff(t, send(Handoff{Action: "start", Meeting: handoffMeeting, Partial: true}), "missing")
+	expectHandoff(t, put("bundle.sqlite", 0, []byte("bundle")), "receiving")
+	expectCode(t, send(Handoff{Action: "start", Meeting: handoffMeeting, Partial: true}), CodeInvalidMessage)
+	expectHandoff(t, put("mic-0001.aac", 0, []byte("aac1")), "receiving")
+	rows := []byte("rows-version-one")
+	expectHandoff(t, put("rows.sqlite", 0, rows), "receiving")
+	if r := expectHandoff(t, put("rows.sqlite", 0, []byte("rows-2")), "receiving"); *r.Offset != 6 {
+		t.Fatalf("rows.sqlite not replaced: %+v", r)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "rows.sqlite")); string(got) != "rows-2" {
+		t.Fatalf("rows.sqlite %q", got)
+	}
+	// A cached hash from an earlier done state goes when the meeting is queued again.
+	s.hashes[dir] = "stale"
+	expectHandoff(t, send(Handoff{Action: "start", Meeting: handoffMeeting, Partial: true}), "queued")
+	if _, ok := s.hashes[dir]; ok {
+		t.Fatal("cached hash kept")
+	}
+	expectHandoff(t, send(Handoff{Action: "start", Meeting: handoffMeeting, Partial: true}), "queued")
+	expectHandoff(t, put("mic-0002.aac", 0, []byte("aac2")), "queued")
+	expectHandoff(t, put("rows.sqlite", 0, []byte("x")), "queued")
+
+	runHandoffs(t, s)
+	waitState(t, s, user.ID, handoffMeeting, "processing")
+	expectHandoff(t, put("mic-0002.aac", 0, []byte("aac2")), "processing")
+	if got, _ := os.ReadFile(filepath.Join(dir, "rows.sqlite")); string(got) != "rows-2" {
+		t.Fatalf("put while processing wrote: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, handoffMeeting, "mic-0002.aac")); err == nil {
+		t.Fatal("put while processing was written")
+	}
+	finish()
+	if detail := waitState(t, s, user.ID, handoffMeeting, "receiving"); detail != "" {
+		t.Fatal(detail)
+	}
+	if args, _ := os.ReadFile(filepath.Join(dir, "args")); !strings.HasSuffix(string(args), "--models /m --partial ") {
+		t.Fatalf("args %q", args)
+	}
+	if m := listed(); m.State != "receiving" || m.TranscribedMS == nil || *m.TranscribedMS != 360000 {
+		t.Fatalf("%+v", m)
+	}
+
+	// A failed partial run: back to receiving with partial_failed, uploads go on.
+	expectHandoff(t, put("mic-0002.aac", 0, []byte("aac2")), "receiving")
+	if err := os.WriteFile(filepath.Join(dir, "fail"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectHandoff(t, send(Handoff{Action: "start", Meeting: handoffMeeting, Partial: true}), "queued")
+	waitState(t, s, user.ID, handoffMeeting, "processing")
+	finish()
+	if detail := waitState(t, s, user.ID, handoffMeeting, "receiving"); detail != "partial_failed" {
+		t.Fatal(detail)
+	}
+	if m := listed(); m.Detail != "partial_failed" || *m.TranscribedMS != 360000 {
+		t.Fatalf("%+v", m)
+	}
+	if !strings.Contains(h.logs.String(), "state=receiving partial=true") {
+		t.Fatal(h.logs.String())
+	}
+
+	// The final start runs the processor without --partial.
+	expectHandoff(t, send(Handoff{Action: "start", Meeting: handoffMeeting}), "queued")
+	waitState(t, s, user.ID, handoffMeeting, "done")
+	if args, _ := os.ReadFile(filepath.Join(dir, "args")); strings.Contains(string(args), "--partial") {
+		t.Fatalf("args %q", args)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "partial")); err == nil {
+		t.Fatal("partial marker kept")
+	}
+	if m := listed(); m.TranscribedMS != nil {
+		t.Fatalf("done lists transcribed_ms: %+v", m)
+	}
+}
+
+// A partial run left processing by a stopped flowd runs as a partial run again.
+func TestHandoffPartialRequeue(t *testing.T) {
+	s := NewHandoffs(HandoffConfig{Dir: t.TempDir(), Processor: fakeProcessor(t, `printf '%s ' "$@" > "$2/args"`)})
+	dir := queue(t, s, handoffMeeting, "processing")
+	if err := os.WriteFile(filepath.Join(dir, "partial"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.hashes[dir] = "stale"
+	runHandoffs(t, s)
+	waitState(t, s, 1, handoffMeeting, "receiving")
+	if args, _ := os.ReadFile(filepath.Join(dir, "args")); !strings.HasSuffix(string(args), "--partial ") {
+		t.Fatalf("args %q", args)
+	}
+	s.mu.Lock()
+	_, ok := s.hashes[dir]
+	s.mu.Unlock()
+	if ok {
+		t.Fatal("cached hash kept on requeue")
+	}
+}

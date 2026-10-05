@@ -15,6 +15,8 @@ final class FakeMeetingActivityRequester: MeetingActivityRequesting {
   var requestFails = false
   private(set) var calls: [Call] = []
   private(set) var live = false
+  /// Every updated state, in order.
+  private(set) var states: [MeetingActivityAttributes.ContentState] = []
 
   func request(
     _ attributes: MeetingActivityAttributes, _ state: MeetingActivityAttributes.ContentState
@@ -26,6 +28,7 @@ final class FakeMeetingActivityRequester: MeetingActivityRequesting {
 
   func update(_ state: MeetingActivityAttributes.ContentState) {
     calls.append(.update(state.phase))
+    states.append(state)
   }
 
   func end() {

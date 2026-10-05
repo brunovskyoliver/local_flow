@@ -9,7 +9,9 @@ import XCTest
 /// flowd's handoff op in memory, with the server's rules: a `put` at the stored size
 /// appends and a `put` anywhere else writes nothing; the SHA-256 on the last chunk checks
 /// the whole file and empties it on a mismatch; `start` needs the bundle and one AAC;
-/// `get` serves the processed bundle in 48,000-byte chunks.
+/// `get` serves the processed bundle in 48,000-byte chunks. Feature 020 US3: `rows.sqlite`
+/// is emptied by a put at offset 0, `start partial` queues a partial run, and a finished
+/// partial run returns the meeting to `receiving` with its `transcribed_ms`.
 final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
   struct Meeting {
     var state: RemoteHandoffReply.State = .receiving
@@ -18,6 +20,10 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
     var files: [String: Data] = [:]
     var copy = false
     var result: Data?
+    /// The queued or running run is partial.
+    var partial = false
+    var partialRuns = 0
+    var transcribedMS: Int?
   }
 
   private let lock = NSLock()
@@ -30,6 +36,8 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
   var refuse: RemoteErrorCode?
   /// A server from before Feature 020's T051: `copy` and `release` are refused.
   var old = false
+  /// A server from before Feature 020's US3: `rows.sqlite` and `partial` are refused.
+  var noPartial = false
   var maximumMeetings = 16
 
   var requests: [RemoteHandoffRequest] { lock.withLock { log } }
@@ -58,6 +66,22 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
     }
   }
 
+  /// The partial run finished: back to `receiving`, with `transcribed_ms` unless it failed.
+  func finishPartial(_ id: UUID, transcribedMS: Int?) {
+    lock.withLock {
+      guard meetings[id]?.partial == true else { return }
+      meetings[id]?.partial = false
+      meetings[id]?.state = .receiving
+      meetings[id]?.progress = nil
+      if let transcribedMS {
+        meetings[id]?.transcribedMS = transcribedMS
+        meetings[id]?.detail = nil
+      } else {
+        meetings[id]?.detail = "partial_failed"
+      }
+    }
+  }
+
   /// The retention sweep removed it.
   func drop(_ id: UUID) { _ = lock.withLock { meetings.removeValue(forKey: id) } }
 
@@ -76,6 +100,9 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
       if old, request.copy || request.action == .release {
         throw RemoteChannelError.server(.invalidMessage)
       }
+      if noPartial, request.partial || request.name == "rows.sqlite" {
+        throw RemoteChannelError.server(.invalidMessage)
+      }
       return try handle(request)
     }
   }
@@ -86,7 +113,9 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
         meetings: meetings.map { id, meeting in
           .init(
             meeting: id, state: meeting.state, detail: meeting.detail,
-            progress: meeting.state == .processing ? meeting.progress : nil, copy: meeting.copy)
+            progress: meeting.state == .processing ? meeting.progress : nil,
+            transcribedMS: meeting.state == .receiving ? meeting.transcribedMS : nil,
+            copy: meeting.copy)
         })
     }
     let id = request.meeting!
@@ -110,6 +139,7 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
       }
       guard var meeting, meeting.state == .receiving, let name = request.name else { return reply }
       var file = meeting.files[name] ?? Data()
+      if name == "rows.sqlite", request.offset == 0 { file = Data() }
       if request.offset == file.count {
         if let data = request.data { file.append(data) }
         if let sha = request.sha256, Self.hex(file) != sha { file = Data() }
@@ -125,6 +155,9 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
         meeting.files.keys.contains(where: { $0.hasSuffix(".aac") })
       else { throw RemoteChannelError.server(.invalidMessage) }
       meeting.state = .queued
+      meeting.detail = nil
+      meeting.partial = request.partial
+      if request.partial { meeting.partialRuns += 1 }
       meeting.copy = meeting.copy || request.copy
       meetings[id] = meeting
       reply.state = .queued

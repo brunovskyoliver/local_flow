@@ -1048,6 +1048,117 @@ final class MeetingFinalizerTests: XCTestCase {
     XCTAssertEqual(localCalls, 1)
   }
 
+  // MARK: Partial runs (Feature 020)
+
+  /// Puts the meeting back into recording with `open` segments for `sequences`.
+  private func reopen(_ meeting: TranscriptMeetingFixture, open sequences: [Int]) async throws {
+    try await fixture.history.database.write { db in
+      try db.execute(
+        sql: "UPDATE meetings SET state='recording' WHERE id=?",
+        arguments: [meeting.meetingID.uuidString])
+      for sequence in sequences {
+        try db.execute(
+          sql: """
+            UPDATE meeting_segments SET state='open' WHERE sequence=? AND track_id IN
+              (SELECT id FROM meeting_tracks WHERE meeting_id=?)
+            """, arguments: [sequence, meeting.meetingID.uuidString])
+      }
+    }
+  }
+
+  func testPartialRunsWhileRecordingResumeIntoTheSameTranscriptAsOneFullRun() async throws {
+    let stretches = [TranscriptMeetingFixture.Stretch(), .init(), .init()]
+    let reference = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: stretches, startedAt: 1_800_000_000_000)
+    let (whole, _) = makeFinalizer()
+    let full = try await whole.run(
+      meetingID: reference.meetingID, revision: try await revision(reference.meetingID))
+    let expected = try await store.page(
+      meetingID: reference.meetingID, finality: .final, after: nil, limit: 200)
+    XCTAssertEqual(Set(expected.map(\.draft.stretchSequence)), [1, 2, 3])
+
+    // Recording: stretch 3 is still open and stretch 2's microphone file has not arrived.
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: stretches)
+    try await reopen(meeting, open: [3])
+    let late = try XCTUnwrap(meeting.files[2]?[.microphone])
+    let aside = late.appendingPathExtension("aside")
+    try FileManager.default.moveItem(at: late, to: aside)
+    let runtime = FakeTranscriptionRuntime()
+    let (finalizer, lifecycle) = makeFinalizer(runtime: runtime)
+    do {
+      _ = try await finalizer.run(
+        meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+      XCTFail("a recording meeting ran a full pass")
+    } catch { XCTAssertEqual(error as? MeetingFinalizer.Error, .meetingActive) }
+
+    let first = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID),
+      partial: true)
+    XCTAssertEqual(first.row.state, .finalizing, "a partial run never completes")
+    XCTAssertEqual(first.row.passKind, .final)
+    XCTAssertEqual(first.row.progressSequence, 1, "stops before the missing file")
+    XCTAssertEqual(first.transcribedMs, full.row.analysisDescriptor?.stretches[0].lengthMs)
+    var counts = await runtime.sampleCounts
+    XCTAssertEqual(counts.count, 1)
+    var rows = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    XCTAssertEqual(rows.map(\.draft), expected.filter { $0.draft.stretchSequence == 1 }.map(\.draft))
+    let released = await lifecycle.snapshot()
+    XCTAssertFalse(released.leased)
+
+    // The file arrives; the next partial run adds stretch 2 and stops at the open stretch 3.
+    try FileManager.default.moveItem(at: aside, to: late)
+    let second = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: first.row.revision, partial: true)
+    XCTAssertEqual(second.row.passID, first.row.passID, "the same pass resumes")
+    XCTAssertEqual(second.row.progressSequence, 2)
+    XCTAssertGreaterThan(second.transcribedMs, first.transcribedMs)
+    counts = await runtime.sampleCounts
+    XCTAssertEqual(counts.count, 2, "stretch 1 is not transcribed again")
+    rows = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    XCTAssertEqual(rows.map(\.draft), expected.filter { $0.draft.stretchSequence < 3 }.map(\.draft))
+
+    // Stop: stretch 3 is finished and the meeting completed. The final run adds stretch 3.
+    try await fixture.history.database.write { db in
+      try db.execute(
+        sql: "UPDATE meetings SET state='completed' WHERE id=?",
+        arguments: [meeting.meetingID.uuidString])
+      try db.execute(
+        sql: """
+          UPDATE meeting_segments SET state='finalized' WHERE track_id IN
+            (SELECT id FROM meeting_tracks WHERE meeting_id=?)
+          """, arguments: [meeting.meetingID.uuidString])
+    }
+    let final = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: second.row.revision)
+    XCTAssertEqual(final.row.state, .final)
+    XCTAssertEqual(final.row.passID, first.row.passID)
+    counts = await runtime.sampleCounts
+    XCTAssertEqual(counts.count, 3, "each stretch transcribed once")
+    rows = try await store.page(
+      meetingID: meeting.meetingID, finality: .final, after: nil, limit: 200)
+    XCTAssertEqual(rows.map(\.draft), expected.map(\.draft), "no gaps, no duplicates")
+    XCTAssertEqual(final.row.segmentCount, full.row.segmentCount)
+    XCTAssertEqual(final.row.analysisDescriptor, full.row.analysisDescriptor)
+    XCTAssertEqual(final.row.coveredMs, full.row.coveredMs)
+    XCTAssertEqual(final.transcribedMs, full.transcribedMs)
+  }
+
+  func testAPartialRunWithNothingFinishedTouchesNothing() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture, stretches: [.init()])
+    try await reopen(meeting, open: [1])
+    let before = try await store.transcription(meetingID: meeting.meetingID)
+    let (finalizer, _) = makeFinalizer()
+    do {
+      _ = try await finalizer.run(
+        meetingID: meeting.meetingID, revision: try XCTUnwrap(before).revision, partial: true)
+      XCTFail("nothing finished, yet a pass ran")
+    } catch { XCTAssertEqual(error as? MeetingFinalizer.Error, .noSourceAudio) }
+    let after = try await store.transcription(meetingID: meeting.meetingID)
+    XCTAssertEqual(after, before)
+  }
+
   private func wait(_ condition: @escaping @Sendable () async -> Bool) async {
     for _ in 0..<1_000 {
       if await condition() { return }

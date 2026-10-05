@@ -75,4 +75,75 @@ final class MeetingHandoffTests: XCTestCase {
       id, to: fixture.directory.appendingPathComponent("handoff2/bundle.sqlite"))
     XCTAssertFalse(again)
   }
+
+  /// Feature 020: the slice goes up while the meeting records, a partial run transcribes
+  /// what is finished, newer rows arrive as `rows.sqlite` and replace the bundle's without
+  /// touching the transcript, and the final run completes the same pass.
+  func testRowsFileReplacesMeetingRowsBetweenPartialAndFinalRuns() async throws {
+    let fixture = try MeetingTestStore.make()
+    defer { fixture.cleanup() }
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture)
+    let id = meeting.meetingID
+    let setOpen = { (state: String, segments: String) async throws in
+      try await fixture.history.database.write { db in
+        try db.execute(
+          sql: "UPDATE meetings SET state=? WHERE id=?", arguments: [state, id.uuidString])
+        try db.execute(
+          sql: """
+            UPDATE meeting_segments SET state=? WHERE sequence=2 AND track_id IN
+              (SELECT id FROM meeting_tracks WHERE meeting_id=?)
+            """, arguments: [segments, id.uuidString])
+      }
+    }
+    try await setOpen("recording", "open")
+    let handoff = MeetingHandoff(
+      pool: RemoteChannelPool(open: { throw RemoteChannelError.unreachable }),
+      database: fixture.history.database, root: fixture.root,
+      eligible: { _ in true }, defaultLanguage: { .defaultLanguage })
+    let directory = fixture.directory.appendingPathComponent("handoff")
+    let bundle = directory.appendingPathComponent("bundle.sqlite")
+    let refused = try await handoff.export(id, to: bundle)
+    XCTAssertFalse(refused, "a recording meeting goes up only as a live export")
+    let exported = try await handoff.export(id, to: bundle, recording: true)
+    XCTAssertTrue(exported)
+
+    let remote = try TranscriptionStore(path: bundle.path)
+    let transcripts = TranscriptStore(database: remote.database)
+    let finalizer = MeetingFinalizer(
+      store: transcripts, meetings: MeetingStore(history: remote, root: fixture.root),
+      storageRoot: fixture.root,
+      lifecycle: ModelLifecycleCoordinator { FakeTranscriptionRuntime() },
+      vocabulary: EmptyVocabularyProvider(), clock: FakeMeetingClock())
+    let rowValue = try await transcripts.transcription(meetingID: id)
+    let partial = try await finalizer.run(
+      meetingID: id, revision: try XCTUnwrap(rowValue).revision, partial: true)
+    XCTAssertEqual(partial.row.state, .finalizing)
+    XCTAssertEqual(partial.row.progressSequence, 1)
+    let partialRows = partial.row.segmentCount
+    XCTAssertGreaterThan(partialRows, 0)
+
+    // Stop on the phone; its newer rows replace the bundle's.
+    try await setOpen("completed", "finalized")
+    let rows = directory.appendingPathComponent("rows.sqlite")
+    try await handoff.exportRows(id, to: rows)
+    try await handoff.exportRows(id, to: rows)
+    try await MeetingHandoff.importRows(from: rows, into: remote.database)
+    try await remote.database.read { db in
+      XCTAssertEqual(
+        try String.fetchOne(
+          db, sql: "SELECT state FROM meetings WHERE id=?", arguments: [id.uuidString]),
+        "completed")
+      XCTAssertEqual(
+        try Int.fetchOne(
+          db, sql: "SELECT COUNT(*) FROM meeting_segments WHERE state='finalized'"), 4)
+      XCTAssertEqual(
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM transcript_segments"), partialRows,
+        "replacing the meeting row cascades to nothing")
+      XCTAssertEqual(try Int.fetchOne(db, sql: "PRAGMA foreign_keys"), 1)
+    }
+    let final = try await finalizer.run(meetingID: id, revision: partial.row.revision)
+    XCTAssertEqual(final.row.state, .final)
+    XCTAssertEqual(final.row.passID, partial.row.passID)
+    XCTAssertGreaterThan(final.row.segmentCount, partialRows)
+  }
 }

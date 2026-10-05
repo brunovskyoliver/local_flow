@@ -124,16 +124,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T038 [P] [US3] `server/internal/remote/handoff_test.go`: `start partial` from `receiving` only, runner passes `--partial`, state returns to `receiving`, `partial_failed` detail, `rows.sqlite` put at offset 0 truncates, `transcribed_ms` in list, cached hash cleared on requeue, puts refused while queued/processing
-- [ ] T039 [P] [US3] `apps/macos/LocalFlowTests/MeetingFinalizerTests.swift`: `run(partial:)` on a recording meeting transcribes finished segments, stops at the first unfinished or missing file, does not complete; a later partial run and the final run resume with no gaps or duplicates and match a single full run
-- [ ] T040 [P] [US3] `apps/ios/LocalFlowPhoneTests/MeetingUploaderTests.swift` (live cases): during recording, finished segments go up in order, then `rows.sqlite`, then `start partial`; waits while the server is busy; catches up after a disconnect; recording never blocks
+- [X] T038 [P] [US3] `server/internal/remote/handoff_test.go`: `start partial` from `receiving` only, runner passes `--partial`, state returns to `receiving`, `partial_failed` detail, `rows.sqlite` put at offset 0 truncates, `transcribed_ms` in list, cached hash cleared on requeue, puts refused while queued/processing
+- [X] T039 [P] [US3] `apps/macos/LocalFlowTests/MeetingFinalizerTests.swift`: `run(partial:)` on a recording meeting transcribes finished segments, stops at the first unfinished or missing file, does not complete; a later partial run and the final run resume with no gaps or duplicates and match a single full run
+- [X] T040 [P] [US3] `apps/ios/LocalFlowPhoneTests/MeetingUploaderTests.swift` (live cases): during recording, finished segments go up in order, then `rows.sqlite`, then `start partial`; waits while the server is busy; catches up after a disconnect; recording never blocks
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Server: `partial`, `rows.sqlite`, `transcribed_ms` in `server/internal/remote/protocol.go` and `server/internal/remote/handoff.go` per contracts/handoff-v2.md
-- [ ] T042 [US3] `MeetingFinalizer.run(partial:)` in `apps/macos/LocalFlow/Core/Transcripts/MeetingFinalizer.swift` per research R3, with a `ponytail:` comment on the O(n²) decode ceiling
-- [ ] T043 [US3] `apps/macos/MeetingProcessor/main.swift`: `rows.sqlite` import, `--partial` mode, `transcribed_ms` file
-- [ ] T044 [US3] Phone live driver in `apps/ios/App/Meetings/MeetingUploader.swift`: per finished segment upload, rows, partial start; `transcribed_ms` shown on the recording screen and the Live Activity
+- [X] T041 [US3] Server: `partial`, `rows.sqlite`, `transcribed_ms` in `server/internal/remote/protocol.go` and `server/internal/remote/handoff.go` per contracts/handoff-v2.md
+- [X] T042 [US3] `MeetingFinalizer.run(partial:)` in `apps/macos/LocalFlow/Core/Transcripts/MeetingFinalizer.swift` per research R3, with a `ponytail:` comment on the O(n²) decode ceiling
+- [X] T043 [US3] `apps/macos/MeetingProcessor/main.swift`: `rows.sqlite` import, `--partial` mode, `transcribed_ms` file
+- [X] T044 [US3] Phone live driver in `apps/ios/App/Meetings/MeetingUploader.swift`: per finished segment upload, rows, partial start; `transcribed_ms` shown on the recording screen and the Live Activity
 
 **Checkpoint**: head start works; after-Stop path unchanged when offline.
 

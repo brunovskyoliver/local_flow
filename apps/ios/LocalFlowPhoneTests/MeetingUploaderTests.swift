@@ -29,6 +29,8 @@ final class MeetingUploaderTests: XCTestCase {
     server = nil
   }
 
+  private let events = OSAllocatedUnfairLock(initialState: [MeetingUploader.Event]())
+
   private func uploader() -> MeetingUploader {
     let database = harness.phone.history.database
     let pool = RemoteChannelPool(open: { throw RemoteChannelError.unreachable })
@@ -43,7 +45,8 @@ final class MeetingUploaderTests: XCTestCase {
         summaries.withLock { $0.append(id) }
         return summary.withLock { $0 }
       },
-      now: { clock.nowMilliseconds })
+      now: { clock.nowMilliseconds },
+      onChange: { [events] event in events.withLock { $0.append(event) } })
   }
 
   /// A stopped meeting with `seconds` of audio.
@@ -386,5 +389,174 @@ final class MeetingUploaderTests: XCTestCase {
     await harness.coordinator.stop()
     _ = await uploader.pass()
     XCTAssertEqual(try stage(recording), "processing")
+  }
+
+  // MARK: While recording (User Story 3)
+
+  /// Starts a meeting and records until `finished` segments are finalized.
+  private func startRecording(finished: Int) async throws -> UUID {
+    await harness.coordinator.start()
+    let id = try XCTUnwrap(harness.coordinator.meetingID)
+    try await keepRecording(id, finished: finished)
+    return id
+  }
+
+  private func keepRecording(_ id: UUID, finished: Int) async throws {
+    while try finishedPaths(id).count < finished {
+      harness.engine.feed(seconds: 5, into: harness.recorder)
+      try await Task.sleep(for: .milliseconds(20))
+    }
+  }
+
+  private func finishedPaths(_ id: UUID) throws -> [String] {
+    try harness.segments(id).filter { $0["state"] == "finalized" }.map { $0["relative_path"] }
+  }
+
+  private func firstIndex(_ matches: (RemoteHandoffRequest) -> Bool) -> Int? {
+    server.requests.firstIndex(where: matches)
+  }
+
+  /// The meeting row in the stored `rows.sqlite`.
+  private func storedRowsState(_ id: UUID) throws -> String? {
+    let data = try XCTUnwrap(server.stored[id]?.files["rows.sqlite"])
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "rows-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try data.write(to: url)
+    let queue = try DatabaseQueue(path: url.path)
+    defer { try? queue.close() }
+    return try queue.read {
+      try String.fetchOne($0, sql: "SELECT state FROM meetings WHERE id=?", arguments: [id.uuidString])
+    }
+  }
+
+  func testFinishedSegmentsGoUpInOrderThenRowsThenAPartialRun() async throws {
+    let id = try await startRecording(finished: 2)
+    let finished = try finishedPaths(id)
+    let names = finished.map { URL(fileURLWithPath: $0).lastPathComponent }
+    let uploader = uploader()
+
+    let next = await uploader.pass()
+    XCTAssertEqual(next, MeetingUploader.livePollInterval)
+    let segment0 = try XCTUnwrap(firstIndex { $0.name == names[0] })
+    let segment1 = try XCTUnwrap(firstIndex { $0.name == names[1] })
+    let rows = try XCTUnwrap(firstIndex { $0.name == "rows.sqlite" })
+    let bundle = try XCTUnwrap(firstIndex { $0.name == "bundle.sqlite" })
+    let start = try XCTUnwrap(firstIndex { $0.action == .start })
+    XCTAssertLessThan(segment0, segment1)
+    XCTAssertLessThan(server.requests.lastIndex { $0.name == names[1] }!, rows)
+    XCTAssertLessThan(rows, bundle)
+    XCTAssertLessThan(server.requests.lastIndex { $0.name == "bundle.sqlite" }!, start)
+    XCTAssertTrue(server.requests[start].partial)
+    XCTAssertFalse(server.requests[start].copy)
+    let stored = try XCTUnwrap(server.stored[id])
+    XCTAssertEqual(stored.state, .queued)
+    XCTAssertTrue(stored.partial)
+    for path in finished {
+      XCTAssertEqual(stored.files[URL(fileURLWithPath: path).lastPathComponent], try local(path))
+    }
+    XCTAssertEqual(try storedRowsState(id), "recording")
+    XCTAssertEqual(try stage(id), "uploading")
+    XCTAssertEqual(try row(id)?["confirmed_segments"] as String?, finished.joined(separator: ","))
+    XCTAssertEqual(try row(id)?["bundle_uploaded"] as Bool?, true)
+    XCTAssertTrue(harness.coordinator.isRecording, "recording goes on")
+
+    // The server is busy with the partial run: nothing is sent, the phone waits.
+    server.clearLog()
+    _ = await uploader.pass()
+    XCTAssertEqual(server.requests.map(\.action), [.list])
+
+    // The run is done: "Transcribed up to" comes back; no new segment, no new run.
+    server.finishPartial(id, transcribedMS: 34_000)
+    server.clearLog()
+    _ = await uploader.pass()
+    XCTAssertEqual(server.requests.map(\.action), [.list])
+    XCTAssertEqual(try row(id)?["transcribed_ms"] as Int?, 34_000)
+    XCTAssertTrue(events.withLock { $0.contains(.transcribed(id, 34_000)) })
+    harness.coordinator.transcribed(id, ms: 34_000)
+    XCTAssertEqual(harness.coordinator.transcribedMs, 34_000)
+    XCTAssertEqual(harness.activity.states.last?.transcribedMs, 34_000)
+
+    // The next finished segment: it, the rows and another partial run; the bundle stays.
+    try await keepRecording(id, finished: 3)
+    let third = try XCTUnwrap(try finishedPaths(id).last)
+    server.clearLog()
+    _ = await uploader.pass()
+    XCTAssertEqual(
+      puts(URL(fileURLWithPath: third).lastPathComponent).last?.sha256,
+      FakeHandoffServer.hex(try local(third)))
+    XCTAssertTrue(puts("bundle.sqlite").isEmpty, "the bundle goes up once")
+    XCTAssertFalse(puts("rows.sqlite").isEmpty)
+    XCTAssertEqual(server.stored[id]?.partialRuns, 2)
+
+    // Stop while that run is going: the queue waits for it, then sends what is left.
+    await harness.coordinator.stop()
+    try await harness.assertState(id, .completed)
+    XCTAssertNil(harness.coordinator.transcribedMs)
+    _ = await uploader.pass()
+    XCTAssertEqual(try stage(id), "processing")
+    XCTAssertEqual(server.stored[id]?.partial, true)
+    server.finishPartial(id, transcribedMS: 52_000)
+    server.clearLog()
+    _ = await uploader.pass()
+    XCTAssertEqual(try stage(id), "processing")
+    let after = try XCTUnwrap(server.stored[id])
+    XCTAssertEqual(after.state, .queued)
+    XCTAssertFalse(after.partial, "the last start is the final run")
+    for path in try segmentPaths(id) {
+      XCTAssertEqual(after.files[URL(fileURLWithPath: path).lastPathComponent], try local(path))
+    }
+    XCTAssertTrue(puts("bundle.sqlite").isEmpty)
+    XCTAssertEqual(try storedRowsState(id), "completed", "the rows after Stop")
+    XCTAssertLessThan(
+      server.requests.lastIndex { $0.name == "rows.sqlite" }!,
+      server.requests.lastIndex { $0.action == .start }!)
+    try complete(id)
+    _ = await uploader.pass()
+    XCTAssertEqual(try stage(id), "ready")
+  }
+
+  func testLiveUploadCatchesUpAfterADisconnectAndNeverBlocksRecording() async throws {
+    let id = try await startRecording(finished: 1)
+    server.unreachable = true
+    let uploader = uploader()
+    _ = await uploader.pass()
+    XCTAssertTrue(server.stored.isEmpty)
+    try await keepRecording(id, finished: 3)
+    _ = await uploader.pass()
+    XCTAssertTrue(harness.coordinator.isRecording)
+    XCTAssertEqual(try row(id)?["attempts"] as Int?, 0, "no backoff while recording")
+
+    server.unreachable = false
+    server.clearLog()
+    _ = await uploader.pass()
+    let names = try finishedPaths(id).map { URL(fileURLWithPath: $0).lastPathComponent }
+    let order = server.requests.filter { $0.action == .put && $0.data != nil }.compactMap(\.name)
+      .filter { $0.hasSuffix(".aac") }
+    XCTAssertEqual(Array(NSOrderedSet(array: order)) as? [String], names)
+    XCTAssertEqual(server.stored[id]?.partialRuns, 1, "one run for everything that caught up")
+    XCTAssertEqual(try row(id)?["confirmed_segments"] as String?, try finishedPaths(id).joined(separator: ","))
+    await harness.coordinator.stop()
+  }
+
+  func testAServerWithoutPartialRunsGetsTheMeetingAfterStop() async throws {
+    let id = try await startRecording(finished: 1)
+    server.noPartial = true
+    let uploader = uploader()
+    _ = await uploader.pass()
+    XCTAssertNil(server.stored[id]?.files["bundle.sqlite"], "no bundle without a partial run")
+    XCTAssertFalse(server.requests.contains { $0.action == .start })
+    try await keepRecording(id, finished: 2)
+    server.clearLog()
+    _ = await uploader.pass()
+    XCTAssertFalse(server.requests.contains { $0.name == "rows.sqlite" }, "asked once")
+
+    await harness.coordinator.stop()
+    server.clearLog()
+    _ = await uploader.pass()
+    XCTAssertEqual(try stage(id), "processing")
+    XCTAssertEqual(server.stored[id]?.state, .queued)
+    XCTAssertFalse(server.requests.contains { $0.name == "rows.sqlite" })
+    XCTAssertFalse(puts("bundle.sqlite").filter { $0.data != nil }.isEmpty)
   }
 }

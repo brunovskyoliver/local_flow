@@ -6,7 +6,7 @@ import LocalFlowSpeech
 
 // flowd-meeting: one handed-off meeting, processed headless on the server Mac.
 //
-//   flowd-meeting --bundle <dir> --meeting <UUID> --models <dir> --helper <path>
+//   flowd-meeting --bundle <dir> --meeting <UUID> --models <dir> --helper <path> [--partial]
 //
 // <dir>/bundle.sqlite is the meeting's slice of the client's history database and
 // <dir> its meeting storage root (<UUID>/mic-0001.aac ...). The app's own finalizer
@@ -19,6 +19,12 @@ import LocalFlowSpeech
 // output could hold meeting content and flowd discards it anyway. The percent
 // done goes to <dir>/progress for flowd's handoff list: the transcript is the
 // first 80, speaker labels the rest.
+//
+// Feature 020: a phone sends <dir>/rows.sqlite with its newer meeting rows (the
+// meeting, tracks, segments, pauses, notes); they replace the bundle's before the
+// run and the file is deleted. --partial runs while the meeting still records: the
+// finalizer transcribes the finished stretches and stops without completing, no
+// speaker labels, and <dir>/transcribed_ms says how far the transcript reaches.
 
 func argument(_ name: String) -> String? {
   let arguments = CommandLine.arguments
@@ -73,8 +79,14 @@ func process() async -> Int32 {
       descriptor: diarizationDescriptor,
       rootURL: FluidAudioDiarizerFactory.installRoot(models: models))
 
+    let partial = CommandLine.arguments.contains("--partial")
     let history = try TranscriptionStore(
       path: bundle.appendingPathComponent("bundle.sqlite").path)
+    let rows = bundle.appendingPathComponent("rows.sqlite")
+    if FileManager.default.fileExists(atPath: rows.path) {
+      try await MeetingHandoff.importRows(from: rows, into: history.database)
+      try FileManager.default.removeItem(at: rows)
+    }
     let vocabulary = VocabularyStore(history: history)
     let root = MeetingStorageRoot(url: bundle)
     let meetings = MeetingStore(history: history, root: root)
@@ -117,6 +129,18 @@ func process() async -> Int32 {
     guard let row = try await transcripts.transcription(meetingID: meetingID) else { return 65 }
     let progress = ProgressFile(directory: bundle)
     progress.report(0)
+    if partial {
+      let outcome = try await finalizer.run(
+        meetingID: meetingID, revision: row.revision, partial: true,
+        progress: { progress.report($0) })
+      await lifecycle.setKeepLoaded(false)
+      try await history.database.writeWithoutTransaction { db in
+        try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+      }
+      try Data("\(outcome.transcribedMs)\n".utf8).write(
+        to: bundle.appendingPathComponent("transcribed_ms"), options: .atomic)
+      return 0
+    }
     let outcome = try await finalizer.run(
       meetingID: meetingID, revision: row.revision,
       progress: { progress.report($0 * 0.8) })

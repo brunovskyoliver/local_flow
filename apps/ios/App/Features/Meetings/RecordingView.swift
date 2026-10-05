@@ -19,6 +19,9 @@ struct RecordingView: View {
       }
       Text(recorder.isPaused ? "Paused · another app has the microphone" : recorder.inputName ?? "")
         .font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
+      if let ms = meetings.transcribedMs {
+        Text(Self.transcribed(ms)).font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
+      }
       Button {
         Task { await meetings.stop() }
       } label: {
@@ -31,6 +34,10 @@ struct RecordingView: View {
       .disabled(meetings.isBusy)
     }
     .padding(.vertical, 8)
+  }
+
+  static func transcribed(_ ms: Int64) -> String {
+    "Transcribed up to \(Duration.milliseconds(ms).formatted(.time(pattern: .minuteSecond)))"
   }
 
   static func elapsed(_ recorder: MeetingRecorder, now: Date) -> String {

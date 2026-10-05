@@ -28,12 +28,16 @@ actor MeetingFinalizer {
     /// diarizer to reuse instead of decoding both tracks again. nil unless the
     /// layout profiled echo (per-track); the stretches keep a zero base.
     let echoProfile: EchoGate.Profile?
+    /// Audio the pass has covered, in stretch time: after a partial run, how far the
+    /// transcript reaches (Feature 020 "Transcribed up to").
+    var transcribedMs: Int64 = 0
 
     /// The same outcome without its echo profile, for callers that keep it around.
     var withoutEchoProfile: Outcome {
       Outcome(
         row: row, windowCount: windowCount, totalGapCount: totalGapCount,
-        coveredGapCount: coveredGapCount, coveredGapMs: coveredGapMs, echoProfile: nil)
+        coveredGapCount: coveredGapCount, coveredGapMs: coveredGapMs, echoProfile: nil,
+        transcribedMs: transcribedMs)
     }
   }
   struct Configuration: Sendable {
@@ -169,6 +173,30 @@ actor MeetingFinalizer {
     return total
   }
 
+  /// Feature 020 (research R3): the detail cut before the first stretch that is not
+  /// finished yet, where some track's segment is not finalized or its file has not
+  /// arrived. A partial run covers only what is before the cut.
+  func finishedPrefix(_ detail: MeetingDetail) -> MeetingDetail {
+    let cut = Self.sequences(detail).first { sequence in
+      detail.tracks.contains { track in
+        guard let segment = track.segments.first(where: { $0.sequence == sequence }) else {
+          return false
+        }
+        return segment.state != .finalized
+          || storageRoot.resolve(relativePath: segment.relativePath).map {
+            FileManager.default.fileExists(atPath: $0.path)
+          } != true
+      }
+    }
+    guard let cut else { return detail }
+    return MeetingDetail(
+      meeting: detail.meeting,
+      tracks: detail.tracks.map { track in
+        MeetingTrackDetail(track: track.track, segments: track.segments.filter { $0.sequence < cut })
+      },
+      pauses: detail.pauses, notes: detail.notes, outcomes: detail.outcomes)
+  }
+
   private func hasSourceAudio(_ detail: MeetingDetail) -> Bool {
     detail.tracks.contains { track in
       track.segments.contains { segment in
@@ -206,11 +234,28 @@ actor MeetingFinalizer {
     let row: MeetingTranscription
   }
 
+  /// `partial` (Feature 020, research R3): the meeting may still be recording. The pass
+  /// covers the finished stretches before the first unfinished one, persists its rows and
+  /// progress, and stops without completing: the row stays `finalizing` with the same pass,
+  /// so the next partial run and the final run resume after the last persisted window.
+  ///
+  /// ponytail: every rerun decodes the earlier stretches again (the resume skips their
+  /// inference, not their decoding, and the per-track echo profile reads every stretch),
+  /// so decoding grows O(n²) over a meeting's partial runs. AAC decodes far faster than real
+  /// time, fine up to the 4-hour cap; persist decoded stretch lengths in the bundle if it
+  /// is ever not.
   func run(
-    meetingID: UUID, revision: Int64, progress: (@Sendable (Double) -> Void)? = nil
+    meetingID: UUID, revision: Int64, partial: Bool = false,
+    progress: (@Sendable (Double) -> Void)? = nil
   ) async throws -> Outcome {
-    guard let detail = try await meetings.detail(id: meetingID) else { throw Error.noSourceAudio }
-    guard detail.meeting.state.isTerminal else { throw Error.meetingActive }
+    guard var detail = try await meetings.detail(id: meetingID) else {
+      throw Error.noSourceAudio
+    }
+    if partial {
+      detail = finishedPrefix(detail)
+    } else {
+      guard detail.meeting.state.isTerminal else { throw Error.meetingActive }
+    }
     guard hasSourceAudio(detail) else { throw Error.noSourceAudio }
     var snapshot: VocabularySnapshot?
     do { snapshot = try await vocabulary.snapshot() } catch is CancellationError {
@@ -306,6 +351,7 @@ actor MeetingFinalizer {
         }
       }
       try await flush(&context, force: true)
+      if partial { return try await pause(&context) }
       return try await complete(&context)
     } catch is CancellationError {
       // Stop at the boundary: rows and progress stay for a later resume.
@@ -958,6 +1004,19 @@ actor MeetingFinalizer {
     }
   }
 
+  /// The end of a partial run: rows and progress are persisted, the row stays
+  /// `finalizing` for the next run.
+  private func pause(_ context: inout PassContext) async throws -> Outcome {
+    try? await lifecycle.finish(context.lease)
+    guard let row = try await store.transcription(meetingID: context.meetingID) else {
+      throw PassFailure(category: .persistenceFailure, detail: nil)
+    }
+    logSink("partial pass windows=\(context.windowCount) transcribedMs=\(context.baseMs)")
+    return Outcome(
+      row: row, windowCount: context.windowCount, totalGapCount: 0, coveredGapCount: 0,
+      coveredGapMs: 0, echoProfile: nil, transcribedMs: context.baseMs)
+  }
+
   private func complete(_ context: inout PassContext) async throws -> Outcome {
     let gaps = try await store.gaps(meetingID: context.meetingID)
     var bases: [Int: (base: Int64, length: Int64)] = [:]
@@ -1007,6 +1066,6 @@ actor MeetingFinalizer {
     return Outcome(
       row: row, windowCount: context.windowCount, totalGapCount: gaps.count,
       coveredGapCount: coveredCount, coveredGapMs: coveredMs,
-      echoProfile: context.echoProfile)
+      echoProfile: context.echoProfile, transcribedMs: context.baseMs)
   }
 }

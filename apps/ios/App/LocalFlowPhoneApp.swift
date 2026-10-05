@@ -109,6 +109,8 @@ final class PhoneApp {
         bundleIdentifier: Bundle.main.bundleIdentifier ?? "org.localflow.LocalFlowPhone")
       background.register()
       uploads.forward = { [weak background] in background?.handle($0) }
+      uploads.onTranscribed = { [weak meetings] id, ms in meetings?.transcribed(id, ms: ms) }
+      meetings.onStarted = { _ in Task { await uploader.kick() } }
       meetings.onEnded = { [weak background] id, origin in
         // The app's own Stop is a tap in the foreground: the system's continued
         // processing can take over. Otherwise the app may already be in the background.

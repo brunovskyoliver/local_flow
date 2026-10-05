@@ -247,8 +247,15 @@ public actor MeetingHandoff {
     ("analysis_overlays", "meeting_id=?"),
   ]
 
-  public func export(_ id: UUID, to url: URL) async throws -> Bool {
-    let language = await defaultLanguage()
+  /// The tables `rows.sqlite` carries (Feature 020): what changes while a meeting records.
+  /// The server's `flowd-meeting` replaces them in its bundle before each run.
+  private static let rowTables = Set([
+    "meetings", "meeting_tracks", "meeting_segments", "meeting_pauses", "meeting_notes",
+  ])
+
+  /// The meeting's slice for the server. `recording` (Feature 020): the meeting may still
+  /// be recording, for a partial run; later row changes go up as `rows.sqlite`.
+  public func export(_ id: UUID, to url: URL, recording: Bool = false) async throws -> Bool {
     let eligible = try await database.read { db -> Bool in
       let terminal =
         try Bool.fetchOne(
@@ -263,9 +270,43 @@ public actor MeetingHandoff {
               OR EXISTS(SELECT 1 FROM meeting_analysis WHERE meeting_id=?1
                 AND (accepted_run_id IS NOT NULL OR current_run_id IS NOT NULL))
             """, arguments: [id.uuidString]) ?? true
-      return terminal && !labeled
+      return (terminal || recording) && !labeled
     }
     guard eligible else { return false }
+    try await stage(id, tables: Self.inputs, to: url)
+    return true
+  }
+
+  /// `rows.sqlite` (Feature 020): the meeting's own rows of `rowTables`, as they are now.
+  public func exportRows(_ id: UUID, to url: URL) async throws {
+    try? FileManager.default.removeItem(at: url)
+    try await stage(id, tables: Self.inputs.filter { Self.rowTables.contains($0.table) }, to: url)
+  }
+
+  /// The server side of `rows.sqlite`: its rows replace the bundle's. Foreign keys are off
+  /// for the import, so replacing a parent row never cascades to the transcript.
+  public static func importRows(from url: URL, into database: any DatabaseWriter) async throws {
+    try await database.writeWithoutTransaction { db in
+      try db.execute(sql: "ATTACH DATABASE ? AS rows", arguments: [url.path])
+      defer { try? db.execute(sql: "DETACH DATABASE rows") }
+      try db.execute(sql: "PRAGMA foreign_keys=OFF")
+      defer { try? db.execute(sql: "PRAGMA foreign_keys=ON") }
+      try db.inTransaction {
+        for (table, _) in Self.inputs where Self.rowTables.contains(table) {
+          let columns = try Self.columns(db, table, "main", "rows")
+          try db.execute(
+            sql:
+              "INSERT OR REPLACE INTO main.\(table)(\(columns)) SELECT \(columns) FROM rows.\(table)")
+        }
+        return .commit
+      }
+    }
+  }
+
+  private func stage(_ id: UUID, tables: [(table: String, filter: String)], to url: URL)
+    async throws
+  {
+    let language = await defaultLanguage()
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
@@ -277,7 +318,7 @@ public actor MeetingHandoff {
       try db.execute(sql: "ATTACH DATABASE ? AS bundle", arguments: [staging.path])
       defer { try? db.execute(sql: "DETACH DATABASE bundle") }
       try db.inTransaction {
-        for (table, filter) in Self.inputs {
+        for (table, filter) in tables {
           let columns = try Self.columns(db, table, "main", "bundle")
           try db.execute(
             sql:
@@ -304,7 +345,6 @@ public actor MeetingHandoff {
     }
     try staged.close()
     try FileManager.default.moveItem(at: staging, to: url)
-    return true
   }
 
   /// Replaces this meeting's transcript, labels and summary with the server's rows in
