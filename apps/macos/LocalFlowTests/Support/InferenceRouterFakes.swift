@@ -1,6 +1,7 @@
 import Foundation
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 /// Feature 018: a router whose server serves every meeting stage.

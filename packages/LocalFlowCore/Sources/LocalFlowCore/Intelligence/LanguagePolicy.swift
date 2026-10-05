@@ -1,5 +1,4 @@
 import Foundation
-import LocalFlowCore
 import LocalFlowSpeech
 
 /// `policy_v1` language detection (research R10). `detect` samples at most
@@ -10,15 +9,15 @@ import LocalFlowSpeech
 /// Below that — or with dominant other text — the result is `mixed` (Slovak prose,
 /// English terms kept), except that English with at least twice the Slovak text
 /// yields `en`: a clearly English meeting is never summarized in Slovak (FR-036).
-enum LanguagePolicy {
-  static let version = "policy_v1"
+public enum LanguagePolicy {
+  public static let version = "policy_v1"
 
   /// The `language_policy` request value: `{"output": …, "preserve_terms": true}`.
-  static func requestValue(output: AnalysisLanguage) -> AnalysisRequest.LanguagePolicyValue {
+  public static func requestValue(output: AnalysisLanguage) -> AnalysisRequest.LanguagePolicyValue {
     AnalysisRequest.LanguagePolicyValue(output: output, preserveTerms: true)
   }
 
-  static func resolve(
+  public static func resolve(
     segments: [EvidenceSegment], sampleBytes: Int,
     meetingLanguage: MeetingLanguage?, transcriptPipeline: String?
   ) -> AnalysisLanguage {
@@ -34,7 +33,7 @@ enum LanguagePolicy {
   }
 
   /// A fixed `lang_<sk|en>_prompt_v<1|2>` tag recorded in the final pass identity.
-  static func recordedLanguage(_ transcriptPipeline: String?) -> AnalysisLanguage? {
+  public static func recordedLanguage(_ transcriptPipeline: String?) -> AnalysisLanguage? {
     let recorded = (transcriptPipeline ?? "").split(separator: "+").filter {
       $0.hasPrefix("lang_")
     }
@@ -50,7 +49,7 @@ enum LanguagePolicy {
     }
   }
 
-  static func detect(segments: [EvidenceSegment], sampleBytes: Int) -> AnalysisLanguage {
+  public static func detect(segments: [EvidenceSegment], sampleBytes: Int) -> AnalysisLanguage {
     var english = 0
     var slovak = 0
     var other = 0
@@ -76,7 +75,7 @@ enum LanguagePolicy {
   /// Evenly spaced segment texts whose combined byte count stays under
   /// `budget`. With more text than the budget, up to 64 equally spaced
   /// positions are sampled, each truncated to its share.
-  static func sampledTexts(segments: [EvidenceSegment], budget: Int) -> [String] {
+  public static func sampledTexts(segments: [EvidenceSegment], budget: Int) -> [String] {
     guard budget > 0, !segments.isEmpty else { return [] }
     let ordered = segments.sorted { $0.ordinal < $1.ordinal }
     let total = ordered.reduce(0) { $0 + $1.text.utf8.count }

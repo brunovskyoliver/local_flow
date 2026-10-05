@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T031 — the validator skeleton: meeting-id check, the duplicate rule and the
 /// partial merge; the other stages are pass-through stubs for now.

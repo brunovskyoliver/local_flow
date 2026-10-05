@@ -4,7 +4,7 @@
 # owner. Evidence and the spec 010 identity tables are read-only for it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-scope="apps/macos/LocalFlow/Core/Intelligence apps/macos/LocalFlow/Core/IntelligenceBoundaries.swift apps/macos/LocalFlow/Core/Storage/AnalysisStore.swift apps/macos/LocalFlow/Features/Intelligence"
+scope="apps/macos/LocalFlow/Core/Intelligence packages/LocalFlowCore/Sources/LocalFlowCore/Intelligence apps/macos/LocalFlow/Features/Intelligence"
 if grep -rnE 'FluidAudio|whisper|WhisperKit|ModelLifecycleCoordinator|ModelFactory|makeRuntime' $scope 2>/dev/null; then
   echo "intelligence module references a model runtime or lifecycle owner" >&2
   exit 1

@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T082 — FR-037: `1 MIN READ` is `ceil(words / 200)` over the rendered prose
 /// (summary, topics and items), minimum one minute. The value is computed on

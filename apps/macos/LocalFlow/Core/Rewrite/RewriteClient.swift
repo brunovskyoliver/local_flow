@@ -3,21 +3,7 @@ import LocalFlowCore
 import LocalFlowSpeech
 import OSLog
 
-/// Where a request goes: the full URL from Settings and its normalized origin,
-/// which keys the credential and the insecure override.
-struct RewriteEndpoint: Sendable, Equatable {
-  let url: URL
-  let origin: String
-  /// Meeting analysis only: the summary-server headers pinned at admission
-  /// (`AnalysisTransporting.pinned`), held in memory for one run and never
-  /// logged or stored. Nil means "read the current Settings choice".
-  var summaryHeaders: [String: String]? = nil
-  /// Feature 014: the request travels over the remote dictation channel, not HTTP.
-  var viaRemoteChannel = false
-  /// Feature 018 (R9): a request to the custom summaries server that fails before any
-  /// result is sent again over the channel.
-  var channelFallback = false
-
+extension RewriteEndpoint {
   /// Which primary backend a pinned endpoint reaches: origin, URL and model,
   /// never the key. Keys the analysis partial cache.
   var summaryBackendKey: String {
@@ -30,25 +16,9 @@ struct RewriteEndpoint: Sendable, Equatable {
 
   init?(settings: RewriteSettings) {
     guard let url = settings.endpoint, settings.isEndpointValid else { return nil }
-    self.url = url
-    origin = settings.endpointOrigin
+    self.init(url: url, origin: settings.endpointOrigin)
     viaRemoteChannel = settings.viaRemoteChannel
   }
-  init(url: URL, origin: String) {
-    self.url = url
-    self.origin = origin
-  }
-
-  /// Feature 018: the server's channel, the custom summaries server, or this Mac's flowd.
-  var analysisInferencePath: AnalysisInferencePath {
-    if viaRemoteChannel { return .server }
-    return summaryHeaders?.isEmpty == false ? .custom : .local
-  }
-
-  var rewriteURL: URL { url.appendingPathComponent("v1/rewrite") }
-  var healthURL: URL { url.appendingPathComponent("v1/rewrite/health") }
-  var analysisURL: URL { url.appendingPathComponent("v1/analysis/meeting") }
-  var analysisHealthURL: URL { url.appendingPathComponent("v1/analysis/health") }
 }
 
 /// What the transport yields while a response streams in. `firstByte` arrives

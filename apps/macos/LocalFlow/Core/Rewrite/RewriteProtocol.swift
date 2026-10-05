@@ -216,30 +216,6 @@ enum RewriteEvent: Sendable, Equatable {
   }
 }
 
-/// Typed extraction from `JSONSerialization` values. Booleans are `NSNumber` too,
-/// so an integer field must reject them explicitly.
-enum JSONField {
-  static func int(_ value: Any?) -> Int? {
-    guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
-      return nil
-    }
-    guard let double = Double(exactly: number), double.rounded() == double,
-      double >= Double(Int32.min), double <= Double(Int32.max)
-    else { return nil }
-    return Int(double)
-  }
-  static func span(_ value: Any?) -> Int? {
-    guard let value = int(value), value >= 0 else { return nil }
-    return value
-  }
-  static func identity(_ value: Any?) -> String? {
-    guard let string = value as? String, !string.isEmpty,
-      string.utf8.count <= RewriteBounds.maximumIdentityBytes
-    else { return nil }
-    return string
-  }
-}
-
 enum RewriteResultValidator {
   /// Rules 3 to 9 of the contract, in order, over the decoded events of one
   /// response. Rules 1 and 2 (byte cap, line shape) are enforced while reading.

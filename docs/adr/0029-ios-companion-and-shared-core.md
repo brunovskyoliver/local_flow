@@ -25,6 +25,7 @@ The code that does this already exists in the Mac app. The `flowd-speech` worker
 
 - ADR 0001 now describes one macOS app and one iOS companion that share a package. `AGENTS.md` says so, so agents don't treat the phone app as out of scope.
 - About 150 declarations become `public`. Mac files that use moved types import the package modules. Mac tests reach package internals with `@testable import`.
+- Feature 020 moves the Mac meeting client into `LocalFlowCore` with the same pattern: `Meetings/` (capture, store, reconciler), `Transcripts/` (store, models, lifecycle), `Remote/` (channel, protocol, capabilities, pool, credentials, enrollment, meeting jobs, handoff) and `Intelligence/` (analysis store, protocol, validator and helpers, `RewriteEndpoint`, the channel analysis transport). The Mac keeps the CoreAudio sources, voiceprints, `RoutingAnalysisTransport` and the dictation and rewrite transports.
 - The Mac database, its migrations and its file locations don't change. `MacCompatibilityTests` freezes the migration list and the paths.
 - The storage closure is wider than the portable dictation path alone: `TranscriptionStore` also stores rewrite attempts, dictation context rows and remote failure reasons, and the migrator builds CHECK constraints from meeting, diarization, identification and analysis enums. Those value types move with it, each cut from its Mac file. The runtimes that produce them stay in the Mac app.
 - The keyboard never links FluidAudio or GRDB, which keeps it inside the extension memory limit.

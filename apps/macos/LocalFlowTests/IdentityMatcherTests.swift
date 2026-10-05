@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// `tiers_v1` (research R6) at every threshold edge, with the provisional WeSpeaker values.
 final class IdentityMatcherTests: XCTestCase {

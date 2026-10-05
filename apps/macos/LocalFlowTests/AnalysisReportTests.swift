@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T083 — `contracts/ui.md` "Copy": a plain report with title and date,
 /// headings and `- ` bullets in reading order, and no internal identifiers,

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// `contracts/ui.md` "Copy": a plain human-readable report — title and date,
 /// headings and `- ` bullets in reading order. It never contains identifiers,

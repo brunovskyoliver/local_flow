@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T057: the resolver's phrase table against a meeting started Sunday
 /// 2026-09-20 in Europe/Bratislava (the due-dates fixture's anchor).

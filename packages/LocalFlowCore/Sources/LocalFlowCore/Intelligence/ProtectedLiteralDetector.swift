@@ -6,15 +6,19 @@ import Foundation
 /// Names are not checked: the model sees speaker labels ("Speaker 2",
 /// "Lukáš Kocman") the transcript never says, and Slovak inflection and product
 /// names made the capitalized-word rule drop correct sentences.
-enum ProtectedLiteralDetector {
+public enum ProtectedLiteralDetector {
 
   /// One literal that does not appear in the checked evidence.
-  struct Violation: Equatable, Sendable {
-    var literal: String
+  public struct Violation: Equatable, Sendable {
+    public var literal: String
+
+    public init(literal: String) {
+      self.literal = literal
+    }
   }
 
   /// Literals in `text` absent from `evidence`.
-  static func violations(in text: String, evidence: String) -> [Violation] {
+  public static func violations(in text: String, evidence: String) -> [Violation] {
     let literals = extract(from: text)
     guard !literals.isEmpty else { return [] }
     let haystack = collapseSpaces(evidence)
@@ -26,7 +30,7 @@ enum ProtectedLiteralDetector {
   /// Shared-prefix stem rule: two tokens match when their common prefix is
   /// at least `max(4, min(length) − 3)` characters. Diacritics stay
   /// significant — matching is case- and accent-sensitive.
-  static func stemMatch(_ a: String, _ b: String) -> Bool {
+  public static func stemMatch(_ a: String, _ b: String) -> Bool {
     if a == b { return true }
     let prefix = a.commonPrefix(with: b)
     return prefix.count >= max(4, min(a.count, b.count) - 3)
@@ -34,14 +38,14 @@ enum ProtectedLiteralDetector {
 
   /// Whitespace-separated tokens with edge punctuation stripped — the unit
   /// the stem rule and the support check compare.
-  static func wordTokens(of text: String) -> [String] {
+  public static func wordTokens(of text: String) -> [String] {
     text.split(whereSeparator: { $0.isWhitespace }).map {
       String($0).trimmingCharacters(in: edgePunctuation)
     }.filter { !$0.isEmpty }
   }
 
   /// R6 content tokens: ≥ 4 characters, folded, stopwords removed.
-  static func contentTokens(of text: String) -> [String] {
+  public static func contentTokens(of text: String) -> [String] {
     wordTokens(of: text).map(fold).filter { $0.count >= 4 && !stopWords.contains($0) }
   }
 
@@ -73,12 +77,12 @@ enum ProtectedLiteralDetector {
   // MARK: Classes
 
   /// The classes Feature 012 redacts from on-screen context (research D8).
-  enum ProtectedClass: String, Sendable {
+  public enum ProtectedClass: String, Sendable {
     case email, url, ip, number
   }
 
   /// The redaction class of one punctuation-stripped token, or nil.
-  static func protectedClass(of token: String) -> ProtectedClass? {
+  public static func protectedClass(of token: String) -> ProtectedClass? {
     guard !token.isEmpty else { return nil }
     if isIPv4(token) || isIPv6(token) { return .ip }
     if isURL(token) || token.lowercased().hasPrefix("www.") { return .url }

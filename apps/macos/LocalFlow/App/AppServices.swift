@@ -49,7 +49,9 @@ final class AppServices {
   @ObservationIgnored private(set) var rewriteCoordinator: RewriteCoordinator?
   // Feature 014: remote dictation. Nothing here connects until the user turns it on;
   // the enrollment object is created only after the consent step.
-  @ObservationIgnored let remoteCredentials = RemoteCredentialStore()
+  @ObservationIgnored let remoteCredentials = RemoteCredentialStore(
+    service: RemoteCredentialStore.defaultService,
+    accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
   @ObservationIgnored private var remoteEnrollmentInstance: RemoteEnrollment?
   @ObservationIgnored private(set) var remoteRouter: RemoteDictationRouter?
   @ObservationIgnored private(set) var pendingRemoteStore: PendingRemoteDictationStore?
@@ -171,7 +173,11 @@ final class AppServices {
     if let remoteEnrollmentInstance { return remoteEnrollmentInstance }
     let enrollment = RemoteEnrollment(
       preferences: preferences, credentials: remoteCredentials, keys: SecureEnclaveDeviceKeys(),
-      signIn: SystemIdentitySignIn(), identityFetcher: URLSessionIdentityFetcher(),
+      signIn: SystemIdentitySignIn(
+        googleClientID: Bundle.main.object(forInfoDictionaryKey: "LocalFlowGoogleClientID")
+          as? String,
+        presentationAnchor: { NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow() }),
+      identityFetcher: URLSessionIdentityFetcher(),
       transports: URLSessionRemoteTransportOpener(),
       deviceName: Host.current().localizedName ?? "Mac")
     remoteEnrollmentInstance = enrollment
@@ -2842,4 +2848,10 @@ extension WhisperMeetingRuntime {
     try process.run()
     return (process.processIdentifier, process)
   }
+}
+
+extension RemoteCredentialStore {
+  /// Service `<bundle id>.remote`; the dev variant's differs, so it never reads the
+  /// installed app's items.
+  static let defaultService = AppIdentity.current.keychainService("remote")
 }

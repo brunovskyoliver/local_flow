@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 018 T013 (research R11).
 final class RemoteCapabilitiesTests: XCTestCase {

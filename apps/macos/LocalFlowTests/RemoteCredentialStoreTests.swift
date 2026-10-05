@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 final class RemoteCredentialStoreTests: XCTestCase {
   private var store: RemoteCredentialStore!
@@ -9,7 +10,8 @@ final class RemoteCredentialStoreTests: XCTestCase {
     super.setUp()
     // A throwaway service, so the test never touches the app's own items.
     store = RemoteCredentialStore(
-      service: "org.localflow.LocalFlowTests.remote.\(UUID().uuidString)")
+      service: "org.localflow.LocalFlowTests.remote.\(UUID().uuidString)",
+      accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
   }
 
   override func tearDown() {
@@ -47,7 +49,8 @@ final class RemoteCredentialStoreTests: XCTestCase {
   func testIssueTimeIsMemoryOnly() throws {
     try store.write(.accessToken, Data("lfa_x".utf8))
     store.accessTokenIssuedAt = .seconds(42)
-    let reopened = RemoteCredentialStore(service: store.service)
+    let reopened = RemoteCredentialStore(
+      service: store.service, accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
     XCTAssertEqual(try reopened.read(.accessToken), Data("lfa_x".utf8))
     XCTAssertNil(reopened.accessTokenIssuedAt)
   }

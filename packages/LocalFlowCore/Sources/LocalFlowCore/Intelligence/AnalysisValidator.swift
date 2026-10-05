@@ -1,5 +1,4 @@
 import Foundation
-import LocalFlowCore
 
 /// Client-side result validation (contracts/client-analysis.md). Runs after the
 /// transport's structural decode on every result. The pipeline order is fixed —
@@ -8,9 +7,9 @@ import LocalFlowCore
 /// tasks (T044+ identity, T057+ due dates, T063+ literals/support) slot in
 /// without reordering. Implemented now: the meeting-id step, the duplicate rule
 /// and the partial merge; the rest are pass-through stubs.
-enum AnalysisValidator {
+public enum AnalysisValidator {
 
-  static func validate(
+  public static func validate(
     result: AnalysisResult, against evidence: AnalysisEvidence, policy: AnalysisPolicy
   ) throws -> (ValidatedAnalysis, ValidationCounts) {
     try checkMeeting(result: result, evidence: evidence)

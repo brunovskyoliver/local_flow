@@ -1,31 +1,30 @@
 import CryptoKit
 import Foundation
-import LocalFlowCore
 import LocalFlowSpeech
 
 /// Control messages of remote channel v1 (`contracts/remote-channel.md`,
 /// `protocol/schemas/remote-*.schema.json`). Audio travels in kind-0x01 frames and
 /// never appears here.
-enum RemoteProtocol {
-  static let schemaVersion = 1
-  static let channelVersion = 1
-  static let suite = "x25519-hkdfsha256-chacha20poly1305"
-  static let maximumControlBytes = 65_536
-  static let maximumFrameSamples = 16_000
+public enum RemoteProtocol {
+  public static let schemaVersion = 1
+  public static let channelVersion = 1
+  public static let suite = "x25519-hkdfsha256-chacha20poly1305"
+  public static let maximumControlBytes = 65_536
+  public static let maximumFrameSamples = 16_000
   /// Feature 018: kind-0x02 meeting frames.
-  static let maximumS16FrameSamples = 32_000
-  static let windowSamples = WindowedTranscriber.productionWindowSamples
+  public static let maximumS16FrameSamples = 32_000
+  public static let windowSamples = WindowedTranscriber.productionWindowSamples
   /// 180 s of 16 kHz audio: the dictation limit, so at most 13 windows.
-  static let maximumSessionSamples = 2_880_000
-  static let maximumWindows = 14
-  static let maximumBoostTerms = 256
-  static let maximumGovernedSpellings = 1_024
-  static let maximumTermBytes = 128
-  static let maximumDeviceNameBytes = 64
+  public static let maximumSessionSamples = 2_880_000
+  public static let maximumWindows = 14
+  public static let maximumBoostTerms = 256
+  public static let maximumGovernedSpellings = 1_024
+  public static let maximumTermBytes = 128
+  public static let maximumDeviceNameBytes = 64
 }
 
 /// Error codes flowd sends in `error` messages.
-enum RemoteErrorCode: String, Codable, Sendable, CaseIterable {
+public enum RemoteErrorCode: String, Codable, Sendable, CaseIterable {
   case unauthorized
   case tokenExpired = "token_expired"
   case notApproved = "not_approved"
@@ -39,7 +38,7 @@ enum RemoteErrorCode: String, Codable, Sendable, CaseIterable {
   case `internal`
 
   /// The code a dictation records when the server answered with this error.
-  var failureReason: RemoteFailureReason {
+  public var failureReason: RemoteFailureReason {
     switch self {
     case .unauthorized, .tokenExpired: .unauthorized
     case .notApproved: .notApproved
@@ -52,7 +51,7 @@ enum RemoteErrorCode: String, Codable, Sendable, CaseIterable {
   }
 }
 
-enum RemoteProtocolError: Error, Equatable, Sendable {
+public enum RemoteProtocolError: Error, Equatable, Sendable {
   /// Not JSON, a missing field, a wrong type or an unknown message type.
   case invalidMessage
   case unsupportedVersion
@@ -62,15 +61,15 @@ enum RemoteProtocolError: Error, Equatable, Sendable {
 }
 
 /// `GET /v1/remote/identity`.
-struct RemoteServerIdentity: Codable, Sendable, Equatable {
-  let schemaVersion: Int
-  let server: String
-  let protocolVersions: [Int]
-  let suite: String
-  let serverKey: String
-  let fingerprint: String
+public struct RemoteServerIdentity: Codable, Sendable, Equatable {
+  public let schemaVersion: Int
+  public let server: String
+  public let protocolVersions: [Int]
+  public let suite: String
+  public let serverKey: String
+  public let fingerprint: String
 
-  enum CodingKeys: String, CodingKey {
+  public enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
     case server
     case protocolVersions = "protocol_versions"
@@ -80,7 +79,7 @@ struct RemoteServerIdentity: Codable, Sendable, Equatable {
   }
 
   /// The 32-byte X25519 key, or nil when the response is not a v1 identity.
-  func validatedKey() -> Data? {
+  public func validatedKey() -> Data? {
     guard schemaVersion == RemoteProtocol.schemaVersion,
       protocolVersions.contains(RemoteProtocol.channelVersion), suite == RemoteProtocol.suite,
       let key = Data(base64URL: serverKey), key.count == 32,
@@ -90,47 +89,70 @@ struct RemoteServerIdentity: Codable, Sendable, Equatable {
   }
 
   /// First 16 bytes of SHA-256 over the raw key, as eight groups of four hex digits.
-  static func fingerprint(of key: Data) -> String {
+  public static func fingerprint(of key: Data) -> String {
     let hex = Array(SHA256Digest.hex(key).prefix(32))
     return stride(from: 0, to: 32, by: 4).map { String(hex[$0..<$0 + 4]) }.joined(separator: "-")
   }
+
+  public init(
+    schemaVersion: Int, server: String, protocolVersions: [Int], suite: String, serverKey: String,
+    fingerprint: String
+  ) {
+    self.schemaVersion = schemaVersion
+    self.server = server
+    self.protocolVersions = protocolVersions
+    self.suite = suite
+    self.serverKey = serverKey
+    self.fingerprint = fingerprint
+  }
 }
 
-enum RemoteHelloPurpose: String, Codable, Sendable {
+public enum RemoteHelloPurpose: String, Codable, Sendable {
   case enroll, refresh, session
 }
 
-struct RemoteHello: Encodable, Sendable {
-  let schemaVersion = RemoteProtocol.schemaVersion
-  let type = "hello"
-  let replyKey: String
-  let purpose: RemoteHelloPurpose
-  var accessToken: String?
+public struct RemoteHello: Encodable, Sendable {
+  public let schemaVersion = RemoteProtocol.schemaVersion
+  public let type = "hello"
+  public let replyKey: String
+  public let purpose: RemoteHelloPurpose
+  public var accessToken: String?
 
-  enum CodingKeys: String, CodingKey {
+  public enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
     case type
     case replyKey = "reply_key"
     case purpose
     case accessToken = "access_token"
   }
+
+  public init(replyKey: String, purpose: RemoteHelloPurpose, accessToken: String? = nil) {
+    self.replyKey = replyKey
+    self.purpose = purpose
+    self.accessToken = accessToken
+  }
 }
 
 /// Dictionary terms for one dictation (FR-014). The server uses them for that session only.
-struct RemoteBoost: Codable, Sendable, Equatable {
-  struct Term: Codable, Sendable, Equatable {
-    let entryID: String
-    let canonical: String
-    enum CodingKeys: String, CodingKey {
+public struct RemoteBoost: Codable, Sendable, Equatable {
+  public struct Term: Codable, Sendable, Equatable {
+    public let entryID: String
+    public let canonical: String
+    public enum CodingKeys: String, CodingKey {
       case entryID = "entry_id"
       case canonical
     }
+
+    public init(entryID: String, canonical: String) {
+      self.entryID = entryID
+      self.canonical = canonical
+    }
   }
-  let terms: [Term]
-  let governed: [String]
+  public let terms: [Term]
+  public let governed: [String]
 
   /// The first 256 terms and 1,024 governed spellings that fit the wire limits.
-  init?(_ boost: VocabularyBoostTerms?) {
+  public init?(_ boost: VocabularyBoostTerms?) {
     guard let boost else { return nil }
     let fits = { (text: String) in text.utf8.count <= RemoteProtocol.maximumTermBytes }
     terms = boost.terms.filter { fits($0.entryID) && fits($0.canonical) }
@@ -141,14 +163,14 @@ struct RemoteBoost: Codable, Sendable, Equatable {
     guard !terms.isEmpty else { return nil }
   }
 
-  init(terms: [Term], governed: [String]) {
+  public init(terms: [Term], governed: [String]) {
     self.terms = terms
     self.governed = governed
   }
 }
 
 /// A message the app sends after `ready`.
-enum RemoteClientMessage: Sendable, Equatable {
+public enum RemoteClientMessage: Sendable, Equatable {
   case enroll(
     op: Int, provider: IdentityProvider, idToken: String, deviceName: String, deviceKey: Data,
     signature: Data)
@@ -169,7 +191,7 @@ enum RemoteClientMessage: Sendable, Equatable {
   /// A handed-off meeting: upload, start, poll, download or delete (one reply each).
   case handoff(op: Int, request: RemoteHandoffRequest)
 
-  func encoded() throws -> Data {
+  public func encoded() throws -> Data {
     var object: [String: Any] = ["schema_version": RemoteProtocol.schemaVersion]
     switch self {
     case .enroll(let op, let provider, let idToken, let deviceName, let deviceKey, let signature):
@@ -239,7 +261,7 @@ enum RemoteClientMessage: Sendable, Equatable {
   }
 
   /// At most 64 UTF-8 bytes with control characters removed, cut on a character boundary.
-  static func deviceName(_ name: String) -> String {
+  public static func deviceName(_ name: String) -> String {
     var result = ""
     for character in name
     where !character.unicodeScalars.contains(where: {
@@ -255,45 +277,68 @@ enum RemoteClientMessage: Sendable, Equatable {
 }
 
 /// One recognized window: the wire form of `TranscriptionWindow` and `RecognitionEvidence`.
-struct RemoteWindowResult: Decodable, Sendable {
-  struct Token: Codable, Sendable {
-    let text: String
-    let start: Double
-    let end: Double
+public struct RemoteWindowResult: Decodable, Sendable {
+  public struct Token: Codable, Sendable {
+    public let text: String
+    public let start: Double
+    public let end: Double
+
+    public init(text: String, start: Double, end: Double) {
+      self.text = text
+      self.start = start
+      self.end = end
+    }
   }
-  struct Evidence: Codable, Sendable {
-    let text: String
-    let samples: Int
-    let paddedSamples: Int
-    let timingsAvailable: Bool
-    let tokens: [RecognitionEvidence.Token]
-    enum CodingKeys: String, CodingKey {
+  public struct Evidence: Codable, Sendable {
+    public let text: String
+    public let samples: Int
+    public let paddedSamples: Int
+    public let timingsAvailable: Bool
+    public let tokens: [RecognitionEvidence.Token]
+    public enum CodingKeys: String, CodingKey {
       case text, samples
       case paddedSamples = "padded_samples"
       case timingsAvailable = "timings_available"
       case tokens
     }
+
+    public init(
+      text: String, samples: Int, paddedSamples: Int, timingsAvailable: Bool,
+      tokens: [RecognitionEvidence.Token]
+    ) {
+      self.text = text
+      self.samples = samples
+      self.paddedSamples = paddedSamples
+      self.timingsAvailable = timingsAvailable
+      self.tokens = tokens
+    }
   }
-  struct Hint: Codable, Sendable {
-    let source: String
-    let canonical: String
-    let entryID: String
-    enum CodingKeys: String, CodingKey {
+  public struct Hint: Codable, Sendable {
+    public let source: String
+    public let canonical: String
+    public let entryID: String
+    public enum CodingKeys: String, CodingKey {
       case source, canonical
       case entryID = "entry_id"
     }
-  }
-  let op: Int
-  let index: Int
-  let sampleStart: Int
-  let sampleCount: Int
-  let text: String
-  let tokens: [Token]
-  let evidence: Evidence?
-  let boostHints: [Hint]
-  let recognitionMs: Int
 
-  enum CodingKeys: String, CodingKey {
+    public init(source: String, canonical: String, entryID: String) {
+      self.source = source
+      self.canonical = canonical
+      self.entryID = entryID
+    }
+  }
+  public let op: Int
+  public let index: Int
+  public let sampleStart: Int
+  public let sampleCount: Int
+  public let text: String
+  public let tokens: [Token]
+  public let evidence: Evidence?
+  public let boostHints: [Hint]
+  public let recognitionMs: Int
+
+  public enum CodingKeys: String, CodingKey {
     case op, index
     case sampleStart = "sample_start"
     case sampleCount = "sample_count"
@@ -302,7 +347,7 @@ struct RemoteWindowResult: Decodable, Sendable {
     case recognitionMs = "recognition_ms"
   }
 
-  init(from decoder: any Decoder) throws {
+  public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     op = try container.decode(Int.self, forKey: .op)
     index = try container.decode(Int.self, forKey: .index)
@@ -316,7 +361,7 @@ struct RemoteWindowResult: Decodable, Sendable {
   }
 
   /// Field mapping of FR-016. Hints are dropped when the server said boosting did not run.
-  func window(boostingRan: Bool = true) -> TranscriptionWindow {
+  public func window(boostingRan: Bool = true) -> TranscriptionWindow {
     TranscriptionWindow(
       text: text, tokens: tokens.map { .init(text: $0.text, start: $0.start, end: $0.end) },
       evidence: evidence.map {
@@ -330,23 +375,23 @@ struct RemoteWindowResult: Decodable, Sendable {
         } : [])
   }
 
-  var recognitionSeconds: Double { Double(max(0, recognitionMs)) / 1_000 }
+  public var recognitionSeconds: Double { Double(max(0, recognitionMs)) / 1_000 }
 }
 
 /// Collects window results for one dictation and applies the local admission checks
 /// as they arrive, so a bad result fails the session instead of the transcript.
-struct RemoteWindowCollector: Sendable {
-  private(set) var windows: [Int: PrefetchedWindow] = [:]
+public struct RemoteWindowCollector: Sendable {
+  public private(set) var windows: [Int: PrefetchedWindow] = [:]
   private var admission = RecognitionAdmission(
     strideSamples: 239_360, processingReserveBytes: 24_576)
-  let boostingRan: Bool
+  public let boostingRan: Bool
 
-  init(boostingRan: Bool) { self.boostingRan = boostingRan }
+  public init(boostingRan: Bool) { self.boostingRan = boostingRan }
 
-  var count: Int { windows.count }
+  public var count: Int { windows.count }
 
   /// Throws `invalidResult` for an out-of-order, oversized or inadmissible window.
-  mutating func append(_ result: RemoteWindowResult) throws {
+  public mutating func append(_ result: RemoteWindowResult) throws {
     guard result.index == windows.count, result.index < RemoteProtocol.maximumWindows,
       result.sampleStart == result.index * RemoteProtocol.windowSamples,
       (1...RemoteProtocol.windowSamples).contains(result.sampleCount),
@@ -361,14 +406,14 @@ struct RemoteWindowCollector: Sendable {
   }
 
   /// Whether the collected windows cover exactly `total` samples.
-  func covers(_ total: Int) -> Bool {
+  public func covers(_ total: Int) -> Bool {
     let expected = total == 0 ? 0 : (total - 1) / RemoteProtocol.windowSamples + 1
     return windows.count == expected
   }
 }
 
 /// A message flowd sends.
-enum RemoteServerMessage: Sendable {
+public enum RemoteServerMessage: Sendable {
   case ready(RemoteCapabilities)
   case enrolled(op: Int, state: RemoteEnrollmentState, refreshToken: String?)
   case tokens(op: Int, accessToken: String, expiresIn: Int, refreshToken: String)
@@ -390,7 +435,7 @@ enum RemoteServerMessage: Sendable {
   case handoffReply(op: Int, reply: RemoteHandoffReply)
   case error(op: Int?, code: RemoteErrorCode)
 
-  var op: Int? {
+  public var op: Int? {
     switch self {
     case .ready: nil
     case .enrolled(let op, _, _), .tokens(let op, _, _, _), .dictationAccepted(let op, _, _),
@@ -404,7 +449,7 @@ enum RemoteServerMessage: Sendable {
     }
   }
 
-  static func decode(_ data: Data) throws -> RemoteServerMessage {
+  public static func decode(_ data: Data) throws -> RemoteServerMessage {
     guard data.count <= RemoteProtocol.maximumControlBytes else {
       throw RemoteProtocolError.tooLarge
     }
@@ -534,18 +579,30 @@ enum RemoteServerMessage: Sendable {
 }
 
 /// Feature 018: one meeting model call for the server's meeting worker.
-struct RemoteMeetingJob: Sendable, Equatable {
-  enum Kind: String, Sendable, CaseIterable {
+public struct RemoteMeetingJob: Sendable, Equatable {
+  public enum Kind: String, Sendable, CaseIterable {
     case transcribe, diarize, embed
   }
-  let kind: Kind
-  let sampleCount: Int
+  public let kind: Kind
+  public let sampleCount: Int
   /// Transcribe only.
-  var language: String?
-  var vocabularyTerms: [String]?
-  var pipeline: String?
+  public var language: String?
+  public var vocabularyTerms: [String]?
+  public var pipeline: String?
   /// Diarize only.
-  var numSpeakers: Int?
+  public var numSpeakers: Int?
+
+  public init(
+    kind: Kind, sampleCount: Int, language: String? = nil, vocabularyTerms: [String]? = nil,
+    pipeline: String? = nil, numSpeakers: Int? = nil
+  ) {
+    self.kind = kind
+    self.sampleCount = sampleCount
+    self.language = language
+    self.vocabularyTerms = vocabularyTerms
+    self.pipeline = pipeline
+    self.numSpeakers = numSpeakers
+  }
 }
 
 /// `live_result.window`: the dictation window form without boost hints.
@@ -566,7 +623,7 @@ private struct RemoteLiveWindow: Decodable {
 }
 
 /// `meeting_result.result` mapped to the types the local runtimes return.
-enum RemoteMeetingResult: Sendable {
+public enum RemoteMeetingResult: Sendable {
   case transcription(TranscriptionWindow, language: String?, retryDepth: Int)
   case diarization(DiarizationWindowResult)
   case embedding(VoiceEmbedding)
@@ -583,14 +640,14 @@ enum RemoteMeetingResult: Sendable {
   }
   private struct Diarized: Decodable {
     struct Turn: Decodable {
-      let cluster: Int
-      let start: Double
-      let end: Double
-      let quality: Float?
+      public let cluster: Int
+      public let start: Double
+      public let end: Double
+      public let quality: Float?
     }
     struct Centroid: Decodable {
-      let cluster: Int
-      let vector: [Float]
+      public let cluster: Int
+      public let vector: [Float]
     }
     let turns: [Turn]
     let centroids: [Centroid]
@@ -604,7 +661,7 @@ enum RemoteMeetingResult: Sendable {
     }
   }
 
-  static func decode(kind: RemoteMeetingJob.Kind, _ object: [String: Any]) throws
+  public static func decode(kind: RemoteMeetingJob.Kind, _ object: [String: Any]) throws
     -> RemoteMeetingResult
   {
     let data = try JSONSerialization.data(withJSONObject: object)
@@ -647,24 +704,24 @@ private func integer(_ value: Any?) -> Int? {
 }
 
 /// A device's combined state as the server reports it at enrollment.
-enum RemoteEnrollmentState: String, Codable, Sendable {
+public enum RemoteEnrollmentState: String, Codable, Sendable {
   case pending, approved, rejected
 }
 
-enum SHA256Digest {
-  static func hex(_ data: Data) -> String {
+public enum SHA256Digest {
+  public static func hex(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 }
 
 extension Data {
   /// Unpadded base64url (RFC 4648 §5), as every key and signature on the wire.
-  var base64URL: String {
+  public var base64URL: String {
     base64EncodedString().replacingOccurrences(of: "+", with: "-")
       .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
   }
 
-  init?(base64URL text: String) {
+  public init?(base64URL text: String) {
     guard text.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
     else { return nil }
     var base64 = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(
@@ -675,47 +732,75 @@ extension Data {
 }
 
 /// `handoff`: one action on a meeting handed to the server (or `list`, on none).
-struct RemoteHandoffRequest: Sendable, Equatable {
-  enum Action: String, Sendable { case put, start, list, get, delete, release }
-  var action: Action
-  var meeting: UUID?
-  var name: String?
-  var offset: Int?
-  var data: Data?
-  var sha256: String?
+public struct RemoteHandoffRequest: Sendable, Equatable {
+  public enum Action: String, Sendable { case put, start, list, get, delete, release }
+  public var action: Action
+  public var meeting: UUID?
+  public var name: String?
+  public var offset: Int?
+  public var data: Data?
+  public var sha256: String?
   /// `start` only (Feature 020): process the audio uploaded so far, then back to `receiving`.
-  var partial = false
+  public var partial = false
   /// `put` and `start` only (Feature 020): keep the result for the owner's Mac after `release`.
-  var copy = false
+  public var copy = false
+
+  public init(
+    action: Action, meeting: UUID? = nil, name: String? = nil, offset: Int? = nil,
+    data: Data? = nil, sha256: String? = nil, partial: Bool = false, copy: Bool = false
+  ) {
+    self.action = action
+    self.meeting = meeting
+    self.name = name
+    self.offset = offset
+    self.data = data
+    self.sha256 = sha256
+    self.partial = partial
+    self.copy = copy
+  }
 }
 
 /// `handoff_reply`. `state` is absent only on a `list` reply, which has `meetings`.
-struct RemoteHandoffReply: Sendable, Equatable {
-  enum State: String, Sendable { case receiving, queued, processing, done, failed, missing }
-  struct Entry: Sendable, Equatable {
-    let meeting: UUID
-    let state: State
-    let detail: String?
+public struct RemoteHandoffReply: Sendable, Equatable {
+  public enum State: String, Sendable { case receiving, queued, processing, done, failed, missing }
+  public struct Entry: Sendable, Equatable {
+    public let meeting: UUID
+    public let state: State
+    public let detail: String?
     /// `processing` only: percent done, 0...100, once the processor has reported.
-    var progress: Int? = nil
+    public var progress: Int? = nil
     /// Feature 020: `receiving` after a partial run, milliseconds transcribed so far.
-    var transcribedMS: Int? = nil
+    public var transcribedMS: Int? = nil
     /// Feature 020: sent by this device, a Mac copy was asked for, the sender has its result.
-    var mine = false
-    var copy = false
-    var released = false
-  }
-  var state: State?
-  var meeting: UUID?
-  var name: String?
-  var offset: Int?
-  var data: Data?
-  var size: Int?
-  var sha256: String?
-  var detail: String?
-  var meetings: [Entry]?
+    public var mine = false
+    public var copy = false
+    public var released = false
 
-  init(
+    public init(
+      meeting: UUID, state: State, detail: String?, progress: Int? = nil, transcribedMS: Int? = nil,
+      mine: Bool = false, copy: Bool = false, released: Bool = false
+    ) {
+      self.meeting = meeting
+      self.state = state
+      self.detail = detail
+      self.progress = progress
+      self.transcribedMS = transcribedMS
+      self.mine = mine
+      self.copy = copy
+      self.released = released
+    }
+  }
+  public var state: State?
+  public var meeting: UUID?
+  public var name: String?
+  public var offset: Int?
+  public var data: Data?
+  public var size: Int?
+  public var sha256: String?
+  public var detail: String?
+  public var meetings: [Entry]?
+
+  public init(
     state: State? = nil, meeting: UUID? = nil, name: String? = nil, offset: Int? = nil,
     data: Data? = nil, size: Int? = nil, sha256: String? = nil, detail: String? = nil,
     meetings: [Entry]? = nil
@@ -731,7 +816,7 @@ struct RemoteHandoffReply: Sendable, Equatable {
     self.meetings = meetings
   }
 
-  init(_ object: [String: Any]) throws {
+  public init(_ object: [String: Any]) throws {
     func state(_ value: Any?) throws -> State? {
       guard let value else { return nil }
       guard let raw = value as? String, let state = State(rawValue: raw) else {

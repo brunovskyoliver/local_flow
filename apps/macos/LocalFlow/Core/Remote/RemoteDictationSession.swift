@@ -28,15 +28,6 @@ struct RemoteDictationConfiguration: Sendable {
   var pumpInterval: Duration = .milliseconds(200)
 }
 
-/// The windows the server recognized for one dictation, and the open channel for its rewrite.
-struct RemoteDictationResult: Sendable {
-  let windows: [Int: PrefetchedWindow]
-  let model: RemoteModelIdentity
-  let channel: RemoteChannel
-  /// The next operation number on `channel`.
-  let nextOp: Int
-}
-
 /// One dictation streamed to the server (Feature 014 R12). It opens the channel at key
 /// press, streams the spool's new samples every 200 ms in frames of at most 16,000, and
 /// collects `window_result`s by sample start. Any failure ends it with a reason code;

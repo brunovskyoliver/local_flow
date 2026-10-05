@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// FR-037: `1 MIN READ` is computed on the Mac from the rendered prose —
 /// `ceil(words / 200)`, minimum one minute. No wire field carries a reading

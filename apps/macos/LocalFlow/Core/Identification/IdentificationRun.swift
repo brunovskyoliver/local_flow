@@ -133,3 +133,13 @@ extension FluidAudioVoiceEmbedderFactory {
       manifestHash: manifestHash, dimension: VoiceEmbedding.dimension)
   }
 }
+
+extension RemoteCapabilities {
+  /// The server's embedding model, compared with the voice library's before matching (FR-023).
+  var voiceModel: VoiceModelIdentity? {
+    guard let voice = models?.voice, let dimension = voice.dimension else { return nil }
+    return VoiceModelIdentity(
+      engine: voice.engine, modelID: voice.modelID, modelRevision: voice.modelRevision,
+      manifestHash: voice.manifestHash, dimension: dimension)
+  }
+}

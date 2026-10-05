@@ -1,4 +1,3 @@
-import AppKit
 import AuthenticationServices
 import CryptoKit
 import Foundation
@@ -6,13 +5,13 @@ import OSLog
 
 /// The display cache of this device's server state (`remote.state`). The server decides;
 /// the app only shows what it last heard.
-enum RemoteDictationState: String, CaseIterable, Sendable {
+public enum RemoteDictationState: String, CaseIterable, Sendable {
   case off, pinned, pending, approved, rejected, revoked
   case pinMismatch = "pin_mismatch"
 }
 
 /// A one-off instruction the status line shows beside the state (`remote.notice`).
-enum RemoteDictationNotice: String, CaseIterable, Sendable {
+public enum RemoteDictationNotice: String, CaseIterable, Sendable {
   /// The device key or tokens are gone; enrollment must run again.
   case signInAgain = "sign_in_again"
   /// The server answered `unsupported_version`.
@@ -20,28 +19,28 @@ enum RemoteDictationNotice: String, CaseIterable, Sendable {
 }
 
 /// The press-time snapshot of the remote settings (FR-017: one decision per dictation).
-struct RemoteDictationSettings: Sendable, Equatable {
-  static let defaultFallbackThreshold = Duration.milliseconds(1_500)
-  var enabled = false
-  var serverOrigin: URL?
-  var state: RemoteDictationState = .off
-  var fallbackThreshold = RemoteDictationSettings.defaultFallbackThreshold
+public struct RemoteDictationSettings: Sendable, Equatable {
+  public static let defaultFallbackThreshold = Duration.milliseconds(1_500)
+  public var enabled = false
+  public var serverOrigin: URL?
+  public var state: RemoteDictationState = .off
+  public var fallbackThreshold: Duration = RemoteDictationSettings.defaultFallbackThreshold
   /// False under Settings › Server › Server only: a failed or missing server never
   /// falls back to the local model.
-  var localModelsAllowed = true
+  public var localModelsAllowed = true
   /// Settings › Server › Advanced › Dictation: This Mac. Speech stays on this Mac while
   /// rewriting and the rest still use the server.
-  var dictationOnThisMac = false
+  public var dictationOnThisMac = false
 
-  static let off = RemoteDictationSettings()
+  public static let off = RemoteDictationSettings()
 
   /// Remote recognition is attempted only for an approved device with a pinned server.
-  var routesToServer: Bool { enabled && serverOrigin != nil && state == .approved }
+  public var routesToServer: Bool { enabled && serverOrigin != nil && state == .approved }
   /// Dictation audio streams to the server.
-  var streamsDictation: Bool { routesToServer && !dictationOnThisMac }
+  public var streamsDictation: Bool { routesToServer && !dictationOnThisMac }
 
   /// An `https://` origin with no path, query, fragment or credentials; nil otherwise.
-  static func origin(_ text: String) -> URL? {
+  public static func origin(_ text: String) -> URL? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let components = URLComponents(string: trimmed), components.scheme == "https",
       let host = components.host, !host.isEmpty, components.user == nil,
@@ -54,9 +53,35 @@ struct RemoteDictationSettings: Sendable, Equatable {
     origin.port = components.port
     return origin.url
   }
+
+  public init(
+    enabled: Bool = false, serverOrigin: URL? = nil, state: RemoteDictationState = .off,
+    fallbackThreshold: Duration = RemoteDictationSettings.defaultFallbackThreshold,
+    localModelsAllowed: Bool = true, dictationOnThisMac: Bool = false
+  ) {
+    self.enabled = enabled
+    self.serverOrigin = serverOrigin
+    self.state = state
+    self.fallbackThreshold = fallbackThreshold
+    self.localModelsAllowed = localModelsAllowed
+    self.dictationOnThisMac = dictationOnThisMac
+  }
 }
 
-enum RemoteEnrollmentError: Error, Equatable, Sendable {
+/// The settings enrollment reads and writes (`remote.*`). The Mac's `AppPreferences`
+/// conforms; the phone keeps its own.
+@MainActor
+public protocol RemoteEnrollmentSettings: AnyObject {
+  /// The server origin once the consent step is confirmed and the feature is on; nil
+  /// before that, so nothing connects.
+  var remoteEnrollmentOrigin: URL? { get }
+  var remoteState: RemoteDictationState { get set }
+  var remoteNotice: RemoteDictationNotice? { get set }
+  /// Turning the feature off: every `remote.*` setting goes except the switch.
+  func resetRemote()
+}
+
+public enum RemoteEnrollmentError: Error, Equatable, Sendable {
   /// Consent is not confirmed or no server address is set: nothing may connect.
   case notConfigured
   /// The identity endpoint answered something other than a v1 identity.
@@ -71,13 +96,13 @@ enum RemoteEnrollmentError: Error, Equatable, Sendable {
 /// Enrollment and credentials for remote dictation (User Story 2): server identity and
 /// pinning, Sign in with Apple or Google bound to the channel, the Secure Enclave key,
 /// token refresh, state updates and turning the feature off. Main-actor confined; it
-/// writes the display state into `AppPreferences`.
+/// writes the display state into its `RemoteEnrollmentSettings`.
 @MainActor
-final class RemoteEnrollment {
+public final class RemoteEnrollment {
   /// Access tokens live 15 minutes on the server; the client refreshes after 12.
-  static let refreshAfter = Duration.seconds(12 * 60)
+  public static let refreshAfter = Duration.seconds(12 * 60)
 
-  private let preferences: AppPreferences
+  private let preferences: any RemoteEnrollmentSettings
   private let credentials: any RemoteCredentialStoring
   private let keys: any RemoteDeviceKeys
   private let signIn: any IdentitySignIn
@@ -90,8 +115,8 @@ final class RemoteEnrollment {
   private var scheduledRefresh: Task<Void, Never>?
   private let log = Logger(subsystem: "org.localflow.LocalFlow", category: "remote")
 
-  init(
-    preferences: AppPreferences, credentials: any RemoteCredentialStoring,
+  public init(
+    preferences: any RemoteEnrollmentSettings, credentials: any RemoteCredentialStoring,
     keys: any RemoteDeviceKeys, signIn: any IdentitySignIn,
     identityFetcher: any RemoteIdentityFetching, transports: any RemoteTransportOpening,
     clock: any RemoteClock = SystemRemoteClock(), deviceName: String
@@ -106,10 +131,10 @@ final class RemoteEnrollment {
     self.deviceName = deviceName
   }
 
-  var state: RemoteDictationState { preferences.remoteState }
+  public var state: RemoteDictationState { preferences.remoteState }
 
   /// `wss://<host>/v1/remote/channel` for the configured origin.
-  static func channelURL(origin: URL) -> URL? {
+  public static func channelURL(origin: URL) -> URL? {
     guard var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
       return nil
     }
@@ -118,18 +143,13 @@ final class RemoteEnrollment {
     return components.url
   }
 
-  private var origin: URL? {
-    guard preferences.remoteConsentVersion >= AppPreferences.remoteDictationConsentVersion,
-      preferences.remoteEnabled
-    else { return nil }
-    return RemoteDictationSettings.origin(preferences.remoteServerURL)
-  }
+  private var origin: URL? { preferences.remoteEnrollmentOrigin }
 
   // MARK: Identity and pinning
 
   /// Fetches the server identity for the user to compare. Nothing connects before the
   /// consent step and a server address.
-  func fetchServerIdentity() async throws -> RemoteServerIdentity {
+  public func fetchServerIdentity() async throws -> RemoteServerIdentity {
     guard let origin else { throw RemoteEnrollmentError.notConfigured }
     let identity = try await identityFetcher.fetch(origin: origin)
     guard identity.validatedKey() != nil else { throw RemoteEnrollmentError.invalidIdentity }
@@ -137,7 +157,7 @@ final class RemoteEnrollment {
   }
 
   /// Pins the key the user saw. Only enrollment pins; a later mismatch never re-pins.
-  func pin(_ identity: RemoteServerIdentity) throws {
+  public func pin(_ identity: RemoteServerIdentity) throws {
     guard origin != nil else { throw RemoteEnrollmentError.notConfigured }
     guard let key = identity.validatedKey() else { throw RemoteEnrollmentError.invalidIdentity }
     try credentials.removeAll()
@@ -147,14 +167,14 @@ final class RemoteEnrollment {
     preferences.remoteState = .pinned
   }
 
-  var pinnedKey: Data? { try? credentials.read(.serverKey) }
+  public var pinnedKey: Data? { try? credentials.read(.serverKey) }
 
   // MARK: Enrollment
 
   /// Creates the device key, signs in with the provider on a nonce bound to this
   /// channel, and registers the device. Returns the server's state for it.
   @discardableResult
-  func enroll(provider: IdentityProvider) async throws -> RemoteEnrollmentState {
+  public func enroll(provider: IdentityProvider) async throws -> RemoteEnrollmentState {
     guard let origin, let url = Self.channelURL(origin: origin), let serverKey = pinnedKey else {
       throw RemoteEnrollmentError.notConfigured
     }
@@ -209,7 +229,7 @@ final class RemoteEnrollment {
   /// A live access token for a session channel, refreshing first when it is 12 minutes
   /// old by the monotonic clock or its issue time is unknown. Nil when the device is not
   /// approved or the refresh failed; the dictation then runs locally.
-  func accessToken() async -> String? {
+  public func accessToken() async -> String? {
     guard origin != nil, preferences.remoteState == .approved else { return nil }
     if let token = credentials.string(.accessToken), let issued = accessIssuedAt,
       clock.now() - issued < Self.refreshAfter
@@ -221,13 +241,13 @@ final class RemoteEnrollment {
 
   /// A pending device tries one background refresh at dictation start, so an approval
   /// takes effect without restarting (User Story 2 scenario 5).
-  func refreshIfPending() {
+  public func refreshIfPending() {
     guard origin != nil, preferences.remoteState == .pending, refreshing == nil else { return }
     Task { _ = await refreshNow() }
   }
 
   /// After `token_expired`: the token is dropped and refreshed now.
-  func accessTokenExpired() async -> String? {
+  public func accessTokenExpired() async -> String? {
     try? credentials.remove(.accessToken)
     accessIssuedAt = nil
     return await refreshNow()
@@ -235,7 +255,7 @@ final class RemoteEnrollment {
 
   /// One refresh at a time; concurrent callers share it.
   @discardableResult
-  func refreshNow() async -> String? {
+  public func refreshNow() async -> String? {
     if let refreshing { return await refreshing.value }
     let task = Task { await performRefresh() }
     refreshing = task
@@ -278,7 +298,7 @@ final class RemoteEnrollment {
         try credentials.write(.refreshToken, Data(rotated.utf8))
         try credentials.write(.accessToken, Data(access.utf8))
         accessIssuedAt = clock.now()
-        (credentials as? RemoteCredentialStore)?.accessTokenIssuedAt = accessIssuedAt
+        credentials.accessTokenIssuedAt = accessIssuedAt
         preferences.remoteNotice = nil
         if preferences.remoteState != .approved { preferences.remoteState = .approved }
         scheduleRefresh()
@@ -316,7 +336,7 @@ final class RemoteEnrollment {
   // MARK: Server answers
 
   /// Applies an error code the server sent on any channel (FR-005, User Story 3).
-  func apply(_ code: RemoteErrorCode) {
+  public func apply(_ code: RemoteErrorCode) {
     switch code {
     case .revoked:
       try? credentials.remove(.accessToken)
@@ -347,7 +367,7 @@ final class RemoteEnrollment {
 
   /// Close code 4001 or a different identity: refuse to send anything until the user
   /// enrolls again. The pin is never replaced here.
-  func handlePinMismatch() {
+  public func handlePinMismatch() {
     try? credentials.remove(.accessToken)
     accessIssuedAt = nil
     scheduledRefresh?.cancel()
@@ -371,7 +391,7 @@ final class RemoteEnrollment {
 
   /// FR-003: deletes the four Keychain items and the `remote.*` settings except
   /// `remote.enabled = false`. History is untouched.
-  func turnOff() {
+  public func turnOff() {
     refreshing?.cancel()
     scheduledRefresh?.cancel()
     scheduledRefresh = nil
@@ -382,7 +402,7 @@ final class RemoteEnrollment {
 }
 
 extension RemoteCredentialStoring {
-  func string(_ item: RemoteCredentialItem) -> String? {
+  public func string(_ item: RemoteCredentialItem) -> String? {
     (try? read(item)).flatMap { String(data: $0, encoding: .utf8) }
   }
 }
@@ -391,19 +411,21 @@ extension RemoteCredentialStoring {
 
 /// Secure Enclave P-256 keys. The handle is the key's `dataRepresentation`, usable only on
 /// this Mac's Secure Enclave; the private key never leaves it.
-struct SecureEnclaveDeviceKeys: RemoteDeviceKeys {
-  func create() throws -> (handle: Data, publicKey: Data) {
+public struct SecureEnclaveDeviceKeys: RemoteDeviceKeys {
+  public init() {}
+
+  public func create() throws -> (handle: Data, publicKey: Data) {
     guard SecureEnclave.isAvailable else { throw RemoteEnrollmentError.deviceKeyUnavailable }
     let key = try SecureEnclave.P256.Signing.PrivateKey()
     return (key.dataRepresentation, key.publicKey.x963Representation)
   }
 
-  func publicKey(handle: Data) -> Data? {
+  public func publicKey(handle: Data) -> Data? {
     (try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: handle))?.publicKey
       .x963Representation
   }
 
-  func sign(_ message: Data, handle: Data) throws -> Data {
+  public func sign(_ message: Data, handle: Data) throws -> Data {
     guard let key = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: handle) else {
       throw RemoteEnrollmentError.deviceKeyUnavailable
     }
@@ -412,8 +434,10 @@ struct SecureEnclaveDeviceKeys: RemoteDeviceKeys {
 }
 
 /// `GET /v1/remote/identity`: public and content-free, at most 4 KiB.
-struct URLSessionIdentityFetcher: RemoteIdentityFetching {
-  func fetch(origin: URL) async throws -> RemoteServerIdentity {
+public struct URLSessionIdentityFetcher: RemoteIdentityFetching {
+  public init() {}
+
+  public func fetch(origin: URL) async throws -> RemoteServerIdentity {
     var request = URLRequest(url: origin.appendingPathComponent("v1/remote/identity"))
     request.timeoutInterval = 10
     request.httpShouldHandleCookies = false
@@ -432,29 +456,31 @@ struct URLSessionIdentityFetcher: RemoteIdentityFetching {
 /// Sign in with Apple (native) and Google (authorization code with PKCE in
 /// `ASWebAuthenticationSession`). Only the ID token leaves this type, to flowd.
 @MainActor
-final class SystemIdentitySignIn: NSObject, IdentitySignIn, @unchecked Sendable {
-  /// The per-variant Google iOS OAuth client (Info.plist `LocalFlowGoogleClientID`);
-  /// Google sign-in is hidden when it is empty.
-  let googleClientID: String
+public final class SystemIdentitySignIn: NSObject, IdentitySignIn, @unchecked Sendable {
+  /// The per-variant Google iOS OAuth client, from the caller (the Mac reads Info.plist
+  /// `LocalFlowGoogleClientID`); Google sign-in is hidden when it is empty.
+  public let googleClientID: String
+  /// The window sign-in sheets attach to.
+  private let presentationAnchor: @MainActor () -> ASPresentationAnchor
   private var appleContinuation: CheckedContinuation<String, any Error>?
   private var webSession: ASWebAuthenticationSession?
   private let log = Logger(subsystem: "org.localflow.LocalFlow", category: "remote")
 
-  init(
-    googleClientID: String? = Bundle.main.object(forInfoDictionaryKey: "LocalFlowGoogleClientID")
-      as? String
+  public init(
+    googleClientID: String?, presentationAnchor: @escaping @MainActor () -> ASPresentationAnchor
   ) {
     self.googleClientID = googleClientID?.trimmingCharacters(in: .whitespaces) ?? ""
+    self.presentationAnchor = presentationAnchor
   }
 
-  nonisolated func isAvailable(_ provider: IdentityProvider) -> Bool {
+  public nonisolated func isAvailable(_ provider: IdentityProvider) -> Bool {
     switch provider {
     case .apple: true
     case .google: MainActor.assumeIsolated { !googleClientID.isEmpty }
     }
   }
 
-  nonisolated func signIn(provider: IdentityProvider, nonce: String) async throws -> String {
+  public nonisolated func signIn(provider: IdentityProvider, nonce: String) async throws -> String {
     switch provider {
     case .apple: try await appleSignIn(nonce: nonce)
     case .google: try await googleSignIn(nonce: nonce)
@@ -554,7 +580,7 @@ extension SystemIdentitySignIn: ASAuthorizationControllerDelegate,
   ASAuthorizationControllerPresentationContextProviding,
   ASWebAuthenticationPresentationContextProviding
 {
-  nonisolated func authorizationController(
+  public nonisolated func authorizationController(
     controller: ASAuthorizationController,
     didCompleteWithAuthorization authorization: ASAuthorization
   ) {
@@ -570,7 +596,7 @@ extension SystemIdentitySignIn: ASAuthorizationControllerDelegate,
     }
   }
 
-  nonisolated func authorizationController(
+  public nonisolated func authorizationController(
     controller: ASAuthorizationController, didCompleteWithError error: any Error
   ) {
     MainActor.assumeIsolated {
@@ -579,15 +605,15 @@ extension SystemIdentitySignIn: ASAuthorizationControllerDelegate,
     }
   }
 
-  nonisolated func presentationAnchor(for controller: ASAuthorizationController)
+  public nonisolated func presentationAnchor(for controller: ASAuthorizationController)
     -> ASPresentationAnchor
   {
-    MainActor.assumeIsolated { NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow() }
+    MainActor.assumeIsolated { presentationAnchor() }
   }
 
-  nonisolated func presentationAnchor(for session: ASWebAuthenticationSession)
+  public nonisolated func presentationAnchor(for session: ASWebAuthenticationSession)
     -> ASPresentationAnchor
   {
-    MainActor.assumeIsolated { NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow() }
+    MainActor.assumeIsolated { presentationAnchor() }
   }
 }

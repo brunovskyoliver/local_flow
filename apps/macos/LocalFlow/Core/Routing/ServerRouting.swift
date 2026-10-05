@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import Observation
 
 /// The inference services one switch can send to the user's server (Feature 018).

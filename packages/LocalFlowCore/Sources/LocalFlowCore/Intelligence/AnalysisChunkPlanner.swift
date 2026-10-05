@@ -6,39 +6,53 @@ import Foundation
 /// and synthesized in groups of ≤ `partialsPerSynthesis`, at most
 /// `reduceDepth` levels. Notes ride only the `full` request or the final
 /// synthesis. The plan is pure: it never reads or writes state.
-enum AnalysisChunkPlanner {
+public enum AnalysisChunkPlanner {
 
   /// One `chunk` request's segment window, in pass ordinals.
-  struct Chunk: Sendable, Equatable {
-    var index: Int
+  public struct Chunk: Sendable, Equatable {
+    public var index: Int
     /// First ordinal the request carries (inclusive).
-    var firstOrdinal: Int
+    public var firstOrdinal: Int
     /// Last ordinal the request carries (exclusive).
-    var lastOrdinal: Int
+    public var lastOrdinal: Int
     /// `firstOrdinal...lastOrdinal` resolved against the pass.
-    var segmentBytes: Int
+    public var segmentBytes: Int
     /// A single segment over budget is its own chunk — and flagged, so the
     /// run knows the server may still refuse it (`too_large`).
-    var oversized: Bool
-  }
+    public var oversized: Bool
 
-  struct Plan: Sendable, Equatable {
-    /// Empty for `full`; otherwise one entry per `chunk` request.
-    var chunks: [Chunk]
-    /// Synthesis requests per reduce level: `[1]` when the partials fit one
-    /// request, `[2, 1]` or `[4, 1]` for the bounded reduce.
-    var synthesisCounts: [Int]
-    var isFull: Bool { chunks.isEmpty }
-    /// Notes ride only the `full` request or the final synthesis.
-    var notesStage: AnalysisStage { chunks.isEmpty ? .full : .synthesis }
-    /// `full` counts as one request; staged counts chunks plus every
-    /// synthesis request.
-    var requestCount: Int {
-      (chunks.isEmpty ? 1 : chunks.count) + synthesisCounts.reduce(0, +)
+    public init(index: Int, firstOrdinal: Int, lastOrdinal: Int, segmentBytes: Int, oversized: Bool)
+    {
+      self.index = index
+      self.firstOrdinal = firstOrdinal
+      self.lastOrdinal = lastOrdinal
+      self.segmentBytes = segmentBytes
+      self.oversized = oversized
     }
   }
 
-  static func plan(
+  public struct Plan: Sendable, Equatable {
+    /// Empty for `full`; otherwise one entry per `chunk` request.
+    public var chunks: [Chunk]
+    /// Synthesis requests per reduce level: `[1]` when the partials fit one
+    /// request, `[2, 1]` or `[4, 1]` for the bounded reduce.
+    public var synthesisCounts: [Int]
+    public var isFull: Bool { chunks.isEmpty }
+    /// Notes ride only the `full` request or the final synthesis.
+    public var notesStage: AnalysisStage { chunks.isEmpty ? .full : .synthesis }
+    /// `full` counts as one request; staged counts chunks plus every
+    /// synthesis request.
+    public var requestCount: Int {
+      (chunks.isEmpty ? 1 : chunks.count) + synthesisCounts.reduce(0, +)
+    }
+
+    public init(chunks: [Chunk], synthesisCounts: [Int]) {
+      self.chunks = chunks
+      self.synthesisCounts = synthesisCounts
+    }
+  }
+
+  public static func plan(
     segments: [EvidenceSegment], notes: [NoteParagraph], policy: AnalysisPolicy
   ) throws -> Plan {
     // Notes bounds refuse before any request, with the notes named.

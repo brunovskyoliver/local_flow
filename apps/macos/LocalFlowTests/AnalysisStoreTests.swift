@@ -2,6 +2,7 @@ import GRDB
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T018: migration, transition table, adoption atomicity and overlay
 /// persistence for the seven `intelligence-v9` tables.

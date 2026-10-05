@@ -1,10 +1,9 @@
 import CryptoKit
 import Foundation
-import LocalFlowCore
 import LocalFlowSpeech
 
 /// Why a channel ended. Every case maps to a failure reason code (FR-017).
-enum RemoteChannelError: Error, Equatable, Sendable {
+public enum RemoteChannelError: Error, Equatable, Sendable {
   /// The server could not open the hello (close code 4001): not the pinned server.
   case pinMismatch
   case unreachable
@@ -17,7 +16,7 @@ enum RemoteChannelError: Error, Equatable, Sendable {
   case server(RemoteErrorCode)
   case closed
 
-  var failureReason: RemoteFailureReason {
+  public var failureReason: RemoteFailureReason {
     switch self {
     case .pinMismatch: .pinMismatch
     case .unreachable, .closed: .unreachable
@@ -31,13 +30,13 @@ enum RemoteChannelError: Error, Equatable, Sendable {
 /// The HPKE contexts and frame counters of one channel, without a socket
 /// (`contracts/remote-channel.md`, "Framing and encryption"). Not thread-safe; the
 /// owning `RemoteChannel` actor serializes it.
-struct RemoteChannelCrypto {
-  static let suite = HPKE.Ciphersuite.Curve25519_SHA256_ChachaPoly
-  static let info = Data("localflow remote v1".utf8)
-  static let magic = Data("LFR1".utf8)
-  static let maximumMessageBytes = 70_000
+public struct RemoteChannelCrypto {
+  public static let suite = HPKE.Ciphersuite.Curve25519_SHA256_ChachaPoly
+  public static let info = Data("localflow remote v1".utf8)
+  public static let magic = Data("LFR1".utf8)
+  public static let maximumMessageBytes = 70_000
 
-  enum Kind: UInt8 {
+  public enum Kind: UInt8 {
     case control = 0x00
     case audio = 0x01
     /// Feature 018: meeting windows as 16 kHz mono little-endian signed 16-bit samples.
@@ -49,11 +48,11 @@ struct RemoteChannelCrypto {
   private let replyKey: Curve25519.KeyAgreement.PrivateKey
   private var sendSequence: UInt64 = 0
   private var receiveSequence: UInt64 = 0
-  let binding: Data
+  public let binding: Data
   private let s2cInfo: Data
 
   /// `s2cInfo` replaces the exported value only in tests that replay recorded server frames.
-  init(
+  public init(
     serverKey: Curve25519.KeyAgreement.PublicKey,
     replyKey: Curve25519.KeyAgreement.PrivateKey = .init(), s2cInfo: Data? = nil
   ) throws {
@@ -67,10 +66,10 @@ struct RemoteChannelCrypto {
         sender.exportSecret(context: Data("localflow v1 s2c info".utf8), outputByteCount: 32))
   }
 
-  var replyPublicKey: Data { replyKey.publicKey.rawRepresentation }
+  public var replyPublicKey: Data { replyKey.publicKey.rawRepresentation }
 
   /// `"LFR1" | enc | seq = 0 | Seal(aad = "LFR1" ‖ seq, hello JSON)`.
-  mutating func helloFrame(_ hello: Data) throws -> Data {
+  public mutating func helloFrame(_ hello: Data) throws -> Data {
     precondition(sendSequence == 0)
     let seq = Self.sequence(0)
     let sealed = try sender.seal(hello, authenticating: Self.magic + seq)
@@ -79,7 +78,7 @@ struct RemoteChannelCrypto {
   }
 
   /// `seq | Seal(aad = seq, kind ‖ payload)`.
-  mutating func seal(_ kind: Kind, _ payload: Data) throws -> Data {
+  public mutating func seal(_ kind: Kind, _ payload: Data) throws -> Data {
     precondition(sendSequence > 0)
     let seq = Self.sequence(sendSequence)
     let sealed = try sender.seal(Data([kind.rawValue]) + payload, authenticating: seq)
@@ -90,7 +89,7 @@ struct RemoteChannelCrypto {
   }
 
   /// Opens a server frame: the first carries `enc_s2c`. Returns the control JSON.
-  mutating func open(_ frame: Data) throws -> Data {
+  public mutating func open(_ frame: Data) throws -> Data {
     guard frame.count <= Self.maximumMessageBytes else { throw RemoteChannelError.protocolError }
     var body = frame
     if recipient == nil {
@@ -118,16 +117,16 @@ struct RemoteChannelCrypto {
     return Data(plaintext.dropFirst())
   }
 
-  static func sequence(_ value: UInt64) -> Data {
+  public static func sequence(_ value: UInt64) -> Data {
     withUnsafeBytes(of: value.bigEndian) { Data($0) }
   }
 
-  static func data(_ key: SymmetricKey) -> Data {
+  public static func data(_ key: SymmetricKey) -> Data {
     key.withUnsafeBytes { Data($0) }
   }
 
   /// Little-endian Float32, the spool's own format.
-  static func audioPayload(_ samples: ArraySlice<Float>) -> Data {
+  public static func audioPayload(_ samples: ArraySlice<Float>) -> Data {
     var data = Data(capacity: samples.count * 4)
     for sample in samples {
       withUnsafeBytes(of: sample.bitPattern.littleEndian) { data.append(contentsOf: $0) }
@@ -136,7 +135,7 @@ struct RemoteChannelCrypto {
   }
 
   /// Little-endian `Int16`, clamped to [-1, 1] first (Feature 018 R2).
-  static func s16Payload(_ samples: ArraySlice<Float>) -> Data {
+  public static func s16Payload(_ samples: ArraySlice<Float>) -> Data {
     var data = Data(capacity: samples.count * 2)
     for sample in samples {
       let value = Int16((min(1, max(-1, sample.isNaN ? 0 : sample)) * 32_767).rounded())
@@ -150,8 +149,8 @@ struct RemoteChannelCrypto {
 /// Frames are sealed in call order and sent by one loop, so sequence numbers go out
 /// in order. With more than four frames unsent, a sender waits for the socket to take
 /// one; if the socket takes none for `stallTimeout`, the channel fails with `timeout`.
-actor RemoteChannel {
-  static let maximumUnsentFrames = 4
+public actor RemoteChannel {
+  public static let maximumUnsentFrames = 4
 
   private let transport: any RemoteTransport
   private let stallTimeout: Duration
@@ -160,14 +159,16 @@ actor RemoteChannel {
   private var sending = false
   private var inFlight = false
   /// Frames the socket has taken; a waiting sender checks it for progress.
-  private(set) var sentFrames = 0
+  public private(set) var sentFrames = 0
   private var waitingSenders: [CheckedContinuation<Void, Never>] = []
   private var failure: RemoteChannelError?
   private var closed = false
   /// What the server offered in `ready`; the Feature 014 set until then.
-  private(set) var capabilities = RemoteCapabilities.feature014
+  public private(set) var capabilities = RemoteCapabilities.feature014
 
-  init(transport: any RemoteTransport, serverKey: Data, stallTimeout: Duration = .seconds(15))
+  public init(
+    transport: any RemoteTransport, serverKey: Data, stallTimeout: Duration = .seconds(15)
+  )
     throws
   {
     self.transport = transport
@@ -179,10 +180,10 @@ actor RemoteChannel {
   }
 
   /// The exporter value that binds signatures and the OIDC nonce to this channel.
-  var binding: Data { crypto.binding }
+  public var binding: Data { crypto.binding }
 
   /// Sends the hello and waits for `ready`. A server `error` fails with `.server(code)`.
-  func open(purpose: RemoteHelloPurpose, accessToken: String? = nil) async throws {
+  public func open(purpose: RemoteHelloPurpose, accessToken: String? = nil) async throws {
     let hello = RemoteHello(
       replyKey: crypto.replyPublicKey.base64URL, purpose: purpose, accessToken: accessToken)
     let encoder = JSONEncoder()
@@ -197,12 +198,12 @@ actor RemoteChannel {
   }
 
   /// Returns once the frame is queued; waits while more than four frames are unsent.
-  func send(_ message: RemoteClientMessage) async throws {
+  public func send(_ message: RemoteClientMessage) async throws {
     try await enqueue(try crypto.seal(.control, try message.encoded()))
   }
 
   /// At most 16,000 samples per frame. Waits like `send`.
-  func sendAudio(_ samples: ArraySlice<Float>) async throws {
+  public func sendAudio(_ samples: ArraySlice<Float>) async throws {
     guard (1...RemoteProtocol.maximumFrameSamples).contains(samples.count) else {
       throw fail(.protocolError)
     }
@@ -210,7 +211,7 @@ actor RemoteChannel {
   }
 
   /// At most 32,000 s16le samples per frame (Feature 018). Waits like `send`.
-  func sendS16(_ samples: ArraySlice<Float>) async throws {
+  public func sendS16(_ samples: ArraySlice<Float>) async throws {
     guard (1...RemoteProtocol.maximumS16FrameSamples).contains(samples.count) else {
       throw fail(.protocolError)
     }
@@ -218,7 +219,7 @@ actor RemoteChannel {
   }
 
   /// The next server message. Transport and framing failures close the channel.
-  func receive() async throws -> RemoteServerMessage {
+  public func receive() async throws -> RemoteServerMessage {
     if let failure { throw failure }
     let message: RemoteTransportMessage
     do {
@@ -250,7 +251,7 @@ actor RemoteChannel {
     }
   }
 
-  func close() {
+  public func close() {
     guard !closed else { return }
     closed = true
     failure = failure ?? .closed
@@ -273,7 +274,7 @@ actor RemoteChannel {
   }
 
   /// Queued frames plus the one the socket is still writing.
-  var unsentFrames: Int { outbox.count + (inFlight ? 1 : 0) }
+  public var unsentFrames: Int { outbox.count + (inFlight ? 1 : 0) }
 
   /// Queues the frame at once, so frames go out in seal order, then waits until at most
   /// four are unsent. A retry or reconnect flushes a whole recording through here, so
@@ -324,11 +325,11 @@ actor RemoteChannel {
 }
 
 /// `URLSessionWebSocketTask`, binary only, with no cookies and no `Authorization` header.
-final class URLSessionRemoteTransport: RemoteTransport, @unchecked Sendable {
+public final class URLSessionRemoteTransport: RemoteTransport, @unchecked Sendable {
   private let task: URLSessionWebSocketTask
   private let session: URLSession
 
-  init(url: URL) {
+  public init(url: URL) {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.httpShouldSetCookies = false
     configuration.httpCookieAcceptPolicy = .never
@@ -344,11 +345,11 @@ final class URLSessionRemoteTransport: RemoteTransport, @unchecked Sendable {
     task.resume()
   }
 
-  func send(_ data: Data) async throws {
+  public func send(_ data: Data) async throws {
     do { try await task.send(.data(data)) } catch { throw mapped(error) }
   }
 
-  func receive() async throws -> RemoteTransportMessage {
+  public func receive() async throws -> RemoteTransportMessage {
     do {
       switch try await task.receive() {
       case .data(let data): return .binary(data)
@@ -358,7 +359,7 @@ final class URLSessionRemoteTransport: RemoteTransport, @unchecked Sendable {
     } catch { throw mapped(error) }
   }
 
-  func close(code: Int) {
+  public func close(code: Int) {
     task.cancel(
       with: URLSessionWebSocketTask.CloseCode(rawValue: code) ?? .normalClosure, reason: nil)
     session.finishTasksAndInvalidate()
@@ -371,8 +372,10 @@ final class URLSessionRemoteTransport: RemoteTransport, @unchecked Sendable {
   }
 }
 
-struct URLSessionRemoteTransportOpener: RemoteTransportOpening {
-  func open(_ url: URL) async throws -> any RemoteTransport {
+public struct URLSessionRemoteTransportOpener: RemoteTransportOpening {
+  public init() {}
+
+  public func open(_ url: URL) async throws -> any RemoteTransport {
     URLSessionRemoteTransport(url: url)
   }
 }

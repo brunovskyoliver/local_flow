@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 014 fakes: a WebSocket whose other end is a scripted flowd that speaks the
 /// real channel crypto, an in-memory Keychain, software device keys, a scripted

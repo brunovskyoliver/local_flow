@@ -386,3 +386,13 @@ final class AppPreferences {
     defaults.set(setupVersion, forKey: "setupVersion")
   }
 }
+
+extension AppPreferences: RemoteEnrollmentSettings {
+  /// Enrollment connects only after the dictation consent step and with the switch on.
+  var remoteEnrollmentOrigin: URL? {
+    guard remoteConsentVersion >= Self.remoteDictationConsentVersion, remoteEnabled else {
+      return nil
+    }
+    return RemoteDictationSettings.origin(remoteServerURL)
+  }
+}

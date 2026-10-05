@@ -1,6 +1,5 @@
 import Foundation
 import GRDB
-import LocalFlowCore
 import OSLog
 
 /// Every analysis-table write goes through this actor. It shares the history
@@ -10,8 +9,8 @@ import OSLog
 /// supersede the previous accepted run, replace its content, re-match
 /// overlays through the injected `overlay_match_v1` function and prune run
 /// rows. Logs counts and codes only — never summary, item or overlay text.
-actor AnalysisStore: AnalysisStoring {
-  enum Error: Swift.Error, Equatable, Sendable {
+public actor AnalysisStore: AnalysisStoring {
+  public enum Error: Swift.Error, Equatable, Sendable {
     /// A second `pending`/`running` run for the same meeting.
     case activeRunExists
     case missingRun
@@ -25,32 +24,35 @@ actor AnalysisStore: AnalysisStoring {
 
   /// The overlay re-match function injected into `adopt`
   /// (`OverlayMatcher.match` by default).
-  typealias OverlayMatching =
+  public typealias OverlayMatching =
     @Sendable ([AnalysisOverlay], [StoredItem]) -> (
       matched: [UUID: UUID], orphaned: Set<UUID>
     )
 
-  static let runRowCap = 20
-  static let overlayCap = 500
-  static let sourceCapPerTarget = 10
+  public static let runRowCap = 20
+  public static let overlayCap = 500
+  public static let sourceCapPerTarget = 10
 
-  nonisolated let database: DatabasePool
+  public nonisolated let database: DatabasePool
   private let matchOverlays: OverlayMatching
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "analysis")
 
-  init(database: DatabasePool, matchOverlays: @escaping OverlayMatching = OverlayMatcher.match) {
+  public init(
+    database: DatabasePool, matchOverlays: @escaping OverlayMatching = OverlayMatcher.match
+  ) {
     self.database = database
     self.matchOverlays = matchOverlays
   }
 
-  init(history: TranscriptionStore, matchOverlays: @escaping OverlayMatching = OverlayMatcher.match)
-  {
+  public init(
+    history: TranscriptionStore, matchOverlays: @escaping OverlayMatching = OverlayMatcher.match
+  ) {
     self.init(database: history.database, matchOverlays: matchOverlays)
   }
 
   // MARK: Pointer
 
-  func analysis(meetingID: UUID) throws -> MeetingAnalysisPointer? {
+  public func analysis(meetingID: UUID) throws -> MeetingAnalysisPointer? {
     try database.read { db in try Self.fetchPointer(meetingID, db: db) }
   }
 
@@ -59,7 +61,7 @@ actor AnalysisStore: AnalysisStoring {
   /// Inserts one `pending` run and points `current_run_id` at it. The unique
   /// partial index makes a second active run per meeting impossible.
   @discardableResult
-  func admit(
+  public func admit(
     meetingID: UUID, trigger: AnalysisTrigger, evidence: EvidenceVersion, passID: UUID,
     policy: AnalysisPolicy, now: Int64
   ) throws -> AnalysisRun {
@@ -97,7 +99,7 @@ actor AnalysisStore: AnalysisStoring {
   }
 
   @discardableResult
-  func start(runID: UUID, now: Int64) throws -> AnalysisRun {
+  public func start(runID: UUID, now: Int64) throws -> AnalysisRun {
     try transition(runID, to: .running, now: now) { db in
       try db.execute(
         sql: "UPDATE analysis_runs SET started_at=COALESCE(started_at, ?) WHERE id=?",
@@ -105,7 +107,7 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  func recordInferencePath(runID: UUID, path: AnalysisInferencePath) throws {
+  public func recordInferencePath(runID: UUID, path: AnalysisInferencePath) throws {
     try database.write { db in
       try db.execute(
         sql: "UPDATE analysis_runs SET inference_path=?, server_failure=? WHERE id=?",
@@ -117,7 +119,7 @@ actor AnalysisStore: AnalysisStoring {
   }
 
   /// The plan's chunk count, fixed before the first request (T090).
-  func recordPlan(runID: UUID, chunkCount: Int) throws {
+  public func recordPlan(runID: UUID, chunkCount: Int) throws {
     try database.write { db in
       guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRun }
       guard run.state == .running else { throw Error.lateWrite }
@@ -128,7 +130,9 @@ actor AnalysisStore: AnalysisStoring {
   }
 
   /// Per-request counters; refused once the run left `running`.
-  func recordRequest(runID: UUID, inputBytes: Int, outputBytes: Int, retried: Bool, preempted: Bool)
+  public func recordRequest(
+    runID: UUID, inputBytes: Int, outputBytes: Int, retried: Bool, preempted: Bool
+  )
     throws
   {
     try database.write { db in
@@ -147,7 +151,9 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  func fail(runID: UUID, category: AnalysisFailureCategory, detail: String?, now: Int64) throws {
+  public func fail(runID: UUID, category: AnalysisFailureCategory, detail: String?, now: Int64)
+    throws
+  {
     try database.write { db in
       guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRun }
       guard run.state.canTransition(to: .failed) else { throw Error.invalidTransition }
@@ -162,7 +168,7 @@ actor AnalysisStore: AnalysisStoring {
     logger.notice("Analysis run failed; category=\(category.rawValue, privacy: .public)")
   }
 
-  func timeOut(runID: UUID, now: Int64) throws {
+  public func timeOut(runID: UUID, now: Int64) throws {
     try database.write { db in
       guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRun }
       guard run.state.canTransition(to: .timedOut) else { throw Error.invalidTransition }
@@ -175,7 +181,7 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  func cancel(runID: UUID, now: Int64) throws {
+  public func cancel(runID: UUID, now: Int64) throws {
     try database.write { db in
       guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRun }
       guard run.state.canTransition(to: .cancelled) else { throw Error.invalidTransition }
@@ -189,7 +195,7 @@ actor AnalysisStore: AnalysisStoring {
   }
 
   /// Launch reconciliation only: a run the process left behind.
-  func interrupt(runID: UUID, now: Int64) throws {
+  public func interrupt(runID: UUID, now: Int64) throws {
     try database.write { db in
       guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRun }
       guard run.state.canTransition(to: .interrupted) else { throw Error.invalidTransition }
@@ -204,7 +210,7 @@ actor AnalysisStore: AnalysisStoring {
 
   /// FR-011: a run that lost the `current_run_id` race is discarded, not failed.
   /// Its row stays content-free and `completed_at` is set.
-  func supersede(runID: UUID, now: Int64) throws {
+  public func supersede(runID: UUID, now: Int64) throws {
     try database.write { db in
       guard let run = try Self.fetchRun(runID, db: db) else { throw Error.missingRun }
       if run.state == .superseded { return }
@@ -224,7 +230,7 @@ actor AnalysisStore: AnalysisStoring {
   /// that arrives after the run left `running`, or after a newer run became
   /// `current_run_id`, writes nothing.
   @discardableResult
-  func adopt(
+  public func adopt(
     runID: UUID, result: ValidatedAnalysis, counts: ValidationCounts, identity: RunIdentity,
     now: Int64
   ) throws -> AnalysisRun {
@@ -296,7 +302,7 @@ actor AnalysisStore: AnalysisStoring {
 
   // MARK: Run reads
 
-  func activeRuns(limit: Int) throws -> [AnalysisRun] {
+  public func activeRuns(limit: Int) throws -> [AnalysisRun] {
     try database.read { db in
       try Row.fetchAll(
         db,
@@ -308,13 +314,13 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  func unfinishedRuns(limit: Int) throws -> [AnalysisRun] { try activeRuns(limit: limit) }
+  public func unfinishedRuns(limit: Int) throws -> [AnalysisRun] { try activeRuns(limit: limit) }
 
-  func latestRun(meetingID: UUID) throws -> AnalysisRun? {
+  public func latestRun(meetingID: UUID) throws -> AnalysisRun? {
     try runs(meetingID: meetingID, limit: 1).first
   }
 
-  func runs(meetingID: UUID, limit: Int) throws -> [AnalysisRun] {
+  public func runs(meetingID: UUID, limit: Int) throws -> [AnalysisRun] {
     try database.read { db in
       try Row.fetchAll(
         db,
@@ -325,7 +331,7 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  func markAutoRestarted(meetingID: UUID, now: Int64) throws {
+  public func markAutoRestarted(meetingID: UUID, now: Int64) throws {
     try database.write { db in
       try db.execute(
         sql: "UPDATE meeting_analysis SET auto_restarted_at=?, updated_at=? WHERE meeting_id=?",
@@ -337,7 +343,7 @@ actor AnalysisStore: AnalysisStoring {
 
   /// The accepted run's content plus the meeting's overlays. `nil` when no run
   /// was ever accepted.
-  func readModel(meetingID: UUID) throws -> StoredAnalysis? {
+  public func readModel(meetingID: UUID) throws -> StoredAnalysis? {
     try database.read { db in
       guard let pointer = try Self.fetchPointer(meetingID, db: db),
         let accepted = pointer.acceptedRunID,
@@ -379,7 +385,7 @@ actor AnalysisStore: AnalysisStoring {
 
   /// Upserts on `(item_id, field)` for items and on the meeting's single
   /// summary overlay; refuses beyond `overlayCap` per meeting.
-  func setOverlay(
+  public func setOverlay(
     meetingID: UUID, target: OverlayTarget, field: OverlayField, value: OverlayValue,
     snapshot: OverlaySnapshot, now: Int64
   ) throws {
@@ -438,20 +444,20 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  func removeOverlay(id: UUID) throws {
+  public func removeOverlay(id: UUID) throws {
     try database.write { db in
       try db.execute(sql: "DELETE FROM analysis_overlays WHERE id=?", arguments: [id.uuidString])
     }
   }
 
-  func removeAllOverlays(meetingID: UUID) throws {
+  public func removeAllOverlays(meetingID: UUID) throws {
     try database.write { db in
       try db.execute(
         sql: "DELETE FROM analysis_overlays WHERE meeting_id=?", arguments: [meetingID.uuidString])
     }
   }
 
-  func overlays(meetingID: UUID) throws -> [AnalysisOverlay] {
+  public func overlays(meetingID: UUID) throws -> [AnalysisOverlay] {
     try database.read { db in try Self.fetchOverlays(meetingID, db: db) }
   }
 
@@ -653,7 +659,8 @@ actor AnalysisStore: AnalysisStoring {
 
   // MARK: - Row mapping
 
-  static func fetchPointer(_ meetingID: UUID, db: Database) throws -> MeetingAnalysisPointer? {
+  public static func fetchPointer(_ meetingID: UUID, db: Database) throws -> MeetingAnalysisPointer?
+  {
     try Row.fetchOne(
       db, sql: "SELECT * FROM meeting_analysis WHERE meeting_id=?",
       arguments: [meetingID.uuidString]
@@ -667,14 +674,14 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  static func fetchRun(_ id: UUID, db: Database) throws -> AnalysisRun? {
+  public static func fetchRun(_ id: UUID, db: Database) throws -> AnalysisRun? {
     try Row.fetchOne(db, sql: "SELECT * FROM analysis_runs WHERE id=?", arguments: [id.uuidString])
       .flatMap(run)
   }
 
   /// `sources` is the run's grouped source rows when the caller already holds them;
   /// nil reads them here in one query.
-  static func fetchItems(
+  public static func fetchItems(
     runID: UUID, sources: [SourceTarget: [SourceRef]]? = nil, db: Database
   ) throws -> [StoredItem] {
     let sources = sources ?? ((try? fetchSourceGroups(runID: runID, db: db)) ?? [:])
@@ -696,13 +703,20 @@ actor AnalysisStore: AnalysisStoring {
   }
 
   /// One source row's owner: `analysis_sources.target_kind` and `target_id`.
-  struct SourceTarget: Hashable {
-    let kind: String
-    let id: String
+  public struct SourceTarget: Hashable {
+    public let kind: String
+    public let id: String
+
+    public init(kind: String, id: String) {
+      self.kind = kind
+      self.id = id
+    }
   }
 
   /// Every source row of one run, grouped by target, each group in `ordinal` order.
-  static func fetchSourceGroups(runID: UUID, db: Database) throws -> [SourceTarget: [SourceRef]] {
+  public static func fetchSourceGroups(runID: UUID, db: Database) throws -> [SourceTarget:
+    [SourceRef]]
+  {
     var groups: [SourceTarget: [SourceRef]] = [:]
     let rows = try Row.fetchAll(
       db,
@@ -762,14 +776,14 @@ actor AnalysisStore: AnalysisStoring {
       state: state, date: row["due_date"], original: row["due_original"], source: source)
   }
 
-  static func fetchOverlays(_ meetingID: UUID, db: Database) throws -> [AnalysisOverlay] {
+  public static func fetchOverlays(_ meetingID: UUID, db: Database) throws -> [AnalysisOverlay] {
     try Row.fetchAll(
       db, sql: "SELECT * FROM analysis_overlays WHERE meeting_id=? ORDER BY created_at, id",
       arguments: [meetingID.uuidString]
     ).compactMap(overlay)
   }
 
-  static func overlay(_ row: Row) -> AnalysisOverlay? {
+  public static func overlay(_ row: Row) -> AnalysisOverlay? {
     guard let id = UUID(uuidString: row["id"]), let meetingID = UUID(uuidString: row["meeting_id"]),
       let field = OverlayField(rawValue: row["field"]),
       let value = decodeOverlayValue(row["user_value"], field: field)
@@ -787,7 +801,8 @@ actor AnalysisStore: AnalysisStoring {
       createdAt: row["created_at"], updatedAt: row["updated_at"], orphanedAt: row["orphaned_at"])
   }
 
-  static func encodeOverlayValue(_ value: OverlayValue, field: OverlayField) throws -> String {
+  public static func encodeOverlayValue(_ value: OverlayValue, field: OverlayField) throws -> String
+  {
     func quoted(_ text: String) throws -> String {
       guard let data = try? JSONEncoder().encode(text),
         let encoded = String(data: data, encoding: .utf8)
@@ -809,7 +824,7 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  static func decodeOverlayValue(_ raw: String, field: OverlayField) -> OverlayValue? {
+  public static func decodeOverlayValue(_ raw: String, field: OverlayField) -> OverlayValue? {
     switch field {
     case .status:
       return AnalysisItemStatus(rawValue: raw).map(OverlayValue.status)
@@ -835,7 +850,7 @@ actor AnalysisStore: AnalysisStoring {
     }
   }
 
-  static func run(_ row: Row) -> AnalysisRun? {
+  public static func run(_ row: Row) -> AnalysisRun? {
     guard let id = UUID(uuidString: row["id"]), let meetingID = UUID(uuidString: row["meeting_id"]),
       let state = AnalysisRunState(rawValue: row["state"]),
       let trigger = AnalysisTrigger(rawValue: row["trigger"])

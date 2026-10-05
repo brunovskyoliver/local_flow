@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 018 T040/T041: Settings › Server, where services run and the connection check.
 @MainActor

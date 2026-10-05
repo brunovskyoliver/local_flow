@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T063: the protected-literal detector's classes and verbatim matching (research R5).
 final class ProtectedLiteralDetectorTests: XCTestCase {

@@ -2,6 +2,7 @@ import CryptoKit
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 014 channel crypto and framing: CryptoKit against the vectors flowd's Go
 /// implementation generated, and the channel's failure rules over a fake socket.

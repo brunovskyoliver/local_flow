@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// Feature 018 T021: the `servedByServer` truth table and the path per service.
 final class ServerRoutingTests: XCTestCase {

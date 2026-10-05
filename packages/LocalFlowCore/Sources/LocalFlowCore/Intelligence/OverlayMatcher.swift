@@ -9,14 +9,14 @@ import Foundation
 /// earliest edit wins a field collision. A previously orphaned overlay is
 /// never resurrected: it has no live `item_id` to carry forward and keeps its
 /// `orphaned_at`.
-enum OverlayMatcher {
-  static let version = "overlay_match_v1"
+public enum OverlayMatcher {
+  public static let version = "overlay_match_v1"
 
   /// The outcome of a re-match: `matched` maps each re-attached overlay's id to
   /// its new item; `orphaned` lists overlays that found no new item. Overlays
   /// that were already orphaned or target the summary appear in neither; the
   /// caller leaves them untouched.
-  static func match(existing: [AnalysisOverlay], newItems: [StoredItem]) -> (
+  public static func match(existing: [AnalysisOverlay], newItems: [StoredItem]) -> (
     matched: [UUID: UUID], orphaned: Set<UUID>
   ) {
     var matched: [UUID: UUID] = [:]
@@ -67,14 +67,14 @@ enum OverlayMatcher {
   }
 
   /// Lowercased, non-alphanumerics collapsed to single spaces.
-  static func normalize(_ text: String) -> String {
+  public static func normalize(_ text: String) -> String {
     text.lowercased()
       .unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : " " }
       .reduce(into: "") { $0.append($1) }
       .split(separator: " ").joined(separator: " ")
   }
 
-  static func tokenJaccard(_ a: String, _ b: String) -> Double {
+  public static func tokenJaccard(_ a: String, _ b: String) -> Double {
     let left = Set(a.split(separator: " "))
     let right = Set(b.split(separator: " "))
     let union = left.union(right).count

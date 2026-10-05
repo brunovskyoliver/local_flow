@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 
 /// T087 — `chunking_v2` plan shape (contract step 5).
 final class AnalysisChunkPlannerTests: XCTestCase {

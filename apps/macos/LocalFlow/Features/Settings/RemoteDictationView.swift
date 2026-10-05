@@ -1,3 +1,4 @@
+import LocalFlowCore
 import SwiftUI
 
 /// Settings › Remote dictation (Feature 014, User Story 2): consent, server address,

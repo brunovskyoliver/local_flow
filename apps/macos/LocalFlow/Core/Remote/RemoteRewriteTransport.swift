@@ -2,51 +2,6 @@ import Foundation
 import LocalFlowCore
 import LocalFlowSpeech
 
-/// Hands a completed dictation's still-open channel to its rewrite, or opens a new
-/// session channel when there is none (Feature 014 R14).
-actor RemoteRewriteChannels {
-  typealias Opener = @Sendable () async throws -> RemoteChannel
-
-  /// flowd closes a channel after 30 s between operations, counted from before the
-  /// client parks it. An older parked channel is closed instead of used.
-  static let maximumParkedAge: Duration = .seconds(20)
-  private static let reference = ContinuousClock.now
-
-  private var parked: (channel: RemoteChannel, nextOp: Int, at: Duration)?
-  private let open: Opener
-  private let now: @Sendable () -> Duration
-
-  /// `now` includes time asleep, so a channel parked before sleep is not reused.
-  init(
-    open: @escaping Opener,
-    now: @escaping @Sendable () -> Duration = { RemoteRewriteChannels.reference.duration(to: .now) }
-  ) {
-    self.open = open
-    self.now = now
-  }
-
-  /// The latest dictation's channel. A previous one that was never used is closed.
-  func park(_ result: RemoteDictationResult) async {
-    if let old = parked { await old.channel.close() }
-    parked = (result.channel, result.nextOp, now())
-  }
-
-  /// A channel and the operation number to use on it; the caller owns and closes it.
-  func take() async throws -> (RemoteChannel, Int) {
-    if let current = parked {
-      parked = nil
-      if now() - current.at <= Self.maximumParkedAge { return (current.channel, current.nextOp) }
-      await current.channel.close()
-    }
-    return (try await open(), 1)
-  }
-
-  func closeParked() async {
-    if let old = parked { await old.channel.close() }
-    parked = nil
-  }
-}
-
 /// `RewriteTransporting` over the remote channel: the unchanged rewrite request JSON goes
 /// in a `rewrite` operation, and each `rewrite_event` becomes the same item the HTTP
 /// client yields. Channel failures map to the Feature 003 fallback categories, so the

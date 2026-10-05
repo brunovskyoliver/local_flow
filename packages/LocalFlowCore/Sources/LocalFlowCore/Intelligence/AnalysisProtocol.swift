@@ -1,105 +1,133 @@
 import Foundation
-import LocalFlowCore
 
 /// LocalFlow meeting analysis protocol v1 types and the client-side bounded
 /// decoder (`specs/011-meeting-intelligence/contracts/analysis-protocol.md`).
 /// Nothing here talks to the network; `AnalysisClient` reads bytes and hands
 /// lines to `AnalysisEvent.decode`.
-enum AnalysisBounds {
-  static let schemaVersion = 1
-  static let maxRequestBodyBytes = 262_144
-  static let maxLineBytes = 98_304
+public enum AnalysisBounds {
+  public static let schemaVersion = 1
+  public static let maxRequestBodyBytes = 262_144
+  public static let maxLineBytes = 98_304
   /// Whole response stream. flowd sends a ~110-byte `progress` line every
   /// 250 ms while generating, so a request that runs the full 300 s
   /// per-request timeout carries ~1,200 of them (~132 KB) before its result
   /// line (≤ `maxLineBytes`). 512 KiB leaves more than twice that room.
-  static let maxStreamBytes = 524_288
-  static let maxErrorBodyBytes = 8_192
-  static let maxIdentityBytes = 128
-  static let maxTitleBytes = 256
-  static let maxTimeZoneBytes = 64
-  static let maxParticipantNameBytes = 80
-  static let maxOriginBytes = 32
-  static let maxParticipants = 64
-  static let maxSegments = 4_096
-  static let maxSegmentTextBytes = 4_096
-  static let maxNotes = 256
-  static let maxNoteTextBytes = 8_192
-  static let maxPartials = 16
-  static let maxChunks = 64
-  static let maxSummaryBytes = 4_000
-  static let maxTopicTitleBytes = 200
-  static let maxTopicSummaryBytes = 2_000
-  static let maxTopicBullets = 12
-  static let maxTopicBulletBytes = 500
-  static let maxItemTextBytes = 1_000
-  static let maxOwnerNameBytes = 80
-  static let maxDueOriginalBytes = 80
-  static let maxSourcesPerItem = 10
+  public static let maxStreamBytes = 524_288
+  public static let maxErrorBodyBytes = 8_192
+  public static let maxIdentityBytes = 128
+  public static let maxTitleBytes = 256
+  public static let maxTimeZoneBytes = 64
+  public static let maxParticipantNameBytes = 80
+  public static let maxOriginBytes = 32
+  public static let maxParticipants = 64
+  public static let maxSegments = 4_096
+  public static let maxSegmentTextBytes = 4_096
+  public static let maxNotes = 256
+  public static let maxNoteTextBytes = 8_192
+  public static let maxPartials = 16
+  public static let maxChunks = 64
+  public static let maxSummaryBytes = 4_000
+  public static let maxTopicTitleBytes = 200
+  public static let maxTopicSummaryBytes = 2_000
+  public static let maxTopicBullets = 12
+  public static let maxTopicBulletBytes = 500
+  public static let maxItemTextBytes = 1_000
+  public static let maxOwnerNameBytes = 80
+  public static let maxDueOriginalBytes = 80
+  public static let maxSourcesPerItem = 10
 }
 
 // MARK: - Request
 
-enum AnalysisStage: String, Sendable, Equatable, Encodable {
+public enum AnalysisStage: String, Sendable, Equatable, Encodable {
   case full, chunk, synthesis
 }
 
 /// Body of `POST /v1/analysis/meeting`. The closed `CodingKeys` set is the only
 /// thing the encoder can emit; optional keys are absent when nil.
-struct AnalysisRequest: Encodable, Sendable, Equatable {
-  struct Meeting: Encodable, Sendable, Equatable {
-    let id: UUID
-    let title: String
+public struct AnalysisRequest: Encodable, Sendable, Equatable {
+  public struct Meeting: Encodable, Sendable, Equatable {
+    public let id: UUID
+    public let title: String
     /// RFC 3339 with offset.
-    let startedAt: String
-    let durationMs: Int64
-    let timeZone: String
-    let languagePolicy: LanguagePolicyValue
+    public let startedAt: String
+    public let durationMs: Int64
+    public let timeZone: String
+    public let languagePolicy: LanguagePolicyValue
 
-    enum CodingKeys: String, CodingKey {
+    public enum CodingKeys: String, CodingKey {
       case id, title
       case startedAt = "started_at"
       case durationMs = "duration_ms"
       case timeZone = "time_zone"
       case languagePolicy = "language_policy"
     }
-  }
 
-  struct LanguagePolicyValue: Encodable, Sendable, Equatable {
-    let output: AnalysisLanguage
-    let preserveTerms: Bool
-
-    enum CodingKeys: String, CodingKey {
-      case output
-      case preserveTerms = "preserve_terms"
+    public init(
+      id: UUID, title: String, startedAt: String, durationMs: Int64, timeZone: String,
+      languagePolicy: LanguagePolicyValue
+    ) {
+      self.id = id
+      self.title = title
+      self.startedAt = startedAt
+      self.durationMs = durationMs
+      self.timeZone = timeZone
+      self.languagePolicy = languagePolicy
     }
   }
 
-  struct Participant: Encodable, Sendable, Equatable {
-    let speakerID: UUID
-    let certainty: ParticipantCertainty
-    let origin: String
-    let knownSpeakerID: UUID?
-    let name: String?
-    var label: String? = nil
+  public struct LanguagePolicyValue: Encodable, Sendable, Equatable {
+    public let output: AnalysisLanguage
+    public let preserveTerms: Bool
 
-    enum CodingKeys: String, CodingKey {
+    public enum CodingKeys: String, CodingKey {
+      case output
+      case preserveTerms = "preserve_terms"
+    }
+
+    public init(output: AnalysisLanguage, preserveTerms: Bool) {
+      self.output = output
+      self.preserveTerms = preserveTerms
+    }
+  }
+
+  public struct Participant: Encodable, Sendable, Equatable {
+    public let speakerID: UUID
+    public let certainty: ParticipantCertainty
+    public let origin: String
+    public let knownSpeakerID: UUID?
+    public let name: String?
+    public var label: String? = nil
+
+    public enum CodingKeys: String, CodingKey {
       case speakerID = "speaker_id"
       case certainty, origin
       case knownSpeakerID = "known_speaker_id"
       case name, label
     }
+
+    public init(
+      speakerID: UUID, certainty: ParticipantCertainty, origin: String, knownSpeakerID: UUID?,
+      name: String?, label: String? = nil
+    ) {
+      self.speakerID = speakerID
+      self.certainty = certainty
+      self.origin = origin
+      self.knownSpeakerID = knownSpeakerID
+      self.name = name
+      self.label = label
+    }
   }
 
-  struct Segment: Encodable, Sendable, Equatable {
-    let id: UUID
-    let startMs: Int64
-    let endMs: Int64
+  public struct Segment: Encodable, Sendable, Equatable {
+    public let id: UUID
+    public let startMs: Int64
+    public let endMs: Int64
     /// nil encodes as `null`, never omitted.
-    let speakerID: UUID?
-    let text: String
+    public let speakerID: UUID?
+    public let text: String
 
-    enum CodingKeys: String, CodingKey {
+    public enum CodingKeys: String, CodingKey {
       case id
       case startMs = "start_ms"
       case endMs = "end_ms"
@@ -107,7 +135,7 @@ struct AnalysisRequest: Encodable, Sendable, Equatable {
       case text
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
       var container = encoder.container(keyedBy: CodingKeys.self)
       try container.encode(id.uuidString, forKey: .id)
       try container.encode(startMs, forKey: .startMs)
@@ -119,47 +147,65 @@ struct AnalysisRequest: Encodable, Sendable, Equatable {
       }
       try container.encode(text, forKey: .text)
     }
+
+    public init(id: UUID, startMs: Int64, endMs: Int64, speakerID: UUID?, text: String) {
+      self.id = id
+      self.startMs = startMs
+      self.endMs = endMs
+      self.speakerID = speakerID
+      self.text = text
+    }
   }
 
-  struct Note: Encodable, Sendable, Equatable {
-    let ordinal: Int
-    let text: String
+  public struct Note: Encodable, Sendable, Equatable {
+    public let ordinal: Int
+    public let text: String
 
-    enum CodingKeys: String, CodingKey {
+    public enum CodingKeys: String, CodingKey {
       case id, text
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
       var container = encoder.container(keyedBy: CodingKeys.self)
       try container.encode("note:\(ordinal)", forKey: .id)
       try container.encode(text, forKey: .text)
     }
+
+    public init(ordinal: Int, text: String) {
+      self.ordinal = ordinal
+      self.text = text
+    }
   }
 
-  struct Chunk: Encodable, Sendable, Equatable {
-    let index: Int
-    let count: Int
+  public struct Chunk: Encodable, Sendable, Equatable {
+    public let index: Int
+    public let count: Int
+
+    public init(index: Int, count: Int) {
+      self.index = index
+      self.count = count
+    }
   }
 
-  let schemaVersion = AnalysisBounds.schemaVersion
-  let requestID: UUID
-  let runID: UUID
-  let stage: AnalysisStage
-  let chunk: Chunk?
-  let meeting: Meeting
-  let participants: [Participant]
-  let segments: [Segment]?
-  let notes: [Note]?
-  let partials: [AnalysisResult]?
+  public let schemaVersion = AnalysisBounds.schemaVersion
+  public let requestID: UUID
+  public let runID: UUID
+  public let stage: AnalysisStage
+  public let chunk: Chunk?
+  public let meeting: Meeting
+  public let participants: [Participant]
+  public let segments: [Segment]?
+  public let notes: [Note]?
+  public let partials: [AnalysisResult]?
 
-  enum CodingKeys: String, CodingKey {
+  public enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
     case requestID = "request_id"
     case runID = "run_id"
     case priority, stage, chunk, meeting, participants, segments, notes, partials
   }
 
-  func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(schemaVersion, forKey: .schemaVersion)
     try container.encode(requestID.uuidString, forKey: .requestID)
@@ -173,95 +219,155 @@ struct AnalysisRequest: Encodable, Sendable, Equatable {
     try container.encodeIfPresent(notes, forKey: .notes)
     try container.encodeIfPresent(partials, forKey: .partials)
   }
+
+  public init(
+    requestID: UUID, runID: UUID, stage: AnalysisStage, chunk: Chunk?, meeting: Meeting,
+    participants: [Participant], segments: [Segment]?, notes: [Note]?, partials: [AnalysisResult]?
+  ) {
+    self.requestID = requestID
+    self.runID = runID
+    self.stage = stage
+    self.chunk = chunk
+    self.meeting = meeting
+    self.participants = participants
+    self.segments = segments
+    self.notes = notes
+    self.partials = partials
+  }
 }
 
 // MARK: - Result wire types
 
-struct WireSummary: Sendable, Equatable, Encodable {
-  var text: String
-  var sources: [WireSourceRef]
-  var wholeMeeting: Bool
+public struct WireSummary: Sendable, Equatable, Encodable {
+  public var text: String
+  public var sources: [WireSourceRef]
+  public var wholeMeeting: Bool
 
-  enum CodingKeys: String, CodingKey {
+  public enum CodingKeys: String, CodingKey {
     case text, sources
     case wholeMeeting = "whole_meeting"
   }
+
+  public init(text: String, sources: [WireSourceRef], wholeMeeting: Bool) {
+    self.text = text
+    self.sources = sources
+    self.wholeMeeting = wholeMeeting
+  }
 }
 
-struct WireTopic: Sendable, Equatable, Encodable {
-  var title: String
-  var summary: String
-  var bullets: [String]
-  var sources: [WireSourceRef]
+public struct WireTopic: Sendable, Equatable, Encodable {
+  public var title: String
+  public var summary: String
+  public var bullets: [String]
+  public var sources: [WireSourceRef]
+
+  public init(title: String, summary: String, bullets: [String], sources: [WireSourceRef]) {
+    self.title = title
+    self.summary = summary
+    self.bullets = bullets
+    self.sources = sources
+  }
 }
 
-struct WireItem: Sendable, Equatable, Encodable {
-  var text: String
-  var evidenceClass: EvidenceClass?
-  var sources: [WireSourceRef]
+public struct WireItem: Sendable, Equatable, Encodable {
+  public var text: String
+  public var evidenceClass: EvidenceClass?
+  public var sources: [WireSourceRef]
 
-  enum CodingKeys: String, CodingKey {
+  public enum CodingKeys: String, CodingKey {
     case text
     case evidenceClass = "evidence_class"
     case sources
   }
+
+  public init(text: String, evidenceClass: EvidenceClass? = nil, sources: [WireSourceRef]) {
+    self.text = text
+    self.evidenceClass = evidenceClass
+    self.sources = sources
+  }
 }
 
-enum WireOwnerKind: String, Sendable, Equatable, Encodable {
+public enum WireOwnerKind: String, Sendable, Equatable, Encodable {
   case participant, mentioned, none
 }
 
-struct WireOwner: Sendable, Equatable, Encodable {
-  var kind: WireOwnerKind
-  var speakerID: UUID?
-  var name: String?
+public struct WireOwner: Sendable, Equatable, Encodable {
+  public var kind: WireOwnerKind
+  public var speakerID: UUID?
+  public var name: String?
 
-  enum CodingKeys: String, CodingKey {
+  public enum CodingKeys: String, CodingKey {
     case kind
     case speakerID = "speaker_id"
     case name
   }
+
+  public init(kind: WireOwnerKind, speakerID: UUID? = nil, name: String? = nil) {
+    self.kind = kind
+    self.speakerID = speakerID
+    self.name = name
+  }
 }
 
-struct WireDue: Sendable, Equatable, Encodable {
-  var state: DueState
-  var date: String?
-  var original: String?
-  var source: WireSourceRef?
+public struct WireDue: Sendable, Equatable, Encodable {
+  public var state: DueState
+  public var date: String?
+  public var original: String?
+  public var source: WireSourceRef?
+
+  public init(
+    state: DueState, date: String? = nil, original: String? = nil, source: WireSourceRef? = nil
+  ) {
+    self.state = state
+    self.date = date
+    self.original = original
+    self.source = source
+  }
 }
 
-struct WireActionItem: Sendable, Equatable, Encodable {
-  var text: String
-  var owner: WireOwner
-  var ownershipState: OwnershipState
-  var due: WireDue
-  var sources: [WireSourceRef]
+public struct WireActionItem: Sendable, Equatable, Encodable {
+  public var text: String
+  public var owner: WireOwner
+  public var ownershipState: OwnershipState
+  public var due: WireDue
+  public var sources: [WireSourceRef]
 
-  enum CodingKeys: String, CodingKey {
+  public enum CodingKeys: String, CodingKey {
     case text, owner
     case ownershipState = "ownership_state"
     case due, sources
+  }
+
+  public init(
+    text: String, owner: WireOwner, ownershipState: OwnershipState, due: WireDue,
+    sources: [WireSourceRef]
+  ) {
+    self.text = text
+    self.owner = owner
+    self.ownershipState = ownershipState
+    self.due = due
+    self.sources = sources
   }
 }
 
 /// The `analysis` object of a `result` event, after the bounded decoder ran.
 /// Also the value a `synthesis` request carries in `partials`.
-struct AnalysisResult: Sendable, Equatable, Encodable {
-  var schemaVersion: Int
-  var meetingID: UUID
-  var partial: Bool
-  var language: AnalysisLanguage
-  var summary: WireSummary
-  var topics: [WireTopic]
-  var decisions: [WireItem]
-  var actionItems: [WireActionItem]
-  var nextSteps: [WireItem]
-  var openQuestions: [WireItem]
-  var risks: [WireItem]
+public struct AnalysisResult: Sendable, Equatable, Encodable {
+  public var schemaVersion: Int
+  public var meetingID: UUID
+  public var partial: Bool
+  public var language: AnalysisLanguage
+  public var summary: WireSummary
+  public var topics: [WireTopic]
+  public var decisions: [WireItem]
+  public var actionItems: [WireActionItem]
+  public var nextSteps: [WireItem]
+  public var openQuestions: [WireItem]
+  public var risks: [WireItem]
 
   /// Decode a `result` event's `analysis` object with every structural rule of
   /// the contract. `partial == true` applies the halved section caps.
-  static func decode(_ value: Any?, partial: Bool) throws -> AnalysisResult {
+  public static func decode(_ value: Any?, partial: Bool) throws -> AnalysisResult {
     let object = try object(
       value,
       allowed: [
@@ -306,7 +412,7 @@ struct AnalysisResult: Sendable, Equatable, Encodable {
 
   /// CodingKeys is the closed key set of the `analysis` object; used for both
   /// decoding partials and encoding them into synthesis requests.
-  enum CodingKeys: String, CodingKey {
+  public enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
     case meetingID = "meeting_id"
     case partial, language, summary, topics, decisions
@@ -316,7 +422,7 @@ struct AnalysisResult: Sendable, Equatable, Encodable {
     case risks
   }
 
-  func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(schemaVersion, forKey: .schemaVersion)
     try container.encode(meetingID.uuidString, forKey: .meetingID)
@@ -532,35 +638,86 @@ struct AnalysisResult: Sendable, Equatable, Encodable {
       text: text, owner: try decodeOwner(object["owner"]), ownershipState: state,
       due: try decodeDue(object["due"]), sources: try decodeSources(object, min: 1))
   }
+
+  public init(
+    schemaVersion: Int, meetingID: UUID, partial: Bool, language: AnalysisLanguage,
+    summary: WireSummary, topics: [WireTopic], decisions: [WireItem], actionItems: [WireActionItem],
+    nextSteps: [WireItem], openQuestions: [WireItem], risks: [WireItem]
+  ) {
+    self.schemaVersion = schemaVersion
+    self.meetingID = meetingID
+    self.partial = partial
+    self.language = language
+    self.summary = summary
+    self.topics = topics
+    self.decisions = decisions
+    self.actionItems = actionItems
+    self.nextSteps = nextSteps
+    self.openQuestions = openQuestions
+    self.risks = risks
+  }
 }
 
 // MARK: - Events
 
-enum AnalysisEvent: Sendable, Equatable {
-  struct Identity: Sendable, Equatable {
-    let name: String
-    let version: String
+public enum AnalysisEvent: Sendable, Equatable {
+  public struct Identity: Sendable, Equatable {
+    public let name: String
+    public let version: String
+
+    public init(name: String, version: String) {
+      self.name = name
+      self.version = version
+    }
   }
-  struct Backend: Sendable, Equatable {
-    let kind: String
-    let model: String
+  public struct Backend: Sendable, Equatable {
+    public let kind: String
+    public let model: String
+
+    public init(kind: String, model: String) {
+      self.kind = kind
+      self.model = model
+    }
   }
-  struct Timing: Sendable, Equatable {
-    let queueMs: Int?
-    let firstTokenMs: Int?
-    let backendMs: Int?
+  public struct Timing: Sendable, Equatable {
+    public let queueMs: Int?
+    public let firstTokenMs: Int?
+    public let backendMs: Int?
+
+    public init(queueMs: Int?, firstTokenMs: Int?, backendMs: Int?) {
+      self.queueMs = queueMs
+      self.firstTokenMs = firstTokenMs
+      self.backendMs = backendMs
+    }
   }
-  struct ResultPayload: Sendable, Equatable {
-    let requestID: String?
-    let runID: String?
-    let stage: String?
-    let server: Identity?
-    let backend: Backend?
-    let promptVersion: Int?
-    let pipelineVersion: String?
-    let timing: Timing?
-    let preemptions: Int?
-    let analysis: AnalysisResult
+  public struct ResultPayload: Sendable, Equatable {
+    public let requestID: String?
+    public let runID: String?
+    public let stage: String?
+    public let server: Identity?
+    public let backend: Backend?
+    public let promptVersion: Int?
+    public let pipelineVersion: String?
+    public let timing: Timing?
+    public let preemptions: Int?
+    public let analysis: AnalysisResult
+
+    public init(
+      requestID: String?, runID: String?, stage: String?, server: Identity?, backend: Backend?,
+      promptVersion: Int?, pipelineVersion: String?, timing: Timing?, preemptions: Int?,
+      analysis: AnalysisResult
+    ) {
+      self.requestID = requestID
+      self.runID = runID
+      self.stage = stage
+      self.server = server
+      self.backend = backend
+      self.promptVersion = promptVersion
+      self.pipelineVersion = pipelineVersion
+      self.timing = timing
+      self.preemptions = preemptions
+      self.analysis = analysis
+    }
   }
 
   case accepted(requestID: String?, server: Identity?)
@@ -568,7 +725,7 @@ enum AnalysisEvent: Sendable, Equatable {
   case result(ResultPayload)
   case error(requestID: String?, code: String)
 
-  var requestID: String? {
+  public var requestID: String? {
     switch self {
     case .accepted(let id, _), .progress(let id, _, _), .error(let id, _): return id
     case .result(let payload): return payload.requestID
@@ -577,7 +734,7 @@ enum AnalysisEvent: Sendable, Equatable {
 
   /// One NDJSON line. Lines over `AnalysisBounds.maxLineBytes` never reach this:
   /// the transport stops with `oversized_response` first.
-  static func decode(line: Data) throws -> AnalysisEvent {
+  public static func decode(line: Data) throws -> AnalysisEvent {
     guard line.count <= AnalysisBounds.maxLineBytes else {
       throw AnalysisFailure(.oversizedResponse)
     }
@@ -642,43 +799,70 @@ enum AnalysisEvent: Sendable, Equatable {
 
 /// `GET /v1/analysis/health`. `limits`/`caps` are optional so a partial body
 /// maps to a category instead of a decode error.
-struct AnalysisHealth: Sendable, Equatable {
-  struct Backend: Sendable, Equatable {
-    let state: String
-    let kind: String?
-    let model: String?
-    let jsonSchema: Bool
+public struct AnalysisHealth: Sendable, Equatable {
+  public struct Backend: Sendable, Equatable {
+    public let state: String
+    public let kind: String?
+    public let model: String?
+    public let jsonSchema: Bool
+
+    public init(state: String, kind: String?, model: String?, jsonSchema: Bool) {
+      self.state = state
+      self.kind = kind
+      self.model = model
+      self.jsonSchema = jsonSchema
+    }
   }
-  struct Limits: Sendable, Equatable {
-    var inputBytes: Int
-    var outputBytes: Int
-    var contextTokens: Int
-    var concurrency: Int
+  public struct Limits: Sendable, Equatable {
+    public var inputBytes: Int
+    public var outputBytes: Int
+    public var contextTokens: Int
+    public var concurrency: Int
+
+    public init(inputBytes: Int, outputBytes: Int, contextTokens: Int, concurrency: Int) {
+      self.inputBytes = inputBytes
+      self.outputBytes = outputBytes
+      self.contextTokens = contextTokens
+      self.concurrency = concurrency
+    }
   }
-  struct Caps: Sendable, Equatable {
-    var sourcesPerItem: Int
-    var topics: Int
-    var decisions: Int
-    var actionItems: Int
-    var nextSteps: Int
-    var openQuestions: Int
-    var risks: Int
+  public struct Caps: Sendable, Equatable {
+    public var sourcesPerItem: Int
+    public var topics: Int
+    public var decisions: Int
+    public var actionItems: Int
+    public var nextSteps: Int
+    public var openQuestions: Int
+    public var risks: Int
+
+    public init(
+      sourcesPerItem: Int, topics: Int, decisions: Int, actionItems: Int, nextSteps: Int,
+      openQuestions: Int, risks: Int
+    ) {
+      self.sourcesPerItem = sourcesPerItem
+      self.topics = topics
+      self.decisions = decisions
+      self.actionItems = actionItems
+      self.nextSteps = nextSteps
+      self.openQuestions = openQuestions
+      self.risks = risks
+    }
   }
 
-  let schemaVersion: Int?
-  let service: String?
-  let protocolVersions: [Int]
-  let serverName: String?
-  let serverVersion: String?
-  let backend: Backend?
-  let promptVersions: [String: Int]
-  let resultSchemaVersion: Int?
-  let limits: Limits?
-  let caps: Caps?
+  public let schemaVersion: Int?
+  public let service: String?
+  public let protocolVersions: [Int]
+  public let serverName: String?
+  public let serverVersion: String?
+  public let backend: Backend?
+  public let promptVersions: [String: Int]
+  public let resultSchemaVersion: Int?
+  public let limits: Limits?
+  public let caps: Caps?
 
-  static let serviceName = "localflow-analysis"
+  public static let serviceName = "localflow-analysis"
 
-  static func decode(_ data: Data) throws -> AnalysisHealth {
+  public static func decode(_ data: Data) throws -> AnalysisHealth {
     guard let raw = try? JSONSerialization.jsonObject(with: data),
       let object = raw as? [String: Any]
     else { throw AnalysisFailure(.malformedResponse) }
@@ -728,6 +912,23 @@ struct AnalysisHealth: Sendable, Equatable {
       limits: limits, caps: caps)
   }
 
-  var isAnalysisService: Bool { service == Self.serviceName }
-  var resultSchemaSupported: Bool { resultSchemaVersion == AnalysisBounds.schemaVersion }
+  public var isAnalysisService: Bool { service == Self.serviceName }
+  public var resultSchemaSupported: Bool { resultSchemaVersion == AnalysisBounds.schemaVersion }
+
+  public init(
+    schemaVersion: Int?, service: String?, protocolVersions: [Int], serverName: String?,
+    serverVersion: String?, backend: Backend?, promptVersions: [String: Int],
+    resultSchemaVersion: Int?, limits: Limits?, caps: Caps?
+  ) {
+    self.schemaVersion = schemaVersion
+    self.service = service
+    self.protocolVersions = protocolVersions
+    self.serverName = serverName
+    self.serverVersion = serverVersion
+    self.backend = backend
+    self.promptVersions = promptVersions
+    self.resultSchemaVersion = resultSchemaVersion
+    self.limits = limits
+    self.caps = caps
+  }
 }

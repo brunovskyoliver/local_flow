@@ -1,6 +1,5 @@
 import CryptoKit
 import Foundation
-import LocalFlowCore
 
 /// The name-free SHA-256 of everything that may influence the analysis
 /// (research R6/R8, FR-008). The canonical stream is length-prefixed so two
@@ -9,16 +8,16 @@ import LocalFlowCore
 /// rename keeps the version — while the identity *state* and `known_speaker_id`
 /// are present, so a confirmation, a merge, or linking the local profile
 /// changes it.
-struct EvidenceVersion: Sendable, Equatable {
-  static let streamVersion = "evidence_v1"
-  static let capSetVersion = "caps_v1"
+public struct EvidenceVersion: Sendable, Equatable {
+  public static let streamVersion = "evidence_v1"
+  public static let capSetVersion = "caps_v1"
 
   /// 64 lowercase hex characters.
-  let hex: String
+  public let hex: String
 
   /// - Parameter segments: final segments in ordinal order (paged by the reader).
   /// - Parameter participants: display roots in stable order; `name` is ignored.
-  static func compute(
+  public static func compute(
     meetingID: UUID,
     passID: UUID?,
     segments: [EvidenceSegment],
@@ -84,7 +83,11 @@ struct EvidenceVersion: Sendable, Equatable {
   }
 
   /// SHA-256 hex of one trimmed note paragraph (research R7).
-  static func hash(paragraph text: String) -> String {
+  public static func hash(paragraph text: String) -> String {
     SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+
+  public init(hex: String) {
+    self.hex = hex
   }
 }

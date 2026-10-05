@@ -7,18 +7,23 @@ import Foundation
 /// phrase kept; a vague term is `unresolved` even when the server shipped a
 /// date; a phrase outside the table returns nil and leaves a consistent
 /// server value alone.
-enum DueDateResolver {
+public enum DueDateResolver {
 
   /// What a known phrase resolves to: a concrete `YYYY-MM-DD` under an
   /// explicit state, or `unresolved` for a vague term (`date` nil).
-  struct Resolution: Equatable, Sendable {
-    var state: DueState
-    var date: String? = nil
+  public struct Resolution: Equatable, Sendable {
+    public var state: DueState
+    public var date: String? = nil
+
+    public init(state: DueState, date: String? = nil) {
+      self.state = state
+      self.date = date
+    }
   }
 
   /// `nil` when the phrase is outside the known table — not an error, just
   /// "the client cannot check this one".
-  static func resolve(_ phrase: String, on startedAt: Date, in zone: TimeZone)
+  public static func resolve(_ phrase: String, on startedAt: Date, in zone: TimeZone)
     -> Resolution?
   {
     let normalized = normalize(phrase)
@@ -54,7 +59,7 @@ enum DueDateResolver {
   }
 
   /// The vague-term rule on its own, for callers that only need the check.
-  static func isVague(_ phrase: String) -> Bool {
+  public static func isVague(_ phrase: String) -> Bool {
     isVagueNormalized(normalize(phrase))
   }
 

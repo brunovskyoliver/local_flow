@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import LocalFlowCore
 import LocalFlowSpeech
 import ServiceManagement
 

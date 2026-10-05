@@ -4,20 +4,20 @@ import Foundation
 /// (dictation and rewrite, Feature 014's parked channel), **live** (live meeting preview)
 /// and **background** (summaries and meeting jobs). flowd allows three per device and runs
 /// one op at a time on each, so each role serves one caller at a time; the next waits.
-actor RemoteChannelPool {
-  enum Role: Sendable, CaseIterable {
+public actor RemoteChannelPool {
+  public enum Role: Sendable, CaseIterable {
     case live, background
   }
 
   /// Feature 014's dictation-to-rewrite hand-off, unchanged.
-  nonisolated let interactive: RemoteRewriteChannels
+  public nonisolated let interactive: RemoteRewriteChannels
   private let open: RemoteRewriteChannels.Opener
   private let now: @Sendable () -> Duration
   private var parked: [Role: (channel: RemoteChannel, nextOp: Int, at: Duration)] = [:]
   private var leased: Set<Role> = []
   private var waiters: [Role: [CheckedContinuation<Void, Never>]] = [:]
 
-  init(
+  public init(
     open: @escaping RemoteRewriteChannels.Opener,
     now: @escaping @Sendable () -> Duration = RemoteChannelPool.uptime
   ) {
@@ -27,11 +27,11 @@ actor RemoteChannelPool {
   }
 
   private static let reference = ContinuousClock.now
-  @Sendable static func uptime() -> Duration { reference.duration(to: .now) }
+  @Sendable public static func uptime() -> Duration { reference.duration(to: .now) }
 
   /// The role's channel and the op number to use, once no other caller holds the role.
   /// Pair every lease with `release`.
-  func lease(_ role: Role) async throws -> (RemoteChannel, Int) {
+  public func lease(_ role: Role) async throws -> (RemoteChannel, Int) {
     while leased.contains(role) {
       await withCheckedContinuation { waiters[role, default: []].append($0) }
     }
@@ -53,7 +53,7 @@ actor RemoteChannelPool {
 
   /// Ends the lease. A channel whose op finished cleanly is kept for the next op;
   /// any other is closed.
-  func release(_ role: Role, channel: RemoteChannel, nextOp: Int?) async {
+  public func release(_ role: Role, channel: RemoteChannel, nextOp: Int?) async {
     if let nextOp {
       if let old = parked[role] { await old.channel.close() }
       parked[role] = (channel, nextOp, now())
@@ -73,7 +73,7 @@ actor RemoteChannelPool {
 
   /// Opens a fresh channel for `role`, times it to `ready` and closes it (Feature 018
   /// FR-006). A parked channel is closed first: reusing it proves nothing about the server.
-  func roundTrip(_ role: Role) async throws -> Duration {
+  public func roundTrip(_ role: Role) async throws -> Duration {
     while leased.contains(role) {
       await withCheckedContinuation { waiters[role, default: []].append($0) }
     }
@@ -88,7 +88,7 @@ actor RemoteChannelPool {
   }
 
   /// Closes every idle channel, including the parked interactive one.
-  func closeAll() async {
+  public func closeAll() async {
     for (_, current) in parked { await current.channel.close() }
     parked.removeAll()
     await interactive.closeParked()

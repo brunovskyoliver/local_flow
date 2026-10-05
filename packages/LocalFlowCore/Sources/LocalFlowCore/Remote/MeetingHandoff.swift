@@ -1,7 +1,6 @@
 import CryptoKit
 import Foundation
 import GRDB
-import LocalFlowCore
 import LocalFlowSpeech
 
 /// Hands a stopped meeting to the server whole: its audio files and its slice of the
@@ -13,8 +12,8 @@ import LocalFlowSpeech
 /// Each `step` advances one stage and returns; the transcription queue calls it again
 /// through its server waits. A meeting is handed off while `Handoff/<id>/bundle.sqlite`
 /// exists; the file is the exact upload, so a resumed upload continues byte for byte.
-actor MeetingHandoff {
-  enum Step: Sendable, Equatable {
+public actor MeetingHandoff {
+  public enum Step: Sendable, Equatable {
     /// Not eligible, or the server failed it: finalize the usual way.
     case notHandedOff
     /// Uploaded and queued, or the server is unreachable; ask again later.
@@ -25,7 +24,7 @@ actor MeetingHandoff {
     case merged(labeled: Bool)
   }
 
-  static let chunkBytes = 48_000
+  public static let chunkBytes = 48_000
 
   private let pool: RemoteChannelPool
   private let database: DatabasePool
@@ -35,7 +34,7 @@ actor MeetingHandoff {
   private let eligible: @Sendable (UUID) async -> Bool
   private let defaultLanguage: @Sendable () async -> MeetingLanguage
 
-  init(
+  public init(
     pool: RemoteChannelPool, database: DatabasePool, root: MeetingStorageRoot,
     eligible: @escaping @Sendable (UUID) async -> Bool,
     defaultLanguage: @escaping @Sendable () async -> MeetingLanguage
@@ -49,7 +48,7 @@ actor MeetingHandoff {
     self.defaultLanguage = defaultLanguage
   }
 
-  func step(_ id: UUID) async -> Step {
+  public func step(_ id: UUID) async -> Step {
     let bundle = bundleURL(id)
     if !FileManager.default.fileExists(atPath: bundle.path) {
       guard await eligible(id), (try? await export(id, to: bundle)) == true else {
@@ -114,7 +113,7 @@ actor MeetingHandoff {
   }
 
   /// The meeting was deleted here; the server's copy goes too when it can.
-  func meetingWillDelete(id: UUID) async {
+  public func meetingWillDelete(id: UUID) async {
     guard FileManager.default.fileExists(atPath: bundleURL(id).path) else { return }
     forget(id)
     _ = try? await call(.init(action: .delete, meeting: id))
@@ -248,7 +247,7 @@ actor MeetingHandoff {
     ("analysis_overlays", "meeting_id=?"),
   ]
 
-  func export(_ id: UUID, to url: URL) async throws -> Bool {
+  public func export(_ id: UUID, to url: URL) async throws -> Bool {
     let language = await defaultLanguage()
     let eligible = try await database.read { db -> Bool in
       let terminal =
@@ -311,7 +310,7 @@ actor MeetingHandoff {
   /// Replaces this meeting's transcript, labels and summary with the server's rows in
   /// one transaction, keeping the capacity counter exact. Returns whether a diarization
   /// run was accepted.
-  func merge(_ id: UUID, from url: URL) async throws -> Bool {
+  public func merge(_ id: UUID, from url: URL) async throws -> Bool {
     try await database.writeWithoutTransaction { db in
       try db.execute(sql: "ATTACH DATABASE ? AS result", arguments: [url.path])
       defer { try? db.execute(sql: "DETACH DATABASE result") }

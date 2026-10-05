@@ -4,52 +4,52 @@ import Foundation
 /// values"). Values are provisional until `acceptance/` records the reference
 /// runs; the struct feeds the `policy_v1` version string and the run row's
 /// `request_config_json`.
-struct AnalysisPolicy: Sendable, Equatable {
-  static let version = "policy_v1"
-  static let chunkingVersion = "chunking_v2"
-  static let overlayMatchVersion = "overlay_match_v1"
-  static let pipelineVersion = "\(chunkingVersion)/\(overlayMatchVersion)/\(version)"
+public struct AnalysisPolicy: Sendable, Equatable {
+  public static let version = "policy_v1"
+  public static let chunkingVersion = "chunking_v2"
+  public static let overlayMatchVersion = "overlay_match_v1"
+  public static let pipelineVersion = "\(chunkingVersion)/\(overlayMatchVersion)/\(version)"
 
   /// Segment-text bytes at or under which one `full` request suffices. With
   /// the request envelope Slovak runs ≈ 1.2 B/token (measured 2026-09-22 on
   /// Qwen3.5 4B): 12 KB is ~12k prompt tokens, leaving room for the larger
   /// full-request output inside the backend's real KV pool, which runs well
   /// under the advertised context when the Mac is memory-pressured.
-  var fullBudgetBytes = 12_288
+  public var fullBudgetBytes = 12_288
   /// Segment-text bytes per `chunk` request: ~15k prompt tokens at most, plus
   /// the 3,072-token chunk output cap. The planner balances chunks, so most
   /// land well under it.
-  var chunkBudgetBytes = 16_384
-  var maxChunks = 64
-  var partialsPerSynthesis = 16
-  var reduceDepth = 2
-  var requestsInFlight = 1
-  var requestsInFlightMax = 2
+  public var chunkBudgetBytes = 16_384
+  public var maxChunks = 64
+  public var partialsPerSynthesis = 16
+  public var reduceDepth = 2
+  public var requestsInFlight = 1
+  public var requestsInFlightMax = 2
 
   /// Matches the server's `--analysis-timeout`: a ~10k-token chunk needs ~10 s of
   /// prefill and ~20 s of generation on a 4B model here, several times that when
   /// the Mac is also transcribing.
-  var perRequestTimeout = Duration.seconds(300)
-  var firstTokenTimeout = Duration.seconds(60)
+  public var perRequestTimeout: Duration = Duration.seconds(300)
+  public var firstTokenTimeout: Duration = Duration.seconds(60)
   /// 60 s + one request timeout per request, clamped to [120 s, 30 min] (research R11).
-  func runDeadline(requestCount: Int) -> Duration {
+  public func runDeadline(requestCount: Int) -> Duration {
     let seconds = 60 + Int(perRequestTimeout.components.seconds) * max(1, requestCount)
     let clamped = min(max(seconds, 120), 1_800)
     return .seconds(clamped)
   }
 
-  var serverQueueWait = Duration.seconds(30)
-  var preemptionRetries = 3
+  public var serverQueueWait: Duration = Duration.seconds(30)
+  public var preemptionRetries = 3
 
-  var sourcesPerItem = 10
-  var topicCap = 20
-  var decisionCap = 40
-  var actionItemCap = 60
-  var nextStepCap = 40
-  var openQuestionCap = 40
-  var riskCap = 40
+  public var sourcesPerItem = 10
+  public var topicCap = 20
+  public var decisionCap = 40
+  public var actionItemCap = 60
+  public var nextStepCap = 40
+  public var openQuestionCap = 40
+  public var riskCap = 40
   /// Partial (chunk) results use half of each section cap.
-  func cap(for kind: AnalysisSection, partial: Bool) -> Int {
+  public func cap(for kind: AnalysisSection, partial: Bool) -> Int {
     let full: Int
     switch kind {
     case .topics: full = topicCap
@@ -62,27 +62,27 @@ struct AnalysisPolicy: Sendable, Equatable {
     return partial ? full / 2 : full
   }
 
-  var runRowsPerMeeting = 20
-  var overlaysPerMeeting = 500
-  var queueCapacity = 100
-  var evidencePageSize = 200
-  var languageSampleBytes = 32 * 1_024
-  var maxNoteParagraphs = 256
-  var maxNoteParagraphBytes = 8_192
+  public var runRowsPerMeeting = 20
+  public var overlaysPerMeeting = 500
+  public var queueCapacity = 100
+  public var evidencePageSize = 200
+  public var languageSampleBytes: Int = 32 * 1_024
+  public var maxNoteParagraphs = 256
+  public var maxNoteParagraphBytes = 8_192
   /// Context estimate: 3 bytes per token against the advertised context.
-  var bytesPerToken = 3
-  var contextTokens = 32_768
-  var maxRequestConfigBytes = 2_048
-  var maxSourcesPerSummary = 10
+  public var bytesPerToken = 3
+  public var contextTokens = 32_768
+  public var maxRequestConfigBytes = 2_048
+  public var maxSourcesPerSummary = 10
 
   /// R9: participants with these certainties may be named in requests and as
   /// owners. Part of the evidence version.
-  var permittedCertainties: Set<ParticipantCertainty> {
+  public var permittedCertainties: Set<ParticipantCertainty> {
     [.confirmed, .recognized, .localName, .localUser]
   }
 
   /// FR-020: terms that never resolve to a date (English and Slovak).
-  static let vagueTerms: [String] = [
+  public static let vagueTerms: [String] = [
     "soon", "later", "eventually", "at some point", "next time",
     "čoskoro", "neskôr", "niekedy", "nabudúce", "časom",
   ]
@@ -90,7 +90,7 @@ struct AnalysisPolicy: Sendable, Equatable {
   /// R5/R6: English and Slovak function words plus weekday and month names.
   /// Compared folded (lowercase, diacritics stripped); neither the
   /// proper-noun class nor lexical support counts them.
-  static let stopWords: Set<String> = [
+  public static let stopWords: Set<String> = [
     // English function words.
     "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
     "by", "from", "is", "are", "was", "were", "be", "been", "being", "it",
@@ -139,7 +139,7 @@ struct AnalysisPolicy: Sendable, Equatable {
   ]
 
   /// The policy values recorded on the run row (≤ `maxRequestConfigBytes`).
-  func requestConfigJSON() -> String {
+  public func requestConfigJSON() -> String {
     let pairs = [
       ("full_budget_bytes", fullBudgetBytes), ("chunk_budget_bytes", chunkBudgetBytes),
       ("max_chunks", maxChunks), ("partials_per_synthesis", partialsPerSynthesis),
@@ -158,7 +158,7 @@ struct AnalysisPolicy: Sendable, Equatable {
 
   /// The health `limits`/`caps` minima: the client lowers its budget to the
   /// smaller advertised value and never raises a cap (protocol contract).
-  func lowered(by health: AnalysisHealth) -> AnalysisPolicy {
+  public func lowered(by health: AnalysisHealth) -> AnalysisPolicy {
     var copy = self
     if let input = health.limits?.inputBytes {
       copy.chunkBudgetBytes = min(copy.chunkBudgetBytes, input)
@@ -178,9 +178,53 @@ struct AnalysisPolicy: Sendable, Equatable {
     }
     return copy
   }
+
+  public init(
+    fullBudgetBytes: Int = 12_288, chunkBudgetBytes: Int = 16_384, maxChunks: Int = 64,
+    partialsPerSynthesis: Int = 16, reduceDepth: Int = 2, requestsInFlight: Int = 1,
+    requestsInFlightMax: Int = 2, perRequestTimeout: Duration = Duration.seconds(300),
+    firstTokenTimeout: Duration = Duration.seconds(60),
+    serverQueueWait: Duration = Duration.seconds(30), preemptionRetries: Int = 3,
+    sourcesPerItem: Int = 10, topicCap: Int = 20, decisionCap: Int = 40, actionItemCap: Int = 60,
+    nextStepCap: Int = 40, openQuestionCap: Int = 40, riskCap: Int = 40,
+    runRowsPerMeeting: Int = 20, overlaysPerMeeting: Int = 500, queueCapacity: Int = 100,
+    evidencePageSize: Int = 200, languageSampleBytes: Int = 32 * 1_024,
+    maxNoteParagraphs: Int = 256, maxNoteParagraphBytes: Int = 8_192, bytesPerToken: Int = 3,
+    contextTokens: Int = 32_768, maxRequestConfigBytes: Int = 2_048, maxSourcesPerSummary: Int = 10
+  ) {
+    self.fullBudgetBytes = fullBudgetBytes
+    self.chunkBudgetBytes = chunkBudgetBytes
+    self.maxChunks = maxChunks
+    self.partialsPerSynthesis = partialsPerSynthesis
+    self.reduceDepth = reduceDepth
+    self.requestsInFlight = requestsInFlight
+    self.requestsInFlightMax = requestsInFlightMax
+    self.perRequestTimeout = perRequestTimeout
+    self.firstTokenTimeout = firstTokenTimeout
+    self.serverQueueWait = serverQueueWait
+    self.preemptionRetries = preemptionRetries
+    self.sourcesPerItem = sourcesPerItem
+    self.topicCap = topicCap
+    self.decisionCap = decisionCap
+    self.actionItemCap = actionItemCap
+    self.nextStepCap = nextStepCap
+    self.openQuestionCap = openQuestionCap
+    self.riskCap = riskCap
+    self.runRowsPerMeeting = runRowsPerMeeting
+    self.overlaysPerMeeting = overlaysPerMeeting
+    self.queueCapacity = queueCapacity
+    self.evidencePageSize = evidencePageSize
+    self.languageSampleBytes = languageSampleBytes
+    self.maxNoteParagraphs = maxNoteParagraphs
+    self.maxNoteParagraphBytes = maxNoteParagraphBytes
+    self.bytesPerToken = bytesPerToken
+    self.contextTokens = contextTokens
+    self.maxRequestConfigBytes = maxRequestConfigBytes
+    self.maxSourcesPerSummary = maxSourcesPerSummary
+  }
 }
 
-enum AnalysisSection: String, Sendable, Equatable, CaseIterable {
+public enum AnalysisSection: String, Sendable, Equatable, CaseIterable {
   case topics, decisions
   case actionItems = "action_items"
   case nextSteps = "next_steps"
