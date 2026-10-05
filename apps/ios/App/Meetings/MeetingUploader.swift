@@ -172,9 +172,12 @@ actor MeetingUploader {
     self.summarize = summarize
     self.now = now
     self.onChange = onChange
-    // Where `MeetingHandoff` writes its bundles.
-    directory = root.url.deletingLastPathComponent().appendingPathComponent(
-      "Handoff", isDirectory: true)
+    directory = Self.handoffDirectory(root: root)
+  }
+
+  /// Where `MeetingHandoff` writes its bundles, one folder per meeting.
+  static func handoffDirectory(root: MeetingStorageRoot) -> URL {
+    root.url.deletingLastPathComponent().appendingPathComponent("Handoff", isDirectory: true)
   }
 
   // MARK: Queue
@@ -187,9 +190,10 @@ actor MeetingUploader {
   func pass(ignoringBackoff: Bool = false) async -> Duration? {
     do {
       try await enqueue()
+      let deletes = try await serverDeletes()
       let recording = try await recordingMeeting()
       let rows = try await active()
-      guard !rows.isEmpty || recording != nil else { return nil }
+      guard !rows.isEmpty || recording != nil || !deletes.isEmpty else { return nil }
       let gate = await gate()
       if let reason = gate.closed {
         for row in rows where row.detail != reason || row.stage == .uploading {
@@ -199,14 +203,15 @@ actor MeetingUploader {
         }
         return nil
       }
+      // Deleted meetings first: their server copies go before anything else is sent.
+      let deleted = await sendDeletes(deletes)
       var live: Duration?
       if let recording {
         await self.live(recording, gate: gate)
         live = Self.livePollInterval
       }
       let next = await queue(rows, gate: gate, ignoringBackoff: ignoringBackoff)
-      guard let next, let live else { return next ?? live }
-      return min(next, live)
+      return [deleted, live, next].compactMap { $0 }.min()
     } catch {
       Self.log.error("Upload queue: \(String(describing: error), privacy: .public)")
       return Self.pollInterval
@@ -305,7 +310,7 @@ actor MeetingUploader {
   }
 
   /// Unfinished stopped meetings, oldest first. A recording meeting's row is the live
-  /// driver's until Stop.
+  /// driver's until Stop. A meeting being deleted is left alone.
   private func active() async throws -> [Upload] {
     try await database.read { db in
       try Row.fetchAll(
@@ -314,6 +319,7 @@ actor MeetingUploader {
           SELECT u.* FROM phone_meeting_uploads u JOIN meetings m ON m.id=u.meeting_id
           WHERE u.stage NOT IN ('ready','failed')
             AND m.state NOT IN ('created','preparing','recording','paused','finalizing')
+            AND u.meeting_id NOT IN (SELECT meeting_id FROM phone_meeting_server_deletes)
           ORDER BY m.created_at, m.id
           """
       ).map(Upload.init)
@@ -355,12 +361,45 @@ actor MeetingUploader {
           SELECT m.id, 'waiting', ? FROM meetings m
           WHERE m.origin='iphone' AND m.state IN ('completed','interrupted')
             AND NOT EXISTS(SELECT 1 FROM phone_meeting_uploads u WHERE u.meeting_id=m.id)
+            AND NOT EXISTS(SELECT 1 FROM phone_meeting_server_deletes d WHERE d.meeting_id=m.id)
             AND NOT EXISTS(SELECT 1 FROM meeting_transcriptions t
               WHERE t.meeting_id=m.id AND t.state='final')
             AND EXISTS(SELECT 1 FROM meeting_segments s JOIN meeting_tracks k ON k.id=s.track_id
               WHERE k.meeting_id=m.id AND s.state='finalized')
           """, arguments: [now])
     }
+  }
+
+  // MARK: Deleted meetings
+
+  /// Meetings deleted on the phone whose server copy is still to go, oldest first.
+  private func serverDeletes() async throws -> [UUID] {
+    try await database.read { db in
+      try String.fetchAll(
+        db,
+        sql: "SELECT meeting_id FROM phone_meeting_server_deletes ORDER BY queued_at, meeting_id"
+      ).compactMap(UUID.init(uuidString:))
+    }
+  }
+
+  /// `delete` for each; a meeting the server no longer has counts as deleted. Returns when
+  /// to try again if one could not be sent.
+  private func sendDeletes(_ ids: [UUID]) async -> Duration? {
+    for id in ids {
+      do {
+        _ = try await channel.call(.init(action: .delete, meeting: id))
+        try await database.write { db in
+          try db.execute(
+            sql: "DELETE FROM phone_meeting_server_deletes WHERE meeting_id=?",
+            arguments: [id.uuidString])
+        }
+        forget(id)
+      } catch {
+        Self.log.notice("Server delete: \(String(describing: error), privacy: .public)")
+        return .milliseconds(Self.backoffMilliseconds(attempts: 1))
+      }
+    }
+    return nil
   }
 
   // MARK: One meeting

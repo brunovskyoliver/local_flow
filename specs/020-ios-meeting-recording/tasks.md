@@ -145,9 +145,9 @@
 
 **Independent Test**: open a processed meeting, play from a line, rename a speaker, share, delete (files and server copy gone).
 
-- [ ] T045 [P] [US5] `apps/ios/LocalFlowPhoneTests/MeetingDetailViewModelTests.swift`: play-from-line offset across segments, speaker rename persists, delete removes files, rows and sends `delete` for a server copy
-- [ ] T046 [US5] `apps/ios/App/Features/Meetings/MeetingDetailView.swift` and `MeetingDetailViewModel.swift`: summary on top, transcript lines, tap to play from the line across segments, rename meeting and speakers, Copy and Share as plain text, Delete with confirmation
-- [ ] T047 [US5] Meeting deletion in `apps/ios/App/Meetings/PhoneMeetingCoordinator.swift` (files, rows, upload row, server `delete` when a copy exists or queued for the next connection)
+- [X] T045 [P] [US5] `apps/ios/LocalFlowPhoneTests/MeetingDetailViewModelTests.swift`: play-from-line offset across segments, speaker rename persists, delete removes files, rows and sends `delete` for a server copy
+- [X] T046 [US5] `apps/ios/App/Features/Meetings/MeetingDetailView.swift` and `MeetingDetailViewModel.swift`: summary on top, transcript lines, tap to play from the line across segments, rename meeting and speakers, Copy and Share as plain text, Delete with confirmation
+- [X] T047 [US5] Meeting deletion in `apps/ios/App/Meetings/PhoneMeetingCoordinator.swift` (files, rows, upload row, server `delete` when a copy exists or queued for the next connection)
 
 ---
 

@@ -191,6 +191,17 @@ final class MeetingsViewModel {
     }
   }
 
+  /// A meeting's detail screen (User Story 5); its playback stops the list's.
+  func detail(_ id: UUID, delete: @escaping (UUID) async -> String?) -> MeetingDetailViewModel {
+    let detail = MeetingDetailViewModel(
+      meetingID: id, store: store, root: root, uploads: uploads, player: SystemMeetingLinePlayer(),
+      pasteboard: SystemPasteboard(), audioBusy: audioBusy, delete: delete)
+    detail.retry = { [weak self] in await self?.retry($0) }
+    detail.willPlay = { [weak self] in self?.stopPlayback() }
+    detail.onChange = { [weak self] in Task { await self?.refresh() } }
+    return detail
+  }
+
   /// Plays every kept segment of the microphone track in order; a second tap stops.
   func togglePlayback(_ id: UUID) async {
     if playingID == id { return stopPlayback() }

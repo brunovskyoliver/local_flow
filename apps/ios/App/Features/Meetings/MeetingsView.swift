@@ -36,11 +36,7 @@ struct MeetingsView: View {
         }
         Section {
           ForEach(model.items) { item in
-            NavigationLink {
-              MeetingDetailView(
-                meetingID: item.id, meetings: model.store, uploads: model.uploads,
-                retry: { await model.retry($0) }, openServerSettings: openServerSettings)
-            } label: {
+            NavigationLink(value: item.id) {
               row(item)
             }
             .task { await model.loadMore(after: item) }
@@ -52,6 +48,11 @@ struct MeetingsView: View {
           Text("Meetings you record appear here.").font(.flow(size: 16))
             .foregroundStyle(SottoPalette.muted)
         }
+      }
+      .navigationDestination(for: UUID.self) { id in
+        MeetingDetailView(
+          model: model.detail(id, delete: { await meetings.delete($0) }),
+          openServerSettings: openServerSettings)
       }
       .navigationTitle("Meetings")
       .refreshable { await model.refresh() }

@@ -29,6 +29,10 @@ The phone uses the shared meeting schema from `HistoryMigrations` (already on th
 | `attempts` | INTEGER NOT NULL DEFAULT 0 | for backoff `min(600, 30 << min(attempts, 5))` seconds |
 | `updated_at` | INTEGER NOT NULL | ms since epoch |
 
+## Phone migration `phone-meetings-v2` (PhoneMigrations, phone only)
+
+`phone_meeting_server_deletes(meeting_id TEXT PK, queued_at INTEGER NOT NULL)`: a meeting deleted on the phone whose server copy still exists (US5, FR-033). The uploader sends `delete` with the next connection and removes the row. No foreign key: the meeting row is already gone.
+
 ## State transitions
 
 Meeting (shared `MeetingState`): `created → preparing → recording ⇄ paused → finalizing → completed`; a crash leads through the reconciler to `interrupted`. The phone also uses `paused` for interruptions (calls).

@@ -13,6 +13,9 @@ enum PhoneMigrations {
   /// Feature 020: `phone_meeting_uploads`, the phone's side of each server handoff
   /// (specs/020-ios-meeting-recording/data-model.md).
   static let identifierMeetings = "phone-meetings-v1"
+  /// Feature 020 US5: `phone_meeting_server_deletes`, server copies of meetings deleted on
+  /// the phone, sent with the next connection. No foreign key: the meeting is already gone.
+  static let identifierMeetingsV2 = "phone-meetings-v2"
 
   static func migrator(shared: DatabaseMigrator = HistoryMigrations.migrator()) -> DatabaseMigrator
   {
@@ -66,6 +69,14 @@ enum PhoneMigrations {
             attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
             updated_at INTEGER NOT NULL);
           CREATE INDEX phone_meeting_uploads_stage ON phone_meeting_uploads(stage);
+          """)
+    }
+    migrator.registerMigration(identifierMeetingsV2) { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE phone_meeting_server_deletes(
+            meeting_id TEXT PRIMARY KEY NOT NULL,
+            queued_at INTEGER NOT NULL)
           """)
     }
     return migrator

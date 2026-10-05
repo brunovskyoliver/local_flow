@@ -28,11 +28,14 @@ final class PhoneMigrationTests: XCTestCase {
     XCTAssertEqual(shared.count, 19)
     let phone = [
       PhoneMigrations.identifier, PhoneMigrations.identifierV2, PhoneMigrations.identifierMeetings,
+      PhoneMigrations.identifierMeetingsV2,
     ]
     XCTAssertEqual(Set(try applied(harness.history.database)), Set(shared + phone))
     // Frozen: the list ends with the phone's migrations, in order.
     XCTAssertEqual(PhoneMigrations.migrator().migrations, shared + phone)
-    XCTAssertEqual(phone, ["phone-dictations-v1", "phone-dictations-v2", "phone-meetings-v1"])
+    XCTAssertEqual(
+      phone,
+      ["phone-dictations-v1", "phone-dictations-v2", "phone-meetings-v1", "phone-meetings-v2"])
   }
 
   // MARK: phone-meetings-v1 (Feature 020)
@@ -55,7 +58,9 @@ final class PhoneMigrationTests: XCTestCase {
     let order = try await store.database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY rowid")
     }
-    XCTAssertEqual(order.last, PhoneMigrations.identifierMeetings)
+    XCTAssertEqual(
+      Array(order.suffix(2)),
+      [PhoneMigrations.identifierMeetings, PhoneMigrations.identifierMeetingsV2])
     XCTAssertTrue(order.contains("phone-meetings-v19"))
     let id = try await meeting(store.database)
     try await store.database.write {

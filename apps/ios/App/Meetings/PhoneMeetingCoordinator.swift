@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import LocalFlowCore
 import Observation
 import os
@@ -24,6 +25,9 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
   static let stoppedAtLimit = "The meeting stopped at the 4-hour limit. It's saved."
   static let stoppedOnFailure = "Recording failed. The audio so far is saved."
   static let notSaved = "The meeting couldn't be saved. Try again."
+  static let deleteWhileRecording = "Stop the meeting before deleting it."
+  static let deleteIncomplete = "Some of this meeting's files couldn't be deleted. Try again."
+  static let deleteFailed = "The meeting couldn't be deleted. Try again."
 
   /// The meeting being recorded.
   private(set) var meetingID: UUID?
@@ -38,6 +42,8 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
   @ObservationIgnored var onEnded: ((UUID, StopOrigin) -> Void)?
   /// A meeting started: the server queue sends its segments as they finish (User Story 3).
   @ObservationIgnored var onStarted: ((UUID) -> Void)?
+  /// A meeting was deleted and its server copy waits for the queue's next connection.
+  @ObservationIgnored var onDeleted: ((UUID) -> Void)?
   /// How much of the recording meeting the server has transcribed, once it says.
   private(set) var transcribedMs: Int64?
 
@@ -177,6 +183,75 @@ final class PhoneMeetingCoordinator: MeetingIntentHandler {
   func stopMeeting() async { await stop(from: .liveActivity) }
 
   func clearNotice() { notice = nil }
+
+  /// Deletes a meeting (FR-033): its audio files, its rows (transcript, summary, speakers,
+  /// upload row) and the server's copy. The server copy is queued before the local delete,
+  /// so the server queue sends `delete` with its next connection even after a relaunch;
+  /// a local delete that leaves files behind keeps the meeting and its server copy.
+  /// Returns what went wrong, or nil.
+  func delete(_ id: UUID) async -> String? {
+    guard id != meetingID else { return Self.deleteWhileRecording }
+    do {
+      guard let meeting = try await store.meeting(id: id) else { return nil }
+      guard !meeting.state.isActive else { return Self.deleteWhileRecording }
+      let queued = try await queueServerDelete(id)
+      let outcome: DeletionOutcome
+      do {
+        outcome = try await store.deleteConfirmed(id: id, revision: meeting.revision)
+      } catch {
+        if queued { try? await unqueueServerDelete(id) }
+        throw error
+      }
+      guard outcome.rowDeleted else {
+        if queued { try? await unqueueServerDelete(id) }
+        revision += 1
+        return Self.deleteIncomplete
+      }
+      if !queued {
+        try? FileManager.default.removeItem(
+          at: MeetingUploader.handoffDirectory(root: root)
+            .appendingPathComponent(id.uuidString, isDirectory: true))
+      }
+      revision += 1
+      if queued { onDeleted?(id) }
+      return nil
+    } catch {
+      Self.log.error("Meeting delete failed: \(String(describing: error), privacy: .public)")
+      return Self.deleteFailed
+    }
+  }
+
+  /// Queues the server delete when the server may hold a copy: something went up and the
+  /// copy was not let go yet, or it waits there for the Mac.
+  private func queueServerDelete(_ id: UUID) async throws -> Bool {
+    let now = clock.nowMilliseconds
+    return try await store.database.write { db in
+      let held =
+        try Bool.fetchOne(
+          db,
+          sql: """
+            SELECT EXISTS(SELECT 1 FROM phone_meeting_uploads WHERE meeting_id=? AND (
+              (released_at IS NULL AND (bundle_uploaded=1 OR confirmed_segments<>''
+                OR stage IN ('uploading','processing','merging','summarizing')))
+              OR (released_at IS NOT NULL AND mac_copy='waiting')))
+            """, arguments: [id.uuidString]) ?? false
+      guard held else { return false }
+      try db.execute(
+        sql: """
+          INSERT OR IGNORE INTO phone_meeting_server_deletes(meeting_id, queued_at) VALUES(?,?)
+          """,
+        arguments: [id.uuidString, now])
+      return true
+    }
+  }
+
+  private func unqueueServerDelete(_ id: UUID) async throws {
+    try await store.database.write { db in
+      try db.execute(
+        sql: "DELETE FROM phone_meeting_server_deletes WHERE meeting_id=?",
+        arguments: [id.uuidString])
+    }
+  }
 
   private func refuse(_ text: String?) { notice = text }
 
