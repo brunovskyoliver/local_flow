@@ -9,6 +9,8 @@ Updated: 2026-10-05T00:00:00Z
 
 - Gate 2 (2026-10-05): `go` (all phases). Phone Google iOS client ID 569511417357-6130aocbp9ggo4g5meuifjjhbsr7aavj.apps.googleusercontent.com (public). Owner allows deploying flowd + flowd-meeting to the Mac mini over SSH after MVP phases pass, including adding the phone client ID to --google-client-id. Tailscale is on the phone. Owner runs device checks.
 
+- Deploy timing (agent decision): deploy flowd + flowd-meeting once after phases 6 and 8 (both change the server), not after phase 5.
+
 ## Log
 - 2026-10-05 specify: spec.md and checklists/requirements.md written; feature.json points at specs/020-ios-meeting-recording.
 - 2026-10-05 clarify: answers encoded; added User Story 6 and FR-040..045, SC-009.
@@ -21,5 +23,6 @@ Updated: 2026-10-05T00:00:00Z
 - 2026-10-05 implement phase 2b: T009–T014, commit 2c96ddf (remote client, enrollment with RemoteEnrollmentSettings + anchor closure, credentials with service/accessibility params, MeetingHandoff, summary path moved; JSONField cut; PhoneMigrationTests count fixed to 19). Verified: core imports ok; sub-agent full make check exit 0 (one flaky SpeakerIdentificationCoordinatorTests run, passed on rerun).
 - 2026-10-05 implement phase 3: T015–T025 (sub-agent finished the code before the session limit; committed after resume). Recorder, coordinator, Live Activity, Meetings tab, mic ownership. Verified: iPhone unit tests 154/154 on simulator, package tests 6/6, Mac build ok, keyboard/core import checks ok; two unused try? warnings fixed.
 - 2026-10-05 implement phase 4: T026–T029, commit 0e22e85 (PhoneServerConnection, ServerSettingsView, Google client ID build setting + URL scheme, FakeRemote ported). Verified: iPhone tests 170/170, import checks ok. Real Google sign-in needs a device (no Secure Enclave in Simulator).
+- 2026-10-05 implement phase 5: T030–T037, commit 0bef2ba (MeetingUploader + background tasks, MeetingSummarizer, phone-meetings-v1, MeetingDetailView, FakeHandoffServer). Verified: iPhone tests 193/193. Temporary ponytail fallbacks: start without copy / delete instead of release until server gets T051.
 
 ## Report
