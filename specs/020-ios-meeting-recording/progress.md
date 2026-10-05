@@ -1,6 +1,6 @@
 # Feature 020: Meeting recording on iPhone, processed by the server
-Stage: implement
-Updated: 2026-10-05T00:00:00Z
+Stage: done
+Updated: 2026-10-05T23:25:00+02:00
 
 ## Decisions
 - Reconcile: this branch was already fully merged into main; fast-forwarded to main `cb7e32b`, no conflicts. `t3code/linux-cuda-dictation-server` (13 commits not in main) left alone.
@@ -28,4 +28,34 @@ Updated: 2026-10-05T00:00:00Z
 - 2026-10-05 implement phase 7: T045–T047, commit 68e4eed (detail view model: play from line across segments, rename meeting/speakers, copy/share, delete; queued server delete via new phone-meetings-v2 table). Search not built: spec lists it only as a refinement, no FR. Verified: iPhone 206/206.
 - 2026-10-05 implement phase 8: T048–T054, commit 974d287 (server device/copy/released/mine/release/get-by-name, guard removed; Mac import in LocalFlowCore MeetingHandoff+Import, From iPhone label; phone Sent to Mac / Not delivered / Send to Mac again; phase 5 fallbacks removed). Verified: go test ok, Mac handoff/import/library/store tests pass, iPhone 208/208. Note: Mac imports only when its cached server capabilities include handoff.
 
+- 2026-10-05 implement phase 9: T055–T058, commit 5538671 (iOS README, remote-server.md handoff section, release notes, acceptance/measurements.md template). T058: every scripts/test.sh step except the full Mac suite (beeps); 60 scoped Mac test classes pass, lint clean, Go ok, iPhone 208/208.
+- 2026-10-05 converge: 5 gaps appended as phase 10 (T059–T063), commit da9c79f.
+- 2026-10-05 implement phase 10: T059–T063, commit 531e5bc (unreachable/busy backoff capped at 120 s for SC-004, Retry summary, Recovered label kept, live low-storage warning, upload/result timing logs). Verified: iPhone 213/213, lint clean, make macos ok.
+- 2026-10-05 deploy: flowd + flowd-meeting built locally from 531e5bc (Mac mini has no Xcode), copied to mac-mini.tailf15b6.ts.net, phone Google client ID added to --google-client-id, org.localflow.LocalFlow.remote restarted. Backups: bin/flowd.before-020, bin/flowd-meeting.before-020, bin/remote.plist.before-020. Verified: agent running, identity fingerprint 799f-7d47-f4d9-1300-4b0a-928d-0591-c173, speech + meeting workers ready, no errors in flowd.log.
+
 ## Report
+
+**What changed** (branch t3code/phone-audio-relay-feasibility, not pushed)
+- Phase 1 b7a73a3: ADR 0034, migration phone-meetings-v19, handoff schema + fixtures.
+- Phase 2 73a0eec, 2c96ddf: meetings, transcripts, remote client, enrollment, credentials, MeetingHandoff and summary path moved into LocalFlowCore so the phone can use them.
+- Phase 3 ac1fdee: iPhone recorder (AAC segments, interruptions, route changes, crash recovery), PhoneMeetingCoordinator, Live Activity with Stop, Meetings tab.
+- Phase 4 0e22e85: Settings › Server (fingerprint confirm, Google sign-in, approval states, sign-out, process/copy switches).
+- Phase 5 0bef2ba: upload queue with background tasks, server processing, merge of the result, on-phone summary, meeting detail.
+- Phase 6 321757b: live transcription while recording (server partial runs, rows.sqlite, transcribed_ms; "Transcribed up to" on the phone and Live Activity).
+- Phase 7 68e4eed: detail screen with play-from-line, renames, copy/share, delete (with queued server delete).
+- Phase 8 974d287: Mac copy (server device/copy/release/mine, Mac import with "From iPhone", Sent to Mac / Send to Mac again).
+- Phase 9 5538671: docs, release notes, measurement template.
+- Phase 10 531e5bc: converge fixes (backoff cap, Retry summary, Recovered label, live low-storage warning, timing logs).
+- Server deployed to the Mac mini (see Log).
+
+**How it was verified**
+- iPhone unit tests (simulator, -only-testing:LocalFlowPhoneTests): 213/213.
+- Go: go test/vet/gofmt ./... clean. LocalFlowCore package tests 6/6. Mac build ok; 60 scoped Mac test classes pass. swift-format lint and all import-rule scripts clean.
+- Full Mac LocalFlow test suite NOT run (it beeps; needs the owner's OK).
+
+**What is left**
+- Device checks (owner): real Google sign-in + approval of the phone (`flowd admin list` / approve, or LocalFlow Server app); 60-minute locked recording with Live Activity Stop; phone call and Bluetooth mid-meeting; background upload after Stop; cellular over Tailscale; SC-003/SC-004/SC-009 timings; fill acceptance/measurements.md.
+- Install a Feature 020 build of the Mac app to import phone meetings; it imports only after its cached server capabilities include handoff (one dictation or Check connection after the redeploy).
+- Search in the meeting list is not built (spec lists it only as a refinement).
+- Rollback on the Mac mini: move bin/*.before-020 back over flowd, flowd-meeting and the LaunchAgent plist, then bootout/bootstrap org.localflow.LocalFlow.remote.
+- Branch not pushed or merged into main.
