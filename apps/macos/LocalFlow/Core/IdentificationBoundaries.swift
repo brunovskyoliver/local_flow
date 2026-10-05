@@ -86,37 +86,6 @@ enum MergedResolution: Sendable, Equatable {
 
 // MARK: - Read models
 
-/// The within-margin runner-up shown under Choose another.
-struct IdentityCandidateRef: Sendable, Equatable {
-  let id: UUID
-  let name: String
-}
-
-/// One display root's effective identity (data-model.md "Read models"). Never a score.
-struct SpeakerIdentity: Sendable, Equatable {
-  var state: IdentityState
-  var origin: IdentityOrigin
-  var knownSpeakerID: UUID?
-  var knownSpeakerName: String?
-  var secondCandidate: IdentityCandidateRef?
-  /// A merge conflict: the sheet says "Choose an identity" and blocks Save.
-  var needsChoice = false
-  /// The selector found at least one eligible region for the cluster.
-  var sampleOfferAvailable = false
-
-  static let unknown = SpeakerIdentity(state: .unknown, origin: .automaticMatch)
-}
-
-/// How a transcript row labels its speaker (FR-040).
-enum SegmentIdentity: Sendable, Equatable {
-  /// `confirmed` or `recognized`: the known speaker's name.
-  case named
-  /// `possible`: "Name?" with the confirm control, which links to the candidate.
-  case suggested(name: String, knownSpeakerID: UUID)
-  /// `unknown`, `rejected_unknown` or no row: the 007 label.
-  case unknown
-}
-
 enum KnownSpeakerState: String, Sendable, Equatable {
   case active
   case needsReenrollment = "needs_reenrollment"

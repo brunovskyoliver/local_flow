@@ -1,4 +1,5 @@
 import FluidAudio
+import LocalFlowCore
 import LocalFlowSpeech
 import XCTest
 

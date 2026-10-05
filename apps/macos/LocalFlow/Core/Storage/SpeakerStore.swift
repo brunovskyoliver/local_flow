@@ -460,7 +460,7 @@ actor SpeakerStore: SpeakerStoring {
       }
       let candidates = try Self.quoteCandidates(run.id, db: db)
       // Feature 010: the effective identity per root, from the same read.
-      let identities = try IdentityStore.identities(meetingID, db: db)
+      let identities = try SpeakerIdentityQuery.identities(meetingID, db: db)
       for index in summaries.indices {
         let id = summaries[index].id
         summaries[index].quotes = QuoteSelector.select(candidates[id] ?? []).map(\.text)
@@ -687,7 +687,7 @@ actor SpeakerStore: SpeakerStoring {
     let speechMs: Int64
     /// The name, or the anonymous label, for a review notice; cut to the column's 80.
     func label(inRoom: Bool) -> String {
-      let text = SpeakerPalette.text(source: source, ordinal: ordinal, name: name, inRoom: inRoom)
+      let text = SpeakerLabelText.text(source: source, ordinal: ordinal, name: name, inRoom: inRoom)
       return String(String.UnicodeScalarView(text.unicodeScalars.prefix(SpeakerNames.maxLength)))
     }
   }
@@ -844,7 +844,7 @@ actor SpeakerStore: SpeakerStoring {
           db, meetingID: run.meetingID, runID: run.id, kind: "segment", speakerID: nil,
           targetID: into, segmentID: segment, new: into == nil ? "unknown" : nil, now: now)
       } else {
-        let label = speaker.flatMap { byID[$0]?.label(inRoom: inRoom) } ?? SpeakerPalette.unknown
+        let label = speaker.flatMap { byID[$0]?.label(inRoom: inRoom) } ?? SpeakerLabelText.unknown
         try insertCorrection(
           db, meetingID: run.meetingID, runID: run.id, kind: "segment", speakerID: speaker,
           segmentID: segment, new: label, review: true, now: now)

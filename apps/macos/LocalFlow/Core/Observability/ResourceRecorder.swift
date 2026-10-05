@@ -1068,3 +1068,9 @@ struct RewriteMetricRecord: Sendable, Equatable {
   let fallbackUsed: Bool
   let shieldFailure: Bool
 }
+
+extension ResourceRecorder: MeetingRecoveryRecording {
+  func recordMeetingRecoveryOutcome(_ kind: MeetingRecoveryOutcomeKind) {
+    record(phase: .idle, metric: .meetingRecoveryOutcome, itemCount: 1, meetingKey: kind.rawValue)
+  }
+}

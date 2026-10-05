@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import Observation
 
 /// Settings › Known speakers (contracts/ui.md, FR-042, FR-043): the list, rename, the

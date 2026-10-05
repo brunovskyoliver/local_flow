@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 import GRDB
-import LocalFlowCore
 import LocalFlowSpeech
 import OSLog
 
@@ -9,8 +8,8 @@ import OSLog
 /// `DatabasePool` (one file, one writer, one page ceiling), bumps
 /// `updated_at` on every write, recomputes `recorded_ms`/`wall_clock_ms` on
 /// each persisted change and logs counts and codes only.
-actor MeetingStore: MeetingStoring {
-  enum Error: Swift.Error, Equatable, Sendable {
+public actor MeetingStore: MeetingStoring {
+  public enum Error: Swift.Error, Equatable, Sendable {
     case alreadyActive(UUID)
     case invalidTransition(from: MeetingState, to: MeetingState)
     case segmentAlreadyOpen
@@ -29,23 +28,23 @@ actor MeetingStore: MeetingStoring {
     #endif
   }
 
-  static let pageLimit = 20
-  nonisolated let database: DatabasePool
-  let root: MeetingStorageRoot
+  public static let pageLimit = 20
+  public nonisolated let database: DatabasePool
+  public let root: MeetingStorageRoot
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "meetings")
 
-  init(database: DatabasePool, root: MeetingStorageRoot) {
+  public init(database: DatabasePool, root: MeetingStorageRoot) {
     self.database = database
     self.root = root
   }
 
-  init(history: TranscriptionStore, root: MeetingStorageRoot) {
+  public init(history: TranscriptionStore, root: MeetingStorageRoot) {
     self.init(database: history.database, root: root)
   }
 
   // MARK: Meetings
 
-  func activeMeeting() throws -> Meeting? {
+  public func activeMeeting() throws -> Meeting? {
     try database.read { db in
       try Row.fetchOne(
         db,
@@ -55,7 +54,7 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
-  func create(now: Int64) throws -> Meeting {
+  public func create(now: Int64) throws -> Meeting {
     try database.write { db in
       if let row = try Row.fetchOne(
         db, sql: "SELECT id FROM meetings WHERE state IN (\(Self.activeList)) LIMIT 1"),
@@ -81,7 +80,7 @@ actor MeetingStore: MeetingStoring {
   }
 
   @discardableResult
-  func transition(id: UUID, to: MeetingState, now: Int64, effects: [MeetingTransitionEffect])
+  public func transition(id: UUID, to: MeetingState, now: Int64, effects: [MeetingTransitionEffect])
     throws -> Meeting
   {
     let meeting: Meeting = try database.write { db in
@@ -103,11 +102,12 @@ actor MeetingStore: MeetingStoring {
     return meeting
   }
 
-  func meeting(id: UUID) throws -> Meeting? {
+  public func meeting(id: UUID) throws -> Meeting? {
     try database.read { db in try Self.fetchMeeting(id, db: db) }
   }
 
-  func setTitle(meetingID: UUID, title: String?, revision: Int64, now: Int64) throws -> Int64 {
+  public func setTitle(meetingID: UUID, title: String?, revision: Int64, now: Int64) throws -> Int64
+  {
     let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines)
     let stored = (trimmed?.isEmpty ?? true) ? nil : trimmed
     if let stored, stored.utf8.count > Meeting.maximumTitleBytes { throw Error.titleTooLarge }
@@ -124,7 +124,7 @@ actor MeetingStore: MeetingStoring {
   }
 
   /// nil clears the override, so the meeting follows the Settings default again.
-  func setLanguage(meetingID: UUID, language: MeetingLanguage?, revision: Int64, now: Int64)
+  public func setLanguage(meetingID: UUID, language: MeetingLanguage?, revision: Int64, now: Int64)
     throws -> Int64
   {
     try database.write { db in
@@ -141,7 +141,7 @@ actor MeetingStore: MeetingStoring {
 
   /// Feature 018: **Run on this Mac**. One way: the meeting's remaining work never goes
   /// back to the server.
-  func setRunLocally(meetingID: UUID, now: Int64) throws {
+  public func setRunLocally(meetingID: UUID, now: Int64) throws {
     try database.write { db in
       try db.execute(
         sql: "UPDATE meetings SET run_locally=1, updated_at=? WHERE id=?",
@@ -151,7 +151,7 @@ actor MeetingStore: MeetingStoring {
 
   /// Feature 018: where the meeting's accepted transcript, speaker labels and summary
   /// were produced (`inference_path` of each), nil where there is none yet.
-  func provenance(meetingID: UUID) throws -> MeetingProvenance {
+  public func provenance(meetingID: UUID) throws -> MeetingProvenance {
     try database.read { db in
       let id = meetingID.uuidString
       func path(_ sql: String) throws -> String? {
@@ -175,14 +175,14 @@ actor MeetingStore: MeetingStoring {
 
   // MARK: Segments
 
-  func openSegment(_ segment: MeetingSegment, now: Int64) throws -> MeetingSegment {
+  public func openSegment(_ segment: MeetingSegment, now: Int64) throws -> MeetingSegment {
     try database.write { db in
       try Self.insertSegment(segment, now: now, db: db)
       return segment
     }
   }
 
-  func progressSegment(
+  public func progressSegment(
     id: UUID, durationMs: Int64, byteSize: Int64, droppedFrames: Int64, now: Int64
   )
     throws
@@ -201,7 +201,7 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
-  func finalizeSegment(
+  public func finalizeSegment(
     id: UUID, durationMs: Int64, byteSize: Int64, relativePath: String,
     closeReason: SegmentCloseReason, droppedFrames: Int64, now: Int64
   ) throws {
@@ -214,7 +214,9 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
-  func markSegmentUnrecoverable(id: UUID, reason: MeetingFailureReason, note: String?, now: Int64)
+  public func markSegmentUnrecoverable(
+    id: UUID, reason: MeetingFailureReason, note: String?, now: Int64
+  )
     throws
   {
     try database.write { db in
@@ -227,7 +229,7 @@ actor MeetingStore: MeetingStoring {
   // MARK: Tracks
 
   /// Recovery only: no segment of the track could be validated.
-  func markTrackUnrecoverable(id: UUID, reason: MeetingFailureReason, at: Int64) throws {
+  public func markTrackUnrecoverable(id: UUID, reason: MeetingFailureReason, at: Int64) throws {
     try database.write { db in
       try db.execute(
         sql: """
@@ -241,7 +243,7 @@ actor MeetingStore: MeetingStoring {
   }
 
   /// Recovery only: a content-free note on a segment that was truncated and kept.
-  func noteSegmentRecovery(id: UUID, note: String, now: Int64) throws {
+  public func noteSegmentRecovery(id: UUID, note: String, now: Int64) throws {
     try database.write { db in
       try db.execute(
         sql: "UPDATE meeting_segments SET recovery_note=? WHERE id=?",
@@ -249,14 +251,14 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
-  func markTrackFailed(id: UUID, reason: MeetingFailureReason, at: Int64) throws {
+  public func markTrackFailed(id: UUID, reason: MeetingFailureReason, at: Int64) throws {
     try database.write { db in
       try Self.apply(
         .markTrackFailed(id: id, reason: reason, at: at), meetingID: nil, now: at, db: db)
     }
   }
 
-  func markTrackFinalized(id: UUID, now: Int64) throws {
+  public func markTrackFinalized(id: UUID, now: Int64) throws {
     try database.write { db in
       try Self.apply(.markTrackFinalized(id: id), meetingID: nil, now: now, db: db)
     }
@@ -264,7 +266,7 @@ actor MeetingStore: MeetingStoring {
 
   // MARK: Pauses
 
-  func openPause(meetingID: UUID, reason: PauseReason, at: Int64) throws -> PauseInterval {
+  public func openPause(meetingID: UUID, reason: PauseReason, at: Int64) throws -> PauseInterval {
     let pause = PauseInterval(id: UUID(), meetingID: meetingID, startedAt: at, reason: reason)
     try database.write { db in
       try Self.apply(.openPause(pause), meetingID: meetingID, now: at, db: db)
@@ -273,7 +275,7 @@ actor MeetingStore: MeetingStoring {
     return pause
   }
 
-  func closePause(id: UUID, at: Int64, closedBy: PauseClosedBy) throws {
+  public func closePause(id: UUID, at: Int64, closedBy: PauseClosedBy) throws {
     try database.write { db in
       guard
         let row = try Row.fetchOne(
@@ -291,7 +293,8 @@ actor MeetingStore: MeetingStoring {
 
   // MARK: Notes
 
-  func saveNotes(meetingID: UUID, text: String, revision: Int64, now: Int64) throws -> Int64 {
+  public func saveNotes(meetingID: UUID, text: String, revision: Int64, now: Int64) throws -> Int64
+  {
     guard text.utf8.count <= MeetingNotes.maximumBytes else { throw Error.notesTooLarge }
     let saved: Int64 = try database.write { db in
       guard
@@ -311,12 +314,12 @@ actor MeetingStore: MeetingStoring {
     return saved
   }
 
-  func notes(meetingID: UUID) throws -> MeetingNotes? {
+  public func notes(meetingID: UUID) throws -> MeetingNotes? {
     try database.read { db in try Self.fetchNotes(meetingID, db: db) }
   }
 
   /// Persisted after each track finalizes so a crash mid-stop is recoverable.
-  func setFinalizationStage(meetingID: UUID, stage: FinalizationStage, now: Int64) throws {
+  public func setFinalizationStage(meetingID: UUID, stage: FinalizationStage, now: Int64) throws {
     try database.write { db in
       try Self.apply(.finalizationStage(stage), meetingID: meetingID, now: now, db: db)
     }
@@ -324,7 +327,7 @@ actor MeetingStore: MeetingStoring {
 
   // MARK: Reads
 
-  func page(before: MeetingCursor?, limit: Int) throws -> [MeetingSummary] {
+  public func page(before: MeetingCursor?, limit: Int) throws -> [MeetingSummary] {
     let limit = max(1, min(limit, Self.pageLimit))
     return try database.read { db in
       var sql = """
@@ -356,7 +359,7 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
-  func detail(id: UUID) throws -> MeetingDetail? {
+  public func detail(id: UUID) throws -> MeetingDetail? {
     try database.read { db in
       guard let meeting = try Self.fetchMeeting(id, db: db) else { return nil }
       let tracks = try Row.fetchAll(
@@ -387,7 +390,7 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
-  func activeStateRows() throws -> [Meeting] {
+  public func activeStateRows() throws -> [Meeting] {
     try database.read { db in
       try Row.fetchAll(
         db,
@@ -396,14 +399,14 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
-  func allMeetingIDs() throws -> Set<UUID> {
+  public func allMeetingIDs() throws -> Set<UUID> {
     try database.read { db in
       Set(
         try String.fetchAll(db, sql: "SELECT id FROM meetings").compactMap(UUID.init(uuidString:)))
     }
   }
 
-  func recordOutcome(_ outcome: RecoveryOutcome) throws {
+  public func recordOutcome(_ outcome: RecoveryOutcome) throws {
     try database.write { db in
       try db.execute(
         sql: """
@@ -424,7 +427,7 @@ actor MeetingStore: MeetingStoring {
 
   /// Reconciliation of an orphan directory: one `interrupted` meeting with its
   /// tracks, segments, an empty notes row and the outcome, in one write.
-  func insertRecovered(
+  public func insertRecovered(
     meeting: Meeting, tracks: [MeetingTrack], segments: [MeetingSegment], outcome: RecoveryOutcome
   ) throws {
     try database.write { db in
@@ -467,7 +470,7 @@ actor MeetingStore: MeetingStoring {
 
   /// Files first, row last. A path that cannot be removed keeps the row and is
   /// reported; another meeting's files and rows are never touched.
-  func deleteConfirmed(id: UUID, revision: Int64) throws -> DeletionOutcome {
+  public func deleteConfirmed(id: UUID, revision: Int64) throws -> DeletionOutcome {
     let paths: [String] = try database.read { db in
       guard let meeting = try Self.fetchMeeting(id, db: db) else { throw Error.missingMeeting }
       guard meeting.revision == revision else { throw Error.staleRevision }
@@ -526,7 +529,7 @@ actor MeetingStore: MeetingStoring {
 
   // MARK: - Transaction helpers
 
-  static let activeList = MeetingState.allCases.filter(\.isActive).map { "'\($0.rawValue)'" }
+  public static let activeList = MeetingState.allCases.filter(\.isActive).map { "'\($0.rawValue)'" }
     .joined(separator: ",")
 
   private static func apply(
@@ -744,7 +747,7 @@ actor MeetingStore: MeetingStoring {
 
   /// `wall_clock_ms = (stopped_at ?? now) − started_at`; `recorded_ms` subtracts every
   /// pause clamped to that window, including an open one.
-  static func recomputeDurations(_ meetingID: UUID, now: Int64, db: Database) throws {
+  public static func recomputeDurations(_ meetingID: UUID, now: Int64, db: Database) throws {
     guard let meeting = try fetchMeeting(meetingID, db: db) else { throw Error.missingMeeting }
     guard let started = meeting.startedAt else { return }
     let end = max(started, meeting.stoppedAt ?? now)
@@ -777,7 +780,7 @@ actor MeetingStore: MeetingStoring {
 
   // MARK: - Row mapping
 
-  static func fetchMeeting(_ id: UUID, db: Database) throws -> Meeting? {
+  public static func fetchMeeting(_ id: UUID, db: Database) throws -> Meeting? {
     try Row.fetchOne(db, sql: "SELECT * FROM meetings WHERE id=?", arguments: [id.uuidString])
       .flatMap(meeting)
   }
@@ -791,7 +794,7 @@ actor MeetingStore: MeetingStoring {
     }
   }
 
-  static func meeting(_ row: Row) -> Meeting? {
+  public static func meeting(_ row: Row) -> Meeting? {
     guard let id = UUID(uuidString: row["id"]), let state = MeetingState(rawValue: row["state"])
     else { return nil }
     var meeting = Meeting(
@@ -806,7 +809,7 @@ actor MeetingStore: MeetingStoring {
     return meeting
   }
 
-  static func track(_ row: Row) -> MeetingTrack? {
+  public static func track(_ row: Row) -> MeetingTrack? {
     guard let id = UUID(uuidString: row["id"]), let meetingID = UUID(uuidString: row["meeting_id"]),
       let kind = MeetingTrackKind(rawValue: row["type"]),
       let health = TrackHealth(rawValue: row["health"])
@@ -821,7 +824,7 @@ actor MeetingStore: MeetingStoring {
       droppedFrames: row["dropped_frames"])
   }
 
-  static func segment(_ row: Row) -> MeetingSegment? {
+  public static func segment(_ row: Row) -> MeetingSegment? {
     guard let id = UUID(uuidString: row["id"]), let trackID = UUID(uuidString: row["track_id"]),
       let state = SegmentState(rawValue: row["state"]),
       let openReason = SegmentOpenReason(rawValue: row["open_reason"])
@@ -838,14 +841,14 @@ actor MeetingStore: MeetingStoring {
   }
 
   /// The column's CHECK: 1–128 characters, or NULL.
-  static func boundedDeviceName(_ name: String?) -> String? {
+  public static func boundedDeviceName(_ name: String?) -> String? {
     guard let name else { return nil }
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty
       ? nil : String(trimmed.prefix(DictationInputDevice.maximumNameCharacters))
   }
 
-  static func pause(_ row: Row) -> PauseInterval? {
+  public static func pause(_ row: Row) -> PauseInterval? {
     guard let id = UUID(uuidString: row["id"]), let meetingID = UUID(uuidString: row["meeting_id"]),
       let reason = PauseReason(rawValue: row["reason"])
     else { return nil }
@@ -854,7 +857,7 @@ actor MeetingStore: MeetingStoring {
       reason: reason, closedBy: (row["closed_by"] as String?).flatMap(PauseClosedBy.init))
   }
 
-  static func outcome(_ row: Row) -> RecoveryOutcome? {
+  public static func outcome(_ row: Row) -> RecoveryOutcome? {
     guard let id = UUID(uuidString: row["id"]), let meetingID = UUID(uuidString: row["meeting_id"]),
       let state = MeetingState(rawValue: row["found_state"])
     else { return nil }

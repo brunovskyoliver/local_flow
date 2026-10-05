@@ -3,34 +3,46 @@ import Foundation
 
 /// Frame-by-frame scan of an ADTS file in 64 KiB windows. Stops at the first
 /// inconsistent header or at end of file; recovery truncates at `completeBytes`.
-enum ADTSValidator {
-  static let windowBytes = 65_536
-  static let sampleRates: [Int] = [
+public enum ADTSValidator {
+  public static let windowBytes = 65_536
+  public static let sampleRates: [Int] = [
     96_000, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025, 8_000,
     7_350, 0, 0, 0,
   ]
 
-  struct ScanResult: Equatable, Sendable {
-    var completeFrames = 0
-    var completeBytes = 0
-    var trailingBytes = 0
-    var sampleRate = 0
-    var channels = 0
+  public struct ScanResult: Equatable, Sendable {
+    public var completeFrames = 0
+    public var completeBytes = 0
+    public var trailingBytes = 0
+    public var sampleRate = 0
+    public var channels = 0
     /// Windows read; tests use it to show the scan is bounded per read.
-    var reads = 0
+    public var reads = 0
 
-    var durationMs: Int64 {
+    public init(
+      completeFrames: Int = 0, completeBytes: Int = 0, trailingBytes: Int = 0, sampleRate: Int = 0,
+      channels: Int = 0, reads: Int = 0
+    ) {
+      self.completeFrames = completeFrames
+      self.completeBytes = completeBytes
+      self.trailingBytes = trailingBytes
+      self.sampleRate = sampleRate
+      self.channels = channels
+      self.reads = reads
+    }
+
+    public var durationMs: Int64 {
       guard sampleRate > 0 else { return 0 }
       return Int64(completeFrames) * Int64(ADTSFrame.samplesPerFrame) * 1_000 / Int64(sampleRate)
     }
   }
 
-  enum Failure: Error, Equatable {
+  public enum Failure: Error, Equatable {
     case open(errno: Int32)
     case read(errno: Int32)
   }
 
-  static func scan(url: URL) throws -> ScanResult {
+  public static func scan(url: URL) throws -> ScanResult {
     let fd = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
     guard fd >= 0 else { throw Failure.open(errno: errno) }
     defer { Darwin.close(fd) }
@@ -43,7 +55,7 @@ enum ADTSValidator {
 
   /// `read` fills up to `count` bytes and returns 0 at end of file. Exposed so
   /// tests can count reads with a double; only one window is ever resident.
-  static func scan(readingFrom read: (UnsafeMutableRawPointer, Int) throws -> Int) throws
+  public static func scan(readingFrom read: (UnsafeMutableRawPointer, Int) throws -> Int) throws
     -> ScanResult
   {
     var result = ScanResult()
@@ -116,14 +128,20 @@ enum ADTSValidator {
     position = 0
   }
 
-  struct Header: Equatable {
-    let frameLength: Int
-    let sampleRate: Int
-    let channels: Int
+  public struct Header: Equatable {
+    public let frameLength: Int
+    public let sampleRate: Int
+    public let channels: Int
+
+    public init(frameLength: Int, sampleRate: Int, channels: Int) {
+      self.frameLength = frameLength
+      self.sampleRate = sampleRate
+      self.channels = channels
+    }
   }
 
   /// Sync word, MPEG-4, layer 0, AAC-LC profile and a frame length ≥ the header.
-  static func parseHeader(_ bytes: [UInt8], at offset: Int) -> Header? {
+  public static func parseHeader(_ bytes: [UInt8], at offset: Int) -> Header? {
     guard offset + ADTSFrame.headerLength <= bytes.count else { return nil }
     guard bytes[offset] == 0xFF, bytes[offset + 1] & 0xF6 == 0xF0 else { return nil }
     let profile = Int(bytes[offset + 2] >> 6)

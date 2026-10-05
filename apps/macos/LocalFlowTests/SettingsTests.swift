@@ -1,3 +1,4 @@
+import LocalFlowCore
 import Observation
 import XCTest
 

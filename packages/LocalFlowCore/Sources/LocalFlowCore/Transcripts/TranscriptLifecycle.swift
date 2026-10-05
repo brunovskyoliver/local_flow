@@ -1,18 +1,18 @@
 import Foundation
 import LocalFlowSpeech
 
-enum TranscriptState: String, CaseIterable, Codable, Sendable {
+public enum TranscriptState: String, CaseIterable, Codable, Sendable {
   case notRequested = "not_requested"
   case pending, live, finalizing, final, failed, interrupted
-  var isActive: Bool { self == .pending || self == .live || self == .finalizing }
-  var isStable: Bool { !isActive }
+  public var isActive: Bool { self == .pending || self == .live || self == .finalizing }
+  public var isStable: Bool { !isActive }
 }
-enum LiveState: String, CaseIterable, Codable, Sendable {
+public enum LiveState: String, CaseIterable, Codable, Sendable {
   case live, degraded, suspended, stopped
   case catchingUp = "catching_up"
 }
-enum TranscriptLifecycle {
-  static func transition(from: TranscriptState, to: TranscriptState) throws {
+public enum TranscriptLifecycle {
+  public static func transition(from: TranscriptState, to: TranscriptState) throws {
     let allowed: [TranscriptState: Set<TranscriptState>] = [
       .notRequested: [.pending], .pending: [.live, .finalizing, .failed, .interrupted],
       .live: [.finalizing, .failed, .interrupted], .finalizing: [.final, .failed, .interrupted],
@@ -23,7 +23,7 @@ enum TranscriptLifecycle {
     }
   }
 }
-enum TranscriptFailureCategory: String, CaseIterable, Codable, Sendable {
+public enum TranscriptFailureCategory: String, CaseIterable, Codable, Sendable {
   case modelUnavailable = "model_unavailable"
   case modelProvisioning = "model_provisioning"
   case modelLoadFailure = "model_load_failure"
@@ -37,7 +37,7 @@ enum TranscriptFailureCategory: String, CaseIterable, Codable, Sendable {
 extension TranscriptFailureCategory {
   /// Lease acquisition errors: no verified model, a model that failed verification,
   /// or a factory that threw while loading.
-  static func acquisition(_ error: Error) -> TranscriptFailureCategory {
+  public static func acquisition(_ error: Error) -> TranscriptFailureCategory {
     if let failure = error as? DictationFailure, failure == .modelUnavailable {
       return .modelUnavailable
     }
@@ -50,12 +50,12 @@ extension TranscriptFailureCategory {
     return .modelLoadFailure
   }
 }
-enum TranscriptErrorMessage {
-  static let finalizing = "Meeting transcript is finalizing. Wait for it to finish."
-  static let noSourceAudio = "No recorded audio is available to transcribe."
-  static let tooManyWaiting = "Too many transcripts waiting"
-  static let changed = "The transcript changed. Try again."
-  static func message(
+public enum TranscriptErrorMessage {
+  public static let finalizing = "Meeting transcript is finalizing. Wait for it to finish."
+  public static let noSourceAudio = "No recorded audio is available to transcribe."
+  public static let tooManyWaiting = "Too many transcripts waiting"
+  public static let changed = "The transcript changed. Try again."
+  public static func message(
     for category: TranscriptFailureCategory, keptCount: Int = 0, resumesAutomatically: Bool = true,
     finalMeeting: Bool = false
   ) -> String {

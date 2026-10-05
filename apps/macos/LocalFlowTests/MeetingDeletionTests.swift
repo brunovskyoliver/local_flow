@@ -1,5 +1,6 @@
 import Darwin
 import GRDB
+import LocalFlowCore
 import XCTest
 
 @testable import LocalFlow

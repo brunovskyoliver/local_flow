@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import LocalFlowCore
 
 /// One durable track file through the Feature 005 decode path as 16 kHz mono
 /// emissions, one 4,096-frame buffer at a time. Shared by the final transcript pass

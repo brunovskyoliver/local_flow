@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import os
 
 /// Fixed allocation shared by one producer and one consumer. This queue is downstream

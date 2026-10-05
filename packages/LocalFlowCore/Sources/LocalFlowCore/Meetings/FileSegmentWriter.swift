@@ -4,13 +4,13 @@ import Foundation
 /// The meeting storage root (`<Application Support>/LocalFlow/Meetings/` or the
 /// `LOCALFLOW_MEETING_ROOT` override). Every `relative_path` in the database is
 /// resolved through `resolve(relativePath:)`, so moving the root moves the media.
-struct MeetingStorageRoot: Sendable, Equatable {
-  let url: URL
+public struct MeetingStorageRoot: Sendable, Equatable {
+  public let url: URL
 
-  init(url: URL) { self.url = url.standardizedFileURL }
+  public init(url: URL) { self.url = url.standardizedFileURL }
 
   /// Rejects absolute paths, `..` components and empty paths; never escapes the root.
-  static func isValid(relativePath: String) -> Bool {
+  public static func isValid(relativePath: String) -> Bool {
     guard !relativePath.isEmpty, !relativePath.hasPrefix("/"),
       relativePath.utf8.count <= MeetingSegment.maximumPathBytes,
       !relativePath.contains("\0")
@@ -19,12 +19,12 @@ struct MeetingStorageRoot: Sendable, Equatable {
     return components.allSatisfy { $0 != ".." && $0 != "." && !$0.isEmpty }
   }
 
-  func resolve(relativePath: String) -> URL? {
+  public func resolve(relativePath: String) -> URL? {
     guard Self.isValid(relativePath: relativePath) else { return nil }
     return url.appendingPathComponent(relativePath, isDirectory: false)
   }
 
-  func meetingDirectory(_ id: UUID) -> URL {
+  public func meetingDirectory(_ id: UUID) -> URL {
     url.appendingPathComponent(id.uuidString, isDirectory: true)
   }
 }
@@ -33,23 +33,23 @@ struct MeetingStorageRoot: Sendable, Equatable {
 /// with mode 0600 inside a 0700 meeting directory; symlinked roots, meeting
 /// directories or files are refused (the `AudioSpool` private-path rules).
 /// Every error carries `errno` only.
-final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
-  let root: MeetingStorageRoot
+public final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
+  public let root: MeetingStorageRoot
   private let lock = NSLock()
   private var descriptors: [UUID: Int32] = [:]
 
-  init(root: MeetingStorageRoot) { self.root = root }
+  public init(root: MeetingStorageRoot) { self.root = root }
 
   deinit {
     for fd in descriptors.values { Darwin.close(fd) }
   }
 
   /// Creates the root (0700) when missing; refuses a symlinked or non-directory root.
-  func prepareRoot() throws {
+  public func prepareRoot() throws {
     try Self.ensurePrivateDirectory(root.url)
   }
 
-  func open(meetingID: UUID, kind: MeetingTrackKind, sequence: Int) throws -> SegmentHandle {
+  public func open(meetingID: UUID, kind: MeetingTrackKind, sequence: Int) throws -> SegmentHandle {
     guard sequence >= 1 else { throw MeetingCaptureFailure.invalidPath }
     try Self.ensurePrivateDirectory(root.url)
     let directory = root.meetingDirectory(meetingID)
@@ -76,7 +76,7 @@ final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
     return handle
   }
 
-  func append(_ handle: SegmentHandle, frames: [ADTSFrame]) throws {
+  public func append(_ handle: SegmentHandle, frames: [ADTSFrame]) throws {
     let fd = try descriptor(handle)
     for frame in frames {
       try frame.bytes.withUnsafeBytes { bytes in
@@ -95,12 +95,12 @@ final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
     }
   }
 
-  func sync(_ handle: SegmentHandle) throws {
+  public func sync(_ handle: SegmentHandle) throws {
     let fd = try descriptor(handle)
     guard fsync(fd) == 0 else { throw MeetingCaptureFailure.sync(errno: errno) }
   }
 
-  func finalize(_ handle: SegmentHandle) throws -> Int {
+  public func finalize(_ handle: SegmentHandle) throws -> Int {
     let fd = try descriptor(handle)
     guard fsync(fd) == 0 else { throw MeetingCaptureFailure.finalize(errno: errno) }
     var info = stat()
@@ -114,17 +114,17 @@ final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
     return Int(info.st_size)
   }
 
-  func abandon(_ handle: SegmentHandle) {
+  public func abandon(_ handle: SegmentHandle) {
     guard let fd = lock.withLock({ descriptors.removeValue(forKey: handle.id) }) else { return }
     Darwin.close(fd)
   }
 
-  func discard(_ handle: SegmentHandle) {
+  public func discard(_ handle: SegmentHandle) {
     abandon(handle)
     if let url = root.resolve(relativePath: handle.relativePath) { unlink(url.path) }
   }
 
-  func freeSpace(at root: URL) throws -> Int64 {
+  public func freeSpace(at root: URL) throws -> Int64 {
     let values = try root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
     guard let capacity = values.volumeAvailableCapacityForImportantUsage else {
       throw MeetingCaptureFailure.open(errno: ENOTSUP)
@@ -134,7 +134,7 @@ final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
 
   /// Recovery helper: truncate `url` to `length`, rename it to `destination`,
   /// fsync the directory. Never deletes.
-  static func truncateAndRename(_ url: URL, to destination: URL, length: Int) throws {
+  public static func truncateAndRename(_ url: URL, to destination: URL, length: Int) throws {
     let fd = Darwin.open(url.path, O_WRONLY | O_NOFOLLOW | O_CLOEXEC)
     guard fd >= 0 else { throw MeetingCaptureFailure.open(errno: errno) }
     defer { Darwin.close(fd) }
@@ -145,7 +145,7 @@ final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
     try rename(url, to: destination)
   }
 
-  static func rename(_ source: URL, to destination: URL) throws {
+  public static func rename(_ source: URL, to destination: URL) throws {
     guard Darwin.rename(source.path, destination.path) == 0 else {
       throw MeetingCaptureFailure.finalize(errno: errno)
     }
@@ -165,7 +165,7 @@ final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
 
   /// Every component below `/` must be a real directory (no symlink); missing
   /// components are created with mode 0700, and the leaf is forced to 0700.
-  static func ensurePrivateDirectory(_ url: URL) throws {
+  public static func ensurePrivateDirectory(_ url: URL) throws {
     let standardized = url.standardizedFileURL
     var current = URL(fileURLWithPath: "/", isDirectory: true)
     for component in standardized.pathComponents.dropFirst() {
@@ -185,7 +185,7 @@ final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
     }
   }
 
-  static func ensureNoSymlink(_ url: URL) throws {
+  public static func ensureNoSymlink(_ url: URL) throws {
     var current = URL(fileURLWithPath: "/", isDirectory: true)
     for component in url.standardizedFileURL.pathComponents.dropFirst() {
       current.appendPathComponent(component)

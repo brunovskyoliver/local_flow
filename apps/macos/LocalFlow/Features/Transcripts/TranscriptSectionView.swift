@@ -1,4 +1,5 @@
 import AppKit
+import LocalFlowCore
 import SwiftUI
 
 /// The active meeting's Transcript section: state line, activity indicator while a

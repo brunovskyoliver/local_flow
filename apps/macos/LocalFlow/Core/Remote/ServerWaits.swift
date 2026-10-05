@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Feature 018 (FR-031): meeting work waiting for the user's server, by attempt. Each
 /// item retries 30 s doubling to 10 min, sooner on `serverMayBeReachable`, and never

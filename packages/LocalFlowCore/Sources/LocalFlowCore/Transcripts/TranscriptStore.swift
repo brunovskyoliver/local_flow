@@ -1,19 +1,18 @@
 import Foundation
 import GRDB
-import LocalFlowCore
 
-actor TranscriptStore: TranscriptStoring {
-  enum Capacity: Sendable, Equatable { case meetingSegments, meetingBytes, globalBytes }
-  enum Error: Swift.Error, Sendable, Equatable {
+public actor TranscriptStore: TranscriptStoring {
+  public enum Capacity: Sendable, Equatable { case meetingSegments, meetingBytes, globalBytes }
+  public enum Error: Swift.Error, Sendable, Equatable {
     case invalidTransition(from: TranscriptState, to: TranscriptState)
     case staleRevision, missingRow, passMismatch, damagedDatabase
     case capacityExceeded(Capacity)
     case invalidSegment(String)
   }
-  nonisolated let database: DatabasePool
-  init(database: DatabasePool) { self.database = database }
-  init(history: TranscriptionStore) { self.database = history.database }
-  func transcription(meetingID: UUID) throws -> MeetingTranscription? {
+  public nonisolated let database: DatabasePool
+  public init(database: DatabasePool) { self.database = database }
+  public init(history: TranscriptionStore) { self.database = history.database }
+  public func transcription(meetingID: UUID) throws -> MeetingTranscription? {
     if let row = try database.read({ try Self.fetch(meetingID, db: $0) }) { return row }
     // A meeting recorded before `transcripts-v6` has no row: the first read
     // inserts `not_requested` for terminal legacy meetings. Active meetings get
@@ -35,7 +34,7 @@ actor TranscriptStore: TranscriptStoring {
     }
   }
   @discardableResult
-  func transition(
+  public func transition(
     meetingID: UUID, to: TranscriptState, now: Int64, effects: [TranscriptTransitionEffect]
   ) throws -> MeetingTranscription {
     try database.write { db in
@@ -95,7 +94,7 @@ actor TranscriptStore: TranscriptStoring {
       return row
     }
   }
-  func setLiveState(meetingID: UUID, liveState: LiveState?, now: Int64) throws {
+  public func setLiveState(meetingID: UUID, liveState: LiveState?, now: Int64) throws {
     try database.write { db in
       guard var row = try Self.fetch(meetingID, db: db) else { throw Error.missingRow }
       guard liveState == nil || row.state == .live else {
@@ -105,7 +104,7 @@ actor TranscriptStore: TranscriptStoring {
       try Self.save(&row, now: now, db: db)
     }
   }
-  func updateLiveMetadata(
+  public func updateLiveMetadata(
     meetingID: UUID, descriptor: AnalysisStreamDescriptor,
     incrementModelReloads: Bool, now: Int64
   ) throws -> MeetingTranscription {
@@ -118,7 +117,7 @@ actor TranscriptStore: TranscriptStoring {
       return row
     }
   }
-  func appendSegments(
+  public func appendSegments(
     meetingID: UUID, passID: UUID, drafts: [TranscriptSegmentDraft],
     progress: FinalizationProgress?, now: Int64
   ) throws -> Int {
@@ -205,7 +204,7 @@ actor TranscriptStore: TranscriptStoring {
       return drafts.count
     }
   }
-  func appendGap(_ gap: LiveGap) throws {
+  public func appendGap(_ gap: LiveGap) throws {
     try database.write { db in
       guard var row = try Self.fetch(gap.meetingID, db: db) else { throw Error.missingRow }
       guard row.passID == gap.passID, row.passKind == .live, row.state == .live else {
@@ -247,7 +246,7 @@ actor TranscriptStore: TranscriptStoring {
       try Self.save(&row, now: gap.createdAt, db: db)
     }
   }
-  func completeFinalPass(
+  public func completeFinalPass(
     meetingID: UUID, passID: UUID, descriptor: AnalysisStreamDescriptor, coveredMs: Int64,
     now: Int64
   ) throws -> MeetingTranscription {
@@ -289,7 +288,7 @@ actor TranscriptStore: TranscriptStoring {
       return row
     }
   }
-  func restartFinalPass(
+  public func restartFinalPass(
     meetingID: UUID, passID: UUID, now: Int64, effects: [TranscriptTransitionEffect]
   ) throws -> MeetingTranscription {
     try database.write { db in
@@ -335,14 +334,14 @@ actor TranscriptStore: TranscriptStoring {
       return row
     }
   }
-  func passSegmentCount(meetingID: UUID, passID: UUID) throws -> Int {
+  public func passSegmentCount(meetingID: UUID, passID: UUID) throws -> Int {
     try database.read { db in
       try Int.fetchOne(
         db, sql: "SELECT COUNT(*) FROM transcript_segments WHERE meeting_id=? AND pass_id=?",
         arguments: [meetingID.uuidString, passID.uuidString]) ?? 0
     }
   }
-  func discardPass(meetingID: UUID, passID: UUID) throws {
+  public func discardPass(meetingID: UUID, passID: UUID) throws {
     try database.write { db in
       guard var row = try Self.fetch(meetingID, db: db) else { throw Error.missingRow }
       try db.execute(
@@ -352,7 +351,8 @@ actor TranscriptStore: TranscriptStoring {
       try Self.save(&row, now: Int64(Date().timeIntervalSince1970 * 1000), db: db)
     }
   }
-  func page(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int) throws
+  public func page(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
+    throws
     -> [TranscriptSegment]
   {
     try database.read { db in
@@ -367,7 +367,7 @@ actor TranscriptStore: TranscriptStoring {
     }
   }
   /// The final ordinal of one segment id, for View-source jumps; one index read.
-  func ordinal(meetingID: UUID, segmentID: UUID) async throws -> Int? {
+  public func ordinal(meetingID: UUID, segmentID: UUID) async throws -> Int? {
     try await database.read { db in
       try Int.fetchOne(
         db,
@@ -380,12 +380,14 @@ actor TranscriptStore: TranscriptStoring {
   /// root) from the accepted run. Labels apply only to final rows of the pass the run
   /// aligned against, and only while that pass is the transcript's current pass.
   // `async` so concrete calls pick these over the protocol's no-label defaults.
-  func labeledPage(meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int)
+  public func labeledPage(
+    meetingID: UUID, finality: SegmentFinality, after ordinal: Int?, limit: Int
+  )
     async throws -> [LabeledSegment]
   {
     try await database.read { db in
       // Feature 010: the effective identity per display root, from the same read.
-      let identities = try IdentityStore.identities(meetingID, db: db)
+      let identities = try SpeakerIdentityQuery.identities(meetingID, db: db)
       return try Row.fetchAll(
         db,
         sql: """
@@ -415,7 +417,7 @@ actor TranscriptStore: TranscriptStoring {
     }
   }
 
-  func acceptedSpeakers(meetingID: UUID) async throws -> AcceptedSpeakers? {
+  public func acceptedSpeakers(meetingID: UUID) async throws -> AcceptedSpeakers? {
     try await database.read { db in
       guard
         let accepted = try Row.fetchOne(
@@ -467,15 +469,15 @@ actor TranscriptStore: TranscriptStoring {
     switch row["label_kind"] as String? {
     case "unknown":
       return SegmentLabel(
-        kind: .unknown, text: SpeakerPalette.unknown, colorIndex: nil, edited: edited)
+        kind: .unknown, text: SpeakerLabelText.unknown, colorIndex: nil, edited: edited)
     case "ambiguous":
-      return SegmentLabel(kind: .overlapping, text: SpeakerPalette.overlapping, colorIndex: nil)
+      return SegmentLabel(kind: .overlapping, text: SpeakerLabelText.overlapping, colorIndex: nil)
     case "speaker":
       guard let root = (row["label_root"] as String?).flatMap(UUID.init(uuidString:)),
         let source = (row["label_source"] as String?).flatMap(SpeakerSource.init(rawValue:)),
         let ordinal = row["label_ordinal"] as Int?
       else { return nil }
-      var text = SpeakerPalette.text(
+      var text = SpeakerLabelText.text(
         source: source, ordinal: ordinal, name: row["label_name"],
         inRoom: row["label_in_room"] ?? false)
       // FR-040: "Name" for confirmed and recognized (the name is already the display
@@ -500,7 +502,7 @@ actor TranscriptStore: TranscriptStoring {
     }
   }
 
-  func gaps(meetingID: UUID) throws -> [LiveGap] {
+  public func gaps(meetingID: UUID) throws -> [LiveGap] {
     try database.read { db in
       try Row.fetchAll(
         db,
@@ -517,7 +519,7 @@ actor TranscriptStore: TranscriptStoring {
       }
     }
   }
-  func activeRows(limit: Int) throws -> [MeetingTranscription] {
+  public func activeRows(limit: Int) throws -> [MeetingTranscription] {
     try database.read { db in
       try Row.fetchAll(
         db,
@@ -527,7 +529,9 @@ actor TranscriptStore: TranscriptStoring {
       ).map(Self.decode)
     }
   }
-  func recover(row expected: MeetingTranscription, to: TranscriptState, outcome: RecoveryOutcome)
+  public func recover(
+    row expected: MeetingTranscription, to: TranscriptState, outcome: RecoveryOutcome
+  )
     throws
   {
     try database.write { db in
@@ -544,7 +548,7 @@ actor TranscriptStore: TranscriptStoring {
       try Self.insertOutcome(outcome, db: db)
     }
   }
-  func recordOutcome(_ outcome: RecoveryOutcome) throws {
+  public func recordOutcome(_ outcome: RecoveryOutcome) throws {
     try database.write { db in
       guard var row = try Self.fetch(outcome.meetingID, db: db) else { throw Error.missingRow }
       try Self.insertOutcome(outcome, db: db)
@@ -565,7 +569,7 @@ actor TranscriptStore: TranscriptStoring {
         outcome.bytesTruncated, summary,
       ])
   }
-  func usage() throws -> TranscriptUsage { try database.read { try Self.usage(db: $0) } }
+  public func usage() throws -> TranscriptUsage { try database.read { try Self.usage(db: $0) } }
   private static func usage(db: Database) throws -> TranscriptUsage {
     guard let r = try Row.fetchOne(db, sql: "SELECT * FROM transcript_usage WHERE id=1") else {
       throw Error.damagedDatabase

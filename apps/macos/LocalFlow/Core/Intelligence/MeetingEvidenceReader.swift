@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LocalFlowCore
 
 /// A read-only adapter over the 004–010 stores (T025, research R8/R9). It
 /// implements `MeetingEvidenceReading` and has no write method by construction:
@@ -62,7 +63,7 @@ actor MeetingEvidenceReader: MeetingEvidenceReading {
     let localProfile = try localUserProfile()
     return roots.map { root in
       var participant = participant(root)
-      participant.label = SpeakerPalette.text(
+      participant.label = SpeakerLabelText.text(
         source: root.source, ordinal: root.labelOrdinal, name: nil, inRoom: root.inRoom)
       return participant
     }

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import Observation
 
 /// Keyset paging over one meeting's segments: 200 rows per page, at most two pages
@@ -236,7 +237,7 @@ final class TranscriptPager {
     guard speakers != nil else { return chosen.map(\.normalizedText).joined(separator: "\n") }
     var blocks: [(label: String, lines: [String])] = []
     for segment in chosen {
-      let label = self.label(for: segment.id)?.text ?? SpeakerPalette.unknown
+      let label = self.label(for: segment.id)?.text ?? SpeakerLabelText.unknown
       if blocks.last?.label == label {
         blocks[blocks.count - 1].lines.append(segment.normalizedText)
       } else {

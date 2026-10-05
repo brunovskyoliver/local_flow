@@ -640,19 +640,20 @@ final class SpeakerPaletteTests: XCTestCase {
   }
 
   func testLabelText() {
-    XCTAssertEqual(SpeakerPalette.text(source: .local, ordinal: 1, name: nil, inRoom: false), "You")
     XCTAssertEqual(
-      SpeakerPalette.text(source: .local, ordinal: 1, name: "Ana", inRoom: false), "Ana (You)")
+      SpeakerLabelText.text(source: .local, ordinal: 1, name: nil, inRoom: false), "You")
     XCTAssertEqual(
-      SpeakerPalette.text(source: .local, ordinal: 2, name: nil, inRoom: true), "Local 2")
+      SpeakerLabelText.text(source: .local, ordinal: 1, name: "Ana", inRoom: false), "Ana (You)")
     XCTAssertEqual(
-      SpeakerPalette.text(source: .local, ordinal: 2, name: "Ana", inRoom: true), "Ana")
+      SpeakerLabelText.text(source: .local, ordinal: 2, name: nil, inRoom: true), "Local 2")
     XCTAssertEqual(
-      SpeakerPalette.text(source: .remote, ordinal: 3, name: nil, inRoom: false), "Speaker 3")
+      SpeakerLabelText.text(source: .local, ordinal: 2, name: "Ana", inRoom: true), "Ana")
     XCTAssertEqual(
-      SpeakerPalette.text(source: .remote, ordinal: 3, name: "Bo", inRoom: false), "Bo")
-    XCTAssertEqual(SpeakerPalette.unknown, "Unknown")
-    XCTAssertEqual(SpeakerPalette.overlapping, "Overlapping")
+      SpeakerLabelText.text(source: .remote, ordinal: 3, name: nil, inRoom: false), "Speaker 3")
+    XCTAssertEqual(
+      SpeakerLabelText.text(source: .remote, ordinal: 3, name: "Bo", inRoom: false), "Bo")
+    XCTAssertEqual(SpeakerLabelText.unknown, "Unknown")
+    XCTAssertEqual(SpeakerLabelText.overlapping, "Overlapping")
   }
 }
 

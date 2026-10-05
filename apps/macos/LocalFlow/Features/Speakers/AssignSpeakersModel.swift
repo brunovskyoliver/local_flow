@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import Observation
 
 /// The Assign speakers sheet's drafts (contracts/ui.md). Nothing is written until Save
@@ -53,7 +54,7 @@ final class AssignSpeakersModel: Identifiable {
     /// How rows will read once saved: "Name (You)", "Name", or the anonymous label.
     var preview: String {
       let name = (try? SpeakerNames.validate(draft).get()) ?? nil
-      return SpeakerPalette.text(
+      return SpeakerLabelText.text(
         source: speaker.source, ordinal: speaker.labelOrdinal, name: name,
         inRoom: speaker.inRoom)
     }

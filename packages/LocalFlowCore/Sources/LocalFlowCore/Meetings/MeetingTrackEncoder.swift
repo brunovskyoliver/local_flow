@@ -7,17 +7,17 @@ import Foundation
 /// worker owns. Output block: one compressed buffer of at most 8 packets of
 /// 1,536 bytes. Every packet becomes one ADTS frame; `encodedFrameCount`
 /// × 1,024 ÷ 48,000 is the segment duration source of truth.
-final class MeetingTrackEncoder: MeetingEncoding, @unchecked Sendable {
-  static let inputFrames: UInt32 = 4_096
-  static let outputPackets: UInt32 = 8
+public final class MeetingTrackEncoder: MeetingEncoding, @unchecked Sendable {
+  public static let inputFrames: UInt32 = 4_096
+  public static let outputPackets: UInt32 = 8
 
-  let kind: MeetingTrackKind
-  let inputFormat: AVAudioFormat
-  let channels: Int
-  let bitrate: Int
+  public let kind: MeetingTrackKind
+  public let inputFormat: AVAudioFormat
+  public let channels: Int
+  public let bitrate: Int
   private let converter: AVAudioConverter
   private let output: AVAudioCompressedBuffer
-  private(set) var encodedFrameCount = 0
+  public private(set) var encodedFrameCount = 0
   private var finished = false
 
   // AVAudioConverter invokes its input block synchronously inside convert().
@@ -31,14 +31,14 @@ final class MeetingTrackEncoder: MeetingEncoding, @unchecked Sendable {
     }
   }
 
-  init(kind: MeetingTrackKind, sourceFormat: MeetingSourceFormat) throws {
+  public init(kind: MeetingTrackKind, sourceFormat: MeetingSourceFormat) throws {
     self.kind = kind
     let channels = kind.encodedChannels(sourceChannels: sourceFormat.channels)
     self.channels = channels
     bitrate = kind.bitrate
     guard sourceFormat.channels >= 1, sourceFormat.channels <= 8,
       sourceFormat.sampleRate >= 8_000, sourceFormat.sampleRate <= 192_000,
-      let input = MeetingSampleRing.pcmFormat(
+      let input = Self.pcmFormat(
         sampleRate: sourceFormat.sampleRate, channels: sourceFormat.channels)
     else { throw MeetingCaptureFailure.encoder(code: -1) }
     inputFormat = input
@@ -57,7 +57,31 @@ final class MeetingTrackEncoder: MeetingEncoding, @unchecked Sendable {
       maximumPacketSize: ADTSFrame.maximumPayloadBytes)
   }
 
-  func encode(block: AVAudioPCMBuffer?) throws -> [ADTSFrame] {
+  /// Non-interleaved Float32 with a standard layout tag for 3–8 channels, so
+  /// `AVAudioConverter` can downmix them.
+  public static func pcmFormat(sampleRate: Double, channels: Int) -> AVAudioFormat? {
+    guard channels >= 1, channels <= 8 else { return nil }
+    if channels <= 2 {
+      return AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: UInt32(channels),
+        interleaved: false)
+    }
+    let tag: AudioChannelLayoutTag
+    switch channels {
+    case 3: tag = kAudioChannelLayoutTag_MPEG_3_0_A
+    case 4: tag = kAudioChannelLayoutTag_Quadraphonic
+    case 5: tag = kAudioChannelLayoutTag_MPEG_5_0_A
+    case 6: tag = kAudioChannelLayoutTag_MPEG_5_1_A
+    case 7: tag = kAudioChannelLayoutTag_MPEG_6_1_A
+    default: tag = kAudioChannelLayoutTag_MPEG_7_1_A
+    }
+    guard let layout = AVAudioChannelLayout(layoutTag: tag) else { return nil }
+    return AVAudioFormat(
+      commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, interleaved: false,
+      channelLayout: layout)
+  }
+
+  public func encode(block: AVAudioPCMBuffer?) throws -> [ADTSFrame] {
     guard !finished else { throw MeetingCaptureFailure.closed }
     if let block {
       guard block.format.sampleRate == inputFormat.sampleRate,
@@ -68,7 +92,7 @@ final class MeetingTrackEncoder: MeetingEncoding, @unchecked Sendable {
     return try convert(Supply(block: block, endOfStream: false))
   }
 
-  func finish() throws -> [ADTSFrame] {
+  public func finish() throws -> [ADTSFrame] {
     guard !finished else { throw MeetingCaptureFailure.closed }
     finished = true
     var frames: [ADTSFrame] = []

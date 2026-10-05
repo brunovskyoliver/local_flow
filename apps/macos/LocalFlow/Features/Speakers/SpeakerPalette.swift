@@ -1,8 +1,9 @@
 import AppKit
+import LocalFlowCore
 import SwiftUI
 
-/// Research R9: eight speaker colors and the label text rules. A color is never the
-/// only identity; every label carries text (FR-017).
+/// Research R9: eight speaker colors. The label text rules are `SpeakerLabelText` in
+/// LocalFlowCore; a color is never the only identity (FR-017).
 enum SpeakerPalette {
   /// (light, dark) sRGB pairs. Each keeps at least 3:1 contrast against the app's
   /// light and dark surfaces (WCAG 1.4.11 for the dot); `SpeakerPaletteTests` checks it.
@@ -13,9 +14,6 @@ enum SpeakerPalette {
   /// The lightest light surface and the lightest dark surface the rows sit on.
   static let lightSurfaces: [UInt32] = [0xFFFFFF, 0xF5F5F3]
   static let darkSurfaces: [UInt32] = [0x242523, 0x1B1C1A]
-
-  static let unknown = "Unknown"
-  static let overlapping = "Overlapping"
 
   /// Index cycles after 8.
   static func color(_ index: Int) -> Color {
@@ -28,17 +26,6 @@ enum SpeakerPalette {
           srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
           blue: CGFloat(value & 0xFF) / 255, alpha: 1)
       })
-  }
-
-  /// "You" / "Name (You)" for the default local speaker, "Local N" / "Name" with the
-  /// in-room toggle on, "Speaker N" / "Name" for remote clusters.
-  static func text(source: SpeakerSource, ordinal: Int, name: String?, inRoom: Bool) -> String {
-    let name = name.flatMap { $0.isEmpty ? nil : $0 }
-    switch source {
-    case .local where !inRoom: return name.map { "\($0) (You)" } ?? "You"
-    case .local: return name ?? "Local \(ordinal)"
-    case .remote: return name ?? "Speaker \(ordinal)"
-    }
   }
 
   /// WCAG 2 contrast ratio between two sRGB colors.

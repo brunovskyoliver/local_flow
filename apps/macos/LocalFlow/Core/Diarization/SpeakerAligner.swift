@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// `align_dom0.60_ratio2_ovl0.20_bytrack_v3` (research R6). Labels a transcript segment
 /// from speaker turns and times only; it never sees text (FR-001, FR-013). The caller

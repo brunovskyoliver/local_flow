@@ -991,7 +991,7 @@ struct NoteTranscriptBubble: View {
                 Button(choice.label) { changeSpeaker(.speaker(choice.id)) }
               }
               Divider()
-              Button(SpeakerPalette.unknown) { changeSpeaker(.unknown) }
+              Button(SpeakerLabelText.unknown) { changeSpeaker(.unknown) }
               Button("New speaker") { changeSpeaker(.newSpeaker) }
             }
             .accessibilityIdentifier("meeting.transcript.row.changeSpeaker")

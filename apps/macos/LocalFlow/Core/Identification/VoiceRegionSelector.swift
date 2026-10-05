@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// `regions_v1` (research R4): which single-speaker stretches of one display root are
 /// clean enough to embed, and in what order. Pure and deterministic for equal input.
@@ -7,12 +8,12 @@ enum VoiceRegionSelector {
   static let version = "regions_v1"
   static let sampleRate = 16_000
   /// Trimmed from each end of a turn before it is measured.
-  static let trimMs: Int64 = 200
+  static let trimMs = VoiceRegionRules.trimMs
   /// Provisional (T014 may raise it if short regions hurt calibration).
-  static let minDurationMs: Int64 = 3_000
+  static let minDurationMs = VoiceRegionRules.minDurationMs
   static let maxDurationMs: Int64 = 20_000
   /// Turns with an engine quality below this are skipped; absent quality is allowed.
-  static let minEngineQuality = 0.5
+  static let minEngineQuality = VoiceRegionRules.minEngineQuality
   /// `good` needs this much speech and this quality (or none reported).
   static let goodDurationMs: Int64 = 6_000
   static let goodQuality = 0.7

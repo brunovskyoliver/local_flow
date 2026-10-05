@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import XCTest
 
 @testable import LocalFlow

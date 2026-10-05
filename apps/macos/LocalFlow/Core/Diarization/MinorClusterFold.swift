@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// `minor_10s_5pct_cos0.60_v1`. A run cluster with almost no speech is not evidence of
 /// a speaker: a backchannel during overlap or a goodbye at the very end can land in

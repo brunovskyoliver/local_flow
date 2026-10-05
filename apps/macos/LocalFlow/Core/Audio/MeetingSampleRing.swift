@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import LocalFlowCore
 
 /// The meeting-mode wrapper over `LFAudioRing`: 32 slots × 4,096 frames × the
 /// source's channel count (1–8) preallocated once (512 KiB per channel, 4 MiB at
@@ -102,34 +103,9 @@ final class MeetingSampleRing: @unchecked Sendable {
 
   /// One block in the ring's layout for the consumer to pop into.
   func makeBlock() -> AVAudioPCMBuffer? {
-    guard let format = Self.pcmFormat(sampleRate: sampleRate, channels: channels) else {
-      return nil
-    }
+    guard let format = MeetingTrackEncoder.pcmFormat(sampleRate: sampleRate, channels: channels)
+    else { return nil }
     return AVAudioPCMBuffer(pcmFormat: format, frameCapacity: UInt32(Self.frameCapacity))
-  }
-
-  /// Non-interleaved Float32 with a standard layout tag for 3–8 channels, so
-  /// `AVAudioConverter` can downmix them.
-  static func pcmFormat(sampleRate: Double, channels: Int) -> AVAudioFormat? {
-    guard channels >= 1, channels <= channelCapacity else { return nil }
-    if channels <= 2 {
-      return AVAudioFormat(
-        commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: UInt32(channels),
-        interleaved: false)
-    }
-    let tag: AudioChannelLayoutTag
-    switch channels {
-    case 3: tag = kAudioChannelLayoutTag_MPEG_3_0_A
-    case 4: tag = kAudioChannelLayoutTag_Quadraphonic
-    case 5: tag = kAudioChannelLayoutTag_MPEG_5_0_A
-    case 6: tag = kAudioChannelLayoutTag_MPEG_5_1_A
-    case 7: tag = kAudioChannelLayoutTag_MPEG_6_1_A
-    default: tag = kAudioChannelLayoutTag_MPEG_7_1_A
-    }
-    guard let layout = AVAudioChannelLayout(layoutTag: tag) else { return nil }
-    return AVAudioFormat(
-      commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, interleaved: false,
-      channelLayout: layout)
   }
 }
 

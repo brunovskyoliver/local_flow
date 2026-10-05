@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import Observation
 
 /// Only committed batches enter this bounded view of the live transcript.

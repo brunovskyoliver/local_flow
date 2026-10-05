@@ -1,4 +1,5 @@
 import AVFoundation
+import LocalFlowCore
 import XCTest
 
 @testable import LocalFlow

@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 
 /// Recorded time concatenates stretches. Wall time uses the source row's start,
 /// so pauses contribute no implied audio and microphone timing wins when present.

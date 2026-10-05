@@ -1,3 +1,4 @@
+import LocalFlowCore
 import XCTest
 
 @testable import LocalFlow
@@ -106,14 +107,16 @@ final class MeetingInstrumentationTests: XCTestCase {
     var root = URL(fileURLWithPath: #filePath)
     for _ in 0..<2 { root.deleteLastPathComponent() }
     var files: [URL] = []
-    for directory in ["LocalFlow/Core/Meetings", "LocalFlow/Features/Meetings"] {
+    for directory in [
+      "LocalFlow/Core/Meetings", "LocalFlow/Features/Meetings",
+      "../../packages/LocalFlowCore/Sources/LocalFlowCore/Meetings",
+    ] {
       let url = root.appendingPathComponent(directory)
       files += try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
         .filter { $0.pathExtension == "swift" }
     }
     files.append(root.appendingPathComponent("LocalFlow/Core/MeetingBoundaries.swift"))
     files.append(root.appendingPathComponent("LocalFlow/Core/Audio/MeetingSampleRing.swift"))
-    files.append(root.appendingPathComponent("LocalFlow/Core/Storage/MeetingStore.swift"))
     XCTAssertGreaterThanOrEqual(files.count, 18)
     for file in files {
       let text = try String(contentsOf: file, encoding: .utf8)
@@ -130,12 +133,14 @@ final class MeetingInstrumentationTests: XCTestCase {
     var root = URL(fileURLWithPath: #filePath)
     for _ in 0..<2 { root.deleteLastPathComponent() }
     var files: [URL] = []
-    for directory in ["LocalFlow/Core/Meetings", "LocalFlow/Features/Meetings"] {
+    for directory in [
+      "LocalFlow/Core/Meetings", "LocalFlow/Features/Meetings",
+      "../../packages/LocalFlowCore/Sources/LocalFlowCore/Meetings",
+    ] {
       files += try FileManager.default.contentsOfDirectory(
         at: root.appendingPathComponent(directory), includingPropertiesForKeys: nil
       ).filter { $0.pathExtension == "swift" }
     }
-    files.append(root.appendingPathComponent("LocalFlow/Core/Storage/MeetingStore.swift"))
     for file in files {
       let text = try String(contentsOf: file, encoding: .utf8)
       for line in text.split(separator: "\n") where line.contains("logger.") {

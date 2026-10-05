@@ -253,7 +253,8 @@ final class AudioCaptureService: @unchecked Sendable {
   /// Sets `kAudioOutputUnitProperty_CurrentDevice` on the input node's unit
   /// (global scope, element 0). Only the hardware probe harness uses it: a started
   /// engine does not keep the device, see `PinnedAudioInput`.
-  static let bindInputDevice: @Sendable (AVAudioEngine, AudioDeviceID) throws -> Void = { engine, device in
+  static let bindInputDevice: @Sendable (AVAudioEngine, AudioDeviceID) throws -> Void = {
+    engine, device in
     guard let unit = engine.inputNode.audioUnit else { throw AudioCaptureFailure.deviceLost }
     var id = device
     let status = AudioUnitSetProperty(

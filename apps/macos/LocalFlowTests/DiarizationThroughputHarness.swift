@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import FluidAudio
+import LocalFlowCore
 import XCTest
 
 @testable import LocalFlow

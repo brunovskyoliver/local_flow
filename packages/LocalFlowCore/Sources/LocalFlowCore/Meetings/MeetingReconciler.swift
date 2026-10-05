@@ -3,17 +3,33 @@ import Foundation
 import OSLog
 import Observation
 
-struct ReconciliationSummary: Equatable, Sendable {
-  var meetingsFound = 0
-  var recovered = 0
-  var unrecoverable = 0
-  var orphansReconstructed = 0
-  var deferred = 0
+/// The one metric the reconciler records; the Mac's `ResourceRecorder` conforms.
+public protocol MeetingRecoveryRecording: Sendable {
+  func recordMeetingRecoveryOutcome(_ kind: MeetingRecoveryOutcomeKind)
+}
 
-  var isSilent: Bool { meetingsFound == 0 && orphansReconstructed == 0 && deferred == 0 }
+public struct ReconciliationSummary: Equatable, Sendable {
+  public var meetingsFound = 0
+  public var recovered = 0
+  public var unrecoverable = 0
+  public var orphansReconstructed = 0
+  public var deferred = 0
+
+  public init(
+    meetingsFound: Int = 0, recovered: Int = 0, unrecoverable: Int = 0,
+    orphansReconstructed: Int = 0, deferred: Int = 0
+  ) {
+    self.meetingsFound = meetingsFound
+    self.recovered = recovered
+    self.unrecoverable = unrecoverable
+    self.orphansReconstructed = orphansReconstructed
+    self.deferred = deferred
+  }
+
+  public var isSilent: Bool { meetingsFound == 0 && orphansReconstructed == 0 && deferred == 0 }
 
   /// One notice line; nil when nothing was found.
-  var noticeText: String? {
+  public var noticeText: String? {
     guard !isSilent else { return nil }
     var parts: [String] = []
     if recovered > 0 { parts.append("\(recovered) meeting\(recovered == 1 ? "" : "s") recovered") }
@@ -37,18 +53,18 @@ struct ReconciliationSummary: Equatable, Sendable {
 /// reconstructed as `interrupted` meetings, and every outcome is recorded.
 /// Nothing is ever deleted. Work per launch is bounded to 100 rows and 1,000
 /// directory entries; the remainder is reported as deferred.
-final class MeetingReconciler: Sendable {
-  static let maximumRows = 100
-  static let maximumDirectoryEntries = 1_000
+public final class MeetingReconciler: Sendable {
+  public static let maximumRows = 100
+  public static let maximumDirectoryEntries = 1_000
 
   private let store: MeetingStore
   private let root: MeetingStorageRoot
-  private let recorder: ResourceRecorder?
+  private let recorder: (any MeetingRecoveryRecording)?
   private let clock: any MeetingClock
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "meetings")
 
-  init(
-    store: MeetingStore, root: MeetingStorageRoot, recorder: ResourceRecorder?,
+  public init(
+    store: MeetingStore, root: MeetingStorageRoot, recorder: (any MeetingRecoveryRecording)?,
     clock: any MeetingClock
   ) {
     self.store = store
@@ -57,7 +73,7 @@ final class MeetingReconciler: Sendable {
     self.clock = clock
   }
 
-  func run() async -> ReconciliationSummary {
+  public func run() async -> ReconciliationSummary {
     var summary = ReconciliationSummary()
     do {
       let rows = try await store.activeStateRows()
@@ -379,7 +395,9 @@ final class MeetingReconciler: Sendable {
     }
   }
 
-  static func parse(fileName: String) -> (kind: MeetingTrackKind, sequence: Int, isPart: Bool)? {
+  public static func parse(fileName: String) -> (
+    kind: MeetingTrackKind, sequence: Int, isPart: Bool
+  )? {
     var name = fileName
     var isPart = false
     if name.hasSuffix(".part") {
@@ -399,25 +417,26 @@ final class MeetingReconciler: Sendable {
   }
 
   private func record(_ kind: MeetingRecoveryOutcomeKind) {
-    recorder?.record(
-      phase: .idle, metric: .meetingRecoveryOutcome, itemCount: 1, meetingKey: kind.rawValue)
+    recorder?.recordMeetingRecoveryOutcome(kind)
   }
 }
 
 /// Start Meeting waits on this; launch does not. `complete` is called once by
 /// the detached reconciliation task.
 @MainActor @Observable
-final class MeetingReconciliationGate {
-  private(set) var isComplete = false
-  private(set) var summary: ReconciliationSummary?
+public final class MeetingReconciliationGate {
+  public private(set) var isComplete = false
+  public private(set) var summary: ReconciliationSummary?
   @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
 
-  func wait() async {
+  public init() {}
+
+  public func wait() async {
     if isComplete { return }
     await withCheckedContinuation { waiters.append($0) }
   }
 
-  func complete(_ summary: ReconciliationSummary) {
+  public func complete(_ summary: ReconciliationSummary) {
     guard !isComplete else { return }
     self.summary = summary
     isComplete = true

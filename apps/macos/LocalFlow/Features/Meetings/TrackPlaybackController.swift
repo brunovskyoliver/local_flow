@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import LocalFlowCore
 import Observation
 
 /// Per-track playback (FR-017): one `AVPlayerItem` per finalized segment in

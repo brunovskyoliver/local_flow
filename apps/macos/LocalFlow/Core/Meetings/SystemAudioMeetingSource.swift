@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreMedia
 import Foundation
+import LocalFlowCore
 import ScreenCaptureKit
 
 /// System-audio source: an audio-only `SCStream` over the first display with

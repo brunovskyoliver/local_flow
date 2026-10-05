@@ -1,4 +1,5 @@
 import AVFoundation
+import LocalFlowCore
 
 /// The C ring owns admission and copies synchronously. Detach joins any copy already
 /// in progress, so no audio-buffer reference outlives push and no push waits on analysis.

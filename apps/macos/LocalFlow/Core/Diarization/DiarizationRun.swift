@@ -206,55 +206,6 @@ struct AssignmentDraft: Sendable, Equatable {
   let secondCoverage: Double
 }
 
-enum SpeakerSource: String, Sendable, Codable { case local, remote }
-
-/// One speaker row of the accepted run, resident per meeting while the detail is open.
-struct MeetingSpeaker: Sendable, Equatable, Identifiable {
-  let id: UUID
-  let source: SpeakerSource
-  let labelOrdinal: Int
-  let colorIndex: Int
-  let displayName: String?
-  let mergedInto: UUID?
-  let inRoom: Bool
-
-  var rootID: UUID { mergedInto ?? id }
-  var label: String {
-    SpeakerPalette.text(source: source, ordinal: labelOrdinal, name: displayName, inRoom: inRoom)
-  }
-}
-
-/// The accepted result as the transcript tab shows it. Nil whenever the accepted run
-/// was aligned against another transcript pass (Feature 006 labels apply).
-struct AcceptedSpeakers: Sendable, Equatable {
-  let runID: UUID
-  let speakers: [MeetingSpeaker]
-  /// FR-018: display roots with at least one effective `speaker` assignment.
-  let count: Int
-}
-
-/// The label a transcript row shows, read with its page so it never mixes results.
-struct SegmentLabel: Sendable, Equatable {
-  enum Kind: Sendable, Equatable {
-    case speaker(root: UUID)
-    case unknown, overlapping
-  }
-  let kind: Kind
-  let text: String
-  let colorIndex: Int?
-  /// FR-026: the row carries a manual correction ("Edited" marker).
-  var edited: Bool = false
-  /// Feature 010 (FR-040): how the root's identity renders; nil without a result.
-  var identity: SegmentIdentity? = nil
-}
-
-struct LabeledSegment: Sendable, Equatable {
-  let segment: TranscriptSegment
-  let label: SegmentLabel?
-  /// The accepted run the label came from.
-  var runID: UUID? = nil
-}
-
 /// One Assign speakers section: a display root of the accepted run (data-model.md
 /// "Read models").
 struct SpeakerSummary: Sendable, Equatable, Identifiable {
@@ -274,7 +225,7 @@ struct SpeakerSummary: Sendable, Equatable, Identifiable {
 
   /// "You", "Local N" or "Speaker N", whatever the name.
   var anonymousLabel: String {
-    SpeakerPalette.text(source: source, ordinal: labelOrdinal, name: nil, inRoom: inRoom)
+    SpeakerLabelText.text(source: source, ordinal: labelOrdinal, name: nil, inRoom: inRoom)
   }
   /// The default local speaker, shown first and tinted in Assign speakers.
   var isYou: Bool { source == .local && !inRoom }
@@ -296,7 +247,7 @@ struct MergedSpeaker: Sendable, Equatable, Identifiable {
   let inRoom: Bool
 
   var anonymousLabel: String {
-    SpeakerPalette.text(source: source, ordinal: labelOrdinal, name: nil, inRoom: inRoom)
+    SpeakerLabelText.text(source: source, ordinal: labelOrdinal, name: nil, inRoom: inRoom)
   }
 }
 

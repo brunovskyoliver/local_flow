@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import LocalFlowCore
 
 /// Microphone and screen-recording checks for the start sequence (FR-021).
 /// Only these two permissions are ever touched; each request closure runs at

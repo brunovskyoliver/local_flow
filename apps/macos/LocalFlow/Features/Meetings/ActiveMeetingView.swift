@@ -1,4 +1,5 @@
 import AppKit
+import LocalFlowCore
 import SwiftUI
 
 /// The active (or just-ended) meeting at the top of the Meetings page: state,

@@ -1,28 +1,44 @@
 import Foundation
-import LocalFlowCore
 
 /// Research R11 (FR-026a): the effective identity of a display root with merged members.
 /// A `merged` resolution row wins; otherwise the `self` rows of the root and its members
 /// agree, or the root is Unknown with a choice to make. `self` rows are never modified.
-enum MergedIdentityRule {
-  struct IdentityRow: Sendable, Equatable {
-    let state: IdentityState
-    let origin: IdentityOrigin
-    let knownSpeakerID: UUID?
-    var secondKnownSpeakerID: UUID? = nil
+public enum MergedIdentityRule {
+  public struct IdentityRow: Sendable, Equatable {
+    public let state: IdentityState
+    public let origin: IdentityOrigin
+    public let knownSpeakerID: UUID?
+    public var secondKnownSpeakerID: UUID? = nil
 
-    var isLinked: Bool {
+    public init(
+      state: IdentityState, origin: IdentityOrigin, knownSpeakerID: UUID?,
+      secondKnownSpeakerID: UUID? = nil
+    ) {
+      self.state = state
+      self.origin = origin
+      self.knownSpeakerID = knownSpeakerID
+      self.secondKnownSpeakerID = secondKnownSpeakerID
+    }
+
+    public var isLinked: Bool {
       knownSpeakerID != nil && (state == .recognized || state == .confirmed)
     }
   }
 
-  struct EffectiveIdentity: Sendable, Equatable {
+  public struct EffectiveIdentity: Sendable, Equatable {
     /// Nil is Unknown with no row.
-    let row: IdentityRow?
-    let needsChoice: Bool
+    public let row: IdentityRow?
+    public let needsChoice: Bool
+
+    public init(row: IdentityRow?, needsChoice: Bool) {
+      self.row = row
+      self.needsChoice = needsChoice
+    }
   }
 
-  static func effective(root: IdentityRow?, members: [IdentityRow?], resolution: IdentityRow?)
+  public static func effective(
+    root: IdentityRow?, members: [IdentityRow?], resolution: IdentityRow?
+  )
     -> EffectiveIdentity
   {
     if let resolution { return EffectiveIdentity(row: resolution, needsChoice: false) }

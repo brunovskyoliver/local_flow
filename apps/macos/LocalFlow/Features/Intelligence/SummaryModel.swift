@@ -701,10 +701,10 @@ final class SummaryModel {
   ) -> String {
     switch speaker {
     case .speaker(let root):
-      guard let participant = participants[root] else { return SpeakerPalette.unknown }
+      guard let participant = participants[root] else { return SpeakerLabelText.unknown }
       return participant.certainty.mayBeNamed ? participant.name : participant.anonymousLabel
-    case .unknown: return SpeakerPalette.unknown
-    case .ambiguous: return SpeakerPalette.overlapping
+    case .unknown: return SpeakerLabelText.unknown
+    case .ambiguous: return SpeakerLabelText.overlapping
     }
   }
 

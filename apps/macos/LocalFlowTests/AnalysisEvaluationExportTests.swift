@@ -1,4 +1,5 @@
 import Foundation
+import LocalFlowCore
 import NaturalLanguage
 import XCTest
 
