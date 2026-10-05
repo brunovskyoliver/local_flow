@@ -69,6 +69,7 @@ final class KeyboardSessionModel {
     case .modelUnavailable: "LocalFlow needs its speech model. Open LocalFlow to download it."
     case .permissionDenied: "LocalFlow can't use the microphone. Open LocalFlow to allow it."
     case .audioFailure: "LocalFlow couldn't start the microphone. Open LocalFlow to try again."
+    case .meetingRecording: "A meeting is recording in LocalFlow. Stop it to dictate."
     default: nil
     }
   }

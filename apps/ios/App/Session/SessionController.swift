@@ -80,6 +80,8 @@ final class SessionController {
   /// one-shot control session ends.
   @ObservationIgnored var onControlResult: ((DictationResult) async -> Void)?
   @ObservationIgnored var onLevel: ((Float) -> Void)?
+  /// A meeting holds the microphone (Feature 020, research R9); no session may open.
+  @ObservationIgnored var meetingRecording: () -> Bool = { false }
 
   private let capture: AudioCapturing
   private let pipeline: PhoneDictationPipeline
@@ -136,6 +138,9 @@ final class SessionController {
     }
     session = PhoneSession(id: UUID(), origin: origin, startedAt: now(), state: .starting)
     changed()
+    // One microphone owner at a time: covers the keyboard URL, the handoff server, the
+    // control and the Dictate screen.
+    guard !meetingRecording() else { return end(.meetingRecording) }
     guard modelReady() else { return end(.modelUnavailable) }
     guard await capture.requestPermission() else { return end(.permissionDenied) }
     guard session?.state == .starting else { return }

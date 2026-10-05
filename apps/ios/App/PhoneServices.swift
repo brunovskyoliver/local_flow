@@ -18,6 +18,10 @@ final class PhoneServices {
   let pipeline: PhoneDictationPipeline
   let orphans: OrphanSpoolRecovery
   let keepReady: KeepReady
+  /// Feature 020: `Application Support/LocalFlow/Meetings/<UUID>/mic-NNNN.aac`.
+  let meetingRoot: MeetingStorageRoot
+  let meetings: MeetingStore
+  let meetingWriter: FileSegmentWriter
 
   init(applicationSupport: URL, bundle: Bundle = .main) throws {
     paths = LocalFlowPaths(applicationSupport: try Self.physical(applicationSupport))
@@ -31,6 +35,11 @@ final class PhoneServices {
     try PhoneMigrations.migrator().migrate(history.database)
     vocabulary = VocabularyStore(history: history)
     dictations = PhoneDictationStore(history: history)
+    meetingRoot = MeetingStorageRoot(
+      url: root.appendingPathComponent("Meetings", isDirectory: true))
+    try MeetingRecorder.prepareStorage(meetingRoot.url)
+    meetings = MeetingStore(history: history, root: meetingRoot)
+    meetingWriter = FileSegmentWriter(root: meetingRoot)
 
     let speechData = try Self.descriptorData("parakeet-v3", bundle: bundle)
     let speechDescriptor = try JSONDecoder().decode(ModelDescriptor.self, from: speechData)

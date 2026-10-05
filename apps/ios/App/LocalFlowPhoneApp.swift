@@ -50,6 +50,8 @@ final class PhoneApp {
   let dictate: DictateViewModel?
   let history: HistoryViewModel?
   let dictionary: DictionaryViewModel?
+  let meetings: PhoneMeetingCoordinator?
+  let meetingList: MeetingsViewModel?
   @ObservationIgnored private(set) var server: HandoffServer?
   @ObservationIgnored private var activity: ActivityController?
   @ObservationIgnored private(set) var intents: PhoneIntentHandler?
@@ -76,6 +78,21 @@ final class PhoneApp {
       dictate = DictateViewModel(controller: controller, keepReady: services.keepReady)
       history = HistoryViewModel(store: services.dictations)
       dictionary = DictionaryViewModel(store: services.vocabulary)
+      let meetings = PhoneMeetingCoordinator(
+        store: services.meetings, root: services.meetingRoot,
+        recorder: MeetingRecorder(
+          store: services.meetings, writer: services.meetingWriter, root: services.meetingRoot,
+          engine: SystemMeetingAudioEngine()),
+        session: controller,
+        activity: MeetingActivityController(requester: SystemMeetingActivityRequester()))
+      controller.meetingRecording = { [weak meetings] in meetings?.isRecording ?? false }
+      MeetingIntentHandlers.current = meetings
+      self.meetings = meetings
+      meetingList = MeetingsViewModel(
+        store: services.meetings, root: services.meetingRoot,
+        audioBusy: { [weak meetings, weak controller] in
+          meetings?.isRecording == true || controller?.isActive == true
+        })
       failure = nil
       let activity = ActivityController(
         controller: controller, requester: SystemActivityRequester())
@@ -104,6 +121,8 @@ final class PhoneApp {
       dictate = nil
       history = nil
       dictionary = nil
+      meetings = nil
+      meetingList = nil
       failure =
         "LocalFlow couldn't open its storage. Restart the app; if it keeps failing, free some space."
     }
@@ -114,6 +133,7 @@ final class PhoneApp {
   private func launch() async {
     guard let services, let controller else { return }
     services.orphans.adopt()
+    meetings?.recover()
     server?.start()
     server?.launched()
     // After the server, which sets `onChange` first.
@@ -140,13 +160,13 @@ final class PhoneApp {
 
   /// `localflow://session/start?request=<uuid>` opens or keeps a session. The request
   /// never starts a dictation. `localflow://settings` shows Settings and starts nothing
-  /// (contract "Opening the app").
+  /// (contract "Opening the app"). `localflow://meetings` shows Meetings.
   func open(_ url: URL) {
     guard url.scheme == "localflow" else { return }
-    if url.host() == "settings" {
+    if url.host() == "settings" || url.host() == "meetings" {
       showSetup = false
       showSession = false
-      tab = .settings
+      tab = url.host() == "settings" ? .settings : .meetings
       return
     }
     guard url.host() == "session", url.path() == "/start", let controller else { return }

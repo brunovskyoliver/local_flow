@@ -47,7 +47,7 @@ final class DictateViewModel {
     }
     if let session = controller.session, session.state == .ended, note?.requestID != requestID,
       let reason = session.endReason,
-      [.modelUnavailable, .permissionDenied, .audioFailure].contains(reason)
+      [.modelUnavailable, .permissionDenied, .audioFailure, .meetingRecording].contains(reason)
     {
       return SessionView.explanation(reason)
     }

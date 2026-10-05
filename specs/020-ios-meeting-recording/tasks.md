@@ -53,20 +53,20 @@
 
 ### Tests for User Story 1
 
-- [ ] T015 [P] [US1] `apps/ios/LocalFlowPhoneTests/MeetingRecorderTests.swift`: with a fake engine feeding PCM, segments rotate at 360 s with `rotated` reasons, heartbeat progress every 5 s, interruption began/ended closes with `pause`, writes a `meeting_pauses` row, and reopens with `resume`, route change rotates with `device_changed`, storage floor stops and saves
-- [ ] T016 [P] [US1] `apps/ios/LocalFlowPhoneTests/PhoneMeetingCoordinatorTests.swift`: create → preparing (tracks and transcription row inserted) → recording → finalizing → completed; 4-hour cap; start refused while a dictation is finishing; starting ends a ready dictation session; `SessionController.open` refused while a meeting records
-- [ ] T017 [P] [US1] `apps/ios/LocalFlowPhoneTests/MeetingRecoveryTests.swift`: a `.part` file and `recording` row left by a crash are recovered to `interrupted` with the audio up to the last valid ADTS frame
+- [X] T015 [P] [US1] `apps/ios/LocalFlowPhoneTests/MeetingRecorderTests.swift`: with a fake engine feeding PCM, segments rotate at 360 s with `rotated` reasons, heartbeat progress every 5 s, interruption began/ended closes with `pause`, writes a `meeting_pauses` row, and reopens with `resume`, route change rotates with `device_changed`, storage floor stops and saves
+- [X] T016 [P] [US1] `apps/ios/LocalFlowPhoneTests/PhoneMeetingCoordinatorTests.swift`: create → preparing (tracks and transcription row inserted) → recording → finalizing → completed; 4-hour cap; start refused while a dictation is finishing; starting ends a ready dictation session; `SessionController.open` refused while a meeting records
+- [X] T017 [P] [US1] `apps/ios/LocalFlowPhoneTests/MeetingRecoveryTests.swift`: a `.part` file and `recording` row left by a crash are recovered to `interrupted` with the audio up to the last valid ADTS frame
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] `apps/ios/App/Meetings/MeetingRecorder.swift`: `AVAudioSession` + `AVAudioEngine` tap → serial queue → `MeetingTrackEncoder` → `FileSegmentWriter`, behind a `MeetingAudioEngine` protocol for tests; rotation, heartbeat, interruptions (with `meeting_pauses` rows so gaps are recorded, FR-005), route changes per research R2; Meetings folder created `.completeUntilFirstUserAuthentication` and excluded from backup
-- [ ] T019 [US1] `apps/ios/App/Meetings/PhoneMeetingCoordinator.swift`: owns one meeting through `MeetingStore` (origin `iphone`, mic track, transcription row), start/stop/cap, storage warnings at 1 GB and stop at 200 MB, recovery on launch through `MeetingReconciler`
-- [ ] T020 [US1] Microphone ownership in `apps/ios/App/Session/SessionController.swift`: guard in `open` while a meeting records; coordinator ends a ready session with `.userEnded` before recording (research R9)
-- [ ] T021 [P] [US1] `apps/ios/Intents/MeetingActivityAttributes.swift` and `apps/ios/Intents/MeetingIntents.swift` (`StopMeetingIntent: LiveActivityIntent`, `MeetingIntentHandlers.current` slot), respecting `scripts/check-keyboard-imports.sh`
-- [ ] T022 [P] [US1] `apps/ios/Widgets/MeetingLiveActivity.swift` (Lock Screen and Dynamic Island: elapsed time, transcribed-up-to line, Stop) and register it in `apps/ios/Widgets/LocalFlowWidgets.swift`
-- [ ] T023 [US1] `apps/ios/App/Meetings/MeetingActivityController.swift`: requests the activity before recording starts (no activity, no recording), updates and ends it; with a requester protocol and `apps/ios/LocalFlowPhoneTests/Fakes/FakeMeetingActivityRequester.swift`
-- [ ] T024 [US1] Meetings tab: `apps/ios/App/Features/Meetings/MeetingsView.swift`, `MeetingsViewModel.swift`, `RecordingView.swift` (elapsed, level, input name, Stop), basic playback of a whole meeting; `Tab.meetings` in `apps/ios/App/RootView.swift`; wiring in `PhoneApp`/`PhoneServices`; `localflow://meetings`
-- [ ] T025 [US1] Microphone usage text in `apps/ios/Config/App-Info.plist` mentions meetings and the owner's server
+- [X] T018 [US1] `apps/ios/App/Meetings/MeetingRecorder.swift`: `AVAudioSession` + `AVAudioEngine` tap → serial queue → `MeetingTrackEncoder` → `FileSegmentWriter`, behind a `MeetingAudioEngine` protocol for tests; rotation, heartbeat, interruptions (with `meeting_pauses` rows so gaps are recorded, FR-005), route changes per research R2; Meetings folder created `.completeUntilFirstUserAuthentication` and excluded from backup
+- [X] T019 [US1] `apps/ios/App/Meetings/PhoneMeetingCoordinator.swift`: owns one meeting through `MeetingStore` (origin `iphone`, mic track, transcription row), start/stop/cap, storage warnings at 1 GB and stop at 200 MB, recovery on launch through `MeetingReconciler`
+- [X] T020 [US1] Microphone ownership in `apps/ios/App/Session/SessionController.swift`: guard in `open` while a meeting records; coordinator ends a ready session with `.userEnded` before recording (research R9)
+- [X] T021 [P] [US1] `apps/ios/Intents/MeetingActivityAttributes.swift` and `apps/ios/Intents/MeetingIntents.swift` (`StopMeetingIntent: LiveActivityIntent`, `MeetingIntentHandlers.current` slot), respecting `scripts/check-keyboard-imports.sh`
+- [X] T022 [P] [US1] `apps/ios/Widgets/MeetingLiveActivity.swift` (Lock Screen and Dynamic Island: elapsed time, transcribed-up-to line, Stop) and register it in `apps/ios/Widgets/LocalFlowWidgets.swift`
+- [X] T023 [US1] `apps/ios/App/Meetings/MeetingActivityController.swift`: requests the activity before recording starts (no activity, no recording), updates and ends it; with a requester protocol and `apps/ios/LocalFlowPhoneTests/Fakes/FakeMeetingActivityRequester.swift`
+- [X] T024 [US1] Meetings tab: `apps/ios/App/Features/Meetings/MeetingsView.swift`, `MeetingsViewModel.swift`, `RecordingView.swift` (elapsed, level, input name, Stop), basic playback of a whole meeting; `Tab.meetings` in `apps/ios/App/RootView.swift`; wiring in `PhoneApp`/`PhoneServices`; `localflow://meetings`
+- [X] T025 [US1] Microphone usage text in `apps/ios/Config/App-Info.plist` mentions meetings and the owner's server
 
 **Checkpoint**: US1 works offline on the simulator and device.
 

@@ -22,6 +22,7 @@ enum IntentHandlers {
 
 enum LocalFlowIntentError: Error, CustomLocalizedStringResourceConvertible {
   case liveActivitiesOff, modelMissing, microphoneDenied, pendingSave, nothingToCopy, unavailable
+  case meetingRecording
 
   var localizedStringResource: LocalizedStringResource {
     switch self {
@@ -32,6 +33,7 @@ enum LocalFlowIntentError: Error, CustomLocalizedStringResourceConvertible {
     case .pendingSave: "Unlock your iPhone so LocalFlow can save the last dictation."
     case .nothingToCopy: "There is no dictation to copy yet."
     case .unavailable: "LocalFlow couldn't run this. Open LocalFlow and try again."
+    case .meetingRecording: "A meeting is recording. Stop it in LocalFlow to dictate."
     }
   }
 }

@@ -40,6 +40,7 @@ app, as long as the team and prefix are unchanged.
 | Speech and boost models | app container, `Application Support/LocalFlow/Models/<name>/` | no (excluded) |
 | Download resume data | app container, `Application Support/LocalFlow/Models/.staging/` | yes |
 | Recording spool, orphan waiting for recovery | app container, `Application Support/LocalFlow/TemporaryAudio/` | yes |
+| Meetings (`<UUID>/mic-NNNN.aac`, `.part` while recording) | app container, `Application Support/LocalFlow/Meetings/` | no (excluded) |
 | Settings (`session.idleTimeout`, `setup.completedSteps`, `diagnostics.enabled`, `notifications.dictationResults`) | `UserDefaults.standard` of the app | yes |
 | Handoff files (`session.json`, `result.json`, `keyboard-status.json`, …) | App Group container, `Handoff/` | no (excluded) |
 

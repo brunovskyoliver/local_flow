@@ -43,11 +43,12 @@ public enum TrackHealth: String, Sendable, Codable {
 }
 public enum SegmentState: String, Sendable, Codable { case open, finalized, unrecoverable }
 public enum SegmentOpenReason: String, Sendable, Codable {
-  case start, resume
+  /// `rotated`: Feature 020, the phone cuts a segment every 360 s (`phone-meetings-v19`).
+  case start, resume, rotated
   case deviceChanged = "device_changed"
 }
 public enum SegmentCloseReason: String, Sendable, Codable {
-  case pause, stop, recovered
+  case pause, stop, recovered, rotated
   case systemSleep = "system_sleep"
   case sourceFailed = "source_failed"
   case storageFailed = "storage_failed"
@@ -57,6 +58,8 @@ public enum PauseReason: String, Sendable, Codable {
   case user
   case systemSleep = "system_sleep"
 }
+/// Feature 020: who recorded the meeting (`meetings.origin`, `phone-meetings-v19`).
+public enum MeetingOrigin: String, Sendable, Codable { case local, iphone }
 public enum PauseClosedBy: String, Sendable, Codable { case resume, stop, reconciliation }
 public enum FinalizationStage: String, Sendable, Codable { case none, mic, system, both }
 

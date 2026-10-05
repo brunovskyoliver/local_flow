@@ -75,6 +75,7 @@ struct SessionView: View {
       "LocalFlow needs the microphone. Turn it on in Settings › LocalFlow › Microphone."
     case .audioFailure: "The microphone couldn't start. Try again."
     case .interrupted: "Another app took the microphone."
+    case .meetingRecording: "A meeting is recording. Stop it in Meetings to dictate."
     case .idleTimeout, .afterOneDictation, .userEnded: "Tap the LocalFlow key to start again."
     }
   }

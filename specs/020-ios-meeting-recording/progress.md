@@ -16,5 +16,9 @@ Updated: 2026-10-05T00:00:00Z
 - 2026-10-05 tasks: tasks.md, 58 tasks in 9 phases; MVP = phases 1–5.
 - 2026-10-05 analyze: 0 critical, 1 high (Mac could import before the phone has its result), 4 medium, 2 low. Waiting at gate 2.
 - 2026-10-05 gate 2: `go`. Findings applied (Mac imports only released entries; pause rows; re-upload on expiry; identity change; US5 title; phase 2 in two commits; call-interruption device check).
+- 2026-10-05 implement phase 1: T001–T004 done, commit b7a73a3 (ADR 0034, migration phone-meetings-v19, schema + fixtures, Go/Swift protocol fields with a not-implemented guard). Verified: go test ./internal/remote ok, package tests 6/6, Mac unit tests green (sub-agent).
+- 2026-10-05 implement phase 2a: T005–T008, commit 73a0eec (meetings + transcripts moved to LocalFlowCore; Mac-only halves stay: MeetingSourceFailure/MeetingAudioSourcing, MeetingErrorMessage, MeetingTranscriptionObserving; SpeakerLabelText, SpeakerIdentityQuery, MeetingRecoveryRecording added). Verified: core imports ok, package tests 6/6; sub-agent ran Mac tests, flowd-meeting and iOS builds green.
+- 2026-10-05 implement phase 2b: T009–T014, commit 2c96ddf (remote client, enrollment with RemoteEnrollmentSettings + anchor closure, credentials with service/accessibility params, MeetingHandoff, summary path moved; JSONField cut; PhoneMigrationTests count fixed to 19). Verified: core imports ok; sub-agent full make check exit 0 (one flaky SpeakerIdentificationCoordinatorTests run, passed on rerun).
+- 2026-10-05 implement phase 3: T015–T025 (sub-agent finished the code before the session limit; committed after resume). Recorder, coordinator, Live Activity, Meetings tab, mic ownership. Verified: iPhone unit tests 154/154 on simulator, package tests 6/6, Mac build ok, keyboard/core import checks ok; two unused try? warnings fixed.
 
 ## Report

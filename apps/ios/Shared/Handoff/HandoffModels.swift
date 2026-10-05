@@ -21,6 +21,8 @@ struct SessionFile: HandoffFile, Equatable {
   enum EndReason: String, Codable, Sendable {
     case idleTimeout, afterOneDictation, userEnded, interrupted, audioFailure, modelUnavailable
     case permissionDenied
+    /// Feature 020: a meeting is recording on the phone.
+    case meetingRecording
   }
   enum Outcome: String, Codable, Sendable {
     case empty, busy, failed

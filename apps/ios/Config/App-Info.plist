@@ -5,7 +5,7 @@
 	<key>LocalFlowAppGroup</key>
 	<string>$(LOCALFLOW_APP_GROUP)</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>LocalFlow listens only while a dictation session is open and transcribes on this iPhone.</string>
+	<string>LocalFlow listens only while a dictation session is open or a meeting you started is recording. Dictations are transcribed on this iPhone; meetings are kept here and processed only on your own LocalFlow server if you turn that on.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>

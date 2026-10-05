@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct RootView: View {
-  enum Tab: Hashable { case dictate, history, dictionary, settings }
+  enum Tab: Hashable { case dictate, meetings, history, dictionary, settings }
 
   @Bindable var app: PhoneApp
 
@@ -10,7 +10,8 @@ struct RootView: View {
       Text(failure).font(.flow(size: 16)).padding(32).multilineTextAlignment(.center)
     } else if let services = app.services, let controller = app.controller,
       let modelSetup = app.modelSetup, let dictate = app.dictate, let history = app.history,
-      let dictionary = app.dictionary
+      let dictionary = app.dictionary, let meetings = app.meetings,
+      let meetingList = app.meetingList
     {
       VStack(spacing: 0) {
         if controller.isActive || controller.lastFailure != nil, !app.showSession {
@@ -39,6 +40,9 @@ struct RootView: View {
           TabView(selection: $app.tab) {
             SwiftUI.Tab("Dictate", systemImage: "mic", value: .dictate) {
               DictateView(model: dictate, controller: controller)
+            }
+            SwiftUI.Tab("Meetings", systemImage: "person.2.wave.2", value: .meetings) {
+              MeetingsView(meetings: meetings, model: meetingList)
             }
             SwiftUI.Tab("History", systemImage: "clock", value: .history) {
               HistoryView(model: history, lastResultID: controller.lastResultID)

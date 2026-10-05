@@ -54,7 +54,9 @@ public actor MeetingStore: MeetingStoring {
     }
   }
 
-  public func create(now: Int64) throws -> Meeting {
+  public func create(now: Int64) throws -> Meeting { try create(now: now, origin: .local) }
+
+  public func create(now: Int64, origin: MeetingOrigin) throws -> Meeting {
     try database.write { db in
       if let row = try Row.fetchOne(
         db, sql: "SELECT id FROM meetings WHERE state IN (\(Self.activeList)) LIMIT 1"),
@@ -65,9 +67,9 @@ public actor MeetingStore: MeetingStoring {
       let id = UUID()
       try db.execute(
         sql: """
-          INSERT INTO meetings (id, state, created_at, wall_clock_ms, recorded_ms, updated_at, revision)
-          VALUES (?, 'created', ?, 0, 0, ?, 0)
-          """, arguments: [id.uuidString, now, now])
+          INSERT INTO meetings (id, state, created_at, wall_clock_ms, recorded_ms, updated_at, revision, origin)
+          VALUES (?, 'created', ?, 0, 0, ?, 0, ?)
+          """, arguments: [id.uuidString, now, now, origin.rawValue])
       try db.execute(
         sql:
           "INSERT INTO meeting_notes (meeting_id, text, author, updated_at, revision) VALUES (?, '', 'user', ?, 0)",

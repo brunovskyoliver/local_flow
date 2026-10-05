@@ -59,6 +59,7 @@ final class PhoneIntentHandler: IntentHandler {
           switch reason {
           case .modelUnavailable: .modelMissing
           case .permissionDenied: .microphoneDenied
+          case .meetingRecording: .meetingRecording
           default: .unavailable
           }
         Self.log.error("Control session did not open: \(reason.rawValue, privacy: .public)")
