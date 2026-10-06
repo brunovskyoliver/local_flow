@@ -33,6 +33,7 @@ Updated: 2026-10-05T23:25:00+02:00
 - 2026-10-05 implement phase 10: T059–T063, commit 531e5bc (unreachable/busy backoff capped at 120 s for SC-004, Retry summary, Recovered label kept, live low-storage warning, upload/result timing logs). Verified: iPhone 213/213, lint clean, make macos ok.
 - 2026-10-05 deploy: flowd + flowd-meeting built locally from 531e5bc (Mac mini has no Xcode), copied to mac-mini.tailf15b6.ts.net, phone Google client ID added to --google-client-id, org.localflow.LocalFlow.remote restarted. Backups: bin/flowd.before-020, bin/flowd-meeting.before-020, bin/remote.plist.before-020. Verified: agent running, identity fingerprint 799f-7d47-f4d9-1300-4b0a-928d-0591-c173, speech + meeting workers ready, no errors in flowd.log.
 - 2026-10-06 install: Mac app via `make release` (replaced /Applications/LocalFlow.app, relaunched); iPhone Release build installed and launched on Oliver's iPhone (com.brunovsky.LocalFlow) with the owner's existing Signing.local.xcconfig.
+- 2026-10-06 device fix: meetings failed to start on the iPhone ("couldn't be saved") because FileSegmentWriter refused the root-owned /var symlink in every device container path; simulator paths have none. Now accepts root-owned system links like AudioSpool; regression test via /tmp. Pending iPhone polls approval (5 s on Server screen, 15 s in foreground). Commit 33f3589, reinstalled on the iPhone; server shows device 4 approved and refreshed ok. Device 3 (earlier duplicate sign-in) is a stale approved entry.
 
 ## Report
 
