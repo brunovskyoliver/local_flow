@@ -1002,6 +1002,9 @@ final class MeetingUploadBackground {
   /// wildcard entry in `BGTaskSchedulerPermittedIdentifiers`.
   let prefix: String
   private var tasks: [UUID: BGContinuedProcessingTask] = [:]
+  /// Submitting a request whose identifier has no registered handler raises an
+  /// Objective-C exception that kills the app, so only a successful registration submits.
+  private(set) var registered = false
   private static let log = Logger(subsystem: "org.localflow.LocalFlowPhone", category: "upload")
 
   init(uploader: MeetingUploader, bundleIdentifier: String) {
@@ -1019,11 +1022,13 @@ final class MeetingUploadBackground {
         self.run(task)
       }
     }
+    self.registered = registered
     if !registered { Self.log.error("Meeting upload task not registered") }
   }
 
   /// Stop in the app, still in the foreground.
   func stoppedInApp(_ id: UUID, title: String) {
+    guard registered else { return stoppedInBackground() }
     let request = BGContinuedProcessingTaskRequest(
       identifier: "\(prefix).\(id.uuidString)", title: "Sending meeting to your server",
       subtitle: title)
