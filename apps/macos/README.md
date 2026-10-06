@@ -189,8 +189,8 @@ they test the fallback.
 
 `MeetingInferenceRouter` picks the local or the remote runtimes once per run, when the
 lease is taken. The remote runtimes send 16 kHz s16le samples on the live and background
-channel roles (the pool has three: interactive, live, background) and load no weights on
-the Mac. When the server is busy, unreachable or has no meeting worker, the run stays
+channel roles (the pool has three: interactive, live, background; the phone meeting
+watch opens a fourth channel of its own) and load no weights on the Mac. When the server is busy, unreachable or has no meeting worker, the run stays
 pending and the meeting shows **Waiting for your server**; it retries after 30 s,
 doubling up to 10 min, and the wait resets on a network change or a newly opened channel.
 Summaries wait the same way. A live preview window the server cannot take becomes a

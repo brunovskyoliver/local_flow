@@ -109,6 +109,8 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
   }
 
   private func handle(_ request: RemoteHandoffRequest) throws -> RemoteHandoffReply {
+    // Only a Mac watches.
+    if request.action == .watch { throw RemoteChannelError.server(.notOffered) }
     if request.action == .list {
       return RemoteHandoffReply(
         meetings: meetings.map { id, meeting in
@@ -186,7 +188,7 @@ final class FakeHandoffServer: MeetingHandoffChannel, @unchecked Sendable {
         reply.data = chunk
       }
       return reply
-    case .list: return reply
+    case .list, .watch: return reply
     }
   }
 

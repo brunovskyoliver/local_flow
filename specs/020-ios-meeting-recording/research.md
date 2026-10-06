@@ -64,6 +64,7 @@ The handoff never produces a summary; the client writes it after the merge throu
 - New action `release`: the phone sends it after its merge. If `copy` is set, the server keeps the meeting (`done`) and writes `<dir>/released`; otherwise it deletes it as `delete` does. `delete` keeps its meaning (remove now).
 - `get` accepts `name` (an AAC file name) so another device can download the audio.
 - The Mac's `MeetingHandoff` gains an import step: `list` → entries with `mine == false`, `copy == true`, `released == true`, state `done` (the phone already has its result, so the Mac's `delete` cannot take it from the phone) → download `bundle.sqlite` and every AAC → insert input rows (with `meetings.origin = 'iphone'`) and outputs in one transaction, files under the Mac's meeting root → `delete` → `meetingDidReturnFromServer(id:labeled:)` so identification and the summary run on the Mac.
+- Trigger (Phase 11): the Mac keeps a `handoff_watch` op waiting on a channel of its own; the server answers it on the phone's `release`, so the import starts within seconds. The timer import (every 10 minutes and on any channel opening) stays only for servers without the op. See contracts/handoff-v2.md, Watch.
 - Retention: the existing 7-day sweep on directory mtime covers "at most 7 days".
 - Phone delivery state: after `release`, the phone polls `list`; still present means waiting for the Mac; gone within 7 days of release means delivered; gone later means expired (the sweep). **Send to Mac again** uploads and processes the meeting again with `copy: true`.
 

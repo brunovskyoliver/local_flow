@@ -568,7 +568,8 @@ func TestDictationBounds(t *testing.T) {
 	second, _ := h.hello(PurposeSession, token)
 	second.send(startMessage(1))
 	expectError(t, second.recv(), 1, CodeBusy)
-	// Three channels per device: a fourth hello is busy.
+	// Four channels per device: a fifth hello is busy.
+	h.hello(PurposeSession, token)
 	h.hello(PurposeSession, token)
 	_, hello := h.hello(PurposeSession, token)
 	expectError(t, hello, 0, CodeBusy)

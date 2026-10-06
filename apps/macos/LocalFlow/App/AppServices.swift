@@ -63,6 +63,8 @@ final class AppServices {
   // exclusivity guard is in place from the first shortcut press.
   private(set) var meetingCoordinator: MeetingCoordinator?
   private(set) var meetingTranscription: MeetingTranscriptionCoordinator?
+  /// Feature 020: tells this Mac when a phone meeting waits on the server.
+  @ObservationIgnored private var phoneMeetingWatcher: PhoneMeetingWatcher?
   // Feature 007: speaker labels.
   private(set) var speakerDiarization: SpeakerDiarizationCoordinator?
   @ObservationIgnored private(set) var speakerStore: SpeakerStore?
@@ -996,7 +998,17 @@ final class AppServices {
       transcription.phoneMeetingsImported = { [weak self] _ in
         Task { await self?.meetingLibrary?.refresh() }
       }
+      // The server pushes phone meetings over a channel of the watcher's own; the timer
+      // import covers a server without handoff_watch.
+      let channels = remoteRouter.channels
+      phoneMeetingWatcher = PhoneMeetingWatcher(
+        open: { try await channels.openChannel() },
+        importMeetings: { [weak transcription] in await transcription?.importPhoneMeetingsNow() },
+        pushed: { [weak transcription] pushed in
+          await MainActor.run { transcription?.phoneImportsPushed = pushed }
+        })
       transcription.startPhoneImports()
+      updatePhoneMeetingWatcher()
     }
     meetingTranscription = transcription
     let speakers = SpeakerStore(history: history, recorder: recorder)
@@ -2053,6 +2065,7 @@ final class AppServices {
   /// Routing inputs changed: Parakeet's residency follows at once (FR-012, FR-015).
   /// The local rewrite model follows through `followLocalModelChoice`.
   private func serverRoutingChanged() {
+    updatePhoneMeetingWatcher()
     guard let lifecycle, !quitting else { return }
     let keep = Self.keepsParakeetLoaded(
       keepModelReady: preferences.keepModelReady && allowsPreferenceWarmup,
@@ -2069,9 +2082,19 @@ final class AppServices {
     }
   }
 
+  /// Feature 020: the phone meeting watch runs while this Mac is signed in and approved,
+  /// whatever it routes to the server.
+  private func updatePhoneMeetingWatcher() {
+    guard let watcher = phoneMeetingWatcher else { return }
+    let signedIn = preferences.remoteSettings().routesToServer && !quitting
+    Task { signedIn ? await watcher.start() : await watcher.stop() }
+  }
+
   /// A channel opened or the network changed: meeting work waiting for the server
-  /// retries now (FR-031).
+  /// retries now (FR-031), and so does a phone meeting watch waiting after an unreachable
+  /// server.
   private func serverMayBeReachable() {
+    if let watcher = phoneMeetingWatcher { Task { await watcher.nudge() } }
     meetingTranscription?.serverMayBeReachable()
     speakerDiarization?.serverMayBeReachable()
     speakerIdentification?.serverMayBeReachable()
@@ -2172,6 +2195,7 @@ final class AppServices {
       // A running diarization is cancelled at quit and interrupted at the next launch.
       await speakerDiarization?.shutdown()
       await speakerIdentification?.shutdown()
+      await phoneMeetingWatcher?.stop()
       await meetingTranscription?.shutdown()
       do {
         try await lifecycle?.shutdownIfIdle()

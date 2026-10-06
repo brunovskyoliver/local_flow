@@ -611,10 +611,11 @@ func TestHelloDecodeFailures(t *testing.T) {
 	}
 }
 
-// Three session channels per device (Feature 018 R6: interactive, live,
-// background); the fourth is busy. The server-wide cap stays 32.
+// Four session channels per device (Feature 018 R6: interactive, live,
+// background; Feature 020: a Mac's handoff watch); the fifth is busy. The
+// server-wide cap stays 32.
 func TestChannelsPerDevice(t *testing.T) {
-	if MaxChannelsPerDevice != 3 || MaxChannels != 32 {
+	if MaxChannelsPerDevice != 4 || MaxChannels != 32 {
 		t.Fatalf("per device %d, server-wide %d", MaxChannelsPerDevice, MaxChannels)
 	}
 	h := newHarness(t, Operations{})

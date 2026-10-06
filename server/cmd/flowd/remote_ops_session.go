@@ -23,7 +23,7 @@ import (
 // worker_unavailable (or not_offered, for a meeting worker without models)
 // and flowd keeps serving. With an executable --meeting-processor the handoff
 // op stores uploaded meetings under <data-dir>/handoff and runs the processor
-// on them. Logs carry IDs, counts, durations, states and codes
+// on them, and handoff_watch tells a Mac when a phone meeting waits for it. Logs carry IDs, counts, durations, states and codes
 // only; the meeting worker's lines carry a "meeting " prefix.
 func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Store,
 	watcher *accounts.Watcher, logger *log.Logger) (map[string]remote.OperationStart, func() ([]string, *remote.CapabilityModels), func(), error) {
@@ -79,6 +79,7 @@ func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Stor
 	}
 	if handoffs != nil {
 		operations["handoff"] = handoffs.Start
+		operations["handoff_watch"] = handoffs.Watch
 	}
 	if r.analysis != nil {
 		analyzer := remote.NewAnalyzer(remote.AnalysisConfig{Runner: r.analysis, Logger: logger})

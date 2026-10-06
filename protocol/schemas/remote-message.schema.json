@@ -1656,7 +1656,7 @@
     "handoff": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Client: one meeting handoff request, answered by one handoff_reply (or error). put appends data at offset to the named file of a receiving meeting (creating the meeting) and, with sha256, checks the whole file; a put of rows.sqlite at offset 0 replaces that file. start queues a complete upload for processing, or with partial a run over the finished audio that returns the meeting to receiving; copy on put or start asks the server to keep the result for the owner's Mac. get reads the processed bundle.sqlite, or with name one AAC file, at offset; delete removes the meeting; release tells the server the sending device has its result (it deletes the meeting unless a Mac copy was asked for); list names the user's meetings.",
+      "description": "Client: one meeting handoff request, answered by one handoff_reply (or error). put appends data at offset to the named file of a receiving meeting (creating the meeting) and, with sha256, checks the whole file; a put of rows.sqlite at offset 0 replaces that file. start queues a complete upload for processing, or with partial a run over the finished audio that returns the meeting to receiving; copy on put or start asks the server to keep the result for the owner's Mac. get reads the processed bundle.sqlite, or with name one AAC file, at offset; delete removes the meeting; release tells the server the sending device has its result (it deletes the meeting unless a Mac copy was asked for); list names the user's meetings; watch (the handoff_watch op) answers with a list of the meetings the calling device may import (another device's, copy, released, done) as soon as there is one, or an empty list after 10 minutes.",
       "required": [
         "schema_version",
         "type",
@@ -1681,7 +1681,8 @@
             "list",
             "get",
             "delete",
-            "release"
+            "release",
+            "watch"
           ]
         },
         "meeting": {
@@ -1725,7 +1726,10 @@
           "if": {
             "properties": {
               "action": {
-                "const": "list"
+                "enum": [
+                  "list",
+                  "watch"
+                ]
               }
             }
           },

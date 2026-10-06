@@ -92,8 +92,8 @@ func TestSessionOperationsHandoff(t *testing.T) {
 			t.Fatal(err)
 		}
 		stop()
-		if (ops["handoff"] != nil) != tc.want {
-			t.Fatalf("mode %o: handoff registered %v", tc.mode, ops["handoff"] != nil)
+		if (ops["handoff"] != nil) != tc.want || (ops["handoff_watch"] != nil) != tc.want {
+			t.Fatalf("mode %o: handoff registered %v, handoff_watch %v", tc.mode, ops["handoff"] != nil, ops["handoff_watch"] != nil)
 		}
 	}
 	if info, err := os.Stat(filepath.Join(r.dataDir, "handoff")); err != nil || info.Mode().Perm() != 0o700 {

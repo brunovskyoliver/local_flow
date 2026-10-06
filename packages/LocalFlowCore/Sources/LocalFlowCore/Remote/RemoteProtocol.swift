@@ -731,9 +731,11 @@ extension Data {
   }
 }
 
-/// `handoff`: one action on a meeting handed to the server (or `list`, on none).
+/// `handoff`: one action on a meeting handed to the server (or `list` and `watch`, on none).
+/// `watch` is the `handoff_watch` op (Feature 020): the server answers with a list of the
+/// meetings this device may import once there is one, or an empty list after 10 minutes.
 public struct RemoteHandoffRequest: Sendable, Equatable {
-  public enum Action: String, Sendable { case put, start, list, get, delete, release }
+  public enum Action: String, Sendable { case put, start, list, get, delete, release, watch }
   public var action: Action
   public var meeting: UUID?
   public var name: String?

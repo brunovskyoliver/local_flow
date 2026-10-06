@@ -6,7 +6,7 @@ Extends the `handoff` op from ADR 0033 (`server/internal/remote/protocol.go`, `p
 
 | Field | Change |
 | --- | --- |
-| `action` | adds `release` |
+| `action` | adds `release` and `watch` (see Watch) |
 | `name` | also allowed on `get` (an AAC file name; omitted = `bundle.sqlite`); name pattern adds `rows.sqlite` |
 | `partial` | new, boolean, `start` only |
 | `copy` | new, boolean, `put` and `start` only |
@@ -29,6 +29,15 @@ Rules:
 
 A Mac imports only entries with `mine: false`, `copy: true`, `released: true` and state `done`; it deletes the entry after a successful import.
 
+## Watch (`handoff` with `action: "watch"`, op `handoff_watch`)
+
+Added in Phase 11. The request has no other field. It is its own session op: `ready.capabilities.ops` lists `handoff_watch` when the server serves it, and a server without it answers `not_offered`.
+
+- The reply is a list `handoff_reply` whose `meetings` hold exactly the entries the caller may import (the rule above). It comes at once when there is one; otherwise when a `release` (or a finished processor run) of the same user makes one importable; otherwise after 10 minutes with `meetings: []`.
+- The channel holds no other op while the watch waits; a second op on it is `invalid_message`. The idle timeout is off during the op and pings keep the channel open; closing the channel ends the wait.
+- A device may hold 4 session channels (was 3): the Mac keeps the watch on a channel of its own, so dictation, live and background work keep theirs.
+- The Mac opens a channel, sends `watch` as op 1, imports when the reply names meetings, closes the channel and watches again. It retries a failed channel after 5 s, doubling to 5 minutes and reset by a reply, sooner after a network change, and waits a backoff before importing again a meeting the last import left on the server. While signed out or revoked it does not watch. Against a server without `handoff_watch` it keeps the timer import (every 10 minutes and when any channel opens).
+
 Old Swift decoders ignore unknown keys; the JSON schema's `additionalProperties: false` is updated to allow them.
 
 ## Processor
@@ -41,4 +50,4 @@ Old Swift decoders ignore unknown keys; the JSON schema's `additionalProperties:
 
 ## Fixtures
 
-Valid: `handoff-partial-start.json`, `handoff-release.json`, `handoff-get-name.json`, `handoff-put-rows.json`, `handoff_reply-list-v2.json`. Invalid: `handoff-partial-on-put.json`, `handoff-get-bad-name.json`, `handoff-copy-on-get.json`.
+Valid: `handoff-partial-start.json`, `handoff-release.json`, `handoff-get-name.json`, `handoff-put-rows.json`, `handoff_reply-list-v2.json`, `handoff-watch.json`. Invalid: `handoff-partial-on-put.json`, `handoff-get-bad-name.json`, `handoff-copy-on-get.json`, `handoff-watch-with-meeting.json`.

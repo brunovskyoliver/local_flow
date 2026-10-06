@@ -510,9 +510,11 @@ type MeetingCancel struct {
 
 // Handoff is one meeting handoff request: put a chunk of a file, start
 // processing, list, get a chunk of the processed bundle or an AAC file,
-// delete, or release (Feature 020). Meeting is absent for list only; Name and
-// Offset belong to put (Offset also to get, Name optionally, AAC only); Data
-// and SHA256 to put only; Partial to start only; Copy to put and start.
+// delete, release (Feature 020), or watch: wait until a meeting from another
+// device waits for this one (the handoff_watch op). Meeting is absent for list
+// and watch only; Name and Offset belong to put (Offset also to get, Name
+// optionally, AAC only); Data and SHA256 to put only; Partial to start only;
+// Copy to put and start.
 type Handoff struct {
 	Op      int64  `json:"op"`
 	Action  string `json:"action"`
@@ -1399,12 +1401,12 @@ func validHandoffDetail(state, detail string) bool {
 func (m Handoff) validate() (Message, error) {
 	put, get := m.Action == "put", m.Action == "get"
 	switch m.Action {
-	case "put", "start", "list", "get", "delete", "release":
+	case "put", "start", "list", "get", "delete", "release", "watch":
 	default:
 		return nil, invalid("handoff action")
 	}
 	switch {
-	case (m.Action == "list") != (m.Meeting == "") || (m.Meeting != "" && !validMeetingID(m.Meeting)):
+	case (m.Action == "list" || m.Action == "watch") != (m.Meeting == "") || (m.Meeting != "" && !validMeetingID(m.Meeting)):
 		return nil, invalid("handoff meeting")
 	case put != (m.Name != "") && !get, put && !handoffName.MatchString(m.Name),
 		get && m.Name != "" && !handoffAudio.MatchString(m.Name):

@@ -24,6 +24,9 @@ const (
 	MaxHandoffUserBytes = 8 << 30
 	HandoffTimeout      = 3 * time.Hour
 	HandoffRetention    = 7 * 24 * time.Hour
+	// HandoffWatchTimeout bounds one watch: it then answers an empty list, so
+	// a client that went away without closing frees its channel.
+	HandoffWatchTimeout = 10 * time.Minute
 )
 
 // HandoffConfig configures meeting handoff: uploaded meetings live in
@@ -37,6 +40,8 @@ type HandoffConfig struct {
 	Args      []string
 	Env       []string
 	Timeout   time.Duration // HandoffTimeout when zero
+	// WatchTimeout bounds a handoff watch; HandoffWatchTimeout when zero.
+	WatchTimeout time.Duration
 	// Interactive, when set, pauses the processor (SIGSTOP to its process
 	// group) while a dictation or rewrite is in flight and resumes it after,
 	// so interactive work has the server to itself (principle 15). Normally
@@ -70,12 +75,19 @@ type Handoffs struct {
 	running string             // meeting dir being processed
 	cancel  context.CancelFunc // stops the running processor
 	hashes  map[string]string  // file path -> sha256 of a done meeting's file
+	// changed holds, per user with a watch waiting, a channel closed at the
+	// next change that can make one of the user's meetings importable.
+	changed map[int64]chan struct{}
 }
 
-// NewHandoffs builds the operation; register Start under "handoff" and run Run.
+// NewHandoffs builds the operations; register Start under "handoff", Watch
+// under "handoff_watch" and run Run.
 func NewHandoffs(cfg HandoffConfig) *Handoffs {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = HandoffTimeout
+	}
+	if cfg.WatchTimeout == 0 {
+		cfg.WatchTimeout = HandoffWatchTimeout
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = SystemClock
@@ -83,7 +95,7 @@ func NewHandoffs(cfg HandoffConfig) *Handoffs {
 	if cfg.Logger == nil {
 		cfg.Logger = log.New(discard{}, "", 0)
 	}
-	return &Handoffs{cfg: cfg, wake: make(chan struct{}, 1), hashes: map[string]string{}}
+	return &Handoffs{cfg: cfg, wake: make(chan struct{}, 1), hashes: map[string]string{}, changed: map[int64]chan struct{}{}}
 }
 
 var errHandoffStorage = &Error{CodeInternal, "handoff storage"}
@@ -96,6 +108,9 @@ func (s *Handoffs) Start(_ context.Context, c *Conn, m Message) (Operation, erro
 	}
 	if err := checkAccess(c); err != nil {
 		return nil, err
+	}
+	if req.Action == "watch" {
+		return nil, invalid("handoff watch is the handoff_watch op")
 	}
 	principal := c.Principal()
 	reply, err := s.handle(principal.UserID, principal.DeviceID, req)
@@ -230,26 +245,7 @@ func (s *Handoffs) handle(user, device int64, req Handoff) (HandoffReply, error)
 	defer s.mu.Unlock()
 	userDir := s.userDir(user)
 	if req.Action == "list" {
-		list := []HandoffMeeting{}
-		for _, id := range meetings(userDir) {
-			dir := filepath.Join(userDir, id)
-			if state, detail := readState(dir); state != "missing" && len(list) < maxHandoffList {
-				owner, _ := os.ReadFile(filepath.Join(dir, "device"))
-				m := HandoffMeeting{
-					Meeting: id, State: state, Detail: detail,
-					Mine:     strings.TrimSpace(string(owner)) == strconv.FormatInt(device, 10),
-					Copy:     exists(filepath.Join(dir, "copy")),
-					Released: exists(filepath.Join(dir, "released")),
-				}
-				switch state {
-				case "processing":
-					m.Progress = readProgress(dir)
-				case "receiving":
-					m.TranscribedMS = readTranscribed(dir)
-				}
-				list = append(list, m)
-			}
-		}
+		list := s.list(user, device, func(HandoffMeeting) bool { return true })
 		return HandoffReply{Meetings: &list}, nil
 	}
 	dir := filepath.Join(userDir, req.Meeting)
@@ -273,6 +269,7 @@ func (s *Handoffs) handle(user, device int64, req Handoff) (HandoffReply, error)
 		}
 		now := s.cfg.Clock.Now()
 		_ = os.Chtimes(dir, now, now)
+		s.notify(user)
 		return reply, nil
 	case "put":
 		if state == "missing" {
@@ -325,6 +322,67 @@ func (s *Handoffs) handle(user, device int64, req Handoff) (HandoffReply, error)
 		}
 		return s.get(dir, req, reply)
 	}
+}
+
+// list returns up to maxHandoffList of user's meetings as device sees them,
+// those keep accepts only. s.mu is held.
+func (s *Handoffs) list(user, device int64, keep func(HandoffMeeting) bool) []HandoffMeeting {
+	userDir := s.userDir(user)
+	list := []HandoffMeeting{}
+	for _, id := range meetings(userDir) {
+		dir := filepath.Join(userDir, id)
+		state, detail := readState(dir)
+		if state == "missing" || len(list) >= maxHandoffList {
+			continue
+		}
+		owner, _ := os.ReadFile(filepath.Join(dir, "device"))
+		m := HandoffMeeting{
+			Meeting: id, State: state, Detail: detail,
+			Mine:     strings.TrimSpace(string(owner)) == strconv.FormatInt(device, 10),
+			Copy:     exists(filepath.Join(dir, "copy")),
+			Released: exists(filepath.Join(dir, "released")),
+		}
+		switch state {
+		case "processing":
+			m.Progress = readProgress(dir)
+		case "receiving":
+			m.TranscribedMS = readTranscribed(dir)
+		}
+		if keep(m) {
+			list = append(list, m)
+		}
+	}
+	return list
+}
+
+// isImportable: a done meeting another device sent, released, with a Mac copy
+// asked for. A Mac imports exactly these (contracts/handoff-v2.md).
+func isImportable(m HandoffMeeting) bool {
+	return m.State == "done" && !m.Mine && m.Copy && m.Released
+}
+
+// notify wakes user's waiting watches. s.mu is held.
+func (s *Handoffs) notify(user int64) {
+	if changed, ok := s.changed[user]; ok {
+		close(changed)
+		delete(s.changed, user)
+	}
+}
+
+// importable returns the meetings device of user may import now and, when
+// there are none, a channel closed at the next change that may add one.
+func (s *Handoffs) importable(user, device int64) ([]HandoffMeeting, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if list := s.list(user, device, isImportable); len(list) > 0 {
+		return list, nil
+	}
+	changed, ok := s.changed[user]
+	if !ok {
+		changed = make(chan struct{})
+		s.changed[user] = changed
+	}
+	return nil, changed
 }
 
 // put appends data when the offset is the file's stored size and, with
@@ -589,6 +647,10 @@ func (s *Handoffs) process(ctx, runCtx context.Context, dir, meeting string) {
 		}
 	}
 	_ = os.Remove(filepath.Join(dir, "progress"))
+	// Processing ended: a watch of the meeting's user looks again.
+	if user, err := strconv.ParseInt(filepath.Base(filepath.Dir(dir)), 10, 64); err == nil {
+		s.notify(user)
+	}
 	s.cfg.Logger.Printf("remote handoff meeting=%s state=%s partial=%t duration_ms=%d pauses=%d code=%s",
 		shortID(meeting), state, partial, s.cfg.Clock.Now().Sub(started).Milliseconds(), pauses, code)
 }

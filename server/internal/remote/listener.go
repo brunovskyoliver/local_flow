@@ -22,12 +22,14 @@ import (
 // A channel is anonymous from the upgrade until a session hello authenticates
 // it; enroll and refresh channels stay anonymous. Anonymous channels have
 // their own budget, server-wide and per client, so nobody without an
-// approved device can hold the slots approved devices need.
+// approved device can hold the slots approved devices need. A device holds
+// four session channels: interactive, live, background (Feature 018 R6) and
+// a Mac's handoff watch (Feature 020).
 const (
 	MaxChannels           = 32
 	MaxAnonymousChannels  = 16
 	MaxAnonymousPerClient = 4
-	MaxChannelsPerDevice  = 3
+	MaxChannelsPerDevice  = 4
 	HelloTimeout          = 10 * time.Second
 	IdleTimeout           = 30 * time.Second
 	EnrollIdleTimeout     = 5 * time.Minute
@@ -87,7 +89,8 @@ type SampleCollector interface {
 
 // sessionStarts maps each client message that may begin a session operation
 // to the operation's name in Operations and ready.capabilities. A session
-// op the server has not registered is answered not_offered.
+// op the server has not registered is answered not_offered. A handoff with
+// action watch starts handoff_watch instead (Feature 020).
 var sessionStarts = map[string]string{
 	"dictation_start": "dictation_start",
 	"rewrite":         "rewrite",
@@ -684,6 +687,11 @@ func (c *Conn) handle(ctx context.Context, frame Frame) bool {
 	if part, isPart := message.(AnalysisPart); isPart && part.Index != 0 {
 		name, offerable = "", false
 	}
+	// A handoff watch is its own op, so a server without it answers not_offered
+	// and ready names it (Feature 020).
+	if handoff, isHandoff := message.(Handoff); isHandoff && offerable && handoff.Action == "watch" {
+		name = "handoff_watch"
+	}
 	start, known := c.listener.cfg.Operations[c.purpose][name]
 	c.mu.Lock()
 	fresh := ok && numbered.OpNumber() > c.lastOp
@@ -853,7 +861,7 @@ func (r *Registry) add(c *Conn) {
 	r.conns[c.id] = c
 }
 
-// bind scopes c to principal, refusing a fourth channel for one device.
+// bind scopes c to principal, refusing a fifth channel for one device.
 func (r *Registry) bind(c *Conn, principal accounts.Principal) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

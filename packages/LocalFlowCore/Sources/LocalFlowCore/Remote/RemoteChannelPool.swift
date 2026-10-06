@@ -2,8 +2,9 @@ import Foundation
 
 /// A device's channels to its server by role (Feature 018 research R6): **interactive**
 /// (dictation and rewrite, Feature 014's parked channel), **live** (live meeting preview)
-/// and **background** (summaries and meeting jobs). flowd allows three per device and runs
+/// and **background** (summaries and meeting jobs). flowd allows four per device and runs
 /// one op at a time on each, so each role serves one caller at a time; the next waits.
+/// The fourth is a Mac's phone meeting watch (Feature 020), opened with `openChannel`.
 public actor RemoteChannelPool {
   public enum Role: Sendable, CaseIterable {
     case live, background
@@ -86,6 +87,10 @@ public actor RemoteChannelPool {
     await channel.close()
     return elapsed
   }
+
+  /// A new session channel outside the roles, for one long op that would otherwise hold a
+  /// role (the `handoff_watch` op). The caller closes it.
+  public func openChannel() async throws -> RemoteChannel { try await open() }
 
   /// Closes every idle channel, including the parked interactive one.
   public func closeAll() async {

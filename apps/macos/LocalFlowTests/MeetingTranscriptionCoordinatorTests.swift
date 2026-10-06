@@ -1275,6 +1275,37 @@ final class MeetingTranscriptionCoordinatorTests: XCTestCase {
     }
   }
 
+  /// Feature 020: an import the server's watch asked for skips the cached capability
+  /// check, and while the server pushes, the timer import stands down.
+  func testPushedPhoneImportSkipsTheCapabilityCacheAndStopsTheTimer() async throws {
+    final class Lists: @unchecked Sendable {
+      private let lock = NSLock()
+      private var value = 0
+      var count: Int { lock.withLock { value } }
+      func add() { lock.withLock { value += 1 } }
+    }
+    let lists = Lists()
+    let fixture = try MeetingTestStore.make()
+    let coordinator = MeetingTranscriptionCoordinator(
+      store: FakeTranscriptStore(),
+      lifecycle: ModelLifecycleCoordinator { FakeTranscriptionRuntime() })
+    coordinator.handoff = MeetingHandoff(
+      exchange: { request in
+        XCTAssertEqual(request.action, .list)
+        lists.add()
+        return RemoteHandoffReply(meetings: [])
+      }, database: fixture.history.database, root: fixture.root, eligible: { _ in false },
+      defaultLanguage: { .defaultLanguage })
+    coordinator.phoneImportAllowed = { false }
+    coordinator.phoneImportsPushed = true
+    coordinator.startPhoneImports()
+    coordinator.importPhoneMeetings(force: true)
+    await coordinator.importPhoneMeetingsNow()
+    XCTAssertEqual(lists.count, 1, "only the pushed import asked the server")
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(lists.count, 1, "the timer stands down")
+  }
+
   private func settle(_ condition: @MainActor () -> Bool) async {
     for _ in 0..<500 {
       if condition() { return }

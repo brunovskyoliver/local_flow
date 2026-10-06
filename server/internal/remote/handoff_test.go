@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -550,4 +552,216 @@ func TestHandoffMacCopy(t *testing.T) {
 		t.Fatalf("%+v", m)
 	}
 	expectHandoff(t, send(phone, Handoff{Action: "release", Meeting: otherMeeting}), "done")
+}
+
+// newWatchHarness registers handoff and handoff_watch on the harness clock.
+func newWatchHarness(t *testing.T) (*harness, *Handoffs) {
+	t.Helper()
+	operations := Operations{PurposeSession: {}}
+	h := newHarness(t, operations)
+	s := NewHandoffs(HandoffConfig{Dir: t.TempDir(), Processor: fakeProcessor(t, "exit 0"), Clock: h.clock, Logger: h.listener.cfg.Logger})
+	operations[PurposeSession]["handoff"] = s.Start
+	operations[PurposeSession]["handoff_watch"] = s.Watch
+	return h, s
+}
+
+// doneMeeting writes a processed meeting of user, first put by device.
+func doneMeeting(t *testing.T, s *Handoffs, user, device int64, meeting string, copy, released bool) {
+	t.Helper()
+	dir := filepath.Join(s.userDir(user), meeting)
+	if err := os.MkdirAll(filepath.Join(dir, meeting), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if writeState(dir, "done", "") != nil || os.WriteFile(filepath.Join(dir, "device"), []byte(strconv.FormatInt(device, 10)), 0o600) != nil {
+		t.Fatal("meeting not written")
+	}
+	for name, on := range map[string]bool{"copy": copy, "released": released} {
+		if on && touch(filepath.Join(dir, name)) != nil {
+			t.Fatal(name)
+		}
+	}
+}
+
+// recvAsync reads the next message in the background, so pings are answered
+// while the test waits.
+func (c *testClient) recvAsync() <-chan Message {
+	out := make(chan Message, 1)
+	go func() {
+		m, err := c.tryRecv()
+		if err != nil {
+			m = nil
+		}
+		out <- m
+	}()
+	return out
+}
+
+func expectWatched(t *testing.T, m Message, want ...string) {
+	t.Helper()
+	r := expectHandoff(t, m, "")
+	got := []string{}
+	for _, entry := range *r.Meetings {
+		if !isImportable(entry) {
+			t.Fatalf("not importable: %+v", entry)
+		}
+		got = append(got, entry.Meeting)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("watch named %v, want %v", got, want)
+	}
+}
+
+func quiet(t *testing.T, pending <-chan Message) {
+	t.Helper()
+	select {
+	case m := <-pending:
+		t.Fatalf("watch answered early: %#v", m)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// Feature 020: ready names handoff_watch; a watch answers at once when a
+// meeting waits for the caller, and only with those meetings.
+func TestHandoffWatchImmediate(t *testing.T) {
+	h, s := newWatchHarness(t)
+	user, mac, macToken := h.approved("sub", 1)
+	c, ready := h.hello(PurposeSession, macToken)
+	if r, ok := ready.(Ready); !ok || !slices.Contains(r.Capabilities.Ops, "handoff_watch") {
+		t.Fatalf("%#v", ready)
+	}
+	doneMeeting(t, s, user.ID, mac.ID+1, handoffMeeting, true, true)
+	doneMeeting(t, s, user.ID, mac.ID+1, otherMeeting, true, false) // not released yet
+	expectWatched(t, c.handoff(Handoff{Op: 1, Action: "watch"}), handoffMeeting)
+	// The channel takes the next op once the watch has answered.
+	expectWatched(t, c.handoff(Handoff{Op: 2, Action: "watch"}), handoffMeeting)
+	if !strings.Contains(h.logs.String(), "action=watch meetings=1 code=ok") {
+		t.Fatal(h.logs.String())
+	}
+}
+
+// A watch waits through the idle timeout and wakes when the phone releases a
+// copy meeting; the Mac's own meetings, meetings without a copy and another
+// user's releases do not wake it.
+func TestHandoffWatchWakesOnRelease(t *testing.T) {
+	h, s := newWatchHarness(t)
+	user, mac, macToken := h.approved("sub", 1)
+	phoneToken := h.anotherDevice(user, 2)
+	stranger, strangerDevice, strangerToken := h.approved("stranger", 3)
+	watcher, _ := h.hello(PurposeSession, macToken)
+
+	watcher.send(Handoff{Op: 1, Action: "watch"})
+	pending := watcher.recvAsync()
+	h.clock.waitTimer(t, HandoffWatchTimeout)
+	h.clock.Advance(IdleTimeout + time.Second)
+	quiet(t, pending)
+
+	// Opened after the idle timeout, which closes channels without an op.
+	phone, _ := h.hello(PurposeSession, phoneToken)
+	other, _ := h.hello(PurposeSession, strangerToken)
+	macChannel, _ := h.hello(PurposeSession, macToken)
+
+	// The Mac releases its own copy meeting.
+	doneMeeting(t, s, user.ID, mac.ID, handoffMeeting, true, false)
+	expectHandoff(t, macChannel.handoff(Handoff{Op: 1, Action: "release", Meeting: handoffMeeting}), "done")
+	// Another user's phone releases a copy meeting.
+	doneMeeting(t, s, stranger.ID, strangerDevice.ID+1, otherMeeting, true, false)
+	expectHandoff(t, other.handoff(Handoff{Op: 1, Action: "release", Meeting: otherMeeting}), "done")
+	// The phone releases a meeting without a copy: it is deleted.
+	doneMeeting(t, s, user.ID, mac.ID+1, otherMeeting, false, false)
+	expectHandoff(t, phone.handoff(Handoff{Op: 1, Action: "release", Meeting: otherMeeting}), "missing")
+	quiet(t, pending)
+
+	// The phone releases a copy meeting.
+	doneMeeting(t, s, user.ID, mac.ID+1, otherMeeting, true, false)
+	expectHandoff(t, phone.handoff(Handoff{Op: 2, Action: "release", Meeting: otherMeeting}), "done")
+	select {
+	case m := <-pending:
+		expectWatched(t, m, otherMeeting)
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch not woken by the release")
+	}
+}
+
+// A processor run that ends with a released copy meeting done wakes a watch.
+func TestHandoffWatchWakesOnProcessing(t *testing.T) {
+	h, s := newWatchHarness(t)
+	user, mac, macToken := h.approved("sub", 1)
+	watcher, _ := h.hello(PurposeSession, macToken)
+	watcher.send(Handoff{Op: 1, Action: "watch"})
+	pending := watcher.recvAsync()
+	quiet(t, pending)
+	doneMeeting(t, s, user.ID, mac.ID+1, handoffMeeting, true, true)
+	if writeState(filepath.Join(s.userDir(user.ID), handoffMeeting), "queued", "") != nil {
+		t.Fatal("state")
+	}
+	runHandoffs(t, s)
+	select {
+	case m := <-pending:
+		expectWatched(t, m, handoffMeeting)
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch not woken by the processor")
+	}
+}
+
+// After WatchTimeout a watch answers an empty list and the channel serves the
+// next op; a meeting without a watch to wake leaves nothing behind.
+func TestHandoffWatchTimeout(t *testing.T) {
+	h, _ := newWatchHarness(t)
+	_, _, macToken := h.approved("sub", 1)
+	c, _ := h.hello(PurposeSession, macToken)
+	c.send(Handoff{Op: 1, Action: "watch"})
+	pending := c.recvAsync()
+	h.clock.waitTimer(t, HandoffWatchTimeout)
+	h.clock.Advance(HandoffWatchTimeout - time.Second)
+	quiet(t, pending)
+	h.clock.Advance(time.Second)
+	select {
+	case m := <-pending:
+		expectWatched(t, m)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no answer at the watch timeout")
+	}
+	expectWatched(t, c.handoff(Handoff{Op: 2, Action: "list"}))
+	if !strings.Contains(h.logs.String(), "action=watch meetings=0 code=ok") {
+		t.Fatal(h.logs.String())
+	}
+}
+
+// Closing the channel ends a waiting watch: its goroutine returns and the
+// channel's slot is freed. A watch on a server without handoff_watch is
+// not_offered, and a second op on a watching channel closes it.
+func TestHandoffWatchClose(t *testing.T) {
+	h, _ := newWatchHarness(t)
+	_, _, macToken := h.approved("sub", 1)
+	c, _ := h.hello(PurposeSession, macToken)
+	c.send(Handoff{Op: 1, Action: "watch"})
+	quiet(t, c.recvAsync())
+	before := h.listener.Registry().Len()
+	c.ws.CloseNow()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(h.logs.String(), "action=watch meetings=0 code=closed") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(h.logs.String(), "action=watch meetings=0 code=closed") {
+		t.Fatal("watch still waiting after close: " + h.logs.String())
+	}
+	for h.listener.Registry().Len() >= before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if h.listener.Registry().Len() >= before {
+		t.Fatal("channel kept")
+	}
+
+	second, _ := h.hello(PurposeSession, macToken)
+	second.send(Handoff{Op: 1, Action: "watch"})
+	second.send(Handoff{Op: 2, Action: "list"})
+	expectCode(t, second.recv(), CodeInvalidMessage)
+
+	old, _ := newHandoffHarness(t, fakeProcessor(t, "exit 0"))
+	_, _, oldToken := old.approved("sub", 1)
+	third, ready := old.hello(PurposeSession, oldToken)
+	if slices.Contains(ready.(Ready).Capabilities.Ops, "handoff_watch") {
+		t.Fatal("handoff_watch offered without the op")
+	}
+	expectCode(t, third.handoff(Handoff{Op: 1, Action: "watch"}), CodeNotOffered)
 }

@@ -34,6 +34,9 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   @ObservationIgnored var handoff: MeetingHandoff?
   /// Feature 020 (US6): the server offers the handoff, so phone meetings may be imported.
   @ObservationIgnored var phoneImportAllowed: (@Sendable () async -> Bool)?
+  /// Feature 020: the server pushes phone meetings (`PhoneMeetingWatcher`), so the timer
+  /// import stands down.
+  var phoneImportsPushed = false
   /// Feature 020 (US6): phone meetings were imported; the library shows them.
   @ObservationIgnored var phoneMeetingsImported: (@MainActor ([UUID]) -> Void)?
   /// Server only: no local model may load, so a live preview the server does not run
@@ -71,8 +74,8 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   private var phoneImport: Task<Void, Never>?
   private var phoneImportLoop: Task<Void, Never>?
   private var lastPhoneImportAt: UInt64?
-  /// Phone meetings are looked for this often while the app runs, and on every server wait
-  /// retry trigger at most once per `phoneImportSpacing`.
+  /// Phone meetings are looked for this often while the app runs and the server doesn't
+  /// push them, and on every server wait retry trigger at most once per `phoneImportSpacing`.
   static let phoneImportInterval: Duration = .seconds(600)
   static let phoneImportSpacing: UInt64 = 60_000_000_000
   private var finalizationTask: Task<Void, Never>?
@@ -960,13 +963,14 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
     importPhoneMeetings()
   }
 
-  /// Feature 020 (US6): looks for phone meetings now and every `phoneImportInterval`.
+  /// Feature 020 (US6): looks for phone meetings now and every `phoneImportInterval`
+  /// while the server doesn't push them.
   func startPhoneImports() {
     guard phoneImportLoop == nil else { return }
     let clock = clock
     phoneImportLoop = Task { [weak self] in
       while !Task.isCancelled {
-        self?.importPhoneMeetings(force: true)
+        if self?.phoneImportsPushed == false { self?.importPhoneMeetings(force: true) }
         do { try await clock.sleep(for: Self.phoneImportInterval) } catch { return }
       }
     }
@@ -975,12 +979,14 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   /// Imports finished phone meetings waiting on the server (Feature 020, US6), then runs
   /// the usual follow-up: identification, then the summary, as for a meeting the server
   /// processed for this Mac.
-  func importPhoneMeetings(force: Bool = false) {
+  /// `gated: false` skips the cached capability check: the caller's own channel showed
+  /// the server offers the handoff.
+  func importPhoneMeetings(force: Bool = false, gated: Bool = true) {
     guard let handoff, phoneImport == nil else { return }
     let now = clock.monotonicNanoseconds
     if !force, let last = lastPhoneImportAt, now &- last < Self.phoneImportSpacing { return }
     lastPhoneImportAt = now
-    let allowed = phoneImportAllowed
+    let allowed = gated ? phoneImportAllowed : nil
     phoneImport = Task { [weak self] in
       let imported = await allowed?() == false ? [] : await handoff.importPhoneMeetings()
       guard let self else { return }
@@ -996,6 +1002,14 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
       }
       self.phoneMeetingsImported?(imported.map(\.id))
     }
+  }
+
+  /// Feature 020: the server says phone meetings wait for this Mac. Imports them, after any
+  /// import already running, and returns once done.
+  func importPhoneMeetingsNow() async {
+    await phoneImport?.value
+    importPhoneMeetings(force: true, gated: false)
+    await phoneImport?.value
   }
 
   /// **Run on this Mac**: the meeting is already marked; its pass resumes locally now.

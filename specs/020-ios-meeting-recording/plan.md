@@ -110,6 +110,7 @@ docs/adr/0034-phone-meetings.md
 7. US5 meeting detail, playback, rename, share, delete.
 8. US6 copy to the Mac (server copy/release/get name, Mac import).
 9. Polish: docs (`apps/ios/README.md`, ADR index, release notes), `make check`, acceptance template.
+11. Server push of phone meetings (added after convergence): `handoff_watch` op answered on release, Mac watcher on its own channel, timer import only as a fallback.
 
 MVP = phases 1–5 (record, sign in, process after Stop).
 
