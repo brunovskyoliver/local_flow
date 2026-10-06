@@ -32,6 +32,7 @@ Updated: 2026-10-05T23:25:00+02:00
 - 2026-10-05 converge: 5 gaps appended as phase 10 (T059–T063), commit da9c79f.
 - 2026-10-05 implement phase 10: T059–T063, commit 531e5bc (unreachable/busy backoff capped at 120 s for SC-004, Retry summary, Recovered label kept, live low-storage warning, upload/result timing logs). Verified: iPhone 213/213, lint clean, make macos ok.
 - 2026-10-05 deploy: flowd + flowd-meeting built locally from 531e5bc (Mac mini has no Xcode), copied to mac-mini.tailf15b6.ts.net, phone Google client ID added to --google-client-id, org.localflow.LocalFlow.remote restarted. Backups: bin/flowd.before-020, bin/flowd-meeting.before-020, bin/remote.plist.before-020. Verified: agent running, identity fingerprint 799f-7d47-f4d9-1300-4b0a-928d-0591-c173, speech + meeting workers ready, no errors in flowd.log.
+- 2026-10-06 install: Mac app via `make release` (replaced /Applications/LocalFlow.app, relaunched); iPhone Release build installed and launched on Oliver's iPhone (com.brunovsky.LocalFlow) with the owner's existing Signing.local.xcconfig.
 
 ## Report
 
@@ -55,7 +56,7 @@ Updated: 2026-10-05T23:25:00+02:00
 
 **What is left**
 - Device checks (owner): real Google sign-in + approval of the phone (`flowd admin list` / approve, or LocalFlow Server app); 60-minute locked recording with Live Activity Stop; phone call and Bluetooth mid-meeting; background upload after Stop; cellular over Tailscale; SC-003/SC-004/SC-009 timings; fill acceptance/measurements.md.
-- Install a Feature 020 build of the Mac app to import phone meetings; it imports only after its cached server capabilities include handoff (one dictation or Check connection after the redeploy).
+- Mac app with Feature 020 installed 2026-10-06; it imports only after its cached server capabilities include handoff (one dictation or Check connection after the redeploy).
 - Search in the meeting list is not built (spec lists it only as a refinement).
 - Rollback on the Mac mini: move bin/*.before-020 back over flowd, flowd-meeting and the LaunchAgent plist, then bootout/bootstrap org.localflow.LocalFlow.remote.
 - Branch not pushed or merged into main.
