@@ -98,7 +98,10 @@ struct ServerSettingsView: View {
     }
     .navigationTitle("Server")
     .navigationBarTitleDisplayMode(.inline)
-    .task { await connection.refresh() }
+    .task(id: connection.state) {
+      await connection.refresh()
+      await connection.watchApproval(every: .seconds(5))
+    }
     .confirmationDialog(
       "Sign out of this server?", isPresented: $confirmSignOut, titleVisibility: .visible
     ) {

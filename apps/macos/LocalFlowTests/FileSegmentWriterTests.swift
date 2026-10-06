@@ -69,6 +69,19 @@ final class FileSegmentWriterTests: XCTestCase {
     XCTAssertThrowsError(try writer.open(meetingID: third, kind: .microphone, sequence: 1))
   }
 
+  /// A device's app container path starts with `/var`, a root-owned symlink; `/tmp` is the
+  /// same kind of link on macOS.
+  func testRootOwnedSystemSymlinkInPathIsAccepted() throws {
+    let systemBase = URL(fileURLWithPath: "/tmp", isDirectory: true)
+      .appendingPathComponent("localflow-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: systemBase) }
+    let systemRoot = MeetingStorageRoot(
+      url: systemBase.appendingPathComponent("Meetings", isDirectory: true))
+    let handle = try FileSegmentWriter(root: systemRoot)
+      .open(meetingID: meeting, kind: .microphone, sequence: 1)
+    XCTAssertNotNil(systemRoot.resolve(relativePath: handle.relativePath))
+  }
+
   func testAppendSyncFinalizeAndAbandon() throws {
     let handle = try writer.open(meetingID: meeting, kind: .microphone, sequence: 1)
     let frames = (0..<5).map { _ in

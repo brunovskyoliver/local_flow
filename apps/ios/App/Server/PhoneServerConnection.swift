@@ -312,6 +312,17 @@ final class PhoneServerConnection {
     }
   }
 
+  /// While this iPhone waits for approval, asks the server again every `interval`, so the
+  /// approval shows up without leaving the app. Returns once the state changes or the
+  /// calling task is cancelled.
+  func watchApproval(every interval: Duration) async {
+    while state == .pending, !Task.isCancelled {
+      try? await Task.sleep(for: interval)
+      guard !Task.isCancelled else { return }
+      await refresh()
+    }
+  }
+
   /// "Process meetings on this server". Turning it off closes idle channels.
   func setProcessMeetings(_ on: Bool) {
     settings.setProcessMeetings(on)

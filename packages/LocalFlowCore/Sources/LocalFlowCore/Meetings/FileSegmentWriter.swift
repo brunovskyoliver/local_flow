@@ -163,8 +163,8 @@ public final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
     return fd
   }
 
-  /// Every component below `/` must be a real directory (no symlink); missing
-  /// components are created with mode 0700, and the leaf is forced to 0700.
+  /// Every component below `/` must be a real directory or a root-owned system symlink;
+  /// missing components are created with mode 0700, and the leaf is forced to 0700.
   public static func ensurePrivateDirectory(_ url: URL) throws {
     let standardized = url.standardizedFileURL
     var current = URL(fileURLWithPath: "/", isDirectory: true)
@@ -172,7 +172,9 @@ public final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
       current.appendPathComponent(component, isDirectory: true)
       var info = stat()
       if lstat(current.path, &info) == 0 {
-        guard (info.st_mode & S_IFMT) == S_IFDIR else { throw MeetingCaptureFailure.invalidPath }
+        guard (info.st_mode & S_IFMT) == S_IFDIR || isSystemLink(info) else {
+          throw MeetingCaptureFailure.invalidPath
+        }
         continue
       }
       guard errno == ENOENT else { throw MeetingCaptureFailure.open(errno: errno) }
@@ -194,7 +196,16 @@ public final class FileSegmentWriter: SegmentWriting, @unchecked Sendable {
         if errno == ENOENT { continue }
         throw MeetingCaptureFailure.open(errno: errno)
       }
-      if (info.st_mode & S_IFMT) == S_IFLNK { throw MeetingCaptureFailure.invalidPath }
+      if (info.st_mode & S_IFMT) == S_IFLNK, !isSystemLink(info) {
+        throw MeetingCaptureFailure.invalidPath
+      }
     }
+  }
+
+  /// A root-owned symlink is part of the system layout (`/var` and `/tmp` on macOS and
+  /// iOS, where every app container path starts with `/var`). Only root can create one,
+  /// so it cannot redirect meeting audio.
+  private static func isSystemLink(_ info: stat) -> Bool {
+    (info.st_mode & S_IFMT) == S_IFLNK && info.st_uid == 0
   }
 }

@@ -16,7 +16,7 @@ struct LocalFlowPhoneApp: App {
         .onOpenURL { app.open($0) }
     }
     .onChange(of: phase) { _, phase in
-      if phase == .active { app.becameActive() }
+      if phase == .active { app.becameActive() } else { app.leftForeground() }
     }
   }
 }
@@ -58,6 +58,8 @@ final class PhoneApp {
   /// Feature 020: stopped meetings go to the server and their results come back.
   @ObservationIgnored private(set) var uploader: MeetingUploader?
   @ObservationIgnored private var uploadBackground: MeetingUploadBackground?
+  /// While the app is in front, a pending iPhone keeps asking whether it was approved.
+  @ObservationIgnored private var approvalWatch: Task<Void, Never>?
   @ObservationIgnored private(set) var server: HandoffServer?
   @ObservationIgnored private var activity: ActivityController?
   @ObservationIgnored private(set) var intents: PhoneIntentHandler?
@@ -236,6 +238,15 @@ final class PhoneApp {
       await uploader?.kick()
       await refreshSetup()
     }
+    approvalWatch?.cancel()
+    approvalWatch = Task { [serverConnection] in
+      await serverConnection?.watchApproval(every: .seconds(15))
+    }
+  }
+
+  func leftForeground() {
+    approvalWatch?.cancel()
+    approvalWatch = nil
   }
 
   /// Re-derives the checklist from the keyboard's status file, the microphone, the model
