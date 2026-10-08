@@ -1,6 +1,26 @@
 # Feature 020: Meeting recording on iPhone, processed by the server
 Stage: done
-Updated: 2026-10-05T23:25:00+02:00
+Updated: 2026-10-08
+
+## Main merge and phone reinstall (2026-10-08)
+
+### What changed
+
+- Merge commit `19d44d3` integrates Feature 020 with main's `3b7e3a9` History-capacity and rewrite-notice fixes. The one conflict in `PhoneMigrationTests` preserves all 19 shared migrations and both phone meeting migrations.
+- Pushed the merge to `origin/main` and fast-forwarded the existing main checkout at `/Users/oliver/Programming/local-flow`. No architecture changes or constitution exceptions were introduced during integration.
+- Built the signed iPhone Release app from `19d44d3` with the existing local signing configuration and installed it over `com.brunovsky.LocalFlow` on Oliver's iPhone 16 Pro. The app, keyboard and widget extension retain their existing identities.
+
+### How it was verified
+
+- Full `make check` passed: Mac XCTest 1,894 passed, 31 skipped, zero failures; LocalFlow Server XCTest 34/34; iPhone simulator XCTest 213/213; LocalFlowCore package tests 6/6. Formatting, source-boundary checks, schema validation, Python checks, Go tests/vet, speech-worker build, analysis checks and log scan passed.
+- Signed iPhone Release build passed. `codesign --verify --deep --strict` passed; `devicectl` confirmed installation and the installed bundle ID.
+- After the owner unlocked the phone, `devicectl` successfully launched `com.brunovsky.LocalFlow`; the device process list confirmed that it remained running.
+
+### What is left
+
+- Existing hardware acceptance remains open: long locked recordings, interruptions, background upload and phone/server/Mac timing and resource measurements. No new hardware acceptance or resource measurements were collected in this integration.
+- Continued-processing registration remains unavailable on the phone; upload after Stop gets about 30 seconds of background time and resumes on the next app open.
+- The server and Mac app retain the October 6 deployments recorded below; this request updated main and reinstalled the phone app.
 
 ## Decisions
 - Reconcile: this branch was already fully merged into main; fast-forwarded to main `cb7e32b`, no conflicts. `t3code/linux-cuda-dictation-server` (13 commits not in main) left alone.
@@ -37,9 +57,9 @@ Updated: 2026-10-05T23:25:00+02:00
 - 2026-10-06 device 3 revoked. Phase 11 (owner request): server pushes phone meetings to the Mac via a held `handoff` watch op (capability handoff_watch, 10 min cap, Mac reconnect 5 s→5 min, per-device channel limit 3→4), commits 8b60e81 + 5decfba (watcher added to flowd-meeting target). Deployed flowd + flowd-meeting (backups *.before-watch), Mac app reinstalled via make release; server log shows the Mac's watch channel held open past the idle timeout.
 - 2026-10-06 Stop crash: device crash logs (06:59, 07:35) show SIGABRT from BGTaskScheduler submit without a registered handler; simulator probe confirms register("<bundle>.meeting-upload.*") returns false on this iOS even with the wildcard permitted. Fix 89fb197: submit only after successful registration, otherwise beginBackgroundTask path. Installed on the iPhone. Open: continued-processing registration itself still refused (upload after in-app Stop gets ~30 s, then resumes on next open).
 
-## Report
+## Original implementation report (2026-10-06)
 
-**What changed** (branch t3code/phone-audio-relay-feasibility, not pushed)
+**What changed** (branch t3code/phone-audio-relay-feasibility; merged into main on October 8, as recorded above)
 - Phase 1 b7a73a3: ADR 0034, migration phone-meetings-v19, handoff schema + fixtures.
 - Phase 2 73a0eec, 2c96ddf: meetings, transcripts, remote client, enrollment, credentials, MeetingHandoff and summary path moved into LocalFlowCore so the phone can use them.
 - Phase 3 ac1fdee: iPhone recorder (AAC segments, interruptions, route changes, crash recovery), PhoneMeetingCoordinator, Live Activity with Stop, Meetings tab.
@@ -55,11 +75,11 @@ Updated: 2026-10-05T23:25:00+02:00
 **How it was verified**
 - iPhone unit tests (simulator, -only-testing:LocalFlowPhoneTests): 213/213.
 - Go: go test/vet/gofmt ./... clean. LocalFlowCore package tests 6/6. Mac build ok; 60 scoped Mac test classes pass. swift-format lint and all import-rule scripts clean.
-- Full Mac LocalFlow test suite NOT run (it beeps; needs the owner's OK).
+- Full Mac LocalFlow test suite was not run at original delivery; it passed during the October 8 integration recorded above.
 
 **What is left**
 - Device checks (owner): real Google sign-in + approval of the phone (`flowd admin list` / approve, or LocalFlow Server app); 60-minute locked recording with Live Activity Stop; phone call and Bluetooth mid-meeting; background upload after Stop; cellular over Tailscale; SC-003/SC-004/SC-009 timings; fill acceptance/measurements.md.
 - Mac app with Feature 020 installed 2026-10-06; phone meetings arrive by server push (Phase 11).
 - Search in the meeting list is not built (spec lists it only as a refinement).
 - Rollback on the Mac mini: move bin/*.before-020 back over flowd, flowd-meeting and the LaunchAgent plist, then bootout/bootstrap org.localflow.LocalFlow.remote.
-- Branch not pushed or merged into main.
+- Branch pushed and merged into main on October 8; see the integration report above.
