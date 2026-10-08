@@ -24,7 +24,7 @@ Behavior of the macOS client's rewrite path: boundaries, bounds, ordering, inser
 | Connection test timeout | 10 s | `serverUnreachable` |
 | Admitted attempts per dictation | 10 | Pre-admission refusal `attempt_limit`: explanation shown, no row, existing attempts kept |
 | In flight | 1 per dictation, 2 overall | Pre-admission refusal `concurrency_limit`, identical from dictation and from history: no row, no ordinal. In the live flow the faithful transcript is inserted immediately and the notice reads "Two rewrites are still running. Original text inserted." with Retry; from history the same text is shown and nothing changes. Running attempts are never cancelled to make room and nothing waits. |
-| Storage quota | `history_usage.payload_bytes` ≤ 33,554,432 | `begin` throws `capacity_exceeded` inside its transaction; no row |
+| Storage quota | `history_usage.payload_bytes` ≤ 1,073,741,824 (1 GiB; updated 4 October 2026) | `begin` throws `capacity_exceeded` inside its transaction; no row |
 | Stream line | 8,192 bytes, except `result` | `malformed_response` |
 | Credential | ≤ 4,096 bytes | Settings validation error |
 | Endpoint | absolute `http`/`https` URL, ≤ 255 bytes origin | Settings validation error |

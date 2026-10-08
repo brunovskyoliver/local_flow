@@ -8,6 +8,7 @@ private final class IndicatorPresentation {
   var level: Float = 0
   var notice: LearnedNotice?
   var actionNotice: RewriteActionNotice?
+  var actionNoticeDeadline: ContinuousClock.Instant?
   var clipboard: ClipboardNotice?
   var background: BackgroundNotice?
   /// Feature 019: "No microphone available" / "<name> didn't respond".
@@ -87,7 +88,8 @@ private struct IndicatorHost: View {
         if let notice = presentation.actionNotice {
           ActionNoticeView(
             message: notice.message, actionTitle: notice.canRetry ? "Retry" : nil,
-            actionIdentifier: "rewrite.notice.retry", action: presentation.action
+            actionIdentifier: "rewrite.notice.retry",
+            countdownDeadline: presentation.actionNoticeDeadline, action: presentation.action
           ).id(notice.id).transition(transition)
         }
       case .background:
@@ -163,6 +165,8 @@ final class IndicatorPanel: NSPanel {
   private var hiddenBackgroundReset: Task<Void, Never>?
   private var clipboardDismissal: Task<Void, Never>?
   private var microphoneDismissal: Task<Void, Never>?
+  private var actionDismissal: Task<Void, Never>?
+  private var actionNoticeDismissed: (UUID) -> Void = { _ in }
   /// True while the main window is focused: background work is on screen there already.
   var suppressesBackgroundNotice = false {
     didSet { if oldValue != suppressesBackgroundNotice { refresh() } }
@@ -310,14 +314,37 @@ final class IndicatorPanel: NSPanel {
   }
 
   /// A rewrite notice with one action (Retry). The learned-correction bubble
-  /// and dictation states take precedence; the message is announced once.
+  /// and dictation states take precedence; the message is announced once and
+  /// expires on the same deadline as its countdown, even while another pill shows.
   func showActionNotice(
-    _ notice: RewriteActionNotice?, targetPoint: NSPoint? = nil, action: @escaping () -> Void
+    _ notice: RewriteActionNotice?, targetPoint: NSPoint? = nil,
+    dismissed: @escaping (UUID) -> Void = { _ in }, action: @escaping () -> Void
   ) {
     let previous = presentation.actionNotice
     presentation.actionNotice = notice
-    presentation.action = action
-    if let notice, previous?.id != notice.id { announce(notice.message) }
+    actionNoticeDismissed = dismissed
+    if let notice {
+      presentation.action = { [weak self] in
+        guard self?.presentation.actionNotice?.id == notice.id else { return }
+        action()
+        self?.dismissActionNotice(id: notice.id)
+      }
+      if previous?.id != notice.id {
+        announce(notice.message)
+        actionDismissal?.cancel()
+        let deadline = ContinuousClock.now.advanced(by: RewriteActionNotice.visibleFor)
+        presentation.actionNoticeDeadline = deadline
+        actionDismissal = Task { [weak self] in
+          do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+          self?.dismissActionNotice(id: notice.id)
+        }
+      }
+    } else {
+      actionDismissal?.cancel()
+      actionDismissal = nil
+      presentation.actionNoticeDeadline = nil
+      presentation.action = {}
+    }
     if let targetPoint, notice != nil { self.targetPoint = targetPoint }
     refresh()
   }
@@ -325,9 +352,15 @@ final class IndicatorPanel: NSPanel {
   /// Clears the action notice only if it is still the one with `id`.
   func dismissActionNotice(id: UUID) {
     guard presentation.actionNotice?.id == id else { return }
+    actionDismissal?.cancel()
+    actionDismissal = nil
     presentation.actionNotice = nil
+    presentation.actionNoticeDeadline = nil
     presentation.action = {}
+    let dismissed = actionNoticeDismissed
+    actionNoticeDismissed = { _ in }
     refresh()
+    dismissed(id)
   }
 
   /// Background work (finalizing, labeling). Lowest precedence; hidden while the main

@@ -686,10 +686,11 @@ final class DictationCoordinatorTests: XCTestCase {
     let root = try makeSpoolRoot()
     ownedDirectories.append(root)
     let path = root.appendingPathComponent("history.sqlite").path
-    let store = try TranscriptionStore(path: path)
+    let rowLimit = 3
+    let store = try TranscriptionStore(path: path, maximumRows: rowLimit)
     let fixture = try DatabaseQueue(path: path)
     try await fixture.write { db in
-      for index in 0..<TranscriptionStore.maximumRows {
+      for index in 0..<rowLimit {
         try db.execute(
           sql: """
             INSERT INTO transcriptions
@@ -699,7 +700,7 @@ final class DictationCoordinatorTests: XCTestCase {
       }
       try db.execute(
         sql: "UPDATE history_usage SET row_count = ?, payload_bytes = ? WHERE id = 1",
-        arguments: [TranscriptionStore.maximumRows, TranscriptionStore.maximumRows * 5])
+        arguments: [rowLimit, rowLimit * 5])
     }
     let capture = FakeCapture()
     let coordinator = try makeCoordinator(store: store, capture: capture)
@@ -1262,6 +1263,36 @@ final class DictationRewriteTests: XCTestCase {
   }
 
   // MARK: Fixture
+
+  func testRetryNoticeExpiryClearsTheCoordinatorAndKeepsTheSavedFailure() async throws {
+    let (coordinator, fixture) = try makeFixture(
+      enabled: true, script: .fail(.serverUnreachable))
+    let panel = IndicatorPanel(animated: false, announce: { _ in })
+    defer { panel.orderOut(nil) }
+    coordinator.rewriteNoticeChanged = { [weak coordinator] notice in
+      panel.showActionNotice(
+        notice, dismissed: { coordinator?.dismissRewriteNotice(id: $0) },
+        action: { coordinator?.retryRewrite() })
+    }
+    try await dictate(coordinator)
+    let notice = try XCTUnwrap(coordinator.rewriteNotice)
+    let savedBefore = try await fixture.store.get(notice.dictationID)
+    let before = try XCTUnwrap(savedBefore)
+    coordinator.dismissRewriteNotice(id: UUID())
+    XCTAssertEqual(coordinator.rewriteNotice?.id, notice.id)
+    try await Task.sleep(for: RewriteActionNotice.visibleFor + .milliseconds(200))
+    XCTAssertNil(coordinator.rewriteNotice)
+    XCTAssertFalse(panel.isVisible)
+    let savedAfter = try await fixture.store.get(notice.dictationID)
+    let after = try XCTUnwrap(savedAfter)
+    XCTAssertEqual(after.text, before.text)
+    XCTAssertEqual(after.revision, before.revision)
+    XCTAssertEqual(after.deliveryState, .confirmed)
+    XCTAssertEqual(after.rewriteState, .failed)
+    let attempts = try await fixture.store.attempts(for: notice.dictationID)
+    XCTAssertEqual(attempts.count, 1)
+    XCTAssertEqual(attempts.first?.failureCategory, .serverUnreachable)
+  }
 
   private struct Fixture {
     let store: TranscriptionStore

@@ -6,10 +6,12 @@ import XCTest
 @testable import LocalFlowCore
 
 final class HistoryQueryTests: XCTestCase {
-  private func makeStore() throws -> (TranscriptionStore, URL) {
+  private func makeStore(maximumRows: Int = TranscriptionStore.maximumRows) throws
+    -> (TranscriptionStore, URL)
+  {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "history-query-\(UUID()).sqlite")
-    return (try TranscriptionStore(path: url.path), url)
+    return (try TranscriptionStore(path: url.path, maximumRows: maximumRows), url)
   }
 
   private func save(_ text: String, at time: Int64 = 1, store: TranscriptionStore) async throws
@@ -187,18 +189,21 @@ final class HistoryQueryTests: XCTestCase {
   }
 
   func testTenThousandRowAdmissionAndExplicitDeleteFreesOneSlot() async throws {
-    let (store, url) = try makeStore()
+    let rowLimit = 10_000
+    let (store, url) = try makeStore(maximumRows: rowLimit)
     defer { removeDatabase(at: url) }
     let database = try DatabaseQueue(path: url.path)
     try await database.write { db in
-      for _ in 0..<10_000 {
+      for _ in 0..<rowLimit {
         try db.execute(
           sql: """
             INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,revision)
             VALUES (?,'x',1,'not_attempted','needs_review','complete','key_release',0)
             """, arguments: [UUID().uuidString])
       }
-      try db.execute(sql: "UPDATE history_usage SET row_count=10000,payload_bytes=10000 WHERE id=1")
+      try db.execute(
+        sql: "UPDATE history_usage SET row_count=?,payload_bytes=? WHERE id=1",
+        arguments: [rowLimit, rowLimit])
     }
     do {
       _ = try await store.reserve()

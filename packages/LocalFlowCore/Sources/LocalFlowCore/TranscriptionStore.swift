@@ -6,8 +6,9 @@ import GRDB
 #endif
 
 public actor TranscriptionStore {
-  public static let maximumRows = 10_000
-  public static let maximumPayloadBytes = 33_554_432
+  public static let maximumRows = 100_000
+  public static let maximumPayloadBytes = 1024 * 1024 * 1024
+  public static let maximumDatabaseBytes = 4 * 1024 * 1024 * 1024
   /// Text, quality detail and (Feature 012) the context row: snapshot 8 KiB,
   /// pre-spelling text 64 KiB and spelling changes 32 KiB.
   public static let reservationBytes = 393_216 + 106_496
@@ -51,6 +52,8 @@ public actor TranscriptionStore {
   /// One writer connection serializes writes; readers see the last committed state.
   public nonisolated let database: DatabasePool
   private let databaseURL: URL
+  private let rowLimit: Int
+  private let payloadLimit: Int
   private var reservations: [UUID: Reservation] = [:]
 
   /// After a checkpoint the WAL is truncated to this size, so the file beside the
@@ -65,11 +68,20 @@ public actor TranscriptionStore {
     }
   }
 
-  public init(path: String, maximumDatabaseBytes: Int = 128 * 1024 * 1024) throws {
-    guard maximumDatabaseBytes > 0, maximumDatabaseBytes <= 128 * 1024 * 1024 else {
+  public init(
+    path: String, maximumDatabaseBytes: Int = TranscriptionStore.maximumDatabaseBytes,
+    maximumRows: Int = TranscriptionStore.maximumRows,
+    maximumPayloadBytes: Int = TranscriptionStore.maximumPayloadBytes
+  ) throws {
+    guard maximumDatabaseBytes > 0, maximumDatabaseBytes <= Self.maximumDatabaseBytes else {
       throw Error.databaseLimitExceeded
     }
+    guard maximumRows > 0, maximumRows <= Self.maximumRows,
+      maximumPayloadBytes > 0, maximumPayloadBytes <= Self.maximumPayloadBytes
+    else { throw Error.capacityExceeded }
     databaseURL = URL(fileURLWithPath: path)
+    rowLimit = maximumRows
+    payloadLimit = maximumPayloadBytes
     // Create the database privately before SQLite creates its WAL and shared-memory
     // files; SQLite gives both the database file's permissions.
     let fd = open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -124,11 +136,11 @@ public actor TranscriptionStore {
       try db.execute(sql: "PRAGMA synchronous=FULL")
       guard try Self.hasDurableSync(db) else { throw Error.databaseLimitExceeded }
     }
-    try Self.verifyDatabaseBounds(database)
+    try Self.verifyDatabaseBounds(database, maximumBytes: maximumDatabaseBytes)
     let migrator = HistoryMigrations.migrator()
     let migrationsPending = try database.read { try !migrator.hasCompletedMigrations($0) }
     try migrator.migrate(database)
-    try Self.verifyDatabaseBounds(database)
+    try Self.verifyDatabaseBounds(database, maximumBytes: maximumDatabaseBytes)
     // Launch reads first and writes only when something needs repair, so an ordinary
     // start neither rescans every payload nor pays for an empty fsynced transaction.
     let repair = try database.read { db in
@@ -211,8 +223,8 @@ public actor TranscriptionStore {
     let reservedBytes = reservations.values.reduce(0) { $0 + $1.bytes }
     try database.read { db in
       let usage = try Self.usage(db)
-      guard usage.count + reservedRows + 1 <= Self.maximumRows,
-        usage.bytes + reservedBytes + reservation.bytes <= Self.maximumPayloadBytes
+      guard usage.count + reservedRows + 1 <= rowLimit,
+        usage.bytes + reservedBytes + reservation.bytes <= payloadLimit
       else {
         throw Error.capacityExceeded
       }
@@ -281,9 +293,9 @@ public actor TranscriptionStore {
         return existing
       }
       let otherReservations = reservations.values.filter { $0.id != reservation.id }
-      guard usage.count + otherReservations.count + 1 <= Self.maximumRows,
+      guard usage.count + otherReservations.count + 1 <= rowLimit,
         usage.bytes + otherReservations.reduce(0, { $0 + $1.bytes }) + entryBytes
-          <= Self.maximumPayloadBytes
+          <= payloadLimit
       else {
         throw Error.capacityExceeded
       }
@@ -803,7 +815,7 @@ public actor TranscriptionStore {
         throw RewriteFailure(.concurrencyLimit)
       }
       let usage = try Self.usage(db)
-      guard usage.bytes + reservedByDictation + reservedBytes <= Self.maximumPayloadBytes else {
+      guard usage.bytes + reservedByDictation + reservedBytes <= payloadLimit else {
         throw RewriteFailure(.capacityExceeded)
       }
       let ordinal =
@@ -1032,11 +1044,11 @@ public actor TranscriptionStore {
     }
   }
 
-  private static func verifyDatabaseBounds(_ db: some DatabaseReader) throws {
+  private static func verifyDatabaseBounds(_ db: some DatabaseReader, maximumBytes: Int) throws {
     try db.read { database in
       let pageSize: Int = try Int.fetchOne(database, sql: "PRAGMA page_size") ?? 0
       let pageCount: Int = try Int.fetchOne(database, sql: "PRAGMA page_count") ?? 0
-      guard pageSize > 0, pageCount * pageSize <= 128 * 1024 * 1024 else {
+      guard pageSize > 0, pageCount * pageSize <= maximumBytes else {
         throw Error.databaseLimitExceeded
       }
     }

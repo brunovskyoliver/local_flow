@@ -91,6 +91,57 @@ final class AppConfigurationTests: XCTestCase {
   }
 
   @MainActor
+  func testRewriteRetryNoticeExpiresWithoutAnotherDictation() async throws {
+    let panel = IndicatorPanel(animated: false, announce: { _ in })
+    defer { panel.orderOut(nil) }
+    var dismissed: [UUID] = []
+    let notice = RewriteActionNotice(
+      dictationID: UUID(), message: "Rewrite server unreachable. Original text inserted.",
+      canRetry: true)
+    panel.showActionNotice(
+      notice, dismissed: { dismissed.append($0) }, action: {})
+    XCTAssertTrue(panel.isVisible)
+    try await Task.sleep(for: RewriteActionNotice.visibleFor + .milliseconds(200))
+    XCTAssertFalse(panel.isVisible, "The retry bubble must expire like the clipboard bubble")
+    XCTAssertFalse(panel.observesGeometryChanges)
+    XCTAssertEqual(dismissed, [notice.id])
+  }
+
+  @MainActor
+  func testActionNoticeReplacementGetsItsOwnDeadlineWithoutExtendingOnRefresh() async throws {
+    var dismissed: [UUID] = []
+    let panel = IndicatorPanel(animated: false, announce: { _ in })
+    defer { panel.orderOut(nil) }
+    let first = RewriteActionNotice(dictationID: UUID(), message: "First", canRetry: true)
+    let second = RewriteActionNotice(dictationID: UUID(), message: "Second", canRetry: true)
+    panel.showActionNotice(first, dismissed: { dismissed.append($0) }, action: {})
+    try await Task.sleep(for: .seconds(3))
+    panel.showActionNotice(second, dismissed: { dismissed.append($0) }, action: {})
+    panel.dismissActionNotice(id: first.id)
+    try await Task.sleep(for: .milliseconds(3_200))
+    XCTAssertTrue(panel.isVisible, "The older deadline cannot dismiss its replacement")
+    XCTAssertTrue(dismissed.isEmpty)
+    panel.showActionNotice(second, dismissed: { dismissed.append($0) }, action: {})
+    try await Task.sleep(for: .seconds(3))
+    XCTAssertFalse(panel.isVisible, "Refreshing the same notice cannot restart its countdown")
+    XCTAssertEqual(dismissed, [second.id])
+  }
+
+  @MainActor
+  func testNonRetryNoticeExpiresWhileDictationKeepsThePanel() async throws {
+    let panel = IndicatorPanel(animated: false, announce: { _ in })
+    defer { panel.orderOut(nil) }
+    panel.showActionNotice(
+      RewriteActionNotice(dictationID: UUID(), message: "Saved to History", canRetry: false),
+      action: {})
+    panel.update(state: .recording, level: 0, cancel: {})
+    try await Task.sleep(for: RewriteActionNotice.visibleFor + .milliseconds(200))
+    XCTAssertTrue(panel.isVisible, "Expiring a covered notice cannot hide a recording")
+    panel.update(state: .idle, level: 0, cancel: {})
+    XCTAssertFalse(panel.isVisible, "The expired notice cannot return after recording")
+  }
+
+  @MainActor
   func testClipboardNoticeTakesPrecedenceOverBackgroundAndDismissesByID() {
     var announcements: [String] = []
     let panel = IndicatorPanel(animated: false) { announcements.append($0) }

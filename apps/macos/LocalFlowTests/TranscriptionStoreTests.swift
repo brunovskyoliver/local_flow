@@ -13,15 +13,53 @@ func removeDatabase(at url: URL) {
 }
 
 final class TranscriptionStoreTests: XCTestCase {
-  private func makeStore() throws -> (TranscriptionStore, URL) {
+  private func makeStore(
+    maximumRows: Int = TranscriptionStore.maximumRows,
+    maximumPayloadBytes: Int = TranscriptionStore.maximumPayloadBytes
+  ) throws -> (TranscriptionStore, URL) {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
       "localflow-history-\(UUID().uuidString).sqlite")
-    return (try TranscriptionStore(path: url.path), url)
+    return (
+      try TranscriptionStore(
+        path: url.path, maximumRows: maximumRows, maximumPayloadBytes: maximumPayloadBytes), url
+    )
   }
 
   private func entry(id: UUID = UUID(), text: String = "hello") throws -> TranscriptionEntry {
     try TranscriptionEntry(
       id: id, text: text, createdAtMilliseconds: 1, quality: .complete, stopReason: .keyRelease)
+  }
+
+  func testAdmissionBeyondTheFormerRowAndPayloadLimits() async throws {
+    let (store, url) = try makeStore()
+    defer { removeDatabase(at: url) }
+    try await store.database.write { db in
+      // Admission reads the durable usage ledger, including reservations.
+      try db.execute(
+        sql: "UPDATE history_usage SET row_count=?, payload_bytes=? WHERE id=1",
+        arguments: [10_000, 33_554_432])
+    }
+    let reservation = try await store.reserve()
+    await store.releaseReservation(reservation)
+  }
+
+  func testDatabaseCanGrowBeyondTheFormerFileLimitAndReopenSavedText() async throws {
+    let (store, url) = try makeStore()
+    defer { removeDatabase(at: url) }
+    let original = try entry(text: "Retained across a larger database.")
+    _ = try await store.commit(reservation: try await store.reserve(), entry: original)
+    try await store.database.write { db in
+      // SQLite generates this on disk; Swift never allocates the large payload.
+      try db.execute(sql: "CREATE TABLE capacity_probe(payload BLOB)")
+      try db.execute(sql: "INSERT INTO capacity_probe VALUES (zeroblob(?))", arguments: [129 << 20])
+    }
+    let reopened = try TranscriptionStore(path: url.path)
+    let saved = try await reopened.get(original.id)
+    XCTAssertEqual(saved?.text, original.text)
+    try await reopened.database.read { db in
+      XCTAssertEqual(try Int.fetchOne(db, sql: "PRAGMA cache_size"), -2048)
+      XCTAssertEqual(try Int.fetchOne(db, sql: "PRAGMA mmap_size"), 0)
+    }
   }
 
   func testStableIDRetryReturnsExistingWithoutResettingStatus() async throws {
@@ -55,12 +93,13 @@ final class TranscriptionStoreTests: XCTestCase {
   }
 
   func testReservationCountsAgainstPayloadCapacity() async throws {
-    let (store, url) = try makeStore()
+    let payloadLimit = TranscriptionStore.reservationBytes + 2 * TranscriptionStore.maximumTextBytes
+    let (store, url) = try makeStore(maximumPayloadBytes: payloadLimit)
     defer { removeDatabase(at: url) }
     // Every commit that still leaves room for one full reservation (Feature 012
     // widened it by the context row's maximum).
     let fits =
-      (TranscriptionStore.maximumPayloadBytes - TranscriptionStore.reservationBytes) / 65_536 + 1
+      (payloadLimit - TranscriptionStore.reservationBytes) / 65_536 + 1
     for _ in 0..<fits {
       let reservation = try await store.reserve()
       let text = String(repeating: "x", count: 65_536)
@@ -158,11 +197,12 @@ final class TranscriptionStoreTests: XCTestCase {
   }
 
   func testRowCountReservationCapacityIsEnforced() async throws {
-    let (store, url) = try makeStore()
+    let rowLimit = 3
+    let (store, url) = try makeStore(maximumRows: rowLimit)
     defer { removeDatabase(at: url) }
     let database = try DatabaseQueue(path: url.path)
     try await database.write { db in
-      for index in 0..<TranscriptionStore.maximumRows {
+      for index in 0..<rowLimit {
         try db.execute(
           sql:
             "INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,revision) VALUES (?,?,?,?,?,?,?,0)",
@@ -174,7 +214,7 @@ final class TranscriptionStoreTests: XCTestCase {
       try db.execute(
         sql:
           "UPDATE history_usage SET row_count=?, payload_bytes=(SELECT sum(length(cast(text AS blob))) FROM transcriptions) WHERE id=1",
-        arguments: [TranscriptionStore.maximumRows])
+        arguments: [rowLimit])
     }
     do {
       _ = try await store.reserve()

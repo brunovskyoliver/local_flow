@@ -425,7 +425,7 @@ extension VocabularySnapshot: Equatable {
   }
 }
 
-/// Shares the history database file and its 128 MiB ceiling; every edit is one transaction.
+/// Shares the history database file and its page ceiling; every edit is one transaction.
 public actor VocabularyStore {
   public static let maximumEntries = 512
   static let maximumPayloadBytes = 1_048_576

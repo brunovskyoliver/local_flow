@@ -405,6 +405,11 @@ final class DictationCoordinator {
 
   func dismissRewriteNotice() { setRewriteNotice(nil) }
 
+  func dismissRewriteNotice(id: UUID) {
+    guard rewriteNotice?.id == id else { return }
+    setRewriteNotice(nil)
+  }
+
   private func setRewriteNotice(_ notice: RewriteActionNotice?) {
     rewriteNotice = notice
     rewriteNoticeChanged?(notice)
