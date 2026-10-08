@@ -371,7 +371,10 @@ struct ActionNoticeView: View {
   /// VoiceOver label of the action; "<title> rewrite" when nil.
   var actionAccessibilityLabel: String? = nil
   var symbol = "text.badge.xmark"
+  var countdownDeadline: ContinuousClock.Instant? = nil
   let action: () -> Void
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var remaining: Double = 1
 
   var body: some View {
     HStack(spacing: 10) {
@@ -387,10 +390,21 @@ struct ActionNoticeView: View {
             .foregroundStyle(Color(red: 245 / 255, green: 245 / 255, blue: 241 / 255))
             .padding(.horizontal, 12).padding(.vertical, 6)
             .background(.white.opacity(0.1), in: Capsule())
+            .overlay {
+              if countdownDeadline != nil {
+                Capsule().trim(from: 0, to: remaining)
+                  .stroke(
+                    PillStyle.ink.opacity(0.9),
+                    style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+              }
+            }
+            .padding(countdownDeadline == nil ? 0 : 1)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(actionAccessibilityLabel ?? "\(actionTitle) rewrite")
         .accessibilityIdentifier(actionIdentifier)
+        .accessibilityHint(
+          countdownDeadline == nil ? "" : "Available here briefly. Retry is also in History.")
       }
     }
     .padding(.leading, 14).padding(.trailing, actionTitle == nil ? 16 : 5)
@@ -400,6 +414,12 @@ struct ActionNoticeView: View {
     .overlay { Capsule().strokeBorder(.white.opacity(0.13), lineWidth: 1) }
     .accessibilityElement(children: .contain)
     .accessibilityLabel(message)
+    .onAppear {
+      guard let countdownDeadline, !reduceMotion else { return }
+      let duration = max(0, ContinuousClock.now.duration(to: countdownDeadline).seconds)
+      remaining = min(1, duration / RewriteActionNotice.visibleFor.seconds)
+      withAnimation(.linear(duration: duration)) { remaining = 0 }
+    }
   }
 }
 

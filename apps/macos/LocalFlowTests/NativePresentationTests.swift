@@ -169,6 +169,14 @@ final class NativePresentationTests: XCTestCase {
         notice: ClipboardNotice(dictationID: UUID(), reason: .notInserted), dismiss: {})
       ClipboardNoticeView(
         notice: ClipboardNotice(dictationID: UUID(), reason: .uncertain), dismiss: {})
+      ActionNoticeView(
+        message: "Rewrite server unreachable. Original text inserted.", actionTitle: "Retry",
+        actionIdentifier: "rewrite.notice.retry",
+        countdownDeadline: .now.advanced(by: RewriteActionNotice.visibleFor), action: {})
+      ActionNoticeView(
+        message: "Rewrite timed out. Original text inserted.", actionTitle: "Retry",
+        actionIdentifier: "rewrite.notice.retry",
+        countdownDeadline: .now.advanced(by: .seconds(3)), action: {})
       BackgroundNoticeView(
         notice: BackgroundNotice(
           id: meeting, message: "Finalizing transcript", symbol: "text.badge.checkmark",
@@ -180,7 +188,7 @@ final class NativePresentationTests: XCTestCase {
     ] {
       try await render(
         pills, to: output.appendingPathComponent("indicator-pills-\(name).png"),
-        appearance: appearance, scheme: scheme, height: 420, width: 460)
+        appearance: appearance, scheme: scheme, height: 540, width: 620)
     }
   }
 

@@ -556,6 +556,7 @@ final class RewriteCoordinator: RewriteRequesting {
 /// What the indicator shows after a rewrite did not deliver: the bounded notice
 /// text and whether Retry applies (never for the attempt limit).
 struct RewriteActionNotice: Sendable, Equatable, Identifiable {
+  static let visibleFor: Duration = .seconds(6)
   let id = UUID()
   let dictationID: UUID
   let message: String

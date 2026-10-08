@@ -109,7 +109,6 @@ final class AppServices {
   @ObservationIgnored private var provisioner: ModelProvisioner?
   @ObservationIgnored private let shortcut = ShortcutController()
   @ObservationIgnored private let panel = IndicatorPanel()
-  @ObservationIgnored private var noticeDismissal: Task<Void, Never>?
   /// Finalizations queued by launch reconciliation; their pill says "Resuming".
   @ObservationIgnored private var resumedFinalizations: Set<UUID> = []
   @ObservationIgnored private var visualTask: Task<Void, Never>?
@@ -620,9 +619,10 @@ final class AppServices {
       }
       coordinator.rewriteNoticeChanged = { [weak self, weak coordinator] notice in
         guard let self else { return }
-        self.panel.showActionNotice(notice, targetPoint: coordinator?.targetDisplayPoint) {
-          coordinator?.retryRewrite()
-        }
+        self.panel.showActionNotice(
+          notice, targetPoint: coordinator?.targetDisplayPoint,
+          dismissed: { coordinator?.dismissRewriteNotice(id: $0) },
+          action: { coordinator?.retryRewrite() })
       }
       coordinator.clipboardFallback = { [weak self, weak coordinator] notice in
         self?.panel.showClipboardNotice(notice, targetPoint: coordinator?.targetDisplayPoint)
@@ -1262,12 +1262,6 @@ final class AppServices {
     let notice = RewriteActionNotice(dictationID: UUID(), message: text, canRetry: false)
     panel.showActionNotice(notice, targetPoint: coordinator?.targetDisplayPoint) { [weak self] in
       self?.router.show(.meetings)
-    }
-    noticeDismissal?.cancel()
-    noticeDismissal = Task { [weak self] in
-      do { try await Task.sleep(for: .seconds(6)) } catch { return }
-      guard let self, !Task.isCancelled else { return }
-      self.panel.dismissActionNotice(id: notice.id)
     }
   }
 
