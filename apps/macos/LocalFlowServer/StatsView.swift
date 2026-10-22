@@ -1,16 +1,24 @@
 import Observation
 import SwiftUI
 
-/// Ingests flowd.log into the stats file every minute while the app runs, whether or not
-/// the window is open, so history outlives log rotation.
+/// Ingests flowd.log into the stats file when the log changes, whether or not the window
+/// is open, so history outlives log rotation. Writes are batched for a minute; a rotation
+/// is ingested at once, because the reader can follow only one rotation between reads.
+/// An idle server with an unchanged log wakes nothing. The figures are aggregated in
+/// SQLite, and only while the Stats tab is on screen or the range changes.
 @MainActor @Observable
 final class StatsModel {
-  private(set) var records: [RequestRecord] = []
+  nonisolated static let ingestDelay: Duration = .seconds(60)
+
+  private(set) var summary = StatsSummary()
   private(set) var failure: String?
+  /// The rewrite model's name from flowd's plist, read with the figures, not per draw.
+  private(set) var rewriteModel = "localflow"
   var days = 7 { didSet { reload() } }
 
   @ObservationIgnored private let store: StatsStore?
-  @ObservationIgnored private var loop: Task<Void, Never>?
+  @ObservationIgnored private var pendingIngest: Task<Void, Never>?
+  @ObservationIgnored private var visible = false
 
   init() {
     do {
@@ -21,12 +29,31 @@ final class StatsModel {
       store = nil
       failure = "Could not open the stats file: \(error.localizedDescription)"
     }
-    loop = Task { [weak self] in
-      while !Task.isCancelled {
-        await self?.ingest()
-        try? await Task.sleep(for: .seconds(60))
-      }
+    // Catch up with whatever flowd logged while the app was not running.
+    Task { [weak self] in await self?.ingest() }
+  }
+
+  /// From the monitor's log watcher.
+  func logChanged(rotated: Bool) {
+    if rotated {
+      pendingIngest?.cancel()
+      pendingIngest = nil
+      Task { await ingest() }
+      return
     }
+    guard pendingIngest == nil else { return }
+    pendingIngest = Task { [weak self] in
+      try? await Task.sleep(for: Self.ingestDelay, tolerance: .seconds(10))
+      guard !Task.isCancelled else { return }
+      self?.pendingIngest = nil
+      await self?.ingest()
+    }
+  }
+
+  func setVisible(_ visible: Bool) {
+    let appeared = visible && !self.visible
+    self.visible = visible
+    if appeared { Task { await ingest() } }
   }
 
   func ingest() async {
@@ -37,24 +64,21 @@ final class StatsModel {
     if case .failure(let error) = result {
       failure = "Ingest failed: \(error.localizedDescription)"
     }
-    reload()
+    if visible { reload() }
   }
 
   private func reload() {
     guard let store else { return }
-    do { records = try store.records(days: days) } catch {
+    do { summary = try store.summary(days: days) } catch {
       failure = "Could not read the stats file: \(error.localizedDescription)"
     }
+    rewriteModel = AgentPlist.arguments(Server.plist)?.value(after: "--model") ?? "localflow"
   }
 }
 
 struct StatsView: View {
   @Bindable var stats: StatsModel
   let monitor: ServerMonitor
-
-  private var requests: [RequestRecord] {
-    stats.records.filter { $0.service != RequestRecord.analysisCall }
-  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -71,7 +95,7 @@ struct StatsView: View {
         Button("Refresh") { Task { await stats.ingest() } }
       }
       if let failure = stats.failure { Text(failure).foregroundStyle(.red) }
-      Table(ServiceDay.summarize(requests)) {
+      Table(stats.summary.serviceDays) {
         TableColumn("Day", value: \.day)
         TableColumn("Service", value: \.service)
         TableColumn("Requests") { Text("\($0.requests)").monospacedDigit() }
@@ -81,11 +105,10 @@ struct StatsView: View {
       }
       HStack(alignment: .top, spacing: 16) {
         GroupBox("Failure codes") {
-          let codes = Dictionary(grouping: requests.filter(\.failed), by: \.code)
-            .map { ($0.key, $0.value.count) }.sorted { $0.1 > $1.1 }
+          let codes = stats.summary.failureCodes
           VStack(alignment: .leading, spacing: 4) {
             if codes.isEmpty { Text("None").foregroundStyle(.secondary) }
-            ForEach(codes, id: \.0) { Text("\($0.0): \($0.1)").monospacedDigit() }
+            ForEach(codes, id: \.code) { Text("\($0.code): \($0.count)").monospacedDigit() }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -94,22 +117,23 @@ struct StatsView: View {
         }
       }
     }
+    .onAppear { stats.setVisible(true) }
+    .onDisappear { stats.setVisible(false) }
   }
 
   /// How often an analysis call was answered by the rewrite model although a separate
   /// summaries backend was set (backend.Fallback logs the model that answered).
   private var fallbackText: String {
-    let calls = stats.records.filter { $0.service == RequestRecord.analysisCall }
-    let rewriteModel = AgentPlist.arguments(Server.plist)?.value(after: "--model") ?? "localflow"
-    let byModel = Dictionary(grouping: calls) { $0.model ?? "-" }
-      .map { "\($0.key): \($0.value.count)" }.sorted().joined(separator: ", ")
-    guard !calls.isEmpty else { return "No analysis calls in this range." }
+    let byModel = stats.summary.analysisCalls
+    let total = byModel.values.reduce(0, +)
+    let models = byModel.map { "\($0.key): \($0.value)" }.sorted().joined(separator: ", ")
+    guard total > 0 else { return "No analysis calls in this range." }
     guard monitor.snapshot.analysisBackend != nil else {
       return
-        "\(calls.count) analysis calls, all on the rewrite model (no separate backend). \(byModel)"
+        "\(total) analysis calls, all on the rewrite model (no separate backend). \(models)"
     }
-    let fellBack = calls.filter { $0.model == rewriteModel }.count
-    return "\(fellBack) of \(calls.count) analysis calls fell back to the rewrite model. \(byModel)"
+    let fellBack = byModel[stats.rewriteModel] ?? 0
+    return "\(fellBack) of \(total) analysis calls fell back to the rewrite model. \(models)"
   }
 
   private static func ms(_ value: Int) -> String {

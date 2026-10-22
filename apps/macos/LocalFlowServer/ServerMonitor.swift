@@ -1,12 +1,21 @@
 import Foundation
 import Observation
 
-/// Polls the two agents, flowd's health endpoints and oMLX every 5 s, and follows
-/// flowd.log every second. Feeds the menu bar and the window.
+/// Polls the two agents, flowd's health endpoints and oMLX, and follows flowd.log when it
+/// changes. Feeds the menu bar and the window. How much it does depends on what is on
+/// screen: with nothing open only the menu bar icon needs health, every 30 s; an open
+/// menu polls health every 5 s; the open window also polls flowd's admin counters and
+/// process memory every 5 s. Opening the menu or window, and an administrative action,
+/// poll at once.
 @MainActor @Observable
 final class ServerMonitor {
   /// The log view's memory bound.
   nonisolated static let lineLimit = 5000
+
+  typealias Demand = MonitorDemand
+
+  /// Bursts of log writes are read at most once per this interval.
+  nonisolated static let logCoalescing: Duration = .seconds(1)
 
   private(set) var snapshot = ServerSnapshot()
   private(set) var statuses: [ServiceStatus] = []
@@ -16,32 +25,74 @@ final class ServerMonitor {
   private(set) var adminStatus: AdminStatus?
   private(set) var swap: (used: UInt64, total: UInt64)?
   var overall: Health { ServerSnapshot.overall(statuses) }
+  /// Called on every flowd.log change; `rotated` for a rename or deletion.
+  @ObservationIgnored var onLogChanged: (@MainActor (_ rotated: Bool) -> Void)?
 
   @ObservationIgnored private var reader = LogReader.fromStart(
     log: Server.log, rotated: Server.rotatedLog)
   @ObservationIgnored private var workers = WorkerStates()
   @ObservationIgnored private var nextLineID = 0
   @ObservationIgnored private var loop: Task<Void, Never>?
+  @ObservationIgnored private var watcher: LogWatcher?
+  @ObservationIgnored private var logRead: Task<Void, Never>?
+  @ObservationIgnored private var logDirty = false
+  @ObservationIgnored private var menuVisible = false
+  @ObservationIgnored private var windowVisible = false
+  @ObservationIgnored private(set) var demand = Demand.idle
 
   init() {
-    loop = Task { [weak self] in
-      var tick = 0
-      while !Task.isCancelled {
-        await self?.readLog()
-        if tick % 5 == 0 { await self?.poll() }
-        tick += 1
-        try? await Task.sleep(for: .seconds(1))
-      }
+    watcher = LogWatcher(url: Server.log) { [weak self] rotated in
+      self?.logChanged(rotated: rotated)
     }
+    scheduleLogRead()
+    startLoop(pollNow: true)
+  }
+
+  func setMenuVisible(_ visible: Bool) {
+    menuVisible = visible
+    updateDemand()
+  }
+
+  func setWindowVisible(_ visible: Bool) {
+    windowVisible = visible
+    updateDemand()
+  }
+
+  private func updateDemand() {
+    let next: Demand = windowVisible ? .window : menuVisible ? .menu : .idle
+    guard next != demand else { return }
+    let more = next == .window || (next == .menu && demand == .idle)
+    demand = next
+    // More on screen polls at once; less only lengthens the next wait.
+    startLoop(pollNow: more)
   }
 
   /// Polls now, e.g. after a restart.
   func refresh() async {
     await readLog()
-    await poll()
+    await poll(detailed: true)
   }
 
-  private func poll() async {
+  private func startLoop(pollNow: Bool) {
+    loop?.cancel()
+    loop = Task { [weak self] in
+      var wait = !pollNow
+      while !Task.isCancelled {
+        if wait {
+          guard let interval = self?.demand.interval else { return }
+          try? await Task.sleep(for: interval, tolerance: interval / 5)
+          guard !Task.isCancelled else { return }
+        }
+        wait = true
+        guard let self else { return }
+        await self.poll(detailed: self.demand.detailed)
+      }
+    }
+  }
+
+  private func poll(detailed: Bool) async {
+    // A log that did not exist at launch, or a failed reopen after rotation.
+    if let watcher, !watcher.isWatching, watcher.rearm() { logChanged(rotated: true) }
     async let flowd = Launchctl.job(Server.label)
     async let mtplx = Launchctl.job(Server.mtplxLabel)
     async let rewrite = Self.health("/v1/rewrite/health")
@@ -53,11 +104,37 @@ final class ServerMonitor {
     next.analysisBackend = AgentPlist.arguments(Server.plist)?.value(after: "--analysis-backend")
     snapshot = next
     statuses = next.statuses
+    guard detailed else { return }
     adminStatus = await AdminAPI.status()
     let (flowdPID, mtplxPID) = (next.flowd?.pid, next.mtplx?.pid)
     (processes, swap) = await Task.detached {
       (ProcessStats.serverProcesses(flowd: flowdPID, mtplx: mtplxPID), ProcessStats.swap())
     }.value
+  }
+
+  private func logChanged(rotated: Bool) {
+    onLogChanged?(rotated)
+    scheduleLogRead()
+  }
+
+  /// One read now, then at most one more per `logCoalescing` while writes keep coming.
+  private func scheduleLogRead() {
+    guard logRead == nil else {
+      logDirty = true
+      return
+    }
+    logRead = Task { [weak self] in
+      await self?.readLog()
+      try? await Task.sleep(for: Self.logCoalescing)
+      self?.finishLogRead()
+    }
+  }
+
+  private func finishLogRead() {
+    logRead = nil
+    guard logDirty else { return }
+    logDirty = false
+    scheduleLogRead()
   }
 
   /// The model each service runs, from the workers' ready lines and the agents' plists.

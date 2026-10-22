@@ -39,20 +39,41 @@ enum IdleTimeout: String, CaseIterable, Identifiable, Sendable {
   }
 }
 
-/// A 1 s tick, so a session ends at most 1 s after its deadline (SC-009 allows 10 s).
+/// One cancellable timer for the ready session's idle deadline. Nothing runs while no
+/// session waits for one, so an idle app has no periodic wakeup. The fire is allowed 1 s
+/// of tolerance, so a session ends at most about 1 s after its deadline (SC-009 allows
+/// 10 s). `SessionController.tick` checks the deadline itself and reports it again when
+/// a fire arrives early (for example after a wall-clock change).
 @MainActor
 final class IdleTimer {
-  private var timer: Timer?
+  static let tolerance: TimeInterval = 1
 
-  func start(_ tick: @escaping @MainActor () -> Void) {
-    timer?.invalidate()
-    timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-      MainActor.assumeIsolated { tick() }
+  private var timer: Timer?
+  private(set) var deadline: Date?
+
+  var isArmed: Bool { timer != nil }
+
+  /// Arms one fire at `deadline`, replacing any earlier one; nil disarms.
+  func schedule(at deadline: Date?, _ fire: @escaping @MainActor () -> Void) {
+    if deadline == self.deadline, deadline == nil || timer != nil { return }
+    stop()
+    guard let deadline else { return }
+    self.deadline = deadline
+    let timer = Timer(fire: deadline, interval: 0, repeats: false) { [weak self] _ in
+      MainActor.assumeIsolated {
+        self?.timer = nil
+        self?.deadline = nil
+        fire()
+      }
     }
+    timer.tolerance = Self.tolerance
+    RunLoop.main.add(timer, forMode: .common)
+    self.timer = timer
   }
 
   func stop() {
     timer?.invalidate()
     timer = nil
+    deadline = nil
   }
 }

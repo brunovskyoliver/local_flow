@@ -5,7 +5,7 @@ import SwiftUI
 /// globe bottom left. The same rect shows the rolling wave and the notices.
 struct ListeningView: View {
   let model: KeyboardSessionModel
-  let levels: LevelsReader?
+  let levels: LevelsFeed?
   let needsGlobe: Bool
   let nextKeyboard: () -> Void
   let stop: () -> Void
@@ -49,10 +49,11 @@ struct ListeningView: View {
       EmptyView()
     case .listening(let startedAt, let inputName):
       VStack(spacing: 10) {
-        TimelineView(.animation(minimumInterval: 1 / 30)) { _ in
-          LargeWaveform(
-            levels: levels?.levels() ?? Array(repeating: 0, count: LevelsFile.slotCount))
-        }
+        // Redraws when the feed publishes new levels, not on a 30 Hz clock that reads the
+        // file inside drawing. The feed samples only while this is on screen.
+        LargeWaveform(levels: levels?.levels ?? Array(repeating: 0, count: LevelsFile.slotCount))
+          .onAppear { levels?.start() }
+          .onDisappear { levels?.stop() }
         TimelineView(.periodic(from: .now, by: 1)) { context in
           Text(BarStatus.listening(startedAt: startedAt, now: context.date))
             .font(.flow(size: 16, weight: .medium)).monospacedDigit()

@@ -109,18 +109,49 @@ final class FrameWriter: @unchecked Sendable {
 }
 
 /// Reads frames on a dedicated thread so a blocking read never holds the main actor.
+/// Bounded: at most `capacity` frames are read but not yet taken by the job loop. The
+/// reader thread blocks before reading another, so stdin (and flowd's writer) waits
+/// instead of the worker buffering payloads of up to 38.4 MB without limit.
 final class FrameReader: @unchecked Sendable {
   struct Box: @unchecked Sendable { let frame: WorkerFraming.Frame? }
-  let frames: AsyncThrowingStream<Box, any Error>
+  static let capacity = 2
+
+  struct Frames: AsyncSequence {
+    let stream: AsyncThrowingStream<Box, any Error>
+    let slots: DispatchSemaphore
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+      var base: AsyncThrowingStream<Box, any Error>.AsyncIterator
+      let slots: DispatchSemaphore
+
+      mutating func next() async throws -> Box? {
+        guard let box = try await base.next() else { return nil }
+        slots.signal()
+        return box
+      }
+    }
+
+    func makeAsyncIterator() -> AsyncIterator {
+      AsyncIterator(base: stream.makeAsyncIterator(), slots: slots)
+    }
+  }
+
+  let frames: Frames
 
   init() {
     var continuation: AsyncThrowingStream<Box, any Error>.Continuation!
-    frames = AsyncThrowingStream { continuation = $0 }
+    // The semaphore keeps the buffer within capacity, so this policy never drops.
+    let stream = AsyncThrowingStream<Box, any Error>(
+      bufferingPolicy: .bufferingOldest(Self.capacity)
+    ) { continuation = $0 }
+    let slots = DispatchSemaphore(value: Self.capacity)
+    frames = Frames(stream: stream, slots: slots)
     let output = continuation!
     let thread = Thread {
       let input = FileHandle.standardInput
       do {
         while true {
+          slots.wait()
           let frame = try WorkerFraming.read { count in
             var data = Data()
             while data.count < count {
@@ -130,7 +161,11 @@ final class FrameReader: @unchecked Sendable {
             }
             return data
           }
-          output.yield(Box(frame: frame))
+          if case .dropped = output.yield(Box(frame: frame)) {
+            // Unreachable while the semaphore holds; fail loudly rather than lose a job.
+            log("frame_overflow")
+            exit(1)
+          }
           if frame == nil { break }
         }
         output.finish()
@@ -314,8 +349,10 @@ final class PromptTerms: @unchecked Sendable {
 }
 
 /// Feature 018: the meeting worker. One coordinator owns Whisper Turbo, the diarizer and
-/// the voice embedder, one resident at a time; nothing loads until the first job, and
-/// the resident model is released after 10 idle minutes. One job at a time.
+/// the voice embedder, one resident at a time; nothing loads until the first job. The
+/// coordinator's meeting-worker retention keeps the resident model between jobs of the
+/// same kind and language, releases it before another kind loads, and releases it after
+/// 10 idle minutes. One job at a time.
 func meeting(models: URL, helper: URL, descriptors: MeetingDescriptors) async -> Int32 {
   let writer = FrameWriter()
   FluidAudioDiarizerFactory.enableOfflineMode()
@@ -337,12 +374,15 @@ func meeting(models: URL, helper: URL, descriptors: MeetingDescriptors) async ->
   }
   let terms = PromptTerms()
   let lifecycle = ModelLifecycleCoordinator(
+    retention: .meetingWorker,
     observe: { state, _, duration in
       guard duration == 0 else { return }
       switch state {
       case .preparing: writer.sendState("loading")
       case .active: writer.sendState("active")
-      case .releasing: writer.sendState("releasing")
+      case .releasing:
+        writer.sendState("releasing")
+        log("state=releasing")
       default: break
       }
     },
@@ -366,10 +406,8 @@ func meeting(models: URL, helper: URL, descriptors: MeetingDescriptors) async ->
         return (process.processIdentifier, process)
       }
     },
+    // This worker has no live speech; its retention policy never tries to warm it.
     factory: { throw DictationFailure.modelUnavailable })
-  // The worker's own idle timer releases the model; the coordinator's 30 s cooldown
-  // would reload Whisper between a meeting's windows.
-  await lifecycle.setKeepLoaded(true)
   func identity(_ engine: String, _ descriptor: ModelDescriptor, _ hash: String) -> [String: Any] {
     [
       "engine": engine, "model_id": descriptor.modelID,
@@ -387,12 +425,9 @@ func meeting(models: URL, helper: URL, descriptors: MeetingDescriptors) async ->
       voice: voice))
   log("state=ready")
 
-  var idle: Task<Void, Never>?
-  defer { idle?.cancel() }
   do {
     for try await box in FrameReader().frames {
       guard let frame = box.frame else { break }
-      idle?.cancel()
       switch frame.type {
       case "transcribe", "diarize", "embed":
         guard let job = frame.integer("job") else {
@@ -424,12 +459,6 @@ func meeting(models: URL, helper: URL, descriptors: MeetingDescriptors) async ->
           writer.send(MeetingWorkerMessages.error(job: job, code: code))
           log("job=\(job) kind=\(kind) samples=\(samples.count) code=\(code)")
         }
-        idle = Task {
-          try? await Task.sleep(for: .seconds(600))
-          guard !Task.isCancelled else { return }
-          try? await lifecycle.unloadIfIdle()
-          log("state=idle_release")
-        }
       case "shutdown":
         log("state=shutdown")
         try? await lifecycle.shutdownIfIdle()
@@ -447,7 +476,8 @@ func meeting(models: URL, helper: URL, descriptors: MeetingDescriptors) async ->
   return 0
 }
 
-/// One job under its own lease; the lease ends with the job.
+/// One job under its own lease; the lease ends with the job. Finishing keeps the runtime
+/// for the next job of the same kind and language; a failure releases it.
 func runMeetingJob(
   _ kind: String, frame: WorkerFraming.Frame, samples: [Float],
   lifecycle: ModelLifecycleCoordinator, terms: PromptTerms

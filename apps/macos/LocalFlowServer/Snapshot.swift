@@ -10,6 +10,8 @@ enum Snapshot {
   static let active = ProcessInfo.processInfo.environment["LOCALFLOW_SERVER_SNAPSHOT_DIR"] != nil
 
   static func schedule(monitor: ServerMonitor, stats: StatsModel, into directory: URL) {
+    // Offscreen renders still need the window's detailed polling.
+    monitor.setWindowVisible(true)
     Task {
       try? await Task.sleep(for: .seconds(8))  // a few polls and the log backlog
       try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

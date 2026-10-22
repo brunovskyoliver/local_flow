@@ -95,6 +95,55 @@ final class StatsTests: XCTestCase {
     XCTAssertEqual(try reopened.records(days: 1, now: now).count, 1)
   }
 
+  /// The SQL aggregation gives exactly what summarizing every fetched row gives, p95
+  /// included, for group sizes that exercise every nearest-rank boundary.
+  func testSQLSummaryMatchesTheRowSummary() throws {
+    let store = try StatsStore(path: directory.appending(path: "stats.sqlite").path)
+    var lines: [String] = []
+    let services = ["rewrite", "dictation", "meeting"]
+    for size in [1, 2, 3, 7, 19, 20, 21, 40, 59, 60, 61, 101] {
+      let service = services[size % services.count]
+      let day = 1 + size % 3
+      for index in 0..<size {
+        let duration = (index * 7_919) % 4_001 + 1
+        let code = index % 9 == 4 ? "busy" : index % 11 == 5 ? "failed" : "ok"
+        lines.append(
+          "flowd 2026/10/0\(day) 10:00:00 remote \(service) channel=1 user=1 device=1 op=1 duration_ms=\(duration) code=\(code)"
+        )
+      }
+      lines.append(
+        "flowd 2026/10/0\(day) 10:00:01 remote \(service) channel=1 user=1 device=1 op=1 code=busy")
+    }
+    lines.append(
+      "flowd 2026/10/02 10:00:00 request_id=A run_id=B stage=chunk input_bytes=1 output_bytes=2 duration_ms=3000 queue_ms=0 preemptions=0 attempts=2 model=localflow rejected=- code=succeeded detail=-"
+    )
+    lines.append(
+      "flowd 2026/10/02 10:00:00 request_id=A run_id=B stage=merge input_bytes=1 output_bytes=2 duration_ms=3000 queue_ms=0 preemptions=0 attempts=1 model=summaries rejected=- code=succeeded detail=-"
+    )
+    try write(lines, to: log)
+    let now = try XCTUnwrap(LogLine("flowd 2026/10/03 12:00:00 x=1").date)
+    try store.ingest(log: log, rotated: rotated, now: now)
+    let records = try store.records(days: 7, now: now)
+    let summary = try store.summary(days: 7, now: now)
+    let requests = records.filter { $0.service != RequestRecord.analysisCall }
+    XCTAssertEqual(summary.serviceDays, ServiceDay.summarize(requests))
+    let codes = Dictionary(grouping: requests.filter(\.failed), by: \.code).mapValues(\.count)
+    XCTAssertEqual(
+      Dictionary(uniqueKeysWithValues: summary.failureCodes.map { ($0.code, $0.count) }), codes)
+    XCTAssertEqual(
+      summary.failureCodes.map(\.count), summary.failureCodes.map(\.count).sorted(by: >))
+    XCTAssertEqual(summary.analysisCalls, ["localflow": 1, "summaries": 1])
+    XCTAssertEqual(try store.summary(days: 1, now: now).serviceDays.map(\.day), ["2026-10-03"])
+  }
+
+  func testNearestRankUsesWholeNumbersAtEveryBoundary() {
+    for count in 1...400 {
+      let sorted = Array(1...count)
+      XCTAssertEqual(ServiceDay.percentile(sorted, 0.95), (count * 95 + 99) / 100, "\(count)")
+      XCTAssertEqual(ServiceDay.percentile(sorted, 0.5), (count + 1) / 2, "\(count)")
+    }
+  }
+
   func testOldRowsAreDropped() throws {
     let store = try StatsStore(path: directory.appending(path: "stats.sqlite").path)
     try write(

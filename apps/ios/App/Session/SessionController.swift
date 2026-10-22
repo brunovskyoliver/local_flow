@@ -72,6 +72,9 @@ final class SessionController {
   @ObservationIgnored private(set) var pendingSave: PendingSave?
 
   @ObservationIgnored var onChange: (() -> Void)?
+  /// Every state change reports `pendingIdleDeadline`, so the app arms one timer for it
+  /// instead of ticking while no session waits.
+  @ObservationIgnored var onIdleDeadline: ((Date?) -> Void)?
   /// Keyboard dictations, for `result.json`.
   @ObservationIgnored var onResult: ((DictationResult) -> Void)?
   /// In-app notes, which never go to the keyboard.
@@ -178,12 +181,23 @@ final class SessionController {
     changed()
   }
 
-  /// Every second: ends a `ready` session whose deadline has passed.
+  /// At the idle deadline: ends a `ready` session whose deadline has passed. An early
+  /// fire re-arms the timer for the same deadline.
   func tick() {
-    guard let session, session.state == .ready, let deadline = session.idleDeadline,
-      now() >= deadline
-    else { return }
+    guard let session, session.state == .ready, let deadline = session.idleDeadline else {
+      return
+    }
+    guard now() >= deadline else {
+      onIdleDeadline?(deadline)
+      return
+    }
     end(.idleTimeout)
+  }
+
+  /// The deadline `tick()` must run at: a `ready` session's idle deadline, else nil.
+  var pendingIdleDeadline: Date? {
+    guard let session, session.state == .ready else { return nil }
+    return session.idleDeadline
   }
 
   func memoryWarning() {
@@ -371,7 +385,10 @@ final class SessionController {
     if notify { changed() }
   }
 
-  private func changed() { onChange?() }
+  private func changed() {
+    onIdleDeadline?(pendingIdleDeadline)
+    onChange?()
+  }
 
   /// `session.json` for the keyboard.
   func sessionFile() -> SessionFile? {

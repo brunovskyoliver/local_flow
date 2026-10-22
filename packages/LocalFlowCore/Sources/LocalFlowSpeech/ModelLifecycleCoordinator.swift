@@ -5,6 +5,21 @@ import Foundation
 /// voice embedder are never resident together (FR-032, ADR 0017, ADR 0020).
 public actor ModelLifecycleCoordinator {
   public enum State: Sendable, Equatable { case unloaded, preparing, active, cooling, releasing }
+
+  /// What happens to a runtime when its lease finishes.
+  public enum RetentionPolicy: Sendable, Equatable {
+    /// The app's policy: live speech cools down for 30 seconds (or stays while Keep model
+    /// ready is on); meeting, diarization and identification runtimes release at once, and
+    /// Keep model ready then re-prepares live speech.
+    case client
+    /// A server worker's policy (contracts/meeting-worker-ipc.md): every workload stays
+    /// resident after its lease until a job of another workload or meeting language
+    /// arrives, or `idle` passes with no lease. Live speech is never warmed.
+    case retainWorkload(idle: Duration)
+
+    /// The Feature 018 meeting worker: the resident model is released after 10 idle minutes.
+    public static let meetingWorker = RetentionPolicy.retainWorkload(idle: .seconds(600))
+  }
   public typealias Factory = @Sendable () async throws -> any TranscriptionRuntime
   public typealias DiarizationFactory = @Sendable () async throws -> any DiarizationRuntime
 
@@ -47,6 +62,7 @@ public actor ModelLifecycleCoordinator {
   private let diarizationFactory: DiarizationFactory
   private let voiceEmbeddingFactory: VoiceEmbeddingFactory
   private let clock: any DictationClock
+  private let retention: RetentionPolicy
   private let observe: @Sendable (State, ModelWorkload, UInt64) -> Void
   private var stateStarted = DispatchTime.now().uptimeNanoseconds
   private var runtime: Resident?
@@ -90,6 +106,7 @@ public actor ModelLifecycleCoordinator {
 
   public init(
     clock: any DictationClock = SystemDictationClock(),
+    retention: RetentionPolicy = .client,
     observe: @escaping @Sendable (State, ModelWorkload, UInt64) -> Void = { _, _, _ in },
     diarizationFactory: @escaping DiarizationFactory = { throw DictationFailure.modelUnavailable },
     voiceEmbeddingFactory: @escaping VoiceEmbeddingFactory = {
@@ -99,6 +116,7 @@ public actor ModelLifecycleCoordinator {
     factory: @escaping Factory
   ) {
     self.clock = clock
+    self.retention = retention
     self.factory = factory
     self.meetingFactory = meetingFactory
     self.diarizationFactory = diarizationFactory
@@ -354,9 +372,10 @@ public actor ModelLifecycleCoordinator {
     }
   }
 
-  /// Live speech cools down; meeting, diarization and identification leases release at
-  /// once, then Keep model ready re-prepares the live speech runtime unless speaker
-  /// work is still queued.
+  /// Under the client policy live speech cools down; meeting, diarization and
+  /// identification leases release at once, then Keep model ready re-prepares the live
+  /// speech runtime unless speaker work is still queued. Under `retainWorkload` every
+  /// workload cools down until its idle deadline.
   public func finish(_ lease: ModelLease) async throws {
     guard owner == lease else { throw DictationFailure.staleLease }
     guard inference == nil, diarizing == nil, embedding == nil, loading == nil else {
@@ -364,7 +383,7 @@ public actor ModelLifecycleCoordinator {
     }
     owner = nil
     if warmLease == lease { warmLease = nil }
-    guard lease.workload != .speechRecognition else {
+    guard lease.workload != .speechRecognition, retention == .client else {
       state = .cooling
       scheduleCooldown()
       notifyAvailable()
@@ -378,7 +397,9 @@ public actor ModelLifecycleCoordinator {
   /// Keep model ready re-prepares live speech once nothing else wants the model:
   /// not while a lease is held, an install runs, or speaker work is still queued.
   private func warmIfNeeded() {
-    guard keepLoaded, owner == nil, !installing, state == .unloaded, !hasSpeakerDemand else {
+    guard retention == .client, keepLoaded, owner == nil, !installing, state == .unloaded,
+      !hasSpeakerDemand
+    else {
       return
     }
     Task { await self.warm() }
@@ -443,20 +464,27 @@ public actor ModelLifecycleCoordinator {
     cooldownGeneration &+= 1
     cooldown?.cancel()
     cooldown = nil
-    if !enabled, owner == nil, state == .cooling { scheduleCooldown() }
+    // Keep model ready never suspends a server worker's idle deadline.
+    if !enabled || retention != .client, owner == nil, state == .cooling { scheduleCooldown() }
   }
 
   private func scheduleCooldown() {
     cooldownGeneration &+= 1
     cooldown?.cancel()
     cooldown = nil
-    guard !keepLoaded else { return }
+    let interval: Duration
+    switch retention {
+    case .client:
+      guard !keepLoaded else { return }
+      interval = .seconds(30)
+    case .retainWorkload(let idle): interval = idle
+    }
     let deadline = cooldownGeneration
     let expected = generation
     let clock = clock
     cooldown = Task { [weak self] in
       do {
-        try await clock.sleep(for: .seconds(30))
+        try await clock.sleep(for: interval)
         try Task.checkCancellation()
         await self?.releaseIfIdle(generation: expected, deadline: deadline)
       } catch {
@@ -522,7 +550,8 @@ public actor ModelLifecycleCoordinator {
   }
 
   func releaseIfIdle(generation expected: UInt64, deadline: UInt64? = nil) async {
-    guard !keepLoaded, generation == expected, owner == nil, state == .cooling,
+    guard retention != .client || !keepLoaded, generation == expected, owner == nil,
+      state == .cooling,
       deadline == nil || deadline == cooldownGeneration
     else { return }
     await beginRelease()

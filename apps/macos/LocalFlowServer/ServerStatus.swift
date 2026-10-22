@@ -1,5 +1,21 @@
 import Foundation
 
+/// What of the server app is on screen, which sets how often and how much
+/// `ServerMonitor` polls. With nothing open, only the menu bar icon needs health.
+enum MonitorDemand: Equatable, Sendable {
+  case idle, menu, window
+
+  var interval: Duration {
+    switch self {
+    case .idle: .seconds(30)
+    case .menu, .window: .seconds(5)
+    }
+  }
+
+  /// The window's Overview shows flowd's counters and the process table.
+  var detailed: Bool { self == .window }
+}
+
 enum Health: Int, Comparable, Sendable {
   case ready, loading, down
 

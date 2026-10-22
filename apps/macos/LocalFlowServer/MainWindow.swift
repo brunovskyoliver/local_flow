@@ -16,6 +16,9 @@ struct MainWindow: View {
     }
     .padding()
     .frame(minWidth: 720, minHeight: 480)
+    // Process memory and flowd's counters are polled only while the window is open.
+    .onAppear { monitor.setWindowVisible(true) }
+    .onDisappear { monitor.setWindowVisible(false) }
   }
 }
 
@@ -30,26 +33,37 @@ struct OverviewView: View {
             GridRow {
               Text("Process")
               Text("PID")
-              Text("Memory").gridColumnAlignment(.trailing)
+              Text("Footprint").gridColumnAlignment(.trailing)
+              Text("Resident").gridColumnAlignment(.trailing)
               Text("Up for")
             }
             .foregroundStyle(.secondary)
             ForEach(monitor.processes) { process in
               GridRow {
-                Text(process.name)
+                Text(process.name).padding(.leading, CGFloat(process.depth) * 12)
                 Text(String(process.pid)).monospacedDigit()
                 Text(Format.bytes(process.footprint)).monospacedDigit()
+                Text(Format.bytes(process.resident)).monospacedDigit()
                 Text(process.started.map(Format.age) ?? "–")
               }
             }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(4)
+          Text(
+            "Footprint is what Activity Monitor calls Memory. Resident also counts shared and mapped pages, such as model files, so it is not a model's own working set."
+          )
+          .font(.caption).foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 4)
         }
         GroupBox("Memory") {
           pairs([
             ("Physical memory", Format.bytes(ProcessInfo.processInfo.physicalMemory)),
-            ("Server processes", Format.bytes(monitor.processes.map(\.footprint).reduce(0, +))),
+            (
+              "Server processes (sum of footprints)",
+              Format.bytes(monitor.processes.map(\.footprint).reduce(0, +))
+            ),
             (
               "Swap used",
               monitor.swap.map { "\(Format.bytes($0.used)) of \(Format.bytes($0.total))" } ?? "–"

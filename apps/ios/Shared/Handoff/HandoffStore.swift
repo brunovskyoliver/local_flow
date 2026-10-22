@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// The App Group `Handoff/` directory. Each file has one writer and every write replaces
 /// the whole file atomically; a missing, unparseable or unknown-version file reads as nil.
@@ -57,5 +58,68 @@ struct HandoffStore: Sendable {
 
   func remove(_ name: Name) {
     try? FileManager.default.removeItem(at: url(name))
+  }
+}
+
+/// The keyboard waveform's source. It samples the app's level ring off the drawing path,
+/// at most `rate` times a second while the listening view is up, and publishes only when
+/// the ring moved, so the waveform redraws at the producer's pace (never above `rate`)
+/// and not at all while no levels arrive. A sample opens, reads 128 bytes into a reused
+/// buffer and closes: the app replaces the file atomically, so a held descriptor would
+/// keep reading the old copy.
+@MainActor @Observable
+final class LevelsFeed {
+  /// The same 30 Hz the waveform drew at before, so recording feedback is as prompt.
+  nonisolated static let rate: Double = 30
+
+  private(set) var levels = [Float](repeating: 0, count: LevelsFile.slotCount)
+
+  @ObservationIgnored private let url: URL
+  @ObservationIgnored private var buffer = [UInt8](repeating: 0, count: LevelsFile.byteCount)
+  @ObservationIgnored private var lastWriteIndex: UInt32?
+  @ObservationIgnored private var timer: Timer?
+
+  init(url: URL) {
+    self.url = url
+  }
+
+  convenience init(store: HandoffStore) {
+    self.init(url: store.url(.levels))
+  }
+
+  var isRunning: Bool { timer != nil }
+
+  func start() {
+    guard timer == nil else { return }
+    sample()
+    let timer = Timer(timeInterval: 1 / Self.rate, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { _ = self?.sample() }
+    }
+    timer.tolerance = 0.25 / Self.rate
+    RunLoop.main.add(timer, forMode: .common)
+    self.timer = timer
+  }
+
+  func stop() {
+    timer?.invalidate()
+    timer = nil
+    lastWriteIndex = nil
+  }
+
+  /// Reads the ring once; true when it moved and `levels` changed.
+  @discardableResult
+  func sample() -> Bool {
+    let descriptor = open(url.path, O_RDONLY)
+    guard descriptor >= 0 else { return false }
+    defer { close(descriptor) }
+    let count = buffer.withUnsafeMutableBytes { pread(descriptor, $0.baseAddress, $0.count, 0) }
+    guard count == LevelsFile.byteCount else { return false }
+    let index = buffer.withUnsafeBytes {
+      UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: 0, as: UInt32.self))
+    }
+    guard index != lastWriteIndex, let file = LevelsFile(data: Data(buffer)) else { return false }
+    lastWriteIndex = index
+    levels = file.levels
+    return true
   }
 }

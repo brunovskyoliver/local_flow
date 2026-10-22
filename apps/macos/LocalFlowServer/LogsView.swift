@@ -9,14 +9,35 @@ struct LogsView: View {
   @State private var code: String?
   @State private var paused: [LogLine]?
   @State private var selection: LogLine.ID?
+  /// The filtered lines, newest first, and the result codes for the picker. Recomputed
+  /// when a filter, the pause or the newest line changes, not on every view update.
+  @State private var shown: [LogLine] = []
+  @State private var codes: [String] = []
 
   private var source: [LogLine] { paused ?? monitor.lines }
 
-  private var shown: [LogLine] {
-    source.reversed().filter { line in
+  private struct FilterKey: Equatable {
+    var service: LogLine.Service?
+    var level: LogLine.Level?
+    var code: String?
+    var paused: Bool
+    var newest: LogLine.ID?
+    var count: Int
+  }
+
+  private var key: FilterKey {
+    FilterKey(
+      service: service, level: level, code: code, paused: paused != nil,
+      newest: source.last?.id, count: source.count)
+  }
+
+  private func refilter() {
+    let (service, level, code) = (service, level, code)
+    shown = source.reversed().filter { line in
       (service == nil || line.service == service) && (level == nil || line.level == level)
         && (code == nil || line.code == code)
     }
+    codes = Array(Set(source.compactMap(\.code))).sorted()
   }
 
   var body: some View {
@@ -34,7 +55,7 @@ struct LogsView: View {
         .frame(width: 150)
         Picker("Result", selection: $code) {
           Text("All").tag(String?.none)
-          ForEach(Array(Set(source.compactMap(\.code))).sorted(), id: \.self) {
+          ForEach(codes, id: \.self) {
             Text($0).tag(Optional($0))
           }
         }
@@ -57,6 +78,7 @@ struct LogsView: View {
       Text("\(shown.count) of \(source.count) lines · \(Server.log.path)")
         .font(.caption).foregroundStyle(.secondary)
     }
+    .onChange(of: key, initial: true) { refilter() }
   }
 
   private func copy(_ line: LogLine) {

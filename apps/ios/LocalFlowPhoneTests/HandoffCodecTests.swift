@@ -13,6 +13,29 @@ final class HandoffCodecTests: XCTestCase {
 
   override func tearDown() { try? FileManager.default.removeItem(at: store.directory) }
 
+  /// The keyboard waveform reads the ring off the drawing path and publishes only when it
+  /// moved; each write replaces the file, which a fresh open per sample sees.
+  @MainActor
+  func testLevelsFeedPublishesOnlyWhenTheRingMoves() throws {
+    let feed = LevelsFeed(store: store)
+    XCTAssertFalse(feed.sample(), "no file yet")
+    var file = LevelsFile()
+    file.append(0.5)
+    try store.write(data: file.data, .levels)
+    XCTAssertTrue(feed.sample())
+    XCTAssertEqual(feed.levels, file.levels)
+    XCTAssertFalse(feed.sample(), "unchanged ring, no update")
+    file.append(0.25)
+    try store.write(data: file.data, .levels)
+    XCTAssertTrue(feed.sample(), "an atomic replace is seen")
+    XCTAssertEqual(feed.levels.last, 0.25)
+    feed.start()
+    XCTAssertTrue(feed.isRunning)
+    feed.stop()
+    XCTAssertFalse(feed.isRunning)
+    XCTAssertTrue(feed.sample(), "stopping forgets the ring position")
+  }
+
   func testEveryFileRoundTrips() throws {
     let session = SessionFile(
       sessionID: UUID(), state: .ended, idleDeadline: 1_790_000_000_000, idleTimeout: "5m",

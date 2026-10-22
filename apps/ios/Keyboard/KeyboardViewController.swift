@@ -7,6 +7,8 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
   private var model: KeyboardSessionModel!
   private var hosting: UIHostingController<KeyboardView>?
   private let store = HandoffStore.group()
+  /// The waveform's levels; sampling runs only while the listening view is up.
+  private lazy var levels: LevelsFeed? = store.map { LevelsFeed(store: $0) }
   private var restReading: DispatchWorkItem?
   private var sampler: Timer?
   /// SC-003: peak `phys_footprint` seen while each surface was up, for the life of the
@@ -41,7 +43,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     super.viewWillAppear(animated)
     // One hosting controller while visible; released on disappear (research R11).
     let view = KeyboardView(
-      model: model, levels: store.map(LevelsReader.init),
+      model: model, levels: levels,
       needsGlobe: needsInputModeSwitchKey,
       actions: .init(
         tap: { [weak self] in self?.tap() },
@@ -83,6 +85,7 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     restReading = nil
     sampler?.invalidate()
     sampler = nil
+    levels?.stop()
     model.disappear()
     hosting?.willMove(toParent: nil)
     hosting?.view.removeFromSuperview()
@@ -156,15 +159,5 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
   func insert(_ text: String) { textDocumentProxy.insertText(text) }
   func deleteBackward(_ count: Int) {
     for _ in 0..<count { textDocumentProxy.deleteBackward() }
-  }
-}
-
-/// Reads `levels.bin` for the recording waveform.
-struct LevelsReader {
-  let store: HandoffStore
-
-  func levels() -> [Float] {
-    store.readData(.levels).flatMap(LevelsFile.init(data:))?.levels
-      ?? Array(repeating: 0, count: LevelsFile.slotCount)
   }
 }
