@@ -351,6 +351,8 @@ private struct StreakCard: View {
     let streaks = UsageInsights.streaks(
       days: insights.days.keys, today: today, calendar: calendar)
     let columns = weekStarts(today: today)
+    // Once per draw. Each of the 133 cells used to sort every active day's count.
+    let limits = Self.thresholds(insights)
     InsightCard {
       HStack(alignment: .firstTextBaseline) {
         Text("\(streaks.current) day streak").font(.flow(size: 29, weight: .medium))
@@ -367,7 +369,8 @@ private struct StreakCard: View {
             Text(weekdaySymbol(weekday)).font(.flow(size: 11))
               .foregroundStyle(SottoPalette.muted).frame(width: 34, alignment: .leading)
             ForEach(columns, id: \.self) { start in
-              cell(day(start, weekday), today: today, streak: streaks.currentDays)
+              cell(
+                day(start, weekday), today: today, streak: streaks.currentDays, limits: limits)
             }
           }
         }
@@ -435,13 +438,14 @@ private struct StreakCard: View {
     .accessibilityLabel(symbol == "chevron.left" ? "Earlier weeks" : "Later weeks")
   }
 
-  private func cell(_ date: Date, today: Date, streak: Set<Date>) -> some View {
+  private func cell(_ date: Date, today: Date, streak: Set<Date>, limits: [Int]) -> some View {
     let usage = insights.days[date]
     let count = usage?.words ?? 0
     let fill: Color =
       date > today
       ? SottoPalette.heatEmpty.opacity(0.45)
-      : (count == 0 ? SottoPalette.heatEmpty : SottoPalette.dataScale[level(count)])
+      : (count == 0
+        ? SottoPalette.heatEmpty : SottoPalette.dataScale[Self.level(count, limits: limits)])
     return RoundedRectangle(cornerRadius: 3).fill(fill)
       .overlay {
         if streak.contains(date) {
@@ -458,14 +462,13 @@ private struct StreakCard: View {
   }
 
   /// Quartiles of active days, so one heavy day does not wash out the rest.
-  private var thresholds: [Int] {
+  static func thresholds(_ insights: UsageInsights) -> [Int] {
     let counts = insights.days.values.map(\.words).filter { $0 > 0 }.sorted()
     guard !counts.isEmpty else { return [1, 1, 1] }
     return [0.25, 0.5, 0.75].map { counts[min(counts.count - 1, Int(Double(counts.count) * $0))] }
   }
 
-  private func level(_ count: Int) -> Int {
-    let limits = thresholds
+  static func level(_ count: Int, limits: [Int]) -> Int {
     if count > limits[2] { return 0 }
     if count > limits[1] { return 1 }
     if count > limits[0] { return 2 }
