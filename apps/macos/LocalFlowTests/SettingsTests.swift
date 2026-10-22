@@ -70,6 +70,51 @@ final class SettingsTests: XCTestCase {
     XCTAssertEqual(calls, [])
   }
 
+  /// Audit fix 01: Parakeet v3 stays the default; Ultra is opt-in and persisted only once
+  /// AppServices has switched; an unknown stored value reads as v3.
+  @MainActor func testSpeechModelPreferenceDefaultsToV3AndPersists() {
+    let suite = "LocalFlow-speech-model-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    XCTAssertEqual(AppPreferences(defaults: defaults).speechModel, .parakeetV3)
+    AppPreferences(defaults: defaults).speechModel = .parakeetUltra
+    XCTAssertEqual(AppPreferences(defaults: defaults).speechModel, .parakeetUltra)
+    defaults.set("parakeet-redux", forKey: "speechModel")
+    XCTAssertEqual(AppPreferences(defaults: defaults).speechModel, .parakeetV3)
+  }
+
+  /// Both bundled speech manifests ship in the app and pin their choice exactly.
+  func testBundledSpeechManifestsSelectTheirModel() throws {
+    for choice in SpeechModelChoice.allCases {
+      let url = try XCTUnwrap(
+        Bundle.main.url(forResource: choice.resourceName, withExtension: "json"))
+      let descriptor = try JSONDecoder().decode(ModelDescriptor.self, from: Data(contentsOf: url))
+      XCTAssertEqual(SpeechModelChoice(pinned: descriptor), choice)
+      XCTAssertEqual(descriptor.license, "cc-by-4.0")
+    }
+  }
+
+  @MainActor func testAlternateSpeechModelRowStatesSizeLicenseAndRole() {
+    var ultra = SettingsViewModel.AlternateSpeechModel(
+      choice: .parakeetUltra, attribution: SpeechModelChoice.parakeetUltra.attribution,
+      downloadBytes: 632_162_964)
+    XCTAssertEqual(ultra.name, "Parakeet Ultra")
+    XCTAssertEqual(ultra.role, "Optional dictation model")
+    XCTAssertTrue(ultra.readiness.hasPrefix("Not installed · "))
+    XCTAssertTrue(ultra.readiness.contains("MB"))
+    XCTAssertTrue(ultra.attribution.contains("CC BY 4.0"))
+    ultra.installing = true
+    XCTAssertEqual(ultra.readiness, "Downloading…")
+    ultra.installing = false
+    ultra.installed = true
+    XCTAssertEqual(ultra.readiness, "Installed")
+    let v3 = SettingsViewModel.AlternateSpeechModel(
+      choice: .parakeetV3, attribution: SpeechModelChoice.parakeetV3.attribution,
+      downloadBytes: 483_105_645, installed: true)
+    XCTAssertEqual(v3.role, "Default dictation model")
+    XCTAssertEqual(SettingsViewModel.Snapshot().speechModel, .parakeetV3)
+  }
+
   @MainActor func testMeetingModelReadinessDoesNotBorrowDictationInstallation() {
     var snapshot = SettingsViewModel.Snapshot()
     snapshot.modelInstalled = true

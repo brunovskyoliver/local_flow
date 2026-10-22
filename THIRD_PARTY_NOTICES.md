@@ -32,6 +32,24 @@ while its final License section says Apache 2.0 and points to FluidAudio.
 These are inconsistent labels. Dependency licenses are recorded above;
 selected model artifact license interpretation remains an open T002 gate.
 
+## Optional Parakeet Ultra speech model
+
+Parakeet Ultra is an optional dictation and live-preview model. It is downloaded
+only when the owner chooses Download in Settings › Models; Parakeet v3 stays the
+default and the rollback. The pinned build is `FluidInference/parakeet-ultra-coreml`
+at revision `95eaa59a39d4394f047a4dc5cce480388a60d1b6`
+([manifest](apps/macos/LocalFlow/Resources/Models/parakeet-ultra.json): 18 files,
+632,162,964 bytes). It is FluidInference's Core ML conversion of
+[`moondream/parakeet-ultra`](https://huggingface.co/moondream/parakeet-ultra), a
+post-training of NVIDIA's `nvidia/parakeet-tdt-0.6b-v3`. The repository and its
+upstream checkpoint declare CC-BY-4.0. LFS file SHA-256 values come from the Hugging
+Face tree API at that revision; the six small Git files were fetched, matched to their
+Git blob IDs, then hashed. Weights are not bundled in the app or kept in version
+control, and the downloaded assets are not modified. Preserve the
+[pinned model card](docs/licenses/parakeet-ultra-model-card.md) (Git blob
+`a166d3e4fdaa2a42338309881c41b5ab4ca50b10`) and the
+[CC BY 4.0 attribution terms](https://creativecommons.org/licenses/by/4.0/).
+
 ## Feature 007 speaker diarization model
 
 The speaker labeling model is `FluidInference/speaker-diarization-coreml` at revision
