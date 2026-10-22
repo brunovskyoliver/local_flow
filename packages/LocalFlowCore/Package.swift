@@ -14,7 +14,7 @@ let package = Package(
     .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.10.0"),
     // No default traits: the NeMo text-processing library stays out, as it was when the
     // Mac project referenced FluidAudio directly (`traits = ()`).
-    .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7", traits: []),
+    .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7", traits: []),
   ],
   targets: [
     .target(

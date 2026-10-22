@@ -18,6 +18,7 @@ public struct FluidAudioVoiceEmbedderFactory: Sendable {
   }
 
   public func makeRuntime() async throws -> any VoiceEmbeddingRuntime {
+    FluidAudioSDK.configureLogging()
     guard offlineMode() else { throw IdentificationFailureCategory.modelUnavailable }
     // macOS 14 BNNS crash in Core ML predictions (FluidAudio #878).
     guard operatingSystem.majorVersion >= 15 else {

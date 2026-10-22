@@ -7,6 +7,9 @@ public struct TranscriptionPipelineIdentity: Sendable {
   private var windowSamples = 239_360
   private var engine = "unrecorded_runtime"
   private var descriptor: ModelDescriptor?
+  /// The runtime library release that ran, which can differ from the release the
+  /// manifest was pinned against (`sdkCompatibility`).
+  private var sdkVersion: String?
   private var manifestHash: String?
   private var build: String?
   /// What the runtime was told about language; nil means automatic with no hint.
@@ -40,10 +43,12 @@ public struct TranscriptionPipelineIdentity: Sendable {
 
   public init(
     descriptor: ModelDescriptor, manifestHash: String, build: String?,
-    engine: String = "FluidAudio", windowSamples: Int = 239_360, languageHint: String? = nil
+    engine: String = "FluidAudio", windowSamples: Int = 239_360, languageHint: String? = nil,
+    sdkVersion: String? = nil
   ) throws {
     try descriptor.validate()
     self.engine = engine
+    self.sdkVersion = sdkVersion ?? (engine == "FluidAudio" ? FluidAudioSDK.version : nil)
     self.languageHint = languageHint
     self.windowSamples = windowSamples
     self.descriptor = descriptor
@@ -74,7 +79,7 @@ public struct TranscriptionPipelineIdentity: Sendable {
     }
     if build == nil { missing.append(.init(field: "build", reason: .notRecorded)) }
     return TranscriptionProvenance(
-      engine: engine, sdkVersion: descriptor?.sdkCompatibility ?? remoteSDK,
+      engine: engine, sdkVersion: sdkVersion ?? descriptor?.sdkCompatibility ?? remoteSDK,
       modelID: descriptor?.modelID ?? remoteModelID,
       modelRevision: descriptor?.sourceRevision ?? remoteRevision,
       modelManifestHash: manifestHash,

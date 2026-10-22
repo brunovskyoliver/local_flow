@@ -28,6 +28,7 @@ public struct FluidAudioEngineFactory: Sendable {
   }
 
   public func makeRuntime() async throws -> any TranscriptionRuntime {
+    FluidAudioSDK.configureLogging()
     try descriptor.descriptor.validate()
     guard descriptor.descriptor.modelID == "FluidInference/parakeet-tdt-0.6b-v3-coreml",
       descriptor.descriptor.sourceRevision == "7dd20fe6b1797d35f5e3307e8b1732d9a178edfe",
@@ -129,7 +130,7 @@ struct VocabularyBooster: Sendable {
 }
 
 public actor FluidAudioRuntime: TranscriptionRuntime {
-  /// FluidAudio 0.15.7's v3 `language` only filters decoder tokens by script
+  /// FluidAudio's v3 `language` (0.15.7 through 0.17.7) only filters decoder tokens by script
   /// (`TokenLanguageFilter`: Latin vs Cyrillic vs Greek); English and Slovak are
   /// both Latin, so either value behaves the same and English is not constrained.
   /// Slovak is passed because its alphabet contains English's: a later per-language

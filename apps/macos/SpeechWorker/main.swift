@@ -226,7 +226,7 @@ func serve(models: URL, descriptors: Descriptors) async -> Int32 {
   var model: [String: Any] = [
     "engine": "FluidAudio", "model_id": descriptors.speech.modelID,
     "model_revision": descriptors.speech.sourceRevision, "manifest_hash": descriptors.speechHash,
-    "sdk": descriptors.speech.sdkCompatibility, "worker_build": workerBuild,
+    "sdk": FluidAudioSDK.version, "worker_build": workerBuild,
   ]
   if boostModel != nil { model["booster"] = VocabularyBoostPolicy.version }
   writer.send(["type": "ready", "protocol": 1, "model": model])

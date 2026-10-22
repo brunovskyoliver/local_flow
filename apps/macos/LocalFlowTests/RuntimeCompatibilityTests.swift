@@ -396,7 +396,8 @@ final class RuntimeCompatibilityTests: XCTestCase {
         ).makeRuntime()
       }
       let config = [
-        "engine": "FluidAudio", "sdk": "0.15.7", "model_revision": descriptor.sourceRevision,
+        "engine": "FluidAudio", "sdk": FluidAudioSDK.version,
+        "model_revision": descriptor.sourceRevision,
         "model_descriptor_sha256": try QualityArtifacts.hashFile(descriptorURL),
         "language": "automatic_no_hint", "window_samples": "239360", "overlap_samples": "32000",
         "padding_minimum": "4800", "assembly": "historical_window_assembly",
@@ -595,7 +596,8 @@ extension RuntimeCompatibilityTests {
         }
       }
       let config = [
-        "engine": "FluidAudio", "sdk": "0.15.7", "model_revision": descriptor.sourceRevision,
+        "engine": "FluidAudio", "sdk": FluidAudioSDK.version,
+        "model_revision": descriptor.sourceRevision,
         "model_descriptor_sha256": try QualityArtifacts.hashFile(descriptorURL),
         "language": "automatic_no_hint",
         "window_samples": String(ChunkPlanner.maximumSamples),

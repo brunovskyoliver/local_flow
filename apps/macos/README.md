@@ -18,7 +18,7 @@ all status; Dismiss recovery keeps the text and quality; Delete requires confirm
 Explicit insertion reviews the saved text before selecting and confirming a real
 external field. Settings Load/Unload goes through the shared lifecycle owner.
 
-FluidAudio 0.15.7 uses empty traits; GRDB.swift is pinned to 7.10.0. Preserve
+FluidAudio 0.17.7 uses empty traits; GRDB.swift is pinned to 7.10.0. Preserve
 `Package.resolved` and the notices under `docs/licenses/`. No VoiceInk application
 source, server change or additional client runtime is included.
 

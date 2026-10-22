@@ -29,6 +29,7 @@ public struct FluidAudioDiarizerFactory: Sendable {
   }
 
   public func makeRuntime() async throws -> any DiarizationRuntime {
+    FluidAudioSDK.configureLogging()
     // Offline mode is what stops ModelHub from downloading or purging (research R2).
     guard offlineMode() else { throw DiarizationFailureCategory.modelUnavailable }
     // macOS 14 BNNS crash in Core ML predictions (FluidAudio #878).

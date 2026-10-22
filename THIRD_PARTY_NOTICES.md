@@ -6,9 +6,11 @@ FluidAudio and GRDB are pinned dependencies as recorded below. No application so
 
 ## Feature 001 pinned dependencies
 
-FluidAudio 0.15.7, commit `41540ea237350afe5117a082b5c28eda642d0612`, is
-resolved by Xcode with an empty trait list. The resolved graph excludes the
-optional NeMo dependency. Preserve [Apache-2.0 license](docs/licenses/FluidAudio-0.15.7.txt)
+FluidAudio 0.17.7, commit `503b4bd1bbf7220882de39fe8ae6716aae4132da`, is
+resolved by Xcode with an empty trait list (upgraded from 0.15.7, commit
+`41540ea237350afe5117a082b5c28eda642d0612`; the license text is unchanged). The
+`NemoTextProcessing` trait stays off, so its prebuilt binary is not linked, though
+SwiftPM still downloads the archive while resolving. Preserve [Apache-2.0 license](docs/licenses/FluidAudio-0.17.7.txt)
 and its bundled [fastcluster notice](docs/licenses/fastcluster.md).
 
 GRDB.swift 7.10.0, commit `36e30a6f1ef10e4194f6af0cff90888526f0c115`, uses
@@ -134,15 +136,15 @@ others): [modernc-libc-v1.75.7-third-party.md](docs/licenses/modernc-libc-v1.75.
 
 ## Feature 016 iOS companion
 
-The iOS app (`LocalFlowPhone`) links `packages/LocalFlowCore`, which pins FluidAudio 0.15.7
-(commit `41540ea237350afe5117a082b5c28eda642d0612`, [Apache-2.0](docs/licenses/FluidAudio-0.15.7.txt),
+The iOS app (`LocalFlowPhone`) links `packages/LocalFlowCore`, which pins FluidAudio 0.17.7
+(commit `503b4bd1bbf7220882de39fe8ae6716aae4132da`, [Apache-2.0](docs/licenses/FluidAudio-0.17.7.txt),
 with the [fastcluster notice](docs/licenses/fastcluster.md)) and GRDB.swift 7.10.0 (commit
 `36e30a6f1ef10e4194f6af0cff90888526f0c115`, [MIT](docs/licenses/GRDB-7.10.0.txt)) exactly, as
 recorded in `packages/LocalFlowCore/Package.resolved`. The `LocalFlowKeyboard` extension links
 neither package.
 
 `Package.swift` declares FluidAudio with `traits: []`, as the Mac project did before the
-extraction, so the NeMo text-processing dependency stays out of the resolved graph.
+extraction, so the NeMo text-processing binary is not linked.
 
 The app, the keyboard and the `LocalFlowWidgets` extension (Feature 017, ADR 0030) each bundle
 Figtree and EB Garamond from `apps/macos/LocalFlow/Resources/Fonts`, under the SIL Open Font
