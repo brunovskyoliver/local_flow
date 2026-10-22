@@ -171,3 +171,49 @@ extension Launchctl {
     return result.succeeded ? nil : "launchctl bootstrap failed: \(result.error)"
   }
 }
+
+/// What an Apply does, so the confirmation names the real interruption (UI-11).
+enum ModelChange: Equatable {
+  case rewrite(path: String)
+  case summaries(omlxModel: String?, copyKey: Bool, live: Bool)
+
+  var confirmTitle: String {
+    switch self {
+    case .rewrite: "Restart MTPLX with this model?"
+    case .summaries(_, _, live: true): "Switch summaries now?"
+    case .summaries: "Restart flowd?"
+    }
+  }
+
+  var confirmButton: String {
+    switch self {
+    case .summaries(_, _, live: true): "Switch"
+    default: "Apply and Restart"
+    }
+  }
+
+  var confirmMessage: String {
+    switch self {
+    case .rewrite:
+      "Rewriting, and summaries that use the rewrite model, pause for about 30 seconds. If MTPLX does not report healthy within 60 seconds, the previous model is restored."
+    case .summaries(_, _, live: true):
+      "flowd switches summaries without a restart; dictation and rewriting keep running. The plist keeps the choice for the next start."
+    case .summaries:
+      "This flowd has no admin API, so it restarts: remote dictation, rewriting and summaries stop for about 30 seconds. If it does not report healthy within 60 seconds, the previous plist is restored."
+    }
+  }
+}
+
+/// Why a model list came back empty (UI-11).
+enum ModelDiscovery {
+  /// Why `mtplx models --json` gave no models, or nil when it listed some.
+  static func mtplxProblem(_ result: ProcessResult, models: [MTPLXModel]) -> String? {
+    guard models.isEmpty else { return nil }
+    if result.status != 0 {
+      let reason = result.error.split(separator: "\n").first.map(String.init) ?? ""
+      return "MTPLX could not list its models"
+        + (reason.isEmpty ? " (exit \(result.status))." : ": \(reason)")
+    }
+    return "MTPLX lists no downloaded models."
+  }
+}

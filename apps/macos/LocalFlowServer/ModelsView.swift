@@ -11,34 +11,56 @@ final class ModelsModel {
   private(set) var rewriteModel: String?
   private(set) var analysis: AnalysisBackend?
   private(set) var flowdKnowsAnalysisBackend = false
+  /// flowd's admin API answers, so a summaries switch applies without a restart.
+  private(set) var switchesSummariesLive = false
+  /// Why a model list is empty, or nil when discovery worked.
+  private(set) var mtplxProblem: String?
+  private(set) var omlxProblem: String?
+  private(set) var loading = false
   private(set) var progress: String?
   private(set) var outcome: String?
   private(set) var busy = false
 
   func load() async {
+    loading = true
+    defer { loading = false }
     let flowdArguments = AgentPlist.arguments(Server.plist) ?? []
     let mtplxArguments = AgentPlist.arguments(Server.mtplxPlist) ?? []
     rewriteModel = mtplxArguments.value(after: "--model")
     analysis = AgentArguments.analysisBackend(flowdArguments)
     if let mtplx = AgentArguments.mtplxExecutable(mtplxArguments) {
-      mtplxModels = MTPLXModel.parse(
-        Data(await runProcess(mtplx, ["models", "--json"]).output.utf8))
+      let listed = await runProcess(mtplx, ["models", "--json"])
+      mtplxModels = MTPLXModel.parse(Data(listed.output.utf8))
+      mtplxProblem = ModelDiscovery.mtplxProblem(listed, models: mtplxModels)
+    } else {
+      mtplxModels = []
+      mtplxProblem = "The MTPLX agent plist names no MTPLX executable."
     }
-    omlxModels = await Self.omlxModels()
+    (omlxModels, omlxProblem) = await Self.omlxModels()
+    switchesSummariesLive = await AdminAPI.status() != nil
     // Builds before b26a743 refuse --analysis-backend and would never come up.
     let help = await runProcess(Server.flowd.path, ["serve", "-h"])
     flowdKnowsAnalysisBackend = (help.output + help.error).contains("-analysis-backend")
   }
 
-  /// oMLX's models, authenticated with the key from its own settings. The key stays in
-  /// memory for this request.
-  nonisolated private static func omlxModels() async -> [OMLXModel] {
+  /// oMLX's models, authenticated with the key from its own settings, or why there are
+  /// none. The key stays in memory for this request.
+  nonisolated private static func omlxModels() async -> ([OMLXModel], String?) {
     var request = URLRequest(url: Server.omlx.appending(path: "v1/models"), timeoutInterval: 3)
     if let key = omlxKey() {
       request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
     }
-    guard let (data, _) = try? await URLSession.shared.data(for: request) else { return [] }
-    return OMLXModel.parse(data)
+    let data: Data
+    let response: URLResponse
+    do { (data, response) = try await URLSession.shared.data(for: request) } catch {
+      let reason = error.localizedDescription
+      return ([], "oMLX did not answer at \(Server.omlx.absoluteString): \(reason)")
+    }
+    if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+      return ([], "oMLX answered HTTP \(http.statusCode).")
+    }
+    let models = OMLXModel.parse(data)
+    return (models, models.isEmpty ? "oMLX lists no models." : nil)
   }
 
   nonisolated private static func omlxKey() -> String? {
@@ -135,7 +157,7 @@ struct ModelsView: View {
   @State private var rewriteSelection = ""
   @State private var analysisSelection = ""  // "" is the rewrite model
   @State private var copyKey = true
-  @State private var confirm: (() async -> Void)?
+  @State private var confirm: ModelChange?
 
   var body: some View {
     Form {
@@ -146,17 +168,15 @@ struct ModelsView: View {
               .tag(pack.path)
           }
         }
+        if let problem = model.mtplxProblem { discoveryProblem(problem) }
         HStack {
           Text(
             "Current: \(model.rewriteModel.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "–")"
           )
           .foregroundStyle(.secondary)
           Spacer()
-          Button("Apply…") {
-            let path = rewriteSelection
-            confirm = { await model.applyRewriteModel(path) }
-          }
-          .disabled(rewriteSelection.isEmpty || rewriteSelection == model.rewriteModel)
+          Button("Apply…") { confirm = .rewrite(path: rewriteSelection) }
+            .disabled(rewriteSelection.isEmpty || rewriteSelection == model.rewriteModel)
         }
       }
       Section("Summaries") {
@@ -167,6 +187,7 @@ struct ModelsView: View {
               .tag(item.id)
           }
         }
+        if let problem = model.omlxProblem { discoveryProblem(problem) }
         if !analysisSelection.isEmpty {
           Toggle("Copy oMLX's API key to analysis-api-key (0600) for flowd", isOn: $copyKey)
         }
@@ -182,11 +203,9 @@ struct ModelsView: View {
           Spacer()
           Link("oMLX Dashboard", destination: Server.omlx.appending(path: "admin"))
           Button("Apply…") {
-            let (selection, copy) = (analysisSelection, copyKey)
-            confirm = {
-              await model.applyAnalysis(
-                omlxModel: selection.isEmpty ? nil : selection, copyKey: copy)
-            }
+            confirm = .summaries(
+              omlxModel: analysisSelection.isEmpty ? nil : analysisSelection, copyKey: copyKey,
+              live: model.switchesSummariesLive)
           }
           .disabled(
             analysisSelection == (model.analysis?.model ?? "")
@@ -202,7 +221,11 @@ struct ModelsView: View {
         }
         if let outcome = model.outcome { Text(outcome) }
         Text(
-          "Apply rewrites the agent's plist and restarts it: remote dictation stops for about 30 seconds. If the agent does not report healthy within 60 seconds, the previous plist is restored."
+          "A rewrite model change restarts MTPLX. "
+            + (model.switchesSummariesLive
+              ? "A summaries change applies live through flowd's admin API."
+              : "A summaries change restarts flowd.")
+            + " A restart that does not report healthy within 60 seconds restores the previous plist."
         )
         .font(.caption).foregroundStyle(.secondary)
       }
@@ -214,16 +237,39 @@ struct ModelsView: View {
       rewriteSelection = model.rewriteModel ?? ""
       analysisSelection = model.analysis?.model ?? ""
     }
+    // After an Apply the pickers show what is actually running, including a rollback.
+    .onChange(of: model.rewriteModel) { _, applied in rewriteSelection = applied ?? "" }
+    .onChange(of: model.analysis?.model) { _, applied in analysisSelection = applied ?? "" }
     .confirmationDialog(
-      "Restart the agent?",
+      confirm?.confirmTitle ?? "",
       isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } })
     ) {
-      Button("Apply and Restart") {
-        guard let confirm else { return }
-        Task { await confirm() }
+      Button(confirm?.confirmButton ?? "Apply") {
+        guard let change = confirm else { return }
+        Task { await apply(change) }
       }
     } message: {
-      Text("Remote dictation stops for about 30 seconds.")
+      Text(confirm?.confirmMessage ?? "")
+    }
+  }
+
+  private func apply(_ change: ModelChange) async {
+    switch change {
+    case .rewrite(let path): await model.applyRewriteModel(path)
+    case .summaries(let omlxModel, let copyKey, _):
+      await model.applyAnalysis(omlxModel: omlxModel, copyKey: copyKey)
+    }
+  }
+
+  private func discoveryProblem(_ problem: String) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+      Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
+      Spacer()
+      if model.loading {
+        ProgressView().controlSize(.small)
+      } else {
+        Button("Retry") { Task { await model.load() } }
+      }
     }
   }
 }

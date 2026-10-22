@@ -75,3 +75,41 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(back["KeepAlive"] as? Bool, true)
   }
 }
+
+/// UI-11: the confirmation names the real interruption, and discovery says why it is empty.
+final class ModelsFeedbackTests: XCTestCase {
+  func testSummariesSwitchOverTheAdminAPIDoesNotPromptForARestart() {
+    let live = ModelChange.summaries(omlxModel: "smart", copyKey: true, live: true)
+    XCTAssertEqual(live.confirmButton, "Switch")
+    XCTAssertFalse(live.confirmTitle.contains("Restart"))
+    XCTAssertTrue(live.confirmMessage.contains("without a restart"))
+    let restart = ModelChange.summaries(omlxModel: nil, copyKey: false, live: false)
+    XCTAssertEqual(restart.confirmButton, "Apply and Restart")
+    XCTAssertTrue(restart.confirmTitle.contains("Restart flowd"))
+    XCTAssertTrue(ModelChange.rewrite(path: "/x").confirmTitle.contains("MTPLX"))
+  }
+
+  func testDiscoveryProblemExplainsAnEmptyList() {
+    let failed = ProcessResult(status: 1, output: "", error: "no such profile\nmore")
+    XCTAssertEqual(
+      ModelDiscovery.mtplxProblem(failed, models: []),
+      "MTPLX could not list its models: no such profile")
+    XCTAssertEqual(
+      ModelDiscovery.mtplxProblem(ProcessResult(status: 0, output: "{}", error: ""), models: []),
+      "MTPLX lists no downloaded models.")
+    let listed = MTPLXModel.parse(Data(#"{"models":[{"repo_id":"a/b","path":"/m/a"}]}"#.utf8))
+    XCTAssertEqual(listed.count, 1)
+    XCTAssertNil(
+      ModelDiscovery.mtplxProblem(ProcessResult(status: 0, output: "", error: ""), models: listed))
+  }
+
+  func testDevicesLoadErrorClearsAfterASuccessfulReload() {
+    let ok = ProcessResult(status: 0, output: "", error: "")
+    let failed = ProcessResult(status: 1, output: "", error: "database locked\n")
+    XCTAssertEqual(
+      Admin.loadError(listed: failed, audited: ok), "flowd admin failed: database locked")
+    XCTAssertEqual(
+      Admin.loadError(listed: ok, audited: failed), "flowd admin failed: database locked")
+    XCTAssertNil(Admin.loadError(listed: ok, audited: ok))
+  }
+}

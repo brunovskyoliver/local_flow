@@ -86,3 +86,12 @@ enum Admin {
     await runProcess(Server.flowd.path, ["admin", "--data-dir", Server.dataDir.path] + arguments)
   }
 }
+
+extension Admin {
+  /// Why a Devices reload failed, or nil once `list` and `audit` both succeed (UI-11).
+  static func loadError(listed: ProcessResult, audited: ProcessResult) -> String? {
+    guard let failed = !listed.succeeded ? listed : !audited.succeeded ? audited : nil
+    else { return nil }
+    return "flowd admin failed: " + failed.error.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+}
