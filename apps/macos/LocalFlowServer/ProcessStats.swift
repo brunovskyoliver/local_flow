@@ -1,19 +1,30 @@
 import Darwin
 import Foundation
 
-/// One server process: memory footprint (what Activity Monitor calls Memory) and start time.
+/// One server process. `footprint` is the physical footprint (what Activity Monitor calls
+/// Memory); `resident` is RSS, which also counts shared pages such as mapped model files,
+/// so neither column is an isolated model working set. `depth` is the distance from the
+/// launch agent's process, for indenting helpers under their parent.
 struct ProcessRow: Identifiable, Equatable, Sendable {
   var name: String
   var pid: Int32
   var footprint: UInt64
+  var resident: UInt64 = 0
   var started: Date?
+  var depth = 0
   var id: Int32 { pid }
 }
 
 /// Reads memory and start time of the server's processes through libproc. Same-user
 /// processes need no privileges.
 enum ProcessStats {
-  static func row(_ name: String, pid: Int32) -> ProcessRow? {
+  /// The traversal bound below each launch agent's process: model helpers sit at most a
+  /// few levels down (flowd → flowd-speech meeting → localflow-whisper-engine; launchd's
+  /// shell wrapper → Python).
+  static let maximumDepth = 4
+  static let maximumDescendants = 64
+
+  static func row(_ name: String, pid: Int32, depth: Int = 0) -> ProcessRow? {
     var usage = rusage_info_v4()
     let result = withUnsafeMutablePointer(to: &usage) {
       $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
@@ -22,7 +33,8 @@ enum ProcessStats {
     }
     guard result == 0 else { return nil }
     return ProcessRow(
-      name: name, pid: pid, footprint: usage.ri_phys_footprint, started: started(pid))
+      name: name, pid: pid, footprint: usage.ri_phys_footprint,
+      resident: usage.ri_resident_size, started: started(pid), depth: depth)
   }
 
   static func started(_ pid: Int32) -> Date? {
@@ -38,6 +50,60 @@ enum ProcessStats {
     var pids = [Int32](repeating: 0, count: 64)
     let count = proc_listchildpids(pid, &pids, Int32(pids.count * MemoryLayout<Int32>.size))
     return count > 0 ? Array(pids.prefix(Int(count))) : []
+  }
+
+  /// Every process below `root`, breadth first, with its depth. Bounded by depth and
+  /// count, and a PID is visited once even if the listing changes during the walk.
+  static func descendants(
+    of root: Int32, maximumDepth: Int = maximumDepth, limit: Int = maximumDescendants,
+    children: (Int32) -> [Int32] = children(of:)
+  ) -> [(pid: Int32, depth: Int)] {
+    var found: [(pid: Int32, depth: Int)] = []
+    var seen: Set<Int32> = [root]
+    var level = [root]
+    var depth = 0
+    while !level.isEmpty, depth < maximumDepth, found.count < limit {
+      depth += 1
+      var next: [Int32] = []
+      for parent in level {
+        for child in children(parent) where child > 0 && seen.insert(child).inserted {
+          guard found.count < limit else { return found }
+          found.append((child, depth))
+          next.append(child)
+        }
+      }
+      level = next
+    }
+    return found
+  }
+
+  /// A readable role for a server process from its executable and arguments.
+  static func role(executable: String, arguments: [String]) -> String {
+    // An unreadable path (another user's process, or one that just exited) is empty.
+    let name = executable.isEmpty ? "" : URL(fileURLWithPath: executable).lastPathComponent
+    switch name {
+    case "flowd": return "flowd"
+    case "flowd-speech":
+      switch arguments.dropFirst().first {
+      case "meeting": return "Meeting worker"
+      case "provision": return "Model provisioning"
+      default: return "Speech worker"
+      }
+    case "flowd-meeting": return "Meeting processor"
+    case "localflow-whisper-engine": return "Whisper helper"
+    case "localflow-mtplx": return "MTPLX wrapper"
+    case "bash", "sh", "zsh": return "Shell (\(name))"
+    case _ where name.hasPrefix("python") || name == "Python": return "Model service (Python)"
+    case "": return "Process"
+    default: return name
+    }
+  }
+
+  static func executable(_ pid: Int32) -> String {
+    var buffer = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
+    let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    guard length > 0 else { return "" }
+    return String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
 
   /// PIDs whose process name (as `ps -c` shows it) is `name`.
@@ -87,22 +153,26 @@ enum ProcessStats {
     return (usage.xsu_used, usage.xsu_total)
   }
 
-  /// The server's processes: flowd and its two workers, MTPLX and oMLX.
+  /// A launch agent's process and everything below it, each labelled by its role.
+  static func tree(_ name: String, pid: Int32) -> [ProcessRow] {
+    var rows = [row(name, pid: pid)].compactMap { $0 }
+    for (child, depth) in descendants(of: pid) {
+      let label = role(executable: executable(child), arguments: arguments(child))
+      rows += [row(label, pid: child, depth: depth)].compactMap { $0 }
+    }
+    return rows
+  }
+
+  /// The server's processes: flowd with its workers and their model helpers, MTPLX with
+  /// whatever its launch agent started, and oMLX.
   static func serverProcesses(flowd: Int32?, mtplx: Int32?) -> [ProcessRow] {
     var rows: [ProcessRow] = []
-    if let flowd {
-      rows += [row("flowd", pid: flowd)].compactMap { $0 }
-      for child in children(of: flowd) {
-        let name =
-          arguments(child).dropFirst().first == "meeting" ? "Meeting worker" : "Speech worker"
-        rows += [row(name, pid: child)].compactMap { $0 }
-      }
-    }
-    if let mtplx { rows += [row("MTPLX", pid: mtplx)].compactMap { $0 } }
+    if let flowd { rows += tree("flowd", pid: flowd) }
+    if let mtplx { rows += tree("MTPLX", pid: mtplx) }
     // The oMLX app runs its server as a child that renames itself, so find it by parent.
     for app in pids(named: "oMLX") {
       rows += [row("oMLX app", pid: app)].compactMap { $0 }
-      rows += children(of: app).compactMap { row("oMLX server", pid: $0) }
+      rows += descendants(of: app).compactMap { row("oMLX server", pid: $0.pid, depth: $0.depth) }
     }
     return rows
   }
