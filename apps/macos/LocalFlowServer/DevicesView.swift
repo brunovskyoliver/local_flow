@@ -5,7 +5,10 @@ import SwiftUI
 final class DevicesModel {
   private(set) var users: [AdminUser] = []
   private(set) var audit: [AuditEntry] = []
+  /// The last approve/revoke result.
   private(set) var message: String?
+  /// Why the last reload failed; cleared by the next successful one (UI-11).
+  private(set) var loadError: String?
   private(set) var busy = false
 
   func reload() async {
@@ -14,9 +17,7 @@ final class DevicesModel {
     let (listed, audited) = await (list, log)
     if listed.succeeded { users = Admin.parseList(listed.output) }
     if audited.succeeded { audit = Admin.parseAudit(audited.output) }
-    if !listed.succeeded || !audited.succeeded {
-      message = "flowd admin failed: " + (listed.succeeded ? audited : listed).error
-    }
+    loadError = Admin.loadError(listed: listed, audited: audited)
   }
 
   func apply(_ verb: String, _ kind: String, _ id: Int) async {
@@ -44,6 +45,9 @@ struct DevicesView: View {
         .foregroundStyle(.secondary)
         Spacer()
         Button("Refresh") { Task { await model.reload() } }
+      }
+      if let loadError = model.loadError {
+        Label(loadError, systemImage: "exclamationmark.triangle").font(.callout)
       }
       if let message = model.message { Text(message).font(.callout) }
       List {

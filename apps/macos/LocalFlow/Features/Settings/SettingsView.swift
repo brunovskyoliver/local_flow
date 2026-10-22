@@ -898,7 +898,8 @@ private enum ContextApp {
   }
 }
 
-/// One app in the sheet list: icon, name and bundle ID, with its action on hover.
+/// One app in the sheet list: icon, name and bundle ID. Remove shows on hover or keyboard
+/// focus, and always for VoiceOver.
 private struct ContextAppRow: View {
   enum Trailing {
     case remove(() -> Void)
@@ -910,6 +911,7 @@ private struct ContextAppRow: View {
   let app: ContextApp.Info
   let trailing: Trailing
   @State private var hovering = false
+  @FocusState private var removeFocused: Bool
 
   var body: some View {
     HStack(spacing: 12) {
@@ -931,15 +933,15 @@ private struct ContextAppRow: View {
       case .fixed(let label):
         Text(label).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
       case .remove(let remove):
-        if hovering {
-          Button("Remove", action: remove).buttonStyle(DictionaryPillButtonStyle())
-            .accessibilityLabel("Stop excluding \(app.name)")
-        }
+        Button("Remove", action: remove).buttonStyle(DictionaryPillButtonStyle())
+          .focused($removeFocused)
+          .hoverRevealed(hovering || removeFocused)
+          .accessibilityLabel("Stop excluding \(app.name)")
       case .kind(let kind, let set, let remove):
-        if hovering {
-          Button("Remove", action: remove).buttonStyle(DictionaryPillButtonStyle())
-            .accessibilityLabel("Use the built-in kind for \(app.name)")
-        }
+        Button("Remove", action: remove).buttonStyle(DictionaryPillButtonStyle())
+          .focused($removeFocused)
+          .hoverRevealed(hovering || removeFocused)
+          .accessibilityLabel("Use the built-in kind for \(app.name)")
         PillMenu(title: kind.title) {
           ForEach(AppCategory.allCases, id: \.self) { option in
             Button(option.title) { set(option) }

@@ -328,3 +328,22 @@ final class MeetingLibraryTests: XCTestCase {
         + " · Summary: your custom server")
   }
 }
+
+/// UI-09: the Today card reflects the active recording and today's notes.
+final class MeetingTodaySummaryTests: XCTestCase {
+  @MainActor
+  func testTodayCardNamesTheRecordingAndCountsTodaysNotes() {
+    XCTAssertEqual(
+      MeetingLibraryView.todaySummary(activeState: nil, todayCount: 0), "No meetings today")
+    XCTAssertEqual(
+      MeetingLibraryView.todaySummary(activeState: nil, todayCount: 1), "1 meeting today")
+    XCTAssertEqual(
+      MeetingLibraryView.todaySummary(activeState: nil, todayCount: 3), "3 meetings today")
+    XCTAssertEqual(
+      MeetingLibraryView.todaySummary(activeState: .recording, todayCount: 0), "Recording now")
+    XCTAssertEqual(
+      MeetingLibraryView.todaySummary(activeState: .paused, todayCount: 2), "Recording paused")
+    XCTAssertEqual(
+      MeetingLibraryView.todaySummary(activeState: .completed, todayCount: 2), "2 meetings today")
+  }
+}

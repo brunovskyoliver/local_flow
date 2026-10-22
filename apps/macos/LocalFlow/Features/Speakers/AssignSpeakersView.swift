@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The Assign speakers dialog (contracts/ui.md), laid out like Wispr's: a card over a
-/// dimmed note, one block per voice with its quotes and a name field, Cancel and Save
-/// names at the bottom. Cancel, Escape, the close button and the backdrop discard the
-/// drafts; Save names commits them together and closes.
+/// The Assign speakers dialog (contracts/ui.md), laid out like Wispr's: a sheet with one
+/// block per voice with its quotes and a name field, Cancel and Save names at the bottom.
+/// Cancel, Escape and the close button discard the drafts; Save names commits them
+/// together and closes. Presented as a native sheet, so focus stays inside it.
 struct AssignSpeakersView: View {
   static let cardWidth: CGFloat = 560
   static let fieldHeight: CGFloat = 46
@@ -21,32 +21,21 @@ struct AssignSpeakersView: View {
   @FocusState private var focused: UUID?
 
   var body: some View {
-    ZStack {
-      Color.black.opacity(0.28)
-        .ignoresSafeArea()
-        .contentShape(Rectangle())
-        .onTapGesture { close() }
-        .accessibilityHidden(true)
-      card
-        .frame(width: Self.cardWidth)
-        .background(SottoPalette.surface, in: .rect(cornerRadius: 18))
-        .shadow(color: .black.opacity(0.18), radius: 30, y: 12)
-        .overlay {
-          RoundedRectangle(cornerRadius: 18).strokeBorder(NotetakerStyle.rule, lineWidth: 1)
-        }
-    }
-    .foregroundStyle(SottoPalette.ink)
-    .accessibilityIdentifier("meeting.speakers.assign")
-    .onExitCommand { close() }
-    .task {
-      await model.load()
-      focused = model.sections.first { $0.id == initialFocus }?.id ?? model.sections.first?.id
-    }
-    .onChange(of: model.structureRevision) { _, _ in structureChanged() }
-    .task(id: focusedDraft) {
-      guard let focused else { return }
-      await model.refreshSuggestions(for: focused)
-    }
+    card
+      .frame(width: Self.cardWidth)
+      .background(SottoPalette.surface)
+      .foregroundStyle(SottoPalette.ink)
+      .accessibilityIdentifier("meeting.speakers.assign")
+      .onExitCommand { close() }
+      .task {
+        await model.load()
+        focused = model.sections.first { $0.id == initialFocus }?.id ?? model.sections.first?.id
+      }
+      .onChange(of: model.structureRevision) { _, _ in structureChanged() }
+      .task(id: focusedDraft) {
+        guard let focused else { return }
+        await model.refreshSuggestions(for: focused)
+      }
   }
 
   private var card: some View {
@@ -79,8 +68,7 @@ struct AssignSpeakersView: View {
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.horizontal, 32).padding(.top, 20).padding(.bottom, 28)
         }
-        .scrollIndicators(.never)
-        .hideScrollers()
+        // The scroller shows that more voices follow below the fold (UI-14).
         .frame(minHeight: 160, maxHeight: 480)
         .onChange(of: model.sections.isEmpty) { _, _ in
           if let initialFocus { proxy.scrollTo(initialFocus, anchor: .top) }

@@ -177,4 +177,14 @@ final class ServerSettingsViewModelTests: XCTestCase {
     XCTAssertEqual(pings, 0)
     XCTAssertEqual(model.checkResult, "Nothing runs on your server")
   }
+
+  /// UI-01: first-run copy says what leaves this Mac at each enrollment state.
+  func testOnboardingPrivacyCopyFollowsEnrollment() {
+    let remote = model().remote
+    XCTAssertTrue(OnboardingView.remotePrivacy(remote).hasPrefix("Nothing leaves this Mac"))
+    approve(.pending)
+    XCTAssertTrue(OnboardingView.remotePrivacy(remote).hasPrefix("Waiting for approval"))
+    approve(.approved)
+    XCTAssertTrue(OnboardingView.remotePrivacy(remote).hasPrefix("Approved."))
+  }
 }

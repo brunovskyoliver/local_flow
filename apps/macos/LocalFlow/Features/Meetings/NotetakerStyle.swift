@@ -49,6 +49,8 @@ private struct ScrollerRemover: NSViewRepresentable {
     }
 
     func stripIfNeeded() {
+      // "Show scroll bars: Always" is an accessibility choice; leave the scrollers alone.
+      guard NSScroller.preferredScrollerStyle == .overlay else { return }
       guard let window, superview != nil else { return }
       let enclosing = enclosingScrollView
       // Nothing found yet (the scroll view may not be installed), one went away, or
@@ -156,21 +158,11 @@ struct NoteOverflowMenu: View {
   var transcription: TranscriptionAction? = nil
   var delete: () -> Void
   @State private var presented = false
-  @State private var unavailable: String?
 
   var body: some View {
     NoteIconButton(symbol: "ellipsis", label: "Note options") { presented.toggle() }
       .popover(isPresented: $presented, arrowEdge: .bottom) {
         VStack(alignment: .leading, spacing: 2) {
-          menuItem("Copy link", symbol: "link") {
-            explain("Links will be available when note sharing is added.")
-          }
-          menuItem("Share", symbol: "square.and.arrow.up") {
-            explain("Note sharing is not available yet. Your recordings stay on this Mac.")
-          }
-          menuItem("Report", symbol: "flag") {
-            explain("Reporting is not available for local notes. Nothing has been sent.")
-          }
           if let transcription {
             menuItem(transcription.title, symbol: "arrow.clockwise") {
               presented = false
@@ -186,19 +178,6 @@ struct NoteOverflowMenu: View {
         .padding(8).frame(width: 190)
         .background(SottoPalette.surface)
       }
-      .alert(
-        "Not available yet",
-        isPresented: Binding(get: { unavailable != nil }, set: { if !$0 { unavailable = nil } })
-      ) {
-        Button("OK") { unavailable = nil }
-      } message: {
-        Text(unavailable ?? "")
-      }
-  }
-
-  private func explain(_ message: String) {
-    presented = false
-    unavailable = message
   }
 
   private func menuItem(
@@ -212,34 +191,6 @@ struct NoteOverflowMenu: View {
         .foregroundStyle(destructive ? Color.red : SottoPalette.ink)
         .contentShape(.rect)
     }.buttonStyle(.plain)
-  }
-}
-
-struct NoteUnavailableBar: View {
-  var prompt = "Ask anything"
-  @State private var explaining = false
-
-  var body: some View {
-    Button {
-      explaining = true
-    } label: {
-      HStack {
-        Text(prompt).font(.flow(size: 15)).foregroundStyle(SottoPalette.muted)
-        Spacer()
-      }
-      .padding(.horizontal, 18).frame(height: 48)
-      .background(SottoPalette.surface, in: Capsule())
-      .overlay { Capsule().strokeBorder(NotetakerStyle.rule, lineWidth: 1) }
-      .contentShape(Capsule())
-    }
-    .buttonStyle(.plain)
-    .alert("Meeting chat is not available yet", isPresented: $explaining) {
-      Button("OK", role: .cancel) {}
-    } message: {
-      Text(
-        "You can read your transcript and edit My thoughts. Asking questions about recordings will be added with meeting summaries."
-      )
-    }
   }
 }
 

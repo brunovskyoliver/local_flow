@@ -30,7 +30,6 @@ struct MeetingDetailView: View {
   /// Feature 018: where this meeting's transcript, labels and summary were produced.
   @State private var provenance: MeetingProvenance?
   @State private var retainedEditor: MeetingNotesEditor?
-  @State private var explainingSharing = false
   @State private var transcriptQuery = ""
   @State private var searchOpen = false
   /// UI-02: a failed full copy or export; cleared by the next transcript action.
@@ -142,11 +141,6 @@ struct MeetingDetailView: View {
     }
     .font(.flow(size: 15))
     .foregroundStyle(SottoPalette.ink)
-    .alert("Note sharing is not available yet", isPresented: $explainingSharing) {
-      Button("OK", role: .cancel) {}
-    } message: {
-      Text("This recording and your thoughts are stored on this Mac. No link has been created.")
-    }
     .onAppear {
       titleDraft = meeting.displayTitle
       retainedEditor = notesEditor
@@ -230,28 +224,23 @@ struct MeetingDetailView: View {
         identification.enrollmentDidStoreOwner = nil
       }
     }
-    .overlay {
-      if let assigning = assigningSpeakers {
-        AssignSpeakersView(
-          model: assigning,
-          saved: {
-            diarization?.namesDidChange(meetingID: assigning.meetingID)
-            // A names-only save is a rename, not an identity or evidence change.
-            if assigning.didChangeIdentities {
-              identification?.identitiesDidChange(meetingID: assigning.meetingID)
-            }
-          },
-          structureChanged: { Task { await pager?.refreshLabels() } },
-          close: {
-            assigningSpeakers = nil
-            Task { await summaryModel?.refresh() }
-          },
-          initialFocus: assigningFocus
-        )
-        .transition(.opacity)
-      }
+    // UI-14: a native sheet isolates focus and VoiceOver from the note behind it.
+    .sheet(item: $assigningSpeakers, onDismiss: { Task { await summaryModel?.refresh() } }) {
+      assigning in
+      AssignSpeakersView(
+        model: assigning,
+        saved: {
+          diarization?.namesDidChange(meetingID: assigning.meetingID)
+          // A names-only save is a rename, not an identity or evidence change.
+          if assigning.didChangeIdentities {
+            identification?.identitiesDidChange(meetingID: assigning.meetingID)
+          }
+        },
+        structureChanged: { Task { await pager?.refreshLabels() } },
+        close: { assigningSpeakers = nil },
+        initialFocus: assigningFocus
+      )
     }
-    .animation(.easeOut(duration: 0.18), value: assigningSpeakers?.id)
     .confirmationDialog("Delete \"\(meeting.displayTitle)\"?", isPresented: $confirmingDelete) {
       Button("Delete meeting", role: .destructive) {
         stopPlayback()
@@ -282,13 +271,6 @@ struct MeetingDetailView: View {
       NoteOverflowMenu(
         canDelete: meeting.state.isTerminal, transcription: transcriptMenuAction
       ) { confirmingDelete = true }
-      Button {
-        explainingSharing = true
-      } label: {
-        Label("Share", systemImage: "square.and.arrow.up")
-      }.buttonStyle(PrototypeButtonStyle())
-      NoteIconButton(symbol: "link", label: "Copy note link") { explainingSharing = true }
-        .background(SottoPalette.button, in: .rect(cornerRadius: 5))
       NoteIconButton(symbol: "chevron.left", label: "Previous note") { navigateNote(offset: -1) }
         .disabled(adjacentNote(offset: -1) == nil || leaving)
       NoteIconButton(symbol: "chevron.right", label: "Next note") { navigateNote(offset: 1) }
@@ -403,7 +385,6 @@ struct MeetingDetailView: View {
             playingKind: $playingKind, microphone: microphonePlayback, system: systemPlayback,
             stop: stopPlayback)
         }
-        NoteUnavailableBar()
       }
     }
   }
@@ -1075,7 +1056,7 @@ struct NoteTranscriptBubble: View {
         HStack(spacing: 6) {
           Text(speaker.text).font(.flow(size: 12, weight: .medium))
             .foregroundStyle(
-              speaker.colorIndex.map(SpeakerPalette.color) ?? SottoPalette.ink)
+              speaker.colorIndex.map(SpeakerPalette.textColor) ?? SottoPalette.ink)
           if let confirmIdentity, case .suggested? = speaker.identity {
             Button(action: confirmIdentity) {
               Image(systemName: "checkmark.circle").font(.flow(size: 11))

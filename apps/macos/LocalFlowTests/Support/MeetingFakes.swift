@@ -506,10 +506,15 @@ enum ADTSFixtures {
 
 // MARK: - Store and root helpers
 
-/// A private root under the home directory (the temp directory sits behind a
-/// symlink, which the writer refuses by design).
+/// A private root in the test process's temporary directory, by its canonical path:
+/// `/var/folders/…` sits behind the `/var` symlink, which the writer refuses by design.
+/// `realpath` keeps the `/private` prefix that `resolvingSymlinksInPath()` strips.
 func makeMeetingTestRoot() throws -> URL {
-  let root = FileManager.default.homeDirectoryForCurrentUser
+  guard let canonical = realpath(NSTemporaryDirectory(), nil) else {
+    throw CocoaError(.fileNoSuchFile)
+  }
+  defer { free(canonical) }
+  let root = URL(fileURLWithPath: String(cString: canonical), isDirectory: true)
     .appendingPathComponent("LocalFlowMeetingTests-\(UUID().uuidString)", isDirectory: true)
   try FileManager.default.createDirectory(
     at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -534,7 +539,11 @@ struct MeetingTestStore {
       analysis: AnalysisStore(history: history), root: root, directory: directory)
   }
 
-  func cleanup() { try? FileManager.default.removeItem(at: directory) }
+  /// Closes the shared pool first, so SQLite never sees its files unlinked while open.
+  func cleanup() {
+    try? history.database.close()
+    try? FileManager.default.removeItem(at: directory)
+  }
 }
 
 /// Reads every sample line a recorder wrote; used to prove instrumentation is

@@ -6,7 +6,8 @@ final class OnboardingCoordinator {
   enum Step: Int, CaseIterable {
     case introduction, ai, aiDetails, downloads, permissions, personalize, test, complete
   }
-  /// Where rewriting and meeting notes run. Speech recognition always stays on this Mac.
+  /// Where rewriting and meeting notes run. With `remote`, an approved device also sends
+  /// dictation and meetings to the server; this Mac's speech model stays as the fallback.
   enum AIMode: Equatable { case local, remote, off }
   private(set) var step: Step = .introduction
   /// The choice on the AI step; `off` once the user skips it.

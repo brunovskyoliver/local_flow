@@ -111,6 +111,10 @@ final class NativePresentationTests: XCTestCase {
     let preferences = AppPreferences(defaults: defaults)
     let settings = SettingsViewModel(observe: { state }, perform: { _ in })
     await settings.refresh()
+    // The server step embeds Settings' approved-device setup (UI-01).
+    settings.server = ServerSettingsModel(
+      remote: RemoteDictationModel(preferences: preferences, enrollment: { nil }, turnOff: {}),
+      preferences: preferences, ping: { nil })
     let coordinator = OnboardingCoordinator(preferences: preferences)
     let localAI = LocalAISetup(
       preferences: nil, installer: nil, physicalMemory: 32 << 30,
@@ -127,8 +131,18 @@ final class NativePresentationTests: XCTestCase {
       ("3-ai-remote", view, { coordinator.aiMode = .remote }),
       ("4-ai-remote-server", view, { coordinator.advance(readiness: state) }),
       (
+        "4b-ai-remote-pending", view,
+        {
+          preferences.setRemoteServerURL("https://studio.example.com")
+          preferences.confirmRemoteConsent()
+          preferences.remoteEnabled = true
+          preferences.remoteState = .pending
+        }
+      ),
+      (
         "5-model", view,
         {
+          preferences.remoteEnabled = false
           coordinator.back()
           coordinator.aiMode = .local
           coordinator.advance(readiness: state)

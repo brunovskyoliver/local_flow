@@ -65,7 +65,7 @@ struct InsightsView: View {
 
   private func usage(_ insights: UsageInsights) -> some View {
     VStack(spacing: 24) {
-      HStack(spacing: 24) {
+      cardRow {
         HStack(spacing: 24) {
           PaceCard(insights: insights)
           FixesCard(insights: insights)
@@ -73,12 +73,10 @@ struct InsightsView: View {
         .frame(maxWidth: .infinity)
         VolumeCard(insights: insights).frame(maxWidth: .infinity)
       }
-      .fixedSize(horizontal: false, vertical: true)
-      HStack(spacing: 24) {
+      cardRow {
         AppUsageCard(insights: insights)
         StreakCard(insights: insights)
       }
-      .fixedSize(horizontal: false, vertical: true)
     }
     .insightTipLayer()
   }
@@ -87,7 +85,7 @@ struct InsightsView: View {
 
   private func voice(_ insights: UsageInsights) -> some View {
     VStack(spacing: 24) {
-      HStack(spacing: 24) {
+      cardRow {
         InsightCard {
           StatHeading(value: talkTime(insights.spokenSeconds), label: "Time spoken")
         }
@@ -99,10 +97,16 @@ struct InsightsView: View {
             value: "\(insights.longestDictationWords.formatted())", label: "Longest dictation")
         }
       }
-      .fixedSize(horizontal: false, vertical: true)
       HourCard(insights: insights)
     }
     .insightTipLayer()
+  }
+
+  /// Cards side by side, stacked in a compact window so none is squeezed (UI-14).
+  private func cardRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    let layout =
+      compact ? AnyLayout(VStackLayout(spacing: 24)) : AnyLayout(HStackLayout(spacing: 24))
+    return layout { content() }.fixedSize(horizontal: false, vertical: true)
   }
 }
 
@@ -329,12 +333,15 @@ private struct AppUsageCard: View {
 
   private func bar(_ count: Int, first: Bool) -> some View {
     let share = insights.dictations == 0 ? 0 : Double(count) / Double(insights.dictations)
-    let fill =
+    let (fill, label) =
       count == 0
-      ? SottoPalette.dataQuiet : (first ? SottoPalette.dataStrong : SottoPalette.dataScale[1])
+      ? (SottoPalette.dataQuiet, SottoPalette.onDataQuiet)
+      : first
+        ? (SottoPalette.dataStrong, SottoPalette.onDataStrong)
+        : (SottoPalette.dataScale[1], SottoPalette.onData)
     return Text("\(Int((share * 100).rounded()))%")
       .font(.flow(size: 12, weight: .medium)).monospacedDigit().tracking(0.7)
-      .foregroundStyle(.white)
+      .foregroundStyle(label)
       .frame(width: max(35, share * (compact ? 150 : 300)), height: 28)
       .background(fill, in: RoundedRectangle(cornerRadius: 4))
   }

@@ -224,6 +224,8 @@ private struct HistoryRow: View {
   let delete: () -> Void
   @State private var hovering = false
   @State private var copied = false
+  /// Which row action has keyboard focus; the actions stay visible while one does.
+  @FocusState private var focusedAction: Int?
 
   var body: some View {
     HStack(alignment: .top, spacing: 0) {
@@ -250,7 +252,8 @@ private struct HistoryRow: View {
         .font(.flow(size: 15)).lineSpacing(4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
-      actions.padding(.leading, 16).padding(.top, -4).opacity(hovering ? 1 : 0)
+      actions.padding(.leading, 16).padding(.top, -4)
+        .hoverRevealed(hovering || focusedAction != nil)
     }
     .padding(.vertical, 16).padding(.leading, 18).padding(.trailing, 12)
     .background(hovering ? SottoPalette.canvas : .clear)
@@ -270,11 +273,13 @@ private struct HistoryRow: View {
           copied = false
         }
       }
+      .focused($focusedAction, equals: 0)
       rowButton("text.insert", label: entry.deliveryState == .confirmed ? "Insert again" : "Insert")
       {
         insert()
       }
       .disabled(busy || entry.deliveryState == .attempting)
+      .focused($focusedAction, equals: 1)
       Menu {
         menuItems
       } label: {
@@ -282,6 +287,7 @@ private struct HistoryRow: View {
           .frame(width: 28, height: 28).contentShape(Rectangle())
       }
       .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+      .focused($focusedAction, equals: 2)
       .accessibilityLabel("More")
     }
     .foregroundStyle(SottoPalette.muted)
