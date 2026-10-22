@@ -120,14 +120,92 @@ final class TranscriptPagerPagingTests: XCTestCase {
   func testSelectionCopiesNormalizedTextJoinedByNewlines() async throws {
     let (pager, _, _) = await makePager(count: 4)
     await pager.loadFirst()
-    XCTAssertEqual(pager.copyText(), "Seg 0\nSeg 1\nSeg 2\nSeg 3")
+    XCTAssertEqual(pager.selectionText(), "", "no selection copies nothing; full copy is separate")
+    let full = try await pager.fullTranscriptText()
+    XCTAssertEqual(full, "Seg 0\nSeg 1\nSeg 2\nSeg 3")
     pager.toggleSelection(pager.segments[2].id)
     pager.toggleSelection(pager.segments[0].id)
-    XCTAssertEqual(pager.copyText(), "Seg 0\nSeg 2", "selection follows ordinal order")
+    XCTAssertEqual(pager.selectionText(), "Seg 0\nSeg 2", "selection follows ordinal order")
     pager.toggleSelection(pager.segments[0].id)
-    XCTAssertEqual(pager.copyText(), "Seg 2")
+    XCTAssertEqual(pager.selectionText(), "Seg 2")
     pager.clearSelection()
-    XCTAssertEqual(pager.copyText(), "Seg 0\nSeg 1\nSeg 2\nSeg 3")
+    XCTAssertEqual(pager.selectionText(), "")
+  }
+
+  // MARK: Whole-transcript search, copy and export (UI-02)
+
+  func testSearchFindsAndRevealsAMatchBeyondTheResidentPages() async throws {
+    let (pager, _, _) = await makePager(count: 1_000)
+    await pager.loadFirst()
+    await pager.loadNext()
+    XCTAssertEqual(pager.segments.last?.ordinal, 399)
+    // No resident row matches, so the old resident-only filter showed nothing.
+    XCTAssertTrue(pager.segments.filter { pager.matches($0, query: "Seg 750") }.isEmpty)
+    await pager.search("Seg 750")
+    let result = try XCTUnwrap(pager.searchResult)
+    XCTAssertEqual(result.matches.map(\.ordinal), [750])
+    XCTAssertFalse(result.truncated)
+    XCTAssertFalse(pager.isSearching)
+    // Residency is untouched by the search itself.
+    XCTAssertEqual(pager.segments.map(\.ordinal), Array(0..<400))
+    await pager.showMatch(forward: true)
+    XCTAssertEqual(pager.currentMatchIndex, 0)
+    XCTAssertEqual(pager.highlightedSegmentID, result.matches[0].segmentID)
+    XCTAssertTrue(pager.segments.contains { $0.ordinal == 750 })
+    XCTAssertLessThanOrEqual(pager.residentCount, 400)
+    XCTAssertTrue(pager.hasPrevious, "earlier rows still page in above the match")
+    XCTAssertTrue(pager.hasNext)
+  }
+
+  func testSearchHitsAreCappedAndNavigationWraps() async throws {
+    let (pager, _, _) = await makePager(count: 1_500)
+    await pager.loadFirst()
+    await pager.search("Seg")
+    let result = try XCTUnwrap(pager.searchResult)
+    XCTAssertEqual(result.matches.count, TranscriptPager.maximumSearchMatches)
+    XCTAssertTrue(result.truncated)
+    await pager.showMatch(forward: false)
+    XCTAssertEqual(pager.currentMatchIndex, TranscriptPager.maximumSearchMatches - 1)
+    await pager.showMatch(forward: true)
+    XCTAssertEqual(pager.currentMatchIndex, 0, "Next wraps to the first hit")
+    XCTAssertEqual(pager.highlightedSegmentID, pager.segments.first?.id)
+    await pager.search("")
+    XCTAssertNil(pager.searchResult)
+    XCTAssertNil(pager.currentMatchIndex)
+    await pager.search("nothing like this")
+    XCTAssertEqual(pager.searchResult?.matches, [])
+  }
+
+  func testFullCopyAndExportIncludeRowsBeyondTheResidentPages() async throws {
+    let (pager, _, _) = await makePager(count: 1_000)
+    await pager.loadFirst()
+    await pager.loadNext()
+    XCTAssertEqual(pager.residentCount, 400)
+    let text = try await pager.fullTranscriptText()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+    XCTAssertEqual(lines.count, 1_000)
+    XCTAssertEqual(lines[750], "Seg 750")
+    XCTAssertEqual(lines.last, "Seg 999")
+    XCTAssertEqual(pager.residentCount, 400, "copying reads the store, not the resident pages")
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("transcript-export-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appendingPathComponent("transcript.txt")
+    try await pager.exportTranscript(to: url)
+    XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), text)
+  }
+
+  func testFullCopyIsBounded() async throws {
+    let store = FakeTranscriptStore()
+    let meeting = UUID()
+    await store.seed(meeting)
+    await store.seedSegments(meeting, passID: UUID(), finality: .final, count: 1_000)
+    do {
+      _ = try await TranscriptTextQuery.fullText(
+        store: store, meetingID: meeting, finality: .final, labelRunID: nil, maximumBytes: 1_000)
+      XCTFail("expected tooLong")
+    } catch TranscriptTextQuery.ExportError.tooLong {}
   }
 }
 
@@ -423,8 +501,9 @@ final class TranscriptPagerLabelTests: XCTestCase {
     try await speakers.correctSegment(meetingID: id, segmentID: row5, to: .unknown, now: 21)
     let pager = TranscriptPager(meetingID: id, store: transcripts)
     await pager.loadFirst()
+    let full = try await pager.fullTranscriptText()
     XCTAssertEqual(
-      pager.copyText(),
+      full,
       """
       Ana:
       Words 0.
@@ -441,23 +520,25 @@ final class TranscriptPagerLabelTests: XCTestCase {
       Words 5.
       """)
     for forbidden in ["confidence", "coverage", first.uuidString, second.uuidString, "cluster"] {
-      XCTAssertFalse(pager.copyText().contains(forbidden))
+      XCTAssertFalse(full.contains(forbidden))
     }
     // Selection keeps transcript order and the same block rules.
     pager.toggleSelection(pager.segments[3].id)
     pager.toggleSelection(pager.segments[0].id)
-    XCTAssertEqual(pager.copyText(), "Ana:\nWords 0.\nWords 3.")
+    XCTAssertEqual(pager.selectionText(), "Ana:\nWords 0.\nWords 3.")
   }
 
   func testUndiarizedCopyMatchesFeature006() async throws {
     let (id, _) = try await meeting(segments: 3)
     let pager = TranscriptPager(meetingID: id, store: transcripts)
     await pager.loadFirst()
-    XCTAssertEqual(pager.copyText(), "Words 0.\nWords 1.\nWords 2.")
+    let before = try await pager.fullTranscriptText()
+    XCTAssertEqual(before, "Words 0.\nWords 1.\nWords 2.")
     // A result for another pass shows source labels, and copies like Feature 006 too.
     try await accept(id, pass: UUID(), track: .system, now: 10)
     await pager.applyLabels()
-    XCTAssertEqual(pager.copyText(), "Words 0.\nWords 1.\nWords 2.")
+    let after = try await pager.fullTranscriptText()
+    XCTAssertEqual(after, "Words 0.\nWords 1.\nWords 2.")
   }
 
   func testSearchMatchesDisplayNamesAndText() async throws {
@@ -472,6 +553,11 @@ final class TranscriptPagerLabelTests: XCTestCase {
     XCTAssertEqual(rows.filter { pager.matches($0, query: "words 3") }.map(\.ordinal), [3])
     XCTAssertEqual(rows.filter { pager.matches($0, query: "") }.count, 4)
     XCTAssertTrue(rows.filter { pager.matches($0, query: "zzz") }.isEmpty)
+    // The store search applies the same rules to every row, labels included.
+    await pager.search("nov")
+    XCTAssertEqual(pager.searchResult?.matches.map(\.ordinal), [0, 2])
+    await pager.search("Speaker 2")
+    XCTAssertEqual(pager.searchResult?.matches.map(\.ordinal), [1, 3])
   }
 
   func testLiveRowsCarryNoSpeakerLabels() async throws {

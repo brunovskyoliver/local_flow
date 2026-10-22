@@ -7,6 +7,26 @@ struct SessionView: View {
   let dismiss: () -> Void
 
   var body: some View {
+    // UI-03: the messages scroll at the largest Dynamic Type sizes; the end/close
+    // button stays pinned above the home indicator so it is always reachable.
+    GeometryReader { proxy in
+      ScrollView {
+        messages
+          .padding(.horizontal, 32).padding(.vertical, 24)
+          .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+      }
+      .scrollBounceBehavior(.basedOnSize)
+    }
+    .safeAreaInset(edge: .bottom) {
+      endButton.padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 20)
+        .background(SottoPalette.canvas)
+    }
+    .multilineTextAlignment(.center)
+    .background(SottoPalette.canvas)
+    .foregroundStyle(SottoPalette.ink)
+  }
+
+  private var messages: some View {
     VStack(spacing: 24) {
       Spacer()
       Text(title).font(.flow(size: 34, design: .serif))
@@ -35,21 +55,20 @@ struct SessionView: View {
         }
       }
       Spacer()
-      Button(controller.isActive ? "End session" : "Close") {
-        if controller.isActive { controller.end(.userEnded) }
-        dismiss()
-      }
-      .font(.flow(size: 16, weight: .medium))
-      .foregroundStyle(SottoPalette.onPrimary)
-      .padding(.horizontal, 24).padding(.vertical, 12)
-      .frame(maxWidth: controller.isActive ? .infinity : nil)
-      .background(SottoPalette.primary, in: RoundedRectangle(cornerRadius: SottoRadius.control))
     }
-    .multilineTextAlignment(.center)
-    .padding(32)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(SottoPalette.canvas)
-    .foregroundStyle(SottoPalette.ink)
+  }
+
+  private var endButton: some View {
+    Button(controller.isActive ? "End session" : "Close") {
+      if controller.isActive { controller.end(.userEnded) }
+      dismiss()
+    }
+    .font(.flow(size: 16, weight: .medium))
+    .foregroundStyle(SottoPalette.onPrimary)
+    .padding(.horizontal, 24).padding(.vertical, 12)
+    .frame(maxWidth: controller.isActive ? .infinity : nil)
+    .background(SottoPalette.primary, in: RoundedRectangle(cornerRadius: SottoRadius.control))
+    .accessibilityIdentifier("session.end")
   }
 
   private var title: String {

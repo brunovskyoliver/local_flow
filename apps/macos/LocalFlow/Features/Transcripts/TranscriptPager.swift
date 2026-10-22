@@ -157,7 +157,12 @@ final class TranscriptPager {
     }
     guard let ordinal = try? await store.ordinal(meetingID: meetingID, segmentID: segmentID)
     else { return }
-    // The page starts at the target: it lands at the top of the loaded window.
+    await load(at: ordinal, highlighting: segmentID)
+  }
+
+  /// Replaces the resident pages with the page starting at `ordinal`: the target lands
+  /// at the top of the loaded window, and earlier rows load as the reader scrolls up.
+  private func load(at ordinal: Int, highlighting segmentID: UUID) async {
     guard let page = await fetch(after: ordinal - 1), !page.segments.isEmpty else { return }
     pages = [page]
     evictedFirstOrdinals = []
@@ -227,32 +232,115 @@ final class TranscriptPager {
   }
   func clearSelection() { selection.removeAll() }
 
-  /// Normalized text of the selected segments (or every resident segment), one per line.
-  /// With a current speaker result (US7): `Label:` blocks in transcript order, rows with
-  /// the same label joined by newlines, blocks separated by a blank line. Labels are the
-  /// display texts already resident with their pages; nothing else is loaded or copied.
-  func copyText() -> String {
-    let chosen = (selection.isEmpty ? segments : segments.filter { selection.contains($0.id) })
-      .sorted { $0.ordinal < $1.ordinal }
-    guard speakers != nil else { return chosen.map(\.normalizedText).joined(separator: "\n") }
-    var blocks: [(label: String, lines: [String])] = []
-    for segment in chosen {
-      let label = self.label(for: segment.id)?.text ?? SpeakerLabelText.unknown
-      if blocks.last?.label == label {
-        blocks[blocks.count - 1].lines.append(segment.normalizedText)
-      } else {
-        blocks.append((label, [segment.normalizedText]))
-      }
-    }
-    return blocks.map { "\($0.label):\n" + $0.lines.joined(separator: "\n") }
-      .joined(separator: "\n\n")
+  /// Normalized text of the selected segments, one per line, in transcript order.
+  /// With a current speaker result (US7): `Label:` blocks, rows with the same label
+  /// joined by newlines, blocks separated by a blank line. Empty without a selection:
+  /// copying the whole transcript is `fullTranscriptText()`, which reads the store.
+  func selectionText() -> String {
+    let chosen = segments.filter { selection.contains($0.id) }.sorted { $0.ordinal < $1.ordinal }
+    var formatter = TranscriptTextFormatter(labeled: speakers != nil)
+    return chosen.map { formatter.piece(text: $0.normalizedText, label: label(for: $0.id)?.text) }
+      .joined()
   }
 
   /// FR-020: search matches the row's text and, with a result, its speaker's display text.
   func matches(_ segment: TranscriptSegment, query: String) -> Bool {
-    guard !query.isEmpty else { return true }
-    if segment.normalizedText.localizedStandardContains(query) { return true }
-    return label(for: segment.id)?.text.localizedStandardContains(query) ?? false
+    TranscriptTextQuery.matches(
+      text: segment.normalizedText, label: label(for: segment.id)?.text, query: query)
+  }
+
+  // MARK: Whole-transcript search, copy and export (UI-02)
+
+  /// Hits kept per query; the count shows "1,000+" past it.
+  static let maximumSearchMatches = 1_000
+  /// The last whole-transcript search; nil without a query.
+  private(set) var searchResult: TranscriptSearchResult?
+  /// The hit the reader last moved to with Next/Previous.
+  private(set) var currentMatchIndex: Int?
+  private(set) var isSearching = false
+  private var searchGeneration = 0
+
+  /// Searches every row of the current finality in the store, page by page, not
+  /// only the resident pages. A newer call supersedes an older one.
+  func search(_ query: String) async {
+    searchGeneration += 1
+    let generation = searchGeneration
+    currentMatchIndex = nil
+    guard !query.isEmpty else {
+      searchResult = nil
+      isSearching = false
+      return
+    }
+    isSearching = true
+    do {
+      let result = try await TranscriptTextQuery.search(
+        store: store, meetingID: meetingID, finality: finality, query: query,
+        labelRunID: speakers?.runID, limit: Self.maximumSearchMatches)
+      guard generation == searchGeneration else { return }
+      searchResult = result
+    } catch {
+      guard generation == searchGeneration else { return }
+      if !(error is CancellationError) { notice = "The transcript could not be searched." }
+      searchResult = nil
+    }
+    isSearching = false
+  }
+
+  /// Moves to the next (or previous) hit, wrapping, and loads its page when it is not
+  /// resident. The row is highlighted like a View-source jump.
+  func showMatch(forward: Bool) async {
+    guard let matches = searchResult?.matches, !matches.isEmpty else { return }
+    let index: Int
+    if let current = currentMatchIndex {
+      index = (current + (forward ? 1 : -1) + matches.count) % matches.count
+    } else {
+      // The first hit at or after the top of the loaded window (or before it, backwards).
+      let top = pages.first?.first ?? 0
+      index =
+        forward
+        ? matches.firstIndex(where: { $0.ordinal >= top }) ?? 0
+        : matches.lastIndex(where: { $0.ordinal < top }) ?? matches.count - 1
+    }
+    currentMatchIndex = index
+    let match = matches[index]
+    if segments.contains(where: { $0.id == match.segmentID }) {
+      highlightedSegmentID = match.segmentID
+    } else {
+      await load(at: match.ordinal, highlighting: match.segmentID)
+    }
+  }
+
+  /// The whole transcript as copy text, read from the store a page at a time; throws
+  /// `TranscriptTextQuery.ExportError.tooLong` past 20 MiB.
+  func fullTranscriptText() async throws -> String {
+    try await TranscriptTextQuery.fullText(
+      store: store, meetingID: meetingID, finality: finality, labelRunID: speakers?.runID)
+  }
+
+  /// Writes the whole transcript to `url` in 64 KiB chunks; a failed export leaves no file.
+  func exportTranscript(to url: URL) async throws {
+    let manager = FileManager.default
+    guard manager.createFile(atPath: url.path, contents: nil) else {
+      throw CocoaError(.fileWriteUnknown)
+    }
+    do {
+      let handle = try FileHandle(forWritingTo: url)
+      defer { try? handle.close() }
+      var buffer = Data()
+      try await TranscriptTextQuery.export(
+        store: store, meetingID: meetingID, finality: finality, labelRunID: speakers?.runID
+      ) { piece in
+        buffer.append(contentsOf: piece.utf8)
+        if buffer.count >= 64 * 1024 {
+          try handle.write(contentsOf: buffer)
+          buffer.removeAll(keepingCapacity: true)
+        }
+      }
+      try handle.write(contentsOf: buffer)
+    } catch {
+      try? manager.removeItem(at: url)
+      throw error
+    }
   }
 
   // MARK: Private

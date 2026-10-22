@@ -62,4 +62,16 @@ extension HistoryViewModelTests {
     await model.refresh()
     XCTAssertEqual(model.items.map(\.needsReview), [true])
   }
+
+  /// UI-03: the detail reader gets the complete saved text, not the row's preview.
+  func testDetailLookupReturnsTheCompleteTextUntilDeleted() async throws {
+    let text = Array(repeating: "Dlhý diktát s diakritikou, and some English too. ", count: 200)
+      .joined()
+    let id = try await save(text, source: .app, at: 1_790_000_000)
+    let model = HistoryViewModel(store: harness.dictations)
+    await model.refresh()
+    XCTAssertEqual(model.item(id: id)?.text, text)
+    await model.delete(id)
+    XCTAssertNil(model.item(id: id))
+  }
 }

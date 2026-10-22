@@ -6,8 +6,39 @@ struct DictateView: View {
   let model: DictateViewModel
   let controller: SessionController
   @State private var copied = false
+  /// UI-03: the full-screen reader for the last note.
+  @State private var reading = false
 
   var body: some View {
+    // UI-03: the page scrolls once a long note (or the largest Dynamic Type sizes) no
+    // longer fits; until then the capsule stays centred as before.
+    GeometryReader { proxy in
+      ScrollView {
+        content
+          .padding(24)
+          .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+      }
+      .scrollBounceBehavior(.basedOnSize)
+    }
+    .background(SottoPalette.canvas)
+    .foregroundStyle(SottoPalette.ink)
+    .onAppear(perform: model.appear)
+    .onDisappear(perform: model.disappear)
+    .sheet(isPresented: $reading) {
+      if let note = model.note {
+        NavigationStack {
+          DictationReaderView(text: note.text)
+            .navigationTitle("Dictation")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+              ToolbarItem(placement: .cancellationAction) { Button("Done") { reading = false } }
+            }
+        }
+      }
+    }
+  }
+
+  private var content: some View {
     VStack(spacing: 24) {
       Spacer()
       Button {
@@ -30,10 +61,13 @@ struct DictateView: View {
       if let note = model.note {
         VStack(alignment: .leading, spacing: 12) {
           Text(note.text).font(.flow(size: 17)).textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-          Button(copied ? "Copied" : "Copy") {
-            UIPasteboard.general.string = note.text
-            copied = true
+            .accessibilityIdentifier("dictate.result")
+          // Wraps at the largest Dynamic Type sizes instead of truncating the labels.
+          ViewThatFits(in: .horizontal) {
+            HStack(spacing: 20) { resultActions(note.text) }
+            VStack(alignment: .leading, spacing: 12) { resultActions(note.text) }
           }
           .font(.flow(size: 15, weight: .medium))
         }
@@ -43,12 +77,17 @@ struct DictateView: View {
       }
       Spacer()
     }
-    .padding(24)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(SottoPalette.canvas)
-    .foregroundStyle(SottoPalette.ink)
-    .onAppear(perform: model.appear)
-    .onDisappear(perform: model.disappear)
+  }
+
+  @ViewBuilder private func resultActions(_ text: String) -> some View {
+    Button(copied ? "Copied" : "Copy") {
+      UIPasteboard.general.string = text
+      copied = true
+    }
+    Button("Open") { reading = true }
+      .accessibilityHint("Shows the whole note to read, select or share")
+      .accessibilityIdentifier("dictate.result.open")
+    ShareLink("Share", item: text)
   }
 
   @ViewBuilder private var capsule: some View {
