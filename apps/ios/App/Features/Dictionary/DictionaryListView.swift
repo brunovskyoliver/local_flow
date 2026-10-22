@@ -7,12 +7,13 @@ struct DictionaryListView: View {
   @State private var editing: VocabularyEntry?
   @State private var adding = false
   @State private var status: String?
+  @State private var pendingDelete: VocabularyEntry?
 
   var body: some View {
     NavigationStack {
       List {
         if let error = model.loadError ?? status {
-          Text(error).foregroundStyle(SottoPalette.warning)
+          Text(error).foregroundStyle(SottoPalette.warning).sottoRow()
         }
         ForEach(model.entries) { entry in
           Button {
@@ -30,15 +31,26 @@ struct DictionaryListView: View {
               }
             }
           }
-          .swipeActions {
-            Button("Delete", role: .destructive) {
-              Task { status = await model.delete(entry) }
-            }
+          // Delete asks first (UI-05); not `.destructive`, which animates the row away early.
+          .swipeActions(allowsFullSwipe: false) {
+            Button("Delete", systemImage: "trash") { pendingDelete = entry }.tint(.red)
             Button(entry.enabled ? "Turn off" : "Turn on") {
               Task { status = await model.setEnabled(entry, !entry.enabled) }
             }
           }
         }
+        .sottoRow()
+      }
+      .sottoList()
+      .confirmationDialog(
+        "Delete “\(pendingDelete?.canonical ?? "")”?", isPresented: deleteDialog,
+        titleVisibility: .visible, presenting: pendingDelete
+      ) { entry in
+        Button("Delete Term", role: .destructive) {
+          Task { status = await model.delete(entry) }
+        }
+      } message: { _ in
+        Text("Dictation stops using this spelling and its aliases. This can't be undone.")
       }
       .overlay {
         if model.entries.isEmpty, model.loadError == nil {
@@ -60,5 +72,9 @@ struct DictionaryListView: View {
       }
       .task { await model.refresh() }
     }
+  }
+
+  private var deleteDialog: Binding<Bool> {
+    Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
   }
 }

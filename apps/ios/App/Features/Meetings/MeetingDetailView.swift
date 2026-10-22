@@ -40,6 +40,7 @@ struct MeetingDetailView: View {
             .font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
             .accessibilityIdentifier("meeting.recovered")
         }
+        .sottoRow()
       }
       if let upload = content.upload, !upload.ready {
         Section {
@@ -51,6 +52,7 @@ struct MeetingDetailView: View {
             Button("Server settings", action: openServerSettings)
           }
         }
+        .sottoRow()
       }
       if let upload = content.upload, upload.summaryFailed {
         Section {
@@ -59,6 +61,7 @@ struct MeetingDetailView: View {
           Button("Retry summary") { Task { await model.retrySummary(model.meetingID) } }
             .accessibilityIdentifier("meeting.retrySummary")
         }
+        .sottoRow()
       }
       if let upload = content.upload, upload.ready, let mac = upload.macCopyText {
         Section {
@@ -70,24 +73,29 @@ struct MeetingDetailView: View {
               .accessibilityIdentifier("meeting.sendToMacAgain")
           }
         }
+        .sottoRow()
       }
       if let error = model.error {
         Section {
           Text(error).font(.flow(size: 14)).foregroundStyle(SottoPalette.warning)
         }
+        .sottoRow()
       }
       if content.hasSummary { summary }
       if !content.lines.isEmpty {
         Section("Transcript") {
           ForEach(content.lines) { line in transcriptLine(line) }
         }
+        .sottoRow()
       } else if content.upload?.ready ?? true {
         Text("No transcript yet.").font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
+          .sottoRow()
       }
       if model.loadFailed {
-        Text("This meeting couldn't be read.").foregroundStyle(SottoPalette.warning)
+        Text("This meeting couldn't be read.").foregroundStyle(SottoPalette.warning).sottoRow()
       }
     }
+    .sottoList()
     .navigationTitle(content.title)
     .navigationBarTitleDisplayMode(.inline)
     .toolbar { ToolbarItem(placement: .topBarTrailing) { menu } }
@@ -138,6 +146,7 @@ struct MeetingDetailView: View {
         }
       }
     }
+    .sottoRow()
   }
 
   private func transcriptLine(_ line: MeetingDetailContent.Line) -> some View {

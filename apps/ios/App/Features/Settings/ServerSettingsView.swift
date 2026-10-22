@@ -25,11 +25,12 @@ struct ServerSettingsView: View {
         Text("Server address")
       } footer: {
         if let error = connection.error {
-          Text(error).foregroundStyle(.red)
+          Text(error).foregroundStyle(SottoPalette.warning)
         } else {
           Text("Your LocalFlow server's https:// address, for example its Tailscale name.")
         }
       }
+      .sottoRow()
 
       if let identity = connection.identity {
         Section {
@@ -43,6 +44,7 @@ struct ServerSettingsView: View {
         } footer: {
           Text("Compare it with `flowd admin identity` on the server before you confirm.")
         }
+        .sottoRow()
       }
 
       if connection.settings.origin != nil {
@@ -77,6 +79,7 @@ struct ServerSettingsView: View {
         } footer: {
           if let footer = stateFooter { Text(footer) }
         }
+        .sottoRow()
 
         Section {
           Toggle(
@@ -94,8 +97,10 @@ struct ServerSettingsView: View {
         } footer: {
           Text(PhoneServerConnection.consentText)
         }
+        .sottoRow()
       }
     }
+    .sottoList()
     .navigationTitle("Server")
     .navigationBarTitleDisplayMode(.inline)
     .task(id: connection.state) {

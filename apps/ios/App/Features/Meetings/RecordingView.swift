@@ -4,14 +4,20 @@ import SwiftUI
 /// (contracts/phone-ui.md "Recording screen").
 struct RecordingView: View {
   let meetings: PhoneMeetingCoordinator
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     let recorder = meetings.recorder
     VStack(spacing: 14) {
-      TimelineView(.periodic(from: .now, by: 0.1)) { context in
-        VStack(spacing: 10) {
+      // The clock ticks once a second, on the recording's own second boundaries; only the
+      // meter redraws faster, and slower with Reduce Motion on.
+      VStack(spacing: 10) {
+        TimelineView(.periodic(from: recorder.runningSince ?? .now, by: 1)) { context in
           Text(Self.elapsed(recorder, now: context.date))
             .font(.flow(size: 40, weight: .semibold)).monospacedDigit()
+            .lineLimit(1).minimumScaleFactor(0.5)
+        }
+        TimelineView(.periodic(from: .now, by: reduceMotion ? 0.5 : 0.1)) { _ in
           ProgressView(value: Double(recorder.isPaused ? 0 : recorder.level))
             .tint(SottoPalette.accent)
             .accessibilityLabel("Input level")

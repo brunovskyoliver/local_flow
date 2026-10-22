@@ -45,10 +45,12 @@ struct DiagnosticsView: View {
             + "keyboard process has used; the rest and listening peaks are sampled once a "
             + "second while the keys or the listening view are up.")
       }
+      .sottoRow()
       Section("App memory") {
         LabeledContent("Now", value: Self.megabytes(footprint.current))
         LabeledContent("Peak", value: Self.megabytes(footprint.peak))
       }
+      .sottoRow()
       Section("Model") {
         if let lifecycle {
           LabeledContent("State", value: String(describing: lifecycle.state))
@@ -57,6 +59,7 @@ struct DiagnosticsView: View {
         }
         LabeledContent("Kept ready by", value: holders)
       }
+      .sottoRow()
       Section {
         LabeledContent("Stop", value: Self.time(app.controller?.lastStopAt))
         LabeledContent("Result", value: Self.time(app.controller?.lastResultAt))
@@ -70,6 +73,7 @@ struct DiagnosticsView: View {
             + "Control stop → result is for the last dictation from the control, Action "
             + "Button or Shortcuts since LocalFlow started.")
       }
+      .sottoRow()
       #if DEBUG
         Section {
           Button("Transcribe fixture", action: transcribeFixtures)
@@ -80,11 +84,14 @@ struct DiagnosticsView: View {
             "Transcribes every audio file in the app's Documents (copied in with Xcode's "
               + "device file sharing) and writes <name>.txt next to it.")
         }
+        .sottoRow()
       #endif
       Section {
         Button("Refresh", action: refresh)
       }
+      .sottoRow()
     }
+    .sottoList()
     .navigationTitle("Diagnostics")
     .onAppear(perform: refresh)
   }
