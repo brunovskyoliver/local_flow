@@ -38,3 +38,9 @@ These are deterministic tests. No app was run by hand.
 - Manual UI pass: Mac onboarding server path, hover actions with keyboard/VoiceOver, speaker sheet, Settings › Models download/switch; iPhone light/dark, largest text, keyboard in a host app, Lock Screen and Dynamic Island.
 - Deferred items listed in tickets 05 and 06 (60 Hz animation rate, Mac UI-15 theme decision, orphan audio export, Increase Contrast variant).
 - Physical iPhone: forced quit during recovery, large handoff memory.
+
+## Merge and install
+
+`audit-fixes` was fast-forwarded into local `main` (not pushed). `make release` built a signed Release and replaced `/Applications/LocalFlow.app` (executable dated 2026-10-22 19:59; bundle contains `parakeet-ultra.json`). The flowd launch agent kept running the old binary from the replaced bundle, so it was restarted with `launchctl kickstart -k`; it now runs from `/Applications/LocalFlow.app/Contents/Helpers/flowd` and `/v1/rewrite/health` reports ready. Build log: `~/agent-runs/2026-10-22-localflow-audit-fixes/make-release.log`.
+
+Possible follow-up: `scripts/dev-macos.sh` does not restart the flowd launch agent after replacing the app, so gateway changes don't take effect until it restarts.
