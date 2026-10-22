@@ -9,6 +9,9 @@ struct DictationLiveActivity: Widget {
   /// iOS sets the expanded island's width; the recording row sits this far in from its
   /// edges, centred top to bottom.
   static let recordingInset: CGFloat = 20
+  /// The compact and minimal island have a fixed system size, so their text stops growing
+  /// here; the Lock Screen and the expanded island keep the full timers at any size.
+  static let compactTypeLimit = DynamicTypeSize.xxLarge
 
   var body: some WidgetConfiguration {
     ActivityConfiguration(for: DictationActivityAttributes.self) { context in
@@ -72,11 +75,11 @@ struct DictationLiveActivity: Widget {
           }
         }
       } compactLeading: {
-        Mic(phase: state.phase)
+        Mic(phase: state.phase).dynamicTypeSize(...Self.compactTypeLimit)
       } compactTrailing: {
-        CompactTime(state: state)
+        CompactTime(state: state).dynamicTypeSize(...Self.compactTypeLimit)
       } minimal: {
-        Mic(phase: state.phase)
+        Mic(phase: state.phase).dynamicTypeSize(...Self.compactTypeLimit)
       }
     }
   }
@@ -223,16 +226,19 @@ private struct Mic: View {
 }
 
 /// `Text(timerInterval:)` takes every point of width it is offered, which shifted the rows
-/// around it. A fixed frame keeps it to its digits.
+/// around it. A fixed frame keeps it to its digits; the frame grows with the text size, and
+/// the digits shrink a little rather than truncate if a long session still overflows it.
 private struct Elapsed: View {
   let since: Date
   let width: CGFloat
   let alignment: Alignment
+  @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
 
   var body: some View {
     Text(timerInterval: since...Date.distantFuture, countsDown: false).monospacedDigit()
       .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
-      .frame(width: width, alignment: alignment)
+      .lineLimit(1).minimumScaleFactor(0.7)
+      .frame(width: width * scale, alignment: alignment)
   }
 }
 
@@ -240,12 +246,14 @@ private struct Countdown: View {
   let to: Date
   let width: CGFloat
   let alignment: Alignment
+  @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
 
   var body: some View {
     // A range needs its start before its end; a passed deadline shows 0:00.
     let now = Date()
     Text(timerInterval: now...max(now, to), countsDown: true).monospacedDigit()
       .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
-      .frame(width: width, alignment: alignment)
+      .lineLimit(1).minimumScaleFactor(0.7)
+      .frame(width: width * scale, alignment: alignment)
   }
 }
