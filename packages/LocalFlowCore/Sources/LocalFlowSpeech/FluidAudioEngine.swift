@@ -3,8 +3,9 @@ import FluidAudio
 import Foundation
 import OSLog
 
-/// Constructs the pinned Parakeet v3 runtime only from a previously verified local model.
-/// The lifecycle coordinator owns the returned runtime and is the only caller of this factory.
+/// Constructs a pinned Parakeet runtime (v3 or Ultra, `SpeechModelChoice`) only from a
+/// previously verified local model. The lifecycle coordinator owns the returned runtime and
+/// is the only caller of this factory.
 public struct FluidAudioEngineFactory: Sendable {
   let descriptor: LocalModelDescriptor
   var evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil
@@ -30,10 +31,12 @@ public struct FluidAudioEngineFactory: Sendable {
   public func makeRuntime() async throws -> any TranscriptionRuntime {
     FluidAudioSDK.configureLogging()
     try descriptor.descriptor.validate()
-    guard descriptor.descriptor.modelID == "FluidInference/parakeet-tdt-0.6b-v3-coreml",
-      descriptor.descriptor.sourceRevision == "7dd20fe6b1797d35f5e3307e8b1732d9a178edfe",
-      descriptor.descriptor.sdkCompatibility == "0.15.7", descriptor.descriptor.automaticLanguage
-    else { throw DictationFailure.modelUnavailable }
+    guard let choice = SpeechModelChoice(pinned: descriptor.descriptor) else {
+      throw DictationFailure.modelUnavailable
+    }
+    // Same files, compute units, window, padding and decoding for every choice; only the
+    // weights and FluidAudio's version tag differ.
+    let version = choice.asrVersion
     let configuration = MLModelConfiguration()
     configuration.computeUnits = .all
     // Direct local URLs only: never use a download-capable convenience loader.
@@ -57,9 +60,12 @@ public struct FluidAudioEngineFactory: Sendable {
       encoder: load("Encoder.mlmodelc"),
       preprocessor: load("Preprocessor.mlmodelc"), decoder: load("Decoder.mlmodelc"),
       joint: load("JointDecisionv3.mlmodelc"), configuration: configuration,
-      vocabulary: vocabulary, version: .v3)
+      vocabulary: vocabulary, version: version)
     let manager = AsrManager(
       config: ASRConfig(sampleRate: 16_000, parallelChunkConcurrency: 1), models: models)
+    // The booster rescores the recognizer's token timings against its own CTC pass. Ultra
+    // keeps v3's tokenizer and timing format, so the booster stays on for it; its acceptance
+    // policy was tuned on v3 confidences and has not been re-measured for Ultra.
     var booster: VocabularyBooster?
     if let boostModel {
       do {
@@ -72,8 +78,18 @@ public struct FluidAudioEngineFactory: Sendable {
       }
     }
     return FluidAudioRuntime(
-      manager: manager, evidenceObserver: evidenceObserver, booster: booster,
+      manager: manager, model: choice, evidenceObserver: evidenceObserver, booster: booster,
       englishWords: englishWords)
+  }
+}
+
+extension SpeechModelChoice {
+  /// FluidAudio's tag for the weights; both select its v3-family decode path (`isV3Family`).
+  var asrVersion: AsrModelVersion {
+    switch self {
+    case .parakeetV3: .v3
+    case .parakeetUltra: .ultra
+    }
   }
 }
 
@@ -140,6 +156,8 @@ public actor FluidAudioRuntime: TranscriptionRuntime {
   public nonisolated static let languageHint = "en_sk_latin_script"
 
   private let manager: AsrManager
+  /// The pinned checkpoint this runtime loaded.
+  public nonisolated let model: SpeechModelChoice
 
   private let evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)?
   private let booster: VocabularyBooster?
@@ -147,12 +165,13 @@ public actor FluidAudioRuntime: TranscriptionRuntime {
   private var boostSession: VocabularyBooster.Session?
 
   init(
-    manager: AsrManager,
+    manager: AsrManager, model: SpeechModelChoice = .parakeetV3,
     evidenceObserver: (@Sendable (RecognitionEvidence) async throws -> Void)? = nil,
     booster: VocabularyBooster? = nil,
     englishWords: @escaping @MainActor @Sendable (Set<String>) -> Set<String> = { _ in [] }
   ) {
     self.manager = manager
+    self.model = model
     self.evidenceObserver = evidenceObserver
     self.booster = booster
     self.englishWords = englishWords
@@ -171,7 +190,7 @@ public actor FluidAudioRuntime: TranscriptionRuntime {
     // The spotter's CTC pass runs beside recognition: about 60 ms of the 110 ms it
     // takes per window on M5 stays hidden behind the TDT decode.
     async let spotted = Self.spot(bounded, session: session)
-    var decoderState = TdtDecoderState.make(decoderLayers: AsrModelVersion.v3.decoderLayers)
+    var decoderState = TdtDecoderState.make(decoderLayers: model.asrVersion.decoderLayers)
     let result = try await manager.transcribe(
       bounded, decoderState: &decoderState, language: Self.scriptFilter)
     guard result.text.utf8.count <= 65_536, (result.tokenTimings?.count ?? 0) <= 16_384,
