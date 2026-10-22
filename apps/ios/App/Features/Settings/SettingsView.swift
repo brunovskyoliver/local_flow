@@ -10,7 +10,7 @@ struct SettingsView: View {
   @AppStorage(DiagnosticsView.enabledKey) private var diagnostics = false
   @AppStorage(ResultNotifier.enabledKey) private var notifyResults = false
   @State private var notificationsDenied = false
-  @State private var orphanPresent = false
+  @State private var orphanCount = 0
   @State private var sizeOnDisk: Int64 = 0
   @State private var confirmDelete = false
   @State private var confirmDeleteOrphan = false
@@ -79,7 +79,7 @@ struct SettingsView: View {
           }
         }
         .sottoRow()
-        if orphanPresent || orphanMessage != nil {
+        if orphanCount > 0 || orphanMessage != nil {
           orphanSection
         }
         if let connection = app.serverConnection {
@@ -140,16 +140,21 @@ struct SettingsView: View {
         )
       }
       .confirmationDialog(
-        "Delete the unrecovered recording?", isPresented: $confirmDeleteOrphan,
+        orphanCount == 1
+          ? "Delete the unrecovered recording?" : "Delete \(orphanCount) unrecovered recordings?",
+        isPresented: $confirmDeleteOrphan,
         titleVisibility: .visible
       ) {
-        Button("Delete Recording", role: .destructive) {
+        Button(orphanCount == 1 ? "Delete Recording" : "Delete Recordings", role: .destructive) {
           orphans.delete()
           orphanMessage = nil
           refresh()
         }
       } message: {
-        Text("It was never transcribed. Deleting it can't be undone.")
+        Text(
+          orphanCount == 1
+            ? "It was never transcribed. Deleting it can't be undone."
+            : "They were never transcribed. Deleting them can't be undone.")
       }
     }
   }
@@ -158,14 +163,18 @@ struct SettingsView: View {
   /// recovery; Delete asks first, because the audio is the only copy.
   private var orphanSection: some View {
     Section {
-      if orphanPresent {
-        LabeledContent("1 unrecovered recording") {
+      if orphanCount > 0 {
+        LabeledContent(
+          orphanCount == 1 ? "1 unrecovered recording" : "\(orphanCount) unrecovered recordings"
+        ) {
           if retryingOrphan { ProgressView() }
         }
         Button("Try transcribing again", action: retryOrphan)
           .disabled(!canRetryOrphan)
-        Button("Delete recording…", role: .destructive) { confirmDeleteOrphan = true }
-          .disabled(retryingOrphan)
+        Button(orphanCount == 1 ? "Delete recording…" : "Delete recordings…", role: .destructive) {
+          confirmDeleteOrphan = true
+        }
+        .disabled(retryingOrphan)
       }
       if let orphanMessage {
         Text(orphanMessage).font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
@@ -173,7 +182,7 @@ struct SettingsView: View {
     } header: {
       Text("Recovery")
     } footer: {
-      if orphanPresent {
+      if orphanCount > 0 {
         Text(orphanFooter)
       }
     }
@@ -199,14 +208,14 @@ struct SettingsView: View {
       retryingOrphan = false
       refresh()
       orphanMessage =
-        orphanPresent
+        orphanCount > 0
         ? "It couldn't be transcribed this time. It's kept; try again later."
         : "Done. If it heard any speech, the transcript is in History."
     }
   }
 
   private func refresh() {
-    orphanPresent = orphans.hasOrphan
+    orphanCount = orphans.orphanCount
     liveActivities = ActivityAuthorizationInfo().areActivitiesEnabled
     sizeOnDisk = model.state == .ready ? model.sizeOnDisk() : 0
   }
