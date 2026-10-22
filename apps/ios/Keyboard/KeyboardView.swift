@@ -12,7 +12,7 @@ struct KeyboardView: View {
   }
 
   let model: KeyboardSessionModel
-  let levels: LevelsReader?
+  let levels: LevelsFeed?
   let needsGlobe: Bool
   let actions: Actions
 
