@@ -765,3 +765,108 @@ func TestHandoffWatchClose(t *testing.T) {
 	}
 	expectCode(t, third.handoff(Handoff{Op: 1, Action: "watch"}), CodeNotOffered)
 }
+
+// A put keeps the user's byte count in step with the files without walking
+// the directory per chunk, and checks the final sha256 from the hash built
+// as chunks arrive; a put resumed by another flowd (no running hash) reads
+// the file instead. Truncations and resets subtract what they drop.
+func TestHandoffPutUsageAndRunningHash(t *testing.T) {
+	s := NewHandoffs(HandoffConfig{Dir: t.TempDir(), Processor: "/bin/false"})
+	const user = 7
+	userDir := s.userDir(user)
+	put := func(s *Handoffs, name string, at int64, data []byte, sum string) int64 {
+		t.Helper()
+		r, err := s.handle(user, 1, Handoff{Action: "put", Meeting: handoffMeeting, Name: name, Offset: offset(at), Data: data, SHA256: sum})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *r.Offset
+	}
+	exact := func(label string) {
+		t.Helper()
+		s.mu.Lock()
+		cached, ok := s.usage[user]
+		s.mu.Unlock()
+		if !ok || cached != userBytes(userDir) {
+			t.Fatalf("%s: cached %d (%t), stored %d", label, cached, ok, userBytes(userDir))
+		}
+	}
+
+	bundle := bytes.Repeat([]byte("bundle-"), 20_000)
+	half := int64(len(bundle) / 2)
+	put(s, "bundle.sqlite", 0, bundle[:half], "")
+	exact("first chunk")
+	if got := put(s, "bundle.sqlite", half, bundle[half:], hexSum(bundle)); got != int64(len(bundle)) {
+		t.Fatalf("whole bundle rejected: %d", got)
+	}
+	exact("bundle")
+	if len(s.uploads) != 0 {
+		t.Fatal("running hash kept after the checksum put")
+	}
+
+	audio := bytes.Repeat([]byte{0xAA}, 50_000)
+	put(s, "mic-0000.aac", 0, audio[:30_000], "")
+	if got := put(s, "mic-0000.aac", 30_000, audio[30_000:], hexSum([]byte("other"))); got != 0 {
+		t.Fatal("mismatch kept")
+	}
+	exact("mismatch")
+	put(s, "rows.sqlite", 0, []byte("rows-v1"), "")
+	put(s, "rows.sqlite", 0, []byte("rows"), "")
+	exact("rows reset")
+
+	// Another flowd resumes the audio: no running hash, so the file is read.
+	put(s, "mic-0000.aac", 0, audio[:30_000], "")
+	restarted := NewHandoffs(HandoffConfig{Dir: s.cfg.Dir, Processor: "/bin/false"})
+	if got := put(restarted, "mic-0000.aac", 30_000, audio[30_000:], hexSum(audio)); got != int64(len(audio)) {
+		t.Fatalf("resumed upload rejected: %d", got)
+	}
+	if got := put(restarted, "mic-0000.aac", int64(len(audio)), nil, hexSum(audio)); got != int64(len(audio)) {
+		t.Fatalf("checksum-only put after a resume: %d", got)
+	}
+	restarted.mu.Lock()
+	cached := restarted.usage[user]
+	restarted.mu.Unlock()
+	if cached != userBytes(userDir) {
+		t.Fatalf("reconciled %d, stored %d", cached, userBytes(userDir))
+	}
+
+	// Delete forgets both caches for the meeting.
+	if _, err := s.handle(user, 1, Handoff{Action: "delete", Meeting: handoffMeeting}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.usage[user]; ok || len(s.uploads) != 0 {
+		t.Fatal("delete kept a cache")
+	}
+}
+
+// The first get of a done file hashes it outside s.mu and caches the sum;
+// a later get reuses it.
+func TestHandoffGetHashesOutsideTheLock(t *testing.T) {
+	s := NewHandoffs(HandoffConfig{Dir: t.TempDir(), Processor: "/bin/false"})
+	dir := queue(t, s, handoffMeeting, "done")
+	bundle := bytes.Repeat([]byte("result"), 10_000)
+	if err := os.WriteFile(filepath.Join(dir, "bundle.sqlite"), bundle, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.handle(1, 1, Handoff{Action: "get", Meeting: handoffMeeting, Offset: offset(0)})
+	if err != nil || r.SHA256 != hexSum(bundle) || *r.Size != int64(len(bundle)) || len(r.Data) != MaxHandoffChunkBytes {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if s.hashes[filepath.Join(dir, "bundle.sqlite")] != hexSum(bundle) {
+		t.Fatal("sum not cached")
+	}
+	r, err = s.handle(1, 1, Handoff{Action: "get", Meeting: handoffMeeting, Name: "missing.aac", Offset: offset(0)})
+	if err == nil {
+		t.Fatalf("missing file served: %+v", r)
+	}
+	expectState := func(state string) {
+		t.Helper()
+		if err := writeState(dir, state, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expectState("processing")
+	if r, err := s.handle(1, 1, Handoff{Action: "get", Meeting: handoffMeeting, Offset: offset(0)}); err != nil || r.State != "processing" || r.Data != nil {
+		t.Fatalf("%+v %v", r, err)
+	}
+}

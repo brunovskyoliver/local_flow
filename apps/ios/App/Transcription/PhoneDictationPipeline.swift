@@ -12,6 +12,9 @@ struct PhoneDictationPipeline: Sendable {
     let quality: TranscriptionEntry.Quality
     let stopReason: TranscriptionEntry.StopReason
     let detail: TranscriptionQualityDetail?
+    /// The recognizer did not finish every window. Empty text with this set is a
+    /// failure to retry, not silence.
+    var transcriptionIncomplete = false
   }
 
   let lifecycle: ModelLifecycleCoordinator
@@ -54,7 +57,8 @@ struct PhoneDictationPipeline: Sendable {
     let detail =
       empty ? nil : try result.detail?.addingCompletionReasons(reasons, normalizedText: result.text)
     return Output(
-      text: empty ? "" : result.text, quality: quality, stopReason: stopReason, detail: detail)
+      text: empty ? "" : result.text, quality: quality, stopReason: stopReason, detail: detail,
+      transcriptionIncomplete: result.incomplete || result.detail?.incomplete == true)
   }
 
   /// Keep-ready may still be loading the model when a dictation stops, which makes

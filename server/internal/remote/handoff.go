@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"hash"
 	"io"
 	"io/fs"
 	"log"
@@ -68,13 +69,21 @@ type Handoffs struct {
 	cfg  HandoffConfig
 	wake chan struct{}
 
-	// ponytail: one lock over all handoff storage, so a put's final hash of
-	// up to 1 GiB stalls other handoff ops for seconds; lock per meeting if
-	// that matters.
+	// mu guards all handoff storage. Nothing under it reads a whole file on
+	// the normal path: a put hashes its chunks as they arrive (uploads), the
+	// user's byte count is cached (usage), and a get hashes a done file
+	// without it. Only a put that resumes after a restart rehashes its file.
 	mu      sync.Mutex
 	running string             // meeting dir being processed
 	cancel  context.CancelFunc // stops the running processor
 	hashes  map[string]string  // file path -> sha256 of a done meeting's file
+	// uploads holds the running sha256 of each file being put, by path. An
+	// entry ends with the file's checksum put, a truncation or forget.
+	uploads map[string]*uploadHash
+	// usage caches each user's stored bytes, kept exact by put. A missing
+	// entry is reconciled with one walk of the user's directory; forget and
+	// the processor's end drop it, since they change storage outside put.
+	usage map[int64]int64
 	// changed holds, per user with a watch waiting, a channel closed at the
 	// next change that can make one of the user's meetings importable.
 	changed map[int64]chan struct{}
@@ -95,7 +104,17 @@ func NewHandoffs(cfg HandoffConfig) *Handoffs {
 	if cfg.Logger == nil {
 		cfg.Logger = log.New(discard{}, "", 0)
 	}
-	return &Handoffs{cfg: cfg, wake: make(chan struct{}, 1), hashes: map[string]string{}, changed: map[int64]chan struct{}{}}
+	return &Handoffs{
+		cfg: cfg, wake: make(chan struct{}, 1), hashes: map[string]string{},
+		uploads: map[string]*uploadHash{}, usage: map[int64]int64{},
+		changed: map[int64]chan struct{}{},
+	}
+}
+
+// uploadHash is the sha256 of a file's first size bytes.
+type uploadHash struct {
+	h    hash.Hash
+	size int64
 }
 
 var errHandoffStorage = &Error{CodeInternal, "handoff storage"}
@@ -222,13 +241,74 @@ func meetings(dir string) []string {
 	return out
 }
 
-// forget drops the cached hashes of dir's files.
+// forget drops the cached hashes of dir's files and its user's byte count.
+// s.mu is held.
 func (s *Handoffs) forget(dir string) {
+	prefix := dir + string(filepath.Separator)
 	for path := range s.hashes {
-		if strings.HasPrefix(path, dir+string(filepath.Separator)) {
+		if strings.HasPrefix(path, prefix) {
 			delete(s.hashes, path)
 		}
 	}
+	for path := range s.uploads {
+		if strings.HasPrefix(path, prefix) {
+			delete(s.uploads, path)
+		}
+	}
+	s.dropUsage(dir)
+}
+
+// dropUsage makes the next put of dir's user count its bytes again. s.mu is
+// held.
+func (s *Handoffs) dropUsage(dir string) {
+	if user, err := strconv.ParseInt(filepath.Base(filepath.Dir(dir)), 10, 64); err == nil {
+		delete(s.usage, user)
+	}
+}
+
+// userUsage is user's stored bytes, walking userDir only when not cached.
+// s.mu is held.
+func (s *Handoffs) userUsage(user int64, userDir string) int64 {
+	used, ok := s.usage[user]
+	if !ok {
+		used = userBytes(userDir)
+		s.usage[user] = used
+	}
+	return used
+}
+
+// addUsage adjusts a cached byte count; an uncached one is walked later.
+// s.mu is held.
+func (s *Handoffs) addUsage(user, delta int64) {
+	if used, ok := s.usage[user]; ok {
+		s.usage[user] = max(0, used+delta)
+	}
+}
+
+// hashAppend extends path's running hash with data written at before. A
+// file whose earlier bytes were not seen here (a put resumed after a
+// restart) has no running hash. s.mu is held.
+func (s *Handoffs) hashAppend(path string, before int64, data []byte) {
+	u := s.uploads[path]
+	if before == 0 {
+		u = &uploadHash{h: sha256.New()}
+		s.uploads[path] = u
+	}
+	if u == nil || u.size != before {
+		delete(s.uploads, path)
+		return
+	}
+	u.h.Write(data)
+	u.size += int64(len(data))
+}
+
+// uploadSum is the sha256 of path's size bytes: the running hash when it
+// covers them, otherwise read from the file. s.mu is held.
+func (s *Handoffs) uploadSum(path string, size int64) (string, error) {
+	if u, ok := s.uploads[path]; ok && u.size == size {
+		return hex.EncodeToString(u.h.Sum(nil)), nil
+	}
+	return hashFile(path)
 }
 
 func exists(path string) bool {
@@ -241,6 +321,9 @@ func touch(path string) error {
 }
 
 func (s *Handoffs) handle(user, device int64, req Handoff) (HandoffReply, error) {
+	if req.Action == "get" {
+		return s.handleGet(user, req)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	userDir := s.userDir(user)
@@ -289,7 +372,7 @@ func (s *Handoffs) handle(user, device int64, req Handoff) (HandoffReply, error)
 		if req.Copy && touch(filepath.Join(dir, "copy")) != nil {
 			return reply, errHandoffStorage
 		}
-		return s.put(userDir, dir, req, reply)
+		return s.put(user, userDir, dir, req, reply)
 	case "start":
 		if state != "receiving" {
 			return reply, nil
@@ -316,12 +399,49 @@ func (s *Handoffs) handle(user, device int64, req Handoff) (HandoffReply, error)
 		}
 		reply.State, reply.Detail = "queued", ""
 		return reply, nil
-	default: // get
-		if state != "done" {
-			return reply, nil
-		}
-		return s.get(dir, req, reply)
+	default:
+		return reply, invalid("unknown handoff action")
 	}
+}
+
+// handleGet answers a get. The first get of a done file hashes it without
+// s.mu: the file does not change until the meeting is deleted, and the sum
+// is kept only if the file's size and time are the same afterwards.
+func (s *Handoffs) handleGet(user int64, req Handoff) (HandoffReply, error) {
+	dir := filepath.Join(s.userDir(user), req.Meeting)
+	path := filePath(dir, req.Meeting, getName(req))
+	s.mu.Lock()
+	state, _ := readState(dir)
+	_, cached := s.hashes[path]
+	s.mu.Unlock()
+	if state == "done" && !cached {
+		if before, err := os.Stat(path); err == nil {
+			sum, err := hashFile(path)
+			after, statErr := os.Stat(path)
+			s.mu.Lock()
+			if current, _ := readState(dir); err == nil && statErr == nil && current == "done" &&
+				before.Size() == after.Size() && before.ModTime().Equal(after.ModTime()) {
+				s.hashes[path] = sum
+			}
+			s.mu.Unlock()
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, detail := readState(dir)
+	reply := HandoffReply{Meeting: req.Meeting, State: state, Detail: detail}
+	if state != "done" {
+		return reply, nil
+	}
+	return s.get(dir, req, reply)
+}
+
+// getName is the file a get reads: the bundle without a name.
+func getName(req Handoff) string {
+	if req.Name == "" {
+		return "bundle.sqlite"
+	}
+	return req.Name
 }
 
 // list returns up to maxHandoffList of user's meetings as device sees them,
@@ -389,17 +509,24 @@ func (s *Handoffs) importable(user, device int64) ([]HandoffMeeting, <-chan stru
 // sha256, checks the whole file, emptying it on a mismatch. A put at another
 // offset writes nothing, so a resent chunk cannot erase progress. rows.sqlite
 // is replaceable: a put at offset 0 empties it first.
-func (s *Handoffs) put(userDir, dir string, req Handoff, reply HandoffReply) (HandoffReply, error) {
+//
+// The user's byte count is cached and each file's sha256 is built as its
+// chunks arrive, so a chunk costs neither a directory walk nor, at the end,
+// a read of the whole file under s.mu (s.mu is held).
+func (s *Handoffs) put(user int64, userDir, dir string, req Handoff, reply HandoffReply) (HandoffReply, error) {
 	path := filePath(dir, req.Meeting, req.Name)
 	if req.Name == "rows.sqlite" && *req.Offset == 0 {
+		old := fileSize(path)
 		if err := os.Truncate(path, 0); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return reply, errHandoffStorage
 		}
+		s.addUsage(user, -old)
+		delete(s.uploads, path)
 	}
 	size := fileSize(path)
 	if *req.Offset == size {
 		if len(req.Data) > 0 {
-			if size+int64(len(req.Data)) > MaxHandoffFileBytes || userBytes(userDir)+int64(len(req.Data)) > MaxHandoffUserBytes {
+			if size+int64(len(req.Data)) > MaxHandoffFileBytes || s.userUsage(user, userDir)+int64(len(req.Data)) > MaxHandoffUserBytes {
 				return reply, &Error{CodeLimitExceeded, "handoff storage bound"}
 			}
 			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
@@ -408,8 +535,13 @@ func (s *Handoffs) put(userDir, dir string, req Handoff, reply HandoffReply) (Ha
 			}
 			_, err = f.Write(req.Data)
 			if closeErr := f.Close(); err != nil || closeErr != nil {
+				// A short write leaves an unknown size: count and hash again.
+				delete(s.usage, user)
+				delete(s.uploads, path)
 				return reply, errHandoffStorage
 			}
+			s.addUsage(user, int64(len(req.Data)))
+			s.hashAppend(path, size, req.Data)
 			size += int64(len(req.Data))
 			now := s.cfg.Clock.Now()
 			_ = os.Chtimes(dir, now, now) // the retention sweep reads the dir's time
@@ -419,10 +551,14 @@ func (s *Handoffs) put(userDir, dir string, req Handoff, reply HandoffReply) (Ha
 			if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600); err == nil {
 				_ = f.Close()
 			}
-			if sum, err := hashFile(path); err != nil || sum != req.SHA256 {
+			sum, err := s.uploadSum(path, size)
+			delete(s.uploads, path)
+			if err != nil || sum != req.SHA256 {
 				if os.Truncate(path, 0) != nil {
+					delete(s.usage, user)
 					return reply, errHandoffStorage
 				}
+				s.addUsage(user, -size)
 				size = 0
 			}
 		}
@@ -459,10 +595,8 @@ func (s *Handoffs) delete(dir, meeting string) (HandoffReply, error) {
 // get returns up to MaxHandoffChunkBytes from offset of the done bundle or,
 // with a name, of one of the meeting's AAC files.
 func (s *Handoffs) get(dir string, req Handoff, reply HandoffReply) (HandoffReply, error) {
-	name := req.Name
-	if name == "" {
-		name = "bundle.sqlite"
-	} else {
+	name := getName(req)
+	if req.Name != "" {
 		reply.Name = name
 	}
 	path := filePath(dir, req.Meeting, name)
@@ -635,6 +769,8 @@ func (s *Handoffs) process(ctx, runCtx context.Context, dir, meeting string) {
 	defer s.mu.Unlock()
 	s.cancel()
 	s.running, s.cancel = "", nil
+	// The processor rewrote the bundle and wrote its own files.
+	s.dropUsage(dir)
 	if current, _ := readState(dir); current == "processing" && state != "processing" {
 		if partial {
 			_ = os.Remove(filepath.Join(dir, "partial"))

@@ -1,5 +1,4 @@
 import BackgroundTasks
-import CryptoKit
 import Foundation
 import GRDB
 import LocalFlowCore
@@ -179,6 +178,8 @@ actor MeetingUploader {
   private let now: @Sendable () -> Int64
   private let onChange: @Sendable (Event) -> Void
   private let directory: URL
+  /// The first pause after a rejected checksum; it doubles for each further mismatch.
+  private let uploadRetryDelay: Duration
   /// Per recording meeting: confirmed segments when its last partial run was accepted.
   private var partialAt: [UUID: Int] = [:]
   /// The server refused `rows.sqlite` or `partial` (before Feature 020's US3): meetings go
@@ -195,8 +196,10 @@ actor MeetingUploader {
     channel: any MeetingHandoffChannel, gate: @escaping @Sendable () async -> Gate,
     summarize: @escaping @Sendable (UUID) async -> MeetingSummarizer.Outcome,
     now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1_000) },
-    onChange: @escaping @Sendable (Event) -> Void = { _ in }
+    onChange: @escaping @Sendable (Event) -> Void = { _ in },
+    uploadRetryDelay: Duration = .seconds(1)
   ) {
+    self.uploadRetryDelay = uploadRetryDelay
     self.database = database
     self.root = root
     self.handoff = handoff
@@ -875,72 +878,39 @@ actor MeetingUploader {
     Self.log.notice("Meeting upload: bytes=\(bytes, privacy: .public) ms=\(ms, privacy: .public)")
   }
 
-  /// One file, in chunks from the server's size; the last chunk carries the SHA-256, and a
-  /// mismatch (the server empties the file) sends it again from the start. Returns the
-  /// bytes sent.
+  /// One file, in bounded chunks from the server's size; the last chunk carries the
+  /// SHA-256, and a mismatch (the server empties the file) sends it again from the start,
+  /// at most `HandoffFileTransfer.maximumMismatches` times. Returns the bytes sent.
   @discardableResult
   private func put(
     _ id: UUID, name: String, url: URL, progress: (Int) -> Void
   ) async throws -> Int {
-    let data = try Data(contentsOf: url, options: .mappedIfSafe)
-    let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    // An offset the server does not have writes nothing and returns its size.
-    var offset =
-      try await channel.call(.init(action: .put, meeting: id, name: name, offset: 0)).offset ?? 0
-    guard offset <= data.count else { throw RemoteChannelError.protocolError }
-    var mismatches = 0
-    var sent = 0
-    while true {
-      try Task.checkCancellation()
-      progress(offset)
-      let end = min(data.count, offset + MeetingHandoff.chunkBytes)
-      let last = end == data.count
-      let reply = try await channel.call(
-        .init(
-          action: .put, meeting: id, name: name, offset: offset,
-          data: end > offset ? data.subdata(in: offset..<end) : nil, sha256: last ? hash : nil))
-      guard let next = reply.offset, reply.state == .receiving else {
-        throw RemoteChannelError.protocolError
-      }
-      sent += end - offset
-      if last && next == 0 && !data.isEmpty {
-        mismatches += 1
-        guard mismatches < 3 else { throw RemoteChannelError.protocolError }
-        offset = 0
-        continue
-      }
-      guard next == end else { throw RemoteChannelError.protocolError }
-      if last { return sent }
-      offset = next
+    let channel = channel
+    do {
+      return try await HandoffFileTransfer.put(
+        meeting: id, name: name, url: url, retryDelay: uploadRetryDelay,
+        call: { try await channel.call($0) }, progress: progress)
+    } catch HandoffFileTransferError.checksumMismatch {
+      throw RemoteChannelError.protocolError
     }
   }
 
   // MARK: Result
 
-  /// The processed bundle, checksum-verified, in `Handoff/<id>/result.sqlite`.
+  /// The processed bundle, checksum-verified, in `Handoff/<id>/result.sqlite`. Chunks go
+  /// to a private partial file that a later attempt resumes, never to memory.
   private func download(_ id: UUID) async throws -> URL {
-    var data = Data()
-    var expected: (size: Int, sha256: String)?
-    repeat {
-      try Task.checkCancellation()
-      let reply = try await channel.call(.init(action: .get, meeting: id, offset: data.count))
-      guard reply.state == .done, let size = reply.size, let sha256 = reply.sha256,
-        reply.offset == data.count, size <= 1 << 30,
-        expected == nil || expected! == (size, sha256)
-      else { throw RemoteChannelError.protocolError }
-      expected = (size, sha256)
-      guard let chunk = reply.data, !chunk.isEmpty else { break }
-      data.append(chunk)
-    } while data.count < expected!.size
-    let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    guard let expected, data.count == expected.size, hash == expected.sha256 else {
-      throw MeetingUploadError.checksum
-    }
     let folder = directory.appendingPathComponent(id.uuidString, isDirectory: true)
     try FileManager.default.createDirectory(
       at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let url = folder.appendingPathComponent("result.sqlite")
-    try data.write(to: url, options: .atomic)
+    let channel = channel
+    do {
+      try await HandoffFileTransfer.get(
+        meeting: id, name: nil, to: url, call: { try await channel.call($0) })
+    } catch HandoffFileTransferError.checksumMismatch {
+      throw MeetingUploadError.checksum
+    }
     return url
   }
 
