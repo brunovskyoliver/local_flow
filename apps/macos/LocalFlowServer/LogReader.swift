@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 
 /// Reads new complete lines from flowd.log across rotation. flowd renames flowd.log to
@@ -53,5 +54,60 @@ struct LogReader: Codable, Equatable, Sendable {
     let complete = data[data.startIndex...end]
     offset += UInt64(complete.count)
     return complete.split(separator: UInt8(ascii: "\n")).map { String(decoding: $0, as: UTF8.self) }
+  }
+}
+
+/// Calls `changed` on the main queue when flowd.log is written, renamed (rotation) or
+/// deleted, so the app reads the log when it changes instead of every second. After a
+/// rotation or deletion the watch moves to the file now at the path; when none is there
+/// yet, the monitor's next health poll calls `rearm()` again.
+@MainActor
+final class LogWatcher {
+  typealias Handler = @MainActor (_ rotated: Bool) -> Void
+
+  private let url: URL
+  private let changed: Handler
+  private var source: (any DispatchSourceFileSystemObject)?
+
+  init(url: URL, changed: @escaping Handler) {
+    self.url = url
+    self.changed = changed
+    rearm()
+  }
+
+  var isWatching: Bool { source != nil }
+
+  /// Starts watching the file at the path; true when a new watch started.
+  @discardableResult
+  func rearm() -> Bool {
+    guard source == nil else { return false }
+    let descriptor = open(url.path, O_EVTONLY)
+    guard descriptor >= 0 else { return false }
+    let source = DispatchSource.makeFileSystemObjectSource(
+      fileDescriptor: descriptor, eventMask: [.write, .extend, .rename, .delete, .revoke],
+      queue: .main)
+    source.setEventHandler { [weak self, weak source] in
+      guard let events = source?.data else { return }
+      MainActor.assumeIsolated { self?.handle(events) }
+    }
+    source.setCancelHandler { close(descriptor) }
+    self.source = source
+    source.resume()
+    return true
+  }
+
+  private func handle(_ events: DispatchSource.FileSystemEvent) {
+    let rotated = !events.isDisjoint(with: [.rename, .delete, .revoke])
+    if rotated {
+      source?.cancel()
+      source = nil
+      rearm()
+    }
+    changed(rotated)
+  }
+
+  func stop() {
+    source?.cancel()
+    source = nil
   }
 }

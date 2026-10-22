@@ -73,4 +73,47 @@ final class LogReaderTests: XCTestCase {
     var reader = LogReader.fromStart(log: log, rotated: rotated)
     XCTAssertEqual(reader.read(log: log, rotated: rotated), [])
   }
+
+  /// The monitor reads the log on change instead of every second: a write is reported,
+  /// a rotation is reported as one and the watch moves to the new file, and a missing
+  /// log is picked up by a later rearm.
+  @MainActor
+  func testWatcherReportsWritesAndFollowsRotation() async throws {
+    var events: [Bool] = []
+    let watcher = LogWatcher(url: log) { events.append($0) }
+    XCTAssertFalse(watcher.isWatching, "no log yet")
+    try append("first\n", to: log)
+    XCTAssertTrue(watcher.rearm())
+    XCTAssertFalse(watcher.rearm(), "already watching")
+    try append("second\n", to: log)
+    try await waitUntil { events.contains(false) }
+    try rotate()
+    try await waitUntil { events.contains(true) }
+    XCTAssertFalse(watcher.isWatching, "flowd has not created the new file yet")
+    try append("third\n", to: log)
+    XCTAssertTrue(watcher.rearm(), "the next health poll picks up the new file")
+    events.removeAll()
+    try append("fourth\n", to: log)
+    try await waitUntil { events.contains(false) }
+    watcher.stop()
+    XCTAssertFalse(watcher.isWatching)
+  }
+
+  @MainActor
+  private func waitUntil(_ condition: () -> Bool) async throws {
+    for _ in 0..<200 {
+      if condition() { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTFail("timed out")
+  }
+
+  func testIdleMonitorPollsHealthSlowlyAndDetailOnlyForTheWindow() {
+    XCTAssertEqual(MonitorDemand.idle.interval, .seconds(30))
+    XCTAssertEqual(MonitorDemand.menu.interval, .seconds(5))
+    XCTAssertEqual(MonitorDemand.window.interval, .seconds(5))
+    XCTAssertFalse(MonitorDemand.idle.detailed)
+    XCTAssertFalse(MonitorDemand.menu.detailed)
+    XCTAssertTrue(MonitorDemand.window.detailed)
+  }
 }

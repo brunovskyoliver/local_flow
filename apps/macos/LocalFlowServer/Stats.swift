@@ -72,10 +72,12 @@ struct ServiceDay: Identifiable, Equatable, Sendable {
       .sorted { ($0.day, $0.service) > ($1.day, $1.service) }
   }
 
-  /// Nearest-rank percentile of sorted values.
+  /// Nearest-rank percentile of sorted values: rank = ceil(p × n), in whole percent and
+  /// integer arithmetic so it matches `StatsStore.summary`'s SQL exactly.
   static func percentile(_ sorted: [Int], _ p: Double) -> Int? {
     guard !sorted.isEmpty else { return nil }
-    let rank = Int((p * Double(sorted.count)).rounded(.up))
+    let percent = Int((p * 100).rounded())
+    let rank = (sorted.count * percent + 99) / 100
     return sorted[max(0, min(sorted.count - 1, rank - 1))]
   }
 }
@@ -138,4 +140,86 @@ final class StatsStore: Sendable {
       try RequestRecord.filter(Column("day") >= RequestRecord.day(first)).fetchAll(db)
     }
   }
+
+  /// The Stats tab's figures, aggregated in SQLite instead of fetching every request row.
+  /// Median and p95 are nearest-rank over each day's durations, exactly as
+  /// `ServiceDay.summarize` computes them: rank = ceil(p × n), here in integer arithmetic.
+  func summary(days: Int, now: Date = .now) throws -> StatsSummary {
+    let first = RequestRecord.day(
+      Calendar.current.date(byAdding: .day, value: -(days - 1), to: now)!)
+    let ok = LogLine.okCodes.sorted()
+    let okList = Array(repeating: "?", count: ok.count).joined(separator: ", ")
+    let call = RequestRecord.analysisCall
+    return try database.read { db in
+      var percentiles: [String: (median: Int?, p95: Int?)] = [:]
+      for row in try Row.fetchAll(
+        db,
+        sql: """
+          SELECT day, service,
+            MAX(CASE WHEN position = (total * 50 + 99) / 100 THEN duration_ms END) AS median,
+            MAX(CASE WHEN position = (total * 95 + 99) / 100 THEN duration_ms END) AS p95
+          FROM (
+            SELECT day, service, duration_ms,
+              ROW_NUMBER() OVER (PARTITION BY day, service ORDER BY duration_ms) AS position,
+              COUNT(*) OVER (PARTITION BY day, service) AS total
+            FROM request
+            WHERE day >= ? AND service != ? AND duration_ms IS NOT NULL)
+          GROUP BY day, service
+          """, arguments: [first, call])
+      {
+        percentiles[(row["day"] as String) + "/" + (row["service"] as String)] = (
+          row["median"], row["p95"]
+        )
+      }
+      let serviceDays = try Row.fetchAll(
+        db,
+        sql: """
+          SELECT day, service, COUNT(*) AS requests,
+            SUM(CASE WHEN code IN (\(okList)) THEN 0 ELSE 1 END) AS failures
+          FROM request WHERE day >= ? AND service != ?
+          GROUP BY day, service ORDER BY day DESC, service DESC
+          """, arguments: StatementArguments(ok + [first, call])
+      ).map { row in
+        let day: String = row["day"]
+        let service: String = row["service"]
+        let durations = percentiles[day + "/" + service]
+        return ServiceDay(
+          day: day, service: service, requests: row["requests"], medianMS: durations?.median,
+          p95MS: durations?.p95, failures: row["failures"])
+      }
+      let failureCodes = try Row.fetchAll(
+        db,
+        sql: """
+          SELECT code, COUNT(*) AS count FROM request
+          WHERE day >= ? AND service != ? AND code NOT IN (\(okList))
+          GROUP BY code ORDER BY count DESC, code
+          """, arguments: StatementArguments([first, call] + ok)
+      ).map { StatsSummary.CodeCount(code: $0["code"], count: $0["count"]) }
+      var analysisCalls: [String: Int] = [:]
+      for row in try Row.fetchAll(
+        db,
+        sql: """
+          SELECT COALESCE(model, '-') AS model, COUNT(*) AS count FROM request
+          WHERE day >= ? AND service = ? GROUP BY 1
+          """, arguments: [first, call])
+      {
+        analysisCalls[row["model"]] = row["count"]
+      }
+      return StatsSummary(
+        serviceDays: serviceDays, failureCodes: failureCodes, analysisCalls: analysisCalls)
+    }
+  }
+}
+
+/// What the Stats tab shows for its range: per service and day, the failure codes of
+/// client requests, and the analysis backend calls by answering model.
+struct StatsSummary: Equatable, Sendable {
+  struct CodeCount: Hashable, Sendable {
+    var code: String
+    var count: Int
+  }
+
+  var serviceDays: [ServiceDay] = []
+  var failureCodes: [CodeCount] = []
+  var analysisCalls: [String: Int] = [:]
 }

@@ -22,6 +22,9 @@ struct LocalFlowServerApp: App {
   }
 
   init() {
+    // The stats history ingests when flowd.log changes, not on a timer.
+    let stats = stats
+    monitor.onLogChanged = { stats.logChanged(rotated: $0) }
     if let directory = ProcessInfo.processInfo.environment["LOCALFLOW_SERVER_SNAPSHOT_DIR"] {
       Snapshot.schedule(monitor: monitor, stats: stats, into: URL(fileURLWithPath: directory))
     }
@@ -94,6 +97,8 @@ struct MenuContent: View {
     .controlSize(.small)
     .padding(14)
     .frame(width: 340)
+    .onAppear { monitor.setMenuVisible(true) }
+    .onDisappear { monitor.setMenuVisible(false) }
   }
 
   private func restart(_ name: String, _ label: String) {
