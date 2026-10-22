@@ -13,6 +13,7 @@ struct SummaryTabView: View {
   var openTranscript: (() -> Void)? = nil
   @State private var previousEdits = false
   @State private var copied = false
+  @State private var confirmingRemoveEdits = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 20) {
@@ -100,10 +101,9 @@ struct SummaryTabView: View {
         .accessibilityIdentifier("meeting.summary.regenerate")
       Button("Previous edits") { previousEdits = true }
         .disabled(model.readModel?.previousEdits.isEmpty ?? true)
-      Button("Remove all edits", role: .destructive) {
-        Task { await model.removeAllEdits() }
-      }
-      .disabled(!hasEdits)
+      Button("Remove all edits…", role: .destructive) { confirmingRemoveEdits = true }
+        .disabled(!hasEdits)
+        .accessibilityIdentifier("meeting.summary.removeEdits")
       if let line = model.generatedLine {
         Divider()
         Text(line)
@@ -116,6 +116,17 @@ struct SummaryTabView: View {
     .accessibilityLabel("Summary options")
     .popover(isPresented: $previousEdits, arrowEdge: .bottom) {
       PreviousEditsView(model: model)
+    }
+    .confirmationDialog("Remove all edits?", isPresented: $confirmingRemoveEdits) {
+      Button("Remove All Edits", role: .destructive) {
+        Task { await model.removeAllEdits() }
+      }
+      .accessibilityIdentifier("meeting.summary.removeEdits.confirm")
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "Your changes to the summary, owners, due dates and items are deleted, and the generated text comes back. This can't be undone."
+      )
     }
   }
 
@@ -256,6 +267,7 @@ struct SummaryTabView: View {
     @State private var draft = ""
     @State private var showAI = false
     @State private var hovering = false
+    @FocusState private var focusedControl: Int?
 
     var editable: Bool { item.kind == .decision || item.kind == .nextStep }
 
@@ -294,9 +306,12 @@ struct SummaryTabView: View {
               },
               edits: item.edits
             )
-            .opacity(hovering ? 1 : 0)
+            .focused($focusedControl, equals: 0)
+            .hoverRevealed(hovering || focusedControl != nil)
           }
-          SourceButton(item: item, model: model).opacity(hovering ? 1 : 0)
+          SourceButton(item: item, model: model)
+            .focused($focusedControl, equals: 1)
+            .hoverRevealed(hovering || focusedControl != nil)
         }
       }
       .onHover { hovering = $0 }
@@ -451,6 +466,7 @@ struct SummaryTabView: View {
     @State private var pickingDue = false
     @State private var duePick = Date()
     @State private var hovering = false
+    @FocusState private var focusedControl: Int?
 
     var body: some View {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -494,8 +510,10 @@ struct SummaryTabView: View {
             }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
-          actionEditMenu.opacity(hovering ? 1 : 0)
-          SourceButton(item: item, model: model).opacity(hovering ? 1 : 0)
+          actionEditMenu.focused($focusedControl, equals: 0)
+            .hoverRevealed(hovering || focusedControl != nil)
+          SourceButton(item: item, model: model).focused($focusedControl, equals: 1)
+            .hoverRevealed(hovering || focusedControl != nil)
         }
       }
       .padding(.vertical, 3)

@@ -147,9 +147,6 @@ struct MeetingLibraryView: View {
         .frame(maxWidth: .infinity)
       }
       .scrollIndicators(.never)
-      NoteUnavailableBar(prompt: "Ask about your meetings")
-        .shadow(color: .black.opacity(0.06), radius: 5, y: 3)
-        .padding(20)
     }
   }
 
@@ -168,6 +165,26 @@ struct MeetingLibraryView: View {
     return state == .failed || state == .interrupted
   }
 
+  /// UI-09: the Today card's line when nothing needs attention, from the active meeting
+  /// and today's loaded notes. Today's notes are the newest, so the first page has them.
+  static func todaySummary(activeState: MeetingState?, todayCount: Int) -> String {
+    switch activeState {
+    case .created, .preparing, .recording: return "Recording now"
+    case .paused: return "Recording paused"
+    case .finalizing: return "Finishing the recording"
+    case .completed, .interrupted, .failed, nil: break
+    }
+    switch todayCount {
+    case 0: return "No meetings today"
+    case 1: return "1 meeting today"
+    default: return "\(todayCount) meetings today"
+    }
+  }
+
+  private var todayCount: Int {
+    model.rows.count(where: { Calendar.current.isDateInToday(day($0.createdAt)) })
+  }
+
   private var today: some View {
     VStack(alignment: .leading, spacing: 16) {
       HStack {
@@ -181,8 +198,14 @@ struct MeetingLibraryView: View {
       if needsAttention {
         ActiveMeetingView(coordinator: coordinator)
       } else {
-        Text("No meetings today").font(.flow(size: 15)).frame(maxWidth: .infinity)
-          .padding(.bottom, 14)
+        Text(
+          Self.todaySummary(
+            activeState: coordinator.activeMeetingID == nil ? nil : coordinator.status?.state,
+            todayCount: todayCount)
+        )
+        .font(.flow(size: 15)).frame(maxWidth: .infinity)
+        .padding(.bottom, 14)
+        .accessibilityIdentifier("meeting.today.summary")
       }
     }
     .padding(.horizontal, 20).padding(.vertical, 12)

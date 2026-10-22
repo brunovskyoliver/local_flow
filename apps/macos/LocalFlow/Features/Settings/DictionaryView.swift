@@ -217,7 +217,8 @@ struct DictionaryView: View {
   }
 }
 
-/// One entry: `misspelling → Correct spelling`, or the word alone. Actions show on hover.
+/// One entry: `misspelling → Correct spelling`, or the word alone. Actions show on hover
+/// or keyboard focus, and always for VoiceOver.
 private struct DictionaryRow: View {
   let entry: VocabularyEntry
   let busy: Bool
@@ -230,6 +231,7 @@ private struct DictionaryRow: View {
   let toggle: () -> Void
   let delete: () -> Void
   @State private var hovering = false
+  @FocusState private var focusedAction: Int?
 
   private var retiredAliases: Set<String> {
     Set(retired.filter { !$0.isBoost && $0.term != entry.canonical }.map(\.term))
@@ -304,15 +306,17 @@ private struct DictionaryRow: View {
           .background(SottoPalette.tint, in: Capsule())
       }
       Spacer(minLength: 0)
-      if hovering || busy {
-        HStack(spacing: 4) {
-          Button("Edit", action: edit).accessibilityLabel("Edit \(entry.canonical)")
-          Button(entry.enabled ? "Disable" : "Enable", action: toggle)
-            .accessibilityLabel("\(entry.enabled ? "Disable" : "Enable") \(entry.canonical)")
-          Button("Delete", action: delete).accessibilityLabel("Delete \(entry.canonical)")
-        }
-        .buttonStyle(DictionaryPillButtonStyle()).disabled(busy)
+      HStack(spacing: 4) {
+        Button("Edit", action: edit).accessibilityLabel("Edit \(entry.canonical)")
+          .focused($focusedAction, equals: 0)
+        Button(entry.enabled ? "Disable" : "Enable", action: toggle)
+          .accessibilityLabel("\(entry.enabled ? "Disable" : "Enable") \(entry.canonical)")
+          .focused($focusedAction, equals: 1)
+        Button("Delete", action: delete).accessibilityLabel("Delete \(entry.canonical)")
+          .focused($focusedAction, equals: 2)
       }
+      .buttonStyle(DictionaryPillButtonStyle()).disabled(busy)
+      .hoverRevealed(hovering || busy || focusedAction != nil)
     }
   }
 }

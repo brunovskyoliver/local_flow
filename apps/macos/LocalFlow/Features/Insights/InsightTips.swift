@@ -8,6 +8,24 @@ enum InsightTip: Equatable {
   case note(title: String, detail: String? = nil)
   /// Light card for a calendar day.
   case day(date: Date, words: Int, apps: Int, topApp: String?)
+
+  /// The tip as one sentence, so VoiceOver reads chart values that sighted users get on
+  /// hover.
+  @MainActor var spokenText: String {
+    switch self {
+    case .note(let title, let detail):
+      return ([title] + (detail.map { [$0.replacingOccurrences(of: "\n", with: ", ")] } ?? []))
+        .joined(separator: ", ")
+    case .day(let date, let words, let apps, let topApp):
+      var parts = [
+        date.formatted(date: .long, time: .omitted),
+        "\(words.formatted()) \(words == 1 ? "word" : "words")",
+        "\(apps.formatted()) \(apps == 1 ? "app" : "apps") used",
+      ]
+      if let topApp { parts.append("most in \(AppName.display(topApp))") }
+      return parts.joined(separator: ", ")
+    }
+  }
 }
 
 private struct TipAnchor {
@@ -34,6 +52,9 @@ private struct TipTarget: ViewModifier {
         guard hovering, let tip else { return [] }
         return [TipAnchor(tip: tip, bounds: bounds)]
       }
+      // UI-04: the hover detail is also the element's accessibility value.
+      .accessibilityElement(children: .combine)
+      .accessibilityValue(tip?.spokenText ?? "")
   }
 }
 

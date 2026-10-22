@@ -298,7 +298,7 @@ final class SummaryModel {
     var attributed = AttributedString(shown)
     for mention in speakerMentions(in: shown) {
       guard let range = Range(mention.range, in: attributed) else { continue }
-      attributed[range].foregroundColor = SpeakerPalette.color(mention.colorIndex)
+      attributed[range].foregroundColor = SpeakerPalette.textColor(mention.colorIndex)
       // ponytail: the color index names the speaker; two roots sharing a palette slot
       // link to the first. Carry the root id through the matcher if that happens.
       if let id = choices.first(where: { $0.colorIndex == mention.colorIndex })?.id {

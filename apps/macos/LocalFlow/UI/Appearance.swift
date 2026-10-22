@@ -7,8 +7,9 @@ import SwiftUI
 enum SottoPalette {
   static let ink = adaptive(
     light: 0x1A1A1A, dark: 0xDEDDD7, contrastLight: 0x000000, contrastDark: 0xFFFFFF)
+  // Light muted keeps 4.5:1 for small text on canvas, surface, card, tint and button.
   static let muted = adaptive(
-    light: 0x71716E, dark: 0x9D9C98, contrastLight: 0x464544, contrastDark: 0xC8C8C2)
+    light: 0x686865, dark: 0x9D9C98, contrastLight: 0x464544, contrastDark: 0xC8C8C2)
   static let faint = muted
   static let canvas = adaptive(light: 0xF7F6F3, dark: 0x1F1F1E)
   static let surface = adaptive(light: 0xFCFCFB, dark: 0x141414)
@@ -36,8 +37,14 @@ enum SottoPalette {
     adaptive(light: 0x9ACAC2, dark: 0x3F6A65), adaptive(light: 0xD6ECEA, dark: 0x2E4744),
   ]
   static let dataQuiet = adaptive(light: 0x84BAB1, dark: 0x3F6A65)
+  // Labels drawn on the data fills above; each pair keeps 4.5:1 on its fill in both themes.
+  static let onDataStrong = adaptive(light: 0xFFFFFF, dark: 0x000000)
+  static let onData = adaptive(light: 0x1A1A1A, dark: 0x141414)
+  static let onDataQuiet = adaptive(light: 0x1A1A1A, dark: 0xFFFFFF)
   static let success = Color(nsColor: .systemGreen)
-  static let warning = adaptive(light: 0xEA580C, dark: 0xFB923C)
+  /// Used for small error and warning text, so the light value is the darker orange that
+  /// keeps 4.5:1 on canvas, surface, card, tint and button fills (`AppearanceContrastTests`).
+  static let warning = adaptive(light: 0xB43C0B, dark: 0xFB923C)
 
   private static func adaptive(
     light: UInt32, dark: UInt32, darkAlpha: CGFloat = 1,
@@ -117,6 +124,21 @@ struct PrimaryButtonStyle: ButtonStyle {
       .padding(.horizontal, 16).padding(.vertical, 9)
       .background(SottoPalette.primary, in: RoundedRectangle(cornerRadius: 8))
       .opacity(configuration.isPressed ? 0.8 : isEnabled ? 1 : 0.45)
+  }
+}
+
+extension View {
+  /// Row actions that appear on pointer hover. They stay in the view tree so Tab (with
+  /// keyboard navigation on) reaches them; pass `visible` true while the row is hovered or
+  /// one of its actions has keyboard focus. VoiceOver always gets them.
+  func hoverRevealed(_ visible: Bool) -> some View { modifier(HoverReveal(visible: visible)) }
+}
+
+private struct HoverReveal: ViewModifier {
+  let visible: Bool
+  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+  func body(content: Content) -> some View {
+    content.opacity(visible || voiceOver ? 1 : 0)
   }
 }
 

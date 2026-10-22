@@ -9,6 +9,8 @@ struct OnboardingView: View {
   @Bindable var preferences: AppPreferences
   @State private var recorder: ShortcutRecorder?
   @State private var recordingError: String?
+  @State private var showingLegacyServer = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     VStack(spacing: 0) {
@@ -30,7 +32,7 @@ struct OnboardingView: View {
     }
     .font(.flow(size: 14))
     .foregroundStyle(SottoPalette.ink)
-    .animation(.smooth(duration: 0.25), value: coordinator.step)
+    .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: coordinator.step)
     .task { await settings.refresh() }
     .task(id: coordinator.step) {
       // Right Control is the first-run default; a shortcut the user already saved stays.
@@ -82,7 +84,9 @@ struct OnboardingView: View {
     SetupCard {
       FeatureRow(
         symbol: "lock.shield", title: "Private by design",
-        detail: "Speech recognition always runs on this Mac. Your audio never leaves it.")
+        detail:
+          "Speech recognition runs on this Mac. Audio leaves it only if you connect a LocalFlow server you run."
+      )
       FeatureRow(
         symbol: "keyboard", title: "Works in every app",
         detail: "Hold Right Control, speak, release. The text lands where your cursor is.")
@@ -96,7 +100,7 @@ struct OnboardingView: View {
     eyebrow("Optional")
     headline("Add ", "AI", " rewriting.")
     lede(
-      "A language model can polish each dictation and turn meetings into notes. Choose where it runs. Speech recognition stays on this Mac either way."
+      "A language model can polish each dictation and turn meetings into notes. Choose where it runs."
     )
     VStack(spacing: 10) {
       SelectableCard(selected: coordinator.aiMode == .local) {
@@ -114,13 +118,13 @@ struct OnboardingView: View {
         ChoiceLabel(
           symbol: "server.rack", title: "On your server",
           detail:
-            "Use a LocalFlow server on another computer you run, for bigger models. Nothing large downloads here."
+            "Use a LocalFlow server on another computer you run, for bigger models. Its administrator approves this Mac once."
         )
       }
     }
     if coordinator.aiMode == .remote {
       Label(
-        "Dictated text and meeting transcripts go to that server. Audio never leaves this Mac.",
+        "Once the server approves this Mac, dictation audio, meeting recordings and their text go to it. Until then, and whenever it can't be reached, dictation is transcribed on this Mac.",
         systemImage: "info.circle"
       )
       .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
@@ -162,11 +166,53 @@ struct OnboardingView: View {
     }
   }
 
+  /// The same approved-device setup as Settings › Server: consent and address, fingerprint
+  /// trust, sign-in, then the administrator's approval.
   @ViewBuilder private var remoteServer: some View {
     headline("Connect ", "your server", ".")
     lede(
-      "Rewriting and meeting notes will run on a LocalFlow server you control. Use HTTPS, or plain HTTP only on a network you trust."
+      "Turn on Remote dictation and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this Mac once. You can change this later in Settings."
     )
+    if let server = settings.server {
+      SetupCard { RemoteDictationView(model: server.remote) }
+      Label(Self.remotePrivacy(server.remote), systemImage: "info.circle")
+        .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("onboarding.remoteStatus")
+    }
+    DisclosureGroup("Advanced: rewrite-only server", isExpanded: $showingLegacyServer) {
+      VStack(alignment: .leading, spacing: 16) { legacyRewriteServer }
+        .foregroundStyle(SottoPalette.ink).padding(.top, 12)
+    }
+    .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+    .accessibilityIdentifier("onboarding.legacyRewriteServer")
+  }
+
+  /// What leaves this Mac at each enrollment state, so the copy never overstates it.
+  static func remotePrivacy(_ remote: RemoteDictationModel) -> String {
+    guard remote.isOn else {
+      return
+        "Nothing leaves this Mac until you confirm what is sent and the administrator approves this Mac."
+    }
+    switch remote.state {
+    case .approved:
+      return
+        "Approved. Dictation, rewriting, summaries and meetings will use this server. Speech recognition on this Mac takes over when the server can't be reached."
+    case .pending:
+      return
+        "Waiting for approval. You can continue: until the administrator approves this Mac, nothing is sent and dictation is transcribed here."
+    default:
+      return "Nothing is sent until the administrator approves this Mac."
+    }
+  }
+
+  /// The older rewrite-only flowd with a shared access key; kept for existing setups.
+  @ViewBuilder private var legacyRewriteServer: some View {
+    Text(
+      "Only rewriting uses this server; dictation and meetings stay on this Mac. Use HTTPS, or plain HTTP only on a network you trust."
+    )
+    .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+    .fixedSize(horizontal: false, vertical: true)
     SetupCard {
       VStack(alignment: .leading, spacing: 8) {
         fieldLabel("Server address")
@@ -229,7 +275,8 @@ struct OnboardingView: View {
     SetupCard {
       DownloadRow(
         symbol: "waveform", title: "Speech recognition",
-        detail: "Parakeet v3 · \(Self.bytes(settings.snapshot.downloadBytes ?? 483_105_645))",
+        detail: "Parakeet v3 · \(Self.bytes(settings.snapshot.downloadBytes ?? 483_105_645))"
+          + (coordinator.aiMode == .remote ? " · used when the server can't be reached" : ""),
         state: speechState)
       switch coordinator.aiMode {
       case .local:
@@ -241,8 +288,12 @@ struct OnboardingView: View {
           state: aiState, retry: { localAI.start() })
       case .remote:
         DownloadRow(
-          symbol: "server.rack", title: "AI server",
-          detail: settings.rewriteSettings?.host ?? "Remote", state: .done)
+          symbol: "server.rack", title: "Your server",
+          detail: remoteEnrolled
+            ? settings.server.map { Self.serverHost($0.remote.serverURL) } ?? "Remote"
+            : settings.rewriteSettings?.host ?? "Remote",
+          state: remoteEnrolled && settings.server?.remote.state != .approved
+            ? .waiting("Waiting for approval") : .done)
       case .off: EmptyView()
       }
     }
@@ -387,6 +438,9 @@ struct OnboardingView: View {
 
   private func primaryAction() {
     if coordinator.step == .aiDetails, coordinator.aiMode == .remote {
+      // An enrolled device uses the server for every service it offers, as Settings'
+      // "Use this server for everything" does; the legacy path only rewrites.
+      if remoteEnrolled { preferences.useServerForEverything = true }
       settings.rewriteEnabled = true
     }
     coordinator.advance(readiness: settings.snapshot)
@@ -431,8 +485,8 @@ struct OnboardingView: View {
 
   private var hint: String? {
     switch coordinator.step {
-    case .aiDetails where coordinator.aiMode == .remote && !remoteConnected:
-      "Connect to continue"
+    case .aiDetails where coordinator.aiMode == .remote && !remoteConnected && !remoteEnrolled:
+      "Sign in to continue"
     case .downloads where !settings.snapshot.modelInstalled: "Waiting for speech recognition…"
     case .permissions where !settings.readyForTest: "Allow Microphone and Input Monitoring"
     default: nil
@@ -441,12 +495,23 @@ struct OnboardingView: View {
 
   private var remoteConnected: Bool { settings.connectionResult?.category == .connected }
 
+  /// Signed in to the server: approved, or waiting for the administrator.
+  private var remoteEnrolled: Bool {
+    guard let remote = settings.server?.remote, remote.isOn else { return false }
+    return remote.state == .approved || remote.state == .pending
+  }
+
+  static func serverHost(_ url: String) -> String {
+    URL(string: url)?.host() ?? url
+  }
+
   private var canAdvance: Bool {
     switch coordinator.step {
     case .introduction, .ai: true
     case .aiDetails:
       coordinator.aiMode == .remote
-        ? remoteConnected : localAI.selection.fits(physicalMemory: localAI.physicalMemory)
+        ? remoteEnrolled || remoteConnected
+        : localAI.selection.fits(physicalMemory: localAI.physicalMemory)
     case .downloads: settings.snapshot.modelInstalled
     case .permissions, .personalize: settings.readyForTest && recorder == nil
     case .test: coordinator.testSucceeded
@@ -827,8 +892,10 @@ private struct DownloadRow: View {
 
 /// Drawn rather than NSProgressIndicator, which turns gray whenever the window is not key.
 private struct Bar: View {
-  /// Nil sweeps a short segment across the track.
+  /// Nil sweeps a short segment across the track; with Reduce Motion it holds a dimmed
+  /// full track instead.
   let fraction: Double?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
     GeometryReader { geometry in
       ZStack(alignment: .leading) {
@@ -836,7 +903,9 @@ private struct Bar: View {
         if let fraction {
           Capsule().fill(SottoPalette.accent)
             .frame(width: max(6, geometry.size.width * min(max(fraction, 0), 1)))
-            .animation(.smooth, value: fraction)
+            .animation(reduceMotion ? nil : .smooth, value: fraction)
+        } else if reduceMotion {
+          Capsule().fill(SottoPalette.accent.opacity(0.45))
         } else {
           TimelineView(DictationIndicator.frames) { timeline in
             let phase =
@@ -853,6 +922,10 @@ private struct Bar: View {
       }
     }
     .frame(height: 5)
+    .accessibilityElement()
+    .accessibilityLabel("Progress")
+    .accessibilityValue(
+      fraction.map { "\(Int((min(max($0, 0), 1) * 100).rounded())) percent" } ?? "In progress")
   }
 }
 

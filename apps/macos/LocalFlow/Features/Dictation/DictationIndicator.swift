@@ -82,9 +82,9 @@ struct DictationIndicator: View {
       .offset(x: 35)
       .accessibilityLabel(state == .rewriting ? "Cancel rewrite" : "Cancel dictation")
       .accessibilityFocused($accessibilityFocused)
-      .scaleEffect(hovering || accessibilityFocused ? 1 : 0.6)
+      .scaleEffect(hovering || accessibilityFocused || reduceMotion ? 1 : 0.6)
       .opacity(hovering || accessibilityFocused ? 1 : 0)
-      .animation(PillStyle.swap, value: hovering)
+      .animation(reduceMotion ? nil : PillStyle.swap, value: hovering)
     }
     .frame(width: 153, height: 38, alignment: .leading)
     .contentShape(Rectangle())
