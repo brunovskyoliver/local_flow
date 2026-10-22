@@ -25,9 +25,16 @@ final class KeyboardViewController: UIInputViewController, KeyboardHost {
     doorbell.observe(.result) { [weak self] in self?.model.checkResult() }
     // One height for the keys and the listening view; 999 so the system can still win
     // during rotation without a constraint conflict (research R10).
-    let height = view.heightAnchor.constraint(equalToConstant: KeyboardView.height)
+    // Taller at accessibility text sizes (UI-07), following the text size if it changes.
+    let height = view.heightAnchor.constraint(
+      equalToConstant: KeyboardView.height(for: traitCollection.preferredContentSizeCategory))
     height.priority = UILayoutPriority(999)
     height.isActive = true
+    registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) {
+      (controller: Self, _: UITraitCollection) in
+      height.constant = KeyboardView.height(
+        for: controller.traitCollection.preferredContentSizeCategory)
+    }
   }
 
   override func viewWillAppear(_ animated: Bool) {
