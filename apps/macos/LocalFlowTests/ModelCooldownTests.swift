@@ -574,3 +574,169 @@ extension ModelCooldownTests {
     try await coordinator.finish(held)
   }
 }
+
+// MARK: Server meeting worker retention (contracts/meeting-worker-ipc.md)
+
+/// Records factory calls and shutdowns in order, so a test can prove the old runtime
+/// was released before the next one was built.
+private actor RetentionEvents {
+  private(set) var events: [String] = []
+  func record(_ event: String) { events.append(event) }
+  func count(_ event: String) -> Int { events.filter { $0 == event }.count }
+}
+
+private actor RecordingRuntime: TranscriptionRuntime {
+  let name: String
+  let events: RetentionEvents
+  init(name: String, events: RetentionEvents) {
+    self.name = name
+    self.events = events
+  }
+  func transcribe(_ samples: [Float]) async throws -> TranscriptionWindow {
+    .init(text: name, tokens: [])
+  }
+  func shutdown() async { await events.record("shutdown \(name)") }
+}
+
+extension ModelCooldownTests {
+  private func serverCoordinator(
+    clock: ManualClock, events: RetentionEvents, diarization: FakeDiarizationFactory? = nil
+  ) -> ModelLifecycleCoordinator {
+    ModelLifecycleCoordinator(
+      clock: clock, retention: .meetingWorker,
+      diarizationFactory: {
+        await events.record("make diarization")
+        guard let diarization else { throw DictationFailure.modelUnavailable }
+        return try await diarization.make()
+      },
+      meetingFactory: { language in
+        await events.record("make meeting \(language.rawValue)")
+        return RecordingRuntime(name: "meeting \(language.rawValue)", events: events)
+      },
+      factory: {
+        await events.record("make speech")
+        throw DictationFailure.modelUnavailable
+      })
+  }
+
+  private func waitUntilUnloaded(_ coordinator: ModelLifecycleCoordinator) async {
+    for _ in 0..<1000 {
+      if await coordinator.state == .unloaded { return }
+      await Task.yield()
+    }
+  }
+
+  /// Consecutive windows of one meeting load Whisper once; the runtime is released 600 s
+  /// after the last job, and the worker never tries to warm its unavailable live speech.
+  func testServerRetentionKeepsTheSameWorkloadUntilIdleExpiry() async throws {
+    let clock = ManualClock()
+    let events = RetentionEvents()
+    let coordinator = serverCoordinator(clock: clock, events: events)
+    for index in 1...2 {
+      let lease = try await coordinator.acquire(
+        session: UUID(), workload: .meetingTranscription, meetingLanguage: .english)
+      let window = try await coordinator.transcribe(lease, samples: [0.1])
+      XCTAssertEqual(window.text, "meeting english")
+      try await coordinator.finish(lease)
+      await clock.waitUntilSleeping(count: index)
+      let state = await coordinator.state
+      XCTAssertEqual(state, .cooling)
+    }
+    await settle()
+    let requested = await clock.requested
+    XCTAssertEqual(requested, [.seconds(600), .seconds(600)])
+    let makes = await events.count("make meeting english")
+    XCTAssertEqual(makes, 1, "The second window reuses the resident runtime")
+    let early = await events.count("shutdown meeting english")
+    XCTAssertEqual(early, 0)
+
+    await clock.advance(to: .milliseconds(599_999))
+    await settle()
+    let beforeDeadline = await coordinator.state
+    XCTAssertEqual(beforeDeadline, .cooling)
+
+    await clock.advance(to: .seconds(600))
+    await waitUntilUnloaded(coordinator)
+    let after = await coordinator.state
+    XCTAssertEqual(after, .unloaded)
+    let shutdowns = await events.count("shutdown meeting english")
+    XCTAssertEqual(shutdowns, 1)
+    await settle()
+    let speech = await events.count("make speech")
+    XCTAssertEqual(speech, 0, "No attempt to warm live speech the worker does not have")
+  }
+
+  /// A language or workload switch releases the resident runtime before the next loads.
+  func testServerRetentionReleasesOnLanguageAndWorkloadSwitch() async throws {
+    let clock = ManualClock()
+    let events = RetentionEvents()
+    let diarization = FakeDiarizationFactory()
+    let coordinator = serverCoordinator(clock: clock, events: events, diarization: diarization)
+    let english = try await coordinator.acquire(
+      session: UUID(), workload: .meetingTranscription, meetingLanguage: .english)
+    try await coordinator.finish(english)
+    let slovak = try await coordinator.acquire(
+      session: UUID(), workload: .meetingTranscription, meetingLanguage: .slovak)
+    try await coordinator.finish(slovak)
+    let diarize = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    try await coordinator.finish(diarize)
+    let resident = await coordinator.state
+    XCTAssertEqual(resident, .cooling, "Diarization is retained too")
+    let again = try await coordinator.acquire(session: UUID(), workload: .diarization)
+    try await coordinator.finish(again)
+    let makes = await diarization.makeCount
+    XCTAssertEqual(makes, 1)
+    let log = await events.events
+    XCTAssertEqual(
+      log,
+      [
+        "make meeting english", "shutdown meeting english", "make meeting slovak",
+        "shutdown meeting slovak", "make diarization",
+      ])
+    let shutdowns = await diarization.runtime.shutdownCount
+    XCTAssertEqual(shutdowns, 0)
+    try await coordinator.shutdownIfIdle()
+    let stopped = await diarization.runtime.shutdownCount
+    XCTAssertEqual(stopped, 1)
+  }
+
+  /// A failed or cancelled job still releases at once; an explicit unload (new prompt
+  /// terms) releases a retained runtime.
+  func testServerRetentionReleasesOnFailureAndExplicitUnload() async throws {
+    let clock = ManualClock()
+    let events = RetentionEvents()
+    let coordinator = serverCoordinator(clock: clock, events: events)
+    let failed = try await coordinator.acquire(
+      session: UUID(), workload: .meetingTranscription, meetingLanguage: .english)
+    await coordinator.cancelAndJoin(failed)
+    let afterFailure = await coordinator.state
+    XCTAssertEqual(afterFailure, .unloaded)
+    let retained = try await coordinator.acquire(
+      session: UUID(), workload: .meetingTranscription, meetingLanguage: .english)
+    try await coordinator.finish(retained)
+    try await coordinator.unloadIfIdle()
+    let afterUnload = await coordinator.state
+    XCTAssertEqual(afterUnload, .unloaded)
+    let shutdowns = await events.count("shutdown meeting english")
+    XCTAssertEqual(shutdowns, 2)
+    let speech = await events.count("make speech")
+    XCTAssertEqual(speech, 0)
+  }
+
+  /// Keep model ready cannot suspend a server worker's idle deadline.
+  func testServerRetentionIgnoresKeepLoadedForTheIdleDeadline() async throws {
+    let clock = ManualClock()
+    let events = RetentionEvents()
+    let coordinator = serverCoordinator(clock: clock, events: events)
+    let lease = try await coordinator.acquire(
+      session: UUID(), workload: .meetingTranscription, meetingLanguage: .english)
+    try await coordinator.finish(lease)
+    await clock.waitUntilSleeping(count: 1)
+    await coordinator.setKeepLoaded(true)
+    await clock.waitUntilSleeping(count: 2)
+    await clock.advance(to: .seconds(600))
+    await waitUntilUnloaded(coordinator)
+    let state = await coordinator.state
+    XCTAssertEqual(state, .unloaded)
+  }
+}
