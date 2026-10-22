@@ -23,6 +23,9 @@ final class SettingsViewModel {
     case setKeepModelReady(Bool)
     case importSpeakerModel, downloadSpeakerModel, verifySpeakerModel
     case downloadBoostModel
+    /// Parakeet v3 or Ultra: download the one not in use, cancel that download, or switch.
+    case downloadAlternateSpeechModel, cancelAlternateSpeechModel
+    case useSpeechModel(SpeechModelChoice)
     case importMeetingModel, downloadMeetingModel, verifyMeetingModel
     case testModel(ModelTest)
   }
@@ -37,8 +40,32 @@ final class SettingsViewModel {
       }
     }
   }
+  /// The speech model dictation is not using: shown so the owner can download it,
+  /// switch to it, or switch back.
+  struct AlternateSpeechModel: Equatable {
+    var choice: SpeechModelChoice
+    var attribution: String
+    var downloadBytes: Int64
+    var installed = false
+    var installing = false
+    var progress = ProvisioningProgress.Snapshot()
+    var name: String { choice.displayName }
+    var readiness: String {
+      if installing { return "Downloading…" }
+      if installed { return "Installed" }
+      return "Not installed · "
+        + ByteCountFormatter.string(fromByteCount: downloadBytes, countStyle: .file)
+    }
+    /// Ultra is the optional one; v3 is the default and the rollback.
+    var role: String {
+      choice == .defaultChoice ? "Default dictation model" : "Optional dictation model"
+    }
+  }
   struct Snapshot: Equatable {
     var modelInstalled = false
+    var speechModel = SpeechModelChoice.defaultChoice
+    var speechModelAttribution = SpeechModelChoice.defaultChoice.attribution
+    var alternateSpeechModel: AlternateSpeechModel?
     var keepModelReady = false
     var meetingModelInstalled = false
     var meetingModelInstalling = false

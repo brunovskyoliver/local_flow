@@ -6,9 +6,11 @@ FluidAudio and GRDB are pinned dependencies as recorded below. No application so
 
 ## Feature 001 pinned dependencies
 
-FluidAudio 0.15.7, commit `41540ea237350afe5117a082b5c28eda642d0612`, is
-resolved by Xcode with an empty trait list. The resolved graph excludes the
-optional NeMo dependency. Preserve [Apache-2.0 license](docs/licenses/FluidAudio-0.15.7.txt)
+FluidAudio 0.17.7, commit `503b4bd1bbf7220882de39fe8ae6716aae4132da`, is
+resolved by Xcode with an empty trait list (upgraded from 0.15.7, commit
+`41540ea237350afe5117a082b5c28eda642d0612`; the license text is unchanged). The
+`NemoTextProcessing` trait stays off, so its prebuilt binary is not linked, though
+SwiftPM still downloads the archive while resolving. Preserve [Apache-2.0 license](docs/licenses/FluidAudio-0.17.7.txt)
 and its bundled [fastcluster notice](docs/licenses/fastcluster.md).
 
 GRDB.swift 7.10.0, commit `36e30a6f1ef10e4194f6af0cff90888526f0c115`, uses
@@ -29,6 +31,24 @@ Review note: the retained pinned model card's YAML declares `cc-by-4.0`,
 while its final License section says Apache 2.0 and points to FluidAudio.
 These are inconsistent labels. Dependency licenses are recorded above;
 selected model artifact license interpretation remains an open T002 gate.
+
+## Optional Parakeet Ultra speech model
+
+Parakeet Ultra is an optional dictation and live-preview model. It is downloaded
+only when the owner chooses Download in Settings › Models; Parakeet v3 stays the
+default and the rollback. The pinned build is `FluidInference/parakeet-ultra-coreml`
+at revision `95eaa59a39d4394f047a4dc5cce480388a60d1b6`
+([manifest](apps/macos/LocalFlow/Resources/Models/parakeet-ultra.json): 18 files,
+632,162,964 bytes). It is FluidInference's Core ML conversion of
+[`moondream/parakeet-ultra`](https://huggingface.co/moondream/parakeet-ultra), a
+post-training of NVIDIA's `nvidia/parakeet-tdt-0.6b-v3`. The repository and its
+upstream checkpoint declare CC-BY-4.0. LFS file SHA-256 values come from the Hugging
+Face tree API at that revision; the six small Git files were fetched, matched to their
+Git blob IDs, then hashed. Weights are not bundled in the app or kept in version
+control, and the downloaded assets are not modified. Preserve the
+[pinned model card](docs/licenses/parakeet-ultra-model-card.md) (Git blob
+`a166d3e4fdaa2a42338309881c41b5ab4ca50b10`) and the
+[CC BY 4.0 attribution terms](https://creativecommons.org/licenses/by/4.0/).
 
 ## Feature 007 speaker diarization model
 
@@ -134,15 +154,15 @@ others): [modernc-libc-v1.75.7-third-party.md](docs/licenses/modernc-libc-v1.75.
 
 ## Feature 016 iOS companion
 
-The iOS app (`LocalFlowPhone`) links `packages/LocalFlowCore`, which pins FluidAudio 0.15.7
-(commit `41540ea237350afe5117a082b5c28eda642d0612`, [Apache-2.0](docs/licenses/FluidAudio-0.15.7.txt),
+The iOS app (`LocalFlowPhone`) links `packages/LocalFlowCore`, which pins FluidAudio 0.17.7
+(commit `503b4bd1bbf7220882de39fe8ae6716aae4132da`, [Apache-2.0](docs/licenses/FluidAudio-0.17.7.txt),
 with the [fastcluster notice](docs/licenses/fastcluster.md)) and GRDB.swift 7.10.0 (commit
 `36e30a6f1ef10e4194f6af0cff90888526f0c115`, [MIT](docs/licenses/GRDB-7.10.0.txt)) exactly, as
 recorded in `packages/LocalFlowCore/Package.resolved`. The `LocalFlowKeyboard` extension links
 neither package.
 
 `Package.swift` declares FluidAudio with `traits: []`, as the Mac project did before the
-extraction, so the NeMo text-processing dependency stays out of the resolved graph.
+extraction, so the NeMo text-processing binary is not linked.
 
 The app, the keyboard and the `LocalFlowWidgets` extension (Feature 017, ADR 0030) each bundle
 Figtree and EB Garamond from `apps/macos/LocalFlow/Resources/Fonts`, under the SIL Open Font

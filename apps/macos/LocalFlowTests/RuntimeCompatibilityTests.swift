@@ -8,6 +8,14 @@ import XCTest
 @testable import LocalFlowSpeech
 
 final class RuntimeCompatibilityTests: XCTestCase {
+  /// Opt-in speech runs use Parakeet v3 unless TEST_RUNNER_LOCALFLOW_SPEECH_DESCRIPTOR
+  /// names another bundled speech manifest, such as `parakeet-ultra` for an A/B.
+  static var speechDescriptorName: String {
+    ProcessInfo.processInfo.environment["LOCALFLOW_SPEECH_DESCRIPTOR"]
+      .flatMap(SpeechModelChoice.init(rawValue:))?.resourceName
+      ?? SpeechModelChoice.defaultChoice.resourceName
+  }
+
   /// Opt-in regression reproducer. Frozen speech stays local; assertions contain no transcript.
   func testOptInEmptyTailRecognition() async throws {
     let env = ProcessInfo.processInfo.environment
@@ -155,7 +163,8 @@ final class RuntimeCompatibilityTests: XCTestCase {
       !path.isEmpty
     else { throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_MODEL_PROBE_ROOT to verified local assets.") }
     let source = URL(fileURLWithPath: path, isDirectory: true)
-    let manifest = try XCTUnwrap(Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
+    let manifest = try XCTUnwrap(
+      Bundle.main.url(forResource: Self.speechDescriptorName, withExtension: "json"))
     let descriptor = try JSONDecoder().decode(
       ModelDescriptor.self, from: Data(contentsOf: manifest))
     let root = try makeSpoolRoot()
@@ -163,13 +172,32 @@ final class RuntimeCompatibilityTests: XCTestCase {
     let provisioner = ModelProvisioner(
       descriptor: descriptor, rootURL: root.appendingPathComponent("model"))
     _ = try await provisioner.install(from: source)
-    let lifecycle = ModelLifecycleCoordinator {
+    // Optional: TEST_RUNNER_LOCALFLOW_BOOST_MODEL_ROOT also loads the pinned term booster
+    // and binds one Dictionary term, so the CTC rescoring pass runs beside this recognizer.
+    var boostModel: LocalModelDescriptor?
+    var boost: VocabularyBoostTerms?
+    if let boostPath = ProcessInfo.processInfo.environment["LOCALFLOW_BOOST_MODEL_ROOT"],
+      !boostPath.isEmpty
+    {
+      let boostManifest = try XCTUnwrap(
+        Bundle.main.url(forResource: "parakeet-ctc-110m", withExtension: "json"))
+      let boostProvisioner = ModelProvisioner(
+        descriptor: try JSONDecoder().decode(
+          ModelDescriptor.self, from: Data(contentsOf: boostManifest)),
+        rootURL: root.appendingPathComponent("booster"))
+      boostModel = try await boostProvisioner.install(
+        from: URL(fileURLWithPath: boostPath, isDirectory: true))
+      boost = VocabularyBoostTerms(
+        terms: [.init(entryID: "probe", canonical: "LocalFlow")], key: "probe")
+    }
+    let lifecycle = ModelLifecycleCoordinator { [boostModel] in
       let local = try await provisioner.verifiedLocalDescriptor()
-      return try await FluidAudioEngineFactory(descriptor: local).makeRuntime()
+      return try await FluidAudioEngineFactory(descriptor: local, boostModel: boostModel)
+        .makeRuntime()
     }
     let clock = ContinuousClock()
     let started = clock.now
-    let lease = try await lifecycle.acquire(session: UUID())
+    let lease = try await lifecycle.acquire(session: UUID(), boost: boost)
     let loaded = clock.now
     do {
       for count in [160, 239_360] {
@@ -198,7 +226,7 @@ final class RuntimeCompatibilityTests: XCTestCase {
     let finalState = await lifecycle.state
     XCTAssertEqual(finalState, .unloaded)
     let evidence =
-      "Pinned local model verified; synthetic silence only. Load: \(started.duration(to: loaded)); decode and release: \(loaded.duration(to: released)). Reload/cancellation race joined. No RSS or speech-accuracy claim."
+      "Pinned local model \(descriptor.modelID)@\(descriptor.sourceRevision) verified (booster: \(boostModel != nil)); synthetic silence only. Load: \(started.duration(to: loaded)); decode and release: \(loaded.duration(to: released)). Reload/cancellation race joined. No RSS or speech-accuracy claim."
     let attachment = XCTAttachment(string: evidence)
     attachment.name = "Local runtime probe (no speech content)"
     attachment.lifetime = .keepAlways
@@ -249,7 +277,7 @@ final class RuntimeCompatibilityTests: XCTestCase {
       Set(fixtures.fixtures.map(\.id)).count == fixtures.fixtures.count
     else { throw DictationFailure.invalidResult }
     let descriptorURL = try XCTUnwrap(
-      Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
+      Bundle.main.url(forResource: Self.speechDescriptorName, withExtension: "json"))
     let descriptor = try JSONDecoder().decode(
       ModelDescriptor.self, from: Data(contentsOf: descriptorURL))
     let root = try makeSpoolRoot()
@@ -377,7 +405,7 @@ final class RuntimeCompatibilityTests: XCTestCase {
     }
     do {
       let descriptorURL = try XCTUnwrap(
-        Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
+        Bundle.main.url(forResource: Self.speechDescriptorName, withExtension: "json"))
       let descriptor = try JSONDecoder().decode(
         ModelDescriptor.self, from: Data(contentsOf: descriptorURL))
       let root = try makeSpoolRoot()
@@ -396,7 +424,8 @@ final class RuntimeCompatibilityTests: XCTestCase {
         ).makeRuntime()
       }
       let config = [
-        "engine": "FluidAudio", "sdk": "0.15.7", "model_revision": descriptor.sourceRevision,
+        "engine": "FluidAudio", "sdk": FluidAudioSDK.version,
+        "model_revision": descriptor.sourceRevision,
         "model_descriptor_sha256": try QualityArtifacts.hashFile(descriptorURL),
         "language": "automatic_no_hint", "window_samples": "239360", "overlap_samples": "32000",
         "padding_minimum": "4800", "assembly": "historical_window_assembly",
@@ -505,7 +534,7 @@ extension RuntimeCompatibilityTests {
       let search = Int(env["LOCALFLOW_CHUNK_SEARCH_START"] ?? "0") ?? 0
       let threshold = Float(env["LOCALFLOW_CHUNK_VAD_THRESHOLD"] ?? "0.2") ?? 0.2
       let descriptorURL = try XCTUnwrap(
-        Bundle.main.url(forResource: "parakeet-v3", withExtension: "json"))
+        Bundle.main.url(forResource: Self.speechDescriptorName, withExtension: "json"))
       let descriptor = try JSONDecoder().decode(
         ModelDescriptor.self, from: Data(contentsOf: descriptorURL))
       let root = try makeSpoolRoot()
@@ -595,7 +624,8 @@ extension RuntimeCompatibilityTests {
         }
       }
       let config = [
-        "engine": "FluidAudio", "sdk": "0.15.7", "model_revision": descriptor.sourceRevision,
+        "engine": "FluidAudio", "sdk": FluidAudioSDK.version,
+        "model_revision": descriptor.sourceRevision,
         "model_descriptor_sha256": try QualityArtifacts.hashFile(descriptorURL),
         "language": "automatic_no_hint",
         "window_samples": String(ChunkPlanner.maximumSamples),

@@ -1,5 +1,6 @@
 import Foundation
 import LocalFlowSpeech
+import os
 
 /// Pinned application/model identity, captured before dictation. The lifecycle factory
 /// verifies these same model artifacts before granting a lease.
@@ -7,6 +8,9 @@ public struct TranscriptionPipelineIdentity: Sendable {
   private var windowSamples = 239_360
   private var engine = "unrecorded_runtime"
   private var descriptor: ModelDescriptor?
+  /// The runtime library release that ran, which can differ from the release the
+  /// manifest was pinned against (`sdkCompatibility`).
+  private var sdkVersion: String?
   private var manifestHash: String?
   private var build: String?
   /// What the runtime was told about language; nil means automatic with no hint.
@@ -21,8 +25,16 @@ public struct TranscriptionPipelineIdentity: Sendable {
   private var remoteSDK: String?
   private var remoteModelID: String?
   private var remoteRevision: String?
+  /// Set for an identity that follows the selected local speech model; every read
+  /// delegates to the source's current identity.
+  private var source: SpeechModelIdentitySource?
 
   public init() {}
+
+  /// The identity of whichever local speech model `source` currently names.
+  public init(following source: SpeechModelIdentitySource) {
+    self.source = source
+  }
 
   public init(remote model: RemoteModelIdentity, build: String?) {
     func valid(_ value: String) -> String? {
@@ -36,14 +48,16 @@ public struct TranscriptionPipelineIdentity: Sendable {
     self.build = build
   }
 
-  var recordedBuild: String? { build }
+  var recordedBuild: String? { source?.current.recordedBuild ?? build }
 
   public init(
     descriptor: ModelDescriptor, manifestHash: String, build: String?,
-    engine: String = "FluidAudio", windowSamples: Int = 239_360, languageHint: String? = nil
+    engine: String = "FluidAudio", windowSamples: Int = 239_360, languageHint: String? = nil,
+    sdkVersion: String? = nil
   ) throws {
     try descriptor.validate()
     self.engine = engine
+    self.sdkVersion = sdkVersion ?? (engine == "FluidAudio" ? FluidAudioSDK.version : nil)
     self.languageHint = languageHint
     self.windowSamples = windowSamples
     self.descriptor = descriptor
@@ -56,6 +70,10 @@ public struct TranscriptionPipelineIdentity: Sendable {
   public func provenance(sampleCount: Int, recognition: Double, assembly: Double)
     -> TranscriptionProvenance
   {
+    if let source {
+      return source.current.provenance(
+        sampleCount: sampleCount, recognition: recognition, assembly: assembly)
+    }
     var missing: [TranscriptionProvenance.Unavailable] = [
       .init(field: "dirty", reason: .notRecorded),
       .init(field: "normalization_duration", reason: .notRecorded),
@@ -74,7 +92,7 @@ public struct TranscriptionPipelineIdentity: Sendable {
     }
     if build == nil { missing.append(.init(field: "build", reason: .notRecorded)) }
     return TranscriptionProvenance(
-      engine: engine, sdkVersion: descriptor?.sdkCompatibility ?? remoteSDK,
+      engine: engine, sdkVersion: sdkVersion ?? descriptor?.sdkCompatibility ?? remoteSDK,
       modelID: descriptor?.modelID ?? remoteModelID,
       modelRevision: descriptor?.sourceRevision ?? remoteRevision,
       modelManifestHash: manifestHash,
@@ -90,4 +108,28 @@ public struct TranscriptionPipelineIdentity: Sendable {
       stageDurations: ["recognition": recognition, "assembly": assembly],
       unavailableMetadata: missing)
   }
+}
+
+/// The selected local speech model's identity, shared by every transcriber and meeting
+/// stage built at launch. The app replaces it only inside
+/// `ModelLifecycleCoordinator.installModel`, when no lease is held and no runtime is
+/// resident, so a lease's provenance always names the model that lease loaded.
+public final class SpeechModelIdentitySource: Sendable {
+  private let state: OSAllocatedUnfairLock<TranscriptionPipelineIdentity>
+
+  public init(_ identity: TranscriptionPipelineIdentity) {
+    state = OSAllocatedUnfairLock(initialState: identity.resolved)
+  }
+
+  public var current: TranscriptionPipelineIdentity { state.withLock { $0 } }
+
+  public func replace(with identity: TranscriptionPipelineIdentity) {
+    let resolved = identity.resolved
+    state.withLock { $0 = resolved }
+  }
+}
+
+extension TranscriptionPipelineIdentity {
+  /// A fixed identity: following identities are resolved so sources never chain.
+  fileprivate var resolved: Self { source?.current ?? self }
 }

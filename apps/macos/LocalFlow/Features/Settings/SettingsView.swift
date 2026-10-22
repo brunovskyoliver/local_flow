@@ -12,6 +12,7 @@ struct SettingsView: View {
   @State private var recorder: ShortcutRecorder?
   @State private var recordingError: String?
   @State private var confirmingDownload = false
+  @State private var confirmingAlternateDownload = false
   @State private var editingCredential = false
   @State private var summaryKeyDraft = ""
   @State private var editingSummaryKey = false
@@ -461,8 +462,8 @@ struct SettingsView: View {
       sectionTitle("Models")
       settingsGroup {
         modelRow(
-          "Parakeet", role: role("Dictation", .dictation), status: model.snapshot.modelReadiness,
-          test: .speech,
+          model.snapshot.speechModel.displayName, role: role("Dictation", .dictation),
+          status: model.snapshot.modelReadiness, test: .speech,
           installed: model.snapshot.modelInstalled
         ) {
           if model.snapshot.modelInstalled {
@@ -477,6 +478,10 @@ struct SettingsView: View {
         }
         if model.snapshot.installing {
           installProgress
+        }
+        if let alternate = model.snapshot.alternateSpeechModel {
+          separator
+          alternateSpeechModelRow(alternate)
         }
         separator
         modelRow(
@@ -548,15 +553,64 @@ struct SettingsView: View {
         }
       }
     }
-    .confirmationDialog("Download Parakeet?", isPresented: $confirmingDownload) {
+    .confirmationDialog(
+      "Download \(model.snapshot.speechModel.displayName)?", isPresented: $confirmingDownload
+    ) {
       Button("Download") { Task { await model.run(.download) } }
       Button("Cancel", role: .cancel) {}
     } message: {
       Text(
-        model.snapshot.downloadBytes.map {
+        (model.snapshot.downloadBytes.map {
           ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
-        } ?? "Download size unavailable.")
+        } ?? "Download size unavailable.") + "\n" + model.snapshot.speechModelAttribution)
     }
+    .confirmationDialog(
+      "Download \(model.snapshot.alternateSpeechModel?.name ?? "speech model")?",
+      isPresented: $confirmingAlternateDownload
+    ) {
+      Button("Download") { Task { await model.run(.downloadAlternateSpeechModel) } }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      if let alternate = model.snapshot.alternateSpeechModel {
+        Text(
+          "\(ByteCountFormatter.string(fromByteCount: alternate.downloadBytes, countStyle: .file)) from Hugging Face, verified against pinned hashes.\n\(alternate.attribution)\nDictation keeps using \(model.snapshot.speechModel.displayName) until you switch."
+        )
+      }
+    }
+  }
+
+  /// Parakeet v3 (default) or Ultra, whichever dictation is not using. Switching unloads
+  /// the current model first; only one speech model is ever loaded.
+  private func alternateSpeechModelRow(_ alternate: SettingsViewModel.AlternateSpeechModel)
+    -> some View
+  {
+    VStack(alignment: .leading, spacing: 0) {
+      SettingsRow(
+        alternate.name,
+        detail: "\(role(alternate.role, .dictation)) · CC BY 4.0 · \(alternate.readiness)"
+      ) {
+        if alternate.installing {
+          Button("Cancel") { Task { await model.run(.cancelAlternateSpeechModel) } }
+        } else if alternate.installed {
+          Button("Use for dictation") {
+            Task { await model.run(.useSpeechModel(alternate.choice)) }
+          }
+          .disabled(!model.modelControlsAvailable)
+          .accessibilityLabel("Use \(alternate.name) for dictation")
+        } else {
+          Button("Download…") { confirmingAlternateDownload = true }
+            .disabled(model.snapshot.installing)
+        }
+      }
+      if alternate.installing, alternate.progress.totalBytes > 0 {
+        ProgressView(
+          value: Double(alternate.progress.completedBytes),
+          total: Double(alternate.progress.totalBytes)
+        )
+        .padding(.bottom, 19)
+      }
+    }
+    .accessibilityIdentifier("settings.alternateSpeechModel")
   }
 
   /// "Dictation · On your server" once this device is approved (Feature 018 FR-016).

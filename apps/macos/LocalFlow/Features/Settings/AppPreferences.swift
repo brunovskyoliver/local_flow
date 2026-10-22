@@ -28,6 +28,11 @@ final class AppPreferences {
   var keepModelReady: Bool {
     didSet { defaults.set(keepModelReady, forKey: "keepModelReady") }
   }
+  /// The local dictation model: Parakeet v3 unless the owner installed and chose Ultra.
+  /// Changed only by AppServices after the switch went through the model lifecycle.
+  var speechModel: SpeechModelChoice {
+    didSet { defaults.set(speechModel.rawValue, forKey: "speechModel") }
+  }
   /// When the local rewrite model is unloaded after its last use (ADR 0026).
   var localModelIdleUnload: LocalModelIdleUnload {
     didSet { defaults.set(localModelIdleUnload.rawValue, forKey: "localModelIdleUnload") }
@@ -346,6 +351,7 @@ final class AppPreferences {
     summaryServerModel = defaults.string(forKey: SummaryServer.modelKey) ?? ""
     appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
     keepModelReady = defaults.bool(forKey: "keepModelReady")
+    speechModel = SpeechModelChoice(storedValue: defaults.string(forKey: "speechModel"))
     localModelIdleUnload =
       LocalModelIdleUnload(rawValue: defaults.integer(forKey: "localModelIdleUnload")) ?? .never
     unloadLocalModelDuringGames =

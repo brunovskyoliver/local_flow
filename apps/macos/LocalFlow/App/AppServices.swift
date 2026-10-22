@@ -110,7 +110,15 @@ final class AppServices {
   @ObservationIgnored private var starting = false
   @ObservationIgnored private var instanceLock: AppInstanceLock?
   @ObservationIgnored private var lifecycle: ModelLifecycleCoordinator?
-  @ObservationIgnored private var provisioner: ModelProvisioner?
+  /// Parakeet v3 (default) or Ultra. Dictation and live previews load `current`; a
+  /// switch goes through the lifecycle's install gate (`SpeechModelSelection.select`).
+  @ObservationIgnored private var speechModels: SpeechModelSelection?
+  private var provisioner: ModelProvisioner? { speechModels?.current.provisioner }
+  /// The speech model dictation is not using, verified at launch and after a download.
+  private(set) var alternateSpeechInstalled = false
+  private(set) var alternateSpeechInstalling = false
+  private(set) var alternateSpeechProgress = ProvisioningProgress.Snapshot()
+  @ObservationIgnored private var alternateSpeechTask: Task<Void, Never>?
   @ObservationIgnored private let shortcut = ShortcutController()
   @ObservationIgnored private let panel = IndicatorPanel()
   /// Finalizations queued by launch reconciliation; their pill says "Resuming".
@@ -120,8 +128,13 @@ final class AppServices {
   /// Read once and refreshed by `displayObserver`, not on every indicator frame.
   @ObservationIgnored private var reduceMotion =
     NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-  @ObservationIgnored private var modelDescriptor: ModelDescriptor?
-  @ObservationIgnored private var modelLocation: URL?
+  private var modelDescriptor: ModelDescriptor? { speechModels?.current.descriptor }
+  private var modelLocation: URL? { speechModels?.current.rootURL }
+  private var alternateSpeechModel: SpeechModelSelection.Model? {
+    guard let speechModels else { return nil }
+    return SpeechModelChoice.allCases.lazy.filter { $0 != speechModels.currentChoice }
+      .compactMap { speechModels.models[$0] }.first
+  }
   @ObservationIgnored private var recorder: ResourceRecorder?
   @ObservationIgnored private var measurementTask: Task<Void, Never>?
   @ObservationIgnored private var quitting = false
@@ -270,13 +283,9 @@ final class AppServices {
         return (base, store, instanceLock)
       }.value
       instanceLock = paths.2
-      guard let url = Bundle.main.url(forResource: "parakeet-v3", withExtension: "json") else {
-        throw DictationFailure.modelUnavailable
-      }
-      let descriptorData = try Data(contentsOf: url)
-      let descriptor = try JSONDecoder().decode(ModelDescriptor.self, from: descriptorData)
-      modelDescriptor = descriptor
-      modelLocation = AppIdentity.current.modelsDirectory.appendingPathComponent("parakeet-v3")
+      let speechModels = try Self.loadSpeechModels(selected: preferences.speechModel)
+      self.speechModels = speechModels
+      let descriptor = speechModels.current.descriptor
       if ProcessInfo.processInfo.environment["LOCALFLOW_RESOURCE_RECORDING"] == "1" {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         if let hardware = ResourceRecorder.hardwareIdentifier() {
@@ -292,18 +301,7 @@ final class AppServices {
           }.value
         }
       }
-      let provisioner = ModelProvisioner(
-        descriptor: descriptor,
-        rootURL: AppIdentity.current.modelsDirectory.appendingPathComponent("parakeet-v3"))
-      self.provisioner = provisioner
-      let bytes = descriptor.files.reduce(Int64(0)) {
-        $0 + max(0, min($1.size, ModelProvisioner.maxPackageBytes))
-      }
-      let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-      modelDetails =
-        "\(descriptor.modelID)\nRevision \(descriptor.sourceRevision)\nLicense: \(descriptor.license)\nManifest-listed files: \(size). "
-        + (descriptor.complete ? "" : "Integrity metadata incomplete; provisioning unavailable. ")
-        + "\nLocation: \(AppIdentity.current.modelsDirectory.appendingPathComponent("parakeet-v3").path)\nWorks offline after verified installation."
+      refreshModelDetails()
       FluidAudioDiarizerFactory.enableOfflineMode()
       // Speaker labels have their own pinned manifest and directory; a missing
       // manifest only disables diarization (model_unavailable).
@@ -483,7 +481,8 @@ final class AppServices {
           guard await !localModelsOff() else { throw DictationFailure.modelUnavailable }
           let local: LocalModelDescriptor
           do {
-            local = try await provisioner.verifiedLocalDescriptor()
+            // Read at load: a switch only happens with no lease held and no runtime resident.
+            local = try await speechModels.current.provisioner.verifiedLocalDescriptor()
           } catch is CancellationError {
             throw CancellationError()
           } catch {
@@ -530,10 +529,8 @@ final class AppServices {
       }
       preferences.observeServerRouting { [weak self] in self?.serverRoutingChanged() }
       watchNetworkPath()
-      let transcriptIdentity = try TranscriptionPipelineIdentity(
-        descriptor: descriptor, manifestHash: TranscriptionQualityDetail.hash(descriptorData),
-        build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
-        languageHint: FluidAudioRuntime.languageHint)
+      // Dictation, retries and live meeting previews record whichever model is selected.
+      let transcriptIdentity = TranscriptionPipelineIdentity(following: speechModels.identity)
       let finalIdentity = try TranscriptionPipelineIdentity(
         descriptor: meetingDescriptor,
         manifestHash: TranscriptionQualityDetail.hash(meetingManifest),
@@ -587,11 +584,7 @@ final class AppServices {
         spoolRoot: AppIdentity.current.spoolDirectory,
         transcriber: WindowedTranscriber(
           lifecycle: lifecycle,
-          identity: try TranscriptionPipelineIdentity(
-            descriptor: descriptor,
-            manifestHash: TranscriptionQualityDetail.hash(descriptorData),
-            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
-            languageHint: FluidAudioRuntime.languageHint)),
+          identity: transcriptIdentity),
         vocabulary: vocabulary, rewriter: rewriteCoordinator,
         // Feature 012: read at each press; off by default, so no AX read happens.
         contextReader: SystemAppContextReader(),
@@ -825,6 +818,7 @@ final class AppServices {
       // Validation never downloads assets or constructs a model runtime. Only the
       // dictation model gates the shortcut; after the first launch this is a stat check.
       modelInstalled = await Self.verifyModel(provisioner, name: "Speech model")
+      await rollBackToDefaultSpeechModelIfNeeded(lifecycle: lifecycle)
       setupStatus =
         modelInstalled
         ? "Verified local model available." : "Import the pinned model before dictating."
@@ -844,7 +838,10 @@ final class AppServices {
         // Verification only: the diarizer is never loaded here.
         let speaker = await Self.verifyModel(diarizationProvisioner, name: "Speaker labeling model")
         let boost = await Self.verifyModel(boostProvisioner, name: "Term booster")
+        let alternate = await Self.verifyModel(
+          self?.alternateSpeechModel?.provisioner, name: "Alternate speech model")
         guard let self else { return }
+        if !alternateSpeechInstalling { alternateSpeechInstalled = alternate }
         if !meetingModelInstalling { meetingModelInstalled = meeting }
         if !speakerModelInstalling { speakerModelInstalled = speaker }
         if !boostModelInstalling { boostModelInstalled = boost }
@@ -1448,7 +1445,8 @@ final class AppServices {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { root.deleteLastPathComponent() }
         source = root.appendingPathComponent(
-          "build/model-downloads/parakeet-v3-\(modelDescriptor.sourceRevision)", isDirectory: true)
+          "build/model-downloads/\(speechModels?.currentChoice.resourceName ?? "parakeet-v3")-\(modelDescriptor.sourceRevision)",
+          isDirectory: true)
       }
       var directory: ObjCBool = false
       guard FileManager.default.fileExists(atPath: source.path, isDirectory: &directory),
@@ -1589,6 +1587,16 @@ final class AppServices {
     snapshot.rewriteBlockedReason = SettingsViewModel.rewriteBlockedReason(
       for: RewriteSettings.capture(preferences: preferences, credentialStore: rewriteCredentials))
     snapshot.modelIdentity = modelDescriptor?.modelID
+    if let current = speechModels?.current {
+      snapshot.speechModel = current.choice
+      snapshot.speechModelAttribution = current.choice.attribution
+    }
+    snapshot.alternateSpeechModel = alternateSpeechModel.map {
+      .init(
+        choice: $0.choice, attribution: $0.choice.attribution, downloadBytes: $0.downloadBytes,
+        installed: alternateSpeechInstalled, installing: alternateSpeechInstalling,
+        progress: alternateSpeechProgress)
+    }
     snapshot.modelVersion = modelDescriptor?.sourceRevision
     snapshot.downloadBytes = modelDescriptor.map { $0.files.reduce(Int64(0)) { $0 + $1.size } }
     // Installation verifies every allowlisted asset against its exact byte count.
@@ -1758,6 +1766,12 @@ final class AppServices {
       try await installSpeakerModel(source: nil)
     case .downloadBoostModel:
       try await installBoostModel()
+    case .downloadAlternateSpeechModel:
+      downloadAlternateSpeechModel()
+    case .cancelAlternateSpeechModel:
+      alternateSpeechTask?.cancel()
+    case .useSpeechModel(let choice):
+      try await useSpeechModel(choice)
     case .showLocation:
       if let modelLocation { NSWorkspace.shared.activateFileViewerSelecting([modelLocation]) }
     case .requestMicrophone:
@@ -1837,6 +1851,135 @@ final class AppServices {
       string: "x-apple.systempreferences:com.apple.preference.security?Privacy_\(name)")
     {
       NSWorkspace.shared.open(url)
+    }
+  }
+
+  /// Every bundled speech manifest. Parakeet v3 is required; another model whose manifest
+  /// is missing or invalid is left out, and a stored choice of it reads as v3.
+  private static func loadSpeechModels(selected: SpeechModelChoice) throws -> SpeechModelSelection {
+    let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+    var models: [SpeechModelSelection.Model] = []
+    for choice in SpeechModelChoice.allCases {
+      do {
+        guard let url = Bundle.main.url(forResource: choice.resourceName, withExtension: "json")
+        else { throw DictationFailure.modelUnavailable }
+        let data = try Data(contentsOf: url)
+        let descriptor = try JSONDecoder().decode(ModelDescriptor.self, from: data)
+        guard SpeechModelChoice(pinned: descriptor) == choice else {
+          throw ModelProvisioner.Error.invalidManifest
+        }
+        let rootURL = AppIdentity.current.modelsDirectory.appendingPathComponent(
+          choice.resourceName)
+        models.append(
+          .init(
+            choice: choice, descriptor: descriptor,
+            provisioner: ModelProvisioner(descriptor: descriptor, rootURL: rootURL),
+            rootURL: rootURL,
+            identity: try TranscriptionPipelineIdentity(
+              descriptor: descriptor, manifestHash: TranscriptionQualityDetail.hash(data),
+              build: build, languageHint: FluidAudioRuntime.languageHint)))
+      } catch {
+        guard choice != .defaultChoice else { throw error }
+        logModelFailure("\(choice.displayName) manifest", error)
+      }
+    }
+    return try SpeechModelSelection(models: models, selected: selected)
+  }
+
+  private func refreshModelDetails() {
+    guard let current = speechModels?.current else { return }
+    let descriptor = current.descriptor
+    let size = ByteCountFormatter.string(fromByteCount: current.downloadBytes, countStyle: .file)
+    modelDetails =
+      "\(descriptor.modelID)\nRevision \(descriptor.sourceRevision)\n\(current.choice.attribution)\nManifest-listed files: \(size). "
+      + (descriptor.complete ? "" : "Integrity metadata incomplete; provisioning unavailable. ")
+      + "\nLocation: \(current.rootURL.path)\nWorks offline after verified installation."
+  }
+
+  /// The chosen optional model failed verification at launch (deleted or damaged) while
+  /// Parakeet v3 is still installed: dictate with v3 rather than block the shortcut.
+  private func rollBackToDefaultSpeechModelIfNeeded(lifecycle: ModelLifecycleCoordinator) async {
+    guard !modelInstalled, let speechModels, speechModels.currentChoice != .defaultChoice,
+      let fallback = speechModels.models[.defaultChoice],
+      await Self.verifyModel(fallback.provisioner, name: "Speech model")
+    else { return }
+    do {
+      try await speechModels.select(.defaultChoice, lifecycle: lifecycle)
+      preferences.speechModel = .defaultChoice
+      alternateSpeechInstalled = false
+      modelInstalled = true
+      refreshModelDetails()
+      setupStatus = "The chosen speech model is missing; dictating with Parakeet v3."
+    } catch {
+      Self.logModelFailure("Speech model rollback", error)
+    }
+  }
+
+  /// Switches dictation and live previews to `choice`. The lifecycle releases the loaded
+  /// model before the switch, so only one speech model is resident; a held lease (a
+  /// dictation or a live meeting) refuses the switch with `busy`.
+  private func useSpeechModel(_ choice: SpeechModelChoice) async throws {
+    guard let lifecycle, let speechModels, !installing, !alternateSpeechInstalling,
+      !modelCommandInProgress, coordinator?.busy == false, coordinator?.unsaved == nil
+    else { throw DictationFailure.busy }
+    guard choice != speechModels.currentChoice else { return }
+    modelCommandInProgress = true
+    defer { modelCommandInProgress = false }
+    let previousInstalled = modelInstalled
+    do {
+      try await speechModels.select(choice, lifecycle: lifecycle)
+    } catch DictationFailure.busy {
+      throw DictationFailure.busy
+    } catch {
+      Self.logModelFailure("\(choice.displayName) selection", error)
+      alternateSpeechInstalled = false
+      throw DictationFailure.modelUnavailable
+    }
+    preferences.speechModel = choice
+    alternateSpeechInstalled = previousInstalled
+    modelInstalled = true
+    refreshModelDetails()
+    setupStatus = "Dictation now uses \(choice.displayName)."
+    if Self.keepsParakeetLoaded(
+      keepModelReady: preferences.keepModelReady, routing: preferences.serverRouting)
+    {
+      try await prepareModel(using: lifecycle)
+    }
+  }
+
+  /// Downloads the model dictation is not using. Its files are not loaded by anything
+  /// until a switch, and the provisioner refuses verification while it writes, so the
+  /// download runs outside the lifecycle gate and dictation keeps working meanwhile.
+  private func downloadAlternateSpeechModel() {
+    guard let alternate = alternateSpeechModel, !alternateSpeechInstalling, !installing else {
+      return
+    }
+    alternateSpeechInstalling = true
+    let provisioner = alternate.provisioner
+    alternateSpeechTask = Task { [weak self] in
+      let observer = Task { [weak self] in
+        while !Task.isCancelled {
+          self?.alternateSpeechProgress = provisioner.progress.snapshot()
+          try? await ContinuousClock().sleep(for: .milliseconds(100))
+        }
+      }
+      defer {
+        observer.cancel()
+        self?.alternateSpeechProgress = provisioner.progress.snapshot()
+        self?.alternateSpeechInstalling = false
+        self?.alternateSpeechTask = nil
+      }
+      do {
+        _ = try await provisioner.download()
+        self?.alternateSpeechInstalled = true
+        self?.setupStatus = "\(alternate.choice.displayName) downloaded and verified."
+      } catch is CancellationError {
+        self?.setupStatus = "\(alternate.choice.displayName) download cancelled."
+      } catch {
+        Self.logModelFailure(alternate.choice.displayName, error)
+        self?.setupStatus =
+          "\(alternate.choice.displayName) download failed. Check the connection and available storage."
+      }
     }
   }
 
