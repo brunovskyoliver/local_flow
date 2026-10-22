@@ -35,6 +35,9 @@ final class HistoryViewModel {
     }
   }
 
+  /// The loaded entry with `id`, for the detail reader; nil once it is deleted.
+  func item(id: UUID) -> Item? { items.first { $0.id == id } }
+
   func delete(_ id: UUID) async {
     do {
       try await store.delete(id: id)
