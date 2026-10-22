@@ -7,7 +7,7 @@ enum SottoPalette {
   static let ink = adaptive(
     light: 0x1A1A1A, dark: 0xDEDDD7, contrastLight: 0x000000, contrastDark: 0xFFFFFF)
   static let muted = adaptive(
-    light: 0x71716E, dark: 0x9D9C98, contrastLight: 0x464544, contrastDark: 0xC8C8C2)
+    light: 0x686865, dark: 0x9D9C98, contrastLight: 0x464544, contrastDark: 0xC8C8C2)
   static let canvas = adaptive(light: 0xF7F6F3, dark: 0x1F1F1E)
   static let surface = adaptive(light: 0xFCFCFB, dark: 0x141414)
   static let tint = adaptive(light: 0xF1EEE9, dark: 0x2A2A29)
@@ -28,7 +28,8 @@ enum SottoPalette {
     adaptive(light: 0x9ACAC2, dark: 0x3F6A65), adaptive(light: 0xD6ECEA, dark: 0x2E4744),
   ]
   static let dataQuiet = adaptive(light: 0x84BAB1, dark: 0x3F6A65)
-  static let warning = adaptive(light: 0xEA580C, dark: 0xFB923C)
+  /// Safe for small text: at least 4.5:1 on every light surface, including tint and button.
+  static let warning = adaptive(light: 0xB43C0B, dark: 0xFB923C)
 
   private static func adaptive(
     light: UInt32, dark: UInt32, contrastLight: UInt32? = nil, contrastDark: UInt32? = nil
