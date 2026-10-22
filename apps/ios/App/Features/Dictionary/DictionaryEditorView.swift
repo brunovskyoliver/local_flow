@@ -11,6 +11,7 @@ struct DictionaryEditorView: View {
   @State private var enabled = true
   @State private var error: String?
   @State private var saving = false
+  @State private var confirmDelete = false
 
   var body: some View {
     NavigationStack {
@@ -23,6 +24,7 @@ struct DictionaryEditorView: View {
         } footer: {
           Text("Dictation writes it exactly like this, with these capitals and accents.")
         }
+        .sottoRow()
         Section {
           ForEach(aliases.indices, id: \.self) { index in
             TextField("Heard as", text: $aliases[index])
@@ -37,24 +39,37 @@ struct DictionaryEditorView: View {
         } footer: {
           Text("What the model writes instead, such as “home ar” for Homarr.")
         }
+        .sottoRow()
         Section {
           Toggle("On", isOn: $enabled)
         }
+        .sottoRow()
         if let error {
-          Section { Text(error).foregroundStyle(SottoPalette.warning) }
+          Section { Text(error).foregroundStyle(SottoPalette.warning) }.sottoRow()
         }
-        if let entry {
+        if entry != nil {
           Section {
-            Button("Delete", role: .destructive) {
-              Task {
-                error = await model.delete(entry)
-                if error == nil { dismiss() }
-              }
-            }
+            Button("Delete…", role: .destructive) { confirmDelete = true }
           }
+          .sottoRow()
         }
       }
       .font(.flow(size: 16))
+      .sottoList()
+      .confirmationDialog(
+        "Delete “\(entry?.canonical ?? "")”?", isPresented: $confirmDelete,
+        titleVisibility: .visible
+      ) {
+        Button("Delete Term", role: .destructive) {
+          guard let entry else { return }
+          Task {
+            error = await model.delete(entry)
+            if error == nil { dismiss() }
+          }
+        }
+      } message: {
+        Text("Dictation stops using this spelling and its aliases. This can't be undone.")
+      }
       .navigationTitle(entry == nil ? "New term" : "Edit term")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {

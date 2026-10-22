@@ -47,6 +47,7 @@ struct SetupView: View {
         }
       }
       .font(.flow(size: 15))
+      .sottoList()
       .navigationTitle("Set up LocalFlow")
       .toolbar {
         Button(checklist.isComplete ? "Done" : "Later", action: close)
@@ -107,5 +108,6 @@ struct SetupView: View {
       }
       .textCase(nil)
     }
+    .sottoRow()
   }
 }

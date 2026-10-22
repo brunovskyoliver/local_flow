@@ -16,23 +16,33 @@ struct BarWaveform: View {
 }
 
 /// Working: a slow rolling wave while the app transcribes. `scale` 3 matches
-/// `LargeWaveform` in the keyboard's listening view.
+/// `LargeWaveform` in the keyboard's listening view. With Reduce Motion on it holds one
+/// still frame and schedules no updates; the "Transcribing" text beside it carries the state.
 struct RollingWave: View {
   var ink = PillStyle.ink
   var scale: CGFloat = 1
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1 / 30)) { context in
-      let phase = context.date.timeIntervalSinceReferenceDate * 4
-      HStack(spacing: 2 * scale) {
-        ForEach(0..<15, id: \.self) { index in
-          let lift: Double = 1 + sin(phase + Double(index) * 0.6)
-          Capsule().fill(ink.opacity(0.8))
-            .frame(width: 3 * scale, height: (5 + 9 * lift) * scale)
-        }
+    if reduceMotion {
+      bars(phase: 0)
+    } else {
+      TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+        bars(phase: context.date.timeIntervalSinceReferenceDate * 4)
       }
-      .frame(height: 24 * scale)
     }
+  }
+
+  private func bars(phase: Double) -> some View {
+    HStack(spacing: 2 * scale) {
+      ForEach(0..<15, id: \.self) { index in
+        let lift: Double = 1 + sin(phase + Double(index) * 0.6)
+        Capsule().fill(ink.opacity(0.8))
+          .frame(width: 3 * scale, height: (5 + 9 * lift) * scale)
+      }
+    }
+    .frame(height: 24 * scale)
+    .accessibilityHidden(true)
   }
 }
 

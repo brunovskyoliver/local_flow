@@ -13,6 +13,9 @@ struct SettingsView: View {
   @State private var orphanPresent = false
   @State private var sizeOnDisk: Int64 = 0
   @State private var confirmDelete = false
+  @State private var confirmDeleteOrphan = false
+  @State private var retryingOrphan = false
+  @State private var orphanMessage: String?
   @State private var liveActivities = true
   @Environment(\.scenePhase) private var phase
 
@@ -30,6 +33,7 @@ struct SettingsView: View {
             Text("The microphone stays available until you end the session.")
           }
         }
+        .sottoRow()
         Section {
           Toggle("Notify when a note is ready", isOn: $notifyResults)
           if notificationsDenied, let url = URL(string: UIApplication.openSettingsURLString) {
@@ -40,6 +44,7 @@ struct SettingsView: View {
             "After a dictation from the control, the Action Button or Shortcuts. Copy in the notification opens LocalFlow."
           )
         }
+        .sottoRow()
         if !liveActivities {
           Section {
             if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -52,6 +57,7 @@ struct SettingsView: View {
               "Live Activities are off. Sessions still work, but the LocalFlow control can't record."
             )
           }
+          .sottoRow()
         }
         Section {
           LabeledContent("State", value: stateText)
@@ -65,21 +71,16 @@ struct SettingsView: View {
             Button("Delete speech model", role: .destructive) { confirmDelete = true }
               .disabled(app.controller?.isActive == true)
           }
-          if orphanPresent {
-            LabeledContent("1 unrecovered recording") {
-              Button("Delete", role: .destructive) {
-                orphans.delete()
-                orphanPresent = orphans.hasOrphan
-                liveActivities = ActivityAuthorizationInfo().areActivitiesEnabled
-              }
-            }
-          }
         } header: {
           Text("Speech model")
         } footer: {
           if model.state == .ready, app.controller?.isActive == true {
             Text("End the listening session to delete the model.")
           }
+        }
+        .sottoRow()
+        if orphanPresent || orphanMessage != nil {
+          orphanSection
         }
         if let connection = app.serverConnection {
           Section {
@@ -91,17 +92,22 @@ struct SettingsView: View {
           } footer: {
             Text("Meetings are processed on your own LocalFlow server when you turn that on.")
           }
+          .sottoRow()
         }
         Section {
           Button("Open setup") { app.showSetup = true }
         }
+        .sottoRow()
         Section {
           Toggle("Diagnostics", isOn: $diagnostics)
           if diagnostics {
             NavigationLink("Diagnostics") { DiagnosticsView(app: app) }
           }
         }
+        .sottoRow()
       }
+      .font(.flow(size: 16))
+      .sottoList()
       .navigationTitle("Settings")
       .onAppear(perform: refresh)
       .onChange(of: model.state) { refresh() }
@@ -133,6 +139,69 @@ struct SettingsView: View {
           "Dictation stops working until you download it again. History and the Dictionary stay."
         )
       }
+      .confirmationDialog(
+        "Delete the unrecovered recording?", isPresented: $confirmDeleteOrphan,
+        titleVisibility: .visible
+      ) {
+        Button("Delete Recording", role: .destructive) {
+          orphans.delete()
+          orphanMessage = nil
+          refresh()
+        }
+      } message: {
+        Text("It was never transcribed. Deleting it can't be undone.")
+      }
+    }
+  }
+
+  /// A dictation cut short when LocalFlow was closed (UI-05). Retry runs the normal
+  /// recovery; Delete asks first, because the audio is the only copy.
+  private var orphanSection: some View {
+    Section {
+      if orphanPresent {
+        LabeledContent("1 unrecovered recording") {
+          if retryingOrphan { ProgressView() }
+        }
+        Button("Try transcribing again", action: retryOrphan)
+          .disabled(!canRetryOrphan)
+        Button("Delete recording…", role: .destructive) { confirmDeleteOrphan = true }
+          .disabled(retryingOrphan)
+      }
+      if let orphanMessage {
+        Text(orphanMessage).font(.flow(size: 14)).foregroundStyle(SottoPalette.muted)
+      }
+    } header: {
+      Text("Recovery")
+    } footer: {
+      if orphanPresent {
+        Text(orphanFooter)
+      }
+    }
+    .sottoRow()
+  }
+
+  private var canRetryOrphan: Bool {
+    !retryingOrphan && model.state == .ready && app.controller?.isActive != true
+  }
+
+  private var orphanFooter: String {
+    if model.state != .ready { return "Download the speech model to transcribe it." }
+    if app.controller?.isActive == true { return "End the listening session to transcribe it." }
+    return "LocalFlow closed before this dictation was transcribed. A transcript goes to History."
+  }
+
+  private func retryOrphan() {
+    guard let services = app.services else { return }
+    retryingOrphan = true
+    orphanMessage = nil
+    Task {
+      await orphans.recover(pipeline: services.pipeline, store: services.dictations)
+      retryingOrphan = false
+      refresh()
+      orphanMessage =
+        orphanPresent
+        ? "It couldn't be transcribed this time. It's kept; try again later."
+        : "Done. If it heard any speech, the transcript is in History."
     }
   }
 

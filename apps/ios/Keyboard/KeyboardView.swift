@@ -1,9 +1,16 @@
 import SwiftUI
+import UIKit
 
 struct KeyboardView: View {
   /// One height for every surface, so the listening view never resizes the keyboard
-  /// (research R10). The view controller pins the input view to it.
+  /// (research R10). The view controller pins the input view to it. Accessibility text
+  /// sizes get a taller keyboard; anything that still doesn't fit scrolls.
   static let height: CGFloat = 260
+  static let accessibilityHeight: CGFloat = 320
+
+  static func height(for category: UIContentSizeCategory) -> CGFloat {
+    category.isAccessibilityCategory ? accessibilityHeight : height
+  }
 
   struct Actions {
     let tap: () -> Void
@@ -15,6 +22,7 @@ struct KeyboardView: View {
   let levels: LevelsReader?
   let needsGlobe: Bool
   let actions: Actions
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   var body: some View {
     Group {
@@ -27,13 +35,21 @@ struct KeyboardView: View {
       }
     }
     .frame(maxWidth: .infinity)
-    .frame(height: Self.height)
+    .frame(height: dynamicTypeSize.isAccessibilitySize ? Self.accessibilityHeight : Self.height)
     .font(.flow(size: 15))
   }
 
   /// Dictation only (owner, 2026-10-02): settings, the session status and the mic. No
   /// keys; the owner types with the Apple keyboard through the globe.
   private var keys: some View {
+    // Scrolls only when large text or a long message doesn't fit; the mic stays on top.
+    ScrollView {
+      keysContent
+    }
+    .scrollBounceBehavior(.basedOnSize)
+  }
+
+  private var keysContent: some View {
     VStack(spacing: 12) {
       HStack(spacing: 4) {
         if needsGlobe { iconButton("globe", "Next keyboard", actions.nextKeyboard) }
@@ -66,18 +82,11 @@ struct KeyboardView: View {
         Text(message).font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
           .multilineTextAlignment(.center)
       }
-      HStack(spacing: 8) {
-        if model.canUndo {
-          chip("Undo") { model.undo() }
-        }
-        if model.lastInserted != nil {
-          chip("Insert last dictation") { model.insertLast() }
-        }
-        if model.limitReached, model.lastInsertion != nil {
-          Text("Limit reached").font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
-        }
+      // Side by side when they fit, stacked at large text sizes or narrow widths.
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 8) { chips }
+        VStack(spacing: 0) { chips }
       }
-      Spacer(minLength: 0)
     }
     .padding(8)
     .foregroundStyle(SottoPalette.ink)
@@ -107,11 +116,22 @@ struct KeyboardView: View {
     }
   }
 
+  @ViewBuilder private var chips: some View {
+    if model.canUndo {
+      chip("Undo") { model.undo() }
+    }
+    if model.lastInserted != nil {
+      chip("Insert last dictation") { model.insertLast() }
+    }
+    if model.limitReached, model.lastInsertion != nil {
+      Text("Limit reached").font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+    }
+  }
+
+  /// The chip stays small; its touch region is at least 44 × 44 pt.
   private func chip(_ title: String, _ action: @escaping () -> Void) -> some View {
     Button(title, action: action)
       .font(.flow(size: 13, weight: .medium))
-      .padding(.horizontal, 12).padding(.vertical, 6)
-      .background(SottoPalette.tint, in: Capsule())
-      .foregroundStyle(SottoPalette.ink)
+      .buttonStyle(SottoChipButtonStyle(fill: SottoPalette.tint))
   }
 }

@@ -20,7 +20,8 @@ struct RootView: View {
           } label: {
             Label(bannerTitle(controller), systemImage: "waveform")
               .font(.flow(size: 14, weight: .medium))
-              .frame(maxWidth: .infinity).padding(10)
+              .padding(.horizontal, 10).padding(.vertical, 6)
+              .frame(maxWidth: .infinity, minHeight: 44)
               .background(SottoPalette.tint)
               .foregroundStyle(SottoPalette.ink)
           }

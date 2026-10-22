@@ -31,8 +31,9 @@ struct MeetingsView: View {
             Text(notice).font(.flow(size: 13)).foregroundStyle(SottoPalette.warning)
           }
         }
+        .sottoRow()
         if let error = model.error {
-          Text(error).foregroundStyle(SottoPalette.warning)
+          Text(error).foregroundStyle(SottoPalette.warning).sottoRow()
         }
         Section {
           ForEach(model.items) { item in
@@ -42,7 +43,9 @@ struct MeetingsView: View {
             .task { await model.loadMore(after: item) }
           }
         }
+        .sottoRow()
       }
+      .sottoList()
       .overlay {
         if model.items.isEmpty, model.error == nil, !meetings.isRecording {
           Text("Meetings you record appear here.").font(.flow(size: 16))
@@ -64,14 +67,9 @@ struct MeetingsView: View {
     HStack(spacing: 12) {
       VStack(alignment: .leading, spacing: 4) {
         Text(item.title).font(.flow(size: 16)).lineLimit(2)
-        HStack(spacing: 6) {
-          Text(item.date, format: .dateTime.day().month(.abbreviated).hour().minute())
-          Text("·")
-          Text(Duration.milliseconds(item.durationMs), format: .time(pattern: .hourMinuteSecond))
-          Text("·")
-          Text(model.label(item))
-        }
-        .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+        // One wrapping line, so large text sizes don't clip it (UI-07).
+        Text(metadata(item))
+          .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
         if let upload = item.upload, upload.ready, let mac = upload.macCopyText {
           Label(mac, systemImage: "laptopcomputer").font(.flow(size: 12))
             .foregroundStyle(SottoPalette.muted)
@@ -83,6 +81,8 @@ struct MeetingsView: View {
           Task { await model.togglePlayback(item.id) }
         } label: {
           Image(systemName: model.playingID == item.id ? "stop.fill" : "play.fill")
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .disabled(!model.canPlay)
@@ -90,5 +90,13 @@ struct MeetingsView: View {
       }
     }
     .padding(.vertical, 4)
+  }
+
+  private func metadata(_ item: MeetingsViewModel.Item) -> String {
+    [
+      item.date.formatted(.dateTime.day().month(.abbreviated).hour().minute()),
+      Duration.milliseconds(item.durationMs).formatted(.time(pattern: .hourMinuteSecond)),
+      model.label(item),
+    ].joined(separator: " · ")
   }
 }

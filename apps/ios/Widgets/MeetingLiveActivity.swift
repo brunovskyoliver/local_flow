@@ -46,11 +46,16 @@ struct MeetingLiveActivity: Widget {
         }
       } compactLeading: {
         Dot(phase: context.state.phase)
+          .dynamicTypeSize(...DictationLiveActivity.compactTypeLimit)
       } compactTrailing: {
+        // Meetings run past an hour, so the frame fits h:mm:ss and shrinks it if needed.
         MeetingTime(state: context.state).font(.flow(size: 14, weight: .medium))
-          .frame(width: 48, alignment: .trailing)
+          .lineLimit(1).minimumScaleFactor(0.7)
+          .frame(width: 58, alignment: .trailing)
+          .dynamicTypeSize(...DictationLiveActivity.compactTypeLimit)
       } minimal: {
         Dot(phase: context.state.phase)
+          .dynamicTypeSize(...DictationLiveActivity.compactTypeLimit)
       }
     }
   }

@@ -72,6 +72,7 @@ struct ListeningView: View {
           )
           .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
           .multilineTextAlignment(.center).padding(.horizontal, 24)
+          .minimumScaleFactor(0.6)
         }
       }
       .accessibilityElement(children: .combine)
@@ -81,34 +82,60 @@ struct ListeningView: View {
   }
 
   @ViewBuilder private func noticeView(_ notice: KeyboardSessionModel.Notice) -> some View {
-    VStack(spacing: 12) {
-      switch notice {
-      case .notRunning:
+    switch notice {
+    case .notRunning:
+      noticeBody {
         Text("LocalFlow isn't running.").font(.flow(size: 16, weight: .medium))
         HStack(spacing: 8) {
           pill("Start LocalFlow", primary: true, action: startLocalFlow)
           pill("Dismiss", primary: false, action: model.dismissNotice)
         }
-      case .fullAccess:
-        // Opening LocalFlow or Settings needs Full Access itself, so the text is the way on.
+      }
+    case .fullAccess:
+      // Opening LocalFlow or Settings needs Full Access itself, so the text is the way on.
+      noticeBody {
         Text(KeyboardSessionModel.fullAccessMessage).font(.flow(size: 14))
         pill("OK", primary: false, action: model.dismissNotice)
-      case .nothingHeard:
-        Text("Didn't catch that").font(.flow(size: 16, weight: .medium))
-        Text("Tap to go back").font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
-      case .failed(let hint):
-        Text(hint).font(.flow(size: 15, weight: .medium))
+      }
+    case .nothingHeard:
+      dismissible("Didn't catch that", size: 16)
+    case .failed(let hint):
+      dismissible(hint, size: 15)
+    }
+  }
+
+  /// Notices without buttons go on a tap anywhere or after 4 s. The whole notice is one
+  /// real button, so VoiceOver, Switch Control and Full Keyboard Access can dismiss it too.
+  private func dismissible(_ message: String, size: CGFloat) -> some View {
+    Button(action: model.dismissNotice) {
+      VStack(spacing: 12) {
+        Text(message).font(.flow(size: size, weight: .medium))
         Text("Tap to go back").font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
       }
+      // At the largest text sizes a long hint shrinks rather than clipping in 260 pt.
+      .minimumScaleFactor(0.6)
+      .multilineTextAlignment(.center)
+      .padding(.horizontal, 24)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .contentShape(Rectangle())
     }
-    .multilineTextAlignment(.center)
-    .padding(.horizontal, 24)
+    .buttonStyle(.plain)
+    .accessibilityLabel(message)
+    .accessibilityHint("Goes back to the keyboard")
+  }
+
+  /// Long notices at large text sizes scroll inside the fixed keyboard height instead of
+  /// clipping.
+  private func noticeBody(@ViewBuilder _ content: () -> some View) -> some View {
+    ScrollView {
+      VStack(spacing: 12) { content() }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity)
+    }
+    .scrollBounceBehavior(.basedOnSize)
+    .defaultScrollAnchor(.center)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .contentShape(Rectangle())
-    .onTapGesture {
-      // The two with buttons wait for them; the others go on a tap or after 4 s.
-      if notice != .notRunning, notice != .fullAccess { model.dismissNotice() }
-    }
   }
 
   private func round(
@@ -128,8 +155,6 @@ struct ListeningView: View {
   private func pill(_ title: String, primary: Bool, action: @escaping () -> Void) -> some View {
     Button(title, action: action)
       .font(.flow(size: 14, weight: .medium))
-      .padding(.horizontal, 14).padding(.vertical, 8)
-      .background(primary ? SottoPalette.primary : SottoPalette.button, in: Capsule())
-      .foregroundStyle(primary ? SottoPalette.onPrimary : SottoPalette.ink)
+      .buttonStyle(SottoChipButtonStyle(primary: primary))
   }
 }
