@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import GRDB
 import LocalFlowSpeech
@@ -25,6 +24,9 @@ public actor MeetingHandoff {
   }
 
   public static let chunkBytes = 48_000
+  /// `Step.waiting` code after an upload's checksum was rejected
+  /// `HandoffFileTransfer.maximumMismatches` times.
+  public static let checksumMismatch = "checksum_mismatch"
 
   /// One `handoff` request and its reply.
   public typealias Exchange = @Sendable (RemoteHandoffRequest) async throws -> RemoteHandoffReply
@@ -36,6 +38,8 @@ public actor MeetingHandoff {
   /// Server routing, the `handoff` op, and no **Run on this Mac**.
   private let eligible: @Sendable (UUID) async -> Bool
   private let defaultLanguage: @Sendable () async -> MeetingLanguage
+  /// The first pause after a rejected checksum; it doubles for each further mismatch.
+  private let uploadRetryDelay: Duration
 
   public init(
     pool: RemoteChannelPool, database: DatabasePool, root: MeetingStorageRoot,
@@ -60,9 +64,11 @@ public actor MeetingHandoff {
   public init(
     exchange: @escaping Exchange, database: DatabasePool, root: MeetingStorageRoot,
     eligible: @escaping @Sendable (UUID) async -> Bool,
-    defaultLanguage: @escaping @Sendable () async -> MeetingLanguage
+    defaultLanguage: @escaping @Sendable () async -> MeetingLanguage,
+    uploadRetryDelay: Duration = .seconds(1)
   ) {
     self.exchange = exchange
+    self.uploadRetryDelay = uploadRetryDelay
     self.database = database
     self.root = root
     directory = root.url.deletingLastPathComponent().appendingPathComponent(
@@ -118,6 +124,10 @@ public actor MeetingHandoff {
       return .notHandedOff
     } catch let waiting as RemoteMeetingWaiting {
       return .waiting(waiting.code)
+    } catch HandoffFileTransferError.checksumMismatch {
+      // The server kept rejecting a file's checksum. The local files stay; the next step
+      // tries again after the queue's server wait.
+      return .waiting(Self.checksumMismatch)
     } catch {
       return .waiting("unreachable")
     }
@@ -162,34 +172,13 @@ public actor MeetingHandoff {
     for (name, url) in files { try await upload(id, name: name, url: url) }
   }
 
+  /// One file in bounded chunks; a rejected checksum is retried a bounded number of times
+  /// with backoff, then reported as `HandoffFileTransferError.checksumMismatch`.
   private func upload(_ id: UUID, name: String, url: URL) async throws {
-    let data = try Data(contentsOf: url, options: .mappedIfSafe)
-    let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    // An offset the server does not have yet writes nothing and returns its size.
-    var offset =
-      try await call(.init(action: .put, meeting: id, name: name, offset: 0))
-      .offset ?? 0
-    guard offset <= data.count else { throw RemoteChannelError.protocolError }
-    repeat {
-      try Task.checkCancellation()
-      let end = min(data.count, offset + Self.chunkBytes)
-      let last = end == data.count
-      let reply = try await call(
-        .init(
-          action: .put, meeting: id, name: name, offset: offset,
-          data: end > offset ? data.subdata(in: offset..<end) : nil, sha256: last ? hash : nil))
-      guard let next = reply.offset, reply.state == .receiving else {
-        throw RemoteChannelError.protocolError
-      }
-      // A hash mismatch truncates the file on the server: send it again.
-      if last && next == 0 && !data.isEmpty {
-        offset = 0
-        continue
-      }
-      guard next == end else { throw RemoteChannelError.protocolError }
-      if last { return }
-      offset = next
-    } while true
+    let exchange = exchange
+    try await HandoffFileTransfer.put(
+      meeting: id, name: name, url: url, retryDelay: uploadRetryDelay,
+      call: { try await exchange($0) })
   }
 
   private func download(_ id: UUID) async throws -> URL {
@@ -200,25 +189,17 @@ public actor MeetingHandoff {
   }
 
   /// A done meeting's processed bundle, or with `name` one of its AAC files, written to
-  /// `url` once its size and SHA-256 match what the server announced.
+  /// `url` once its size and SHA-256 match what the server announced. Chunks go straight
+  /// to a private partial file, so memory does not grow with the file. A checksum failure
+  /// is a `protocolError`, as before: the result does not merge.
   func fetch(_ id: UUID, name: String?, to url: URL) async throws {
-    var data = Data()
-    var expected: (size: Int, sha256: String)?
-    repeat {
-      let reply = try await call(.init(action: .get, meeting: id, name: name, offset: data.count))
-      guard reply.state == .done, let size = reply.size, let sha256 = reply.sha256,
-        reply.offset == data.count, size <= 1 << 30,
-        expected == nil || expected! == (size, sha256)
-      else { throw RemoteChannelError.protocolError }
-      expected = (size, sha256)
-      guard let chunk = reply.data, !chunk.isEmpty else { break }
-      data.append(chunk)
-    } while data.count < expected!.size
-    let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    guard let expected, data.count == expected.size, hash == expected.sha256 else {
+    let exchange = exchange
+    do {
+      try await HandoffFileTransfer.get(
+        meeting: id, name: name, to: url, call: { try await exchange($0) })
+    } catch HandoffFileTransferError.checksumMismatch {
       throw RemoteChannelError.protocolError
     }
-    try data.write(to: url, options: .atomic)
   }
 
   // MARK: Database slices

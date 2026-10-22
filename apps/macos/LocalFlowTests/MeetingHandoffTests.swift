@@ -146,4 +146,57 @@ final class MeetingHandoffTests: XCTestCase {
     XCTAssertEqual(final.row.passID, partial.row.passID)
     XCTAssertGreaterThan(final.row.segmentCount, partialRows)
   }
+
+  /// Audit item 5: a server that rejects every checksum used to make the upload loop
+  /// forever. It now stops after `HandoffFileTransfer.maximumMismatches` final puts per
+  /// file, reports a retryable wait and keeps the local bundle and audio.
+  func testAPeerThatAlwaysRejectsTheChecksumEndsTheStepAndKeepsTheOriginals() async throws {
+    let fixture = try MeetingTestStore.make()
+    defer { fixture.cleanup() }
+    let meeting = try await TranscriptMeetingFixture.make(in: fixture)
+    let id = meeting.meetingID
+    final class Server: @unchecked Sendable {
+      let lock = NSLock()
+      var stored: [String: Int] = [:]
+      var checksumPuts: [String: Int] = [:]
+      func call(_ request: RemoteHandoffRequest) throws -> RemoteHandoffReply {
+        try lock.withLock {
+          switch request.action {
+          case .list: return RemoteHandoffReply(meetings: [])
+          case .put:
+            let name = try XCTUnwrap(request.name)
+            var size = stored[name] ?? 0
+            if request.offset == size { size += request.data?.count ?? 0 }
+            if request.sha256 != nil {
+              checksumPuts[name, default: 0] += 1
+              size = 0
+            }
+            stored[name] = size
+            return RemoteHandoffReply(state: .receiving, name: name, offset: size)
+          default: throw RemoteChannelError.server(.invalidMessage)
+          }
+        }
+      }
+    }
+    let server = Server()
+    let handoff = MeetingHandoff(
+      exchange: { try server.call($0) }, database: fixture.history.database,
+      root: fixture.root, eligible: { _ in true }, defaultLanguage: { .defaultLanguage },
+      uploadRetryDelay: .milliseconds(1))
+
+    let step = await handoff.step(id)
+    XCTAssertEqual(step, .waiting(MeetingHandoff.checksumMismatch))
+    XCTAssertEqual(
+      server.lock.withLock { Array(server.checksumPuts.values) },
+      [HandoffFileTransfer.maximumMismatches], "the first file gives up; nothing else is sent")
+    let bundle = fixture.root.url.deletingLastPathComponent()
+      .appendingPathComponent("Handoff").appendingPathComponent(id.uuidString)
+      .appendingPathComponent("bundle.sqlite")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: bundle.path), "the bundle stays")
+    for stretch in meeting.files.values {
+      for file in stretch.values {
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "the audio stays")
+      }
+    }
+  }
 }
