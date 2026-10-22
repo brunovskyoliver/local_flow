@@ -33,6 +33,8 @@ struct MeetingDetailView: View {
   @State private var explainingSharing = false
   @State private var transcriptQuery = ""
   @State private var searchOpen = false
+  /// UI-02: a failed full copy or export; cleared by the next transcript action.
+  @State private var transcriptActionNotice: String?
   @FocusState private var searchFocused: Bool
   /// The row to keep in view after a page loads or is evicted above or below it.
   @State private var pageAnchor: PageAnchor?
@@ -454,6 +456,9 @@ struct MeetingDetailView: View {
                 if !focused, transcriptQuery.isEmpty { searchOpen = false }
               }
               .accessibilityIdentifier("meeting.transcript.search")
+            if liveStatus == nil, let pager, !transcriptQuery.isEmpty {
+              transcriptMatchNavigator(pager)
+            }
           }
         } else {
           NoteIconButton(symbol: "magnifyingglass", label: "Search transcript") {
@@ -462,11 +467,8 @@ struct MeetingDetailView: View {
           }
           .accessibilityIdentifier("meeting.transcript.search.open")
         }
-        if let pager, !pager.segments.isEmpty {
-          NoteIconButton(symbol: "square.on.square", label: "Copy transcript") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(pager.copyText(), forType: .string)
-          }
+        if liveStatus == nil, let pager, pager.count > 0 || !pager.segments.isEmpty {
+          transcriptCopyMenu(pager)
         }
         if showsSpeakerControls, pager?.speakers != nil {
           NoteIconButton(symbol: "person.badge.plus", label: "Assign speakers") {
@@ -491,6 +493,7 @@ struct MeetingDetailView: View {
         .foregroundStyle(.red)
       }
       if let notice = pager?.notice { Text(notice).foregroundStyle(.red) }
+      if let notice = transcriptActionNotice { Text(notice).foregroundStyle(.red) }
       if liveStatus != nil {
         liveTranscript
       } else if let pager, !pager.segments.isEmpty {
@@ -502,12 +505,15 @@ struct MeetingDetailView: View {
         let dividers = Self.microphoneDividers(
           switches: microphoneSwitches, transcript: segments.map { ($0.id, $0.startMs) })
         LazyVStack(alignment: .leading, spacing: 3) {
-          // No buttons: the next page loads when its edge scrolls into view.
-          if pager.hasPrevious, let first = segments.first {
+          // No buttons: the next page loads when its edge scrolls into view. The
+          // sentinels follow the resident pages, not the filtered rows, so a search
+          // with no resident matches still pages (UI-02).
+          if pager.hasPrevious {
+            let first = segments.first?.id
             Color.clear.frame(height: 1).onAppear {
               Task {
                 await pager.loadPrevious()
-                pageAnchor = PageAnchor(id: first.id, anchor: .top)
+                if let first { pageAnchor = PageAnchor(id: first, anchor: .top) }
               }
             }
           }
@@ -534,19 +540,136 @@ struct MeetingDetailView: View {
             MicrophoneChangeDivider(name: $0.element)
           }
           if segments.isEmpty {
-            Text("No matches.").foregroundStyle(SottoPalette.muted)
+            Text(noResidentMatchText(pager)).foregroundStyle(SottoPalette.muted)
           }
-          if pager.hasNext, let last = segments.last {
+          if pager.hasNext {
+            let last = segments.last?.id
             Color.clear.frame(height: 1).onAppear {
               Task {
                 await pager.loadNext()
-                pageAnchor = PageAnchor(id: last.id, anchor: .bottom)
+                if let last { pageAnchor = PageAnchor(id: last, anchor: .bottom) }
               }
             }
           }
         }.accessibilityIdentifier("meeting.transcript.list")
       }
-    }.accessibilityIdentifier("meeting.transcript")
+    }
+    .accessibilityIdentifier("meeting.transcript")
+    .task(id: searchKey) {
+      // UI-02: the store search covers the whole transcript, not the resident pages.
+      guard let pager, liveStatus == nil else { return }
+      if !transcriptQuery.isEmpty {
+        do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+      }
+      await pager.search(transcriptQuery)
+    }
+  }
+
+  // MARK: Whole-transcript search and copy (UI-02)
+
+  private struct SearchKey: Equatable {
+    let query: String
+    let finality: SegmentFinality?
+    let labels: Int?
+    let count: Int?
+  }
+  private var searchKey: SearchKey {
+    SearchKey(
+      query: transcriptQuery, finality: pager?.finality, labels: pager?.labelsRevision,
+      count: pager?.count)
+  }
+
+  private func transcriptMatchNavigator(_ pager: TranscriptPager) -> some View {
+    HStack(spacing: 2) {
+      Text(Self.matchCountText(pager)).monospacedDigit().lineLimit(1).fixedSize()
+        .accessibilityIdentifier("meeting.transcript.search.count")
+      let none = (pager.searchResult?.matches.isEmpty ?? true)
+      Button {
+        Task { await pager.showMatch(forward: false) }
+      } label: {
+        Image(systemName: "chevron.up").frame(width: 20, height: 20).contentShape(.rect)
+      }
+      .buttonStyle(.plain).disabled(none).help("Previous match")
+      .accessibilityLabel("Previous match")
+      .accessibilityIdentifier("meeting.transcript.search.previous")
+      Button {
+        Task { await pager.showMatch(forward: true) }
+      } label: {
+        Image(systemName: "chevron.down").frame(width: 20, height: 20).contentShape(.rect)
+      }
+      .buttonStyle(.plain).disabled(none).help("Next match")
+      .accessibilityLabel("Next match")
+      .accessibilityIdentifier("meeting.transcript.search.next")
+    }
+  }
+
+  /// "Searching…", "No matches", "41 matches" or "3 of 41" over the whole transcript.
+  static func matchCountText(_ pager: TranscriptPager) -> String {
+    if pager.isSearching { return "Searching…" }
+    guard let result = pager.searchResult else { return "" }
+    let total = result.matches.count.formatted() + (result.truncated ? "+" : "")
+    if result.matches.isEmpty { return "No matches" }
+    if let index = pager.currentMatchIndex { return "\((index + 1).formatted()) of \(total)" }
+    return result.matches.count == 1 && !result.truncated ? "1 match" : "\(total) matches"
+  }
+
+  private func noResidentMatchText(_ pager: TranscriptPager) -> String {
+    if pager.isSearching { return "Searching the whole transcript…" }
+    guard let result = pager.searchResult, !result.matches.isEmpty else { return "No matches." }
+    return "No matches in this part of the transcript. Use the arrows to go to the others."
+  }
+
+  private func transcriptCopyMenu(_ pager: TranscriptPager) -> some View {
+    Menu {
+      Button(
+        pager.selection.isEmpty
+          ? "Copy Selected Segments" : "Copy \(pager.selection.count) Selected Segments"
+      ) {
+        transcriptActionNotice = nil
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(pager.selectionText(), forType: .string)
+      }
+      .disabled(pager.selection.isEmpty)
+      .accessibilityIdentifier("meeting.transcript.copySelection")
+      Button("Copy Full Transcript") { copyFullTranscript(pager) }
+        .accessibilityIdentifier("meeting.transcript.copyFull")
+      Button("Export Transcript…") { exportTranscript(pager) }
+        .accessibilityIdentifier("meeting.transcript.export")
+    } label: {
+      Image(systemName: "square.on.square").font(.flow(size: 13))
+        .frame(width: 28, height: 28).contentShape(.rect)
+    }
+    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+    .help("Copy or export transcript").accessibilityLabel("Copy or export transcript")
+    .accessibilityIdentifier("meeting.transcript.copy")
+  }
+
+  private func copyFullTranscript(_ pager: TranscriptPager) {
+    transcriptActionNotice = nil
+    Task {
+      do {
+        let text = try await pager.fullTranscriptText()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+      } catch TranscriptTextQuery.ExportError.tooLong {
+        transcriptActionNotice = "The transcript is too long to copy. Export it to a file instead."
+      } catch {
+        transcriptActionNotice = "The transcript could not be copied."
+      }
+    }
+  }
+
+  private func exportTranscript(_ pager: TranscriptPager) {
+    transcriptActionNotice = nil
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "\(meeting.displayTitle) transcript.txt"
+    panel.allowedContentTypes = [.plainText]
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    Task {
+      do { try await pager.exportTranscript(to: url) } catch {
+        transcriptActionNotice = "The transcript could not be exported."
+      }
+    }
   }
 
   /// Provisional segments straight from the coordinator while recording; the pager only
