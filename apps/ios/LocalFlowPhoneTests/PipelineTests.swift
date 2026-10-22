@@ -58,12 +58,16 @@ final class PipelineTests: XCTestCase {
 
   // MARK: Orphans
 
+  private func writeAudio(to url: URL, samples: Int = 3_200) throws {
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let values = [Float](repeating: 0.2, count: samples)
+    try values.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: url)
+  }
+
   private func leaveOrphan() throws -> OrphanSpoolRecovery {
     let folder = harness.spoolRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
-    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    let samples = [Float](repeating: 0.2, count: 3_200)
-    try samples.withUnsafeBufferPointer { Data(buffer: $0) }
-      .write(to: folder.appendingPathComponent("audio.pcm"))
+    try writeAudio(to: folder.appendingPathComponent("audio.pcm"))
     let recovery = OrphanSpoolRecovery(root: harness.spoolRoot)
     recovery.adopt()
     XCTAssertTrue(recovery.hasOrphan)
@@ -71,18 +75,170 @@ final class PipelineTests: XCTestCase {
     return recovery
   }
 
+  private func blockSaves(_ blocked: Bool) throws {
+    try harness.history.database.write { db in
+      try db.execute(
+        sql: blocked
+          ? "CREATE TRIGGER locked BEFORE INSERT ON phone_dictations BEGIN SELECT RAISE(ABORT, 'locked'); END"
+          : "DROP TRIGGER locked")
+    }
+  }
+
+  private func recoveryFolders(_ recovery: OrphanSpoolRecovery) -> [String] {
+    (try? FileManager.default.contentsOfDirectory(atPath: recovery.recoveryDirectory.path))?
+      .filter { UUID(uuidString: $0) != nil } ?? []
+  }
+
   func testOrphanIsRecoveredForReview() async throws {
     let recovery = try leaveOrphan()
+    let id = try XCTUnwrap(recovery.parked.first).deletingPathExtension().lastPathComponent
     await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
     XCTAssertFalse(recovery.hasOrphan)
+    XCTAssertTrue(recoveryFolders(recovery).isEmpty)
     let rows = try await harness.dictations.list()
     XCTAssertEqual(rows.count, 1)
+    XCTAssertEqual(rows.first?.id.uuidString, id, "the parked file name is the stable ID")
     XCTAssertEqual(rows.first?.endDetail, .recoveredAfterTermination)
     XCTAssertEqual(rows.first?.entry.recoveryState, .needsReview)
   }
 
-  func testFailingOrphanIsDeleted() async throws {
+  /// Audit item 1: a model failure used to delete the only copy.
+  func testAModelFailureKeepsTheOrphanForARetry() async throws {
     await harness.runtime.set(fails: true)
+    let recovery = try leaveOrphan()
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertTrue(recovery.hasOrphan)
+    XCTAssertEqual(try harness.rowCount(), 0)
+    XCTAssertTrue(recoveryFolders(recovery).isEmpty, "the working copy is cleaned")
+    await harness.runtime.set(fails: false)
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertFalse(recovery.hasOrphan)
+    XCTAssertEqual(try harness.rowCount(), 1)
+  }
+
+  func testAModelLoadFailureKeepsTheOrphan() async throws {
+    await harness.runtime.set(loadFails: true)
+    let recovery = try leaveOrphan()
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertTrue(recovery.hasOrphan)
+    XCTAssertEqual(try harness.rowCount(), 0)
+  }
+
+  func testAFailedHistorySaveKeepsTheOrphanForARetry() async throws {
+    let recovery = try leaveOrphan()
+    try blockSaves(true)
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertTrue(recovery.hasOrphan)
+    XCTAssertEqual(try harness.rowCount(), 0)
+    try blockSaves(false)
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertFalse(recovery.hasOrphan)
+    XCTAssertEqual(try harness.rowCount(), 1, "exactly one review item")
+  }
+
+  func testCancellingRecoveryKeepsTheOrphan() async throws {
+    await harness.runtime.set(loadDelay: .milliseconds(300))
+    let recovery = try leaveOrphan()
+    let recovering = Task {
+      await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    }
+    try await Task.sleep(for: .milliseconds(50))
+    recovering.cancel()
+    await recovering.value
+    XCTAssertTrue(recovery.hasOrphan)
+    XCTAssertEqual(try harness.rowCount(), 0)
+    await harness.runtime.set(loadDelay: .zero)
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertEqual(try harness.rowCount(), 1)
+  }
+
+  /// A process death after the History commit but before cleanup: the retry finds the
+  /// row by the parked ID and only cleans up.
+  func testARetryAfterACommittedSaveDoesNotDuplicate() async throws {
+    let recovery = try leaveOrphan()
+    let url = try XCTUnwrap(recovery.parked.first)
+    let id = try XCTUnwrap(UUID(uuidString: url.deletingPathExtension().lastPathComponent))
+    try await harness.dictations.save(
+      .init(
+        id: id, text: "already saved", createdAt: Date(), source: .keyboard,
+        durationMilliseconds: 200, quality: .incomplete, stopReason: .failure,
+        endDetail: .recoveredAfterTermination, sessionID: nil, detail: nil))
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertFalse(recovery.hasOrphan)
+    XCTAssertEqual(try harness.rowCount(), 1)
+  }
+
+  /// A process death during transcription leaves the parked file and its working copy.
+  func testAdoptDropsARedundantRecoveryCopy() async throws {
+    let recovery = try leaveOrphan()
+    let url = try XCTUnwrap(recovery.parked.first)
+    let id = url.deletingPathExtension().lastPathComponent
+    try writeAudio(
+      to: recovery.recoveryDirectory.appendingPathComponent(id).appendingPathComponent(
+        "audio.pcm"))
+    recovery.adopt()
+    XCTAssertEqual(recovery.orphanCount, 1)
+    XCTAssertTrue(recoveryFolders(recovery).isEmpty)
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertEqual(try harness.rowCount(), 1)
+  }
+
+  /// Builds before this fix deleted the parked file before inference, leaving only the
+  /// recovery folder after a process death.
+  func testAdoptParksAnInterruptedRecoveryFolder() async throws {
+    let recovery = OrphanSpoolRecovery(root: harness.spoolRoot)
+    let id = UUID()
+    try writeAudio(
+      to: recovery.recoveryDirectory.appendingPathComponent(id.uuidString)
+        .appendingPathComponent("audio.pcm"))
+    recovery.adopt()
+    XCTAssertEqual(recovery.parked.first?.lastPathComponent, "\(id.uuidString).pcm")
+    XCTAssertTrue(recoveryFolders(recovery).isEmpty)
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertNotNil(try harness.row(id))
+    XCTAssertFalse(recovery.hasOrphan)
+  }
+
+  func testAdoptParksTheLegacyOrphanFile() async throws {
+    let recovery = OrphanSpoolRecovery(root: harness.spoolRoot)
+    try writeAudio(to: recovery.legacyParked)
+    recovery.adopt()
+    XCTAssertFalse(FileManager.default.fileExists(atPath: recovery.legacyParked.path))
+    XCTAssertEqual(recovery.orphanCount, 1)
+  }
+
+  /// A second left-over recording used to be deleted when one was already parked.
+  func testAdoptKeepsEveryLeftOverRecording() async throws {
+    let recovery = try leaveOrphan()
+    try writeAudio(
+      to: harness.spoolRoot.appendingPathComponent(UUID().uuidString)
+        .appendingPathComponent("audio.pcm"))
+    recovery.adopt()
+    XCTAssertEqual(recovery.orphanCount, 2)
+    await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
+    XCTAssertEqual(try harness.rowCount(), 2)
+    XCTAssertFalse(recovery.hasOrphan)
+  }
+
+  func testAdoptKeepsTheNewestWithinCapacity() throws {
+    let recovery = OrphanSpoolRecovery(root: harness.spoolRoot)
+    var newest: UUID?
+    for index in 0..<(OrphanSpoolRecovery.capacity + 2) {
+      let id = UUID()
+      try writeAudio(to: recovery.file(for: id))
+      try FileManager.default.setAttributes(
+        [.creationDate: Date(timeIntervalSince1970: 1_000 + Double(index))],
+        ofItemAtPath: recovery.file(for: id).path)
+      newest = id
+    }
+    recovery.adopt()
+    XCTAssertEqual(recovery.orphanCount, OrphanSpoolRecovery.capacity)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: recovery.file(for: newest!).path))
+  }
+
+  func testACleanSilentOrphanIsRemoved() async throws {
+    await harness.runtime.set(text: "   ")
     let recovery = try leaveOrphan()
     await recovery.recover(pipeline: harness.pipeline, store: harness.dictations)
     XCTAssertFalse(recovery.hasOrphan)

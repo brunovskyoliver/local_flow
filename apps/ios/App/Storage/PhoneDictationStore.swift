@@ -92,6 +92,15 @@ actor PhoneDictationStore {
     }
   }
 
+  /// Whether History already holds this dictation, so a retried save is skipped.
+  func contains(_ id: UUID) async throws -> Bool {
+    try await history.database.read { db in
+      try Bool.fetchOne(
+        db, sql: "SELECT EXISTS(SELECT 1 FROM transcriptions WHERE id=?)",
+        arguments: [id.uuidString]) ?? false
+    }
+  }
+
   /// Sets the phone delivery and the shared delivery state together.
   func markDelivery(dictationID: UUID, _ delivery: Delivery) async throws {
     try await history.database.write { db in
