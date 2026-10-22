@@ -164,6 +164,50 @@ final class SessionControllerTests: XCTestCase {
     XCTAssertTrue(harness.keepReady.holders.isEmpty)
   }
 
+  /// The app arms one timer for the ready session's deadline instead of ticking every
+  /// second: the deadline is reported while ready, withdrawn while recording and after
+  /// the session ends, and an early fire re-reports the same deadline.
+  func testIdleDeadlineIsReportedOnlyWhileASessionWaits() async {
+    var reported: [Date?] = []
+    controller.onIdleDeadline = { reported.append($0) }
+    await controller.open(origin: .keyboard)
+    let deadline = harness.now.addingTimeInterval(300)
+    XCTAssertEqual(reported.last, deadline)
+    let request = UUID()
+    controller.start(requestID: request)
+    XCTAssertEqual(reported.last, .some(nil), "recording has no deadline")
+    await controller.stop(requestID: request)
+    XCTAssertEqual(reported.last, deadline)
+    reported.removeAll()
+    harness.now += 10
+    controller.tick()
+    XCTAssertEqual(reported, [deadline], "an early fire re-arms the same deadline")
+    harness.now += 290
+    controller.tick()
+    XCTAssertEqual(controller.session?.endReason, .idleTimeout)
+    XCTAssertEqual(reported.last, .some(nil), "an ended session disarms the timer")
+  }
+
+  func testIdleTimerArmsOneFireAndDisarms() async {
+    let timer = IdleTimer()
+    var fired = 0
+    XCTAssertFalse(timer.isArmed)
+    let later = Date().addingTimeInterval(3600)
+    timer.schedule(at: later) { fired += 1 }
+    XCTAssertTrue(timer.isArmed)
+    XCTAssertEqual(timer.deadline, later)
+    timer.schedule(at: nil) { fired += 1 }
+    XCTAssertFalse(timer.isArmed)
+    let done = expectation(description: "fires once")
+    timer.schedule(at: Date().addingTimeInterval(0.05)) {
+      fired += 1
+      done.fulfill()
+    }
+    await fulfillment(of: [done], timeout: 5)
+    XCTAssertEqual(fired, 1)
+    XCTAssertFalse(timer.isArmed, "one fire, no repeating tick")
+  }
+
   func testNeverSessionHasNoDeadlineAndEndsOnlyWhenTheUserEndsIt() async {
     harness.timeout = .never
     await controller.open(origin: .keyboard)

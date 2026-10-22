@@ -198,7 +198,10 @@ final class PhoneApp {
     await services.model.launchCheck()
     await refreshSetup()
     showSetup = !setup.isComplete && !showSession
-    idleTimer.start { [weak controller] in controller?.tick() }
+    // One timer for the ready session's idle deadline, armed only while there is one.
+    controller.onIdleDeadline = { [idleTimer, weak controller] deadline in
+      idleTimer.schedule(at: deadline) { controller?.tick() }
+    }
     memoryObserver = NotificationCenter.default.addObserver(
       forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
     ) { [weak controller] _ in MainActor.assumeIsolated { controller?.memoryWarning() } }
@@ -227,6 +230,7 @@ final class PhoneApp {
   }
 
   func becameActive() {
+    dictate?.sceneChanged(active: true)
     server?.becameActive()
     activity?.becameActive()
     Task {
@@ -244,7 +248,10 @@ final class PhoneApp {
     }
   }
 
+  /// Inactive or background. The Dictate screen stops holding the model; a session that
+  /// is recording or finishing keeps its own hold.
   func leftForeground() {
+    dictate?.sceneChanged(active: false)
     approvalWatch?.cancel()
     approvalWatch = nil
   }

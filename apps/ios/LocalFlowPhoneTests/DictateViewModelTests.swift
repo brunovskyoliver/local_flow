@@ -103,4 +103,40 @@ final class DictateViewModelTests: XCTestCase {
     snapshot = await harness.lifecycle.snapshot()
     XCTAssertFalse(snapshot.loaded, "released 30 s after the screen went away")
   }
+
+  /// The screen holds the model only while it is visible in an active scene: Home, lock
+  /// and the app switcher release it, and coming back to the Dictate tab takes it again.
+  func testTheScreenHoldIsGatedOnAnActiveSceneAndTheVisibleTab() {
+    model.appear()
+    XCTAssertEqual(harness.keepReady.holders, [.dictateScreen])
+    model.sceneChanged(active: false)
+    XCTAssertTrue(harness.keepReady.holders.isEmpty, "backgrounded on the Dictate tab")
+    model.sceneChanged(active: true)
+    XCTAssertEqual(harness.keepReady.holders, [.dictateScreen], "back in front")
+    model.disappear()
+    XCTAssertTrue(harness.keepReady.holders.isEmpty, "another tab")
+    model.sceneChanged(active: false)
+    model.sceneChanged(active: true)
+    XCTAssertTrue(harness.keepReady.holders.isEmpty, "foreground on another tab holds nothing")
+    model.appear()
+    model.appear()
+    XCTAssertEqual(harness.keepReady.holders, [.dictateScreen])
+    model.disappear()
+    XCTAssertTrue(harness.keepReady.holders.isEmpty, "a repeated appear is one hold")
+  }
+
+  /// Backgrounding mid-dictation drops only the screen's hold; the session keeps its own
+  /// and the note still completes.
+  func testBackgroundingWhileRecordingKeepsTheSessionHold() async throws {
+    model.appear()
+    await model.toggle()
+    XCTAssertTrue(model.isRecording)
+    XCTAssertEqual(harness.keepReady.holders, [.session, .dictateScreen])
+    model.sceneChanged(active: false)
+    XCTAssertEqual(harness.keepReady.holders, [.session])
+    XCTAssertTrue(model.isRecording, "leaving the foreground never interrupts a dictation")
+    await model.toggle()
+    let note = try XCTUnwrap(model.note)
+    XCTAssertEqual(note.text, "hello from the phone")
+  }
 }
