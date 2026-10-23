@@ -5,6 +5,10 @@ administrator approval. LocalFlow's Mac client uses a single stable Sparkle feed
 with optional background checks and user-confirmed installation. The remote
 server is deployed separately and must be compatible before a client release.
 
+## Current release exception
+
+The maintainer explicitly chose ad-hoc distribution for v0.3.0. It is not notarized and has in-app updates disabled. Publish only its ZIP and checksum, without a signed appcast or the generated auto-updating Homebrew cask. Users install it manually and may need to approve its first launch in macOS Privacy & Security. The signed production procedure below remains the path for enabling in-app updates later.
+
 ## First signed installation
 
 Older ad-hoc builds contain no updater or trusted update public key. Install the

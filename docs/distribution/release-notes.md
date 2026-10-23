@@ -1,27 +1,24 @@
-LocalFlow for Apple Silicon. The app targets macOS 14 or later.
+# LocalFlow 0.3.0
 
-Production releases are Developer ID signed and notarized. Older installations
-need one manual signed bootstrap before in-app updates become available. macOS
-may request renewed privacy/background-item approval during this transition.
-See the distribution guide before upgrading.
+For Apple Silicon Macs running macOS 14 or later.
 
-Homebrew installation (after the tap syncs this release):
+This release uses ad-hoc signing and is not Apple-notarized, as requested by the maintainer. In-app updates are disabled. Download and install future versions manually. No Apple credential setup is required to build this version.
 
-```sh
-brew install --cask brunovskyoliver/tap/localflow
-```
+## Changes
 
-Or download the ZIP, extract it and move LocalFlow.app to Applications.
-Models are downloaded separately from inside the app. See the repository's
-installation guide for permissions, updates and removal.
+- Optional Parakeet Ultra speech recognition.
+- Fresh field context for each dictation, preserving existing text and checking for intervening edits. Context remains Experimental.
+- Optional per-device usage sharing, with withdrawal and deletion controls. The owner dashboard is prepared separately; hosting is not configured by this release.
+- Update infrastructure for a future signed release. Automatic updates are not enabled in this build.
 
-This release can use a shared LocalFlow server for dictation, rewriting, summaries
-and meetings (Settings › Server, Google sign-in, owner approval). The installation
-guide's "Use a shared LocalFlow server" section lists the steps, including Tailscale.
+## Installation
 
-Meetings recorded with the LocalFlow iPhone app can now show up in Meetings, marked
-"From iPhone". The phone sends them through the shared server, and the Mac imports them
-the next time it connects. This needs a server updated with the same release: redeploy
-`flowd` and `flowd-meeting` together (the meeting database moves to migration v19), and add
-the iPhone app's Google client ID to flowd's `--google-client-id`. The steps are in
-`docs/distribution/remote-server.md`, "Meeting handoff and iPhone meetings".
+Download `LocalFlow-0.3.0-arm64.zip`, extract it, quit LocalFlow and move the app into Applications. Keep existing Application Support data and Keychain entries. Models are managed separately inside the app.
+
+macOS may block the first launch because the app is not notarized. If you trust this download, use System Settings > Privacy & Security > Open Anyway after trying to open it. Permission approval may be requested again after replacing an older build.
+
+Server access still requires Google sign-in and administrator approval. New usage-reporting capabilities need an updated server; no remote server or dashboard was deployed with this release.
+
+## Verification and limits
+
+`make check` passed: 2,243 XCTest passes, zero failures and 32 skips. Focused Go race tests and updater transport/signature tests passed. Live context quality, hardware resource targets and signed-upgrade acceptance remain incomplete; no such acceptance is claimed.
