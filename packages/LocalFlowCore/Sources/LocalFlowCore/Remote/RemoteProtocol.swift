@@ -190,6 +190,7 @@ public enum RemoteClientMessage: Sendable, Equatable {
   case meetingCancel(op: Int)
   /// A handed-off meeting: upload, start, poll, download or delete (one reply each).
   case handoff(op: Int, request: RemoteHandoffRequest)
+  case usage(op: Int, request: UsageRequest)
 
   public func encoded() throws -> Data {
     var object: [String: Any] = ["schema_version": RemoteProtocol.schemaVersion]
@@ -243,6 +244,11 @@ public enum RemoteClientMessage: Sendable, Equatable {
       if let speakers = job.numSpeakers { object["num_speakers"] = speakers }
     case .meetingCancel(let op):
       object.merge(["type": "meeting_cancel", "op": op]) { $1 }
+    case .usage(let op, let request):
+      object.merge([
+        "type": "usage", "op": op,
+        "request": try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)),
+      ]) { $1 }
     case .handoff(let op, let request):
       object.merge(["type": "handoff", "op": op, "action": request.action.rawValue]) { $1 }
       if let meeting = request.meeting { object["meeting"] = meeting.uuidString }
@@ -433,6 +439,7 @@ public enum RemoteServerMessage: Sendable {
   case meetingResult(
     op: Int, result: RemoteMeetingResult, processingMs: Int, model: RemoteCapabilities.Model)
   case handoffReply(op: Int, reply: RemoteHandoffReply)
+  case usageReply(op: Int, response: UsageResponse)
   case error(op: Int?, code: RemoteErrorCode)
 
   public var op: Int? {
@@ -442,7 +449,7 @@ public enum RemoteServerMessage: Sendable {
       .progress(let op, _), .dictationComplete(let op, _), .cancelled(let op),
       .rewriteEvent(let op, _), .analysisEventPart(let op, _, _), .analysisEvent(let op, _, _, _),
       .liveResult(let op, _, _), .meetingProgress(let op, _, _), .meetingResult(let op, _, _, _),
-      .handoffReply(let op, _):
+      .handoffReply(let op, _), .usageReply(let op, _):
       op
     case .windowResult(let result): result.op
     case .error(let op, _): op
@@ -558,6 +565,19 @@ public enum RemoteServerMessage: Sendable {
           processingMs: try int("processing_ms"),
           model: try decoder.decode(
             RemoteCapabilities.Model.self, from: JSONSerialization.data(withJSONObject: model)))
+      case "usage_reply":
+        guard Set(object.keys) == ["schema_version", "type", "op", "response"],
+          let value = object["response"] as? [String: Any],
+          Set(value.keys).isSubset(of: [
+            "version", "status", "user_id", "device_id", "epoch", "grant", "enabled",
+            "control_revision", "deletion_cutoff", "propagation_pending", "rows",
+          ])
+        else { throw RemoteProtocolError.invalidMessage }
+        return .usageReply(
+          op: try op(),
+          response: try JSONDecoder().decode(
+            UsageResponse.self,
+            from: JSONSerialization.data(withJSONObject: value)))
       case "handoff_reply":
         return .handoffReply(op: try op(), reply: try RemoteHandoffReply(object))
       case "error":

@@ -30,6 +30,10 @@ struct LocalFlowApp: App {
     .defaultSize(width: 1100, height: 760)
     .windowStyle(.hiddenTitleBar)
     .commands {
+      CommandGroup(after: .appInfo) {
+        Button("Check for Updates…") { services.updater.check() }
+          .disabled(!services.updater.canCheck)
+      }
       CommandGroup(replacing: .appSettings) {
         MainWindowButton(services: services, destination: .settings)
       }
@@ -77,6 +81,7 @@ final class LocalFlowAppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard let services else { return .terminateNow }
     if services.isReadyToTerminate { return .terminateNow }
+    if services.updater.installationRequested && services.updateBusy { return .terminateCancel }
     services.quit()
     return .terminateCancel
   }

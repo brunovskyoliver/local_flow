@@ -39,6 +39,7 @@ final class PendingRemoteDictationStoreTests: XCTestCase {
         [
           "id", "audio_file", "sample_count", "created_at", "attempts", "next_attempt_at",
           "last_failure", "target_bundle_id", "input_device_name", "input_device_kind",
+          "usage_attribution",
         ])
     }
     try queue.write { db in

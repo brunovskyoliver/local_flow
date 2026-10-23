@@ -213,7 +213,7 @@ var MessageTypes = []string{
 	"window_result", "progress", "dictation_end", "dictation_cancel", "dictation_complete",
 	"cancelled", "rewrite", "rewrite_event", "analysis_part", "analysis", "analysis_event_part",
 	"analysis_event", "live_window", "live_result", "meeting_job", "meeting_progress", "meeting_result",
-	"meeting_cancel", "handoff", "handoff_reply", "error",
+	"meeting_cancel", "handoff", "handoff_reply", "usage", "usage_reply", "error",
 }
 
 // Ready carries Capabilities on session channels (Feature 018); a ready
@@ -625,6 +625,8 @@ func (m ErrorMessage) OpNumber() int64      { return m.Op }
 // decoders maps a wire type to a function decoding the strict object (without
 // schema_version and type) and validating it.
 var decoders = map[string]func([]byte) (Message, error){
+	"usage":               decodeAs[Usage],
+	"usage_reply":         decodeAs[UsageReply],
 	"ready":               decodeAs[Ready],
 	"enroll":              decodeAs[Enroll],
 	"enrolled":            decodeAs[Enrolled],

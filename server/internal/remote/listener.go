@@ -98,6 +98,7 @@ var sessionStarts = map[string]string{
 	"live_window":     "live_window",
 	"meeting_job":     "meeting_job",
 	"handoff":         "handoff",
+	"usage":           "usage",
 }
 
 // SessionCapabilities lists the session operations registered in ops, so the

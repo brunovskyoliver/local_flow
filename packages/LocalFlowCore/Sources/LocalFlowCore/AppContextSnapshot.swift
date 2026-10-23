@@ -18,6 +18,7 @@ public enum ContextOutcome: String, Codable, CaseIterable, Sendable {
   case nothingReadable = "nothing_readable"
   case timedOut = "timed_out"
   case noTarget = "no_target"
+  case changedField = "changed_field"
 }
 
 /// The four text parts a snapshot can carry, in wire spelling.
@@ -108,6 +109,8 @@ public struct AppContextSnapshot: Codable, Equatable, Sendable {
     public var selectedText: String?
     /// The selection was longer than the bound and was not read.
     public var selectedTooLarge = false
+    public var beforeTruncated = false
+    public var afterTruncated = false
 
     public init(
       appName: String? = nil, appCategory: AppCategory = .other, fieldKind: FieldKind = .unknown,

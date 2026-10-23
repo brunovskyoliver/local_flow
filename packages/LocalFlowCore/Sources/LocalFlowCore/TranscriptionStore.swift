@@ -341,6 +341,10 @@ public actor TranscriptionStore {
           "UPDATE history_usage SET row_count=row_count+1, payload_bytes=payload_bytes+? WHERE id=1",
         arguments: [entryBytes])
       try alsoWrite?(db)
+      if let usage = envelope.usage {
+        UsageReportingStore.record(
+          usage, id: entry.id, createdAt: entry.createdAtMilliseconds, db: db)
+      }
       return normalized
     }
     reservations.removeValue(forKey: reservation.id)

@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"localflow/server/internal/accounts"
 	"localflow/server/internal/remote"
@@ -27,6 +29,8 @@ import (
 // only; the meeting worker's lines carry a "meeting " prefix.
 func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Store,
 	watcher *accounts.Watcher, logger *log.Logger) (map[string]remote.OperationStart, func() ([]string, *remote.CapabilityModels), func(), error) {
+	sharedOutput := &serializedLogWriter{writer: logger.Writer()}
+	logger.SetOutput(sharedOutput)
 	supervisor := speech.NewSupervisor(speech.SupervisorConfig{
 		Command: []string{r.speechWorker, "serve", "--models", r.speechModels},
 		Env:     workerEnvironment(os.Environ()),
@@ -44,6 +48,23 @@ func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Stor
 		Gate:        queue.InteractiveIdle,
 	})
 	runs := []func(context.Context){supervisor.Run, scheduler.Run, meetingWorker.Run}
+	if r.metrics != nil {
+		runs = append(runs, func(ctx context.Context) {
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					r.metrics.SetQueue("dictation", int64(scheduler.Waiting()))
+					r.metrics.SetQueue("live", int64(scheduler.LiveWaiting()))
+					r.metrics.SetQueue("meeting", int64(queue.Waiting()))
+				}
+			}
+		})
+	}
+
 	var handoffs *remote.Handoffs
 	if info, err := os.Stat(r.meetingProcessor); r.meetingProcessor != "" && err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
 		dir := filepath.Join(r.dataDir, "handoff")
@@ -107,4 +128,17 @@ func workerEnvironment(environ []string) []string {
 		out = append(out, entry)
 	}
 	return out
+}
+
+// Distinct log.Logger instances have distinct locks; share one writer lock
+// between speech/meeting loggers even when the destination is a plain buffer.
+type serializedLogWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *serializedLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(p)
 }

@@ -48,6 +48,10 @@ struct SettingsView: View {
               summaryFields: { summaryServerFields })
           }
         }
+        if let updater = model.updater {
+          sectionTitle("Updates")
+          settingsGroup { UpdatesSettingsSection(updater: updater) }
+        }
         sectionTitle("General")
         settingsGroup {
           SettingsRow(
@@ -103,6 +107,7 @@ struct SettingsView: View {
         // Feature 018: the section holds only the server choice, which Server › Advanced
         // takes over while the switch is on.
         if model.server?.hidesSummaryServerFields != true { summarySection }
+        if let usage = model.usageReporting { UsageSettingsSection(model: usage) }
         permissionsSection
         if let recordingError {
           Text(recordingError).foregroundStyle(SottoPalette.warning).padding(.top, 16)

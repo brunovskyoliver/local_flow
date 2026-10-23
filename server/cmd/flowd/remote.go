@@ -15,15 +15,19 @@ import (
 
 	"localflow/server/internal/accounts"
 	"localflow/server/internal/analysis"
+	"localflow/server/internal/observability"
 	"localflow/server/internal/remote"
 	"localflow/server/internal/rewrite"
+	"localflow/server/internal/usage"
 )
 
 // remoteConfig holds the remote serving flags (contracts/flowd-cli.md).
 // Remote serving is off when listen is empty.
 type remoteConfig struct {
+	metrics      *observability.Metrics
 	listen       string
 	dataDir      string
+	usageConfig  string
 	speechWorker string
 	speechModels string
 	// The meeting worker runs as <speechWorker> meeting --models
@@ -129,13 +133,16 @@ func privateDirectory(dir string) error {
 
 // remoteServer is the running remote listener and what it owns.
 type remoteServer struct {
-	server   *http.Server
-	listener *remote.Listener
-	net      net.Listener
-	store    *accounts.Store
-	watcher  *accounts.Watcher
-	stop     context.CancelFunc
-	polling  chan struct{}
+	server     *http.Server
+	listener   *remote.Listener
+	net        net.Listener
+	store      *accounts.Store
+	watcher    *accounts.Watcher
+	usage      *usage.Store
+	usageDone  chan struct{}
+	exportDone chan struct{}
+	stop       context.CancelFunc
+	polling    chan struct{}
 	// stopOperations releases what the operations own (the speech worker).
 	stopOperations func()
 }
@@ -162,7 +169,12 @@ func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remo
 	s := &remoteServer{store: store}
 	s.watcher, err = store.Watch(ctx, func(lost accounts.Lost) {
 		logger.Printf("remote event=approval_lost users=%d devices=%d", len(lost.Users), len(lost.Devices))
-		s.listener.Revoke(lost)
+		if s.listener != nil {
+			s.listener.Revoke(lost)
+		}
+		if s.usage != nil {
+			_ = s.usage.Reconcile(ctx)
+		}
 	})
 	if err != nil {
 		store.Close()
@@ -173,6 +185,11 @@ func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remo
 		s.watcher.Close()
 		store.Close()
 		return nil, err
+	}
+	var exporter *usage.Exporter
+	s.usage, exporter = openOptionalUsage(ctx, r.dataDir, r.usageConfig, func(id usage.Identity) bool { return s.watcher.Snapshot().Approved(id.User, id.Device) }, logger)
+	if s.usage != nil {
+		operations[remote.PurposeSession]["usage"] = (&remote.UsageHandler{Store: s.usage}).Start
 	}
 	s.stopOperations = stopOperations
 	s.listener = remote.NewListener(remote.Config{
@@ -189,10 +206,28 @@ func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remo
 	if err != nil {
 		s.watcher.Close()
 		store.Close()
+		if s.usage != nil {
+			s.usage.Close()
+		}
+		stopOperations()
 		return nil, fmt.Errorf("could not open remote listener: %w", err)
 	}
 	watchCtx, stop := context.WithCancel(ctx)
 	s.stop, s.polling = stop, make(chan struct{})
+	s.usageDone = make(chan struct{})
+	s.exportDone = make(chan struct{})
+	go func() {
+		defer close(s.exportDone)
+		if exporter != nil {
+			exporter.Run(watchCtx)
+		}
+	}()
+	go func() {
+		defer close(s.usageDone)
+		if s.usage != nil {
+			s.usage.Run(watchCtx)
+		}
+	}()
 	ticker := time.NewTicker(accounts.PollInterval)
 	go func() {
 		defer close(s.polling)
@@ -213,6 +248,15 @@ func (s *remoteServer) shutdown(ctx context.Context) {
 	}
 	s.stop()
 	<-s.polling
+	if s.usageDone != nil {
+		<-s.usageDone
+	}
+	if s.exportDone != nil {
+		<-s.exportDone
+	}
+	if s.usage != nil {
+		s.usage.Close()
+	}
 	if s.stopOperations != nil {
 		s.stopOperations()
 	}

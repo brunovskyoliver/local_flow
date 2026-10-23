@@ -16,7 +16,8 @@ concurrency:
 jobs:
   release:
     runs-on: macos-26
-    timeout-minutes: 45
+    environment: macos-release
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,31 +26,71 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache: false
-      - name: Check build tools
+      - name: Check release prerequisites
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          VERIFIED_SERVER_TAG: ${{ vars.LOCALFLOW_COMPATIBLE_SERVER_TAG }}
         run: |
           test "$(uname -m)" = arm64
-          xcodebuild -version
+          test "$VERIFIED_SERVER_TAG" = "$RELEASE_TAG" || { echo 'Verify/deploy a compatible server and record LOCALFLOW_COMPATIBLE_SERVER_TAG before release.' >&2; exit 1; }
           brew install cmake
-      - name: Package ad-hoc signed application
+      - name: Import protected release credentials
+        env:
+          SIGNING_P12_BASE64: ${{ secrets.LOCALFLOW_SIGNING_P12_BASE64 }}
+          SIGNING_P12_PASSWORD: ${{ secrets.LOCALFLOW_SIGNING_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.LOCALFLOW_CI_KEYCHAIN_PASSWORD }}
+          NOTARY_KEY_BASE64: ${{ secrets.LOCALFLOW_NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.LOCALFLOW_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.LOCALFLOW_NOTARY_ISSUER }}
+          UPDATE_PRIVATE_KEY: ${{ secrets.LOCALFLOW_UPDATE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for name in SIGNING_P12_BASE64 SIGNING_P12_PASSWORD KEYCHAIN_PASSWORD NOTARY_KEY_BASE64 NOTARY_KEY_ID NOTARY_ISSUER UPDATE_PRIVATE_KEY; do
+            test -n "${!name}" || { echo "Missing protected credential: $name" >&2; exit 1; }
+          done
+          umask 077
+          printf '%s' "$SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/localflow.p12"
+          printf '%s' "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          printf '%s' "$UPDATE_PRIVATE_KEY" > "$RUNNER_TEMP/update-key"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/release.keychain-db"
+          security set-keychain-settings -lut 7200 "$RUNNER_TEMP/release.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/release.keychain-db"
+          security import "$RUNNER_TEMP/localflow.p12" -k "$RUNNER_TEMP/release.keychain-db" -P "$SIGNING_P12_PASSWORD" -T /usr/bin/codesign > /dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/release.keychain-db" > /dev/null
+          security list-keychains -d user -s "$RUNNER_TEMP/release.keychain-db" "$HOME/Library/Keychains/login.keychain-db"
+          xcrun notarytool store-credentials localflow-release --keychain "$RUNNER_TEMP/release.keychain-db" --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" > /dev/null
+      - name: Package verified application and update feed
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           BUILD_NUMBER: ${{ github.run_number }}
-          # The production iOS OAuth client (not secret); without it Google sign-in is hidden.
           LOCALFLOW_GOOGLE_CLIENT_ID: ${{ vars.LOCALFLOW_GOOGLE_CLIENT_ID }}
+          LOCALFLOW_SIGNING_IDENTITY: ${{ vars.LOCALFLOW_SIGNING_IDENTITY }}
+          LOCALFLOW_NOTARY_PROFILE: localflow-release
+          LOCALFLOW_UPDATE_PUBLIC_KEY: ${{ vars.LOCALFLOW_UPDATE_PUBLIC_KEY }}
+          LOCALFLOW_UPDATE_FEED_URL: https://github.com/brunovskyoliver/local_flow/releases/latest/download/appcast.xml
         run: |
+          export LOCALFLOW_UPDATE_KEY_FILE="$RUNNER_TEMP/update-key"
+          export LOCALFLOW_NOTARY_KEYCHAIN="$RUNNER_TEMP/release.keychain-db"
           mkdir -p build
           ./scripts/package-macos.sh "${RELEASE_TAG#v}" "$BUILD_NUMBER" 2>&1 | tee build/release-build.log
-      - name: Publish release
+      - name: Publish complete release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           version="${RELEASE_TAG#v}"
-          gh release create "$RELEASE_TAG" --verify-tag \
+          gh release create "$RELEASE_TAG" --verify-tag --draft \
             "build/distribution/$version/LocalFlow-$version-arm64.zip" \
             "build/distribution/$version/LocalFlow-$version-arm64.zip.sha256" \
             "build/distribution/$version/localflow.rb" \
+            "build/distribution/$version/appcast.xml" \
             --title "LocalFlow $version" --notes-file docs/distribution/release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" || true
+          rm -f "$RUNNER_TEMP/localflow.p12" "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/update-key"
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

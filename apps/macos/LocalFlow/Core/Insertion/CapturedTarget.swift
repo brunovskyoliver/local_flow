@@ -30,6 +30,9 @@ public struct CapturedTarget: @unchecked Sendable {
   public let focusedWindow: AXUIElement?
   public let selectedRange: CFRange
   public let comparisonContext: String
+  /// Bounded text after the selection, including an empty string at the field's end.
+  /// Nil means the application could not expose this span.
+  public let comparisonAfter: String?
   public let delivery: Delivery
 
   public init(
@@ -40,7 +43,8 @@ public struct CapturedTarget: @unchecked Sendable {
     focusedWindow: AXUIElement?,
     selectedRange: CFRange,
     comparisonContext: String,
-    delivery: Delivery = .typing
+    delivery: Delivery = .typing,
+    comparisonAfter: String? = nil
   ) {
     self.processIdentifier = processIdentifier
     self.launchDate = launchDate
@@ -49,6 +53,7 @@ public struct CapturedTarget: @unchecked Sendable {
     self.focusedWindow = focusedWindow
     self.selectedRange = selectedRange
     self.comparisonContext = comparisonContext
+    self.comparisonAfter = comparisonAfter
     self.delivery = delivery
   }
 }
@@ -155,7 +160,7 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     validateSynchronously(target)
   }
 
-  private func validateSynchronously(_ target: CapturedTarget) -> TargetValidation {
+  func validateSynchronously(_ target: CapturedTarget) -> TargetValidation {
     guard AXIsProcessTrusted() else { return .rejected(.accessibilityDenied) }
     if target.delivery == .paste { return validatePaste(target) }
     guard let current = try? captureSynchronously() else { return .rejected(.focusChanged) }
@@ -165,12 +170,17 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
     else { return .rejected(.staleProcess) }
     guard let currentWindow = current.focusedWindow, let targetWindow = target.focusedWindow,
       CFEqual(current.element, target.element), CFEqual(currentWindow, targetWindow),
-      current.comparisonContext == target.comparisonContext
+      Self.referenceTextMatches(current, target)
     else { return .rejected(.focusChanged) }
     guard current.selectedRange.location == target.selectedRange.location,
       current.selectedRange.length == target.selectedRange.length
     else { return .rejected(.selectionChanged) }
     return .eligible
+  }
+
+  static func referenceTextMatches(_ current: CapturedTarget, _ target: CapturedTarget) -> Bool {
+    current.comparisonContext == target.comparisonContext
+      && current.comparisonAfter == target.comparisonAfter
   }
 
   public func setSelectedText(_ text: String, on target: CapturedTarget) async throws
@@ -456,10 +466,33 @@ public struct SystemTextAccessibilityAdapter: TextAccessibilityAdapter {
       else { return nil }
       context = value
     }
+    let after = Self.afterSelection(in: element, selection: range)
     return CapturedTarget(
       processIdentifier: pid, launchDate: launchDate,
       bundleIdentifier: bundleIdentifier, element: element, focusedWindow: window,
-      selectedRange: range, comparisonContext: context)
+      selectedRange: range, comparisonContext: context, comparisonAfter: after)
+  }
+
+  /// Keep the same bounded suffix that the context reader can use for rewriting.
+  private static func afterSelection(in element: AXUIElement, selection: CFRange) -> String? {
+    var raw: CFTypeRef?
+    guard
+      AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &raw)
+        == .success, let count = raw as? Int,
+      let range = afterComparisonRange(for: selection, characterCount: count)
+    else { return nil }
+    if range.length == 0 { return "" }
+    return string(in: element, location: range.location, length: range.length)
+  }
+
+  static func afterComparisonRange(for selection: CFRange, characterCount: Int) -> CFRange? {
+    guard selection.location >= 0, selection.length >= 0,
+      selection.location <= Int.max - selection.length
+    else { return nil }
+    let start = selection.location + selection.length
+    guard characterCount >= start else { return nil }
+    return CFRange(
+      location: start, length: min(AppContextSnapshot.afterCharacters, characterCount - start))
   }
 }
 

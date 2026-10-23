@@ -21,11 +21,11 @@ extension AppContextSnapshot {
       snapshot.windowTitle = String(title.prefix(windowTitleCharacters))
     }
     if let before = clean(parts.beforeCursor) {
-      if before.count > beforeCharacters { note(.beforeCursor) }
+      if parts.beforeTruncated || before.count > beforeCharacters { note(.beforeCursor) }
       snapshot.beforeCursor = String(before.suffix(beforeCharacters))
     }
     if let after = clean(parts.afterCursor) {
-      if after.count > afterCharacters { note(.afterCursor) }
+      if parts.afterTruncated || after.count > afterCharacters { note(.afterCursor) }
       snapshot.afterCursor = String(after.prefix(afterCharacters))
     }
     if parts.selectedTooLarge {

@@ -21,12 +21,14 @@ import (
 	"localflow/server/internal/accounts"
 	"localflow/server/internal/analysis"
 	"localflow/server/internal/backend"
+	"localflow/server/internal/observability"
 	"localflow/server/internal/rewrite"
 )
 
 type configuration struct {
-	listen  string
-	backend backend.Config
+	metricsListen string
+	listen        string
+	backend       backend.Config
 	// analysisBackend, when its BaseURL is set, serves summaries and meeting
 	// analysis; rewriting stays on backend, which is also the fallback.
 	analysisBackend backend.Config
@@ -71,8 +73,10 @@ func parse(args []string, getenv func(string) string, output io.Writer) (configu
 	fs.DurationVar(&c.analysis.QueueWait, "analysis-queue-wait", 30*time.Second, "rewrite-first gate window")
 	fs.BoolVar(&c.analysis.Preempt, "analysis-preempt", true, "cancel an in-flight analysis call when a rewrite arrives")
 	fs.StringVar(&c.logFile, "log-file", "", "append the request log to this file, rotated at 1 MiB to <file>.1")
+	fs.StringVar(&c.metricsListen, "metrics-listen", "", "optional loopback metrics listener (disabled by default)")
 	fs.StringVar(&c.adminListen, "admin-listen", "", "loopback host:port for the LocalFlow Server app's admin API (token in <data-dir>/admin-token); off when unset")
 	fs.StringVar(&c.dumpDir, "analysis-dump-requests", "", "debug builds only: write each analysis request body to this directory")
+	fs.StringVar(&c.remote.usageConfig, "usage-export-config", "", "optional owner usage export JSON configuration")
 	fs.StringVar(&c.remote.listen, "remote-listen", "", "loopback host:port for /v1/remote/*; remote serving is off when unset")
 	fs.StringVar(&c.remote.dataDir, "data-dir", "", "remote server data directory (required with --remote-listen)")
 	fs.StringVar(&c.remote.speechWorker, "speech-worker", "", "speech worker executable (default <flowd dir>/flowd-speech)")
@@ -197,10 +201,17 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		logOutput = file
 	}
 	counters := &requestCounters{}
-	logger := log.New(io.MultiWriter(logOutput, counters), "flowd ", log.LstdFlags)
+	metrics := &observability.Metrics{}
+	stopMetrics, err := metrics.Listen(c.metricsListen)
+	if err != nil {
+		return err
+	}
+	defer stopMetrics()
+	logger := log.New(io.MultiWriter(logOutput, counters, metrics), "flowd ", log.LstdFlags)
 	gate := analysis.NewGate(c.analysis.QueueWait, c.analysis.Preempt)
 	rewriteHandler := rewrite.NewHandler(rewrite.HandlerConfig{Backend: adapter, Token: c.token, Shield: c.shield, ProtocolVersions: c.rewriteVersions, Logger: logger, Gate: gate})
 	mux := http.NewServeMux()
+	mux.Handle("/v1/helper/identity", helperIdentityHandler())
 	mux.Handle("/v1/rewrite", rewriteHandler)
 	mux.Handle("/v1/rewrite/health", rewriteHandler)
 	// Built always: the remote channel's analysis op uses it; its HTTP
@@ -234,6 +245,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 	}
 	var remoteServer *remoteServer
 	if c.remote.listen != "" {
+		c.remote.metrics = metrics
 		c.remote.rewrite = rewriteHandler
 		c.remote.analysis = analysisHandler
 		if remoteServer, err = startRemote(ctx, c.remote, logger); err != nil {

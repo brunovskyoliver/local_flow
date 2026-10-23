@@ -767,32 +767,12 @@ public enum HistoryMigrations {
     // for protocol version 2. SQLite cannot widen a CHECK in place, so the table is
     // created, copied, dropped and renamed under GRDB's deferred foreign-key check.
     migrator.registerMigration("app-context-v11") { db in
-      let outcomes = ContextOutcome.allCases.map { "'\($0.rawValue)'" }.joined(separator: ",")
-      try db.execute(
-        sql: """
-          CREATE TABLE dictation_contexts (
-            transcription_id TEXT NOT NULL PRIMARY KEY
-              REFERENCES transcriptions(id) ON DELETE CASCADE,
-            outcome TEXT NOT NULL CHECK(outcome IN (\(outcomes))),
-            capture_ms INTEGER CHECK(capture_ms IS NULL OR capture_ms >= 0),
-            app_bundle_id TEXT CHECK(app_bundle_id IS NULL
-              OR length(cast(app_bundle_id AS blob)) BETWEEN 1 AND 255),
-            snapshot_json TEXT CHECK(snapshot_json IS NULL
-              OR length(cast(snapshot_json AS blob)) <= 8192),
-            snapshot_hash TEXT CHECK(snapshot_hash IS NULL OR \(hex64("snapshot_hash"))),
-            pre_spelling_text TEXT CHECK(pre_spelling_text IS NULL
-              OR length(cast(pre_spelling_text AS blob)) <= 65536),
-            spelling_changes_json TEXT CHECK(spelling_changes_json IS NULL
-              OR length(cast(spelling_changes_json AS blob)) <= 32768),
-            speller_version INTEGER CHECK(speller_version IS NULL OR speller_version >= 1),
-            rewrite_note TEXT CHECK(rewrite_note IS NULL OR rewrite_note = 'server_unsupported'),
-            CHECK((snapshot_json IS NULL) = (snapshot_hash IS NULL)),
-            CHECK((pre_spelling_text IS NULL) = (spelling_changes_json IS NULL)),
-            CHECK(outcome NOT IN ('used','timed_out') OR snapshot_json IS NOT NULL),
-            CHECK(outcome != 'off' OR (snapshot_json IS NULL AND app_bundle_id IS NULL
-              AND capture_ms IS NULL AND pre_spelling_text IS NULL))
-          )
-          """)
+      try createDictationContexts(
+        db, named: "dictation_contexts",
+        outcomes: [
+          .used, .off, .excludedApp, .ownApp, .secureField, .noPermission,
+          .nothingReadable, .timedOut, .noTarget,
+        ])
       let columns = try db.columns(in: "rewrite_attempts").map { "\"\($0.name)\"" }
         .joined(separator: ",")
       try createRewriteAttempts(
@@ -1037,6 +1017,19 @@ public enum HistoryMigrations {
           """)
       for index in indexes { try db.execute(sql: index) }
     }
+    migrator.registerMigration("context-consistency-v20") { db in
+      try createDictationContexts(
+        db, named: "dictation_contexts_v20", outcomes: ContextOutcome.allCases)
+      try db.execute(
+        sql: """
+          INSERT INTO dictation_contexts_v20 SELECT * FROM dictation_contexts;
+          DROP TABLE dictation_contexts;
+          ALTER TABLE dictation_contexts_v20 RENAME TO dictation_contexts;
+          """)
+    }
+    migrator.registerMigration("usage-reporting-v21") { db in
+      try UsageReportingStore.migrate(db)
+    }
     return migrator
   }
 
@@ -1100,6 +1093,37 @@ public enum HistoryMigrations {
         t.check(sql: "(protocol_version = 2) = (context_hash IS NOT NULL)")
       }
     }
+  }
+
+  private static func createDictationContexts(
+    _ db: Database, named name: String, outcomes: [ContextOutcome]
+  ) throws {
+    let outcomes = outcomes.map { "'\($0.rawValue)'" }.joined(separator: ",")
+    try db.execute(
+      sql: """
+        CREATE TABLE \(name) (
+          transcription_id TEXT NOT NULL PRIMARY KEY
+            REFERENCES transcriptions(id) ON DELETE CASCADE,
+          outcome TEXT NOT NULL CHECK(outcome IN (\(outcomes))),
+          capture_ms INTEGER CHECK(capture_ms IS NULL OR capture_ms >= 0),
+          app_bundle_id TEXT CHECK(app_bundle_id IS NULL
+            OR length(cast(app_bundle_id AS blob)) BETWEEN 1 AND 255),
+          snapshot_json TEXT CHECK(snapshot_json IS NULL
+            OR length(cast(snapshot_json AS blob)) <= 8192),
+          snapshot_hash TEXT CHECK(snapshot_hash IS NULL OR \(hex64("snapshot_hash"))),
+          pre_spelling_text TEXT CHECK(pre_spelling_text IS NULL
+            OR length(cast(pre_spelling_text AS blob)) <= 65536),
+          spelling_changes_json TEXT CHECK(spelling_changes_json IS NULL
+            OR length(cast(spelling_changes_json AS blob)) <= 32768),
+          speller_version INTEGER CHECK(speller_version IS NULL OR speller_version >= 1),
+          rewrite_note TEXT CHECK(rewrite_note IS NULL OR rewrite_note = 'server_unsupported'),
+          CHECK((snapshot_json IS NULL) = (snapshot_hash IS NULL)),
+          CHECK((pre_spelling_text IS NULL) = (spelling_changes_json IS NULL)),
+          CHECK(outcome NOT IN ('used','timed_out') OR snapshot_json IS NOT NULL),
+          CHECK(outcome != 'off' OR (snapshot_json IS NULL AND app_bundle_id IS NULL
+            AND capture_ms IS NULL AND pre_spelling_text IS NULL))
+        )
+        """)
   }
 
   private static func hex64(_ column: String) -> String {

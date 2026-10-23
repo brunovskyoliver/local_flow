@@ -205,6 +205,8 @@ final class DictationCoordinator {
   private(set) var hasRecovery = false
   @ObservationIgnored private var pendingOutcome:
     (UUID, Int64, UUID, TranscriptionStore.Outcome, RewriteDelivery)?
+  var usagePending: ((UUID, UsageAttribution) async -> Void)?
+  var usageAttribution: (() -> UsageAttribution?)?
   var successfulDictation: ((TranscriptionEntry) -> Void)?
   var historyChanged: (() -> Void)?
   var sessionStarted: ((UUID) -> Void)?
@@ -642,6 +644,7 @@ final class DictationCoordinator {
     tag: ControlMailbox.Tag, mode: RewriteMode?, context: ContextSettings,
     remoteSettings: RemoteDictationSettings = .off
   ) async {
+    let reportingAttribution = usageAttribution?()
     var session = DictationSession(id: tag.sessionID)
     var remoteSession: RemoteDictationSession?
     var recognitionPath = TranscriptionEntry.RecognitionPath.local
@@ -903,6 +906,9 @@ final class DictationCoordinator {
           await keepForRetry(
             session: &session, audio: audio, reason: serverFailure ?? .unreachable,
             remote: remote)
+          if let reportingAttribution, usageAttribution?() == reportingAttribution {
+            await usagePending?(session.id, reportingAttribution)
+          }
           return
         }
         if serverResult == nil { live.acquire(lifecycle, session: session.id, boost: boost) }
@@ -961,7 +967,14 @@ final class DictationCoordinator {
           ? result.detail : try result.detail?.resealed(normalizedText: entry.text)
         let detail = try sealed?.addingCompletionReasons(
           terminalReasons, normalizedText: entry.text)
-        let envelope = TranscriptionEnvelope(entry: entry, detail: detail, context: spelled.record)
+        var envelope = TranscriptionEnvelope(entry: entry, detail: detail, context: spelled.record)
+        if let reportingAttribution, usageAttribution?() == reportingAttribution,
+          !cancelled, !result.incomplete, session.quality == .complete
+        {
+          envelope.usage = UsageContribution(
+            attribution: reportingAttribution,
+            audioMilliseconds: Int64(audio.sampleCount) / 16, remote: recognitionPath == .server)
+        }
         let saved: TranscriptionEntry
         let persistStarted = DispatchTime.now().uptimeNanoseconds
         do {

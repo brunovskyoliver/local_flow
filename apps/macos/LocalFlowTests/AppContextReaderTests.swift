@@ -17,6 +17,9 @@ final class ScriptedAttributeSource: ContextAttributeSource, @unchecked Sendable
   var text = ""
   var ancestors: [String] = []
   var readDelay: TimeInterval = 0
+  var current = true
+  var changeAfterFirstRead = false
+  var replacementAfterRead: String?
   private let lock = NSLock()
   private var callStorage: [String] = []
   private(set) var requestedLevels: Int?
@@ -58,12 +61,20 @@ final class ScriptedAttributeSource: ContextAttributeSource, @unchecked Sendable
     log("count")
     return text.utf16.count
   }
+  func isCurrent(_ target: CapturedTarget) -> Bool {
+    current && !(changeAfterFirstRead && calls.contains { $0.hasPrefix("string") })
+  }
   func string(_ target: CapturedTarget, location: Int, length: Int) -> String? {
     log("string \(location) \(length)")
     if readDelay > 0 { Thread.sleep(forTimeInterval: readDelay) }
     let units = Array(text.utf16)
     guard location >= 0, location + length <= units.count else { return nil }
-    return String(decoding: units[location..<(location + length)], as: UTF16.self)
+    let result = String(decoding: units[location..<(location + length)], as: UTF16.self)
+    if let replacementAfterRead {
+      text = replacementAfterRead
+      self.replacementAfterRead = nil
+    }
+    return result
   }
   func ancestorRoles(_ target: CapturedTarget, levels: Int) -> [String] {
     log("ancestors")
@@ -84,6 +95,78 @@ func makeContextTarget(bundleID: String = "com.apple.mail", location: Int = 0, l
 final class AppContextReaderTests: XCTestCase {
   private let enabled = ContextSettings(enabled: true)
 
+  func testRangedCaptureReportsTruncatedSurroundings() {
+    let source = ScriptedAttributeSource()
+    source.text = String(repeating: "a", count: 3_000)
+    let capture = AppContextSnapshotBuilder.build(
+      target: makeContextTarget(location: 1_500), settings: enabled, source: source,
+      deadlineReached: { false })
+    XCTAssertEqual(capture.snapshot?.beforeCursor?.count, 1_000)
+    XCTAssertEqual(capture.snapshot?.afterCursor?.count, 300)
+    XCTAssertEqual(capture.snapshot?.truncated, ["before_cursor", "after_cursor"])
+  }
+
+  func testLargeSelectionDoesNotReferenceTextOutsideInsertionValidation() {
+    let source = ScriptedAttributeSource()
+    source.text = String(repeating: "a", count: 6_000)
+    let capture = AppContextSnapshotBuilder.build(
+      target: makeContextTarget(location: 1_000, length: 4_000), settings: enabled, source: source,
+      deadlineReached: { false })
+    XCTAssertEqual(capture.snapshot?.beforeCursor?.count, 96)
+    XCTAssertNil(capture.snapshot?.selectedText)
+    XCTAssertTrue(capture.snapshot?.truncated.contains("before_cursor") == true)
+    XCTAssertTrue(capture.snapshot?.truncated.contains("selected_text") == true)
+  }
+
+  func testFieldChangedDuringCaptureDiscardsAllText() {
+    let source = ScriptedAttributeSource()
+    source.text = "Hello edited prompt"
+    source.title = "Private draft"
+    source.changeAfterFirstRead = true
+    let capture = AppContextSnapshotBuilder.build(
+      target: makeContextTarget(location: 6), settings: enabled, source: source,
+      deadlineReached: { false })
+    XCTAssertEqual(capture.outcome, .changedField)
+    XCTAssertNil(capture.snapshot)
+  }
+
+  func testRereadRejectsMixedPartsEvenIfTargetIdentityStillMatches() {
+    let source = ScriptedAttributeSource()
+    source.text = "Hello world"
+    source.replacementAfterRead = "Other words"
+    let capture = AppContextSnapshotBuilder.build(
+      target: makeContextTarget(location: 6), settings: enabled, source: source,
+      deadlineReached: { false })
+    XCTAssertEqual(capture.outcome, .changedField)
+    XCTAssertNil(capture.snapshot)
+  }
+
+  func testTimeoutNeverPublishesUnverifiedFieldParts() {
+    let source = ScriptedAttributeSource()
+    source.text = "Hello edited prompt"
+    let capture = AppContextSnapshotBuilder.build(
+      target: makeContextTarget(location: 6), settings: enabled, source: source,
+      deadlineReached: { source.calls.contains { $0.hasPrefix("string") } })
+    XCTAssertEqual(capture.outcome, .timedOut)
+    XCTAssertNil(capture.snapshot?.beforeCursor)
+    XCTAssertNil(capture.snapshot?.afterCursor)
+  }
+
+  func testNewCaptureUsesManualEditsInsteadOfPreviousSnapshot() {
+    let source = ScriptedAttributeSource()
+    func capture() -> AppContextCapture {
+      AppContextSnapshotBuilder.build(
+        target: makeContextTarget(location: source.text.utf16.count), settings: enabled,
+        source: source, deadlineReached: { false })
+    }
+    source.text = "Discuss NetBird. "
+    let first = capture()
+    source.text = "Discuss Tailscale. "
+    let second = capture()
+    XCTAssertEqual(first.snapshot?.beforeCursor, "Discuss NetBird. ")
+    XCTAssertEqual(second.snapshot?.beforeCursor, "Discuss Tailscale. ")
+  }
+
   // MARK: Snapshot values (T004)
 
   func testEnumWireValues() {
@@ -101,7 +184,7 @@ final class AppContextReaderTests: XCTestCase {
       ContextOutcome.allCases.map(\.rawValue),
       [
         "used", "off", "excluded_app", "own_app", "secure_field", "no_permission",
-        "nothing_readable", "timed_out", "no_target",
+        "nothing_readable", "timed_out", "no_target", "changed_field",
       ])
   }
 
@@ -395,7 +478,8 @@ final class AppContextReaderTests: XCTestCase {
     XCTAssertEqual(capture.snapshot?.appCategory, .email)
     XCTAssertEqual(capture.snapshot?.fieldKind, .multiLine)
     XCTAssertEqual(
-      source.calls.filter { $0.hasPrefix("string") }, ["string 0 6", "string 6 5", "string 11 14"])
+      source.calls.filter { $0.hasPrefix("string") },
+      ["string 0 6", "string 6 5", "string 11 14", "string 0 6", "string 6 5", "string 11 14"])
     XCTAssertEqual(
       source.calls.filter { !$0.hasPrefix("string") },
       ["trusted", "prepare", "name", "title", "role", "placeholder", "count"])

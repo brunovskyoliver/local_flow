@@ -43,7 +43,7 @@ final class DictationContextFlowTests: XCTestCase {
   }
 
   private func makeStore() throws -> TranscriptionStore {
-    let directory = FileManager.default.homeDirectoryForCurrentUser
+    let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("LocalFlowStore-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     ownedDirectories.append(directory)
@@ -106,6 +106,38 @@ final class DictationContextFlowTests: XCTestCase {
   }
 
   // MARK: Capture beside recording (T019)
+
+  func testSuccessiveDictationsCommitTheirOwnEditedFieldSnapshots() async throws {
+    let store = try makeStore()
+    let reader = FakeAppContextReader(scripts: [
+      .init(snapshot: snapshot(before: "Discuss NetBird. ")),
+      .init(snapshot: snapshot(before: "Discuss Tailscale. ")),
+    ])
+    let coordinator = try makeCoordinator(store: store, reader: reader, settings: { self.enabled })
+    try await dictate(coordinator)
+    let (first, firstContext) = try await latest(store)
+    try await dictate(coordinator)
+    let (second, secondContext) = try await latest(store)
+    XCTAssertNotEqual(first.id, second.id)
+    XCTAssertEqual(reader.callCount, 2)
+    XCTAssertEqual(firstContext?.snapshot?.beforeCursor, "Discuss NetBird. ")
+    XCTAssertEqual(secondContext?.snapshot?.beforeCursor, "Discuss Tailscale. ")
+    XCTAssertEqual(first.text, "hello")
+    XCTAssertEqual(second.text, "hello")
+  }
+
+  func testChangedFieldOutcomePreservesFaithfulTranscriptAndHistoryReason() async throws {
+    let store = try makeStore()
+    let reader = FakeAppContextReader(defaultScript: .init(outcome: .changedField))
+    let coordinator = try makeCoordinator(store: store, reader: reader, settings: { self.enabled })
+    try await dictate(coordinator)
+    let (entry, context) = try await latest(store)
+    XCTAssertEqual(entry.text, "hello")
+    XCTAssertEqual(context?.outcome, .changedField)
+    XCTAssertNil(context?.snapshot)
+    XCTAssertEqual(
+      HistoryViewModel.contextLabel(context), "Context unavailable: field changed during capture")
+  }
 
   /// SC-005 ordering: recording starts whatever the read takes; a read past the
   /// 250 ms deadline is recorded as `timed_out`.

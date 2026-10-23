@@ -1,8 +1,8 @@
 # Homebrew distribution
 
-LocalFlow uses free ad-hoc signing. This makes the bundle executable on Apple
-Silicon but does not verify the publisher's identity or provide Apple notarization.
-No Apple account, certificate or signing secret is needed to build it.
+New production packages require Developer ID signing, notarization and a signed
+update feed. Older releases were ad-hoc signed. See [signed updates](updates.md)
+for the manual bootstrap, current release prerequisites and acceptance gates.
 
 ## Install
 
@@ -32,9 +32,9 @@ brew update
 brew upgrade --cask brunovskyoliver/tap/localflow
 ```
 
-Ad-hoc signatures change between builds. Approval may be needed again. If
-shortcuts or insertion stop working, remove and re-add LocalFlow in the relevant
-Privacy & Security list, then restart the app.
+The first signed bootstrap may require renewed macOS permissions. Later updates
+are available in the app's menu and Settings. For manual Homebrew updates of this
+`auto_updates` cask, use `brew upgrade --cask --greedy brunovskyoliver/tap/localflow`.
 
 ## Use a shared LocalFlow server
 
@@ -85,49 +85,8 @@ There is deliberately no destructive `zap` stanza.
 
 ## Make a release
 
-1. Commit the distribution setup to main and push it. The repository and release
-   assets must be publicly readable for these installation commands.
-2. Ensure GitHub Actions can write repository contents in both repositories.
-   The app workflow publishes releases; the tap workflow updates its own main
-   branch. No cross-repository token is required. Set the repository variable
-   `LOCALFLOW_GOOGLE_CLIENT_ID` to the iOS OAuth client of `org.localflow.LocalFlow`;
-   without it the release can't sign in to a server.
-3. Push a new version tag, such as `v0.1.0`. Use increasing X.Y.Z versions.
-   To retry a failed release after fixing CI, run the release workflow manually
-   from main with the original tag. This preserves the tagged source commit.
-4. Run `make check` locally before tagging. CI builds on Apple Silicon, ad-hoc signs all
-   nested binaries and the app, verifies signatures, creates a ZIP and checksum,
-   publishes the GitHub Release with the generated `localflow.rb` asset.
-   The tap checks for releases hourly and commits that cask to its main branch.
-   For an immediate update, run its Sync LocalFlow release workflow manually.
-5. Check the workflow, download URL, checksum and generated cask. Test installation,
-   launch approval, dictation, helper services, upgrading and uninstalling on a
-   clean Mac before advertising the release.
-
-The workflow uses the macos-26 ARM runner and its default Xcode. The local project
-was developed with Xcode 26.4.1; hosted-runner compatibility must be established
-by the first CI run. There are no Apple signing credentials in this workflow.
-If tap synchronization fails, rerun its workflow or copy the release's
-`localflow.rb` asset into `Casks/localflow.rb` in homebrew-tap through a pull
-request. Scheduled runs may be delayed; GitHub can disable schedules after
-60 days without repository activity, so check the tap Actions page if it falls
-behind. Never replace a published ZIP with different bytes.
-
-For a local package, install Xcode, Go, CMake and FFmpeg, then run:
-
-```sh
-make check
-./scripts/package-macos.sh 0.1.0 1
-```
-
-Artifacts are written to `build/distribution/0.1.0/`. Packaging does not install
-or open the app and does not modify the source Info.plist. The existing
-`make release` command remains a development launch command.
-
-This setup does not establish clean-Mac acceptance, macOS 14 runtime compatibility,
-resource measurements or Apple security approval. Optional local AI provisioning
-and background services also need clean-Mac testing. An unsigned release belongs
-in this custom tap, not the official Homebrew cask repository.
-
-Constitution check: distribution tooling only; no app architecture, model lifecycle,
-wire schema, storage or runtime dependency changes. No architecture exception.
+Follow [signed updates](updates.md). The release workflow now requires protected
+signing/notarization credentials and a compatible-server attestation before it
+can publish. Local signed test artifacts use the explicit `--signed-local` mode;
+they are not notarized and have update checking disabled. No release has been
+published merely by adding this workflow.

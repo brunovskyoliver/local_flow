@@ -19,6 +19,8 @@ protocol ContextAttributeSource: Sendable {
   func role(_ target: CapturedTarget) -> (role: String?, subrole: String?)
   func placeholder(_ target: CapturedTarget) -> String?
   func characterCount(_ target: CapturedTarget) -> Int?
+  /// Validates focus, selection and bounded text against the recording-start target.
+  func isCurrent(_ target: CapturedTarget) -> Bool
   /// UTF-16 range read; nil when the attribute is unsupported or the call failed.
   func string(_ target: CapturedTarget, location: Int, length: Int) -> String?
   /// Roles of up to `levels` ancestors, nearest first.
@@ -105,23 +107,30 @@ enum AppContextSnapshotBuilder {
     let placeholder = source.placeholder(target)
     guard !deadlineReached() else { return timedOut() }
     let selection = target.selectedRange
+    guard source.isCurrent(target) else {
+      return AppContextCapture(outcome: .changedField, bundleID: bundleID)
+    }
     let cursor = max(0, selection.location)
     let selectedLength = max(0, selection.length)
     let count = source.characterCount(target) ?? (cursor + selectedLength)
 
     guard !deadlineReached() else { return timedOut() }
-    let beforeLength = min(cursor, AppContextSnapshot.beforeCharacters)
+    // A large selection consumes part of insertion's 4,096-unit comparison range.
+    // Only reference preceding text that insertion can validate again later.
+    let comparisonStart =
+      SystemTextAccessibilityAdapter.comparisonRange(for: selection)?.location ?? cursor
+    let beforeLength = min(max(0, cursor - comparisonStart), AppContextSnapshot.beforeCharacters)
     let before =
       beforeLength > 0
       ? source.string(target, location: cursor - beforeLength, length: beforeLength) : nil
-    progress.update { $0.beforeCursor = before }
+    // Never publish field parts to the timeout fallback before consistency is checked.
+    var selected: String?
 
     guard !deadlineReached() else { return timedOut() }
     if selectedLength > AppContextSnapshot.selectedCharacters {
       progress.update { $0.selectedTooLarge = true }
     } else if selectedLength > 0 {
-      let selected = source.string(target, location: cursor, length: selectedLength)
-      progress.update { $0.selectedText = selected }
+      selected = source.string(target, location: cursor, length: selectedLength)
     }
 
     guard !deadlineReached() else { return timedOut() }
@@ -129,7 +138,36 @@ enum AppContextSnapshotBuilder {
     let afterLength = min(max(0, count - afterStart), AppContextSnapshot.afterCharacters)
     let after =
       afterLength > 0 ? source.string(target, location: afterStart, length: afterLength) : nil
-    progress.update { $0.afterCursor = after }
+    guard !deadlineReached() else { return timedOut() }
+    guard source.isCurrent(target) else {
+      return AppContextCapture(outcome: .changedField, bundleID: bundleID)
+    }
+    guard !deadlineReached() else { return timedOut() }
+    // The insertion prefix can be shorter than the context prefix for large selections.
+    // Verify every readable part, without retrying or publishing a mixed snapshot.
+    for (location, length, expected) in [
+      (cursor - beforeLength, beforeLength, before),
+      (cursor, selectedLength, selected),
+      (afterStart, afterLength, after),
+    ] {
+      guard let expected else { continue }
+      guard !deadlineReached() else { return timedOut() }
+      guard source.string(target, location: location, length: length) == expected else {
+        return AppContextCapture(outcome: .changedField, bundleID: bundleID)
+      }
+    }
+    guard !deadlineReached() else { return timedOut() }
+    guard source.isCurrent(target) else {
+      return AppContextCapture(outcome: .changedField, bundleID: bundleID)
+    }
+    guard !deadlineReached() else { return timedOut() }
+    progress.update {
+      $0.beforeCursor = before
+      $0.selectedText = selected
+      $0.afterCursor = after
+      $0.beforeTruncated = cursor > beforeLength
+      $0.afterTruncated = count - afterStart > afterLength
+    }
 
     // A field showing its placeholder has no text of its own.
     if let placeholder, !placeholder.isEmpty {
@@ -243,6 +281,10 @@ private final class ResumeOnce: @unchecked Sendable {
 
 /// Live Accessibility reads. Every call is bounded by the 100 ms messaging timeout.
 struct AXContextSource: ContextAttributeSource {
+  func isCurrent(_ target: CapturedTarget) -> Bool {
+    SystemTextAccessibilityAdapter().validateSynchronously(target) == .eligible
+  }
+
   func isTrusted() -> Bool { AXIsProcessTrusted() }
 
   func focusedSubrole() -> String? {

@@ -40,6 +40,8 @@ rm -f "$contents"/Library/LaunchAgents/*.plist
 render "$source/flowd.plist.template" "$contents/Library/LaunchAgents/$bundle_id.flowd.plist" 644
 render "$source/mtplx.plist.template" "$contents/Library/LaunchAgents/$bundle_id.mtplx.plist" 644
 if [[ "${CODE_SIGNING_ALLOWED:-YES}" != NO ]]; then
-  codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --options runtime --timestamp=none \
+  timestamp=(--timestamp=none)
+  if [[ "${EXPANDED_CODE_SIGN_IDENTITY_NAME:-}" == 'Developer ID Application:'* ]]; then timestamp=(--timestamp); fi
+  codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --options runtime "${timestamp[@]}" \
     "$contents/Helpers/flowd"
 fi

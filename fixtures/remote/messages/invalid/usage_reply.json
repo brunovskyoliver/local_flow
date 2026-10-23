@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "type": "usage_reply",
+  "op": 1,
+  "response": {
+    "version": 1,
+    "status": "accepted",
+    "user_id": "",
+    "device_id": "",
+    "epoch": 0,
+    "enabled": false,
+    "control_revision": 0,
+    "deletion_cutoff": 0,
+    "propagation_pending": false,
+    "rows": []
+  },
+  "unexpected": true
+}

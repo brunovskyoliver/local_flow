@@ -25,7 +25,7 @@ final class PhoneMigrationTests: XCTestCase {
 
   func testFreshDatabaseHasTheSharedMigrationsThenThePhoneTable() throws {
     let shared = HistoryMigrations.migrator().migrations
-    XCTAssertEqual(shared.count, 19)
+    XCTAssertEqual(shared.count, 21)
     let phone = [
       PhoneMigrations.identifier, PhoneMigrations.identifierV2, PhoneMigrations.identifierMeetings,
       PhoneMigrations.identifierMeetingsV2,

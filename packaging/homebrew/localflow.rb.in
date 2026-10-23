@@ -11,20 +11,13 @@ cask "localflow" do
   depends_on macos: :sonoma
 
   app "LocalFlow.app"
+  auto_updates true
 
   caveats <<~EOS
-    LocalFlow is ad-hoc signed, without an Apple Developer ID, and is not notarized.
-    On first launch, macOS may block it. If you trust this download:
-      1. Open LocalFlow from Applications once, then dismiss the warning.
-      2. Open System Settings > Privacy & Security.
-      3. Find LocalFlow under Security, click Open Anyway, and confirm.
-    Keep Gatekeeper enabled. Managed Macs may not allow this exception.
-
-    After updates, macOS may require approval again. If shortcuts or insertion
-    stop working, remove and re-add LocalFlow in Input Monitoring and
-    Accessibility, then restart it. Grant Microphone access when prompted.
+    LocalFlow checks for updates when enabled; you confirm installation in the app.
+    Quit LocalFlow before a manual Homebrew upgrade or uninstall.
+    The first signed update from an older ad-hoc build may require macOS permission
+    and background-item approval again. Settings, recordings and models are preserved.
     Model downloads are handled inside the app, separately from Homebrew.
-    Quit LocalFlow before upgrading or uninstalling. Recordings, models and
-    settings in Application Support are preserved when the app is uninstalled.
   EOS
 end

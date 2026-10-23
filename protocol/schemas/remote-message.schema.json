@@ -87,6 +87,12 @@
     },
     {
       "$ref": "#/$defs/error"
+    },
+    {
+      "$ref": "#/$defs/usage"
+    },
+    {
+      "$ref": "#/$defs/usage_reply"
     }
   ],
   "$defs": {
@@ -2202,6 +2208,54 @@
           "maxLength": 256
         }
       }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "usage"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "request": {
+          "$ref": "usage-request-v1.schema.json"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "request"
+      ]
+    },
+    "usage_reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "usage_reply"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "response": {
+          "$ref": "usage-response-v1.schema.json"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "response"
+      ]
     }
   }
 }

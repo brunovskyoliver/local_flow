@@ -6,6 +6,7 @@ public struct TranscriptionEnvelope: Sendable {
   public let detail: TranscriptionQualityDetail?
   /// Feature 012: the context row, committed in the entry's transaction. Nil for
   /// legacy entries and for callers that predate the feature.
+  public var usage: UsageContribution? = nil
   public var context: DictationContextRecord? = nil
 
   public init(

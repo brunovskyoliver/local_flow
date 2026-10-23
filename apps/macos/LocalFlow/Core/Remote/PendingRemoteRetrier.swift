@@ -33,6 +33,7 @@ actor PendingRemoteRetrier {
   private let vocabulary: any VocabularyProviding
   private let starter: any RemoteRetryStarting
   private let transcriber: WindowedTranscriber
+  private let usage: @Sendable (UUID) async -> UsageAttribution?
   private let now: @Sendable () -> Int64
   private let log = Logger(subsystem: "org.localflow.LocalFlow", category: "remote")
   private var running: Task<Void, Never>?
@@ -46,6 +47,7 @@ actor PendingRemoteRetrier {
     store: PendingRemoteDictationStore, history: any TranscriptionStoring,
     vocabulary: any VocabularyProviding, starter: any RemoteRetryStarting,
     transcriber: WindowedTranscriber,
+    usage: @escaping @Sendable (UUID) async -> UsageAttribution? = { _ in nil },
     now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1_000) }
   ) {
     self.store = store
@@ -53,6 +55,7 @@ actor PendingRemoteRetrier {
     self.vocabulary = vocabulary
     self.starter = starter
     self.transcriber = transcriber
+    self.usage = usage
     self.now = now
   }
 
@@ -229,9 +232,13 @@ actor PendingRemoteRetrier {
           inputDevice: item.inputDevice)
         let saved: TranscriptionEntry
         do {
-          saved = try await history.commit(
-            reservation: reservation,
-            envelope: TranscriptionEnvelope(entry: entry, detail: result.detail))
+          var envelope = TranscriptionEnvelope(entry: entry, detail: result.detail)
+          if !result.incomplete, let binding = await usage(item.id) {
+            envelope.usage = UsageContribution(
+              attribution: binding,
+              audioMilliseconds: Int64(item.sampleCount) / 16, remote: path == .server)
+          }
+          saved = try await history.commit(reservation: reservation, envelope: envelope)
         } catch {
           await history.releaseReservation(reservation)
           throw error

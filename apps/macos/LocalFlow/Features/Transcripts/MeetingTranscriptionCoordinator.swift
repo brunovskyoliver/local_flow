@@ -17,6 +17,7 @@ final class MeetingTranscriptionCoordinator: MeetingTranscriptionObserving {
   let liveModel = LiveTranscriptModel()
   var isWindowInFlight: Bool { recognizer?.isWindowInFlight ?? false }
   var isFinalizing: Bool { finalizingMeetingID != nil }
+  var isImportingPhoneMeetings: Bool { phoneImport != nil }
   private(set) var finalizingMeetingID: UUID?
   /// A pass is running on this Mac and holds the model lease. A meeting handed to the
   /// server is finalizing without it, so dictation can go ahead.

@@ -177,6 +177,7 @@ actor LocalAIInstaller {
         throw LocalAIError.approvalRequired
       }
     }
+    try await reconcileBundledHelpers()
     // The agent never starts itself. A changed model needs a fresh mtplx
     // (`-k`); flowd always asks for `localflow`.
     do {
@@ -189,6 +190,62 @@ actor LocalAIInstaller {
     } catch { throw LocalAIError.serviceRegistration }
     try await waitUntilServing()
     report(.ready)
+  }
+
+  /// Called before this app starts work, including after a manual replacement.
+  /// Never registers a service the user has not already enabled.
+  func reconcileBundledHelpers() async throws {
+    guard SMAppService.agent(plistName: Self.flowdLabel + ".plist").status == .enabled else {
+      return
+    }
+    guard let resources else { throw LocalAIError.missingResources }
+    let executable = resources.deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("Helpers/flowd")
+    let expected = try Self.sha256(of: executable, maximumBytes: 256 << 20)
+    let scriptHashes = try ["localflow-flowd", "localflow-mtplx"].map {
+      try Self.sha256(of: resources.appendingPathComponent($0), maximumBytes: 1 << 20)
+    }
+    let stamp = ([expected] + scriptHashes).joined(separator: "\n")
+    let marker = root.appendingPathComponent("helper-build")
+    let previous = try? String(contentsOf: marker, encoding: .utf8)
+    let reconciler = HelperReconciler(
+      expected: expected,
+      running: { await Self.runningHelperHash() },
+      restart: { try await self.refreshOwnedHelpers() },
+      sleep: { try await Task.sleep(for: .milliseconds(250)) })
+    try await reconciler.reconcile(force: previous != stamp)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data(stamp.utf8).write(to: marker, options: .atomic)
+  }
+
+  private static func runningHelperHash() async -> String? {
+    struct Identity: Decodable { let sha256: String }
+    var request = URLRequest(url: URL(string: rewriteEndpoint + "/v1/helper/identity")!)
+    request.timeoutInterval = 1
+    guard let body = await fetch(request), body.utf8.count <= 256,
+      let value = try? JSONDecoder().decode(Identity.self, from: Data(body.utf8)),
+      value.sha256.count == 64
+    else { return nil }
+    return value.sha256
+  }
+
+  private func refreshOwnedHelpers() async throws {
+    try FileManager.default.createDirectory(
+      at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if !FileManager.default.fileExists(atPath: log.path) {
+      FileManager.default.createFile(atPath: log.path, contents: nil)
+    }
+    // Refresh launchd's bundle association as well as its process image.
+    for label in [Self.mtplxLabel, Self.flowdLabel] {
+      let service = SMAppService.agent(plistName: label + ".plist")
+      guard service.status == .enabled else { continue }
+      try await service.unregister()
+      try service.register()
+      guard service.status == .enabled else { throw LocalAIError.approvalRequired }
+    }
+    try await run(
+      URL(fileURLWithPath: "/bin/launchctl"),
+      ["kickstart", "-k", "gui/\(getuid())/\(Self.flowdLabel)"])
   }
 
   private static var mtplxTarget: String { "gui/\(getuid())/\(mtplxLabel)" }

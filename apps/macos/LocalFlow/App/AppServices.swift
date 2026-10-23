@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import ApplicationServices
+import CryptoKit
 import Foundation
 import LocalFlowCore
 import LocalFlowSpeech
@@ -12,6 +13,19 @@ import os
 
 @MainActor @Observable
 final class AppServices {
+  @ObservationIgnored lazy var updater = UpdateController.configured { [weak self] in
+    self?.updateBusy ?? true
+  }
+  var updateBusy: Bool {
+    starting || quitting || installing || modelCommandInProgress || meetingModelInstalling
+      || speakerModelInstalling || boostModelInstalling || alternateSpeechInstalling
+      || coordinator?.busy == true || coordinator?.unsaved != nil
+      || meetingCoordinator?.isActive == true || meetingIntelligence?.activeMeetingID != nil
+      || meetingTranscription?.isImportingPhoneMeetings == true
+      || meetingTranscription?.isFinalizing == true
+      || meetingTranscription?.isWindowInFlight == true
+      || speakerDiarization?.activeMeetingID != nil || speakerIdentification?.activeMeetingID != nil
+  }
   let router = MainWindowRouter()
   let preferences = AppPreferences()
   @ObservationIgnored lazy var onboarding = OnboardingCoordinator(
@@ -27,6 +41,7 @@ final class AppServices {
     perform: { [weak self] action in try await self?.performSetting(action) },
     preferences: preferences, rewriteCredentials: rewriteCredentials,
     rewriteTransport: rewriteClient, analysisTransport: analysisClient)
+  private(set) var usageReporting: UsageReportingModel?
   private(set) var historyModel: HistoryViewModel?
   private(set) var vocabularyModel: VocabularyViewModel?
   private(set) var insightsModel: InsightsModel?
@@ -262,9 +277,9 @@ final class AppServices {
   func start() async {
     guard coordinator == nil, !starting else { return }
     starting = true
+    settings.updater = updater
     applyAppearance()
     localModel.observe()
-    followLocalModelChoice()
     ChromiumAccessibility.startObserving()
     defer { starting = false }
     do {
@@ -283,6 +298,14 @@ final class AppServices {
         return (base, store, instanceLock)
       }.value
       instanceLock = paths.2
+      do {
+        try await LocalAIInstaller().reconcileBundledHelpers()
+        localHelpersReady = true
+      } catch {
+        localHelpersReady = false
+        setupStatus = "The bundled AI helper could not restart. Reopen LocalFlow to retry."
+      }
+      followLocalModelChoice()
       let speechModels = try Self.loadSpeechModels(selected: preferences.speechModel)
       self.speechModels = speechModels
       let descriptor = speechModels.current.descriptor
@@ -554,6 +577,22 @@ final class AppServices {
             || !((Bundle.main.object(forInfoDictionaryKey: "LocalFlowGoogleClientID") as? String)?
               .isEmpty ?? true)
         })
+      let usageStore = UsageReportingStore(database: paths.1.database)
+      let usageTransport = UsageTransport(pool: remoteRouter.channels)
+      let usageModel = UsageReportingModel(
+        store: usageStore,
+        exchange: { request in try await usageTransport.exchange(request) },
+        identity: { [weak self] in
+          guard let self, self.preferences.remoteEnabled,
+            self.preferences.remoteState == .approved,
+            let key = try? self.remoteCredentials.read(.deviceKey)
+          else { return nil }
+          let fingerprint = SHA256.hash(data: key).map { String(format: "%02x", $0) }.joined()
+          return (self.preferences.remoteServerURL, fingerprint)
+        })
+      usageReporting = usageModel
+      settings.usageReporting = usageModel
+      await usageModel.start()
       settings.server = ServerSettingsModel(
         remote: remoteModel, preferences: preferences, ping: { await remoteRouter.ping() })
       // Always wired: whether a dictation is rewritten is read from the per-attempt
@@ -591,11 +630,23 @@ final class AppServices {
         contextSettings: { [weak preferences] in preferences?.contextSettings() ?? .disabled },
         remote: remoteRouter, inputCatalog: inputCatalog, inputDevices: inputDevices,
         inputTimings: inputTimings)
+      coordinator.usagePending = { id, binding in
+        do { try await usageStore.setPending(id, attribution: binding) } catch {
+          try? await usageStore.markIncomplete()
+        }
+      }
+      coordinator.usageAttribution = { [weak usageModel] in usageModel?.attribution }
       self.coordinator = coordinator
       coordinator.inputMeasured = { [weak self] metrics in self?.recorder?.record(input: metrics) }
       let retrier = PendingRemoteRetrier(
         store: pendingStore, history: paths.1, vocabulary: vocabulary, starter: remoteRouter,
-        transcriber: WindowedTranscriber(lifecycle: lifecycle, identity: transcriptIdentity))
+        transcriber: WindowedTranscriber(lifecycle: lifecycle, identity: transcriptIdentity),
+        usage: { [weak usageModel] id in
+          guard let saved = try? await usageStore.pending(id),
+            await MainActor.run(body: { usageModel?.attribution == saved })
+          else { return nil }
+          return saved
+        })
       await retrier.setHandlers(
         recovered: { [weak self, history = paths.1] entry in
           Task { @MainActor in
@@ -2122,7 +2173,10 @@ final class AppServices {
       }
     }
   }
+  private var localHelpersReady = false
+
   private func localBackendReady() async -> Bool {
+    guard localHelpersReady else { return false }
     let local = RewriteEndpoint(
       url: URL(string: LocalAIInstaller.rewriteEndpoint)!, origin: LocalAIInstaller.rewriteEndpoint)
     return (try? await rewriteClient.health(endpoint: local))?.backendReady == true

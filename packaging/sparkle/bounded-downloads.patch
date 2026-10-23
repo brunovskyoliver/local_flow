@@ -1,0 +1,139 @@
+diff --git a/Downloader/SPUDownloader.m b/Downloader/SPUDownloader.m
+index fccc8511..53dcfb9a 100644
+--- a/Downloader/SPUDownloader.m
++++ b/Downloader/SPUDownloader.m
+@@ -24,13 +24,15 @@ typedef NS_ENUM(NSUInteger, SPUDownloadMode)
+ 
+ static NSString *SUDownloadingReason = @"Downloading update related file";
+ 
+-@interface SPUDownloader () <NSURLSessionDownloadDelegate>
++@interface SPUDownloader () <NSURLSessionDownloadDelegate, NSURLSessionDataDelegate>
+ @end
+ 
+ @implementation SPUDownloader
+ {
+     NSURLSessionTask *_sessionTask;
+     NSURLSession *_downloadSession;
++    NSMutableData *_boundedData;
++    NSError *_boundsError;
+     NSString *_bundleIdentifier;
+     NSString *_desiredFilename;
+     
+@@ -72,7 +74,11 @@ - (void)startDownloadWithRequest:(NSURLRequest *)request SPU_OBJC_DIRECT
+         return;
+     }
+     
+-    if ([scheme caseInsensitiveCompare:@"http"] != NSOrderedSame && [scheme caseInsensitiveCompare:@"https"] != NSOrderedSame) {
++    BOOL allowedScheme = [scheme caseInsensitiveCompare:@"https"] == NSOrderedSame;
++#if defined(LOCALFLOW_UPDATER_TEST_TRANSPORT) && LOCALFLOW_UPDATER_TEST_TRANSPORT
++    allowedScheme = allowedScheme || ([scheme isEqualToString:@"http"] && [request.URL.host isEqualToString:@"127.0.0.1"]);
++#endif
++    if (!allowedScheme) {
+         NSString *message = [NSString stringWithFormat:@"The download request URL must use http or https (%@)", request.URL];
+         NSError *error = [NSError errorWithDomain:SUSparkleErrorDomain code:SUDownloadError userInfo:@{ NSLocalizedDescriptionKey: message }];
+         [_delegate downloaderDidFailWithError:error];
+@@ -80,8 +86,11 @@ - (void)startDownloadWithRequest:(NSURLRequest *)request SPU_OBJC_DIRECT
+         return;
+     }
+     
++    NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration ephemeralSessionConfiguration];
++    configuration.timeoutIntervalForRequest = 30;
++    configuration.timeoutIntervalForResource = (_mode == SPUDownloadModeTemporary) ? 30 : 1800;
+     _downloadSession = [NSURLSession
+-        sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]
++        sessionWithConfiguration:configuration
+         delegate:self
+         delegateQueue:[NSOperationQueue mainQueue]];
+     
+@@ -90,10 +99,8 @@ - (void)startDownloadWithRequest:(NSURLRequest *)request SPU_OBJC_DIRECT
+             _sessionTask = [_downloadSession downloadTaskWithRequest:request];
+             break;
+         case SPUDownloadModeTemporary: {
+-            __weak __typeof__(self) weakSelf = self;
+-            _sessionTask = [_downloadSession dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+-                [weakSelf temporaryDownloadDidFinishWithData:data response:response error:error];
+-            }];
++            _boundedData = [NSMutableData data];
++            _sessionTask = [_downloadSession dataTaskWithRequest:request];
+             break;
+         }
+     }
+@@ -243,6 +250,12 @@ - (void)temporaryDownloadDidFinishWithData:(NSData * _Nullable)data response:(NS
+ 
+ - (void)URLSession:(NSURLSession *)__unused session downloadTask:(NSURLSessionDownloadTask *)downloadTask didFinishDownloadingToURL:(NSURL *)location
+ {
++    NSNumber *downloadSize = nil;
++    [location getResourceValue:&downloadSize forKey:NSURLFileSizeKey error:NULL];
++    if (_boundsError != nil || downloadSize == nil || downloadSize.unsignedLongLongValue > 4294967296ULL) {
++        [_delegate downloaderDidFailWithError:_boundsError ?: [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorDataLengthExceedsMaximum userInfo:nil]];
++        return;
++    }
+     if (!SPUValidateStatusCodeAndFailIfInvalid(downloadTask.response, downloadTask.originalRequest.URL, _delegate)) {
+         return;
+     }
+@@ -312,6 +325,11 @@ - (void)URLSession:(NSURLSession *)__unused session downloadTask:(NSURLSessionDo
+         return;
+     }
+     
++    if (totalBytesWritten > 4294967296LL || totalBytesExpectedToWrite > 4294967296LL) {
++        _boundsError = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorDataLengthExceedsMaximum userInfo:nil];
++        [_sessionTask cancel];
++        return;
++    }
+     if (!_receivedExpectedBytes) {
+         _receivedExpectedBytes = YES;
+         [_delegate downloaderDidReceiveExpectedContentLength:(totalBytesExpectedToWrite != NSURLSessionTransferSizeUnknown) ? totalBytesExpectedToWrite : 0];
+@@ -322,8 +340,40 @@ - (void)URLSession:(NSURLSession *)__unused session downloadTask:(NSURLSessionDo
+     }
+ }
+ 
++// Redirects must preserve HTTPS; no account credentials are attached to these requests.
++- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler
++{
++    if (![request.URL.scheme.lowercaseString isEqualToString:@"https"]) {
++        _boundsError = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorUnsupportedURL userInfo:nil];
++        [task cancel];
++        completionHandler(nil);
++        return;
++    }
++    completionHandler(request);
++}
++
++// LocalFlow: bound feed/release-note accumulation before appending each chunk.
++- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveData:(NSData *)data
++{
++    if (_boundsError != nil) { return; }
++    if (data.length > 1048576 || _boundedData.length > 1048576 - data.length) {
++        _boundsError = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorDataLengthExceedsMaximum userInfo:nil];
++        [task cancel];
++        return;
++    }
++    [_boundedData appendData:data];
++}
++
+ - (void)URLSession:(NSURLSession *)__unused session task:(NSURLSessionTask *)__unused task didCompleteWithError:(NSError *)error
+ {
++    NSURLResponse *response = _sessionTask.response;
++    error = _boundsError ?: error;
++    if (_mode == SPUDownloadModeTemporary) {
++        NSData *data = error == nil ? _boundedData : nil;
++        _boundedData = nil;
++        [self temporaryDownloadDidFinishWithData:data response:response error:error];
++        return;
++    }
+     _sessionTask = nil;
+     if (error != nil) {
+         [_delegate downloaderDidFailWithError:error];
+diff --git a/Sparkle/SPULocalCacheDirectory.m b/Sparkle/SPULocalCacheDirectory.m
+index 2f8ae48e..007d40db 100644
+--- a/Sparkle/SPULocalCacheDirectory.m
++++ b/Sparkle/SPULocalCacheDirectory.m
+@@ -12,7 +12,7 @@
+ 
+ #include "AppKitPrevention.h"
+ 
+-static NSTimeInterval OLD_ITEM_DELETION_INTERVAL = 86400 * 10; // 10 days
++static NSTimeInterval OLD_ITEM_DELETION_INTERVAL = 0; // LocalFlow: keep only the newly completed download.
+ 
+ @implementation SPULocalCacheDirectory
+ 

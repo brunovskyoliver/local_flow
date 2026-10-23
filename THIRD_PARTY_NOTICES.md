@@ -188,3 +188,20 @@ Review note: as with Parakeet v3, the pinned card's YAML declares `cc-by-4.0` wh
 section says the conversion is released under Apache 2.0, "same as the original NVIDIA model".
 The NVIDIA repository declares CC-BY-4.0, so that sentence does not match the upstream metadata.
 Keep both notices and do not relabel the weights as Apache-only.
+
+## Feature 021 usage reporting
+
+The optional Go usage store and owner dashboard reuse the existing
+`modernc.org/sqlite` dependency and Go standard library. No client analytics SDK
+or OpenTelemetry SDK is added. An operator-installed OpenTelemetry Collector is
+not bundled or redistributed by LocalFlow.
+
+## Sparkle 2.10.0
+
+LocalFlow builds Sparkle at commit `eef1a539a373c1f1a320624b1130fc5de7b2e100`
+with the local transport patch in `packaging/sparkle/bounded-downloads.patch`.
+The complete upstream license, including bundled-component notices, is retained
+in `packaging/sparkle/LICENSE` and copied into packaged application notices.
+The patch bounds downloads and temporary feed buffers, restricts transport to
+HTTPS and limits old download-cache retention. No VoiceInk source is used.
+Source: https://github.com/sparkle-project/Sparkle/tree/2.10.0

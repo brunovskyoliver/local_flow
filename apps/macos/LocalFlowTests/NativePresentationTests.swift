@@ -578,6 +578,57 @@ final class NativePresentationTests: XCTestCase {
     }
   }
 
+  /// Feature 021: synthetic usage consent and reporting states; no network or enrollment.
+  @MainActor
+  func testRenderUsageSharingStates() async throws {
+    guard let path = ProcessInfo.processInfo.environment["LOCALFLOW_UI_CAPTURE_DIR"] else {
+      throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_UI_CAPTURE_DIR for native render artifacts.")
+    }
+    let output = URL(fileURLWithPath: path, isDirectory: true)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    let grant = "00000000-0000-4000-8000-000000000001"
+    let binding = UsageAttribution(
+      origin: "https://fixture.invalid", userID: "fixture-user", deviceID: "fixture-device",
+      epoch: 1, grant: grant, credentialFingerprint: "fixture-device-key")
+    let response = Data(
+      #"{"version":1,"status":"accepted","user_id":"fixture-user","device_id":"fixture-device","epoch":2,"enabled":false,"control_revision":2,"deletion_cutoff":1,"propagation_pending":true,"rows":[]}"#
+        .utf8)
+    for state in ["off", "on", "unavailable", "pending"] {
+      let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "usage-render-\(UUID()).sqlite")
+      defer { removeDatabase(at: url) }
+      let history = try TranscriptionStore(path: url.path)
+      let store = UsageReportingStore(database: history.database)
+      if state == "on" || state == "pending" { try await store.enable(binding) }
+      if state == "on" {
+        try await store.acknowledge([], now: Date(timeIntervalSince1970: 1_792_756_800))
+      }
+      if state == "pending" { try await store.disable(.deleteDevice) }
+      let available = state != "unavailable"
+      let model = UsageReportingModel(
+        store: store,
+        exchange: { _ in try JSONDecoder().decode(UsageResponse.self, from: response) },
+        identity: {
+          available ? (origin: binding.origin, fingerprint: binding.credentialFingerprint) : nil
+        })
+      await model.start()
+      if state == "pending" { await model.synchronize() }
+      XCTAssertEqual(model.enabled, state == "on")
+      XCTAssertEqual(model.available, available)
+      if state == "pending" { XCTAssertTrue(model.notice.contains("pending")) }
+      for (suffix, appearance, scheme) in [
+        ("light", NSAppearance.Name.aqua, ColorScheme.light),
+        ("dark", NSAppearance.Name.darkAqua, ColorScheme.dark),
+      ] {
+        try await render(
+          UsageSettingsSection(model: model).padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading),
+          to: output.appendingPathComponent("usage-\(state)-\(suffix).png"),
+          appearance: appearance, scheme: scheme, height: 440, width: 670)
+      }
+    }
+  }
+
   @MainActor
   private func render<V: View>(
     _ view: V, to url: URL, appearance: NSAppearance.Name, scheme: ColorScheme,

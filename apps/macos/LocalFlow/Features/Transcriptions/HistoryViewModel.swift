@@ -502,6 +502,7 @@ extension HistoryViewModel {
     case .nothingReadable: "Context: nothing readable"
     case .timedOut: "Context: timed out"
     case .noTarget: "Context: no text field"
+    case .changedField: "Context unavailable: field changed during capture"
     }
   }
   var contextLabel: String { Self.contextLabel(detailEnvelope?.context) }

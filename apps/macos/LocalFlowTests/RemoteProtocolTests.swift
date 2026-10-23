@@ -12,12 +12,12 @@ final class RemoteProtocolTests: XCTestCase {
     "dictation_complete", "cancelled", "rewrite_event", "error",
     // Feature 018
     "analysis_event_part", "analysis_event", "live_result", "meeting_progress", "meeting_result",
-    "handoff_reply",
+    "handoff_reply", "usage_reply",
   ]
   private let clientTypes: Set = [
     "enroll", "refresh", "dictation_start", "dictation_end", "dictation_cancel", "rewrite",
     // Feature 018
-    "analysis_part", "analysis", "live_window", "meeting_job", "meeting_cancel", "handoff",
+    "analysis_part", "analysis", "live_window", "meeting_job", "meeting_cancel", "handoff", "usage",
   ]
 
   private func messages(_ folder: String) throws -> [(name: String, data: Data)] {
@@ -120,6 +120,12 @@ final class RemoteProtocolTests: XCTestCase {
             pipeline: fixture["pipeline"] as? String,
             numSpeakers: fixture["num_speakers"] as? Int))
       case "meeting_cancel": message = .meetingCancel(op: op)
+      case "usage":
+        message = .usage(
+          op: op,
+          request: try JSONDecoder().decode(
+            UsageRequest.self,
+            from: JSONSerialization.data(withJSONObject: fixture["request"]!)))
       case "handoff":
         message = .handoff(
           op: op,

@@ -61,6 +61,33 @@ final class AppContextStoreTests: XCTestCase {
 
   // MARK: Schema
 
+  func testContextConsistencyUpgradePreservesRowsAndAllowsChangedField() throws {
+    let queue = try DatabaseQueue(path: makeURL().path)
+    let migrator = HistoryMigrations.migrator()
+    try migrator.migrate(queue, upTo: "phone-meetings-v19")
+    let id = UUID().uuidString
+    try queue.write { db in
+      try db.execute(
+        sql: """
+          INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,revision)
+          VALUES (?,'saved',5,'confirmed','resolved','complete','key_release',1)
+          """, arguments: [id])
+      try db.execute(
+        sql: "INSERT INTO dictation_contexts (transcription_id,outcome) VALUES (?,'off')",
+        arguments: [id])
+    }
+    try migrator.migrate(queue, upTo: "context-consistency-v20")
+    try queue.write { db in
+      XCTAssertEqual(try String.fetchOne(db, sql: "SELECT outcome FROM dictation_contexts"), "off")
+      try db.execute(
+        sql: "UPDATE dictation_contexts SET outcome='changed_field' WHERE transcription_id=?",
+        arguments: [id])
+      XCTAssertThrowsError(try db.execute(sql: "UPDATE dictation_contexts SET outcome='invalid'"))
+      try db.execute(sql: "DELETE FROM transcriptions WHERE id=?", arguments: [id])
+      XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM dictation_contexts"), 0)
+    }
+  }
+
   func testContextTableShapeAndCascade() throws {
     let (store, _) = try makeStore()
     try store.database.read { db in

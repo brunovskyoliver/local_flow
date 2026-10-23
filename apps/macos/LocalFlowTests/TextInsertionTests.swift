@@ -5,6 +5,39 @@ import XCTest
 @testable import LocalFlow
 
 final class TextInsertionTests: XCTestCase {
+  func testAfterCursorEditInvalidatesReferenceEvenWhenSelectionAndPrefixMatch() {
+    func target(_ after: String?) -> CapturedTarget {
+      CapturedTarget(
+        processIdentifier: 1, launchDate: Date(), bundleIdentifier: "fixture",
+        element: AXUIElementCreateSystemWide(), focusedWindow: nil,
+        selectedRange: CFRange(location: 6, length: 0), comparisonContext: "Hello ",
+        comparisonAfter: after)
+    }
+    XCTAssertTrue(
+      SystemTextAccessibilityAdapter.referenceTextMatches(target("world"), target("world")))
+    XCTAssertFalse(
+      SystemTextAccessibilityAdapter.referenceTextMatches(target("there"), target("world")))
+    XCTAssertFalse(
+      SystemTextAccessibilityAdapter.referenceTextMatches(target(nil), target("world")))
+    XCTAssertFalse(SystemTextAccessibilityAdapter.referenceTextMatches(target("added"), target("")))
+  }
+
+  func testAfterReferenceIsBoundedAndHandlesEmptySuffixAndInvalidRanges() throws {
+    let selection = CFRange(location: 10, length: 5)
+    let range = try XCTUnwrap(
+      SystemTextAccessibilityAdapter.afterComparisonRange(for: selection, characterCount: 10_000))
+    XCTAssertEqual(range.location, 15)
+    XCTAssertEqual(range.length, 300)
+    XCTAssertEqual(
+      SystemTextAccessibilityAdapter.afterComparisonRange(for: selection, characterCount: 15)?
+        .length, 0)
+    XCTAssertNil(
+      SystemTextAccessibilityAdapter.afterComparisonRange(for: selection, characterCount: 14))
+    XCTAssertNil(
+      SystemTextAccessibilityAdapter.afterComparisonRange(
+        for: CFRange(location: Int.max, length: 1), characterCount: Int.max))
+  }
+
   func testChangedTargetDoesNotDispatch() async {
     let adapter = FakeInsertionAdapter(validation: .rejected(.selectionChanged))
     let service = TextInsertionService(adapter: adapter)
