@@ -53,3 +53,11 @@ The user authorized committing and releasing the Mac app. Preparing version 0.3.
 Implementation committed as `f7b35f5b` and pushed to `origin/main`. Draft release v0.3.0 created at https://github.com/brunovskyoliver/local_flow/releases/tag/untagged-44332866b4a4f2b53114 with no binaries attached. It is unpublished, and no release tag was pushed to trigger CI. The notarization wizard passed `bash -n`; it has not been run because the user must enter their Apple credentials locally.
 
 The user subsequently declined notarization setup and explicitly requested distribution without Developer ID signing. Preparing v0.3.0 with the existing ad-hoc packaging mode, in-app updates disabled, and explicit release notes about manual installation. This supersedes the notarization prerequisite for this manual release only; signed-update and hardware acceptance remain open. The generated auto-updating Homebrew cask and appcast will not be published.
+
+## Published manual release
+
+Published v0.3.0 at https://github.com/brunovskyoliver/local_flow/releases/tag/v0.3.0 from commit `c65e6bd05ef0f8974be9301c03ac1c1e5ea44ae7`, build 10003, using the user-authorized ad-hoc mode. Attached the ZIP and SHA-256 file only. Archive size: 20,300,743 bytes. SHA-256: `9b6bb4e5f43a0ab77da8311b4f06b55912e0d0d556101614202f3067e31e570f`.
+
+The Release build and packaging succeeded. Extracted archive passed strict deep codesign verification, with ad-hoc signing confirmed, version/build checked, Google client ID present and signed updates disabled. GitHub's uploaded archive digest matched the verified local ZIP before publication. Production source is unchanged since the full passing make check; subsequent commits contain release documentation only. Build log: `/Users/oliver/agent-runs/2026-10-23-localflow-release/package-0.3.0.log`.
+
+The app is not notarized and may require manual first-launch approval. No installed app, Homebrew tap, remote server or dashboard deployment was changed. Signed automatic updates and outstanding live/hardware acceptance remain deferred.
