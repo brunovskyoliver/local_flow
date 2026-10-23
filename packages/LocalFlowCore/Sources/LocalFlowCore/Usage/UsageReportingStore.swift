@@ -64,6 +64,29 @@ public actor UsageReportingStore {
     }
   }
 
+  /// A disabled binding is a durable tombstone: never reopen it automatically.
+  /// A different approved identity must not inherit old totals or pending controls.
+  public func prepareAutomaticEnrollment(origin: String, fingerprint: String) throws -> Bool {
+    try database.write { db in
+      if let raw = try String.fetchOne(
+        db, sql: "SELECT binding FROM usage_reporting_state WHERE id=1")
+      {
+        let old = try JSONDecoder().decode(UsageAttribution.self, from: Data(raw.utf8))
+        let active =
+          try Bool.fetchOne(db, sql: "SELECT enabled FROM usage_reporting_state WHERE id=1") == true
+        guard active else { return false }
+        if old.origin == origin && old.credentialFingerprint == fingerprint { return false }
+        try db.execute(sql: "DELETE FROM usage_reporting_days")
+        try db.execute(sql: "DELETE FROM usage_reporting_completions")
+        try db.execute(
+          sql:
+            "UPDATE usage_reporting_state SET binding=NULL,enabled=0,pending=NULL,incomplete=0,last_report=NULL WHERE id=1"
+        )
+      }
+      return true
+    }
+  }
+
   public func enable(_ binding: UsageAttribution) throws {
     let encoded = try JSONEncoder().encode(binding)
     guard encoded.count <= 2048, binding.epoch > 0, UUID(uuidString: binding.grant) != nil else {
@@ -126,12 +149,8 @@ public actor UsageReportingStore {
           current == binding
         else { return }
       }
-      let action: String? = row["pending"]
-      if action == UsageRequest.Action.withdraw.rawValue {
-        try db.execute(sql: "UPDATE usage_reporting_state SET pending=NULL WHERE id=1")
-      } else {
-        try db.execute(sql: "UPDATE usage_reporting_state SET pending=NULL,binding=NULL WHERE id=1")
-      }
+      // Retain the disabled binding to prevent automatic enrollment after deletion.
+      try db.execute(sql: "UPDATE usage_reporting_state SET pending=NULL WHERE id=1")
     }
   }
 

@@ -580,7 +580,7 @@ final class AppServices {
       let usageStore = UsageReportingStore(database: paths.1.database)
       let usageTransport = UsageTransport(pool: remoteRouter.channels)
       let usageModel = UsageReportingModel(
-        store: usageStore,
+        store: usageStore, automaticEnrollment: true,
         exchange: { request in try await usageTransport.exchange(request) },
         identity: { [weak self] in
           guard let self, self.preferences.remoteEnabled,
@@ -591,7 +591,6 @@ final class AppServices {
           return (self.preferences.remoteServerURL, fingerprint)
         })
       usageReporting = usageModel
-      settings.usageReporting = usageModel
       await usageModel.start()
       settings.server = ServerSettingsModel(
         remote: remoteModel, preferences: preferences, ping: { await remoteRouter.ping() })

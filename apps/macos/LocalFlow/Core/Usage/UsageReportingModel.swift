@@ -11,6 +11,7 @@ final class UsageReportingModel {
   private(set) var lastReport: Date?
   private var binding: UsageAttribution?
   @ObservationIgnored private var reportFailed = false
+  @ObservationIgnored private let automaticEnrollment: Bool
   @ObservationIgnored private let store: UsageReportingStore
   @ObservationIgnored private let exchange: @Sendable (UsageRequest) async throws -> UsageResponse
   @ObservationIgnored private let identity: @MainActor () -> (origin: String, fingerprint: String)?
@@ -19,10 +20,12 @@ final class UsageReportingModel {
 
   init(
     store: UsageReportingStore,
+    automaticEnrollment: Bool = false,
     exchange: @escaping @Sendable (UsageRequest) async throws -> UsageResponse,
     identity: @escaping @MainActor () -> (origin: String, fingerprint: String)?
   ) {
     self.store = store
+    self.automaticEnrollment = automaticEnrollment
     self.exchange = exchange
     self.identity = identity
   }
@@ -83,7 +86,10 @@ final class UsageReportingModel {
       try await store.enable(value)
       await reload()
       schedule()
-    } catch { notice = Self.message(error) }
+    } catch {
+      reportFailed = true
+      notice = Self.message(error)
+    }
   }
 
   func disable(delete: Bool = false) async {
@@ -102,7 +108,27 @@ final class UsageReportingModel {
 
   func synchronize() async {
     guard !busy else { return }
-    guard let current = identity(), let binding,
+    guard let current = identity() else {
+      reportFailed = false
+      return
+    }
+    if automaticEnrollment && attribution == nil {
+      do {
+        let shouldEnroll = try await store.prepareAutomaticEnrollment(
+          origin: current.origin, fingerprint: current.fingerprint)
+        await reload()
+        guard let after = identity(), after == current else { return }
+        if shouldEnroll {
+          reportFailed = false
+          await enable()
+          return
+        }
+      } catch {
+        reportFailed = true
+        return
+      }
+    }
+    guard let binding,
       current.origin == binding.origin, current.fingerprint == binding.credentialFingerprint
     else {
       reportFailed = true
@@ -169,18 +195,18 @@ final class UsageReportingModel {
   }
 
   private func schedule() {
-    guard loop == nil, enabled || pending != nil else { return }
+    guard loop == nil, automaticEnrollment || enabled || pending != nil else { return }
     loop = Task { [weak self] in
-      var delay: Double = 30
+      var delay: Double = self?.automaticEnrollment == true ? 0 : 30
       while !Task.isCancelled {
         do { try await Task.sleep(for: .seconds(delay)) } catch { break }
         guard let self else { break }
-        guard self.enabled || self.pending != nil else {
+        guard self.automaticEnrollment || self.enabled || self.pending != nil else {
           self.loop = nil
           break
         }
         await self.synchronize()
-        delay = self.reportFailed ? min(delay * 2, 3600) : 300
+        delay = self.reportFailed ? min(max(delay * 2, 30), 3600) : 300
       }
     }
   }

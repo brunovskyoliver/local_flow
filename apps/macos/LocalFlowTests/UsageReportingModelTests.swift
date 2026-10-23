@@ -45,14 +45,19 @@ final class UsageReportingModelTests: XCTestCase {
       ]))
   }
 
-  private func fixture(_ script: Script) throws -> (UsageReportingModel, UsageReportingStore, URL) {
+  private func fixture(
+    _ script: Script, automatic: Bool = false,
+    identity: @escaping @MainActor () -> (origin: String, fingerprint: String)? = {
+      ("https://example.invalid", "test-device")
+    }
+  ) throws -> (UsageReportingModel, UsageReportingStore, URL) {
     let path = FileManager.default.temporaryDirectory.appendingPathComponent(
       "usage-model-\(UUID()).sqlite")
     let history = try TranscriptionStore(path: path.path)
     let store = UsageReportingStore(database: history.database)
     let model = UsageReportingModel(
-      store: store, exchange: { try await script.send($0) },
-      identity: { ("https://example.invalid", "test-device") })
+      store: store, automaticEnrollment: automatic, exchange: { try await script.send($0) },
+      identity: identity)
     return (model, store, path)
   }
 
@@ -123,4 +128,66 @@ final class UsageReportingModelTests: XCTestCase {
     let actions = await script.actions
     XCTAssertEqual(actions, [.enable, .withdraw, .deleteDevice])
   }
+  func testAutomaticEnrollmentWaitsForApprovalAndDoesNotRepeat() async throws {
+    var approved = false
+    let script = Script([try reply()])
+    let (model, _, path) = try fixture(
+      script, automatic: true,
+      identity: {
+        approved ? ("https://example.invalid", "test-device") : nil
+      })
+    defer { remove(path) }
+    await model.synchronize()
+    let before = await script.actions
+    XCTAssertTrue(before.isEmpty)
+    approved = true
+    await model.synchronize()
+    await model.synchronize()
+    XCTAssertNotNil(model.attribution)
+    let after = await script.actions
+    XCTAssertEqual(after, [.enable])
+    approved = false
+    XCTAssertNil(model.attribution)
+    await model.synchronize()
+    let revoked = await script.actions
+    XCTAssertEqual(revoked, [.enable])
+  }
+
+  func testAutomaticEnrollmentPreservesDeletionAcrossRestart() async throws {
+    let script = Script([try reply(), try reply(epoch: 2, enabled: false)])
+    let (model, store, path) = try fixture(script, automatic: true)
+    defer { remove(path) }
+    await model.synchronize()
+    await model.disable(delete: true)
+    let restarted = UsageReportingModel(
+      store: store, automaticEnrollment: true, exchange: { try await script.send($0) },
+      identity: { ("https://example.invalid", "test-device") })
+    await restarted.synchronize()
+    XCTAssertNil(restarted.attribution)
+    let actions = await script.actions
+    XCTAssertEqual(actions, [.enable, .deleteDevice])
+  }
+
+  func testAutomaticEnrollmentSeparatesNewIdentity() async throws {
+    var fingerprint = "first-device"
+    let script = Script([try reply(), try reply(epoch: 2)])
+    let (model, store, path) = try fixture(
+      script, automatic: true,
+      identity: {
+        ("https://example.invalid", fingerprint)
+      })
+    defer { remove(path) }
+    await model.synchronize()
+    let first = try XCTUnwrap(model.attribution)
+    fingerprint = "second-device"
+    XCTAssertNil(model.attribution)
+    await model.synchronize()
+    XCTAssertEqual(model.attribution?.credentialFingerprint, fingerprint)
+    XCTAssertNotEqual(model.attribution, first)
+    let rows = try await store.days()
+    XCTAssertTrue(rows.isEmpty)
+    let actions = await script.actions
+    XCTAssertEqual(actions, [.enable, .enable])
+  }
+
 }

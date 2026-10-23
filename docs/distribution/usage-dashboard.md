@@ -107,3 +107,7 @@ service:
 ```
 
 This is a local preparation example, not an installed collector or a remote exporter. Choose an owner-controlled destination separately. Collector failure has no effect on dictation. No OTel SDK or external analytics SDK is added to the clients or server.
+
+## Mac client reporting policy
+
+From v0.3.1, approved Mac server accounts enroll automatically and report daily counts and audio duration in the background, including local processing while linked to the approved account. There is no reporting settings section or alert. Local-only and unapproved devices send nothing. Prior withdrawal/deletion stays disabled; owner deletion and account revocation are still enforced. No audio, dictated text or field content is collected. Hosting remains a separate operator action.

@@ -108,3 +108,9 @@ Long fields and partial context; edits during capture; malicious instructions in
 ## LocalFlow resource and failure acceptance
 
 Reuse Feature 012's context bounds and capture deadline. Updates stream to disk with one download at a time. Reporting uses bounded daily aggregates, bounded request bodies and a single export worker; exact capacities are defined in the plan. Reporting failure cannot block dictation or remove audio/transcripts. No additional model runtime or native app is introduced. Hosted reporting is optional and contains metadata only. Constitution compliance and dependency licenses must be checked before implementation; resource and live release acceptance remain distinct from unit tests.
+
+## Approved revision: automatic reporting (2026-10-23)
+
+The user requested removal of the Usage sharing section and all reporting alerts/status displays, with reporting built in. This supersedes the original per-device toggle requirement for new reporting enrollment. New approved identities automatically enroll through the existing authenticated usage endpoint. Local-only, signed-out and pending/revoked devices send nothing. Existing disabled bindings and pending deletion/withdrawal remain authoritative and are never automatically reopened. Switching identities discards unsent old-account aggregates before enrollment; it never forwards those totals to another account. No history backfill. Only daily counts/audio duration are allowed; all existing wire, retention, capacity and owner-access restrictions remain.
+
+No reporting UI or dialogs remain in Settings. Reporting failures are silent and isolated from dictation. An immediate background attempt at startup and bounded retries enroll identities approved later without blocking app startup. Owner-side deletion and account revocation remain available. This behavior is documented in release notes even though the app has no reporting prompts.

@@ -62,3 +62,10 @@ Goal: Known opt-in usage appears once under the correct account and only the own
 T001–T002 precede implementation. T003–T004 establish usage contracts. US1, US2 and US3 are independently deliverable; US1 does not depend on usage or signing. Within US2, integrate the updater before signed end-to-end acceptance; T013 can be developed separately from packaging after shared app lifecycle ownership is agreed. Within US3, finish contract/schema work before client/server implementations, then ingestion before dashboard integration. Separate agents can own context, updates and usage, but app entry point/settings/Xcode edits must be serialized by the parent. No [P] task claims a conflict-free edit where shared files are likely.
 
 MVP = phases 1–3. Full scope = all six phases. Signed release and production hosting remain explicit external delivery gates; local implementation can proceed with test identities and updater doubles. Preserve existing user data and do not change the default speech model.
+
+## Follow-up: automatic reporting and patch release
+
+- [X] T032 Record the user-approved reporting policy amendment, constitution change and ADR clarification.
+- [X] T033 Add background enrollment with approval/identity checks, bounded retry and preserved disabled bindings; test enrollment, switching, revocation and deletion.
+- [ ] T034 Remove usage reporting UI and dialogs, verify settings build and run make check.
+- [ ] T035 Publish ad-hoc v0.3.1 with the completed fixes, update the Homebrew tap and record verification.

@@ -1,3 +1,4 @@
+<!-- 2026-10-23: version 3.0.0 amends principle 5 for user-requested automatic approved-account usage. Feature 021 spec/plan/tasks and ADR 0035 record the scope; all other privacy defaults remain. -->
 <!-- Sync impact report
 Version: 1.0.0 -> 2.0.0 (major: principles 3, 4, 5, 8 and 14 redefined for opt-in remote inference)
 Modified: 3 Explicit model lifecycle (server workers); 4 Local-first operation (local fallback);
@@ -31,7 +32,7 @@ Dictation, capture, recording, transcription and local persistence MUST work off
 
 ### 5. Privacy by architecture
 
-Speech recognition and recordings MUST remain local by default. Sending audio or text to a server requires explicit per-device opt-in and is allowed only to a LocalFlow server the user or their administrator operates. Audio and text MUST be encrypted in transit end to end between client and that server; when TLS terminates at a third party such as a tunnel provider, an inner application-layer encryption layer is required. The server MUST process audio and text in memory or bounded temporary files and MUST NOT retain them after the request, unless a later specification adds user-controlled storage. No mandatory cloud, telemetry, advertising or external analytics SDK is allowed. Credentials and device keys belong in Keychain or the Secure Enclave. Logs on client and server MUST exclude audio, transcript text and credentials. Changes to these defaults require a specification and explicit user consent.
+Speech recognition and recordings MUST remain local by default. Sending audio or text to a server requires explicit per-device opt-in and is allowed only to a LocalFlow server the user or their administrator operates. Audio and text MUST be encrypted in transit end to end between client and that server; when TLS terminates at a third party such as a tunnel provider, an inner application-layer encryption layer is required. The server MUST process audio and text in memory or bounded temporary files and MUST NOT retain them after the request, unless a later specification adds user-controlled storage. No mandatory cloud, advertising or external analytics SDK is allowed. Following the explicit 2026-10-23 product-owner revision (ADR 0035), approved LocalFlow server accounts may automatically report bounded daily usage counts and audio duration to that server, without a separate reporting UI. This exception excludes audio/text/field content, does not apply to local-only or unapproved devices, and must preserve prior withdrawal/deletion and inference revocation. Credentials and device keys belong in Keychain or the Secure Enclave. Logs on client and server MUST exclude audio, transcript text and credentials. Changes to these defaults require a specification and explicit user consent.
 
 ### 6. Streaming over accumulation
 
@@ -81,4 +82,4 @@ Substantial changes follow specify, clarify where needed, plan, tasks, analyze, 
 
 This constitution takes precedence over convenience and feature-local designs. Reviewers MUST check compliance. Exceptions require an ADR documenting the conflict, evidence, mitigation and approval; an ADR alone does not silently amend a mandatory principle. Amendments record rationale, update affected templates/docs/specs and use semantic versioning: major for incompatible principles, minor for additions, patch for clarifications. Unmeasured targets MUST NOT be represented as achieved.
 
-**Version**: 2.0.0 | **Ratified**: 2026-09-16 | **Last amended**: 2026-09-27
+**Version**: 3.0.0 | **Ratified**: 2026-09-16 | **Last amended**: 2026-10-23

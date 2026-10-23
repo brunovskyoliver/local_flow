@@ -154,7 +154,33 @@ final class UsageReportingTests: XCTestCase {
     XCTAssertEqual(deleting.pending, .deleteDevice)
     try await reporting.acknowledgeControl(expected: .deleteDevice, binding: binding)
     let erased = try await reporting.binding()
-    XCTAssertNil(erased)
+    XCTAssertEqual(erased, binding)
+    let autoEnroll = try await reporting.prepareAutomaticEnrollment(
+      origin: binding.origin, fingerprint: binding.credentialFingerprint)
+    XCTAssertFalse(autoEnroll)
+  }
+
+  func testAutomaticIdentityChangeClearsOnlyReportingTotals() async throws {
+    let (history, reporting, directory) = try fixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let old = attribution()
+    try await reporting.enable(old)
+    let item = try envelope(old)
+    _ = try await history.commit(reservation: history.reserve(), envelope: item)
+    let before = try await reporting.days()
+    XCTAssertEqual(before.first?.localCount, 1)
+    let canEnroll = try await reporting.prepareAutomaticEnrollment(
+      origin: "https://new-server.invalid", fingerprint: "new-device")
+    XCTAssertTrue(canEnroll)
+    let after = try await reporting.days()
+    XCTAssertTrue(after.isEmpty)
+    let state = try await reporting.state()
+    XCTAssertNil(state.attribution)
+    // A late completion from the old grant cannot count under the new identity.
+    try await reporting.enable(attribution(epoch: 2))
+    _ = try await history.commit(reservation: history.reserve(), envelope: envelope(old))
+    let late = try await reporting.days()
+    XCTAssertTrue(late.isEmpty)
   }
 
 }
