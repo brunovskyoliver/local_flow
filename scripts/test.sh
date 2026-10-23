@@ -7,6 +7,7 @@ fi
 swift format lint --strict --recursive apps/macos/LocalFlow apps/macos/LocalFlowTests apps/macos/LocalFlowUITests \
   apps/macos/LocalFlowServer apps/macos/LocalFlowServerTests packages/LocalFlowCore apps/ios
 for script in scripts/*.sh .specify/scripts/bash/*.sh; do bash -n "$script"; done
+./scripts/test-sparkle-signing.sh
 ./scripts/check-transcript-imports.sh
 ./scripts/check-identification-imports.sh
 ./scripts/check-intelligence-imports.sh

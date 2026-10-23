@@ -23,6 +23,7 @@
     "F02100000000000000000002" = { "isa" = "PBXBuildFile"; "fileRef" = "F02100000000000000000001"; };
     "F02100000000000000000003" = { "isa" = "PBXBuildFile"; "fileRef" = "F02100000000000000000001"; "settings" = { "ATTRIBUTES" = ("CodeSignOnCopy", "RemoveHeadersOnCopy"); }; };
     "F02100000000000000000004" = { "isa" = "PBXCopyFilesBuildPhase"; "buildActionMask" = "2147483647"; "dstPath" = ""; "dstSubfolderSpec" = "10"; "files" = ("F02100000000000000000003"); "name" = "Embed bounded Sparkle"; "runOnlyForDeploymentPostprocessing" = "0"; };
+    "F02100000000000000000006" = { "isa" = "PBXShellScriptBuildPhase"; "buildActionMask" = "2147483647"; "files" = (); "inputPaths" = (); "outputPaths" = (); "runOnlyForDeploymentPostprocessing" = "0"; "alwaysOutOfDate" = "1"; "name" = "Sign embedded Sparkle helpers"; "shellPath" = "/bin/bash"; "shellScript" = "\"$SRCROOT/../../scripts/sign-embedded-sparkle.sh\""; };
     "F02100000000000000000005" = { "isa" = "PBXShellScriptBuildPhase"; "buildActionMask" = "2147483647"; "files" = (); "inputPaths" = (); "outputPaths" = (); "runOnlyForDeploymentPostprocessing" = "0"; "alwaysOutOfDate" = "1"; "name" = "Prepare bounded Sparkle"; "shellPath" = "/bin/bash"; "shellScript" = "\"$SRCROOT/../../scripts/prepare-sparkle.sh\""; };
     "F010265E9944A058E3EE75EA" = { "isa" = "PBXBuildFile"; "fileRef" = "F01057F5FA06A14B80B949D4"; };
     "F01057F5FA06A14B80B949D4" = { "isa" = "PBXFileReference"; "path" = "LocalFlowTests/AppearanceContrastTests.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
@@ -1550,7 +1551,7 @@
       "packageProductDependencies" = ("C00000000000000000000002", "C0000000000000000000000B", "F01600000000000000000002", "F01600000000000000000003");
       "productName" = "LocalFlow";
       "isa" = "PBXNativeTarget";
-      "buildPhases" = ("F02100000000000000000005", "F00900000000000000000003", "F01A00000000000000000001", "A0000000000000000000000B", "C0000000000000000000001E", "41D311A605520FC7B8B9A980", "F02100000000000000000004");
+      "buildPhases" = ("F02100000000000000000005", "F00900000000000000000003", "F01A00000000000000000001", "A0000000000000000000000B", "C0000000000000000000001E", "41D311A605520FC7B8B9A980", "F02100000000000000000004", "F02100000000000000000006");
       "dependencies" = ();
       "name" = "LocalFlow";
       "buildRules" = ();

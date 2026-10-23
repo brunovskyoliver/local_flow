@@ -65,3 +65,13 @@ The app is not notarized and may require manual first-launch approval. No instal
 ## Homebrew tap update
 
 At the user's request, updated `brunovskyoliver/homebrew-tap` to v0.3.0 in commit https://github.com/brunovskyoliver/homebrew-tap/commit/33eca9e5e18587acc7722cb6f993a8b7bc6332e6. The cask checksum matches GitHub's published archive digest. It retains the ad-hoc installation caveats, explicitly describes manual updates, and does not declare `auto_updates`. Ruby syntax validation passed and the published cask was read back and compared with the intended content. No local application installation or upgrade was performed.
+
+## Follow-up: make release nested-signature failure
+
+Reproduced the user's exact `code has no resources but signature indicates they must be present` failure with strict codesign verification of both the Release app and Sparkle's Downloader.xpc. The source-built dependency's nested helpers had only linker-generated ad-hoc signatures; Xcode's CodeSignOnCopy signed the outer framework without sealing its nested bundles. Source and embedded copies exhibited the same failure, ruling out missing copied resources.
+
+Added a final Xcode build phase that signs embedded Mach-O files, then nested XPC/app bundles, then Sparkle.framework, and strictly verifies the result. It uses the active Xcode signing identity and preserves entitlements. It changes only the embedded copy, leaving the shared dependency cache untouched; unsigned builds skip it. The standalone packaging script already performs nested signing, so the published v0.3.0 ZIP is unaffected.
+
+A regression script exercises real source-built Sparkle bundles, unsigned-build skipping and repeated signing, and now runs in make check. The first concurrent check run lost a test-host process during the release installer quit step; it is not counted as passing. After the user closed LocalFlow, make release completed with exit 0, installed and opened /Applications/LocalFlow.app, and strict deep verification of the installed app passed. The final make check run was executed separately from installation and completed with exit 0: Mac client 1,933 passed, Server app 43 passed, iPhone 235 passed and shared core 32 passed, with zero failures and 32 skips. The new nested-signing regression check also passed.
+
+Evidence is in `/Users/oliver/agent-runs/2026-10-23-localflow-release/`: `sparkle-signing-test.log`, `make-release-fix-final.log` and `make-check-signing-fix-final.log`. No window presentation or application behavior changed.

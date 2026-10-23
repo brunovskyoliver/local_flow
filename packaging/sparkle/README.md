@@ -4,6 +4,11 @@ Sparkle 2.10.0, commit `eef1a539a373c1f1a320624b1130fc5de7b2e100`, is built
 from source by `scripts/prepare-sparkle.sh`. Source, products and tools live in
 ignored `build/Sparkle/`; no source checkout is committed. The Xcode app target
 runs preparation before compilation and embeds/signs the resulting framework.
+The final embedding phase runs `scripts/sign-embedded-sparkle.sh` for signed
+builds: it signs Mach-O files, nested XPC/app bundles and the framework in that
+order, then verifies the complete framework. CodeSignOnCopy alone does not seal
+the nested bundles produced by the unsigned dependency build. Unsigned test
+builds skip this step; distribution packaging has its own nested signing pass.
 Test targets inherit its framework search path. No extra Swift package is added.
 
 The upstream binary package cannot enforce the feature's feed memory bound.
