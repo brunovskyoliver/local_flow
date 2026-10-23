@@ -38,7 +38,9 @@ final class UpdateController {
   static func configured(bundle: Bundle = .main, busy: @escaping () -> Bool) -> UpdateController {
     #if DEBUG
       return UpdateController(
-        driver: nil, unavailableReason: "Updates are available in signed release builds.")
+        driver: nil,
+        unavailableReason:
+          "This build uses manual updates. Download the latest version from GitHub.")
     #else
       guard bundle.bundleIdentifier == "org.localflow.LocalFlow",
         bundle.object(forInfoDictionaryKey: "LocalFlowSignedUpdates") as? Bool == true,
@@ -48,7 +50,9 @@ final class UpdateController {
         Data(base64Encoded: key)?.count == 32
       else {
         return UpdateController(
-          driver: nil, unavailableReason: "Install a signed release to enable updates.")
+          driver: nil,
+          unavailableReason:
+            "This build uses manual updates. Download the latest version from GitHub.")
       }
       do { return UpdateController(driver: try SparkleUpdateDriver(busy: busy)) } catch {
         return UpdateController(

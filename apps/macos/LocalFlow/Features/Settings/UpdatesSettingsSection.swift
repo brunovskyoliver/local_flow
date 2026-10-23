@@ -2,23 +2,34 @@ import SwiftUI
 
 struct UpdatesSettingsSection: View {
   @Bindable var updater: UpdateController
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        Text("Software updates")
-        Spacer()
-        Button("Check for Updates…") { updater.check() }
-          .disabled(!updater.canCheck)
-          .accessibilityIdentifier("settings.checkForUpdates")
-      }
+    VStack(spacing: 0) {
       if let reason = updater.unavailableReason {
-        Text(reason).font(.caption).foregroundStyle(.secondary)
+        SettingsRow("Software updates", detail: reason) {
+          Link(
+            "View Downloads",
+            destination: URL(
+              string: "https://github.com/brunovskyoliver/local_flow/releases/latest")!
+          )
+          .accessibilityIdentifier("settings.updateDownloads")
+        }
       } else {
-        Toggle("Check for updates automatically", isOn: $updater.automaticallyChecks)
-          .accessibilityIdentifier("settings.automaticUpdates")
-        Text("You choose when to install. Updates wait until active work finishes.")
-          .font(.caption).foregroundStyle(.secondary)
+        SettingsRow("Latest version", detail: "You choose when to install.") {
+          Button("Check for Updates…") { updater.check() }
+            .disabled(!updater.canCheck)
+            .accessibilityIdentifier("settings.checkForUpdates")
+        }
+        SottoPalette.line.frame(height: 1)
+        SettingsRow(
+          "Check automatically", detail: "Installation waits until active work finishes."
+        ) {
+          Toggle("Check for updates automatically", isOn: $updater.automaticallyChecks)
+            .labelsHidden().toggleStyle(.switch)
+            .accessibilityIdentifier("settings.automaticUpdates")
+        }
       }
     }
+    .buttonStyle(PrototypeButtonStyle())
   }
 }

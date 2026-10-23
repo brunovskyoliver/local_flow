@@ -630,6 +630,46 @@ final class NativePresentationTests: XCTestCase {
   }
 
   @MainActor
+  func testRenderUpdateSettingsStates() async throws {
+    guard let path = ProcessInfo.processInfo.environment["LOCALFLOW_UI_CAPTURE_DIR"] else {
+      throw XCTSkip("Set TEST_RUNNER_LOCALFLOW_UI_CAPTURE_DIR for native render artifacts.")
+    }
+    let output = URL(fileURLWithPath: path, isDirectory: true)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    let states: [(String, UpdateController)] = [
+      (
+        "manual",
+        UpdateController(
+          driver: nil,
+          unavailableReason:
+            "This build uses manual updates. Download the latest version from GitHub.")
+      ),
+      ("checking", UpdateController(driver: nil)),
+      (
+        "failed",
+        UpdateController(
+          driver: nil, unavailableReason: "The updater could not start. Reopen LocalFlow to retry.")
+      ),
+    ]
+    for (name, updater) in states {
+      for width: CGFloat in [390, 670] {
+        for scheme: ColorScheme in [.light, .dark] {
+          try await render(
+            VStack(alignment: .leading, spacing: 13) {
+              Text("Updates").font(.flow(size: 14, weight: .medium))
+              UpdatesSettingsSection(updater: updater)
+                .padding(.horizontal, 19)
+                .background(SottoPalette.canvas, in: RoundedRectangle(cornerRadius: 12))
+            }.padding(28),
+            to: output.appendingPathComponent("updates-\(name)-\(Int(width))-\(scheme).png"),
+            appearance: scheme == .light ? .aqua : .darkAqua, scheme: scheme,
+            height: 280, width: width)
+        }
+      }
+    }
+  }
+
+  @MainActor
   private func render<V: View>(
     _ view: V, to url: URL, appearance: NSAppearance.Name, scheme: ColorScheme,
     height: CGFloat = 650, width: CGFloat = 670
