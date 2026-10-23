@@ -61,3 +61,7 @@ Published v0.3.0 at https://github.com/brunovskyoliver/local_flow/releases/tag/v
 The Release build and packaging succeeded. Extracted archive passed strict deep codesign verification, with ad-hoc signing confirmed, version/build checked, Google client ID present and signed updates disabled. GitHub's uploaded archive digest matched the verified local ZIP before publication. Production source is unchanged since the full passing make check; subsequent commits contain release documentation only. Build log: `/Users/oliver/agent-runs/2026-10-23-localflow-release/package-0.3.0.log`.
 
 The app is not notarized and may require manual first-launch approval. No installed app, Homebrew tap, remote server or dashboard deployment was changed. Signed automatic updates and outstanding live/hardware acceptance remain deferred.
+
+## Homebrew tap update
+
+At the user's request, updated `brunovskyoliver/homebrew-tap` to v0.3.0 in commit https://github.com/brunovskyoliver/homebrew-tap/commit/33eca9e5e18587acc7722cb6f993a8b7bc6332e6. The cask checksum matches GitHub's published archive digest. It retains the ad-hoc installation caveats, explicitly describes manual updates, and does not declare `auto_updates`. Ruby syntax validation passed and the published cask was read back and compared with the intended content. No local application installation or upgrade was performed.

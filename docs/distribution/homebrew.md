@@ -1,13 +1,13 @@
 # Homebrew distribution
 
-New production packages require Developer ID signing, notarization and a signed
-update feed. Older releases were ad-hoc signed. See [signed updates](updates.md)
-for the manual bootstrap, current release prerequisites and acceptance gates.
+The current v0.3.0 release is ad-hoc signed and not notarized, as requested by
+the maintainer. In-app updates are disabled; use Homebrew to upgrade. Future
+signed updates require the setup described in [signed updates](updates.md).
 
 ## Install
 
-The command below becomes available after the first release is published and
-its cask is synced to [homebrew-tap](https://github.com/brunovskyoliver/homebrew-tap).
+The v0.3.0 cask is published in
+[homebrew-tap](https://github.com/brunovskyoliver/homebrew-tap).
 Homebrew discovers that repository automatically from the tap name.
 
 ```sh
@@ -32,9 +32,8 @@ brew update
 brew upgrade --cask brunovskyoliver/tap/localflow
 ```
 
-The first signed bootstrap may require renewed macOS permissions. Later updates
-are available in the app's menu and Settings. For manual Homebrew updates of this
-`auto_updates` cask, use `brew upgrade --cask --greedy brunovskyoliver/tap/localflow`.
+This release does not declare `auto_updates`; the ordinary upgrade command above
+is sufficient. macOS may request permissions again after replacement.
 
 ## Use a shared LocalFlow server
 
