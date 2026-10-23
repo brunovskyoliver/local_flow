@@ -67,5 +67,5 @@ MVP = phases 1–3. Full scope = all six phases. Signed release and production h
 
 - [X] T032 Record the user-approved reporting policy amendment, constitution change and ADR clarification.
 - [X] T033 Add background enrollment with approval/identity checks, bounded retry and preserved disabled bindings; test enrollment, switching, revocation and deletion.
-- [ ] T034 Remove usage reporting UI and dialogs, verify settings build and run make check.
-- [ ] T035 Publish ad-hoc v0.3.1 with the completed fixes, update the Homebrew tap and record verification.
+- [X] T034 Remove usage reporting UI and dialogs, verify settings build and run make check.
+- [X] T035 Publish ad-hoc v0.3.1 with the completed fixes, update the Homebrew tap and record verification.

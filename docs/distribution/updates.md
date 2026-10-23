@@ -7,7 +7,7 @@ server is deployed separately and must be compatible before a client release.
 
 ## Current release exception
 
-The maintainer explicitly chose ad-hoc distribution for v0.3.0. It is not notarized and has in-app updates disabled. Publish only its ZIP and checksum, without a signed appcast or the generated auto-updating Homebrew cask. Users install it manually and may need to approve its first launch in macOS Privacy & Security. The signed production procedure below remains the path for enabling in-app updates later.
+The maintainer explicitly chose ad-hoc distribution for the v0.3.x releases. It is not notarized and has in-app updates disabled. Publish only its ZIP and checksum, without a signed appcast or the generated auto-updating Homebrew cask. Users install it manually and may need to approve its first launch in macOS Privacy & Security. The signed production procedure below remains the path for enabling in-app updates later.
 
 ## First signed installation
 

@@ -25,4 +25,4 @@ Server access still requires Google sign-in and administrator approval. New usag
 
 ## Verification and limits
 
-`make check` passed: 2,243 XCTest passes, zero failures and 32 skips. Focused Go race tests and updater transport/signature tests passed. Live context quality, hardware resource targets and signed-upgrade acceptance remain incomplete; no such acceptance is claimed.
+`make check` passed: 2,247 XCTest passes, zero failures and 32 skips. Focused Go race tests and updater transport/signature tests passed. Live context quality, hardware resource targets and signed-upgrade acceptance remain incomplete; no such acceptance is claimed.

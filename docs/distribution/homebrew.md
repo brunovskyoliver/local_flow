@@ -1,12 +1,12 @@
 # Homebrew distribution
 
-The current v0.3.0 release is ad-hoc signed and not notarized, as requested by
+The current v0.3.1 release is ad-hoc signed and not notarized, as requested by
 the maintainer. In-app updates are disabled; use Homebrew to upgrade. Future
 signed updates require the setup described in [signed updates](updates.md).
 
 ## Install
 
-The v0.3.0 cask is published in
+The v0.3.1 cask is published in
 [homebrew-tap](https://github.com/brunovskyoliver/homebrew-tap).
 Homebrew discovers that repository automatically from the tap name.
 
