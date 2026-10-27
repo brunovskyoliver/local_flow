@@ -27,3 +27,5 @@ Server access still requires Google sign-in and administrator approval. This rel
 The focused regression run executed 206 tests: 205 passed, one microphone check skipped, zero failures. It includes a real pinned Parakeet Ultra load/decode/release/reload/cancellation probe using synthetic audio. Native rendering passed for all onboarding steps in light and dark appearances.
 
 `make check` passed formatting, shared-package tests, validation and Go tests/vet, then stalled in Xcode's macOS test launcher. The built macOS test bundle passed the focused run directly. Fresh-account permission and background-service approval, real microphone capture, signed upgrades and hardware resource targets remain unverified. No such acceptance is claimed.
+
+A wider direct Mac run executed 1,979 tests, with 33 skips and one remote-upload timeout assertion failure. The affected remote-session, credential-store and usage-reporting suites then passed their 26-test focused recheck. The full repository gate is not claimed as passing.
