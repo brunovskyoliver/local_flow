@@ -49,6 +49,28 @@ struct ShortcutCancellationState {
   }
 }
 
+/// Reconciles grants with the installed event tap while setup is visible.
+struct ShortcutPermissionRecovery {
+  private var inputMonitoringAllowed = false
+  private var accessibilityAllowed = false
+
+  mutating func refresh(
+    inputMonitoring: Bool, accessibility: Bool, available: Bool, busy: Bool,
+    install: () throws -> Void
+  ) rethrows {
+    if inputMonitoring
+      && (!available || !inputMonitoringAllowed || accessibility != accessibilityAllowed)
+      && !busy
+    {
+      try install()
+    }
+    if !busy {
+      inputMonitoringAllowed = inputMonitoring
+      accessibilityAllowed = accessibility
+    }
+  }
+}
+
 @MainActor
 final class ShortcutController {
   enum Failure: Error {
@@ -106,14 +128,14 @@ final class ShortcutController {
     }
     guard CGPreflightListenEventAccess() else { throw Failure.permissionDenied }
     let priority = AXIsProcessTrusted()
-    guard priority || preference.kind == .fnGlobe else { throw Failure.accessibilityRequired }
+    let options = try Self.tapOptions(for: preference, accessibility: priority)
     let mask =
       (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
       | (1 << CGEventType.keyUp.rawValue)
     guard
       let newTap = CGEvent.tapCreate(
         tap: .cgSessionEventTap, place: .headInsertEventTap,
-        options: priority ? .defaultTap : .listenOnly,
+        options: options,
         eventsOfInterest: CGEventMask(mask),
         callback: { _, type, event, context in
           guard let context else { return Unmanaged.passUnretained(event) }
@@ -168,6 +190,15 @@ final class ShortcutController {
 
   static let idleHealthInterval: TimeInterval = 2
   static let heldPollInterval: TimeInterval = 0.1
+
+  static func tapOptions(for preference: ShortcutPreference, accessibility: Bool) throws
+    -> CGEventTapOptions
+  {
+    guard accessibility || preference.kind != .keyCombination else {
+      throw Failure.accessibilityRequired
+    }
+    return accessibility ? .defaultTap : .listenOnly
+  }
 
   private func checkHealth() {
     guard tap != nil else { return }

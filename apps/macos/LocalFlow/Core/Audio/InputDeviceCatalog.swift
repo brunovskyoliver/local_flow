@@ -169,6 +169,11 @@ final class CoreAudioInputCatalog: InputDeviceCataloging, @unchecked Sendable {
       ) { [weak self] _ in self?.queue.async { self?.rebuildOnQueue() } })
   }
 
+  /// Re-enumerate after Microphone access changes, even if HAL posts no device event.
+  func refresh() {
+    queue.async { self.rebuildOnQueue() }
+  }
+
   /// Removes the listeners at quit.
   func stop() {
     let shouldStop = lock.withLock {

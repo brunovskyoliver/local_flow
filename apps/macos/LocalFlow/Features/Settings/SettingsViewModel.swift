@@ -57,15 +57,17 @@ final class SettingsViewModel {
       return "Not installed · "
         + ByteCountFormatter.string(fromByteCount: downloadBytes, countStyle: .file)
     }
-    /// Ultra is the optional one; v3 is the default and the rollback.
+    /// New setups prefer Ultra; v3 remains available as an alternative.
     var role: String {
-      choice == .defaultChoice ? "Default dictation model" : "Optional dictation model"
+      choice == AppPreferences.firstRunSpeechModel
+        ? "Default for new setups" : "Alternative dictation model"
     }
   }
   struct Snapshot: Equatable {
     var modelInstalled = false
-    var speechModel = SpeechModelChoice.defaultChoice
-    var speechModelAttribution = SpeechModelChoice.defaultChoice.attribution
+    var speechModel = AppPreferences.firstRunSpeechModel
+    var speechModelAttribution = AppPreferences.firstRunSpeechModel.attribution
+    var modelInstallError: String?
     var alternateSpeechModel: AlternateSpeechModel?
     var keepModelReady = false
     var meetingModelInstalled = false
@@ -123,6 +125,25 @@ final class SettingsViewModel {
       storageAvailable && modelInstalled && microphone == .granted && inputMonitoring == .granted
         && shortcutReady
         && shortcut.enabled && !busy && !installing && !runtime.leased && runtime.controlsAvailable
+    }
+    var testBlockedReason: String? {
+      if !modelInstalled {
+        return modelInstallError ?? "Finish downloading speech recognition first."
+      }
+      if microphone != .granted { return "Allow Microphone access to record." }
+      if inputMonitoring != .granted { return "Allow Input Monitoring to use the shortcut." }
+      if !shortcut.enabled { return "Enable a dictation shortcut." }
+      if !shortcutReady {
+        return shortcut.kind == .keyCombination && accessibility != .granted
+          ? "Allow Accessibility for this shortcut, or choose a modifier key."
+          : "Starting the dictation shortcut…"
+      }
+      if installing || !runtime.controlsAvailable {
+        return "Wait for the model operation to finish."
+      }
+      if busy { return "Wait for the current dictation to finish." }
+      if !storageAvailable { return "Local storage is not ready. Check Settings before recording." }
+      return nil
     }
   }
   private(set) var snapshot = Snapshot()

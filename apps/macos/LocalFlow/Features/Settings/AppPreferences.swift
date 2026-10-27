@@ -21,6 +21,7 @@ final class AppPreferences {
     }
   }
   static let currentSetupVersion = 1
+  nonisolated static let firstRunSpeechModel = SpeechModelChoice.parakeetUltra
   @ObservationIgnored private let defaults: UserDefaults
   var appearance: Appearance {
     didSet { defaults.set(appearance.rawValue, forKey: "appearance") }
@@ -28,7 +29,7 @@ final class AppPreferences {
   var keepModelReady: Bool {
     didSet { defaults.set(keepModelReady, forKey: "keepModelReady") }
   }
-  /// The local dictation model: Parakeet v3 unless the owner installed and chose Ultra.
+  /// New setups use Ultra; existing installations keep their saved or legacy choice.
   /// Changed only by AppServices after the switch went through the model lifecycle.
   var speechModel: SpeechModelChoice {
     didSet { defaults.set(speechModel.rawValue, forKey: "speechModel") }
@@ -351,7 +352,13 @@ final class AppPreferences {
     summaryServerModel = defaults.string(forKey: SummaryServer.modelKey) ?? ""
     appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
     keepModelReady = defaults.bool(forKey: "keepModelReady")
-    speechModel = SpeechModelChoice(storedValue: defaults.string(forKey: "speechModel"))
+    if let stored = defaults.string(forKey: "speechModel") {
+      speechModel = SpeechModelChoice(storedValue: stored)
+    } else {
+      speechModel =
+        defaults.integer(forKey: "setupVersion") == 0
+        ? Self.firstRunSpeechModel : .defaultChoice
+    }
     localModelIdleUnload =
       LocalModelIdleUnload(rawValue: defaults.integer(forKey: "localModelIdleUnload")) ?? .never
     unloadLocalModelDuringGames =
@@ -388,6 +395,7 @@ final class AppPreferences {
   }
 
   func completeOnboarding() {
+    defaults.set(speechModel.rawValue, forKey: "speechModel")
     setupVersion = Self.currentSetupVersion
     defaults.set(setupVersion, forKey: "setupVersion")
   }

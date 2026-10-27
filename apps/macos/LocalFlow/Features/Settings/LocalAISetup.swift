@@ -10,20 +10,22 @@ final class LocalAISetup {
   let physicalMemory: UInt64
   /// Catalog ids already pulled; checked once, when onboarding opens.
   let downloaded: Set<String>
-  @ObservationIgnored private let installer: LocalAIInstaller?
+  @ObservationIgnored private let installer: (any LocalAIInstalling)?
   @ObservationIgnored private let preferences: AppPreferences?
-  @ObservationIgnored private var task: Task<Void, Never>?
+  @ObservationIgnored private(set) var task: Task<Void, Never>?
+  @ObservationIgnored private let ready: @MainActor () -> Void
 
   init(
-    preferences: AppPreferences?, installer: LocalAIInstaller?,
+    preferences: AppPreferences?, installer: (any LocalAIInstalling)?,
     physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory,
     phase: LocalAIPhase = .idle, selection: LocalAIModel? = nil,
-    downloaded: Set<String>? = nil
+    downloaded: Set<String>? = nil, ready: @escaping @MainActor () -> Void = {}
   ) {
     let downloaded =
       downloaded ?? Set(LocalAIModel.catalog.filter { $0.isDownloaded() }.map(\.id))
     self.preferences = preferences
     self.installer = installer
+    self.ready = ready
     self.physicalMemory = physicalMemory
     self.phase = phase
     self.downloaded = downloaded
@@ -65,10 +67,20 @@ final class LocalAISetup {
 
   func cancel() { task?.cancel() }
 
+  /// Continue the user's pending setup when they return from approving Login Items.
+  func resumeAfterApproval() async {
+    guard phase == .failed(.approvalRequired), task == nil, let installer,
+      await installer.backgroundServicesEnabled()
+    else { return }
+    start()
+  }
+
   private func finish(_ outcome: LocalAIPhase) {
     task = nil
     phase = outcome
-    guard outcome == .ready, let preferences else { return }
+    guard outcome == .ready else { return }
+    ready()
+    guard let preferences else { return }
     preferences.rewriteEndpoint = LocalAIInstaller.rewriteEndpoint
     preferences.rewriteEnabled = true
   }

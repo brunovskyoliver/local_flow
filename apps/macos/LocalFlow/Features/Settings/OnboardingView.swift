@@ -68,6 +68,15 @@ struct OnboardingView: View {
       headline("You're ", "all set", ".")
       Text("Hold your shortcut in any app to dictate.").foregroundStyle(SottoPalette.muted)
     }
+    if coordinator.aiMode == .local, localAI.phase != .ready,
+      [.permissions, .personalize, .test].contains(coordinator.step)
+    {
+      SetupCard {
+        DownloadRow(
+          symbol: "sparkles", title: "On-device AI", detail: localAI.selection.name,
+          state: aiState, retry: { localAI.start() })
+      }
+    }
   }
 
   // MARK: Steps
@@ -275,9 +284,10 @@ struct OnboardingView: View {
     SetupCard {
       DownloadRow(
         symbol: "waveform", title: "Speech recognition",
-        detail: "Parakeet v3 · \(Self.bytes(settings.snapshot.downloadBytes ?? 483_105_645))"
+        detail:
+          "\(settings.snapshot.speechModel.displayName) · \(Self.bytes(settings.snapshot.downloadBytes ?? 632_162_964))"
           + (coordinator.aiMode == .remote ? " · used when the server can't be reached" : ""),
-        state: speechState)
+        state: speechState, retry: { Task { await settings.run(.download) } })
       switch coordinator.aiMode {
       case .local:
         DownloadRow(
@@ -396,16 +406,26 @@ struct OnboardingView: View {
         ? "Your first transcript is saved in Transcriptions."
         : "Press the button, then hold \(settings.snapshot.shortcut.title) and say a short sentence. Release to transcribe."
     )
-    if !settings.readyForTest {
-      Text("Check the speech model, Microphone, Input Monitoring and shortcut first.")
+    if !coordinator.testSucceeded {
+      Text("This test is optional. You can start dictating after setup.")
+        .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+    }
+    if let reason = settings.snapshot.testBlockedReason {
+      Text(reason)
         .foregroundStyle(SottoPalette.warning)
     }
-    Button(coordinator.testArmed ? "Listening for your shortcut…" : "Start test") {
+    Button(
+      coordinator.preparingTest
+        ? "Preparing speech model…"
+        : coordinator.testArmed ? "Listening for your shortcut…" : "Start test"
+    ) {
       Task { await coordinator.armTest() }
     }
     .buttonStyle(PrototypeButtonStyle())
-    .disabled(!settings.readyForTest || coordinator.testArmed || coordinator.testSucceeded)
-    if let error = settings.error {
+    .disabled(
+      !settings.readyForTest || coordinator.preparingTest || coordinator.testArmed
+        || coordinator.testSucceeded)
+    if let error = coordinator.testError ?? settings.error {
       Text(error).font(.flow(size: 13)).foregroundStyle(SottoPalette.warning)
     }
   }
@@ -460,6 +480,12 @@ struct OnboardingView: View {
         Button("Skip for now") { coordinator.skipAI() }
           .buttonStyle(PrototypeButtonStyle())
       }
+      if coordinator.step == .test && !coordinator.testSucceeded {
+        Button("Skip test") { coordinator.skipTest() }
+          .buttonStyle(PrototypeButtonStyle())
+          .accessibilityHint("Finish setup without recording a dictation.")
+          .accessibilityIdentifier("onboarding.skipTest")
+      }
       if coordinator.step != .complete {
         Button(primaryTitle, action: primaryAction)
           .buttonStyle(PrimaryButtonStyle())
@@ -488,7 +514,7 @@ struct OnboardingView: View {
     case .aiDetails where coordinator.aiMode == .remote && !remoteConnected && !remoteEnrolled:
       "Sign in to continue"
     case .downloads where !settings.snapshot.modelInstalled: "Waiting for speech recognition…"
-    case .permissions where !settings.readyForTest: "Allow Microphone and Input Monitoring"
+    case .permissions, .personalize: settings.snapshot.testBlockedReason
     default: nil
     }
   }
@@ -524,6 +550,7 @@ struct OnboardingView: View {
   private var speechState: DownloadRow.State {
     let snapshot = settings.snapshot
     if snapshot.modelInstalled { return .done }
+    if let error = snapshot.modelInstallError { return .failed(error) }
     if let error = settings.error, !snapshot.installing { return .failed(error) }
     guard snapshot.installing else { return .waiting("Queued") }
     if snapshot.progress.phase == .verifying { return .working("Verifying…") }

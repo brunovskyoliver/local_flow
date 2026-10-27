@@ -15,23 +15,28 @@ final class OnboardingCoordinator {
   private(set) var meetingsRequested = false
   private(set) var testArmed = false
   private(set) var testSucceeded = false
+  private(set) var preparingTest = false
+  private(set) var testError: String?
   private let preferences: AppPreferences
   private var armedSessionID: UUID?
   @ObservationIgnored private let liveReadiness: @MainActor () async -> SettingsViewModel.Snapshot
   /// Starts the speech model and, for `local`, MTPLX. Downloads outlive the step.
   @ObservationIgnored private let startDownloads: @MainActor (_ localAI: Bool) -> Void
   @ObservationIgnored private let startMeetingModels: @MainActor () -> Void
+  @ObservationIgnored private let prepareTest: @MainActor () async throws -> Void
 
   init(
     preferences: AppPreferences,
     liveReadiness: @escaping @MainActor () async -> SettingsViewModel.Snapshot = { .init() },
     startDownloads: @escaping @MainActor (_ localAI: Bool) -> Void = { _ in },
-    startMeetingModels: @escaping @MainActor () -> Void = {}
+    startMeetingModels: @escaping @MainActor () -> Void = {},
+    prepareTest: @escaping @MainActor () async throws -> Void = {}
   ) {
     self.preferences = preferences
     self.liveReadiness = liveReadiness
     self.startDownloads = startDownloads
     self.startMeetingModels = startMeetingModels
+    self.prepareTest = prepareTest
   }
 
   /// The primary button. The view gates each step; remote setup is saved before advancing.
@@ -69,6 +74,7 @@ final class OnboardingCoordinator {
   func back() {
     guard step != .complete, step != .introduction else { return }
     testArmed = false
+    testError = nil
     armedSessionID = nil
     switch step {
     case .downloads: step = aiMode == .off ? .ai : .aiDetails
@@ -77,13 +83,25 @@ final class OnboardingCoordinator {
     }
   }
   func armTest() async {
+    guard step == .test, !preparingTest, !testArmed else { return }
     let readiness = await liveReadiness()
-    startTest(readiness: readiness)
+    guard readiness.readyForTest, step == .test, !preparingTest, !testArmed else { return }
+    preparingTest = true
+    testError = nil
+    defer { preparingTest = false }
+    do {
+      try await prepareTest()
+      startTest(readiness: await liveReadiness())
+    } catch {
+      guard step == .test else { return }
+      testError = DictationErrorMessage.describe(error)
+    }
   }
 
   func startTest(readiness: SettingsViewModel.Snapshot) {
     guard step == .test, readiness.readyForTest else { return }
     testSucceeded = false
+    testError = nil
     armedSessionID = nil
     testArmed = true
   }
@@ -100,8 +118,29 @@ final class OnboardingCoordinator {
     testArmed = false
     testSucceeded = true
   }
+
+  func dictationEnded(id: UUID, message: String) {
+    guard step == .test, testArmed, armedSessionID == id else { return }
+    testArmed = false
+    armedSessionID = nil
+    testError = message
+  }
+
+  /// The microphone check is useful but not required to finish first-run setup.
+  func skipTest() {
+    guard step == .test else { return }
+    finish()
+  }
+
   func complete() {
     guard step == .test, testSucceeded else { return }
+    finish()
+  }
+
+  private func finish() {
+    testArmed = false
+    armedSessionID = nil
+    testError = nil
     preferences.completeOnboarding()
     step = .complete
   }

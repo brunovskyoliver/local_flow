@@ -9,6 +9,10 @@ server is deployed separately and must be compatible before a client release.
 
 The maintainer explicitly chose ad-hoc distribution for the v0.3.x releases. It is not notarized and has in-app updates disabled. Publish only its ZIP and checksum, without a signed appcast or the generated auto-updating Homebrew cask. Users install it manually and may need to approve its first launch in macOS Privacy & Security. The signed production procedure below remains the path for enabling in-app updates later.
 
+Manual v0.3.x tags do not trigger the production-only release workflow. Its explicit
+workflow dispatch remains available for a deliberately configured signed release,
+and other version tags retain the signing and compatible-server prerequisites.
+
 ## First signed installation
 
 Older ad-hoc builds contain no updater or trusted update public key. Install the

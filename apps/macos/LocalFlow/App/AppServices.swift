@@ -32,10 +32,18 @@ final class AppServices {
     preferences: preferences,
     liveReadiness: { [weak self] in await self?.settingsSnapshot() ?? .init() },
     startDownloads: { [weak self] localAI in self?.beginSetupDownloads(localAI: localAI) },
-    startMeetingModels: { [weak self] in self?.downloadMeetingModels() })
+    startMeetingModels: { [weak self] in self?.downloadMeetingModels() },
+    prepareTest: { [weak self] in
+      guard let self else { throw DictationFailure.modelUnavailable }
+      if !self.preferences.serverRouting.servedByServer(.dictation) {
+        try await self.performSetting(.load)
+      }
+    })
   @ObservationIgnored lazy var localAI = LocalAISetup(
-    preferences: preferences, installer: LocalAIInstaller())
+    preferences: preferences, installer: LocalAIInstaller(),
+    ready: { [weak self] in self?.localHelpersReady = true })
   @ObservationIgnored private var meetingModelsTask: Task<Void, Never>?
+  @ObservationIgnored private var setupBoostTask: Task<Void, Never>?
   @ObservationIgnored lazy var settings = SettingsViewModel(
     observe: { [weak self] in await self?.settingsSnapshot() ?? .init() },
     perform: { [weak self] action in try await self?.performSetting(action) },
@@ -125,7 +133,7 @@ final class AppServices {
   @ObservationIgnored private var starting = false
   @ObservationIgnored private var instanceLock: AppInstanceLock?
   @ObservationIgnored private var lifecycle: ModelLifecycleCoordinator?
-  /// Parakeet v3 (default) or Ultra. Dictation and live previews load `current`; a
+  /// Parakeet Ultra for new setups or v3. Dictation and live previews load `current`; a
   /// switch goes through the lifecycle's install gate (`SpeechModelSelection.select`).
   @ObservationIgnored private var speechModels: SpeechModelSelection?
   private var provisioner: ModelProvisioner? { speechModels?.current.provisioner }
@@ -159,8 +167,9 @@ final class AppServices {
   @ObservationIgnored private(set) lazy var inputDevices = UserDefaultsInputDevicePriorityStore()
   @ObservationIgnored private lazy var inputTimings = InputDeviceTimingStore()
   @ObservationIgnored private var inputReconcile: Task<Void, Never>?
-  @ObservationIgnored private var lastInputMonitoringAllowed = false
-  @ObservationIgnored private var lastAccessibilityAllowed = false
+  @ObservationIgnored private var shortcutRecovery = ShortcutPermissionRecovery()
+  @ObservationIgnored private var lastMicrophoneAllowed = false
+  private var modelInstallError: String?
   @ObservationIgnored private var settingsWake: AsyncStream<Void>.Continuation?
   @ObservationIgnored private var phaseStarted = DispatchTime.now().uptimeNanoseconds
   @ObservationIgnored private var measuredPhase: DictationSession.State = .idle
@@ -303,7 +312,8 @@ final class AppServices {
         localHelpersReady = true
       } catch {
         localHelpersReady = false
-        setupStatus = "The bundled AI helper could not restart. Reopen LocalFlow to retry."
+        setupStatus =
+          "The bundled AI helper could not restart. It will retry before the next request."
       }
       followLocalModelChoice()
       let speechModels = try Self.loadSpeechModels(selected: preferences.speechModel)
@@ -825,6 +835,11 @@ final class AppServices {
       coordinator.stateChanged = { [weak self, weak coordinator] state in
         guard let self, let coordinator else { return }
         self.recordTransition(state, cycleID: coordinator.controlTag?.sessionID)
+        if [.idle, .failed, .recovery].contains(state),
+          let id = coordinator.controlTag?.sessionID
+        {
+          self.onboarding.dictationEnded(id: id, message: coordinator.status)
+        }
         self.shortcut.setSessionActive(
           [
             .preparing, .connecting, .recording, .transcribing, .persisting, .rewriting,
@@ -878,7 +893,6 @@ final class AppServices {
           beginInstallation(source: source)
         }
       #endif
-      lastInputMonitoringAllowed = CGPreflightListenEventAccess()
       configureShortcut(ShortcutPreference.load())
       startMeasurements()
       // Meeting and speaker models are not needed to dictate; a first-launch full hash
@@ -1596,17 +1610,24 @@ final class AppServices {
   }
 
   private func refreshSettingsState() async {
+    let microphone = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    if microphone && !lastMicrophoneAllowed { inputCatalog.refresh() }
+    lastMicrophoneAllowed = microphone
     let allowed = CGPreflightListenEventAccess()
     let accessibility = AXIsProcessTrusted()
-    if allowed && (!lastInputMonitoringAllowed || accessibility != lastAccessibilityAllowed)
-      && coordinator?.busy != true
-    {
-      configureShortcut(ShortcutPreference.load())
+    let preference = ShortcutPreference.load()
+    do {
+      try shortcutRecovery.refresh(
+        inputMonitoring: allowed && preference.enabled, accessibility: accessibility,
+        available: shortcut.isAvailable,
+        busy: coordinator == nil || coordinator?.busy == true
+      ) {
+        try shortcut.install(preference)
+      }
+    } catch {
+      setupStatus = DictationErrorMessage.describe(error)
     }
-    if coordinator?.busy != true {
-      lastInputMonitoringAllowed = allowed
-      lastAccessibilityAllowed = accessibility
-    }
+    await localAI.resumeAfterApproval()
     await settings.refresh()
   }
 
@@ -1627,6 +1648,7 @@ final class AppServices {
   private func settingsSnapshot() async -> SettingsViewModel.Snapshot {
     var snapshot = SettingsViewModel.Snapshot()
     snapshot.modelInstalled = modelInstalled
+    snapshot.modelInstallError = modelInstallError
     snapshot.meetingModelInstalled = meetingModelInstalled
     snapshot.meetingModelInstalling = meetingModelInstalling
     snapshot.speakerModelInstalled = speakerModelInstalled
@@ -2100,10 +2122,13 @@ final class AppServices {
     if !modelInstalled { downloadModel() }
     if wanted { localAI.start() }
     // The term booster follows the speech model through the same install gate.
-    if !boostModelInstalled {
-      Task { [weak self] in
+    if !boostModelInstalled, setupBoostTask == nil {
+      setupBoostTask = Task { [weak self] in
         await self?.installTask?.value
-        do { try await self?.installBoostModel() } catch {
+        guard let self else { return }
+        defer { setupBoostTask = nil }
+        guard modelInstalled, !Task.isCancelled else { return }
+        do { try await installBoostModel() } catch {
           Self.logModelFailure("Term booster", error)
         }
       }
@@ -2116,6 +2141,7 @@ final class AppServices {
     guard meetingModelsTask == nil else { return }
     meetingModelsTask = Task { [weak self] in
       await self?.installTask?.value
+      await self?.setupBoostTask?.value
       guard let self else { return }
       defer { meetingModelsTask = nil }
       do {
@@ -2134,6 +2160,7 @@ final class AppServices {
       return
     }
     setupStatus = source == nil ? "Downloading model files…" : "Importing model files…"
+    modelInstallError = nil
     installTask = Task {
       let observer = Task {
         while !Task.isCancelled {
@@ -2169,13 +2196,19 @@ final class AppServices {
           setupStatus =
             "Installation failed. Check the pinned files, connection and available storage."
         }
+        if !modelInstalled { modelInstallError = setupStatus }
       }
     }
   }
   private var localHelpersReady = false
 
   private func localBackendReady() async -> Bool {
-    guard localHelpersReady else { return false }
+    if !localHelpersReady {
+      do {
+        try await LocalAIInstaller().reconcileBundledHelpers()
+        localHelpersReady = true
+      } catch { return false }
+    }
     let local = RewriteEndpoint(
       url: URL(string: LocalAIInstaller.rewriteEndpoint)!, origin: LocalAIInstaller.rewriteEndpoint)
     return (try? await rewriteClient.health(endpoint: local))?.backendReady == true

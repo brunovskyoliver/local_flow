@@ -94,8 +94,8 @@ final class NativePresentationTests: XCTestCase {
     defer { defaults.removePersistentDomain(forName: suite) }
     var snapshot = SettingsViewModel.Snapshot()
     snapshot.installing = true
-    snapshot.downloadBytes = 483_105_645
-    snapshot.progress = .init(phase: .staging, completedBytes: 301_000_000, totalBytes: 483_105_645)
+    snapshot.downloadBytes = 632_162_964
+    snapshot.progress = .init(phase: .staging, completedBytes: 301_000_000, totalBytes: 632_162_964)
     snapshot.microphone = .granted
     snapshot.inputMonitoring = .unknown
     snapshot.accessibility = .denied
@@ -152,6 +152,16 @@ final class NativePresentationTests: XCTestCase {
       ("7-downloads-meetings", view, { coordinator.downloadMeetingModels() }),
       ("8-permissions", view, { coordinator.advance(readiness: installed) }),
       ("9-personalize", later, { coordinator.advance(readiness: installed) }),
+      ("10-optional-test", later, { coordinator.advance(readiness: installed) }),
+      (
+        "11-retry-test", later,
+        {
+          coordinator.startTest(readiness: installed)
+          let id = UUID()
+          coordinator.dictationStarted(id: id)
+          coordinator.dictationEnded(id: id, message: "Microphone did not respond. Try again.")
+        }
+      ),
     ]
     for (name, screen, step) in captures {
       step()

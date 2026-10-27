@@ -75,6 +75,7 @@ final class HelperReconcilerTests: XCTestCase {
     func read() -> String? { hash }
     func count() -> Int { restarts }
     func failRestart() { succeeds = false }
+    func allowRestart() { succeeds = true }
   }
   func testOldHelperIsRestartedAndNewIdentityVerified() async throws {
     let host = Host()
@@ -98,6 +99,10 @@ final class HelperReconcilerTests: XCTestCase {
       try await reconcile.reconcile()
       XCTFail("Accepted old helper")
     } catch HelperReconciler.Failure.unverified {}
+    await host.allowRestart()
+    try await reconcile.reconcile()
+    let attempts = await host.count()
+    XCTAssertEqual(attempts, 2, "A failed startup must be retryable without restarting the app")
   }
   func testScriptChangeForcesReconciliation() async throws {
     let host = Host()

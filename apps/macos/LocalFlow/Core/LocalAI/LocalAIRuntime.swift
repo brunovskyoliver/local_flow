@@ -102,7 +102,13 @@ enum LocalAIError: Error, Equatable, Sendable {
 /// Installs the MTPLX runtime and a chosen model under Application Support and
 /// registers the bundled mtplx and flowd login services (ADR 0026). Nothing here
 /// loads weights: MTPLX runs in its own process, launched by launchd.
-actor LocalAIInstaller {
+protocol LocalAIInstalling: Sendable {
+  func install(_ model: LocalAIModel, report: @escaping @Sendable (LocalAIPhase) -> Void)
+    async throws
+  func backgroundServicesEnabled() async -> Bool
+}
+
+actor LocalAIInstaller: LocalAIInstalling {
   static let servedModelID = "localflow"
   static let rewriteEndpoint = AppIdentity.current.rewriteEndpoint
   static let mtplxLabel = AppIdentity.current.mtplxLabel
@@ -132,6 +138,28 @@ actor LocalAIInstaller {
 
   private var log: URL {
     AppIdentity.current.logsDirectory.appendingPathComponent("local-ai-setup.log")
+  }
+
+  func backgroundServicesEnabled() -> Bool {
+    [Self.mtplxLabel, Self.flowdLabel].allSatisfy {
+      SMAppService.agent(plistName: $0 + ".plist").status == .enabled
+    }
+  }
+
+  /// Registration is not proof that macOS has approved or started the service.
+  static func registerService(
+    status: () -> SMAppService.Status, register: () throws -> Void
+  ) throws {
+    guard status() != .enabled else { return }
+    guard status() != .requiresApproval else { throw LocalAIError.approvalRequired }
+    do { try register() } catch {
+      if status() == .requiresApproval { throw LocalAIError.approvalRequired }
+      throw LocalAIError.serviceRegistration
+    }
+    guard status() == .enabled else {
+      throw status() == .requiresApproval
+        ? LocalAIError.approvalRequired : LocalAIError.serviceRegistration
+    }
   }
 
   func install(_ model: LocalAIModel, report: @escaping @Sendable (LocalAIPhase) -> Void)
@@ -170,12 +198,17 @@ actor LocalAIInstaller {
 
     report(.starting)
     let restartMTPLX = mtplx.status == .enabled
-    for service in [mtplx, flowd] where service.status != .enabled {
-      do { try service.register() } catch {
-        guard service.status == .requiresApproval else { throw LocalAIError.serviceRegistration }
-        SMAppService.openSystemSettingsLoginItems()
-        throw LocalAIError.approvalRequired
+    var needsApproval = false
+    for service in [mtplx, flowd] {
+      do {
+        try Self.registerService(status: { service.status }, register: { try service.register() })
+      } catch LocalAIError.approvalRequired {
+        needsApproval = true
       }
+    }
+    if needsApproval {
+      SMAppService.openSystemSettingsLoginItems()
+      throw LocalAIError.approvalRequired
     }
     try await reconcileBundledHelpers()
     // The agent never starts itself. A changed model needs a fresh mtplx

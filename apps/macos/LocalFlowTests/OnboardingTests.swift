@@ -1,9 +1,10 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowSpeech
 
 final class OnboardingTests: XCTestCase {
-  @MainActor func testCopyOnlyNeedsSuccessfulTestBeforeCompletion() {
+  @MainActor func testSuccessfulDictationCompletesOnboarding() {
     let suite = "LocalFlow-onboarding-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -39,9 +40,108 @@ final class OnboardingTests: XCTestCase {
     setup.complete()
     XCTAssertTrue(preferences.onboardingComplete)
   }
+
+  @MainActor func testMicrophoneTestCanBeSkipped() {
+    let suite = "LocalFlow-onboarding-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    let setup = OnboardingCoordinator(preferences: preferences)
+    var readiness = SettingsViewModel.Snapshot()
+    setup.advance(readiness: readiness)
+    setup.skipAI()
+    readiness.modelInstalled = true
+    readiness.storageAvailable = true
+    setup.advance(readiness: readiness)
+    readiness.microphone = .granted
+    readiness.inputMonitoring = .granted
+    readiness.shortcutReady = true
+    setup.advance(readiness: readiness)
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .test)
+
+    setup.skipTest()
+
+    XCTAssertEqual(setup.step, .complete)
+    XCTAssertTrue(preferences.onboardingComplete)
+  }
 }
 
 extension OnboardingTests {
+  @MainActor private func readySnapshot() -> SettingsViewModel.Snapshot {
+    var snapshot = SettingsViewModel.Snapshot()
+    snapshot.modelInstalled = true
+    snapshot.storageAvailable = true
+    snapshot.microphone = .granted
+    snapshot.inputMonitoring = .granted
+    snapshot.shortcutReady = true
+    return snapshot
+  }
+
+  @MainActor private func reachTest(_ setup: OnboardingCoordinator) {
+    let ready = readySnapshot()
+    setup.advance(readiness: ready)
+    setup.skipAI()
+    setup.advance(readiness: ready)
+    setup.advance(readiness: ready)
+    setup.advance(readiness: ready)
+    XCTAssertEqual(setup.step, .test)
+  }
+
+  @MainActor func testFailedOrCancelledRecordingCanRetryWithoutRestart() {
+    let suite = "LocalFlow-onboarding-retry-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    let setup = OnboardingCoordinator(preferences: preferences)
+    reachTest(setup)
+    for message in ["Microphone did not respond.", "Cancelled"] {
+      setup.startTest(readiness: readySnapshot())
+      let id = UUID()
+      setup.dictationStarted(id: id)
+      setup.dictationEnded(id: UUID(), message: "Old session")
+      XCTAssertTrue(setup.testArmed)
+      setup.dictationEnded(id: id, message: message)
+      XCTAssertFalse(setup.testArmed)
+      XCTAssertFalse(setup.testSucceeded)
+      XCTAssertEqual(setup.testError, message)
+      XCTAssertFalse(preferences.onboardingComplete)
+    }
+    setup.startTest(readiness: readySnapshot())
+    XCTAssertNil(setup.testError)
+    let id = UUID()
+    setup.dictationStarted(id: id)
+    setup.recordSuccessfulDictation(id: id)
+    setup.dictationEnded(id: id, message: "Ready")
+    XCTAssertTrue(setup.testSucceeded)
+    setup.complete()
+    XCTAssertTrue(preferences.onboardingComplete)
+  }
+
+  @MainActor func testSpeechModelPreparationFailureCanRetryBeforeArming() async {
+    let suite = "LocalFlow-onboarding-prepare-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let ready = readySnapshot()
+    var attempts = 0
+    let setup = OnboardingCoordinator(
+      preferences: AppPreferences(defaults: defaults), liveReadiness: { ready },
+      prepareTest: {
+        attempts += 1
+        if attempts == 1 { throw DictationFailure.modelUnavailable }
+      })
+    reachTest(setup)
+    await setup.armTest()
+    XCTAssertFalse(setup.testArmed)
+    XCTAssertFalse(setup.preparingTest)
+    XCTAssertNotNil(setup.testError)
+    await setup.armTest()
+    XCTAssertTrue(setup.testArmed)
+    XCTAssertFalse(setup.preparingTest)
+    XCTAssertNil(setup.testError)
+    XCTAssertEqual(attempts, 2)
+  }
+
   @MainActor func testReadinessRequiresEveryLocalPrerequisiteButNotAccessibility() {
     var state = SettingsViewModel.Snapshot()
     state.modelInstalled = true
@@ -126,6 +226,16 @@ extension OnboardingTests {
     XCTAssertFalse(readiness.readyForTest)
     readiness.runtime = .init(state: .releasing, loaded: false, leased: false, installing: false)
     XCTAssertFalse(readiness.readyForTest)
+  }
+
+  @MainActor func testModelWorkDoesNotMislabelGrantedPermissions() {
+    var readiness = readySnapshot()
+    readiness.runtime = .init(state: .unloaded, loaded: false, leased: false, installing: true)
+    XCTAssertFalse(readiness.readyForTest)
+    XCTAssertEqual(readiness.testBlockedReason, "Wait for the model operation to finish.")
+    readiness.runtime = .init(state: .unloaded, loaded: false, leased: false, installing: false)
+    XCTAssertTrue(readiness.readyForTest)
+    XCTAssertNil(readiness.testBlockedReason)
   }
 }
 

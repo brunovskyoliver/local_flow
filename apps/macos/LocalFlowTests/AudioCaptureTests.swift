@@ -213,9 +213,61 @@ final class AudioCaptureTests: XCTestCase {
   // MARK: Feature 019 — input binding (T008)
 
   private func makeSpool() throws -> (AudioSpool, URL) {
-    let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
-      UUID().uuidString)
+    let root = try makeSpoolRoot()
     return (try AudioSpool(rootDirectory: root), root)
+  }
+
+  func testGrantingMicrophonePermissionDoesNotRequireRecreatingCaptureService() async throws {
+    let (spool, root) = try makeSpool()
+    defer {
+      try? spool.cleanup()
+      try? FileManager.default.removeItem(at: root)
+    }
+    let authorized = AtomicFlag()
+    let bound = AtomicFlag()
+    let service = AudioCaptureService(
+      openInput: { _ in
+        bound.set(true)
+        throw AudioCaptureFailure.deviceLost
+      }, permission: { authorized.value ? .authorized : .denied })
+    do {
+      _ = try await service.start(sessionID: UUID(), spool: spool, input: .device(42))
+      XCTFail("Permission is still denied")
+    } catch { XCTAssertEqual(error as? AudioCaptureFailure, .permissionDenied) }
+    XCTAssertFalse(bound.value)
+    authorized.set(true)
+    do {
+      _ = try await service.start(sessionID: UUID(), spool: spool, input: .device(42))
+      XCTFail("The test device must fail at binding")
+    } catch { XCTAssertEqual(error as? AudioCaptureFailure, .deviceLost) }
+    XCTAssertTrue(bound.value, "The same capture service must observe the new grant")
+  }
+
+  /// Records locally for less than a second, then deletes the spool. Never transcribes.
+  func testOptInMicrophoneCapture() async throws {
+    guard ProcessInfo.processInfo.environment["LOCALFLOW_MIC_PROBE"] == "1" else {
+      throw XCTSkip("Set LOCALFLOW_MIC_PROBE=1 to exercise the current microphone.")
+    }
+    guard AudioCaptureService.permissionStatus == .authorized else {
+      throw XCTSkip("The test host has no Microphone grant. No permissions were changed.")
+    }
+    let (spool, root) = try makeSpool()
+    defer {
+      try? spool.cleanup()
+      try? FileManager.default.removeItem(at: root)
+    }
+    let service = AudioCaptureService()
+    let id = UUID()
+    do {
+      _ = try await service.start(sessionID: id, spool: spool, input: .systemDefault)
+      try await Task.sleep(for: .milliseconds(750))
+      let result = try await service.stop(sessionID: id, tail: nil)
+      XCTAssertGreaterThan(result.sampleCount, 0, "The microphone delivered no samples")
+      XCTAssertEqual(result.reason, .keyRelease)
+    } catch {
+      _ = try? await service.cancel(sessionID: id)
+      throw error
+    }
   }
 
   func testDeviceBindingFailureIsDeviceLossAndLeavesTheSpoolEmpty() async throws {

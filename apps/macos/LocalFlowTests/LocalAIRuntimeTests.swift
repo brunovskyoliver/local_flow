@@ -1,3 +1,4 @@
+import ServiceManagement
 import XCTest
 
 @testable import LocalFlow
@@ -5,6 +6,65 @@ import XCTest
 @testable import LocalFlowSpeech
 
 final class LocalAIRuntimeTests: XCTestCase {
+  func testBackgroundRegistrationChecksApprovalAfterSuccessfulRegisterCall() {
+    var status = SMAppService.Status.notRegistered
+    XCTAssertThrowsError(
+      try LocalAIInstaller.registerService(
+        status: { status }, register: { status = .requiresApproval })
+    ) { error in
+      XCTAssertEqual(error as? LocalAIError, .approvalRequired)
+    }
+    XCTAssertThrowsError(
+      try LocalAIInstaller.registerService(
+        status: { status }, register: { XCTFail("Must wait for the user to approve") }))
+    status = .enabled
+    XCTAssertNoThrow(
+      try LocalAIInstaller.registerService(
+        status: { status }, register: { XCTFail("Already enabled") }))
+  }
+
+  private actor ApprovalInstaller: LocalAIInstalling {
+    var approved = false
+    var attempts = 0
+    func backgroundServicesEnabled() -> Bool { approved }
+    func approve() { approved = true }
+    func install(_ model: LocalAIModel, report: @escaping @Sendable (LocalAIPhase) -> Void)
+      async throws
+    {
+      attempts += 1
+      guard approved else { throw LocalAIError.approvalRequired }
+      report(.ready)
+    }
+  }
+
+  @MainActor func testApprovingBackgroundServicesResumesSetupWithoutRestart() async {
+    let suite = "LocalFlow-localai-approval-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = AppPreferences(defaults: defaults)
+    let installer = ApprovalInstaller()
+    var becameReady = 0
+    let setup = LocalAISetup(
+      preferences: preferences, installer: installer, downloaded: [],
+      ready: { becameReady += 1 })
+    setup.start()
+    await setup.task?.value
+    XCTAssertEqual(setup.phase, .failed(.approvalRequired))
+    await setup.resumeAfterApproval()
+    var attempts = await installer.attempts
+    XCTAssertEqual(attempts, 1, "Pending approval must not repeatedly register or download")
+    await installer.approve()
+    await setup.resumeAfterApproval()
+    await setup.task?.value
+    XCTAssertEqual(setup.phase, .ready)
+    XCTAssertTrue(preferences.rewriteEnabled)
+    XCTAssertEqual(preferences.rewriteEndpoint, LocalAIInstaller.rewriteEndpoint)
+    XCTAssertEqual(becameReady, 1)
+    await setup.resumeAfterApproval()
+    attempts = await installer.attempts
+    XCTAssertEqual(attempts, 2)
+  }
+
   func testPullEventsReadProgressAndResultAndIgnoreNoise() {
     XCTAssertEqual(
       LocalAIInstaller.pullEvent(

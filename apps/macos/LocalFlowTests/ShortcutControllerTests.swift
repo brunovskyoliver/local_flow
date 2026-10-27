@@ -5,6 +5,36 @@ import XCTest
 @testable import LocalFlow
 
 final class ShortcutControllerTests: XCTestCase {
+  @MainActor func testModifierShortcutsWorkWithInputMonitoringWithoutAccessibility() throws {
+    for preference in [ShortcutPreference.rightControl, .rightOption, .fnGlobe] {
+      XCTAssertEqual(
+        try ShortcutController.tapOptions(for: preference, accessibility: false), .listenOnly)
+      XCTAssertEqual(
+        try ShortcutController.tapOptions(for: preference, accessibility: true), .defaultTap)
+    }
+    XCTAssertThrowsError(
+      try ShortcutController.tapOptions(
+        for: .init(kind: .keyCombination, keyCode: 49), accessibility: false))
+  }
+
+  func testGrantedPermissionsRetryUntilShortcutIsAvailable() throws {
+    var recovery = ShortcutPermissionRecovery()
+    var attempts = 0
+    func install() { attempts += 1 }
+    try recovery.refresh(
+      inputMonitoring: true, accessibility: false, available: false, busy: false,
+      install: install)
+    // The permission was granted but the first tap did not become available.
+    try recovery.refresh(
+      inputMonitoring: true, accessibility: false, available: false, busy: false,
+      install: install)
+    XCTAssertEqual(attempts, 2)
+    try recovery.refresh(
+      inputMonitoring: true, accessibility: false, available: true, busy: false,
+      install: install)
+    XCTAssertEqual(attempts, 2, "A working shortcut must not be recreated every poll")
+  }
+
   func testReleaseDuringPreparationAndRepeatedFlags() {
     var hold = ShortcutHoldState()
     XCTAssertEqual(hold.setHeld(true), .pressed)

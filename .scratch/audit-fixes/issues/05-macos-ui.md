@@ -68,6 +68,46 @@ Source: `~/agent-runs/2026-10-22-localflow-audit/ui-audit.md` (findings UI-01, U
 - Renders: 55 PNGs in `~/agent-runs/2026-10-22-audit-05-macos-ui/renders/`, with logs alongside. I looked at onboarding 3, 4 and the new 4b (pending approval), history, notetaker list and the identity sheet. The darker warning text is visible, the Ask bar is gone and the Today card is correct.
 - `python3 scripts/check-sotto-tokens.py` fails until the iOS agent lands the matching values; see UI-06.
 
+### Follow-up: optional microphone test (2026-10-27)
+- `OnboardingView` now explains that the final microphone test is optional and
+  shows an accessible `Skip test` button. The normal `Finish setup` action still
+  requires a successful dictation.
+- `OnboardingCoordinator.skipTest()` completes onboarding through the same
+  preference path as the successful-test flow and clears any armed test state.
+- `OnboardingTests.testMicrophoneTestCanBeSkipped` covers the skip path. The
+  direct built-bundle run passed all 9 `OnboardingTests`, including the existing
+  successful-dictation completion test.
+- `make check` passed its formatting, Swift package, validation and Go stages,
+  then stalled in Xcode 27 while its macOS XCTest workers failed to materialize.
+  The macOS test bundle did build. Direct XCTest was used only to verify the
+  onboarding class; full XCTest and live AeroSpace acceptance remain unverified.
+
+### Follow-up: onboarding startup audit (2026-10-27)
+
+- Fixed Right Control's unnecessary Accessibility requirement, idle shortcut
+  retries, and input-device refresh after a Microphone grant.
+- Failed/cancelled tests can retry without restarting. Start test prepares the
+  speech model through the lifecycle owner and exposes preparation errors. The
+  final microphone test remains optional.
+- New Mac setups default to Parakeet Ultra. Saved and completed legacy setups
+  keep their choice; completion persists Ultra for the next launch.
+- Background-service installation checks approval after registration, submits
+  both services, and resumes after approval. Setup success clears stale helper
+  readiness; startup reconciliation failures retry on the next backend check.
+- Kept local-AI progress and Retry visible on later steps, added speech-download
+  failure recovery, corrected disabled-button explanations, and serialized
+  optional booster/meeting installs through the existing gate.
+- Final build-for-testing and strict formatting passed. Selected XCTest executed
+  206 tests: 205 passed, one microphone probe skipped, no failures. This includes
+  the real pinned Parakeet Ultra load/decode/release/reload/cancellation probe.
+  Native render testing passed with 24 screenshots; inspected downloads, optional
+  test and retry states in light/dark appearances.
+- `make check` passed its pre-XCTest stages but stalled in the Xcode macOS test
+  launcher. Full gate, fresh-account permissions, real first-run service approval
+  and live AeroSpace tiling remain unverified. No release/install was performed.
+- Full findings, evidence, test-runner workaround and acceptance checklist:
+  `/Users/oliver/agent-runs/2026-10-27-onboarding-audit/report.md`.
+
 ## Left open
 - Real VoiceOver and Full Keyboard Access walk-through of the hover-revealed actions. Also unverified: whether SwiftUI exposes opacity-0 views to VoiceOver when the VoiceOver environment flag is false.
 - Insights chart cells are not separate Tab stops. Their data reaches VoiceOver, not keyboard-only focus.
