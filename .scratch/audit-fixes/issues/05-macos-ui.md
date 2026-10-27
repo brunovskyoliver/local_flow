@@ -108,6 +108,38 @@ Source: `~/agent-runs/2026-10-22-localflow-audit/ui-audit.md` (findings UI-01, U
 - Full findings, evidence, test-runner workaround and acceptance checklist:
   `/Users/oliver/agent-runs/2026-10-27-onboarding-audit/report.md`.
 
+### Release and local installation (2026-10-27)
+
+- Published [v0.3.2](https://github.com/brunovskyoliver/local_flow/releases/tag/v0.3.2),
+  build 10005, from `2edbe569abbb975b10b6811590895ee6476dc660`. The verified
+  20,300,186-byte ZIP and checksum follow the existing ad-hoc/manual-update policy.
+  Uploaded digest and a fresh download match SHA-256
+  `2658f6a914d1885a64e1a9c31138e857703ae0b5c09ecff1c99bb758a8f43986`.
+- Homebrew cask updated in `0b7a0d1e80dca4f4d8a7f79585b2fa3c64db4990` and read
+  back. [Post-release sync](https://github.com/brunovskyoliver/homebrew-tap/actions/runs/40468213403)
+  passed. Manual v0.3.x tags now skip the production-only notarization workflow;
+  signed dispatch retains its prerequisites.
+- `make release` exited 0 and installed/opened `/Applications/LocalFlow.app` at
+  0.3.2/build 10005 with the existing Apple Development identity. Strict deep
+  verification passed. Both owned background agents are running, the backend is
+  ready, and running helper identity matches the newly installed helper. No
+  remote server/dashboard deployment was performed.
+- Wider direct Mac testing executed 1,979 tests. After repairing the disposable
+  runner's signature, the rerun had 1,945 passes, 33 skips and one remote-upload
+  timeout assertion failure; the affected 26-test focused recheck passed without
+  source changes. The earlier onboarding-focused 205 passes and real Ultra probe
+  remain valid. Full `make check` still stalls in Xcode's launcher and is not
+  claimed green. Fresh-account/microphone acceptance remains open.
+- A real main window entered AeroSpace's tiling container. Repeat-open and
+  neighboring-frame acceptance remain unverified; no window policy/config changed.
+- Moved about 5.59 GiB of idle task-generated output and scratch to macOS Trash.
+  Retained the release archive, logs/evidence, shared build caches, installed app,
+  models, credentials and all worktrees. Nothing was emptied from Trash; no
+  reclaimed-space claim is made.
+- Release and cleanup evidence:
+  `/Users/oliver/agent-runs/2026-10-27-localflow-0.3.2-release/report.md` and
+  `CLEANUP.md` in that directory.
+
 ## Left open
 - Real VoiceOver and Full Keyboard Access walk-through of the hover-revealed actions. Also unverified: whether SwiftUI exposes opacity-0 views to VoiceOver when the VoiceOver environment flag is false.
 - Insights chart cells are not separate Tab stops. Their data reaches VoiceOver, not keyboard-only focus.
