@@ -31,6 +31,7 @@ final class OnboardingCoordinator {
   /// Turns remote off after an abandoned server path; the coordinator undoes the rest.
   @ObservationIgnored private let abandonServer: @MainActor () -> Void
   @ObservationIgnored private let openNotetaker: @MainActor () -> Void
+  @ObservationIgnored private let installShortcut: @MainActor () -> Void
   /// The purpose the server step was reached with. Leaving the choice for another one
   /// abandons what that path set (FR-011).
   private var serverPurpose: AppPreferences.Purpose?
@@ -44,7 +45,8 @@ final class OnboardingCoordinator {
     cancelMeetingModels: @escaping @MainActor () -> Void = {},
     prepareTest: @escaping @MainActor () async throws -> Void = {},
     abandonServer: @escaping @MainActor () -> Void = {},
-    openNotetaker: @escaping @MainActor () -> Void = {}
+    openNotetaker: @escaping @MainActor () -> Void = {},
+    installShortcut: @escaping @MainActor () -> Void = {}
   ) {
     self.preferences = preferences
     purpose = preferences.purpose
@@ -55,6 +57,7 @@ final class OnboardingCoordinator {
     self.prepareTest = prepareTest
     self.abandonServer = abandonServer
     self.openNotetaker = openNotetaker
+    self.installShortcut = installShortcut
   }
 
   /// A quit mid-setup: onboarding starts again, and what a meeting path stored doesn't
@@ -64,6 +67,15 @@ final class OnboardingCoordinator {
     if preferences.serverOnly || preferences.remoteEnabled { abandonServerChoice() }
     preferences.purpose = .both
     purpose = .both
+  }
+
+  /// Settings' Set up dictation (FR-010). The purpose goes first: the shortcut guards read it.
+  /// `serverOnly` stays, since the meeting consent already covers later dictation.
+  func setUpDictation() {
+    guard preferences.purpose == .meetings else { return }
+    preferences.purpose = .both
+    purpose = .both
+    installShortcut()
   }
 
   private func abandonServerChoice() {

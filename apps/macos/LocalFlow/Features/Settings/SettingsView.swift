@@ -54,7 +54,18 @@ struct SettingsView: View {
         }
         sectionTitle("General")
         settingsGroup {
-          if !meetingOnly {
+          if meetingOnly {
+            SettingsRow(
+              "Set up dictation",
+              detail: "Hold a key in any app to talk. Meetings stay as they are."
+            ) {
+              Button("Set Up") { Task { await model.run(.setUpDictation) } }
+                .buttonStyle(PrototypeButtonStyle(minimumWidth: 99))
+                .disabled(model.performing)
+                .accessibilityIdentifier("settings.setUpDictation")
+            }
+            separator
+          } else {
             SettingsRow(
               "Shortcut",
               detail: recorder == nil ? nil : "Press a shortcut, then release. Esc to cancel."

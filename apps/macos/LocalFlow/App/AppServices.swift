@@ -41,7 +41,8 @@ final class AppServices {
       }
     },
     abandonServer: { [weak self] in self?.turnOffRemoteDictation() },
-    openNotetaker: { [weak self] in self?.router.selection = .meetings })
+    openNotetaker: { [weak self] in self?.router.selection = .meetings },
+    installShortcut: { [weak self] in self?.installFirstDictationShortcut() })
   @ObservationIgnored lazy var localAI = LocalAISetup(
     preferences: preferences, installer: LocalAIInstaller(),
     ready: { [weak self] in self?.localHelpersReady = true })
@@ -1867,6 +1868,7 @@ final class AppServices {
       if !MeetingPermissions.live.requestScreenRecording() {
         openPermissionSettings("ScreenCapture")
       }
+    case .setUpDictation: onboarding.setUpDictation()
     case .requestInputMonitoring:
       guard preferences.purpose != .meetings else { return }
       requestShortcutPermission()
@@ -2086,6 +2088,12 @@ final class AppServices {
     } catch {
       setupStatus = DictationErrorMessage.describe(error)
     }
+  }
+  /// A meeting-only setup never saved a shortcut. Right Control is the first-run default, saved
+  /// even without Input Monitoring: granting it later installs the saved one.
+  private func installFirstDictationShortcut() {
+    if !ShortcutPreference.isSaved { ShortcutPreference.rightControl.save() }
+    configureShortcut(ShortcutPreference.load())
   }
   func requestMicrophone() async {
     _ = await AVCaptureDevice.requestAccess(for: .audio)

@@ -34,7 +34,7 @@ Write each test before its code. `[P]` means a different file with no dependency
 
 ## Phase 5: User Story 4, adding dictation later
 
-- [ ] T018 [US4] Test and code: Set up dictation row sets the purpose to `both`, installs the shortcut, and shows the permission section (FR-010)
+- [X] T018 [US4] Test and code: Set up dictation row sets the purpose to `both`, installs the shortcut, and shows the permission section (FR-010)
 
 ## Phase 6: Acceptance
 

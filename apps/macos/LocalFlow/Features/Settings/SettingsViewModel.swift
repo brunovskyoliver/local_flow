@@ -20,6 +20,7 @@ final class SettingsViewModel {
   enum Action {
     case download, importModel, cancelInstall, load, unload, showLocation, verifyModel
     case requestMicrophone, requestInputMonitoring, requestAccessibility, requestSystemAudio
+    case setUpDictation
     case configureShortcut(ShortcutPreference)
     case setKeepModelReady(Bool)
     case importSpeakerModel, downloadSpeakerModel, verifySpeakerModel

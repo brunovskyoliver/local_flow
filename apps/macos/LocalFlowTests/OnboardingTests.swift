@@ -987,3 +987,39 @@ extension OnboardingTests {
     XCTAssertNil(defaults.string(forKey: "setup.purpose"), "Launch stores no purpose for them")
   }
 }
+
+// MARK: Feature 022, User Story 4
+
+extension OnboardingTests {
+  /// T018 (FR-010): the shortcut guards read the purpose, so it changes before the install.
+  @MainActor func testSetUpDictationAllowsTheShortcutAndKeepsTheMeetingSetup() {
+    let (preferences, _) = preferences()
+    preferences.purpose = .meetings
+    preferences.serverOnly = true
+    preferences.completeOnboarding()
+    var purposeAtInstall: [AppPreferences.Purpose] = []
+    let setup = OnboardingCoordinator(
+      preferences: preferences, installShortcut: { purposeAtInstall.append(preferences.purpose) })
+    setup.setUpDictation()
+    XCTAssertEqual(purposeAtInstall, [.both])
+    XCTAssertEqual(preferences.purpose, .both)
+    XCTAssertEqual(setup.purpose, .both)
+    XCTAssertTrue(preferences.serverOnly, "The meeting consent already covers later dictation")
+    XCTAssertTrue(preferences.onboardingComplete)
+    XCTAssertEqual(setup.step, .introduction, "Nothing else in setup repeats")
+    setup.setUpDictation()
+    XCTAssertEqual(purposeAtInstall, [.both], "Only a meeting-only user has this to do")
+  }
+
+  /// T018: the Settings row reaches the composition root.
+  @MainActor func testTheSetUpDictationActionReachesPerform() async {
+    var received = 0
+    let model = SettingsViewModel(
+      observe: { .init() },
+      perform: { action in
+        if case .setUpDictation = action { received += 1 }
+      })
+    await model.run(.setUpDictation)
+    XCTAssertEqual(received, 1)
+  }
+}
