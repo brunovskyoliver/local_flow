@@ -38,6 +38,6 @@ Write each test before its code. `[P]` means a different file with no dependency
 
 ## Phase 6: Acceptance
 
-- [ ] T019 Update `docs/architecture/overview.md` and the onboarding section of `apps/macos/README.md` if it describes the flow
+- [X] T019 Update `docs/architecture/overview.md` and the onboarding section of `apps/macos/README.md` if it describes the flow
 - [ ] T020 Build and run `LocalFlow Dev` on a clean profile; walk all paths the Mac can run; record results in `acceptance/onboarding.md`; run the AeroSpace tiling check; on the server path confirm zero model bytes (no dev model source available, since debug builds auto-install one) and record that no model loads
 - [ ] T021 Run `make check`; record any failures not caused by this feature

@@ -8,8 +8,10 @@ and a non-activating recording panel. Feature 001 is not acceptance-complete.
 `App/` composes services. `Core/` owns capture, model lifecycle, transcription,
 insertion and SQLite storage. `Features/Dictation/` coordinates one session.
 The Sotto-derived window has Dictation, searchable paged History and Settings.
-First-run setup guides local model installation, permissions and a real dictation
-test. History and Settings remain accessible during setup, including when storage
+First-run setup asks what LocalFlow is for: Dictation, Meeting notes or Both. Dictation
+and Both guide model installation, permissions and a real dictation test. Meeting notes
+skips the shortcut, keyboard permissions and the test, ends on Notetaker, and on your
+server downloads no model (Feature 022). History and Settings remain accessible during setup, including when storage
 is full. Appearance follows System, Light or Dark across native surfaces.
 
 History keeps one 20-row page while a replacement query builds another. The

@@ -2154,7 +2154,7 @@ final class AppServices {
         await self?.installTask?.value
         guard let self else { return }
         defer { setupBoostTask = nil }
-        guard modelInstalled, !Task.isCancelled else { return }
+        guard modelInstalled, !Task.isCancelled, !preferences.serverOnly else { return }
         do { try await installBoostModel() } catch {
           Self.logModelFailure("Term booster", error)
         }

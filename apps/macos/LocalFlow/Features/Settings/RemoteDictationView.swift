@@ -42,7 +42,10 @@ final class RemoteDictationModel {
 
   var isOn: Bool { preferences.remoteEnabled }
   var meetingOnly: Bool { preferences.purpose == .meetings }
-  var currentConsentText: String { meetingOnly ? Self.meetingConsentText : Self.consentText }
+  /// Server-only sends dictation to the server too, so "dictation stays local" would be false.
+  var currentConsentText: String {
+    meetingOnly || preferences.serverOnly ? Self.meetingConsentText : Self.consentText
+  }
   var state: RemoteDictationState { preferences.remoteState }
   var serverURL: String { preferences.remoteServerURL }
   var draftOrigin: URL? { RemoteDictationSettings.origin(serverDraft) }

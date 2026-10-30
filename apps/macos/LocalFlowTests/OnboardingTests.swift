@@ -537,6 +537,9 @@ extension OnboardingTests {
     XCTAssertEqual(model.currentConsentText, RemoteDictationModel.consentText)
     preferences.purpose = .dictation
     XCTAssertEqual(model.currentConsentText, RemoteDictationModel.consentText)
+    preferences.serverOnly = true
+    XCTAssertEqual(model.currentConsentText, RemoteDictationModel.meetingConsentText)
+    preferences.serverOnly = false
     preferences.purpose = .meetings
     XCTAssertEqual(model.currentConsentText, RemoteDictationModel.meetingConsentText)
     let text = RemoteDictationModel.meetingConsentText.lowercased()
