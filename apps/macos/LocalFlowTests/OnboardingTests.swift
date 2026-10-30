@@ -1,6 +1,7 @@
 import XCTest
 
 @testable import LocalFlow
+@testable import LocalFlowCore
 @testable import LocalFlowSpeech
 
 final class OnboardingTests: XCTestCase {
@@ -438,5 +439,313 @@ extension OnboardingTests {
     setup.advance(readiness: readiness)
     XCTAssertEqual(setup.step, .complete)
     XCTAssertTrue(preferences.onboardingComplete)
+  }
+}
+
+// MARK: Feature 022, User Story 1
+
+extension OnboardingTests {
+  @MainActor private func remote(_ preferences: AppPreferences) -> RemoteDictationModel {
+    RemoteDictationModel(preferences: preferences, enrollment: { nil }, turnOff: {})
+  }
+
+  @MainActor private func enroll(_ preferences: AppPreferences, _ state: RemoteDictationState) {
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.confirmRemoteConsent()
+    preferences.remoteEnabled = true
+    preferences.remoteState = state
+  }
+
+  /// T004 (US1 scenarios 1 to 3, SC-001).
+  @MainActor func testMeetingsOnAServerSkipsDownloadsAndFinishesOnNotetaker() {
+    let (preferences, _) = preferences()
+    var downloads = 0
+    var meetingModels = 0
+    var notetaker = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, startDownloads: { _ in downloads += 1 },
+      startMeetingModels: { meetingModels += 1 }, openNotetaker: { notetaker += 1 })
+    var readiness = SettingsViewModel.Snapshot()
+    readiness.storageAvailable = true
+    readiness.microphone = .granted
+    setup.advance(readiness: readiness)
+    setup.purpose = .meetings
+    setup.advance(readiness: readiness)
+    setup.aiMode = .remote
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .aiDetails)
+    XCTAssertFalse(preferences.serverOnly, "Choosing the card alone changes nothing")
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .permissions)
+    XCTAssertTrue(preferences.serverOnly)
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .personalize)
+    XCTAssertEqual(notetaker, 0)
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .complete)
+    XCTAssertTrue(preferences.onboardingComplete)
+    XCTAssertEqual(notetaker, 1)
+    XCTAssertEqual(downloads, 0)
+    XCTAssertEqual(meetingModels, 0)
+  }
+
+  /// T004: only the path a server serves meetings on may continue, approved or pending.
+  @MainActor func testAPendingDeviceContinuesAsAnApprovedOneDoesAndARewriteServerDoesNot() {
+    let (preferences, _) = preferences()
+    let model = remote(preferences)
+    for state in [RemoteDictationState.pinned, .rejected, .revoked] {
+      enroll(preferences, state)
+      XCTAssertFalse(
+        OnboardingView.serverReady(model, purpose: .meetings, legacy: false), "\(state)")
+    }
+    for state in [RemoteDictationState.pending, .approved] {
+      enroll(preferences, state)
+      XCTAssertTrue(
+        OnboardingView.serverReady(model, purpose: .meetings, legacy: false), "\(state)")
+    }
+    preferences.resetRemote()
+    XCTAssertFalse(OnboardingView.serverReady(model, purpose: .meetings, legacy: true))
+    XCTAssertTrue(OnboardingView.serverReady(model, purpose: .both, legacy: true))
+    XCTAssertTrue(OnboardingView.serverReady(model, purpose: .dictation, legacy: true))
+  }
+
+  @MainActor func testBothOnAServerKeepsServerOnlyOffAndDoesNotOpenNotetaker() {
+    let (preferences, _) = preferences()
+    var notetaker = 0
+    let setup = OnboardingCoordinator(preferences: preferences, openNotetaker: { notetaker += 1 })
+    let ready = everythingReady()
+    setup.advance(readiness: ready)
+    setup.advance(readiness: ready)
+    setup.aiMode = .remote
+    setup.advance(readiness: ready)
+    setup.advance(readiness: ready)
+    XCTAssertEqual(setup.step, .downloads)
+    XCTAssertFalse(preferences.serverOnly)
+    setup.advance(readiness: ready)
+    setup.advance(readiness: ready)
+    setup.advance(readiness: ready)
+    setup.skipTest()
+    XCTAssertEqual(notetaker, 0)
+  }
+
+  /// T006 (FR-012): the variant follows the purpose and the versioned text stays.
+  @MainActor func testMeetingConsentIsChosenByPurposeAndStatesRetention() {
+    let (preferences, _) = preferences()
+    let model = remote(preferences)
+    XCTAssertEqual(model.currentConsentText, RemoteDictationModel.consentText)
+    preferences.purpose = .dictation
+    XCTAssertEqual(model.currentConsentText, RemoteDictationModel.consentText)
+    preferences.purpose = .meetings
+    XCTAssertEqual(model.currentConsentText, RemoteDictationModel.meetingConsentText)
+    let text = RemoteDictationModel.meetingConsentText.lowercased()
+    for phrase in [
+      "meeting audio", "meeting transcripts", "summaries", "administrator can see audio",
+      "until they are merged", "at most 7 days", "recordings wait",
+      "if you set up dictation later", "this server",
+    ] {
+      XCTAssertTrue(text.contains(phrase), phrase)
+    }
+    XCTAssertFalse(text.contains("stays local"), "No local dictation on a server-only path")
+    XCTAssertEqual(AppPreferences.remoteConsentVersion, 2, "The versioned text did not change")
+  }
+
+  /// T006: confirming the variant is a current consent, so meetings may reach the server.
+  @MainActor func testConfirmingTheMeetingConsentAllowsMeetingsOnTheServer() async {
+    let (preferences, _) = preferences()
+    preferences.purpose = .meetings
+    let model = remote(preferences)
+    model.serverDraft = "https://mini.example.com"
+    await model.confirmConsent()
+    XCTAssertTrue(preferences.remoteConsentCurrent)
+    XCTAssertFalse(model.needsConsentUpdate)
+  }
+
+  /// T006: every server path states the 7-day handoff retention, in every enrollment state.
+  @MainActor func testEveryServerPathStatesTheRetention() {
+    let (preferences, _) = preferences()
+    let model = remote(preferences)
+    for purpose in AppPreferences.Purpose.allCases {
+      preferences.purpose = purpose
+      preferences.resetRemote()
+      XCTAssertTrue(OnboardingView.remotePrivacy(model).contains("at most 7 days"), "\(purpose)")
+      for state in [RemoteDictationState.pinned, .pending, .approved] {
+        enroll(preferences, state)
+        XCTAssertTrue(
+          OnboardingView.remotePrivacy(model).contains("at most 7 days"), "\(purpose) \(state)")
+      }
+    }
+  }
+
+  @MainActor func testMeetingOnlyPrivacyCopyNeverPromisesLocalDictation() {
+    let (preferences, _) = preferences()
+    preferences.purpose = .meetings
+    let model = remote(preferences)
+    for state in [RemoteDictationState.pinned, .pending, .approved] {
+      enroll(preferences, state)
+      XCTAssertFalse(OnboardingView.remotePrivacy(model).contains("ictation"), "\(state)")
+    }
+  }
+
+  /// T007: the hint names what a meeting path still needs, never a keyboard permission.
+  @MainActor func testMeetingBlockedReasonNeedsOnlyMicrophoneAndStorage() {
+    var state = SettingsViewModel.Snapshot()
+    XCTAssertEqual(state.meetingBlockedReason, "Allow Microphone access to record.")
+    state.microphone = .granted
+    XCTAssertEqual(
+      state.meetingBlockedReason, "Local storage is not ready. Check Settings before recording.")
+    state.storageAvailable = true
+    XCTAssertNil(state.meetingBlockedReason)
+  }
+
+  /// T009 (FR-007, SC-003).
+  @MainActor func testOnlyAMeetingPurposeLandsOnNotetaker() {
+    let (preferences, _) = preferences()
+    XCTAssertEqual(preferences.landingPage, .history, "A missing purpose keeps today's page")
+    preferences.purpose = .dictation
+    XCTAssertEqual(preferences.landingPage, .history)
+    preferences.purpose = .both
+    XCTAssertEqual(preferences.landingPage, .history)
+    preferences.purpose = .meetings
+    XCTAssertEqual(preferences.landingPage, .meetings)
+  }
+
+  /// A meetings-on-a-server setup up to the permissions step.
+  @MainActor private func reachServerPermissions(
+    _ setup: OnboardingCoordinator, _ preferences: AppPreferences
+  ) {
+    let ready = everythingReady()
+    setup.advance(readiness: ready)
+    setup.purpose = .meetings
+    setup.advance(readiness: ready)
+    setup.aiMode = .remote
+    setup.advance(readiness: ready)
+    enroll(preferences, .pending)
+    preferences.useServerForEverything = true
+    preferences.rewriteEnabled = true
+    setup.advance(readiness: ready)
+    XCTAssertTrue(preferences.serverOnly)
+  }
+
+  @MainActor private func assertServerUndone(_ preferences: AppPreferences, abandoned: Int) {
+    XCTAssertFalse(preferences.serverOnly)
+    XCTAssertFalse(preferences.useServerForEverything)
+    XCTAssertFalse(preferences.rewriteEnabled)
+    XCTAssertEqual(abandoned, 1)
+  }
+
+  /// T010 (FR-011): another location clears what the server path set.
+  @MainActor func testBackToAnotherLocationClearsTheServerPath() {
+    for skip in [false, true] {
+      let (preferences, _) = preferences()
+      var abandoned = 0
+      var downloads: [Bool] = []
+      let setup = OnboardingCoordinator(
+        preferences: preferences, startDownloads: { downloads.append($0) },
+        abandonServer: {
+          abandoned += 1
+          preferences.resetRemote()
+        })
+      reachServerPermissions(setup, preferences)
+      setup.back()
+      XCTAssertEqual(setup.step, .aiDetails)
+      setup.back()
+      XCTAssertEqual(setup.step, .ai)
+      XCTAssertTrue(preferences.serverOnly, "Nothing changes until another choice is made")
+      if skip {
+        setup.skipAI()
+        XCTAssertEqual(downloads, [false])
+      } else {
+        setup.aiMode = .local
+        setup.advance(readiness: everythingReady())
+        XCTAssertEqual(setup.step, .aiDetails)
+      }
+      assertServerUndone(preferences, abandoned: abandoned)
+      XCTAssertFalse(preferences.remoteEnabled)
+    }
+  }
+
+  /// T010 (FR-011): another purpose clears it too, even with the same location.
+  @MainActor func testBackToAnotherPurposeClearsTheServerPath() {
+    let (preferences, _) = preferences()
+    var abandoned = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, abandonServer: { abandoned += 1 })
+    reachServerPermissions(setup, preferences)
+    setup.back()
+    setup.back()
+    setup.back()
+    XCTAssertEqual(setup.step, .purpose)
+    setup.purpose = .both
+    setup.advance(readiness: everythingReady())
+    XCTAssertEqual(preferences.purpose, .both)
+    assertServerUndone(preferences, abandoned: abandoned)
+  }
+
+  /// T010: Back over the same choice keeps the enrolled server.
+  @MainActor func testBackOverTheSameChoiceKeepsTheServer() {
+    let (preferences, _) = preferences()
+    var abandoned = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, abandonServer: { abandoned += 1 })
+    reachServerPermissions(setup, preferences)
+    let ready = everythingReady()
+    setup.back()
+    setup.back()
+    setup.back()
+    setup.advance(readiness: ready)
+    setup.advance(readiness: ready)
+    setup.advance(readiness: ready)
+    XCTAssertEqual(setup.step, .permissions)
+    XCTAssertTrue(preferences.serverOnly)
+    XCTAssertEqual(abandoned, 0)
+  }
+
+  /// T010 (spec edge case): a quit mid-setup leaves no completed-setup values behind.
+  @MainActor func testRestartingAnUnfinishedMeetingSetupClearsTheServerPath() {
+    let suite = "LocalFlow-onboarding-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let before = AppPreferences(defaults: defaults)
+    reachServerPermissions(OnboardingCoordinator(preferences: before), before)
+
+    let preferences = AppPreferences(defaults: defaults)
+    XCTAssertTrue(preferences.serverOnly)
+    var abandoned = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, abandonServer: { abandoned += 1 })
+    setup.resumeUnfinishedSetup()
+    assertServerUndone(preferences, abandoned: abandoned)
+    XCTAssertEqual(preferences.purpose, .both)
+    XCTAssertEqual(setup.purpose, .both)
+    XCTAssertEqual(setup.step, .introduction)
+  }
+
+  /// T010: a meeting path that only chose its location has nothing on a server to clear.
+  @MainActor func testRestartWithoutAServerTouchesNothingElse() {
+    let (preferences, _) = preferences()
+    preferences.purpose = .meetings
+    preferences.rewriteEnabled = true
+    var abandoned = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, abandonServer: { abandoned += 1 })
+    setup.resumeUnfinishedSetup()
+    XCTAssertEqual(abandoned, 0)
+    XCTAssertTrue(preferences.rewriteEnabled)
+    XCTAssertEqual(preferences.purpose, .both)
+  }
+
+  /// T010: a finished setup is never treated as abandoned.
+  @MainActor func testAFinishedMeetingSetupKeepsItsServerOnLaunch() {
+    let (preferences, _) = preferences()
+    preferences.purpose = .meetings
+    preferences.serverOnly = true
+    preferences.completeOnboarding()
+    var abandoned = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, abandonServer: { abandoned += 1 })
+    setup.resumeUnfinishedSetup()
+    XCTAssertTrue(preferences.serverOnly)
+    XCTAssertEqual(preferences.purpose, .meetings)
+    XCTAssertEqual(abandoned, 0)
   }
 }

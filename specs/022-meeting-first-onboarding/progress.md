@@ -13,5 +13,6 @@ Updated: 2026-10-30
 - 2026-10-30 specify: spec.md written from the cross-platform plan.
 - 2026-10-30 plan, tasks: plan.md, tasks.md (21 tasks, 6 phases, MVP phases 1-2), checklists/requirements.md written.
 - 2026-10-30 analyze: 3 HIGH and 4 MEDIUM findings, listed in the gate message. Waiting for go.
+- 2026-10-30 implement: phases 1 and 2 (T001-T011) done. Unit tests pass (2002 total: 1968 passed, 34 skipped, 0 failed). No app run, so the UI, prompts and tiling are unverified until T020. Meetings + local can still finish without Whisper and speaker models until T012.
 
 ## Report

@@ -54,18 +54,20 @@ struct SettingsView: View {
         }
         sectionTitle("General")
         settingsGroup {
-          SettingsRow(
-            "Shortcut",
-            detail: recorder == nil ? nil : "Press a shortcut, then release. Esc to cancel."
-          ) {
-            Button(recorder == nil ? model.snapshot.shortcut.title : "Listening…") {
-              toggleRecording()
+          if !meetingOnly {
+            SettingsRow(
+              "Shortcut",
+              detail: recorder == nil ? nil : "Press a shortcut, then release. Esc to cancel."
+            ) {
+              Button(recorder == nil ? model.snapshot.shortcut.title : "Listening…") {
+                toggleRecording()
+              }
+              .buttonStyle(PrototypeButtonStyle(minimumWidth: 99))
+              .disabled(model.snapshot.busy || model.performing)
+              .accessibilityIdentifier("settings.shortcut")
             }
-            .buttonStyle(PrototypeButtonStyle(minimumWidth: 99))
-            .disabled(model.snapshot.busy || model.performing)
-            .accessibilityIdentifier("settings.shortcut")
+            separator
           }
-          separator
           SettingsRow("Appearance") {
             Picker("Appearance", selection: $preferences.appearance) {
               ForEach(AppPreferences.Appearance.allCases) { Text($0.title).tag($0) }
@@ -656,9 +658,17 @@ struct SettingsView: View {
     }.font(.flow(size: 12)).padding(.bottom, 19)
   }
 
+  /// Meeting notes only: no shortcut, so no keyboard permission is ever offered (FR-005).
+  private var meetingOnly: Bool { preferences.purpose == .meetings }
+
   var permissionsSection: some View {
     VStack(alignment: .leading, spacing: 0) {
-      if model.snapshot.hasMissingPermissions {
+      if meetingOnly {
+        if model.snapshot.microphone != .granted {
+          sectionTitle("Permissions needed")
+          settingsGroup { permission("Microphone", action: .requestMicrophone) }
+        }
+      } else if model.snapshot.hasMissingPermissions {
         sectionTitle("Permissions needed")
         settingsGroup {
           if model.snapshot.microphone != .granted {

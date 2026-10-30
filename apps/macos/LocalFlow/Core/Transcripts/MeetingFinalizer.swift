@@ -274,6 +274,7 @@ actor MeetingFinalizer {
     }
     // The path is chosen once per run, before admission, so a resume never mixes paths.
     choice = await inference.choose(.finalTranscript, meeting: meetingID)
+    if choice.waitsForServer { throw Error.waitingForServer("not_approved") }
     lifecycle = choice.lifecycle
     var replacementLease: ModelLease?
     if let existing = try await store.transcription(meetingID: meetingID), existing.state == .final

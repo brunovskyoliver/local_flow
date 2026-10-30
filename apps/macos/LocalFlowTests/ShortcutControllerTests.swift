@@ -486,3 +486,14 @@ extension ShortcutControllerTests {
     XCTAssertEqual(events, [.pressed, .released])
   }
 }
+
+extension ShortcutControllerTests {
+  /// Feature 022 T008 (FR-005): a meetings purpose installs nothing and reports no shortcut,
+  /// with or without Input Monitoring on this Mac, and never reaches the permission check.
+  @MainActor func testNoInstallWhileTheInstallIsNotAllowed() throws {
+    let controller = ShortcutController()
+    controller.installAllowed = { false }
+    try controller.install(ShortcutPreference.rightControl)
+    XCTAssertFalse(controller.isAvailable)
+  }
+}

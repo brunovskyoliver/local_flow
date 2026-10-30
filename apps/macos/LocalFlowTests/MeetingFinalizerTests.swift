@@ -1187,3 +1187,46 @@ private final class FactoryLanguages: @unchecked Sendable {
   var values: [MeetingLanguage] { lock.withLock { stored } }
   func append(_ language: MeetingLanguage) { lock.withLock { stored.append(language) } }
 }
+
+extension MeetingFinalizerTests {
+  /// Feature 022 T011 (FR-009, SC-004, US1 scenario 4): with server only on, a saved meeting
+  /// waits while the device is not approved or the server can't be reached, never loads a
+  /// local model, and finishes from the same audio once the server answers.
+  func testAServerOnlyRecordingWaitsThenFinishesWithoutRecordingAgain() async throws {
+    let meeting = try await TranscriptMeetingFixture.make(
+      in: fixture, stretches: [.init(microphone: .blocks(8), system: .missing)])
+    func routing(_ state: RemoteDictationState) -> ServerRouting {
+      ServerRouting(
+        remote: RemoteDictationSettings(
+          enabled: true, serverOrigin: URL(string: "https://mini.example.com"), state: state,
+          localModelsAllowed: false),
+        useForEverything: true, capabilities: ServerRouting.servingMeetings().capabilities,
+        consentCurrent: true)
+    }
+    let inputs = RouterInputs()
+    let local = ProbeRuntime()
+    for (state, code) in [
+      (RemoteDictationState.pending, "not_approved"), (.approved, "busy"),
+    ] {
+      inputs.routing = routing(state)
+      let finalizer = serverFinalizer(
+        server: FlakyServerRuntime(failOn: 1), inputs: inputs, local: local)
+      do {
+        _ = try await finalizer.run(
+          meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+        XCTFail("\(state) must wait")
+      } catch MeetingFinalizer.Error.waitingForServer(let waiting) {
+        XCTAssertEqual(waiting, code)
+      }
+      let row = try await store.transcription(meetingID: meeting.meetingID)
+      XCTAssertNotEqual(row?.state, .failed, "\(state)")
+    }
+    let finalizer = serverFinalizer(server: FlakyServerRuntime(), inputs: inputs, local: local)
+    let outcome = try await finalizer.run(
+      meetingID: meeting.meetingID, revision: try await revision(meeting.meetingID))
+    XCTAssertEqual(outcome.row.state, .final)
+    XCTAssertEqual(outcome.row.inferencePath, .server)
+    let localCalls = await local.calls
+    XCTAssertEqual(localCalls, 0, "No model runs on this Mac")
+  }
+}

@@ -36,7 +36,9 @@ struct OnboardingView: View {
     .task { await settings.refresh() }
     .task(id: coordinator.step) {
       // Right Control is the first-run default; a shortcut the user already saved stays.
-      guard coordinator.step == .personalize, !ShortcutPreference.isSaved else { return }
+      guard coordinator.step == .personalize, coordinator.purpose != .meetings,
+        !ShortcutPreference.isSaved
+      else { return }
       await settings.run(.configureShortcut(.rightControl))
     }
     .onDisappear { recorder?.stop() }
@@ -59,7 +61,7 @@ struct OnboardingView: View {
   @ViewBuilder private var content: some View {
     switch coordinator.step {
     case .introduction: introduction
-    case .purpose: EmptyView()
+    case .purpose: purposeChoice
     case .ai: aiChoice
     case .aiDetails: if coordinator.aiMode == .remote { remoteServer } else { modelPicker }
     case .downloads: downloads
@@ -68,7 +70,10 @@ struct OnboardingView: View {
     case .test: test
     case .complete:
       headline("You're ", "all set", ".")
-      Text("Hold your shortcut in any app to dictate.").foregroundStyle(SottoPalette.muted)
+      Text(
+        coordinator.purpose == .meetings
+          ? "Start a meeting in Notetaker." : "Hold your shortcut in any app to dictate."
+      ).foregroundStyle(SottoPalette.muted)
     }
     if coordinator.aiMode == .local, localAI.phase != .ready,
       [.permissions, .personalize, .test].contains(coordinator.step)
@@ -90,7 +95,7 @@ struct OnboardingView: View {
       .background(SottoPalette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 18))
     headline("Your voice, written ", "on this Mac", ".")
     lede(
-      "Hold a key in any app, talk, and let go. LocalFlow turns speech into clean text right here on your Mac."
+      "Hold a key in any app, talk, and let go, or record a meeting and get notes. LocalFlow turns speech into clean text right here on your Mac."
     )
     SetupCard {
       FeatureRow(
@@ -102,40 +107,84 @@ struct OnboardingView: View {
         symbol: "keyboard", title: "Works in every app",
         detail: "Hold Right Control, speak, release. The text lands where your cursor is.")
       FeatureRow(
+        symbol: "person.2.wave.2", title: "Meeting notes",
+        detail: "Records your calls, then writes a transcript with speaker labels and notes.")
+      FeatureRow(
         symbol: "sparkles", title: "Tidies up as you go",
         detail: "Optional AI fixes punctuation, drops the ums and ahs, and writes meeting notes.")
     }
   }
 
+  @ViewBuilder private var purposeChoice: some View {
+    headline("What is LocalFlow ", "for", "?")
+    lede("Setup only asks for what your choice needs. You can add dictation later in Settings.")
+    VStack(spacing: 10) {
+      purposeCard(
+        .both, symbol: "square.stack", title: "Both", badge: "Recommended",
+        detail: "Dictation in every app, and notes from your meetings.")
+      purposeCard(
+        .dictation, symbol: "keyboard", title: "Dictation",
+        detail: "Hold a key in any app and talk. Meeting notes stay optional.")
+      purposeCard(
+        .meetings, symbol: "person.2.wave.2", title: "Meeting notes",
+        detail: "Record calls and get transcripts and notes. No shortcut or keyboard permissions.")
+    }
+  }
+
+  private func purposeCard(
+    _ purpose: AppPreferences.Purpose, symbol: String, title: String, badge: String? = nil,
+    detail: String
+  ) -> some View {
+    SelectableCard(selected: coordinator.purpose == purpose) {
+      coordinator.purpose = purpose
+    } content: {
+      ChoiceLabel(symbol: symbol, title: title, badge: badge, detail: detail)
+    }
+    .accessibilityIdentifier("onboarding.purpose.\(purpose.rawValue)")
+  }
+
+  private var meetingOnly: Bool { coordinator.purpose == .meetings }
+
   @ViewBuilder private var aiChoice: some View {
-    eyebrow("Optional")
-    headline("Add ", "AI", " rewriting.")
-    lede(
-      "A language model can polish each dictation and turn meetings into notes. Choose where it runs."
-    )
+    if meetingOnly {
+      eyebrow("Meeting notes")
+      headline("Where should ", "meetings", " run?")
+      lede("Recordings are always saved on this Mac first. Choose what turns them into notes.")
+    } else {
+      eyebrow("Optional")
+      headline("Add ", "AI", " rewriting.")
+      lede(
+        "A language model can polish each dictation and turn meetings into notes. Choose where it runs."
+      )
+    }
     VStack(spacing: 10) {
       SelectableCard(selected: coordinator.aiMode == .local) {
         coordinator.aiMode = .local
       } content: {
         ChoiceLabel(
-          symbol: "laptopcomputer", title: "On this Mac", badge: "Recommended",
-          detail:
-            "Private and offline. LocalFlow installs MTPLX, an open-source engine for Apple Silicon, and a model you pick."
+          symbol: "laptopcomputer", title: meetingOnly ? "This computer" : "On this Mac",
+          badge: "Recommended",
+          detail: meetingOnly
+            ? "Nothing leaves this Mac. LocalFlow downloads speech, Whisper and speaker models, about 2.3 GB, then offers a language model for summaries."
+            : "Private and offline. LocalFlow installs MTPLX, an open-source engine for Apple Silicon, and a model you pick."
         )
       }
       SelectableCard(selected: coordinator.aiMode == .remote) {
         coordinator.aiMode = .remote
       } content: {
         ChoiceLabel(
-          symbol: "server.rack", title: "On your server",
-          detail:
-            "Use a LocalFlow server on another computer you run, for bigger models. Its administrator approves this Mac once."
+          symbol: "server.rack", title: meetingOnly ? "Your server" : "On your server",
+          detail: meetingOnly
+            ? "Meeting audio, transcripts and summary text go to a LocalFlow server you run. Nothing downloads to this Mac. Its administrator approves this Mac once."
+            : "Use a LocalFlow server on another computer you run, for bigger models. Its administrator approves this Mac once."
         )
       }
     }
     if coordinator.aiMode == .remote {
       Label(
-        "Once the server approves this Mac, dictation audio, meeting recordings and their text go to it. Until then, and whenever it can't be reached, dictation is transcribed on this Mac.",
+        meetingOnly
+          ? "Once the server approves this Mac, meeting recordings and their text go to it. Until then, and whenever it can't be reached, recordings wait on this Mac."
+          : "Once the server approves this Mac, dictation audio, meeting recordings and their text go to it. Until then, and whenever it can't be reached, dictation is transcribed on this Mac.",
         systemImage: "info.circle"
       )
       .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
@@ -182,7 +231,7 @@ struct OnboardingView: View {
   @ViewBuilder private var remoteServer: some View {
     headline("Connect ", "your server", ".")
     lede(
-      "Turn on Remote dictation and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this Mac once. You can change this later in Settings."
+      "Turn on \(meetingOnly ? "Your server" : "Remote dictation") and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this Mac once. You can change this later in Settings."
     )
     if let server = settings.server {
       SetupCard { RemoteDictationView(model: server.remote) }
@@ -191,30 +240,50 @@ struct OnboardingView: View {
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityIdentifier("onboarding.remoteStatus")
     }
-    DisclosureGroup("Advanced: rewrite-only server", isExpanded: $showingLegacyServer) {
-      VStack(alignment: .leading, spacing: 16) { legacyRewriteServer }
-        .foregroundStyle(SottoPalette.ink).padding(.top, 12)
+    // It only rewrites, so it can't serve a meeting-only setup.
+    if !meetingOnly {
+      DisclosureGroup("Advanced: rewrite-only server", isExpanded: $showingLegacyServer) {
+        VStack(alignment: .leading, spacing: 16) { legacyRewriteServer }
+          .foregroundStyle(SottoPalette.ink).padding(.top, 12)
+      }
+      .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+      .accessibilityIdentifier("onboarding.legacyRewriteServer")
     }
-    .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
-    .accessibilityIdentifier("onboarding.legacyRewriteServer")
   }
 
-  /// What leaves this Mac at each enrollment state, so the copy never overstates it.
+  /// What leaves this Mac at each enrollment state, so the copy never overstates it. Every
+  /// server path states the handoff retention (ADR 0033); the versioned consent stays as it is.
   static func remotePrivacy(_ remote: RemoteDictationModel) -> String {
+    let retention = "Meetings handed off to the server stay there until merged, at most 7 days."
     guard remote.isOn else {
       return
-        "Nothing leaves this Mac until you confirm what is sent and the administrator approves this Mac."
+        "Nothing leaves this Mac until you confirm what is sent and the administrator approves this Mac. \(retention)"
     }
     switch remote.state {
     case .approved:
-      return
-        "Approved. Dictation, rewriting, summaries and meetings will use this server. Speech recognition on this Mac takes over when the server can't be reached."
+      return remote.meetingOnly
+        ? "Approved. Meeting audio, transcripts and summaries will use this server. Recordings wait on this Mac when the server can't be reached. \(retention)"
+        : "Approved. Dictation, rewriting, summaries and meetings will use this server. Speech recognition on this Mac takes over when the server can't be reached. \(retention)"
     case .pending:
-      return
-        "Waiting for approval. You can continue: until the administrator approves this Mac, nothing is sent and dictation is transcribed here."
+      return remote.meetingOnly
+        ? "Waiting for approval. You can continue: until the administrator approves this Mac, nothing is sent and recordings wait here. \(retention)"
+        : "Waiting for approval. You can continue: until the administrator approves this Mac, nothing is sent and dictation is transcribed here. \(retention)"
     default:
-      return "Nothing is sent until the administrator approves this Mac."
+      return "Nothing is sent until the administrator approves this Mac. \(retention)"
     }
+  }
+
+  /// Signed in to the server: approved, or waiting for the administrator.
+  static func enrolled(_ remote: RemoteDictationModel?) -> Bool {
+    guard let remote, remote.isOn else { return false }
+    return remote.state == .approved || remote.state == .pending
+  }
+
+  /// Whether the server step may continue. The rewrite-only server serves no meetings.
+  static func serverReady(
+    _ remote: RemoteDictationModel?, purpose: AppPreferences.Purpose, legacy: Bool
+  ) -> Bool {
+    enrolled(remote) || (purpose != .meetings && legacy)
   }
 
   /// The older rewrite-only flowd with a shared access key; kept for existing setups.
@@ -339,19 +408,70 @@ struct OnboardingView: View {
 
   @ViewBuilder private var permissions: some View {
     headline("Allow ", "access", ".")
-    lede(
-      "Microphone and Input Monitoring let LocalFlow hear you while you hold the shortcut. Accessibility lets it type the text for you and record a custom shortcut; without it, you paste the text yourself."
-    )
-    SettingsPermissionsGroup(settings: settings).buttonStyle(PrototypeButtonStyle())
-    if !settings.snapshot.hasMissingPermissions {
-      Label("Everything is allowed.", systemImage: "checkmark.circle.fill")
-        .font(.flow(size: 14, weight: .medium)).foregroundStyle(SottoPalette.accent)
+    if meetingOnly {
+      lede("LocalFlow records your microphone and the other people on a call.")
+      SetupCard {
+        accessRow(
+          symbol: "mic", title: "Microphone", detail: "Needed to record a meeting.",
+          permission: settings.snapshot.microphone, action: .requestMicrophone)
+        systemAudioRow
+      }
+      if settings.snapshot.microphone == .granted, settings.snapshot.systemAudio == .granted {
+        allowedLabel
+      }
+    } else {
+      lede(
+        "Microphone and Input Monitoring let LocalFlow hear you while you hold the shortcut. Accessibility lets it type the text for you and record a custom shortcut; without it, you paste the text yourself."
+      )
+      SettingsPermissionsGroup(settings: settings).buttonStyle(PrototypeButtonStyle())
+      if !settings.snapshot.hasMissingPermissions { allowedLabel }
+      if coordinator.purpose == .both { SetupCard { systemAudioRow } }
+    }
+  }
+
+  private var allowedLabel: some View {
+    Label("Everything is allowed.", systemImage: "checkmark.circle.fill")
+      .font(.flow(size: 14, weight: .medium)).foregroundStyle(SottoPalette.accent)
+  }
+
+  /// Optional: a refusal never blocks setup, and the meeting records the microphone alone.
+  private var systemAudioRow: some View {
+    accessRow(
+      symbol: "speaker.wave.2", title: "System audio",
+      detail:
+        "Records the other people on a call. macOS calls this Screen Recording and may ask you to reopen LocalFlow. Without it, meetings record your microphone only.",
+      permission: settings.snapshot.systemAudio, action: .requestSystemAudio)
+  }
+
+  private func accessRow(
+    symbol: String, title: String, detail: String, permission: SettingsViewModel.Permission,
+    action: SettingsViewModel.Action
+  ) -> some View {
+    HStack(alignment: .top, spacing: 14) {
+      RowIcon(symbol: symbol)
+      VStack(alignment: .leading, spacing: 3) {
+        Text(title).font(.flow(size: 14, weight: .semibold))
+        Text(detail).font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: 12)
+      if permission == .granted {
+        Label("Allowed", systemImage: "checkmark.circle.fill")
+          .font(.flow(size: 12, weight: .medium)).foregroundStyle(SottoPalette.accent)
+      } else {
+        Button("Allow…") { Task { await settings.run(action) } }
+          .buttonStyle(PrototypeButtonStyle()).disabled(settings.performing)
+          .accessibilityLabel("Allow \(title)")
+      }
     }
   }
 
   @ViewBuilder private var personalize: some View {
     headline("Make it ", "yours", ".")
-    lede("Pick a look and the key you hold to dictate. Both can change later in Settings.")
+    lede(
+      meetingOnly
+        ? "Pick a look. You can change it later in Settings."
+        : "Pick a look and the key you hold to dictate. Both can change later in Settings.")
     fieldLabel("Appearance")
     HStack(spacing: 12) {
       ForEach(AppPreferences.Appearance.allCases) { appearance in
@@ -360,6 +480,10 @@ struct OnboardingView: View {
         }
       }
     }
+    if !meetingOnly { shortcutChoice }
+  }
+
+  @ViewBuilder private var shortcutChoice: some View {
     fieldLabel("Dictation shortcut")
     SetupCard {
       HStack(alignment: .center, spacing: 16) {
@@ -507,26 +631,28 @@ struct OnboardingView: View {
       localAI.isDownloaded(localAI.selection)
         ? "Use \(localAI.selection.name)" : "Download \(localAI.selection.name)"
     case .test: "Finish setup"
+    case .personalize where meetingOnly: "Finish setup"
     default: "Continue"
     }
   }
 
   private var hint: String? {
     switch coordinator.step {
-    case .aiDetails where coordinator.aiMode == .remote && !remoteConnected && !remoteEnrolled:
-      "Sign in to continue"
+    case .aiDetails where coordinator.aiMode == .remote && !serverReady: "Sign in to continue"
     case .downloads where !settings.snapshot.modelInstalled: "Waiting for speech recognition…"
-    case .permissions, .personalize: settings.snapshot.testBlockedReason
+    case .permissions, .personalize:
+      meetingOnly ? settings.snapshot.meetingBlockedReason : settings.snapshot.testBlockedReason
     default: nil
     }
   }
 
   private var remoteConnected: Bool { settings.connectionResult?.category == .connected }
 
-  /// Signed in to the server: approved, or waiting for the administrator.
-  private var remoteEnrolled: Bool {
-    guard let remote = settings.server?.remote, remote.isOn else { return false }
-    return remote.state == .approved || remote.state == .pending
+  private var remoteEnrolled: Bool { Self.enrolled(settings.server?.remote) }
+
+  private var serverReady: Bool {
+    Self.serverReady(
+      settings.server?.remote, purpose: coordinator.purpose, legacy: remoteConnected)
   }
 
   static func serverHost(_ url: String) -> String {
@@ -538,11 +664,11 @@ struct OnboardingView: View {
     case .introduction, .purpose, .ai: true
     case .aiDetails:
       coordinator.aiMode == .remote
-        ? remoteEnrolled || remoteConnected
+        ? serverReady
         : localAI.selection.fits(physicalMemory: localAI.physicalMemory)
     case .downloads: settings.snapshot.modelInstalled
     case .permissions, .personalize:
-      (coordinator.purpose == .meetings
+      (meetingOnly
         ? settings.snapshot.readyForMeetings : settings.readyForTest) && recorder == nil
     case .test: coordinator.testSucceeded
     case .complete: false

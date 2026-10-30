@@ -26,13 +26,21 @@ final class OnboardingCoordinator {
   @ObservationIgnored private let startDownloads: @MainActor (_ localAI: Bool) -> Void
   @ObservationIgnored private let startMeetingModels: @MainActor () -> Void
   @ObservationIgnored private let prepareTest: @MainActor () async throws -> Void
+  /// Turns remote off after an abandoned server path; the coordinator undoes the rest.
+  @ObservationIgnored private let abandonServer: @MainActor () -> Void
+  @ObservationIgnored private let openNotetaker: @MainActor () -> Void
+  /// The purpose the server step was reached with. Leaving the choice for another one
+  /// abandons what that path set (FR-011).
+  private var serverPurpose: AppPreferences.Purpose?
 
   init(
     preferences: AppPreferences,
     liveReadiness: @escaping @MainActor () async -> SettingsViewModel.Snapshot = { .init() },
     startDownloads: @escaping @MainActor (_ localAI: Bool) -> Void = { _ in },
     startMeetingModels: @escaping @MainActor () -> Void = {},
-    prepareTest: @escaping @MainActor () async throws -> Void = {}
+    prepareTest: @escaping @MainActor () async throws -> Void = {},
+    abandonServer: @escaping @MainActor () -> Void = {},
+    openNotetaker: @escaping @MainActor () -> Void = {}
   ) {
     self.preferences = preferences
     purpose = preferences.purpose
@@ -40,6 +48,28 @@ final class OnboardingCoordinator {
     self.startDownloads = startDownloads
     self.startMeetingModels = startMeetingModels
     self.prepareTest = prepareTest
+    self.abandonServer = abandonServer
+    self.openNotetaker = openNotetaker
+  }
+
+  /// A quit mid-setup: onboarding starts again, and what a meeting path stored doesn't
+  /// count as a finished setup. Call before the shortcut is configured at launch.
+  func resumeUnfinishedSetup() {
+    guard !preferences.onboardingComplete, preferences.purpose == .meetings else { return }
+    if preferences.serverOnly || preferences.remoteEnabled { abandonServerChoice() }
+    preferences.purpose = .both
+    purpose = .both
+  }
+
+  private func abandonServerChoice() {
+    serverPurpose = nil
+    preferences.undoServerChoice()
+    abandonServer()
+  }
+
+  private func abandonServerIfChoiceChanged() {
+    guard let serverPurpose, serverPurpose != purpose || aiMode != .remote else { return }
+    abandonServerChoice()
   }
 
   /// The steps of the current purpose and AI choice, without `complete` (plan's path table).
@@ -64,9 +94,19 @@ final class OnboardingCoordinator {
     case .introduction: step = .purpose
     case .purpose:
       preferences.purpose = purpose
+      abandonServerIfChoiceChanged()
       step = .ai
-    case .ai: if aiMode == .off { beginDownloads() } else { step = .aiDetails }
-    case .aiDetails: if meetingsOnServer { step = .permissions } else { beginDownloads() }
+    case .ai:
+      abandonServerIfChoiceChanged()
+      if aiMode == .remote { serverPurpose = purpose }
+      if aiMode == .off { beginDownloads() } else { step = .aiDetails }
+    case .aiDetails:
+      if meetingsOnServer {
+        preferences.serverOnly = true
+        step = .permissions
+      } else {
+        beginDownloads()
+      }
     // Local AI and meeting models keep downloading; only dictation needs its model.
     case .downloads: if readiness.modelInstalled { step = .permissions }
     case .permissions: if ready(readiness) { step = .personalize }
@@ -81,6 +121,7 @@ final class OnboardingCoordinator {
   func skipAI() {
     guard step == .ai else { return }
     aiMode = .off
+    abandonServerIfChoiceChanged()
     beginDownloads()
   }
 
@@ -163,5 +204,6 @@ final class OnboardingCoordinator {
     testError = nil
     preferences.completeOnboarding()
     step = .complete
+    if purpose == .meetings { openNotetaker() }
   }
 }

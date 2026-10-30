@@ -16,6 +16,9 @@ struct MeetingInferenceRouter: Sendable {
     /// The server's model for this stage, from `ready.capabilities.models`; recorded as
     /// the pass identity. Nil on this Mac.
     let model: RemoteCapabilities.Model?
+    /// Server only and this stage can't reach the server yet (not approved, or not
+    /// offered): the local lifecycle would refuse, so the work waits instead of failing.
+    var waitsForServer = false
 
     var remote: Bool { path == .server }
   }
@@ -37,8 +40,11 @@ struct MeetingInferenceRouter: Sendable {
 
   func choose(_ service: ServerService, meeting: UUID) async -> Choice {
     let remote = service == .livePreview ? live : background
-    guard let routing = await routing(), let remote, routing.servedByServer(service) else {
-      return Choice(lifecycle: local, path: .local, serverFailure: nil, model: nil)
+    let current = await routing()
+    guard let routing = current, let remote, routing.servedByServer(service) else {
+      return Choice(
+        lifecycle: local, path: .local, serverFailure: nil, model: nil,
+        waitsForServer: current?.remote.localModelsAllowed == false)
     }
     // Server only ignores an earlier Run on this Mac.
     if routing.remote.localModelsAllowed, await runsLocally(meeting) {

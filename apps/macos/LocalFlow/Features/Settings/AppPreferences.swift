@@ -90,6 +90,8 @@ final class AppPreferences {
   var purpose: Purpose {
     didSet { defaults.set(purpose.rawValue, forKey: "setup.purpose") }
   }
+  /// The page the window opens on.
+  var landingPage: LocalFlowPage { purpose == .meetings ? .meetings : .history }
   private(set) var setupVersion: Int
   var onboardingComplete: Bool { setupVersion >= Self.currentSetupVersion }
 
@@ -237,6 +239,14 @@ final class AppPreferences {
     serverCapabilities = nil
     // The observed values are reset above; the stored ones go, except the switch.
     for key in Self.remoteKeys where key != "remote.enabled" { defaults.removeObject(forKey: key) }
+  }
+
+  /// Undoes what choosing a server during setup stored, so the remote choice can be abandoned.
+  /// `resetRemote` is the rest of it.
+  func undoServerChoice() {
+    serverOnly = false
+    storedUseServerForEverything = nil
+    rewriteEnabled = false
   }
 
   var remoteFallbackThreshold: Duration {

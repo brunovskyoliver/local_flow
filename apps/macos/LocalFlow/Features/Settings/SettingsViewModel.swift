@@ -19,7 +19,7 @@ final class SettingsViewModel {
   }
   enum Action {
     case download, importModel, cancelInstall, load, unload, showLocation, verifyModel
-    case requestMicrophone, requestInputMonitoring, requestAccessibility
+    case requestMicrophone, requestInputMonitoring, requestAccessibility, requestSystemAudio
     case configureShortcut(ShortcutPreference)
     case setKeepModelReady(Bool)
     case importSpeakerModel, downloadSpeakerModel, verifySpeakerModel
@@ -126,6 +126,11 @@ final class SettingsViewModel {
     }
     /// Recording a meeting needs no model, shortcut or keyboard permission.
     var readyForMeetings: Bool { storageAvailable && microphone == .granted }
+    var meetingBlockedReason: String? {
+      if microphone != .granted { return "Allow Microphone access to record." }
+      if !storageAvailable { return "Local storage is not ready. Check Settings before recording." }
+      return nil
+    }
     /// The local models a meeting on this Mac needs.
     var meetingModelsReady: Bool {
       modelInstalled && speakerModelInstalled && meetingModelInstalled

@@ -38,7 +38,9 @@ final class AppServices {
       if !self.preferences.serverRouting.servedByServer(.dictation) {
         try await self.performSetting(.load)
       }
-    })
+    },
+    abandonServer: { [weak self] in self?.turnOffRemoteDictation() },
+    openNotetaker: { [weak self] in self?.router.selection = .meetings })
   @ObservationIgnored lazy var localAI = LocalAISetup(
     preferences: preferences, installer: LocalAIInstaller(),
     ready: { [weak self] in self?.localHelpersReady = true })
@@ -196,6 +198,7 @@ final class AppServices {
     guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
       return "Allow Microphone in Settings."
     }
+    if preferences.purpose == .meetings { return "Ready · start a meeting in Notetaker" }
     guard shortcut.isAvailable else {
       return "Enable the shortcut and Input Monitoring in Settings."
     }
@@ -286,6 +289,8 @@ final class AppServices {
   func start() async {
     guard coordinator == nil, !starting else { return }
     starting = true
+    shortcut.installAllowed = { [weak self] in self?.preferences.purpose != .meetings }
+    onboarding.resumeUnfinishedSetup()
     settings.updater = updater
     applyAppearance()
     localModel.observe()
@@ -1853,11 +1858,17 @@ final class AppServices {
       } else {
         await requestMicrophone()
       }
+    case .requestSystemAudio:
+      if !MeetingPermissions.live.requestScreenRecording() {
+        openPermissionSettings("ScreenCapture")
+      }
     case .requestInputMonitoring:
+      guard preferences.purpose != .meetings else { return }
       requestShortcutPermission()
       if !CGPreflightListenEventAccess() { openPermissionSettings("ListenEvent") }
     case .requestAccessibility: requestAccessibilityPermission()
     case .configureShortcut(let preference):
+      guard preferences.purpose != .meetings else { return }
       guard coordinator?.busy != true else { throw DictationFailure.busy }
       try shortcut.install(preference)
       preference.save()
@@ -2061,8 +2072,9 @@ final class AppServices {
     setupStatus = "Local model verification failed. Verify or reinstall the model in Settings."
   }
 
+  /// Meeting notes only: no shortcut is installed or saved, whoever asks (FR-005).
   func configureShortcut(_ preference: ShortcutPreference) {
-    guard coordinator?.busy != true else { return }
+    guard preferences.purpose != .meetings, coordinator?.busy != true else { return }
     do {
       try shortcut.install(preference)
       preference.save()
@@ -2077,6 +2089,7 @@ final class AppServices {
       ? "Microphone allowed." : "Microphone permission is needed for dictation."
   }
   func requestShortcutPermission() {
+    guard preferences.purpose != .meetings else { return }
     _ = CGRequestListenEventAccess()
     configureShortcut(ShortcutPreference.load())
   }

@@ -10,6 +10,7 @@ struct LocalFlowApp: App {
   init() {
     FlowFonts.register()
     let services = AppServices()
+    services.router.selection = services.preferences.landingPage
     _services = State(initialValue: services)
     if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
       Task { await services.start() }

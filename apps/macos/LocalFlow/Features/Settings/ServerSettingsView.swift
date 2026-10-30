@@ -302,7 +302,7 @@ struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
   private var consentUpdate: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Send summaries and meetings to your server?").font(.flow(size: 17, weight: .medium))
-      Text(RemoteDictationModel.consentText).font(.flow(size: 13)).lineSpacing(3)
+      Text(model.remote.currentConsentText).font(.flow(size: 13)).lineSpacing(3)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
         Spacer()

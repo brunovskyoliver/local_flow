@@ -11,14 +11,14 @@ Write each test before its code. `[P]` means a different file with no dependency
 
 ## Phase 2: User Story 1, meeting notes on a server (MVP)
 
-- [ ] T004 [US1] Test: meetings + remote goes aiDetails, permissions, personalize, complete; starts no downloads; sets `serverOnly`; finish opens Notetaker; a pending approval can continue as an approved one can (US1 scenario 2)
-- [ ] T005 [US1] Purpose step and purpose-aware AI step and introduction copy in `OnboardingView` (FR-001, FR-002, FR-003)
-- [ ] T006 [US1] Meeting-only consent variant in `RemoteDictationView` and `remotePrivacy` (FR-012), with a test that the variant is chosen by purpose; the variant says later dictation goes to this server; retention notice shows on every server path, including Both
-- [ ] T007 [US1] Meeting permission rows using `MeetingPermissions` and appearance-only `personalize`; the system audio row also shows for Both (FR-005, FR-006, US3)
-- [ ] T008 [US1] Guard `configureShortcut` on the purpose, with a test that a `meetings` purpose installs no shortcut (FR-005)
-- [ ] T009 [US1] Hide keyboard permissions in Settings for `meetings`, and land on Notetaker on launch (FR-005, FR-007)
-- [ ] T010 [US1] Test and code: Back from a remote path to a different choice clears `serverOnly` and remote, and so does restarting an unfinished onboarding after a quit (FR-011)
-- [ ] T011 [US1] Test: a recording made with `serverOnly` and no reachable server is saved and waits, using the existing meeting test doubles (FR-009, SC-004)
+- [X] T004 [US1] Test: meetings + remote goes aiDetails, permissions, personalize, complete; starts no downloads; sets `serverOnly`; finish opens Notetaker; a pending approval can continue as an approved one can (US1 scenario 2)
+- [X] T005 [US1] Purpose step and purpose-aware AI step and introduction copy in `OnboardingView` (FR-001, FR-002, FR-003)
+- [X] T006 [US1] Meeting-only consent variant in `RemoteDictationView` and `remotePrivacy` (FR-012), with a test that the variant is chosen by purpose; the variant says later dictation goes to this server; retention notice shows on every server path, including Both
+- [X] T007 [US1] Meeting permission rows using `MeetingPermissions` and appearance-only `personalize`; the system audio row also shows for Both (FR-005, FR-006, US3)
+- [X] T008 [US1] Guard `configureShortcut` on the purpose, with a test that a `meetings` purpose installs no shortcut (FR-005)
+- [X] T009 [US1] Hide keyboard permissions in Settings for `meetings`, and land on Notetaker on launch (FR-005, FR-007)
+- [X] T010 [US1] Test and code: Back from a remote path to a different choice clears `serverOnly` and remote, and so does restarting an unfinished onboarding after a quit (FR-011)
+- [X] T011 [US1] Test: a recording made with `serverOnly` and no reachable server is saved and waits, using the existing meeting test doubles (FR-009, SC-004)
 
 ## Phase 3: User Story 2, meeting notes on this Mac
 

@@ -84,6 +84,9 @@ final class ShortcutController {
   /// False when Shift belongs to the configured shortcut; Settings says so.
   var bypassGestureAvailable: Bool { !preference.includesShift }
   var onCancel: (() -> Void)?
+  /// False while the purpose is meeting notes only: no event tap, whoever asks, and an
+  /// earlier one goes on the next permission refresh (Feature 022 FR-005).
+  var installAllowed: () -> Bool = { true }
   private let logger = Logger(subsystem: "org.localflow.LocalFlow", category: "shortcut")
   private var cancellation = ShortcutCancellationState()
   private var hold = ShortcutHoldState()
@@ -114,13 +117,17 @@ final class ShortcutController {
   }
 
   var isAvailable: Bool {
-    preference.enabled && CGPreflightListenEventAccess()
+    installAllowed() && preference.enabled && CGPreflightListenEventAccess()
       && (!priorityActive || AXIsProcessTrusted())
       && tap.map { CGEvent.tapIsEnabled(tap: $0) } == true
   }
 
   func install(_ preference: ShortcutPreference) throws {
     guard preference.isValid else { throw Failure.invalidBinding }
+    guard installAllowed() else {
+      remove()
+      return
+    }
     if !preference.enabled {
       remove()
       self.preference = preference

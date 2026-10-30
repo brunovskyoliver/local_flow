@@ -11,6 +11,11 @@ final class RemoteDictationModel {
   static let consentText =
     "Dictation audio, transcripts, Dictionary terms and rewrite text will leave this Mac for the server below while remote dictation is on. With Use this server for everything, so will meeting audio, meeting transcripts and the text summaries are made from. The server's administrator can see audio while it is being processed. Nothing is sent until the administrator approves this device; dictation stays local whenever the server can't be reached."
 
+  /// Feature 022: what a meeting-only setup confirms, at the same consent version. Its
+  /// last sentence is why Set up dictation needs no second consent.
+  static let meetingConsentText =
+    "Meeting audio, meeting transcripts and the text summaries are made from will leave this Mac for the server below. The server's administrator can see audio while it is being processed. Meetings handed off to the server stay there until they are merged back, at most 7 days. Nothing is sent until the administrator approves this device; recordings wait on this Mac while the server can't be reached. If you set up dictation later, dictation audio, transcripts, Dictionary terms and rewrite text go to this server too."
+
   private(set) var showingConsent = false
   private(set) var confirmingTurnOff = false
   var serverDraft = ""
@@ -36,6 +41,8 @@ final class RemoteDictationModel {
   }
 
   var isOn: Bool { preferences.remoteEnabled }
+  var meetingOnly: Bool { preferences.purpose == .meetings }
+  var currentConsentText: String { meetingOnly ? Self.meetingConsentText : Self.consentText }
   var state: RemoteDictationState { preferences.remoteState }
   var serverURL: String { preferences.remoteServerURL }
   var draftOrigin: URL? { RemoteDictationSettings.origin(serverDraft) }
@@ -159,9 +166,9 @@ struct RemoteDictationView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      SettingsRow("Remote dictation", detail: detail) {
+      SettingsRow(title, detail: detail) {
         Toggle(
-          "Remote dictation",
+          title,
           isOn: Binding(
             get: { model.isOn },
             set: { $0 ? model.requestTurnOn() : model.requestTurnOff() })
@@ -218,8 +225,13 @@ struct RemoteDictationView: View {
     }
   }
 
+  private var title: String { model.meetingOnly ? "Your server" : "Remote dictation" }
+
   private var detail: String {
     guard model.isOn else {
+      if model.meetingOnly {
+        return "Run meeting transcripts and notes on a LocalFlow server you run."
+      }
       return "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run."
     }
     return [model.serverURL, model.statusText].compactMap { $0 }.filter { !$0.isEmpty }
@@ -233,7 +245,7 @@ struct RemoteDictationView: View {
         TextField("https://server.example.com", text: $model.serverDraft)
           .accessibilityIdentifier("settings.remoteServerURL")
       }
-      Text(RemoteDictationModel.consentText).font(.flow(size: 13)).lineSpacing(3)
+      Text(model.currentConsentText).font(.flow(size: 13)).lineSpacing(3)
         .fixedSize(horizontal: false, vertical: true)
       if let origin = model.draftOrigin {
         Text("Server: \(origin.host() ?? origin.absoluteString)").font(
