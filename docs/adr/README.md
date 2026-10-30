@@ -50,3 +50,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0033: Meeting handoff, server-side processing that survives a disconnect](0033-meeting-handoff.md)
 
 - [0034: Meetings recorded on the iPhone, with a copy for the Mac](0034-phone-meetings.md)
+
+- [0036: One Rust and GPUI desktop client for macOS and Windows](0036-rust-gpui-desktop-client.md)
