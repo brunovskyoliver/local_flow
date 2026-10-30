@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted by the owner, 2026-10-31, including Phase 0 decisions recorded in the plan. Supersedes, as the Rust client replaces the Swift one at cutover, ADR 0001 and ADR 0010's presentation choice, and amend ADR 0002 and ADR 0008, once the Phase 0 gates in the [plan](../architecture/cross-platform-gpui.md) pass. The constitution is not yet amended.
+Accepted by the owner, 2026-10-31, including Phase 0 decisions recorded in the plan. Supersedes, as the Rust client replaces the Swift one at cutover, ADR 0001 and ADR 0010's presentation choice, and amend ADR 0002 and ADR 0008, once the Phase 0 gates in the [plan](../architecture/cross-platform-gpui.md) pass. The constitution was amended to 4.0.0 on 2026-10-31.
 
 ## Context
 
@@ -21,7 +21,7 @@ The client is about 45,000 lines of Swift plus the 23,000-line `LocalFlowCore` p
 
 ## Constitution check
 
-A major amendment (4.0.0) is required before implementation starts:
+A major amendment (4.0.0), applied on 2026-10-31, before implementation started:
 
 - **1 Native lightweight client:** today requires Swift, SwiftUI and Apple frameworks. It would become: Rust and GPUI with native OS APIs; the bans on Electron, web shells, client LLMs and persistent Python or Node stay.
 - **5 Privacy:** "Keychain or the Secure Enclave" would add Windows Credential Manager and TPM-backed keys. Consent, encryption and retention rules don't change.

@@ -1,6 +1,6 @@
 # Cross-platform desktop client: GPUI plan
 
-Status: proposed, 2026-10-30. Nothing here is implemented. The decision and its constitution impact are in [ADR 0036](../adr/0036-rust-gpui-desktop-client.md). Each phase below gets its own Spec Kit cycle.
+Status: accepted, 2026-10-31. Phase 1 is built; Phase 3 is Feature 024. The decision and the constitution amendment are in [ADR 0036](../adr/0036-rust-gpui-desktop-client.md). Each phase below gets its own Spec Kit cycle.
 
 ## Goal
 

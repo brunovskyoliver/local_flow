@@ -1,3 +1,4 @@
+<!-- 2026-10-31: version 4.0.0 amends principles 1, 5, 7 and 14 for the Rust and GPUI desktop client, as proposed in ADR 0036 and approved by the owner. The Swift Mac app stays valid and shipping until its cutover (plan Phase 7); iOS, the server and the workers stay as they are. -->
 <!-- 2026-10-23: version 3.0.0 amends principle 5 for user-requested automatic approved-account usage. Feature 021 spec/plan/tasks and ADR 0035 record the scope; all other privacy defaults remain. -->
 <!-- Sync impact report
 Version: 1.0.0 -> 2.0.0 (major: principles 3, 4, 5, 8 and 14 redefined for opt-in remote inference)
@@ -16,7 +17,7 @@ Related: ADR 0028 (proposed). Deferred follow-ups: remote inference specificatio
 
 ### 1. Native lightweight client
 
-The client MUST use Swift, SwiftUI and Apple frameworks, with AppKit where needed. Electron, Chromium shells, embedded UI web servers, client LLMs, and persistent Python or Node runtimes are prohibited.
+The desktop client MUST use Rust and GPUI with native OS APIs (ADR 0036). Until its cutover the Swift Mac app, and permanently the iOS app, use Swift, SwiftUI and Apple frameworks, with AppKit where needed. Electron, Chromium shells, embedded UI web servers, client LLMs, and persistent Python or Node runtimes are prohibited.
 
 ### 2. Memory efficiency
 
@@ -32,7 +33,7 @@ Dictation, capture, recording, transcription and local persistence MUST work off
 
 ### 5. Privacy by architecture
 
-Speech recognition and recordings MUST remain local by default. Sending audio or text to a server requires explicit per-device opt-in and is allowed only to a LocalFlow server the user or their administrator operates. Audio and text MUST be encrypted in transit end to end between client and that server; when TLS terminates at a third party such as a tunnel provider, an inner application-layer encryption layer is required. The server MUST process audio and text in memory or bounded temporary files and MUST NOT retain them after the request, unless a later specification adds user-controlled storage. No mandatory cloud, advertising or external analytics SDK is allowed. Following the explicit 2026-10-23 product-owner revision (ADR 0035), approved LocalFlow server accounts may automatically report bounded daily usage counts and audio duration to that server, without a separate reporting UI. This exception excludes audio/text/field content, does not apply to local-only or unapproved devices, and must preserve prior withdrawal/deletion and inference revocation. Credentials and device keys belong in Keychain or the Secure Enclave. Logs on client and server MUST exclude audio, transcript text and credentials. Changes to these defaults require a specification and explicit user consent.
+Speech recognition and recordings MUST remain local by default. Sending audio or text to a server requires explicit per-device opt-in and is allowed only to a LocalFlow server the user or their administrator operates. Audio and text MUST be encrypted in transit end to end between client and that server; when TLS terminates at a third party such as a tunnel provider, an inner application-layer encryption layer is required. The server MUST process audio and text in memory or bounded temporary files and MUST NOT retain them after the request, unless a later specification adds user-controlled storage. No mandatory cloud, advertising or external analytics SDK is allowed. Following the explicit 2026-10-23 product-owner revision (ADR 0035), approved LocalFlow server accounts may automatically report bounded daily usage counts and audio duration to that server, without a separate reporting UI. This exception excludes audio/text/field content, does not apply to local-only or unapproved devices, and must preserve prior withdrawal/deletion and inference revocation. Credentials and device keys belong in Keychain or the Secure Enclave on Apple platforms, and in Windows Credential Manager or TPM-backed keys on Windows. Logs on client and server MUST exclude audio, transcript text and credentials. Changes to these defaults require a specification and explicit user consent.
 
 ### 6. Streaming over accumulation
 
@@ -40,7 +41,7 @@ Audio, large files and network payloads MUST be processed incrementally with bou
 
 ### 7. Simple persistence
 
-Structured data MUST use SQLite, preferably GRDB.swift on the client, with explicit migrations and transactions. Media belongs in files, never database BLOBs. SwiftData/Core Data MUST NOT be the storage authority. Add only schema needed by the current feature.
+Structured data MUST use SQLite, preferably GRDB.swift on Swift clients and `rusqlite` on the Rust desktop client, with explicit migrations and transactions. Media belongs in files, never database BLOBs. SwiftData/Core Data MUST NOT be the storage authority. Add only schema needed by the current feature.
 
 ### 8. Server isolation
 
@@ -68,7 +69,7 @@ Development tooling MUST measure RSS, model load/unload duration, ASR and diariz
 
 ### 14. Scope discipline
 
-Build thin feature slices through Spec Kit. Do not add speculative infrastructure, package proliferation, distributed queues, multi-server clustering or generic platforms. Accounts are allowed only as described in principle 15; public self-service platforms, billing and cross-server federation are out of scope. Prefer Apple APIs, then small maintained native dependencies. Substantial dependencies require documented justification and license review. Never copy VoiceInk application source.
+Build thin feature slices through Spec Kit. Do not add speculative infrastructure, package proliferation, distributed queues, multi-server clustering or generic platforms. Accounts are allowed only as described in principle 15; public self-service platforms, billing and cross-server federation are out of scope. Prefer platform APIs, then small maintained native dependencies. Substantial dependencies require documented justification and license review; this includes GPUI, GPUI Kit, sherpa-onnx, ONNX Runtime and `tray-icon`. Never copy VoiceInk application source.
 
 ### 15. Authenticated, isolated server access
 
@@ -82,4 +83,4 @@ Substantial changes follow specify, clarify where needed, plan, tasks, analyze, 
 
 This constitution takes precedence over convenience and feature-local designs. Reviewers MUST check compliance. Exceptions require an ADR documenting the conflict, evidence, mitigation and approval; an ADR alone does not silently amend a mandatory principle. Amendments record rationale, update affected templates/docs/specs and use semantic versioning: major for incompatible principles, minor for additions, patch for clarifications. Unmeasured targets MUST NOT be represented as achieved.
 
-**Version**: 3.0.0 | **Ratified**: 2026-09-16 | **Last amended**: 2026-10-23
+**Version**: 4.0.0 | **Ratified**: 2026-09-16 | **Last amended**: 2026-10-31
