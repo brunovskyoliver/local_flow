@@ -219,7 +219,8 @@ final class StorageRecoveryTests: XCTestCase {
   }
 
   private func makeRoot(name: String) -> URL {
-    let root = ((try? canonicalTemporaryDirectory()) ?? URL(fileURLWithPath: NSTemporaryDirectory()))
+    let root =
+      ((try? canonicalTemporaryDirectory()) ?? URL(fileURLWithPath: NSTemporaryDirectory()))
       .appendingPathComponent("LocalFlowRecovery-\(name)-\(UUID().uuidString)", isDirectory: true)
     try? FileManager.default.createDirectory(
       at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

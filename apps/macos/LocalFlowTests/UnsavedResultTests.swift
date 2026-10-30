@@ -281,7 +281,8 @@ final class UnsavedResultTests: XCTestCase {
   }
 
   private func makeRoot(name: String) -> URL {
-    let root = ((try? canonicalTemporaryDirectory()) ?? URL(fileURLWithPath: NSTemporaryDirectory()))
+    let root =
+      ((try? canonicalTemporaryDirectory()) ?? URL(fileURLWithPath: NSTemporaryDirectory()))
       .appendingPathComponent("LocalFlowUnsaved-\(name)-\(UUID().uuidString)", isDirectory: true)
     try? FileManager.default.createDirectory(
       at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

@@ -533,7 +533,8 @@ final class HistoryViewModelTests: XCTestCase {
   }
 
   private func makeCoordinator(store: TranscriptionStore) -> DictationCoordinator {
-    let root = ((try? canonicalTemporaryDirectory()) ?? URL(fileURLWithPath: NSTemporaryDirectory()))
+    let root =
+      ((try? canonicalTemporaryDirectory()) ?? URL(fileURLWithPath: NSTemporaryDirectory()))
       .appendingPathComponent("LocalFlowHistoryVM-\(UUID().uuidString)", isDirectory: true)
     try? FileManager.default.createDirectory(
       at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
