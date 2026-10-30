@@ -28,9 +28,9 @@ Write each test before its code. `[P]` means a different file with no dependency
 
 ## Phase 4: User Story 3, dictation or both
 
-- [ ] T015 [US3] Test: dictation path equals today's path plus the purpose step (SC-002)
-- [ ] T016 [US3] Test and code: both + local or off starts meeting models automatically; both + remote does not, and keeps `serverOnly` off (FR-014)
-- [ ] T017 [US3] Test: an install with finished onboarding and no stored purpose keeps its page and shortcut (SC-003)
+- [X] T015 [US3] Test: dictation path equals today's path plus the purpose step (SC-002)
+- [X] T016 [US3] Test and code: both + local or off starts meeting models automatically; both + remote does not, and keeps `serverOnly` off (FR-014)
+- [X] T017 [US3] Test: an install with finished onboarding and no stored purpose keeps its page and shortcut (SC-003)
 
 ## Phase 5: User Story 4, adding dictation later
 

@@ -257,6 +257,7 @@ extension OnboardingTests {
       startMeetingModels: { meetings += 1 })
     var readiness = SettingsViewModel.Snapshot()
     setup.advance(readiness: readiness)
+    setup.purpose = .dictation
     setup.advance(readiness: readiness)
     setup.advance(readiness: readiness)
     XCTAssertEqual(setup.step, .aiDetails)
@@ -265,6 +266,7 @@ extension OnboardingTests {
     setup.advance(readiness: readiness)
     XCTAssertEqual(setup.step, .downloads)
     XCTAssertEqual(started, [true])
+    XCTAssertEqual(meetings, 0, "Dictation only asks when the user presses Download")
     setup.downloadMeetingModels()
     setup.downloadMeetingModels()
     XCTAssertEqual(meetings, 1)
@@ -886,5 +888,102 @@ extension OnboardingTests {
     readiness.meetingModelInstalled = true
     readiness.speakerModelInstalled = true
     XCTAssertTrue(setup.downloadsReady(readiness))
+  }
+}
+
+// MARK: Feature 022, User Story 3
+
+extension OnboardingTests {
+  /// T015 (SC-002): today's steps plus the purpose step, and the same gate at each.
+  @MainActor func testDictationIsTodaysFlowPlusThePurposeStep() {
+    let today: [(OnboardingCoordinator.AIMode, [OnboardingCoordinator.Step])] = [
+      (.local, [.introduction, .ai, .aiDetails, .downloads, .permissions, .personalize, .test]),
+      (.remote, [.introduction, .ai, .aiDetails, .downloads, .permissions, .personalize, .test]),
+      (.off, [.introduction, .ai, .downloads, .permissions, .personalize, .test]),
+    ]
+    for (mode, steps) in today {
+      let (preferences, _) = preferences()
+      var meetingModels = 0
+      let setup = OnboardingCoordinator(
+        preferences: preferences, startMeetingModels: { meetingModels += 1 })
+      reachDownloads(setup, .dictation, mode)
+      XCTAssertEqual(setup.path.filter { $0 != .purpose }, steps, "\(mode)")
+      XCTAssertEqual(setup.path.count, steps.count + 1)
+      XCTAssertEqual(meetingModels, 0, "\(mode)")
+      let ready = readySnapshot()
+      XCTAssertFalse(ready.meetingModelsReady)
+      setup.advance(readiness: ready)
+      XCTAssertEqual(setup.step, .permissions, "Meeting models stay optional")
+      setup.advance(readiness: ready)
+      setup.advance(readiness: ready)
+      XCTAssertEqual(setup.step, .test)
+      XCTAssertFalse(preferences.serverOnly)
+      setup.skipTest()
+      XCTAssertEqual(preferences.landingPage, .history)
+    }
+  }
+
+  /// T016 (US3 scenario 2): Both asks for the meeting models itself, but doesn't wait for them.
+  @MainActor func testBothOnThisMacStartsMeetingModelsAutomatically() {
+    for mode in [OnboardingCoordinator.AIMode.local, .off] {
+      let (preferences, _) = preferences()
+      var meetingModels = 0
+      let setup = OnboardingCoordinator(
+        preferences: preferences, startMeetingModels: { meetingModels += 1 })
+      reachDownloads(setup, .both, mode)
+      XCTAssertEqual(meetingModels, 1, "\(mode)")
+      XCTAssertTrue(setup.meetingsRequested)
+      setup.advance(readiness: readySnapshot())
+      XCTAssertEqual(setup.step, .permissions, "Only meeting notes alone need them first")
+      XCTAssertFalse(preferences.serverOnly)
+    }
+  }
+
+  /// T016 (FR-014): the server handles meetings; the speech model stays as the fallback.
+  @MainActor func testBothOnAServerRequestsNoMeetingModelsAndKeepsServerOnlyOff() {
+    let (preferences, _) = preferences()
+    var started: [Bool] = []
+    var meetingModels = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, startDownloads: { started.append($0) },
+      startMeetingModels: { meetingModels += 1 })
+    reachDownloads(setup, .both, .remote)
+    XCTAssertEqual(started, [false])
+    XCTAssertEqual(meetingModels, 0)
+    XCTAssertFalse(setup.meetingsRequested)
+    XCTAssertFalse(preferences.serverOnly)
+  }
+
+  /// T016 (FR-011): Both on this Mac, then Back to a server, drops what hasn't started.
+  @MainActor func testChangingBothToAServerWithdrawsQueuedMeetingModels() {
+    let (preferences, _) = preferences()
+    var withdrawn = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, cancelMeetingModels: { withdrawn += 1 })
+    reachDownloads(setup, .both, .local)
+    setup.back()
+    setup.back()
+    setup.aiMode = .remote
+    setup.advance(readiness: .init())
+    setup.advance(readiness: .init())
+    XCTAssertEqual(setup.step, .downloads)
+    XCTAssertEqual(withdrawn, 1)
+    XCTAssertFalse(setup.meetingsRequested)
+    XCTAssertFalse(preferences.serverOnly)
+  }
+
+  /// T017 (FR-008, SC-003): updating changes nothing for a finished setup with no purpose.
+  @MainActor func testAFinishedInstallWithNoStoredPurposeKeepsItsPageAndShortcut() {
+    let (preferences, defaults) = preferences()
+    preferences.completeOnboarding()
+    XCTAssertNil(defaults.string(forKey: "setup.purpose"))
+    let updated = AppPreferences(defaults: defaults)
+    OnboardingCoordinator(preferences: updated).resumeUnfinishedSetup()
+    XCTAssertTrue(updated.onboardingComplete)
+    XCTAssertEqual(updated.purpose, .both)
+    XCTAssertEqual(updated.landingPage, .history)
+    XCTAssertNotEqual(updated.purpose, .meetings, "Every shortcut guard tests for this purpose")
+    XCTAssertFalse(updated.serverOnly)
+    XCTAssertNil(defaults.string(forKey: "setup.purpose"), "Launch stores no purpose for them")
   }
 }

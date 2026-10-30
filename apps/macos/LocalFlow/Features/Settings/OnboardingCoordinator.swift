@@ -90,7 +90,7 @@ final class OnboardingCoordinator {
   private var meetingsOnServer: Bool { purpose == .meetings && aiMode == .remote }
 
   /// Paths that download the meeting models without the user pressing Download.
-  private var meetingModelsAutomatic: Bool { purpose == .meetings && aiMode != .remote }
+  private var meetingModelsAutomatic: Bool { purpose != .dictation && aiMode != .remote }
 
   private func ready(_ readiness: SettingsViewModel.Snapshot) -> Bool {
     purpose == .meetings ? readiness.readyForMeetings : readiness.readyForTest
