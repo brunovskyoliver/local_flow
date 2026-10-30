@@ -115,7 +115,7 @@ final class InputDeviceMigrationTests: XCTestCase {
 
   // T046
   func testTranscriptionStoreReadsBackTheDeviceAndOldRowsReadNil() async throws {
-    let directory = FileManager.default.homeDirectoryForCurrentUser
+    let directory = try canonicalTemporaryDirectory()
       .appendingPathComponent("InputDeviceMigration-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     directories.append(directory)
@@ -160,7 +160,7 @@ final class InputDeviceMigrationTests: XCTestCase {
   }
 
   func testPendingRemoteDictationKeepsItsDeviceAcrossAReopen() async throws {
-    let directory = FileManager.default.homeDirectoryForCurrentUser
+    let directory = try canonicalTemporaryDirectory()
       .appendingPathComponent("InputDevicePending-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     directories.append(directory)

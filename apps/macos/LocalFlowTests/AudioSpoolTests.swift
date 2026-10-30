@@ -123,7 +123,7 @@ final class AudioSpoolTests: XCTestCase {
   }
 
   private func temporaryRoot() throws -> URL {
-    let url = FileManager.default.homeDirectoryForCurrentUser
+    let url = try canonicalTemporaryDirectory()
       .appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     addTeardownBlock { try? FileManager.default.removeItem(at: url) }

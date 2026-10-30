@@ -289,13 +289,29 @@ final class FakeInsertion: TextInserting, @unchecked Sendable {
   }
 }
 
-func makeSpoolRoot() throws -> URL {
-  let root = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent("LocalFlowTests-\(UUID().uuidString)", isDirectory: true)
+/// The test process's temporary directory by its canonical path: `/var/folders/…` sits
+/// behind the `/var` symlink, which the writers and the model provisioner refuse by design.
+/// `realpath` keeps the `/private` prefix that `resolvingSymlinksInPath()` strips.
+func canonicalTemporaryDirectory() throws -> URL {
+  guard let canonical = realpath(NSTemporaryDirectory(), nil) else {
+    throw CocoaError(.fileNoSuchFile)
+  }
+  defer { free(canonical) }
+  return URL(fileURLWithPath: String(cString: canonical), isDirectory: true)
+}
+
+/// A private (0700) root in the canonical temporary directory, never the home directory.
+func makePrivateTestRoot(prefix: String) throws -> URL {
+  let root = try canonicalTemporaryDirectory()
+    .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
   try FileManager.default.createDirectory(
     at: root, withIntermediateDirectories: true,
     attributes: [.posixPermissions: 0o700])
   return root
+}
+
+func makeSpoolRoot() throws -> URL {
+  try makePrivateTestRoot(prefix: "LocalFlowTests")
 }
 
 /// Authored evidence only; never claims these values came from a model run.

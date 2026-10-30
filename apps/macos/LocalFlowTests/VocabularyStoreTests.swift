@@ -18,7 +18,7 @@ final class VocabularyStoreTests: XCTestCase {
     if let path {
       file = path
     } else {
-      let directory = FileManager.default.homeDirectoryForCurrentUser
+      let directory = try canonicalTemporaryDirectory()
         .appendingPathComponent("LocalFlowVocabulary-\(UUID().uuidString)", isDirectory: true)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       directories.append(directory)

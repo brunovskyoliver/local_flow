@@ -289,7 +289,7 @@ final class WhisperBenchmarkTests: XCTestCase {
     output: URL, hardware: String, power: String
   ) async throws -> Receipt {
     try descriptor.validate()
-    let installRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+    let installRoot = try canonicalTemporaryDirectory().appendingPathComponent(
       "LocalFlowTests-whisper-parakeet-" + UUID().uuidString, isDirectory: true)
     let provisioner = ModelProvisioner(descriptor: descriptor, rootURL: installRoot)
     let local = try await provisioner.install(from: source)

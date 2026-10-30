@@ -506,19 +506,9 @@ enum ADTSFixtures {
 
 // MARK: - Store and root helpers
 
-/// A private root in the test process's temporary directory, by its canonical path:
-/// `/var/folders/…` sits behind the `/var` symlink, which the writer refuses by design.
-/// `realpath` keeps the `/private` prefix that `resolvingSymlinksInPath()` strips.
+/// A private root in the canonical temporary directory (see `canonicalTemporaryDirectory`).
 func makeMeetingTestRoot() throws -> URL {
-  guard let canonical = realpath(NSTemporaryDirectory(), nil) else {
-    throw CocoaError(.fileNoSuchFile)
-  }
-  defer { free(canonical) }
-  let root = URL(fileURLWithPath: String(cString: canonical), isDirectory: true)
-    .appendingPathComponent("LocalFlowMeetingTests-\(UUID().uuidString)", isDirectory: true)
-  try FileManager.default.createDirectory(
-    at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-  return root
+  try makePrivateTestRoot(prefix: "LocalFlowMeetingTests")
 }
 
 struct MeetingTestStore {

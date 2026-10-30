@@ -105,7 +105,7 @@ final class AudioCaptureTests: XCTestCase {
   }
 
   func testStereoConversionSplitsIntoBoundedMonoSpoolWrites() throws {
-    let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+    let root = try canonicalTemporaryDirectory().appendingPathComponent(
       UUID().uuidString)
     let spool = try AudioSpool(rootDirectory: root)
     defer {
@@ -132,7 +132,7 @@ final class AudioCaptureTests: XCTestCase {
   }
 
   func testLowRateConversionUsesSeveralBoundedOutputBlocks() throws {
-    let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+    let root = try canonicalTemporaryDirectory().appendingPathComponent(
       UUID().uuidString)
     let spool = try AudioSpool(rootDirectory: root)
     defer {
@@ -153,7 +153,7 @@ final class AudioCaptureTests: XCTestCase {
   }
 
   func testFailedSpoolDoesNotAdvanceNormalizedSampleCount() throws {
-    let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+    let root = try canonicalTemporaryDirectory().appendingPathComponent(
       UUID().uuidString)
     let spool = try AudioSpool(rootDirectory: root)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -172,7 +172,7 @@ final class AudioCaptureTests: XCTestCase {
   }
 
   func testConverterClipsTheFinalPermittedSample() throws {
-    let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+    let root = try canonicalTemporaryDirectory().appendingPathComponent(
       UUID().uuidString)
     let spool = try AudioSpool(rootDirectory: root)
     defer {

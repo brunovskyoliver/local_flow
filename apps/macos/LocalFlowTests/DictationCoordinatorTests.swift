@@ -847,7 +847,7 @@ final class DictationCoordinatorTests: XCTestCase {
   }
 
   private func makeStore() throws -> TranscriptionStore {
-    let directory = FileManager.default.homeDirectoryForCurrentUser
+    let directory = try canonicalTemporaryDirectory()
       .appendingPathComponent("LocalFlowStore-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     ownedDirectories.append(directory)
@@ -1397,7 +1397,7 @@ final class DictationRewriteTests: XCTestCase {
   }
 
   private func makeStore() throws -> TranscriptionStore {
-    let directory = FileManager.default.homeDirectoryForCurrentUser
+    let directory = try canonicalTemporaryDirectory()
       .appendingPathComponent("LocalFlowStore-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     ownedDirectories.append(directory)
