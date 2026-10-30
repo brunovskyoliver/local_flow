@@ -4,12 +4,14 @@ import Observation
 @MainActor @Observable
 final class OnboardingCoordinator {
   enum Step: Int, CaseIterable {
-    case introduction, ai, aiDetails, downloads, permissions, personalize, test, complete
+    case introduction, purpose, ai, aiDetails, downloads, permissions, personalize, test, complete
   }
   /// Where rewriting and meeting notes run. With `remote`, an approved device also sends
   /// dictation and meetings to the server; this Mac's speech model stays as the fallback.
   enum AIMode: Equatable { case local, remote, off }
   private(set) var step: Step = .introduction
+  /// The choice on the purpose step, stored on leaving it.
+  var purpose: AppPreferences.Purpose
   /// The choice on the AI step; `off` once the user skips it.
   var aiMode: AIMode = .local
   private(set) var meetingsRequested = false
@@ -33,22 +35,44 @@ final class OnboardingCoordinator {
     prepareTest: @escaping @MainActor () async throws -> Void = {}
   ) {
     self.preferences = preferences
+    purpose = preferences.purpose
     self.liveReadiness = liveReadiness
     self.startDownloads = startDownloads
     self.startMeetingModels = startMeetingModels
     self.prepareTest = prepareTest
   }
 
+  /// The steps of the current purpose and AI choice, without `complete` (plan's path table).
+  var path: [Step] {
+    var steps: [Step] = [.introduction, .purpose, .ai]
+    if aiMode != .off { steps.append(.aiDetails) }
+    if !meetingsOnServer { steps.append(.downloads) }
+    steps += [.permissions, .personalize]
+    if purpose != .meetings { steps.append(.test) }
+    return steps
+  }
+
+  private var meetingsOnServer: Bool { purpose == .meetings && aiMode == .remote }
+
+  private func ready(_ readiness: SettingsViewModel.Snapshot) -> Bool {
+    purpose == .meetings ? readiness.readyForMeetings : readiness.readyForTest
+  }
+
   /// The primary button. The view gates each step; remote setup is saved before advancing.
   func advance(readiness: SettingsViewModel.Snapshot) {
     switch step {
-    case .introduction: step = .ai
+    case .introduction: step = .purpose
+    case .purpose:
+      preferences.purpose = purpose
+      step = .ai
     case .ai: if aiMode == .off { beginDownloads() } else { step = .aiDetails }
-    case .aiDetails: beginDownloads()
+    case .aiDetails: if meetingsOnServer { step = .permissions } else { beginDownloads() }
     // Local AI and meeting models keep downloading; only dictation needs its model.
     case .downloads: if readiness.modelInstalled { step = .permissions }
-    case .permissions: if readiness.readyForTest { step = .personalize }
-    case .personalize: if readiness.readyForTest { step = .test }
+    case .permissions: if ready(readiness) { step = .personalize }
+    case .personalize:
+      guard ready(readiness) else { return }
+      if purpose == .meetings { finish() } else { step = .test }
     case .test: complete()
     case .complete: break
     }
@@ -72,15 +96,11 @@ final class OnboardingCoordinator {
   }
 
   func back() {
-    guard step != .complete, step != .introduction else { return }
+    guard let index = path.firstIndex(of: step), index > 0 else { return }
     testArmed = false
     testError = nil
     armedSessionID = nil
-    switch step {
-    case .downloads: step = aiMode == .off ? .ai : .aiDetails
-    case .permissions: step = .downloads
-    default: step = Step(rawValue: step.rawValue - 1) ?? .introduction
-    }
+    step = path[index - 1]
   }
   func armTest() async {
     guard step == .test, !preparingTest, !testArmed else { return }

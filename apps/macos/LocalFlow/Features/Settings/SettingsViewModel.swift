@@ -109,6 +109,9 @@ final class SettingsViewModel {
     var microphone: Permission = .unknown
     var inputMonitoring: Permission = .unknown
     var accessibility: Permission = .unknown
+    /// macOS's Screen Recording grant. Refusing it never blocks: a meeting records the
+    /// microphone alone.
+    var systemAudio: Permission = .unknown
     var shortcut = ShortcutPreference()
     var shortcutReady = false
     var storageAvailable = false
@@ -120,6 +123,12 @@ final class SettingsViewModel {
     var status = "Checking local prerequisites…"
     var hasMissingPermissions: Bool {
       microphone != .granted || inputMonitoring != .granted || accessibility != .granted
+    }
+    /// Recording a meeting needs no model, shortcut or keyboard permission.
+    var readyForMeetings: Bool { storageAvailable && microphone == .granted }
+    /// The local models a meeting on this Mac needs.
+    var meetingModelsReady: Bool {
+      modelInstalled && speakerModelInstalled && meetingModelInstalled
     }
     var readyForTest: Bool {
       storageAvailable && modelInstalled && microphone == .granted && inputMonitoring == .granted

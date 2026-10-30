@@ -5,9 +5,9 @@ Write each test before its code. `[P]` means a different file with no dependency
 ## Phase 1: Foundation
 
 - [X] T000 Fix the existing `swift format` line-length failures that stop `make check` (separate commit)
-- [ ] T001 Add `AppPreferences.Purpose` persisted under `setup.purpose`, missing meaning `both`, with a test, in `Features/Settings/AppPreferences.swift`
-- [ ] T002 Add `systemAudio`, `speakerModelInstalled`, `readyForMeetings` and `meetingModelsReady` to `SettingsViewModel.Snapshot` and fill them in `AppServices.settingsSnapshot`
-- [ ] T003 Add `Step.purpose` and path-table routing to `OnboardingCoordinator`; update existing `OnboardingTests` for the new step
+- [X] T001 Add `AppPreferences.Purpose` persisted under `setup.purpose`, missing meaning `both`, with a test, in `Features/Settings/AppPreferences.swift`
+- [X] T002 Add `systemAudio`, `speakerModelInstalled`, `readyForMeetings` and `meetingModelsReady` to `SettingsViewModel.Snapshot` and fill them in `AppServices.settingsSnapshot`
+- [X] T003 Add `Step.purpose` and path-table routing to `OnboardingCoordinator`; update existing `OnboardingTests` for the new step
 
 ## Phase 2: User Story 1, meeting notes on a server (MVP)
 

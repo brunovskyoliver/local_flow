@@ -1687,6 +1687,7 @@ final class AppServices {
     }
     snapshot.inputMonitoring = CGPreflightListenEventAccess() ? .granted : .denied
     snapshot.accessibility = AXIsProcessTrusted() ? .granted : .denied
+    snapshot.systemAudio = MeetingPermissions.live.screenRecordingGranted() ? .granted : .denied
     snapshot.shortcut = ShortcutPreference.load()
     snapshot.shortcutReady = shortcut.isAvailable
     snapshot.busy = coordinator?.busy == true || modelCommandInProgress

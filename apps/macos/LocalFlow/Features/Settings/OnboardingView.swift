@@ -43,21 +43,23 @@ struct OnboardingView: View {
   }
 
   private var progress: some View {
-    let steps = OnboardingCoordinator.Step.allCases.count - 1
+    let path = coordinator.path
+    let current = path.firstIndex(of: coordinator.step) ?? 0
     return HStack(spacing: 5) {
-      ForEach(0..<steps, id: \.self) { index in
+      ForEach(0..<path.count, id: \.self) { index in
         Capsule()
-          .fill(index <= coordinator.step.rawValue ? SottoPalette.accent : SottoPalette.line)
-          .frame(width: index == coordinator.step.rawValue ? 22 : 8, height: 5)
+          .fill(index <= current ? SottoPalette.accent : SottoPalette.line)
+          .frame(width: index == current ? 22 : 8, height: 5)
       }
     }
     .accessibilityElement()
-    .accessibilityLabel("Step \(coordinator.step.rawValue + 1) of \(steps)")
+    .accessibilityLabel("Step \(current + 1) of \(path.count)")
   }
 
   @ViewBuilder private var content: some View {
     switch coordinator.step {
     case .introduction: introduction
+    case .purpose: EmptyView()
     case .ai: aiChoice
     case .aiDetails: if coordinator.aiMode == .remote { remoteServer } else { modelPicker }
     case .downloads: downloads
@@ -533,13 +535,15 @@ struct OnboardingView: View {
 
   private var canAdvance: Bool {
     switch coordinator.step {
-    case .introduction, .ai: true
+    case .introduction, .purpose, .ai: true
     case .aiDetails:
       coordinator.aiMode == .remote
         ? remoteEnrolled || remoteConnected
         : localAI.selection.fits(physicalMemory: localAI.physicalMemory)
     case .downloads: settings.snapshot.modelInstalled
-    case .permissions, .personalize: settings.readyForTest && recorder == nil
+    case .permissions, .personalize:
+      (coordinator.purpose == .meetings
+        ? settings.snapshot.readyForMeetings : settings.readyForTest) && recorder == nil
     case .test: coordinator.testSucceeded
     case .complete: false
     }

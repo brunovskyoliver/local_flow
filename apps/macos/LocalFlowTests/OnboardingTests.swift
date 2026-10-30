@@ -14,6 +14,8 @@ final class OnboardingTests: XCTestCase {
       preferences: preferences, startDownloads: { started.append($0) })
     var readiness = SettingsViewModel.Snapshot()
     setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .purpose)
+    setup.advance(readiness: readiness)
     XCTAssertEqual(setup.step, .ai)
     setup.skipAI()
     XCTAssertEqual(setup.step, .downloads)
@@ -49,6 +51,7 @@ final class OnboardingTests: XCTestCase {
     let setup = OnboardingCoordinator(preferences: preferences)
     var readiness = SettingsViewModel.Snapshot()
     setup.advance(readiness: readiness)
+    setup.advance(readiness: readiness)
     setup.skipAI()
     readiness.modelInstalled = true
     readiness.storageAvailable = true
@@ -80,6 +83,7 @@ extension OnboardingTests {
 
   @MainActor private func reachTest(_ setup: OnboardingCoordinator) {
     let ready = readySnapshot()
+    setup.advance(readiness: ready)
     setup.advance(readiness: ready)
     setup.skipAI()
     setup.advance(readiness: ready)
@@ -193,6 +197,7 @@ extension OnboardingTests {
     let setup = OnboardingCoordinator(
       preferences: AppPreferences(defaults: defaults), liveReadiness: { readiness })
     setup.advance(readiness: readiness)
+    setup.advance(readiness: readiness)
     setup.skipAI()
     setup.advance(readiness: readiness)
     setup.advance(readiness: readiness)
@@ -252,6 +257,7 @@ extension OnboardingTests {
     var readiness = SettingsViewModel.Snapshot()
     setup.advance(readiness: readiness)
     setup.advance(readiness: readiness)
+    setup.advance(readiness: readiness)
     XCTAssertEqual(setup.step, .aiDetails)
     XCTAssertEqual(setup.aiMode, .local)
     XCTAssertTrue(started.isEmpty, "Nothing downloads before a model is chosen")
@@ -282,6 +288,7 @@ extension OnboardingTests {
       preferences: AppPreferences(defaults: defaults), startDownloads: { started.append($0) })
     let readiness = SettingsViewModel.Snapshot()
     setup.advance(readiness: readiness)
+    setup.advance(readiness: readiness)
     setup.aiMode = .remote
     setup.advance(readiness: readiness)
     XCTAssertEqual(setup.step, .aiDetails)
@@ -295,5 +302,141 @@ extension OnboardingTests {
     XCTAssertEqual(ShortcutPreference.rightControl.title, "Right Control")
     XCTAssertTrue(ShortcutPreference.rightOption.isValid)
     XCTAssertFalse(ShortcutPreference.rightControl.includesShift)
+  }
+}
+
+// MARK: Feature 022
+
+extension OnboardingTests {
+  /// A throwaway suite; `addTeardownBlock` removes it after the test.
+  @MainActor private func preferences() -> (AppPreferences, UserDefaults) {
+    let suite = "LocalFlow-onboarding-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+    return (AppPreferences(defaults: defaults), defaults)
+  }
+
+  /// Everything every path can ask for, so only the routing decides the steps.
+  @MainActor private func everythingReady() -> SettingsViewModel.Snapshot {
+    var snapshot = readySnapshot()
+    snapshot.meetingModelInstalled = true
+    snapshot.speakerModelInstalled = true
+    return snapshot
+  }
+
+  /// Walks to the end of setup, then checks Back retraces the same steps.
+  @MainActor private func walk(
+    _ purpose: AppPreferences.Purpose, _ mode: OnboardingCoordinator.AIMode
+  ) -> [OnboardingCoordinator.Step] {
+    let (preferences, _) = preferences()
+    let setup = OnboardingCoordinator(preferences: preferences)
+    let ready = everythingReady()
+    setup.advance(readiness: ready)
+    setup.purpose = purpose
+    setup.advance(readiness: ready)
+    setup.aiMode = mode
+    var steps = [setup.step]
+    while setup.step != .test, setup.step != .complete {
+      setup.advance(readiness: ready)
+      steps.append(setup.step)
+    }
+    guard setup.step == .test else { return steps }
+    XCTAssertEqual(setup.path, [.introduction, .purpose] + steps)
+    for step in steps.dropLast().reversed() {
+      setup.back()
+      XCTAssertEqual(setup.step, step)
+    }
+    return steps
+  }
+
+  @MainActor func testPurposeIsStoredAndMissingMeansBoth() {
+    let suite = "LocalFlow-onboarding-purpose-\(UUID())"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    XCTAssertEqual(AppPreferences(defaults: defaults).purpose, .both)
+    defaults.set("nonsense", forKey: "setup.purpose")
+    XCTAssertEqual(AppPreferences(defaults: defaults).purpose, .both)
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.purpose = .meetings
+    XCTAssertEqual(defaults.string(forKey: "setup.purpose"), "meetings")
+    XCTAssertEqual(AppPreferences(defaults: defaults).purpose, .meetings)
+  }
+
+  @MainActor func testMeetingReadinessNeedsStorageAndMicrophoneButNoSystemAudio() {
+    var state = SettingsViewModel.Snapshot()
+    XCTAssertFalse(state.readyForMeetings)
+    state.storageAvailable = true
+    XCTAssertFalse(state.readyForMeetings)
+    state.microphone = .granted
+    state.systemAudio = .denied
+    XCTAssertTrue(state.readyForMeetings, "A refused system audio request does not block")
+    XCTAssertFalse(state.readyForTest, "No model, Input Monitoring or shortcut needed")
+    state.inputMonitoring = .granted
+    state.accessibility = .granted
+    XCTAssertFalse(state.hasMissingPermissions, "System audio is not a dictation permission")
+  }
+
+  @MainActor func testMeetingModelsReadyNeedsSpeechWhisperAndSpeakers() {
+    var state = SettingsViewModel.Snapshot()
+    state.modelInstalled = true
+    state.meetingModelInstalled = true
+    XCTAssertFalse(state.meetingModelsReady)
+    state.speakerModelInstalled = true
+    XCTAssertTrue(state.meetingModelsReady)
+    state.modelInstalled = false
+    XCTAssertFalse(state.meetingModelsReady)
+  }
+
+  @MainActor func testEveryRowOfThePathTable() {
+    XCTAssertEqual(
+      walk(.meetings, .remote), [.ai, .aiDetails, .permissions, .personalize, .complete])
+    XCTAssertEqual(
+      walk(.meetings, .local), [.ai, .aiDetails, .downloads, .permissions, .personalize, .complete])
+    XCTAssertEqual(walk(.meetings, .off), [.ai, .downloads, .permissions, .personalize, .complete])
+    let local: [OnboardingCoordinator.Step] = [
+      .ai, .aiDetails, .downloads, .permissions, .personalize, .test,
+    ]
+    let off: [OnboardingCoordinator.Step] = [.ai, .downloads, .permissions, .personalize, .test]
+    for purpose in [AppPreferences.Purpose.dictation, .both] {
+      XCTAssertEqual(walk(purpose, .local), local, "\(purpose)")
+      XCTAssertEqual(walk(purpose, .remote), local, "\(purpose)")
+      XCTAssertEqual(walk(purpose, .off), off, "\(purpose)")
+    }
+  }
+
+  @MainActor func testPurposeStartsAsBothAndIsStoredOnLeavingTheStep() {
+    let (preferences, _) = preferences()
+    let setup = OnboardingCoordinator(preferences: preferences)
+    let ready = everythingReady()
+    XCTAssertEqual(setup.purpose, .both)
+    setup.advance(readiness: ready)
+    setup.purpose = .meetings
+    XCTAssertEqual(preferences.purpose, .both, "Only leaving the step stores the choice")
+    setup.advance(readiness: ready)
+    XCTAssertEqual(preferences.purpose, .meetings)
+    XCTAssertFalse(preferences.onboardingComplete)
+  }
+
+  @MainActor func testAMeetingPathFinishesAfterPersonalizeOnlyWithMicrophoneAndStorage() {
+    let (preferences, _) = preferences()
+    let setup = OnboardingCoordinator(preferences: preferences)
+    var readiness = everythingReady()
+    readiness.inputMonitoring = .denied
+    readiness.shortcutReady = false
+    setup.advance(readiness: readiness)
+    setup.purpose = .meetings
+    setup.advance(readiness: readiness)
+    setup.skipAI()
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .permissions)
+    readiness.microphone = .denied
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .permissions)
+    readiness.microphone = .granted
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .personalize)
+    setup.advance(readiness: readiness)
+    XCTAssertEqual(setup.step, .complete)
+    XCTAssertTrue(preferences.onboardingComplete)
   }
 }

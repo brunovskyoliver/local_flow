@@ -20,6 +20,11 @@ final class AppPreferences {
       }
     }
   }
+  /// What this Mac uses LocalFlow for (Feature 022).
+  enum Purpose: String, CaseIterable, Identifiable {
+    case dictation, meetings, both
+    var id: String { rawValue }
+  }
   static let currentSetupVersion = 1
   nonisolated static let firstRunSpeechModel = SpeechModelChoice.parakeetUltra
   @ObservationIgnored private let defaults: UserDefaults
@@ -80,6 +85,10 @@ final class AppPreferences {
   }
   var summaryServerModel: String {
     didSet { defaults.set(summaryServerModel, forKey: SummaryServer.modelKey) }
+  }
+  /// A missing value means `both`, so an install from before Feature 022 does not change.
+  var purpose: Purpose {
+    didSet { defaults.set(purpose.rawValue, forKey: "setup.purpose") }
   }
   private(set) var setupVersion: Int
   var onboardingComplete: Bool { setupVersion >= Self.currentSetupVersion }
@@ -365,6 +374,7 @@ final class AppPreferences {
       defaults.object(forKey: "unloadLocalModelDuringGames") as? Bool ?? true
     learnCorrections = defaults.bool(forKey: "learnCorrections")
     showsBackgroundProgress = defaults.object(forKey: "showsBackgroundProgress") as? Bool ?? true
+    purpose = Purpose(rawValue: defaults.string(forKey: "setup.purpose") ?? "") ?? .both
     setupVersion = defaults.integer(forKey: "setupVersion")
     rewriteEnabled = defaults.bool(forKey: "rewriteEnabled")
     rewriteEndpoint = defaults.string(forKey: "rewriteEndpoint") ?? ""
