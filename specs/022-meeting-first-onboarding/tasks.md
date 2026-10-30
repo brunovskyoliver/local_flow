@@ -22,9 +22,9 @@ Write each test before its code. `[P]` means a different file with no dependency
 
 ## Phase 3: User Story 2, meeting notes on this Mac
 
-- [ ] T012 [US2] Test and code: meetings + local or off requires `meetingModelsReady` at the downloads step and starts meeting models automatically (FR-013)
-- [ ] T013 [US2] Required meeting row with Retry, including a coordinator retry that clears `meetingsRequested`
-- [ ] T014 [US2] Skip copy on the AI step for meetings: summaries won't be available (FR-013)
+- [X] T012 [US2] Test and code: meetings + local or off requires `meetingModelsReady` at the downloads step and starts meeting models automatically (FR-013)
+- [X] T013 [US2] Required meeting row with Retry, including a coordinator retry that clears `meetingsRequested`
+- [X] T014 [US2] Skip copy on the AI step for meetings: summaries won't be available (FR-013)
 
 ## Phase 4: User Story 3, dictation or both
 

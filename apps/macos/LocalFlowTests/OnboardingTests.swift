@@ -749,3 +749,142 @@ extension OnboardingTests {
     XCTAssertEqual(abandoned, 0)
   }
 }
+
+// MARK: Feature 022, User Story 2
+
+extension OnboardingTests {
+  /// Introduction to downloads, on the choices the user made.
+  @MainActor private func reachDownloads(
+    _ setup: OnboardingCoordinator, _ purpose: AppPreferences.Purpose,
+    _ mode: OnboardingCoordinator.AIMode
+  ) {
+    let nothing = SettingsViewModel.Snapshot()
+    setup.advance(readiness: nothing)
+    setup.purpose = purpose
+    setup.advance(readiness: nothing)
+    if mode == .off {
+      setup.skipAI()
+    } else {
+      setup.aiMode = mode
+      setup.advance(readiness: nothing)
+      setup.advance(readiness: nothing)
+    }
+    XCTAssertEqual(setup.step, .downloads)
+  }
+
+  /// T012 (FR-013, US2 scenario 1): the language model never blocks; the other three do.
+  @MainActor func testMeetingsOnThisMacRequireTheirModelsAndStartThemAutomatically() {
+    for mode in [OnboardingCoordinator.AIMode.local, .off] {
+      let (preferences, _) = preferences()
+      var started: [Bool] = []
+      var meetingModels = 0
+      let setup = OnboardingCoordinator(
+        preferences: preferences, startDownloads: { started.append($0) },
+        startMeetingModels: { meetingModels += 1 })
+      reachDownloads(setup, .meetings, mode)
+      XCTAssertEqual(started, [mode == .local])
+      XCTAssertEqual(meetingModels, 1, "\(mode)")
+      XCTAssertTrue(setup.meetingsRequested)
+      var readiness = SettingsViewModel.Snapshot()
+      readiness.modelInstalled = true
+      setup.advance(readiness: readiness)
+      XCTAssertEqual(setup.step, .downloads, "Speech alone doesn't record a local meeting")
+      readiness.meetingModelInstalled = true
+      setup.advance(readiness: readiness)
+      XCTAssertEqual(setup.step, .downloads, "Speaker labels are still missing")
+      readiness.speakerModelInstalled = true
+      setup.advance(readiness: readiness)
+      XCTAssertEqual(setup.step, .permissions, "\(mode)")
+      setup.back()
+      XCTAssertEqual(setup.step, .downloads)
+      setup.back()
+      XCTAssertNotEqual(setup.step, .downloads)
+      if mode == .local { setup.advance(readiness: readiness) } else { setup.skipAI() }
+      XCTAssertEqual(setup.step, .downloads)
+      XCTAssertEqual(meetingModels, 1, "Coming back asks only once")
+    }
+  }
+
+  /// T012 (FR-011): a request from a path the user left must not start later.
+  @MainActor func testLeavingAMeetingsPathWithdrawsItsQueuedModels() {
+    for leaveFor in [AppPreferences.Purpose.dictation, .meetings] {
+      let (preferences, _) = preferences()
+      var meetingModels = 0
+      var withdrawn = 0
+      let setup = OnboardingCoordinator(
+        preferences: preferences, startMeetingModels: { meetingModels += 1 },
+        cancelMeetingModels: { withdrawn += 1 })
+      reachDownloads(setup, .meetings, .local)
+      let nothing = SettingsViewModel.Snapshot()
+      setup.back()
+      setup.back()
+      XCTAssertEqual(setup.step, .ai)
+      XCTAssertEqual(withdrawn, 0, "Back alone changes nothing")
+      if leaveFor == .dictation {
+        setup.back()
+        setup.purpose = .dictation
+        setup.advance(readiness: nothing)
+        setup.advance(readiness: nothing)
+        setup.advance(readiness: nothing)
+        XCTAssertEqual(setup.step, .downloads)
+      } else {
+        setup.aiMode = .remote
+        setup.advance(readiness: nothing)
+        setup.advance(readiness: nothing)
+        XCTAssertEqual(setup.step, .permissions)
+      }
+      XCTAssertEqual(withdrawn, 1, "\(leaveFor)")
+      XCTAssertFalse(setup.meetingsRequested)
+      XCTAssertEqual(meetingModels, 1)
+    }
+  }
+
+  /// T013: Download pressed by hand is the user's choice, on any later path.
+  @MainActor func testAManualMeetingDownloadIsNeverWithdrawn() {
+    let (preferences, _) = preferences()
+    var withdrawn = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, cancelMeetingModels: { withdrawn += 1 })
+    reachDownloads(setup, .dictation, .local)
+    setup.downloadMeetingModels()
+    setup.back()
+    setup.advance(readiness: .init())
+    XCTAssertEqual(setup.step, .downloads)
+    XCTAssertTrue(setup.meetingsRequested)
+    XCTAssertEqual(withdrawn, 0)
+  }
+
+  /// T013 (US2 scenario 2): Retry asks again, and only on the downloads step.
+  @MainActor func testRetryRequestsTheMeetingModelsAgain() {
+    let (preferences, _) = preferences()
+    var meetingModels = 0
+    let setup = OnboardingCoordinator(
+      preferences: preferences, startMeetingModels: { meetingModels += 1 })
+    setup.retryMeetingModels()
+    XCTAssertEqual(meetingModels, 0, "Nothing to retry before the downloads step")
+    reachDownloads(setup, .meetings, .off)
+    XCTAssertEqual(meetingModels, 1)
+    setup.retryMeetingModels()
+    XCTAssertEqual(meetingModels, 2)
+    XCTAssertTrue(setup.meetingsRequested)
+  }
+
+  /// T014 (FR-013): the Skip says what a meeting-only user gives up.
+  func testMeetingSkipCopySaysSummariesWontBeAvailable() {
+    XCTAssertTrue(OnboardingView.meetingSkipCopy.contains("summaries won't be available"))
+  }
+
+  /// T013: the step's gate is the coordinator's, so the button and `advance` can't disagree.
+  @MainActor func testDownloadsGateFollowsThePurpose() {
+    let (preferences, _) = preferences()
+    let setup = OnboardingCoordinator(preferences: preferences)
+    var readiness = SettingsViewModel.Snapshot()
+    readiness.modelInstalled = true
+    XCTAssertTrue(setup.downloadsReady(readiness))
+    setup.purpose = .meetings
+    XCTAssertFalse(setup.downloadsReady(readiness))
+    readiness.meetingModelInstalled = true
+    readiness.speakerModelInstalled = true
+    XCTAssertTrue(setup.downloadsReady(readiness))
+  }
+}

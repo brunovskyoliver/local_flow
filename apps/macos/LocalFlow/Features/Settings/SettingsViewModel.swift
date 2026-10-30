@@ -72,6 +72,8 @@ final class SettingsViewModel {
     var keepModelReady = false
     var meetingModelInstalled = false
     var meetingModelInstalling = false
+    /// Why onboarding's meeting models stopped; cleared when they're requested again.
+    var meetingModelsError: String?
     var meetingProgress = ProvisioningProgress.Snapshot()
     var meetingModelReadiness: String {
       if meetingModelInstalling { return "Installing…" }

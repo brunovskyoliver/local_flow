@@ -33,6 +33,7 @@ final class AppServices {
     liveReadiness: { [weak self] in await self?.settingsSnapshot() ?? .init() },
     startDownloads: { [weak self] localAI in self?.beginSetupDownloads(localAI: localAI) },
     startMeetingModels: { [weak self] in self?.downloadMeetingModels() },
+    cancelMeetingModels: { [weak self] in self?.meetingModelsWanted = false },
     prepareTest: { [weak self] in
       guard let self else { throw DictationFailure.modelUnavailable }
       if !self.preferences.serverRouting.servedByServer(.dictation) {
@@ -45,6 +46,9 @@ final class AppServices {
     preferences: preferences, installer: LocalAIInstaller(),
     ready: { [weak self] in self?.localHelpersReady = true })
   @ObservationIgnored private var meetingModelsTask: Task<Void, Never>?
+  /// False once setup left the path that asked; the model downloading then finishes.
+  @ObservationIgnored private var meetingModelsWanted = false
+  private var meetingModelsError: String?
   @ObservationIgnored private var setupBoostTask: Task<Void, Never>?
   @ObservationIgnored lazy var settings = SettingsViewModel(
     observe: { [weak self] in await self?.settingsSnapshot() ?? .init() },
@@ -1656,6 +1660,7 @@ final class AppServices {
     snapshot.modelInstallError = modelInstallError
     snapshot.meetingModelInstalled = meetingModelInstalled
     snapshot.meetingModelInstalling = meetingModelInstalling
+    snapshot.meetingModelsError = meetingModelsError
     snapshot.speakerModelInstalled = speakerModelInstalled
     snapshot.speakerModelInstalling = speakerModelInstalling
     snapshot.boostModelInstalled = boostModelInstalled
@@ -2149,9 +2154,11 @@ final class AppServices {
     }
   }
 
-  /// Onboarding's optional meeting pack: speaker labels, then Whisper Turbo, after
-  /// the speech model, since model installs take the lifecycle gate one at a time.
+  /// Onboarding's meeting pack: speaker labels, then Whisper Turbo, after the speech
+  /// model, since model installs take the lifecycle gate one at a time.
   func downloadMeetingModels() {
+    meetingModelsWanted = true
+    meetingModelsError = nil
     guard meetingModelsTask == nil else { return }
     meetingModelsTask = Task { [weak self] in
       await self?.installTask?.value
@@ -2159,11 +2166,17 @@ final class AppServices {
       guard let self else { return }
       defer { meetingModelsTask = nil }
       do {
-        if !speakerModelInstalled { try await installSpeakerModel(source: nil) }
-        if !meetingModelInstalled { try await installMeetingModel(source: nil) }
+        if meetingModelsWanted, !speakerModelInstalled {
+          try await installSpeakerModel(source: nil)
+        }
+        if meetingModelsWanted, !meetingModelInstalled {
+          try await installMeetingModel(source: nil)
+        }
       } catch {
         Self.logModelFailure("Meeting models", error)
         setupStatus = "Meeting models did not finish downloading. Retry in Settings."
+        meetingModelsError =
+          "Meeting models did not finish downloading. Check your connection and available storage."
       }
     }
   }

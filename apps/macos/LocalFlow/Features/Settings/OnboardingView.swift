@@ -145,6 +145,9 @@ struct OnboardingView: View {
 
   private var meetingOnly: Bool { coordinator.purpose == .meetings }
 
+  static let meetingSkipCopy =
+    "Skip for now to keep meetings on this Mac without a language model. You still get transcripts with speaker labels, but summaries won't be available."
+
   @ViewBuilder private var aiChoice: some View {
     if meetingOnly {
       eyebrow("Meeting notes")
@@ -207,6 +210,12 @@ struct OnboardingView: View {
         systemImage: "checkmark.shield"
       )
       .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+    }
+    if meetingOnly {
+      Label(Self.meetingSkipCopy, systemImage: "text.badge.xmark")
+        .font(.flow(size: 13)).foregroundStyle(SottoPalette.muted)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("onboarding.meetingSkip")
     }
   }
 
@@ -351,7 +360,10 @@ struct OnboardingView: View {
 
   @ViewBuilder private var downloads: some View {
     headline("Getting ", "everything", " ready.")
-    lede("Downloads keep going in the background, so you can continue while they finish.")
+    lede(
+      meetingOnly
+        ? "Meeting notes on this Mac need these models, so setup waits for them."
+        : "Downloads keep going in the background, so you can continue while they finish.")
     SetupCard {
       DownloadRow(
         symbol: "waveform", title: "Speech recognition",
@@ -379,11 +391,11 @@ struct OnboardingView: View {
       }
     }
     SetupCard {
-      if coordinator.meetingsRequested || settings.snapshot.meetingModelInstalled {
+      if coordinator.meetingsRequested || meetingModelsInstalled {
         DownloadRow(
           symbol: "person.2.wave.2", title: "Meeting transcription",
           detail: "Whisper Turbo and speaker labels · \(Self.bytes(Self.meetingBytes))",
-          state: meetingState)
+          state: meetingState, retry: { coordinator.retryMeetingModels() })
       } else {
         HStack(alignment: .top, spacing: 14) {
           RowIcon(symbol: "person.2.wave.2")
@@ -640,6 +652,8 @@ struct OnboardingView: View {
     switch coordinator.step {
     case .aiDetails where coordinator.aiMode == .remote && !serverReady: "Sign in to continue"
     case .downloads where !settings.snapshot.modelInstalled: "Waiting for speech recognition…"
+    case .downloads where !coordinator.downloadsReady(settings.snapshot):
+      "Waiting for meeting models…"
     case .permissions, .personalize:
       meetingOnly ? settings.snapshot.meetingBlockedReason : settings.snapshot.testBlockedReason
     default: nil
@@ -666,7 +680,7 @@ struct OnboardingView: View {
       coordinator.aiMode == .remote
         ? serverReady
         : localAI.selection.fits(physicalMemory: localAI.physicalMemory)
-    case .downloads: settings.snapshot.modelInstalled
+    case .downloads: coordinator.downloadsReady(settings.snapshot)
     case .permissions, .personalize:
       (meetingOnly
         ? settings.snapshot.readyForMeetings : settings.readyForTest) && recorder == nil
@@ -698,9 +712,15 @@ struct OnboardingView: View {
     }
   }
 
+  /// Whisper alone isn't the pack: speaker labels install first and can fail on their own.
+  private var meetingModelsInstalled: Bool {
+    settings.snapshot.meetingModelInstalled && settings.snapshot.speakerModelInstalled
+  }
+
   private var meetingState: DownloadRow.State {
     let snapshot = settings.snapshot
-    if snapshot.meetingModelInstalled { return .done }
+    if meetingModelsInstalled { return .done }
+    if let error = snapshot.meetingModelsError { return .failed(error) }
     if snapshot.meetingModelInstalling, snapshot.meetingProgress.totalBytes > 0 {
       return .progress(snapshot.meetingProgress.completedBytes, snapshot.meetingProgress.totalBytes)
     }

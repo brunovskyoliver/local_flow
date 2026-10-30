@@ -25,6 +25,8 @@ final class OnboardingCoordinator {
   /// Starts the speech model and, for `local`, MTPLX. Downloads outlive the step.
   @ObservationIgnored private let startDownloads: @MainActor (_ localAI: Bool) -> Void
   @ObservationIgnored private let startMeetingModels: @MainActor () -> Void
+  /// Drops meeting models that haven't started; one already downloading finishes.
+  @ObservationIgnored private let cancelMeetingModels: @MainActor () -> Void
   @ObservationIgnored private let prepareTest: @MainActor () async throws -> Void
   /// Turns remote off after an abandoned server path; the coordinator undoes the rest.
   @ObservationIgnored private let abandonServer: @MainActor () -> Void
@@ -32,12 +34,14 @@ final class OnboardingCoordinator {
   /// The purpose the server step was reached with. Leaving the choice for another one
   /// abandons what that path set (FR-011).
   private var serverPurpose: AppPreferences.Purpose?
+  private var meetingsRequestedAutomatically = false
 
   init(
     preferences: AppPreferences,
     liveReadiness: @escaping @MainActor () async -> SettingsViewModel.Snapshot = { .init() },
     startDownloads: @escaping @MainActor (_ localAI: Bool) -> Void = { _ in },
     startMeetingModels: @escaping @MainActor () -> Void = {},
+    cancelMeetingModels: @escaping @MainActor () -> Void = {},
     prepareTest: @escaping @MainActor () async throws -> Void = {},
     abandonServer: @escaping @MainActor () -> Void = {},
     openNotetaker: @escaping @MainActor () -> Void = {}
@@ -47,6 +51,7 @@ final class OnboardingCoordinator {
     self.liveReadiness = liveReadiness
     self.startDownloads = startDownloads
     self.startMeetingModels = startMeetingModels
+    self.cancelMeetingModels = cancelMeetingModels
     self.prepareTest = prepareTest
     self.abandonServer = abandonServer
     self.openNotetaker = openNotetaker
@@ -84,6 +89,9 @@ final class OnboardingCoordinator {
 
   private var meetingsOnServer: Bool { purpose == .meetings && aiMode == .remote }
 
+  /// Paths that download the meeting models without the user pressing Download.
+  private var meetingModelsAutomatic: Bool { purpose == .meetings && aiMode != .remote }
+
   private func ready(_ readiness: SettingsViewModel.Snapshot) -> Bool {
     purpose == .meetings ? readiness.readyForMeetings : readiness.readyForTest
   }
@@ -102,13 +110,13 @@ final class OnboardingCoordinator {
       if aiMode == .off { beginDownloads() } else { step = .aiDetails }
     case .aiDetails:
       if meetingsOnServer {
+        withdrawAutomaticMeetingModels()
         preferences.serverOnly = true
         step = .permissions
       } else {
         beginDownloads()
       }
-    // Local AI and meeting models keep downloading; only dictation needs its model.
-    case .downloads: if readiness.modelInstalled { step = .permissions }
+    case .downloads: if downloadsReady(readiness) { step = .permissions }
     case .permissions: if ready(readiness) { step = .personalize }
     case .personalize:
       guard ready(readiness) else { return }
@@ -128,12 +136,38 @@ final class OnboardingCoordinator {
   private func beginDownloads() {
     step = .downloads
     startDownloads(aiMode == .local)
+    guard meetingModelsAutomatic else {
+      withdrawAutomaticMeetingModels()
+      return
+    }
+    if !meetingsRequested { meetingsRequestedAutomatically = true }
+    downloadMeetingModels()
+  }
+
+  /// A request Download didn't make goes with the path that made it (FR-011).
+  private func withdrawAutomaticMeetingModels() {
+    guard meetingsRequestedAutomatically else { return }
+    meetingsRequestedAutomatically = false
+    meetingsRequested = false
+    cancelMeetingModels()
   }
 
   func downloadMeetingModels() {
     guard step == .downloads, !meetingsRequested else { return }
     meetingsRequested = true
     startMeetingModels()
+  }
+
+  /// After a failure: asks again, the same way the first request did.
+  func retryMeetingModels() {
+    guard step == .downloads else { return }
+    meetingsRequested = false
+    downloadMeetingModels()
+  }
+
+  /// Other paths' local AI and meeting models keep downloading; only dictation needs its model.
+  func downloadsReady(_ readiness: SettingsViewModel.Snapshot) -> Bool {
+    purpose == .meetings ? readiness.meetingModelsReady : readiness.modelInstalled
   }
 
   func back() {
