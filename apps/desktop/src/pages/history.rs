@@ -474,12 +474,13 @@ impl HistoryPage {
                 .bg(p.canvas)
                 .rounded(px(8.))
                 .text_size(px(14.))
-                .child(icon("magnifyingglass", 14., p.muted))
+                .child(div().w(px(16.)).flex().justify_center().child(icon("magnifyingglass", 14., p.muted)))
                 .child(
                     div().id("history.searchInput").test_support().w(px(if compact { 90. } else { 160. })).child(
                         Input::new(&self.search)
                             .appearance(false)
                             .px_0()
+                            .text_color(p.muted)
                             .aria_label("Search transcriptions")
                             .accessibility_id("history.search"),
                     ),
@@ -488,7 +489,7 @@ impl HistoryPage {
         } else {
             FlowButton::new("history.searchToggle", ButtonKind::Plain, "Search transcriptions")
                 .tooltip("Search")
-                .content(div().size(px(32.)).flex().items_center().justify_center().child(icon("magnifyingglass", 17.5, p.muted)))
+                .content(div().size(px(32.)).flex().items_center().justify_center().child(icon("magnifyingglass", 15., p.muted)))
                 .on_click(cx.listener(|this, _, w, cx| this.open_search(w, cx)))
                 .into_any_element()
         };

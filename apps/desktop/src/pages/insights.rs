@@ -373,7 +373,7 @@ impl InsightsPage {
     fn hours(&self, i: &Insights, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = pal(cx);
         let peak = i.hours.iter().copied().max().unwrap_or(0).max(1);
-        let mut bars = h_flex().w_full().h(px(130.)).items_end().gap(px(6.)).mt(px(26.));
+        let mut bars = h_flex().w_full().h(px(130.)).items_end().gap(px(6.)).mt(px(25.));
         for h in 0..24usize {
             let (from, fill) = (hour_fill(&p, i.hours[h], h, self.previous_hour), hour_fill(&p, i.hours[h], h, self.hovered_hour));
             let height = (130. * i.hours[h] as f32 / peak as f32).max(5.);
@@ -389,7 +389,7 @@ impl InsightsPage {
                 .min_w_0();
             bars = bars.child(target);
         }
-        let mut labels = h_flex().w_full().pt(px(10.));
+        let mut labels = h_flex().w_full().h(px(25.)).pt(px(10.));
         for h in [0, 6, 12, 18] {
             labels = labels.child(div().flex_1().child(t(hour_label(h)).size(12.).color(p.muted)));
         }
@@ -499,7 +499,7 @@ fn caps(text: &str, color: Hsla, size: f32) -> Txt {
 
 fn insight_card(cx: &App) -> Div {
     let p = pal(cx);
-    v_flex().flex_1().min_w_0().items_start().p(px(18.)).bg(p.card).rounded(px(6.)).border_1().border_color(p.card_line)
+    v_flex().flex_1().min_w_0().items_start().px(px(17.)).py(px(18.)).bg(p.card).rounded(px(6.)).border_1().border_color(p.card_line)
 }
 
 fn rule(cx: &App) -> Div {

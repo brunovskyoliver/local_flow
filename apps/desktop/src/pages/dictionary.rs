@@ -265,6 +265,7 @@ impl DictionaryPage {
                                     Input::new(&self.search)
                                         .appearance(false)
                                         .px_0()
+                                        .text_color(p.muted)
                                         .aria_label("Search dictionary")
                                         .accessibility_id("vocabulary.search"),
                                 ),
@@ -272,7 +273,7 @@ impl DictionaryPage {
                     })
                     .child(
                         FlowButton::new("vocabulary.searchToggle", ButtonKind::Plain, "Search")
-                            .content(icon("magnifyingglass", 15.5, p.muted))
+                            .content(icon("magnifyingglass", 13., p.muted))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.searching = !this.searching;
                                 // Swift doesn't focus the field when it opens (DICT-023).
