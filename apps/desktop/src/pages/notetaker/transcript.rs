@@ -68,7 +68,13 @@ impl NotetakerPage {
         self.menu = None;
         let Some(m) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()) else { return };
         let Some(db) = db_of(cx) else { return };
-        if correct_segment(db, &m, segment, &to, now_ms()).is_ok() {
+        // `SpeakerDiarizationCoordinator`'s notices.
+        self.transcript_notice = match correct_segment(db, &m, segment, &to, now_ms()) {
+            Ok(_) => None,
+            Err(MeetingError::CorrectionCapacity) => Some("This meeting has too many speaker changes to save more.".into()),
+            Err(_) => Some("The speaker change could not be saved.".into()),
+        };
+        if self.transcript_notice.is_none() {
             if let Some(p) = &mut self.pager {
                 p.refresh_labels(db);
             }
@@ -177,7 +183,6 @@ impl NotetakerPage {
         let query = self.search.read(cx).value().to_string();
         let open = self.search_open;
         let copy = live.is_none() && self.pager.as_ref().is_some_and(|x| x.count() > 0 || x.rows().next().is_some());
-        let copy_open = self.menu.as_deref() == Some("copy");
         let elapsed = live.map_or(d.meeting.recorded_ms, |s| s.elapsed_ms);
         h_flex()
             .w_full()
@@ -212,34 +217,24 @@ impl NotetakerPage {
                 }
             })
             .when(copy, |w| {
-                w.child(
-                    div()
-                        .relative()
-                        .child(note_icon("meeting.transcript.copy", "doc.on.doc", "Copy or export transcript", p.accent).on_click(cx.listener(|this, _, _, cx| this.toggle_menu("copy", cx))))
-                        .when(copy_open, |w| {
-                            let selected = self.pager.as_ref().map_or(0, |x| x.selection.len());
-                            let title = if selected == 0 { "Copy Selected Segments".to_string() } else { format!("Copy {selected} Selected Segments") };
-                            let items = v_flex()
-                                .p(px(8.))
-                                .gap(px(2.))
-                                .child(menu_row("meeting.transcript.copySelection", title, None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.menu = None;
-                                    this.transcript_notice = None;
-                                    if let Some(x) = &this.pager {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(x.selection_text()));
-                                    }
-                                    cx.notify();
-                                }))).disabled(selected == 0))
-                                .child(menu_row("meeting.transcript.copyFull", "Copy Full Transcript", None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, _, cx| this.copy_full(cx)))))
-                                .child(menu_row("meeting.transcript.export", "Export Transcript…", None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.menu = None;
-                                    // The save panel is an OS service; the export itself is `Pager::export`.
-                                    this.transcript_notice = Self::worker("Choosing a save location", cx).err().map(|_| "The transcript could not be exported.".to_string());
-                                    cx.notify();
-                                }))));
-                            w.child(popover_panel(240., 32., cx, items))
-                        }),
-                )
+                let selected = self.pager.as_ref().map_or(0, |x| x.selection.len());
+                let title = if selected == 0 { "Copy Selected Segments".to_string() } else { format!("Copy {selected} Selected Segments") };
+                let page = cx.entity().downgrade();
+                w.child(menu_trigger("meeting.transcript.copy", "Copy or export transcript", "doc.on.doc", 13., 28., p.accent).dropdown_menu(move |menu, _, _| {
+                    menu.item(PopupMenuItem::new(title.clone()).disabled(selected == 0).on_click(act(&page, |this, _, cx| {
+                        this.transcript_notice = None;
+                        if let Some(x) = &this.pager {
+                            cx.write_to_clipboard(ClipboardItem::new_string(x.selection_text()));
+                        }
+                        cx.notify();
+                    })))
+                    .item(PopupMenuItem::new("Copy Full Transcript").on_click(act(&page, |this, _, cx| this.copy_full(cx))))
+                    .item(PopupMenuItem::new("Export Transcript…").on_click(act(&page, |this, _, cx| {
+                        // The save panel is an OS service; the export itself is `Pager::export`.
+                        this.transcript_notice = Self::worker("Choosing a save location", cx).err().map(|_| "The transcript could not be exported.".to_string());
+                        cx.notify();
+                    })))
+                }))
             })
             .when(assign, |w| w.child(note_icon("meeting.speakers.assign.open", "person.badge.plus", "Assign speakers", p.muted).on_click(cx.listener(|this, _, w, cx| this.open_assign(None, w, cx)))))
     }
@@ -348,12 +343,10 @@ impl NotetakerPage {
     fn bubble(&mut self, row: &TranscriptRow, show_source: bool, highlighted: bool, selected: bool, seek: bool, correctable: bool, choices: &[(String, String)], cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let id = row.id.clone();
-        let key = format!("seg.{id}");
-        let open = self.menu.as_deref() == Some(key.as_str());
         let fill = if highlighted { p.accent.opacity(0.2) } else if selected { p.tint } else { p.canvas };
         let color = if row.finality == "provisional" { p.muted } else { p.ink };
         let identify = cx.global::<Core>().prefs.bool_or("speakerIdentificationEnabled", true);
-        let right_key = key.clone();
+        let (page, choices) = (cx.entity().downgrade(), choices.to_vec());
         v_flex()
             .id(sid(format!("meeting.transcript.row.{}", row.ordinal)))
             .w_full()
@@ -390,35 +383,30 @@ impl NotetakerPage {
                     .flex()
                     .flex_col()
                     .items_start()
-                    .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).on_mouse_down(MouseButton::Right, cx.listener(move |this, _, _, cx| this.toggle_menu(&right_key, cx))).child(t(row.text.clone()).size(13.).line_spacing(4.).color(color)))
-                    .when(open, |d| {
-                        let toggle_id = id.clone();
-                        let mut items = v_flex().p(px(8.)).gap(px(2.)).child(menu_row("meeting.transcript.row.select", if selected { "Deselect segment" } else { "Select segment" }, None, p.ink, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.menu = None;
+                    .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).child(t(row.text.clone()).size(13.).line_spacing(4.).color(color).selectable()).context_menu(move |menu, window, cx| {
+                        let segment = id.clone();
+                        let mut menu = menu.item(PopupMenuItem::new(if selected { "Deselect" } else { "Select" }).on_click(act(&page, move |this, _, cx| {
                             if let Some(x) = &mut this.pager {
-                                x.toggle_selection(&toggle_id);
+                                x.toggle_selection(&segment);
                             }
                             cx.notify();
-                        }))));
+                        })));
                         if seek {
-                            items = items.child(menu_row("meeting.transcript.row.play", "Play from here", None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.menu = None;
-                                this.play(cx);
-                            }))));
+                            menu = menu.item(PopupMenuItem::new("Play from here").on_click(act(&page, |this, _, cx| this.play(cx))));
                         }
                         if correctable {
-                            items = items.child(div().id("meeting.transcript.row.changeSpeaker").pl(px(10.)).pt(px(6.)).child(t("Change speaker").size(12.).color(p.muted)));
-                            for (index, (speaker, label)) in choices.iter().enumerate() {
-                                let (segment, speaker) = (id.clone(), speaker.clone());
-                                items = items.child(menu_row(sid(format!("meeting.transcript.row.speaker.{index}")), sid(label.clone()), None, p.ink, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| this.correct(&segment, Correction::Speaker(speaker.clone()), cx)))));
-                            }
-                            let segment = id.clone();
-                            items = items.child(menu_row("meeting.transcript.row.unknown", "Unknown", None, p.ink, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| this.correct(&segment, Correction::Unknown, cx)))));
-                            let segment = id.clone();
-                            items = items.child(menu_row("meeting.transcript.row.newSpeaker", "New speaker", None, p.ink, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| this.correct(&segment, Correction::New, cx)))));
+                            let (page, id, choices) = (page.clone(), id.clone(), choices.clone());
+                            menu = menu.submenu("Change speaker", window, cx, move |mut menu, _, _| {
+                                for (speaker, label) in choices.clone() {
+                                    let segment = id.clone();
+                                    menu = menu.item(PopupMenuItem::new(label).on_click(act(&page, move |this, _, cx| this.correct(&segment, Correction::Speaker(speaker.clone()), cx))));
+                                }
+                                let (unknown, new) = (id.clone(), id.clone());
+                                menu.separator().item(PopupMenuItem::new("Unknown").on_click(act(&page, move |this, _, cx| this.correct(&unknown, Correction::Unknown, cx)))).item(PopupMenuItem::new("New speaker").on_click(act(&page, move |this, _, cx| this.correct(&new, Correction::New, cx))))
+                            });
                         }
-                        d.child(popover_panel(220., 34., cx, items))
-                    }),
+                        menu
+                    })),
             )
     }
 

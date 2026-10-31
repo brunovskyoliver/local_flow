@@ -4,10 +4,12 @@
 //! and always reports a Label node with its value.
 use gpui_kit::{
     App, AvailableSpace, Bounds, Element, ElementId, Font, FontStyle, FontWeight, GlobalElementId,
-    Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, SharedString, Size, Style,
+    Hsla, InspectorElementId, IntoElement, LayoutId, MouseUpEvent, Pixels, Point, SharedString, Size, Style,
     TextRun, Window, accesskit, point, px, size,
 };
+use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 use std::panic::Location;
 
 pub const FIGTREE: &str = "Figtree";
@@ -34,10 +36,12 @@ pub struct Span {
     pub color: Option<Hsla>,
     pub underline: bool,
     pub strike: bool,
+    /// The key `Txt::on_link` receives when this span is clicked.
+    pub link: Option<SharedString>,
 }
 
 pub fn span(text: impl Into<SharedString>) -> Span {
-    Span { text: text.into(), italic: false, serif: None, weight: None, color: None, underline: false, strike: false }
+    Span { text: text.into(), italic: false, serif: None, weight: None, color: None, underline: false, strike: false, link: None }
 }
 
 impl Span {
@@ -65,7 +69,14 @@ impl Span {
         self.strike = true;
         self
     }
+    /// An inline link. Takes effect when the `Txt` has `on_link`.
+    pub fn link(mut self, key: impl Into<SharedString>) -> Self {
+        self.link = Some(key.into());
+        self
+    }
 }
+
+type LinkHandler = std::rc::Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
 
 pub struct Txt {
     id: ElementId,
@@ -84,6 +95,9 @@ pub struct Txt {
     opacity: f32,
     mono_digits: bool,
     mono: bool,
+    selectable: bool,
+    selection_hitbox: Option<gpui_kit::Hitbox>,
+    on_link: Option<LinkHandler>,
 }
 
 /// Text at the inherited size and color. Id comes from the call site and the text.
@@ -118,6 +132,9 @@ pub fn rich(spans: Vec<Span>) -> Txt {
         opacity: 1.0,
         mono_digits: false,
         mono: false,
+        selectable: false,
+        selection_hitbox: None,
+        on_link: None,
     }
 }
 
@@ -203,6 +220,17 @@ impl Txt {
         self.mono = true;
         self
     }
+    /// Called with a `Span::link` key when that span is clicked.
+    pub fn on_link(mut self, f: impl Fn(&SharedString, &mut Window, &mut App) + 'static) -> Self {
+        self.on_link = Some(std::rc::Rc::new(f));
+        self
+    }
+    /// `.textSelection(.enabled)`: drag to select, double click for a word, triple for the text,
+    /// Cmd-C to copy. Stays a Label to accessibility.
+    pub fn selectable(mut self) -> Self {
+        self.selectable = true;
+        self
+    }
     pub fn text(&self) -> String {
         self.spans.iter().map(|s| s.text.as_ref()).collect()
     }
@@ -214,6 +242,8 @@ struct Glyph {
     x: f32,
     emoji: bool,
     color: Hsla,
+    /// Where this glyph starts in the text.
+    byte: usize,
 }
 
 struct Mark {
@@ -227,7 +257,24 @@ struct Mark {
 struct Line {
     glyphs: Vec<Glyph>,
     marks: Vec<Mark>,
+    links: Vec<(f32, f32, SharedString)>,
     width: f32,
+    /// The byte after this line's last glyph.
+    end: usize,
+}
+
+/// Selected bytes: `anchor` where the drag began, `head` where it is now.
+#[derive(Default)]
+struct Selection {
+    anchor: usize,
+    head: usize,
+    dragging: bool,
+}
+
+impl Selection {
+    fn range(&self) -> (usize, usize) {
+        (self.anchor.min(self.head), self.anchor.max(self.head))
+    }
 }
 
 #[derive(Clone)]
@@ -240,6 +287,7 @@ pub struct Resolved {
     text: String,
     runs: Vec<TextRun>,
     marks: Vec<(usize, usize, bool)>,
+    links: Vec<(usize, usize, SharedString)>,
     color: Hsla,
     ellipsis_font: Font,
 }
@@ -330,8 +378,9 @@ fn layout(r: &Resolved, max: Option<f32>, window: &mut Window) -> Laid {
             let base = flat.get(from).map(|g| g.2).unwrap_or(0.0);
             let mut line = Line::default();
             for g in &flat[from..to] {
-                line.glyphs.push(Glyph { font: g.0, id: g.1, x: g.2 - base, emoji: g.4, color: color_at(r, offset + g.3) });
+                line.glyphs.push(Glyph { font: g.0, id: g.1, x: g.2 - base, emoji: g.4, color: color_at(r, offset + g.3), byte: offset + g.3 });
             }
+            line.end = flat.get(to).map_or(end, |g| offset + g.3);
             let raw_end = flat.get(to).map(|g| g.2).unwrap_or(total);
             // Trailing spaces don't count toward the line's width, as in SwiftUI.
             let mut last = to;
@@ -345,6 +394,14 @@ fn layout(r: &Resolved, max: Option<f32>, window: &mut Window) -> Laid {
                     let lastix = from + flat[from..to].iter().rposition(|g| offset + g.3 >= a && offset + g.3 < b).unwrap();
                     let e = flat.get(lastix + 1).map(|g| g.2).unwrap_or(total);
                     line.marks.push(Mark { from: f.2 - base, to: e - base, color: color_at(r, a), strike });
+                }
+            }
+            for (a, b, key) in &r.links {
+                let hit = |g: &&(gpui_kit::FontId, gpui_kit::GlyphId, f32, usize, bool)| offset + g.3 >= *a && offset + g.3 < *b;
+                if let Some(f) = flat[from..to].iter().find(hit) {
+                    let last = from + flat[from..to].iter().rposition(|g| hit(&g)).unwrap();
+                    let e = flat.get(last + 1).map(|g| g.2).unwrap_or(total);
+                    line.links.push((f.2 - base, e - base, key.clone()));
                 }
             }
             laid.lines.push(line);
@@ -383,7 +440,7 @@ fn layout(r: &Resolved, max: Option<f32>, window: &mut Window) -> Laid {
                 if let Some(run) = dots.runs.first() {
                     if let Some(g) = run.glyphs.first() {
                         line.glyphs.pop();
-                        line.glyphs.push(Glyph { font: run.font_id, id: g.id, x, emoji: false, color: r.color });
+                        line.glyphs.push(Glyph { font: run.font_id, id: g.id, x, emoji: false, color: r.color, byte: line.end });
                     }
                 }
                 line.width = x + dot_w;
@@ -391,6 +448,28 @@ fn layout(r: &Resolved, max: Option<f32>, window: &mut Window) -> Laid {
         }
     }
     laid
+}
+
+/// The caret position nearest a point relative to the text's origin, left aligned.
+fn byte_at(l: &Laid, x: f32, y: f32) -> usize {
+    let pitch = l.line_height + l.gap;
+    let n = ((y / pitch).floor().max(0.) as usize).min(l.lines.len().saturating_sub(1));
+    let Some(line) = l.lines.get(n) else { return 0 };
+    for (i, g) in line.glyphs.iter().enumerate() {
+        let next = line.glyphs.get(i + 1).map_or(line.width, |g| g.x);
+        if x < (g.x + next) / 2. {
+            return g.byte;
+        }
+    }
+    line.end
+}
+
+/// The word around `at`, bounded by whitespace and punctuation.
+fn word_at(text: &str, at: usize) -> (usize, usize) {
+    let is_word = |c: char| c.is_alphanumeric() || c == '\'' || c == '’' || c == '_';
+    let start = text[..at].char_indices().rev().take_while(|(_, c)| is_word(*c)).last().map_or(at, |(i, _)| i);
+    let end = text[at..].char_indices().find(|(_, c)| !is_word(*c)).map_or(text.len(), |(i, _)| at + i);
+    (start, end)
 }
 
 fn color_at(r: &Resolved, byte: usize) -> Hsla {
@@ -419,6 +498,7 @@ impl Txt {
         };
         let mut runs = vec![];
         let mut marks = vec![];
+        let mut links = vec![];
         let mut text = String::new();
         let make = |serif: bool, weight: FontWeight, italic: bool| Font {
             family: if self.mono { MONO.into() } else if serif { GARAMOND.into() } else { FIGTREE.into() },
@@ -436,6 +516,9 @@ impl Txt {
             }
             if s.text.is_empty() {
                 continue;
+            }
+            if let Some(key) = &s.link {
+                links.push((text.len(), text.len() + s.text.len(), key.clone()));
             }
             if s.underline || s.strike {
                 marks.push((text.len(), text.len() + s.text.len(), s.strike));
@@ -463,6 +546,7 @@ impl Txt {
             ellipsis_font: runs[0].font.clone(),
             runs,
             marks,
+            links,
             color,
         }
     }
@@ -477,7 +561,7 @@ impl IntoElement for Txt {
 
 impl Element for Txt {
     type RequestLayoutState = Resolved;
-    type PrepaintState = ();
+    type PrepaintState = Vec<(gpui_kit::Hitbox, SharedString)>;
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -522,25 +606,60 @@ impl Element for Txt {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        _: &mut Resolved,
-        _: &mut Window,
+        bounds: Bounds<Pixels>,
+        r: &mut Resolved,
+        window: &mut Window,
         _: &mut App,
-    ) {
+    ) -> Self::PrepaintState {
+        self.selection_hitbox = self.selectable.then(|| window.insert_hitbox(bounds, gpui_kit::HitboxBehavior::Normal));
+        if self.on_link.is_none() || r.links.is_empty() {
+            return vec![];
+        }
+        let w = f32::from(bounds.size.width);
+        let l = layout(r, Some(w + 0.5), window);
+        let mut y = f32::from(bounds.origin.y);
+        let mut out = vec![];
+        for line in &l.lines {
+            let dx = match r.align {
+                Align::Left => 0.0,
+                Align::Center => (w - line.width) / 2.0,
+                Align::Right => w - line.width,
+            };
+            for (a, b, key) in &line.links {
+                let rect = Bounds::new(point(px(f32::from(bounds.origin.x) + dx + a), px(y)), size(px(b - a), px(l.line_height)));
+                out.push((window.insert_hitbox(rect, gpui_kit::HitboxBehavior::Normal), key.clone()));
+            }
+            y += l.line_height + l.gap;
+        }
+        out
     }
 
     fn paint(
         &mut self,
-        _: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         r: &mut Resolved,
-        _: &mut (),
+        links: &mut Self::PrepaintState,
         window: &mut Window,
-        _: &mut App,
+        cx: &mut App,
     ) {
+        if let Some(handler) = &self.on_link {
+            for (hitbox, key) in links.drain(..) {
+                window.set_cursor_style(gpui_kit::CursorStyle::PointingHand, &hitbox);
+                let (handler, key) = (handler.clone(), key);
+                window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
+                    if phase.bubble() && hitbox.bounds.contains(&e.position) {
+                        handler(&key, window, cx);
+                    }
+                });
+            }
+        }
         let w = f32::from(bounds.size.width);
-        let l = layout(r, Some(w + 0.5), window);
+        let l = Rc::new(layout(r, Some(w + 0.5), window));
+        if let (Some(hitbox), Some(id)) = (self.selection_hitbox.as_ref(), id) {
+            paint_selection(id, hitbox, bounds, r, &l, window, cx);
+        }
         let mut y = f32::from(bounds.origin.y);
         let x0 = f32::from(bounds.origin.x);
         for line in &l.lines {
@@ -570,9 +689,90 @@ impl Element for Txt {
     }
 }
 
+/// The highlight, and the mouse and Cmd-C handling behind it. Registered each frame, as GPUI wants.
+fn paint_selection(id: &GlobalElementId, hitbox: &gpui_kit::Hitbox, bounds: Bounds<Pixels>, r: &Resolved, l: &Rc<Laid>, window: &mut Window, cx: &mut App) {
+    use gpui_kit::{CursorStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+    let state: Rc<RefCell<Selection>> = window.with_element_state(id, |s: Option<Rc<RefCell<Selection>>>, _| {
+        let s = s.unwrap_or_default();
+        (s.clone(), s)
+    });
+    window.set_cursor_style(CursorStyle::IBeam, hitbox);
+    let (from, to) = state.borrow().range();
+    if from < to {
+        let color = crate::tokens::pal(cx).accent.opacity(0.3);
+        let (x0, mut y) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+        for line in &l.lines {
+            let start = line.glyphs.iter().find(|g| g.byte >= from).filter(|g| g.byte < to).map(|g| g.x);
+            if let Some(a) = start {
+                let b = line.glyphs.iter().find(|g| g.byte >= to).map_or(line.width, |g| g.x);
+                window.paint_quad(gpui_kit::fill(Bounds::new(point(px(x0 + a), px(y)), size(px(b - a), px(l.line_height))), color));
+            }
+            y += l.line_height + l.gap;
+        }
+    }
+    let origin = bounds.origin;
+    let text: Rc<str> = r.text.as_str().into();
+    let at = {
+        let lines = l.clone();
+        move |p: Point<Pixels>| byte_at(&lines, f32::from(p.x - origin.x), f32::from(p.y - origin.y))
+    };
+    let hit = hitbox.clone();
+    {
+        let (state, text, at) = (state.clone(), text.clone(), at.clone());
+        window.on_mouse_event(move |e: &MouseDownEvent, phase, window, _| {
+            if !phase.bubble() {
+                return;
+            }
+            let mut s = state.borrow_mut();
+            if hit.is_hovered(window) && e.button == MouseButton::Left {
+                let b = at(e.position);
+                (s.anchor, s.head) = match e.click_count {
+                    1 => (b, b),
+                    2 => word_at(&text, b),
+                    _ => (0, text.len()),
+                };
+                s.dragging = e.click_count == 1;
+                window.refresh();
+            } else if s.anchor != s.head {
+                // Clicking elsewhere clears it, as an NSTextView losing the selection does.
+                s.anchor = s.head;
+                window.refresh();
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, _| {
+            let mut s = state.borrow_mut();
+            if phase.bubble() && s.dragging {
+                s.head = at(e.position);
+                window.refresh();
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        window.on_mouse_event(move |_: &MouseUpEvent, _, _, _| state.borrow_mut().dragging = false);
+    }
+    window.on_key_event(move |e: &KeyDownEvent, phase, _, cx| {
+        let k = &e.keystroke;
+        let (from, to) = state.borrow().range();
+        if phase.bubble() && from < to && k.key == "c" && k.modifiers.platform {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text[from..to].to_string()));
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::wrap_points;
+    use super::{word_at, wrap_points};
+
+    #[test]
+    fn a_word_stops_at_spaces_and_punctuation() {
+        assert_eq!(word_at("the north, wind", 5), (4, 9));
+        assert_eq!(word_at("the north, wind", 9), (4, 9));
+        assert_eq!(word_at("the north, wind", 3), (0, 3));
+    }
 
     #[test]
     fn wraps_at_the_last_space_and_never_empties_a_line() {

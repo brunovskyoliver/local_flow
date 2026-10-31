@@ -92,7 +92,12 @@ impl NotetakerPage {
                 card = card.child(div().id("meeting.captureLoss").child(sf_label("exclamationmark.triangle.fill", "Some audio was lost during recording. The transcript may be incomplete.", 12., orange(cx))));
             }
             if let Some(n) = s.notice.clone() {
-                card = card.child(t(n).size(13.).color(p.muted).id("meeting.notice"));
+                let permission = self.refusal.as_ref().is_some_and(|r| r.contains("System Settings"));
+                card = card.child(h_flex().gap(px(8.)).child(t(n).size(13.).color(p.muted).id("meeting.notice")).when(permission, |d| {
+                    d.child(prototype_button("meeting.openSettings", "Open System Settings").on_click(|_, _, cx| {
+                        let _ = cx.global::<Core>().services.open_permission_settings(flow_platform::Permission::Microphone);
+                    }))
+                }));
             }
             if let Some(line) = self.live_section.clone() {
                 card = card.child(section_view(&line, &s, cx));
@@ -111,10 +116,17 @@ impl NotetakerPage {
                     Some(e) if e.state == SaveState::Saved => ("Saved", p.muted),
                     _ => ("", p.muted),
                 };
+                let notice = self.editor.as_ref().and_then(|e| e.notice.clone());
                 card = card
-                    .child(div().w_full().max_w(px(360.)).child(Input::new(&self.active_title).aria_label("Title (optional)").accessibility_id("meeting.title.active")))
-                    .child(h_flex().gap(px(8.)).child(t("Notes").font(13., 600.)).child(t(text).size(12.).color(color).id("meeting.notes.state")))
-                    .child(div().w_full().h(px(90.)).bg(p.surface).rounded(px(8.)).child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(13.)).aria_label("Notes").accessibility_id("meeting.notes")));
+                    .child(h_flex().w_full().gap(px(8.)).child(div().flex_1().max_w(px(360.)).child(Input::new(&self.active_title).aria_label("Title (optional)").accessibility_id("meeting.title.active"))).when_some(self.active_title_notice.clone(), |d, n| d.child(t(n).size(12.).color(red(cx)).id("meeting.title.notice"))))
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap(px(6.))
+                            .child(h_flex().w_full().child(t("Notes").font(13., 600.)).child(div().flex_1()).child(t(text).size(12.).color(color).id("meeting.notes.state")))
+                            .child(div().w_full().h(px(90.)).bg(p.surface).rounded(px(8.)).child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(13.)).aria_label("Notes").accessibility_id("meeting.notes")))
+                            .when_some(notice, |d, n| d.child(t(n).size(12.).color(red(cx)))),
+                    );
             }
         } else if let Some(refusal) = self.refusal.clone() {
             let permission = refusal.contains("System Settings");
@@ -133,6 +145,24 @@ impl NotetakerPage {
             );
         }
         card
+    }
+    /// `saveTitle`: Enter in the card's title field.
+    pub(crate) fn save_active_title(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.status.as_ref().map(|s| s.id.clone()) else { return };
+        let Some(db) = db_of(cx) else { return };
+        let draft = self.active_title.read(cx).value().to_string();
+        self.active_title_notice = if draft.len() > TITLE_MAX_BYTES {
+            Some("Titles are limited to 256 bytes.".into())
+        } else {
+            let saved = meeting(db, &id).ok().flatten().and_then(|m| set_title(db, &id, &draft, m.revision, now_ms()).ok());
+            if saved.is_some() {
+                self.lib.refresh(db, Some(&id));
+                None
+            } else {
+                Some("The title could not be saved.".into())
+            }
+        };
+        cx.notify();
     }
     /// Pause, Resume and Stop go to the Mac coordinator.
     pub(crate) fn live_action(&mut self, what: &'static str, cx: &mut Context<Self>) {

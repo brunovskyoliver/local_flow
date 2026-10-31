@@ -1,5 +1,6 @@
 //! `SummaryTabView`. Generation is a worker; everything here reads and edits stored rows.
 use super::*;
+use std::collections::HashSet;
 use std::time::Duration;
 
 pub(crate) struct SummaryState {
@@ -15,11 +16,20 @@ pub(crate) struct SummaryState {
     /// (item id, field) while its text or owner or due date is being typed.
     pub editing: Option<(String, &'static str)>,
     pub item_input: Entity<InputState>,
-    pub shown_ai: Option<String>,
+    /// Rows (`"summary"` or an item id) showing the AI's value.
+    pub shown_ai: HashSet<String>,
+    pub due: Entity<CalendarState>,
     pub roots: Vec<SpeakerSummary>,
+    _subs: Vec<Subscription>,
 }
 impl SummaryState {
     pub fn new(window: &mut Window, cx: &mut Context<NotetakerPage>) -> Self {
+        let item_input = cx.new(|cx| InputState::new(window, cx));
+        let subs = vec![cx.subscribe_in(&item_input, window, |this: &mut NotetakerPage, _, e: &TextInputEvent, _, cx| match e {
+            TextInputEvent::PressEnter { .. } => this.save_editing_item(cx),
+            TextInputEvent::Change => cx.notify(),
+            _ => {}
+        })];
         SummaryState {
             model: None,
             header: SummaryHeader::Eligible,
@@ -30,10 +40,12 @@ impl SummaryState {
             error: None,
             editing_summary: false,
             summary_input: cx.new(|cx| TextareaState::new(window, cx)),
-            item_input: cx.new(|cx| InputState::new(window, cx)),
+            due: cx.new(|cx| CalendarState::new(window, cx)),
+            item_input,
             editing: None,
-            shown_ai: None,
+            shown_ai: HashSet::new(),
             roots: vec![],
+            _subs: subs,
         }
     }
     pub fn reset(&mut self) {
@@ -43,7 +55,7 @@ impl SummaryState {
         self.error = None;
         self.editing_summary = false;
         self.editing = None;
-        self.shown_ai = None;
+        self.shown_ai.clear();
     }
     pub fn apply_scenario(&mut self, name: &str) {
         match name {
@@ -85,24 +97,32 @@ impl NotetakerPage {
         }
         self.summary.roots = speaker_summaries(db, &id).unwrap_or_default();
     }
-    /// `model.highlighted`: speaker names in their palette color.
+    /// `model.highlighted`: speaker names in their palette color, each a link to Assign speakers.
     fn spans(&self, text: &str, cx: &App) -> Vec<Span> {
         let speakers: Vec<(String, String, usize)> = self.summary.roots.iter().map(|r| (r.id.clone(), r.label(), r.color)).collect();
         let mut out = vec![];
         let mut at = 0;
-        for (start, end, _, color) in speaker_mentions(text, &speakers) {
+        for (start, end, id, color) in speaker_mentions(text, &speakers) {
             if start < at {
                 continue;
             }
             out.push(span(text[at..start].to_string()));
-            out.push(span(text[start..end].to_string()).color(speaker_text(color, cx)));
+            out.push(span(text[start..end].to_string()).color(speaker_text(color, cx)).link(id));
             at = end;
         }
         out.push(span(text[at..].to_string()));
         out
     }
-    fn highlighted(&self, text: &str, cx: &App) -> Txt {
-        rich(self.spans(text, cx))
+    #[track_caller]
+    fn linked(spans: Vec<Span>, cx: &Context<Self>) -> Txt {
+        let page = cx.entity().downgrade();
+        rich(spans).on_link(move |id, window, cx| {
+            page.update(cx, |this, cx| this.open_assign(Some(id.to_string()), window, cx)).ok();
+        })
+    }
+    #[track_caller]
+    fn highlighted(&self, text: &str, cx: &Context<Self>) -> Txt {
+        Self::linked(self.spans(text, cx), cx)
     }
     fn generate(&mut self, cx: &mut Context<Self>) {
         self.menu = None;
@@ -152,8 +172,9 @@ impl NotetakerPage {
     }
     fn begin_item_edit(&mut self, item: &Item, field: &'static str, initial: String, window: &mut Window, cx: &mut Context<Self>) {
         self.summary.item_input.update(cx, |s, cx| s.set_value(initial, window, cx));
+        self.summary.item_input.read(cx).focus_handle(cx).focus(window, cx);
         self.summary.editing = Some((item.id.clone(), field));
-        self.menu = None;
+        self.menu = if field == "owner" { Some(format!("owner.{}", item.id)) } else { None };
         cx.notify();
     }
     fn set_item(&mut self, item: &Item, field: &str, value: &str, ai: Option<String>, cx: &mut Context<Self>) {
@@ -161,21 +182,34 @@ impl NotetakerPage {
         self.summary.editing = None;
         self.write(cx, |db, id| set_overlay(db, id, OverlayTarget::Item(&item.id), field, value, ai.as_deref(), Some(&item.ai_text), &key, now_ms()));
     }
-    fn save_item_edit(&mut self, item: &Item, cx: &mut Context<Self>) {
-        let Some((_, field)) = self.summary.editing.clone() else { return };
+    /// Save on the open text or owner field. A blank owner stays open, as its disabled Save does.
+    pub(crate) fn save_editing_item(&mut self, cx: &mut Context<Self>) {
+        let Some((id, field)) = self.summary.editing.clone() else { return };
+        let Some(item) = self.summary.model.as_ref().and_then(|m| [&m.action_items, &m.next_steps, &m.decisions].into_iter().flatten().find(|i| i.id == id).cloned()) else { return };
         let value = self.summary.item_input.read(cx).value().trim().to_string();
         match field {
-            "owner" => self.set_item(item, "owner", &owner_value_mentioned(&value), Some(owner_json(&item.ai_owner)), cx),
-            "due_date" => {
-                if !valid_date(&value) {
-                    self.summary.error = Some("Enter the date as YYYY-MM-DD.".into());
-                    cx.notify();
-                    return;
-                }
-                self.set_item(item, "due_date", &due_value(Some(&value)), Some(due_value(item.ai_due_date.as_deref())), cx)
-            }
-            f => self.set_item(item, f, &value, Some(item.ai_text.clone()), cx),
+            "owner" if value.is_empty() => {}
+            "owner" => self.set_item(&item, "owner", &owner_value_mentioned(&value), Some(owner_json(&item.ai_owner)), cx),
+            f => self.set_item(&item, f, &value, Some(item.ai_text.clone()), cx),
         }
+    }
+    fn begin_due(&mut self, item: &Item, window: &mut Window, cx: &mut Context<Self>) {
+        let offset = offset_at(now_ms(), cx);
+        let (y, m, d) = flow_core::history::civil_from_days((now_ms() / 1000 + offset as i64).div_euclid(86_400));
+        let today = format!("{y:04}-{m:02}-{d:02}");
+        let date = calendar_date(item.due_date.as_deref().unwrap_or(&today));
+        self.summary.due.update(cx, |s, cx| s.set_date(date, window, cx));
+        self.menu = Some(format!("due.{}", item.id));
+        cx.notify();
+    }
+    fn set_due(&mut self, item: &Item, date: Option<&str>, cx: &mut Context<Self>) {
+        self.set_item(item, "due_date", &due_value(date), Some(due_value(item.ai_due_date.as_deref())), cx);
+    }
+    fn toggle_ai(&mut self, key: &str, cx: &mut Context<Self>) {
+        if !self.summary.shown_ai.remove(key) {
+            self.summary.shown_ai.insert(key.to_string());
+        }
+        cx.notify();
     }
     fn view_source(&mut self, source: &SourceRef, cx: &mut Context<Self>) {
         match source {
@@ -195,13 +229,12 @@ impl NotetakerPage {
                 h_flex()
                     .id("meeting.summary.stale")
                     .w_full()
-                    .gap(px(8.))
-                    .p(px(10.))
                     .gap(px(10.))
+                    .p(px(10.))
                     .bg(p.warning.opacity(0.12))
                     .rounded(px(6.))
                     .child(icon("exclamationmark.triangle", 12., p.warning))
-                    .child(div().flex_1().child(t("The transcript, speakers or notes changed after this summary.").size(12.)))
+                    .child(div().flex_1().child(t(STALE_TEXT).size(12.).color(p.ink)))
                     .child(prototype_button("meeting.summary.stale.regenerate", "Regenerate").on_click(cx.listener(|this, _, _, cx| this.generate(cx)))),
             );
         }
@@ -209,19 +242,21 @@ impl NotetakerPage {
             out = out.child(t(e).size(11.).color(red(cx)).id("meeting.summary.editError"));
         }
         let Some(model) = model else {
-            let text = if self.summary.load_error {
-                "The summary could not be loaded.".to_string()
+            let (text, read_transcript) = if self.summary.load_error {
+                ("The summary could not be loaded.".to_string(), false)
             } else {
                 match &header {
-                    SummaryHeader::NotEligible(reason) => reason.to_string(),
-                    SummaryHeader::Pending(_) | SummaryHeader::Running(_) => "Summarizing…".to_string(),
-                    _ => "No summary yet.".to_string(),
+                    SummaryHeader::NotEligible(reason) => (reason.to_string(), true),
+                    SummaryHeader::Eligible => ("No summary yet.".to_string(), false),
+                    _ => ("Summarizing…".to_string(), false),
                 }
             };
-            return out.child(v_flex().w_full().items_center().gap(px(8.)).py(px(40.)).child(t(text).size(14.).color(p.muted).center()).child(plain_button("meeting.summary.readTranscript", "Read transcript").on_click(cx.listener(|this, _, _, cx| {
-                this.tab = Tab::Transcript;
-                cx.notify();
-            })).content(t("Read transcript").size(13.).color(p.accent).a11y_hidden())));
+            return out.child(v_flex().w_full().items_start().gap(px(12.)).child(t(text).line_spacing(6.).color(p.muted)).when(read_transcript, |d| {
+                d.child(plain_button("meeting.summary.readTranscript", "Read transcript").on_click(cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Transcript;
+                    cx.notify();
+                })).content(t("Read transcript").color(p.accent).a11y_hidden()))
+            }));
         };
         out = out.child(self.summary_body(&model, cx));
         for topic in &model.topics {
@@ -247,14 +282,15 @@ impl NotetakerPage {
     fn summary_header_row(&mut self, m: &MeetingRow, header: &SummaryHeader, model: Option<&ReadModel>, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let label = model.map_or("SUMMARY".to_string(), |x| format!("{} MIN READ", x.reading_minutes));
-        let open = self.menu.as_deref() == Some("summary.options");
         let copied = self.summary.copied;
         let offset = offset_at(m.created_at, cx);
+        let page = cx.entity().downgrade();
         let has_previous = model.is_some_and(|x| !x.previous_edits.is_empty());
-        let has_edits = model.is_some_and(|x| x.summary_overlay.is_some() || !x.previous_edits.is_empty() || [&x.action_items, &x.next_steps, &x.decisions].iter().any(|l| l.iter().any(|i| !i.overlays.is_empty())));
+        let has_edits = model.is_some_and(|x| x.summary_overlay.is_some() || !x.previous_edits.is_empty() || [&x.action_items, &x.next_steps, &x.decisions, &x.open_questions, &x.risks].iter().any(|l| l.iter().any(|i| !i.overlays.is_empty())));
         let edits_open = self.menu.as_deref() == Some("summary.edits");
         let generated = model.map(|x| generated_text(x.generated_at, offset));
         let edits = model.map(|x| x.previous_edits.clone()).unwrap_or_default();
+        let plain_ink = |id: &'static str, title: &'static str, cx: &mut Context<Self>| plain_button(id, title).on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t(title).color(p.ink).a11y_hidden());
         h_flex()
             .w_full()
             .h(px(44.))
@@ -266,47 +302,49 @@ impl NotetakerPage {
             .child(h_flex().gap(px(6.)).child(icon("lightbulb", 13., p.muted)).child(t(label).font(12., 500.).tracking(1.2).color(p.muted).id("meeting.summary.readingTime")))
             .child(div().flex_1())
             .map(|d| match header {
-                SummaryHeader::Eligible => d.child(prototype_button("meeting.summary.generate", "Generate summary").on_click(cx.listener(|this, _, _, cx| this.generate(cx)))),
-                SummaryHeader::Pending(_) => d.child(t("Queued").size(13.).color(p.muted)).child(plain_button("meeting.summary.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t("Cancel").size(13.).color(p.accent).a11y_hidden())),
-                SummaryHeader::Running(text) => d.child(Spinner::new().small()).child(t(text.clone()).size(13.).color(p.muted).lines(1)).child(plain_button("meeting.summary.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t("Cancel").size(13.).color(p.accent).a11y_hidden())),
-                SummaryHeader::Failed(text) => d.child(t(text.clone()).size(13.).color(red(cx)).lines(1)).child(plain_button("meeting.summary.retry", "Retry").on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t("Retry").size(13.).color(p.accent).a11y_hidden())),
-                _ => d,
-            })
-            .when(model.is_some(), |d| {
-                d.child(note_icon("meeting.summary.copy", if copied { "checkmark" } else { "doc.on.doc" }, if copied { "Copied" } else { "Copy summary" }, p.muted).on_click(cx.listener(|this, _, _, cx| this.copy_report(cx)))).child(
-                    div()
-                        .relative()
-                        .child(note_icon("meeting.summary.options", "ellipsis", "Summary options", p.accent).on_click(cx.listener(|this, _, _, cx| this.toggle_menu("summary.options", cx))))
-                        .when(open, |w| {
-                            let items_base = v_flex().p(px(8.)).gap(px(2.)).child(menu_row("meeting.summary.regenerate", "Regenerate", None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, _, cx| this.generate(cx)))))
-                                .child(menu_row("meeting.summary.showPrevious", "Previous edits", None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.menu = Some("summary.edits".into());
-                                    cx.notify();
-                                }))).disabled(!has_previous))
-                                .child(menu_row("meeting.summary.removeEdits", "Remove all edits…", None, red(cx), Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.menu = None;
-                                    this.confirm = Some(Confirm::RemoveEdits);
-                                    cx.notify();
-                                }))).disabled(!has_edits));
-                            let mut items = items_base;
-                            if let Some(g) = generated.clone() {
-                                items = items.child(div().px(px(10.)).py(px(6.)).child(t(g).size(11.).color(p.muted)));
-                            }
-                            w.child(popover_panel(240., 32., cx, items))
-                        })
-                        .when(edits_open, |w| {
-                            let mut list = v_flex().id("meeting.summary.previousEdits").p(px(14.)).gap(px(10.)).child(t("Previous edits").font(13., 600.));
-                            for e in edits.clone() {
-                                let overlay = e.id.clone();
-                                list = list.child(plain_button(sid(format!("meeting.summary.previous.delete.{}", e.id)), "Delete").on_click(cx.listener(move |this, _, _, cx| {
-                                    let overlay = overlay.clone();
-                                    this.write(cx, move |db, _| remove_overlay(db, &overlay));
-                                })).content(t("Delete").size(11.).color(p.accent).a11y_hidden()));
-                                list = list.child(v_flex().gap(px(2.)).when_some(e.item_text.clone(), |d, x| d.child(t(x).size(11.).color(p.muted))).child(t(e.user_value.clone()).size(13.)).when_some(e.ai_value.clone(), |d, x| d.child(t(format!("AI: {x}")).size(11.).color(p.muted))));
-                            }
-                            w.child(popover_panel(280., 32., cx, list))
-                        }),
-                )
+                SummaryHeader::NotEligible(_) => d,
+                SummaryHeader::Eligible => d.child(plain_ink("meeting.summary.generate", "Generate", cx)),
+                SummaryHeader::Pending(_) => d.child(t("Queued").size(13.).color(p.muted)).child(plain_ink("meeting.summary.cancel", "Cancel", cx)),
+                SummaryHeader::Running(text) => d.child(t(text.clone()).size(13.).color(p.muted).lines(1)).child(plain_ink("meeting.summary.cancel", "Cancel", cx)),
+                SummaryHeader::Failed(text) => d.child(t(text.clone()).size(13.).color(red(cx)).lines(1)).child(plain_ink("meeting.summary.retry", "Retry", cx)),
+                SummaryHeader::Succeeded => d
+                    .child(note_icon("meeting.summary.copy", if copied { "checkmark" } else { "doc.on.doc" }, if copied { "Copied" } else { "Copy summary" }, p.muted).on_click(cx.listener(|this, _, _, cx| this.copy_report(cx))))
+                    .child(
+                        div()
+                            .relative()
+                            .child(menu_trigger("meeting.summary.options", "Summary options", "ellipsis", 15., 28., p.accent).dropdown_menu(move |menu, _, _| {
+                                let mut menu = menu
+                                    .item(PopupMenuItem::new("Regenerate").on_click(act(&page, |this, _, cx| this.generate(cx))))
+                                    .item(PopupMenuItem::new("Previous edits").disabled(!has_previous).on_click(act(&page, |this, _, cx| {
+                                        this.menu = Some("summary.edits".into());
+                                        cx.notify();
+                                    })))
+                                    .item(PopupMenuItem::new("Remove all edits…").disabled(!has_edits).on_click(act(&page, |this, _, cx| {
+                                        this.confirm = Some(Confirm::RemoveEdits);
+                                        cx.notify();
+                                    })));
+                                if let Some(g) = generated.clone() {
+                                    menu = menu.separator().label(g);
+                                }
+                                menu
+                            }))
+                            .when(edits_open, |w| {
+                                let mut list = v_flex().id("meeting.summary.previousEdits").p(px(14.)).gap(px(10.)).child(t("Previous edits").font(12., 600.));
+                                for e in edits.clone() {
+                                    let overlay = e.id.clone();
+                                    list = list.child(
+                                        v_flex()
+                                            .gap(px(3.))
+                                            .when_some(e.item_text.clone(), |d, x| d.child(t(x).size(11.).color(p.muted).lines(2)))
+                                            .child(h_flex().gap(px(8.)).child(div().flex_1().min_w_0().child(t(e.user_value.clone()).size(11.).lines(1))).child(plain_button(sid(format!("meeting.summary.previous.delete.{}", e.id)), "Delete").on_click(cx.listener(move |this, _, _, cx| {
+                                                let overlay = overlay.clone();
+                                                this.write(cx, move |db, _| remove_overlay(db, &overlay));
+                                            })).content(t("Delete").size(11.).color(red(cx)).a11y_hidden()))),
+                                    );
+                                }
+                                w.child(popover_panel(280., 32., cx, list))
+                            }),
+                    ),
             })
     }
 
@@ -316,216 +354,256 @@ impl NotetakerPage {
             return v_flex()
                 .w_full()
                 .gap(px(8.))
-                .child(div().w_full().h(px(180.)).text_size(px(14.)).child(Textarea::new(&self.summary.summary_input).h_full().aria_label("Summary").accessibility_id("meeting.summary.editor")))
-                .child(h_flex().gap(px(8.)).child(prototype_button("meeting.summary.edit.save", "Save").on_click(cx.listener(|this, _, _, cx| this.save_summary_edit(cx)))).child(prototype_button("meeting.summary.edit.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| {
+                .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                    if e.keystroke.key == "escape" {
+                        this.summary.editing_summary = false;
+                        cx.notify();
+                    }
+                }))
+                .child(div().w_full().h(px(90.)).text_size(px(14.)).border_1().border_color(p.line).rounded(px(4.)).child(Textarea::new(&self.summary.summary_input).appearance(false).bordered(false).h_full().aria_label("Summary").accessibility_id("meeting.summary.editor")))
+                .child(h_flex().gap(px(8.)).child(prototype_button("meeting.summary.edit.save", "Save").on_click(cx.listener(|this, _, _, cx| this.save_summary_edit(cx)))).child(plain_button("meeting.summary.edit.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| {
                     this.summary.editing_summary = false;
                     cx.notify();
-                }))))
+                })).content(t("Cancel").color(p.muted).a11y_hidden())))
                 .into_any_element();
         }
-        let group: SharedString = "meeting.summary.body".into();
-        let open = self.menu.as_deref() == Some("summary.body");
-        let mut paragraphs = v_flex().flex_1().gap(px(10.));
-        for part in model.summary.split("\n\n") {
+        let ai_shown = self.summary.shown_ai.contains("summary");
+        let mut paragraphs = v_flex().w_full().gap(px(10.)).pb(px(4.));
+        for part in if ai_shown { &model.ai_summary } else { &model.summary }.split("\n\n") {
             paragraphs = paragraphs.child(self.highlighted(part, cx).size(15.).line_spacing(6.));
         }
-        let ai_shown = self.summary.shown_ai.as_deref() == Some("summary");
         let overlay = model.summary_overlay.clone();
-        let ai = model.ai_summary.clone();
-        h_flex()
-            .group(group.clone())
+        let page = cx.entity().downgrade();
+        div()
+            .id("meeting.summary.text")
             .w_full()
-            .items_start()
-            .gap(px(4.))
-            .child(div().id("meeting.summary.text").flex_1().on_click(cx.listener(|this, e: &ClickEvent, w, cx| {
+            .on_click(cx.listener(|this, e: &ClickEvent, w, cx| {
                 if e.click_count() == 2 {
                     this.begin_summary_edit(w, cx);
                 }
-            })).child(paragraphs).when(ai_shown, |d| d.child(t(ai).size(12.).color(p.muted))))
-            .child(
-                div()
-                    .relative()
-                    .child(hover_revealed(group, open, div()).child(plain_button("meeting.summary.editMenu", "Edit summary").tooltip("Edit summary").on_click(cx.listener(|this, _, _, cx| this.toggle_menu("summary.body", cx))).content(div().size(px(20.)).flex().items_center().justify_center().child(icon("ellipsis", 11., p.muted)))))
-                    .when(open, |w| {
-                        let mut items = v_flex().p(px(8.)).gap(px(2.)).child(menu_row("meeting.summary.edit", "Edit summary", None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, w, cx| this.begin_summary_edit(w, cx)))));
-                        if let Some(id) = overlay {
-                            items = items.child(menu_row("meeting.summary.showAI", if ai_shown { "Hide AI value" } else { "Show AI value" }, None, p.ink, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.summary.shown_ai = if ai_shown { None } else { Some("summary".into()) };
-                                this.menu = None;
-                                cx.notify();
-                            })))).child(menu_row("meeting.summary.removeText", "Remove text edit", None, p.ink, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                let id = id.clone();
-                                this.write(cx, move |db, _| remove_overlay(db, &id));
-                            }))));
-                        }
-                        w.child(popover_panel(220., 24., cx, items))
-                    }),
-            )
+            }))
+            .child(paragraphs)
+            .context_menu(move |menu, _, _| {
+                let menu = menu.item(PopupMenuItem::new("Edit summary").on_click(act(&page, |this, w, cx| this.begin_summary_edit(w, cx))));
+                let Some(id) = overlay.clone() else { return menu };
+                menu.item(PopupMenuItem::new(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(&page, |this, _, cx| this.toggle_ai("summary", cx)))).item(PopupMenuItem::new("Remove text edit").on_click(act(&page, move |this, _, cx| {
+                    let id = id.clone();
+                    this.write(cx, move |db, _| remove_overlay(db, &id));
+                })))
+            })
             .into_any_element()
     }
 
     fn item_row(&mut self, item: &Item, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let action = item.kind == "action_item";
-        let key = format!("item.{}", item.id);
+        let row_id = sid(format!("meeting.summary.item.{}.{}", item.kind, item.ordinal));
         let group = sid(format!("meeting.summary.group.{}", item.id));
-        let open = self.menu.as_deref() == Some(key.as_str());
-        let done = item.status != "open";
-        let ai_shown = self.summary.shown_ai.as_deref() == Some(&item.id);
-        let editing = self.summary.editing.as_ref().filter(|e| e.0 == item.id).map(|e| e.1);
-        let attribution = item.attribution.clone().filter(|a| !item.text.contains(a.as_str()));
-        // Action items carry their owner in a chip.
-        let attribution = attribution.filter(|_| !action);
-        let attribution_text = attribution.map_or(String::new(), |a| format!(" \u{2014} {a}"));
-        let text = item.text.clone();
-        let mut body = v_flex().flex_1().min_w_0().gap(px(6.));
-        if let Some(field) = editing {
-            let (save, placeholder) = (item.clone(), if field == "due_date" { "YYYY-MM-DD" } else if field == "owner" { "Owner name" } else { "Text" });
-            body = body.child(
-                h_flex()
-                    .w_full()
-                    .gap(px(8.))
-                    .child(div().flex_1().text_size(px(13.)).child(Input::new(&self.summary.item_input).aria_label(placeholder).accessibility_id(if field == "due_date" { "meeting.summary.due" } else { "meeting.summary.editor.item" })))
-                    .child(prototype_button("meeting.summary.item.save", "Save").on_click(cx.listener(move |this, _, _, cx| this.save_item_edit(&save, cx))))
-                    .when(field == "due_date", |d| {
-                        let clear = item.clone();
-                        d.child(prototype_button("meeting.summary.due.clear.inline", "Clear").on_click(cx.listener(move |this, _, _, cx| this.set_item(&clear, "due_date", &due_value(None), Some(due_value(clear.ai_due_date.as_deref())), cx))))
-                    })
-                    .child(prototype_button("meeting.summary.item.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| {
+        let ai_shown = self.summary.shown_ai.contains(&item.id);
+        let (owner_key, due_key) = (format!("owner.{}", item.id), format!("due.{}", item.id));
+        let popover = self.menu.as_deref() == Some(owner_key.as_str()) || self.menu.as_deref() == Some(due_key.as_str());
+        let editing = self.summary.editing.as_ref().is_some_and(|e| e.0 == item.id && e.1 != "owner");
+        if editing {
+            return h_flex()
+                .id(row_id)
+                .w_full()
+                .gap(px(8.))
+                .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                    if e.keystroke.key == "escape" {
                         this.summary.editing = None;
                         cx.notify();
-                    }))),
-            );
+                    }
+                }))
+                .child(div().flex_1().child(Input::new(&self.summary.item_input).aria_label("Edit").accessibility_id("meeting.summary.editor.item")))
+                .child(prototype_button("meeting.summary.edit.save", "Save").on_click(cx.listener(|this, _, _, cx| this.save_editing_item(cx))))
+                .into_any_element();
+        }
+        let text = if ai_shown { item.ai_text.clone() } else { item.text.clone() };
+        let edit_field = editable_field(&item.kind);
+        let open_edit = item.clone();
+        let text_id = sid(format!("meeting.summary.text.{}.{}", item.kind, item.ordinal));
+        let done = item.status != "open";
+        let text_el = if action {
+            let spans = self.spans(&text, cx).into_iter().map(|s| if done { s.strike() } else { s }).collect();
+            Self::linked(spans, cx).size(15.).line_spacing(5.).color(if done { p.muted } else { p.ink })
         } else {
-            body = body.child(if done && action { rich(vec![span(text.clone()).strike()]).size(15.).line_spacing(5.).color(p.muted).into_any_element() } else { {
-                let mut spans = self.spans(&text, cx);
-                if !attribution_text.is_empty() {
-                    spans.push(span(attribution_text.clone()).color(p.muted));
-                }
-                rich(spans).size(15.).line_spacing(5.).into_any_element()
-            } });
-        }
-        if ai_shown {
-            body = body.child(t(format!("AI: {}", item.ai_text)).size(12.).color(p.muted));
-        }
-        if action {
-            let mut chips = h_flex().gap(px(8.)).child(self.owner_chip(item, cx));
-            if let Some(date) = &item.due_date {
-                chips = chips.child(t(format!("Due {}", due_text(date))).size(11.).color(p.muted));
-            } else if item.due_state == "unresolved" {
-                chips = chips.child(t(format!("Due: unclear (\"{}\")", item.due_original.clone().unwrap_or_default())).size(11.).color(p.muted));
+            let mut spans = self.spans(&text, cx);
+            // `ItemRow` drops an attribution the sentence already names.
+            if let Some(a) = item.attribution.clone().filter(|a| !text.to_lowercase().contains(&a.to_lowercase())) {
+                spans.push(span(" \u{2014} ").color(p.muted));
+                spans.extend(self.spans(&a, cx));
             }
-            body = body.child(chips);
+            Self::linked(spans, cx).size(15.).line_spacing(5.)
+        };
+        let body = div().id(text_id).w_full().on_click(cx.listener(move |this, e: &ClickEvent, w, cx| {
+            if let (2, Some(f)) = (e.click_count(), edit_field) {
+                this.begin_item_edit(&open_edit, f, open_edit.text.clone(), w, cx);
+            }
+        })).child(text_el);
+        let mut controls = h_flex();
+        if edit_field.is_some() || !item.overlays.is_empty() {
+            let label = if action { "Edit action item" } else { "Edit item" };
+            let trigger = menu_trigger(sid(format!("meeting.summary.editMenu.{}.{}", item.kind, item.ordinal)), label, "ellipsis", 11., 20., p.muted);
+            let (page, it, choices) = (cx.entity().downgrade(), item.clone(), owner_choices(&self.summary.roots));
+            controls = controls.child(trigger.dropdown_menu(move |menu, w, cx| item_menu(menu, &page, &it, ai_shown, &choices, w, cx)));
+        }
+        if let Some(s) = item.sources.first().cloned() {
+            controls = controls.child(plain_button(sid(format!("meeting.summary.source.{}.{}", item.kind, item.ordinal)), "View source").tooltip("View source").on_click(cx.listener(move |this, _, _, cx| this.view_source(&s, cx))).content(div().size(px(20.)).flex().items_center().justify_center().child(icon("arrow.up.right.square", 11., p.muted))));
+        }
+        let controls = hover_revealed(group.clone(), popover, div()).relative().child(controls).when(popover, |d| {
+            let it = item.clone();
+            if self.menu.as_deref() == Some(owner_key.as_str()) {
+                let body = self.owner_popover(cx);
+                d.child(popover_panel(220., 24., cx, body))
+            } else {
+                let body = self.due_popover(&it, cx);
+                d.child(popover_panel(290., 24., cx, body))
+            }
+        });
+        if !action {
+            return h_flex().id(row_id).group(group).w_full().items_start().gap(px(8.)).pl(px(6.)).child(t("•").size(15.)).child(div().flex_1().min_w_0().child(body)).child(controls).into_any_element();
         }
         let status_item = item.clone();
-        let source = item.sources.first().cloned();
+        let completed = item.status == "completed";
+        let owner = if ai_shown { item.ai_owner.clone() } else { item.owner.clone() };
+        let due_date = if ai_shown { item.ai_due_date.clone() } else { item.due_date.clone() };
+        let mut chips = h_flex().gap(px(8.)).child(self.owner_chip(item, owner, cx));
+        if let Some(date) = due_date {
+            chips = chips.child(t(format!("Due {}", due_text(&date))).size(11.).color(p.muted));
+        } else if item.due_state == "unresolved" {
+            let text = item.due_original.as_ref().map_or("Due: unclear".to_string(), |o| format!("Due: unclear (\"{o}\")"));
+            chips = chips.child(t(text).size(11.).color(p.muted));
+        }
         h_flex()
-            .id(sid(format!("meeting.summary.item.{}.{}", item.kind, item.ordinal)))
-            .group(group.clone())
+            .id(row_id)
+            .group(group)
             .w_full()
             .items_start()
             .gap(px(8.))
-            .when(!action, |d| d.pl(px(6.)))
-            .map(|d| {
-                if action {
-                    d.child(plain_button(sid(format!("meeting.summary.status.{}", item.ordinal)), if done { "Mark open" } else { "Mark completed" }).on_click(cx.listener(move |this, _, _, cx| {
-                        let next = if status_item.status == "open" { "completed" } else { "open" };
-                        this.set_item(&status_item, "status", next, Some("open".into()), cx);
-                    })).content(div().pt(px(3.)).child(icon(if done { "checkmark.circle.fill" } else { "circle" }, 13., if done { p.accent } else { p.muted }))))
-                } else {
-                    d.child(t("•").size(15.))
-                }
-            })
-            .child(body)
-            .when_some(source, |d, s| {
-                d.child(hover_revealed(group.clone(), false, div()).child(plain_button(sid(format!("meeting.summary.source.{}.{}", item.kind, item.ordinal)), "View source").tooltip("View source").on_click(cx.listener(move |this, _, _, cx| this.view_source(&s, cx))).content(div().size(px(20.)).flex().items_center().justify_center().child(icon("arrow.up.right.square", 11., p.muted)))))
-            })
-            .when(editable_field(&item.kind).is_some(), |d| d.child(
-                div()
-                    .relative()
-                    .child(hover_revealed(group, open, div()).child(plain_button(sid(format!("meeting.summary.editMenu.{}.{}", item.kind, item.ordinal)), if action { "Edit action item" } else { "Edit item" }).on_click({
-                        let key = key.clone();
-                        cx.listener(move |this, _, _, cx| this.toggle_menu(&key, cx))
-                    }).content(div().size(px(20.)).flex().items_center().justify_center().child(icon("ellipsis", 11., p.muted)))))
-                    .when(open, |w| {
-                        let items = self.item_menu(item, ai_shown, cx);
-                        w.child(popover_panel(230., 24., cx, items))
-                    }),
-            ))
+            .py(px(3.))
+            .child(plain_button(sid(format!("meeting.summary.status.{}", item.ordinal)), if done { "Mark open" } else { "Mark completed" }).on_click(cx.listener(move |this, _, _, cx| {
+                let next = if status_item.status == "open" { "completed" } else { "open" };
+                this.set_item(&status_item, "status", next, Some("open".into()), cx);
+            })).content(div().pt(px(3.)).child(icon(if completed { "checkmark.circle.fill" } else { "circle" }, 13., if completed { p.success } else { p.muted }))))
+            .child(v_flex().flex_1().min_w_0().gap(px(5.)).child(body).child(chips))
+            .child(controls)
+            .into_any_element()
     }
 
-    fn item_menu(&mut self, item: &Item, ai_shown: bool, cx: &mut Context<Self>) -> AnyElement {
-        let p = pal(cx);
-        let field: &'static str = editable_field(&item.kind).unwrap_or("");
-        let mut items = v_flex().p(px(8.)).gap(px(2.));
-        let row = |id: SharedString, title: String, on: Click| menu_row(id, title, None, p.ink, on);
-        let it = item.clone();
-        items = items.child(row("meeting.summary.edit".into(), if item.kind == "action_item" { "Edit text".into() } else { "Edit item".into() }, Box::new(cx.listener(move |this, _: &ClickEvent, w, cx| this.begin_item_edit(&it, field, it.text.clone(), w, cx)))));
-        if item.kind == "action_item" {
-            for (i, (id, name, _)) in owner_choices(&self.summary.roots).into_iter().enumerate() {
-                let it = item.clone();
-                let ai = owner_json(&item.ai_owner);
-                items = items.child(row(sid(format!("meeting.summary.owner.choice.{i}")), format!("Owner: {name}"), Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_item(&it, "owner", &owner_value_participant(&id), Some(ai.clone()), cx)))));
-            }
-            let it = item.clone();
-            items = items.child(row("meeting.summary.owner.other".into(), "Someone else…".into(), Box::new(cx.listener(move |this, _: &ClickEvent, w, cx| this.begin_item_edit(&it, "owner", String::new(), w, cx)))));
-            let it = item.clone();
-            let ai = owner_json(&item.ai_owner);
-            items = items.child(row("meeting.summary.owner.none".into(), "No owner".into(), Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_item(&it, "owner", OWNER_VALUE_NONE, Some(ai.clone()), cx)))));
-            let it = item.clone();
-            items = items.child(row("meeting.summary.due.pick".into(), "Set due date…".into(), Box::new(cx.listener(move |this, _: &ClickEvent, w, cx| this.begin_item_edit(&it, "due_date", it.due_date.clone().unwrap_or_default(), w, cx)))));
-            if item.due_date.is_some() {
-                let it = item.clone();
-                items = items.child(row("meeting.summary.due.clear".into(), "Clear due date".into(), Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_item(&it, "due_date", &due_value(None), Some(due_value(it.ai_due_date.as_deref())), cx)))));
-            }
-            let it = item.clone();
-            let dismissed = item.status == "dismissed";
-            items = items.child(row("meeting.summary.dismiss".into(), if dismissed { "Reopen".into() } else { "Dismiss".into() }, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_item(&it, "status", if dismissed { "open" } else { "dismissed" }, Some("open".into()), cx)))));
-        }
-        if !item.overlays.is_empty() {
-            let id = item.id.clone();
-            items = items.child(row("meeting.summary.showAI".into(), if ai_shown { "Hide AI value".into() } else { "Show AI value".into() }, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.summary.shown_ai = if ai_shown { None } else { Some(id.clone()) };
-                this.menu = None;
-                cx.notify();
-            }))));
-            for (i, (field, overlay)) in item.overlays.iter().cloned().enumerate() {
-                let name = match field.as_str() {
-                    "owner" => "owner",
-                    "due_date" => "due-date",
-                    "status" => "status",
-                    _ => "text",
-                };
-                items = items.child(row(sid(format!("meeting.summary.removeEdit.{i}")), format!("Remove {name} edit"), Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let overlay = overlay.clone();
-                    this.write(cx, move |db, _| remove_overlay(db, &overlay));
-                }))));
-            }
-        }
-        items.into_any_element()
+    /// `Someone else…`: padding 12, width 220.
+    fn owner_popover(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let blank = self.summary.item_input.read(cx).value().trim().is_empty();
+        v_flex()
+            .p(px(12.))
+            .gap(px(8.))
+            .child(t("Owner name").font(11., 600.))
+            .child(Input::new(&self.summary.item_input).aria_label("Name").accessibility_id("meeting.summary.owner.name"))
+            .child(prototype_button("meeting.summary.owner.save", "Save").disabled(blank).on_click(cx.listener(|this, _, _, cx| this.save_editing_item(cx))))
     }
 
-    fn owner_chip(&mut self, item: &Item, cx: &mut Context<Self>) -> impl IntoElement {
+    /// `Pick date…`: the graphical date picker.
+    fn due_popover(&mut self, item: &Item, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let (clear, save) = (item.clone(), item.clone());
+        v_flex()
+            .id("meeting.summary.due")
+            .p(px(12.))
+            .gap(px(8.))
+            .child(Calendar::new(&self.summary.due))
+            .child(
+                h_flex()
+                    .w_full()
+                    .child(plain_button("meeting.summary.due.popover.clear", "Clear").on_click(cx.listener(move |this, _, _, cx| this.set_due(&clear, None, cx))).content(t("Clear").a11y_hidden()))
+                    .child(div().flex_1())
+                    .child(prototype_button("meeting.summary.due.save", "Save").on_click(cx.listener(move |this, _, _, cx| {
+                        let picked = calendar_text(&this.summary.due.read(cx).date());
+                        this.set_due(&save, picked.as_deref(), cx);
+                    }))),
+            )
+    }
+
+    fn owner_chip(&mut self, item: &Item, owner: Owner, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
-        let chip = h_flex().id("meeting.summary.owner").gap(px(5.)).px(px(8.)).py(px(3.)).rounded_full();
-        match item.owner.clone() {
-            Owner::Participant(name, color, local) => chip.bg(p.button).child(div().size(px(8.)).rounded_full().bg(speaker_dot(color, cx))).child(t(if local { "You".to_string() } else { name }).size(11.)).into_any_element(),
+        let chip = h_flex().id("meeting.summary.owner").px(px(8.)).py(px(3.)).rounded_full();
+        match owner {
+            Owner::Participant(name, color, local) => chip.gap(px(6.)).bg(p.button).child(div().size(px(8.)).rounded_full().bg(speaker_dot(color, cx))).child(t(if local { "You".to_string() } else { name }).size(11.)).into_any_element(),
             Owner::Mentioned(name, known) => {
                 let it = item.clone();
                 let ai = owner_json(&item.ai_owner);
-                chip.border_1()
-                    .border_color(p.line)
-                    .child(t(name).size(11.))
-                    .child(t("mentioned").size(9.).color(p.muted))
+                h_flex()
+                    .gap(px(4.))
+                    .child(chip.border_1().border_color(p.line).child(v_flex().gap(px(1.)).child(t(name).size(11.)).child(t("mentioned").size(9.).color(p.muted))))
                     .when_some(known, |d, (id, known_name)| {
-                        d.child(t(format!("might be {known_name}?")).size(9.).color(p.muted)).child(plain_button("meeting.summary.owner.accept", "Accept").on_click(cx.listener(move |this, _, _, cx| this.set_item(&it, "owner", &owner_value_participant(&id), Some(ai.clone()), cx))).content(t("Accept").size(9.).color(p.accent).a11y_hidden()))
+                        d.child(t(format!("might be {known_name}?")).size(9.).color(p.muted)).child(plain_button("meeting.summary.owner.accept", "Accept").on_click(cx.listener(move |this, _, _, cx| this.set_item(&it, "owner", &owner_value_participant(&id), Some(ai.clone()), cx))).content(div().h(px(19.)).px(px(9.)).flex().items_center().rounded(px(5.)).bg(p.button).child(t("Accept").size(12.).color(p.muted).a11y_hidden())))
                     })
                     .into_any_element()
             }
-            Owner::Unresolved(label) => chip.border_1().border_dashed().border_color(p.line).child(t(label).size(11.).color(p.muted)).into_any_element(),
+            Owner::Unresolved(label) => chip.border_1().border_dashed().border_color(p.muted).child(t(label).size(11.).color(p.muted)).into_any_element(),
         }
     }
 }
+
+/// `ItemEditMenu`: a native menu with Owner and Due date submenus for action items.
+fn item_menu(menu: PopupMenu, page: &WeakEntity<NotetakerPage>, item: &Item, ai_shown: bool, choices: &[(String, String, usize)], window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+    let action = item.kind == "action_item";
+    let mut menu = menu;
+    if let Some(field) = editable_field(&item.kind) {
+        let it = item.clone();
+        menu = menu.item(PopupMenuItem::new("Edit text").on_click(act(page, move |this, w, cx| this.begin_item_edit(&it, field, it.text.clone(), w, cx))));
+    }
+    if action {
+        let (page2, it, list) = (page.clone(), item.clone(), choices.to_vec());
+        menu = menu.submenu("Owner", window, cx, move |menu, _, _| {
+            let mut menu = menu;
+            for (id, name, color) in list.clone() {
+                let it2 = it.clone();
+                let page3 = page2.clone();
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, cx| h_flex().gap(px(6.)).child(div().size(px(8.)).rounded_full().bg(speaker_dot(color, cx))).child(t(name.clone()).size(13.)))
+                        .on_click(act(&page3, move |this, _, cx| this.set_item(&it2, "owner", &owner_value_participant(&id), Some(owner_json(&it2.ai_owner)), cx))),
+                );
+            }
+            let (other, none) = (it.clone(), it.clone());
+            menu.separator()
+                .item(PopupMenuItem::new("Someone else…").on_click(act(&page2, move |this, w, cx| this.begin_item_edit(&other, "owner", String::new(), w, cx))))
+                .item(PopupMenuItem::new("No owner").on_click(act(&page2, move |this, _, cx| this.set_item(&none, "owner", OWNER_VALUE_NONE, Some(owner_json(&none.ai_owner)), cx))))
+        });
+        let (page2, it) = (page.clone(), item.clone());
+        menu = menu.submenu("Due date", window, cx, move |menu, _, _| {
+            let pick = it.clone();
+            let menu = menu.item(PopupMenuItem::new("Pick date…").on_click(act(&page2, move |this, w, cx| this.begin_due(&pick, w, cx))));
+            if it.due_date.is_some() || it.overlay("due_date").is_some() {
+                let clear = it.clone();
+                menu.item(PopupMenuItem::new("Clear").on_click(act(&page2, move |this, _, cx| this.set_due(&clear, None, cx))))
+            } else {
+                menu
+            }
+        });
+        let it = item.clone();
+        let dismissed = it.status == "dismissed";
+        menu = menu.item(PopupMenuItem::new(if dismissed { "Reopen" } else { "Dismiss" }).on_click(act(page, move |this, _, cx| this.set_item(&it, "status", if dismissed { "open" } else { "dismissed" }, Some("open".into()), cx))));
+    }
+    if !item.overlays.is_empty() {
+        let id = item.id.clone();
+        menu = menu.separator().item(PopupMenuItem::new(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(page, move |this, _, cx| this.toggle_ai(&id, cx))));
+        let mut overlays = item.overlays.clone();
+        overlays.sort();
+        for (field, overlay) in overlays {
+            let name = match field.as_str() {
+                "owner" => "owner",
+                "due_date" => "due-date",
+                "status" => "status",
+                _ => "text",
+            };
+            menu = menu.item(PopupMenuItem::new(format!("Remove {name} edit")).on_click(act(page, move |this, _, cx| {
+                let overlay = overlay.clone();
+                this.write(cx, move |db, _| remove_overlay(db, &overlay));
+            })));
+        }
+    }
+    menu
+}
+
+const STALE_TEXT: &str = "The transcript, speakers or notes changed after this summary.";
 
 /// `OverlayField` has text edits for these kinds only; questions and risks read-only.
 fn editable_field(kind: &str) -> Option<&'static str> {
@@ -541,8 +619,4 @@ fn owner_json(owner: &Owner) -> String {
         Owner::Participant(name, ..) | Owner::Mentioned(name, _) => owner_value_mentioned(name),
         Owner::Unresolved(_) => OWNER_VALUE_NONE.to_string(),
     }
-}
-fn valid_date(text: &str) -> bool {
-    let b = text.as_bytes();
-    b.len() == 10 && b[4] == b'-' && b[7] == b'-' && text.split('-').all(|p| p.bytes().all(|c| c.is_ascii_digit()))
 }

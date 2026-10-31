@@ -51,6 +51,7 @@ pub struct NotetakerPage {
     pub(crate) status: Option<LiveStatus>,
     pub(crate) live_section: Option<String>,
     pub(crate) active_title: Entity<InputState>,
+    pub(crate) active_title_notice: Option<String>,
     pub(crate) refusal: Option<String>,
     pub(crate) waiting: HashSet<String>,
     pub(crate) can_start: bool,
@@ -131,6 +132,17 @@ type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 pub(crate) fn note_icon(id: impl Into<ElementId>, symbol: &'static str, label: &str, color: Hsla) -> FlowButton {
     plain_button(id, sid(label)).tooltip(sid(label)).content(div().size(px(28.)).flex().items_center().justify_center().child(icon(symbol, 15., color)))
 }
+/// The trigger of a native `Menu`: a borderless symbol in a square.
+pub(crate) fn menu_trigger(id: impl Into<ElementId>, label: &'static str, symbol: &'static str, size: f32, frame: f32, color: Hsla) -> Button {
+    Button::new(id).ghost().p_0().h(px(frame)).w(px(frame)).accessibility_label(label).child(div().size(px(frame)).flex().items_center().justify_center().child(icon(symbol, size, color)))
+}
+/// A menu item's click, delivered to the page.
+pub(crate) fn act(page: &WeakEntity<NotetakerPage>, f: impl Fn(&mut NotetakerPage, &mut Window, &mut Context<NotetakerPage>) + 'static) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    let page = page.clone();
+    move |_, window, cx| {
+        page.update(cx, |this, cx| f(this, window, cx)).ok();
+    }
+}
 /// `NoteTab`.
 pub(crate) fn note_tab(id: impl Into<ElementId>, title: &'static str, selected: bool, cx: &App) -> FlowButton {
     let p = pal(cx);
@@ -188,6 +200,11 @@ impl NotetakerPage {
         let active_title = cx.new(|cx| InputState::new(window, cx).placeholder("Title (optional)"));
         let thoughts = cx.new(|cx| TextareaState::new(window, cx));
         let subs = vec![
+            cx.subscribe_in(&active_title, window, |this, _, e: &TextInputEvent, _, cx| {
+                if matches!(e, TextInputEvent::PressEnter { .. }) {
+                    this.save_active_title(cx);
+                }
+            }),
             cx.subscribe_in(&query, window, |_, _, e: &TextInputEvent, _, cx| {
                 if matches!(e, TextInputEvent::Change) {
                     cx.notify();
@@ -225,6 +242,7 @@ impl NotetakerPage {
             status: None,
             live_section: None,
             active_title,
+            active_title_notice: None,
             refusal: None,
             waiting: HashSet::new(),
             can_start: true,
