@@ -22,7 +22,7 @@ fn native_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> Flo
 }
 
 fn stage_text(text: &str) -> Txt {
-    t(if text.is_empty() { "(Empty stage)".to_string() } else { text.to_string() }).size(14.).selectable()
+    t(if text.is_empty() { "(Empty stage)".to_string() } else { text.to_string() }).size(14.).selectable().no_widow()
 }
 
 fn meta(label: String, value: String, cx: &App) -> Div {
@@ -54,7 +54,7 @@ impl HistoryPage {
                 FlowButton::new(SharedString::from(key.to_string()), ButtonKind::Plain, title.clone())
                     .a11y_selected(on)
                     // The native indicator: chevron centered 4 from the leading edge, title at 12.
-                    .content(h_flex().py(px(2.)).child(div().w(px(8.)).flex().justify_center().child(icon(if on { "chevron.down" } else { "chevron.right" }, 9., p.muted))).child(div().w(px(4.))).child(t(title).size(size).a11y_hidden()))
+                    .content(h_flex().py(px(2.)).child(div().w(px(8.)).flex().justify_center().child(icon(if on { "chevron.down" } else { "chevron.right" }, 11., if p.ink.l > 0.5 { p.ink } else { p.muted }))).child(div().w(px(4.))).child(t(title).size(size).a11y_hidden()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !this.open.remove(&k) {
                             this.open.insert(k.clone());
@@ -95,7 +95,7 @@ impl HistoryPage {
                     cx.notify();
                 }))),
             )
-            .child(div().id("history.detail.scroll").flex_1().min_h_0().w_full().overflow_y_scroll().child(body))
+            .child(div().id("history.detail.scroll").test_support().flex_1().min_h_0().w_full().overflow_y_scroll().child(body))
             .into_any_element()
     }
 
@@ -103,7 +103,7 @@ impl HistoryPage {
         let p = pal(cx);
         let e = &env.entry;
         let status = v_flex()
-            .gap(px(4.))
+            .gap(px(3.))
             .child(t(format!("Completeness: {}", e.quality_label().unwrap_or("Complete"))).size(13.).selectable())
             .child(t(format!("Recognized: {}", e.path_label(true).unwrap_or_else(|| "Local".into()))).size(13.).selectable())
             .child(t(format!("Delivery: {}", spaced(&e.delivery_state))).size(13.).selectable())
@@ -224,7 +224,7 @@ impl HistoryPage {
                 .gap(px(6.))
                 .child(t(title.clone()).size(12.).selectable())
                 .child(t(caption).size(12.).color(p.muted).selectable())
-                .child(t(body).size(14.).selectable())
+                .child(t(body).size(14.).selectable().no_widow())
                 .child(
                     h_flex()
                         .gap(px(8.))
@@ -263,8 +263,8 @@ impl HistoryPage {
             .child(hairline(cx))
             .child(t("Rewrite").font(14., 600.).selectable())
             .child(t(m.rewrite_state_line()).size(13.).color(p.muted).selectable())
-            .child(t(m.delivered_line()).id("history.detail.rewrite.delivered").size(13.).selectable().selectable())
-            .when_some(m.rewrite_notice.clone(), |d, n| d.child(t(n).id("history.detail.rewrite.notice").size(13.).color(p.muted).selectable().selectable()))
+            .child(t(m.delivered_line()).id("history.detail.rewrite.delivered").size(13.).selectable())
+            .when_some(m.rewrite_notice.clone(), |d, n| d.child(t(n).id("history.detail.rewrite.notice").size(13.).color(p.muted).selectable()))
             .when_some(m.rewrite_limit_explanation(), |d, n| d.child(t(n).size(13.).color(p.muted).selectable()))
             .child(texts)
             .child(
@@ -306,7 +306,7 @@ fn attempt_body(a: Attempt, e: Entry, cx: &mut Context<HistoryPage>) -> AnyEleme
     let n = a.ordinal;
     let mut v = v_flex().w_full().pt(px(8.)).gap(px(8.)).child(t(a.summary()).size(13.).color(p.muted).selectable());
     if a.failure_category.as_deref() == Some("context_copied") {
-        v = v.child(t(rewrite_notice("context_copied")).size(13.).selectable().selectable());
+        v = v.child(t(rewrite_notice("context_copied")).size(13.).selectable());
     }
     v = v.child(t("Input snapshot").size(12.).selectable()).child(t(a.input_text.clone()).size(13.).selectable());
     if let Some(out) = a.output_text.clone() {

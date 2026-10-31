@@ -6,7 +6,7 @@ use crate::pages::Page;
 use crate::shell::Session;
 use flow_core::dictionary::{Entry, Field, Filter, MAX_ENTRIES, Model, RetiredTerm, Source, Suggestion};
 use flow_ui::prelude::*;
-use ui::{confirm_dialog, help, overlay, pill, sheet_card};
+use ui::{confirm_dialog, help, outline, overlay, pill, sheet_card, under_card_border};
 
 // ponytail: no spell checker service yet, so no common word is held back from suggestions
 // (`NSSpellChecker`); the filter takes effect when Feature 025 adds it to `Services`.
@@ -230,7 +230,7 @@ impl DictionaryPage {
                     })
                     .child(
                         FlowButton::new("vocabulary.searchToggle", ButtonKind::Plain, "Search")
-                            .content(icon("magnifyingglass", 13., p.muted))
+                            .content(icon("magnifyingglass", 15.5, p.muted))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.searching = !this.searching;
                                 if this.searching {
@@ -261,7 +261,7 @@ impl DictionaryPage {
                     .w_full()
                     .px(px(32.))
                     .py(px(36.))
-                    .gap(px(14.))
+                    .gap(px(13.))
                     .child(div().text_size(px(34.)).child(rich(vec![serif("LocalFlow spells the way "), serif("you").italic(), serif(" do.")]).size(34.).tracking(-0.6).color(white())))
                     .child(
                         div().max_w(px(600.)).child(
@@ -290,7 +290,7 @@ impl DictionaryPage {
             .child(
                 div().absolute().top(px(12.)).right(px(12.)).child(
                     FlowButton::new("vocabulary.bannerDismiss", ButtonKind::Plain, "Dismiss introduction")
-                        .content(div().p(px(6.)).rounded_full().bg(white_a(0.14)).child(icon("xmark", 11., white_a(0.8))))
+                        .content(div().p(px(6.)).rounded_full().bg(white_a(0.14)).child(icon("xmark", 13., white_a(0.8))))
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.global_mut::<Core>().prefs.set("dictionary.bannerDismissed", true);
                             cx.notify();
@@ -302,7 +302,7 @@ impl DictionaryPage {
     fn suggestions(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = pal(cx);
         let count = self.model.suggestions.len();
-        let mut rows = v_flex().w_full().border_1().border_color(p.line).rounded(px(12.));
+        let mut rows = v_flex().relative().w_full();
         for (i, s) in self.model.suggestions.iter().enumerate() {
             let (add, dismiss) = (s.clone(), s.clone());
             rows = rows
@@ -310,9 +310,9 @@ impl DictionaryPage {
                     h_flex()
                         .w_full()
                         .gap(px(10.))
-                        .px(px(17.))
+                        .px(px(18.))
                         .py(px(10.))
-                        .when(!s.alias.is_empty(), |d| d.child(t(s.alias.clone()).size(15.)).child(icon("arrow.right", 10., p.ink)))
+                        .when(!s.alias.is_empty(), |d| d.child(t(s.alias.clone()).size(15.)).child(icon("arrow.right", 12., p.ink)))
                         .child(t(s.canonical.clone()).size(15.))
                         .child(t(suggestion_note(s)).size(12.).color(p.muted))
                         .child(div().flex_1())
@@ -334,7 +334,7 @@ impl DictionaryPage {
                 )
                 .when(i + 1 < count, |d| d.child(hairline(cx)));
         }
-        v_flex().id("vocabulary.suggestions").w_full().mt(px(24.)).gap(px(10.)).child(t("Suggested").font(13., 500.).color(p.muted)).child(rows)
+        v_flex().id("vocabulary.suggestions").w_full().mt(px(24.)).gap(px(10.)).child(t("Suggested").font(13., 500.).color(p.muted)).child(rows.child(outline(cx)))
     }
 
     fn list(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -352,11 +352,11 @@ impl DictionaryPage {
             return div().w_full().mt(px(24.)).py(px(60.)).flex().justify_center().child(t(text).size(15.).color(p.muted)).into_any_element();
         }
         let count = entries.len();
-        let mut list = v_flex().id("vocabulary.list").w_full().mt(px(24.)).border_1().border_color(p.line).rounded(px(12.));
+        let mut list = v_flex().id("vocabulary.list").relative().w_full().mt(px(24.));
         for (i, e) in entries.into_iter().enumerate() {
             list = list.child(self.row(i, e, cx)).when(i + 1 < count, |d| d.child(hairline(cx)));
         }
-        list.into_any_element()
+        list.child(outline(cx)).into_any_element()
     }
 
     fn row(&self, i: usize, e: Entry, cx: &mut Context<Self>) -> AnyElement {
@@ -381,7 +381,7 @@ impl DictionaryPage {
                     spans.push(span(", "));
                 }
             }
-            title = title.child(rich(spans).size(15.).color(fg)).child(icon("arrow.right", 10., fg)).child(t(e.canonical.clone()).size(15.).color(fg));
+            title = title.child(rich(spans).size(15.).color(fg)).child(icon("arrow.right", 12., fg)).child(t(e.canonical.clone()).size(15.).color(fg));
         }
         let chip = |text: &'static str| div().px(px(6.)).py(px(2.)).bg(p.tint).rounded_full().child(t(text).size(11.).color(p.muted));
         if self.model.is_provisional(&e) {
@@ -437,7 +437,7 @@ impl DictionaryPage {
             .group(group.clone())
             .w_full()
             .min_h(px(53.))
-            .px(px(17.))
+            .px(px(18.))
             .py(px(10.))
             .gap(px(4.))
             .text_color(fg)
@@ -643,7 +643,7 @@ impl Render for DictionaryPage {
         div()
             .relative()
             .size_full()
-            .child(prototype_page("dictionary.page", 960., cx, content))
+            .child(under_card_border(prototype_page("dictionary.page", 960., cx, content)))
             .when_some(sheet, |d, s| d.child(overlay("vocabulary.sheetOverlay", window, cx, s)))
             .when_some(confirm, |d, c| d.child(overlay("vocabulary.deleteOverlay", window, cx, c)))
     }

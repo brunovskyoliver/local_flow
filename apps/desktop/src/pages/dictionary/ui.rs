@@ -7,12 +7,19 @@ pub fn pill(id: impl Into<ElementId>, label: impl Into<SharedString>, prominent:
     let label: SharedString = label.into();
     let (fill, fg, size, weight, kind) = if prominent { (p.ink, p.surface, 15., 500., ButtonKind::Primary) } else { (p.button, p.ink, 13., 400., ButtonKind::Prototype) };
     // Primary's padding is 16 by 9; Swift's prominent pill is 18 by 10.
-    let pad = if prominent { (2., 1.) } else { (0., 0.) };
+    // Plain: `Txt` rounds a 13 line up to 16; Swift's is 15.6, so its pill is 28, not 29.
+    let pad = if prominent { (2., 1.) } else { (0., -0.5) };
     FlowButton::new(id, kind, label.clone())
         .fill(fill)
         .text_color(fg)
         .disabled_opacity(0.45)
         .content(div().mx(px(pad.0)).my(px(pad.1)).child(t(label).font(size, weight).color(fg).a11y_hidden()))
+}
+
+/// `.overlay(RoundedRectangle(...).stroke(line))`: an outline that takes no layout. Goes last in a
+/// `relative` parent.
+pub fn outline(cx: &App) -> Div {
+    div().absolute().inset_0().border_1().border_color(pal(cx).line).rounded(px(12.))
 }
 
 /// SwiftUI's `.help`: the tooltip on any element.
@@ -22,17 +29,24 @@ pub fn help(id: impl Into<ElementId>, text: impl Into<SharedString>, child: impl
 }
 
 /// A sheet or confirmation. The shell has no Kit `Root`, so Kit dialogs can't open; this dims the
-/// whole window, sidebar included, and blocks what's under it, as an AppKit sheet does. Measured on
-/// the reference: canvas (247,246,243) becomes (201,201,199).
+/// whole window, sidebar included, and blocks what's under it, as an AppKit sheet does. See `sheet_scrim`.
 pub fn overlay(id: impl Into<ElementId>, window: &Window, cx: &App, content: impl IntoElement) -> Deferred {
-    let dim = if pal(cx).ink.l > 0.5 { SHEET_DIM_DARK } else { SHEET_DIM };
     let viewport = window.viewport_size();
-    let scrim = div().id(id).w(viewport.width).h(viewport.height).occlude().flex().items_center().justify_center().bg(black().opacity(dim)).child(content);
+    let scrim = div().id(id).w(viewport.width).h(viewport.height).occlude().flex().items_center().justify_center().bg(sheet_scrim(cx)).child(content);
     deferred(anchored().position(point(px(0.), px(0.))).snap_to_window().child(scrim)).with_priority(1)
 }
 
-pub const SHEET_DIM: f32 = 0.186;
-pub const SHEET_DIM_DARK: f32 = 0.186;
+/// What AppKit lays over a window behind a sheet. Fitted from reference pixels: in light, ink
+/// 21 to 113 and surface 252 to 203; in dark, ink 236 to 101 and surface 20 to 20.
+pub fn sheet_scrim(cx: &App) -> Hsla {
+    if pal(cx).ink.l > 0.5 { hsla(0., 0., 20. / 255., 0.625) } else { hsla(0., 0., 172. / 255., 0.611) }
+}
+
+/// The shell's card border takes a point of layout where Swift's is an overlay; this gives it back
+/// so page content sits and wraps where Swift's does.
+pub fn under_card_border(content: impl IntoElement) -> Div {
+    div().relative().size_full().child(div().absolute().top(px(-1.)).bottom(px(-1.)).left(px(-1.)).right(px(-1.)).child(content))
+}
 
 /// The sheet's card: surface fill, rounded, no border, as an AppKit sheet shows it.
 pub fn sheet_card(width: f32, cx: &App) -> Div {

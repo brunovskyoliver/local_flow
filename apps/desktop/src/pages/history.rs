@@ -1,7 +1,7 @@
 //! Transcriptions page: search, waiting dictations, the day-grouped list and its row actions.
 mod detail;
 
-use super::dictionary::ui::{confirm_dialog, overlay, sheet_card, under_card_border};
+use super::dictionary::ui::{confirm_dialog, outline, overlay, sheet_card, under_card_border};
 use crate::core::Core;
 use crate::insertion::{Delivery, Quality, ReviewEntry, begin_review};
 use crate::pages::Page;
@@ -271,6 +271,7 @@ impl HistoryPage {
         let loading = self.model.is_loading;
         div()
             .id(if older { "history.sentinel.older" } else { "history.sentinel.newer" })
+            .test_support()
             .w_full()
             .h(px(44.))
             .flex()
@@ -326,7 +327,7 @@ impl HistoryPage {
         } else {
             FlowButton::new("history.searchToggle", ButtonKind::Plain, "Search transcriptions")
                 .tooltip("Search")
-                .content(div().size(px(32.)).flex().items_center().justify_center().child(icon("magnifyingglass", 15., p.muted)))
+                .content(div().size(px(32.)).flex().items_center().justify_center().child(icon("magnifyingglass", 17.5, p.muted)))
                 .on_click(cx.listener(|this, _, w, cx| this.open_search(w, cx)))
                 .into_any_element()
         };
@@ -337,7 +338,7 @@ impl HistoryPage {
         let p = pal(cx);
         let core = cx.global::<Core>();
         let now = now_ms();
-        let mut rows = v_flex().w_full().border_1().border_color(p.line).rounded(px(12.));
+        let mut rows = v_flex().relative().w_full();
         for item in &self.model.pending_items {
             let (id, id2) = (item.id.clone(), item.id.clone());
             let when = core.db.as_ref().map(|db| day_time(db, item.created_at)).unwrap_or_default();
@@ -365,7 +366,7 @@ impl HistoryPage {
         v_flex()
             .w_full()
             .child(div().pt(px(28.)).pb(px(12.)).child(t("WAITING FOR SERVER").font(12., 500.).tracking(1.2).color(p.muted)))
-            .child(rows)
+            .child(rows.child(outline(cx)))
             .when_some(self.model.pending_error.clone(), |d, e| d.child(div().pt(px(8.)).child(t(e).size(12.).color(p.warning))))
     }
 
@@ -434,27 +435,25 @@ impl HistoryPage {
             .flex()
             .items_start()
             .py(px(16.))
-            .pl(px(17.))
-            .pr(px(11.))
-            .border_l_1()
-            .border_r_1()
-            .border_color(p.line)
-            .when(first, |d| d.border_t_1().rounded_tl(px(12.)).rounded_tr(px(12.)))
-            .when(last, |d| d.border_b_1().rounded_bl(px(12.)).rounded_br(px(12.)))
+            .pl(px(18.))
+            .pr(px(12.))
+            .when(first, |d| d.rounded_tl(px(12.)).rounded_tr(px(12.)))
+            .when(last, |d| d.rounded_bl(px(12.)).rounded_br(px(12.)))
             .hover(|s| s.bg(p.canvas))
             .child(
                 v_flex()
                     .flex_none()
                     .w(px(if compact { 72. } else { 104. }))
                     .pt(px(2.))
-                    .gap(px(4.))
+                    // `Txt` rounds lines up; Swift's fractional lines keep the column shorter.
+                    .gap(px(2.))
                     .child(t(time).size(13.).mono_digits().color(p.muted))
-                    .when_some(e.quality_label(), |d, q| d.child(t(q).font(11., 500.).color(p.warning)))
-                    .when_some(path, |d, l| d.child(t(l).id("history.pathLabel").size(11.).color(p.muted))),
+                    .when_some(e.quality_label(), |d, q| d.child(t(q).font(11., 500.).color(p.warning).no_widow()))
+                    .when_some(path, |d, l| d.child(t(l).id("history.pathLabel").size(11.).color(p.muted).no_widow())),
             )
-            .child(div().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.).selectable().no_widow()))
+            .child(div().id(SharedString::from(format!("history.text.{}", e.id))).test_support().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.).selectable().no_widow()))
             .child(hover_or_focus_revealed(group, self.voice_over, &action_focus, actions))
-            .when(!last, |d| d.child(div().absolute().bottom_0().left(px(1.)).right(px(1.)).h(px(1.)).bg(p.line)))
+            .when(!last, |d| d.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(p.line)))
             .child(
                 canvas(
                     move |b, window, _| {
@@ -475,13 +474,19 @@ impl HistoryPage {
             )
             .context_menu(move |menu, _, _| row_menu(menu, page.clone(), m.clone(), insert_off, busy));
         // ponytail: fades rows in only; a removed row leaves at once, Swift fades it out too.
-        let first_seen = *self.seen.borrow_mut().entry(e.id.clone()).or_insert_with(Instant::now);
-        if self.settled && first_seen.elapsed() < Duration::from_millis(300) {
+        if self.fades(&e.id) {
             let id = SharedString::from(format!("history.fade.{}", e.id));
             row.with_animation(id, Animation::new(Duration::from_millis(200)).with_easing(ease_out_quint()), |d, delta| d.opacity(delta)).into_any_element()
         } else {
             row.into_any_element()
         }
+    }
+
+    /// A row is new when it arrives after the first list was drawn; it fades for the next 300 ms.
+    fn fades(&self, id: &str) -> bool {
+        const FADE: Duration = Duration::from_millis(300);
+        let first_seen = *self.seen.borrow_mut().entry(id.to_string()).or_insert_with(|| if self.settled { Instant::now() } else { Instant::now() - FADE });
+        first_seen.elapsed() < FADE
     }
 
     fn list(&self, cx: &mut Context<Self>) -> Div {
@@ -493,11 +498,13 @@ impl HistoryPage {
             col = col.child(self.sentinel(false, cx));
         }
         for g in &groups {
-            col = col.child(div().pt(px(28.)).pb(px(12.)).child(t(g.title.to_uppercase()).font(12., 500.).tracking(1.2).color(p.muted)));
+            col = col.child(div().pt(px(28.)).pb(px(11.)).child(t(g.title.to_uppercase()).font(12., 500.).tracking(1.2).color(p.muted)));
             let n = g.entries.len();
+            let mut group = v_flex().relative().w_full();
             for (i, e) in g.entries.iter().enumerate() {
-                col = col.child(self.row(e, i == 0, i + 1 == n, busy, cx));
+                group = group.child(self.row(e, i == 0, i + 1 == n, busy, cx));
             }
+            col = col.child(group.child(outline(cx)));
         }
         if self.model.has_older {
             col = col.child(self.sentinel(true, cx));
@@ -506,10 +513,15 @@ impl HistoryPage {
     }
 }
 
+/// The row menu's insert label, and whether Insert and Delete are off.
+fn row_menu_state(e: &Entry, insert_off: bool, busy: bool) -> (&'static str, bool, bool) {
+    (if e.is_confirmed() { "Insert again…" } else { "Insert…" }, insert_off, busy || e.is_attempting())
+}
+
 fn row_menu(menu: PopupMenu, page: WeakEntity<HistoryPage>, e: Entry, insert_off: bool, busy: bool) -> PopupMenu {
     let (a, b, c, d) = (page.clone(), page.clone(), page.clone(), page);
     let (ea, eb, ec, ed) = (e.clone(), e.clone(), e.clone(), e.clone());
-    let insert = if e.is_confirmed() { "Insert again…" } else { "Insert…" };
+    let (insert, insert_off, delete_off) = row_menu_state(&e, insert_off, busy);
     menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
         a.update(cx, |this, cx| this.copy_row(&ea, cx)).ok();
     }))
@@ -520,7 +532,7 @@ fn row_menu(menu: PopupMenu, page: WeakEntity<HistoryPage>, e: Entry, insert_off
         c.update(cx, |this, cx| this.show_detail(&ec.id, cx)).ok();
     }))
     .separator()
-    .item(PopupMenuItem::new("Delete").disabled(busy || e.is_attempting()).on_click(move |_, _, cx| {
+    .item(PopupMenuItem::new("Delete").disabled(delete_off).on_click(move |_, _, cx| {
         d.update(cx, |this, cx| this.ask_delete(&ed, cx)).ok();
     }))
 }
@@ -625,6 +637,9 @@ impl Render for HistoryPage {
                 let k = &e.keystroke;
                 if k.key == "f" && k.modifiers.platform {
                     this.open_search(w, cx);
+                } else if k.key == "tab" {
+                    // ponytail: no Kit `Root` in this shell, so no window-wide Tab; each page with row actions binds it.
+                    if k.modifiers.shift { w.focus_prev(cx) } else { w.focus_next(cx) }
                 } else if k.key == "escape" {
                     if this.model.detail_id.is_some() {
                         this.model.clear_detail();

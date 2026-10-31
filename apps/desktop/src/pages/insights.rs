@@ -36,6 +36,8 @@ impl Tip {
 
 type Anchors = Rc<RefCell<HashMap<String, Bounds<Pixels>>>>;
 const LAYER: &str = "layer";
+/// Puts 11.5 caps on a 29 heading's first baseline; `Txt` reports no baseline to flex.
+const CAPS_ON_HEADING: f32 = 15.5;
 /// swift-note: the cell's `.aspectRatio(1, .fit)` in a row of unconstrained height collapses in
 /// SwiftUI's layout pass. Measured at 2x on the reference: the first row 3 pt, the second 2 pt, the
 /// rest 0. The inventory (INS-078) says square cells; this matches what Swift renders.
@@ -220,7 +222,7 @@ impl InsightsPage {
     fn apps(&self, i: &Insights, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = pal(cx);
         let compact = cx.global::<Flow>().compact;
-        let mut rows = v_flex().gap(px(16.)).pt(px(26.));
+        let mut rows = v_flex().gap(px(16.)).pt(px(25.));
         for (n, (cat, count)) in i.category_rows().into_iter().enumerate() {
             let share = if i.dictations == 0 { 0. } else { count as f32 / i.dictations as f32 };
             let (fill, label) = if count == 0 {
@@ -253,7 +255,7 @@ impl InsightsPage {
         }
         insight_card(cx)
             .id("insights.apps")
-            .child(h_flex().w_full().justify_between().items_baseline().gap(px(8.)).child(t("Desktop usage").font(29., 500.).tracking(-0.6).lines(1)).child(caps(&format!("Total apps used | {}", i.apps_used), p.ink, 11.5)))
+            .child(h_flex().w_full().justify_between().items_start().gap(px(8.)).child(t("Desktop usage").font(29., 500.).tracking(-0.6).lines(1)).child(div().pt(px(CAPS_ON_HEADING)).child(caps(&format!("Total apps used | {}", i.apps_used), p.ink, 11.5))))
             .child(rows)
     }
 
@@ -275,7 +277,7 @@ impl InsightsPage {
                     cx.notify();
                 }))
         };
-        let mut months = h_flex().w_full().gap(px(8.)).relative().pb(px(16.)).child(div().w(px(34.)).flex_none().flex().items_start().child(chevron("insights.earlierWeeks", "chevron.left", "Earlier weeks", earliest.is_some_and(|e| e < cols[0]), 1, cx)));
+        let mut months = h_flex().w_full().gap(px(8.)).relative().pb(px(14.)).child(div().w(px(34.)).flex_none().flex().items_start().child(chevron("insights.earlierWeeks", "chevron.left", "Earlier weeks", earliest.is_some_and(|e| e < cols[0]), 1, cx)));
         for w in &cols {
             // The label overflows its column, as `.fixedSize()` does in Swift's overlay.
             months = months.child(div().flex_1().min_w_0().h(px(16.)).relative().when_some(month_label(*w), |d, l: String| d.child(div().absolute().left_0().top_0().w(px(30.)).child(t(l).size(11.).color(p.muted)))));
@@ -283,7 +285,7 @@ impl InsightsPage {
         months = months.child(div().absolute().right_0().top_0().bg(p.card).child(chevron("insights.laterWeeks", "chevron.right", "Later weeks", self.page > 0, -1, cx)));
         let mut grid = v_flex().w_full().gap(px(8.)).pt(px(24.)).child(months);
         for wd in 0..7i64 {
-            let mut r = h_flex().w_full().gap(px(8.)).child(div().w(px(34.)).flex_none().child(t(weekday_label(wd)).size(11.).color(p.muted)));
+            let mut r = h_flex().w_full().h(px(13.)).gap(px(8.)).child(div().w(px(34.)).flex_none().child(t(weekday_label(wd)).size(11.).color(p.muted)));
             for w in &cols {
                 let day = w + wd;
                 let usage = i.days.get(&day);
@@ -296,7 +298,7 @@ impl InsightsPage {
                     p.data_scale[level(count, &limits)]
                 };
                 let tip = (day <= today).then(|| Tip::Day { day, words: count, apps: usage.map_or(0, |u| u.apps.len() as i64), top: usage.and_then(|u| u.top_app()).map(app_name) });
-                let cell = div().size(px(HEAT_DOT[wd as usize])).rounded(px(3.)).bg(fill).when(streaks.current_days.contains(&day), |d| d.border(px(1.5)).border_color(p.streak_outline));
+                let cell = div().size(px(HEAT_DOT[wd as usize])).rounded(px(3.)).bg(fill).when(HEAT_DOT[wd as usize] > 0. && streaks.current_days.contains(&day), |d| d.border(px(1.5)).border_color(p.streak_outline));
                 r = r.child(div().flex_1().min_w_0().flex().justify_center().child(self.target(format!("insights.day.{day}"), tip, cell, cx).test_support()));
             }
             grid = grid.child(r);
@@ -317,10 +319,10 @@ impl InsightsPage {
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .items_baseline()
+                    .items_start()
                     .gap(px(8.))
                     .child(t(format!("{} day streak", streaks.current)).font(29., 500.).tracking(-0.6).lines(1))
-                    .child(caps(&format!("Longest streak | {} {}", streaks.longest, if streaks.longest == 1 { "day" } else { "days" }), p.ink, 11.5)),
+                    .child(div().pt(px(CAPS_ON_HEADING)).child(caps(&format!("Longest streak | {} {}", streaks.longest, if streaks.longest == 1 { "day" } else { "days" }), p.ink, 11.5))),
             )
             .child(grid)
             .child(legend)
@@ -457,7 +459,7 @@ fn insight_card(cx: &App) -> Div {
 }
 
 fn rule(cx: &App) -> Div {
-    div().w_full().py(px(17.)).child(div().h(px(1.)).w_full().bg(pal(cx).rule.opacity(0.6)))
+    div().w_full().py(px(16.)).child(div().h(px(1.)).w_full().bg(pal(cx).rule.opacity(0.6)))
 }
 
 /// `cardRow`: side by side with equal heights, stacked in a compact window.
@@ -569,7 +571,7 @@ impl Render for InsightsPage {
                     .children(tip),
             );
         }
-        prototype_page("insights.page", 1142., cx, col)
+        super::dictionary::ui::under_card_border(prototype_page("insights.page", 1142., cx, col))
     }
 }
 
