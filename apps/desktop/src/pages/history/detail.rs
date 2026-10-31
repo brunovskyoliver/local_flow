@@ -69,7 +69,7 @@ impl HistoryPage {
 
     pub(super) fn detail_sheet(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let body: AnyElement = if self.model.detail_loading {
-            div().w_full().p(px(40.)).flex().justify_center().child(Spinner::new()).into_any_element()
+            div().id("history.detail.loading").test_support().w_full().p(px(40.)).flex().justify_center().child(Spinner::new()).into_any_element()
         } else if let Some(e) = self.model.detail_error.clone() {
             v_flex()
                 .gap(px(8.))
@@ -102,7 +102,7 @@ impl HistoryPage {
             .into_any_element()
     }
 
-    fn envelope_view(&mut self, env: &Envelope, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn envelope_view(&mut self, env: &Envelope, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = pal(cx);
         let e = &env.entry;
         // Swift's spacing 4 over 15.6 lines is 19.6 apart; `Txt` rounds a line to 16, so 3 keeps the pitch.
@@ -115,7 +115,7 @@ impl HistoryPage {
             .child(t(format!("Delivery: {}", spaced(&e.delivery_state))).size(13.).selectable())
             .child(t(format!("Stopped: {}", spaced(&e.stop_reason))).size(13.).selectable())
             .child(t(e.microphone_label()).id("history.detail.microphone").size(13.).selectable());
-        let mut col = v_flex().id("history.detail").w_full().gap(px(14.)).child(status);
+        let mut col = v_flex().id("history.detail").test_support().w_full().gap(px(14.)).child(status);
         if let Some(d) = env.detail.clone() {
             col = col.child(self.stage_picker(cx));
             match self.stage {
@@ -261,7 +261,7 @@ impl HistoryPage {
             }
             menu
         });
-        let picker = h_flex().w(px(180.)).justify_center().gap(px(8.)).child(t("Mode").size(14.)).child(popup);
+        let picker = h_flex().id("history.detail.rewrite.modeFrame").test_support().w(px(180.)).justify_center().gap(px(8.)).child(t("Mode").size(14.)).child(popup);
         let mut col = v_flex()
             .id("history.detail.rewrite")
             .w_full()

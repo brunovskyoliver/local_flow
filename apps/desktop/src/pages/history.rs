@@ -300,6 +300,13 @@ impl HistoryPage {
 
     fn delete(&mut self, cx: &mut Context<Self>) {
         self.confirming_delete = false;
+        // `deleteOrThrow`: a coordinator that's busy or can't store refuses the delete.
+        if cx.try_global::<Session>().and_then(|s| s.dictation.as_ref()).is_some_and(|d| d.busy || d.storage_blocked) {
+            self.model.selected = None;
+            self.model.error = Some(ACTION_ERROR.into());
+            cx.notify();
+            return;
+        }
         let free = cx.global::<Core>().services.free_disk_bytes();
         let (mut deleted, mut room) = (false, false);
         if let Some(db) = cx.global::<Core>().db.as_ref() {
@@ -459,6 +466,8 @@ impl HistoryPage {
         let compact = cx.global::<Flow>().compact;
         let right = if self.searching || !self.model.search_text.is_empty() {
             h_flex()
+                .id("history.searchField")
+                .test_support()
                 .gap(px(6.))
                 .h(px(32.))
                 .px(px(10.))
@@ -467,7 +476,7 @@ impl HistoryPage {
                 .text_size(px(14.))
                 .child(icon("magnifyingglass", 14., p.muted))
                 .child(
-                    div().w(px(if compact { 90. } else { 160. })).child(
+                    div().id("history.searchInput").test_support().w(px(if compact { 90. } else { 160. })).child(
                         Input::new(&self.search)
                             .appearance(false)
                             .px_0()
@@ -498,6 +507,7 @@ impl HistoryPage {
             rows = rows.child(
                 h_flex()
                     .id(SharedString::from(format!("history.pendingRemote.{id}")))
+                    .test_support()
                     .w_full()
                     .gap(px(12.))
                     .py(px(14.))
@@ -538,7 +548,7 @@ impl HistoryPage {
         cx.notify();
     }
 
-    fn row(&self, e: &Entry, first: bool, last: bool, busy: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn row(&self, e: &Entry, first: bool, last: bool, busy: bool, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = pal(cx);
         let compact = cx.global::<Flow>().compact;
         let core = cx.global::<Core>();
@@ -615,7 +625,7 @@ impl HistoryPage {
                     .when_some(path, |d, l| d.child(t(l).id("history.pathLabel").size(11.).color(p.muted).no_widow())),
             )
             .child(div().id(SharedString::from(format!("history.text.{}", e.id))).test_support().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.).selectable().no_widow()))
-            .child(hover_or_focus_revealed(group, self.voice_over, &action_focus, actions))
+            .child(focus_revealed(group, self.voice_over, &action_focus, window, cx, actions))
             .when(!last, |d| d.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(p.line)))
             .child(
                 canvas(
@@ -652,7 +662,7 @@ impl HistoryPage {
         first_seen.elapsed() < FADE
     }
 
-    fn list(&self, cx: &mut Context<Self>) -> Div {
+    fn list(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = pal(cx);
         let busy = self.busy(cx);
         let groups = cx.global::<Core>().db.as_ref().map(|db| self.model.date_groups(db, self.now)).unwrap_or_default();
@@ -665,7 +675,7 @@ impl HistoryPage {
             let n = g.entries.len();
             let mut group = v_flex().relative().w_full();
             for (i, e) in g.entries.iter().enumerate() {
-                group = group.child(self.row(e, i == 0, i + 1 == n, busy, cx));
+                group = group.child(self.row(e, i == 0, i + 1 == n, busy, window, cx));
             }
             col = col.child(group.child(outline(cx)));
         }
@@ -738,9 +748,9 @@ impl Render for HistoryPage {
             content = content.child(self.pending(cx));
         }
         if self.model.entries.is_empty() && !self.model.is_loading {
-            content = content.child(div().w_full().py(px(80.)).flex().justify_center().child(t(if self.model.is_no_matches() { "No matches" } else { "No transcriptions yet" }).color(p.muted)));
+            content = content.child(div().id("history.empty").test_support().w_full().py(px(80.)).flex().justify_center().child(t(if self.model.is_no_matches() { "No matches" } else { "No transcriptions yet" }).color(p.muted)));
         } else {
-            content = content.child(div().id("history.list").w_full().child(self.list(cx)));
+            content = content.child(div().id("history.list").test_support().w_full().child(self.list(window, cx)));
             self.settled = true;
         }
         let compact = cx.global::<Flow>().compact;
@@ -834,7 +844,7 @@ impl Render for HistoryPage {
 
 /// Used by the sheet module; keeps `sheet_card` in one import path.
 pub(self) fn detail_card(cx: &App) -> Div {
-    sheet_card(600., cx)
+    sheet_card(600., cx).text_color(pal(cx).ink)
 }
 
 #[cfg(test)]

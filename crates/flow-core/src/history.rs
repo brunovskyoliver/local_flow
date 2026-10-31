@@ -11,7 +11,6 @@ pub const PAGE_SIZE: usize = 20;
 pub const RESIDENT_LIMIT: usize = 200;
 pub const MAX_ATTEMPTS: usize = 10;
 pub const MAX_PENDING_OVERALL: usize = 2;
-pub const MAX_PENDING_ROWS: usize = 20;
 pub const PENDING_MAX_AGE_MS: i64 = 24 * 3_600_000;
 pub const SEARCH_LIMIT_MESSAGE: &str = "Search is limited to 256 Unicode scalars and 1 KiB. Shorten your search.";
 pub const READ_ERROR: &str = "History could not be read. Your saved text has not been deleted. Try again.";
@@ -1295,6 +1294,11 @@ pub fn begin_rewrite(db: &Db, transcription: &str, mode: &str, input: &str, orig
     let overall: i64 = tx.query_row("SELECT count(*) FROM rewrite_attempts WHERE state='pending'", [], |r| r.get(0))?;
     if here > 0 || overall as usize >= MAX_PENDING_OVERALL {
         return Err(StoreError::Refused("concurrency_limit"));
+    }
+    // ponytail: Swift also counts bytes reserved by recordings in flight; none run in this process yet.
+    let bytes: i64 = tx.query_row("SELECT payload_bytes FROM history_usage WHERE id=1", [], |r| r.get(0))?;
+    if bytes + input.len() as i64 + reserved_for(input.len()) > MAX_PAYLOAD_BYTES {
+        return Err(StoreError::Refused("capacity_exceeded"));
     }
     let id = new_uuid(db);
     let ordinal: i64 = tx.query_row("SELECT coalesce(max(ordinal),0)+1 FROM rewrite_attempts WHERE transcription_id=?", [transcription], |r| r.get(0))?;
@@ -2971,5 +2975,429 @@ mod tests {
         assert_eq!(m.pending_items.len(), 1);
         assert!(!dir.join(&new.audio_file).exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn attempt(ordinal: i64, state: &str, output: Option<&str>, stale: bool) -> Attempt {
+        Attempt { id: format!("a{ordinal}"), ordinal, mode: "clean".into(), state: state.into(), input_text: "in".into(), output_text: output.map(str::to_string), failure_category: None, stale, duration_ms: None, first_byte_ms: None, delivered: false, context_hash: None, backend_model: None, prompt_version: None, shield_version: None }
+    }
+
+    fn context(outcome: &str, note: Option<&str>) -> Context {
+        Context { outcome: outcome.into(), snapshot: None, pre_spelling_text: None, spelling_changes: vec![], rewrite_note: note.map(str::to_string) }
+    }
+
+    fn at_local(db: &Db, stamp: &str) -> i64 {
+        db.conn.query_row("SELECT strftime('%s',?1,'utc')*1000", [stamp], |r| r.get(0)).unwrap()
+    }
+
+    // parity: HIST-035
+    /// Each boundary of the day headings, at one second either side of local midnight.
+    #[test]
+    fn day_headings_turn_at_local_midnight_and_spell_the_date() {
+        let db = Db::memory();
+        let e = m_entry();
+        let row = |stamp: &str| Entry { id: stamp.into(), created_at: at_local(&db, stamp), ..e.clone() };
+        let m = Model { entries: ["2026-09-26 00:00:00", "2026-09-25 23:59:59", "2026-09-25 00:00:00", "2026-09-24 23:59:59", "2026-01-03 09:00:00"].map(row).to_vec(), ..Default::default() };
+        let g = m.date_groups(&db, at_local(&db, "2026-09-26 12:00:00"));
+        let shape: Vec<(&str, usize)> = g.iter().map(|x| (x.title.as_str(), x.entries.len())).collect();
+        assert_eq!(shape, [("Today", 1), ("Yesterday", 2), ("24 September 2026", 1), ("3 January 2026", 1)]);
+    }
+
+    // parity: HIST-046
+    #[test]
+    fn every_server_failure_reads_its_reason() {
+        for (raw, label) in [("unreachable", "unreachable"), ("timeout", "no answer"), ("busy", "busy"), ("unauthorized", "sign-in needed"), ("not_approved", "not approved"), ("revoked", "removed"), ("pin_mismatch", "identity changed"), ("worker_unavailable", "recognizer unavailable"), ("protocol_error", "invalid reply"), ("limit_exceeded", "too long"), ("pending_retry", "retried")] {
+            assert_eq!(failure_label(raw), label);
+        }
+        assert_eq!(failure_label("anything else"), "unreachable");
+    }
+
+    // parity: HIST-099
+    #[test]
+    fn a_missing_or_invalid_microphone_reads_not_recorded() {
+        let e = m_entry();
+        assert_eq!(e.microphone_label(), "Microphone: Studio Microphone");
+        for (name, kind) in [(None, Some("usb")), (Some("Mic"), None), (Some("Mic"), Some("carrier pigeon")), (Some(""), Some("usb"))] {
+            let bad = Entry { input_device_name: name.map(str::to_string), input_device_kind: kind.map(str::to_string), ..e.clone() };
+            assert_eq!(bad.microphone_label(), "Microphone: Not recorded");
+        }
+        for kind in ["builtIn", "usb", "bluetooth", "iPhone", "virtual", "other", "systemDefault"] {
+            assert_eq!(Entry { input_device_kind: Some(kind.into()), ..e.clone() }.microphone_label(), "Microphone: Studio Microphone");
+        }
+    }
+
+    // parity: HIST-017 HIST-018
+    #[test]
+    fn search_limits_and_text_length() {
+        let mut m = Model::default();
+        assert!(m.set_search("kept"));
+        assert!(m.set_search(&"x".repeat(256)) && m.error.is_none());
+        assert!(m.set_search("kept"));
+        // Over the scalar count, ASCII or not: both revert with the copy.
+        for over in ["x".repeat(257), "€".repeat(257)] {
+            m.error = None;
+            assert!(!m.set_search(&over));
+            assert_eq!((m.search_text.as_str(), m.error.as_deref()), ("kept", Some("Search is limited to 256 Unicode scalars and 1 KiB. Shorten your search.")));
+        }
+        m.error = None;
+        // 256 four-byte scalars are exactly 1,024 bytes: the byte limit can never trip on its own.
+        assert!(m.set_search(&"😀".repeat(256)));
+        // Text at the limit still matches, one byte over never does, an empty query always does.
+        let at = "a".repeat(65_536);
+        assert!(matches(&at, "A"));
+        assert!(!matches(&(at.clone() + "a"), "A"));
+        assert!(matches(&(at + "a"), ""));
+        // Composed and decomposed forms compare equal.
+        assert!(matches("caf\u{e9}", "cafe\u{301}"));
+    }
+
+    // parity: HIST-019 HIST-021
+    #[test]
+    fn has_more_needs_a_further_match_and_newer_pages_stay_newest_first() {
+        let db = Db::memory();
+        let put = |n: i64, text: &str| {
+            db.conn.execute("INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason) VALUES (?,?,?,'not_attempted','needs_review','complete','key_release')", params![seed_id(n), text, 1000 + n]).unwrap();
+        };
+        for n in 0..PAGE_SIZE as i64 {
+            put(n, "needle");
+        }
+        put(100, "other");
+        // Exactly a page of matches, and a non-match past it: no further match.
+        let p = page(&db, "needle", None, Direction::Older, None).unwrap();
+        assert_eq!((p.entries.len(), p.has_more), (PAGE_SIZE, false));
+        assert_eq!(p.watermark.as_ref().unwrap().id, seed_id(100), "the ceiling is the newest row, match or not");
+        put(-1, "needle");
+        let p = page(&db, "needle", None, Direction::Older, None).unwrap();
+        assert_eq!((p.entries.len(), p.has_more), (PAGE_SIZE, true));
+        // Older from the middle excludes the cursor; newer comes back newest first.
+        let cursor = Cursor { created_at: 1000 + 5, id: seed_id(5) };
+        let older = page(&db, "", Some(&cursor), Direction::Older, None).unwrap();
+        assert_eq!(older.entries[0].id, seed_id(4));
+        let newer = page(&db, "needle", Some(&cursor), Direction::Newer, None).unwrap();
+        assert_eq!(newer.entries.last().unwrap().id, seed_id(6));
+        assert!(newer.entries.windows(2).all(|w| w[0].created_at > w[1].created_at));
+        // Nothing stored at all.
+        assert_eq!(page(&Db::memory(), "", None, Direction::Older, None).unwrap().entries.len(), 0);
+    }
+
+    // parity: HIST-070 HIST-073 HIST-085
+    #[test]
+    fn the_waiting_table_keeps_its_rules_and_reads_oldest_first() {
+        let db = Db::memory();
+        let put = |n: i64, samples: i64, at: i64, kind: &str| db.conn.execute("INSERT INTO pending_remote_dictations (id,audio_file,sample_count,created_at,next_attempt_at,input_device_kind) VALUES (?,'a.f32',?,?,0,?)", params![seed_id(n), samples, at, kind]);
+        assert!(put(1, 0, 1, "usb").is_err(), "at least one sample");
+        assert!(put(1, 2_880_001, 1, "usb").is_err(), "at most 2,880,000");
+        assert!(put(1, 1, 1, "fax").is_err(), "a known kind");
+        // Same time breaks by id; newer rows read later. Swift's read has no LIMIT: 20 is a write rule.
+        put(3, 2_880_000, 5, "usb").unwrap();
+        put(2, 1, 5, "usb").unwrap();
+        put(1, 1, 1, "usb").unwrap();
+        let read = pending_items(&db);
+        assert_eq!(read.iter().map(|i| i.id.clone()).collect::<Vec<_>>(), [seed_id(1), seed_id(2), seed_id(3)]);
+        let attempts: i64 = db.conn.query_row("SELECT attempts FROM pending_remote_dictations LIMIT 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(attempts, 0);
+        let columns: Vec<String> = db.conn.prepare("SELECT name FROM pragma_table_info('pending_remote_dictations')").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        for c in ["id", "audio_file", "sample_count", "created_at", "attempts", "next_attempt_at", "last_failure", "target_bundle_id", "input_device_name", "input_device_kind"] {
+            assert!(columns.iter().any(|x| x == c), "{c}");
+        }
+        // 24 hours exactly stops the retries; a millisecond before does not.
+        let item = &read[0];
+        assert_eq!(item.status(item.created_at + PENDING_MAX_AGE_MS), "Retries stopped after 24 hours");
+        assert_eq!(item.status(item.created_at + PENDING_MAX_AGE_MS - 1), "Waiting for server");
+        // A read error is an empty list.
+        db.conn.execute_batch("DROP TABLE pending_remote_dictations").unwrap();
+        assert!(pending_items(&db).is_empty());
+    }
+
+    // parity: HIST-086
+    #[test]
+    fn the_transcriptions_table_keeps_its_rules() {
+        let db = Db::memory();
+        let columns: Vec<String> = db.conn.prepare("SELECT name FROM pragma_table_info('transcriptions')").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        for c in ["id", "text", "created_at", "delivery_state", "recovery_state", "quality", "stop_reason", "target_bundle_id", "attempt_id", "attempt_started_at", "revision", "rewrite_state", "delivered_source", "delivered_rewrite_attempt_id"] {
+            assert!(columns.iter().any(|x| x == c), "{c}");
+        }
+        let put = |text: &str, bundle: &str| db.conn.execute("INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id) VALUES (?,?,1,'not_attempted','needs_review','complete','key_release',?)", params![new_uuid(&db), text, bundle]);
+        assert!(put("", "b").is_err(), "one byte at least");
+        assert!(put(&"x".repeat(65_537), "b").is_err(), "65,536 at most");
+        assert!(put(&"x".repeat(65_536), "b").is_ok());
+        assert!(put("x", &"b".repeat(256)).is_err(), "255 at most");
+        assert!(put("x", &"b".repeat(255)).is_ok());
+    }
+
+    // parity: HIST-087 HIST-088
+    #[test]
+    fn attempts_and_contexts_keep_their_columns_and_limits() {
+        let db = seeded();
+        let names = |t: &str| -> Vec<String> { db.conn.prepare(&format!("SELECT name FROM pragma_table_info('{t}')")).unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect() };
+        let attempts_columns = names("rewrite_attempts");
+        for c in ["duration_ms", "first_byte_ms", "network_ms", "server_queue_ms", "backend_first_token_ms", "backend_ms", "request_bytes", "response_bytes", "server_name", "server_version", "backend_kind", "backend_model", "prompt_version", "shield_version"] {
+            assert!(attempts_columns.iter().any(|x| x == c), "{c}");
+        }
+        let id = seed_id(3);
+        let a = begin_rewrite(&db, &id, "clean", "one", "https://x.test", false, None).unwrap();
+        terminate_rewrite(&db, &a, None, None).unwrap();
+        assert!(db.conn.execute("INSERT INTO rewrite_attempts (id,transcription_id,ordinal,mode,state,input_text,input_hash,started_at,protocol_version,endpoint_origin) SELECT 'dup',transcription_id,ordinal,mode,state,input_text,input_hash,started_at,protocol_version,endpoint_origin FROM rewrite_attempts WHERE id=?", [&a]).is_err(), "one ordinal per dictation");
+        let context_columns = names("dictation_contexts");
+        for c in ["transcription_id", "outcome", "capture_ms", "app_bundle_id", "snapshot_json", "snapshot_hash", "pre_spelling_text", "spelling_changes_json", "speller_version", "rewrite_note"] {
+            assert!(context_columns.iter().any(|x| x == c), "{c}");
+        }
+        let hash = "0".repeat(64);
+        let put = |snapshot: Option<String>, pre: Option<String>, changes: Option<String>| db.conn.execute("INSERT OR REPLACE INTO dictation_contexts (transcription_id,outcome,snapshot_json,snapshot_hash,pre_spelling_text,spelling_changes_json) VALUES (?,'no_permission',?,?,?,?)", params![id, snapshot, snapshot.as_ref().map(|_| hash.clone()), pre, changes]);
+        assert!(put(Some("x".repeat(8_193)), None, None).is_err());
+        assert!(put(Some("x".repeat(8_192)), None, None).is_ok());
+        assert!(put(None, Some("x".repeat(65_537)), Some("[]".into())).is_err());
+        assert!(put(None, Some("x".repeat(65_536)), Some("[]".into())).is_ok());
+        assert!(put(None, Some("x".into()), Some("x".repeat(32_769))).is_err());
+        assert!(put(None, Some("x".into()), Some("x".repeat(32_768))).is_ok());
+        db.conn.execute("DELETE FROM transcriptions WHERE id=?", [&id]).unwrap();
+        let left: i64 = db.conn.query_row("SELECT count(*) FROM dictation_contexts WHERE transcription_id=?", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0, "cascade");
+    }
+
+    // parity: HIST-096
+    /// Each check the load makes: a bad schema, size or hash is an error, a read failure of the attempts is no attempts.
+    #[test]
+    fn the_detail_load_checks_schema_size_and_hash() {
+        let db = seeded();
+        let id = seed_id(3);
+        let (json, hash): (String, String) = db.conn.query_row("SELECT detail_json,content_hash FROM transcription_quality WHERE transcription_id=?", [&id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let text = get(&db, &id).unwrap().unwrap().text;
+        assert!(decode_detail(&json, 1, &hash, &text).is_some());
+        assert!(decode_detail(&json, 2, &hash, &text).is_none(), "schema");
+        assert!(decode_detail(&json, 1, &"0".repeat(64), &text).is_none(), "stored hash");
+        assert!(decode_detail(&json.replacen("seed-engine", "seed-enginf", 1), 1, &hash, &text).is_none(), "content hash");
+        assert!(decode_detail(&json, 1, &hash, "other text").is_none(), "saved text");
+        assert!(decode_detail(&format!("{json}{}", " ".repeat(262_145)), 1, &hash, &text).is_none(), "size");
+        let env = envelope(&db, &seed_id(1)).unwrap();
+        assert_eq!(env.context.as_ref().unwrap().outcome, "used");
+        assert_eq!(env.content_hash.len(), 64);
+        let legacy = envelope(&db, &seed_id(5)).unwrap();
+        assert!(legacy.detail.is_none() && legacy.content_hash.is_empty());
+        let mut m = Model::default();
+        db.conn.execute_batch("ALTER TABLE rewrite_attempts RENAME TO gone").unwrap();
+        m.show_detail(&db, &id);
+        assert!(m.attempts.is_empty() && m.envelope.is_some(), "attempts that can't be read leave the sheet open with none");
+    }
+
+    // parity: HIST-110 HIST-111 HIST-112 HIST-114 HIST-116 HIST-117 HIST-118 HIST-120 HIST-121 HIST-122 HIST-123
+    /// Every metadata row from a detail built here, so each value traces to one key.
+    #[test]
+    fn processing_rows_read_exact_values_in_order() {
+        let d = serde_json::json!({
+            "provenance": {"engine": "E", "modelID": "M", "modelRevision": "R", "build": "B", "dirty": true, "automaticLanguage": false, "languageHint": "sk", "operatingSystem": "OS", "foldingRuntime": "U",
+                "sampleRate": 16000, "channels": 1, "inputSampleFormat": "float32_pcm", "inputSamples": 8000, "inputDurationSeconds": 0.5, "windowSamples": 10, "overlapSamples": 2, "strideSamples": 8, "minimumPaddedSamples": 4,
+                "stageDurations": {"zeta": 1.0, "alpha": 0.25}, "unavailableMetadata": [{"field": "sdk_version", "reason": "not_recorded"}], "modelManifestHash": "mh", "artifactHashes": {"z.bin": "zh", "a.bin": "ah"}},
+            "assemblyVersion": "A1", "normalizationVersion": "N1", "vocabularyRevision": 7, "appliedRuleIDs": ["N1", "N2"], "appliedEntryIDs": [], "ambiguousEntryIDs": ["K"],
+            "assembledHash": "ash", "normalizedHash": "nh", "vocabularyHash": "vh",
+            "rawWindows": [{"sequence": 0, "timingValidation": "valid", "timings": [1, 2], "paddedSampleCount": 9, "textHash": "w0"}, {"sequence": 1, "timingValidation": "absent", "timings": [], "paddedSampleCount": 3, "textHash": "w1"}],
+            "seams": [{"window": 1, "decision": "merged", "discardedLexicalWords": 2}],
+            "completionReasons": [{"code": "plain"}, {"code": "joined", "window": 1}],
+            "selectedAttempt": 1, "attempts": [{"engine": "E", "status": "failed"}, {"engine": "E", "status": "completed", "duration": 2.5}]
+        });
+        let m = |a: &str, b: &str| Line::Meta(a.into(), b.into());
+        let lines = processing_lines(&d);
+        assert_eq!(lines, vec![
+            m("Engine", "E"), m("SDK", "Unavailable"), m("Model", "M"), m("Model revision", "R"), m("Build", "B"), m("Uncommitted build changes", "Yes"), m("Language", "sk"),
+            m("Assembly", "A1"), m("Normalization", "N1"), m("Vocabulary revision", "7"),
+            m("Applied formatting rules", "N1, N2"), m("Applied vocabulary entries", "None"), m("Ambiguous vocabulary entries", "K"),
+            m("Operating system", "OS"), m("Unicode runtime", "U"),
+            m("Audio", "16000 Hz, 1 channel, float32_pcm"), m("Input", "8000 samples; 0.5 seconds"), m("Windows", "10 samples; overlap 2; stride 8"), m("Minimum padded input", "4 samples"),
+            m("Alpha duration", "0.25 seconds"), m("Zeta duration", "1.0 seconds"),
+            m("Window 1 timing evidence", "valid; 2 recorded tokens; 9 padded samples"), m("Window 2 timing evidence", "absent; 0 recorded tokens; 3 padded samples"),
+            m("Join before window 2", "merged; 2 words discarded"),
+            Line::Heading("Processing reasons".into()), Line::Plain("plain".into()), Line::Plain("joined (window 2)".into()),
+            Line::Heading("Unavailable evidence".into()), m("sdk_version", "not_recorded"),
+            m("Attempt 1", "E; failed; Duration unavailable"), m("Attempt 2 (selected)", "E; completed; 2.5 seconds"),
+        ]);
+        assert_eq!(hash_lines(&d, "ch"), vec![m("Content", "ch"), m("Assembled", "ash"), m("Normalized", "nh"), m("Vocabulary", "vh"), m("Model manifest", "mh"), m("Raw window 1", "w0"), m("Raw window 2", "w1"), m("a.bin", "ah"), m("z.bin", "zh")]);
+        // Both empty blocks read the same, and an automatic language has no hint.
+        let empty = processing_lines(&serde_json::json!({"provenance": {"automaticLanguage": true, "dirty": false}}));
+        assert_eq!(empty.iter().filter(|l| **l == Line::Plain("None recorded".into())).count(), 2);
+        assert!(empty.contains(&m("Language", "Automatic; no hint")) && empty.contains(&m("Uncommitted build changes", "No")));
+    }
+
+    // parity: HIST-125 HIST-126 HIST-129
+    #[test]
+    fn context_lines_read_every_outcome_and_kind() {
+        assert_eq!(context_label(None), "Context: not recorded");
+        for (raw, label) in [("used", "Context: used"), ("off", "Context: off"), ("excluded_app", "Context: excluded app"), ("own_app", "Context: LocalFlow window"), ("secure_field", "Context: secure field"), ("no_permission", "Context unavailable: permission"), ("nothing_readable", "Context: nothing readable"), ("timed_out", "Context: timed out"), ("no_target", "Context: no text field"), ("changed_field", "Context unavailable: field changed during capture")] {
+            assert_eq!(context_label(Some(&context(raw, None))), label);
+        }
+        let plain = context("used", None);
+        let unsupported = context("used", Some("server_unsupported"));
+        let sent = Attempt { context_hash: Some("h".into()), ..attempt(1, "succeeded", Some("x"), false) };
+        let copied = Attempt { failure_category: Some("context_copied".into()), ..sent.clone() };
+        assert_eq!(context_rewrite_line(Some(&unsupported), None), Some("Context not sent: server unsupported"));
+        assert_eq!(context_rewrite_line(Some(&unsupported), Some(&sent)), Some("Context not sent: server unsupported"));
+        assert_eq!(context_rewrite_line(Some(&plain), Some(&copied)), Some("Rewrite used on-screen text you did not say; inserted your transcript."));
+        assert_eq!(context_rewrite_line(Some(&plain), Some(&sent)), Some("Context sent to the rewrite server"));
+        assert_eq!(context_rewrite_line(Some(&plain), Some(&attempt(1, "failed", None, false))), None);
+        assert_eq!(context_rewrite_line(Some(&plain), None), None);
+        for (raw, label) in [("single_line", "single line"), ("multi_line", "multi line"), ("search", "search"), ("code", "code"), ("terminal", "terminal"), ("unknown", "unknown")] {
+            assert_eq!(snapshot_lines(&serde_json::json!({"field_kind": raw}))[0], ("Field".to_string(), label.to_string()));
+        }
+        let all = snapshot_lines(&serde_json::json!({"app_name": "Mail", "field_kind": "code", "window_title": "W", "before_cursor": "B", "after_cursor": "A", "selected_text": "S", "terms": [{"text": "T1"}, {"text": "T2"}], "truncated": ["one", "two"]}));
+        let want: Vec<(String, String)> = [("App", "Mail"), ("Field", "code"), ("Window title", "W"), ("Text before the cursor", "B"), ("Text after the cursor", "A"), ("Selected text", "S"), ("Terms", "T1, T2"), ("Shortened", "one, two")].map(|(a, b)| (a.to_string(), b.to_string())).to_vec();
+        assert_eq!(all, want);
+    }
+
+    // parity: HIST-131 HIST-132 HIST-141 HIST-158 HIST-162
+    #[test]
+    fn rewrite_lines_read_each_state_and_the_current_rule() {
+        let db = seeded();
+        let mut m = Model::default();
+        m.show_detail(&db, &seed_id(3));
+        assert_eq!(m.rewrite_state_line(), "Rewrite: not requested", "with no attempts it reads the column");
+        for (raw, line) in [("pending", "pending"), ("succeeded", "succeeded"), ("failed", "failed"), ("cancelled", "cancelled"), ("timed_out", "timed out")] {
+            m.attempts = vec![attempt(1, "failed", None, false), attempt(2, raw, None, false)];
+            assert_eq!(m.rewrite_state_line(), format!("Rewrite: {line}"), "the newest attempt");
+        }
+        // The newest good one: a later failure, stale success or empty success doesn't count.
+        m.attempts = vec![attempt(1, "succeeded", Some("old"), false), attempt(2, "succeeded", Some("new"), false), attempt(3, "succeeded", Some("stale"), true), attempt(4, "succeeded", None, false), attempt(5, "failed", Some("x"), false)];
+        assert_eq!(m.current_rewrite().unwrap().ordinal, 2);
+        m.attempts = vec![attempt(1, "succeeded", Some("stale"), true)];
+        assert!(m.current_rewrite().is_none());
+        // A stale success stays insertable, other states don't.
+        assert_eq!(attempt(1, "succeeded", Some("out"), true).deliverable(), Some("out"));
+        for state in ["pending", "failed", "cancelled", "timed_out"] {
+            assert_eq!(attempt(1, state, Some("out"), false).deliverable(), None, "{state}");
+        }
+        assert_eq!(attempt(1, "succeeded", None, false).deliverable(), None);
+        // Delivered saved text with a different current rewrite adds the suffix; undelivered doesn't.
+        m.show_detail(&db, &seed_id(3));
+        m.attempts = vec![attempt(1, "succeeded", Some("out"), false)];
+        assert_eq!(m.delivered_line(), "Delivered: saved text. The current rewrite is not the text that was delivered.");
+        m.envelope.as_mut().unwrap().entry.delivered_source = None;
+        assert_eq!(m.delivered_line(), "Delivered: nothing yet");
+        m.envelope.as_mut().unwrap().entry.delivered_source = Some("rewrite".into());
+        m.envelope.as_mut().unwrap().entry.delivered_rewrite_attempt_id = Some("a1".into());
+        assert_eq!(m.delivered_line(), "Delivered: rewrite attempt 1 (Clean)");
+        // Every part of a summary, then every missing part.
+        let full = Attempt { duration_ms: Some(5), first_byte_ms: Some(2), failure_category: Some("timeout".into()), context_hash: Some("h".into()), stale: true, delivered: true, backend_model: Some("m".into()), prompt_version: Some(1), shield_version: Some(2), ..attempt(1, "failed", None, false) };
+        assert_eq!(full.summary(), "5 ms total · 2 ms to first byte · timeout · context sent · stale · delivered · m+p1+s2");
+        assert_eq!(attempt(1, "failed", None, false).summary(), "duration unavailable · unknown+punknown+sunknown");
+        assert_eq!(attempt(3, "timed_out", None, false).title(), "Attempt 3 · Clean · timed_out");
+    }
+
+    // parity: HIST-149 HIST-150
+    #[test]
+    fn admission_limits_write_nothing_and_quota_refuses() {
+        let db = seeded();
+        let id = seed_id(3);
+        let begin = |text: &str| begin_rewrite(&db, &id, "clean", text, "https://x.test", false, None);
+        let count = || -> i64 { db.conn.query_row("SELECT count(*) FROM rewrite_attempts WHERE transcription_id=?", [&id], |r| r.get(0)).unwrap() };
+        for too_much in ["x".repeat(20_001), "€".repeat(21_846), String::new()] {
+            assert_eq!(begin(&too_much).unwrap_err(), StoreError::Refused("input_too_large"));
+        }
+        assert_eq!(count(), 0);
+        // Quota: refused while over, by the input plus its reservation, nothing written.
+        let input = "x".repeat(100);
+        db.conn.execute("UPDATE history_usage SET payload_bytes=?", [MAX_PAYLOAD_BYTES - 500 + 1]).unwrap();
+        assert_eq!(begin(&input).unwrap_err(), StoreError::Refused("capacity_exceeded"));
+        let settings = crate::settings::RewriteSettings { origin: "http://127.0.0.1:1".into(), ..Default::default() };
+        assert_eq!(admit_rewrite(&db, &id, &input, "clean", true, &settings, None), Admission::Refused("capacity_exceeded"));
+        assert_eq!((count(), get(&db, &id).unwrap().unwrap().rewrite_state.as_str().to_string()), (0, "not_requested".to_string()));
+        db.conn.execute("UPDATE history_usage SET payload_bytes=?", [MAX_PAYLOAD_BYTES - 500]).unwrap();
+        // At the quota exactly, it fits; ordinals climb from the highest; state mirrors.
+        let a = begin(&input).unwrap();
+        let used: i64 = db.conn.query_row("SELECT payload_bytes FROM history_usage", [], |r| r.get(0)).unwrap();
+        assert_eq!(used, MAX_PAYLOAD_BYTES);
+        assert_eq!(get(&db, &id).unwrap().unwrap().rewrite_state, "pending");
+        terminate_rewrite(&db, &a, None, None).unwrap();
+        db.conn.execute("UPDATE history_usage SET payload_bytes=0", []).unwrap();
+        db.conn.execute("UPDATE rewrite_attempts SET ordinal=7 WHERE id=?", [&a]).unwrap();
+        let b = begin(&input).unwrap();
+        let ordinal: i64 = db.conn.query_row("SELECT ordinal FROM rewrite_attempts WHERE id=?", [&b], |r| r.get(0)).unwrap();
+        assert_eq!(ordinal, 8);
+    }
+
+    // parity: HIST-151 HIST-152 HIST-153
+    #[test]
+    fn rewrite_endings_write_their_columns_and_release_the_reservation() {
+        let db = seeded();
+        let id = seed_id(3);
+        let bytes = || -> i64 { db.conn.query_row("SELECT payload_bytes FROM history_usage", [], |r| r.get(0)).unwrap() };
+        let start = bytes();
+        let input = "same words";
+        let begin = || begin_rewrite(&db, &id, "clean", input, "https://x.test", false, None).unwrap();
+        let a = begin();
+        let answer = RewriteAnswer { text: "same words".into(), first_byte_ms: Some(4), request_bytes: Some(10), response_bytes: Some(20), server_queue_ms: Some(1), backend_first_token_ms: Some(2), backend_ms: Some(3), server_name: Some("srv".into()), server_version: Some("1".into()), backend_kind: Some("k".into()), backend_model: Some("m".into()), prompt_version: Some(5), shield_version: Some(6), ..Default::default() };
+        record_rewrite_result(&db, &a, &answer, Some(9)).unwrap();
+        type Row = (String, String, i64, i64, i64, i64, String, i64);
+        let row: Row = db.conn.query_row("SELECT state,output_hash,unchanged,duration_ms,first_byte_ms,backend_ms,backend_model,shield_version FROM rewrite_attempts WHERE id=?", [&a], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))).unwrap();
+        assert_eq!(row, ("succeeded".to_string(), sha256_hex(input.as_bytes()), 1, 9, 4, 3, "m".to_string(), 6));
+        assert_eq!(bytes(), start + (input.len() * 2) as i64, "the input, and the output in place of the reservation");
+        assert_eq!(get(&db, &id).unwrap().unwrap().rewrite_state, "succeeded");
+        let after = bytes();
+        let state = |a: &str| -> (String, Option<String>, Option<i64>) { db.conn.query_row("SELECT state,failure_category,duration_ms FROM rewrite_attempts WHERE id=?", [a], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap() };
+        let t = begin();
+        terminate_rewrite(&db, &t, Some("timeout"), Some(7)).unwrap();
+        assert_eq!(state(&t), ("timed_out".to_string(), Some("timeout".to_string()), Some(7)));
+        assert_eq!(get(&db, &id).unwrap().unwrap().rewrite_state, "timed_out");
+        let f = begin();
+        terminate_rewrite(&db, &f, Some("server_unreachable"), None).unwrap();
+        assert_eq!(state(&f), ("failed".to_string(), Some("server_unreachable".to_string()), None));
+        assert_eq!(get(&db, &id).unwrap().unwrap().rewrite_state, "failed");
+        assert_eq!(bytes(), after + 2 * input.len() as i64, "only the two inputs stay");
+        // A restart: attempting becomes uncertain and needs review, a revision up; pending fails as interrupted.
+        let rev = get(&db, &id).unwrap().unwrap().revision;
+        let (_, rev) = begin_attempt(&db, &id, rev).unwrap();
+        db.conn.execute("UPDATE transcriptions SET recovery_state='resolved' WHERE id=?", [&id]).unwrap();
+        let p = begin();
+        startup_repair(&db).unwrap();
+        let e = get(&db, &id).unwrap().unwrap();
+        assert_eq!((e.delivery_state.as_str(), e.recovery_state.as_str(), e.revision, e.rewrite_state.as_str()), ("uncertain", "needs_review", rev + 1, "failed"));
+        assert_eq!(state(&p), ("failed".to_string(), Some("interrupted".to_string()), None));
+    }
+
+    // parity: HIST-175 HIST-176
+    #[test]
+    fn delivery_writes_each_column_and_outcome() {
+        let db = seeded();
+        let id = seed_id(3);
+        let columns = || -> (String, String, Option<String>, Option<i64>, i64) { db.conn.query_row("SELECT delivery_state,recovery_state,attempt_id,attempt_started_at,revision FROM transcriptions WHERE id=?", [&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).unwrap() };
+        let a = begin_rewrite(&db, &id, "clean", "words", "https://x.test", false, None).unwrap();
+        record_rewrite_result(&db, &a, &RewriteAnswer { text: "out".into(), ..Default::default() }, None).unwrap();
+        for (outcome, state, recovery) in [(Outcome::Confirmed, "confirmed", "resolved"), (Outcome::NotInserted, "not_inserted", "needs_review"), (Outcome::Uncertain, "uncertain", "needs_review")] {
+            let before = get(&db, &id).unwrap().unwrap().revision;
+            let start = now_ms();
+            let (attempt_id, rev) = begin_attempt(&db, &id, before).unwrap();
+            let (s, r, stored, at, revision) = columns();
+            assert_eq!((s.as_str(), r.as_str(), stored.as_deref(), revision), ("attempting", "needs_review", Some(attempt_id.as_str()), before + 1));
+            assert!(at.unwrap() >= start);
+            assert_eq!(rev, before + 1);
+            assert_eq!(record_outcome(&db, &id, rev, "wrong", outcome, None).unwrap_err(), StoreError::InvalidAttempt);
+            let done = record_outcome(&db, &id, rev, &attempt_id, outcome, Some(&a)).unwrap();
+            assert_eq!((done.delivery_state.as_str(), done.recovery_state.as_str(), done.revision, done.delivered_source.as_deref(), done.delivered_rewrite_attempt_id.as_deref()), (state, recovery, before + 2, Some("rewrite"), Some(a.as_str())));
+        }
+        let delivered: i64 = db.conn.query_row("SELECT delivered FROM rewrite_attempts WHERE id=?", [&a], |r| r.get(0)).unwrap();
+        assert_eq!(delivered, 1);
+        // No rewrite is the faithful text, and only a succeeded attempt can be delivered.
+        let b = begin_rewrite(&db, &id, "clean", "words", "https://x.test", false, None).unwrap();
+        let rev = get(&db, &id).unwrap().unwrap().revision;
+        let (attempt_id, rev) = begin_attempt(&db, &id, rev).unwrap();
+        assert_eq!(record_outcome(&db, &id, rev, &attempt_id, Outcome::Confirmed, Some(&b)).unwrap_err(), StoreError::InvalidAttempt);
+        let done = record_outcome(&db, &id, rev, &attempt_id, Outcome::Confirmed, None).unwrap();
+        assert_eq!((done.delivered_source.as_deref(), done.delivered_rewrite_attempt_id), (Some("faithful"), None));
+    }
+
+    // parity: HIST-062
+    #[test]
+    fn delete_cascades_and_subtracts_every_byte() {
+        let db = seeded();
+        let id = seed_id(1);
+        let usage = || -> (i64, i64) { db.conn.query_row("SELECT row_count,payload_bytes FROM history_usage", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap() };
+        let sum = |sql: &str| -> i64 { db.conn.query_row(sql, [&id], |r| r.get(0)).unwrap() };
+        let bytes = sum("SELECT length(cast(text AS blob)) FROM transcriptions WHERE id=?")
+            + sum("SELECT length(cast(detail_json AS blob)) FROM transcription_quality WHERE transcription_id=?")
+            + sum("SELECT sum(length(cast(input_text AS blob))+length(cast(coalesce(output_text,'') AS blob))) FROM rewrite_attempts WHERE transcription_id=?")
+            + sum("SELECT length(cast(snapshot_json AS blob))+length(cast(pre_spelling_text AS blob))+length(cast(spelling_changes_json AS blob)) FROM dictation_contexts WHERE transcription_id=?");
+        let (rows, payload) = usage();
+        let revision = get(&db, &id).unwrap().unwrap().revision;
+        delete_confirmed(&db, &id, revision).unwrap();
+        assert_eq!(usage(), (rows - 1, payload - bytes));
+        for table in ["transcription_quality", "rewrite_attempts", "dictation_contexts"] {
+            assert_eq!(sum(&format!("SELECT count(*) FROM {table} WHERE transcription_id=?")), 0, "{table}");
+        }
     }
 }
