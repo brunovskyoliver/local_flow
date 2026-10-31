@@ -2908,6 +2908,7 @@ pub struct Recovery {
 }
 impl Recovery {
     /// The two notices Swift publishes after reconciling.
+    // ponytail: no orphan-file or deferred-part notices; the file scan that finds them lands with the capture worker.
     pub fn notices(&self) -> Vec<String> {
         let mut out = vec![];
         if self.meetings_found > 0 {

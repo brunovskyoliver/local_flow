@@ -145,7 +145,7 @@ impl NotetakerPage {
         let today = local_day(now, offset_at(now, cx));
         let mut list = v_flex().w_full().pt(px(25.)).gap(px(3.));
         if self.lib.evicted_newest {
-            list = list.child(div().pb(px(12.)).child(prototype_button("notetaker.showNewest", "Show newest").on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))));
+            list = list.child(h_flex().pb(px(12.)).child(native_button("notetaker.showNewest", "Show newest").on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))));
         }
         let mut previous = None;
         for (index, row) in rows.iter().enumerate() {
