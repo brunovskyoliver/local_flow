@@ -6,6 +6,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// `DisclosureGroup` at Figtree 12, as measured on the reference.
+const DISCLOSURE: Pixels = px(22.);
+
 type Win = WindowHandle<SettingsPage>;
 type Log = Rc<RefCell<Vec<String>>>;
 
@@ -80,6 +83,9 @@ impl flow_platform::Services for Stub {
     }
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
         self.call(format!("open {url}"))
+    }
+    fn reveal_app(&self) -> Result<(), Unavailable> {
+        self.call("reveal".into())
     }
     fn record_shortcut(&self) -> Result<(), Unavailable> {
         self.call("record".into())
@@ -322,7 +328,9 @@ async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     assert_eq!(pref_b(cx, "remote.enabled"), Some(false));
     assert_eq!(pref_s(cx, "remote.serverURL"), None);
     assert!(logged(&r, &format!("remove {}", core::remote_keychain("device-key"))));
-    assert!(logged(&r, &format!("remove {}", core::remote_keychain("access-token"))));
+    for item in ["access-token", "refresh-token", "server-key"] {
+        assert!(logged(&r, &format!("remove {}", core::remote_keychain(item))), "{item}");
+    }
     assert_saw(&["Server only"]);
     assert!(!saw("Use this server for everything"));
 }
@@ -385,10 +393,19 @@ async fn consent_update_sheet(cx: &mut TestAppContext) {
     click(cx, r.win, "settings.serverConsentUpdate");
     assert_saw(&["Send summaries and meetings to your server?"]);
     click(cx, r.win, "settings.serverConsentCancel");
+    assert!(read(cx, r.win, |p, _| p.modal.is_none()), "Cancel closes");
     assert_eq!(pref_i(cx, "remote.consentVersion", 0), 1);
+    click(cx, r.win, "settings.serverConsentUpdate");
+    set(cx, r.win, |p, w, cx| p.key("escape", w, cx));
+    assert!(read(cx, r.win, |p, _| p.modal.is_none()), "Esc closes");
+    assert_eq!(pref_i(cx, "remote.consentVersion", 0), 1, "Esc leaves the version");
     click(cx, r.win, "settings.serverConsentUpdate");
     click(cx, r.win, "settings.serverConsentConfirm");
     assert_eq!(pref_i(cx, "remote.consentVersion", 0), 2);
+    let r = rig(cx, "consent-update", |_| {});
+    click(cx, r.win, "settings.serverConsentUpdate");
+    set(cx, r.win, |p, w, cx| p.key("enter", w, cx));
+    assert_eq!(pref_i(cx, "remote.consentVersion", 0), 2, "Return confirms");
     assert!(!saw("Confirm the updated consent"));
 }
 
@@ -501,7 +518,7 @@ async fn general_controls_persist(cx: &mut TestAppContext) {
     assert_eq!(pref_s(cx, "settings.meetingLanguage").as_deref(), Some("slovak"));
 }
 
-// parity: SET-020 SET-175 SET-176 SET-178 SET-179 SET-180 SET-181 SET-182 SET-186 SET-187 SET-188 SET-189 SET-191 SET-193 SET-190
+// parity: SET-175 SET-176 SET-178 SET-179 SET-180 SET-181 SET-182 SET-186 SET-187 SET-188 SET-191 SET-193
 #[flow_ui::gpui::test]
 async fn microphones_list_edits(cx: &mut TestAppContext) {
     let r = rig(cx, "microphones", |_| {});
@@ -519,7 +536,11 @@ async fn microphones_list_edits(cx: &mut TestAppContext) {
     let n = ids(cx).len();
     set(cx, r.win, |p, _, cx| p.add_mic("bt-XXXX-3F2A", cx));
     assert_eq!(ids(cx).len(), n + 1);
-    assert_eq!(ids(cx).last().unwrap(), core::InputEntry::system_default().id.as_str(), "inserted above System default");
+    let after = ids(cx);
+    assert_eq!(after.last().unwrap(), core::InputEntry::system_default().id.as_str(), "System default stays last");
+    let stored = cx.update(|cx| core::load_inputs(&cx.global::<Core>().prefs));
+    assert_eq!(stored[stored.len() - 2].uid.as_deref(), Some("bt-XXXX-3F2A"), "inserted just above System default, and saved");
+    assert_eq!(stored.iter().map(|e| e.id.clone()).collect::<Vec<_>>(), after, "rebuilt from what was saved");
     assert_saw(&["AirPods Pro", "Bluetooth · Uses call-quality audio and lowers playback quality while recording."]);
     let row = SharedString::from(format!("settings.microphones.row.{}", start[0]));
     cx.update_window(r.win.into(), |_, w, cx| w.within(row).click("settings.microphones.remove", cx)).unwrap();
@@ -813,19 +834,25 @@ async fn permission_buttons(cx: &mut TestAppContext) {
     click(cx, r.win, "settings.allow.Accessibility");
     assert!(!logged(&r, "request Accessibility"), "denied goes straight to System Settings");
     assert!(logged(&r, "settings Accessibility"));
+    assert!(logged(&r, "reveal"), "not trusted: the app is shown in Finder");
+    assert_eq!(read(cx, r.win, |p, _| p.snapshot.status.clone()), "Enable LocalFlow in Accessibility settings. The app is shown in Finder if you need to add it.");
+    assert!(!logged(&r, "settings Microphone"), "only the pane asked for");
     r.ok.set(false);
     click(cx, r.win, "settings.allow.Accessibility");
     assert_saw(&["Error type flow_platform.Unavailable, code 0."]);
 }
 
-// parity: SET-045 SET-055 SET-070 SET-071 SET-072 SET-119 SET-326 SET-327 SET-328 SET-332
-// T012: needs the temporary flowd started by the audit; skips without its env. Never the owner's server.
+#[cfg(unix)]
+#[path = "../../../../../crates/flow-core/src/settings/test_flowd.rs"]
+mod test_flowd;
+
+// parity: SET-045 SET-055 SET-070 SET-071 SET-072 SET-118 SET-119 SET-326 SET-327 SET-328 SET-332
+// Starts its own throwaway flowd; see `test_flowd`. Never the owner's server.
+#[cfg(unix)]
 #[flow_ui::gpui::test]
-async fn flowd_end_to_end_when_configured(cx: &mut TestAppContext) {
-    let (Ok(identity_url), Ok(rewrite_url), Ok(token), Ok(expected_fp)) = (std::env::var("FLOWD_REMOTE_URL"), std::env::var("FLOWD_REWRITE_URL"), std::env::var("FLOWD_TOKEN"), std::env::var("FLOWD_FINGERPRINT")) else {
-        eprintln!("skipped: FLOWD_* not set");
-        return;
-    };
+async fn real_flowd_through_the_page(cx: &mut TestAppContext) {
+    let flowd = test_flowd::Flowd::start();
+    let (identity_url, rewrite_url, token, expected_fp) = (flowd.remote.clone(), flowd.rewrite.clone(), flowd.token.clone(), flowd.fingerprint.clone());
     cx.executor().allow_parking();
     let wait = |cx: &mut TestAppContext, win: Win, done: &dyn Fn(&SettingsPage) -> bool| {
         for _ in 0..100 {
@@ -854,15 +881,14 @@ async fn flowd_end_to_end_when_configured(cx: &mut TestAppContext) {
     wait(cx, r.win, &|p| !p.checking);
     frame(cx, r.win);
     assert_saw(&["Server unreachable"]);
-    if let Ok(token) = std::env::var("FLOWD_ACCESS_TOKEN") {
-        let identity = core::fetch_identity(&identity_url).unwrap();
-        r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), identity.server_key);
-        r.secrets.borrow_mut().insert(core::remote_keychain("access-token"), token);
-        click(cx, r.win, "settings.serverCheckConnection");
-        wait(cx, r.win, &|p| !p.checking);
-        frame(cx, r.win);
-        assert_saw(&["Answered in "]);
-    }
+    let identity = core::fetch_identity(&identity_url).unwrap();
+    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), identity.server_key);
+    r.secrets.borrow_mut().insert(core::remote_keychain("access-token"), flowd.access_token.clone());
+    flow_ui::probe::clear();
+    click(cx, r.win, "settings.serverCheckConnection");
+    wait(cx, r.win, &|p| !p.checking);
+    frame(cx, r.win);
+    assert_saw(&["Answered in "]);
     // A wrong identity base is reported, not trusted.
     let r = rig(cx, "checking", |_| {});
     set(cx, r.win, |p, _, _| p.remote_base = Some("http://127.0.0.1:9".into()));
@@ -885,9 +911,9 @@ async fn flowd_end_to_end_when_configured(cx: &mut TestAppContext) {
     click(cx, r.win, "settings.rewriteTestConnection");
     wait(cx, r.win, &|p| !p.connection_testing);
     frame(cx, r.win);
-    assert_saw(&["Connected.", "Meeting analysis"]);
+    assert_saw(&["Connected.", &format!("Meeting analysis: available (model {}).", test_flowd::MODEL)]);
     click(cx, r.win, "settings.rewriteAdvanced");
-    assert_saw(&["Server: "]);
+    assert_saw(&["Server: flowd "]);
 }
 
 
@@ -895,36 +921,101 @@ fn bounds(cx: &mut TestAppContext, win: Win, id: &'static str) -> Bounds<Pixels>
     cx.update_window(win.into(), |_, w, _| w.find(id).bounds()).unwrap()
 }
 
-// parity: SET-001 SET-092 SET-130 SET-149 SET-151 SET-166 SET-172 SET-288 SET-303 SET-330 SET-336
+fn gap(a: Bounds<Pixels>, b: Bounds<Pixels>) -> f32 {
+    f32::from(b.left() - a.right())
+}
+
+// parity: SET-092 SET-130 SET-129 SET-149 SET-151 SET-166 SET-172 SET-288 SET-303 SET-336 SET-352
 #[flow_ui::gpui::test]
 async fn controls_have_swifts_measured_sizes(cx: &mut TestAppContext) {
     let r = rig(cx, "advanced", |_| {});
-    assert_eq!((f32::from(bounds(cx, r.win, "settings.remoteEnabled").size.width), f32::from(bounds(cx, r.win, "settings.remoteEnabled").size.height)), (54., 24.));
+    let switch = bounds(cx, r.win, "settings.remoteEnabled").size;
+    assert_eq!((f32::from(switch.width), f32::from(switch.height)), (54., 24.));
     let cell = bounds(cx, r.win, "settings.serverFallbackThreshold.cell");
     assert_eq!((f32::from(cell.size.width), f32::from(cell.size.height)), STEPPER);
     let (up, down) = (bounds(cx, r.win, "settings.serverFallbackThreshold.up"), bounds(cx, r.win, "settings.serverFallbackThreshold.down"));
     assert_eq!((up.top(), up.bottom(), down.bottom()), (cell.top(), down.top(), cell.bottom()), "one cell split in two");
     assert_eq!(bounds(cx, r.win, "settings.serverOverride.dictation.frame").size.width, px(150.));
+    let r = rig(cx, "", |_| {});
     assert!(bounds(cx, r.win, "settings.shortcut").size.width >= px(99.));
     assert_eq!(bounds(cx, r.win, "settings.appearance.frame").size.width, px(110.));
     assert_eq!(bounds(cx, r.win, "settings.meetingLanguage.frame").size.width, px(210.));
     assert_eq!(bounds(cx, r.win, "settings.rewriteDefaultMode.frame").size.width, px(120.));
-    let r = rig(cx, "", |_| {});
     assert_eq!(bounds(cx, r.win, "settings.summaryServer.frame").size.width, px(110.));
-    // SET-001: the audit's measured content box is 960 wide at most, padded 47 (Swift's 48 less the hairline).
-    assert_eq!(bounds(cx, r.win, "settings.content").size.width, px(960.));
+    assert!(bounds(cx, r.win, "settings.allow.Microphone").size.width >= px(99.));
+    let r = rig(cx, "meeting-only", |_| {});
+    assert!(bounds(cx, r.win, "settings.setUpDictation").size.width >= px(99.));
+    let r = rig(cx, "", |p| p.set("rewriteEndpoint", core::loopback_endpoint()));
+    assert_eq!(bounds(cx, r.win, "settings.localModelIdleUnload.frame").size.width, px(130.));
 }
 
-// parity: SET-077 SET-212
+// parity: SET-001 SET-004 SET-005 SET-007 SET-240
 #[flow_ui::gpui::test]
-async fn sheets_have_swifts_width(cx: &mut TestAppContext) {
+async fn page_rows_and_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let content = bounds(cx, r.win, "settings.content");
+    let (section, text) = (bounds(cx, r.win, "settings.section.General"), bounds(cx, r.win, "settings.section.General.text"));
+    assert_eq!((content.size.width, bounds(cx, r.win, "settings.pageTitle").top() - content.top()), (px(960.), px(47.)), "max width and top padding");
+    assert_eq!((text.top() - section.top(), section.bottom() - text.bottom()), (px(29.), px(13.)));
+    let row = bounds(cx, r.win, "settings.row.Learn corrections");
+    assert_eq!(row.left() - content.left(), px(47. + 19.), "page padding, then the group's horizontal padding");
+    let (left, switch) = (bounds(cx, r.win, "settings.row.Learn corrections.text"), bounds(cx, r.win, "settings.learnCorrections"));
+    assert_eq!((gap(left, switch), row.size.height), (22., switch.size.height + px(38.)), "spacing 22, vertical padding 19");
+    let r = rig(cx, "installed", |_| {});
+    assert_eq!(gap(bounds(cx, r.win, "settings.speechLoad"), bounds(cx, r.win, "settings.test.speech")), 8., "model controls");
+}
+
+// parity: SET-077 SET-080 SET-107 SET-212 SET-213 SET-215 SET-217 SET-226 SET-229 SET-011
+#[flow_ui::gpui::test]
+async fn sheets_have_swifts_geometry(cx: &mut TestAppContext) {
     let r = rig(cx, "consent", |_| {});
-    assert_eq!(bounds(cx, r.win, "settings.sheet").size.width, px(460.));
+    let sheet = bounds(cx, r.win, "settings.sheet");
+    assert_eq!((sheet.size.width, bounds(cx, r.win, "settings.consentBody").left() - sheet.left()), (px(460.), px(24.)));
+    let body = bounds(cx, r.win, "settings.consentBody");
+    assert!(body.size.height > px(3. * 16.) && body.size.width == px(412.), "wraps inside the padding: {body:?}");
+    let r = rig(cx, "consent-update-sheet", |_| {});
+    let (sheet, cancel) = (bounds(cx, r.win, "settings.sheet"), bounds(cx, r.win, "settings.serverConsentCancel"));
+    assert_eq!((sheet.size.width, sheet.bottom() - cancel.bottom()), (px(460.), px(24.)));
     let r = rig(cx, "exclusions", |_| {});
-    assert_eq!(bounds(cx, r.win, "settings.sheet").size.width, px(480.));
-    // Swift's prominent pill: 15pt with 10pt vertical padding, about 38 tall in the reference.
-    let done = bounds(cx, r.win, "settings.contextDone").size;
-    assert!(done.height >= px(36.) && done.height <= px(40.), "{done:?}");
+    let sheet = bounds(cx, r.win, "settings.sheet");
+    let (header, list) = (bounds(cx, r.win, "settings.contextHeader"), bounds(cx, r.win, "settings.contextList"));
+    assert_eq!((sheet.size.width, header.left() - sheet.left(), list.top() - header.bottom()), (px(480.), px(22.), px(18.)));
+    assert!(header.size.height > px(30.), "title and description stacked: {header:?}");
+    assert_eq!(list.size.height, px(308.), "min(10 x 57, 308)");
+    assert_eq!(bounds(cx, r.win, "context.row.com.1password.1password").size.height, px(56.));
+    let (menu, field, done) = (bounds(cx, r.win, "context.running"), bounds(cx, r.win, "settings.contextField"), bounds(cx, r.win, "settings.contextDone").size);
+    assert_eq!(gap(menu, field), 8.);
+    assert_eq!(field.size.height, px(30.), "13pt with padding 7, measured 30 in the reference");
+    assert!(done.height >= px(36.) && done.height <= px(40.), "prominent pill: {done:?}");
+}
+
+// parity: SET-110 SET-120 SET-329 SET-176 SET-258 SET-311 SET-316 SET-338
+#[flow_ui::gpui::test]
+async fn lower_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    assert!(!has(cx, r.win, "settings.serverServices"), "only when approved");
+    let r = rig(cx, "approved", |_| {});
+    set(cx, r.win, |p, _, _| p.check_result = Some("Answered in 3 ms".into()));
+    assert_eq!(gap(bounds(cx, r.win, "settings.serverCheckResult"), bounds(cx, r.win, "settings.serverCheckConnection")), 10.);
+    assert_eq!(bounds(cx, r.win, "settings.serverAdvanced").size.height, DISCLOSURE, "the audit's measured disclosure");
+    let r = rig(cx, "", |p| p.set("rewriteEndpoint", "https://rw.example.com"));
+    assert_eq!(bounds(cx, r.win, "settings.rewriteAdvanced").size.height, DISCLOSURE);
+    let r = rig(cx, "microphones", |_| {});
+    let (d, list) = (bounds(cx, r.win, "settings.microphones.description"), bounds(cx, r.win, "settings.microphones.list"));
+    assert_eq!(list.top(), d.bottom(), "the 12 below the text is inside");
+    let r = rig(cx, "installing", |_| {});
+    let (bar, cancel) = (bounds(cx, r.win, "settings.installProgress"), bounds(cx, r.win, "settings.installCancel"));
+    assert_eq!(cancel.top() - bar.bottom(), px(10.), "VStack spacing 10");
+    let r = rig(cx, "", |p| p.set("rewriteEndpoint", "https://rw.example.com"));
+    type_into(cx, r.win, |p| p.credential.clone(), "abc");
+    click(cx, r.win, "settings.rewriteCredentialSave");
+    click(cx, r.win, "settings.rewriteCredentialEdit");
+    assert_eq!(gap(bounds(cx, r.win, "settings.rewriteCredentialRemove"), bounds(cx, r.win, "settings.rewriteCredentialCancel")), 12.);
+    let header = bounds(cx, r.win, "settings.secretHeader");
+    assert_eq!(bounds(cx, r.win, "settings.credentialRow").top() - header.bottom(), px(8.), "section spacing 8");
+    let r = rig(cx, "summary-remote", |_| {});
+    let (url, label) = (bounds(cx, r.win, "settings.summaryServerURL"), bounds(cx, r.win, "settings.summaryModelLabel"));
+    assert_eq!(label.top() - url.bottom(), px(14.), "spacing 14");
 }
 
 // parity: SET-067

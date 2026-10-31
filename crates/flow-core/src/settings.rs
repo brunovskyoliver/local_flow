@@ -2202,6 +2202,9 @@ pub fn usage_backoff(previous: u64) -> u64 {
     previous.saturating_mul(2).clamp(30, 3600)
 }
 
+#[cfg(all(test, unix))]
+mod test_flowd;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2854,9 +2857,7 @@ mod tests {
         assert_eq!((usage_backoff(0), usage_backoff(30), usage_backoff(3000)), (30, 60, 3600));
     }
 
-    /// `FLOWD_REWRITE_URL`, `FLOWD_REMOTE_URL`, `FLOWD_TOKEN` and `FLOWD_DOWN_URL` are set by
-    /// `scripts`-free runs against a throwaway flowd; see the audit transcript. Skipped otherwise.
-    // parity: SET-045 SET-055 SET-071 SET-326 SET-327 SET-328 SET-332 SET-119 SET-118
+    // parity: SET-118
     #[test]
     fn channel_url_and_ping_need_pin_and_token() {
         assert_eq!(channel_url("https://flow.example.com:8443/"), "wss://flow.example.com:8443/v1/remote/channel");
@@ -2868,52 +2869,53 @@ mod tests {
         assert_eq!(ping("http://127.0.0.1:9", Some("AAAA"), None), None);
     }
 
-    // parity: SET-045 SET-055 SET-071 SET-118 SET-119 SET-326 SET-327 SET-328 SET-332
+    // parity: SET-045 SET-071
+    #[cfg(unix)]
     #[test]
-    fn real_flowd_when_configured() {
-        let Ok(remote) = std::env::var("FLOWD_REMOTE_URL") else {
-            eprintln!("skipped: FLOWD_REMOTE_URL not set");
-            return;
-        };
-        let identity = fetch_identity(&remote).expect("identity");
-        println!("identity fingerprint {}", identity.fingerprint);
-        assert_eq!(Some(identity.fingerprint.as_str()), std::env::var("FLOWD_FINGERPRINT").ok().as_deref());
-        // A real sealed channel to the pinned key. A valid session token needs an enrolled device
-        // (interactive sign-in), so session is checked for refusal and enroll for reaching ready.
-        let key = identity.validated_key().expect("key");
-        let (ms, _) = channel_round_trip(&remote, &key, None).expect("enroll channel reaches ready");
-        println!("Answered in {ms} ms");
-        assert!(matches!(channel_round_trip(&remote, &key, Some("not-a-token")), Err(ChannelError::Server(_))), "a bad token is refused in the channel");
-        assert_eq!(ping(&remote, Some(&identity.server_key), Some("not-a-token")), None);
-        // A session with an approved device's token, seeded into the throwaway server's database.
-        if let Ok(token) = std::env::var("FLOWD_ACCESS_TOKEN") {
-            let (_, offered) = ping(&remote, Some(&identity.server_key), Some(&token)).expect("session reaches ready");
-            assert!(offered.is_some(), "ready carries the capabilities");
-        }
-        assert_eq!(channel_round_trip(&remote, &[7u8; 32], None), Err(ChannelError::Unreachable), "a hello sealed to another key is closed");
-        let down = std::env::var("FLOWD_DOWN_URL").unwrap();
-        assert!(fetch_identity(&down).is_err());
-        assert_eq!(channel_round_trip(&down, &key, None), Err(ChannelError::Unreachable));
-        assert!(fetch_identity(&format!("{}/nothing", std::env::var("FLOWD_REWRITE_URL").unwrap())).is_err());
+    fn real_flowd_identity_is_validated() {
+        let f = super::test_flowd::Flowd::start();
+        let identity = fetch_identity(&f.remote).expect("identity");
+        assert_eq!(identity.fingerprint, f.fingerprint, "what the admin tool printed");
+        assert_eq!(identity.validated_key().unwrap().len(), 32);
+        assert!(fetch_identity(&f.down).is_err(), "closed port");
+        assert!(fetch_identity(&f.rewrite).is_err(), "a server with no identity route");
+    }
 
-        let rewrite = std::env::var("FLOWD_REWRITE_URL").unwrap();
-        let token = std::env::var("FLOWD_TOKEN").unwrap();
-        assert_eq!(rewrite_health(&rewrite, None), Err(Connection::AuthenticationFailed));
-        assert_eq!(rewrite_health(&rewrite, Some("wrong")), Err(Connection::AuthenticationFailed));
-        assert_eq!(rewrite_health(&down, None), Err(Connection::Unreachable));
-        let health = rewrite_health(&rewrite, Some(&token)).expect("health");
-        println!("{}", health.identity_text());
+    // parity: SET-118 SET-119
+    #[cfg(unix)]
+    #[test]
+    fn real_flowd_channel_round_trip() {
+        let f = super::test_flowd::Flowd::start();
+        let identity = fetch_identity(&f.remote).unwrap();
+        let key = identity.validated_key().unwrap();
+        assert!(channel_round_trip(&f.remote, &key, None).is_ok(), "enroll reaches ready");
+        let (_, offered) = ping(&f.remote, Some(&identity.server_key), Some(&f.access_token)).expect("an approved device's session reaches ready");
+        assert!(offered.is_some(), "ready carries the capabilities");
+        assert_eq!(ping(&f.remote, Some(&identity.server_key), Some("not-a-token")), None);
+        assert!(matches!(channel_round_trip(&f.remote, &key, Some("not-a-token")), Err(ChannelError::Server(_))), "a bad token is refused in the channel");
+        assert_eq!(channel_round_trip(&f.remote, &[7u8; 32], None), Err(ChannelError::Unreachable), "a hello sealed to another key is closed");
+        assert_eq!(channel_round_trip(&f.down, &key, None), Err(ChannelError::Unreachable));
+    }
+
+    // parity: SET-326 SET-327 SET-328 SET-332
+    #[cfg(unix)]
+    #[test]
+    fn real_flowd_health_outcomes() {
+        let f = super::test_flowd::Flowd::start();
+        assert_eq!(rewrite_health(&f.rewrite, None), Err(Connection::AuthenticationFailed));
+        assert_eq!(rewrite_health(&f.rewrite, Some("wrong")), Err(Connection::AuthenticationFailed));
+        assert_eq!(rewrite_health(&f.down, None), Err(Connection::Unreachable));
+        assert_eq!(rewrite_health(&f.remote, None), Err(Connection::ServiceUnavailable), "the remote listener has no rewrite route");
+        let health = rewrite_health(&f.rewrite, Some(&f.token)).expect("health");
         assert_eq!(health.evaluate(), Connection::Connected);
-        let line = analysis_status_text(&rewrite, Some(&token));
-        println!("{line}");
-        assert!(line.starts_with("Meeting analysis: available"));
-        assert_eq!(analysis_status_text(&down, None), "Meeting analysis could not be checked.");
-
-        if let Ok(no_backend) = std::env::var("FLOWD_NO_BACKEND_URL") {
-            assert_eq!(rewrite_health(&no_backend, None).unwrap().evaluate(), Connection::BackendUnavailable);
-            let no_analysis = analysis_status_text(&no_backend, None);
-            println!("--analysis=false: {no_analysis}");
-            assert_eq!(no_analysis, "This server does not offer meeting analysis.");
+        let identity = health.identity_text();
+        for line in ["Server: flowd ", &format!("Backend: openai-compatible · {}", super::test_flowd::MODEL), "Prompts: ", "clean: ", "Shield: ", "Protocol: 1, 2"] {
+            assert!(identity.contains(line), "{line} in {identity}");
         }
+        assert_eq!(analysis_status_text(&f.rewrite, Some(&f.token)), format!("Meeting analysis: available (model {}).", super::test_flowd::MODEL));
+        assert_eq!(analysis_status_text(&f.down, None), "Meeting analysis could not be checked.");
+        assert_eq!(rewrite_health(&f.no_backend, Some(&f.token)).unwrap().evaluate(), Connection::BackendUnavailable);
+        assert_eq!(analysis_status_text(&f.no_backend, Some(&f.token)), "This server does not offer meeting analysis.");
+        assert_eq!(rewrite_health(&f.wrong_version, Some(&f.token)).unwrap().evaluate(), Connection::IncompatibleVersion);
     }
 }

@@ -64,7 +64,7 @@ impl SettingsPage {
                     .w_full()
                     .gap(px(10.))
                     .pb(px(19.))
-                    .child(if s.total > 0 { Progress::new("settings.installProgress").value(s.completed as f32 / s.total as f32 * 100.).into_any_element() } else { Spinner::new().small().into_any_element() })
+                    .child(div().id("settings.installProgress").w_full().child(if s.total > 0 { Progress::new("settings.installProgressBar").value(s.completed as f32 / s.total as f32 * 100.).into_any_element() } else { Spinner::new().small().into_any_element() }).test_support())
                     .child(h_flex().w_full().justify_between().child(t(label).size(12.)).child(Self::action("settings.installCancel", "Cancel", "cancelInstall", false, cx))),
             );
         }

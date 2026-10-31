@@ -124,7 +124,7 @@ impl SettingsPage {
             .gap(px(16.))
             .child(t("Use your LocalFlow server?").font(17., 500.))
             .child(input_surface("server.rack", Input::new(&self.server_draft).aria_label("Server address").accessibility_id("settings.remoteServerURL"), &self.server_draft, window, cx))
-            .child(t(text).size(13.).line_spacing(3.))
+            .child(div().id("settings.consentBody").w_full().child(t(text).size(13.).line_spacing(3.)).test_support())
             .when_some(origin.as_ref(), |d, o| d.child(t(format!("Server: {}", core::origin_host(o))).font(13., 500.)))
             .when_some(self.remote_error.clone(), |d, e| d.child(t(e).size(12.).color(pl.warning)))
             .child(
@@ -207,7 +207,7 @@ impl SettingsPage {
                 let current = overrides.get(id).map_or("other", String::as_str);
                 self.app_row(id, exclusions, current, i == last, cx).into_any_element()
             }).collect::<Vec<_>>();
-            div().id("settings.contextList").w_full().h(px(height)).overflow_y_scroll().rounded(px(12.)).border_1().border_color(pl.line).children(rows).into_any_element()
+            div().id("settings.contextList").w_full().h(px(height)).overflow_y_scroll().rounded(px(12.)).border_1().border_color(pl.line).children(rows).test_support().into_any_element()
         };
         let running: Vec<(String, String)> = {
             let excluded = core::exclusions(prefs(cx));
@@ -225,6 +225,7 @@ impl SettingsPage {
             .child(pill_menu("context.running", "Running app".into(), running, cx))
             .child(
                 div()
+                    .id("settings.contextField")
                     .flex_1()
                     .min_w_0()
                     .px(px(10.))
@@ -235,6 +236,7 @@ impl SettingsPage {
                     .rounded(px(8.))
                     .border(px(if focused { 2. } else { 1. }))
                     .border_color(if focused { pl.accent } else { pl.line })
+                    .test_support()
                     .child(Input::new(draft).aria_label("Bundle ID").accessibility_id("settings.contextBundleID").appearance(false)),
             )
             .when(!exclusions, |d| d.child(pill_menu("context.addKind", core::kind_title(self.add_category).into(), Self::pick_kinds(), cx)))
@@ -245,9 +247,11 @@ impl SettingsPage {
             .gap(px(18.))
             .child(
                 v_flex()
+                    .id("settings.contextHeader")
                     .gap(px(4.))
                     .child(t(if exclusions { "Excluded apps" } else { "App kinds" }).font(17., 500.))
-                    .child(t(if exclusions { "App context is never read in these apps." } else { "Sets the kind of app used for writing style." }).size(13.).color(pl.muted)),
+                    .child(t(if exclusions { "App context is never read in these apps." } else { "Sets the kind of app used for writing style." }).size(13.).color(pl.muted))
+                    .test_support(),
             )
             .child(list)
             .child(add_row)

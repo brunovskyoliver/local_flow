@@ -637,10 +637,17 @@ impl SettingsPage {
         self.error = None;
         let services = &cx.global::<Core>().services;
         let granted = current != Perm::Denied && matches!(services.request_permission(permission), Ok(flow_platform::PermissionState::Granted));
+        if !granted && permission == Permission::Accessibility {
+            // `requestAccessibilityPermission`: a best-effort reveal, so the user can add the app by hand.
+            let _ = services.reveal_app();
+        }
         if !granted && services.open_permission_settings(permission).is_err() {
             self.error = Some(core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)));
         }
         self.refresh(cx);
+        if !granted && permission == Permission::Accessibility {
+            self.snapshot.status = "Enable LocalFlow in Accessibility settings. The app is shown in Finder if you need to add it.".into();
+        }
         cx.notify();
     }
 
@@ -675,7 +682,7 @@ impl SettingsPage {
     // MARK: Sections
 
     fn section_title(title: &'static str) -> impl IntoElement {
-        div().pt(px(29.)).pb(px(13.)).child(t(title).font(14., 500.))
+        div().id(SharedString::from(format!("settings.section.{title}"))).pt(px(29.)).pb(px(13.)).child(div().id(SharedString::from(format!("settings.section.{title}.text"))).child(t(title).font(14., 500.)).test_support()).test_support()
     }
 
     fn general(&self, cx: &mut Context<Self>) -> Div {
@@ -789,8 +796,8 @@ impl SettingsPage {
         let top = self.mic_top.clone();
         vec![
             div().child(canvas(move |b, _, _| top.set(b.top()), |_, _, _, _| {}).w_full().h(px(0.))).child(Self::section_title("Microphones")).into_any_element(),
-            div().pb(px(12.)).child(t("LocalFlow records from the first microphone on this list that is connected.").size(12.).color(muted)).into_any_element(),
-            body.child(row("Add microphone", list.add_disabled.map(String::from), add, cx)).into_any_element(),
+            div().id("settings.microphones.description").pb(px(12.)).child(t("LocalFlow records from the first microphone on this list that is connected.").size(12.).color(muted)).test_support().into_any_element(),
+            body.child(row("Add microphone", list.add_disabled.map(String::from), add, cx)).test_support().into_any_element(),
         ]
     }
 
@@ -938,7 +945,7 @@ impl SettingsPage {
     fn credential_controls(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let pl = pal(cx);
         let present = self.rewrite.credential_present;
-        let header = h_flex().w_full().justify_between().child(t("Server secret").font(12., 500.).color(pl.muted)).when(present, |d| d.child(sf_label("checkmark.shield", "Saved in Keychain", 11., pl.muted)));
+        let header = h_flex().id("settings.secretHeader").w_full().justify_between().child(t("Server secret").font(12., 500.).color(pl.muted)).when(present, |d| d.child(sf_label("checkmark.shield", "Saved in Keychain", 11., pl.muted))).test_support();
         let mut out = v_flex().w_full().gap(px(8.)).pb(px(18.)).child(header);
         if present && !self.editing_credential {
             out = out.child(h_flex().w_full().gap(px(8.)).child(div().flex_1().child(saved_secret("Server secret saved", cx))).child(prototype_button("settings.rewriteCredentialEdit", "Edit").a11y_label("Edit rewrite server credential").on_click(cx.listener(|this, _, _, cx| {
@@ -950,6 +957,8 @@ impl SettingsPage {
             let draft_empty = self.credential_draft(cx).is_empty();
             out = out.child(
                 h_flex()
+                    .id("settings.credentialRow")
+                    .test_support()
                     .w_full()
                     .gap(px(8.))
                     .child(div().flex_1().child(input_surface("key", Input::new(state).aria_label("Rewrite server credential").accessibility_id("settings.rewriteCredential"), state, window, cx)))
@@ -1004,7 +1013,7 @@ impl SettingsPage {
             .py(px(18.))
             .child(label("Server URL"))
             .child(input_surface("link", Input::new(&self.summary_url).aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx))
-            .child(label("Model"))
+            .child(div().id("settings.summaryModelLabel").child(label("Model")).test_support())
             .child(input_surface("cpu", Input::new(&self.summary_model).aria_label("Model").accessibility_id("settings.summaryServerModel"), &self.summary_model, window, cx))
             .child(label("API key"));
         if self.summary_key_saved && !self.editing_summary_key {
@@ -1016,6 +1025,8 @@ impl SettingsPage {
             let empty = val(&self.summary_key, cx).is_empty();
             out = out.child(
                 h_flex()
+                    .id("settings.credentialRow")
+                    .test_support()
                     .w_full()
                     .gap(px(8.))
                     .child(div().flex_1().child(input_surface("key", Input::new(&self.summary_key).aria_label("API key").accessibility_id("settings.summaryServerKey"), &self.summary_key, window, cx)))
@@ -1065,7 +1076,7 @@ impl Render for SettingsPage {
         let compact = cx.global::<flow_ui::tokens::Flow>().compact;
         let routing = core::routing(prefs(cx));
         let mut column = v_flex()
-            .child(t("Settings").font(26., 500.).tracking(-0.4))
+            .child(div().id("settings.pageTitle").child(t("Settings").font(26., 500.).tracking(-0.4)).test_support())
             .child(Self::section_title("Server"))
             .child(self.server_section(window, cx))
             .child(Self::section_title("Updates"))
@@ -1122,15 +1133,19 @@ pub(super) fn group(cx: &App) -> Div {
 }
 
 /// `SettingsRow`.
-pub(super) fn row(title: impl Into<SharedString>, detail: Option<String>, control: impl IntoElement, cx: &App) -> Div {
+pub(super) fn row(title: impl Into<SharedString>, detail: Option<String>, control: impl IntoElement, cx: &App) -> impl IntoElement {
     let compact = cx.global::<flow_ui::tokens::Flow>().compact;
     let m = pal(cx).muted;
+    let title: SharedString = title.into();
+    let id = format!("settings.row.{title}");
     h_flex()
+        .id(SharedString::from(id.clone()))
         .w_full()
         .gap(px(if compact { 10. } else { 22. }))
         .py(px(19.))
-        .child(v_flex().flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(0.5)).child(t(s).size(12.).color(m).line_spacing(4.)))))
+        .child(v_flex().id(SharedString::from(format!("{id}.text"))).flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(0.5)).child(t(s).size(12.).color(m).line_spacing(4.)))).test_support())
         .child(div().flex_none().child(control))
+        .test_support()
 }
 
 pub(super) fn switch(id: &'static str, label: &'static str, on: bool, disabled: bool, f: impl Fn(&bool, &mut Window, &mut App) + 'static) -> impl IntoElement {

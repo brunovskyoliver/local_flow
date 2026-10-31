@@ -79,7 +79,7 @@ impl SettingsPage {
             }
             let check = h_flex()
                 .gap(px(10.))
-                .when_some(self.check_result.clone(), |d, s| d.child(t(s).size(12.).color(pl.muted).id("settings.serverCheckResult")))
+                .when_some(self.check_result.clone(), |d, s| d.child(div().id("settings.serverCheckResult").child(t(s).size(12.).color(pl.muted)).test_support()))
                 .child(prototype_button("settings.serverCheckConnection", if self.checking { "Checking…" } else { "Check connection" }).disabled(self.checking).on_click(cx.listener(|this, _, _, cx| this.check_connection(cx))));
             body = body.child(hairline(cx)).child(div().id("settings.serverServices").w_full().child(row("Services", Some(r.placement()), check, cx)));
             let mut advanced = v_flex().w_full().child(disclosure("settings.serverAdvanced", "Advanced", self.server_advanced, cx.listener(|this, _, _, cx| {
