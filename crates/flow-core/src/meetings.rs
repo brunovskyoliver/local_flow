@@ -2932,6 +2932,114 @@ impl Recovery {
     }
 }
 
+/// Old speaker to new speaker from turn overlap (`carry_ovl0.50_ratio2_v1`): at least half
+/// of the old speaker's speech, twice the next best, the new speaker's strict best, and unclaimed.
+fn carry_map(old: &[(String, String, i64)], new: &[(String, String)], overlaps: &HashMap<(String, String), i64>) -> HashMap<String, String> {
+    let overlap = |o: &str, n: &str| overlaps.get(&(o.to_string(), n.to_string())).copied().unwrap_or(0);
+    let mut proposed = HashMap::new();
+    for (id, track, speech) in old.iter().filter(|s| s.2 > 0) {
+        let mut candidates: Vec<(&String, i64)> = new.iter().filter(|n| n.1 == *track).map(|n| (&n.0, overlap(id, &n.0))).collect();
+        candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let Some(&(best, ms)) = candidates.first().filter(|c| c.1 > 0) else { continue };
+        let next = candidates.get(1).map_or(0, |c| c.1);
+        let alone = old.iter().filter(|r| r.1 == *track && r.0 != *id).all(|r| overlap(&r.0, best) < ms);
+        if ms * 100 >= 50 * speech && ms * 100 >= 200 * next && alone {
+            proposed.insert(id.clone(), best.clone());
+        }
+    }
+    let targets: Vec<String> = proposed.values().cloned().collect();
+    proposed.retain(|_, n| targets.iter().filter(|t| *t == n).count() == 1);
+    proposed
+}
+
+/// A rerun inherits the superseded run's names, merges and segment corrections; what does not
+/// map safely becomes a `needs_review` row. Call inside the transaction that adopts `run`.
+// ponytail: all turns in memory and no identity rows; the diarization worker that calls this
+// brings Swift's paged sweep and `carryManualIdentities` when it lands.
+pub fn carry_over(db: &Db, meeting: &str, previous: &str, run: &str, now: i64) -> Res<()> {
+    let c = &db.conn;
+    type Row6 = (String, Option<String>, String, i64, Option<String>, Option<String>, i64);
+    let speakers = |where_run: Option<&str>| -> Res<Vec<Row6>> {
+        Ok(c.prepare("SELECT id,track,source,label_ordinal,display_name,merged_into,speech_ms FROM meeting_speakers WHERE meeting_id=?1 AND run_id IS ?2 ORDER BY id")?
+            .query_map(params![meeting, where_run], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?
+            .collect::<Result<_, _>>()?)
+    };
+    let (old, new, manual) = (speakers(Some(previous))?, speakers(Some(run))?, speakers(None)?);
+    let mut overlaps: HashMap<(String, String), i64> = HashMap::new();
+    let mut stmt = c.prepare(
+        "SELECT a.speaker_id,b.speaker_id,sum(min(a.end_ms,b.end_ms)-max(a.start_ms,b.start_ms)) FROM speaker_turns a JOIN speaker_turns b
+         ON a.track=b.track AND a.start_ms<b.end_ms AND b.start_ms<a.end_ms WHERE a.run_id=?1 AND b.run_id=?2 AND a.speaker_id IS NOT NULL AND b.speaker_id IS NOT NULL GROUP BY 1,2",
+    )?;
+    for row in stmt.query_map([previous, run], |r| Ok(((r.get(0)?, r.get(1)?), r.get(2)?)))? {
+        let (pair, ms) = row?;
+        overlaps.insert(pair, ms);
+    }
+    let old_keys: Vec<_> = old.iter().filter_map(|s| s.1.clone().map(|t| (s.0.clone(), t, s.6))).collect();
+    let new_keys: Vec<_> = new.iter().filter_map(|s| s.1.clone().map(|t| (s.0.clone(), t))).collect();
+    let mapping = carry_map(&old_keys, &new_keys, &overlaps);
+    let is_manual = |id: &str| manual.iter().any(|m| m.0 == id);
+    let target = |id: &str| if is_manual(id) { Some(id.to_string()) } else { mapping.get(id).cloned() };
+    let in_room: bool = c.query_row("SELECT in_room FROM diarization_runs WHERE id=?1", [previous], |r| r.get(0))?;
+    let label = |s: &Row6| speaker_label(&s.2, s.3, s.4.as_deref(), in_room);
+    let correct = |kind: &str, speaker: Option<&str>, to: Option<&str>, segment: Option<&str>, before: Option<&str>, after: Option<&str>, review: bool| -> Res<()> {
+        c.execute(
+            "INSERT INTO speaker_corrections (id,meeting_id,run_id,kind,speaker_id,target_speaker_id,segment_id,previous_value,new_value,needs_review,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![new_id(), meeting, run, kind, speaker, to, segment, before, after, review, now],
+        )?;
+        Ok(())
+    };
+    for s in old.iter().filter(|s| s.4.is_some()) {
+        if let Some(mapped) = mapping.get(&s.0) {
+            c.execute("UPDATE meeting_speakers SET display_name=?1 WHERE id=?2 AND display_name IS NULL", params![s.4, mapped])?;
+            correct("rename", Some(mapped), None, None, None, s.4.as_deref(), false)?;
+        } else {
+            correct("rename", Some(&s.0), None, None, None, s.4.as_deref(), true)?;
+        }
+    }
+    let everyone: Vec<&Row6> = old.iter().chain(manual.iter()).collect();
+    for s in &everyone {
+        let Some(root) = s.5.as_deref() else { continue };
+        if is_manual(&s.0) && is_manual(root) {
+            continue;
+        }
+        match (target(&s.0), target(root)) {
+            (Some(member), Some(into)) if member != into => {
+                c.execute("UPDATE meeting_speakers SET merged_into=?1 WHERE id=?2", params![into, member])?;
+                correct("merge", Some(&member), Some(&into), None, None, None, false)?;
+            }
+            _ => {
+                if is_manual(&s.0) {
+                    c.execute("UPDATE meeting_speakers SET merged_into=NULL WHERE id=?1", [&s.0])?;
+                }
+                let root_label = everyone.iter().find(|r| r.0 == root).map(|r| label(r)).unwrap_or_default();
+                correct("merge", Some(&s.0), Some(root), None, Some(&root_label), Some(&label(s)), true)?;
+            }
+        }
+    }
+    let pass = |id: &str| c.query_row("SELECT transcript_pass_id FROM diarization_runs WHERE id=?1", [id], |r| r.get::<_, String>(0));
+    let same_pass = pass(previous)? == pass(run)?;
+    let manual_rows: Vec<(String, String, Option<String>)> = c
+        .prepare("SELECT segment_id,manual_kind,manual_speaker_id FROM speaker_assignments WHERE run_id=?1 AND manual_kind IS NOT NULL ORDER BY segment_id")?
+        .query_map([previous], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    for (segment, kind, speaker) in manual_rows {
+        let into = speaker.as_deref().and_then(target);
+        if same_pass && (kind == "unknown" || into.is_some()) {
+            let changed = c.execute(
+                "UPDATE speaker_assignments SET manual_kind=?1,manual_speaker_id=?2,manual_at=?3 WHERE run_id=?4 AND segment_id=?5",
+                params![kind, into, now, run, segment],
+            )?;
+            if changed == 1 {
+                correct("segment", None, into.as_deref(), Some(&segment), None, into.is_none().then_some("unknown"), false)?;
+            }
+        } else {
+            let text = speaker.as_deref().and_then(|id| everyone.iter().find(|r| r.0 == id)).map_or("Unknown".to_string(), |s| label(s));
+            correct("segment", speaker.as_deref(), None, Some(&segment), None, Some(&text), true)?;
+        }
+    }
+    Ok(())
+}
+
 /// Runs once per launch, before Start is enabled: `MeetingReconciler`, then `TranscriptReconciler`,
 /// then the speaker and summary run reconcilers, each bounded to 100 rows. Nothing is deleted.
 // ponytail: open segment files aren't ADTS-validated or truncated; a file that's there stays open for
@@ -3281,6 +3389,62 @@ mod tests {
         assert_eq!(reconcile_launch(&db, &root, 100).unwrap().meetings_found, 0, "a second run finds nothing active");
     }
 
+    // parity: SPK-106
+    #[test]
+    fn a_rerun_inherits_names_merges_and_corrections() {
+        let db = db();
+        let c = &db.conn;
+        let run = |id: &str| {
+            c.execute("INSERT INTO diarization_runs (id,meeting_id,transcript_pass_id,state,\"trigger\",in_room,engine,model_id,model_revision,model_manifest_hash,pipeline_version,created_at)
+                       SELECT ?1,meeting_id,transcript_pass_id,'succeeded',\"trigger\",in_room,engine,model_id,model_revision,model_manifest_hash,pipeline_version,created_at FROM diarization_runs WHERE meeting_id=?2 LIMIT 1", params![id, SEED_FULL]).unwrap();
+        };
+        run("r1");
+        run("r2");
+        let speaker = |id: &str, run: &str, key: i64, name: Option<&str>| {
+            c.execute("INSERT INTO meeting_speakers (id,meeting_id,run_id,cluster_key,source,track,origin,display_name,speech_ms) VALUES (?1,?2,?3,?4,'remote','system','engine',?5,1000)", params![id, SEED_FULL, run, key, name]).unwrap();
+        };
+        let turn = |run: &str, id: &str, a: i64, b: i64| {
+            c.execute("INSERT INTO speaker_turns (run_id,speaker_id,track,start_ms,end_ms) VALUES (?1,?2,'system',?3,?4)", params![run, id, a, b]).unwrap();
+        };
+        speaker("old-a", "r1", 10, Some("Marta"));
+        speaker("old-b", "r1", 11, None);
+        speaker("old-gone", "r1", 12, Some("Tomas"));
+        speaker("new-a", "r2", 20, None);
+        speaker("new-b", "r2", 21, None);
+        c.execute("UPDATE meeting_speakers SET merged_into='old-a' WHERE id='old-b'", []).unwrap();
+        turn("r1", "old-a", 0, 1000);
+        turn("r2", "new-a", 0, 1000);
+        turn("r1", "old-b", 2000, 3000);
+        turn("r2", "new-b", 2000, 3000);
+        turn("r1", "old-gone", 5000, 6000); // nothing in r2 overlaps it
+        let segment: String = c.query_row("SELECT id FROM transcript_segments WHERE meeting_id=?1 LIMIT 1", [SEED_FULL], |r| r.get(0)).unwrap();
+        c.execute("INSERT INTO speaker_assignments (run_id,segment_id,auto_kind,manual_kind,manual_speaker_id,manual_at) VALUES ('r1',?1,'unknown','speaker','old-a',1)", [&segment]).unwrap();
+        c.execute("INSERT INTO speaker_assignments (run_id,segment_id,auto_kind) VALUES ('r2',?1,'unknown')", [&segment]).unwrap();
+
+        carry_over(&db, SEED_FULL, "r1", "r2", 50).unwrap();
+
+        let name: Option<String> = c.query_row("SELECT display_name FROM meeting_speakers WHERE id='new-a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(name.as_deref(), Some("Marta"));
+        let merged: Option<String> = c.query_row("SELECT merged_into FROM meeting_speakers WHERE id='new-b'", [], |r| r.get(0)).unwrap();
+        assert_eq!(merged.as_deref(), Some("new-a"));
+        let manual: Option<String> = c.query_row("SELECT manual_speaker_id FROM speaker_assignments WHERE run_id='r2' AND segment_id=?1", [&segment], |r| r.get(0)).unwrap();
+        assert_eq!(manual.as_deref(), Some("new-a"));
+        let review: (String, String) = c.query_row("SELECT speaker_id,new_value FROM speaker_corrections WHERE run_id='r2' AND needs_review=1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(review, ("old-gone".to_string(), "Tomas".to_string()), "an unmapped name asks for review, and only it");
+    }
+
+    #[test]
+    fn carry_map_refuses_weak_ties_and_double_claims() {
+        let key = |o: &str, n: &str, ms: i64| ((o.to_string(), n.to_string()), ms);
+        let old = |id: &str, speech: i64| (id.to_string(), "system".to_string(), speech);
+        let new = |id: &str| (id.to_string(), "system".to_string());
+        let map = |o: Vec<(String, String, i64)>, n: Vec<(String, String)>, v: Vec<((String, String), i64)>| carry_map(&o, &n, &v.into_iter().collect());
+        assert_eq!(map(vec![old("a", 100)], vec![new("x")], vec![key("a", "x", 50)]).len(), 1, "exactly half maps");
+        assert!(map(vec![old("a", 100)], vec![new("x")], vec![key("a", "x", 49)]).is_empty(), "under half");
+        assert!(map(vec![old("a", 100)], vec![new("x"), new("y")], vec![key("a", "x", 60), key("a", "y", 31)]).is_empty(), "under twice the next best");
+        assert!(map(vec![old("a", 100), old("b", 100)], vec![new("x")], vec![key("a", "x", 60), key("b", "x", 60)]).is_empty(), "a tie maps nobody");
+    }
+
     // parity: NOTE-032 NOTE-056 NOTE-058 NOTE-060 NOTE-061 NOTE-106
     #[test]
     fn library_pages_and_evicts() {
@@ -3382,7 +3546,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    // parity: MEET-049 MEET-050 MEET-053 MEET-054
+    // parity: MEET-049 MEET-053 MEET-054
     #[test]
     fn provenance_reads_stored_paths() {
         let db = db();
@@ -3592,129 +3756,110 @@ mod tests {
     // parity: MEET-027..MEET-037 NOTE-028 LIVE-040
     #[test]
     fn failure_reasons_read_like_swift() {
-        for (reason, track, text) in [
-            ("storage_write_failed", None, "Recording stopped: audio could not be written to disk. What was recorded so far was kept."),
-            ("storage_unavailable", None, "Recording stopped: the meeting folder is unavailable."),
-            ("encoder_failed", None, "Recording stopped: the audio encoder failed. What was recorded so far was kept."),
-            ("not_running_at_last_state", None, "LocalFlow did not exit cleanly during this meeting. Recorded audio was recovered where possible."),
-            ("device_lost", None, "The microphone disconnected. The meeting continued with system audio."),
-            ("stream_stopped", None, "System audio stopped. The meeting continued with the microphone."),
-            ("permission_revoked", Some("microphone"), "Microphone permission was revoked during the meeting."),
-            ("permission_revoked", Some("system"), "System audio permission was revoked during the meeting."),
-            ("permission_revoked", None, "Audio permission was revoked during the meeting."),
-            ("both_sources_failed", None, "Recording stopped because both audio sources failed."),
-            ("record_missing", None, "Files were found without a meeting record. They were kept and listed here."),
-            ("file_missing", None, "The audio file for this segment is missing."),
-            ("segment_open_failed", None, "The meeting could not start because an audio file could not be created."),
-            ("media_unrecoverable", None, "This track could not be made playable. The file was kept."),
-        ] {
-            assert_eq!(failure_reason_text(reason, track), text);
-        }
+        assert_eq!(failure_reason_text("storage_write_failed", None), "Recording stopped: audio could not be written to disk. What was recorded so far was kept.");
+        assert_eq!(failure_reason_text("storage_unavailable", None), "Recording stopped: the meeting folder is unavailable.");
+        assert_eq!(failure_reason_text("encoder_failed", None), "Recording stopped: the audio encoder failed. What was recorded so far was kept.");
+        assert_eq!(failure_reason_text("not_running_at_last_state", None), "LocalFlow did not exit cleanly during this meeting. Recorded audio was recovered where possible.");
+        assert_eq!(failure_reason_text("device_lost", None), "The microphone disconnected. The meeting continued with system audio.");
+        assert_eq!(failure_reason_text("stream_stopped", None), "System audio stopped. The meeting continued with the microphone.");
+        assert_eq!(failure_reason_text("permission_revoked", Some("microphone")), "Microphone permission was revoked during the meeting.");
+        assert_eq!(failure_reason_text("permission_revoked", Some("system")), "System audio permission was revoked during the meeting.");
+        assert_eq!(failure_reason_text("permission_revoked", None), "Audio permission was revoked during the meeting.");
+        assert_eq!(failure_reason_text("both_sources_failed", None), "Recording stopped because both audio sources failed.");
+        assert_eq!(failure_reason_text("record_missing", None), "Files were found without a meeting record. They were kept and listed here.");
+        assert_eq!(failure_reason_text("file_missing", None), "The audio file for this segment is missing.");
+        assert_eq!(failure_reason_text("segment_open_failed", None), "The meeting could not start because an audio file could not be created.");
+        assert_eq!(failure_reason_text("media_unrecoverable", None), "This track could not be made playable. The file was kept.");
     }
 
     // parity: TRANS-060..TRANS-071 TRANS-059
     #[test]
     fn transcript_failures_read_like_swift() {
-        for (c, resumes, meeting, text) in [
-            ("model_unavailable", false, true, "Whisper Turbo is not installed. Install the meeting model in Settings to transcribe."),
-            ("model_unavailable", false, false, "The speech model is not installed. Install it in Settings to transcribe."),
-            ("model_provisioning", false, false, "The speech model could not be verified. Reinstall it in Settings."),
-            ("model_load_failure", false, false, "The speech model failed to load. The recording was not affected."),
-            ("audio_decode_failure", false, false, "A recorded track could not be decoded. The recording was kept."),
-            ("analysis_stream_failure", false, false, "Audio could not be prepared for transcription. The recording was kept."),
-            ("runtime_failure", false, true, "Meeting transcription failed. The recording was kept; choose Retry to try again."),
-            ("runtime_failure", false, false, "Transcription stopped because the speech model failed. The recording continues."),
-            ("finalization_interrupted", true, false, "Finalization was interrupted. It will resume automatically."),
-            ("finalization_interrupted", false, false, "Finalization was interrupted. Choose Retry to finish it."),
-            ("persistence_failure", false, false, "Transcript could not be saved. The recording continues; retry later."),
-            ("storage_limit", false, false, "Transcript storage limit reached (7 segments kept). Delete old meetings to free space."),
-        ] {
-            assert_eq!(transcript_failure_text(c, 7, resumes, meeting), text);
-        }
+        assert_eq!(transcript_failure_text("finalization_interrupted", 7, true, false), "Finalization was interrupted. It will resume automatically.");
+        assert_eq!(transcript_failure_text("model_unavailable", 7, false, true), "Whisper Turbo is not installed. Install the meeting model in Settings to transcribe.");
+        assert_eq!(transcript_failure_text("model_unavailable", 7, false, false), "The speech model is not installed. Install it in Settings to transcribe.");
+        assert_eq!(transcript_failure_text("model_provisioning", 7, false, false), "The speech model could not be verified. Reinstall it in Settings.");
+        assert_eq!(transcript_failure_text("model_load_failure", 7, false, false), "The speech model failed to load. The recording was not affected.");
+        assert_eq!(transcript_failure_text("audio_decode_failure", 7, false, false), "A recorded track could not be decoded. The recording was kept.");
+        assert_eq!(transcript_failure_text("analysis_stream_failure", 7, false, false), "Audio could not be prepared for transcription. The recording was kept.");
+        assert_eq!(transcript_failure_text("runtime_failure", 7, false, true), "Meeting transcription failed. The recording was kept; choose Retry to try again.");
+        assert_eq!(transcript_failure_text("runtime_failure", 7, false, false), "Transcription stopped because the speech model failed. The recording continues.");
+        assert_eq!(transcript_failure_text("finalization_interrupted", 7, true, false), "Finalization was interrupted. It will resume automatically.");
+        assert_eq!(transcript_failure_text("finalization_interrupted", 7, false, false), "Finalization was interrupted. Choose Retry to finish it.");
+        assert_eq!(transcript_failure_text("persistence_failure", 7, false, false), "Transcript could not be saved. The recording continues; retry later.");
+        assert_eq!(transcript_failure_text("storage_limit", 7, false, false), "Transcript storage limit reached (7 segments kept). Delete old meetings to free space.");
     }
 
     // parity: TRANS-004..TRANS-010
     #[test]
     fn badges_read_like_swift() {
-        for (state, text) in [("not_requested", "Not requested"), ("pending", "Pending"), ("live", "Live"), ("finalizing", "Finalizing 42 %"), ("final", "Final"), ("failed", "Failed"), ("interrupted", "Interrupted")] {
-            assert_eq!(badge_text(state, 0.42), text);
-        }
+        assert_eq!(badge_text("not_requested", 0.42), "Not requested");
+        assert_eq!(badge_text("pending", 0.42), "Pending");
+        assert_eq!(badge_text("live", 0.42), "Live");
+        assert_eq!(badge_text("finalizing", 0.42), "Finalizing 42 %");
+        assert_eq!(badge_text("final", 0.42), "Final");
+        assert_eq!(badge_text("failed", 0.42), "Failed");
+        assert_eq!(badge_text("interrupted", 0.42), "Interrupted");
     }
 
     // parity: TRANS-074..TRANS-084
     #[test]
     fn section_status_reads_like_swift() {
-        for (state, live, failure, text) in [
-            ("pending", "", None, "Pending"),
-            ("live", "", Some("x"), "Transcription failed: x"),
-            ("not_requested", "", None, "Transcription off"),
-            ("final", "", None, "Final"),
-            ("failed", "", None, "Transcription failed"),
-            ("interrupted", "", None, "Interrupted"),
-            ("live", "catching_up", None, "Catching up"),
-            ("live", "degraded", None, "Degraded — some live text skipped; the full transcript is produced when the meeting stops"),
-            ("live", "suspended", None, "Live transcription suspended — catching up"),
-            ("live", "stopped", None, "Live preview stopped"),
-            ("live", "healthy", None, "Transcribing"),
-        ] {
-            assert_eq!(section_status_text(state, live, failure, 0.0), text);
-        }
+        assert_eq!(section_status_text("pending", "", None, 0.0), "Pending");
+        assert_eq!(section_status_text("live", "", Some("x"), 0.0), "Transcription failed: x");
+        assert_eq!(section_status_text("not_requested", "", None, 0.0), "Transcription off");
+        assert_eq!(section_status_text("final", "", None, 0.0), "Final");
+        assert_eq!(section_status_text("failed", "", None, 0.0), "Transcription failed");
+        assert_eq!(section_status_text("interrupted", "", None, 0.0), "Interrupted");
+        assert_eq!(section_status_text("live", "catching_up", None, 0.0), "Catching up");
+        assert_eq!(section_status_text("live", "degraded", None, 0.0), "Degraded — some live text skipped; the full transcript is produced when the meeting stops");
+        assert_eq!(section_status_text("live", "suspended", None, 0.0), "Live transcription suspended — catching up");
+        assert_eq!(section_status_text("live", "stopped", None, 0.0), "Live preview stopped");
+        assert_eq!(section_status_text("live", "healthy", None, 0.0), "Transcribing");
     }
 
     // parity: SPK-009..SPK-018
     #[test]
     fn diarization_failures_read_like_swift() {
-        for (c, text) in [
-            ("model_unavailable", "Speaker labeling model isn't installed. Install it in Settings → Models."),
-            ("os_unsupported", "Speaker labeling needs macOS 15 or later."),
-            ("model_load_failure", "The speaker labeling model couldn't be loaded."),
-            ("audio_missing", "This meeting's audio isn't available, so speakers can't be labeled."),
-            ("audio_decode_failure", "This meeting's audio couldn't be read."),
-            ("runtime_failure", "Speaker labeling stopped unexpectedly."),
-            ("transcript_changed", "The transcript changed while speakers were being labeled."),
-            ("persistence_failure", "Speaker labels couldn't be saved."),
-            ("persistence_capacity", "Speaker labels couldn't be saved. Meeting storage is full."),
-            ("interrupted", "Speaker labeling was interrupted."),
-        ] {
-            assert_eq!(diarization_failure_text(c), text);
-        }
+        assert_eq!(diarization_failure_text("model_unavailable"), "Speaker labeling model isn't installed. Install it in Settings → Models.");
+        assert_eq!(diarization_failure_text("os_unsupported"), "Speaker labeling needs macOS 15 or later.");
+        assert_eq!(diarization_failure_text("model_load_failure"), "The speaker labeling model couldn't be loaded.");
+        assert_eq!(diarization_failure_text("audio_missing"), "This meeting's audio isn't available, so speakers can't be labeled.");
+        assert_eq!(diarization_failure_text("audio_decode_failure"), "This meeting's audio couldn't be read.");
+        assert_eq!(diarization_failure_text("runtime_failure"), "Speaker labeling stopped unexpectedly.");
+        assert_eq!(diarization_failure_text("transcript_changed"), "The transcript changed while speakers were being labeled.");
+        assert_eq!(diarization_failure_text("persistence_failure"), "Speaker labels couldn't be saved.");
+        assert_eq!(diarization_failure_text("persistence_capacity"), "Speaker labels couldn't be saved. Meeting storage is full.");
+        assert_eq!(diarization_failure_text("interrupted"), "Speaker labeling was interrupted.");
     }
 
     // parity: SPK-025..SPK-032
     #[test]
     fn identification_failures_read_like_swift() {
-        for (c, text) in [
-            ("os_unsupported", "Speaker identification needs macOS 15 or later."),
-            ("model_load_failure", "The voice model couldn't be loaded."),
-            ("audio_missing", "This meeting's audio isn't available, so speakers can't be identified."),
-            ("runtime_failure", "Speaker identification stopped unexpectedly."),
-            ("diarization_changed", "Speaker labels changed while speakers were being identified."),
-            ("persistence_failure", "Speaker identities couldn't be saved."),
-            ("persistence_capacity", "Speaker identities couldn't be saved. Meeting storage is full."),
-            ("interrupted", "Speaker identification was interrupted."),
-        ] {
-            assert_eq!(identification_failure_text(c), text);
-        }
+        assert_eq!(identification_failure_text("os_unsupported"), "Speaker identification needs macOS 15 or later.");
+        assert_eq!(identification_failure_text("model_load_failure"), "The voice model couldn't be loaded.");
+        assert_eq!(identification_failure_text("audio_missing"), "This meeting's audio isn't available, so speakers can't be identified.");
+        assert_eq!(identification_failure_text("runtime_failure"), "Speaker identification stopped unexpectedly.");
+        assert_eq!(identification_failure_text("diarization_changed"), "Speaker labels changed while speakers were being identified.");
+        assert_eq!(identification_failure_text("persistence_failure"), "Speaker identities couldn't be saved.");
+        assert_eq!(identification_failure_text("persistence_capacity"), "Speaker identities couldn't be saved. Meeting storage is full.");
+        assert_eq!(identification_failure_text("interrupted"), "Speaker identification was interrupted.");
     }
 
     // parity: SUM-020..SUM-030
     #[test]
     fn summary_failures_read_like_swift() {
-        for (c, text) in [
-            ("server_unreachable", "Your server could not be reached."),
-            ("authentication_failed", "The server rejected the credential."),
-            ("backend_unavailable", "The server's language model is not running."),
-            ("backend_busy", "The server is busy with dictation. Try again in a moment."),
-            ("timeout", "The summary took too long and was stopped."),
-            ("malformed_response", "The server sent a summary LocalFlow could not read."),
-            ("source_validation", "The summary did not pass LocalFlow's checks and was not saved."),
-            ("too_long", "This meeting is too long to summarize with the current limits."),
-            ("persistence_failure", "The summary couldn't be saved."),
-            ("persistence_capacity", "The summary couldn't be saved. Meeting storage is full."),
-            ("interrupted", "The summary was interrupted."),
-        ] {
-            assert_eq!(analysis_failure_text(c), text);
-        }
+        assert_eq!(analysis_failure_text("server_unreachable"), "Your server could not be reached.");
+        assert_eq!(analysis_failure_text("authentication_failed"), "The server rejected the credential.");
+        assert_eq!(analysis_failure_text("backend_unavailable"), "The server's language model is not running.");
+        assert_eq!(analysis_failure_text("backend_busy"), "The server is busy with dictation. Try again in a moment.");
+        assert_eq!(analysis_failure_text("timeout"), "The summary took too long and was stopped.");
+        assert_eq!(analysis_failure_text("malformed_response"), "The server sent a summary LocalFlow could not read.");
+        assert_eq!(analysis_failure_text("source_validation"), "The summary did not pass LocalFlow's checks and was not saved.");
+        assert_eq!(analysis_failure_text("too_long"), "This meeting is too long to summarize with the current limits.");
+        assert_eq!(analysis_failure_text("persistence_failure"), "The summary couldn't be saved.");
+        assert_eq!(analysis_failure_text("persistence_capacity"), "The summary couldn't be saved. Meeting storage is full.");
+        assert_eq!(analysis_failure_text("interrupted"), "The summary was interrupted.");
     }
 
     // parity: NOTE-033..NOTE-038
@@ -3757,5 +3902,7 @@ mod tests {
         let id: String = db.conn.query_row("SELECT id FROM analysis_overlays WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap();
         remove_overlay(&db, &id).unwrap();
         assert_eq!(read_model(&db, SEED_FULL).unwrap().unwrap().summary, model.ai_summary);
+        let left: i64 = db.conn.query_row("SELECT count(*) FROM analysis_overlays WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0);
     }
 }

@@ -92,21 +92,59 @@ async fn deleting_a_row_removes_the_meeting_after_confirming(cx: &mut TestAppCon
     assert!(read(cx, &window, |p| !p.lib.rows.iter().any(|r| r.id == SEED_UNTITLED)));
 }
 
-// parity: NOTE-007 NOTE-047 NOTE-048 NOTE-049 NOTE-050 NOTE-053 NOTE-096 NOTE-098
+// parity: NOTE-047 NOTE-048
 #[flow_ui::gpui::test]
-async fn search_filters_loaded_rows_and_preview_follows_hover(cx: &mut TestAppContext) {
+async fn search_toggle_hides_the_field_and_keeps_the_query(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    assert!(!has(cx, &window, "notetaker.search"));
+    click(cx, &window, "notetaker.searchToggle");
+    frame(cx, &window);
+    type_in!(cx, &window, |p| p.query.clone(), "lamp");
+    click(cx, &window, "notetaker.searchToggle");
+    frame(cx, &window);
+    assert!(!has(cx, &window, "notetaker.search"));
+    click(cx, &window, "notetaker.searchToggle");
+    frame(cx, &window);
+    let kept = window.read_with(cx, |p, cx| p.query.read(cx).value().to_string()).unwrap();
+    assert_eq!(kept, "lamp");
+}
+
+// parity: NOTE-049
+#[flow_ui::gpui::test]
+async fn search_field_sits_twelve_under_the_tabs_on_the_canvas(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    click(cx, &window, "notetaker.searchToggle");
+    fresh(cx, &window);
+    assert_eq!(find(cx, &window, "notetaker.searchField").bounds().size.height, px(37.));
+}
+
+// parity: NOTE-050 NOTE-053
+#[flow_ui::gpui::test]
+async fn search_filters_the_loaded_rows_by_title(cx: &mut TestAppContext) {
     let window = open_page(cx, None);
     click(cx, &window, "notetaker.searchToggle");
     frame(cx, &window);
+    type_in!(cx, &window, |p| p.query.clone(), "budget");
+    fresh(cx, &window);
+    assert_saw(&["Budget call"]);
+    assert!(!seen("Lamp prototype review"), "a row whose title doesn't match leaves the list");
     type_in!(cx, &window, |p| p.query.clone(), "zzzz-nothing");
-    frame(cx, &window);
-    flow_ui::probe::clear();
-    frame(cx, &window);
+    fresh(cx, &window);
     assert_saw(&["No matches"]);
+}
+
+// parity: NOTE-007 NOTE-096
+#[flow_ui::gpui::test]
+async fn preview_waits_before_loading_and_is_empty_until_then(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    fresh(cx, &window);
+    assert!(!has(cx, &window, "notetaker.preview.title"), "no row, no content");
     window.update(cx, |p, _, cx| p.request_preview(SEED_FULL, cx)).unwrap();
-    cx.executor().advance_clock(Duration::from_millis(150));
-    flow_ui::probe::clear();
+    cx.executor().advance_clock(Duration::from_millis(100));
     frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.lib.preview_id.clone()), None, "still inside the 120 ms wait");
+    cx.executor().advance_clock(Duration::from_millis(50));
+    fresh(cx, &window);
     assert_eq!(read(cx, &window, |p| p.lib.preview_id.clone()).as_deref(), Some(SEED_FULL));
     assert_saw(&["MY THOUGHTS"]);
 }
@@ -114,7 +152,8 @@ async fn search_filters_loaded_rows_and_preview_follows_hover(cx: &mut TestAppCo
 // parity: NOTE-052 NOTE-036
 #[flow_ui::gpui::test]
 async fn library_states(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.empty", &["No notes yet"]);
+    let _window = open_page(cx, Some("notetaker.empty"));
+    assert_saw(&["No notes yet"]);
 }
 // parity: NOTE-076 NOTE-077
 #[flow_ui::gpui::test]
@@ -129,12 +168,14 @@ async fn waiting_row_runs_on_this_mac(cx: &mut TestAppContext) {
 // parity: LIVE-008 LIVE-011 LIVE-013 LIVE-020 LIVE-026 NOTE-041
 #[flow_ui::gpui::test]
 async fn active_card_states(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.interrupted-card", &["Recording stopped", "Dismiss", "Microphone", "System audio"]);
+    let _window = open_page(cx, Some("notetaker.interrupted-card"));
+    assert_saw(&["Recording stopped", "Dismiss", "Microphone", "System audio"]);
 }
 // parity: LIVE-009 LIVE-014 LIVE-015
 #[flow_ui::gpui::test]
 async fn failed_card_says_it_could_not_start(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.failed-card", &["The meeting could not start", "failed: device lost"]);
+    let _window = open_page(cx, Some("notetaker.failed-card"));
+    assert_saw(&["The meeting could not start", "failed: device lost"]);
 }
 // parity: TRANS-058 MEET-066 MEET-068
 #[flow_ui::gpui::test]
@@ -148,12 +189,16 @@ async fn live_transcript_lists_provisional_rows(cx: &mut TestAppContext) {
 // parity: TRANS-057
 #[flow_ui::gpui::test]
 async fn live_empty_says_listening_or_off(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.live-listening", &["Listening…"]);
+    let _window = open_page(cx, Some("notetaker.live-listening"));
+    assert_saw(&["Listening…"]);
 }
 // parity: TRANS-056
 #[flow_ui::gpui::test]
 async fn live_off_says_transcription_is_off(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.live-off", &["Transcription is off for this note."]);
+    let window = open_page(cx, Some("notetaker.live-off"));
+    assert_saw(&["Transcription is off for this note."]);
+    let (outer, inner) = (find(cx, &window, "meeting.transcript.liveEmpty").bounds(), find(cx, &window, "meeting.transcript.liveEmpty.text").bounds());
+    assert_eq!(inner.origin.y - outer.origin.y, px(20.), "v20");
 }
 
 // parity: NOTE-071 MEET-002 MEET-003 MEET-006 MEET-007 MEET-019 MEET-038 MEET-072
@@ -200,7 +245,8 @@ async fn deleting_the_open_note_returns_to_the_library(cx: &mut TestAppContext) 
 // parity: MEET-024
 #[flow_ui::gpui::test]
 async fn warnings_show_on_the_untitled_note(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.untitled", &["Some audio was lost during recording."]);
+    let _window = open_page(cx, Some("notetaker.untitled"));
+    assert_saw(&["Some audio was lost during recording."]);
 }
 
 // parity: TRANS-011 TRANS-012 TRANS-014 TRANS-049 TRANS-052 TRANS-055
@@ -221,11 +267,13 @@ async fn transcript_reads_labels_search_and_selection(cx: &mut TestAppContext) {
     assert!(read(cx, &window, |p| p.pager.as_ref().unwrap().selection.contains(&first)));
 }
 
-// parity: TRANS-027 TRANS-031 TRANS-035 TRANS-037
+// parity: TRANS-027 TRANS-035 TRANS-037
 #[flow_ui::gpui::test]
 async fn export_and_status_lines_surface_failures(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.label-failed"));
     click(cx, &window, "meeting.transcript.copy");
+    fresh(cx, &window);
+    assert!(!seen("could not be exported"));
     menu_item(cx, &window, 2);
     fresh(cx, &window);
     assert_saw(&["The transcript could not be exported."]);
@@ -293,7 +341,8 @@ async fn generate_reports_the_missing_worker(cx: &mut TestAppContext) {
 // parity: SUM-039
 #[flow_ui::gpui::test]
 async fn summary_states(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.summary-stale", &["The transcript, speakers or notes changed after this summary."]);
+    let _window = open_page(cx, Some("notetaker.summary-stale"));
+    assert_saw(&["The transcript, speakers or notes changed after this summary."]);
 }
 // parity: SUM-061 TRANS-016
 #[flow_ui::gpui::test]
@@ -315,77 +364,100 @@ async fn view_source_jumps_to_transcript(cx: &mut TestAppContext) {
 // parity: NOTE-042 NOTE-043
 #[flow_ui::gpui::test]
 async fn notice_shows_the_page_error(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.notice", &["Meetings could not be loaded. Check app storage."]);
+    let _window = open_page(cx, Some("notetaker.notice"));
+    assert_saw(&["Meetings could not be loaded. Check app storage."]);
 }
 // parity: NOTE-055
 #[flow_ui::gpui::test]
 async fn evicted_offers_show_newest(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.evicted", &["Show newest"]);
+    let _window = open_page(cx, Some("notetaker.evicted"));
+    assert_saw(&["Show newest"]);
 }
-// parity: NOTE-033 NOTE-061 NOTE-072 NOTE-073 NOTE-074
+// parity: NOTE-033 NOTE-072 NOTE-073 NOTE-074
 #[flow_ui::gpui::test]
 async fn recording_row_is_pinned(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.recording", &["Recording now"]);
+    let _window = open_page(cx, Some("notetaker.recording"));
+    assert_saw(&["Recording now"]);
+}
+// parity: NOTE-074
+#[flow_ui::gpui::test]
+async fn recording_badge_pulses_and_paused_does_not(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.recording"));
+    assert!(has(cx, &window, "meeting.waveform"));
+    let window = open_page(cx, Some("notetaker.live-paused"));
+    assert!(!has(cx, &window, "meeting.waveform"));
 }
 // parity: NOTE-034 NOTE-075
 #[flow_ui::gpui::test]
 async fn paused_row_says_paused(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.paused", &["Recording paused"]);
+    let _window = open_page(cx, Some("notetaker.paused"));
+    assert_saw(&["Recording paused"]);
 }
 // parity: NOTE-035
 #[flow_ui::gpui::test]
 async fn finalizing_row_says_finishing(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.finalizing", &["Finishing the recording"]);
+    let _window = open_page(cx, Some("notetaker.finalizing"));
+    assert_saw(&["Finishing the recording"]);
 }
 // parity: NOTE-024 LIVE-017 LIVE-018 LIVE-032
 #[flow_ui::gpui::test]
 async fn refusal_shows_the_message_and_settings(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.refusal", &["Microphone access is not allowed. Enable LocalFlow in System Settings > Privacy & Security > Microphone.", "Open System Settings", "Dismiss"]);
+    let _window = open_page(cx, Some("notetaker.refusal"));
+    assert_saw(&["Microphone access is not allowed. Enable LocalFlow in System Settings > Privacy & Security > Microphone.", "Open System Settings", "Dismiss"]);
 }
 // parity: LIVE-002 LIVE-005 LIVE-007 LIVE-012 LIVE-020 LIVE-022 LIVE-028 LIVE-033
 #[flow_ui::gpui::test]
 async fn panel_shows_controls_title_and_notes(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.panel", &["Recording", "Pause", "Stop Meeting", "Notes", "Microphone", "capturing"]);
+    let _window = open_page(cx, Some("notetaker.panel"));
+    assert_saw(&["Recording", "Pause", "Stop Meeting", "Notes", "Microphone", "capturing"]);
 }
-// parity: LIVE-010 LIVE-016
+// parity: LIVE-010
 #[flow_ui::gpui::test]
 async fn notice_card_shows_storage_and_notice(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.notice-card", &["The meeting folder is running out of space.", "Recorded audio was recovered where possible."]);
+    let _window = open_page(cx, Some("notetaker.notice-card"));
+    assert_saw(&["The meeting folder is running out of space.", "Recorded audio was recovered where possible."]);
 }
 // parity: MEET-046 MEET-047 TRANS-072
 #[flow_ui::gpui::test]
 async fn waiting_detail_offers_this_mac(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.waiting-detail", &["Waiting for your server", "Run on this Mac"]);
+    let _window = open_page(cx, Some("notetaker.waiting-detail"));
+    assert_saw(&["Waiting for your server", "Run on this Mac"]);
 }
 // parity: MEET-049 MEET-023 MEET-065
 #[flow_ui::gpui::test]
 async fn detail_shows_provenance(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.detail", &["Transcript: this Mac"]);
+    let _window = open_page(cx, Some("notetaker.detail"));
+    assert_saw(&["Transcript: this Mac"]);
 }
 // parity: LIVE-045 TRANS-073 TRANS-079 TRANS-085 TRANS-087
 #[flow_ui::gpui::test]
 async fn section_interrupted(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.section:interrupted", &["Transcript", "Interrupted", "provisional", "Let us start with the hinge samples."]);
+    let _window = open_page(cx, Some("notetaker.section:interrupted"));
+    assert_saw(&["Transcript", "Interrupted", "provisional", "Let us start with the hinge samples."]);
 }
 // parity: TRANS-081
 #[flow_ui::gpui::test]
 async fn section_degraded(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.section:live:degraded", &["Degraded — some live text skipped; the full transcript is produced when the meeting stops"]);
+    let _window = open_page(cx, Some("notetaker.section:live:degraded"));
+    assert_saw(&["Degraded — some live text skipped; the full transcript is produced when the meeting stops"]);
 }
 // parity: SUM-011
 #[flow_ui::gpui::test]
 async fn summary_queued(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.summary-pending", &["Queued", "Cancel"]);
+    let _window = open_page(cx, Some("notetaker.summary-pending"));
+    assert_saw(&["Queued", "Cancel"]);
 }
 // parity: SUM-012
 #[flow_ui::gpui::test]
 async fn summary_running(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.summary-running", &["Analyzing", "Cancel"]);
+    let _window = open_page(cx, Some("notetaker.summary-running"));
+    assert_saw(&["Analyzing", "Cancel"]);
 }
 // parity: SUM-015
 #[flow_ui::gpui::test]
 async fn summary_failed(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.summary-failed", &["The server's language model is not running.", "Retry"]);
+    let _window = open_page(cx, Some("notetaker.summary-failed"));
+    assert_saw(&["The server's language model is not running.", "Retry"]);
 }
 // parity: SUM-005 SUM-006
 #[flow_ui::gpui::test]
@@ -397,57 +469,68 @@ async fn summary_not_finished(cx: &mut TestAppContext) {
 // parity: SUM-007
 #[flow_ui::gpui::test]
 async fn summary_off(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.off-summary", &["Transcription is off for this meeting."]);
+    let _window = open_page(cx, Some("notetaker.off-summary"));
+    assert_saw(&["Transcription is off for this meeting."]);
 }
 // parity: SPK-004
 #[flow_ui::gpui::test]
 async fn labels_updating(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.labeling-update", &["Updating speaker labels…"]);
+    let _window = open_page(cx, Some("notetaker.labeling-update"));
+    assert_saw(&["Updating speaker labels…"]);
 }
 // parity: SPK-005
 #[flow_ui::gpui::test]
 async fn labels_waiting(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.label-waiting", &["Waiting to label speakers…"]);
+    let _window = open_page(cx, Some("notetaker.label-waiting"));
+    assert_saw(&["Waiting to label speakers…"]);
 }
 // parity: SPK-006
 #[flow_ui::gpui::test]
 async fn labels_running(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.labeling", &["Labeling speakers…"]);
+    let _window = open_page(cx, Some("notetaker.labeling"));
+    assert_saw(&["Labeling speakers…"]);
 }
 // parity: SPK-007
 #[flow_ui::gpui::test]
 async fn labels_failed(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.label-failed", &["Retry"]);
+    let _window = open_page(cx, Some("notetaker.label-failed"));
+    assert_saw(&["Retry"]);
 }
 // parity: SPK-021
 #[flow_ui::gpui::test]
 async fn identify_waiting(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.identify-waiting", &["Waiting to identify speakers…"]);
+    let _window = open_page(cx, Some("notetaker.identify-waiting"));
+    assert_saw(&["Waiting to identify speakers…"]);
 }
 // parity: SPK-022
 #[flow_ui::gpui::test]
 async fn identify_running(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.identifying", &["Identifying speakers…"]);
+    let _window = open_page(cx, Some("notetaker.identifying"));
+    assert_saw(&["Identifying speakers…"]);
 }
 // parity: SPK-023
 #[flow_ui::gpui::test]
 async fn identify_failed(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.identify-failed", &["Identification failed:", "Retry"]);
+    let _window = open_page(cx, Some("notetaker.identify-failed"));
+    assert_saw(&["Identification failed:", "Retry"]);
 }
 // parity: SPK-024
 #[flow_ui::gpui::test]
 async fn identify_enrolling(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.enrolling", &["Storing voice sample…"]);
+    let _window = open_page(cx, Some("notetaker.enrolling"));
+    assert_saw(&["Storing voice sample…"]);
 }
 // parity: SPK-019
 #[flow_ui::gpui::test]
 async fn past_search_running(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.past-search", &["in past meetings", "Cancel"]);
+    let _window = open_page(cx, Some("notetaker.past-search"));
+    assert_saw(&["in past meetings", "Cancel"]);
 }
 // parity: SPK-033
 #[flow_ui::gpui::test]
 async fn past_search_prompt(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.past-prompt", &["Look for this voice in past meetings?"]);
+    let _window = open_page(cx, Some("notetaker.past-prompt"));
+    assert_saw(&["Look for this voice in past meetings?"]);
 }
 
 // parity: LIVE-034 LIVE-035 LIVE-036 LIVE-037
@@ -460,12 +543,18 @@ async fn panel_notes_state_follows_the_editor(cx: &mut TestAppContext) {
         e.state = state;
         cx.notify();
     };
-    for (dirty, state, text) in [(true, SaveState::Idle, "Unsaved"), (true, SaveState::Saving, "Saving…"), (false, SaveState::Saved, "Saved"), (true, SaveState::NotSaved, "Not saved")] {
-        window.update(cx, |p, _, cx| set(p, cx, dirty, state)).unwrap();
-        flow_ui::probe::clear();
-        frame(cx, &window);
-        assert_saw(&[text]);
-    }
+    window.update(cx, |p, _, cx| set(p, cx, true, SaveState::Idle)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Unsaved"]);
+    window.update(cx, |p, _, cx| set(p, cx, true, SaveState::Saving)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Saving…"]);
+    window.update(cx, |p, _, cx| set(p, cx, false, SaveState::Saved)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Saved"]);
+    window.update(cx, |p, _, cx| set(p, cx, true, SaveState::NotSaved)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Not saved"]);
 }
 
 // parity: NOTE-014 NOTE-015 NOTE-016
@@ -508,10 +597,11 @@ async fn title_too_long_shows_the_limit(cx: &mut TestAppContext) {
     assert_ne!(query(cx, |db| meeting(db, SEED_FULL).unwrap().unwrap().title).as_deref(), Some(long.as_str()));
 }
 
-// parity: SUM-041 SUM-047 SUM-049 SUM-051 SUM-053 SUM-058 SUM-075 SUM-079 SUM-073 SUM-074 SUM-077 SUM-078
+// parity: SUM-041 SUM-047 SUM-049 SUM-051 SUM-053 SUM-058 SUM-075 SUM-079 SUM-073 SUM-074 SUM-078
 #[flow_ui::gpui::test]
 async fn summary_shows_sections_chips_and_attribution(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.summary", &["The order waits until both quotes are in", "Hinges and supplier", "•", "Next steps", "Open questions", "Risks", "Pick the review up again on Friday — You", "Due: unclear (\"soon\")", "might be Tomas Novak?", "Accept", "mentioned", "Owner unresolved", "Due 6 Nov"]);
+    let _window = open_page(cx, Some("notetaker.summary"));
+    assert_saw(&["The order waits until both quotes are in", "Hinges and supplier", "•", "Next steps", "Open questions", "Risks", "Pick the review up again on Friday — You", "Due: unclear (\"soon\")", "might be Tomas Novak?", "Accept", "mentioned", "Owner unresolved", "Due 6 Nov"]);
 }
 // parity: SPK-001 SPK-003 SPK-048 SPK-049 SPK-057 SPK-061 SPK-075 SPK-078
 #[flow_ui::gpui::test]
@@ -588,12 +678,14 @@ async fn previous_disabled_on_first_note_then_goes_back(cx: &mut TestAppContext)
 // parity: NOTE-081 NOTE-082
 #[flow_ui::gpui::test]
 async fn row_shows_state_badge(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.search", &["Interrupted"]);
+    let _window = open_page(cx, Some("notetaker.search"));
+    assert_saw(&["Interrupted"]);
 }
 // parity: MEET-026
 #[flow_ui::gpui::test]
 async fn interrupted_note_shows_its_reason(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.interrupted", &["LocalFlow did not exit cleanly during this meeting."]);
+    let _window = open_page(cx, Some("notetaker.interrupted"));
+    assert_saw(&["LocalFlow did not exit cleanly during this meeting."]);
 }
 
 // --- Round 2: rows that had no real test.
@@ -836,22 +928,27 @@ async fn a_failed_save_keeps_the_note_open_until_retry_works(cx: &mut TestAppCon
     assert!(!seen("Notes not saved"));
     assert_eq!(query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0), "Keep me.");
 }
+fn transcription_items(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, state: &str) -> [bool; 3] {
+    window.update(cx, |p, _, cx| { p.lib.detail = None; p.pager = None; cx.notify() }).unwrap();
+    sql(cx, &format!("UPDATE meeting_transcriptions SET state='{state}' WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, window, SEED_FULL, Tab::Thoughts);
+    click(cx, window, "meeting.options");
+    frame(cx, window);
+    ["meeting.transcript.transcribe", "meeting.transcript.retry", "meeting.transcript.retranscribe"].map(|id| has(cx, window, id))
+}
 // parity: MEET-009 MEET-010 MEET-011 MEET-013
 #[flow_ui::gpui::test]
 async fn overflow_title_follows_the_transcription_state(cx: &mut TestAppContext) {
     let window = open_page(cx, None);
-    for (state, id) in [("not_requested", Some("meeting.transcript.transcribe")), ("failed", Some("meeting.transcript.retry")), ("interrupted", Some("meeting.transcript.retry")), ("final", Some("meeting.transcript.retranscribe")), ("pending", None), ("live", None), ("finalizing", None)] {
-        window.update(cx, |p, _, cx| { p.lib.detail = None; p.pager = None; cx.notify() }).unwrap();
-        sql(cx, &format!("UPDATE meeting_transcriptions SET state='{state}' WHERE meeting_id='{SEED_FULL}';"));
-        open(cx, &window, SEED_FULL, Tab::Thoughts);
-        click(cx, &window, "meeting.options");
-        frame(cx, &window);
-        for known in ["meeting.transcript.transcribe", "meeting.transcript.retry", "meeting.transcript.retranscribe"] {
-            assert_eq!(has(cx, &window, known), id == Some(known), "{state}: {known}");
-        }
-    }
+    assert_eq!(transcription_items(cx, &window, "not_requested"), [true, false, false]);
+    assert_eq!(transcription_items(cx, &window, "failed"), [false, true, false]);
+    assert_eq!(transcription_items(cx, &window, "interrupted"), [false, true, false]);
+    assert_eq!(transcription_items(cx, &window, "final"), [false, false, true]);
+    assert_eq!(transcription_items(cx, &window, "pending"), [false, false, false]);
+    assert_eq!(transcription_items(cx, &window, "live"), [false, false, false]);
+    assert_eq!(transcription_items(cx, &window, "finalizing"), [false, false, false]);
 }
-// parity: MEET-021 MEET-022
+// parity: MEET-022
 #[flow_ui::gpui::test]
 async fn title_write_failure_reports(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.detail"));
@@ -889,11 +986,16 @@ async fn detail_read_failures(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn provenance_names_the_place(cx: &mut TestAppContext) {
     let window = open_page(cx, None);
-    for (path, text) in [("custom", "Transcript: your custom server"), ("local_after_server_failure", "Transcript: this Mac (server unavailable)"), ("server", "Transcript: your server")] {
+    let path = |cx: &mut TestAppContext, path: &str| {
         sql(cx, &format!("UPDATE meeting_transcriptions SET inference_path='{path}' WHERE meeting_id='{SEED_FULL}';"));
         open(cx, &window, SEED_FULL, Tab::Thoughts);
-        assert_saw(&[text]);
-    }
+    };
+    path(cx, "custom");
+    assert_saw(&["Transcript: your custom server"]);
+    path(cx, "local_after_server_failure");
+    assert_saw(&["Transcript: this Mac (server unavailable)"]);
+    path(cx, "server");
+    assert_saw(&["Transcript: your server"]);
 }
 // parity: MEET-056
 #[flow_ui::gpui::test]
@@ -1142,16 +1244,22 @@ async fn confirming_a_suggested_speaker(cx: &mut TestAppContext) {
     assert!(!seen("Tomas Novak?"), "the label is no longer a question");
     assert_saw(&["Tomas Novak"]);
 }
-// parity: SPK-040 SPK-041 SPK-042 SPK-043
+// parity: SPK-040 SPK-042
 #[flow_ui::gpui::test]
 async fn change_speaker_submenu_writes_the_correction(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.transcript"));
     let row = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().clone());
     let choices = read(cx, &window, |p| p.pager.as_ref().unwrap().speakers.as_ref().unwrap().1.iter().filter(|x| x.merged_into.is_none()).count());
     right_click(cx, &window, sid(format!("meeting.transcript.bubble.{}", row.ordinal)));
+    fresh(cx, &window);
     submenu_item(cx, &window, 2, choices + 1);
     let manual: Option<String> = query(cx, |db| db.conn.query_row("SELECT manual_kind FROM speaker_assignments WHERE segment_id=?1", [&row.id], |r| r.get(0)).unwrap());
     assert_eq!(manual.as_deref(), Some("unknown"));
+    let manual_rows = |cx: &mut TestAppContext| -> i64 { query(cx, |db| db.conn.query_row("SELECT count(*) FROM meeting_speakers WHERE meeting_id=?1 AND origin='manual'", [SEED_FULL], |r| r.get(0)).unwrap()) };
+    let before = manual_rows(cx);
+    right_click(cx, &window, sid(format!("meeting.transcript.bubble.{}", row.ordinal)));
+    submenu_item(cx, &window, 2, choices + 2);
+    assert_eq!(manual_rows(cx), before + 1, "New speaker follows Unknown in the submenu");
 }
 // parity: SPK-044 SPK-045 SPK-072 SPK-073
 #[flow_ui::gpui::test]
@@ -1428,7 +1536,7 @@ fn open_item_menu(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>,
     click(cx, window, sid(format!("meeting.summary.editMenu.{}.{}", item.kind, item.ordinal)));
     frame(cx, window);
 }
-// parity: SUM-057 SUM-059 SUM-060
+// parity: SUM-057 SUM-060
 #[flow_ui::gpui::test]
 async fn item_double_click_edits_and_escape_cancels(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.summary"));
@@ -1551,7 +1659,7 @@ fn hover(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, id: impl
 
 // parity: NOTE-070
 #[flow_ui::gpui::test]
-async fn hovering_a_row_paints_the_canvas_and_reveals_its_menu(cx: &mut TestAppContext) {
+async fn hovering_a_row_reveals_its_menu(cx: &mut TestAppContext) {
     let window = open_page(cx, None);
     let row = sid(format!("notetaker.rowContainer.{SEED_UNTITLED}"));
     let reveal = sid(format!("notetaker.overflowReveal.{SEED_UNTITLED}"));
@@ -1740,11 +1848,12 @@ async fn pause_reason_reads_sleep_or_user(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn panel_says_finalizing_or_starting(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.panel"));
-    for (state, text) in [("finalizing", "Finalizing…"), ("preparing", "Starting…")] {
-        window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().state = state.into(); cx.notify() }).unwrap();
-        fresh(cx, &window);
-        assert_saw(&[text]);
-    }
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().state = "finalizing".into(); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Finalizing…"]);
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().state = "preparing".into(); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Starting…"]);
 }
 // parity: LIVE-043
 #[flow_ui::gpui::test]
@@ -1811,4 +1920,101 @@ async fn enrolling_with_identification_off_says_so(cx: &mut TestAppContext) {
     click(cx, &window, "meeting.speakers.save");
     fresh(cx, &window);
     assert_saw(&["Speaker identification is turned off."]);
+}
+
+// parity: NOTE-097 NOTE-098
+#[flow_ui::gpui::test]
+async fn preview_keeps_twenty_point_padding_around_header_and_notes(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    resize(cx, &window, 1180., 780.);
+    window.update(cx, |p, _, cx| p.request_preview(SEED_FULL, cx)).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    fresh(cx, &window);
+    let (preview, header) = (find(cx, &window, "notetaker.preview").bounds(), find(cx, &window, "notetaker.preview.header").bounds());
+    let title = find(cx, &window, "notetaker.preview.title").bounds();
+    assert_eq!((title.origin.x - header.origin.x, title.origin.y - header.origin.y), (px(20.), px(20.)));
+    assert_eq!(header.size.width, preview.size.width);
+    let notes = find(cx, &window, "notetaker.preview.notes").bounds();
+    assert_eq!(notes.origin.x - preview.origin.x, px(20.));
+    assert_eq!(notes.size.width, preview.size.width - px(40.));
+}
+
+// parity: SPK-054
+#[flow_ui::gpui::test]
+async fn review_notice_row_has_twelve_point_padding(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let run: String = query(cx, |db| db.conn.query_row("SELECT accepted_run_id FROM meeting_diarization WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap());
+    sql(cx, &format!("INSERT INTO speaker_corrections (id, meeting_id, run_id, kind, new_value, needs_review, created_at) VALUES ('review-2','{SEED_FULL}','{run}','rename','Marta',1,1);"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    window.update(cx, |p, w, cx| p.open_assign(None, w, cx)).unwrap();
+    fresh(cx, &window);
+    let row = find(cx, &window, "meeting.speakers.review").bounds();
+    let dismiss = find(cx, &window, "meeting.speakers.review.dismiss").bounds();
+    assert_eq!(row.origin.x + row.size.width - (dismiss.origin.x + dismiss.size.width), px(12.));
+}
+
+// parity: SPK-065
+#[flow_ui::gpui::test]
+async fn suggestions_sit_six_points_inside_their_outline(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let id = unnamed(cx, &window);
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), "Mar");
+    fresh(cx, &window);
+    let (list, row) = (find(cx, &window, "meeting.speakers.suggestions").bounds(), find(cx, &window, "meeting.speakers.suggestion.0").bounds());
+    assert_eq!(row.origin.x - list.origin.x, px(6.));
+    assert_eq!(row.origin.y - list.origin.y, px(6.));
+    assert_eq!(row.size.width, list.size.width - px(12.));
+}
+
+// parity: SUM-043
+#[flow_ui::gpui::test]
+async fn summary_editor_is_ninety_points_high(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    cx.update_window(window.into(), |_, w, cx| w.double_click("meeting.summary.text", cx)).unwrap();
+    frame(cx, &window);
+    assert_eq!(find(cx, &window, "meeting.summary.edit.frame").bounds().size.height, px(90.));
+}
+
+// parity: SUM-069
+#[flow_ui::gpui::test]
+async fn due_popover_is_two_hundred_twenty_wide(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = action_item(cx, &window, 0);
+    open_item_menu(cx, &window, &item);
+    submenu_item(cx, &window, 2, 0);
+    assert_eq!(find(cx, &window, "meeting.summary.due").bounds().size.width, px(220.));
+}
+
+// parity: NOTE-019
+#[flow_ui::gpui::test]
+async fn new_note_is_twenty_eight_points_high(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    assert_eq!(find(cx, &window, "meeting.start").bounds().size.height, px(28.));
+}
+
+// parity: SUM-059
+#[flow_ui::gpui::test]
+async fn item_menu_is_twenty_points_square(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = action_item(cx, &window, 0);
+    let b = find(cx, &window, sid(format!("meeting.summary.editMenu.{}.{}", item.kind, item.ordinal))).bounds();
+    assert_eq!((b.size.width, b.size.height), (px(20.), px(20.)));
+}
+
+// parity: SUM-077
+#[flow_ui::gpui::test]
+async fn unresolved_owner_gets_the_outlined_chip(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    assert_saw(&["Owner unresolved"]);
+    assert!(has(cx, &window, "meeting.summary.owner.unresolved"));
+}
+
+// parity: LIVE-016
+#[flow_ui::gpui::test]
+async fn dropped_frames_warn_that_audio_was_lost(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.interrupted-card"));
+    assert!(has(cx, &window, "meeting.captureLoss"));
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().dropped_frames = 0; cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert!(!has(cx, &window, "meeting.captureLoss"));
 }

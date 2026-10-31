@@ -327,9 +327,9 @@ impl NotetakerPage {
             .pb(px(4.))
             .child(div().w_full().ml(px(-10.)).py(px(8.)).font_family(GARAMOND).child(Input::new(&self.title).appearance(false).text_size(px(38.)).line_height(px(46.)).h(px(46.)).aria_label("Note title").accessibility_id("meeting.title")))
             .child(t(date_time_text(m.created_at, offset)).size(15.).color(p.muted))
-            .when(dropped, |w| w.child(div().id("meeting.captureLoss").test_support().child(sf_label("exclamationmark.triangle.fill", "Some audio was lost during recording. The transcript may be incomplete.", 13., orange(cx)))))
-            .when(!dropped && drift, |w| w.child(div().id("meeting.durationWarning").test_support().child(sf_label("exclamationmark.triangle.fill", "A recording track does not match the meeting duration. Some audio may be missing.", 13., orange(cx)))))
-            .when_some(m.failure_reason.clone(), |w, r| w.child(t(failure_reason_text(&r, track_kind.as_deref())).size(13.).color(red(cx)).id("meeting.reason")))
+            .when(dropped, |w| w.child(div().id("meeting.captureLoss").test_support().child(h_flex().gap(px(6.)).child(icon("exclamationmark.triangle.fill", 13., orange(cx))).child(t("Some audio was lost during recording. The transcript may be incomplete.").size(13.).swift_lines().color(orange(cx))))))
+            .when(!dropped && drift, |w| w.child(div().id("meeting.durationWarning").test_support().child(h_flex().gap(px(6.)).child(icon("exclamationmark.triangle.fill", 13., orange(cx))).child(t("A recording track does not match the meeting duration. Some audio may be missing.").size(13.).swift_lines().color(orange(cx))))))
+            .when_some(m.failure_reason.clone(), |w, r| w.child(t(failure_reason_text(&r, track_kind.as_deref())).size(13.).swift_lines().color(red(cx)).id("meeting.reason")))
     }
 
     fn thoughts_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -345,6 +345,9 @@ impl NotetakerPage {
                     .w_full()
                     .h(px(420.))
                     .ml(px(-10.))
+                    .mt(px(-7.))
+                    // Swift's editor is an NSTextView set to the system font, not the app font.
+                    .font_family(".SystemUIFont")
                     .child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(14.)).line_height(px(23.)).aria_label("My thoughts").accessibility_id("meeting.thoughts"))
                     .when(empty, |d| d.child(div().id("meeting.thoughts.placeholder").test_support().absolute().top(px(4.)).left(px(10.)).child(t("Capture your thoughts here").size(14.).color(p.muted.opacity(0.7)).a11y_hidden()))),
             )
@@ -367,7 +370,7 @@ impl NotetakerPage {
         }
         let track = d.track("microphone").or(d.track("system")).is_some();
         let playable = is_terminal(&d.meeting.state) && track;
-        row.child(symbol_button("meeting.playback", "Playback", "play.circle", 15., p.ink).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
+        row.child(symbol_button("meeting.playback", "Playback", "play.circle", 15., p.ink).disabled_opacity(0.7).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
             w.child(t(format!("0:00 / {}", duration_text(self.play_total))).size(12.).mono_digits().color(p.muted))
                 .child(prototype_button("meeting.playback.stop", "Stop").on_click(cx.listener(|this, _, _, cx| {
                     this.playing = false;

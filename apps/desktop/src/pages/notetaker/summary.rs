@@ -243,7 +243,7 @@ impl NotetakerPage {
                     .bg(p.warning.opacity(0.12))
                     .rounded(px(6.))
                     .child(icon("exclamationmark.triangle", 12., p.warning))
-                    .child(div().flex_1().child(t(STALE_TEXT).size(12.).color(p.ink)))
+                    .child(div().flex_1().child(t(STALE_TEXT).size(12.).swift_lines().color(p.ink)))
                     .child(prototype_button("meeting.summary.stale.regenerate", "Regenerate").on_click(cx.listener(|this, _, _, cx| this.generate(cx)))),
             );
         }
@@ -264,7 +264,7 @@ impl NotetakerPage {
                 d.child(plain_button("meeting.summary.readTranscript", "Read transcript").on_click(cx.listener(|this, _, _, cx| {
                     this.tab = Tab::Transcript;
                     cx.notify();
-                })).content(t("Read transcript").color(p.accent).a11y_hidden()))
+                })).content(t("Read transcript").size(15.).color(p.accent).a11y_hidden()))
             }));
         };
         out = out.child(self.summary_body(&model, cx));
@@ -369,7 +369,7 @@ impl NotetakerPage {
                         cx.notify();
                     }
                 }))
-                .child(div().w_full().h(px(90.)).text_size(px(14.)).border_1().border_color(p.line).rounded(px(4.)).child(Textarea::new(&self.summary.summary_input).appearance(false).bordered(false).h_full().aria_label("Summary").accessibility_id("meeting.summary.editor")))
+                .child(div().id("meeting.summary.edit.frame").test_support().w_full().h(px(90.)).text_size(px(14.)).border_1().border_color(p.line).rounded(px(4.)).child(Textarea::new(&self.summary.summary_input).appearance(false).bordered(false).h_full().aria_label("Summary").accessibility_id("meeting.summary.editor")))
                 .child(h_flex().gap(px(8.)).child(prototype_button("meeting.summary.edit.save", "Save").on_click(cx.listener(|this, _, _, cx| this.save_summary_edit(cx)))).child(plain_button("meeting.summary.edit.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| {
                     this.summary.editing_summary = false;
                     cx.notify();
@@ -526,12 +526,15 @@ impl NotetakerPage {
         v_flex()
             .id("meeting.summary.due")
             .test_support()
-            .p(px(12.))
+            .w(px(220.))
+            .py(px(12.))
             .gap(px(8.))
-            .child(Calendar::new(&self.summary.due))
+            // The small calendar already fills Swift's 220 frame, so only the buttons take its 12 inset.
+            .child(Calendar::new(&self.summary.due).small())
             .child(
                 h_flex()
                     .w_full()
+                    .px(px(12.))
                     .child(plain_button("meeting.summary.due.popover.clear", "Clear").on_click(cx.listener(move |this, _, _, cx| this.set_due(&clear, None, cx))).content(t("Clear").a11y_hidden()))
                     .child(div().flex_1())
                     .child(prototype_button("meeting.summary.due.save", "Save").on_click(cx.listener(move |this, _, _, cx| {
@@ -557,7 +560,7 @@ impl NotetakerPage {
                     })
                     .into_any_element()
             }
-            Owner::Unresolved(label) => chip.border_1().border_dashed().border_color(p.muted).child(t(label).size(11.).color(p.muted)).into_any_element(),
+            Owner::Unresolved(label) => chip.id("meeting.summary.owner.unresolved").test_support().border_1().border_dashed().border_color(p.muted).child(t(label).size(11.).color(p.muted)).into_any_element(),
         }
     }
 }

@@ -84,7 +84,7 @@ impl NotetakerPage {
             }
             card = card.child(h_flex().gap(px(14.)).child(track_indicator("microphone", "Microphone", &s.microphone, cx)).child(track_indicator("system", "System audio", &s.system, cx)));
             if s.dropped_frames > 0 {
-                card = card.child(div().id("meeting.captureLoss").child(sf_label("exclamationmark.triangle.fill", "Some audio was lost during recording. The transcript may be incomplete.", 12., orange(cx))));
+                card = card.child(div().id("meeting.captureLoss").test_support().child(sf_label("exclamationmark.triangle.fill", "Some audio was lost during recording. The transcript may be incomplete.", 12., orange(cx))));
             }
             if let Some(n) = s.notice.clone() {
                 let permission = self.refusal.as_ref().is_some_and(|r| r.contains("System Settings"));

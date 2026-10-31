@@ -420,7 +420,7 @@ impl NotetakerPage {
         let rows: Vec<&(String, String)> = s.segments.iter().filter(|r| query.is_empty() || contains(&r.0, &query)).collect();
         if rows.is_empty() {
             let text = if s.transcription_requested { "Listening…" } else { "Transcription is off for this note." };
-            return div().w_full().py(px(20.)).child(t(text).italic().color(p.muted).center()).into_any_element();
+            return div().id("meeting.transcript.liveEmpty").test_support().w_full().py(px(20.)).child(div().id("meeting.transcript.liveEmpty.text").test_support().child(t(text).italic().color(p.muted).center())).into_any_element();
         }
         let mut list = v_flex().id("meeting.transcript.list").w_full().gap(px(3.));
         for (i, (text, tracks)) in rows.iter().map(|r| (&r.0, &r.1)).enumerate() {

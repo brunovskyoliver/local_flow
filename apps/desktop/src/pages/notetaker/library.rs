@@ -18,9 +18,9 @@ impl NotetakerPage {
                         .flex_none()
                         .child(self.library_header(compact, cx))
                         .child(self.today_card(window, cx))
-                        .when_some(self.lib.notice.clone().or(self.lib.detail_notice.clone()), |d, n| d.child(div().pb(px(12.)).child(t(n).size(13.).color(red(cx)))))
+                        .when_some(self.lib.notice.clone().or(self.lib.detail_notice.clone()), |d, n| d.child(div().pb(px(12.)).child(t(n).size(13.).swift_lines().color(red(cx)))))
                         .child(self.tab_row(cx))
-                        .when(self.show_search, |d| d.child(div().mt(px(12.)).p(px(10.)).bg(p.canvas).rounded(px(8.)).text_size(px(14.)).child(Input::new(&self.query).appearance(false).aria_label("Search").accessibility_id("notetaker.search"))))
+                        .when(self.show_search, |d| d.child(div().id("notetaker.searchField").test_support().mt(px(12.)).h(px(37.)).flex().items_center().bg(p.canvas).rounded(px(8.)).text_size(px(14.)).child(Input::new(&self.query).appearance(false).aria_label("Search").accessibility_id("notetaker.search"))))
                         .child(self.note_list(cx)),
                 ),
             )
@@ -302,7 +302,7 @@ impl NotetakerPage {
         let notice = self.lib.preview_notice.clone();
         v_flex().id("notetaker.preview").test_support().size_full().when_some(row, |d, row| {
             let offset = offset_at(row.created_at, cx);
-            d.child(v_flex().p(px(20.)).gap(px(8.)).child(t(row.display_title(offset)).font(18., 500.)).child(t(format!("{} · {}", date_time_text(row.created_at, offset), duration_text(row.recorded_ms))).size(14.).color(p.muted).mono_digits()))
+            d.child(v_flex().id("notetaker.preview.header").test_support().p(px(20.)).gap(px(8.)).child(div().id("notetaker.preview.title").test_support().child(t(row.display_title(offset)).font(18., 500.))).child(t(format!("{} · {}", date_time_text(row.created_at, offset), duration_text(row.recorded_ms))).size(14.).color(p.muted).mono_digits()))
                 .child(hairline(cx))
                 .child(
                     div().id("notetaker.preview.scroll").flex_1().min_h_0().overflow_y_scroll().child(
@@ -310,7 +310,7 @@ impl NotetakerPage {
                             .w_full()
                             .p(px(20.))
                             .gap(px(16.))
-                            .when_some(notes, |d, n| d.child(t("MY THOUGHTS").font(12., 500.).tracking(1.2).color(p.muted)).child(t(n).size(14.).line_spacing(6.)))
+                            .when_some(notes, |d, n| d.child(t("MY THOUGHTS").font(12., 500.).tracking(1.2).color(p.muted)).child(div().id("notetaker.preview.notes").test_support().w_full().child(t(n).size(14.).line_spacing(6.))))
                             .when_some(notice, |d, n| d.child(t(n).size(14.).color(red(cx)))),
                     ),
                 )
@@ -334,5 +334,13 @@ pub(crate) fn checkbox_row(title: &'static str, on: bool, cx: &App) -> impl Into
 pub(crate) fn live_badge(state: &str, elapsed: i64, size: f32, cx: &App) -> impl IntoElement {
     let color = if state == "paused" { pal(cx).muted } else { green(cx) };
     let text = duration_text(elapsed);
-    h_flex().id("meeting.elapsed").gap(px(8.)).child(icon(if state == "paused" { "pause.fill" } else { "waveform" }, size - 1., color)).child(t(text).size(size).mono_digits().color(color))
+    let paused = state == "paused";
+    let glyph = div().child(icon(if paused { "pause.fill" } else { "waveform" }, size - 1., color));
+    // The iterative variable-color effect, approximated as a pulse as in the shell's badge: Lucide glyphs have no layers.
+    let glyph = if paused || cx.global::<flow_ui::tokens::Flow>().reduce_motion {
+        glyph.into_any_element()
+    } else {
+        div().id("meeting.waveform").test_support().child(glyph.with_animation("meeting.waveform.pulse", Animation::new(std::time::Duration::from_millis(1200)).repeat(), |d, f| d.opacity(0.45 + 0.55 * (1. - (2. * f - 1.).abs())))).into_any_element()
+    };
+    h_flex().id("meeting.elapsed").gap(px(8.)).child(glyph).child(t(text).size(size).mono_digits().color(color))
 }

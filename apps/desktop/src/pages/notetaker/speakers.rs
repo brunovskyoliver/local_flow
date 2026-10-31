@@ -156,7 +156,7 @@ impl NotetakerPage {
                     .child(div().absolute().top(px(22.)).right(px(22.)).child(plain_button("meeting.speakers.close", "Close").on_click(cx.listener(|this, _, _, cx| this.close_assign(cx))).content(div().size(px(30.)).flex().items_center().justify_center().child(icon("xmark", 15., p.ink)))))
                     .child(
                         // The scroller shows that more voices follow below the fold (UI-14).
-                        div().relative().w_full().flex().flex_col().child(div().id("meeting.speakers.scroll").test_support().w_full().min_h(px(160.)).max_h(px(480.)).overflow_y_scroll().track_scroll(&handle).child(scroll)).child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Always).styles(move |styles| styles.track(|x| x.bg(p.canvas)).thumb(|x| x.bg(p.muted.opacity(0.6)).width(px(7.)).radius(px(4.))).thumb_hover(|x| x.bg(p.muted.opacity(0.8)).width(px(7.)).radius(px(4.))).thumb_active(|x| x.bg(p.muted).width(px(7.)).radius(px(4.))))),
+                        div().relative().w_full().flex().flex_col().child(div().id("meeting.speakers.scroll").test_support().w_full().min_h(px(160.)).max_h(px(480.)).overflow_y_scroll().track_scroll(&handle).child(scroll)).child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Scrolling).styles(move |styles| styles.track(|x| x.bg(p.canvas)).thumb(|x| x.bg(p.muted.opacity(0.6)).width(px(7.)).radius(px(4.))).thumb_hover(|x| x.bg(p.muted.opacity(0.8)).width(px(7.)).radius(px(4.))).thumb_active(|x| x.bg(p.muted).width(px(7.)).radius(px(4.))))),
                     )
                     .child(hairline(cx))
                     .child(
@@ -207,7 +207,7 @@ impl NotetakerPage {
                 div()
                     .w_full()
                     .h(px(46.))
-                    .px(px(10.))
+                    .px(px(4.))
                     .flex()
                     .items_center()
                     .rounded(px(12.))
@@ -218,7 +218,7 @@ impl NotetakerPage {
             );
         }
         if !suggestions.is_empty() {
-            let mut list = v_flex().w_full().gap(px(2.)).p(px(6.)).rounded(px(12.)).border_1().border_color(p.line);
+            let mut list = v_flex().id("meeting.speakers.suggestions").test_support().w_full().gap(px(2.)).p(px(5.)).rounded(px(12.)).border_1().border_color(p.line);
             for (i, name) in suggestions.into_iter().enumerate() {
                 let (speaker, pick) = (id.clone(), name.clone());
                 list = list.child(plain_button(sid(format!("meeting.speakers.suggestion.{i}")), sid(format!("Use name {name}"))).full_width().on_click(cx.listener(move |this, _, w, cx| {
@@ -230,7 +230,7 @@ impl NotetakerPage {
                         }
                     }
                     cx.notify();
-                })).content(div().w_full().px(px(12.)).py(px(10.)).rounded(px(8.)).hover(|d| d.bg(p.canvas)).child(t(name).size(15.).a11y_hidden())));
+                })).content(div().w_full().px(px(12.)).py(px(10.)).rounded(px(8.)).hover(|d| d.bg(p.canvas)).child(t(name).size(15.).swift_lines().a11y_hidden())));
             }
             column = column.child(list);
         }
@@ -340,7 +340,7 @@ impl NotetakerPage {
     /// `pickerMenu`: name, sample count and the re-enrollment tag; never scores.
     fn known_menu(&mut self, accessibility: &'static str, title: &'static str, known: &[KnownSpeaker], id: &str, cx: &mut Context<Self>) -> impl IntoElement {
         let (known, id, page) = (known.to_vec(), id.to_string(), cx.entity().downgrade());
-        text_menu(accessibility, title, 12., cx).dropdown_menu(move |mut menu, _, _| {
+        text_menu(accessibility, title, 14., cx).dropdown_menu(move |mut menu, _, _| {
             for k in &known {
                 let noun = if k.samples == 1 { "voice sample" } else { "voice samples" };
                 let tag = if k.samples == 0 { " · needs re-enrollment" } else { "" };
