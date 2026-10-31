@@ -163,23 +163,22 @@ impl OnboardingPage {
             let text = if Purpose::stored(prefs) == Purpose::Meetings || prefs.bool_or("server.only", false) { MEETING_CONSENT_TEXT } else { CONSENT_TEXT };
             let cancel = self.click(cx, |this, cx| this.cancel_consent(cx));
             let confirm = self.click(cx, |this, cx| this.confirm_consent(cx));
-            let line = p.card_line;
             v_flex()
                 .w(px(460.))
                 .p(px(24.))
                 .gap(px(16.))
                 .child(t("Use your LocalFlow server?").font(17., 500.))
                 .child(
-                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(8.)).border_1().border_color(line).child(icon("server.rack", 16., p.muted)).child(div().flex_1().min_w_0().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL"))),
+                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(8.)).border_2().border_color(p.accent).child(icon("server.rack", 16., p.muted)).child(div().flex_1().min_w_0().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL"))),
                 )
                 .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.))
                 .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
                 .when_some(self.remote.error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning)))
-                .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").on_click(cancel)).child(primary_button("settings.remoteConsentConfirm", "Turn On").disabled(origin.is_none()).on_click(confirm)))
+                .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.21)).on_click(cancel)).child(primary_button("settings.remoteConsentConfirm", "Turn On").when(origin.is_none(), |b| b.fill(p.ink.opacity(0.1)).text_color(p.muted).disabled_opacity(1.)).disabled(origin.is_none()).on_click(confirm)))
         };
         // Stops clicks reaching the page behind, as a sheet does.
         Some(any(deferred(
-            h_flex().id("onboarding.modal").occlude().absolute().inset_0().justify_center().bg(gpui_black(0.25)).child(div().bg(p.surface).rounded(px(12.)).border_1().border_color(p.line).child(body)),
+            h_flex().id("onboarding.modal").occlude().absolute().inset_0().justify_center().bg(sheet_scrim(cx)).child(div().bg(sheet_fill(cx)).rounded(px(12.)).child(body)),
         )))
     }
 }

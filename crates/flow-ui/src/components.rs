@@ -421,3 +421,14 @@ mod tests {
         assert_eq!(FlowSwitch::track_color(true, false, &dark).a, 0.14);
     }
 }
+
+/// What a native sheet does to its parent, measured from the Swift reference: a 60 percent wash.
+pub fn sheet_scrim(cx: &App) -> Hsla {
+    let level = if pal(cx).mode.is_dark() { 21. / 255. } else { 171. / 255. };
+    gpui_kit::hsla(0., 0., level, 0.6)
+}
+
+/// A native sheet's own fill: white, or 0x1E gray in dark, with no border.
+pub fn sheet_fill(cx: &App) -> Hsla {
+    gpui_kit::hsla(0., 0., if pal(cx).mode.is_dark() { 30. / 255. } else { 1. }, 1.)
+}

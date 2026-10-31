@@ -3,12 +3,12 @@ SHELL-002	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell
 SHELL-003	auto	test:landing_page_follows_purpose
 SHELL-004	service	service:services.start has no Rust equivalent yet; dictation and models arrive with the capture and model phases
 SHELL-005	auto	test:router_keeps_selection_across_close
-SHELL-006	not-run	not-run:no PNG: winid showed no main window for Swift and Rust launched normally; Rust matches by not opening one
+SHELL-006	live	live:audit/mac/shell/launch-no-window.txt
 SHELL-007	service	service:AppInstanceLock arrives with the app bootstrap phase
 SHELL-008	service	service:0o700 folder creation arrives with the app bootstrap phase
 SHELL-009	recorded	recorded:no deep links exist in Swift, none added
 SHELL-010	auto	test:router_keeps_selection_across_close
-SHELL-011	not-run	not-run:on_reopen is wired in main.rs; clicking the Dock icon was not exercised because the audit must not take focus
+SHELL-011	auto	test:reopening_keeps_the_setup_step
 SHELL-012	service	service:GPUI has no terminate delegate; the shortcut and menu go through menu::quit; a system logout waits on the platform phase
 SHELL-013	recorded	recorded:SwiftUI wiring detail with no Rust counterpart; main.rs composes services directly
 SHELL-014	service	service:update_busy computes the gate but Sparkle arrives with the updater phase
@@ -32,25 +32,25 @@ SHELL-031	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell
 SHELL-032	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-033	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-034	auto	test:landing_page_follows_purpose
-SHELL-035	not-run	not-run:onboarding finish refresh belongs with status/06 onboarding; Shell only re-renders on the preference
+SHELL-035	auto	test:finishing_writes_prefs_and_opens_the_library
 SHELL-036	service	service:flushMeetingNotes needs the notes tasks in the meeting pipeline phase
 SHELL-037	auto	test:router_keeps_selection_across_close
-SHELL-038	not-run	not-run:500 ms polling exists in Shell::new; not asserted because the test clock loop would hide the activation condition
+SHELL-038	auto	test:only_an_active_settings_or_setup_window_polls
 SHELL-039	auto	test:appearance_preference_switches_the_palette
 SHELL-040	auto	test:sidebar_rows_navigate_and_mark_selection
-SHELL-041	auto	test:sidebar_rows_navigate_and_mark_selection
+SHELL-041	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png ; test:sidebar_rows_navigate_and_mark_selection
 SHELL-042	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-043	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-044	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-045	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-046	auto	test:sidebar_rows_navigate_and_mark_selection
-SHELL-047	auto	test:sidebar_rows_navigate_and_mark_selection
+SHELL-047	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png ; test:sidebar_rows_navigate_and_mark_selection
 SHELL-048	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-049	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-050	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-051	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-052	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
-SHELL-053	auto	test:active_note_card_opens_its_meeting
+SHELL-053	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png ; test:active_note_card_opens_its_meeting
 SHELL-054	auto	test:active_note_card_opens_its_meeting
 SHELL-055	auto	test:active_note_card_opens_its_meeting
 SHELL-056	auto	test:active_note_card_opens_its_meeting
@@ -71,12 +71,12 @@ SHELL-070	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-071	auto	test:pages_show_unavailable_until_stores_exist
 SHELL-072	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-073	auto	test:pages_show_unavailable_until_stores_exist
-SHELL-074	not-run	not-run:Insights refresh belongs with the store owner in status/03; no dictation exists to trigger it
+SHELL-074	service	service:the trigger is a new dictation, from the capture pipeline, Feature 025; refresh on appearing is tested in status/03
 SHELL-075	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-076	auto	test:pages_show_unavailable_until_stores_exist
 SHELL-077	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-078	auto	test:pages_show_unavailable_until_stores_exist
-SHELL-079	auto	test:recovery_states_render_and_disable_while_busy
+SHELL-079	live	live:audit/mac/shell/unsaved-light-rust.png ; recorded:Rust-only: an unsaved dictation needs capture ; test:recovery_states_render_and_disable_while_busy
 SHELL-080	auto	test:pages_show_unavailable_until_stores_exist
 SHELL-081	auto	test:recovery_states_render_and_disable_while_busy
 SHELL-082	auto	test:recovery_actions_retry_copy_and_discard
@@ -128,7 +128,7 @@ SHELL-127	auto	test:quit_refuses_in_swifts_order
 SHELL-128	auto	test:quit_refuses_in_swifts_order
 SHELL-129	service	service:model lifecycle phase provides the shutdown result
 SHELL-130	service	service:resource recorder phase provides the export result
-SHELL-131	service	service:in-window alert copy exists under scenario shell.recording-cant-wait; the trigger needs flowd capture
+SHELL-131	service	service:the native alert copy shows under scenario shell.recording-cant-wait; its trigger needs flowd capture, Feature 025 ; live:audit/mac/shell/recording-cant-wait-light-rust.png
 SHELL-132	service	service:Services::choose_save_path returns Unavailable until the platform phase
 SHELL-133	service	service:alert closes without writing; real recovery audio needs flowd capture
 SHELL-134	service	service:UserNotifications arrives with the platform phase
@@ -189,15 +189,15 @@ PILL-014	auto	test:panel_position
 PILL-015	service	service:choosing the target screen needs AX in the capture phase; primary display used
 PILL-016	auto	test:panel_position
 PILL-017	auto	test:timing_and_waveform_math
-PILL-018	not-run	not-run:0.18 s fade runs inside the window; animation frames were not captured
-PILL-019	service	service:GPUI cannot animate a window frame; the panel reopens at the new size; needs a platform call
-PILL-020	not-run	not-run:branch exists; Reduce Motion is a system setting the audit must not change
+PILL-018	auto	test:hide_fades_then_closes
+PILL-019	live	test:resize_animates_the_same_panel ; live:audit/mac/shell/pill-swap-frames.txt
+PILL-020	auto	test:reduce_motion_resizes_and_hides_at_once
 PILL-021	service	service:reposition triggers need NSWorkspace in the platform phase
 PILL-022	auto	test:meter_updates_skip_layout
 PILL-023	auto	test:precedence_and_show_decision
 PILL-024	auto	test:precedence_and_show_decision
-PILL-025	not-run	not-run:content swaps instantly: GPUI has no view scale and the panel reopens per content; difference stands
-PILL-026	not-run	not-run:swap is unanimated in every mode, which matches this row; not separately exercised
+PILL-025	auto	test:content_swap_springs_in_and_reduce_motion_cuts
+PILL-026	auto	test:content_swap_springs_in_and_reduce_motion_cuts
 PILL-027	auto	test:meter_updates_skip_layout
 PILL-028	auto	test:precedence_and_show_decision
 PILL-029	auto	test:bars_follow_swift_formulas
@@ -218,7 +218,7 @@ PILL-043	auto	test:bars_follow_swift_formulas
 PILL-044	auto	test:precedence_and_show_decision
 PILL-045	auto	test:precedence_and_show_decision
 PILL-046	auto	test:precedence_and_show_decision
-PILL-047	auto	test:dictation_labels_and_cancel
+PILL-047	live	live:audit/mac/shell/pill-recording-dark-rust.png ; recorded:Rust-only: the reference pill needs a live dictation and microphone ; test:dictation_labels_and_cancel
 PILL-048	auto	test:dictation_labels_and_cancel
 PILL-049	auto	test:dictation_labels_and_cancel
 PILL-050	auto	test:dictation_labels_and_cancel
@@ -235,9 +235,9 @@ PILL-060	auto	test:announcements_match_swift
 PILL-061	auto	test:announcements_match_swift
 PILL-062	auto	test:announcements_match_swift
 PILL-063	auto	test:announcements_match_swift
-PILL-064	auto	test:learned_notice_copy_actions_and_timer
-PILL-065	auto	test:learned_notice_copy_actions_and_timer
-PILL-066	auto	test:learned_notice_copy_actions_and_timer
+PILL-064	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; recorded:Rust-only: the reference notices need a live dictation ; test:learned_notice_copy_actions_and_timer
+PILL-065	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; recorded:Rust-only: the reference notices need a live dictation ; test:learned_notice_copy_actions_and_timer
+PILL-066	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; recorded:Rust-only: the reference notices need a live dictation ; test:learned_notice_copy_actions_and_timer
 PILL-067	auto	test:learned_notice_copy_actions_and_timer
 PILL-068	auto	test:learned_notice_copy_actions_and_timer
 PILL-069	auto	test:learned_notice_copy_actions_and_timer
@@ -250,12 +250,12 @@ PILL-075	auto	test:microphone_notice
 PILL-076	auto	test:microphone_notice
 PILL-077	auto	test:microphone_notice
 PILL-078	auto	test:microphone_notice
-PILL-079	auto	test:clipboard_notice
+PILL-079	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; recorded:Rust-only: the reference notices need a live dictation ; test:clipboard_notice
 PILL-080	auto	test:clipboard_notice
 PILL-081	auto	test:clipboard_notice
 PILL-082	auto	test:clipboard_notice
 PILL-083	auto	test:clipboard_notice
-PILL-084	auto	test:action_notices_show_every_message
+PILL-084	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; recorded:Rust-only: the reference notices need a live dictation ; test:action_notices_show_every_message
 PILL-085	auto	test:action_notices_show_every_message
 PILL-086	auto	test:action_notices_show_every_message
 PILL-087	auto	test:action_notices_show_every_message
@@ -283,9 +283,9 @@ PILL-108	auto	test:action_notices_show_every_message
 PILL-109	auto	test:action_notices_show_every_message
 PILL-110	service	service:published meeting texts arrive with the meeting pipeline; the notice renders any string
 PILL-111	recorded	recorded:debug-only Swift strings, out of scope
-PILL-112	auto	test:background_notice
+PILL-112	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; recorded:Rust-only: the reference notices need a live dictation ; test:background_notice
 PILL-113	auto	test:background_notice
-PILL-114	auto	test:background_notice
+PILL-114	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; recorded:Rust-only: the reference notices need a live dictation ; test:background_notice
 PILL-115	auto	test:background_notice
 PILL-116	auto	test:background_notice
 PILL-117	auto	test:background_notice
@@ -299,8 +299,8 @@ PILL-124	auto	test:background_notice
 PILL-125	auto	test:background_notice
 SHELL-145	auto	test:begin_review_refuses_silently
 SHELL-146	auto	test:begin_review_refuses_silently
-SHELL-147	auto	test:review_sheet_shows_warnings_and_buttons_work
-SHELL-148	auto	test:review_sheet_shows_warnings_and_buttons_work
+SHELL-147	live	live:audit/mac/shell/review-light-rust.png ; recorded:Rust-only: the reference rows reveal Insert only on pointer hover, and AeroSpace returns its window off screen; checked against Swift source ; test:review_sheet_shows_warnings_and_buttons_work
+SHELL-148	live	live:audit/mac/shell/review-light-rust.png ; recorded:Rust-only: the reference rows reveal Insert only on pointer hover, and AeroSpace returns its window off screen; checked against Swift source ; test:review_sheet_shows_warnings_and_buttons_work
 SHELL-149	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-150	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-151	auto	test:review_sheet_shows_warnings_and_buttons_work
@@ -309,7 +309,7 @@ SHELL-153	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-154	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-155	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-156	auto	test:review_sheet_shows_warnings_and_buttons_work
-SHELL-157	auto	test:panel_runs_select_confirm_insert
+SHELL-157	live	live:audit/mac/shell/review-light-rust.png ; recorded:Rust-only: the reference rows reveal Insert only on pointer hover, and AeroSpace returns its window off screen; checked against Swift source ; test:panel_runs_select_confirm_insert
 SHELL-158	auto	test:panel_runs_select_confirm_insert
 SHELL-159	auto	test:panel_sits_near_the_bottom_center
 SHELL-160	auto	test:panel_runs_select_confirm_insert
@@ -318,7 +318,7 @@ SHELL-162	auto	test:panel_runs_select_confirm_insert
 SHELL-163	auto	test:panel_runs_select_confirm_insert ; test:unsupported_and_paste_targets
 SHELL-164	auto	test:unsupported_and_paste_targets
 SHELL-165	auto	test:panel_runs_select_confirm_insert
-SHELL-166	service	service:insert_once runs and is tested; store beginAttempt and recordOutcome arrive with the dictation pipeline phase
+SHELL-166	auto	test:delivery_is_recorded_around_the_insert ; test:a_rewrite_marks_its_attempt_delivered
 SHELL-167	auto	test:panel_runs_select_confirm_insert
 SHELL-168	auto	test:panel_runs_select_confirm_insert
 SHELL-169	auto	test:cancelling_and_failure_copy
@@ -374,17 +374,17 @@ SHELL-218	auto	test:palette_matches_sotto
 SHELL-219	auto	test:palette_matches_sotto
 SHELL-220	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-221	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
-SHELL-222	not-run	not-run:no screen in this inventory uses the serif; compared by page owners
+SHELL-222	auto	test:button_styles_match_swift
 SHELL-223	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-224	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-225	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
-SHELL-226	not-run	not-run:compact padding was not captured at 800 wide or less
-SHELL-227	not-run	not-run:no Swift pair in this inventory shows this button; compared by page owners
-SHELL-228	not-run	not-run:pressed state needs a held mouse in a real window
+SHELL-226	auto	test:compact_page_padding_is_24_and_32
+SHELL-227	auto	test:button_styles_match_swift
+SHELL-228	auto	test:button_styles_match_swift
 SHELL-229	live	live:audit/mac/shell/unsaved-busy-light-rust.png
-SHELL-230	not-run	not-run:no primary button in this inventory; compared by page owners
-SHELL-231	not-run	not-run:pressed state needs a held mouse in a real window
-SHELL-232	not-run	not-run:no disabled primary button in this inventory; compared by page owners
+SHELL-230	auto	test:button_styles_match_swift
+SHELL-231	auto	test:button_styles_match_swift
+SHELL-232	auto	test:button_styles_match_swift
 SHELL-233	service	service:VoiceOver state needs a platform call; hover half is the Kit group hover used by pages
 SHELL-234	recorded	recorded:Swift note or unconstructed view; no reachable behaviour to port
 SHELL-235	recorded	recorded:Swift note or unconstructed view; no reachable behaviour to port

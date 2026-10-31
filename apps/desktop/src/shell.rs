@@ -400,7 +400,8 @@ pub fn open_main_window(cx: &mut App) {
     // The audit opens a window that takes no focus and stays out of the tiling layout.
     let audit = std::env::var_os("LOCALFLOW_AUDIT_WINDOW").is_some();
     let options = if audit {
-        let bounds = Bounds { origin: point(px(30.), px(60.)), size: size(px(1180.), px(780.)) };
+        let length = |name, default| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+        let bounds = Bounds { origin: point(px(30.), px(60.)), size: size(px(length("LOCALFLOW_AUDIT_WIDTH", 1180.)), px(length("LOCALFLOW_AUDIT_HEIGHT", 780.))) };
         WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: None, focus: false, kind: WindowKind::PopUp, is_movable: false, ..Default::default() }
     } else {
         let bounds = Bounds::centered(None, DEFAULT_SIZE, cx);
@@ -720,9 +721,9 @@ pub fn modal(id: &'static str, width: f32, padding: f32, cx: &App, content: impl
         .flex()
         .items_center()
         .justify_center()
-        .bg(black().opacity(0.2))
+        .bg(sheet_scrim(cx))
         .occlude()
-        .child(v_flex().w(px(width)).p(px(padding)).bg(p.surface).border_1().border_color(p.line).rounded(px(14.)).shadow_lg().text_color(p.ink).text_size(px(14.)).child(content))
+        .child(v_flex().w(px(width)).p(px(padding)).bg(sheet_fill(cx)).rounded(px(14.)).shadow_lg().text_color(p.ink).text_size(px(14.)).child(content))
 }
 
 /// Title, message and buttons, in the order Swift adds them.
