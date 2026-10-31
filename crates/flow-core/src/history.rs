@@ -589,7 +589,8 @@ pub fn processing_lines(d: &Value) -> Vec<Line> {
         meta("Minimum padded input", Some(format!("{} samples", n("minimumPaddedSamples")))),
     ];
     if let Some(stages) = p["stageDurations"].as_object() {
-        // serde_json's map is ordered, so these are sorted like Swift's `keys.sorted()`.
+        // Swift's `keys.sorted()`. serde_json keeps insertion order once GPUI turns on `preserve_order`.
+        let stages: std::collections::BTreeMap<_, _> = stages.iter().collect();
         for (k, v) in stages {
             out.push(meta(format!("{} duration", capitalized(k)), Some(format!("{} seconds", double_text(v.as_f64().unwrap_or(0.0))))));
         }
@@ -657,7 +658,7 @@ pub fn hash_lines(d: &Value, content_hash: &str) -> Vec<Line> {
         out.push(meta(format!("Raw window {}", w["sequence"].as_i64().unwrap_or(0) + 1), text_of(&w["textHash"])));
     }
     if let Some(a) = p["artifactHashes"].as_object() {
-        for (k, v) in a {
+        for (k, v) in a.iter().collect::<std::collections::BTreeMap<_, _>>() {
             out.push(meta(k.clone(), text_of(v)));
         }
     }
