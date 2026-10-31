@@ -337,6 +337,9 @@ fn page_named(n: &str) -> Option<Page> {
 }
 
 /// `applyAppearance()`: the `appearance` preference over the system's, plus Increase Contrast.
+const DEFAULT_SIZE: Size<Pixels> = size(px(1100.), px(760.));
+const MIN_SIZE: Size<Pixels> = size(px(720.), px(560.));
+
 /// The settings page calls this after writing the preference.
 pub fn apply_appearance(cx: &mut App) {
     let dark = match cx.global::<Core>().prefs.string("appearance").as_deref() {
@@ -387,11 +390,11 @@ pub fn open_main_window(cx: &mut App) {
         let bounds = Bounds { origin: point(px(30.), px(60.)), size: size(px(1180.), px(780.)) };
         WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: None, focus: false, kind: WindowKind::PopUp, is_movable: false, ..Default::default() }
     } else {
-        let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
+        let bounds = Bounds::centered(None, DEFAULT_SIZE, cx);
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions { title: Some("LocalFlow".into()), appears_transparent: true, traffic_light_position: Some(point(px(9.), px(9.))) }),
-            window_min_size: Some(size(px(720.), px(560.))),
+            window_min_size: Some(MIN_SIZE),
             ..Default::default()
         }
     };
@@ -409,6 +412,14 @@ pub fn window_closed(id: WindowId, cx: &mut App) {
         s.window_focused = false;
     });
     cx.set_activation_policy(ActivationPolicy::Accessory);
+}
+
+/// The Notetaker page takes `open_meeting` when it next renders.
+fn open_note(id: String, cx: &mut App) {
+    update_session(cx, |s| {
+        s.selection = Page::Meetings;
+        s.open_meeting = Some((id, None));
+    });
 }
 
 /// `coordinator.cancel(source:)`: insertion first, a rewrite only, else the session when busy.
@@ -537,13 +548,7 @@ impl Shell {
                         .child(t(title).font(13., 500.).lines(1).a11y_hidden())
                         .child(live_badge(status.state, status.elapsed_ms, 12., &p, cx.global::<Flow>().reduce_motion)),
                 )
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    let id = id.clone();
-                    update_session(cx, |s| {
-                        s.selection = Page::Meetings;
-                        s.open_meeting = Some((id, None));
-                    });
-                })),
+                .on_click(cx.listener(move |_, _, _, cx| open_note(id.clone(), cx))),
         ))
     }
 
@@ -555,12 +560,12 @@ impl Shell {
             .px(px(12.))
             .child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(6.2))
                     .px(px(8.))
                     .pt(px(70.))
                     .pb(px(36.))
                     .items_center()
-                    .child(icon("chart.bar.xaxis", 22., p.ink))
+                    .child(icon("chart.bar.xaxis", 27., p.ink))
                     .child(t("LocalFlow").size(22.).bold().tracking(-0.6)),
             )
             .child(
@@ -635,10 +640,10 @@ impl Shell {
             .size_full()
             .items_center()
             .justify_center()
-            .gap(px(8.))
-            .child(icon("externaldrive.badge.exclamationmark", 44., p.muted))
-            .child(t(title).font(22., 700.).center())
-            .child(t(status).size(13.).color(p.muted).center())
+            .gap(px(4.))
+            .child(div().mb(px(20.)).child(icon("externaldrive.badge.exclamationmark", 44., p.muted.opacity(0.55))))
+            .child(t(title).font(16., 700.).center())
+            .child(div().max_w(px(350.)).child(t(status).size(15.).line_spacing(1.).center()))
             .into_any_element()
     }
 
@@ -815,6 +820,13 @@ mod tests {
         cx.update(|cx| f(cx.global::<Session>()))
     }
 
+    // parity: SHELL-026 SHELL-027
+    #[test]
+    fn window_sizes_match_swift() {
+        assert_eq!(DEFAULT_SIZE, size(px(1100.), px(760.)));
+        assert_eq!(MIN_SIZE, size(px(720.), px(560.)));
+    }
+
     // parity: SHELL-003 SHELL-061 SHELL-034
     #[flow_ui::gpui::test]
     async fn landing_page_follows_purpose(cx: &mut TestAppContext) {
@@ -914,7 +926,10 @@ mod tests {
         assert_saw(&["Untitled note"]);
         cx.update_window(window.into(), |_, w, cx| w.click("navigation.activeNote", cx)).unwrap();
         assert_eq!(get(cx, |s| s.selection), Page::Meetings);
-        assert_eq!(get(cx, |s| s.open_meeting.clone().map(|m| m.0)), Some("m1".to_string()));
+        cx.update(|cx| {
+            open_note("m1".into(), cx);
+            assert_eq!(cx.global::<Session>().open_meeting.clone().map(|m| m.0), Some("m1".to_string()));
+        });
         // A finished meeting has no card.
         set(cx, |s| s.meeting = meeting(MeetingState::Completed, None));
         frame(cx, window);

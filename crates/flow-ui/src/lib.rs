@@ -50,6 +50,17 @@ pub fn application() -> gpui_kit::Application {
     gpui_kit::application().with_assets(icons::FlowAssets)
 }
 
+/// A window without Kit's `Root`, whose theme fill would hide a transparent background.
+pub fn open_bare_window<V: gpui_kit::Render>(
+    options: gpui_kit::WindowOptions,
+    cx: &mut gpui_kit::App,
+    build: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App) -> gpui_kit::Entity<V>,
+) -> gpui_kit::Result<(gpui_kit::AnyWindowHandle, gpui_kit::Entity<V>)> {
+    let window = cx.open_window(options, |window, cx| build(window, cx))?;
+    let view = window.update(cx, |_, _, cx| cx.entity())?;
+    Ok((window.into(), view))
+}
+
 pub fn open_window<V: gpui_kit::Render>(
     options: gpui_kit::WindowOptions,
     cx: &mut gpui_kit::App,

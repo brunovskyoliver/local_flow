@@ -923,7 +923,7 @@ pub fn sync_window(cx: &mut App) {
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
-    if let Ok((handle, view)) = flow_ui::open_window(options, cx, |_, cx| cx.new(PillView::new)) {
+    if let Ok((handle, view)) = flow_ui::open_bare_window(options, cx, |_, cx| cx.new(PillView::new)) {
         cx.set_global(PillWindow { handle, view, key });
     }
 }
@@ -991,6 +991,14 @@ mod tests {
 
     fn pill<R>(cx: &mut TestAppContext, f: impl FnOnce(&Pill) -> R) -> R {
         cx.update(|cx| f(&cx.global::<Session>().pill))
+    }
+
+    // parity: PILL-001 PILL-002 PILL-003 PILL-004
+    #[test]
+    fn pill_colors_ignore_appearance() {
+        assert_eq!(style::fill(), Hsla::from(rgb(0x242522)));
+        assert_eq!(style::ink(), Hsla::from(rgb(0xF5F5F1)));
+        assert_eq!((style::white(0.13).a, style::white(0.22).a), (0.13, 0.22));
     }
 
     // parity: PILL-005 PILL-006 PILL-017 PILL-033 PILL-034 PILL-010
