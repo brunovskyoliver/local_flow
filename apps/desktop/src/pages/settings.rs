@@ -352,7 +352,9 @@ impl SettingsPage {
             self.left_page(window, cx);
         }
         self.visible = visible;
-        if visible {
+        // `settingsPollingWanted`: nothing while the app is inactive; the next active tick refreshes.
+        // ponytail: window activity stands in for `NSApp.isActive`, the app has one main window.
+        if visible && window.is_window_active() {
             self.refresh(cx);
             self.take_anchor(cx);
         }
@@ -854,7 +856,7 @@ impl SettingsPage {
         // `Menu` with `PrototypeButtonStyle`: the tint pill, 13 medium, and no indicator.
         let pl = pal(cx);
         let unavailable = list.add_disabled.is_some();
-        let add = Button::new("settings.microphones.add").custom(flow_ui::controls::ButtonCustomVariant::new(cx).color(pl.tint).foreground(pl.ink).hover(pl.tint).active(pl.button).shadow(false)).bg(pl.tint).accessibility_label("Add…").h_auto().px(px(12.)).py(px(7.)).rounded(px(8.)).border_0().child(t("Add…").font(13., 500.).a11y_hidden()).disabled(unavailable).when(unavailable, |b| b.opacity(0.45)).dropdown_menu(move |mut menu, _, _| {
+        let add = Button::new("settings.microphones.add").custom(flow_ui::controls::ButtonCustomVariant::new(cx).color(pl.tint).foreground(pl.ink).hover(pl.tint).active(pl.button).shadow(false)).bg(pl.tint).accessibility_label("Add…").h_auto().px(px(12.)).py(px(7.)).rounded(px(8.)).border_0().child(t("Add…").font(13., 500.).swift_lines().color(pl.ink).a11y_hidden()).disabled(unavailable).when(unavailable, |b| b.opacity(0.45)).dropdown_menu(move |mut menu, _, _| {
             for (title, uid) in items.clone() {
                 let this = this.clone();
                 menu = menu.item(PopupMenuItem::new(title).on_click(move |_, _, cx| {
@@ -867,7 +869,7 @@ impl SettingsPage {
         let top = self.mic_top.clone();
         vec![
             div().child(canvas(move |b, _, _| top.set(b.top()), |_, _, _, _| {}).w_full().h(px(0.))).child(Self::section_title("Microphones")).into_any_element(),
-            div().id("settings.microphones.description").pb(px(12.)).child(t("LocalFlow records from the first microphone on this list that is connected.").size(12.).color(muted)).test_support().into_any_element(),
+            div().id("settings.microphones.description").pb(px(12.)).child(t("LocalFlow records from the first microphone on this list that is connected.").size(12.).swift_lines().color(muted)).test_support().into_any_element(),
             body.child(row("Add microphone", list.add_disabled.map(String::from), add, cx)).test_support().into_any_element(),
         ]
     }
@@ -1081,14 +1083,16 @@ impl SettingsPage {
     }
 
     /// In Summaries, or in Server › Advanced.
-    pub(super) fn summary_fields(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    pub(super) fn summary_fields(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let pl = pal(cx);
         let label = |s: &'static str| t(s).font(12., 500.).color(pl.muted);
         let mut out = v_flex()
+            .id("settings.summaryFields")
+            .test_support()
             .w_full()
             .gap(px(14.))
             .py(px(18.))
-            .child(label("Server URL"))
+            .child(div().id("settings.summaryURLLabel").test_support().child(label("Server URL")))
             .child(div().id("settings.summaryURLField").test_support().child(input_surface("link", Some("http://host:8000/v1"), Input::new(&self.summary_url).id("settings.summaryServerURL").aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx)))
             .child(div().id("settings.summaryModelLabel").child(label("Model")).test_support())
             .child(input_surface("cpu", None, Input::new(&self.summary_model).id("settings.summaryServerModel").aria_label("Model").accessibility_id("settings.summaryServerModel"), &self.summary_model, window, cx))
@@ -1120,10 +1124,10 @@ impl SettingsPage {
         if let Some(e) = &self.summary_key_error {
             out = out.child(t(e.clone()).size(12.).color(pl.warning));
         }
-        out
+        out.into_any_element()
     }
 
-    /// `permissionsSection`, public because onboarding shows it alone (SET-022).
+    /// `permissionsSection`.
     pub fn permissions_section(&self, cx: &mut Context<Self>) -> Div {
         let s = &self.snapshot;
         let rows: Vec<(&'static str, Permission, Perm)> = if core::meeting_only(prefs(cx)) {
@@ -1303,7 +1307,7 @@ pub(super) fn pill_menu(id: impl Into<SharedString>, title: String, options: Vec
         .px(px(12.))
         .py(px(7.))
         .rounded(px(8.))
-        .child(h_flex().gap(px(6.)).child(t(title).size(13.).a11y_hidden()).child(icon("chevron.down", 9., pl.muted)))
+        .child(h_flex().gap(px(6.)).child(t(title).size(13.).a11y_hidden()).child(icon("chevron.down@semibold", 9., pl.muted)))
         .dropdown_menu(move |mut menu, _, _| {
             for (name, value) in options.clone() {
                 let (this, key) = (this.clone(), key.clone());
@@ -1337,6 +1341,9 @@ pub(super) const STEPPER: (f32, f32) = (20., 24.);
 pub(super) fn selectable(id: impl Into<SharedString>, text: impl Into<SharedString>, size: f32, mono: bool, color: Hsla, line: f32) -> impl IntoElement {
     let id: SharedString = id.into();
     let text: SharedString = text.into();
+    if mono {
+        flow_ui::probe::note(&format!("mono:{text}"));
+    }
     let txt = t(text.clone()).size(size).color(flow_ui::gpui::transparent_black());
     div()
         .id(ElementId::Name(id.clone()))
@@ -1359,7 +1366,7 @@ pub(super) fn selectable(id: impl Into<SharedString>, text: impl Into<SharedStri
 /// `DisclosureGroup`.
 pub(super) fn disclosure(id: &'static str, title: &'static str, open: bool, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, cx: &App) -> AnyElement {
     let m = pal(cx).muted;
-    h_flex().child(plain_button(id, title).content(h_flex().h(px(22.)).gap(px(2.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 10., m)).child(t(title).size(12.).color(m).a11y_hidden()).into_any_element()).on_click(f))
+    h_flex().child(plain_button(id, title).content(h_flex().h(px(22.)).gap(px(2.)).child(icon(if open { "chevron.down@bold" } else { "chevron.right@bold" }, 10., m)).child(t(title).size(12.).color(m).a11y_hidden()).into_any_element()).on_click(f))
     .into_any_element()
 }
 

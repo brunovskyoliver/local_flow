@@ -276,6 +276,7 @@ async fn refresh_reads_permissions_and_all_granted_hides_the_section(cx: &mut Te
 #[flow_ui::gpui::test]
 async fn poll_sees_a_permission_change_within_half_a_second(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
+    flow_ui::gpui::VisualTestContext::from_window(r.win.into(), cx).update(|w, _| w.activate_window());
     let before = read(cx, r.win, |p, _| p.snapshot.microphone);
     assert_ne!(before, Perm::Granted);
     r.permissions.set(PermissionState::Granted);

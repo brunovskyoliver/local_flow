@@ -744,7 +744,7 @@ async fn other_model_buttons_hide_when_installed_or_installing(cx: &mut TestAppC
     assert_saw(&["Meeting transcripts · On your server · Not installed · 1.63 GB", "Who said what · On this Mac · Not installed"]);
 }
 
-// parity: SET-285 SET-286 SET-287 SET-288 SET-289 SET-290
+// parity: SET-285 SET-286 SET-287 SET-288 SET-289 SET-290 SET-380
 #[flow_ui::gpui::test]
 async fn keep_loaded_and_rewrite_model_rows(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -761,6 +761,7 @@ async fn keep_loaded_and_rewrite_model_rows(cx: &mut TestAppContext) {
     assert_eq!(bounds(cx, r2.win, "settings.localModelIdleUnload.frame").size.width, px(130.));
     choose(cx, r2.win, "settings.localModelIdleUnload", "After 1 hour");
     assert_eq!(pref_i(cx, "localModelIdleUnload", 0), 3600);
+    assert_eq!(cx.update(|cx| core::local_model_idle_unload(&cx.global::<Core>().prefs)), 3600);
     assert!(checked(cx, r2.win, "settings.unloadLocalModelDuringGames"), "on by default");
     click(cx, r2.win, "settings.unloadLocalModelDuringGames");
     assert_eq!(pref_b(cx, "unloadLocalModelDuringGames"), Some(false));
@@ -959,4 +960,135 @@ async fn text_prefs_start_empty_and_store_raw_text(cx: &mut TestAppContext) {
     assert_eq!(pref_s(cx, "summaryServerURL").as_deref(), Some(" u "));
     type_into(cx, r.win, |p| p.summary_model.clone(), "m");
     assert_eq!(pref_s(cx, "summaryServerModel").as_deref(), Some("m"));
+}
+
+// MARK: Round 5
+
+// parity: SET-017
+#[flow_ui::gpui::test]
+async fn polling_stops_while_the_window_is_inactive(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let before = read(cx, r.win, |p, _| p.snapshot.microphone);
+    let mut vcx = flow_ui::gpui::VisualTestContext::from_window(r.win.into(), cx);
+    vcx.deactivate_window();
+    r.permissions.set(PermissionState::Granted);
+    cx.executor().advance_clock(Duration::from_secs(2));
+    frame(cx, r.win);
+    assert_eq!(read(cx, r.win, |p, _| p.snapshot.microphone), before, "no poll while inactive");
+    let mut vcx = flow_ui::gpui::VisualTestContext::from_window(r.win.into(), cx);
+    vcx.update(|w, _| w.activate_window());
+    cx.executor().advance_clock(Duration::from_millis(600));
+    frame(cx, r.win);
+    assert_eq!(read(cx, r.win, |p, _| p.snapshot.microphone), Perm::Granted, "refreshes on return");
+}
+
+// parity: SET-013
+#[flow_ui::gpui::test]
+async fn pill_menu_reads_like_swift(cx: &mut TestAppContext) {
+    let r = rig(cx, "kinds", |_| {});
+    let pl = palette(cx);
+    assert_type("Running app", 13., 400., pl.ink);
+    assert_symbols(&["chevron.down"]);
+    assert_eq!(flow_ui::probe::symbol_color("chevron.down"), Some(pl.muted));
+    let button = bounds(cx, r.win, "context.running");
+    assert_eq!(button.size.height, px(29.), "7 + the 15 pt line + 7");
+    assert!(button.size.width < px(130.), "fixed size, not the row's width");
+}
+
+// parity: SET-219
+#[flow_ui::gpui::test]
+async fn own_app_row_says_always_and_has_no_remove(cx: &mut TestAppContext) {
+    let r = rig(cx, "exclusions", |_| {});
+    assert_type("Always", 12., 400., palette(cx).muted);
+    let own: &'static str = format!("context.remove.{}", core::BUNDLE_ID).leak();
+    assert!(!has(cx, r.win, own), "no Remove");
+    assert!(has(cx, r.win, "context.remove.com.apple.Passwords"), "other rows have one");
+    let before = cx.update(|cx| core::exclusions(&cx.global::<Core>().prefs));
+    cx.update(|cx| core::remove_exclusion(&mut cx.global_mut::<Core>().prefs, core::BUNDLE_ID));
+    assert_eq!(cx.update(|cx| core::exclusions(&cx.global::<Core>().prefs)), before, "store refuses");
+}
+
+// parity: SET-094
+#[flow_ui::gpui::test]
+async fn turning_off_clears_identity_and_error(cx: &mut TestAppContext) {
+    let r = rig(cx, "approved", |_| {});
+    let key = core::base64url_encode(&[7u8; 32]);
+    set(cx, r.win, |p, _, _| {
+        p.identity = Some(identity(&key, "aaaa-bbbb"));
+        p.remote_error = Some("old".into());
+    });
+    for account in ["device-key", "server-key", "refresh-token", "access-token"] {
+        r.secrets.borrow_mut().insert(core::remote_keychain(account), "x".into());
+    }
+    set(cx, r.win, |p, _, cx| p.confirm_turn_off(cx));
+    assert!(read(cx, r.win, |p, _| p.identity.is_none()));
+    assert_eq!(read(cx, r.win, |p, _| p.remote_error.clone()), None);
+    assert!(r.secrets.borrow().is_empty(), "four Keychain items gone");
+    assert_eq!(pref_b(cx, "remote.enabled"), Some(false));
+}
+
+// parity: SET-050
+#[flow_ui::gpui::test]
+async fn rejected_shows_its_status_and_enroll_again(cx: &mut TestAppContext) {
+    let r = rig(cx, "rejected", |_| {});
+    assert_saw(&["Rejected"]);
+    assert_eq!(label(cx, r.win, "settings.remoteEnrollAgain"), "Enroll Again");
+}
+
+// parity: SET-217
+#[flow_ui::gpui::test]
+async fn app_row_geometry(cx: &mut TestAppContext) {
+    let r = rig(cx, "exclusions", |_| {});
+    let id = "com.apple.Passwords";
+    let row = bounds(cx, r.win, "context.row.com.apple.Passwords");
+    let tint = bounds(cx, r.win, "context.tint.com.apple.Passwords");
+    let text = bounds(cx, r.win, "context.text.com.apple.Passwords");
+    let name = bounds(cx, r.win, "context.name.com.apple.Passwords");
+    let bundle = bounds(cx, r.win, "context.id.com.apple.Passwords");
+    assert_eq!(row.size.height, px(56.), "{id}");
+    assert_eq!(tint.left() - row.left(), px(16.), "padding 16");
+    assert_eq!(tint.size.width, px(24.));
+    assert_eq!(tint.size.height, px(24.));
+    assert_eq!(text.left() - tint.right(), px(12.), "spacing 12");
+    assert_eq!(bundle.top() - name.bottom(), px(2.), "spacing 2");
+}
+
+// parity: SET-055
+#[flow_ui::gpui::test]
+async fn fingerprint_value_is_monospaced_and_selectable(cx: &mut TestAppContext) {
+    let r = rig(cx, "pending", |_| {});
+    let key = core::base64url_encode(&[7u8; 32]);
+    set(cx, r.win, |p, _, _| p.identity = Some(identity(&key, "aaaa-bbbb")));
+    assert_saw(&["mono:aaaa-bbbb"]);
+    assert_eq!(style("aaaa-bbbb").size, 13.);
+    assert!(has(cx, r.win, "settings.remoteFingerprint.text"));
+    assert!(has(cx, r.win, "settings.remoteFingerprint"));
+}
+
+// parity: SET-338
+#[flow_ui::gpui::test]
+async fn summary_fields_padding_and_labels(cx: &mut TestAppContext) {
+    let r = rig(cx, "summary-remote", |_| {});
+    let muted = palette(cx).muted;
+    assert_type("Server URL", 12., 500., muted);
+    assert_type("Model", 12., 500., muted);
+    assert_type("API key", 12., 500., muted);
+    let (box_, url) = (bounds(cx, r.win, "settings.summaryFields"), bounds(cx, r.win, "settings.summaryURLLabel"));
+    assert_eq!(url.top() - box_.top(), px(18.), "padding 18");
+    let key = bounds(cx, r.win, "settings.summaryKeyRow");
+    assert_eq!(box_.bottom() - key.bottom(), px(18.));
+}
+
+// parity: SET-252 SET-333
+#[flow_ui::gpui::test]
+async fn speech_download_label_and_monospaced_diagnostics(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |p| p.set("rewriteEndpoint", "https://rw.example.com"));
+    assert_eq!(label(cx, r.win, "settings.speechDownload"), "Download…");
+    click(cx, r.win, "settings.rewriteTestConnection");
+    click(cx, r.win, "settings.rewriteAdvanced");
+    click(cx, r.win, "settings.rewriteDiagnostics");
+    let line = read(cx, r.win, |p, _| format!("connection_test={} code={}", p.connection.as_ref().unwrap().0.category(), p.connection.as_ref().unwrap().2));
+    assert_saw(&[format!("mono:{line}").as_str()]);
+    assert_eq!(style(&line).size, 11.);
+    assert!(has(cx, r.win, "settings.rewriteDiagnostics.text"));
 }

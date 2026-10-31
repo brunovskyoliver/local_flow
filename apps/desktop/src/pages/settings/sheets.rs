@@ -348,9 +348,18 @@ impl SettingsPage {
             .gap(px(12.))
             .child(match info.icon {
                 Some(icon) => img(icon).id(SharedString::from(format!("context.icon.{id}"))).size(px(24.)).flex_none().test_support().into_any_element(),
-                None => div().size(px(24.)).flex_none().rounded(px(6.)).bg(pl.tint).into_any_element(),
+                None => div().id(SharedString::from(format!("context.tint.{id}"))).test_support().size(px(24.)).flex_none().rounded(px(6.)).bg(pl.tint).into_any_element(),
             })
-            .child(v_flex().flex_1().min_w_0().gap(px(2.)).child(t(info.name.clone()).size(14.).lines(1)).child(t(id.to_string()).size(12.).color(pl.muted).lines(1)))
+            .child(
+                v_flex()
+                    .id(SharedString::from(format!("context.text.{id}")))
+                    .test_support()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.))
+                    .child(div().id(SharedString::from(format!("context.name.{id}"))).test_support().child(t(info.name.clone()).size(14.).lines(1)))
+                    .child(div().id(SharedString::from(format!("context.id.{id}"))).test_support().child(t(id.to_string()).size(12.).color(pl.muted).lines(1))),
+            )
             .child(trailing)
     }
 }
@@ -368,5 +377,5 @@ fn sheet_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> Flow
 /// `DictionaryPillButtonStyle`: 13 regular on `button`.
 fn pill_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> FlowButton {
     let pl = pal(cx);
-    prototype_button(id, label).fill(pl.button).content(t(label).size(13.).color(pl.ink).a11y_hidden())
+    prototype_button(id, label).fill(pl.button).content(t(label).size(13.).swift_lines().color(pl.ink).a11y_hidden())
 }

@@ -2454,9 +2454,16 @@ mod tests {
         assert_eq!(consent_text(&p), MEETING_CONSENT_TEXT);
         p.set("server.useForEverything", true);
         p.set("server.override.rewrite", "custom");
+        for (k, v) in [("remote.consentVersion", 2), ("remote.fallbackThresholdMs", 2000)] {
+            p.set(k, v);
+        }
+        p.set("remote.notice", "update_required");
+        p.set("server.capabilities", Capabilities::feature014());
         reset_remote(&mut p);
         assert!(!p.bool_or("remote.enabled", true));
-        assert!(!p.contains("remote.serverURL") && !p.contains("remote.state"));
+        for key in ["remote.serverURL", "remote.state", "remote.consentVersion", "remote.fallbackThresholdMs", "remote.notice", "server.capabilities"] {
+            assert!(!p.contains(key), "{key}");
+        }
         assert!(p.bool_or("server.only", false) && p.contains("server.useForEverything") && p.contains("server.override.rewrite"));
         p.remove("server.only");
         p.set("setup.purpose", "meetings");
@@ -2491,6 +2498,7 @@ mod tests {
     fn error_copy_busy_and_model() {
         assert_eq!(describe(&Failure::Busy), "Another dictation or model operation is still running. Wait for it to finish.");
         assert_eq!(describe(&Failure::ModelUnavailable), "The speech model is unavailable. Verify the local model in Settings.");
+        assert_eq!(describe(&Failure::Cancelled), "The operation was cancelled.");
     }
 
     // parity: SET-028
@@ -2664,6 +2672,9 @@ mod tests {
         assert!(overrides(&p).is_empty());
         p.set("contextCategoryOverrides", serde_json::json!({"a.b":"email","c.d":"nonsense"}));
         assert_eq!(overrides(&p).len(), 1);
+        let many: std::collections::BTreeMap<String, String> = (0..400).map(|i| (format!("a{i}"), "email".to_string())).collect();
+        p.set("contextCategoryOverrides", many);
+        assert_eq!(overrides(&p).len(), 200, "capped");
         assert_eq!(BUILT_IN.len(), 32);
         assert_eq!(natural_cmp("App 2", "app 10"), std::cmp::Ordering::Less);
         assert_eq!(app_count(1), "1 app");
