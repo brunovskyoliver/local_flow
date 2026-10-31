@@ -239,11 +239,7 @@ impl SettingsPage {
     pub(super) fn confirm_turn_off(&mut self, cx: &mut Context<Self>) {
         self.identity = None;
         self.remote_error = None;
-        let services = &cx.global::<Core>().services;
-        for account in ["device-key", "server-key", "refresh-token", "access-token"] {
-            let _ = services.remove_secret(&core::remote_keychain(account));
-        }
-        core::reset_remote(prefs_mut(cx));
+        cx.global_mut::<Core>().turn_off_remote();
         self.refresh(cx);
         cx.notify();
     }

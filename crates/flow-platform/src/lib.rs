@@ -112,6 +112,10 @@ pub trait Services: 'static {
     fn remove_secret(&self, _name: &str) -> Result<(), Unavailable> {
         Err(Unavailable("Keychain"))
     }
+    /// `RemoteRewriteChannels.closeParked()`. The channel pool arrives with the remote transport (Feature 026).
+    fn close_parked_channels(&self) -> Result<(), Unavailable> {
+        Err(Unavailable("remote channels"))
+    }
     /// Opens a web address in the browser.
     fn open_url(&self, _url: &str) -> Result<(), Unavailable> {
         Err(Unavailable("opening a link"))

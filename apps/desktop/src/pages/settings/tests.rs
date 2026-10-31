@@ -86,6 +86,9 @@ impl flow_platform::Services for Stub {
         self.secrets.borrow_mut().remove(name);
         Ok(())
     }
+    fn close_parked_channels(&self) -> Result<(), Unavailable> {
+        self.call("close parked".into())
+    }
     fn settings_action(&self, action: &str) -> Result<(), Unavailable> {
         self.call(format!("action {action}"))
     }
@@ -414,6 +417,7 @@ async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     for item in ["access-token", "refresh-token", "server-key"] {
         assert!(logged(&r, &format!("remove {}", core::remote_keychain(item))), "{item}");
     }
+    assert!(logged(&r, "close parked"), "turnOffRemoteDictation closes the parked channel");
     assert_saw(&["Server only"]);
     assert!(!saw("Use this server for everything"));
 }

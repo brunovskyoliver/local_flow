@@ -74,7 +74,7 @@ impl OnboardingPage {
             details = details
                 .child(t("Server fingerprint").font(12., 500.).color(p.muted))
                 .child(div().id("settings.remoteFingerprint").child(t(fingerprint).mono().size(13.).selectable()).test_support())
-                .child(t("Compare it with `flowd admin identity` on the server before trusting it.").size(12.).color(p.muted))
+                .child(rich(vec![span("Compare it with "), span("flowd admin identity").serif(false), span(" on the server before trusting it.")]).size(12.).color(p.muted))
                 .child(native_button("settings.remoteTrust", "Trust This Server").on_click(trust));
         } else if state != "approved"
             && let Some(pinned) = self.remote.pinned.clone()

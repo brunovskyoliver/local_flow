@@ -651,11 +651,7 @@ impl OnboardingPage {
         self.remote.identity = None;
         self.remote.pinned = None;
         self.remote.error = None;
-        let services = &cx.global::<Core>().services;
-        for account in ["device-key", "server-key", "refresh-token", "access-token"] {
-            let _ = services.remove_secret(&server::remote_keychain(account));
-        }
-        reset_remote(&mut cx.global_mut::<Core>().prefs);
+        cx.global_mut::<Core>().turn_off_remote();
     }
 
     /// `settings.rewriteEndpoint`'s setter: per keystroke.

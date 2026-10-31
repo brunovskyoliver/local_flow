@@ -104,7 +104,7 @@ ONB-103	auto	test:advance_walks_steps_and_requests_models
 ONB-104	auto	test:advance_walks_steps_and_requests_models
 ONB-105	auto	test:skip_abandon_and_back
 ONB-106	auto	test:skip_abandon_and_back
-ONB-107	auto	test:server_step_consent_trust_sign_in_and_turn_off
+ONB-107	auto	test:turning_off_removes_every_credential_and_closes_the_parked_channel ; note:the Rust Mac Services returns Unavailable for Keychain removal and has no channel pool yet (Feature 026), so the test proves the calls are made through Services, not a real Keychain delete or channel close
 ONB-108	auto	test:skip_abandon_and_back
 ONB-109	auto	test:skip_abandon_and_back
 ONB-110	auto	test:set_up_dictation_keeps_the_server_choice

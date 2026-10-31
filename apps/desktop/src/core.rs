@@ -40,6 +40,17 @@ impl Core {
         Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![] }
     }
 
+    /// `turnOffRemoteDictation()`: enrollment `turnOff()` removes the four Keychain items and the
+    /// remote settings, history stays, and a parked rewrite channel is closed. Failures are ignored
+    /// as Swift's `try?` and detached task ignore them.
+    pub fn turn_off_remote(&mut self) {
+        for account in ["device-key", "server-key", "refresh-token", "access-token"] {
+            let _ = self.services.remove_secret(&flow_core::settings::remote_keychain(account));
+        }
+        flow_core::settings::reset_remote(&mut self.prefs);
+        let _ = self.services.close_parked_channels();
+    }
+
     /// In-memory database with the seed, memory preferences and fake services.
     pub fn for_test() -> Core {
         let db = Db::memory();

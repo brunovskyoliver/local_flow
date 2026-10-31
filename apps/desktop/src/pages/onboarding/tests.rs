@@ -98,6 +98,9 @@ impl flow_platform::Services for Stub {
     fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
         self.call(format!("remove {name}"), ())
     }
+    fn close_parked_channels(&self) -> Result<(), Unavailable> {
+        self.call("close parked".into(), ())
+    }
     fn reveal_app(&self) -> Result<(), Unavailable> {
         self.call("reveal".into(), ())
     }
@@ -892,7 +895,7 @@ async fn test_step_arms_and_done_copy(cx: &mut TestAppContext) {
     assert_saw(&["Start a meeting in Notetaker."]);
 }
 
-// parity: ONB-057 ONB-174 ONB-175 ONB-176 ONB-177 ONB-178 ONB-179 ONB-180 ONB-192 ONB-193 ONB-194 ONB-195 ONB-196 ONB-197 ONB-198 ONB-199 ONB-202 ONB-203 ONB-204 ONB-205 ONB-206 ONB-207 ONB-208 ONB-209 ONB-210 ONB-212 ONB-213 ONB-214 ONB-215 ONB-217 ONB-218 ONB-219 ONB-222 ONB-045 ONB-107
+// parity: ONB-057 ONB-174 ONB-175 ONB-176 ONB-177 ONB-178 ONB-179 ONB-180 ONB-192 ONB-193 ONB-194 ONB-195 ONB-196 ONB-197 ONB-198 ONB-199 ONB-202 ONB-203 ONB-204 ONB-205 ONB-206 ONB-207 ONB-208 ONB-209 ONB-210 ONB-212 ONB-213 ONB-214 ONB-215 ONB-217 ONB-218 ONB-219 ONB-222 ONB-045
 #[flow_ui::gpui::test]
 async fn server_step_consent_trust_sign_in_and_turn_off(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);
@@ -1406,6 +1409,48 @@ async fn turn_off_alert_is_destructive(cx: &mut TestAppContext) {
     assert!(!flag(cx, "remote.enabled"));
 }
 
+// parity: ONB-107
+/// `Effect::AbandonServer` and the toggle's Turn Off both go through `turnOffRemoteDictation()`.
+#[flow_ui::gpui::test]
+async fn turning_off_removes_every_credential_and_closes_the_parked_channel(cx: &mut TestAppContext) {
+    let r = rig(cx, true, &[]);
+    let w = r.win;
+    let expected: Vec<String> = ["device-key", "server-key", "refresh-token", "access-token"].iter().map(|a| format!("remove {}", flow_core::settings::remote_keychain(a))).chain(["close parked".to_string()]).collect();
+    let store = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let prefs = &mut cx.global_mut::<Core>().prefs;
+            prefs.set("remote.enabled", true);
+            prefs.set("remote.serverURL", "https://box.example.com");
+            prefs.set("remote.state", "approved");
+        })
+    };
+    // Abandoning the server choice: the coordinator's effect, run by the page.
+    store(cx);
+    w.update(cx, |p, _, cx| {
+        p.setup.effects.push(Effect::AbandonServer);
+        p.after(cx);
+    })
+    .unwrap();
+    frame(cx, w);
+    assert_eq!(*r.log.borrow(), expected);
+    assert!(!flag(cx, "remote.enabled"));
+    assert_eq!(pref(cx, "remote.serverURL"), None);
+    assert_eq!(pref(cx, "remote.state"), None);
+    // The toggle's Turn Off.
+    r.log.borrow_mut().clear();
+    store(cx);
+    set(cx, w, |p| {
+        p.setup.step = Step::AiDetails;
+        p.setup.ai_mode = AiMode::Remote;
+    });
+    click(cx, w, "settings.remoteEnabled");
+    cx.simulate_prompt_answer("Turn Off");
+    cx.run_until_parked();
+    let calls: Vec<String> = r.log.borrow().iter().filter(|c| c.starts_with("remove") || *c == "close parked").cloned().collect();
+    assert_eq!(calls, expected);
+    assert!(!flag(cx, "remote.enabled"));
+}
+
 // parity: ONB-232 ONB-234
 /// Both placeholders show until there's a value, and the address's is a link colour.
 #[flow_ui::gpui::test]
@@ -1746,7 +1791,9 @@ async fn server_type_keys_prefill_and_trust_failure(cx: &mut TestAppContext) {
     assert_style("Server fingerprint", 12., Some(500.), muted);
     assert_eq!(flow_ui::probe::style_of(&fingerprint).map(|s| s.size), Some(13.));
     w.update(cx, |_, w, _| assert!(w.try_find("settings.remoteFingerprint").is_some())).unwrap();
-    assert_style("Compare it with `flowd admin identity` on the server before trusting it.", 12., None, muted);
+    assert_style("Compare it with flowd admin identity on the server before trusting it.", 12., None, muted);
+    assert_saw(&["Compare it with ", "flowd admin identity", " on the server before trusting it."]);
+    assert!(!flow_ui::probe::seen().iter().any(|text| text.contains('`')), "inline code has no backticks");
     // The Keychain refusing the key is Swift's error, and nothing is pinned.
     r.ok.set(false);
     click(cx, w, "settings.remoteTrust");
