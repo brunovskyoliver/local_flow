@@ -3051,54 +3051,24 @@ pub fn carry_over(db: &Db, meeting: &str, previous: &str, run: &str, now: i64) -
 
 /// Runs once per launch, before Start is enabled: `MeetingReconciler`, then `TranscriptReconciler`,
 /// then the speaker and summary run reconcilers, each bounded to 100 rows. Nothing is deleted.
-// ponytail: open segment files aren't ADTS-validated or truncated; a file that's there stays open for
-// the capture phase, which brings the validator. Only a missing file is decided here.
+/// The caller holds `.instance.lock`, the same flock Swift takes, so no writer owns an open segment.
 pub fn reconcile_launch(db: &Db, root: &Path, now: i64) -> Res<Recovery> {
     let c = &db.conn;
     let mut out = Recovery::default();
     let active: i64 = c.query_row("SELECT count(*) FROM meetings WHERE state IN ('created','preparing','recording','paused','finalizing')", [], |r| r.get(0))?;
     out.deferred += (active - 100).max(0);
-    let rows: Vec<(String, String, Option<String>, Option<i64>, i64)> = c
+    let rows: Vec<ActiveRow> = c
         .prepare("SELECT id,state,finalization_stage,stopped_at,updated_at FROM meetings WHERE state IN ('created','preparing','recording','paused','finalizing') ORDER BY created_at,id LIMIT 100")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
         .collect::<Result<_, _>>()?;
-    for (id, found, stage, stopped, updated) in rows {
+    for row in &rows {
         out.meetings_found += 1;
-        let segments: Vec<(String, String, String)> = c
-            .prepare("SELECT s.id,s.state,s.relative_path FROM meeting_segments s JOIN meeting_tracks t ON t.id=s.track_id WHERE t.meeting_id=?1")?
-            .query_map([&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<Result<_, _>>()?;
-        let detail = format!("found={found}");
-        if found == "created" || segments.is_empty() {
-            c.execute("UPDATE meetings SET state='failed',failure_reason='not_running_at_last_state',failure_detail=?1,updated_at=?2,revision=revision+1 WHERE id=?3", params![detail, now, id])?;
-            outcome(c, &id, now, &found, stage.as_deref(), 0, 0, false, "no media; marked failed")?;
-            continue;
+        // As Swift: one meeting's failure doesn't stop the others. The row stays active, so the next launch retries it.
+        match reconcile_active(db, root, row, now) {
+            Ok(Some(true)) => out.recovered += 1,
+            Ok(Some(false)) => out.unrecoverable += 1,
+            Ok(None) | Err(_) => {}
         }
-        let (mut recovered, mut missing) = (0, 0);
-        for (segment, state, path) in &segments {
-            if state == "unrecoverable" {
-                continue;
-            }
-            let bare = path.strip_suffix(".part").unwrap_or(path);
-            if root.join(path).exists() || root.join(bare).exists() {
-                recovered += 1;
-            } else {
-                missing += 1;
-                c.execute("UPDATE meeting_segments SET state='unrecoverable',failure_reason='file_missing' WHERE id=?1", [segment])?;
-            }
-        }
-        c.execute("UPDATE meeting_tracks SET health='finalized' WHERE meeting_id=?1 AND health='healthy'", [&id])?;
-        let paused = c.execute("UPDATE meeting_pauses SET ended_at=max(started_at,?1),closed_by='reconciliation' WHERE meeting_id=?2 AND ended_at IS NULL", params![updated, id])? > 0;
-        c.execute(
-            "UPDATE meetings SET state='interrupted',failure_reason='not_running_at_last_state',failure_detail=?1,completed_at=?2,stopped_at=?3,updated_at=?2,revision=revision+1 WHERE id=?4",
-            params![format!("{detail} stage={}", stage.as_deref().unwrap_or("none")), now, stopped.unwrap_or(updated), id],
-        )?;
-        if recovered > 0 {
-            out.recovered += 1;
-        } else {
-            out.unrecoverable += 1;
-        }
-        outcome(c, &id, now, &found, stage.as_deref(), recovered, missing, paused, &format!("recovered={recovered} unrecoverable=0 missing={missing} truncated=0"))?;
     }
     reconstruct_orphans(db, root, now, &mut out)?;
     let transcripts: Vec<(String, String, i64, i64)> = c
@@ -3120,7 +3090,7 @@ pub fn reconcile_launch(db: &Db, root: &Path, now: i64) -> Res<Recovery> {
             "UPDATE meeting_transcriptions SET state=?1,live_state=NULL,failure_category='finalization_interrupted',failure_detail=?2,updated_at=?3,revision=revision+1 WHERE meeting_id=?4 AND revision=?5",
             params![target, format!("found={state}"), now, id, revision],
         )?;
-        outcome(c, &id, now, &meeting_state, stage.as_deref(), count, 0, false, &format!("transcript:{state}->{target} finalization_interrupted"))?;
+        outcome(c, &id, now, &meeting_state, stage.as_deref(), [count, 0, 0, 0], false, &format!("transcript:{state}->{target} finalization_interrupted"))?;
         if failed {
             out.transcripts_failed += 1;
         } else {
@@ -3134,7 +3104,159 @@ pub fn reconcile_launch(db: &Db, root: &Path, now: i64) -> Res<Recovery> {
     c.execute("UPDATE analysis_runs SET state='interrupted',completed_at=?1,failure_category='interrupted',duration_ms=max(0,?1-coalesce(started_at,created_at)) WHERE id IN (SELECT id FROM analysis_runs WHERE state IN ('pending','running') ORDER BY created_at LIMIT 100)", [now])?;
     Ok(out)
 }
-#[allow(clippy::too_many_arguments)]
+type ActiveRow = (String, String, Option<String>, Option<i64>, i64);
+#[derive(Default)]
+struct Tally {
+    recovered: i64,
+    unrecoverable: i64,
+    missing: i64,
+    truncated: i64,
+}
+/// `MeetingReconciler.reconcile`. None marked failed; otherwise whether some segment ended up playable.
+fn reconcile_active(db: &Db, root: &Path, (id, found, stage, stopped, updated): &ActiveRow, now: i64) -> Res<Option<bool>> {
+    let tx = db.conn.unchecked_transaction()?;
+    let c: &Connection = &tx;
+    let tracks: Vec<(String, String)> = c.prepare("SELECT id,health FROM meeting_tracks WHERE meeting_id=?1")?.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+    let mut per_track = vec![];
+    for (track, health) in tracks {
+        let segments: Vec<ActiveSegment> = c
+            .prepare("SELECT id,state,relative_path,duration_ms,byte_size,close_reason,dropped_frames FROM meeting_segments WHERE track_id=?1 ORDER BY sequence")?
+            .query_map([&track], |r| Ok(ActiveSegment { id: r.get(0)?, state: r.get(1)?, path: r.get(2)?, duration: r.get(3)?, bytes: r.get(4)?, close: r.get(5)?, dropped: r.get(6)? }))?
+            .collect::<Result<_, _>>()?;
+        per_track.push((track, health, segments));
+    }
+    if found == "created" || per_track.iter().all(|t| t.2.is_empty()) {
+        c.execute("UPDATE meetings SET state='failed',failure_reason='not_running_at_last_state',failure_detail=?1,updated_at=?2,revision=revision+1 WHERE id=?3", params![format!("found={found}"), now, id])?;
+        recompute_durations(c, id, now)?;
+        outcome(c, id, now, found, stage.as_deref(), [0; 4], false, "no media; marked failed")?;
+        tx.commit()?;
+        return Ok(None);
+    }
+    let mut tally = Tally::default();
+    let mut any_validated = false;
+    for (track, health, segments) in &per_track {
+        let mut validated = 0;
+        for segment in segments {
+            if recover_segment(c, root, track, segment, &mut tally)? {
+                validated += 1;
+            }
+        }
+        any_validated |= validated > 0;
+        if validated == 0 && !segments.is_empty() && (health == "healthy" || health == "failed") {
+            c.execute("UPDATE meeting_tracks SET health='unrecoverable',failure_reason=COALESCE(failure_reason,'unrecoverable_media'),failed_at=COALESCE(failed_at,?1) WHERE id=?2", params![now, track])?;
+        } else if health == "healthy" {
+            c.execute("UPDATE meeting_tracks SET health='finalized' WHERE id=?1", [track])?;
+        }
+    }
+    c.execute(
+        "UPDATE meetings SET state='interrupted',failure_reason='not_running_at_last_state',failure_detail=?1,completed_at=?2,updated_at=?2,revision=revision+1 WHERE id=?3",
+        params![format!("found={found} stage={}", stage.as_deref().unwrap_or("none")), now, id],
+    )?;
+    // Swift's effect order: the warnings read durations before the stop time and the pause close land.
+    recompute_durations(c, id, now)?;
+    let recorded: i64 = c.query_row("SELECT recorded_ms FROM meetings WHERE id=?1", [id], |r| r.get(0))?;
+    c.execute("UPDATE meeting_tracks SET duration_warning=CASE WHEN dropped_frames>0 OR abs(total_duration_ms-?1)>?2 THEN 1 ELSE 0 END WHERE meeting_id=?3", params![recorded, (recorded / 100).max(2000), id])?;
+    if stopped.is_none() {
+        c.execute("UPDATE meetings SET stopped_at=?1 WHERE id=?2", params![updated, id])?;
+    }
+    let paused = c.execute("UPDATE meeting_pauses SET ended_at=max(started_at,?1),closed_by='reconciliation' WHERE meeting_id=?2 AND ended_at IS NULL", params![updated, id])? > 0;
+    recompute_durations(c, id, now)?;
+    let summary = format!("recovered={} unrecoverable={} missing={} truncated={}", tally.recovered, tally.unrecoverable, tally.missing, tally.truncated);
+    outcome(c, id, now, found, stage.as_deref(), [tally.recovered, tally.unrecoverable, tally.missing, tally.truncated], paused, &summary)?;
+    tx.commit()?;
+    Ok(Some(any_validated))
+}
+struct ActiveSegment {
+    id: String,
+    state: String,
+    path: String,
+    duration: i64,
+    bytes: i64,
+    close: Option<String>,
+    dropped: i64,
+}
+/// `MeetingStorageRoot.isValid`: stays relative to the root.
+fn valid_relative_path(path: &str) -> bool {
+    !path.is_empty() && !path.starts_with('/') && !path.contains('\0') && path.split('/').all(|p| !p.is_empty() && p != "." && p != "..")
+}
+/// `MeetingReconciler.recover`: true when the segment ends up finalized with playable frames.
+fn recover_segment(c: &Connection, root: &Path, track: &str, s: &ActiveSegment, tally: &mut Tally) -> Res<bool> {
+    let final_path = s.path.strip_suffix(".part").unwrap_or(&s.path);
+    if s.state == "unrecoverable" || !valid_relative_path(final_path) || !valid_relative_path(&s.path) {
+        return Ok(false);
+    }
+    let last = root.join(final_path);
+    let source = if s.state == "finalized" {
+        if last.exists() {
+            if s.path != final_path {
+                finalize_segment(c, track, s, s.duration, s.bytes, final_path, s.close.as_deref().unwrap_or("recovered"))?;
+            }
+            return Ok(true);
+        }
+        root.join(format!("{final_path}.part"))
+    } else if root.join(&s.path).exists() {
+        root.join(&s.path)
+    } else {
+        last.clone() // Renamed but the row never caught up: validate the final file in place.
+    };
+    let unrecoverable = |reason: &str, note: Option<String>| -> Res<bool> {
+        c.execute("UPDATE meeting_segments SET state='unrecoverable',failure_reason=?1,recovery_note=?2 WHERE id=?3", params![reason, note, s.id])?;
+        track_totals(c, track)?;
+        Ok(false)
+    };
+    if !source.exists() {
+        tally.missing += 1;
+        return unrecoverable("file_missing", None);
+    }
+    let Ok(scan) = adts_scan(&source) else {
+        tally.missing += 1;
+        return unrecoverable("file_missing", None);
+    };
+    if scan.frames == 0 {
+        tally.unrecoverable += 1;
+        return unrecoverable("unrecoverable_media", Some(format!("frames=0 bytes={}", scan.trailing)));
+    }
+    // Only the bytes after the last complete frame go, and only when a rename or a torn tail asks for it.
+    if (source != last || scan.trailing > 0) && truncate_and_rename(&source, &last, scan.bytes).is_err() {
+        tally.unrecoverable += 1;
+        return unrecoverable("unrecoverable_media", Some("rename failed".into()));
+    }
+    finalize_segment(c, track, s, scan.duration_ms(), scan.bytes as i64, final_path, "recovered")?;
+    c.execute("UPDATE meeting_segments SET recovery_note=?1 WHERE id=?2", params![format!("truncated={} frames={}", scan.trailing, scan.frames), s.id])?;
+    tally.recovered += 1;
+    tally.truncated += scan.trailing as i64;
+    Ok(true)
+}
+fn finalize_segment(c: &Connection, track: &str, s: &ActiveSegment, duration: i64, bytes: i64, path: &str, reason: &str) -> Res<()> {
+    c.execute(
+        "UPDATE meeting_segments SET state='finalized',duration_ms=?1,byte_size=?2,relative_path=?3,close_reason=?4,dropped_frames=?5 WHERE id=?6",
+        params![duration.max(0), bytes.max(0), path, reason, s.dropped.max(0), s.id],
+    )?;
+    track_totals(c, track)
+}
+/// `MeetingStore.recomputeTrackTotals`.
+fn track_totals(c: &Connection, track: &str) -> Res<()> {
+    c.execute(
+        "UPDATE meeting_tracks SET total_duration_ms=(SELECT COALESCE(SUM(duration_ms),0) FROM meeting_segments WHERE track_id=?1 AND state='finalized'),
+         total_bytes=(SELECT COALESCE(SUM(byte_size),0) FROM meeting_segments WHERE track_id=?1),
+         dropped_frames=(SELECT COALESCE(SUM(dropped_frames),0) FROM meeting_segments WHERE track_id=?1) WHERE id=?1",
+        [track],
+    )?;
+    Ok(())
+}
+/// `MeetingStore.recomputeDurations`: every pause clamped to the wall-clock window, an open one included.
+fn recompute_durations(c: &Connection, id: &str, now: i64) -> Res<()> {
+    let (started, stopped): (Option<i64>, Option<i64>) = c.query_row("SELECT started_at,stopped_at FROM meetings WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let Some(started) = started else { return Ok(()) };
+    let end = started.max(stopped.unwrap_or(now));
+    let paused: i64 = c.query_row(
+        "SELECT COALESCE(SUM(max(0,min(COALESCE(ended_at,?1),?1)-max(started_at,?2))),0) FROM meeting_pauses WHERE meeting_id=?3",
+        params![end, started, id],
+        |r| r.get(0),
+    )?;
+    c.execute("UPDATE meetings SET wall_clock_ms=?1,recorded_ms=?2 WHERE id=?3", params![end - started, (end - started - paused).max(0), id])?;
+    Ok(())
+}
 /// `ADTSValidator.scan`: complete frames, their length in bytes, the sample rate and channels.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct AdtsScan {
@@ -3206,11 +3328,24 @@ fn parse_uuid(name: &str) -> Option<String> {
     let shape = name.len() == 36 && name.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() });
     shape.then(|| name.to_uppercase())
 }
+/// `FileSegmentWriter.truncateAndRename`: refuses a symlink and fsyncs the file and its folder.
 fn truncate_and_rename(from: &Path, to: &Path, length: u64) -> std::io::Result<()> {
-    let file = std::fs::OpenOptions::new().write(true).open(from)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(from)?;
     file.set_len(length)?;
     file.sync_all()?;
-    std::fs::rename(from, to)
+    std::fs::rename(from, to)?;
+    #[cfg(unix)]
+    if let Some(folder) = to.parent() {
+        std::fs::File::open(folder)?.sync_all()?;
+    }
+    Ok(())
 }
 /// `reconstructOrphans`: a meeting folder with no row becomes an `interrupted` meeting.
 /// Nothing is deleted. 1,000 directory entries a launch; the rest are deferred.
@@ -3307,10 +3442,12 @@ fn reconstruct_orphan(db: &Db, id: &str, dir: &Path, created: i64, now: i64) -> 
     tx.commit()?;
     Ok(())
 }
-fn outcome(c: &Connection, id: &str, now: i64, found: &str, stage: Option<&str>, recovered: i64, missing: i64, paused: bool, summary: &str) -> Res<()> {
+/// `counts`: segments recovered, unrecoverable and missing, then bytes truncated.
+#[allow(clippy::too_many_arguments)]
+fn outcome(c: &Connection, id: &str, now: i64, found: &str, stage: Option<&str>, counts: [i64; 4], paused: bool, summary: &str) -> Res<()> {
     c.execute(
-        "INSERT INTO meeting_recovery_outcomes (id,meeting_id,ran_at,found_state,found_stage,segments_recovered,segments_missing,pause_closed,summary) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-        params![new_id(), id, now, found, stage, recovered, missing, paused as i64, summary],
+        "INSERT INTO meeting_recovery_outcomes (id,meeting_id,ran_at,found_state,found_stage,segments_recovered,segments_unrecoverable,segments_missing,bytes_truncated,pause_closed,summary) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        params![new_id(), id, now, found, stage, counts[0], counts[1], counts[2], counts[3], paused as i64, summary],
     )?;
     Ok(())
 }
@@ -3571,6 +3708,102 @@ mod tests {
         let run: String = db.conn.query_row("SELECT state FROM analysis_runs WHERE meeting_id=?1 ORDER BY created_at DESC LIMIT 1", [SEED_FULL], |r| r.get(0)).unwrap();
         assert_eq!(run, "interrupted");
         assert_eq!(reconcile_launch(&db, &root, 100).unwrap().meetings_found, 0, "a second run finds nothing active");
+    }
+
+    // Mirrors `MeetingReconcilerTests`: Swift truncates only the torn tail, finalizes, and keeps zero-frame files.
+    // parity: MEET-091
+    #[test]
+    fn active_rows_recover_as_swift_does_and_lose_no_frames() {
+        let db = db();
+        let c = &db.conn;
+        let root = std::env::temp_dir().join(format!("lf-recover-{}", new_id()));
+        let m = "AAAAAAAA-0000-4000-8000-000000000001";
+        std::fs::create_dir_all(root.join(m)).unwrap();
+        insert_meeting(c, m, "completed", None, 1000, 0, None, "local");
+        c.execute("UPDATE meetings SET state='finalizing',finalization_stage='mic',started_at=1000,stopped_at=NULL,completed_at=NULL,updated_at=61000 WHERE id=?1", [m]).unwrap();
+        c.execute("INSERT INTO meeting_pauses (id,meeting_id,started_at,reason) VALUES ('open',?1,41000,'user')", [m]).unwrap();
+        let (mic, sys) = (seed_uuid(0x9301), seed_uuid(0x9302));
+        insert_track(c, &mic, m, "microphone", "healthy", None, 0, 0, 0);
+        insert_track(c, &sys, m, "system", "healthy", None, 0, 0, 0);
+        let seg = |id: &str, track: &str, n: i64, path: String, state: &str, duration: i64, bytes: i64| {
+            c.execute("INSERT INTO meeting_segments (id,track_id,sequence,relative_path,state,start_offset_ms,duration_ms,byte_size,started_at,host_start_ns,open_reason,dropped_frames) VALUES (?1,?2,?3,?4,?5,0,?6,?7,1000,0,'start',0)", params![id, track, n, path, state, duration, bytes]).unwrap();
+        };
+        let at = |name: &str| root.join(m).join(name);
+        // Torn tail on an open part; a part already renamed; a finalized row with stale .part; a missing one.
+        std::fs::write(at("mic-0001.aac.part"), adts(40, 30)).unwrap();
+        std::fs::write(at("mic-0002.aac"), adts(2, 0)).unwrap();
+        std::fs::write(at("mic-0003.aac"), adts(1, 0)).unwrap();
+        seg("s1", &mic, 1, format!("{m}/mic-0001.aac.part"), "open", 0, 0);
+        seg("s2", &mic, 2, format!("{m}/mic-0002.aac.part"), "open", 0, 0);
+        seg("s3", &mic, 3, format!("{m}/mic-0003.aac.part"), "finalized", 21, 100);
+        seg("s4", &mic, 4, format!("{m}/mic-0004.aac.part"), "open", 0, 0);
+        // A whole track with no frame stays a .part on disk, byte for byte.
+        std::fs::write(at("system-0001.aac.part"), b"not audio").unwrap();
+        seg("z1", &sys, 1, format!("{m}/system-0001.aac.part"), "open", 0, 0);
+
+        let r = reconcile_launch(&db, &root, 70_000).unwrap();
+        assert_eq!((r.meetings_found, r.recovered, r.unrecoverable), (1, 1, 0));
+        assert_eq!(std::fs::metadata(at("mic-0001.aac")).unwrap().len(), 4000, "40 whole frames kept, 30 torn bytes cut");
+        assert!(!at("mic-0001.aac.part").exists());
+        assert_eq!(std::fs::read(at("mic-0002.aac")).unwrap(), adts(2, 0), "an untorn final file isn't rewritten");
+        assert_eq!(std::fs::read(at("system-0001.aac.part")).unwrap(), b"not audio", "zero frames: nothing cut, nothing renamed");
+        assert!(!at("system-0001.aac").exists());
+        let seg_row = |id: &str| -> (String, String, i64, i64, Option<String>, Option<String>, Option<String>) {
+            c.query_row("SELECT state,relative_path,duration_ms,byte_size,close_reason,failure_reason,recovery_note FROM meeting_segments WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))).unwrap()
+        };
+        let frames = |n: i64| n * 1024 * 1000 / 48000;
+        assert_eq!(seg_row("s1"), ("finalized".into(), format!("{m}/mic-0001.aac"), frames(40), 4000, Some("recovered".into()), None, Some("truncated=30 frames=40".into())));
+        assert_eq!(seg_row("s2"), ("finalized".into(), format!("{m}/mic-0002.aac"), frames(2), 200, Some("recovered".into()), None, Some("truncated=0 frames=2".into())));
+        assert_eq!(seg_row("s3"), ("finalized".into(), format!("{m}/mic-0003.aac"), 21, 100, Some("recovered".into()), None, None), "stale metadata: the row catches up, its figures stay");
+        assert_eq!(seg_row("s4"), ("unrecoverable".into(), format!("{m}/mic-0004.aac.part"), 0, 0, None, Some("file_missing".into()), None));
+        assert_eq!(seg_row("z1"), ("unrecoverable".into(), format!("{m}/system-0001.aac.part"), 0, 0, None, Some("unrecoverable_media".into()), Some("frames=0 bytes=9".into())));
+        let track = |id: &str| -> (String, Option<String>, i64, i64) {
+            c.query_row("SELECT health,failure_reason,total_duration_ms,total_bytes FROM meeting_tracks WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap()
+        };
+        assert_eq!(track(&mic), ("finalized".into(), None, frames(40) + frames(2) + 21, 4300));
+        assert_eq!(track(&sys), ("unrecoverable".into(), Some("unrecoverable_media".into()), 0, 0));
+        let row: (String, String, String) = c.query_row("SELECT state,failure_reason,failure_detail FROM meetings WHERE id=?1", [m], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert_eq!(row, ("interrupted".into(), "not_running_at_last_state".into(), "found=finalizing stage=mic".into()));
+        let times: (Option<i64>, Option<i64>, i64, i64) = c.query_row("SELECT stopped_at,completed_at,wall_clock_ms,recorded_ms FROM meetings WHERE id=?1", [m], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+        assert_eq!(times, (Some(61_000), Some(70_000), 60_000, 40_000), "stopped at the last write; the open pause closes there and doesn't count");
+        let pause: (i64, String) = c.query_row("SELECT ended_at,closed_by FROM meeting_pauses WHERE id='open'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(pause, (61_000, "reconciliation".into()));
+        let warned: i64 = c.query_row("SELECT duration_warning FROM meeting_tracks WHERE id=?1", [&mic], |r| r.get(0)).unwrap();
+        assert_eq!(warned, 1, "under a second of audio against 40 s recorded");
+        let o: (String, Option<String>, i64, i64, i64, i64, i64, String) = c.query_row("SELECT found_state,found_stage,segments_recovered,segments_unrecoverable,segments_missing,bytes_truncated,pause_closed,summary FROM meeting_recovery_outcomes WHERE meeting_id=?1", [m], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))).unwrap();
+        assert_eq!(o, ("finalizing".into(), Some("mic".into()), 2, 1, 1, 30, 1, "recovered=2 unrecoverable=1 missing=1 truncated=30".into()));
+
+        let before = std::fs::read(at("mic-0001.aac")).unwrap();
+        assert_eq!(reconcile_launch(&db, &root, 80_000).unwrap().meetings_found, 0, "a second run finds nothing active");
+        assert_eq!(std::fs::read(at("mic-0001.aac")).unwrap(), before);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // A symlinked or escaping path is never opened for truncation.
+    // parity: MEET-091
+    #[cfg(unix)]
+    #[test]
+    fn recovery_refuses_symlinks_and_paths_outside_the_root() {
+        let db = db();
+        let c = &db.conn;
+        let root = std::env::temp_dir().join(format!("lf-recover-link-{}", new_id()));
+        let m = "AAAAAAAA-0000-4000-8000-000000000002";
+        std::fs::create_dir_all(root.join(m)).unwrap();
+        let target = root.join("elsewhere.aac");
+        std::fs::write(&target, adts(1, 7)).unwrap();
+        std::os::unix::fs::symlink(&target, root.join(m).join("mic-0001.aac.part")).unwrap();
+        insert_meeting(c, m, "completed", None, 1000, 0, None, "local");
+        c.execute("UPDATE meetings SET state='recording',completed_at=NULL WHERE id=?1", [m]).unwrap();
+        let mic = seed_uuid(0x9311);
+        insert_track(c, &mic, m, "microphone", "healthy", None, 0, 0, 0);
+        for (id, n, path) in [("l1", 1, format!("{m}/mic-0001.aac.part")), ("l2", 2, "../elsewhere.aac.part".to_string())] {
+            c.execute("INSERT INTO meeting_segments (id,track_id,sequence,relative_path,state,start_offset_ms,duration_ms,byte_size,started_at,host_start_ns,open_reason) VALUES (?1,?2,?3,?4,'open',0,0,0,1000,0,'start')", params![id, mic, n, path]).unwrap();
+        }
+        reconcile_launch(&db, &root, 9).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), adts(1, 7), "the link's target keeps its tail");
+        let state = |id: &str| c.query_row("SELECT state FROM meeting_segments WHERE id=?1", [id], |r| r.get::<_, String>(0)).unwrap();
+        assert_eq!((state("l1").as_str(), state("l2").as_str()), ("unrecoverable", "open"), "as Swift: the link reads as missing; an invalid path is skipped");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// An ADTS file of `frames` 48 kHz stereo frames of 100 bytes, then `tail` loose bytes.
