@@ -1307,7 +1307,7 @@ pub(super) fn pill_menu(id: impl Into<SharedString>, title: String, options: Vec
         .px(px(12.))
         .py(px(7.))
         .rounded(px(8.))
-        .child(h_flex().gap(px(6.)).child(t(title).size(13.).a11y_hidden()).child(icon("chevron.down@semibold", 9., pl.muted)))
+        .child(h_flex().gap(px(6.)).child(t(title).size(13.).swift_lines().a11y_hidden()).child(icon("chevron.down@semibold", 9., pl.muted)))
         .dropdown_menu(move |mut menu, _, _| {
             for (name, value) in options.clone() {
                 let (this, key) = (this.clone(), key.clone());
@@ -1366,7 +1366,7 @@ pub(super) fn selectable(id: impl Into<SharedString>, text: impl Into<SharedStri
 /// `DisclosureGroup`.
 pub(super) fn disclosure(id: &'static str, title: &'static str, open: bool, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, cx: &App) -> AnyElement {
     let m = pal(cx).muted;
-    h_flex().child(plain_button(id, title).content(h_flex().h(px(22.)).gap(px(2.)).child(icon(if open { "chevron.down@bold" } else { "chevron.right@bold" }, 10., m)).child(t(title).size(12.).color(m).a11y_hidden()).into_any_element()).on_click(f))
+    h_flex().child(plain_button(id, title).content(h_flex().h(px(22.)).gap(px(2.)).child(disclosure_chevron(open, &pal(cx))).child(t(title).size(12.).color(m).a11y_hidden()).into_any_element()).on_click(f))
     .into_any_element()
 }
 

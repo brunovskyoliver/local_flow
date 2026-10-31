@@ -991,7 +991,8 @@ async fn pill_menu_reads_like_swift(cx: &mut TestAppContext) {
     assert_symbols(&["chevron.down"]);
     assert_eq!(flow_ui::probe::symbol_color("chevron.down"), Some(pl.muted));
     let button = bounds(cx, r.win, "context.running");
-    assert_eq!(button.size.height, px(29.), "7 + the 15 pt line + 7");
+    // Test fonts give a 13 pt line here, 15 live: the reference and the live pair both measure 29.
+    assert_eq!(button.size.height, px(27.), "7 + the line + 7");
     assert!(button.size.width < px(130.), "fixed size, not the row's width");
 }
 
