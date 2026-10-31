@@ -371,9 +371,9 @@ SPK-036	live	live:audit/mac/notetaker/transcript-dark-rust.png
 SPK-037	live	test:confirming_a_suggested_speaker ; live:audit/mac/notetaker/transcript-dark-rust.png
 SPK-038	auto	test:confirming_a_suggested_speaker
 SPK-039	auto	test:confirming_a_suggested_speaker
-SPK-040	auto	test:change_speaker_writes_the_correction ; test:change_speaker_submenu_writes_the_correction
+SPK-040	auto	test:change_speaker_submenu_writes_the_correction
 SPK-041	auto	test:corrections_and_merges_persist ; test:change_speaker_submenu_writes_the_correction
-SPK-042	auto	test:change_speaker_writes_the_correction ; test:corrections_and_merges_persist ; test:change_speaker_submenu_writes_the_correction
+SPK-042	auto	test:corrections_and_merges_persist ; test:change_speaker_submenu_writes_the_correction
 SPK-043	auto	test:corrections_and_merges_persist ; test:change_speaker_submenu_writes_the_correction
 SPK-044	auto	test:correction_and_merge_failures_surface
 SPK-045	auto	test:correction_and_merge_failures_surface
@@ -480,9 +480,9 @@ SUM-038	recorded	recorded:swift-note kept as Swift behaves; no separate behavior
 SUM-039	live	test:summary_states ; live:audit/mac/notetaker/summary-stale-light-rust.png
 SUM-040	auto	test:edit_failure_shows_under_the_header
 SUM-041	live	test:summary_shows_sections_chips_and_attribution ; live:audit/mac/notetaker/summary-light-rust.png
-SUM-042	auto	test:summary_edit_saves_an_overlay ; test:summary_text_edits_through_its_context_menu
-SUM-043	auto	test:summary_edit_saves_an_overlay ; test:summary_text_edits_through_its_context_menu
-SUM-044	auto	test:summary_edit_saves_an_overlay ; test:summary_overlays_and_report ; test:summary_text_edits_through_its_context_menu
+SUM-042	auto	test:summary_text_edits_through_its_context_menu
+SUM-043	auto	test:summary_text_edits_through_its_context_menu
+SUM-044	auto	test:summary_overlays_and_report ; test:summary_text_edits_through_its_context_menu
 SUM-045	auto	test:summary_text_edits_through_its_context_menu
 SUM-046	auto	test:removing_one_overlay_restores_the_generated_value
 SUM-047	live	test:summary_shows_sections_chips_and_attribution ; live:audit/mac/notetaker/summary-light-rust.png
