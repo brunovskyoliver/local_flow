@@ -70,25 +70,26 @@ impl SettingsPage {
 
     /// A macOS alert, 260 wide; the geometry is measured from `audit/mac/settings/turn-off-light-ref.png`.
     /// Its glass can't be drawn here, so the fill is what it averages to over the dimmed window, and
-    /// the type is Figtree where AppKit's is SF.
+    /// the type is the system face, as AppKit's is.
     fn alert(&self, title: String, message: String, destructive: bool, action: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         let pl = pal(cx);
-        let fill = if pl.mode.is_dark() { hsla(0., 0., 0.164, 0.92) } else { hsla(0., 0., 0.862, 0.96) };
+        let fill = if pl.mode.is_dark() { hsla(0., 0., 0.164, 0.97) } else { hsla(0., 0., 0.862, 0.97) };
         let confirm = if destructive { destructive_prompt_button("settings.alert.confirm", action) } else { prompt_button("settings.alert.confirm", action) };
         v_flex()
             .id("settings.alert")
             .test_support()
             .w(px(260.))
             .px(px(16.))
-            .pt(px(21.))
-            .pb(px(16.))
+            .pt(px(19.))
+            .pb(px(15.))
+            .font_family(".SystemUIFont")
             .bg(fill)
             .rounded(px(26.))
             .border_1()
-            .border_color(pl.ink.opacity(0.1))
-            .shadow_lg()
+            .border_color(black().opacity(if pl.mode.is_dark() { 0.5 } else { 0.2 }))
+            .shadow(vec![BoxShadow { color: black().opacity(0.14), offset: point(px(0.), px(6.)), blur_radius: px(16.), spread_radius: px(0.), inset: false }])
             .child(div().px(px(6.)).child(t(title).font(13., 600.).swift_lines()))
-            .child(div().px(px(6.)).pt(px(11.5)).pb(px(16.)).child(t(message).size(13.).swift_lines().line_spacing(1.)))
+            .child(div().px(px(6.)).pt(px(10.)).pb(px(17.)).child(t(message).size(13.).swift_lines()))
             .child(h_flex().w_full().justify_between().child(prompt_button("settings.alert.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.close_modal(cx)))).child(confirm.on_click(cx.listener(|this, _, _, cx| this.confirm_alert(cx)))))
     }
 

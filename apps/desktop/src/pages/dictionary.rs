@@ -530,7 +530,9 @@ impl DictionaryPage {
             .id("vocabulary.sheet")
             .test_support()
             .track_focus(&self.focus)
-            .p(px(18.))
+            // Swift's 18, plus the 3.5 the native sheet window adds above and below (measured on the pair).
+            .px(px(18.))
+            .py(px(21.5))
             .gap(px(14.))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| match e.keystroke.key.as_str() {
                 "escape" if !this.model.saving => this.cancel(w, cx),

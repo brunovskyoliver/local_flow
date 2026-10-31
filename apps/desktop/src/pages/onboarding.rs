@@ -192,6 +192,9 @@ impl OnboardingPage {
         page.effects(cx);
         page.refresh(cx);
         page.apply_scenario(cx);
+        if page.remote.consent_open {
+            page.server_draft.update(cx, |s, cx| s.focus(window, cx));
+        }
         if page.remote.confirm_off {
             cx.defer_in(window, |this, w, cx| this.present_turn_off(w, cx));
         }

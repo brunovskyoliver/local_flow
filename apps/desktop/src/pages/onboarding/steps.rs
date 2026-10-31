@@ -248,7 +248,7 @@ impl OnboardingPage {
     fn access_row(&mut self, symbol: &str, title: &'static str, detail: &str, state: Perm, permission: Permission, cx: &mut Context<Self>) -> Div {
         let a = pal(cx).accent;
         let control = if state == Perm::Granted {
-            any(h_flex().gap(px(5.)).child(icon("checkmark.circle.fill", 13., a)).child(t("Allowed").font(12., 500.).color(a)))
+            any(h_flex().gap(px(8.)).child(icon("checkmark.circle.fill", 13., a)).child(t("Allowed").font(12., 500.).color(a)))
         } else {
             let press = self.click(cx, move |this, cx| this.allow(permission, cx));
             any(prototype_button(SharedString::from(format!("onboarding.allow.{title}")), "Allow…").a11y_label(format!("Allow {title}")).disabled(self.performing).on_click(press))

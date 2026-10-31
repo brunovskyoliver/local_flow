@@ -87,8 +87,8 @@ pub fn confirm_dialog(
         .bg(fill)
         .rounded(px(26.))
         .shadow(vec![
-            BoxShadow { color: black().opacity(0.3), offset: point(px(0.), px(0.)), blur_radius: px(1.), spread_radius: px(1.), inset: false },
-            BoxShadow { color: black().opacity(0.3), offset: point(px(0.), px(10.)), blur_radius: px(30.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: black().opacity(0.25), offset: point(px(0.), px(0.)), blur_radius: px(0.5), spread_radius: px(0.5), inset: false },
+            BoxShadow { color: black().opacity(0.14), offset: point(px(0.), px(6.)), blur_radius: px(16.), spread_radius: px(0.), inset: false },
         ])
         .child(t(title.to_string()).font(13., 600.).color(p.ink))
         .when(!message.is_empty(), |d| d.child(div().max_w(px(170.)).child(t(message.to_string()).size(13.).color(p.ink))))

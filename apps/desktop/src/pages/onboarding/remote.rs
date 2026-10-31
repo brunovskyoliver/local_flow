@@ -35,7 +35,7 @@ impl OnboardingPage {
                 cx.notify();
             });
             body.push(any(plain_button("onboarding.legacyRewriteServer", "Advanced: rewrite-only server").toggled(open).on_click(toggle).content(
-                h_flex().py(px(4.)).gap(px(1.)).child(disclosure_chevron(open, &p)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
+                h_flex().py(px(4.)).gap(px(2.5)).child(disclosure_chevron(open, &p)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
             )));
             if open {
                 // The page's spacing is 24; `DisclosureGroup` puts its content 12 below the title.
@@ -175,12 +175,12 @@ impl OnboardingPage {
                 .gap(px(16.))
                 .child(t("Use your LocalFlow server?").font(17., 500.))
                 .child(
-                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.surface).rounded(px(8.)).border(px(if focused { 2. } else { 1. })).border_color(if focused { p.accent } else { p.line }).child(icon("server.rack", 16., p.muted)).child(h_flex().relative().flex_1().min_w_0().when(draft.is_empty(), |d| d.child(div().absolute().left_0().child(t("https://server.example.com").size(13.).color(p.link()).a11y_hidden()))).child(div().w_full().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL")))),
+                    crate::pages::settings::input_surface("server.rack", Some("https://server.example.com"), Input::new(&self.server_draft).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &self.server_draft, window, cx),
                 )
-                .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.))
+                .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.).swift_lines())
                 .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
                 .when_some(self.remote.error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning)))
-                .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.21)).on_click(cancel)).child(prototype_button("settings.remoteConsentConfirm", "Turn On").fill(p.primary).text_color(p.on_primary).when(origin.is_none(), |b| b.fill(p.ink.opacity(0.1)).text_color(p.muted.opacity(0.45)).disabled_opacity(1.)).disabled(origin.is_none()).on_click(confirm)))
+                .child(h_flex().w_full().justify_end().gap(px(8.)).child(native_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.2)).text_color(p.ink).on_click(cancel)).child(native_button("settings.remoteConsentConfirm", "Turn On").fill(p.ink.opacity(0.2)).text_color(p.ink).disabled(origin.is_none()).on_click(confirm)))
         };
         Some(any(sheet_overlay("onboarding.modal", window, cx, div().bg(sheet_fill(cx)).rounded(px(12.)).child(body))))
     }

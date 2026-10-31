@@ -1229,7 +1229,7 @@ pub(super) fn row(title: impl Into<SharedString>, detail: Option<String>, contro
         // `HStack(spacing:)` also spaces the `Spacer(minLength: 0)`, so text and control sit two spacings apart.
         .gap(px(if compact { 20. } else { 44. }))
         .py(px(19.))
-        .child(v_flex().id(SharedString::from(format!("{id}.text"))).flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(1.)).child(t(s).size(12.).color(m).line_spacing(4.).swift_lines()))).test_support())
+        .child(v_flex().id(SharedString::from(format!("{id}.text"))).flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(1.)).child(t(s).size(12.).color(m).line_spacing(4.).no_widow().swift_lines()))).test_support())
         .child(div().flex_none().child(control))
         .test_support()
 }

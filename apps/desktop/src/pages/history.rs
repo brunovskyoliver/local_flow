@@ -182,6 +182,7 @@ impl HistoryPage {
                 }
             }
             "detail" => {
+                self.voice_over = true;
                 if let (Some(id), Some(db)) = (first, cx.global::<Core>().db.as_ref()) {
                     self.model.show_detail(db, &id);
                 }
@@ -193,9 +194,11 @@ impl HistoryPage {
                 self.reload(cx);
             }
             "processing" | "lower" => {
-                // The second row, the incomplete one the reference capture opens.
-                let second = self.model.entries.get(1).map(|e| e.id.clone());
-                if let (Some(id), Some(db)) = (second, cx.global::<Core>().db.as_ref()) {
+                // The reference opens these through the row menu, with VoiceOver reported on so the menu is in the AX tree.
+                self.voice_over = true;
+                // `processing` is the incomplete second row; `lower` the first, which has rewrite attempts.
+                let row = self.model.entries.get(if scenario.ends_with("lower") { 0 } else { 1 }).map(|e| e.id.clone());
+                if let (Some(id), Some(db)) = (row, cx.global::<Core>().db.as_ref()) {
                     self.model.show_detail(db, &id);
                 }
                 if scenario.ends_with("lower") {
@@ -209,6 +212,7 @@ impl HistoryPage {
                 self.model.detail_error = Some(DETAIL_ERROR.into());
             }
             "delete" => {
+                self.voice_over = true;
                 self.model.selected = self.model.entries.first().cloned();
                 self.confirming_delete = true;
             }
