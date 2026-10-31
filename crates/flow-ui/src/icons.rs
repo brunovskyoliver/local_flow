@@ -29,6 +29,7 @@ pub fn lucide(symbol: &str) -> &'static str {
         "chevron.left" => "chevron-left",
         "chevron.right" => "chevron-right",
         "chevron.up" => "chevron-up",
+        "chevron.up.chevron.down" => "chevrons-native",
         "circle.fill" | "circle" => "circle",
         "clock" => "clock",
         "command" => "command",
@@ -98,7 +99,7 @@ embed!(
     "hard-drive", "settings", "globe", "info", "smartphone", "keyboard", "lightbulb", "shield", "search", "mic", "mic-off",
     "circle-pause", "pause", "users", "user-plus", "circle-play", "play", "plus", "circle-dot", "server", "panel-right",
     "sparkles", "volume-2", "layers", "square", "list-checks", "file-x", "book-text", "text-cursor-input", "quote", "trash",
-    "audio-waveform", "x", "chart-bar-xaxis",
+    "audio-waveform", "x", "chart-bar-xaxis", "chevrons-native",
 );
 
 impl AssetSource for FlowAssets {

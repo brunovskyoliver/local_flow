@@ -22,6 +22,26 @@ pub enum PermissionState {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Unavailable(pub &'static str);
 
+/// A connected audio input (Swift's `ConnectedInput`). Read-only: nothing here opens the device.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputDevice {
+    pub device_id: u32,
+    pub uid: String,
+    pub model_uid: Option<String>,
+    pub name: String,
+    /// `builtIn`, `usb`, `bluetooth`, `iPhone`, `virtual` or `other`.
+    pub kind: &'static str,
+    pub alive: bool,
+}
+
+/// Swift's `InputDeviceSnapshot`, first 64 inputs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InputCatalog {
+    pub devices: Vec<InputDevice>,
+    pub default_input: Option<u32>,
+    pub clamshell: bool,
+}
+
 /// How a captured field takes text: a direct Accessibility write or a pasted Command-V.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InsertDelivery {
@@ -91,6 +111,10 @@ pub trait Services: 'static {
     /// Regular running apps as (name, bundle ID), for the context sheets.
     fn running_apps(&self) -> Vec<(String, String)> {
         vec![]
+    }
+    /// The input devices, or `None` where this platform has no catalog yet.
+    fn input_catalog(&self) -> Option<InputCatalog> {
+        None
     }
     /// `ProcessInfo.physicalMemory`; 0 where unknown, which fits no local model.
     fn physical_memory(&self) -> u64 {
