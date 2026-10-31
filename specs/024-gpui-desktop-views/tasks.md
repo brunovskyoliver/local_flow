@@ -13,6 +13,6 @@
 - [X] T011 Notetaker, meeting detail, transcript, speakers, summary
 - [X] T012 `flowd` integration
 - [X] T013 Reference capture pipeline: Swift screenshots on the fixture root
-- [X] T014 Side-by-side audit, macOS light and dark; Windows dropped by the owner, captures only
-- [X] T015 AX dumps, tiling check, RSS; UIA not verified, see `progress.md`
+- [X] T014 Side-by-side audit, macOS light and dark; Windows captures only, by owner decision; tests on GitHub Actions
+- [X] T015 AX dumps, tiling check, RSS; UIA read on GitHub Actions, see `progress.md`
 - [X] T016 Report in `progress.md`

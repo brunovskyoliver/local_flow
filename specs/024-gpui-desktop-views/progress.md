@@ -10,7 +10,7 @@ Evidence is under `~/agent-runs/2026-10-31-gpui-views/audit/`. Nothing is merged
 
 ### Owner decisions
 - Visual differences that can't match SwiftUI exactly are accepted. They stay recorded on their rows.
-- Windows end-to-end testing is dropped and the agent-created VM `agent-localflow-win11` is deleted. Windows behaviour is an unverified assumption, not a pass.
+- VM testing is dropped and `agent-localflow-win11` is deleted, replaced by the GitHub Actions run below.
 
 ### What changed
 All desktop views exist in Rust and GPUI: shell, menu, tray, pill, insertion panel, onboarding, Settings, Dictionary, Insights, Transcriptions and Notetaker. The Swift Mac and iOS apps were not removed; `make check` still builds and tests them. Inventory: 2,254 rows, none open.
@@ -45,22 +45,21 @@ Independent spot checks of 100 random rows each, read-only:
 
 The last two rows use different weak definitions. Round 6 fixed those findings, but no spot check has run since, so expect some remaining false or weak rows among the 1,652 auto rows.
 
-### Windows limits
-- UIA was never verified. Every dump, in all three runs, is close to empty: median 0 or 1 named elements. Two-step reading was being tried when the VM was removed. Narrator support on Windows is unknown.
-- `onboarding-purpose` has `.crash.txt` files with exit -1 and no stderr. It was the scenario running when the runner's time limit killed the process, and the same scenario later produced PNGs, but the planned clean rerun did not happen.
-- One audit run stalled at `notetaker-summary-pending`; the cause was not found.
-- Windows-only Rust paths (windowing, services, input) have only been run as far as those captures.
+### Windows
+The VM is deleted. GitHub Actions run 41231247250 at `261eb01d` passed on x64 (`windows-latest`) and arm64 (`windows-11-arm`), with the same results on both:
+- `cargo test --workspace`: 729 desktop, 182 flow-core, 16 flow-ui and 2 smaller suites passed, 0 failed. The tests that start a real `flowd` are Unix-only and don't run there.
+- Seven page and scenario opens stayed running for 6 seconds, including `onboarding.purpose`. This clears the VM's crash file, which came from the runner killing the process.
+- UIA now returns real trees when read twice, because the first read only turns the tree on: for example 85 named elements on Settings. The VM's nearly empty dumps were read too early. Logs and dumps: `audit/windows-ci/`.
 
-### Windows CI
-Owner approved a GitHub Actions run in place of the VM: `.github/workflows/windows-desktop.yml` runs `cargo test --workspace` and `scripts/windows-smoke.ps1` on x64 and arm64.
+Not established on Windows: pixel comparison with Swift, Narrator speech, audio, real services, and flowd. x64 evidence is these tests and opens only, not hardware acceptance. The VM's 388 captures are from `b916ab47`; one VM run stalled at `notetaker-summary-pending` and the cause wasn't found.
 
 ### Left
 Reviews still list these rows as weak or different: inventory 01: 37, 03: 8, 04: 19, 05: 17. See `audit/review-0N.tsv`. Inventory 02's file has no `weak` label in that column; it reported 11 weak rows plus ONB-268.
 
 Not run, needs the owner or hardware:
-- VoiceOver speech (PILL-052) and Narrator
+- VoiceOver speech (PILL-052) and Narrator speech
 - Apple and Google sign-in (SET-063, 064, 065)
-- x64 and audio acceptance, including live microphone recording
+- x64 hardware and audio acceptance, including live microphone recording
 - A real pill and insertion panel on screen: non-key behaviour, level, clicks and hover (PILL-011, 012, SHELL-157)
 - Tiling on the final commit
 
