@@ -1076,6 +1076,18 @@ impl Alternate {
     }
 }
 
+/// `SpeechModelChoice.downloadBytes`: the sum of the file sizes in `Resources/Models/<choice>.json`.
+pub fn speech_download_bytes(choice: &str) -> u64 {
+    if choice == "parakeet-ultra" { 632_162_964 } else { 483_105_645 }
+}
+pub fn other_speech_model(choice: &str) -> &'static str {
+    if choice == "parakeet-ultra" { "parakeet-v3" } else { "parakeet-ultra" }
+}
+impl Alternate {
+    pub fn not_installed(choice: &'static str) -> Self {
+        Alternate { choice, installed: false, installing: false, completed: 0, total: 0, bytes: speech_download_bytes(choice) }
+    }
+}
 pub fn speech_name(choice: &str) -> &'static str {
     if choice == "parakeet-ultra" { "Parakeet Ultra" } else { "Parakeet v3" }
 }
@@ -2402,26 +2414,49 @@ mod tests {
         assert_eq!(consent_text(&p), MEETING_CONSENT_TEXT);
     }
 
-    // parity: SET-026 SET-027 SET-028 SET-029
+    // parity: SET-253 SET-262
     #[test]
-    fn error_copy() {
-        for (f, s) in [
-            (Failure::AccessibilityRequired, "Allow Accessibility to record and prioritize shortcuts."),
-            (Failure::InputMonitoringDenied, "Allow Input Monitoring to use the dictation shortcut."),
-            (Failure::InvalidBinding, "That shortcut is unavailable. Try another key combination."),
-            (Failure::Conflict, "That shortcut is already registered. Try another combination."),
-            (Failure::ShortcutUnavailable, "The keyboard shortcut could not start. Check permissions and try again."),
-            (Failure::Busy, "Another dictation or model operation is still running. Wait for it to finish."),
-            (Failure::ModelUnavailable, "The speech model is unavailable. Verify the local model in Settings."),
-            (Failure::Cancelled, "The operation was cancelled."),
-            (Failure::ServerOnly, "Server only is on, but this Mac can't use your server. Check Settings › Server."),
-            (Failure::Other("Unavailable".into(), 0), "Error type Unavailable, code 0."),
-        ] {
-            assert_eq!(describe(&f), s);
+    fn download_sizes_are_the_manifests() {
+        for choice in ["parakeet-v3", "parakeet-ultra"] {
+            let path = format!("{}/../../apps/macos/LocalFlow/Resources/Models/{choice}.json", env!("CARGO_MANIFEST_DIR"));
+            let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            let files = manifest["files"].as_array().unwrap();
+            let sum: u64 = files.iter().map(|f| f["size"].as_u64().or(f["bytes"].as_u64()).unwrap()).sum();
+            assert_eq!(speech_download_bytes(choice), sum, "{choice}");
         }
+        assert_eq!(Alternate::not_installed(other_speech_model("parakeet-v3")).name(), "Parakeet Ultra");
     }
 
-    // parity: SET-030 SET-031 SET-033 SET-248 SET-254 SET-261 SET-262 SET-271 SET-275 SET-279
+    // parity: SET-026
+    #[test]
+    fn error_copy_shortcuts() {
+        assert_eq!(describe(&Failure::AccessibilityRequired), "Allow Accessibility to record and prioritize shortcuts.");
+        assert_eq!(describe(&Failure::InputMonitoringDenied), "Allow Input Monitoring to use the dictation shortcut.");
+        assert_eq!(describe(&Failure::InvalidBinding), "That shortcut is unavailable. Try another key combination.");
+        assert_eq!(describe(&Failure::Conflict), "That shortcut is already registered. Try another combination.");
+        assert_eq!(describe(&Failure::ShortcutUnavailable), "The keyboard shortcut could not start. Check permissions and try again.");
+    }
+
+    // parity: SET-027
+    #[test]
+    fn error_copy_busy_and_model() {
+        assert_eq!(describe(&Failure::Busy), "Another dictation or model operation is still running. Wait for it to finish.");
+        assert_eq!(describe(&Failure::ModelUnavailable), "The speech model is unavailable. Verify the local model in Settings.");
+    }
+
+    // parity: SET-028
+    #[test]
+    fn error_copy_server_only() {
+        assert_eq!(describe(&Failure::ServerOnly), "Server only is on, but this Mac can't use your server. Check Settings › Server.");
+    }
+
+    // parity: SET-029
+    #[test]
+    fn error_copy_fallback() {
+        assert_eq!(describe(&Failure::Other("Unavailable".into(), 0)), "Error type Unavailable, code 0.");
+        assert_eq!(describe(&Failure::Cancelled), "The operation was cancelled.");
+    }
+
     #[test]
     fn snapshot_readiness_copy() {
         let mut s = Snapshot::default();

@@ -114,12 +114,14 @@ struct Rig {
     log: Log,
     secrets: Rc<RefCell<HashMap<String, String>>>,
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
+    permissions: Rc<Cell<PermissionState>>,
 }
 
 fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core::prefs::Prefs)) -> Rig {
     boot(cx, Mode::Light);
     let (ok, log, secrets, permissions) = (Rc::new(Cell::new(true)), Log::default(), Rc::new(RefCell::new(HashMap::new())), Rc::new(Cell::new(PermissionState::NotAsked)));
     let catalog = Rc::new(RefCell::new(None));
+    let permissions_handle = permissions.clone();
     let stub = Stub { fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone() };
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
@@ -131,7 +133,7 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let bounds = Bounds::new(point(px(0.), px(0.)), size(px(1180.), px(6000.)));
     let win = cx.update(|cx| cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |w, cx| cx.new(|cx| SettingsPage::new(w, cx)))).unwrap();
     frame(cx, win);
-    Rig { win, ok, log, secrets, catalog }
+    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle }
 }
 fn frame(cx: &mut TestAppContext, win: Win) {
     cx.run_until_parked();
@@ -212,15 +214,30 @@ async fn default_page_shows_every_section_in_order(cx: &mut TestAppContext) {
     assert!(disabled(cx, r.win, "settings.contextStyleEnabled"));
 }
 
-// parity: SET-016 SET-017 SET-032 SET-350
+// parity: SET-016 SET-350
 #[flow_ui::gpui::test]
-async fn refresh_and_poll_pick_up_changed_permissions(cx: &mut TestAppContext) {
+async fn refresh_reads_permissions_and_all_granted_hides_the_section(cx: &mut TestAppContext) {
+    rig(cx, "", |_| {});
+    assert_saw(&["Permissions needed", "Allow…"]);
     let r = rig(cx, "permissions-granted", |_| {});
     assert!(!saw("Permissions needed"), "all granted hides the section");
     assert_eq!(read(cx, r.win, |p, _| p.snapshot.microphone), Perm::Granted);
-    cx.executor().advance_clock(Duration::from_millis(600));
+}
+
+// parity: SET-017
+#[flow_ui::gpui::test]
+async fn poll_sees_a_permission_change_within_half_a_second(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let before = read(cx, r.win, |p, _| p.snapshot.microphone);
+    assert_ne!(before, Perm::Granted);
+    r.permissions.set(PermissionState::Granted);
+    cx.executor().advance_clock(Duration::from_millis(100));
     frame(cx, r.win);
-    assert_eq!(read(cx, r.win, |p, _| p.snapshot.accessibility), Perm::Granted);
+    assert_eq!(read(cx, r.win, |p, _| p.snapshot.microphone), before, "not before the next poll");
+    cx.executor().advance_clock(Duration::from_millis(500));
+    frame(cx, r.win);
+    assert_eq!(read(cx, r.win, |p, _| p.snapshot.microphone), Perm::Granted);
+    assert!(!saw("Permissions needed"));
 }
 
 // parity: SET-019 SET-015
@@ -335,7 +352,7 @@ async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     assert!(!saw("Use this server for everything"));
 }
 
-// parity: SET-044 SET-046 SET-047 SET-048 SET-050 SET-051 SET-052 SET-060 SET-061 SET-062 SET-066 SET-069 SET-043 SET-073
+// parity: SET-060 SET-061 SET-062 SET-066 SET-069 SET-073
 #[flow_ui::gpui::test]
 async fn remote_status_lines_and_their_controls(cx: &mut TestAppContext) {
     for (scenario, status, enroll, sign_in) in [("pinned", "Sign in to finish", false, true), ("sign-in-again", "Sign in again", false, true), ("pending", "Waiting for approval", false, false), ("rejected", "Rejected", true, false), ("revoked", "Removed from the server", true, false), ("pin-mismatch", "Server identity changed", true, false), ("update-required", "Update LocalFlow or the server", false, false)] {
@@ -548,6 +565,31 @@ async fn microphones_list_edits(cx: &mut TestAppContext) {
     assert_eq!(ids(cx).len(), n);
 }
 
+// parity: SET-189
+#[flow_ui::gpui::test]
+async fn dragging_over_a_row_shows_the_two_point_bar(cx: &mut TestAppContext) {
+    use flow_ui::gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput};
+    let r = rig(cx, "microphones", |_| {});
+    let ids = read(cx, r.win, |p, _| p.mics.as_ref().unwrap().entries.iter().map(|e| format!("settings.microphones.row.{}", e.id)).collect::<Vec<_>>());
+    let target: &'static str = ids[0].clone().leak();
+    let source: &'static str = ids[1].clone().leak();
+    let (top, from) = (bounds(cx, r.win, target), bounds(cx, r.win, source).center());
+    let to = top.center();
+    let send = |cx: &mut TestAppContext, e: PlatformInput| {
+        cx.update_window(r.win.into(), |_, w, cx| w.dispatch_event(e, cx)).unwrap();
+    };
+    send(cx, PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: from, modifiers: Modifiers::default(), click_count: 1, first_mouse: false }));
+    send(cx, PlatformInput::MouseMove(MouseMoveEvent { position: to, pressed_button: Some(MouseButton::Left), modifiers: Modifiers::default() }));
+    send(cx, PlatformInput::MouseMove(MouseMoveEvent { position: to, pressed_button: Some(MouseButton::Left), modifiers: Modifiers::default() }));
+    frame(cx, r.win);
+    let bar = bounds(cx, r.win, "settings.microphones.dropBar");
+    assert_eq!((bar.size.height, bar.top(), bar.size.width), (px(2.), bounds(cx, r.win, target).top(), top.size.width), "2 pt at the top of the targeted row");
+    assert_eq!(bounds(cx, r.win, target).size.height, top.size.height, "the bar doesn't move the row");
+    send(cx, PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: Modifiers::default(), click_count: 1 }));
+    frame(cx, r.win);
+    assert!(!has(cx, r.win, "settings.microphones.dropBar"), "gone after the drop");
+}
+
 // parity: SET-201 SET-203 SET-205 SET-207
 #[flow_ui::gpui::test]
 async fn app_context_switches(cx: &mut TestAppContext) {
@@ -563,7 +605,7 @@ async fn app_context_switches(cx: &mut TestAppContext) {
     assert_eq!(pref_b(cx, "contextRewriteEnabled"), Some(true));
 }
 
-// parity: SET-212 SET-213 SET-214 SET-215 SET-216 SET-217 SET-218 SET-219 SET-220 SET-221 SET-226 SET-227 SET-228 SET-229 SET-231 SET-232 SET-234 SET-236 SET-237
+// parity: SET-213 SET-219 SET-220 SET-221 SET-226 SET-228 SET-231 SET-232 SET-234 SET-236 SET-237
 #[flow_ui::gpui::test]
 async fn exclusions_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -618,7 +660,7 @@ async fn kinds_sheet(cx: &mut TestAppContext) {
     click(cx, r.win, "settings.contextDone");
 }
 
-// parity: SET-241 SET-242 SET-244 SET-245 SET-246 SET-249 SET-250 SET-251 SET-264 SET-265
+// parity: SET-243 SET-241 SET-242 SET-244 SET-245 SET-246 SET-249 SET-250 SET-251 SET-264 SET-265
 #[flow_ui::gpui::test]
 async fn installed_model_controls(cx: &mut TestAppContext) {
     let r = rig(cx, "installed", |_| {});
@@ -655,7 +697,7 @@ async fn downloads_and_progress(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     click(cx, r.win, "settings.speechDownload");
     let (title, message) = cx.pending_prompt().expect("native alert");
-    assert!(title.starts_with("Download Parakeet") && message.starts_with("Download size unavailable.\n") && message.contains("License: CC BY 4.0"), "{title} {message}");
+    assert!(title.starts_with("Download Parakeet") && message.starts_with(&format!("{}\n", core::byte_count(core::speech_download_bytes(read(cx, r.win, |p, _| p.snapshot.speech_model))))) && message.contains("License: CC BY 4.0"), "{title} {message}");
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert!(!logged(&r, "action download"));
@@ -846,7 +888,7 @@ async fn permission_buttons(cx: &mut TestAppContext) {
 #[path = "../../../../../crates/flow-core/src/settings/test_flowd.rs"]
 mod test_flowd;
 
-// parity: SET-045 SET-055 SET-070 SET-071 SET-072 SET-118 SET-119 SET-326 SET-327 SET-328 SET-332
+// parity: SET-045 SET-055 SET-070 SET-072 SET-119 SET-326 SET-327 SET-328 SET-332
 // Starts its own throwaway flowd; see `test_flowd`. Never the owner's server.
 #[cfg(unix)]
 #[flow_ui::gpui::test]
@@ -960,7 +1002,7 @@ async fn page_rows_and_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
     let row = bounds(cx, r.win, "settings.row.Learn corrections");
     assert_eq!(row.left() - content.left(), px(47. + 19.), "page padding, then the group's horizontal padding");
     let (left, switch) = (bounds(cx, r.win, "settings.row.Learn corrections.text"), bounds(cx, r.win, "settings.learnCorrections"));
-    assert_eq!((gap(left, switch), row.size.height), (22., switch.size.height + px(38.)), "spacing 22, vertical padding 19");
+    assert_eq!((gap(left, switch), row.size.height), (44., switch.size.height + px(38.)), "spacing 22 on each side of the Spacer, vertical padding 19");
     let r = rig(cx, "installed", |_| {});
     assert_eq!(gap(bounds(cx, r.win, "settings.speechLoad"), bounds(cx, r.win, "settings.test.speech")), 8., "model controls");
 }
@@ -1014,8 +1056,23 @@ async fn lower_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
     let header = bounds(cx, r.win, "settings.secretHeader");
     assert_eq!(bounds(cx, r.win, "settings.credentialRow").top() - header.bottom(), px(8.), "section spacing 8");
     let r = rig(cx, "summary-remote", |_| {});
-    let (url, label) = (bounds(cx, r.win, "settings.summaryServerURL"), bounds(cx, r.win, "settings.summaryModelLabel"));
+    let (url, label) = (bounds(cx, r.win, "settings.summaryURLField"), bounds(cx, r.win, "settings.summaryModelLabel"));
     assert_eq!(label.top() - url.bottom(), px(14.), "spacing 14");
+}
+
+// parity: SET-020
+#[flow_ui::gpui::test]
+async fn microphones_anchor_scrolls_there_once(cx: &mut TestAppContext) {
+    let r = rig(cx, "microphones", |_| {});
+    cx.update(|cx| {
+        let mut session = crate::shell::Session::new(cx.global::<Core>());
+        session.microphones_anchor = true;
+        cx.set_global(session);
+    });
+    set(cx, r.win, |p, _, cx| p.take_anchor(cx));
+    assert_eq!(cx.update(|cx| cx.global::<crate::shell::Session>().microphones_anchor), false, "the anchor clears");
+    let (y, top) = read(cx, r.win, |p, _| (p.scroll.offset().y, p.mic_top.get()));
+    assert!(y < px(0.) && top > px(0.), "scrolled down to the section: {y:?} {top:?}");
 }
 
 // parity: SET-067
@@ -1064,7 +1121,7 @@ async fn microphones_follow_the_catalog(cx: &mut TestAppContext) {
     assert_saw(&["Built-in · Not connected"]);
 }
 
-// parity: SET-024 SET-055 SET-059 SET-133 SET-332 SET-333
+// parity: SET-024
 #[flow_ui::gpui::test]
 async fn selectable_text_copies(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});

@@ -5,6 +5,7 @@ use flow_core::settings as core;
 use flow_core::settings::{Connection, Failure, Health, Identity, InputSnapshot, Permission as Perm, RewriteSettings, Runtime, Shortcut, Snapshot};
 use flow_platform::Permission;
 use flow_ui::gpui::base::TestSupportExt;
+use flow_ui::gpui::DragMoveEvent;
 use flow_ui::prelude::*;
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -45,6 +46,7 @@ pub struct SettingsPage {
     focus: FocusHandle,
     scroll: ScrollHandle,
     mic_top: Rc<Cell<Pixels>>,
+    pub(super) mic_drop: Option<String>,
     pub(super) visible: bool,
     pub(super) scenario: String,
     pub(super) snapshot: Snapshot,
@@ -193,6 +195,7 @@ impl SettingsPage {
             focus,
             scroll: ScrollHandle::new(),
             mic_top: Rc::new(Cell::new(px(0.))),
+            mic_drop: None,
             visible: true,
             scenario: scenario.clone(),
             snapshot: Snapshot::default(),
@@ -254,8 +257,11 @@ impl SettingsPage {
         let core_state = cx.global::<Core>();
         let permission = |p| map_perm(core_state.services.permission(p));
         let p = &core_state.prefs;
+        let speech_model = core::speech_model(p);
         let mut next = Snapshot {
-            speech_model: core::speech_model(p),
+            speech_model,
+            download_bytes: Some(core::speech_download_bytes(speech_model)),
+            alternate: Some(core::Alternate::not_installed(core::other_speech_model(speech_model))),
             keep_model_ready: core::bool_pref(p, "keepModelReady"),
             microphone: permission(Permission::Microphone),
             input_monitoring: permission(Permission::InputMonitoring),
@@ -775,7 +781,19 @@ impl SettingsPage {
                         .test_support()
                         .when(!(r.available || r.is_default), |d| d.opacity(0.55))
                         .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
-                        .drag_over::<DragMic>(move |s, _, _, _| s.border_t_2().border_color(accent))
+                        .relative()
+                        .on_drag_move::<DragMic>(cx.listener({
+                            let id = id.clone();
+                            move |this, e: &DragMoveEvent<DragMic>, _, cx| {
+                                if e.bounds.contains(&e.event.position) && this.mic_drop.as_ref() != Some(&id) {
+                                    this.mic_drop = Some(id.clone());
+                                    cx.notify();
+                                }
+                            }
+                        }))
+                        .when(cx.has_active_drag() && self.mic_drop.as_ref() == Some(&id), |d| {
+                            d.child(div().id("settings.microphones.dropBar").test_support().absolute().top_0().left_0().right_0().h(px(2.)).bg(accent))
+                        })
                         .on_drop(cx.listener(move |this, d: &DragMic, _, cx| this.edit_mics(|e| core::move_input(e, &d.0, &drop_id), cx)))
                         .child(row(r.title(), Some(r.detail()), div().children(remove), cx)),
                 )
@@ -1012,7 +1030,7 @@ impl SettingsPage {
             .gap(px(14.))
             .py(px(18.))
             .child(label("Server URL"))
-            .child(input_surface("link", Input::new(&self.summary_url).aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx))
+            .child(div().id("settings.summaryURLField").test_support().child(input_surface("link", Input::new(&self.summary_url).aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx)))
             .child(div().id("settings.summaryModelLabel").child(label("Model")).test_support())
             .child(input_surface("cpu", Input::new(&self.summary_model).aria_label("Model").accessibility_id("settings.summaryServerModel"), &self.summary_model, window, cx))
             .child(label("API key"));
@@ -1141,7 +1159,8 @@ pub(super) fn row(title: impl Into<SharedString>, detail: Option<String>, contro
     h_flex()
         .id(SharedString::from(id.clone()))
         .w_full()
-        .gap(px(if compact { 10. } else { 22. }))
+        // `HStack(spacing:)` also spaces the `Spacer(minLength: 0)`, so text and control sit two spacings apart.
+        .gap(px(if compact { 20. } else { 44. }))
         .py(px(19.))
         .child(v_flex().id(SharedString::from(format!("{id}.text"))).flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(0.5)).child(t(s).size(12.).color(m).line_spacing(4.)))).test_support())
         .child(div().flex_none().child(control))
