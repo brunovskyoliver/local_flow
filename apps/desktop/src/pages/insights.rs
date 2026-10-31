@@ -63,6 +63,7 @@ fn app_name(bundle: &str) -> String {
 impl InsightsPage {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut shown = cx.try_global::<Session>().map(|s| s.selection);
+        let mut revision = cx.try_global::<Session>().map_or(0, |s| s.history_revision);
         // `.task`: refreshes on every appearance, and not while shown.
         let _session_sub = cx.observe_global::<Session>(move |this, cx| {
             let now = Some(cx.global::<Session>().selection);
@@ -71,6 +72,13 @@ impl InsightsPage {
                 cx.notify();
             }
             shown = now;
+            // A new dictation refreshes Insights only while it is the selected page.
+            let latest = cx.global::<Session>().history_revision;
+            if latest != revision && now == Some(Page::Insights) {
+                this.refresh(cx);
+                cx.notify();
+            }
+            revision = latest;
         });
         let mut page = InsightsPage { insights: None, error: None, tab: Tab::Usage, page: 0, hovered_hour: None, tip: None, anchors: Default::default(), _session_sub };
         page.refresh(cx);
@@ -166,13 +174,13 @@ impl InsightsPage {
         self.target(format!("insights.info.{id}"), Some(Tip::note(text)), icon("info.circle", 13., m), cx).aria_label(text.to_string()).test_support()
     }
 
-    // ponytail: the long label's 9.8 stands in for `.minimumScaleFactor`, measured at 1180 wide.
+    // ponytail: the long label's 9.8 stands in for `.minimumScaleFactor`, measured at 1180 wide; compact cards fit it unscaled.
     fn stat(&self, value: String, label: &str, help: Option<(&str, &str)>, cx: &mut Context<Self>) -> Div {
         let info = help.map(|(id, h)| self.info(id, h, cx));
         v_flex()
             .gap(px(8.))
             .child(t(value).font(28., 500.).mono_digits().tracking(-0.5).lines(1))
-            .child(h_flex().gap(px(6.)).child(caps(label, pal(cx).muted, if label.len() > 20 { 9.8 } else { 11.5 })).when_some(info, |d, i| d.child(i)))
+            .child(h_flex().gap(px(6.)).child(caps(label, pal(cx).muted, if label.len() > 20 && !cx.global::<Flow>().compact { 9.8 } else { 11.5 })).when_some(info, |d, i| d.child(i)))
     }
 
     fn usage(&self, i: &Insights, cx: &mut Context<Self>) -> Div {
@@ -790,5 +798,36 @@ mod tests {
         // 2026-10-31 is a Saturday; with Sunday first its week starts on the 25th, six days earlier.
         assert_eq!(week_start(20757), 20757 - (20757 + 5 - 1_i64).rem_euclid(7));
         assert_eq!(grouped(1234), "N1234");
+    }
+
+    // parity: SHELL-074
+    /// A new dictation refreshes Insights only while it is the selected page.
+    #[flow_ui::gpui::test]
+    async fn history_change_refreshes_only_the_selected_page(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(crate::shell::ensure_session);
+        let w = cx.add_window(|w, cx| InsightsPage::new(w, cx));
+        frame(cx, w);
+        let count = |cx: &mut TestAppContext| w.update(cx, |p, _, _| p.insights.as_ref().map(|i| i.dictations)).unwrap();
+        let before = count(cx);
+        let remove = |cx: &mut TestAppContext, n: i64| {
+            cx.update(|cx| {
+                let db = cx.global::<Core>().db.as_ref().unwrap();
+                let id = flow_core::history::seed_id(n);
+                let revision = flow_core::history::get(db, &id).unwrap().map_or(0, |e| e.revision);
+                flow_core::history::delete_confirmed(db, &id, revision).unwrap();
+                crate::shell::history_changed(cx);
+            });
+            cx.run_until_parked();
+        };
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::History));
+        remove(cx, 20);
+        assert_eq!(count(cx), before, "not selected");
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Insights));
+        cx.run_until_parked();
+        let shown = count(cx);
+        assert!(shown < before, "appearing re-reads");
+        remove(cx, 21);
+        assert!(count(cx) < shown, "selected re-reads");
     }
 }
