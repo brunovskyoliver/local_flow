@@ -108,9 +108,6 @@ pub fn bool_pref(p: &Prefs, key: &str) -> bool {
     let default = matches!(key, "unloadLocalModelDuringGames" | "showsBackgroundProgress");
     p.bool_or(key, default)
 }
-/// `meetingTranscriptionEnabled` and its siblings have no switch and are not persisted.
-pub const ALWAYS_ON_MEETING_FLAGS: bool = true;
-
 /// At launch: retired keys go, and a removed language rewrites as the default.
 pub fn migrate(p: &mut Prefs) {
     for key in RETIRED_KEYS {
@@ -2280,7 +2277,7 @@ mod tests {
         assert_eq!(remote_server_url(&p), "");
     }
 
-    // parity: SET-406 SET-377 SET-378 SET-379 SET-380 SET-381 SET-382 SET-383 SET-384 SET-385 SET-386 SET-387 SET-388 SET-389 SET-390 SET-391 SET-392 SET-393 SET-394 SET-395 SET-396 SET-397 SET-398 SET-399 SET-402 SET-404 SET-405 SET-407 SET-408 SET-409 SET-410 SET-411 SET-412 SET-413 SET-422
+    // parity: SET-406 SET-377 SET-378 SET-379 SET-380 SET-381 SET-382 SET-383 SET-384 SET-386 SET-387 SET-388 SET-389 SET-390 SET-391 SET-392 SET-393 SET-394 SET-395 SET-396 SET-397 SET-398 SET-399 SET-402 SET-404 SET-405 SET-407 SET-408 SET-409 SET-410 SET-411 SET-412 SET-413 SET-422
     #[test]
     fn preference_defaults_and_keys_match_swift() {
         let mut p = Prefs::memory();
@@ -2330,7 +2327,6 @@ mod tests {
         assert_eq!(override_of(&p, "server.override.meetings"), "server");
         assert_eq!(override_of(&p, "server.override.rewrite"), "custom");
         assert_eq!(loopback_endpoint(), "http://127.0.0.1:8080");
-        assert!(ALWAYS_ON_MEETING_FLAGS);
         p.set("settings.meetingLanguage", "czech");
         for k in RETIRED_KEYS {
             p.set(k, true);
@@ -2339,6 +2335,37 @@ mod tests {
         assert_eq!(p.string("settings.meetingLanguage").as_deref(), Some("automatic"));
         assert!(RETIRED_KEYS.iter().all(|k| !p.contains(k)));
         assert_eq!((whisper_language("automatic"), whisper_language("slovak"), whisper_language("english")), ("auto", "sk", "en"));
+    }
+
+    // parity: SET-396 SET-402 SET-404 SET-405 SET-409 SET-412 SET-422
+    #[test]
+    fn stored_values_drive_the_readers() {
+        let mut p = Prefs::memory();
+        assert_eq!(remote_status(&p, true), None, "remote.enabled starts false");
+        assert!(!routing(&p).server_only);
+        p.set("server.only", true);
+        assert!(routing(&p).server_only);
+        for state in ["off", "pinned", "pending", "approved", "rejected", "revoked", "pin_mismatch"] {
+            p.set("remote.state", state);
+            assert_eq!(remote_state(&p), state);
+        }
+        for notice in ["sign_in_again", "update_required"] {
+            p.set("remote.notice", notice);
+            assert_eq!(remote_notice(&p), Some(notice));
+        }
+        p.set("remote.notice", "other");
+        assert_eq!(remote_notice(&p), None);
+        p.set("server.override.summaries", "custom");
+        assert_eq!(override_of(&p, "server.override.summaries"), "custom");
+        p.set("server.override.summaries", "thisMac");
+        assert_eq!(override_of(&p, "server.override.summaries"), "thisMac");
+        set_insecure_override(&mut p, "http://a:80", true);
+        assert!(insecure_override(&p, "http://a:80"));
+        assert!(!insecure_override(&p, "http://b:80"));
+        assert_eq!(rewrite_keychain("http://a:80"), "org.localflow.LocalFlow.rewrite/http://a:80");
+        assert_eq!(rewrite_keychain(SUMMARY_ACCOUNT), "org.localflow.LocalFlow.rewrite/summary-server");
+        assert_eq!(remote_keychain("device-key"), "org.localflow.LocalFlow.remote/device-key");
+        assert_eq!(loopback_endpoint(), "http://127.0.0.1:8080");
     }
 
     // parity: SET-102 SET-111 SET-112 SET-113 SET-241 SET-414

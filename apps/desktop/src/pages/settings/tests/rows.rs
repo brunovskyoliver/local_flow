@@ -913,3 +913,48 @@ async fn analysis_status_line_reads_small_and_muted(cx: &mut TestAppContext) {
     assert!(has(cx, r.win, "settings.analysisStatus"));
     assert_type("Meeting analysis: available (model m).", 12., 400., palette(cx).muted);
 }
+
+// MARK: Permissions and stored text
+
+// parity: SET-352 SET-353 SET-354 SET-355 SET-356
+#[flow_ui::gpui::test]
+async fn permission_requests_write_swifts_status(cx: &mut TestAppContext) {
+    let r = rig(cx, "permissions-refused", |_| {});
+    assert_eq!(label(cx, r.win, "settings.allow.Microphone"), "Allow Microphone");
+    assert_saw(&["Allow…"]);
+    assert!(bounds(cx, r.win, "settings.allow.Microphone").size.width >= px(99.));
+    set(cx, r.win, |p, _, _| p.performing = true);
+    assert!(disabled(cx, r.win, "settings.allow.Microphone"));
+    set(cx, r.win, |p, _, _| p.performing = false);
+    click(cx, r.win, "settings.allow.Microphone");
+    assert!(logged(&r, "settings Microphone"), "denied opens the pane");
+    assert_eq!(read(cx, r.win, |p, _| p.snapshot.status.clone()), "Microphone permission is needed for dictation.");
+    let installs = |r: &Rig| r.log.borrow().iter().filter(|l| *l == "install").count();
+    let before = installs(&r);
+    click(cx, r.win, "settings.allow.Input Monitoring");
+    assert!(logged(&r, "settings InputMonitoring"));
+    assert_eq!(installs(&r), before + 1, "reinstalls the saved shortcut");
+    let r = rig(cx, "", |_| {});
+    r.permissions.set(PermissionState::Granted);
+    click(cx, r.win, "settings.allow.Microphone");
+    assert_eq!(read(cx, r.win, |p, _| p.snapshot.status.clone()), "Microphone allowed.");
+    // Meetings never see the row, so the Swift guard has nothing to stop here.
+    let r = rig(cx, "meeting-only", |_| {});
+    assert!(!has(cx, r.win, "settings.allow.Input Monitoring"));
+    assert!(has(cx, r.win, "settings.allow.Microphone"));
+}
+
+// parity: SET-388 SET-389 SET-393
+#[flow_ui::gpui::test]
+async fn text_prefs_start_empty_and_store_raw_text(cx: &mut TestAppContext) {
+    let r = rig(cx, "summary-remote", |_| {});
+    assert_eq!(read(cx, r.win, |p, cx| val(&p.endpoint, cx)), "");
+    assert_eq!(read(cx, r.win, |p, cx| val(&p.summary_url, cx)), "");
+    assert_eq!(read(cx, r.win, |p, cx| val(&p.summary_model, cx)), "");
+    type_into(cx, r.win, |p| p.endpoint.clone(), " not a url ");
+    assert_eq!(pref_s(cx, "rewriteEndpoint").as_deref(), Some(" not a url "));
+    type_into(cx, r.win, |p| p.summary_url.clone(), " u ");
+    assert_eq!(pref_s(cx, "summaryServerURL").as_deref(), Some(" u "));
+    type_into(cx, r.win, |p| p.summary_model.clone(), "m");
+    assert_eq!(pref_s(cx, "summaryServerModel").as_deref(), Some("m"));
+}

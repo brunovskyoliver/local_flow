@@ -684,9 +684,20 @@ impl SettingsPage {
         if !granted && services.open_permission_settings(permission).is_err() {
             self.error = Some(core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)));
         }
+        if permission == Permission::InputMonitoring && !core::meeting_only(prefs(cx)) {
+            let json = Shortcut::load(prefs(cx)).json();
+            let _ = cx.global::<Core>().services.install_shortcut(&json);
+        }
         self.refresh(cx);
-        if !granted && permission == Permission::Accessibility {
-            self.snapshot.status = "Enable LocalFlow in Accessibility settings. The app is shown in Finder if you need to add it.".into();
+        let status = match (permission, granted) {
+            (Permission::Microphone, true) => Some("Microphone allowed."),
+            (Permission::Microphone, false) => Some("Microphone permission is needed for dictation."),
+            (Permission::Accessibility, true) => Some("Accessibility allowed. Insertion is available in supported fields."),
+            (Permission::Accessibility, false) => Some("Enable LocalFlow in Accessibility settings. The app is shown in Finder if you need to add it."),
+            _ => None,
+        };
+        if let Some(status) = status {
+            self.snapshot.status = status.into();
         }
         cx.notify();
     }

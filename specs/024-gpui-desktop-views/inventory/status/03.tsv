@@ -349,11 +349,11 @@ SET-348	auto	test:summary_headers_follow_the_routing
 SET-349	auto	test:meeting_only_variant ; service:test uses a stub, real AVFoundation not exercised
 SET-350	auto	test:refresh_reads_permissions_and_all_granted_hides_the_section
 SET-351	auto	test:permissions_list_only_what_is_missing_in_order ; service:real AVFoundation, CGPreflightListenEventAccess, AXIsProcessTrusted not exercised
-SET-352	auto	test:permissions_list_only_what_is_missing_in_order ; test:controls_have_swifts_measured_sizes
-SET-353	auto	test:permission_buttons ; service:test uses a stub, real AVFoundation not exercised
-SET-354	auto	test:permission_buttons ; service:test uses a stub, real AVFoundation not exercised
-SET-355	auto	test:permission_buttons ; service:test uses a stub, real CGRequestListenEventAccess not exercised
-SET-356	auto	test:permission_buttons ; service:test uses a stub, real AXIsProcessTrustedWithOptions not exercised
+SET-352	auto	test:permission_requests_write_swifts_status ; test:permissions_list_only_what_is_missing_in_order ; test:controls_have_swifts_measured_sizes
+SET-353	auto	test:permission_requests_write_swifts_status ; test:permission_buttons ; service:test uses a stub, real AVFoundation not exercised
+SET-354	auto	test:permission_requests_write_swifts_status ; test:permission_buttons ; service:test uses a stub, real AVFoundation not exercised
+SET-355	auto	test:permission_requests_write_swifts_status ; test:permission_buttons ; service:test uses a stub, real CGRequestListenEventAccess not exercised
+SET-356	auto	test:permission_requests_write_swifts_status ; test:permission_buttons ; service:test uses a stub, real AXIsProcessTrustedWithOptions not exercised
 SET-357	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-358	auto	test:known_speakers_model
 SET-359	auto	test:known_speakers_model
@@ -372,8 +372,8 @@ SET-371	auto	test:known_speakers_model
 SET-372	auto	test:known_speakers_model
 SET-373	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-374	auto	test:automatic_enrollment_follows_the_binding ; test:usage_enrollment_runs_when_approved_with_a_device_key ; note:store half only; a true result should start enrollment, and nothing sends it yet
-SET-375	auto	test:usage_notices_and_backoff_are_kept ; service:test uses a stub, real wss /v1/remote/channel op `usage` not exercised
-SET-376	auto	test:usage_notices_and_backoff_are_kept
+SET-375	service	service:usage report loop over wss /v1/remote/channel, later service phase; usage_backoff has no production caller
+SET-376	recorded	recorded:Swift has no view for these either; copy kept in USAGE_NOTICES for the screen that will show them
 SET-377	auto	test:preference_defaults_and_keys_match_swift
 SET-378	auto	test:preference_defaults_and_keys_match_swift
 SET-379	auto	test:preference_defaults_and_keys_match_swift
@@ -382,34 +382,34 @@ SET-381	auto	test:preference_defaults_and_keys_match_swift
 SET-382	auto	test:preference_defaults_and_keys_match_swift
 SET-383	auto	test:preference_defaults_and_keys_match_swift
 SET-384	auto	test:preference_defaults_and_keys_match_swift
-SET-385	auto	test:preference_defaults_and_keys_match_swift
+SET-385	recorded	recorded:fixed flags in Swift with no reader on this page; Rust has no flag
 SET-386	auto	test:preference_defaults_and_keys_match_swift
 SET-387	auto	test:preference_defaults_and_keys_match_swift
-SET-388	auto	test:preference_defaults_and_keys_match_swift
-SET-389	auto	test:preference_defaults_and_keys_match_swift
+SET-388	auto	test:text_prefs_start_empty_and_store_raw_text
+SET-389	auto	test:text_prefs_start_empty_and_store_raw_text
 SET-390	auto	test:preference_defaults_and_keys_match_swift
 SET-391	auto	test:preference_defaults_and_keys_match_swift
 SET-392	auto	test:preference_defaults_and_keys_match_swift
-SET-393	auto	test:preference_defaults_and_keys_match_swift
+SET-393	auto	test:text_prefs_start_empty_and_store_raw_text
 SET-394	auto	test:preference_defaults_and_keys_match_swift
 SET-395	auto	test:preference_defaults_and_keys_match_swift
-SET-396	auto	test:preference_defaults_and_keys_match_swift
+SET-396	auto	test:stored_values_drive_the_readers ; test:preference_defaults_and_keys_match_swift
 SET-397	auto	test:preference_defaults_and_keys_match_swift
 SET-398	auto	test:preference_defaults_and_keys_match_swift
 SET-399	auto	test:preference_defaults_and_keys_match_swift
 SET-400	auto	test:exclusions_and_kinds
 SET-401	auto	test:exclusions_and_kinds
-SET-402	auto	test:preference_defaults_and_keys_match_swift
+SET-402	auto	test:stored_values_drive_the_readers ; test:preference_defaults_and_keys_match_swift
 SET-403	auto	test:address_and_credential_validators_match_swift
-SET-404	auto	test:preference_defaults_and_keys_match_swift
-SET-405	auto	test:preference_defaults_and_keys_match_swift
+SET-404	auto	test:stored_values_drive_the_readers ; test:preference_defaults_and_keys_match_swift
+SET-405	auto	test:stored_values_drive_the_readers ; test:preference_defaults_and_keys_match_swift
 SET-406	auto	test:consent_version_gates_dictation_at_one_and_the_rest_at_two ; test:preference_defaults_and_keys_match_swift
 SET-407	auto	test:preference_defaults_and_keys_match_swift
 SET-408	auto	test:preference_defaults_and_keys_match_swift
-SET-409	auto	test:preference_defaults_and_keys_match_swift
+SET-409	auto	test:stored_values_drive_the_readers ; test:preference_defaults_and_keys_match_swift
 SET-410	auto	test:preference_defaults_and_keys_match_swift
 SET-411	auto	test:preference_defaults_and_keys_match_swift
-SET-412	auto	test:preference_defaults_and_keys_match_swift
+SET-412	auto	test:stored_values_drive_the_readers ; test:preference_defaults_and_keys_match_swift
 SET-413	auto	test:preference_defaults_and_keys_match_swift
 SET-414	auto	test:routing_truth_table
 SET-415	auto	test:shortcut_rules_and_capture
@@ -419,4 +419,4 @@ SET-418	service	service:real Keychain item layout not exercised; owner Keychain 
 SET-419	service	service:real Keychain item layout not exercised; owner Keychain must not be touched
 SET-420	service	service:Sparkle, updater service phase
 SET-421	auto	test:known_speakers_model
-SET-422	auto	test:preference_defaults_and_keys_match_swift
+SET-422	auto	test:stored_values_drive_the_readers ; note:Rust has no dev variant yet, so separate dev services are not implemented

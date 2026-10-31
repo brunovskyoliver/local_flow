@@ -47,7 +47,7 @@ impl flow_platform::Services for Stub {
     }
     fn request_permission(&self, p: Permission) -> Result<PermissionState, Unavailable> {
         self.call(format!("request {p:?}"))?;
-        Ok(PermissionState::Denied)
+        Ok(self.permissions.get())
     }
     fn input_catalog(&self) -> Option<flow_platform::InputCatalog> {
         self.catalog.borrow().clone()
