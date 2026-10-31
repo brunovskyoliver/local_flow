@@ -12,14 +12,12 @@ fn open(cx: &mut TestAppContext) -> WindowHandle<HistoryPage> {
 fn frame(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>) {
     cx.run_until_parked();
     flow_ui::probe::clear();
-    cx.update_window(w.into(), |_, w, cx| w.render_frame(cx))
-        .unwrap();
+    cx.update_window(w.into(), |_, w, cx| w.render_frame(cx)).unwrap();
 }
 
 fn click(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, id: String) {
     let id = SharedString::from(id);
-    cx.update_window(w.into(), |_, win, cx| win.click(id, cx))
-        .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.click(id, cx)).unwrap();
     frame(cx, w);
 }
 
@@ -38,10 +36,7 @@ impl flow_platform::Services for NoSavePanel {
     fn permission(&self, _: flow_platform::Permission) -> flow_platform::PermissionState {
         flow_platform::PermissionState::Granted
     }
-    fn open_permission_settings(
-        &self,
-        _: flow_platform::Permission,
-    ) -> Result<(), flow_platform::Unavailable> {
+    fn open_permission_settings(&self, _: flow_platform::Permission) -> Result<(), flow_platform::Unavailable> {
         Ok(())
     }
     fn high_contrast(&self) -> bool {
@@ -68,13 +63,7 @@ impl flow_platform::Services for NoSavePanel {
 }
 
 fn exists(cx: &mut TestAppContext, id: String) -> bool {
-    cx.update(|cx| {
-        cx.global::<Core>()
-            .db
-            .as_ref()
-            .map(|db| get(db, &id).unwrap().is_some())
-            .unwrap()
-    })
+    cx.update(|cx| cx.global::<Core>().db.as_ref().map(|db| get(db, &id).unwrap().is_some()).unwrap())
 }
 
 // parity: HIST-008 HIST-034
@@ -89,8 +78,7 @@ async fn list_groups_rows_by_day_with_labels(cx: &mut TestAppContext) {
 async fn search_filters_after_the_wait_and_reports_no_matches(cx: &mut TestAppContext) {
     let w = open(cx);
     click(cx, w, "history.searchToggle".into());
-    cx.update_window(w.into(), |_, win, cx| win.input("zzzqqq", cx))
-        .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.input("zzzqqq", cx)).unwrap();
     cx.executor().advance_clock(Duration::from_millis(300));
     frame(cx, w);
     assert_saw(&["No matches"]);
@@ -117,22 +105,13 @@ async fn search_filters_after_the_wait_and_reports_no_matches(cx: &mut TestAppCo
 #[flow_ui::gpui::test]
 async fn copy_writes_the_clipboard_and_shows_a_check(cx: &mut TestAppContext) {
     let w = open(cx);
-    let (id, text) = w
-        .update(cx, |t, _, _| {
-            (
-                t.model.entries[0].id.clone(),
-                t.model.entries[0].text.clone(),
-            )
-        })
-        .unwrap();
+    let (id, text) = w.update(cx, |t, _, _| (t.model.entries[0].id.clone(), t.model.entries[0].text.clone())).unwrap();
     click(cx, w, format!("history.copy.{id}"));
     assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(text));
-    w.update(cx, |t, _, _| assert!(t.copied.contains(&id)))
-        .unwrap();
+    w.update(cx, |t, _, _| assert!(t.copied.contains(&id))).unwrap();
     cx.executor().advance_clock(Duration::from_millis(1300));
     frame(cx, w);
-    w.update(cx, |t, _, _| assert!(!t.copied.contains(&id)))
-        .unwrap();
+    w.update(cx, |t, _, _| assert!(!t.copied.contains(&id))).unwrap();
 }
 
 // parity: HIST-060 HIST-061 HIST-062 HIST-065
@@ -145,13 +124,7 @@ async fn delete_asks_then_removes_the_row(cx: &mut TestAppContext) {
         seed_id(40)
     });
     w.update(cx, |t, _, cx| {
-        let e = t
-            .model
-            .entries
-            .iter()
-            .find(|e| !e.is_attempting())
-            .unwrap()
-            .clone();
+        let e = t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone();
         t.ask_delete(&e, cx);
     })
     .unwrap();
@@ -162,13 +135,7 @@ async fn delete_asks_then_removes_the_row(cx: &mut TestAppContext) {
     assert!(exists(cx, seed_id(1)) && exists(cx, id));
     let victim = w
         .update(cx, |t, _, cx| {
-            let e = t
-                .model
-                .entries
-                .iter()
-                .find(|e| !e.is_attempting())
-                .unwrap()
-                .clone();
+            let e = t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone();
             t.ask_delete(&e, cx);
             e.id
         })
@@ -182,22 +149,9 @@ async fn delete_asks_then_removes_the_row(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn details_show_status_stages_and_processing(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     frame(cx, w);
-    assert_saw(&[
-        "Details",
-        "Completeness: ",
-        "Recognized: ",
-        "Delivery: ",
-        "Stopped: ",
-        "Normalized",
-        "Raw recognition",
-        "Processing details",
-        "App context",
-        "Rewrite",
-        "Attempt 1",
-    ]);
+    assert_saw(&["Details", "Completeness: ", "Recognized: ", "Delivery: ", "Stopped: ", "Normalized", "Raw recognition", "Processing details", "App context", "Rewrite", "Attempt 1"]);
     click(cx, w, "history.detail.stage.raw".into());
     assert_saw(&["Exact received windows in order."]);
     click(cx, w, "history.detail.processing".into());
@@ -210,8 +164,7 @@ async fn details_show_status_stages_and_processing(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn legacy_row_explains_missing_details(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(5), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(5), cx)).unwrap();
     frame(cx, w);
     assert_saw(&[LEGACY_DETAIL, "Saved text"]);
 }
@@ -234,20 +187,12 @@ async fn pending_rows_save_failure_and_discard(cx: &mut TestAppContext) {
         core.services = Box::new(NoSavePanel);
     });
     frame(cx, w);
-    assert_saw(&[
-        "WAITING FOR SERVER",
-        "Recognize Locally",
-        "Save Audio…",
-        "Discard",
-    ]);
+    assert_saw(&["WAITING FOR SERVER", "Recognize Locally", "Save Audio…", "Discard"]);
     let id = seed_id(9201);
     click(cx, w, format!("history.pending.save.{id}"));
     assert_saw(&[PENDING_ERROR]);
     click(cx, w, format!("history.pending.discard.{id}"));
-    assert_saw(&[
-        "Discard this recording?",
-        "Its audio is deleted and it will not be recognized.",
-    ]);
+    assert_saw(&["Discard this recording?", "Its audio is deleted and it will not be recognized."]);
     click(cx, w, "history.discardDialog.cancel".into());
     assert!(!saw("Discard this recording?"));
     let _ = std::fs::remove_dir_all(dir);
@@ -267,10 +212,7 @@ async fn empty_and_error_states(cx: &mut TestAppContext) {
     let _w = open_scenario(cx, "history.empty");
     assert_saw(&["No transcriptions yet"]);
     let _w = open_scenario(cx, "history.error");
-    assert_saw(&[
-        "History could not be read. Your saved text has not been deleted. Try again.",
-        "Retry",
-    ]);
+    assert_saw(&["History could not be read. Your saved text has not been deleted. Try again.", "Retry"]);
     click(cx, _w, "history.retry".into());
     assert!(!saw("History could not be read."));
     assert_saw(&["TODAY"]);
@@ -280,12 +222,10 @@ async fn empty_and_error_states(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn cmd_f_opens_search_and_escape_closes_it(cx: &mut TestAppContext) {
     let w = open(cx);
-    cx.update_window(w.into(), |_, win, cx| win.press("cmd-f", cx))
-        .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.press("cmd-f", cx)).unwrap();
     frame(cx, w);
     w.update(cx, |t, _, _| assert!(t.searching)).unwrap();
-    cx.update_window(w.into(), |_, win, cx| win.press("escape", cx))
-        .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
     frame(cx, w);
     frame(cx, w);
     w.update(cx, |t, _, _| assert!(!t.searching)).unwrap();
@@ -299,15 +239,7 @@ fn session(cx: &mut TestAppContext) {
 }
 
 fn delete_all(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        cx.global::<Core>()
-            .db
-            .as_ref()
-            .unwrap()
-            .conn
-            .execute_batch("DELETE FROM transcriptions")
-            .unwrap()
-    });
+    cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("DELETE FROM transcriptions").unwrap());
 }
 
 // parity: HIST-004 HIST-005 HIST-006
@@ -318,16 +250,13 @@ async fn leaving_clears_detail_and_coming_back_reloads(cx: &mut TestAppContext) 
     cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::History));
     let w = cx.add_window(|w, cx| HistoryPage::new(w, cx));
     frame(cx, w);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Insights));
-    w.update(cx, |t, _, _| assert!(t.model.detail_id.is_none()))
-        .unwrap();
+    w.update(cx, |t, _, _| assert!(t.model.detail_id.is_none())).unwrap();
     delete_all(cx);
     cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::History));
     frame(cx, w);
-    w.update(cx, |t, _, _| assert!(t.model.entries.is_empty()))
-        .unwrap();
+    w.update(cx, |t, _, _| assert!(t.model.entries.is_empty())).unwrap();
     assert_saw(&["No transcriptions yet"]);
 }
 
@@ -350,28 +279,17 @@ async fn blur_with_empty_text_closes_search(cx: &mut TestAppContext) {
 async fn only_the_latest_search_counts(cx: &mut TestAppContext) {
     let w = open(cx);
     click(cx, w, "history.searchToggle".into());
-    cx.update_window(w.into(), |_, win, cx| win.input("zzz", cx))
-        .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.input("zzz", cx)).unwrap();
     cx.executor().advance_clock(Duration::from_millis(100));
-    cx.update_window(w.into(), |_, win, cx| win.press("backspace", cx))
-        .unwrap();
-    cx.update_window(w.into(), |_, win, cx| win.press("backspace", cx))
-        .unwrap();
-    cx.update_window(w.into(), |_, win, cx| win.press("backspace", cx))
-        .unwrap();
-    cx.update_window(w.into(), |_, win, cx| win.input("kickoff", cx))
-        .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.press("backspace", cx)).unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.press("backspace", cx)).unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.press("backspace", cx)).unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.input("kickoff", cx)).unwrap();
     cx.executor().advance_clock(Duration::from_millis(300));
     frame(cx, w);
     w.update(cx, |t, _, _| {
         assert_eq!(t.model.search_text, "kickoff");
-        assert!(
-            !t.model.entries.is_empty()
-                && t.model
-                    .entries
-                    .iter()
-                    .all(|e| e.text.to_lowercase().contains("kickoff"))
-        );
+        assert!(!t.model.entries.is_empty() && t.model.entries.iter().all(|e| e.text.to_lowercase().contains("kickoff")));
     })
     .unwrap();
 }
@@ -386,16 +304,10 @@ async fn sentinels_pin_and_first_load(cx: &mut TestAppContext) {
     })
     .unwrap();
     frame(cx, w);
-    let height = cx
-        .update_window(w.into(), |_, win, _| {
-            win.find("history.sentinel.older").bounds().size.height
-        })
-        .unwrap();
+    let height = cx.update_window(w.into(), |_, win, _| win.find("history.sentinel.older").bounds().size.height).unwrap();
     assert_eq!(height, px(44.));
     // A pinned row that moved 100 down shifts the scroll by the same amount.
-    let id = w
-        .update(cx, |t, _, _| t.model.entries[0].id.clone())
-        .unwrap();
+    let id = w.update(cx, |t, _, _| t.model.entries[0].id.clone()).unwrap();
     let was = w.update(cx, |t, _, _| t.tops.borrow()[&id]).unwrap();
     w.update(cx, |t, _, cx| {
         *t.pin.borrow_mut() = Some((id.clone(), was - px(100.)));
@@ -424,38 +336,13 @@ async fn sentinels_pin_and_first_load(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn failed_delete_reports_and_keeps_the_row(cx: &mut TestAppContext) {
     let w = open(cx);
-    let e = w
-        .update(cx, |t, _, _| {
-            t.model
-                .entries
-                .iter()
-                .find(|e| !e.is_attempting())
-                .unwrap()
-                .clone()
-        })
-        .unwrap();
+    let e = w.update(cx, |t, _, _| t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone()).unwrap();
     w.update(cx, |t, _, cx| t.ask_delete(&e, cx)).unwrap();
     frame(cx, w);
-    cx.update(|cx| {
-        cx.global::<Core>()
-            .db
-            .as_ref()
-            .unwrap()
-            .conn
-            .execute_batch("PRAGMA query_only=ON")
-            .unwrap()
-    });
+    cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("PRAGMA query_only=ON").unwrap());
     click(cx, w, "history.deleteDialog.confirm".into());
     assert_saw(&[ACTION_ERROR]);
-    cx.update(|cx| {
-        cx.global::<Core>()
-            .db
-            .as_ref()
-            .unwrap()
-            .conn
-            .execute_batch("PRAGMA query_only=OFF")
-            .unwrap()
-    });
+    cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("PRAGMA query_only=OFF").unwrap());
     assert!(exists(cx, e.id));
 }
 
@@ -463,9 +350,7 @@ async fn failed_delete_reports_and_keeps_the_row(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn only_rows_arriving_later_fade(cx: &mut TestAppContext) {
     let w = open(cx);
-    let id = w
-        .update(cx, |t, _, _| t.model.entries[0].id.clone())
-        .unwrap();
+    let id = w.update(cx, |t, _, _| t.model.entries[0].id.clone()).unwrap();
     w.update(cx, |t, _, _| {
         assert!(t.fades("arrived-now"));
         // Rows of the first list never fade, however soon the next frame comes.
@@ -480,28 +365,12 @@ async fn only_rows_arriving_later_fade(cx: &mut TestAppContext) {
 async fn row_text_selects_by_drag_and_copies(cx: &mut TestAppContext) {
     let w = open(cx);
     cx.write_to_clipboard(ClipboardItem::new_string("before".into()));
-    let (id, text) = w
-        .update(cx, |t, _, _| {
-            (
-                t.model.entries[0].id.clone(),
-                t.model.entries[0].text.clone(),
-            )
-        })
-        .unwrap();
-    let b = cx
-        .update_window(w.into(), |_, win, _| {
-            win.find(SharedString::from(format!("history.text.{id}")))
-                .bounds()
-        })
-        .unwrap();
+    let (id, text) = w.update(cx, |t, _, _| (t.model.entries[0].id.clone(), t.model.entries[0].text.clone())).unwrap();
+    let b = cx.update_window(w.into(), |_, win, _| win.find(SharedString::from(format!("history.text.{id}"))).bounds()).unwrap();
     let y = b.top() + px(8.);
-    cx.update_window(w.into(), |_, win, cx| {
-        win.drag(point(b.left(), y), point(b.left() + px(60.), y), cx)
-    })
-    .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.drag(point(b.left(), y), point(b.left() + px(60.), y), cx)).unwrap();
     frame(cx, w);
-    cx.update_window(w.into(), |_, win, cx| win.press("cmd-c", cx))
-        .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.press("cmd-c", cx)).unwrap();
     let copied = cx.read_from_clipboard().and_then(|c| c.text()).unwrap();
     assert!(
         copied != "before" && !copied.is_empty() && text.starts_with(&copied),
@@ -514,42 +383,22 @@ async fn row_text_selects_by_drag_and_copies(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn tab_reaches_the_row_actions_and_keeps_them_visible(cx: &mut TestAppContext) {
     let w = open(cx);
-    let id = w
-        .update(cx, |t, _, _| t.model.entries[0].id.clone())
-        .unwrap();
+    let id = w.update(cx, |t, _, _| t.model.entries[0].id.clone()).unwrap();
     w.update(cx, |t, win, cx| t.focus.focus(win, cx)).unwrap();
     let copy = SharedString::from(format!("history.copy.{id}"));
     for _ in 0..4 {
-        cx.update_window(w.into(), |_, win, cx| win.press("tab", cx))
-            .unwrap();
-        if cx
-            .update_window(w.into(), |_, win, _| win.find(copy.clone()).focused())
-            .unwrap()
-            == Some(true)
-        {
+        cx.update_window(w.into(), |_, win, cx| win.press("tab", cx)).unwrap();
+        if cx.update_window(w.into(), |_, win, _| win.find(copy.clone()).focused()).unwrap() == Some(true) {
             break;
         }
     }
-    assert_eq!(
-        cx.update_window(w.into(), |_, win, _| win.find(copy.clone()).focused())
-            .unwrap(),
-        Some(true)
-    );
+    assert_eq!(cx.update_window(w.into(), |_, win, _| win.find(copy.clone()).focused()).unwrap(), Some(true));
     // `in_focus` shows the actions on exactly this condition.
-    let within = w
-        .update(cx, |t, win, cx| {
-            t.action_focus.borrow()[&id].contains_focused(win, cx)
-        })
-        .unwrap();
+    let within = w.update(cx, |t, win, cx| t.action_focus.borrow()[&id].contains_focused(win, cx)).unwrap();
     assert!(within);
     // Shift-Tab goes back.
-    cx.update_window(w.into(), |_, win, cx| win.press("shift-tab", cx))
-        .unwrap();
-    assert_ne!(
-        cx.update_window(w.into(), |_, win, _| win.find(copy).focused())
-            .unwrap(),
-        Some(true)
-    );
+    cx.update_window(w.into(), |_, win, cx| win.press("shift-tab", cx)).unwrap();
+    assert_ne!(cx.update_window(w.into(), |_, win, _| win.find(copy).focused()).unwrap(), Some(true));
 }
 
 // parity: HIST-049 HIST-052 HIST-053
@@ -558,26 +407,12 @@ async fn row_icon_buttons_are_28_and_insert_follows_delivery(cx: &mut TestAppCon
     let w = open(cx);
     let entries = w.update(cx, |t, _, _| t.model.entries.clone()).unwrap();
     let id = &entries[0].id;
-    let copy = cx
-        .update_window(w.into(), |_, win, _| {
-            win.find(SharedString::from(format!("history.copy.{id}")))
-        })
-        .unwrap();
+    let copy = cx.update_window(w.into(), |_, win, _| win.find(SharedString::from(format!("history.copy.{id}")))).unwrap();
     assert_eq!(copy.bounds().size, size(px(28.), px(28.)));
     assert_eq!(copy.label().map(|l| l.to_string()).as_deref(), Some("Copy"));
     let confirmed = entries.iter().find(|e| e.is_confirmed()).unwrap();
-    let insert = cx
-        .update_window(w.into(), |_, win, _| {
-            win.find(SharedString::from(format!(
-                "history.insert.{}",
-                confirmed.id
-            )))
-        })
-        .unwrap();
-    assert_eq!(
-        insert.label().map(|l| l.to_string()).as_deref(),
-        Some("Insert again")
-    );
+    let insert = cx.update_window(w.into(), |_, win, _| win.find(SharedString::from(format!("history.insert.{}", confirmed.id)))).unwrap();
+    assert_eq!(insert.label().map(|l| l.to_string()).as_deref(), Some("Insert again"));
     // Attempting rows and a busy coordinator disable it.
     w.update(cx, |t, _, cx| {
         t.model.entries[0].delivery_state = "attempting".into();
@@ -585,12 +420,7 @@ async fn row_icon_buttons_are_28_and_insert_follows_delivery(cx: &mut TestAppCon
     })
     .unwrap();
     frame(cx, w);
-    let off = cx
-        .update_window(w.into(), |_, win, _| {
-            win.find(SharedString::from(format!("history.insert.{id}")))
-                .disabled()
-        })
-        .unwrap();
+    let off = cx.update_window(w.into(), |_, win, _| win.find(SharedString::from(format!("history.insert.{id}"))).disabled()).unwrap();
     assert_eq!(off, Some(true));
 }
 
@@ -601,60 +431,30 @@ async fn the_row_menu_runs_the_row_actions(cx: &mut TestAppContext) {
     let e = w.update(cx, |t, _, _| t.model.entries[0].clone()).unwrap();
     let target = SharedString::from(format!("history.text.{}", e.id));
     let menu = |cx: &mut TestAppContext, item: u64| {
-        cx.update_window(w.into(), |_, win, cx| win.right_click(target.clone(), cx))
-            .unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.right_click(target.clone(), cx)).unwrap();
         frame(cx, w);
-        cx.update_window(w.into(), |_, win, cx| {
-            win.click(ElementId::Integer(item), cx)
-        })
-        .unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click(ElementId::Integer(item), cx)).unwrap();
         frame(cx, w);
     };
     menu(cx, 0);
-    assert_eq!(
-        cx.read_from_clipboard().and_then(|c| c.text()),
-        Some(e.text.clone())
-    );
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(e.text.clone()));
     // Copy from the menu shows no check; Swift's check is only on the row button.
-    w.update(cx, |t, _, _| assert!(t.copied.is_empty()))
-        .unwrap();
+    w.update(cx, |t, _, _| assert!(t.copied.is_empty())).unwrap();
     menu(cx, 2);
-    w.update(cx, |t, _, _| {
-        assert_eq!(t.model.detail_id.as_deref(), Some(e.id.as_str()))
-    })
-    .unwrap();
+    w.update(cx, |t, _, _| assert_eq!(t.model.detail_id.as_deref(), Some(e.id.as_str()))).unwrap();
 }
 
 // parity: HIST-055 HIST-059
 #[flow_ui::gpui::test]
 async fn more_button_and_menu_state_follow_the_row(cx: &mut TestAppContext) {
     let w = open(cx);
-    let id = w
-        .update(cx, |t, _, _| t.model.entries[0].id.clone())
-        .unwrap();
+    let id = w.update(cx, |t, _, _| t.model.entries[0].id.clone()).unwrap();
     let more = SharedString::from(format!("history.more.{id}"));
-    let b = cx
-        .update_window(w.into(), |_, win, _| win.find(more).bounds().size)
-        .unwrap();
+    let b = cx.update_window(w.into(), |_, win, _| win.find(more).bounds().size).unwrap();
     assert_eq!(b, size(px(28.), px(28.)));
-    let mut e = w
-        .update(cx, |t, _, _| {
-            t.model
-                .entries
-                .iter()
-                .find(|e| e.is_confirmed())
-                .unwrap()
-                .clone()
-        })
-        .unwrap();
-    assert_eq!(
-        row_menu_state(&e, false, false),
-        ("Insert again…", false, false)
-    );
-    assert_eq!(
-        row_menu_state(&e, true, true),
-        ("Insert again…", true, true)
-    );
+    let mut e = w.update(cx, |t, _, _| t.model.entries.iter().find(|e| e.is_confirmed()).unwrap().clone()).unwrap();
+    assert_eq!(row_menu_state(&e, false, false), ("Insert again…", false, false));
+    assert_eq!(row_menu_state(&e, true, true), ("Insert again…", true, true));
     e.delivery_state = "attempting".into();
     assert_eq!(row_menu_state(&e, false, false), ("Insert…", false, true));
 }
@@ -673,16 +473,11 @@ async fn detail_loading_error_retry_and_missing(cx: &mut TestAppContext) {
     frame(cx, w);
     assert_saw(&[DETAIL_ERROR, "Retry"]);
     click(cx, w, "history.detail.retry".into());
-    w.update(cx, |t, _, _| {
-        assert!(t.model.detail_error.is_none() && t.model.envelope.is_some())
-    })
-    .unwrap();
+    w.update(cx, |t, _, _| assert!(t.model.detail_error.is_none() && t.model.envelope.is_some())).unwrap();
     // Removed underneath: the sheet closes and the row goes.
     cx.update(|cx| {
         let db = cx.global::<Core>().db.as_ref().unwrap();
-        db.conn
-            .execute("DELETE FROM transcriptions WHERE id=?", [&id])
-            .unwrap();
+        db.conn.execute("DELETE FROM transcriptions WHERE id=?", [&id]).unwrap();
     });
     click_retry(cx, w);
     w.update(cx, |t, _, _| {
@@ -716,18 +511,10 @@ fn click_retry(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>) {
 #[flow_ui::gpui::test]
 async fn stages_and_processing_lines(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     frame(cx, w);
     click(cx, w, "history.detail.stage.assembled".into());
-    let assembled = w
-        .update(cx, |t, _, _| {
-            t.model.envelope.as_ref().unwrap().detail.as_ref().unwrap()["assembledText"]
-                .as_str()
-                .unwrap()
-                .to_string()
-        })
-        .unwrap();
+    let assembled = w.update(cx, |t, _, _| t.model.envelope.as_ref().unwrap().detail.as_ref().unwrap()["assembledText"].as_str().unwrap().to_string()).unwrap();
     assert_saw(&[&assembled]);
     // An empty stage and no windows.
     w.update(cx, |t, _, cx| {
@@ -749,8 +536,7 @@ async fn stages_and_processing_lines(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn rewrite_notices_and_attempt_texts(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     cx.simulate_window_resize(w.into(), size(px(1180.), px(3000.)));
     frame(cx, w);
     let n = rewrite_notice("missing_credential");
@@ -763,15 +549,8 @@ async fn rewrite_notices_and_attempt_texts(cx: &mut TestAppContext) {
     })
     .unwrap();
     frame(cx, w);
-    assert_saw(&[
-        n,
-        "Rewrite used on-screen text you did not say.",
-        "Input snapshot",
-    ]);
-    assert_eq!(
-        rewrite_notice("attempt_limit"),
-        "This dictation already has ten rewrite attempts."
-    );
+    assert_saw(&[n, "Rewrite used on-screen text you did not say.", "Input snapshot"]);
+    assert_eq!(rewrite_notice("attempt_limit"), "This dictation already has ten rewrite attempts.");
     w.update(cx, |t, _, cx| {
         t.model.attempts.clear();
         cx.notify();
@@ -785,36 +564,13 @@ async fn rewrite_notices_and_attempt_texts(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn rewrite_columns_buttons_and_mode(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     frame(cx, w);
-    assert_saw(&[
-        "Saved text",
-        "The faithful transcript.",
-        "Current rewrite (Polished)",
-        "AI-generated rewrite, not the transcript.",
-        "Retry",
-        "Mode",
-    ]);
-    let text = w
-        .update(cx, |t, _, _| {
-            t.model.envelope.as_ref().unwrap().entry.text.clone()
-        })
-        .unwrap();
-    let h = cx
-        .update_window(w.into(), |_, win, _| {
-            win.find("history.detail.copy.saved").bounds().size.height
-        })
-        .unwrap();
+    assert_saw(&["Saved text", "The faithful transcript.", "Current rewrite (Polished)", "AI-generated rewrite, not the transcript.", "Retry", "Mode"]);
+    let text = w.update(cx, |t, _, _| t.model.envelope.as_ref().unwrap().entry.text.clone()).unwrap();
+    let h = cx.update_window(w.into(), |_, win, _| win.find("history.detail.copy.saved").bounds().size.height).unwrap();
     assert_eq!(h, px(24.));
-    cx.update_window(w.into(), |_, win, cx| {
-        win.scroll(
-            "history.detail.scroll",
-            ScrollDelta::Pixels(point(px(0.), px(-500.))),
-            cx,
-        )
-    })
-    .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.scroll("history.detail.scroll", ScrollDelta::Pixels(point(px(0.), px(-500.))), cx)).unwrap();
     frame(cx, w);
     click(cx, w, "history.detail.copy.saved".into());
     assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(text));
@@ -826,43 +582,17 @@ async fn rewrite_columns_buttons_and_mode(cx: &mut TestAppContext) {
     })
     .unwrap();
     frame(cx, w);
-    cx.update_window(w.into(), |_, win, cx| {
-        win.scroll(
-            "history.detail.scroll",
-            ScrollDelta::Pixels(point(px(0.), px(-2000.))),
-            cx,
-        )
-    })
-    .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.scroll("history.detail.scroll", ScrollDelta::Pixels(point(px(0.), px(-2000.))), cx)).unwrap();
     frame(cx, w);
-    let out = w
-        .update(cx, |t, _, _| {
-            t.model
-                .attempts
-                .iter()
-                .find(|a| a.ordinal == 2)
-                .unwrap()
-                .output_text
-                .clone()
-                .unwrap()
-        })
-        .unwrap();
+    let out = w.update(cx, |t, _, _| t.model.attempts.iter().find(|a| a.ordinal == 2).unwrap().output_text.clone().unwrap()).unwrap();
     click(cx, w, "history.detail.attempt.copy.2".into());
     assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(out));
     // The mode survives another detail, and the popup is its native 99 by 24 in a 180 frame.
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(2), cx))
-        .unwrap();
-    w.update(cx, |t, _, _| {
-        assert_eq!(t.model.rewrite_mode, RewriteMode::Concise)
-    })
-    .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(2), cx)).unwrap();
+    w.update(cx, |t, _, _| assert_eq!(t.model.rewrite_mode, RewriteMode::Concise)).unwrap();
     frame(cx, w);
     assert_saw(&["Concise", "Rewrite"]);
-    let popup = cx
-        .update_window(w.into(), |_, win, _| {
-            win.find("history.detail.rewrite.mode").bounds().size
-        })
-        .unwrap();
+    let popup = cx.update_window(w.into(), |_, win, _| win.find("history.detail.rewrite.mode").bounds().size).unwrap();
     assert_eq!(popup, size(px(99.), px(24.)));
 }
 
@@ -870,17 +600,10 @@ async fn rewrite_columns_buttons_and_mode(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn segments_are_121_by_24(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     frame(cx, w);
-    for id in [
-        "history.detail.stage.normalized",
-        "history.detail.stage.assembled",
-        "history.detail.stage.raw",
-    ] {
-        let s = cx
-            .update_window(w.into(), |_, win, _| win.find(id).bounds().size)
-            .unwrap();
+    for id in ["history.detail.stage.normalized", "history.detail.stage.assembled", "history.detail.stage.raw"] {
+        let s = cx.update_window(w.into(), |_, win, _| win.find(id).bounds().size).unwrap();
         assert_eq!(s, size(px(121.), px(24.)), "{id}");
     }
 }
@@ -892,24 +615,9 @@ async fn insert_opens_the_review_through_the_session(cx: &mut TestAppContext) {
     session(cx);
     let w = cx.add_window(|w, cx| HistoryPage::new(w, cx));
     frame(cx, w);
-    let e = w
-        .update(cx, |t, _, _| {
-            t.model
-                .entries
-                .iter()
-                .find(|e| !e.is_attempting())
-                .unwrap()
-                .clone()
-        })
-        .unwrap();
+    let e = w.update(cx, |t, _, _| t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone()).unwrap();
     click(cx, w, format!("history.insert.{}", e.id));
-    let id = cx.update(|cx| {
-        cx.global::<Session>()
-            .insertion
-            .entry
-            .as_ref()
-            .map(|r| r.id.clone())
-    });
+    let id = cx.update(|cx| cx.global::<Session>().insertion.entry.as_ref().map(|r| r.id.clone()));
     assert_eq!(id, Some(e.id));
 }
 
@@ -926,8 +634,7 @@ fn shell(cx: &mut TestAppContext) -> WindowHandle<crate::shell::Shell> {
 fn shell_frame(cx: &mut TestAppContext, window: WindowHandle<crate::shell::Shell>) {
     cx.run_until_parked();
     flow_ui::probe::clear();
-    cx.update_window(window.into(), |_, w, cx| w.render_frame(cx))
-        .unwrap();
+    cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
 }
 
 fn unavailable(cx: &mut TestAppContext, page: crate::pages::Page) {
@@ -970,12 +677,7 @@ async fn review_warns_and_cancel_or_timeout_keep_the_text(cx: &mut TestAppContex
     use crate::insertion::{ReviewEntry, arm_selection, begin_review};
     use crate::shell::{Session, ensure_session, update_session};
     boot(cx, Mode::Light);
-    let entry = |quality| ReviewEntry {
-        id: seed_id(20),
-        text: "Saved words".into(),
-        quality,
-        delivery: Delivery::None,
-    };
+    let entry = |quality| ReviewEntry { id: seed_id(20), text: "Saved words".into(), quality, delivery: Delivery::None };
     cx.update(|cx| {
         ensure_session(cx);
         cx.global_mut::<Core>().services = Box::new(flow_platform::Fake::default());
@@ -983,47 +685,27 @@ async fn review_warns_and_cancel_or_timeout_keep_the_text(cx: &mut TestAppContex
     });
     let window = shell(cx);
     shell_frame(cx, window);
-    assert_saw(&[
-        "Review before inserting",
-        "Saved words",
-        "This transcription is incomplete. Review the text before inserting.",
-    ]);
-    cx.update(|cx| {
-        update_session(cx, |s| {
-            s.insertion.entry.as_mut().unwrap().quality = Quality::DurationLimited
-        })
-    });
+    assert_saw(&["Review before inserting", "Saved words", "This transcription is incomplete. Review the text before inserting."]);
+    cx.update(|cx| update_session(cx, |s| s.insertion.entry.as_mut().unwrap().quality = Quality::DurationLimited));
     shell_frame(cx, window);
     assert_saw(&["Recording stopped at 180 seconds. The ending may be missing."]);
 
-    cx.update_window(window.into(), |_, w, cx| w.click("insertion.cancel", cx))
-        .unwrap();
+    cx.update_window(window.into(), |_, w, cx| w.click("insertion.cancel", cx)).unwrap();
     cx.run_until_parked();
-    let status = |cx: &mut TestAppContext| {
-        cx.update(|cx| {
-            cx.global::<Session>()
-                .dictation
-                .as_ref()
-                .unwrap()
-                .status
-                .clone()
-        })
-    };
+    let status = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Session>().dictation.as_ref().unwrap().status.clone());
     assert_eq!(status(cx), "Insertion cancelled. The text remains saved.");
 
     cx.update(|cx| {
         assert!(begin_review(entry(Quality::Complete), cx));
         arm_selection(cx);
     });
-    cx.executor()
-        .advance_clock(std::time::Duration::from_secs(61));
+    cx.executor().advance_clock(std::time::Duration::from_secs(61));
     cx.run_until_parked();
     assert_eq!(status(cx), "Selection expired. Your text remains saved.");
 }
 
 fn first_id(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, n: usize) -> String {
-    w.update(cx, |t, _, _| t.model.entries[n].id.clone())
-        .unwrap()
+    w.update(cx, |t, _, _| t.model.entries[n].id.clone()).unwrap()
 }
 
 // parity: HIST-040
@@ -1034,21 +716,14 @@ async fn hovering_a_row_fills_it_and_leaving_clears_it(cx: &mut TestAppContext) 
     let canvas = cx.update(|cx| pal(cx).canvas);
     let fill = |cx: &mut TestAppContext, id: &str| {
         let id = id.to_string();
-        w.update(cx, move |t, _, cx| t.row_fill(&id, &pal(cx)))
-            .unwrap()
+        w.update(cx, move |t, _, cx| t.row_fill(&id, &pal(cx))).unwrap()
     };
     assert_eq!(fill(cx, &a), gpui::transparent_black());
-    cx.update_window(w.into(), |_, win, cx| {
-        win.hover(SharedString::from(format!("history.text.{a}")), cx)
-    })
-    .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.hover(SharedString::from(format!("history.text.{a}")), cx)).unwrap();
     frame(cx, w);
     assert_eq!(fill(cx, &a), canvas);
     assert_eq!(fill(cx, &b), gpui::transparent_black());
-    cx.update_window(w.into(), |_, win, cx| {
-        win.hover(SharedString::from(format!("history.text.{b}")), cx)
-    })
-    .unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.hover(SharedString::from(format!("history.text.{b}")), cx)).unwrap();
     frame(cx, w);
     assert_eq!(fill(cx, &a), gpui::transparent_black());
     assert_eq!(fill(cx, &b), canvas);
@@ -1059,37 +734,15 @@ async fn hovering_a_row_fills_it_and_leaving_clears_it(cx: &mut TestAppContext) 
 async fn deleting_while_full_reports_whether_there_is_room(cx: &mut TestAppContext) {
     let w = open(cx);
     session(cx);
-    let status = |cx: &mut TestAppContext| {
-        cx.update(|cx| {
-            cx.global::<Session>()
-                .dictation
-                .as_ref()
-                .map(|d| (d.capacity_blocked, d.status.clone()))
-                .unwrap()
-        })
-    };
+    let status = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Session>().dictation.as_ref().map(|d| (d.capacity_blocked, d.status.clone())).unwrap());
     let remove_one = |cx: &mut TestAppContext, full: bool| {
         cx.update(|cx| {
-            crate::shell::update_session(cx, |s| {
-                s.dictation.as_mut().unwrap().capacity_blocked = true
-            });
+            crate::shell::update_session(cx, |s| s.dictation.as_mut().unwrap().capacity_blocked = true);
             let rows = if full { MAX_ROWS + 5 } else { 1 };
-            cx.global::<Core>()
-                .db
-                .as_ref()
-                .unwrap()
-                .conn
-                .execute("UPDATE history_usage SET row_count=?", [rows])
-                .unwrap();
+            cx.global::<Core>().db.as_ref().unwrap().conn.execute("UPDATE history_usage SET row_count=?", [rows]).unwrap();
         });
         w.update(cx, |t, _, cx| {
-            let e = t
-                .model
-                .entries
-                .iter()
-                .find(|e| !e.is_attempting())
-                .unwrap()
-                .clone();
+            let e = t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone();
             t.ask_delete(&e, cx);
         })
         .unwrap();
@@ -1108,22 +761,11 @@ async fn a_day_that_turns_while_away_keeps_the_old_headings(cx: &mut TestAppCont
     let w = open(cx);
     const DAY: i64 = 86_400_000;
     let was = w.update(cx, |t, _, _| t.now).unwrap();
-    w.update(cx, |t, _, cx| t.note_clock(was + DAY, false, cx))
-        .unwrap();
-    assert_eq!(
-        w.update(cx, |t, _, _| t.now).unwrap(),
-        was,
-        "missed while away"
-    );
-    w.update(cx, |t, _, cx| t.note_clock(was + DAY, true, cx))
-        .unwrap();
-    assert_eq!(
-        w.update(cx, |t, _, _| t.now).unwrap(),
-        was,
-        "the same day, even once shown"
-    );
-    w.update(cx, |t, _, cx| t.note_clock(was + 2 * DAY, true, cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.note_clock(was + DAY, false, cx)).unwrap();
+    assert_eq!(w.update(cx, |t, _, _| t.now).unwrap(), was, "missed while away");
+    w.update(cx, |t, _, cx| t.note_clock(was + DAY, true, cx)).unwrap();
+    assert_eq!(w.update(cx, |t, _, _| t.now).unwrap(), was, "the same day, even once shown");
+    w.update(cx, |t, _, cx| t.note_clock(was + 2 * DAY, true, cx)).unwrap();
     assert_eq!(w.update(cx, |t, _, _| t.now).unwrap(), was + 2 * DAY);
 }
 
@@ -1131,8 +773,7 @@ async fn a_day_that_turns_while_away_keeps_the_old_headings(cx: &mut TestAppCont
 #[flow_ui::gpui::test]
 async fn a_refresh_starts_an_open_detail_over(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     frame(cx, w);
     click(cx, w, "history.detail.stage.raw".into());
     click(cx, w, "history.detail.processing".into());
@@ -1152,47 +793,22 @@ async fn the_rewrite_button_sends_the_request_and_shows_the_failure(cx: &mut Tes
     let w = open(cx);
     let id = seed_id(40);
     // Nothing listens on this port once the listener is gone, so the real client fails to connect.
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
         core.prefs.set("rewriteEnabled", true);
-        core.prefs
-            .set("rewriteEndpoint", format!("http://127.0.0.1:{port}"));
+        core.prefs.set("rewriteEndpoint", format!("http://127.0.0.1:{port}"));
         let db = core.db.as_ref().unwrap();
-        db.conn
-            .execute(
-                "DELETE FROM rewrite_attempts WHERE transcription_id=?",
-                [&id],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "UPDATE transcriptions SET quality='complete' WHERE id=?",
-                [&id],
-            )
-            .unwrap();
+        db.conn.execute("DELETE FROM rewrite_attempts WHERE transcription_id=?", [&id]).unwrap();
+        db.conn.execute("UPDATE transcriptions SET quality='complete' WHERE id=?", [&id]).unwrap();
     });
     w.update(cx, |t, _, cx| t.show_detail(&id, cx)).unwrap();
     frame(cx, w);
     click(cx, w, "history.detail.rewrite.retry".into());
     cx.run_until_parked();
     w.update(cx, |t, _, _| {
-        assert_eq!(
-            t.model.rewrite_notice.as_deref(),
-            Some("Rewrite server unreachable.")
-        );
-        assert_eq!(
-            t.model
-                .attempts
-                .iter()
-                .map(|a| a.state.as_str())
-                .collect::<Vec<_>>(),
-            ["failed"]
-        );
+        assert_eq!(t.model.rewrite_notice.as_deref(), Some("Rewrite server unreachable."));
+        assert_eq!(t.model.attempts.iter().map(|a| a.state.as_str()).collect::<Vec<_>>(), ["failed"]);
     })
     .unwrap();
 }
@@ -1205,37 +821,17 @@ async fn the_rewrite_button_stays_on_and_does_nothing_with_rewriting_off(cx: &mu
     cx.update(|cx| {
         cx.global_mut::<Core>().prefs.set("rewriteEnabled", false);
         let db = cx.global::<Core>().db.as_ref().unwrap();
-        db.conn
-            .execute(
-                "DELETE FROM rewrite_attempts WHERE transcription_id=?",
-                [&id],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "UPDATE transcriptions SET quality='complete' WHERE id=?",
-                [&id],
-            )
-            .unwrap();
+        db.conn.execute("DELETE FROM rewrite_attempts WHERE transcription_id=?", [&id]).unwrap();
+        db.conn.execute("UPDATE transcriptions SET quality='complete' WHERE id=?", [&id]).unwrap();
     });
     w.update(cx, |t, _, cx| t.show_detail(&id, cx)).unwrap();
     frame(cx, w);
-    let retry = cx
-        .update_window(w.into(), |_, win, _| {
-            win.find("history.detail.rewrite.retry").disabled()
-        })
-        .unwrap();
+    let retry = cx.update_window(w.into(), |_, win, _| win.find("history.detail.rewrite.retry").disabled()).unwrap();
     assert_ne!(retry, Some(true));
     // A real notice first: enabled, with no endpoint, the click is refused.
     cx.update(|cx| cx.global_mut::<Core>().prefs.set("rewriteEnabled", true));
     click(cx, w, "history.detail.rewrite.retry".into());
-    w.update(cx, |t, _, _| {
-        assert_eq!(
-            t.model.rewrite_notice.as_deref(),
-            Some("Rewriting skipped: the endpoint is invalid.")
-        )
-    })
-    .unwrap();
+    w.update(cx, |t, _, _| assert_eq!(t.model.rewrite_notice.as_deref(), Some("Rewriting skipped: the endpoint is invalid."))).unwrap();
     cx.update(|cx| cx.global_mut::<Core>().prefs.set("rewriteEnabled", false));
     // The notice pushed the button below the sheet's fold.
     w.update(cx, |t, _, cx| {
@@ -1254,8 +850,7 @@ async fn the_rewrite_button_stays_on_and_does_nothing_with_rewriting_off(cx: &mu
 
 fn bounds(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, id: &str) -> Bounds<Pixels> {
     let id = SharedString::from(id.to_string());
-    cx.update_window(w.into(), |_, win, _| win.find(id).bounds())
-        .unwrap()
+    cx.update_window(w.into(), |_, win, _| win.find(id).bounds()).unwrap()
 }
 
 // parity: HIST-029
@@ -1268,10 +863,7 @@ async fn the_error_row_has_its_top_padding(cx: &mut TestAppContext) {
     })
     .unwrap();
     frame(cx, w);
-    let (row, retry) = (
-        bounds(cx, w, "history.errorRow"),
-        bounds(cx, w, "history.retry"),
-    );
+    let (row, retry) = (bounds(cx, w, "history.errorRow"), bounds(cx, w, "history.retry"));
     assert_eq!(retry.origin.y - row.origin.y, px(20.));
 }
 
@@ -1279,46 +871,28 @@ async fn the_error_row_has_its_top_padding(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn the_status_block_is_five_lines_at_its_pitch(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     frame(cx, w);
     // Headless Figtree 13 is a 14 line; on screen `Txt` gives 16 and the pitch matches Swift's.
-    assert_eq!(
-        bounds(cx, w, "history.detail.status").size.height,
-        px(5. * 14. + 4. * 3.)
-    );
+    assert_eq!(bounds(cx, w, "history.detail.status").size.height, px(5. * 14. + 4. * 3.));
 }
 
 // parity: HIST-110 HIST-123
 #[flow_ui::gpui::test]
 async fn processing_lines_and_hashes_keep_their_spacing(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     frame(cx, w);
     click(cx, w, "history.detail.processing".into());
-    let (list, hashes) = (
-        bounds(cx, w, "history.detail.processing.lines"),
-        bounds(cx, w, "history.detail.hashes"),
-    );
+    let (list, hashes) = (bounds(cx, w, "history.detail.processing.lines"), bounds(cx, w, "history.detail.hashes"));
     assert_eq!(hashes.origin.y - list.bottom(), px(8.));
-    let d = w
-        .update(cx, |t, _, _| {
-            t.model.envelope.as_ref().unwrap().detail.clone().unwrap()
-        })
-        .unwrap();
+    let d = w.update(cx, |t, _, _| t.model.envelope.as_ref().unwrap().detail.clone().unwrap()).unwrap();
     let items = processing_lines(&d);
-    let (a, b) = items
-        .windows(2)
-        .find_map(|w| match (&w[0], &w[1]) {
-            (Line::Meta(a, _), Line::Meta(b, _)) => Some((a.clone(), b.clone())),
-            _ => None,
-        })
-        .unwrap();
-    let (first, second) = (
-        bounds(cx, w, &format!("history.meta.{a}")),
-        bounds(cx, w, &format!("history.meta.{b}")),
-    );
+    let (a, b) = items.windows(2).find_map(|w| match (&w[0], &w[1]) {
+        (Line::Meta(a, _), Line::Meta(b, _)) => Some((a.clone(), b.clone())),
+        _ => None,
+    }).unwrap();
+    let (first, second) = (bounds(cx, w, &format!("history.meta.{a}")), bounds(cx, w, &format!("history.meta.{b}")));
     assert_eq!(second.origin.y - first.bottom(), px(8.));
     // Two headless Figtree 13 lines, spacing 2.
     assert_eq!(first.size.height, px(14. + 2. + 14.));
@@ -1328,13 +902,9 @@ async fn processing_lines_and_hashes_keep_their_spacing(cx: &mut TestAppContext)
 #[flow_ui::gpui::test]
 async fn context_disclosures_are_8_apart(cx: &mut TestAppContext) {
     let w = open(cx);
-    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx))
-        .unwrap();
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
     frame(cx, w);
-    let (before, snapshot) = (
-        bounds(cx, w, "history.detail.context.before"),
-        bounds(cx, w, "history.detail.context.snapshot"),
-    );
+    let (before, snapshot) = (bounds(cx, w, "history.detail.context.before"), bounds(cx, w, "history.detail.context.snapshot"));
     assert_eq!(snapshot.origin.y - before.bottom(), px(8.));
 }
 

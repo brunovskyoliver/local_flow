@@ -12,12 +12,9 @@ pub const MAX_ATTEMPTS: usize = 10;
 pub const MAX_PENDING_OVERALL: usize = 2;
 pub const MAX_PENDING_ROWS: usize = 20;
 pub const PENDING_MAX_AGE_MS: i64 = 24 * 3_600_000;
-pub const SEARCH_LIMIT_MESSAGE: &str =
-    "Search is limited to 256 Unicode scalars and 1 KiB. Shorten your search.";
-pub const READ_ERROR: &str =
-    "History could not be read. Your saved text has not been deleted. Try again.";
-pub const ACTION_ERROR: &str =
-    "The change could not be saved. The saved text is still available. Refresh and try again.";
+pub const SEARCH_LIMIT_MESSAGE: &str = "Search is limited to 256 Unicode scalars and 1 KiB. Shorten your search.";
+pub const READ_ERROR: &str = "History could not be read. Your saved text has not been deleted. Try again.";
+pub const ACTION_ERROR: &str = "The change could not be saved. The saved text is still available. Refresh and try again.";
 pub const DETAIL_ERROR: &str = "Processing details could not be read. Try again.";
 pub const PENDING_ERROR: &str = "The waiting dictation could not be changed. Try again.";
 pub const LEGACY_DETAIL: &str = "Legacy: raw output and processing metadata unavailable";
@@ -27,47 +24,27 @@ const MAX_REWRITE_SCALARS: usize = 20_000;
 // ---- Small helpers shared with the other stores ----
 
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 /// Uppercase v4 UUID, as Swift's `uuidString`. SQLite supplies the random bytes.
 pub fn new_uuid(db: &Db) -> String {
-    let h: String = db
-        .conn
-        .query_row("SELECT hex(randomblob(16))", [], |r| r.get(0))
-        .unwrap_or_else(|_| format!("{:032X}", now_ms()));
+    let h: String = db.conn.query_row("SELECT hex(randomblob(16))", [], |r| r.get(0)).unwrap_or_else(|_| format!("{:032X}", now_ms()));
     let variant = u8::from_str_radix(&h[16..17], 16).unwrap_or(8) & 3 | 8;
-    format!(
-        "{}-{}-4{}-{variant:X}{}-{}",
-        &h[..8],
-        &h[8..12],
-        &h[13..16],
-        &h[17..20],
-        &h[20..32]
-    )
+    format!("{}-{}-4{}-{variant:X}{}-{}", &h[..8], &h[8..12], &h[13..16], &h[17..20], &h[20..32])
 }
 
 /// SHA-256, hand-written because `flow-core`'s dependencies stop at rusqlite and serde.
 pub fn sha256_hex(data: &[u8]) -> String {
     const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-        0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
+        0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
+        0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
+        0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+        0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
+        0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
     ];
-    let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-        0x5be0cd19,
-    ];
+    let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
     let mut m = data.to_vec();
     m.push(0x80);
     while m.len() % 64 != 56 {
@@ -77,43 +54,22 @@ pub fn sha256_hex(data: &[u8]) -> String {
     for chunk in m.chunks(64) {
         let mut w = [0u32; 64];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                chunk[4 * i],
-                chunk[4 * i + 1],
-                chunk[4 * i + 2],
-                chunk[4 * i + 3],
-            ]);
+            w[i] = u32::from_be_bytes([chunk[4 * i], chunk[4 * i + 1], chunk[4 * i + 2], chunk[4 * i + 3]]);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
             let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
         }
         let mut v = h;
         for i in 0..64 {
             let s1 = v[4].rotate_right(6) ^ v[4].rotate_right(11) ^ v[4].rotate_right(25);
             let ch = (v[4] & v[5]) ^ (!v[4] & v[6]);
-            let t1 = v[7]
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
+            let t1 = v[7].wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
             let s0 = v[0].rotate_right(2) ^ v[0].rotate_right(13) ^ v[0].rotate_right(22);
             let maj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
             let t2 = s0.wrapping_add(maj);
-            v = [
-                t1.wrapping_add(t2),
-                v[0],
-                v[1],
-                v[2],
-                v[3].wrapping_add(t1),
-                v[4],
-                v[5],
-                v[6],
-            ];
+            v = [t1.wrapping_add(t2), v[0], v[1], v[2], v[3].wrapping_add(t1), v[4], v[5], v[6]];
         }
         for i in 0..8 {
             h[i] = h[i].wrapping_add(v[i]);
@@ -137,21 +93,10 @@ pub struct Local {
 pub fn local(db: &Db, ms: i64) -> Local {
     let s: String = db
         .conn
-        .query_row(
-            "SELECT strftime('%Y %m %d %H %M %w', ?/1000, 'unixepoch', 'localtime')",
-            [ms],
-            |r| r.get(0),
-        )
+        .query_row("SELECT strftime('%Y %m %d %H %M %w', ?/1000, 'unixepoch', 'localtime')", [ms], |r| r.get(0))
         .unwrap_or_else(|_| "1970 01 01 00 00 4".into());
     let p: Vec<i64> = s.split(' ').map(|x| x.parse().unwrap_or(0)).collect();
-    Local {
-        year: p[0],
-        month: p[1],
-        day: p[2],
-        hour: p[3],
-        minute: p[4],
-        weekday: p[5],
-    }
+    Local { year: p[0], month: p[1], day: p[2], hour: p[3], minute: p[4], weekday: p[5] }
 }
 
 /// Days since 1970-01-01 for a calendar date (Hinnant's days_from_civil).
@@ -172,11 +117,7 @@ pub fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (
-        yoe + era * 400 + if m <= 2 { 1 } else { 0 },
-        m,
-        doy - (153 * mp + 2) / 5 + 1,
-    )
+    (yoe + era * 400 + if m <= 2 { 1 } else { 0 }, m, doy - (153 * mp + 2) / 5 + 1)
 }
 
 impl Local {
@@ -185,20 +126,7 @@ impl Local {
     }
 }
 
-pub const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
+pub const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 pub fn month_short(m: i64) -> &'static str {
     &MONTHS[(m - 1).clamp(0, 11) as usize][..3]
@@ -250,13 +178,7 @@ pub fn time_of(db: &Db, ms: i64) -> String {
 pub fn day_time(db: &Db, ms: i64) -> String {
     region_date(ms, "dMMMjmm", false).unwrap_or_else(|| {
         let l = local(db, ms);
-        format!(
-            "{} {}, {:02}:{:02}",
-            l.day,
-            month_short(l.month),
-            l.hour,
-            l.minute
-        )
+        format!("{} {}, {:02}:{:02}", l.day, month_short(l.month), l.hour, l.minute)
     })
 }
 
@@ -264,22 +186,12 @@ pub fn day_time(db: &Db, ms: i64) -> String {
 pub fn short_day(db: &Db, ms: i64) -> String {
     let d = local(db, ms);
     let now = local(db, now_ms());
-    region_date(ms, if d.year == now.year { "dMMM" } else { "yMMMd" }, false).unwrap_or_else(|| {
-        if d.year == now.year {
-            format!("{} {}", d.day, month_short(d.month))
-        } else {
-            format!("{} {} {}", d.day, month_short(d.month), d.year)
-        }
-    })
+    region_date(ms, if d.year == now.year { "dMMM" } else { "yMMMd" }, false).unwrap_or_else(|| if d.year == now.year { format!("{} {}", d.day, month_short(d.month)) } else { format!("{} {} {}", d.day, month_short(d.month), d.year) })
 }
 
 /// Swift's `Double.description` for values that appear in the detail view.
 pub fn double_text(v: f64) -> String {
-    if v.fract() == 0.0 && v.abs() < 1e16 {
-        format!("{v:.1}")
-    } else {
-        format!("{v}")
-    }
+    if v.fract() == 0.0 && v.abs() < 1e16 { format!("{v:.1}") } else { format!("{v}") }
 }
 
 // ---- Entries ----
@@ -344,18 +256,7 @@ impl Entry {
         self.delivery_state == "attempting"
     }
     pub fn microphone_label(&self) -> String {
-        let valid = self.input_device_kind.as_deref().is_some_and(|k| {
-            [
-                "builtIn",
-                "usb",
-                "bluetooth",
-                "iPhone",
-                "virtual",
-                "other",
-                "systemDefault",
-            ]
-            .contains(&k)
-        });
+        let valid = self.input_device_kind.as_deref().is_some_and(|k| ["builtIn", "usb", "bluetooth", "iPhone", "virtual", "other", "systemDefault"].contains(&k));
         match (&self.input_device_name, valid) {
             (Some(n), true) if !n.is_empty() => format!("Microphone: {n}"),
             _ => "Microphone: Not recorded".into(),
@@ -365,10 +266,9 @@ impl Entry {
     pub fn path_label(&self, shows_local: bool) -> Option<String> {
         match self.recognition_path.as_str() {
             "server" => Some("Server".into()),
-            "local_after_server_failure" => Some(format!(
-                "Local after server failure ({})",
-                failure_label(self.server_failure.as_deref().unwrap_or("unreachable"))
-            )),
+            "local_after_server_failure" => {
+                Some(format!("Local after server failure ({})", failure_label(self.server_failure.as_deref().unwrap_or("unreachable"))))
+            }
             _ => shows_local.then(|| "Local".into()),
         }
     }
@@ -427,72 +327,35 @@ pub fn matches(text: &str, query: &str) -> bool {
     if text.len() > 65_536 {
         return false;
     }
-    nfc(text)
-        .to_lowercase()
-        .contains(&nfc(query).to_lowercase())
+    nfc(text).to_lowercase().contains(&nfc(query).to_lowercase())
 }
 
 /// One page in `created_at DESC, id DESC` order. Newer pages come back reversed so the order holds.
-pub fn page(
-    db: &Db,
-    query: &str,
-    cursor: Option<&Cursor>,
-    direction: Direction,
-    watermark: Option<&Cursor>,
-) -> rusqlite::Result<Page> {
+pub fn page(db: &Db, query: &str, cursor: Option<&Cursor>, direction: Direction, watermark: Option<&Cursor>) -> rusqlite::Result<Page> {
     let ceiling = match watermark {
         Some(w) => Some(w.clone()),
         None => db
             .conn
-            .query_row(
-                "SELECT created_at,id FROM transcriptions ORDER BY created_at DESC,id DESC LIMIT 1",
-                [],
-                |r| {
-                    Ok(Cursor {
-                        created_at: r.get(0)?,
-                        id: r.get(1)?,
-                    })
-                },
-            )
+            .query_row("SELECT created_at,id FROM transcriptions ORDER BY created_at DESC,id DESC LIMIT 1", [], |r| Ok(Cursor { created_at: r.get(0)?, id: r.get(1)? }))
             .optional()?,
     };
-    let Some(ceiling) = ceiling else {
-        return Ok(Page::default());
-    };
-    let (op, order) = if direction == Direction::Older {
-        ("<", "DESC")
-    } else {
-        (">", "ASC")
-    };
+    let Some(ceiling) = ceiling else { return Ok(Page::default()) };
+    let (op, order) = if direction == Direction::Older { ("<", "DESC") } else { (">", "ASC") };
     let mut boundary = cursor.cloned();
     let mut found: Vec<Entry> = Vec::new();
     let mut has_more = false;
     // Custom SQL functions aren't compiled in, so matching runs here, over the same batches.
     'batches: loop {
-        let bound = if boundary.is_some() {
-            format!("AND (created_at,id) {op} (?3,?4)")
-        } else {
-            String::new()
-        };
-        let sql = format!(
-            "SELECT {ENTRY_COLUMNS} FROM transcriptions WHERE (created_at,id) <= (?1,?2) {bound} ORDER BY created_at {order},id {order} LIMIT {PAGE_SIZE}"
-        );
+        let bound = if boundary.is_some() { format!("AND (created_at,id) {op} (?3,?4)") } else { String::new() };
+        let sql = format!("SELECT {ENTRY_COLUMNS} FROM transcriptions WHERE (created_at,id) <= (?1,?2) {bound} ORDER BY created_at {order},id {order} LIMIT {PAGE_SIZE}");
         let mut stmt = db.conn.prepare_cached(&sql)?;
         let batch: Vec<Entry> = if let Some(b) = &boundary {
-            stmt.query_map(
-                params![ceiling.created_at, ceiling.id, b.created_at, b.id],
-                entry_row,
-            )?
-            .collect::<Result<_, _>>()?
+            stmt.query_map(params![ceiling.created_at, ceiling.id, b.created_at, b.id], entry_row)?.collect::<Result<_, _>>()?
         } else {
-            stmt.query_map(params![ceiling.created_at, ceiling.id], entry_row)?
-                .collect::<Result<_, _>>()?
+            stmt.query_map(params![ceiling.created_at, ceiling.id], entry_row)?.collect::<Result<_, _>>()?
         };
         let Some(last) = batch.last() else { break };
-        boundary = Some(Cursor {
-            created_at: last.created_at,
-            id: last.id.clone(),
-        });
+        boundary = Some(Cursor { created_at: last.created_at, id: last.id.clone() });
         let short = batch.len() < PAGE_SIZE;
         for e in batch {
             if matches(&e.text, query) {
@@ -510,32 +373,16 @@ pub fn page(
     if direction == Direction::Newer {
         found.reverse();
     }
-    Ok(Page {
-        entries: found,
-        has_more,
-        watermark: Some(ceiling),
-    })
+    Ok(Page { entries: found, has_more, watermark: Some(ceiling) })
 }
 
 /// Changes whenever a row is added, removed or revised, so a page can refresh only then.
 pub fn signature(db: &Db) -> (i64, i64) {
-    db.conn
-        .query_row(
-            "SELECT COUNT(*), COALESCE(SUM(revision),0) FROM transcriptions",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap_or((0, 0))
+    db.conn.query_row("SELECT COUNT(*), COALESCE(SUM(revision),0) FROM transcriptions", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap_or((0, 0))
 }
 
 pub fn get(db: &Db, id: &str) -> rusqlite::Result<Option<Entry>> {
-    db.conn
-        .query_row(
-            &format!("SELECT {ENTRY_COLUMNS} FROM transcriptions WHERE id=?"),
-            [id],
-            entry_row,
-        )
-        .optional()
+    db.conn.query_row(&format!("SELECT {ENTRY_COLUMNS} FROM transcriptions WHERE id=?"), [id], entry_row).optional()
 }
 
 // ---- Detail ----
@@ -578,16 +425,12 @@ fn decode_detail(json: &str, schema: i64, stored_hash: &str, text: &str) -> Opti
     let body = json.strip_prefix("{\"content\":")?;
     let split = body.rfind(",\"contentHash\":\"")?;
     let (raw, tail) = body.split_at(split);
-    let hash = tail
-        .strip_prefix(",\"contentHash\":\"")?
-        .strip_suffix("\"}")?;
+    let hash = tail.strip_prefix(",\"contentHash\":\"")?.strip_suffix("\"}")?;
     if hash != stored_hash || sha256_hex(raw.as_bytes()) != hash {
         return None;
     }
     let content: Value = serde_json::from_str(raw).ok()?;
-    if content["normalizedHash"].as_str()? != sha256_hex(text.as_bytes())
-        || content["schemaVersion"].as_i64()? != 1
-    {
+    if content["normalizedHash"].as_str()? != sha256_hex(text.as_bytes()) || content["schemaVersion"].as_i64()? != 1 {
         return None;
     }
     Some(content)
@@ -604,19 +447,14 @@ pub fn part_label(part: &str) -> &'static str {
 
 /// One read: entry, quality detail, context.
 pub fn envelope(db: &Db, id: &str) -> Result<Envelope, LoadError> {
-    let entry = get(db, id)
-        .map_err(|_| LoadError::Invalid)?
-        .ok_or(LoadError::Missing)?;
+    let entry = get(db, id).map_err(|_| LoadError::Invalid)?.ok_or(LoadError::Missing)?;
     let row: Option<(i64, String, String)> = db
         .conn
         .query_row("SELECT schema_version,detail_json,content_hash FROM transcription_quality WHERE transcription_id=?", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
         .optional()
         .map_err(|_| LoadError::Invalid)?;
     let (detail, content_hash) = match row {
-        Some((schema, json, hash)) => (
-            Some(decode_detail(&json, schema, &hash, &entry.text).ok_or(LoadError::Invalid)?),
-            hash,
-        ),
+        Some((schema, json, hash)) => (Some(decode_detail(&json, schema, &hash, &entry.text).ok_or(LoadError::Invalid)?), hash),
         None => (None, String::new()),
     };
     let context = db
@@ -643,12 +481,7 @@ pub fn envelope(db: &Db, id: &str) -> Result<Envelope, LoadError> {
         })
         .optional()
         .map_err(|_| LoadError::Invalid)?;
-    Ok(Envelope {
-        entry,
-        detail,
-        content_hash,
-        context,
-    })
+    Ok(Envelope { entry, detail, content_hash, context })
 }
 
 pub fn context_label(context: Option<&Context>) -> &'static str {
@@ -667,22 +500,17 @@ pub fn context_label(context: Option<&Context>) -> &'static str {
     }
 }
 
-pub fn context_rewrite_line(
-    context: Option<&Context>,
-    latest: Option<&Attempt>,
-) -> Option<&'static str> {
+pub fn context_rewrite_line(context: Option<&Context>, latest: Option<&Attempt>) -> Option<&'static str> {
     if context.and_then(|c| c.rewrite_note.as_deref()) == Some("server_unsupported") {
         return Some("Context not sent: server unsupported");
     }
     let latest = latest?;
     latest.context_hash.as_ref()?;
-    Some(
-        if latest.failure_category.as_deref() == Some("context_copied") {
-            "Rewrite used on-screen text you did not say; inserted your transcript."
-        } else {
-            "Context sent to the rewrite server"
-        },
-    )
+    Some(if latest.failure_category.as_deref() == Some("context_copied") {
+        "Rewrite used on-screen text you did not say; inserted your transcript."
+    } else {
+        "Context sent to the rewrite server"
+    })
 }
 
 /// Bounded user-facing text per failure category, history variant.
@@ -693,12 +521,8 @@ pub fn rewrite_notice(category: &str) -> &'static str {
         "timeout" => "Rewrite took too long.",
         "authentication_failed" => "Rewrite server rejected the credential. Check Settings.",
         "backend_unavailable" => "Rewrite model is not available on the server.",
-        "malformed_response" | "unsupported_schema_version" | "request_mismatch" => {
-            "Rewrite server sent an unusable reply."
-        }
-        "empty_response" | "oversized_response" | "server_validation_failed" => {
-            "Rewrite result was rejected."
-        }
+        "malformed_response" | "unsupported_schema_version" | "request_mismatch" => "Rewrite server sent an unusable reply.",
+        "empty_response" | "oversized_response" | "server_validation_failed" => "Rewrite result was rejected.",
         "missing_credential" => "Rewriting skipped: no credential for this server.",
         "insecure_endpoint_blocked" => "Rewriting skipped: unencrypted connection blocked.",
         "invalid_settings" => "Rewriting skipped: the endpoint is invalid.",
@@ -728,26 +552,13 @@ fn text_of(v: &Value) -> Option<String> {
 }
 
 fn ids(v: &Value) -> String {
-    let items: Vec<&str> = v
-        .as_array()
-        .map(|a| a.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
-    if items.is_empty() {
-        "None".into()
-    } else {
-        items.join(", ")
-    }
+    let items: Vec<&str> = v.as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    if items.is_empty() { "None".into() } else { items.join(", ") }
 }
 
 fn capitalized(s: &str) -> String {
     let mut c = s.chars();
-    c.next()
-        .map(|f| {
-            f.to_uppercase()
-                .chain(c.flat_map(char::to_lowercase))
-                .collect()
-        })
-        .unwrap_or_default()
+    c.next().map(|f| f.to_uppercase().chain(c.flat_map(char::to_lowercase)).collect()).unwrap_or_default()
 }
 
 /// Rows of "Processing details", in Swift's order.
@@ -760,87 +571,31 @@ pub fn processing_lines(d: &Value) -> Vec<Line> {
         meta("Model", text_of(&p["modelID"])),
         meta("Model revision", text_of(&p["modelRevision"])),
         meta("Build", text_of(&p["build"])),
-        meta(
-            "Uncommitted build changes",
-            p["dirty"]
-                .as_bool()
-                .map(|b| if b { "Yes" } else { "No" }.into()),
-        ),
-        meta(
-            "Language",
-            if p["automaticLanguage"].as_bool().unwrap_or(false) {
-                Some("Automatic; no hint".into())
-            } else {
-                text_of(&p["languageHint"])
-            },
-        ),
+        meta("Uncommitted build changes", p["dirty"].as_bool().map(|b| if b { "Yes" } else { "No" }.into())),
+        meta("Language", if p["automaticLanguage"].as_bool().unwrap_or(false) { Some("Automatic; no hint".into()) } else { text_of(&p["languageHint"]) }),
         meta("Assembly", text_of(&d["assemblyVersion"])),
         meta("Normalization", text_of(&d["normalizationVersion"])),
-        meta(
-            "Vocabulary revision",
-            Some(d["vocabularyRevision"].as_i64().unwrap_or(0).to_string()),
-        ),
+        meta("Vocabulary revision", Some(d["vocabularyRevision"].as_i64().unwrap_or(0).to_string())),
         meta("Applied formatting rules", Some(ids(&d["appliedRuleIDs"]))),
-        meta(
-            "Applied vocabulary entries",
-            Some(ids(&d["appliedEntryIDs"])),
-        ),
-        meta(
-            "Ambiguous vocabulary entries",
-            Some(ids(&d["ambiguousEntryIDs"])),
-        ),
+        meta("Applied vocabulary entries", Some(ids(&d["appliedEntryIDs"]))),
+        meta("Ambiguous vocabulary entries", Some(ids(&d["ambiguousEntryIDs"]))),
         meta("Operating system", text_of(&p["operatingSystem"])),
         meta("Unicode runtime", text_of(&p["foldingRuntime"])),
-        meta(
-            "Audio",
-            Some(format!(
-                "{} Hz, {} channel, {}",
-                n("sampleRate"),
-                n("channels"),
-                p["inputSampleFormat"].as_str().unwrap_or("")
-            )),
-        ),
-        meta(
-            "Input",
-            Some(format!(
-                "{} samples; {} seconds",
-                n("inputSamples"),
-                double_text(p["inputDurationSeconds"].as_f64().unwrap_or(0.0))
-            )),
-        ),
-        meta(
-            "Windows",
-            Some(format!(
-                "{} samples; overlap {}; stride {}",
-                n("windowSamples"),
-                n("overlapSamples"),
-                n("strideSamples")
-            )),
-        ),
-        meta(
-            "Minimum padded input",
-            Some(format!("{} samples", n("minimumPaddedSamples"))),
-        ),
+        meta("Audio", Some(format!("{} Hz, {} channel, {}", n("sampleRate"), n("channels"), p["inputSampleFormat"].as_str().unwrap_or("")))),
+        meta("Input", Some(format!("{} samples; {} seconds", n("inputSamples"), double_text(p["inputDurationSeconds"].as_f64().unwrap_or(0.0))))),
+        meta("Windows", Some(format!("{} samples; overlap {}; stride {}", n("windowSamples"), n("overlapSamples"), n("strideSamples")))),
+        meta("Minimum padded input", Some(format!("{} samples", n("minimumPaddedSamples")))),
     ];
     if let Some(stages) = p["stageDurations"].as_object() {
         // serde_json's map is ordered, so these are sorted like Swift's `keys.sorted()`.
         for (k, v) in stages {
-            out.push(meta(
-                format!("{} duration", capitalized(k)),
-                Some(format!(
-                    "{} seconds",
-                    double_text(v.as_f64().unwrap_or(0.0))
-                )),
-            ));
+            out.push(meta(format!("{} duration", capitalized(k)), Some(format!("{} seconds", double_text(v.as_f64().unwrap_or(0.0))))));
         }
     }
     let windows = d["rawWindows"].as_array().cloned().unwrap_or_default();
     for w in &windows {
         out.push(meta(
-            format!(
-                "Window {} timing evidence",
-                w["sequence"].as_i64().unwrap_or(0) + 1
-            ),
+            format!("Window {} timing evidence", w["sequence"].as_i64().unwrap_or(0) + 1),
             Some(format!(
                 "{}; {} recorded tokens; {} padded samples",
                 w["timingValidation"].as_str().unwrap_or(""),
@@ -851,77 +606,36 @@ pub fn processing_lines(d: &Value) -> Vec<Line> {
     }
     for s in d["seams"].as_array().cloned().unwrap_or_default() {
         out.push(meta(
-            format!(
-                "Join before window {}",
-                s["window"].as_i64().unwrap_or(0) + 1
-            ),
-            Some(format!(
-                "{}; {} words discarded",
-                s["decision"].as_str().unwrap_or(""),
-                s["discardedLexicalWords"].as_i64().unwrap_or(0)
-            )),
+            format!("Join before window {}", s["window"].as_i64().unwrap_or(0) + 1),
+            Some(format!("{}; {} words discarded", s["decision"].as_str().unwrap_or(""), s["discardedLexicalWords"].as_i64().unwrap_or(0))),
         ));
     }
     out.push(Line::Heading("Processing reasons".into()));
-    let reasons = d["completionReasons"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let reasons = d["completionReasons"].as_array().cloned().unwrap_or_default();
     if reasons.is_empty() {
         out.push(Line::Plain("None recorded".into()));
     }
     for r in reasons {
-        let window = r["window"]
-            .as_i64()
-            .map(|w| format!(" (window {})", w + 1))
-            .unwrap_or_default();
-        out.push(Line::Plain(format!(
-            "{}{window}",
-            r["code"].as_str().unwrap_or("")
-        )));
+        let window = r["window"].as_i64().map(|w| format!(" (window {})", w + 1)).unwrap_or_default();
+        out.push(Line::Plain(format!("{}{window}", r["code"].as_str().unwrap_or(""))));
     }
     out.push(Line::Heading("Unavailable evidence".into()));
-    let missing = p["unavailableMetadata"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let missing = p["unavailableMetadata"].as_array().cloned().unwrap_or_default();
     if missing.is_empty() {
         out.push(Line::Plain("None recorded".into()));
     }
     for m in missing {
-        out.push(meta(
-            m["field"].as_str().unwrap_or(""),
-            text_of(&m["reason"]),
-        ));
+        out.push(meta(m["field"].as_str().unwrap_or(""), text_of(&m["reason"])));
     }
     let selected = d["selectedAttempt"].as_i64().unwrap_or(0);
-    for (i, a) in d["attempts"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-    {
+    for (i, a) in d["attempts"].as_array().cloned().unwrap_or_default().iter().enumerate() {
         out.push(meta(
-            format!(
-                "Attempt {}{}",
-                i + 1,
-                if i as i64 == selected {
-                    " (selected)"
-                } else {
-                    ""
-                }
-            ),
+            format!("Attempt {}{}", i + 1, if i as i64 == selected { " (selected)" } else { "" }),
             Some(format!(
                 "{}; {}; {}",
                 a["engine"].as_str().unwrap_or(""),
                 a["status"].as_str().unwrap_or(""),
-                a["duration"]
-                    .as_f64()
-                    .map_or("Duration unavailable".into(), |v| format!(
-                        "{} seconds",
-                        double_text(v)
-                    ))
+                a["duration"].as_f64().map_or("Duration unavailable".into(), |v| format!("{} seconds", double_text(v)))
             )),
         ));
     }
@@ -938,10 +652,7 @@ pub fn hash_lines(d: &Value, content_hash: &str) -> Vec<Line> {
         meta("Model manifest", text_of(&p["modelManifestHash"])),
     ];
     for w in d["rawWindows"].as_array().cloned().unwrap_or_default() {
-        out.push(meta(
-            format!("Raw window {}", w["sequence"].as_i64().unwrap_or(0) + 1),
-            text_of(&w["textHash"]),
-        ));
+        out.push(meta(format!("Raw window {}", w["sequence"].as_i64().unwrap_or(0) + 1), text_of(&w["textHash"])));
     }
     if let Some(a) = p["artifactHashes"].as_object() {
         for (k, v) in a {
@@ -957,28 +668,15 @@ pub fn snapshot_lines(s: &Value) -> Vec<(String, String)> {
     if let Some(a) = s["app_name"].as_str() {
         out.push(("App".to_string(), a.to_string()));
     }
-    out.push((
-        "Field".to_string(),
-        spaced(s["field_kind"].as_str().unwrap_or("unknown")),
-    ));
-    for key in [
-        "window_title",
-        "before_cursor",
-        "after_cursor",
-        "selected_text",
-    ] {
+    out.push(("Field".to_string(), spaced(s["field_kind"].as_str().unwrap_or("unknown"))));
+    for key in ["window_title", "before_cursor", "after_cursor", "selected_text"] {
         if let Some(t) = s[key].as_str() {
             out.push((part_label(key).to_string(), t.to_string()));
         }
     }
     let join = |v: &Value, field: Option<&str>| -> String {
         v.as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|i| field.map_or(i.as_str(), |f| i[f].as_str()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
+            .map(|a| a.iter().filter_map(|i| field.map_or(i.as_str(), |f| i[f].as_str())).collect::<Vec<_>>().join(", "))
             .unwrap_or_default()
     };
     let terms = join(&s["terms"], Some("text"));
@@ -1019,27 +717,13 @@ pub fn mode_title(mode: &str) -> String {
 
 impl Attempt {
     pub fn title(&self) -> String {
-        format!(
-            "Attempt {} · {} · {}",
-            self.ordinal,
-            mode_title(&self.mode),
-            self.state
-        )
+        format!("Attempt {} · {} · {}", self.ordinal, mode_title(&self.mode), self.state)
     }
     pub fn deliverable(&self) -> Option<&str> {
-        if self.state == "succeeded" {
-            self.output_text.as_deref()
-        } else {
-            None
-        }
+        if self.state == "succeeded" { self.output_text.as_deref() } else { None }
     }
     pub fn summary(&self) -> String {
-        let mut parts = vec![
-            self.duration_ms
-                .map_or("duration unavailable".to_string(), |d| {
-                    format!("{d} ms total")
-                }),
-        ];
+        let mut parts = vec![self.duration_ms.map_or("duration unavailable".to_string(), |d| format!("{d} ms total"))];
         if let Some(f) = self.first_byte_ms {
             parts.push(format!("{f} ms to first byte"));
         }
@@ -1056,12 +740,7 @@ impl Attempt {
             parts.push("delivered".into());
         }
         let opt = |v: Option<i64>| v.map_or("unknown".to_string(), |n| n.to_string());
-        parts.push(format!(
-            "{}+p{}+s{}",
-            self.backend_model.as_deref().unwrap_or("unknown"),
-            opt(self.prompt_version),
-            opt(self.shield_version)
-        ));
+        parts.push(format!("{}+p{}+s{}", self.backend_model.as_deref().unwrap_or("unknown"), opt(self.prompt_version), opt(self.shield_version)));
         parts.join(" · ")
     }
 }
@@ -1128,25 +807,12 @@ const RESERVE_FREE_BYTES: u64 = 129 * 1024 * 1024 + RESERVATION_BYTES as u64;
 
 /// `TranscriptionStore.reserve()` as a question: is there room for one more recording?
 pub fn has_room(db: &Db, free_bytes: Option<u64>) -> bool {
-    let usage: rusqlite::Result<(i64, i64)> = db.conn.query_row(
-        "SELECT row_count,payload_bytes FROM history_usage WHERE id=1",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    );
-    free_bytes.is_none_or(|f| f >= RESERVE_FREE_BYTES)
-        && usage.is_ok_and(|(rows, bytes)| {
-            rows < MAX_ROWS && bytes + RESERVATION_BYTES <= MAX_PAYLOAD_BYTES
-        })
+    let usage: rusqlite::Result<(i64, i64)> = db.conn.query_row("SELECT row_count,payload_bytes FROM history_usage WHERE id=1", [], |r| Ok((r.get(0)?, r.get(1)?)));
+    free_bytes.is_none_or(|f| f >= RESERVE_FREE_BYTES) && usage.is_ok_and(|(rows, bytes)| rows < MAX_ROWS && bytes + RESERVATION_BYTES <= MAX_PAYLOAD_BYTES)
 }
 
 fn pending_rewrites(db: &Db) -> usize {
-    db.conn
-        .query_row(
-            "SELECT count(*) FROM rewrite_attempts WHERE state='pending'",
-            [],
-            |r| r.get::<_, i64>(0),
-        )
-        .unwrap_or(0) as usize
+    db.conn.query_row("SELECT count(*) FROM rewrite_attempts WHERE state='pending'", [], |r| r.get::<_, i64>(0)).unwrap_or(0) as usize
 }
 
 /// What `RewriteCoordinator.admit` decided before any network work.
@@ -1158,14 +824,7 @@ pub enum Admission {
 }
 
 /// The admission order of `RewriteCoordinator.admit`: enabled and text, settings, then `begin_rewrite`.
-pub fn admit_rewrite(
-    db: &Db,
-    dictation: &str,
-    text: &str,
-    mode: &str,
-    enabled: bool,
-    settings: &crate::settings::RewriteSettings,
-) -> Admission {
+pub fn admit_rewrite(db: &Db, dictation: &str, text: &str, mode: &str, enabled: bool, settings: &crate::settings::RewriteSettings) -> Admission {
     if !enabled || text.trim().is_empty() {
         return Admission::NotEligible;
     }
@@ -1201,14 +860,9 @@ const MAX_REWRITE_RESULT: usize = 65_536;
 /// `RewriteFailureCategory.forServerCode`.
 fn server_code_category(code: &str) -> &'static str {
     match code {
-        "shield_restore_failed" | "backend_error" | "too_large" | "invalid_request" => {
-            "server_validation_failed"
-        }
+        "shield_restore_failed" | "backend_error" | "too_large" | "invalid_request" => "server_validation_failed",
         "output_too_large" => "oversized_response",
-        "backend_timeout"
-        | "backend_first_token_timeout"
-        | "backend_unavailable"
-        | "server_busy" => "backend_unavailable",
+        "backend_timeout" | "backend_first_token_timeout" | "backend_unavailable" | "server_busy" => "backend_unavailable",
         "unauthorized" => "authentication_failed",
         "unsupported_version" => "unsupported_schema_version",
         _ => "malformed_response",
@@ -1231,10 +885,7 @@ fn http_status_category(status: u16, code: Option<&str>) -> &'static str {
 fn rewrite_line(line: &[u8], request: &RewriteRequest) -> Result<Option<String>, &'static str> {
     use serde_json::Value;
     let v: Value = serde_json::from_slice(line).map_err(|_| "malformed_response")?;
-    let event = v
-        .get("event")
-        .and_then(Value::as_str)
-        .ok_or("malformed_response")?;
+    let event = v.get("event").and_then(Value::as_str).ok_or("malformed_response")?;
     if event != "result" && line.len() > MAX_REWRITE_LINE {
         return Err("malformed_response");
     }
@@ -1252,35 +903,20 @@ fn rewrite_line(line: &[u8], request: &RewriteRequest) -> Result<Option<String>,
             if v.get("mode").and_then(Value::as_str) != Some(request.mode) {
                 return Err("malformed_response");
             }
-            let text = v
-                .get("text")
-                .and_then(Value::as_str)
-                .ok_or("malformed_response")?;
+            let text = v.get("text").and_then(Value::as_str).ok_or("malformed_response")?;
             if text.trim().is_empty() {
                 return Err("empty_response");
             }
             if text.len() > (4 * request.text.len()).min(MAX_REWRITE_RESULT) {
                 return Err("oversized_response");
             }
-            let identity = |parent: &str, field: &str| {
-                v.get(parent)
-                    .and_then(|o| o.get(field))
-                    .and_then(Value::as_str)
-                    .is_some_and(|s| !s.is_empty() && s.len() <= 128)
-            };
-            let count = |parent: &str, field: &str| {
-                v.get(parent)
-                    .and_then(|o| o.get(field))
-                    .and_then(Value::as_i64)
-                    .is_some_and(|n| n >= 0)
-            };
+            let identity = |parent: &str, field: &str| v.get(parent).and_then(|o| o.get(field)).and_then(Value::as_str).is_some_and(|s| !s.is_empty() && s.len() <= 128);
+            let count = |parent: &str, field: &str| v.get(parent).and_then(|o| o.get(field)).and_then(Value::as_i64).is_some_and(|n| n >= 0);
             let complete = identity("server", "name")
                 && identity("server", "version")
                 && identity("backend", "kind")
                 && identity("backend", "model")
-                && v.get("prompt_version")
-                    .and_then(Value::as_i64)
-                    .is_some_and(|n| n >= 0)
+                && v.get("prompt_version").and_then(Value::as_i64).is_some_and(|n| n >= 0)
                 && count("shield", "version")
                 && count("shield", "placeholders")
                 && count("shield", "restored")
@@ -1294,10 +930,7 @@ fn rewrite_line(line: &[u8], request: &RewriteRequest) -> Result<Option<String>,
             Ok(Some(text.to_string()))
         }
         "error" => {
-            let code = v
-                .get("code")
-                .and_then(Value::as_str)
-                .ok_or("malformed_response")?;
+            let code = v.get("code").and_then(Value::as_str).ok_or("malformed_response")?;
             check_id()?;
             Err(server_code_category(code))
         }
@@ -1307,66 +940,32 @@ fn rewrite_line(line: &[u8], request: &RewriteRequest) -> Result<Option<String>,
 
 /// `RewriteClient.rewrite`: protocol v1. Blocking; run it off the UI thread.
 // ponytail: never sends v2 context, the snapshot has no Rust capture yet. Cancel marks the row and lets this run out its timeout.
-pub fn send_rewrite(
-    request: &RewriteRequest,
-    secret: Option<&str>,
-    timeout: std::time::Duration,
-) -> Result<String, &'static str> {
+pub fn send_rewrite(request: &RewriteRequest, secret: Option<&str>, timeout: std::time::Duration) -> Result<String, &'static str> {
     use std::io::{BufRead, BufReader, Read};
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(timeout))
-        .max_redirects(0)
-        .http_status_as_error(false)
-        .proxy(None)
-        .build()
-        .into();
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(timeout)).max_redirects(0).http_status_as_error(false).proxy(None).build().into();
     let body = serde_json::json!({"schema_version": 1, "request_id": request.attempt, "mode": request.mode, "text": request.text, "language_hints": [], "stream_deltas": false});
-    let mut post = agent
-        .post(format!(
-            "{}/v1/rewrite",
-            request.origin.trim_end_matches('/')
-        ))
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/x-ndjson");
+    let mut post = agent.post(format!("{}/v1/rewrite", request.origin.trim_end_matches('/'))).header("Content-Type", "application/json").header("Accept", "application/x-ndjson");
     if let Some(secret) = secret {
         post = post.header("Authorization", format!("Bearer {secret}"));
     }
     let failed = |e: ureq::Error| match e {
         ureq::Error::Timeout(_) => "timeout",
         ureq::Error::HostNotFound | ureq::Error::ConnectionFailed => "server_unreachable",
-        ureq::Error::Io(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-            "server_unreachable"
-        }
+        ureq::Error::Io(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => "server_unreachable",
         ureq::Error::Io(e) if e.kind() == std::io::ErrorKind::TimedOut => "timeout",
         _ => "transport_error",
     };
     let mut response = post.send(body.to_string()).map_err(failed)?;
     let status = response.status().as_u16();
     if status != 200 {
-        let body = response
-            .body_mut()
-            .with_config()
-            .limit(MAX_REWRITE_LINE as u64)
-            .read_to_vec()
-            .unwrap_or_default();
+        let body = response.body_mut().with_config().limit(MAX_REWRITE_LINE as u64).read_to_vec().unwrap_or_default();
         let code = serde_json::from_slice::<serde_json::Value>(&body).ok();
-        return Err(http_status_category(
-            status,
-            code.as_ref()
-                .and_then(|v| v.get("error")?.get("code")?.as_str()),
-        ));
+        return Err(http_status_category(status, code.as_ref().and_then(|v| v.get("error")?.get("code")?.as_str())));
     }
     let cap = (4 * request.text.len() + MAX_REWRITE_LINE).min(73_728);
     let mut total = 0;
-    for line in BufReader::new(response.into_body().into_reader().take(cap as u64 + 1)).split(b'\n')
-    {
-        let line = line.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                "timeout"
-            } else {
-                "transport_error"
-            }
-        })?;
+    for line in BufReader::new(response.into_body().into_reader().take(cap as u64 + 1)).split(b'\n') {
+        let line = line.map_err(|e| if e.kind() == std::io::ErrorKind::TimedOut { "timeout" } else { "transport_error" })?;
         total += line.len() + 1;
         if total > cap + 1 {
             return Err("oversized_response");
@@ -1379,58 +978,30 @@ pub fn send_rewrite(
 }
 
 /// Attempt admission: rechecks limits, reserves quota, inserts the pending row, mirrors the state.
-pub fn begin_rewrite(
-    db: &Db,
-    transcription: &str,
-    mode: &str,
-    input: &str,
-    origin: &str,
-) -> Result<String, StoreError> {
-    if input.is_empty()
-        || input.len() > MAX_REWRITE_INPUT
-        || input.chars().count() > MAX_REWRITE_SCALARS
-    {
+pub fn begin_rewrite(db: &Db, transcription: &str, mode: &str, input: &str, origin: &str) -> Result<String, StoreError> {
+    if input.is_empty() || input.len() > MAX_REWRITE_INPUT || input.chars().count() > MAX_REWRITE_SCALARS {
         return Err(StoreError::Refused("input_too_large"));
     }
     if get(db, transcription)?.is_none() {
         return Err(StoreError::Missing);
     }
     let tx = db.conn.unchecked_transaction()?;
-    let count: i64 = tx.query_row(
-        "SELECT count(*) FROM rewrite_attempts WHERE transcription_id=?",
-        [transcription],
-        |r| r.get(0),
-    )?;
+    let count: i64 = tx.query_row("SELECT count(*) FROM rewrite_attempts WHERE transcription_id=?", [transcription], |r| r.get(0))?;
     if count as usize >= MAX_ATTEMPTS {
         return Err(StoreError::Refused("attempt_limit"));
     }
-    let here: i64 = tx.query_row(
-        "SELECT count(*) FROM rewrite_attempts WHERE transcription_id=? AND state='pending'",
-        [transcription],
-        |r| r.get(0),
-    )?;
-    let overall: i64 = tx.query_row(
-        "SELECT count(*) FROM rewrite_attempts WHERE state='pending'",
-        [],
-        |r| r.get(0),
-    )?;
+    let here: i64 = tx.query_row("SELECT count(*) FROM rewrite_attempts WHERE transcription_id=? AND state='pending'", [transcription], |r| r.get(0))?;
+    let overall: i64 = tx.query_row("SELECT count(*) FROM rewrite_attempts WHERE state='pending'", [], |r| r.get(0))?;
     if here > 0 || overall as usize >= MAX_PENDING_OVERALL {
         return Err(StoreError::Refused("concurrency_limit"));
     }
     let id = new_uuid(db);
-    let ordinal: i64 = tx.query_row(
-        "SELECT coalesce(max(ordinal),0)+1 FROM rewrite_attempts WHERE transcription_id=?",
-        [transcription],
-        |r| r.get(0),
-    )?;
+    let ordinal: i64 = tx.query_row("SELECT coalesce(max(ordinal),0)+1 FROM rewrite_attempts WHERE transcription_id=?", [transcription], |r| r.get(0))?;
     tx.execute(
         "INSERT INTO rewrite_attempts (id,transcription_id,ordinal,mode,state,input_text,input_hash,started_at,protocol_version,endpoint_origin,insecure_override,context_hash) VALUES (?,?,?,?,'pending',?,?,?,1,?,0,NULL)",
         params![id, transcription, ordinal, mode, input, sha256_hex(input.as_bytes()), now_ms(), origin],
     )?;
-    tx.execute(
-        "UPDATE history_usage SET payload_bytes=payload_bytes+? WHERE id=1",
-        [input.len() as i64 + reserved_for(input.len())],
-    )?;
+    tx.execute("UPDATE history_usage SET payload_bytes=payload_bytes+? WHERE id=1", [input.len() as i64 + reserved_for(input.len())])?;
     mirror_rewrite_state(db, transcription)?;
     tx.commit()?;
     Ok(id)
@@ -1443,12 +1014,7 @@ fn pending_attempt(db: &Db, id: &str) -> Result<(String, String), StoreError> {
         .ok_or(StoreError::InvalidAttempt)
 }
 
-pub fn record_rewrite_result(
-    db: &Db,
-    id: &str,
-    output: &str,
-    duration_ms: Option<i64>,
-) -> Result<(), StoreError> {
+pub fn record_rewrite_result(db: &Db, id: &str, output: &str, duration_ms: Option<i64>) -> Result<(), StoreError> {
     let (transcription, input) = pending_attempt(db, id)?;
     if output.len() > MAX_REWRITE_INPUT {
         return Err(StoreError::Refused("oversized_response"));
@@ -1458,22 +1024,14 @@ pub fn record_rewrite_result(
         "UPDATE rewrite_attempts SET state='succeeded',output_text=?,output_hash=?,unchanged=?,duration_ms=? WHERE id=?",
         params![output, sha256_hex(output.as_bytes()), (output == input) as i64, duration_ms, id],
     )?;
-    tx.execute(
-        "UPDATE history_usage SET payload_bytes=payload_bytes-?+? WHERE id=1",
-        [reserved_for(input.len()), output.len() as i64],
-    )?;
+    tx.execute("UPDATE history_usage SET payload_bytes=payload_bytes-?+? WHERE id=1", [reserved_for(input.len()), output.len() as i64])?;
     mirror_rewrite_state(db, &transcription)?;
     tx.commit()?;
     Ok(())
 }
 
 /// `timed_out` for a timeout, `failed` with its category, or `cancelled` when `category` is `None`.
-pub fn terminate_rewrite(
-    db: &Db,
-    id: &str,
-    category: Option<&str>,
-    duration_ms: Option<i64>,
-) -> Result<(), StoreError> {
+pub fn terminate_rewrite(db: &Db, id: &str, category: Option<&str>, duration_ms: Option<i64>) -> Result<(), StoreError> {
     let (transcription, input) = pending_attempt(db, id)?;
     let state = match category {
         None => "cancelled",
@@ -1481,14 +1039,8 @@ pub fn terminate_rewrite(
         Some(_) => "failed",
     };
     let tx = db.conn.unchecked_transaction()?;
-    tx.execute(
-        "UPDATE rewrite_attempts SET state=?,failure_category=?,duration_ms=? WHERE id=?",
-        params![state, category, duration_ms, id],
-    )?;
-    tx.execute(
-        "UPDATE history_usage SET payload_bytes=max(0,payload_bytes-?) WHERE id=1",
-        [reserved_for(input.len())],
-    )?;
+    tx.execute("UPDATE rewrite_attempts SET state=?,failure_category=?,duration_ms=? WHERE id=?", params![state, category, duration_ms, id])?;
+    tx.execute("UPDATE history_usage SET payload_bytes=max(0,payload_bytes-?) WHERE id=1", [reserved_for(input.len())])?;
     mirror_rewrite_state(db, &transcription)?;
     tx.commit()?;
     Ok(())
@@ -1498,9 +1050,7 @@ pub fn terminate_rewrite(
 pub fn startup_repair(db: &Db) -> Result<(), StoreError> {
     db.conn.execute("UPDATE transcriptions SET delivery_state='uncertain',recovery_state='needs_review',revision=revision+1 WHERE delivery_state='attempting'", [])?;
     let pending: Vec<String> = {
-        let mut s = db
-            .conn
-            .prepare("SELECT id FROM rewrite_attempts WHERE state='pending'")?;
+        let mut s = db.conn.prepare("SELECT id FROM rewrite_attempts WHERE state='pending'")?;
         s.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?
     };
     for id in pending {
@@ -1512,9 +1062,7 @@ pub fn startup_repair(db: &Db) -> Result<(), StoreError> {
 // ---- Delivery and deletion ----
 
 pub fn delete_confirmed(db: &Db, id: &str, revision: i64) -> Result<(), StoreError> {
-    let current = get(db, id)?
-        .filter(|e| e.revision == revision)
-        .ok_or(StoreError::Stale)?;
+    let current = get(db, id)?.filter(|e| e.revision == revision).ok_or(StoreError::Stale)?;
     if current.is_attempting() || current.rewrite_state == "pending" {
         return Err(StoreError::Busy);
     }
@@ -1527,14 +1075,8 @@ pub fn delete_confirmed(db: &Db, id: &str, revision: i64) -> Result<(), StoreErr
         params![current.text, id],
         |r| r.get(0),
     )?;
-    tx.execute(
-        "DELETE FROM transcriptions WHERE id=? AND revision=?",
-        params![id, revision],
-    )?;
-    tx.execute(
-        "UPDATE history_usage SET row_count=row_count-1,payload_bytes=payload_bytes-? WHERE id=1",
-        [bytes],
-    )?;
+    tx.execute("DELETE FROM transcriptions WHERE id=? AND revision=?", params![id, revision])?;
+    tx.execute("UPDATE history_usage SET row_count=row_count-1,payload_bytes=payload_bytes-? WHERE id=1", [bytes])?;
     tx.commit()?;
     Ok(())
 }
@@ -1564,19 +1106,9 @@ pub enum Outcome {
 }
 
 /// swift-note HIST-177: Swift writes the delivery source for every outcome, so this does too.
-pub fn record_outcome(
-    db: &Db,
-    id: &str,
-    revision: i64,
-    attempt: &str,
-    outcome: Outcome,
-    rewrite: Option<&str>,
-) -> Result<Entry, StoreError> {
+pub fn record_outcome(db: &Db, id: &str, revision: i64, attempt: &str, outcome: Outcome, rewrite: Option<&str>) -> Result<Entry, StoreError> {
     let current = get(db, id)?.ok_or(StoreError::InvalidAttempt)?;
-    if current.revision != revision
-        || current.attempt_id.as_deref() != Some(attempt)
-        || !current.is_attempting()
-    {
+    if current.revision != revision || current.attempt_id.as_deref() != Some(attempt) || !current.is_attempting() {
         return Err(StoreError::InvalidAttempt);
     }
     let (state, recovery) = match outcome {
@@ -1612,11 +1144,7 @@ pub struct PendingItem {
 
 impl PendingItem {
     pub fn status(&self, now: i64) -> &'static str {
-        if now - self.created_at >= PENDING_MAX_AGE_MS {
-            "Retries stopped after 24 hours"
-        } else {
-            "Waiting for server"
-        }
+        if now - self.created_at >= PENDING_MAX_AGE_MS { "Retries stopped after 24 hours" } else { "Waiting for server" }
     }
     /// swift-note HIST-189: integer division, so under a second reads "0 s of audio".
     pub fn length_label(&self) -> String {
@@ -1628,33 +1156,18 @@ impl PendingItem {
 pub fn pending_items(db: &Db) -> Vec<PendingItem> {
     let read = || -> rusqlite::Result<Vec<PendingItem>> {
         let mut s = db.conn.prepare_cached("SELECT id,audio_file,sample_count,created_at,last_failure FROM pending_remote_dictations ORDER BY created_at, id")?;
-        s.query_map([], |r| {
-            Ok(PendingItem {
-                id: r.get(0)?,
-                audio_file: r.get(1)?,
-                sample_count: r.get(2)?,
-                created_at: r.get(3)?,
-                last_failure: r.get(4)?,
-            })
-        })?
-        .collect()
+        s.query_map([], |r| Ok(PendingItem { id: r.get(0)?, audio_file: r.get(1)?, sample_count: r.get(2)?, created_at: r.get(3)?, last_failure: r.get(4)? }))?.collect()
     };
     read().unwrap_or_default()
 }
 
 fn plain_file_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains('/')
-        && !name.contains('\\')
-        && name.len() <= 255
+    !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\\') && name.len() <= 255
 }
 
 pub fn remove_pending(db: &Db, dir: &Path, id: &str) -> Result<(), StoreError> {
     let item = pending_items(db).into_iter().find(|i| i.id == id);
-    db.conn
-        .execute("DELETE FROM pending_remote_dictations WHERE id=?", [id])?;
+    db.conn.execute("DELETE FROM pending_remote_dictations WHERE id=?", [id])?;
     if let Some(i) = item.filter(|i| plain_file_name(&i.audio_file)) {
         let path = dir.join(i.audio_file);
         if path.exists() {
@@ -1718,11 +1231,7 @@ pub enum RewriteMode {
 }
 
 impl RewriteMode {
-    pub const ALL: [RewriteMode; 3] = [
-        RewriteMode::Clean,
-        RewriteMode::Polished,
-        RewriteMode::Concise,
-    ];
+    pub const ALL: [RewriteMode; 3] = [RewriteMode::Clean, RewriteMode::Polished, RewriteMode::Concise];
     pub fn title(self) -> &'static str {
         match self {
             RewriteMode::Clean => "Clean",
@@ -1798,50 +1307,28 @@ impl Model {
     }
 
     pub fn load_older(&mut self, db: &Db) {
-        let Some(last) = self.entries.last() else {
-            return;
-        };
+        let Some(last) = self.entries.last() else { return };
         if !self.has_older {
             return;
         }
-        let cursor = Cursor {
-            created_at: last.created_at,
-            id: last.id.clone(),
-        };
+        let cursor = Cursor { created_at: last.created_at, id: last.id.clone() };
         self.request(db, Some(cursor), Direction::Older, Placement::AppendOlder);
     }
 
     pub fn load_newer(&mut self, db: &Db) {
-        let Some(first) = self.entries.first() else {
-            return;
-        };
+        let Some(first) = self.entries.first() else { return };
         if !self.has_newer {
             return;
         }
-        let cursor = Cursor {
-            created_at: first.created_at,
-            id: first.id.clone(),
-        };
+        let cursor = Cursor { created_at: first.created_at, id: first.id.clone() };
         self.request(db, Some(cursor), Direction::Newer, Placement::PrependNewer);
     }
 
-    fn request(
-        &mut self,
-        db: &Db,
-        cursor: Option<Cursor>,
-        direction: Direction,
-        placement: Placement,
-    ) {
+    fn request(&mut self, db: &Db, cursor: Option<Cursor>, direction: Direction, placement: Placement) {
         if placement == Placement::Replace {
             self.watermark = None;
         }
-        match page(
-            db,
-            &self.search_text,
-            cursor.as_ref(),
-            direction,
-            self.watermark.as_ref(),
-        ) {
+        match page(db, &self.search_text, cursor.as_ref(), direction, self.watermark.as_ref()) {
             Ok(p) => {
                 self.watermark = p.watermark.clone();
                 self.error = None;
@@ -1901,13 +1388,7 @@ impl Model {
                     } else {
                         format!("{} {} {}", d.day, MONTHS[(d.month - 1) as usize], d.year)
                     };
-                    groups.push((
-                        day,
-                        DateGroup {
-                            title,
-                            entries: vec![e.clone()],
-                        },
-                    ));
+                    groups.push((day, DateGroup { title, entries: vec![e.clone()] }));
                 }
             }
         }
@@ -1922,9 +1403,7 @@ impl Model {
     }
 
     pub fn retry_detail(&mut self, db: &Db) {
-        let Some(id) = self.detail_id.clone() else {
-            return;
-        };
+        let Some(id) = self.detail_id.clone() else { return };
         self.envelope = None;
         self.detail_error = None;
         match envelope(db, &id) {
@@ -1960,9 +1439,7 @@ impl Model {
 
     /// The dialog's Delete. A store refusal shows the action error.
     pub fn delete_selected(&mut self, db: &Db) -> bool {
-        let Some(entry) = self.selected.take() else {
-            return false;
-        };
+        let Some(entry) = self.selected.take() else { return false };
         match delete_confirmed(db, &entry.id, entry.revision) {
             Ok(()) => {
                 self.did_delete(&entry.id);
@@ -1977,10 +1454,7 @@ impl Model {
     }
 
     pub fn current_rewrite(&self) -> Option<&Attempt> {
-        self.attempts
-            .iter()
-            .rev()
-            .find(|a| a.state == "succeeded" && !a.stale && a.output_text.is_some())
+        self.attempts.iter().rev().find(|a| a.state == "succeeded" && !a.stale && a.output_text.is_some())
     }
     pub fn pending_rewrite(&self) -> Option<&Attempt> {
         self.attempts.iter().rev().find(|a| a.state == "pending")
@@ -1994,58 +1468,33 @@ impl Model {
             && self.rewrite_limit_explanation().is_none()
             && self.pending_rewrite().is_none()
             && self.rewrites_running < MAX_PENDING_OVERALL
-            && self
-                .envelope
-                .as_ref()
-                .is_some_and(|e| e.entry.quality == "complete")
+            && self.envelope.as_ref().is_some_and(|e| e.entry.quality == "complete")
     }
     pub fn delivered_line(&self) -> String {
-        let Some(entry) = self.envelope.as_ref().map(|e| &e.entry) else {
-            return "Delivered: nothing yet".into();
-        };
-        let delivered = entry
-            .delivered_rewrite_attempt_id
-            .as_ref()
-            .and_then(|id| self.attempts.iter().find(|a| &a.id == id));
+        let Some(entry) = self.envelope.as_ref().map(|e| &e.entry) else { return "Delivered: nothing yet".into() };
+        let delivered = entry.delivered_rewrite_attempt_id.as_ref().and_then(|id| self.attempts.iter().find(|a| &a.id == id));
         let base = if let Some(a) = delivered {
-            format!(
-                "Delivered: rewrite attempt {} ({})",
-                a.ordinal,
-                mode_title(&a.mode)
-            )
+            format!("Delivered: rewrite attempt {} ({})", a.ordinal, mode_title(&a.mode))
         } else if entry.delivered_source.as_deref() == Some("faithful") {
             "Delivered: saved text".to_string()
         } else {
             "Delivered: nothing yet".to_string()
         };
         match self.current_rewrite() {
-            Some(c)
-                if entry.delivered_source.is_some()
-                    && Some(&c.id) != entry.delivered_rewrite_attempt_id.as_ref() =>
-            {
+            Some(c) if entry.delivered_source.is_some() && Some(&c.id) != entry.delivered_rewrite_attempt_id.as_ref() => {
                 format!("{base}. The current rewrite is not the text that was delivered.")
             }
             _ => base,
         }
     }
     pub fn rewrite_state_line(&self) -> String {
-        let state = self
-            .attempts
-            .last()
-            .map(|a| a.state.as_str())
-            .or(self
-                .envelope
-                .as_ref()
-                .map(|e| e.entry.rewrite_state.as_str()))
-            .unwrap_or("not_requested");
+        let state = self.attempts.last().map(|a| a.state.as_str()).or(self.envelope.as_ref().map(|e| e.entry.rewrite_state.as_str())).unwrap_or("not_requested");
         format!("Rewrite: {}", spaced(state))
     }
 
     /// Re-reads the attempt rows and the entry for the open detail only.
     pub fn reload_attempts(&mut self, db: &Db) {
-        let Some(id) = self.detail_id.clone() else {
-            return;
-        };
+        let Some(id) = self.detail_id.clone() else { return };
         self.attempts = attempts(db, &id).unwrap_or_default();
         self.rewrites_running = pending_rewrites(db);
         if let Ok(Some(entry)) = get(db, &id) {
@@ -2060,36 +1509,19 @@ impl Model {
 
     /// The Rewrite/Retry button: the first attempt's input, or the saved text. An admitted attempt
     /// comes back as the request to send; `finish_rewrite` takes the answer.
-    pub fn request_rewrite(
-        &mut self,
-        db: &Db,
-        enabled: bool,
-        settings: &crate::settings::RewriteSettings,
-    ) -> Option<RewriteRequest> {
+    pub fn request_rewrite(&mut self, db: &Db, enabled: bool, settings: &crate::settings::RewriteSettings) -> Option<RewriteRequest> {
         if !self.can_request_rewrite() {
             return None;
         }
-        let (id, saved) = (
-            self.detail_id.clone()?,
-            self.envelope.as_ref()?.entry.text.clone(),
-        );
-        let input = self
-            .attempts
-            .first()
-            .map_or(saved, |a| a.input_text.clone());
+        let (id, saved) = (self.detail_id.clone()?, self.envelope.as_ref()?.entry.text.clone());
+        let input = self.attempts.first().map_or(saved, |a| a.input_text.clone());
         let mode = self.rewrite_mode.raw();
         let mut request = None;
         self.rewrite_notice = match admit_rewrite(db, &id, &input, mode, enabled, settings) {
             Admission::NotEligible => None,
             Admission::Refused(category) => Some(rewrite_notice(category).into()),
             Admission::Admitted(attempt) => {
-                request = Some(RewriteRequest {
-                    dictation: id,
-                    attempt,
-                    mode,
-                    text: input,
-                    origin: settings.origin.clone(),
-                });
+                request = Some(RewriteRequest { dictation: id, attempt, mode, text: input, origin: settings.origin.clone() });
                 None
             }
         };
@@ -2099,18 +1531,10 @@ impl Model {
     }
 
     /// Stores the answer. A row that is no longer pending was cancelled: its answer is dropped.
-    pub fn finish_rewrite(
-        &mut self,
-        db: &Db,
-        request: &RewriteRequest,
-        answer: Result<String, &'static str>,
-        duration_ms: i64,
-    ) {
+    pub fn finish_rewrite(&mut self, db: &Db, request: &RewriteRequest, answer: Result<String, &'static str>, duration_ms: i64) {
         let stored = match &answer {
             Ok(text) => record_rewrite_result(db, &request.attempt, text, Some(duration_ms)),
-            Err(category) => {
-                terminate_rewrite(db, &request.attempt, Some(category), Some(duration_ms))
-            }
+            Err(category) => terminate_rewrite(db, &request.attempt, Some(category), Some(duration_ms)),
         };
         if stored.is_ok() && self.detail_id.as_deref() == Some(&request.dictation) {
             self.rewrite_notice = answer.err().map(|category| rewrite_notice(category).into());
@@ -2121,9 +1545,7 @@ impl Model {
 
     /// Marks the pending attempt cancelled. No network task exists in Rust yet to stop.
     pub fn cancel_rewrite(&mut self, db: &Db) {
-        let Some(id) = self.pending_rewrite().map(|a| a.id.clone()) else {
-            return;
-        };
+        let Some(id) = self.pending_rewrite().map(|a| a.id.clone()) else { return };
         if terminate_rewrite(db, &id, None, None).is_ok() {
             self.rewrite_notice = Some("Rewrite cancelled.".into());
         }
@@ -2141,10 +1563,7 @@ impl Model {
 
     pub fn export_pending(&mut self, db: &Db, dir: &Path, id: &str, to: &Path) {
         self.pending_error = None;
-        let done = pending_items(db)
-            .iter()
-            .find(|i| i.id == id)
-            .map(|i| export_pending(i, dir, to).is_ok());
+        let done = pending_items(db).iter().find(|i| i.id == id).map(|i| export_pending(i, dir, to).is_ok());
         if done != Some(true) {
             self.pending_error = Some(PENDING_ERROR.into());
         }
@@ -2167,12 +1586,7 @@ const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
 
 /// A quality detail the Swift decoder accepts: sorted keys and whole seconds, so bytes match its encoder.
-fn detail_json(
-    text: &str,
-    windows: &[(i64, i64, &str)],
-    reasons: Value,
-    full: bool,
-) -> (String, String) {
+fn detail_json(text: &str, windows: &[(i64, i64, &str)], reasons: Value, full: bool) -> (String, String) {
     let raw: Vec<Value> = windows
         .iter()
         .enumerate()
@@ -2181,11 +1595,7 @@ fn detail_json(
                    "textHash": sha256_hex(t.as_bytes()), "timingValidation": "unavailable"})
         })
         .collect();
-    let samples = windows
-        .iter()
-        .map(|(s, c, _)| s + c)
-        .max()
-        .unwrap_or(48_000);
+    let samples = windows.iter().map(|(s, c, _)| s + c).max().unwrap_or(48_000);
     let seconds = json!(samples / 16_000);
     assert_eq!(samples % 16_000, 0, "seed durations are whole seconds");
     let provenance = if full {
@@ -2197,23 +1607,10 @@ fn detail_json(
                "stageDurations": {"assembly": 0.25, "normalization": 0.5, "recognition": 1.5}, "strideSamples": 207360,
                "unavailableMetadata": [], "windowSamples": 239360})
     } else {
-        let missing: Vec<Value> = [
-            "sdk_version",
-            "model_id",
-            "model_revision",
-            "model_manifest_hash",
-            "artifact_hashes",
-            "build",
-            "dirty",
-            "operating_system",
-            "folding_runtime",
-            "recognition_duration",
-            "assembly_duration",
-            "normalization_duration",
-        ]
-        .iter()
-        .map(|f| json!({"field": f, "reason": "not_recorded"}))
-        .collect();
+        let missing: Vec<Value> = ["sdk_version", "model_id", "model_revision", "model_manifest_hash", "artifact_hashes", "build", "dirty", "operating_system", "folding_runtime", "recognition_duration", "assembly_duration", "normalization_duration"]
+            .iter()
+            .map(|f| json!({"field": f, "reason": "not_recorded"}))
+            .collect();
         json!({"artifactHashes": {}, "automaticLanguage": true, "channels": 1, "engine": "seed-engine", "inputDurationSeconds": seconds,
                "inputSampleFormat": "float32_pcm", "inputSamples": samples, "minimumPaddedSamples": 4800, "overlapSamples": 0, "sampleRate": 16000,
                "stageDurations": {}, "strideSamples": 239360, "unavailableMetadata": missing, "windowSamples": 239360})
@@ -2240,10 +1637,7 @@ fn detail_json(
     });
     let raw = serde_json::to_string(&content).expect("seed json");
     let hash = sha256_hex(raw.as_bytes());
-    (
-        format!("{{\"content\":{raw},\"contentHash\":\"{hash}\"}}"),
-        hash,
-    )
+    (format!("{{\"content\":{raw},\"contentHash\":\"{hash}\"}}"), hash)
 }
 
 struct SeedRow {
@@ -2259,65 +1653,13 @@ struct SeedRow {
 }
 
 fn seed_rows() -> Vec<SeedRow> {
-    let row = |text, ago, delivery, bundle| SeedRow {
-        text,
-        ago,
-        delivery,
-        quality: "complete",
-        stop: "key_release",
-        bundle,
-        path: "local",
-        failure: None,
-        device: Some(("Studio Microphone", "usb")),
-    };
+    let row = |text, ago, delivery, bundle| SeedRow { text, ago, delivery, quality: "complete", stop: "key_release", bundle, path: "local", failure: None, device: Some(("Studio Microphone", "usb")) };
     let mut rows = vec![
-        row(
-            "Move the kickoff to Thursday and ask Northwind to send the updated floor plan before noon.",
-            2 * MINUTE,
-            "confirmed",
-            Some("com.apple.mail"),
-        ),
-        SeedRow {
-            quality: "incomplete",
-            stop: "device_loss",
-            delivery: "not_inserted",
-            ..row(
-                "Remember to check the Kubernetes rollout notes once the",
-                7 * MINUTE,
-                "",
-                Some("com.tinyspeck.slackmacgap"),
-            )
-        },
-        SeedRow {
-            path: "server",
-            ..row(
-                "Draft a short update for the Acme Robotics team about the new sensor calibration schedule.",
-                12 * MINUTE,
-                "confirmed",
-                Some("com.openai.chat"),
-            )
-        },
-        SeedRow {
-            path: "local_after_server_failure",
-            failure: Some("timeout"),
-            ..row(
-                "Add oat milk, coffee beans and two lemons to the shopping list for Saturday.",
-                DAY + 30 * MINUTE,
-                "uncertain",
-                Some("com.apple.Notes"),
-            )
-        },
-        SeedRow {
-            quality: "duration_limited",
-            stop: "duration_limit",
-            device: None,
-            ..row(
-                "Walk through the quarterly plan section by section, starting with hiring and then moving on to the budget, the roadmap and the open questions about office space in Tallinn.",
-                DAY + 90 * MINUTE,
-                "not_attempted",
-                None,
-            )
-        },
+        row("Move the kickoff to Thursday and ask Northwind to send the updated floor plan before noon.", 2 * MINUTE, "confirmed", Some("com.apple.mail")),
+        SeedRow { quality: "incomplete", stop: "device_loss", delivery: "not_inserted", ..row("Remember to check the Kubernetes rollout notes once the", 7 * MINUTE, "", Some("com.tinyspeck.slackmacgap")) },
+        SeedRow { path: "server", ..row("Draft a short update for the Acme Robotics team about the new sensor calibration schedule.", 12 * MINUTE, "confirmed", Some("com.openai.chat")) },
+        SeedRow { path: "local_after_server_failure", failure: Some("timeout"), ..row("Add oat milk, coffee beans and two lemons to the shopping list for Saturday.", DAY + 30 * MINUTE, "uncertain", Some("com.apple.Notes")) },
+        SeedRow { quality: "duration_limited", stop: "duration_limit", device: None, ..row("Walk through the quarterly plan section by section, starting with hiring and then moving on to the budget, the roadmap and the open questions about office space in Tallinn.", DAY + 90 * MINUTE, "not_attempted", None) },
     ];
     let filler = [
         "Please confirm the delivery window for the replacement parts.",
@@ -2328,25 +1670,12 @@ fn seed_rows() -> Vec<SeedRow> {
         "Ask Qwen support whether the model card lists the supported languages.",
         "Thanks for the quick turnaround, this looks great.",
     ];
-    let bundles = [
-        Some("com.apple.mail"),
-        Some("com.apple.Notes"),
-        Some("com.openai.chat"),
-        Some("com.tinyspeck.slackmacgap"),
-        Some("com.apple.MobileSMS"),
-        Some("com.microsoft.Word"),
-        None,
-    ];
+    let bundles = [Some("com.apple.mail"), Some("com.apple.Notes"), Some("com.openai.chat"), Some("com.tinyspeck.slackmacgap"), Some("com.apple.MobileSMS"), Some("com.microsoft.Word"), None];
     for i in 0..48i64 {
         let u = i as usize;
         // Most days in a two-week run up to two days ago, then scattered over five months.
         let days = if i < 16 { 2 + i / 2 } else { 12 + (i - 15) * 3 };
-        rows.push(row(
-            filler[u % filler.len()],
-            days * DAY + (i % 9) * 47 * MINUTE,
-            "confirmed",
-            bundles[u % bundles.len()],
-        ));
+        rows.push(row(filler[u % filler.len()], days * DAY + (i % 9) * 47 * MINUTE, "confirmed", bundles[u % bundles.len()]));
     }
     rows
 }
@@ -2354,26 +1683,13 @@ fn seed_rows() -> Vec<SeedRow> {
 pub fn seed(db: &Db) {
     let now = now_ms();
     let insert_quality = |id: &str, json: &str, hash: &str| {
-        db.conn
-            .execute(
-                "INSERT INTO transcription_quality VALUES (?,1,?,?)",
-                params![id, json, hash],
-            )
-            .expect("seed quality");
+        db.conn.execute("INSERT INTO transcription_quality VALUES (?,1,?,?)", params![id, json, hash]).expect("seed quality");
     };
     for (i, r) in seed_rows().iter().enumerate() {
         let n = i as i64 + 1;
         let id = seed_id(n);
-        let recovery = if r.delivery == "confirmed" {
-            "resolved"
-        } else {
-            "needs_review"
-        };
-        let source = if r.delivery == "not_attempted" {
-            None
-        } else {
-            Some("faithful")
-        };
+        let recovery = if r.delivery == "confirmed" { "resolved" } else { "needs_review" };
+        let source = if r.delivery == "not_attempted" { None } else { Some("faithful") };
         db.conn
             .execute(
                 "INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id,revision,delivered_source,recognition_path,server_failure,input_device_name,input_device_kind) VALUES (?,?,?,?,?,?,?,?,1,?,?,?,?,?)",
@@ -2386,27 +1702,16 @@ pub fn seed(db: &Db) {
             1 => {
                 let half = r.text.find(" and ask").unwrap_or(0);
                 let (a, b) = r.text.split_at(half);
-                let (json, hash) = detail_json(
-                    r.text,
-                    &[(0, 239_360, a), (207_360, 32_640, b.trim_start())],
-                    json!([]),
-                    true,
-                );
+                let (json, hash) = detail_json(r.text, &[(0, 239_360, a), (207_360, 32_640, b.trim_start())], json!([]), true);
                 insert_quality(&id, &json, &hash);
             }
             2 => {
-                let (json, hash) = detail_json(
-                    r.text,
-                    &[(0, 48_000, r.text)],
-                    json!([{"code": "capture_failure"}, {"code": "uncertain_join", "window": 0}]),
-                    false,
-                );
+                let (json, hash) = detail_json(r.text, &[(0, 48_000, r.text)], json!([{"code": "capture_failure"}, {"code": "uncertain_join", "window": 0}]), false);
                 insert_quality(&id, &json, &hash);
             }
             _ => {
                 let seconds = (r.text.split_whitespace().count() as i64 / 2).max(1);
-                let (json, hash) =
-                    detail_json(r.text, &[(0, seconds * 16_000, r.text)], json!([]), false);
+                let (json, hash) = detail_json(r.text, &[(0, seconds * 16_000, r.text)], json!([]), false);
                 insert_quality(&id, &json, &hash);
             }
         }
@@ -2439,14 +1744,7 @@ fn seed_detail_extras(db: &Db) {
         .expect("seed context");
     let text = "Move the kickoff to Thursday and ask Northwind to send the updated floor plan before noon.";
     let start = now_ms() - MINUTE;
-    let insert = |n: i64,
-                  ordinal: i64,
-                  mode: &str,
-                  state: &str,
-                  output: Option<&str>,
-                  category: Option<&str>,
-                  delivered: i64,
-                  context: Option<String>| {
+    let insert = |n: i64, ordinal: i64, mode: &str, state: &str, output: Option<&str>, category: Option<&str>, delivered: i64, context: Option<String>| {
         db.conn
             .execute(
                 "INSERT INTO rewrite_attempts (id,transcription_id,ordinal,mode,state,input_text,input_hash,output_text,output_hash,unchanged,failure_category,started_at,duration_ms,first_byte_ms,protocol_version,backend_model,prompt_version,shield_version,endpoint_origin,delivered,context_hash) VALUES (?,?,?,?,?,?,?,?,?,0,?,?,420,85,?,?,3,2,'https://rewrite.example.test',?,?)",
@@ -2455,27 +1753,9 @@ fn seed_detail_extras(db: &Db) {
             )
             .expect("seed attempt");
     };
-    insert(
-        9101,
-        1,
-        "clean",
-        "failed",
-        None,
-        Some("server_unreachable"),
-        0,
-        None,
-    );
+    insert(9101, 1, "clean", "failed", None, Some("server_unreachable"), 0, None);
     let rewritten = "Please move the kickoff to Thursday, and ask Northwind to send the updated floor plan before noon.";
-    insert(
-        9102,
-        2,
-        "polished",
-        "succeeded",
-        Some(rewritten),
-        None,
-        1,
-        Some(sha256_hex(snapshot.as_bytes())),
-    );
+    insert(9102, 2, "polished", "succeeded", Some(rewritten), None, 1, Some(sha256_hex(snapshot.as_bytes())));
     db.conn
         .execute(
             "UPDATE transcriptions SET rewrite_state='succeeded',delivered_source='rewrite',delivered_rewrite_attempt_id=? WHERE id=?",
@@ -2489,10 +1769,7 @@ fn seed_detail_extras(db: &Db) {
 pub fn seed_pending(db: &Db, dir: &Path) {
     let _ = std::fs::create_dir_all(dir);
     let now = now_ms();
-    for (n, age, samples) in [
-        (9201, PENDING_MAX_AGE_MS + MINUTE, 160_000),
-        (9202, 3 * MINUTE, 48_000),
-    ] {
+    for (n, age, samples) in [(9201, PENDING_MAX_AGE_MS + MINUTE, 160_000), (9202, 3 * MINUTE, 48_000)] {
         let id = seed_id(n);
         let file = format!("{id}.f32");
         let _ = std::fs::write(dir.join(&file), vec![0u8; samples as usize * 4]);
@@ -2515,22 +1792,13 @@ mod tests {
 
     #[test]
     fn sha256_and_uuid_are_standard() {
-        assert_eq!(
-            sha256_hex(b"abc"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-        assert_eq!(
-            sha256_hex(b""),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
+        assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(sha256_hex(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
         let u = new_uuid(&Db::memory());
         assert_eq!(u.len(), 36);
         assert_eq!(&u[14..15], "4");
         assert!(u.chars().all(|c| !c.is_lowercase()));
-        assert_eq!(
-            civil_from_days(days_from_civil(2026, 10, 31)),
-            (2026, 10, 31)
-        );
+        assert_eq!(civil_from_days(days_from_civil(2026, 10, 31)), (2026, 10, 31));
     }
 
     // parity: HIST-016 HIST-017 HIST-018 HIST-019 HIST-020 HIST-021 HIST-022 HIST-024 HIST-036 HIST-086
@@ -2541,11 +1809,7 @@ mod tests {
         m.refresh(&db);
         assert_eq!(m.entries.len(), PAGE_SIZE);
         assert!(m.has_older && !m.has_newer);
-        assert!(
-            m.entries
-                .windows(2)
-                .all(|w| (w[0].created_at, &w[0].id) >= (w[1].created_at, &w[1].id))
-        );
+        assert!(m.entries.windows(2).all(|w| (w[0].created_at, &w[0].id) >= (w[1].created_at, &w[1].id)));
         // A row newer than the watermark stays out until a replacing refresh.
         db.conn.execute(&format!("INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason) VALUES ('{}','Newest row',{},'not_attempted','needs_review','complete','key_release')", seed_id(7777), now_ms() + 5000), []).unwrap();
         m.load_older(&db);
@@ -2569,44 +1833,12 @@ mod tests {
         assert_eq!(m.error.as_deref(), Some(SEARCH_LIMIT_MESSAGE));
         assert!(query_is_valid(&"x".repeat(256)) && !query_is_valid(&"é".repeat(513)));
         // Resident cap drops the far end and reopens it.
-        let mut w = Model {
-            entries: (0..195)
-                .map(|i| Entry {
-                    id: seed_id(i),
-                    ..m_entry()
-                })
-                .collect(),
-            ..Default::default()
-        };
-        w.place(
-            Page {
-                entries: (195..215)
-                    .map(|i| Entry {
-                        id: seed_id(i),
-                        ..m_entry()
-                    })
-                    .collect(),
-                has_more: false,
-                watermark: None,
-            },
-            Placement::AppendOlder,
-        );
+        let mut w = Model { entries: (0..195).map(|i| Entry { id: seed_id(i), ..m_entry() }).collect(), ..Default::default() };
+        w.place(Page { entries: (195..215).map(|i| Entry { id: seed_id(i), ..m_entry() }).collect(), has_more: false, watermark: None }, Placement::AppendOlder);
         assert_eq!(w.entries.len(), RESIDENT_LIMIT);
         assert!(w.has_newer && !w.has_older);
         assert_eq!(w.entries[0].id, seed_id(15));
-        w.place(
-            Page {
-                entries: (0..15)
-                    .map(|i| Entry {
-                        id: seed_id(i),
-                        ..m_entry()
-                    })
-                    .collect(),
-                has_more: false,
-                watermark: None,
-            },
-            Placement::PrependNewer,
-        );
+        w.place(Page { entries: (0..15).map(|i| Entry { id: seed_id(i), ..m_entry() }).collect(), has_more: false, watermark: None }, Placement::PrependNewer);
         assert_eq!(w.entries.len(), RESIDENT_LIMIT);
         assert!(w.has_older && !w.has_newer);
     }
@@ -2632,10 +1864,7 @@ mod tests {
         assert_eq!(e(1).path_label(false), None);
         assert_eq!(e(1).path_label(true).as_deref(), Some("Local"));
         assert_eq!(e(3).path_label(false).as_deref(), Some("Server"));
-        assert_eq!(
-            e(4).path_label(false).as_deref(),
-            Some("Local after server failure (no answer)")
-        );
+        assert_eq!(e(4).path_label(false).as_deref(), Some("Local after server failure (no answer)"));
         assert_eq!(failure_label("pin_mismatch"), "identity changed");
         assert_eq!(e(1).microphone_label(), "Microphone: Studio Microphone");
         assert_eq!(e(5).microphone_label(), "Microphone: Not recorded");
@@ -2649,11 +1878,7 @@ mod tests {
         let env = envelope(&db, &seed_id(1)).unwrap();
         let d = env.detail.as_ref().unwrap();
         let lines = processing_lines(d);
-        let has = |l: &str, v: &str| {
-            lines
-                .iter()
-                .any(|x| matches!(x, Line::Meta(a, b) if a == l && b == v))
-        };
+        let has = |l: &str, v: &str| lines.iter().any(|x| matches!(x, Line::Meta(a, b) if a == l && b == v));
         assert!(has("Engine", "seed-engine"));
         assert!(has("Language", "en"));
         assert!(has("Uncommitted build changes", "No"));
@@ -2661,32 +1886,15 @@ mod tests {
         assert!(has("Ambiguous vocabulary entries", "None"));
         assert!(has("Audio", "16000 Hz, 1 channel, float32_pcm"));
         assert!(has("Input", "240000 samples; 15.0 seconds"));
-        assert!(has(
-            "Windows",
-            "239360 samples; overlap 32000; stride 207360"
-        ));
+        assert!(has("Windows", "239360 samples; overlap 32000; stride 207360"));
         assert!(has("Minimum padded input", "4800 samples"));
         assert!(has("Recognition duration", "1.5 seconds"));
-        assert!(has(
-            "Window 1 timing evidence",
-            "unavailable; 0 recorded tokens; 239360 padded samples"
-        ));
-        assert!(has(
-            "Attempt 1 (selected)",
-            "seed-engine; completed; 1.5 seconds"
-        ));
+        assert!(has("Window 1 timing evidence", "unavailable; 0 recorded tokens; 239360 padded samples"));
+        assert!(has("Attempt 1 (selected)", "seed-engine; completed; 1.5 seconds"));
         assert!(lines.contains(&Line::Plain("None recorded".into())));
         let hashes = hash_lines(d, &env.content_hash);
-        assert!(
-            hashes
-                .iter()
-                .any(|x| matches!(x, Line::Meta(a, _) if a == "encoder.mlmodelc"))
-        );
-        assert!(
-            hashes
-                .iter()
-                .any(|x| matches!(x, Line::Meta(a, _) if a == "Raw window 2"))
-        );
+        assert!(hashes.iter().any(|x| matches!(x, Line::Meta(a, _) if a == "encoder.mlmodelc")));
+        assert!(hashes.iter().any(|x| matches!(x, Line::Meta(a, _) if a == "Raw window 2")));
         // A sparse detail lists its missing metadata and its reasons.
         let sparse = processing_lines(envelope(&db, &seed_id(2)).unwrap().detail.as_ref().unwrap());
         assert!(sparse.contains(&Line::Plain("capture_failure".into())));
@@ -2699,10 +1907,7 @@ mod tests {
         assert_eq!(context_label(Some(c)), "Context: used");
         assert_eq!(context_label(None), "Context: not recorded");
         assert_eq!(c.spelling_changes[0].replacement, "Northwind");
-        assert_eq!(
-            part_label(&c.spelling_changes[0].source_part),
-            "Window title"
-        );
+        assert_eq!(part_label(&c.spelling_changes[0].source_part), "Window title");
         let snap = snapshot_lines(c.snapshot.as_ref().unwrap());
         assert!(snap.contains(&("Field".to_string(), "multi line".to_string())));
         assert!(snap.contains(&("Terms".to_string(), "Northwind".to_string())));
@@ -2711,18 +1916,10 @@ mod tests {
         let mut m = Model::default();
         m.show_detail(&db, &seed_id(1));
         assert_eq!(m.rewrite_state_line(), "Rewrite: succeeded");
-        assert_eq!(
-            m.delivered_line(),
-            "Delivered: rewrite attempt 2 (Polished)"
-        );
+        assert_eq!(m.delivered_line(), "Delivered: rewrite attempt 2 (Polished)");
         assert_eq!(m.current_rewrite().unwrap().ordinal, 2);
-        assert_eq!(
-            context_rewrite_line(Some(c), m.attempts.last()),
-            Some("Context sent to the rewrite server")
-        );
-        assert!(m.attempts[1].summary().contains(
-            "420 ms total · 85 ms to first byte · context sent · delivered · seed-model-1+p3+s2"
-        ));
+        assert_eq!(context_rewrite_line(Some(c), m.attempts.last()), Some("Context sent to the rewrite server"));
+        assert!(m.attempts[1].summary().contains("420 ms total · 85 ms to first byte · context sent · delivered · seed-model-1+p3+s2"));
         assert!(m.attempts[0].summary().contains("server_unreachable"));
         m.show_detail(&db, &seed_id(3));
         assert_eq!(m.delivered_line(), "Delivered: saved text");
@@ -2730,12 +1927,7 @@ mod tests {
         assert_eq!(m.delivered_line(), "Delivered: nothing yet");
         assert!(m.envelope.as_ref().unwrap().detail.is_none());
         // Damaged JSON is an error, a missing row closes the detail.
-        db.conn
-            .execute(
-                "UPDATE transcription_quality SET detail_json='{}' WHERE transcription_id=?",
-                [seed_id(3)],
-            )
-            .unwrap();
+        db.conn.execute("UPDATE transcription_quality SET detail_json='{}' WHERE transcription_id=?", [seed_id(3)]).unwrap();
         m.show_detail(&db, &seed_id(3));
         assert_eq!(m.detail_error.as_deref(), Some(DETAIL_ERROR));
         m.show_detail(&db, "missing");
@@ -2803,15 +1995,7 @@ mod tests {
     #[test]
     fn delivery_rewrite_and_delete_writes() {
         let db = seeded();
-        let usage = || -> (i64, i64) {
-            db.conn
-                .query_row(
-                    "SELECT row_count,payload_bytes FROM history_usage",
-                    [],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .unwrap()
-        };
+        let usage = || -> (i64, i64) { db.conn.query_row("SELECT row_count,payload_bytes FROM history_usage", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap() };
         let id = seed_id(3);
         let e = get(&db, &id).unwrap().unwrap();
         // Delivery.
@@ -2826,32 +2010,16 @@ mod tests {
         let (attempt, rev) = begin_attempt(&db, &id, e.revision).unwrap();
         assert!(get(&db, &id).unwrap().unwrap().is_attempting());
         assert_eq!(begin_attempt(&db, &id, rev).unwrap_err(), StoreError::Busy);
-        assert_eq!(
-            delete_confirmed(&db, &id, rev).unwrap_err(),
-            StoreError::Busy
-        );
+        assert_eq!(delete_confirmed(&db, &id, rev).unwrap_err(), StoreError::Busy);
         let done = record_outcome(&db, &id, rev, &attempt, Outcome::NotInserted, None).unwrap();
-        assert_eq!(
-            (
-                done.delivery_state.as_str(),
-                done.recovery_state.as_str(),
-                done.delivered_source.as_deref()
-            ),
-            ("not_inserted", "needs_review", Some("faithful"))
-        );
+        assert_eq!((done.delivery_state.as_str(), done.recovery_state.as_str(), done.delivered_source.as_deref()), ("not_inserted", "needs_review", Some("faithful")));
         // Rewrite accounting.
         let before = usage().1;
         let a = begin_rewrite(&db, &id, "clean", &e.text, "https://x.test").unwrap();
         assert_eq!(usage().1, before + e.text.len() as i64 * 5);
         assert_eq!(get(&db, &id).unwrap().unwrap().rewrite_state, "pending");
-        assert_eq!(
-            begin_rewrite(&db, &id, "clean", &e.text, "https://x.test").unwrap_err(),
-            StoreError::Refused("concurrency_limit")
-        );
-        assert_eq!(
-            delete_confirmed(&db, &id, done.revision).unwrap_err(),
-            StoreError::Busy
-        );
+        assert_eq!(begin_rewrite(&db, &id, "clean", &e.text, "https://x.test").unwrap_err(), StoreError::Refused("concurrency_limit"));
+        assert_eq!(delete_confirmed(&db, &id, done.revision).unwrap_err(), StoreError::Busy);
         record_rewrite_result(&db, &a, "Short.", Some(9)).unwrap();
         assert_eq!(usage().1, before + e.text.len() as i64 + 6);
         let b = begin_rewrite(&db, &id, "concise", &e.text, "https://x.test").unwrap();
@@ -2865,67 +2033,31 @@ mod tests {
         assert!(!m.can_request_rewrite(), "pending attempt");
         m.cancel_rewrite(&db);
         assert_eq!(m.rewrite_notice.as_deref(), Some("Rewrite cancelled."));
-        assert_eq!(
-            attempts(&db, &id)
-                .unwrap()
-                .iter()
-                .find(|x| x.id == c)
-                .unwrap()
-                .state,
-            "cancelled"
-        );
+        assert_eq!(attempts(&db, &id).unwrap().iter().find(|x| x.id == c).unwrap().state, "cancelled");
         assert!(m.can_request_rewrite());
         // Startup repair.
         let (_, rev2) = begin_attempt(&db, &id, done.revision).unwrap();
         let p = begin_rewrite(&db, &id, "clean", &e.text, "https://x.test").unwrap();
         startup_repair(&db).unwrap();
         let repaired = get(&db, &id).unwrap().unwrap();
-        assert_eq!(
-            (repaired.delivery_state.as_str(), repaired.revision),
-            ("uncertain", rev2 + 1)
-        );
-        assert_eq!(
-            attempts(&db, &id)
-                .unwrap()
-                .iter()
-                .find(|x| x.id == p)
-                .unwrap()
-                .failure_category
-                .as_deref(),
-            Some("interrupted")
-        );
+        assert_eq!((repaired.delivery_state.as_str(), repaired.revision), ("uncertain", rev2 + 1));
+        assert_eq!(attempts(&db, &id).unwrap().iter().find(|x| x.id == p).unwrap().failure_category.as_deref(), Some("interrupted"));
         // Attempt limit.
         for _ in 0..6 {
             let n = begin_rewrite(&db, &id, "clean", &e.text, "https://x.test").unwrap();
             terminate_rewrite(&db, &n, None, None).unwrap();
         }
-        assert_eq!(
-            begin_rewrite(&db, &id, "clean", &e.text, "https://x.test").unwrap_err(),
-            StoreError::Refused("attempt_limit")
-        );
+        assert_eq!(begin_rewrite(&db, &id, "clean", &e.text, "https://x.test").unwrap_err(), StoreError::Refused("attempt_limit"));
         m.reload_attempts(&db);
-        assert_eq!(
-            m.rewrite_limit_explanation(),
-            Some("This dictation already has ten rewrite attempts.")
-        );
+        assert_eq!(m.rewrite_limit_explanation(), Some("This dictation already has ten rewrite attempts."));
         assert!(!m.can_request_rewrite());
         // Delete: cascades and subtracts every byte.
         let (rows, _) = usage();
         delete_confirmed(&db, &id, repaired.revision).unwrap();
         assert_eq!(usage().0, rows - 1);
-        let left: i64 = db
-            .conn
-            .query_row(
-                "SELECT count(*) FROM rewrite_attempts WHERE transcription_id=?",
-                [&id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let left: i64 = db.conn.query_row("SELECT count(*) FROM rewrite_attempts WHERE transcription_id=?", [&id], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
-        assert_eq!(
-            delete_confirmed(&db, &id, repaired.revision).unwrap_err(),
-            StoreError::Stale
-        );
+        assert_eq!(delete_confirmed(&db, &id, repaired.revision).unwrap_err(), StoreError::Stale);
     }
 
     fn rewrite_ready() -> (Db, Model, String) {
@@ -2935,22 +2067,12 @@ mod tests {
         let mut m = Model::default();
         m.show_detail(&db, &id);
         for a in m.attempts.clone() {
-            db.conn
-                .execute("DELETE FROM rewrite_attempts WHERE id=?", [&a.id])
-                .unwrap();
+            db.conn.execute("DELETE FROM rewrite_attempts WHERE id=?", [&a.id]).unwrap();
         }
-        db.conn
-            .execute(
-                "UPDATE transcriptions SET quality='complete' WHERE id=?",
-                [&id],
-            )
-            .unwrap();
+        db.conn.execute("UPDATE transcriptions SET quality='complete' WHERE id=?", [&id]).unwrap();
         m.has_rewriter = true;
         m.show_detail(&db, &id);
-        assert!(
-            m.can_request_rewrite(),
-            "the baseline each condition below turns off"
-        );
+        assert!(m.can_request_rewrite(), "the baseline each condition below turns off");
         (db, m, id)
     }
 
@@ -2995,21 +2117,14 @@ mod tests {
     #[test]
     fn rewrite_gate_stops_when_two_run_elsewhere() {
         let (db, mut m, id) = rewrite_ready();
-        let others: Vec<String> = entries_page(&db, 5)
-            .into_iter()
-            .filter(|e| e != &id)
-            .take(2)
-            .collect();
+        let others: Vec<String> = entries_page(&db, 5).into_iter().filter(|e| e != &id).take(2).collect();
         let a = begin_rewrite(&db, &others[0], "clean", "words", "https://x.test").unwrap();
         m.reload_attempts(&db);
         assert!(m.can_request_rewrite(), "one elsewhere still leaves room");
         begin_rewrite(&db, &others[1], "clean", "words", "https://x.test").unwrap();
         m.reload_attempts(&db);
         assert!(!m.can_request_rewrite());
-        assert!(
-            m.rewrite_notice.is_none(),
-            "no reason is given, as in Swift"
-        );
+        assert!(m.rewrite_notice.is_none(), "no reason is given, as in Swift");
         terminate_rewrite(&db, &a, Some("timeout"), None).unwrap();
         m.reload_attempts(&db);
         assert!(m.can_request_rewrite());
@@ -3019,37 +2134,19 @@ mod tests {
     #[test]
     fn rewrite_gate_needs_complete_quality() {
         let (db, mut m, id) = rewrite_ready();
-        db.conn
-            .execute(
-                "UPDATE transcriptions SET quality='incomplete' WHERE id=?",
-                [&id],
-            )
-            .unwrap();
+        db.conn.execute("UPDATE transcriptions SET quality='incomplete' WHERE id=?", [&id]).unwrap();
         m.reload_attempts(&db);
         assert!(!m.can_request_rewrite());
-        assert!(
-            m.rewrite_notice.is_none(),
-            "no reason is given, as in Swift"
-        );
+        assert!(m.rewrite_notice.is_none(), "no reason is given, as in Swift");
     }
 
     fn entries_page(db: &Db, n: i64) -> Vec<String> {
-        let mut s = db
-            .conn
-            .prepare("SELECT id FROM transcriptions ORDER BY created_at DESC LIMIT ?")
-            .unwrap();
-        s.query_map([n], |r| r.get(0))
-            .unwrap()
-            .map(Result::unwrap)
-            .collect()
+        let mut s = db.conn.prepare("SELECT id FROM transcriptions ORDER BY created_at DESC LIMIT ?").unwrap();
+        s.query_map([n], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
     }
 
     fn remote(origin: &str, insecure: bool, credential: bool) -> crate::settings::RewriteSettings {
-        crate::settings::RewriteSettings {
-            origin: origin.into(),
-            insecure_override: insecure,
-            credential_present: credential,
-        }
+        crate::settings::RewriteSettings { origin: origin.into(), insecure_override: insecure, credential_present: credential }
     }
 
     // parity: HIST-149
@@ -3058,75 +2155,19 @@ mod tests {
         let (db, _, id) = rewrite_ready();
         let ok = remote("https://x.test", false, true);
         // Rewriting off outranks every settings problem, and writes nothing.
-        assert_eq!(
-            admit_rewrite(
-                &db,
-                &id,
-                "words",
-                "clean",
-                false,
-                &remote("http://x.test", false, false)
-            ),
-            Admission::NotEligible
-        );
-        assert_eq!(
-            admit_rewrite(&db, &id, " \n", "clean", true, &ok),
-            Admission::NotEligible
-        );
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", false, &remote("http://x.test", false, false)), Admission::NotEligible);
+        assert_eq!(admit_rewrite(&db, &id, " \n", "clean", true, &ok), Admission::NotEligible);
         assert!(attempts(&db, &id).unwrap().is_empty());
         // Blocked plain HTTP, then the credential, then the endpoint.
-        assert_eq!(
-            admit_rewrite(
-                &db,
-                &id,
-                "words",
-                "clean",
-                true,
-                &remote("http://x.test", false, false)
-            ),
-            Admission::Refused("insecure_endpoint_blocked")
-        );
-        assert_eq!(
-            admit_rewrite(
-                &db,
-                &id,
-                "words",
-                "clean",
-                true,
-                &remote("https://x.test", false, false)
-            ),
-            Admission::Refused("missing_credential")
-        );
-        assert_eq!(
-            admit_rewrite(&db, &id, "words", "clean", true, &remote("", false, false)),
-            Admission::Refused("invalid_settings")
-        );
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", true, &remote("http://x.test", false, false)), Admission::Refused("insecure_endpoint_blocked"));
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", true, &remote("https://x.test", false, false)), Admission::Refused("missing_credential"));
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", true, &remote("", false, false)), Admission::Refused("invalid_settings"));
         // Settings outrank the input bound; the bound outranks the store.
-        assert_eq!(
-            admit_rewrite(&db, &id, &"x".repeat(20_001), "clean", true, &ok),
-            Admission::Refused("input_too_large")
-        );
-        assert_eq!(
-            admit_rewrite(&db, &id, &"é".repeat(32_769), "clean", true, &ok),
-            Admission::Refused("input_too_large")
-        );
-        let Admission::Admitted(attempt) = admit_rewrite(&db, &id, "words", "clean", true, &ok)
-        else {
-            panic!("admitted")
-        };
-        assert_eq!(
-            admit_rewrite(&db, &id, "words", "clean", true, &ok),
-            Admission::Refused("concurrency_limit")
-        );
-        assert_eq!(
-            attempts(&db, &id)
-                .unwrap()
-                .iter()
-                .find(|a| a.id == attempt)
-                .unwrap()
-                .state,
-            "pending"
-        );
+        assert_eq!(admit_rewrite(&db, &id, &"x".repeat(20_001), "clean", true, &ok), Admission::Refused("input_too_large"));
+        assert_eq!(admit_rewrite(&db, &id, &"é".repeat(32_769), "clean", true, &ok), Admission::Refused("input_too_large"));
+        let Admission::Admitted(attempt) = admit_rewrite(&db, &id, "words", "clean", true, &ok) else { panic!("admitted") };
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", true, &ok), Admission::Refused("concurrency_limit"));
+        assert_eq!(attempts(&db, &id).unwrap().iter().find(|a| a.id == attempt).unwrap().state, "pending");
     }
 
     // parity: HIST-179
@@ -3134,14 +2175,8 @@ mod tests {
     fn rewrite_with_rewriting_off_clears_the_notice_and_writes_nothing() {
         let (db, mut m, id) = rewrite_ready();
         m.rewrite_notice = Some("old".into());
-        assert!(
-            m.can_request_rewrite(),
-            "the button stays enabled with rewriting off"
-        );
-        assert!(
-            m.request_rewrite(&db, false, &remote("https://x.test", false, true))
-                .is_none()
-        );
+        assert!(m.can_request_rewrite(), "the button stays enabled with rewriting off");
+        assert!(m.request_rewrite(&db, false, &remote("https://x.test", false, true)).is_none());
         assert!(m.rewrite_notice.is_none());
         assert!(attempts(&db, &id).unwrap().is_empty());
     }
@@ -3150,14 +2185,8 @@ mod tests {
     #[test]
     fn a_refused_rewrite_shows_the_refusal_and_keeps_no_row() {
         let (db, mut m, id) = rewrite_ready();
-        assert!(
-            m.request_rewrite(&db, true, &remote("https://x.test", false, false))
-                .is_none()
-        );
-        assert_eq!(
-            m.rewrite_notice.as_deref(),
-            Some("Rewriting skipped: no credential for this server.")
-        );
+        assert!(m.request_rewrite(&db, true, &remote("https://x.test", false, false)).is_none());
+        assert_eq!(m.rewrite_notice.as_deref(), Some("Rewriting skipped: no credential for this server."));
         assert!(attempts(&db, &id).unwrap().is_empty());
     }
 
@@ -3173,17 +2202,8 @@ mod tests {
                 let n = c.read(&mut buf).unwrap();
                 got.extend_from_slice(&buf[..n]);
                 let text = String::from_utf8_lossy(&got).to_string();
-                let Some(head) = text.find("\r\n\r\n") else {
-                    continue;
-                };
-                let wanted = text
-                    .lines()
-                    .find_map(|l| {
-                        l.to_lowercase()
-                            .strip_prefix("content-length: ")
-                            .map(|v| v.trim().parse::<usize>().unwrap())
-                    })
-                    .unwrap_or(0);
+                let Some(head) = text.find("\r\n\r\n") else { continue };
+                let wanted = text.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length: ").map(|v| v.trim().parse::<usize>().unwrap())).unwrap_or(0);
                 if got.len() >= head + 4 + wanted {
                     write!(c, "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
                     return text;
@@ -3198,22 +2218,12 @@ mod tests {
     }
 
     fn sample_request(origin: &str) -> RewriteRequest {
-        RewriteRequest {
-            dictation: "d".into(),
-            attempt: "ABC".into(),
-            mode: "clean",
-            text: "some spoken words".into(),
-            origin: origin.into(),
-        }
+        RewriteRequest { dictation: "d".into(), attempt: "ABC".into(), mode: "clean", text: "some spoken words".into(), origin: origin.into() }
     }
 
     fn send(status: u16, body: String) -> Result<String, &'static str> {
         let (origin, thread) = server(status, body);
-        let out = send_rewrite(
-            &sample_request(&origin),
-            Some("key"),
-            std::time::Duration::from_secs(5),
-        );
+        let out = send_rewrite(&sample_request(&origin), Some("key"), std::time::Duration::from_secs(5));
         thread.join().unwrap();
         out
     }
@@ -3224,40 +2234,22 @@ mod tests {
         let (db, mut m, id) = rewrite_ready();
         let saved = m.envelope.as_ref().unwrap().entry.text.clone();
         m.rewrite_mode = RewriteMode::Concise;
-        let first = m
-            .request_rewrite(&db, true, &remote("https://x.test", false, true))
-            .unwrap();
-        assert_eq!(
-            m.pending_rewrite().map(|a| a.mode.as_str()),
-            Some("concise"),
-            "pending until answered"
-        );
+        let first = m.request_rewrite(&db, true, &remote("https://x.test", false, true)).unwrap();
+        assert_eq!(m.pending_rewrite().map(|a| a.mode.as_str()), Some("concise"), "pending until answered");
         m.finish_rewrite(&db, &first, Ok("Short.".into()), 12);
         let a = attempts(&db, &id).unwrap();
-        assert_eq!(
-            (a[0].state.as_str(), a[0].input_text.as_str()),
-            ("succeeded", saved.as_str())
-        );
+        assert_eq!((a[0].state.as_str(), a[0].input_text.as_str()), ("succeeded", saved.as_str()));
         assert!(m.rewrite_notice.is_none());
-        db.conn
-            .execute("UPDATE transcriptions SET text='changed' WHERE id=?", [&id])
-            .unwrap();
+        db.conn.execute("UPDATE transcriptions SET text='changed' WHERE id=?", [&id]).unwrap();
         m.reload_attempts(&db);
-        assert_eq!(
-            m.request_rewrite(&db, true, &remote("https://x.test", false, true))
-                .unwrap()
-                .text,
-            saved
-        );
+        assert_eq!(m.request_rewrite(&db, true, &remote("https://x.test", false, true)).unwrap().text, saved);
     }
 
     // parity: HIST-155
     #[test]
     fn an_answer_after_cancel_is_dropped() {
         let (db, mut m, id) = rewrite_ready();
-        let request = m
-            .request_rewrite(&db, true, &remote("https://x.test", false, true))
-            .unwrap();
+        let request = m.request_rewrite(&db, true, &remote("https://x.test", false, true)).unwrap();
         m.cancel_rewrite(&db);
         m.finish_rewrite(&db, &request, Ok("Late.".into()), 1);
         assert_eq!(m.rewrite_notice.as_deref(), Some("Rewrite cancelled."));
@@ -3267,23 +2259,12 @@ mod tests {
     #[test]
     fn the_request_carries_protocol_v1_and_the_credential() {
         let (origin, thread) = server(200, result_line("abc", "clean", "Clean words."));
-        assert_eq!(
-            send_rewrite(
-                &sample_request(&origin),
-                Some("key"),
-                std::time::Duration::from_secs(5)
-            ),
-            Ok("Clean words.".into())
-        );
+        assert_eq!(send_rewrite(&sample_request(&origin), Some("key"), std::time::Duration::from_secs(5)), Ok("Clean words.".into()));
         let got = thread.join().unwrap();
         assert!(got.starts_with("POST /v1/rewrite HTTP/1.1"), "{got}");
         assert!(got.to_lowercase().contains("authorization: bearer key"));
-        let body: serde_json::Value =
-            serde_json::from_str(got.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-        assert_eq!(
-            body,
-            serde_json::json!({"schema_version":1,"request_id":"ABC","mode":"clean","text":"some spoken words","language_hints":[],"stream_deltas":false})
-        );
+        let body: serde_json::Value = serde_json::from_str(got.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body, serde_json::json!({"schema_version":1,"request_id":"ABC","mode":"clean","text":"some spoken words","language_hints":[],"stream_deltas":false}));
     }
 
     // parity: HIST-134
@@ -3292,82 +2273,30 @@ mod tests {
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = format!("http://{}", closed.local_addr().unwrap());
         drop(closed);
-        assert_eq!(
-            send_rewrite(
-                &sample_request(&origin),
-                None,
-                std::time::Duration::from_secs(5)
-            ),
-            Err("server_unreachable")
-        );
+        assert_eq!(send_rewrite(&sample_request(&origin), None, std::time::Duration::from_secs(5)), Err("server_unreachable"));
         assert_eq!(send(500, String::new()), Err("transport_error"));
         assert_eq!(send(401, String::new()), Err("authentication_failed"));
         assert_eq!(send(503, String::new()), Err("backend_unavailable"));
         // Accepts and never answers.
         let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = format!("http://{}", silent.local_addr().unwrap());
-        assert_eq!(
-            send_rewrite(
-                &sample_request(&origin),
-                None,
-                std::time::Duration::from_millis(200)
-            ),
-            Err("timeout")
-        );
+        assert_eq!(send_rewrite(&sample_request(&origin), None, std::time::Duration::from_millis(200)), Err("timeout"));
     }
 
     // parity: HIST-135
     #[test]
     fn unusable_replies_map_to_their_categories() {
         assert_eq!(send(200, "not json\n".into()), Err("malformed_response"));
-        assert_eq!(
-            send(200, String::new()),
-            Err("malformed_response"),
-            "no terminal event"
-        );
-        assert_eq!(
-            send(200, result_line("other", "clean", "Words.")),
-            Err("request_mismatch")
-        );
-        assert_eq!(
-            send(200, result_line("abc", "polished", "Words.")),
-            Err("malformed_response")
-        );
-        assert_eq!(
-            send(200, result_line("abc", "clean", "  ")),
-            Err("empty_response")
-        );
-        assert_eq!(
-            send(200, result_line("abc", "clean", &"x".repeat(69))),
-            Err("oversized_response")
-        );
-        assert_eq!(
-            send(200, result_line("abc", "clean", "⟦0⟧ words")),
-            Err("server_validation_failed")
-        );
-        assert_eq!(
-            send(
-                200,
-                result_line("abc", "clean", "Words.")
-                    .replace("\"schema_version\":1", "\"schema_version\":9")
-            ),
-            Err("unsupported_schema_version")
-        );
-        assert_eq!(
-            send(
-                200,
-                format!(
-                    "{{\"event\":\"error\",\"request_id\":\"abc\",\"code\":\"backend_error\"}}\n"
-                )
-            ),
-            Err("server_validation_failed")
-        );
+        assert_eq!(send(200, String::new()), Err("malformed_response"), "no terminal event");
+        assert_eq!(send(200, result_line("other", "clean", "Words.")), Err("request_mismatch"));
+        assert_eq!(send(200, result_line("abc", "polished", "Words.")), Err("malformed_response"));
+        assert_eq!(send(200, result_line("abc", "clean", "  ")), Err("empty_response"));
+        assert_eq!(send(200, result_line("abc", "clean", &"x".repeat(69))), Err("oversized_response"));
+        assert_eq!(send(200, result_line("abc", "clean", "⟦0⟧ words")), Err("server_validation_failed"));
+        assert_eq!(send(200, result_line("abc", "clean", "Words.").replace("\"schema_version\":1", "\"schema_version\":9")), Err("unsupported_schema_version"));
+        assert_eq!(send(200, format!("{{\"event\":\"error\",\"request_id\":\"abc\",\"code\":\"backend_error\"}}\n")), Err("server_validation_failed"));
         // Progress is checked and skipped; the first terminal event decides.
-        let lines = format!(
-            "{{\"event\":\"accepted\",\"request_id\":\"abc\"}}\n{}{}",
-            result_line("abc", "clean", "First."),
-            result_line("abc", "clean", "Second.")
-        );
+        let lines = format!("{{\"event\":\"accepted\",\"request_id\":\"abc\"}}\n{}{}", result_line("abc", "clean", "First."), result_line("abc", "clean", "Second."));
         assert_eq!(send(200, lines), Ok("First.".into()));
     }
 
@@ -3378,14 +2307,8 @@ mod tests {
             ("server_unreachable", "Rewrite server unreachable."),
             ("transport_error", "Rewrite connection failed."),
             ("timeout", "Rewrite took too long."),
-            (
-                "authentication_failed",
-                "Rewrite server rejected the credential. Check Settings.",
-            ),
-            (
-                "backend_unavailable",
-                "Rewrite model is not available on the server.",
-            ),
+            ("authentication_failed", "Rewrite server rejected the credential. Check Settings."),
+            ("backend_unavailable", "Rewrite model is not available on the server."),
         ] {
             assert_eq!(rewrite_notice(category), text);
         }
@@ -3394,21 +2317,10 @@ mod tests {
     // parity: HIST-135
     #[test]
     fn result_notice_copy() {
-        for category in [
-            "malformed_response",
-            "unsupported_schema_version",
-            "request_mismatch",
-        ] {
-            assert_eq!(
-                rewrite_notice(category),
-                "Rewrite server sent an unusable reply."
-            );
+        for category in ["malformed_response", "unsupported_schema_version", "request_mismatch"] {
+            assert_eq!(rewrite_notice(category), "Rewrite server sent an unusable reply.");
         }
-        for category in [
-            "empty_response",
-            "oversized_response",
-            "server_validation_failed",
-        ] {
+        for category in ["empty_response", "oversized_response", "server_validation_failed"] {
             assert_eq!(rewrite_notice(category), "Rewrite result was rejected.");
         }
     }
@@ -3417,22 +2329,10 @@ mod tests {
     #[test]
     fn skipped_notice_copy() {
         for (category, text) in [
-            (
-                "missing_credential",
-                "Rewriting skipped: no credential for this server.",
-            ),
-            (
-                "insecure_endpoint_blocked",
-                "Rewriting skipped: unencrypted connection blocked.",
-            ),
-            (
-                "invalid_settings",
-                "Rewriting skipped: the endpoint is invalid.",
-            ),
-            (
-                "input_too_large",
-                "Rewriting skipped: the text is too long.",
-            ),
+            ("missing_credential", "Rewriting skipped: no credential for this server."),
+            ("insecure_endpoint_blocked", "Rewriting skipped: unencrypted connection blocked."),
+            ("invalid_settings", "Rewriting skipped: the endpoint is invalid."),
+            ("input_too_large", "Rewriting skipped: the text is too long."),
             ("capacity_exceeded", "Rewriting skipped: history is full."),
         ] {
             assert_eq!(rewrite_notice(category), text);
@@ -3443,16 +2343,10 @@ mod tests {
     #[test]
     fn limit_notice_copy() {
         for (category, text) in [
-            (
-                "attempt_limit",
-                "This dictation already has ten rewrite attempts.",
-            ),
+            ("attempt_limit", "This dictation already has ten rewrite attempts."),
             ("concurrency_limit", "Two rewrites are still running."),
             ("interrupted", "Rewrite was interrupted by a restart."),
-            (
-                "context_copied",
-                "Rewrite used on-screen text you did not say.",
-            ),
+            ("context_copied", "Rewrite used on-screen text you did not say."),
         ] {
             assert_eq!(rewrite_notice(category), text);
         }
@@ -3467,25 +2361,10 @@ mod tests {
         record_rewrite_result(&db, &a, "Short words.", Some(1)).unwrap();
         let (attempt, rev) = begin_attempt(&db, &id, e.revision).unwrap();
         record_outcome(&db, &id, rev, &attempt, Outcome::NotInserted, Some(&a)).unwrap();
-        let delivered: i64 = db
-            .conn
-            .query_row(
-                "SELECT delivered FROM rewrite_attempts WHERE id=?",
-                [&a],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            delivered, 1,
-            "recorded as delivered although nothing was inserted"
-        );
+        let delivered: i64 = db.conn.query_row("SELECT delivered FROM rewrite_attempts WHERE id=?", [&a], |r| r.get(0)).unwrap();
+        assert_eq!(delivered, 1, "recorded as delivered although nothing was inserted");
         m.reload_attempts(&db);
-        assert!(
-            m.delivered_line()
-                .starts_with("Delivered: rewrite attempt 1"),
-            "{}",
-            m.delivered_line()
-        );
+        assert!(m.delivered_line().starts_with("Delivered: rewrite attempt 1"), "{}", m.delivered_line());
         assert!(crate::insights::load(&db).unwrap().words_corrected > 0);
     }
 
@@ -3493,14 +2372,7 @@ mod tests {
     #[test]
     fn room_for_a_recording_follows_rows_bytes_and_disk() {
         let (db, _, _) = rewrite_ready();
-        let set = |rows: i64, bytes: i64| {
-            db.conn
-                .execute(
-                    "UPDATE history_usage SET row_count=?,payload_bytes=?",
-                    [rows, bytes],
-                )
-                .unwrap()
-        };
+        let set = |rows: i64, bytes: i64| db.conn.execute("UPDATE history_usage SET row_count=?,payload_bytes=?", [rows, bytes]).unwrap();
         set(1, 0);
         assert!(has_room(&db, None));
         assert!(!has_room(&db, Some(RESERVE_FREE_BYTES - 1)));
@@ -3527,14 +2399,7 @@ mod tests {
         assert_eq!(old.status(now_ms()), "Retries stopped after 24 hours");
         assert_eq!(new.status(now_ms()), "Waiting for server");
         assert_eq!(new.length_label(), "3 s of audio");
-        assert_eq!(
-            PendingItem {
-                sample_count: 15_999,
-                ..new.clone()
-            }
-            .length_label(),
-            "0 s of audio"
-        );
+        assert_eq!(PendingItem { sample_count: 15_999, ..new.clone() }.length_label(), "0 s of audio");
         let out = dir.join("out.wav");
         m.export_pending(&db, &dir, &new.id, &out);
         let bytes = std::fs::read(&out).unwrap();

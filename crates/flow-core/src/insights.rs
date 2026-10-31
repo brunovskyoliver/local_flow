@@ -19,14 +19,7 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Category; 6] = [
-        Category::Other,
-        Category::Ai,
-        Category::Personal,
-        Category::Emails,
-        Category::Work,
-        Category::Documents,
-    ];
+    pub const ALL: [Category; 6] = [Category::Other, Category::Ai, Category::Personal, Category::Emails, Category::Work, Category::Documents];
     pub fn label(self) -> &'static str {
         match self {
             Category::Other => "Other tasks",
@@ -49,78 +42,16 @@ impl Category {
     }
     /// Lowercased bundle lookup; nil or unknown is Other tasks.
     pub fn classify(bundle: Option<&str>) -> Category {
-        let Some(b) = bundle else {
-            return Category::Other;
-        };
+        let Some(b) = bundle else { return Category::Other };
         const GROUPS: [(Category, &[&str]); 5] = [
-            (
-                Category::Ai,
-                &[
-                    "com.openai.chat",
-                    "com.openai.codex",
-                    "com.anthropic.claudefordesktop",
-                    "com.t3tools.t3code",
-                    "com.emanueledipietro.synara",
-                    "ai.perplexity.mac",
-                    "com.google.geminimacos",
-                    "com.mistral.lechat",
-                ],
-            ),
-            (
-                Category::Personal,
-                &[
-                    "com.apple.mobilesms",
-                    "net.whatsapp.whatsapp",
-                    "desktop.whatsapp",
-                    "ru.keepcoder.telegram",
-                    "org.telegram.desktop",
-                    "org.whispersystems.signal-desktop",
-                    "com.facebook.archon",
-                    "com.hnc.discord",
-                ],
-            ),
-            (
-                Category::Emails,
-                &[
-                    "com.apple.mail",
-                    "com.microsoft.outlook",
-                    "com.readdle.smartemail-mac",
-                    "com.superhuman.electron",
-                    "it.bloop.airmail2",
-                    "com.mimestream.mimestream",
-                    "com.freron.mailmate",
-                ],
-            ),
-            (
-                Category::Work,
-                &[
-                    "com.tinyspeck.slackmacgap",
-                    "com.microsoft.teams",
-                    "com.microsoft.teams2",
-                    "us.zoom.xos",
-                ],
-            ),
-            (
-                Category::Documents,
-                &[
-                    "com.apple.iwork.pages",
-                    "com.microsoft.word",
-                    "com.apple.notes",
-                    "com.apple.textedit",
-                    "notion.id",
-                    "md.obsidian",
-                    "com.lukilabs.lukiapp",
-                    "net.shinyfrog.bear",
-                    "com.microsoft.onenote.mac",
-                    "com.apple.iwork.keynote",
-                ],
-            ),
+            (Category::Ai, &["com.openai.chat", "com.openai.codex", "com.anthropic.claudefordesktop", "com.t3tools.t3code", "com.emanueledipietro.synara", "ai.perplexity.mac", "com.google.geminimacos", "com.mistral.lechat"]),
+            (Category::Personal, &["com.apple.mobilesms", "net.whatsapp.whatsapp", "desktop.whatsapp", "ru.keepcoder.telegram", "org.telegram.desktop", "org.whispersystems.signal-desktop", "com.facebook.archon", "com.hnc.discord"]),
+            (Category::Emails, &["com.apple.mail", "com.microsoft.outlook", "com.readdle.smartemail-mac", "com.superhuman.electron", "it.bloop.airmail2", "com.mimestream.mimestream", "com.freron.mailmate"]),
+            (Category::Work, &["com.tinyspeck.slackmacgap", "com.microsoft.teams", "com.microsoft.teams2", "us.zoom.xos"]),
+            (Category::Documents, &["com.apple.iwork.pages", "com.microsoft.word", "com.apple.notes", "com.apple.textedit", "notion.id", "md.obsidian", "com.lukilabs.lukiapp", "net.shinyfrog.bear", "com.microsoft.onenote.mac", "com.apple.iwork.keynote"]),
         ];
         let lower = b.to_lowercase();
-        GROUPS
-            .iter()
-            .find(|(_, ids)| ids.contains(&lower.as_str()))
-            .map_or(Category::Other, |(c, _)| *c)
+        GROUPS.iter().find(|(_, ids)| ids.contains(&lower.as_str())).map_or(Category::Other, |(c, _)| *c)
     }
 }
 
@@ -133,10 +64,7 @@ pub struct Day {
 
 /// Most words; a tie goes to the lexically smaller bundle ID.
 pub fn top_of(apps: &BTreeMap<String, i64>) -> Option<&str> {
-    apps.iter()
-        .rev()
-        .max_by_key(|(_, w)| **w)
-        .map(|(k, _)| k.as_str())
+    apps.iter().rev().max_by_key(|(_, w)| **w).map(|(k, _)| k.as_str())
 }
 
 impl Day {
@@ -177,20 +105,14 @@ fn is_punctuation(c: char) -> bool {
         '$' | '+' | '<' | '=' | '>' | '^' | '`' | '|' | '~' => false,
         c if c.is_ascii_punctuation() => true,
         '¡' | '§' | '«' | '¶' | '·' | '»' | '¿' => true,
-        '\u{2010}'..='\u{2027}'
-        | '\u{2030}'..='\u{2043}'
-        | '\u{2045}'..='\u{2051}'
-        | '\u{2053}'..='\u{205E}' => true,
+        '\u{2010}'..='\u{2027}' | '\u{2030}'..='\u{2043}' | '\u{2045}'..='\u{2051}' | '\u{2053}'..='\u{205E}' => true,
         '\u{3001}'..='\u{3003}' | '\u{3008}'..='\u{3011}' | '\u{FF01}'..='\u{FF0F}' => true,
         _ => false,
     }
 }
 
 fn tokens(text: &str) -> Vec<&str> {
-    text.split_whitespace()
-        .map(|t| t.trim_matches(is_punctuation))
-        .filter(|t| !t.is_empty())
-        .collect()
+    text.split_whitespace().map(|t| t.trim_matches(is_punctuation)).filter(|t| !t.is_empty()).collect()
 }
 
 /// Words the rewrite replaced or dropped: Swift's `difference(from:).removals.count`, which for a
@@ -204,11 +126,7 @@ pub fn corrected_words(input: &str, output: &str) -> i64 {
     for x in &a {
         let mut cur = vec![0usize; b.len() + 1];
         for (j, y) in b.iter().enumerate() {
-            cur[j + 1] = if x == y {
-                prev[j] + 1
-            } else {
-                cur[j].max(prev[j + 1])
-            };
+            cur[j + 1] = if x == y { prev[j] + 1 } else { cur[j].max(prev[j + 1]) };
         }
         prev = cur;
     }
@@ -231,16 +149,8 @@ pub fn streaks(days: &BTreeMap<i64, Day>, today: i64) -> Streaks {
         longest = longest.max(run);
         prev = Some(*d);
     }
-    let Some(&last) = days
-        .keys()
-        .next_back()
-        .filter(|l| **l == today || **l + 1 == today)
-    else {
-        return Streaks {
-            current: 0,
-            longest,
-            current_days: HashSet::new(),
-        };
+    let Some(&last) = days.keys().next_back().filter(|l| **l == today || **l + 1 == today) else {
+        return Streaks { current: 0, longest, current_days: HashSet::new() };
     };
     let mut current_days = HashSet::from([last]);
     let mut c = last;
@@ -248,11 +158,7 @@ pub fn streaks(days: &BTreeMap<i64, Day>, today: i64) -> Streaks {
         c -= 1;
         current_days.insert(c);
     }
-    Streaks {
-        current: current_days.len() as i64,
-        longest,
-        current_days,
-    }
+    Streaks { current: current_days.len() as i64, longest, current_days }
 }
 
 pub fn load(db: &Db) -> rusqlite::Result<Insights> {
@@ -305,44 +211,24 @@ pub fn load(db: &Db) -> rusqlite::Result<Insights> {
 
 impl Insights {
     pub fn words_per_minute(&self) -> Option<i64> {
-        (self.spoken_seconds >= 1.0 && self.timed_words > 0)
-            .then(|| (self.timed_words as f64 / (self.spoken_seconds / 60.0)).round() as i64)
+        (self.spoken_seconds >= 1.0 && self.timed_words > 0).then(|| (self.timed_words as f64 / (self.spoken_seconds / 60.0)).round() as i64)
     }
     pub fn average_words(&self) -> i64 {
-        if self.dictations == 0 {
-            0
-        } else {
-            (self.total_words as f64 / self.dictations as f64).round() as i64
-        }
+        if self.dictations == 0 { 0 } else { (self.total_words as f64 / self.dictations as f64).round() as i64 }
     }
     /// All six, by dictation count descending; ties keep enum order.
     pub fn category_rows(&self) -> Vec<(Category, i64)> {
-        let mut rows: Vec<(Category, i64)> = Category::ALL
-            .iter()
-            .map(|c| (*c, self.categories[*c as usize]))
-            .collect();
+        let mut rows: Vec<(Category, i64)> = Category::ALL.iter().map(|c| (*c, self.categories[*c as usize])).collect();
         rows.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         rows
     }
     pub fn top_app_in(&self, c: Category) -> Option<&str> {
-        let in_category: BTreeMap<String, i64> = self
-            .app_words
-            .iter()
-            .filter(|(k, _)| Category::classify(Some(k)) == c)
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
-        top_of(&in_category)
-            .and_then(|t| self.app_words.get_key_value(t))
-            .map(|(k, _)| k.as_str())
+        let in_category: BTreeMap<String, i64> = self.app_words.iter().filter(|(k, _)| Category::classify(Some(k)) == c).map(|(k, v)| (k.clone(), *v)).collect();
+        top_of(&in_category).and_then(|t| self.app_words.get_key_value(t)).map(|(k, _)| k.as_str())
     }
     /// Quartiles of all active days, so one heavy day doesn't wash out the rest.
     pub fn thresholds(&self) -> [i64; 3] {
-        let mut counts: Vec<i64> = self
-            .days
-            .values()
-            .map(|d| d.words)
-            .filter(|w| *w > 0)
-            .collect();
+        let mut counts: Vec<i64> = self.days.values().map(|d| d.words).filter(|w| *w > 0).collect();
         counts.sort_unstable();
         if counts.is_empty() {
             return [1, 1, 1];
@@ -379,9 +265,7 @@ pub fn talk_time(seconds: f64) -> String {
 pub fn versus_typing(pace: Option<i64>) -> String {
     pace.map_or("–".into(), |p| {
         let ratio = p as f64 / 40.0;
-        region_number(ratio, 1)
-            .unwrap_or_else(|| crate::onboarding::localized(&format!("{ratio:.1}")))
-            + "×"
+        region_number(ratio, 1).unwrap_or_else(|| crate::onboarding::localized(&format!("{ratio:.1}"))) + "×"
     })
 }
 
@@ -436,26 +320,17 @@ pub fn weekday_label(offset: i64) -> String {
     // 2026-11-01 was a Sunday.
     let sunday = days_from_civil(2026, 11, 1);
     let day = sunday + (first_weekday() - 1 + offset).rem_euclid(7);
-    region_date(day * DAY_MS, "EEE", true).unwrap_or_else(|| {
-        ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][(day - sunday) as usize].to_string()
-    })
+    region_date(day * DAY_MS, "EEE", true).unwrap_or_else(|| ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][(day - sunday) as usize].to_string())
 }
 
 pub fn columns(today: i64, page: i64) -> Vec<i64> {
-    (0..WEEKS)
-        .map(|c| week_start(today) + 7 * (c - (WEEKS - 1) - page * WEEKS))
-        .collect()
+    (0..WEEKS).map(|c| week_start(today) + 7 * (c - (WEEKS - 1) - page * WEEKS)).collect()
 }
 
 /// The abbreviated month when this week contains a 1st.
 pub fn month_label(week: i64) -> Option<String> {
-    let first = (0..7)
-        .map(|o| week + o)
-        .find(|day| civil_from_days(*day).2 == 1)?;
-    Some(
-        region_date(first * DAY_MS, "MMM", true)
-            .unwrap_or_else(|| crate::history::month_short(civil_from_days(first).1).to_string()),
-    )
+    let first = (0..7).map(|o| week + o).find(|day| civil_from_days(*day).2 == 1)?;
+    Some(region_date(first * DAY_MS, "MMM", true).unwrap_or_else(|| crate::history::month_short(civil_from_days(first).1).to_string()))
 }
 
 /// `date(.long)`, "31 October 2026" in the fallback.
@@ -485,11 +360,7 @@ pub fn note_spoken(title: &str, detail: Option<&str>) -> String {
 }
 
 pub fn day_spoken(day: i64, words: i64, apps: i64, top: Option<&str>) -> String {
-    let mut parts = vec![
-        long_date(day),
-        counted(words, "word", "words"),
-        format!("{} used", counted(apps, "app", "apps")),
-    ];
+    let mut parts = vec![long_date(day), counted(words, "word", "words"), format!("{} used", counted(apps, "app", "apps"))];
     if let Some(t) = top {
         parts.push(format!("most in {t}"));
     }
@@ -507,10 +378,7 @@ mod tests {
         let db = Db::memory();
         crate::history::seed(&db);
         let i = load(&db).unwrap();
-        let n: i64 = db
-            .conn
-            .query_row("SELECT count(*) FROM transcriptions", [], |r| r.get(0))
-            .unwrap();
+        let n: i64 = db.conn.query_row("SELECT count(*) FROM transcriptions", [], |r| r.get(0)).unwrap();
         assert_eq!(i.dictations, n);
         assert_eq!(i.categories.iter().sum::<i64>(), n);
         assert_eq!(i.days.values().map(|d| d.dictations).sum::<i64>(), n);
@@ -520,39 +388,24 @@ mod tests {
         assert!(i.timed_words < i.total_words);
         assert_eq!(i.dictionary_fixes, 1);
         assert!(i.words_per_minute().is_some());
-        assert_eq!(
-            i.average_words(),
-            (i.total_words as f64 / n as f64).round() as i64
-        );
+        assert_eq!(i.average_words(), (i.total_words as f64 / n as f64).round() as i64);
         assert!(i.longest_words >= 20);
-        assert_eq!(
-            i.words_corrected,
-            corrected_words(
-                "Move the kickoff to Thursday and ask Northwind to send the updated floor plan before noon.",
-                "Please move the kickoff to Thursday, and ask Northwind to send the updated floor plan before noon."
-            )
-        );
+        assert_eq!(i.words_corrected, corrected_words(
+            "Move the kickoff to Thursday and ask Northwind to send the updated floor plan before noon.",
+            "Please move the kickoff to Thursday, and ask Northwind to send the updated floor plan before noon."));
         let rows = i.category_rows();
         assert!(rows.windows(2).all(|w| w[0].1 >= w[1].1));
         assert_eq!(rows.len(), 6);
         assert!(i.apps_used >= 6);
         assert_eq!(i.top_app_in(Category::Emails), Some("com.apple.mail"));
-        assert_eq!(
-            i.top_app_in(Category::Personal),
-            Some("com.apple.MobileSMS")
-        );
+        assert_eq!(i.top_app_in(Category::Personal), Some("com.apple.MobileSMS"));
         // The undelivered, unchanged and failed attempts don't count.
-        db.conn
-            .execute("UPDATE rewrite_attempts SET delivered=0", [])
-            .unwrap();
+        db.conn.execute("UPDATE rewrite_attempts SET delivered=0", []).unwrap();
         assert_eq!(load(&db).unwrap().words_corrected, 0);
         let _ = seed_id(1);
         // Empty: all zero and no pace.
         let e = load(&Db::memory()).unwrap();
-        assert_eq!(
-            (e.dictations, e.words_per_minute(), e.average_words()),
-            (0, None, 0)
-        );
+        assert_eq!((e.dictations, e.words_per_minute(), e.average_words()), (0, None, 0));
         assert_eq!(e.thresholds(), [1, 1, 1]);
     }
 
@@ -569,38 +422,17 @@ mod tests {
         assert_eq!(versus_typing(None), "–");
         assert_eq!(grouped(1234567), "1\u{A0}234\u{A0}567");
         assert_eq!(counted(1, "word", "words"), "1 word");
-        assert_eq!(
-            fallback_app_name("com.tinyspeck.slackmacgap"),
-            "Slackmacgap"
-        );
+        assert_eq!(fallback_app_name("com.tinyspeck.slackmacgap"), "Slackmacgap");
         assert_eq!(Category::classify(Some("COM.Apple.MAIL")), Category::Emails);
-        assert_eq!(
-            Category::classify(Some("com.google.GeminiMacOS")),
-            Category::Ai
-        );
-        assert_eq!(
-            Category::classify(Some("com.apple.iWork.Keynote")),
-            Category::Documents
-        );
+        assert_eq!(Category::classify(Some("com.google.GeminiMacOS")), Category::Ai);
+        assert_eq!(Category::classify(Some("com.apple.iWork.Keynote")), Category::Documents);
         assert_eq!(Category::classify(Some("unknown")), Category::Other);
         assert_eq!(Category::classify(None), Category::Other);
-        assert_eq!(
-            top_of(&BTreeMap::from([
-                ("b".to_string(), 3),
-                ("a".to_string(), 3)
-            ])),
-            Some("a")
-        );
+        assert_eq!(top_of(&BTreeMap::from([("b".to_string(), 3), ("a".to_string(), 3)])), Some("a"));
         // Quartiles use every active day.
         let mut i = Insights::default();
         for (d, w) in [(1, 10), (2, 20), (3, 30), (4, 40)] {
-            i.days.insert(
-                d,
-                Day {
-                    words: w,
-                    ..Default::default()
-                },
-            );
+            i.days.insert(d, Day { words: w, ..Default::default() });
         }
         assert_eq!(i.thresholds(), [20, 30, 40]);
         assert_eq!(level(41, &[20, 30, 40]), 0);
@@ -608,10 +440,7 @@ mod tests {
         assert_eq!(level(21, &[20, 30, 40]), 2);
         assert_eq!(level(20, &[20, 30, 40]), 3);
         // Streaks.
-        let days: BTreeMap<i64, Day> = [10, 11, 12, 20, 21]
-            .iter()
-            .map(|d| (*d, Day::default()))
-            .collect();
+        let days: BTreeMap<i64, Day> = [10, 11, 12, 20, 21].iter().map(|d| (*d, Day::default())).collect();
         let s = streaks(&days, 22);
         assert_eq!((s.current, s.longest), (2, 3));
         assert!(s.current_days.contains(&20) && !s.current_days.contains(&12));
@@ -625,15 +454,9 @@ mod tests {
         assert_eq!(c.len(), 19);
         assert_eq!(c[18], week_start(sat));
         assert_eq!(columns(sat, 1)[18], c[0] - 7);
-        assert_eq!(
-            month_label(days_from_civil(2026, 9, 28)).as_deref(),
-            Some("Oct")
-        );
+        assert_eq!(month_label(days_from_civil(2026, 9, 28)).as_deref(), Some("Oct"));
         assert_eq!(month_label(days_from_civil(2026, 10, 5)), None);
-        assert_eq!(
-            note_spoken("3 words", Some("a · b\nMost in Mail")),
-            "3 words, a · b, Most in Mail"
-        );
+        assert_eq!(note_spoken("3 words", Some("a · b\nMost in Mail")), "3 words, a · b, Most in Mail");
         assert!(day_spoken(sat, 1, 2, Some("Mail")).ends_with("1 word, 2 apps used, most in Mail"));
         let db = Db::memory();
         assert_eq!(local(&db, now_ms()).year >= 2026, true);
