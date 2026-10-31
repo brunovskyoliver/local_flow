@@ -688,7 +688,7 @@ impl SettingsPage {
     // MARK: Sections
 
     fn section_title(title: &'static str) -> impl IntoElement {
-        div().id(SharedString::from(format!("settings.section.{title}"))).pt(px(29.)).pb(px(13.)).child(div().id(SharedString::from(format!("settings.section.{title}.text"))).child(t(title).font(14., 500.)).test_support()).test_support()
+        div().id(SharedString::from(format!("settings.section.{title}"))).test_support().pt(px(29.)).pb(px(13.)).child(div().id(SharedString::from(format!("settings.section.{title}.text"))).child(t(title).font(14., 500.)).test_support()).test_support()
     }
 
     fn general(&self, cx: &mut Context<Self>) -> Div {

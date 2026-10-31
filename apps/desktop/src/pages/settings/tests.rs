@@ -201,7 +201,7 @@ fn logged(r: &Rig, s: &str) -> bool {
     r.log.borrow().iter().any(|l| l == s)
 }
 
-// parity: SET-001 SET-002 SET-003 SET-004 SET-005 SET-006 SET-007 SET-034 SET-036 SET-037 SET-134 SET-135 SET-136 SET-146 SET-151 SET-152 SET-166 SET-168 SET-170 SET-172 SET-174 SET-199 SET-200 SET-202 SET-204 SET-206 SET-209 SET-210 SET-211 SET-239 SET-240 SET-247 SET-248 SET-252 SET-256 SET-270 SET-272 SET-274 SET-276 SET-278 SET-280 SET-285 SET-293 SET-296 SET-301 SET-303 SET-335 SET-336 SET-351 SET-352 SET-021
+// parity: SET-034 SET-036 SET-037 SET-134 SET-135 SET-136 SET-146 SET-151 SET-152 SET-166 SET-168 SET-170 SET-172 SET-174 SET-199 SET-200 SET-202 SET-204 SET-206 SET-209 SET-210 SET-211 SET-239 SET-247 SET-248 SET-252 SET-256 SET-270 SET-272 SET-274 SET-276 SET-278 SET-280 SET-285 SET-293 SET-296 SET-301 SET-303 SET-335 SET-336 SET-351 SET-352 SET-021
 #[flow_ui::gpui::test]
 async fn default_page_shows_every_section_in_order(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -212,6 +212,19 @@ async fn default_page_shows_every_section_in_order(cx: &mut TestAppContext) {
     }
     assert!(disabled(cx, r.win, "settings.contextRewriteEnabled"));
     assert!(disabled(cx, r.win, "settings.contextStyleEnabled"));
+}
+
+// parity: SET-003
+#[flow_ui::gpui::test]
+async fn sections_stack_in_swifts_order(cx: &mut TestAppContext) {
+    let r = rig(cx, "microphones", |_| {});
+    let mut last = px(-1.);
+    for title in ["Server", "Updates", "General", "Microphones", "App context", "Models", "Rewriting", "Summaries", "Permissions needed"] {
+        let id: &'static str = format!("settings.section.{title}").leak();
+        let top = bounds(cx, r.win, id).top();
+        assert!(top > last, "{title} sits below the section before it");
+        last = top;
+    }
 }
 
 // parity: SET-016 SET-350
@@ -635,7 +648,7 @@ async fn exclusions_sheet(cx: &mut TestAppContext) {
     assert_saw(&["11 apps"]);
 }
 
-// parity: SET-222 SET-223 SET-224 SET-225 SET-228 SET-230 SET-235
+// parity: SET-214 SET-222 SET-223 SET-224 SET-225 SET-228 SET-230 SET-235
 #[flow_ui::gpui::test]
 async fn kinds_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -669,6 +682,7 @@ async fn installed_model_controls(cx: &mut TestAppContext) {
     click(cx, r.win, "settings.speechLoad");
     assert!(logged(&r, "action load"));
     click(cx, r.win, "settings.test.speech");
+    assert!(logged(&r, "action test.speech"), "the Test action reaches the service");
     assert_saw(&["Working · "]);
     r.ok.set(false);
     click(cx, r.win, "settings.test.speech");

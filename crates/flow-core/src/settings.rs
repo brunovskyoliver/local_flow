@@ -2209,6 +2209,31 @@ pub const USAGE_NOTICES: [&str; 10] = [
     "Usage reporting is unavailable on this server. Your dictations remain available.",
     "Usage could not be sent. It will retry while sharing is on.",
 ];
+/// `prepareAutomaticEnrollment`: no binding enrolls, an inactive one stays off, a changed server or key wipes the days and enrolls again.
+/// ponytail: the store half of enrollment. The channel that sends the reports is the usage service (SET-375).
+pub fn prepare_automatic_enrollment(db: &Db, origin: &str, fingerprint: &str) -> rusqlite::Result<bool> {
+    let conn = &db.conn;
+    let Some((raw, enabled)) = conn
+        .query_row("SELECT binding, enabled FROM usage_reporting_state WHERE id=1", [], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, bool>(1)?)))
+        .optional()?
+        .and_then(|(raw, enabled)| raw.map(|raw| (raw, enabled)))
+    else {
+        return Ok(true);
+    };
+    if !enabled {
+        return Ok(false);
+    }
+    let old: Value = serde_json::from_str(&raw).unwrap_or_default();
+    if old["origin"] == origin && old["credentialFingerprint"] == fingerprint {
+        return Ok(false);
+    }
+    conn.execute_batch(
+        "DELETE FROM usage_reporting_days; DELETE FROM usage_reporting_completions;
+         UPDATE usage_reporting_state SET binding=NULL,enabled=0,pending=NULL,incomplete=0,last_report=NULL WHERE id=1",
+    )?;
+    Ok(true)
+}
+
 /// `SYNC` backoff: double, min 30, max 3,600 seconds.
 pub fn usage_backoff(previous: u64) -> u64 {
     previous.saturating_mul(2).clamp(30, 3600)
@@ -2457,6 +2482,7 @@ mod tests {
         assert_eq!(describe(&Failure::Cancelled), "The operation was cancelled.");
     }
 
+    // parity: SET-030 SET-031 SET-033 SET-248 SET-254 SET-261 SET-262 SET-271 SET-275 SET-279
     #[test]
     fn snapshot_readiness_copy() {
         let mut s = Snapshot::default();
@@ -2883,6 +2909,26 @@ mod tests {
         assert_eq!(summary_headers(&p, None, false), vec![("X-LocalFlow-Primary-URL", "http://h:8000/v1".to_string()), ("X-LocalFlow-Primary-Model", "m".to_string())]);
         assert_eq!(summary_headers(&p, Some("k"), true).len(), 4);
         assert_eq!(custom_summaries_host(&p).as_deref(), Some("h"));
+    }
+
+    // parity: SET-374
+    #[test]
+    fn automatic_enrollment_follows_the_binding() {
+        let db = Db::memory();
+        assert!(prepare_automatic_enrollment(&db, "https://a", "f").unwrap(), "no binding enrolls");
+        let bind = |enabled: i64| {
+            db.conn.execute("INSERT OR REPLACE INTO usage_reporting_state(id,binding,enabled) VALUES(1,?1,?2)", rusqlite::params![r#"{"origin":"https://a","credentialFingerprint":"f"}"#, enabled]).unwrap();
+        };
+        bind(0);
+        assert!(!prepare_automatic_enrollment(&db, "https://b", "f").unwrap(), "an inactive binding stays off");
+        bind(1);
+        assert!(!prepare_automatic_enrollment(&db, "https://a", "f").unwrap(), "the same binding does nothing");
+        db.conn.execute("INSERT INTO usage_reporting_completions(id,day) VALUES('00000000-0000-0000-0000-000000000000','2026-10-31')", []).unwrap();
+        assert!(prepare_automatic_enrollment(&db, "https://a", "new-key").unwrap(), "a changed key enrolls again");
+        let left: i64 = db.conn.query_row("SELECT count(*) FROM usage_reporting_completions", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0, "and wipes");
+        bind(1);
+        assert!(prepare_automatic_enrollment(&db, "https://b", "f").unwrap(), "a changed server enrolls again");
     }
 
     // parity: SET-376 SET-375
