@@ -40,7 +40,7 @@ const LAYER: &str = "layer";
 const CAPS_ON_HEADING: f32 = 15.5;
 /// swift-note: the cell's `.aspectRatio(1, .fit)` in a row of unconstrained height collapses in
 /// SwiftUI's layout pass. Measured at 2x on the reference: the first row 3 pt, the second 2 pt, the
-/// rest 0. The inventory (INS-078) says square cells; this matches what Swift renders.
+/// rest 0. The inventory (INS-077) says square cells, see INS-114; this matches what Swift renders.
 const HEAT_DOT: [f32; 7] = [3., 2., 0., 0., 0., 0., 0.];
 
 pub struct InsightsPage {
@@ -136,6 +136,8 @@ impl InsightsPage {
                     |_, _, _, _| {},
                 )
                 .absolute()
+                .top_0()
+                .left_0()
                 .size_full(),
             )
             .on_hover(cx.listener(move |this, inside: &bool, _, cx| {
@@ -155,9 +157,9 @@ impl InsightsPage {
             }))
     }
 
-    fn info(&self, id: &str, text: &str, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn info(&self, id: &str, text: &str, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let m = pal(cx).muted;
-        self.target(format!("insights.info.{id}"), Some(Tip::note(text)), icon("info.circle", 13., m), cx).aria_label(text.to_string())
+        self.target(format!("insights.info.{id}"), Some(Tip::note(text)), icon("info.circle", 13., m), cx).aria_label(text.to_string()).test_support()
     }
 
     // ponytail: the long label's 9.8 stands in for `.minimumScaleFactor`, measured at 1180 wide.
@@ -298,7 +300,7 @@ impl InsightsPage {
                     p.data_scale[level(count, &limits)]
                 };
                 let tip = (day <= today).then(|| Tip::Day { day, words: count, apps: usage.map_or(0, |u| u.apps.len() as i64), top: usage.and_then(|u| u.top_app()).map(app_name) });
-                let cell = div().size(px(HEAT_DOT[wd as usize])).rounded(px(3.)).bg(fill).when(HEAT_DOT[wd as usize] > 0. && streaks.current_days.contains(&day), |d| d.border(px(1.5)).border_color(p.streak_outline));
+                let cell = div().size(px(HEAT_DOT[wd as usize])).rounded(px(3.)).bg(fill).when(HEAT_DOT[wd as usize] > 0. && streaks.current_days.contains(&day), |d| d.border(px(1.5_f32.min(HEAT_DOT[wd as usize] / 2.))).border_color(p.streak_outline));
                 r = r.child(div().flex_1().min_w_0().flex().justify_center().child(self.target(format!("insights.day.{day}"), tip, cell, cx).test_support()));
             }
             grid = grid.child(r);
@@ -401,6 +403,7 @@ impl InsightsPage {
                 )
             }
         };
+        let content = div().id("insights.tip").test_support().child(content);
         // ponytail: a note's width is estimated only to pick an edge; centered otherwise.
         let wrap = if mid - est / 2. < 0. {
             div().absolute().left_0().child(content)
@@ -566,6 +569,8 @@ impl Render for InsightsPage {
                             |_, _, _, _| {},
                         )
                         .absolute()
+                        .top_0()
+                        .left_0()
                         .size_full(),
                     )
                     .children(tip),
@@ -650,12 +655,9 @@ mod tests {
     #[flow_ui::gpui::test]
     async fn hovering_a_day_shows_its_card(cx: &mut TestAppContext) {
         let w = open(cx);
-        let today = cx.update(|cx| local(cx.global::<Core>().db.as_ref().unwrap(), now_ms()).day_number());
-        let id = SharedString::from(format!("insights.day.{today}"));
-        cx.update_window(w.into(), |_, win, cx| win.hover(id, cx)).unwrap();
-        frame(cx, w);
-        frame(cx, w);
-        assert_saw(&["Total words", "Total apps used", &long_date(today)]);
+        let m = monday(cx);
+        hover(cx, w, &format!("insights.day.{m}"));
+        assert_saw(&["Total words", "Total apps used", &long_date(m)]);
     }
 
     // parity: INS-009 INS-012
@@ -678,5 +680,106 @@ mod tests {
         assert_saw(&["0 day streak", "\u{2013}"]);
         click(cx, w, "insights.tab.voice");
         assert_saw(&["0s"]);
+    }
+
+    fn hover(cx: &mut TestAppContext, w: WindowHandle<InsightsPage>, id: &str) {
+        let id = SharedString::from(id.to_string());
+        cx.update_window(w.into(), |_, win, cx| win.hover(id, cx)).unwrap();
+        frame(cx, w);
+        frame(cx, w);
+    }
+
+    fn bounds(cx: &mut TestAppContext, w: WindowHandle<InsightsPage>, id: &str) -> Bounds<Pixels> {
+        let id = SharedString::from(id.to_string());
+        cx.update_window(w.into(), |_, win, _| win.find(id).bounds()).unwrap()
+    }
+
+    fn monday(cx: &mut TestAppContext) -> i64 {
+        cx.update(|cx| week_start(local(cx.global::<Core>().db.as_ref().unwrap(), now_ms()).day_number()))
+    }
+
+    // parity: INS-011
+    #[flow_ui::gpui::test]
+    async fn before_the_first_result_only_title_and_tabs_show(cx: &mut TestAppContext) {
+        let w = open(cx);
+        w.update(cx, |t, _, cx| {
+            t.insights = None;
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        assert_saw(&["Your usage", "Your voice"]);
+        assert!(!saw("Top apps") && !saw("Total words"));
+    }
+
+    // parity: INS-024 INS-086 INS-087
+    #[flow_ui::gpui::test]
+    async fn a_note_tip_sits_8_above_its_target_and_centered(cx: &mut TestAppContext) {
+        let w = open(cx);
+        hover(cx, w, "insights.info.pace");
+        assert_saw(&["Your dictation pace, against typing at 40 words per minute"]);
+        let (target, tip) = (bounds(cx, w, "insights.info.pace"), bounds(cx, w, "insights.tip"));
+        assert_eq!(tip.bottom() + px(8.), target.top());
+        assert!((f32::from(tip.center().x) - f32::from(target.center().x)).abs() <= 1.);
+        // Leaving removes it.
+        cx.update_window(w.into(), |_, win, cx| win.hover("insights.tab.usage", cx)).unwrap();
+        frame(cx, w);
+        frame(cx, w);
+        assert!(!saw("Your dictation pace, against"));
+    }
+
+    // parity: INS-033 INS-034
+    #[flow_ui::gpui::test]
+    async fn fixes_tips_read_as_in_swift(cx: &mut TestAppContext) {
+        let w = open(cx);
+        hover(cx, w, "insights.info.corrected");
+        assert_saw(&["Words your rewrites changed before inserting"]);
+        hover(cx, w, "insights.info.fixes");
+        assert_saw(&["Words spelled from your dictionary"]);
+    }
+
+    // parity: INS-083
+    #[flow_ui::gpui::test]
+    async fn a_day_tip_is_a_250_card(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let m = monday(cx);
+        hover(cx, w, &format!("insights.day.{m}"));
+        assert_saw(&["Total words", &long_date(m)]);
+        assert_eq!(bounds(cx, w, "insights.tip").size.width, px(250.));
+    }
+
+    // parity: INS-067 INS-077 INS-114
+    #[flow_ui::gpui::test]
+    async fn heat_cells_are_the_dots_swift_renders(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let m = monday(cx);
+        for (offset, side) in [(0, 3.), (1, 2.), (2, 0.), (6, 0.)] {
+            let b = bounds(cx, w, &format!("insights.day.{}", m + offset));
+            assert_eq!(b.size, size(px(side), px(side)), "weekday {offset}");
+        }
+    }
+
+    // parity: INS-048
+    #[flow_ui::gpui::test]
+    async fn personal_messages_has_its_bar(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let _ = w;
+        assert_saw(&["PERSONAL MESSAGES"]);
+        assert_eq!((Category::Personal.label(), Category::Personal.symbol()), ("Personal messages", "bubble.left"));
+    }
+
+    // A fake region: Sunday first, numbers through it.
+    #[test]
+    fn first_weekday_comes_from_the_region() {
+        fn date(_: i64, template: &str, _: bool) -> Option<String> {
+            Some(format!("T:{template}"))
+        }
+        fn number(v: f64, _: u8) -> Option<String> {
+            Some(format!("N{v}"))
+        }
+        flow_core::history::set_region(flow_core::history::Region { date, number, first_weekday: 1 });
+        // 2026-10-31 is a Saturday; with Sunday first its week starts on the 25th, six days earlier.
+        assert_eq!(week_start(20757), 20757 - (20757 + 5 - 1_i64).rem_euclid(7));
+        assert_eq!(grouped(1234), "N1234");
     }
 }

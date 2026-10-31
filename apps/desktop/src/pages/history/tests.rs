@@ -368,7 +368,27 @@ async fn row_icon_buttons_are_28_and_insert_follows_delivery(cx: &mut TestAppCon
     assert_eq!(off, Some(true));
 }
 
-// parity: HIST-055 HIST-056 HIST-057 HIST-059
+// parity: HIST-056 HIST-057
+#[flow_ui::gpui::test]
+async fn the_row_menu_runs_the_row_actions(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let e = w.update(cx, |t, _, _| t.model.entries[0].clone()).unwrap();
+    let target = SharedString::from(format!("history.text.{}", e.id));
+    let menu = |cx: &mut TestAppContext, item: u64| {
+        cx.update_window(w.into(), |_, win, cx| win.right_click(target.clone(), cx)).unwrap();
+        frame(cx, w);
+        cx.update_window(w.into(), |_, win, cx| win.click(ElementId::Integer(item), cx)).unwrap();
+        frame(cx, w);
+    };
+    menu(cx, 0);
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(e.text.clone()));
+    // Copy from the menu shows no check; Swift's check is only on the row button.
+    w.update(cx, |t, _, _| assert!(t.copied.is_empty())).unwrap();
+    menu(cx, 2);
+    w.update(cx, |t, _, _| assert_eq!(t.model.detail_id.as_deref(), Some(e.id.as_str()))).unwrap();
+}
+
+// parity: HIST-055 HIST-059
 #[flow_ui::gpui::test]
 async fn more_button_and_menu_state_follow_the_row(cx: &mut TestAppContext) {
     let w = open(cx);

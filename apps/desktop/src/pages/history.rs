@@ -523,7 +523,7 @@ fn row_menu(menu: PopupMenu, page: WeakEntity<HistoryPage>, e: Entry, insert_off
     let (ea, eb, ec, ed) = (e.clone(), e.clone(), e.clone(), e.clone());
     let (insert, insert_off, delete_off) = row_menu_state(&e, insert_off, busy);
     menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
-        a.update(cx, |this, cx| this.copy_row(&ea, cx)).ok();
+        a.update(cx, |this, cx| this.copy(ea.text.clone(), cx)).ok();
     }))
     .item(PopupMenuItem::new(insert).disabled(insert_off).on_click(move |_, _, cx| {
         b.update(cx, |this, cx| this.insert(&eb, eb.text.clone(), cx)).ok();

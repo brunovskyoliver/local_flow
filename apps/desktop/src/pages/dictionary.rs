@@ -226,7 +226,7 @@ impl DictionaryPage {
                     .gap(px(8.))
                     .pb(px(8.))
                     .when(self.searching, |d| {
-                        d.child(div().w(px(if compact { 90. } else { 150. })).child(Input::new(&self.search).appearance(false).aria_label("Search dictionary").accessibility_id("vocabulary.search")))
+                        d.child(div().id("vocabulary.searchField").test_support().w(px(if compact { 90. } else { 150. })).child(Input::new(&self.search).appearance(false).aria_label("Search dictionary").accessibility_id("vocabulary.search")))
                     })
                     .child(
                         FlowButton::new("vocabulary.searchToggle", ButtonKind::Plain, "Search")
@@ -385,11 +385,11 @@ impl DictionaryPage {
         }
         let chip = |text: &'static str| div().px(px(6.)).py(px(2.)).bg(p.tint).rounded_full().child(t(text).size(11.).color(p.muted));
         if self.model.is_provisional(&e) {
-            title = title.child(help(format!("dictionary.learning.{i}"), "Learned from one correction. Kept three times, it is trusted; undone once, it turns off.", chip("Learning")));
+            title = title.child(help(format!("dictionary.learning.{i}"), "Learned from one correction. Kept three times, it is trusted; undone once, it turns off.", chip("Learning")).test_support());
         }
         if e.learned_at.is_some() {
             // Swift: `Color(nsColor: .systemYellow)`, the same in both modes here.
-            title = title.child(help(format!("dictionary.learned.{i}"), "Learned from a correction you made", icon("sparkles", 10., rgb(0xFFCC00))));
+            title = title.child(help(format!("dictionary.learned.{i}"), "Learned from a correction you made", icon("sparkles", 10., rgb(0xFFCC00))).test_support());
         }
         if !e.enabled {
             title = title.child(chip("Off"));
@@ -641,6 +641,14 @@ impl Render for DictionaryPage {
             None
         };
         div()
+            .id("dictionary.root")
+            .track_focus(&self.focus)
+            // ponytail: no Kit `Root` in this shell, so no window-wide Tab; each page with row actions binds it.
+            .on_key_down(cx.listener(|_, e: &KeyDownEvent, w, cx| {
+                if e.keystroke.key == "tab" {
+                    if e.keystroke.modifiers.shift { w.focus_prev(cx) } else { w.focus_next(cx) }
+                }
+            }))
             .relative()
             .size_full()
             .child(under_card_border(prototype_page("dictionary.page", 960., cx, content)))
@@ -875,5 +883,264 @@ mod tests {
         cx.update_window(w.into(), |_, win, cx| win.press("enter", cx)).unwrap();
         frame(cx, w);
         assert_saw(&["Separate words with single spaces.", "Add to vocabulary"]);
+    }
+
+    fn state(cx: &mut TestAppContext, w: WindowHandle<DictionaryPage>, f: impl FnOnce(&mut DictionaryPage)) {
+        w.update(cx, |t, _, cx| {
+            f(t);
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+    }
+
+    fn disabled(cx: &mut TestAppContext, w: WindowHandle<DictionaryPage>, id: &str) -> Option<bool> {
+        let id = SharedString::from(id.to_string());
+        cx.update_window(w.into(), |_, win, _| win.find(id).disabled()).unwrap()
+    }
+
+    // parity: DICT-006
+    #[flow_ui::gpui::test]
+    async fn coming_back_to_the_page_reloads(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(crate::shell::ensure_session);
+        let w = cx.add_window(|w, cx| DictionaryPage::new(w, cx));
+        frame(cx, w);
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Insights));
+        cx.update(|cx| {
+            let e = Entry { id: "arrived".into(), canonical: "Arrived".into(), aliases: vec![], enabled: true, learned_at: None };
+            flow_core::dictionary::save(cx.global::<Core>().db.as_ref().unwrap(), &e, None, "established").unwrap();
+        });
+        w.update(cx, |t, _, _| assert!(t.model.entries.iter().all(|e| e.id != "arrived"))).unwrap();
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Dictionary));
+        frame(cx, w);
+        w.update(cx, |t, _, _| assert!(t.model.entries.iter().any(|e| e.id == "arrived"))).unwrap();
+    }
+
+    // parity: DICT-002
+    #[flow_ui::gpui::test]
+    async fn compact_narrows_the_search(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.searchToggle");
+        let width = |cx: &mut TestAppContext| cx.update_window(w.into(), |_, win, _| win.find("vocabulary.searchField").bounds().size.width).unwrap();
+        assert_eq!(width(cx), px(150.));
+        cx.update(|cx| cx.global_mut::<Flow>().compact = true);
+        cx.update_window(w.into(), |_, _, cx| cx.refresh_windows()).unwrap();
+        frame(cx, w);
+        assert_eq!(width(cx), px(90.));
+    }
+
+    // parity: DICT-040
+    #[flow_ui::gpui::test]
+    async fn non_ascii_terms_sort_after_z(cx: &mut TestAppContext) {
+        let w = open(cx);
+        cx.update(|cx| {
+            let db = cx.global::<Core>().db.as_ref().unwrap();
+            let e = Entry { id: "z-last".into(), canonical: "Éclair".into(), aliases: vec![], enabled: true, learned_at: None };
+            flow_core::dictionary::save(db, &e, None, "established").unwrap();
+        });
+        w.update(cx, |t, _, cx| t.refresh(cx)).unwrap();
+        frame(cx, w);
+        w.update(cx, |t, _, _| {
+            assert_eq!(t.model.entries.last().unwrap().canonical, "Éclair");
+            assert!(t.model.entries.windows(2).take(t.model.entries.len() - 2).all(|p| p[0].canonical.to_lowercase() <= p[1].canonical.to_lowercase()));
+        })
+        .unwrap();
+    }
+
+    // parity: DICT-047 DICT-128
+    #[flow_ui::gpui::test]
+    async fn saving_turns_off_every_write(cx: &mut TestAppContext) {
+        let w = open(cx);
+        for id in ["vocabulary.suggestion.add.0", "dictionary.edit.0", "dictionary.toggle.0", "dictionary.delete.0", "vocabulary.add"] {
+            assert_ne!(disabled(cx, w, id), Some(true), "{id}");
+        }
+        state(cx, w, |t| t.model.saving = true);
+        for id in ["vocabulary.suggestion.add.0", "dictionary.edit.0", "dictionary.toggle.0", "dictionary.delete.0", "vocabulary.add"] {
+            assert_eq!(disabled(cx, w, id), Some(true), "{id}");
+        }
+    }
+
+    // parity: DICT-057
+    #[flow_ui::gpui::test]
+    async fn unreadable_suggestions_stay_quiet(cx: &mut TestAppContext) {
+        let w = open(cx);
+        assert_saw(&["Suggested"]);
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("DROP TABLE term_corrections").ok());
+        w.update(cx, |t, _, cx| {
+            t.model.suggestions.clear();
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        assert!(!saw("Suggested"));
+        w.update(cx, |t, _, _| assert!(t.model.load_error.is_none())).unwrap();
+    }
+
+    // parity: DICT-062
+    #[flow_ui::gpui::test]
+    async fn before_the_load_add_stays_off(cx: &mut TestAppContext) {
+        let w = open(cx);
+        state(cx, w, |t| {
+            t.model.loaded = false;
+            t.model.entries.clear();
+        });
+        assert_eq!(disabled(cx, w, "vocabulary.add"), Some(true));
+        assert_saw(&["No words yet"]);
+    }
+
+    // parity: DICT-068 DICT-070
+    #[flow_ui::gpui::test]
+    async fn learned_rows_show_their_marks(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let ids: Vec<(usize, bool, bool)> = w.update(cx, |t, _, _| t.model.entries.iter().enumerate().map(|(i, e)| (i, t.model.is_provisional(e), e.learned_at.is_some())).collect()).unwrap();
+        for (i, learning, learned) in ids {
+            let has = |cx: &mut TestAppContext, part: &str| {
+                let id = SharedString::from(format!("dictionary.{part}.{i}"));
+                cx.update_window(w.into(), |_, win, _| win.try_find(id).is_some()).unwrap()
+            };
+            assert_eq!(has(cx, "learning"), learning, "row {i}");
+            assert_eq!(has(cx, "learned"), learned, "row {i}");
+        }
+    }
+
+    // parity: DICT-083
+    #[flow_ui::gpui::test]
+    async fn tab_reaches_row_actions_and_keeps_them_visible(cx: &mut TestAppContext) {
+        let w = open(cx);
+        w.update(cx, |t, win, cx| t.focus.focus(win, cx)).unwrap();
+        let mut reached = false;
+        for _ in 0..30 {
+            cx.update_window(w.into(), |_, win, cx| win.press("tab", cx)).unwrap();
+            reached = cx.update_window(w.into(), |_, win, _| win.find("dictionary.edit.0").focused()).unwrap() == Some(true);
+            if reached {
+                break;
+            }
+        }
+        assert!(reached);
+        assert!(w.update(cx, |t, win, cx| t.action_focus.borrow()[&0].contains_focused(win, cx)).unwrap());
+    }
+
+    // parity: DICT-084 DICT-095 DICT-103
+    #[flow_ui::gpui::test]
+    async fn edit_opens_filled_and_focuses_the_word(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let e = w.update(cx, |t, _, _| t.model.entries[0].clone()).unwrap();
+        let label = cx.update_window(w.into(), |_, win, _| win.find("dictionary.edit.0").label().map(str::to_string)).unwrap();
+        assert_eq!(label, Some(format!("Edit {}", e.canonical)));
+        state(cx, w, |t| {
+            t.model.status = Some("old".into());
+        });
+        click(cx, w, "dictionary.edit.0");
+        w.update(cx, |t, win, cx| {
+            let d = t.model.draft.as_ref().unwrap();
+            assert_eq!(d.id.as_deref(), Some(e.id.as_str()));
+            assert!(t.model.status.is_none());
+            if e.aliases.is_empty() {
+                assert!(t.canonical.as_ref().unwrap().read(cx).focus_handle(cx).is_focused(win));
+            } else {
+                assert!(t.aliases[0].read(cx).focus_handle(cx).is_focused(win));
+            }
+        })
+        .unwrap();
+    }
+
+    // parity: DICT-096 DICT-103 DICT-105
+    #[flow_ui::gpui::test]
+    async fn switching_mode_moves_focus_and_fields(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        // Add opens in misspelling mode on the first alias.
+        w.update(cx, |t, win, cx| assert!(t.aliases[0].read(cx).focus_handle(cx).is_focused(win))).unwrap();
+        click(cx, w, "vocabulary.correctMisspelling");
+        w.update(cx, |t, win, cx| {
+            assert!(t.aliases.is_empty());
+            assert!(t.canonical.as_ref().unwrap().read(cx).focus_handle(cx).is_focused(win));
+        })
+        .unwrap();
+        click(cx, w, "vocabulary.correctMisspelling");
+        click(cx, w, "vocabulary.addAlias");
+        w.update(cx, |t, win, cx| assert!(!t.aliases.is_empty() && t.aliases[0].read(cx).focus_handle(cx).is_focused(win) || t.aliases.len() == 2)).unwrap();
+        assert_saw(&["Add another misspelling"]);
+        assert!(cx.update_window(w.into(), |_, win, _| win.try_find("vocabulary.removeAlias.1").is_some()).unwrap());
+    }
+
+    // parity: DICT-101
+    #[flow_ui::gpui::test]
+    async fn enabled_switch_is_written_on_save(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let id = w.update(cx, |t, _, _| t.model.entries.iter().find(|e| e.enabled).unwrap().id.clone()).unwrap();
+        let i = w.update(cx, |t, _, _| t.model.entries.iter().position(|e| e.id == id).unwrap()).unwrap();
+        click(cx, w, &format!("dictionary.edit.{i}"));
+        click(cx, w, "vocabulary.enabled");
+        assert!(stored(cx).iter().find(|e| e.id == id).unwrap().enabled);
+        click(cx, w, "vocabulary.save");
+        assert!(!stored(cx).iter().find(|e| e.id == id).unwrap().enabled);
+    }
+
+    // parity: DICT-106 DICT-116
+    #[flow_ui::gpui::test]
+    async fn sheet_shows_one_error_and_edits_clear_them(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        state(cx, w, |t| {
+            t.model.field_errors.insert(Field::Entry, "entry problem".into());
+            t.model.field_errors.insert(Field::Store, "store problem".into());
+            t.model.field_errors.insert(Field::Aliases, "aliases problem".into());
+        });
+        assert_saw(&["entry problem"]);
+        assert!(!saw("store problem") && !saw("aliases problem"));
+        state(cx, w, |t| {
+            t.model.field_errors.remove(&Field::Entry);
+        });
+        assert_saw(&["store problem"]);
+        assert!(!saw("aliases problem"));
+        state(cx, w, |t| {
+            t.model.field_errors.remove(&Field::Store);
+            t.model.field_errors.insert(Field::Canonical, "bad word".into());
+            t.model.field_errors.insert(Field::Alias(0), "bad alias".into());
+        });
+        assert_saw(&["aliases problem"]);
+        // An alias edit clears that alias's error and the aliases error; a word edit clears its own.
+        state(cx, w, |t| t.model.set_alias("x".into(), 0));
+        w.update(cx, |t, _, _| {
+            assert!(!t.model.field_errors.contains_key(&Field::Alias(0)) && !t.model.field_errors.contains_key(&Field::Aliases));
+            assert!(t.model.field_errors.contains_key(&Field::Canonical));
+        })
+        .unwrap();
+        state(cx, w, |t| t.model.set_canonical("y".into()));
+        w.update(cx, |t, _, _| assert!(!t.model.field_errors.contains_key(&Field::Canonical))).unwrap();
+    }
+
+    // parity: DICT-092
+    #[flow_ui::gpui::test]
+    async fn status_stays_below_the_list(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "dictionary.toggle.0");
+        let status = w.update(cx, |t, _, _| t.model.status.clone()).unwrap().expect("a write leaves a status");
+        assert_saw(&[&status]);
+        cx.executor().advance_clock(std::time::Duration::from_secs(600));
+        frame(cx, w);
+        assert_saw(&[&status]);
+    }
+
+    // parity: DICT-088
+    #[flow_ui::gpui::test]
+    async fn the_row_menu_runs_the_row_actions(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let menu = |cx: &mut TestAppContext, item: usize| {
+            cx.update_window(w.into(), |_, win, cx| win.right_click("dictionary.edit.0", cx)).unwrap();
+            frame(cx, w);
+            cx.update_window(w.into(), |_, win, cx| win.click(ElementId::Integer(item as u64), cx)).unwrap();
+            frame(cx, w);
+        };
+        let first = w.update(cx, |t, _, _| t.model.entries[0].clone()).unwrap();
+        menu(cx, 1);
+        assert_eq!(stored(cx).iter().find(|e| e.id == first.id).unwrap().enabled, !first.enabled);
+        menu(cx, 0);
+        w.update(cx, |t, _, _| assert_eq!(t.model.draft.as_ref().unwrap().id.as_deref(), Some(first.id.as_str()))).unwrap();
+        click(cx, w, "vocabulary.cancel");
+        menu(cx, 2);
+        w.update(cx, |t, _, _| assert_eq!(t.confirming_delete.as_ref().map(|e| e.id.clone()), Some(first.id.clone()))).unwrap();
     }
 }
