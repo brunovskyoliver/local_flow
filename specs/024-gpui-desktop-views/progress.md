@@ -51,7 +51,7 @@ The VM is deleted. GitHub Actions run 41231247250 at `261eb01d` passed on x64 (`
 - Seven page and scenario opens stayed running for 6 seconds, including `onboarding.purpose`. This clears the VM's crash file, which came from the runner killing the process.
 - UIA now returns real trees when read twice, because the first read only turns the tree on: for example 85 named elements on Settings. The VM's nearly empty dumps were read too early. Logs and dumps: `audit/windows-ci/`.
 
-Not established on Windows: pixel comparison with Swift, Narrator speech, audio, real services, and flowd. x64 evidence is these tests and opens only, not hardware acceptance. The VM's 388 captures are from `b916ab47`; one VM run stalled at `notetaker-summary-pending` and the cause wasn't found.
+Not established on Windows: pixel comparison with Swift, Narrator speech, audio, real services, and flowd. x64 evidence is these tests and opens only, not hardware acceptance. The VM's 388 captures were from `b916ab47` and were deleted in cleanup; one VM run stalled at `notetaker-summary-pending` and the cause wasn't found.
 
 ### Left
 Reviews still list these rows as weak or different: inventory 01: 37, 03: 8, 04: 19, 05: 17. See `audit/review-0N.tsv`. Inventory 02's file has no `weak` label in that column; it reported 11 weak rows plus ONB-268.
