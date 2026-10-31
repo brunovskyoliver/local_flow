@@ -368,5 +368,5 @@ fn sheet_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> Flow
 /// `DictionaryPillButtonStyle`: 13 regular on `button`.
 fn pill_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> FlowButton {
     let pl = pal(cx);
-    prototype_button(id, label).fill(pl.button).content(t(label).size(13.).a11y_hidden())
+    prototype_button(id, label).fill(pl.button).content(t(label).size(13.).color(pl.ink).a11y_hidden())
 }

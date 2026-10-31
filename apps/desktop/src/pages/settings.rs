@@ -1240,7 +1240,15 @@ pub(super) fn switch(id: &'static str, label: &'static str, on: bool, disabled: 
 // ponytail: settings only; other pages have the same 30 pt button, move this into FlowButton at cutover.
 pub(super) fn prototype_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> FlowButton {
     let label: SharedString = label.into();
-    flow_ui::components::prototype_button(id, label.clone()).content(t(label).font(13., 500.).swift_lines().a11y_hidden())
+    flow_ui::components::prototype_button(id, label.clone()).content(PrototypeLabel(label))
+}
+/// Ink set here: custom content otherwise inherits the Kit's faded disabled colour, on top of the 0.45.
+#[derive(IntoElement)]
+struct PrototypeLabel(SharedString);
+impl RenderOnce for PrototypeLabel {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        t(self.0).font(13., 500.).swift_lines().color(pal(cx).ink).a11y_hidden()
+    }
 }
 
 pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>, width: f32, current: &str, options: &[(&'static str, &'static str)], disabled: bool, cx: &mut Context<SettingsPage>) -> AnyElement {

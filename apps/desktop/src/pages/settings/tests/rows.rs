@@ -433,6 +433,7 @@ async fn update_controls_read_and_gate(cx: &mut TestAppContext) {
     assert!(logged(&r, "open https://github.com/brunovskyoliver/local_flow/releases/latest"));
     set(cx, r.win, |p, _, _| p.updates = Updates::Sparkle { automatic: true, can_check: false });
     assert_eq!(label(cx, r.win, "settings.checkForUpdates"), "Check for Updates…");
+    assert_type("Check for Updates…", 13., 500., palette(cx).ink);
     assert!(disabled(cx, r.win, "settings.checkForUpdates"), "unless canCheck");
     assert_eq!(label(cx, r.win, "settings.automaticUpdates"), "Check for updates automatically");
     assert!(checked(cx, r.win, "settings.automaticUpdates"));
@@ -592,6 +593,7 @@ async fn kinds_sheet_type_menus_and_add_row(cx: &mut TestAppContext) {
     let (running, field) = (bounds(cx, r.win, "context.running"), bounds(cx, r.win, "settings.contextField"));
     assert_eq!(field.left() - running.right(), px(8.), "add row spacing");
     assert!(disabled(cx, r.win, "settings.contextAdd"));
+    assert_type("Add", 13., 400., pl.ink);
     type_into(cx, r.win, |p| p.bundle_draft.clone(), "   ");
     assert!(disabled(cx, r.win, "settings.contextAdd"), "blank after trimming");
     choose(cx, r.win, "context.addKind", "Code");
