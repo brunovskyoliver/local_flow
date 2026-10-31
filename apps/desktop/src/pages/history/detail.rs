@@ -39,6 +39,7 @@ impl HistoryPage {
         let k = key.to_string();
         v_flex()
             .w_full()
+            .items_start()
             .child(
                 FlowButton::new(SharedString::from(key.to_string()), ButtonKind::Plain, title.clone())
                     .a11y_selected(on)

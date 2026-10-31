@@ -17,7 +17,7 @@ fn frame(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>) {
 
 fn click(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, id: String) {
     let id = SharedString::from(id);
-    w.update(cx, |_, win, cx| win.click(id, cx)).unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.click(id, cx)).unwrap();
     frame(cx, w);
 }
 
@@ -25,25 +25,25 @@ fn exists(cx: &mut TestAppContext, id: String) -> bool {
     cx.update(|cx| cx.global::<Core>().db.as_ref().map(|db| get(db, &id).unwrap().is_some()).unwrap())
 }
 
-// parity: HIST-001..HIST-020
+// parity: HIST-008 HIST-034
 #[flow_ui::gpui::test]
 async fn list_groups_rows_by_day_with_labels(cx: &mut TestAppContext) {
     let _w = open(cx);
     assert_saw(&["Transcriptions", "TODAY", "Incomplete"]);
 }
 
-// parity: HIST-021..HIST-030
+// parity: HIST-009 HIST-010 HIST-012 HIST-013 HIST-028
 #[flow_ui::gpui::test]
 async fn search_filters_after_the_wait_and_reports_no_matches(cx: &mut TestAppContext) {
     let w = open(cx);
     click(cx, w, "history.searchToggle".into());
-    w.update(cx, |this, win, cx| this.search.update(cx, |s, cx| s.set_value("zzzqqq", win, cx))).unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.input("zzzqqq", cx)).unwrap();
     cx.executor().advance_clock(Duration::from_millis(300));
     frame(cx, w);
     assert_saw(&["No matches"]);
 }
 
-// parity: HIST-060..HIST-070
+// parity: HIST-050 HIST-051
 #[flow_ui::gpui::test]
 async fn copy_writes_the_clipboard_and_shows_a_check(cx: &mut TestAppContext) {
     let w = open(cx);
@@ -56,7 +56,7 @@ async fn copy_writes_the_clipboard_and_shows_a_check(cx: &mut TestAppContext) {
     w.update(cx, |t, _, _| assert!(!t.copied.contains(&id))).unwrap();
 }
 
-// parity: HIST-075..HIST-085
+// parity: HIST-060 HIST-061 HIST-062 HIST-065
 #[flow_ui::gpui::test]
 async fn delete_asks_then_removes_the_row(cx: &mut TestAppContext) {
     let w = open(cx);
@@ -75,9 +75,19 @@ async fn delete_asks_then_removes_the_row(cx: &mut TestAppContext) {
     click(cx, w, "history.deleteDialog.cancel".into());
     assert!(!saw("Delete this transcription?"));
     assert!(exists(cx, seed_id(1)) && exists(cx, id));
+    let victim = w
+        .update(cx, |t, _, cx| {
+            let e = t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone();
+            t.ask_delete(&e, cx);
+            e.id
+        })
+        .unwrap();
+    frame(cx, w);
+    click(cx, w, "history.deleteDialog.confirm".into());
+    assert!(!exists(cx, victim));
 }
 
-// parity: HIST-090..HIST-120
+// parity: HIST-059 HIST-090 HIST-091 HIST-103 HIST-104 HIST-107 HIST-109 HIST-124 HIST-130 HIST-157
 #[flow_ui::gpui::test]
 async fn details_show_status_stages_and_processing(cx: &mut TestAppContext) {
     let w = open(cx);
@@ -92,7 +102,7 @@ async fn details_show_status_stages_and_processing(cx: &mut TestAppContext) {
     assert!(!saw("Completeness: "));
 }
 
-// parity: HIST-140..HIST-154
+// parity: HIST-147
 #[flow_ui::gpui::test]
 async fn rewrite_is_disabled_without_a_client(cx: &mut TestAppContext) {
     let w = open(cx);
@@ -103,7 +113,7 @@ async fn rewrite_is_disabled_without_a_client(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-// parity: HIST-121..HIST-135
+// parity: HIST-102
 #[flow_ui::gpui::test]
 async fn legacy_row_explains_missing_details(cx: &mut TestAppContext) {
     let w = open(cx);
@@ -112,7 +122,7 @@ async fn legacy_row_explains_missing_details(cx: &mut TestAppContext) {
     assert_saw(&[LEGACY_DETAIL, "Saved text"]);
 }
 
-// parity: HIST-040..HIST-055
+// parity: HIST-068 HIST-069 HIST-076 HIST-079 HIST-081 HIST-082 HIST-084
 #[flow_ui::gpui::test]
 async fn pending_rows_save_failure_and_discard(cx: &mut TestAppContext) {
     let w = open(cx);
@@ -135,4 +145,36 @@ async fn pending_rows_save_failure_and_discard(cx: &mut TestAppContext) {
     click(cx, w, "history.discardDialog.cancel".into());
     assert!(!saw("Discard this recording?"));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+fn open_scenario(cx: &mut TestAppContext, scenario: &str) -> WindowHandle<HistoryPage> {
+    boot(cx, Mode::Light);
+    cx.update(|cx| cx.global_mut::<Core>().scenario = Some(scenario.to_string()));
+    let w = cx.add_window(|w, cx| HistoryPage::new(w, cx));
+    frame(cx, w);
+    w
+}
+
+// parity: HIST-027 HIST-029 HIST-030 HIST-031
+#[flow_ui::gpui::test]
+async fn empty_and_error_states(cx: &mut TestAppContext) {
+    let _w = open_scenario(cx, "history.empty");
+    assert_saw(&["No transcriptions yet"]);
+    let _w = open_scenario(cx, "history.error");
+    assert_saw(&["History could not be read. Your saved text has not been deleted. Try again.", "Retry"]);
+    click(cx, _w, "history.retry".into());
+    assert!(!saw("History could not be read."));
+    assert_saw(&["TODAY"]);
+}
+
+// parity: HIST-014 HIST-011
+#[flow_ui::gpui::test]
+async fn cmd_f_opens_search_and_escape_closes_it(cx: &mut TestAppContext) {
+    let w = open(cx);
+    cx.update_window(w.into(), |_, win, cx| win.press("cmd-f", cx)).unwrap();
+    frame(cx, w);
+    w.update(cx, |t, _, _| assert!(t.searching)).unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+    frame(cx, w);
+    w.update(cx, |t, _, _| assert!(!t.searching)).unwrap();
 }

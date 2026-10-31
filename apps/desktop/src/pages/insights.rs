@@ -145,12 +145,13 @@ impl InsightsPage {
         self.target(format!("insights.info.{id}"), Some(Tip::note(text)), icon("info.circle", 13., m), cx).aria_label(text.to_string())
     }
 
+    // ponytail: the long label's 9.8 stands in for `.minimumScaleFactor`, measured at 1180 wide.
     fn stat(&self, value: String, label: &str, help: Option<(&str, &str)>, cx: &mut Context<Self>) -> Div {
         let info = help.map(|(id, h)| self.info(id, h, cx));
         v_flex()
             .gap(px(9.))
             .child(t(value).font(28., 500.).mono_digits().tracking(-0.5).lines(1))
-            .child(h_flex().gap(px(6.)).child(caps(label, pal(cx).muted, 11.5)).when_some(info, |d, i| d.child(i)))
+            .child(h_flex().gap(px(6.)).child(caps(label, pal(cx).muted, if label.len() > 20 { 9.8 } else { 11.5 })).when_some(info, |d, i| d.child(i)))
     }
 
     fn usage(&self, i: &Insights, cx: &mut Context<Self>) -> Div {
@@ -167,6 +168,7 @@ impl InsightsPage {
             .child(rule(cx))
             .child(
                 v_flex()
+                    .w_full()
                     .gap(px(12.))
                     .child(row(i.words_corrected, "words corrected", "corrected", "Words your rewrites changed before inserting", self, cx))
                     .child(row(i.dictionary_fixes, "dictionary fixes", "fixes", "Words spelled from your dictionary", self, cx)),
@@ -190,7 +192,7 @@ impl InsightsPage {
         v_flex()
             .w_full()
             .gap(px(24.))
-            .child(card_row(cx).child(div().flex_1().min_w_0().flex().flex_row().items_stretch().gap(px(24.)).child(pace).child(fixes)).child(volume))
+            .child(card_row(cx).child(div().flex_1().min_w_0().flex().flex_row().items_stretch().gap(px(24.)).child(pace).child(fixes)).child(div().flex_1().min_w_0().flex().items_stretch().child(volume)))
             .child(card_row(cx).child(apps).child(streak))
     }
 
@@ -263,7 +265,7 @@ impl InsightsPage {
         let mut months = h_flex().w_full().gap(px(8.)).relative().pb(px(16.)).child(div().w(px(34.)).flex_none().child(chevron("insights.earlierWeeks", "chevron.left", "Earlier weeks", earliest.is_some_and(|e| e < cols[0]), 1, cx)));
         for w in &cols {
             // The label overflows its column, as `.fixedSize()` does in Swift's overlay.
-            months = months.child(div().flex_1().min_w_0().h(px(16.)).relative().when_some(month_label(*w), |d, l| d.child(div().absolute().left_0().top_0().child(t(l).size(11.).color(p.muted).lines(1)))));
+            months = months.child(div().flex_1().min_w_0().h(px(16.)).relative().when_some(month_label(*w), |d, l| d.child(div().absolute().left_0().top_0().w(px(30.)).child(t(l).size(11.).color(p.muted)))));
         }
         months = months.child(div().absolute().right_0().top_0().bg(p.card).child(chevron("insights.laterWeeks", "chevron.right", "Later weeks", self.page > 0, -1, cx)));
         let mut grid = v_flex().w_full().gap(px(8.)).pt(px(24.)).child(months);
@@ -282,7 +284,7 @@ impl InsightsPage {
                 };
                 let tip = (day <= today).then(|| Tip::Day { day, words: count, apps: usage.map_or(0, |u| u.apps.len() as i64), top: usage.and_then(|u| u.top_app()).map(app_name) });
                 let cell = div().w_full().aspect_square().rounded(px(3.)).bg(fill).when(streaks.current_days.contains(&day), |d| d.border(px(1.5)).border_color(p.streak_outline));
-                r = r.child(self.target(format!("insights.day.{day}"), tip, cell, cx).flex_1().min_w_0());
+                r = r.child(self.target(format!("insights.day.{day}"), tip, cell, cx).test_support().flex_1().min_w_0());
             }
             grid = grid.child(r);
         }
@@ -328,7 +330,7 @@ impl InsightsPage {
             let height = (130. * i.hours[h] as f32 / peak as f32).max(5.);
             let bar = div().w_full().h(px(height)).rounded(px(3.)).bg(fill);
             let target = self
-                .target(format!("insights.hour.{h}"), Some(hour_tip(i, h)), div().w_full().h(px(130.)).flex().items_end().child(bar), cx)
+                .target(format!("insights.hour.{h}"), Some(hour_tip(i, h)), div().w_full().h(px(130.)).flex().items_end().child(bar), cx).test_support()
                 .flex_1()
                 .min_w_0();
             bars = bars.child(target);
@@ -589,53 +591,70 @@ mod tests {
     }
 
     fn click(cx: &mut TestAppContext, w: WindowHandle<InsightsPage>, id: &'static str) {
-        w.update(cx, |_, win, cx| win.click(id, cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click(id, cx)).unwrap();
         frame(cx, w);
     }
 
-    // parity: INS-001..INS-030 INS-047..INS-066
+    // parity: INS-003 INS-006 INS-023 INS-029 INS-031 INS-032 INS-038 INS-039 INS-043 INS-045 INS-051 INS-064 INS-068 INS-089
     #[flow_ui::gpui::test]
     async fn usage_tab_shows_every_card(cx: &mut TestAppContext) {
         let _w = open(cx);
         assert_saw(&["Insights", "Your usage", "Your voice", "WORDS PER MINUTE", "vs typing", "FIXES MADE BY LOCALFLOW", "words corrected", "dictionary fixes", "TOTAL WORDS DICTATED", "Desktop", "dictations", "Desktop usage", "TOTAL APPS USED | ", "DOCUMENTS", "day streak", "LONGEST STREAK | ", "Mon", "Sun", "More", "Less", "Current streak"]);
     }
 
-    // parity: INS-090..INS-105
+    // parity: INS-008 INS-016 INS-090 INS-092 INS-094 INS-096 INS-100 INS-102 INS-103 INS-104
     #[flow_ui::gpui::test]
     async fn voice_tab_shows_stats_and_hours(cx: &mut TestAppContext) {
         let w = open(cx);
         click(cx, w, "insights.tab.voice");
         assert_saw(&["TIME SPOKEN", "WORDS PER DICTATION", "LONGEST DICTATION", "When you dictate", "00", "18"]);
         assert!(!saw("Desktop usage"));
-        let hour = "insights.hour.3";
-        w.update(cx, |_, win, cx| win.hover(hour, cx)).unwrap();
-        frame(cx, w);
-        w.update(cx, |this, _, _| assert_eq!(this.hovered_hour, Some(3))).unwrap();
+        // The seed is relative to now, so look the hours up.
+        let hours = w.update(cx, |this, _, _| this.insights.as_ref().unwrap().hours).unwrap();
+        let empty = hours.iter().position(|h| *h == 0).unwrap();
+        let active = hours.iter().position(|h| *h > 0).unwrap();
+        for (hour, text) in [(empty, "No dictation"), (active, " word")] {
+            let id = SharedString::from(format!("insights.hour.{hour}"));
+            cx.update_window(w.into(), |_, win, cx| win.hover(id, cx)).unwrap();
+            frame(cx, w);
+            w.update(cx, |this, _, _| assert_eq!(this.hovered_hour, Some(hour))).unwrap();
+            frame(cx, w);
+            assert_saw(&[text]);
+        }
     }
 
-    // parity: INS-068..INS-076 INS-112
+    // parity: INS-071 INS-072 INS-073 INS-074 INS-075 INS-076
     #[flow_ui::gpui::test]
     async fn chevrons_page_the_heat_map(cx: &mut TestAppContext) {
         let w = open(cx);
+        // Without older days the chevron stays disabled.
+        click(cx, w, "insights.earlierWeeks");
+        w.update(cx, |this, _, _| assert_eq!(this.page, 0)).unwrap();
+        w.update(cx, |this, _, cx| {
+            this.insights.as_mut().unwrap().days.insert(1, Default::default());
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
         click(cx, w, "insights.earlierWeeks");
         w.update(cx, |this, _, _| assert_eq!(this.page, 1)).unwrap();
         click(cx, w, "insights.laterWeeks");
         w.update(cx, |this, _, _| assert_eq!(this.page, 0)).unwrap();
     }
 
-    // parity: INS-040..INS-046 INS-083..INS-088
+    // parity: INS-084
     #[flow_ui::gpui::test]
     async fn hovering_a_day_shows_its_card(cx: &mut TestAppContext) {
         let w = open(cx);
         let today = cx.update(|cx| local(cx.global::<Core>().db.as_ref().unwrap(), now_ms()).day_number());
         let id = SharedString::from(format!("insights.day.{today}"));
-        w.update(cx, |_, win, cx| win.hover(id, cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.hover(id, cx)).unwrap();
         frame(cx, w);
         frame(cx, w);
         assert_saw(&["Total words", "Total apps used", &long_date(today)]);
     }
 
-    // parity: INS-009..INS-012
+    // parity: INS-009 INS-012
     #[flow_ui::gpui::test]
     async fn load_failure_shows_the_error(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
@@ -643,5 +662,17 @@ mod tests {
         let w = cx.add_window(|w, cx| InsightsPage::new(w, cx));
         frame(cx, w);
         assert_saw(&[ERROR]);
+    }
+
+    // parity: INS-013
+    #[flow_ui::gpui::test]
+    async fn empty_store_shows_zero_values(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| cx.global_mut::<Core>().scenario = Some("insights.empty".into()));
+        let w = cx.add_window(|w, cx| InsightsPage::new(w, cx));
+        frame(cx, w);
+        assert_saw(&["0 day streak", "\u{2013}"]);
+        click(cx, w, "insights.tab.voice");
+        assert_saw(&["0s"]);
     }
 }

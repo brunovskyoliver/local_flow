@@ -236,8 +236,7 @@ impl DictionaryPage {
             .w_full()
             .mt(px(22.))
             .rounded(px(16.))
-            .overflow_hidden()
-            .child(h_flex().absolute().inset_0().child(half(0x211F1C, 0x3D3329)).child(half(0x3D3329, 0x7A5C33)))
+            .child(h_flex().absolute().inset_0().child(half(0x211F1C, 0x3D3329).rounded_l(px(16.))).child(half(0x3D3329, 0x7A5C33).rounded_r(px(16.))))
             .child(
                 v_flex()
                     .w_full()
@@ -292,7 +291,7 @@ impl DictionaryPage {
                     h_flex()
                         .w_full()
                         .gap(px(10.))
-                        .px(px(18.))
+                        .px(px(17.))
                         .py(px(10.))
                         .when(!s.alias.is_empty(), |d| d.child(t(s.alias.clone()).size(15.)).child(icon("arrow.right", 10., p.ink)))
                         .child(t(s.canonical.clone()).size(15.))
@@ -418,7 +417,7 @@ impl DictionaryPage {
             .group(group.clone())
             .w_full()
             .min_h(px(53.))
-            .px(px(18.))
+            .px(px(17.))
             .py(px(10.))
             .gap(px(4.))
             .text_color(fg)
@@ -567,14 +566,11 @@ fn field(state: &Entity<InputState>, label: &str, id: &str, cx: &App) -> Statefu
     div()
         .id(SharedString::from(format!("{id}.box")))
         .w_full()
-        .px(px(10.))
-        .py(px(7.))
         .bg(p.surface)
         .rounded(px(8.))
         .border_1()
         .border_color(p.line)
-        .text_size(px(13.))
-        .child(Input::new(state).appearance(false).aria_label(label.to_string()).accessibility_id(id.to_string()))
+        .child(Input::new(state).appearance(false).h(px(27.)).text_size(px(13.)).aria_label(label.to_string()).accessibility_id(id.to_string()))
 }
 
 fn toggle_row(title: &'static str, tip: &'static str, id: &'static str, on: bool, cx: &App, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Div {
@@ -654,7 +650,18 @@ mod tests {
 
     fn click(cx: &mut TestAppContext, window: WindowHandle<DictionaryPage>, id: &str) {
         let id = SharedString::from(id.to_string());
-        window.update(cx, |_, w, cx| w.click(id, cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click(id, cx)).unwrap();
+        frame(cx, window);
+    }
+
+    // Real keystrokes: `set_value` sends no change event.
+    fn type_into(cx: &mut TestAppContext, window: WindowHandle<DictionaryPage>, state: Entity<InputState>, text: &str) {
+        cx.update_window(window.into(), |_, w, cx| {
+            state.read(cx).focus_handle(cx).focus(w, cx);
+        })
+        .unwrap();
+        frame(cx, window);
+        cx.update_window(window.into(), |_, w, cx| w.input(text, cx)).unwrap();
         frame(cx, window);
     }
 
@@ -662,14 +669,14 @@ mod tests {
         cx.update(|cx| flow_core::dictionary::load(cx.global::<Core>().db.as_ref().unwrap()).unwrap().entries)
     }
 
-    // parity: DICT-001..DICT-012
+    // parity: DICT-008 DICT-009 DICT-014 DICT-017 DICT-027 DICT-029 DICT-041 DICT-071
     #[flow_ui::gpui::test]
     async fn page_shows_title_banner_suggestions_and_rows(cx: &mut TestAppContext) {
         let _w = open(cx);
         assert_saw(&["Dictionary", "Add new", "All", "Enabled", "Disabled", "Learned", "LocalFlow spells the way", "Add new word", "Suggested", "Figtree", "Acme Robotics", "Restore \u{2018}akme robotics\u{2019}", "Off"]);
     }
 
-    // parity: DICT-013..DICT-020
+    // parity: DICT-015 DICT-016 DICT-018 DICT-019 DICT-020 DICT-042
     #[flow_ui::gpui::test]
     async fn filter_tabs_narrow_the_list(cx: &mut TestAppContext) {
         let w = open(cx);
@@ -682,7 +689,7 @@ mod tests {
         assert!(!saw("Brunel"));
     }
 
-    // parity: DICT-021..DICT-028
+    // parity: DICT-032 DICT-033 DICT-034
     #[flow_ui::gpui::test]
     async fn banner_dismissal_persists(cx: &mut TestAppContext) {
         let w = open(cx);
@@ -691,21 +698,23 @@ mod tests {
         cx.update(|cx| assert!(cx.global::<Core>().prefs.bool_or("dictionary.bannerDismissed", false)));
     }
 
-    // parity: DICT-060..DICT-075
+    // parity: DICT-010 DICT-093 DICT-121 DICT-122
     #[flow_ui::gpui::test]
     async fn add_a_word_through_the_sheet(cx: &mut TestAppContext) {
         let w = open(cx);
         click(cx, w, "vocabulary.add");
         assert_saw(&["Add to vocabulary", "Correct a misspelling", "Add word"]);
-        w.update(cx, |this, window, cx| this.canonical.clone().unwrap().update(cx, |s, cx| s.set_value("Tatra", window, cx))).unwrap();
-        frame(cx, w);
+        let field = w.update(cx, |this, _, _| this.canonical.clone().unwrap()).unwrap();
+        type_into(cx, w, field, "Tatra");
+        let alias = w.update(cx, |this, _, _| this.aliases[0].clone()).unwrap();
+        type_into(cx, w, alias, "tatry");
         click(cx, w, "vocabulary.save");
         assert!(stored(cx).iter().any(|e| e.canonical == "Tatra"));
         assert_saw(&["Tatra"]);
         assert!(!saw("Add to vocabulary"));
     }
 
-    // parity: DICT-076..DICT-095
+    // parity: DICT-108 DICT-109 DICT-111 DICT-112 DICT-113 DICT-114 DICT-157
     #[flow_ui::gpui::test]
     async fn misspelling_fields_add_remove_and_report_duplicates(cx: &mut TestAppContext) {
         let w = open(cx);
@@ -719,20 +728,16 @@ mod tests {
         frame(cx, w);
         assert_saw(&["Add another misspelling"]);
         click(cx, w, "vocabulary.addAlias");
-        w.update(cx, |this, window, cx| {
-            for a in this.aliases.clone() {
-                a.update(cx, |s, cx| s.set_value("tatra", window, cx));
-            }
-        })
-        .unwrap();
-        frame(cx, w);
+        for a in w.update(cx, |this, _, _| this.aliases.clone()).unwrap() {
+            type_into(cx, w, a, "tatra");
+        }
         assert_saw(&["Repeats another misspelling.", "Remove duplicates"]);
         click(cx, w, "vocabulary.deduplicate");
         assert!(!saw("Repeats another misspelling."));
         w.update(cx, |this, _, _| assert_eq!(this.aliases.len(), 1)).unwrap();
     }
 
-    // parity: DICT-100..DICT-115
+    // parity: DICT-082 DICT-085 DICT-086 DICT-087 DICT-089 DICT-090 DICT-091
     #[flow_ui::gpui::test]
     async fn disable_and_delete_write_through(cx: &mut TestAppContext) {
         let w = open(cx);
@@ -749,7 +754,7 @@ mod tests {
         assert!(!stored(cx).iter().any(|e| e.canonical == "Brunel"));
     }
 
-    // parity: DICT-120..DICT-125
+    // parity: DICT-077 DICT-080
     #[flow_ui::gpui::test]
     async fn restore_clears_a_retired_alias(cx: &mut TestAppContext) {
         let w = open(cx);
@@ -757,7 +762,7 @@ mod tests {
         assert!(!saw("Restore \u{2018}akme robotics\u{2019}"));
     }
 
-    // parity: DICT-130..DICT-140
+    // parity: DICT-046 DICT-049
     #[flow_ui::gpui::test]
     async fn suggestion_add_fills_the_sheet_and_dismiss_persists(cx: &mut TestAppContext) {
         let w = open(cx);
@@ -768,7 +773,7 @@ mod tests {
         w.update(cx, |this, _, _| assert_eq!(this.model.draft.as_ref().unwrap().canonical, "Garamond")).unwrap();
     }
 
-    // parity: DICT-141..DICT-150
+    // parity: DICT-021 DICT-022 DICT-023 DICT-024 DICT-061
     #[flow_ui::gpui::test]
     async fn search_filters_and_reports_no_matches(cx: &mut TestAppContext) {
         let w = open(cx);
@@ -779,5 +784,76 @@ mod tests {
         assert!(!saw("Suggested"));
         click(cx, w, "vocabulary.searchToggle");
         assert_saw(&["Acme Robotics"]);
+    }
+
+    fn open_scenario(cx: &mut TestAppContext, scenario: &str) -> WindowHandle<DictionaryPage> {
+        boot(cx, Mode::Light);
+        cx.update(|cx| cx.global_mut::<Core>().scenario = Some(scenario.to_string()));
+        let window = cx.add_window(|w, cx| DictionaryPage::new(w, cx));
+        frame(cx, window);
+        window
+    }
+
+    // parity: DICT-011 DICT-030 DICT-031 DICT-060
+    #[flow_ui::gpui::test]
+    async fn full_dictionary_blocks_adding(cx: &mut TestAppContext) {
+        let w = open_scenario(cx, "dictionary.full");
+        assert_saw(&["Dictionary is full (512 words)."]);
+        click(cx, w, "vocabulary.add");
+        assert!(!saw("Add to vocabulary"));
+        click(cx, w, "vocabulary.bannerAdd");
+        assert!(!saw("Add to vocabulary"));
+        click(cx, w, "vocabulary.filter.disabled");
+        assert_saw(&["Nothing here"]);
+    }
+
+    // parity: DICT-035 DICT-059 DICT-160
+    #[flow_ui::gpui::test]
+    async fn empty_and_error_states(cx: &mut TestAppContext) {
+        let _w = open_scenario(cx, "dictionary.empty");
+        assert_saw(&["No words yet"]);
+        assert!(!saw("Suggested"));
+        let _w = open_scenario(cx, "dictionary.error");
+        assert_saw(&["The dictionary could not be read.", "No words yet"]);
+    }
+
+    // parity: DICT-099 DICT-107 DICT-110 DICT-118 DICT-119
+    #[flow_ui::gpui::test]
+    async fn sheet_modes_alias_limit_and_cancel(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        for _ in 0..7 {
+            click(cx, w, "vocabulary.addAlias");
+        }
+        w.update(cx, |this, _, _| assert_eq!(this.aliases.len(), 8)).unwrap();
+        assert!(!saw("Add another misspelling"));
+        click(cx, w, "vocabulary.removeAlias.7");
+        w.update(cx, |this, _, _| assert_eq!(this.aliases.len(), 7)).unwrap();
+        assert_saw(&["Add another misspelling"]);
+        w.update(cx, |this, window, cx| {
+            this.model.set_correcting(false);
+            this.sync_fields(window, cx);
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        w.update(cx, |this, _, _| assert!(this.aliases.is_empty())).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+        frame(cx, w);
+        assert!(!saw("Add to vocabulary"));
+        assert!(!stored(cx).iter().any(|e| e.canonical.is_empty()));
+    }
+
+    // parity: DICT-115 DICT-117 DICT-120 DICT-127 DICT-133
+    #[flow_ui::gpui::test]
+    async fn sheet_shows_a_validation_error_and_stays_open(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        let (canonical, alias) = w.update(cx, |this, _, _| (this.canonical.clone().unwrap(), this.aliases[0].clone())).unwrap();
+        type_into(cx, w, canonical, "two  spaces");
+        type_into(cx, w, alias, "tatry");
+        cx.update_window(w.into(), |_, win, cx| win.press("enter", cx)).unwrap();
+        frame(cx, w);
+        assert_saw(&["Separate words with single spaces.", "Add to vocabulary"]);
     }
 }

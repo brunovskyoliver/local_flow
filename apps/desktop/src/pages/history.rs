@@ -377,6 +377,9 @@ impl HistoryPage {
             .child(
                 Button::new(SharedString::from(format!("history.more.{}", e.id)))
                     .ghost()
+                    .p_0()
+                    .h(px(28.))
+                    .w(px(28.))
                     .accessibility_label("More")
                     .child(div().size(px(28.)).flex().items_center().justify_center().child(icon("ellipsis", 14., p.muted)))
                     .dropdown_menu({
@@ -392,8 +395,8 @@ impl HistoryPage {
             .flex()
             .items_start()
             .py(px(16.))
-            .pl(px(18.))
-            .pr(px(12.))
+            .pl(px(17.))
+            .pr(px(11.))
             .border_l_1()
             .border_r_1()
             .border_color(p.line)

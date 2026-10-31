@@ -29,6 +29,7 @@ pub fn overlay(id: impl Into<ElementId>, cx: &App, content: impl IntoElement) ->
         .id(id)
         .absolute()
         .inset_0()
+        .rounded(px(16.))
         .occlude()
         .flex()
         .items_center()

@@ -1,0 +1,468 @@
+DICT-001	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-002	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+DICT-003	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-004	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-005	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-006	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-007	service	service:learner events do not exist in Rust yet; reload runs on page load only; Mac services work for Feature 024 after the view port
+DICT-008	auto	test:page_shows_title_banner_suggestions_and_rows
+DICT-009	auto	test:page_shows_title_banner_suggestions_and_rows
+DICT-010	auto	test:add_a_word_through_the_sheet
+DICT-011	auto	test:full_dictionary_blocks_adding
+DICT-012	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-013	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-014	auto	test:page_shows_title_banner_suggestions_and_rows
+DICT-015	auto	test:filter_tabs_narrow_the_list ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-016	auto	test:filter_tabs_narrow_the_list
+DICT-017	auto	test:page_shows_title_banner_suggestions_and_rows
+DICT-018	auto	test:filter_tabs_narrow_the_list
+DICT-019	auto	test:filter_tabs_narrow_the_list
+DICT-020	auto	test:filter_tabs_narrow_the_list
+DICT-021	auto	test:search_filters_and_reports_no_matches ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-022	auto	test:search_filters_and_reports_no_matches
+DICT-023	auto	test:search_filters_and_reports_no_matches
+DICT-024	auto	test:search_filters_and_reports_no_matches
+DICT-025	auto	test:folding_key_ids_and_term_validation
+DICT-026	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-027	auto	test:page_shows_title_banner_suggestions_and_rows
+DICT-028	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-029	auto	test:page_shows_title_banner_suggestions_and_rows
+DICT-030	auto	test:full_dictionary_blocks_adding
+DICT-031	auto	test:full_dictionary_blocks_adding
+DICT-032	auto	test:banner_dismissal_persists ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-033	auto	test:banner_dismissal_persists
+DICT-034	auto	test:banner_dismissal_persists
+DICT-035	auto	test:empty_and_error_states
+DICT-036	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-037	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-038	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-039	auto	test:hash_serialization_matches_swift_bytes
+DICT-040	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-041	auto	test:page_shows_title_banner_suggestions_and_rows
+DICT-042	auto	test:filter_tabs_narrow_the_list
+DICT-043	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-044	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-045	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-046	auto	test:suggestion_add_fills_the_sheet_and_dismiss_persists
+DICT-047	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-048	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-049	auto	test:suggestion_add_fills_the_sheet_and_dismiss_persists
+DICT-050	auto	test:suggestions_are_mined_like_swift
+DICT-051	auto	test:suggestions_are_mined_like_swift
+DICT-052	service	service:NSSpellChecker language filter off, no Services method; Mac services work for Feature 024 after the view port ; test:suggestions_are_mined_like_swift
+DICT-053	auto	test:suggestions_are_mined_like_swift
+DICT-054	auto	test:suggestions_are_mined_like_swift
+DICT-055	auto	test:suggestions_are_mined_like_swift
+DICT-056	auto	test:suggestions_are_mined_like_swift
+DICT-057	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-058	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-059	auto	test:empty_and_error_states
+DICT-060	auto	test:full_dictionary_blocks_adding
+DICT-061	auto	test:search_filters_and_reports_no_matches
+DICT-062	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-063	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-064	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-065	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-066	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-067	auto	test:folding_key_ids_and_term_validation
+DICT-068	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-069	auto	test:seed_loads_and_restore_retrusts
+DICT-070	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-071	auto	test:page_shows_title_banner_suggestions_and_rows
+DICT-072	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-073	auto	test:usage_formula_and_trust_policy ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-074	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-075	auto	test:usage_formula_and_trust_policy
+DICT-076	auto	test:usage_formula_and_trust_policy
+DICT-077	auto	test:restore_clears_a_retired_alias ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-078	auto	test:seed_loads_and_restore_retrusts
+DICT-079	auto	test:seed_loads_and_restore_retrusts
+DICT-080	auto	test:restore_clears_a_retired_alias
+DICT-081	auto	test:usage_formula_and_trust_policy
+DICT-082	auto	test:disable_and_delete_write_through
+DICT-083	not-run	not-run:hover reveal implemented but keyboard-focus reveal is missing; known gap
+DICT-084	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-085	auto	test:disable_and_delete_write_through
+DICT-086	auto	test:disable_and_delete_write_through
+DICT-087	auto	test:disable_and_delete_write_through
+DICT-088	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+DICT-089	auto	test:disable_and_delete_write_through
+DICT-090	auto	test:disable_and_delete_write_through
+DICT-091	auto	test:disable_and_delete_write_through
+DICT-092	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-093	auto	test:add_a_word_through_the_sheet
+DICT-094	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-095	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+DICT-096	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-097	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-098	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-099	auto	test:sheet_modes_alias_limit_and_cancel
+DICT-100	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-101	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-102	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-103	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-104	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-105	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-106	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-107	auto	test:sheet_modes_alias_limit_and_cancel
+DICT-108	auto	test:misspelling_fields_add_remove_and_report_duplicates ; live:audit/mac/dictionary/add-light-rust.png
+DICT-109	auto	test:misspelling_fields_add_remove_and_report_duplicates
+DICT-110	auto	test:sheet_modes_alias_limit_and_cancel
+DICT-111	auto	test:misspelling_fields_add_remove_and_report_duplicates
+DICT-112	auto	test:misspelling_fields_add_remove_and_report_duplicates
+DICT-113	auto	test:misspelling_fields_add_remove_and_report_duplicates
+DICT-114	auto	test:misspelling_fields_add_remove_and_report_duplicates
+DICT-115	auto	test:sheet_shows_a_validation_error_and_stays_open
+DICT-116	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-117	auto	test:sheet_shows_a_validation_error_and_stays_open
+DICT-118	auto	test:sheet_modes_alias_limit_and_cancel ; live:audit/mac/dictionary/add-light-rust.png
+DICT-119	auto	test:sheet_modes_alias_limit_and_cancel
+DICT-120	auto	test:sheet_shows_a_validation_error_and_stays_open ; live:audit/mac/dictionary/add-light-rust.png
+DICT-121	auto	test:add_a_word_through_the_sheet
+DICT-122	auto	test:add_a_word_through_the_sheet
+DICT-123	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-124	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-125	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-126	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-127	auto	test:sheet_shows_a_validation_error_and_stays_open
+DICT-128	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+DICT-129	auto	test:folding_key_ids_and_term_validation
+DICT-130	auto	test:folding_key_ids_and_term_validation
+DICT-131	auto	test:folding_key_ids_and_term_validation
+DICT-132	auto	test:folding_key_ids_and_term_validation
+DICT-133	auto	test:folding_key_ids_and_term_validation ; test:sheet_shows_a_validation_error_and_stays_open
+DICT-134	auto	test:folding_key_ids_and_term_validation
+DICT-135	auto	test:folding_key_ids_and_term_validation
+DICT-136	auto	test:folding_key_ids_and_term_validation
+DICT-137	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-138	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-139	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-140	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-141	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-142	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-143	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-144	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-145	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-146	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-147	auto	test:entry_validation_rejects_with_swift_field_and_copy
+DICT-148	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-149	auto	test:hash_serialization_matches_swift_bytes
+DICT-150	auto	test:suggestions_are_mined_like_swift
+DICT-151	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-152	auto	test:write_transaction_revisions_usage_and_staleness
+DICT-153	recorded	recorded:Swift defect or note, kept as Swift behaves
+DICT-154	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:write_transaction_revisions_usage_and_staleness
+DICT-155	recorded	recorded:Swift defect or note, kept as Swift behaves
+DICT-156	recorded	recorded:Swift defect or note, kept as Swift behaves
+DICT-157	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:misspelling_fields_add_remove_and_report_duplicates
+DICT-158	recorded	recorded:Swift defect or note, kept as Swift behaves
+DICT-159	recorded	recorded:Swift defect or note, kept as Swift behaves
+DICT-160	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:empty_and_error_states
+DICT-161	recorded	recorded:Swift defect or note, kept as Swift behaves
+DICT-162	recorded	recorded:Swift defect or note, kept as Swift behaves
+INS-001	live	live:audit/mac/insights/usage-light-rust.png
+INS-002	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+INS-003	auto	test:usage_tab_shows_every_card
+INS-004	live	live:audit/mac/insights/usage-light-rust.png
+INS-005	live	live:audit/mac/insights/usage-light-rust.png
+INS-006	auto	test:usage_tab_shows_every_card
+INS-007	live	live:audit/mac/insights/usage-light-rust.png
+INS-008	auto	test:voice_tab_shows_stats_and_hours
+INS-009	auto	test:load_failure_shows_the_error
+INS-010	service	service:historyChanged is replaced by a once-a-second signature check; dictation events arrive with Mac services work for Feature 024 after the view port
+INS-011	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+INS-012	auto	test:load_failure_shows_the_error
+INS-013	auto	test:empty_store_shows_zero_values
+INS-014	live	live:audit/mac/insights/usage-light-rust.png
+INS-015	live	live:audit/mac/insights/usage-light-rust.png
+INS-016	auto	test:voice_tab_shows_stats_and_hours
+INS-017	live	live:audit/mac/insights/usage-light-rust.png
+INS-018	live	live:audit/mac/insights/usage-light-rust.png
+INS-019	live	live:audit/mac/insights/usage-light-rust.png
+INS-020	live	live:audit/mac/insights/usage-light-rust.png
+INS-021	live	live:audit/mac/insights/usage-light-rust.png
+INS-022	live	live:audit/mac/insights/usage-light-rust.png
+INS-023	auto	test:usage_tab_shows_every_card
+INS-024	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+INS-025	auto	test:aggregates_over_the_seed
+INS-026	auto	test:aggregates_over_the_seed
+INS-027	live	live:audit/mac/insights/usage-light-rust.png
+INS-028	live	live:audit/mac/insights/usage-light-rust.png
+INS-029	auto	test:usage_tab_shows_every_card
+INS-030	auto	test:formulas ; live:audit/mac/insights/usage-light-rust.png
+INS-031	auto	test:usage_tab_shows_every_card
+INS-032	auto	test:usage_tab_shows_every_card
+INS-033	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+INS-034	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+INS-035	auto	test:aggregates_over_the_seed
+INS-036	auto	test:aggregates_over_the_seed
+INS-037	auto	test:aggregates_over_the_seed
+INS-038	auto	test:usage_tab_shows_every_card
+INS-039	auto	test:usage_tab_shows_every_card
+INS-040	auto	test:aggregates_over_the_seed
+INS-041	auto	test:aggregates_over_the_seed
+INS-042	auto	test:aggregates_over_the_seed
+INS-043	auto	test:usage_tab_shows_every_card
+INS-044	auto	test:aggregates_over_the_seed
+INS-045	auto	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png
+INS-046	live	live:audit/mac/insights/usage-light-rust.png
+INS-047	live	live:audit/mac/insights/usage-light-rust.png
+INS-048	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+INS-049	live	live:audit/mac/insights/usage-light-rust.png
+INS-050	live	live:audit/mac/insights/usage-light-rust.png
+INS-051	auto	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png
+INS-052	auto	test:formulas
+INS-053	auto	test:formulas
+INS-054	auto	test:formulas
+INS-055	auto	test:formulas
+INS-056	auto	test:formulas
+INS-057	auto	test:aggregates_over_the_seed
+INS-058	live	live:audit/mac/insights/usage-light-rust.png
+INS-059	auto	test:aggregates_over_the_seed
+INS-060	live	live:audit/mac/insights/usage-light-rust.png
+INS-061	service	service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port
+INS-062	auto	test:aggregates_over_the_seed
+INS-063	service	service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port ; test:formulas
+INS-064	auto	test:usage_tab_shows_every_card
+INS-065	auto	test:formulas
+INS-066	auto	test:aggregates_over_the_seed
+INS-067	live	live:audit/mac/insights/usage-light-rust.png
+INS-068	auto	test:usage_tab_shows_every_card
+INS-069	live	live:audit/mac/insights/usage-light-rust.png
+INS-070	auto	test:formulas
+INS-071	auto	test:chevrons_page_the_heat_map ; live:audit/mac/insights/usage-light-rust.png
+INS-072	auto	test:chevrons_page_the_heat_map
+INS-073	auto	test:chevrons_page_the_heat_map
+INS-074	auto	test:chevrons_page_the_heat_map ; live:audit/mac/insights/usage-light-rust.png
+INS-075	auto	test:chevrons_page_the_heat_map
+INS-076	auto	test:chevrons_page_the_heat_map
+INS-077	live	live:audit/mac/insights/usage-light-rust.png
+INS-078	live	live:audit/mac/insights/usage-light-rust.png
+INS-079	live	live:audit/mac/insights/usage-light-rust.png
+INS-080	auto	test:formulas ; live:audit/mac/insights/usage-light-rust.png
+INS-081	auto	test:formulas
+INS-082	live	live:audit/mac/insights/usage-light-rust.png
+INS-083	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+INS-084	service	service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port ; test:hovering_a_day_shows_its_card
+INS-085	auto	test:aggregates_over_the_seed
+INS-086	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+INS-087	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+INS-088	auto	test:formulas
+INS-089	auto	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png
+INS-090	auto	test:voice_tab_shows_stats_and_hours
+INS-091	auto	test:formulas ; live:audit/mac/insights/voice-dark-rust.png
+INS-092	auto	test:voice_tab_shows_stats_and_hours
+INS-093	auto	test:aggregates_over_the_seed
+INS-094	auto	test:voice_tab_shows_stats_and_hours
+INS-095	auto	test:aggregates_over_the_seed
+INS-096	auto	test:voice_tab_shows_stats_and_hours
+INS-097	live	live:audit/mac/insights/voice-dark-rust.png
+INS-098	live	live:audit/mac/insights/voice-dark-rust.png
+INS-099	live	live:audit/mac/insights/voice-dark-rust.png
+INS-100	auto	test:voice_tab_shows_stats_and_hours
+INS-101	auto	test:aggregates_over_the_seed
+INS-102	auto	test:voice_tab_shows_stats_and_hours
+INS-103	auto	test:voice_tab_shows_stats_and_hours
+INS-104	service	service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port ; test:voice_tab_shows_stats_and_hours
+INS-105	recorded	recorded:states an absence of shortcuts and menus
+INS-106	auto	test:aggregates_over_the_seed
+INS-107	recorded	recorded:Swift defect or note, kept as Swift behaves
+INS-108	recorded	recorded:Swift defect or note, kept as Swift behaves
+INS-109	recorded	recorded:Swift defect or note, kept as Swift behaves
+INS-110	recorded	recorded:Swift defect or note, kept as Swift behaves
+INS-111	recorded	recorded:Swift defect or note, kept as Swift behaves
+INS-112	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:formulas
+INS-113	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-001	live	live:audit/mac/history/default-dark-rust.png
+HIST-002	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-003	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-004	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-005	not-run	not-run:detail is not cleared on leaving the page; not implemented
+HIST-006	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-007	service	service:calendar and time zone notifications not in Services; Mac services work for Feature 024 after the view port
+HIST-008	auto	test:list_groups_rows_by_day_with_labels
+HIST-009	auto	test:search_filters_after_the_wait_and_reports_no_matches ; live:audit/mac/history/default-dark-rust.png
+HIST-010	auto	test:search_filters_after_the_wait_and_reports_no_matches
+HIST-011	auto	test:cmd_f_opens_search_and_escape_closes_it
+HIST-012	auto	test:search_filters_after_the_wait_and_reports_no_matches
+HIST-013	auto	test:search_filters_after_the_wait_and_reports_no_matches
+HIST-014	auto	test:cmd_f_opens_search_and_escape_closes_it
+HIST-015	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-016	auto	test:paging_search_and_the_resident_window
+HIST-017	auto	test:paging_search_and_the_resident_window
+HIST-018	auto	test:paging_search_and_the_resident_window
+HIST-019	auto	test:paging_search_and_the_resident_window
+HIST-020	auto	test:paging_search_and_the_resident_window
+HIST-021	auto	test:paging_search_and_the_resident_window
+HIST-022	auto	test:paging_search_and_the_resident_window
+HIST-023	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-024	auto	test:paging_search_and_the_resident_window
+HIST-025	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-026	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-027	auto	test:empty_and_error_states
+HIST-028	auto	test:search_filters_after_the_wait_and_reports_no_matches
+HIST-029	auto	test:empty_and_error_states
+HIST-030	auto	test:empty_and_error_states
+HIST-031	auto	test:empty_and_error_states
+HIST-032	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-033	live	live:audit/mac/history/pending-dark-rust.png
+HIST-034	auto	test:list_groups_rows_by_day_with_labels
+HIST-035	auto	test:labels_and_day_groups
+HIST-036	auto	test:paging_search_and_the_resident_window
+HIST-037	live	live:audit/mac/history/default-dark-rust.png
+HIST-038	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+HIST-039	live	live:audit/mac/history/default-dark-rust.png
+HIST-040	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+HIST-041	live	live:audit/mac/history/default-dark-rust.png
+HIST-042	live	live:audit/mac/history/default-dark-rust.png
+HIST-043	auto	test:labels_and_day_groups
+HIST-044	live	live:audit/mac/history/default-dark-rust.png
+HIST-045	auto	test:labels_and_day_groups
+HIST-046	auto	test:labels_and_day_groups
+HIST-047	not-run	not-run:row text is drawn but not selectable; known gap
+HIST-048	not-run	not-run:hover reveal implemented but keyboard-focus reveal is missing; known gap
+HIST-049	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-050	auto	test:copy_writes_the_clipboard_and_shows_a_check
+HIST-051	auto	test:copy_writes_the_clipboard_and_shows_a_check
+HIST-052	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-053	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-054	service	service:Accessibility insertion through Services insert_once, Unavailable until Mac services work for Feature 024 after the view port
+HIST-055	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+HIST-056	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+HIST-057	not-run	not-run:needs pointer or keyboard in a running window; implemented, no test drives it and no shot shows it
+HIST-058	service	service:Accessibility insertion through Services insert_once, Unavailable until Mac services work for Feature 024 after the view port
+HIST-059	auto	test:details_show_status_stages_and_processing
+HIST-060	auto	test:delete_asks_then_removes_the_row
+HIST-061	auto	test:delete_asks_then_removes_the_row ; live:audit/mac/history/delete-dark-rust.png
+HIST-062	auto	test:delete_asks_then_removes_the_row ; test:delivery_rewrite_and_delete_writes
+HIST-063	auto	test:delivery_rewrite_and_delete_writes
+HIST-064	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-065	auto	test:delete_asks_then_removes_the_row
+HIST-066	recorded	recorded:no audio player exists, nothing to run
+HIST-067	recorded	recorded:no edit action exists, nothing to run
+HIST-068	auto	test:pending_rows_save_failure_and_discard
+HIST-069	auto	test:pending_rows_save_failure_and_discard
+HIST-070	auto	test:waiting_dictations
+HIST-071	live	live:audit/mac/history/pending-dark-rust.png
+HIST-072	live	live:audit/mac/history/pending-dark-rust.png
+HIST-073	auto	test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png
+HIST-074	auto	test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png
+HIST-075	service	service:flowd remote channel retrier not in Rust; Mac services work for Feature 024 after the view port
+HIST-076	auto	test:pending_rows_save_failure_and_discard
+HIST-077	service	service:local speech model not reachable, button disabled; Mac services work for Feature 024 after the view port
+HIST-078	service	service:local speech model not reachable, button disabled; Mac services work for Feature 024 after the view port
+HIST-079	auto	test:pending_rows_save_failure_and_discard
+HIST-080	service	service:Services choose_save_path returns Unavailable and the pending error shows; WAV writer tested in flow-core; Mac services work for Feature 024 after the view port ; test:waiting_dictations
+HIST-081	auto	test:pending_rows_save_failure_and_discard
+HIST-082	auto	test:pending_rows_save_failure_and_discard
+HIST-083	auto	test:waiting_dictations
+HIST-084	auto	test:pending_rows_save_failure_and_discard ; test:waiting_dictations
+HIST-085	auto	test:waiting_dictations
+HIST-086	auto	test:paging_search_and_the_resident_window
+HIST-087	auto	test:delivery_rewrite_and_delete_writes
+HIST-088	auto	test:detail_decodes_and_lists_every_row
+HIST-089	live	live:audit/mac/history/detail-light-rust.png
+HIST-090	auto	test:details_show_status_stages_and_processing
+HIST-091	auto	test:details_show_status_stages_and_processing
+HIST-092	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-093	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-094	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-095	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-096	auto	test:detail_decodes_and_lists_every_row
+HIST-097	not-run	not-run:detail text is drawn but not selectable; known gap
+HIST-098	auto	test:labels_and_day_groups ; live:audit/mac/history/detail-light-rust.png
+HIST-099	auto	test:labels_and_day_groups
+HIST-100	auto	test:labels_and_day_groups
+HIST-101	auto	test:labels_and_day_groups
+HIST-102	auto	test:legacy_row_explains_missing_details
+HIST-103	auto	test:details_show_status_stages_and_processing
+HIST-104	auto	test:details_show_status_stages_and_processing
+HIST-105	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-106	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-107	auto	test:details_show_status_stages_and_processing
+HIST-108	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-109	auto	test:details_show_status_stages_and_processing
+HIST-110	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-111	auto	test:detail_decodes_and_lists_every_row
+HIST-112	auto	test:detail_decodes_and_lists_every_row
+HIST-113	auto	test:detail_decodes_and_lists_every_row
+HIST-114	auto	test:detail_decodes_and_lists_every_row
+HIST-115	auto	test:detail_decodes_and_lists_every_row
+HIST-116	auto	test:detail_decodes_and_lists_every_row
+HIST-117	auto	test:detail_decodes_and_lists_every_row
+HIST-118	auto	test:detail_decodes_and_lists_every_row
+HIST-119	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-120	auto	test:detail_decodes_and_lists_every_row
+HIST-121	auto	test:detail_decodes_and_lists_every_row
+HIST-122	auto	test:detail_decodes_and_lists_every_row
+HIST-123	auto	test:detail_decodes_and_lists_every_row
+HIST-124	auto	test:details_show_status_stages_and_processing ; live:audit/mac/history/detail-light-rust.png
+HIST-125	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
+HIST-126	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
+HIST-127	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
+HIST-128	live	live:audit/mac/history/detail-light-rust.png
+HIST-129	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
+HIST-130	auto	test:details_show_status_stages_and_processing
+HIST-131	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
+HIST-132	auto	test:detail_decodes_and_lists_every_row
+HIST-133	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-134	service	service:POST /v1/rewrite client not in Rust, Rewrite button disabled; Mac services work for Feature 024 after the view port
+HIST-135	service	service:POST /v1/rewrite client not in Rust, Rewrite button disabled; Mac services work for Feature 024 after the view port
+HIST-136	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-137	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-138	auto	test:detail_decodes_and_lists_every_row
+HIST-139	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-140	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-141	auto	test:detail_decodes_and_lists_every_row
+HIST-142	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-143	service	service:Accessibility insertion through Services insert_once, Unavailable until Mac services work for Feature 024 after the view port
+HIST-144	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-145	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-146	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-147	auto	test:delivery_rewrite_and_delete_writes ; test:rewrite_is_disabled_without_a_client
+HIST-148	service	service:POST /v1/rewrite client not in Rust, Rewrite button disabled; Mac services work for Feature 024 after the view port
+HIST-149	auto	test:delivery_rewrite_and_delete_writes
+HIST-150	auto	test:delivery_rewrite_and_delete_writes
+HIST-151	auto	test:delivery_rewrite_and_delete_writes
+HIST-152	auto	test:delivery_rewrite_and_delete_writes
+HIST-153	auto	test:delivery_rewrite_and_delete_writes
+HIST-154	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-155	service	service:POST /v1/rewrite client not in Rust, Rewrite button disabled; Mac services work for Feature 024 after the view port ; test:delivery_rewrite_and_delete_writes
+HIST-156	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-157	auto	test:details_show_status_stages_and_processing
+HIST-158	auto	test:detail_decodes_and_lists_every_row
+HIST-159	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-160	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-161	not-run	not-run:implemented; no dedicated test and no captured shot looked at for this row
+HIST-162	service	service:Accessibility insertion through Services insert_once, Unavailable until Mac services work for Feature 024 after the view port
+HIST-163	not-run	not-run:review sheet is in apps/desktop/src/insertion.rs, tested under SHELL rows, not re-run here
+HIST-164	not-run	not-run:review sheet is in apps/desktop/src/insertion.rs, tested under SHELL rows, not re-run here
+HIST-165	not-run	not-run:review sheet is in apps/desktop/src/insertion.rs, tested under SHELL rows, not re-run here
+HIST-166	not-run	not-run:review sheet is in apps/desktop/src/insertion.rs, tested under SHELL rows, not re-run here
+HIST-167	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-168	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-169	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-170	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-171	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-172	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-173	not-run	not-run:review sheet is in apps/desktop/src/insertion.rs, tested under SHELL rows, not re-run here
+HIST-174	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-175	auto	test:delivery_rewrite_and_delete_writes
+HIST-176	auto	test:delivery_rewrite_and_delete_writes
+HIST-177	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-178	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-179	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-180	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-181	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-182	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-183	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-184	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-185	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-186	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-187	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-188	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-189	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:waiting_dictations
+HIST-190	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-191	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-192	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-193	recorded	recorded:Swift defect or note, kept as Swift behaves
