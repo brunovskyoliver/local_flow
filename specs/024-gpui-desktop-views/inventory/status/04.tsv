@@ -457,7 +457,7 @@ HIST-180	recorded	test:rewrite_gate_needs_complete_quality ; test:rewrite_gate_s
 HIST-181	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-182	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-183	auto	test:a_refresh_starts_an_open_detail_over
-HIST-184	recorded	recorded:Swift defect or note, kept as Swift behaves ; live:audit/mac/history/hist184-over-detail-ref.png ; live:audit/mac/history/hist184-after-done-ref.png ; recorded:observed on the reference: pressing detail Insert shows no review while the detail sheet is open; after Done the review appears. Rust draws the review over the detail at once
+HIST-184	recorded	live:audit/mac/history/hist184-over-detail-ref.png ; live:audit/mac/history/hist184-after-done-ref.png ; recorded:observed on the reference: pressing detail Insert shows no review while the detail sheet is open; after Done the review appears. Rust differs: from the shell code it draws the review over the detail at once; not run live
 HIST-185	recorded	test:delete_stays_on_for_a_pending_rewrite_and_the_store_refuses ; recorded:Swift defect or note, kept as Swift behaves
 HIST-186	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-187	recorded	recorded:Swift defect or note, kept as Swift behaves
