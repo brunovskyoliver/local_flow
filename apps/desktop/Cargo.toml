@@ -9,5 +9,8 @@ flow-ui.workspace = true
 flow-core.workspace = true
 flow-platform.workspace = true
 
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = { version = "0.23", default-features = false }
+
 [dev-dependencies]
 flow-ui = { workspace = true, features = ["test-support"] }

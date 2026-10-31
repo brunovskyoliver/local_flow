@@ -169,6 +169,28 @@ impl Palette {
     }
 }
 
+/// `PillStyle`: the same in light and dark, because the pill floats over other apps.
+pub mod pill {
+    use gpui_kit::{Hsla, Rgba, rgb};
+    fn h(v: u32) -> Hsla {
+        let c: Rgba = rgb(v);
+        c.into()
+    }
+    pub fn fill() -> Hsla {
+        h(0x242522)
+    }
+    pub fn ink() -> Hsla {
+        h(0xF5F5F1)
+    }
+    pub fn white(alpha: f32) -> Hsla {
+        h(0xFFFFFF).opacity(alpha)
+    }
+    /// AppKit's `windowBackgroundColor`, behind the insertion panel's native controls.
+    pub fn window_background(dark: bool) -> Hsla {
+        h(if dark { 0x323232 } else { 0xECECEC })
+    }
+}
+
 /// App-wide look state: the palette, Reduce Motion and whether the window is compact.
 pub struct Flow {
     pub palette: Palette,
@@ -202,6 +224,43 @@ pub fn contrast(a: u32, b: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // parity: SHELL-189..SHELL-219 Every Swift token, including high-contrast values and aliases.
+    #[test]
+    fn palette_matches_sotto() {
+        let (l, d, cl, cd) = (Hex::new(Mode::Light), Hex::new(Mode::Dark), Hex::new(Mode::ContrastLight), Hex::new(Mode::ContrastDark));
+        let row = |f: fn(&Hex) -> u32| (f(&l), f(&d));
+        assert_eq!((l.ink, d.ink, cl.ink, cd.ink), (0x1A1A1A, 0xDEDDD7, 0x000000, 0xFFFFFF));
+        assert_eq!((l.muted, d.muted, cl.muted, cd.muted), (0x686865, 0x9D9C98, 0x464544, 0xC8C8C2));
+        assert_eq!((l.line, d.line, cl.line, cd.line), (0xEEEBE3, 0x292928, 0x9D9C98, 0x71716E));
+        assert_eq!(row(|x| x.canvas), (0xF7F6F3, 0x1F1F1E));
+        assert_eq!(row(|x| x.surface), (0xFCFCFB, 0x141414));
+        assert_eq!(row(|x| x.tint), (0xF1EEE9, 0x2A2A29));
+        assert_eq!(row(|x| x.button), (0xEEEBE3, 0x2E2E2C));
+        assert_eq!(row(|x| x.accent), (0x247872, 0x68BDB0));
+        assert_eq!(row(|x| x.card), (0xF5F4F1, 0x1F1F1E));
+        assert_eq!(row(|x| x.card_line), (0xEDEBE4, 0x292928));
+        assert_eq!(row(|x| x.rule), (0xC4C0B4, 0x3A3A38));
+        assert_eq!(row(|x| x.heat_empty), (0xEDEBE4, 0x2A2A29));
+        assert_eq!(row(|x| x.data_strong), (0x345A5C, 0x4F8580));
+        assert_eq!(row(|x| x.streak_outline), (0x2F5452, 0xB9DDD8));
+        assert_eq!((l.data_scale, d.data_scale), ([0x457672, 0x59918A, 0x9ACAC2, 0xD6ECEA], [0x84BDB5, 0x5A948D, 0x3F6A65, 0x2E4744]));
+        assert_eq!(row(|x| x.data_quiet), (0x84BAB1, 0x3F6A65));
+        assert_eq!(row(|x| x.on_data_strong), (0xFFFFFF, 0x000000));
+        assert_eq!(row(|x| x.on_data), (0x1A1A1A, 0x141414));
+        assert_eq!(row(|x| x.on_data_quiet), (0x1A1A1A, 0xFFFFFF));
+        assert_eq!(row(|x| x.warning), (0xB43C0B, 0xFB923C));
+        assert_eq!(row(|x| x.success), (0x28CD41, 0x32D74B));
+        // Non-contrast tokens fall back to their normal value in high contrast.
+        assert_eq!((cl.canvas, cd.canvas), (l.canvas, d.canvas));
+        let (pl, pd) = (Palette::new(Mode::Light), Palette::new(Mode::Dark));
+        for p in [pl, pd] {
+            assert_eq!(p.sidebar, p.canvas);
+            assert_eq!(p.primary, p.ink);
+            assert_eq!(p.on_primary, p.surface);
+            assert_eq!(p.on_accent, p.surface);
+        }
+    }
 
     // parity: SHELL-TOKENS Port of AppearanceContrastTests: text keeps 4.5:1 on every page fill.
     #[test]

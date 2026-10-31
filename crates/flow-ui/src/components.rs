@@ -30,6 +30,10 @@ pub struct FlowButton {
     leading: Option<(&'static str, f32)>,
     custom: Option<AnyElement>,
     text_color: Option<Hsla>,
+    fill: Option<Hsla>,
+    toggled: Option<bool>,
+    disabled_opacity: f32,
+    tooltip: Option<SharedString>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -56,8 +60,22 @@ impl FlowButton {
             leading: None,
             custom: None,
             text_color: None,
+            fill: None,
+            toggled: None,
+            disabled_opacity: 0.45,
+            tooltip: None,
             on_click: None,
         }
+    }
+    /// SwiftUI's `.isSelected` trait, exposed as a toggle's pressed state.
+    pub fn toggled(mut self, on: bool) -> Self {
+        self.toggled = Some(on);
+        self
+    }
+    /// Opacity when disabled, 0.45 unless a style says otherwise.
+    pub fn disabled_opacity(mut self, o: f32) -> Self {
+        self.disabled_opacity = o;
+        self
     }
     pub fn disabled(mut self, d: bool) -> Self {
         self.disabled = d;
@@ -78,6 +96,20 @@ impl FlowButton {
     }
     pub fn text_color(mut self, c: impl Into<Hsla>) -> Self {
         self.text_color = Some(c.into());
+        self
+    }
+    /// A fill other than the kind's, such as `.borderedProminent`'s accent.
+    pub fn fill(mut self, c: impl Into<Hsla>) -> Self {
+        self.fill = Some(c.into());
+        self
+    }
+    /// Swift's `.isSelected` accessibility trait; it changes no pixels.
+    pub fn a11y_selected(mut self, selected: bool) -> Self {
+        self.toggled = Some(selected);
+        self
+    }
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
     /// The accessible name when the visible label isn't enough.
@@ -106,6 +138,7 @@ impl RenderOnce for FlowButton {
             ButtonKind::Plain => (transparent, transparent, p.ink, 13., 400., 0., 0.),
         };
         let fg = self.text_color.unwrap_or(fg);
+        let (bg, active) = self.fill.map_or((bg, active), |f| (f, f.opacity(0.8)));
         let variant = ButtonCustomVariant::new(cx).color(bg).foreground(fg).hover(bg).active(active).shadow(false);
         let label = self.a11y_label.unwrap_or_else(|| self.label.clone());
         let content = match self.custom {
@@ -133,8 +166,14 @@ impl RenderOnce for FlowButton {
             .when(self.full_width, |b| b.w_full());
         // Kit's custom variant fades its fill, so the real color goes on the instance style.
         b = b.bg(bg);
+        if let Some(tip) = self.tooltip {
+            b = b.tooltip(tip);
+        }
         if self.disabled {
-            b = b.opacity(0.45);
+            b = b.opacity(self.disabled_opacity);
+        }
+        if let Some(on) = self.toggled {
+            b = b.toggled(on);
         }
         if let Some(f) = self.on_click {
             b = b.on_click(move |e, w, cx| f(e, w, cx));
@@ -203,6 +242,7 @@ impl InvisibleUntil for Div {
 pub fn prototype_nav(id: &'static str, title: &'static str, symbol: &'static str, selected: bool, tint: Hsla, ink: Hsla) -> FlowButton {
     plain_button(id, title)
         .full_width()
+        .a11y_selected(selected)
         .content(
             div()
                 .flex()
@@ -217,6 +257,11 @@ pub fn prototype_nav(id: &'static str, title: &'static str, symbol: &'static str
                 .child(t(title).size(15.).lines(1).a11y_hidden())
                 .into_any_element(),
         )
+}
+
+/// SwiftUI's `Label`: a symbol and text, spaced as AppKit spaces them.
+pub fn sf_label(symbol: &'static str, text: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
+    h_flex().gap(px(6.)).child(icon(symbol, size, color)).child(t(text).size(size).color(color))
 }
 
 pub fn h_flex() -> Div {

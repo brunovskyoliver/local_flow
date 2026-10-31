@@ -1,8 +1,11 @@
 use flow_ui::prelude::*;
-use localflow::{core::Core, shell::Shell};
+use localflow::{core::Core, menu, pill, shell, tray};
 
 fn main() {
-    flow_ui::application().run(|cx| {
+    let app = flow_ui::application().with_quit_mode(QuitMode::Explicit);
+    // Dock reopen with no window opens one; with a window, restores it.
+    app.on_reopen(|cx| shell::open(None, cx));
+    app.run(|cx| {
         let services = flow_platform::native();
         let dark = matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark);
         let core = Core::load(services);
@@ -15,22 +18,22 @@ fn main() {
         let (contrast, motion) = (core.services.high_contrast(), core.services.reduce_motion());
         flow_ui::init(Mode::new(is_dark, contrast), motion, cx);
         cx.set_global(core);
-        // The audit opens a window that takes no focus and stays out of the tiling layout.
+        menu::init(cx);
+        cx.on_window_closed(|cx, id| shell::window_closed(id, cx)).detach();
+        cx.observe_global::<shell::Session>(|cx| pill::sync_window(cx)).detach();
+        pill::apply_scenario(cx);
+        pill::sync_window(cx);
         let audit = std::env::var_os("LOCALFLOW_AUDIT_WINDOW").is_some();
-        let bounds = Bounds { origin: point(px(30.), px(60.)), size: size(px(1180.), px(780.)) };
-        let options = if audit {
-            WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: None, focus: false, kind: WindowKind::PopUp, is_movable: false, ..Default::default() }
-        } else {
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions { title: Some("LocalFlow".into()), appears_transparent: true, traffic_light_position: Some(point(px(9.), px(9.))) }),
-                window_min_size: Some(size(px(640.), px(480.))),
-                ..Default::default()
+        if audit {
+            shell::open_main_window(cx);
+            // The audit's status item would flicker in the owner's menu bar on every capture.
+            if std::env::var_os("LOCALFLOW_TRAY").is_some() {
+                tray::install(cx);
             }
-        };
-        flow_ui::open_window(options, cx, |w, cx| cx.new(|cx| Shell::new(w, cx))).expect("main window opens");
-        if !audit {
-            cx.activate(true);
+        } else {
+            // `LSUIElement`: no Dock icon at launch. Swift's window stays closed until asked for (SHELL-006).
+            cx.set_activation_policy(ActivationPolicy::Accessory);
+            tray::install(cx);
         }
     });
 }

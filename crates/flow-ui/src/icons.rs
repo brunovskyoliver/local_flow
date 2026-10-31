@@ -7,11 +7,20 @@ use std::borrow::Cow;
 pub fn lucide(symbol: &str) -> &'static str {
     match symbol {
         "arrow.right" => "arrow-right",
+        "infinity" => "infinity",
+        "bubble.left" => "message-circle",
+        "envelope" => "mail",
+        "text.bubble" => "message-square-text",
+        "cpu" => "cpu",
+        "key" => "key",
+        "laptopcomputer" => "laptop",
+        "largecircle.fill.circle" => "circle-dot",
+        "link" => "link",
         "arrow.clockwise" => "rotate-cw",
         "arrow.up.right.square" => "square-arrow-out-up-right",
         "bolt.horizontal" => "ellipsis",
         "chart.bar" => "chart-no-axes-column",
-        "chart.bar.xaxis" => "chart-column",
+        "chart.bar.xaxis" => "chart-bar-xaxis",
         "checkmark" => "check",
         "checkmark.circle" => "circle-check",
         "checkmark.circle.fill" => "circle-check-big",
@@ -81,13 +90,15 @@ macro_rules! embed { ($($name:literal),* $(,)?) => {
     const ICONS: &[(&str, &[u8])] = &[$(($name, include_bytes!(concat!("../assets/icons/", $name, ".svg")))),*];
 }}
 embed!(
+    "infinity", "mail", "message-circle", "message-square-text",
+    "cpu", "key", "laptop", "link",
     "arrow-right", "rotate-cw", "square-arrow-out-up-right", "ellipsis", "chart-no-axes-column", "chart-column", "check",
     "circle-check", "circle-check-big", "shield-check", "chevron-down", "chevron-left", "chevron-right", "chevron-up",
     "circle", "clock", "command", "monitor", "clipboard", "copy", "file-text", "circle-alert", "triangle-alert",
     "hard-drive", "settings", "globe", "info", "smartphone", "keyboard", "lightbulb", "shield", "search", "mic", "mic-off",
     "circle-pause", "pause", "users", "user-plus", "circle-play", "play", "plus", "circle-dot", "server", "panel-right",
     "sparkles", "volume-2", "layers", "square", "list-checks", "file-x", "book-text", "text-cursor-input", "quote", "trash",
-    "audio-waveform", "x",
+    "audio-waveform", "x", "chart-bar-xaxis",
 );
 
 impl AssetSource for FlowAssets {
