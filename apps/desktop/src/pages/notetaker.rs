@@ -69,7 +69,7 @@ pub struct NotetakerPage {
     pub(crate) focused_row: Option<String>,
     // Open note.
     pub(crate) tab: Tab,
-    pub(crate) title: Entity<InputState>,
+    pub(crate) title: Entity<TextareaState>,
     pub(crate) thoughts: Entity<TextareaState>,
     pub(crate) editor: Option<NotesEditor>,
     pub(crate) save_epoch: u64,
@@ -149,7 +149,7 @@ pub(crate) fn note_icon(id: impl Into<ElementId>, symbol: &'static str, label: &
 }
 /// `Label` in `PrototypeButtonStyle`: 28 high, as the 13 medium label lays out at 14 in SwiftUI.
 pub(crate) fn symbol_button(id: impl Into<ElementId>, label: &'static str, symbol: &'static str, size: f32, color: Hsla) -> FlowButton {
-    prototype_button(id, label).content(h_flex().h(px(14.)).gap(px(8.)).child(icon(symbol, size, color)).child(t(label).font(13., 500.).a11y_hidden()))
+    prototype_button(id, label).content(h_flex().h(px(15.)).gap(px(8.)).child(icon(symbol, size, color)).child(t(label).font(13., 500.).color(color).a11y_hidden()))
 }
 /// The trigger of a native `Menu`: a borderless symbol in a square.
 pub(crate) fn menu_trigger(id: impl Into<ElementId>, label: &'static str, symbol: &'static str, size: f32, frame: f32, color: Hsla) -> Button {
@@ -231,7 +231,8 @@ impl NotetakerPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
-        let title = cx.new(|cx| InputState::new(window, cx).placeholder("Untitled"));
+        // `lineLimit(1...3)`.
+        let title = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 3).placeholder("Untitled"));
         let active_title = cx.new(|cx| InputState::new(window, cx).placeholder("Title (optional)"));
         let thoughts = cx.new(|cx| TextareaState::new(window, cx));
         let subs = vec![
@@ -276,7 +277,12 @@ impl NotetakerPage {
                 }
                 _ => {}
             }),
-            cx.subscribe_in(&title, window, |this, _, e: &TextInputEvent, window, cx| {
+            cx.subscribe_in(&title, window, |this, input, e: &TextInputEvent, window, cx| {
+                // `onSubmit`: Return saves; the field only wraps, it holds no line breaks.
+                if matches!(e, TextInputEvent::PressEnter { .. }) {
+                    let value = input.read(cx).value().replace('\n', "");
+                    input.update(cx, |s, cx| s.set_value(value, window, cx));
+                }
                 if matches!(e, TextInputEvent::Blur | TextInputEvent::PressEnter { .. }) {
                     this.save_title(window, cx);
                 }

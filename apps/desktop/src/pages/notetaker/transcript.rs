@@ -81,6 +81,8 @@ impl NotetakerPage {
             if let Some(p) = &mut self.pager {
                 p.refresh_labels(db);
             }
+            // `evidenceDidChange`: the accepted summary may be outdated now.
+            self.summary_refresh(cx);
         }
         cx.notify();
     }
@@ -92,6 +94,7 @@ impl NotetakerPage {
                 if let Some(p) = &mut self.pager {
                     p.refresh_labels(db);
                 }
+                self.summary_refresh(cx);
             }
             Err(_) => {
                 if let Some(p) = &mut self.pager {
@@ -109,6 +112,25 @@ impl NotetakerPage {
         }
         self.schedule_highlight_clear(cx);
         cx.notify();
+    }
+    /// `withAnimation { proxy.scrollTo(id, anchor: .center) }`: an eased 0.25 s glide.
+    fn animate_scroll(&mut self, from: Pixels, to: Pixels, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            for step in 1..=15 {
+                cx.background_executor().timer(Duration::from_millis(16)).await;
+                let t = step as f32 / 15.;
+                let eased = t * t * (3. - 2. * t);
+                let done = this.update(cx, |this, cx| {
+                    let x = this.scroll.offset().x;
+                    this.scroll.set_offset(point(x, from + (to - from) * eased));
+                    cx.notify();
+                });
+                if done.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
     }
     fn schedule_highlight_clear(&mut self, cx: &mut Context<Self>) {
         let target = self.pager.as_ref().and_then(|p| p.highlighted.clone());
@@ -203,7 +225,7 @@ impl NotetakerPage {
             .gap(px(10.))
             .bg(p.canvas)
             .rounded(px(6.))
-            .child(h_flex().gap(px(8.)).child(div().w(px(14.)).flex().justify_center().child(icon("clock", 11., p.muted))).child(t(duration_text(elapsed)).size(11.).swift_lines().mono_digits().color(p.muted)))
+            .child(h_flex().gap(px(8.)).child(div().w(px(13.)).flex().justify_center().child(icon("clock", 11., p.muted))).child(t(duration_text(elapsed)).size(11.).swift_lines().mono_digits().color(p.muted)))
             .when_some(badge, |w, b| w.child(t(format!("· {b}")).size(11.).swift_lines().color(p.muted)))
             .child(div().flex_1())
             .map(|w| {
@@ -408,9 +430,11 @@ impl NotetakerPage {
                                 }
                                 if reveal {
                                     let y = o.y + scroll.bounds().center().y - b.center().y;
-                                    scroll.set_offset(point(o.x, y.clamp(-scroll.max_offset().y, px(0.))));
-                                    reveal_page.update(cx, |p, _| p.reveal_pending = false).ok();
-                                    window.refresh();
+                                    let to = y.clamp(-scroll.max_offset().y, px(0.));
+                                    reveal_page.update(cx, |p, cx| {
+                                        p.reveal_pending = false;
+                                        p.animate_scroll(o.y, to, cx);
+                                    }).ok();
                                 }
                             },
                             |_, _, _, _| {},
@@ -448,7 +472,7 @@ impl NotetakerPage {
     fn live_list(&mut self, s: &LiveStatus, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let query = self.search.read(cx).value().to_string();
-        let rows: Vec<&(String, String)> = s.segments.iter().filter(|r| query.is_empty() || contains(&r.0, &query)).collect();
+        let rows: Vec<&(String, String)> = s.live_rows().iter().filter(|r| query.is_empty() || contains(&r.0, &query)).collect();
         if rows.is_empty() {
             let text = if s.transcription_requested { "Listening…" } else { "Transcription is off for this note." };
             return div().id("meeting.transcript.liveEmpty").test_support().w_full().py(px(20.)).child(div().id("meeting.transcript.liveEmpty.text").test_support().child(t(text).italic().color(p.muted).center())).into_any_element();
@@ -463,6 +487,8 @@ impl NotetakerPage {
             };
             list = list.child(
                 v_flex()
+                    .id(sid(format!("meeting.transcript.live.{i}")))
+                    .test_support()
                     .w_full()
                     .gap(px(5.))
                     .when(group, |d| d.child(div().pt(px(14.)).child(t(source_label(tracks)).font(12., 500.).color(color))))

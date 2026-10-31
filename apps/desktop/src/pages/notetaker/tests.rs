@@ -1169,20 +1169,22 @@ async fn copy_menu_selected_item(cx: &mut TestAppContext) {
     menu_item(cx, &window, 0);
     assert!(cx.read_from_clipboard().and_then(|c| c.text()).is_some_and(|t| t.contains(&first.text)));
 }
-// parity: TRANS-031 TRANS-034
+// parity: TRANS-031 TRANS-032 TRANS-034
 #[flow_ui::gpui::test]
 async fn copy_full_writes_or_says_why_not(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.transcript"));
     click(cx, &window, "meeting.transcript.copy");
     menu_item(cx, &window, 1);
     assert!(cx.read_from_clipboard().and_then(|c| c.text()).is_some_and(|t| t.contains("hinge samples")));
+    let (segments, copied) = (query(cx, |db| db.conn.query_row("SELECT count(*) FROM transcript_segments WHERE meeting_id=?1", [SEED_FULL], |r| r.get::<_, i64>(0)).unwrap()), cx.read_from_clipboard().and_then(|c| c.text()).unwrap());
+    assert_eq!(copied.split("\n\n").count() as i64, segments, "the whole transcript, not one page");
     sql(cx, "ALTER TABLE transcript_segments RENAME TO segments_gone;");
     click(cx, &window, "meeting.transcript.copy");
     menu_item(cx, &window, 1);
     fresh(cx, &window);
     assert_saw(&["The transcript could not be copied."]);
 }
-// parity: TRANS-033
+// parity: TRANS-032 TRANS-033
 #[flow_ui::gpui::test]
 async fn copy_too_long_points_to_export(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.transcript"));
@@ -1193,6 +1195,7 @@ async fn copy_too_long_points_to_export(cx: &mut TestAppContext) {
     menu_item(cx, &window, 1);
     fresh(cx, &window);
     assert_saw(&["The transcript is too long to copy. Export it to a file instead."]);
+    assert!(cx.read_from_clipboard().is_none(), "nothing is copied past the limit");
 }
 // parity: TRANS-041
 #[flow_ui::gpui::test]
@@ -2063,15 +2066,6 @@ async fn suggestions_sit_six_points_inside_their_outline(cx: &mut TestAppContext
     assert_eq!(row.size.width, list.size.width - px(12.));
 }
 
-// parity: SUM-043
-#[flow_ui::gpui::test]
-async fn summary_editor_is_ninety_points_high(cx: &mut TestAppContext) {
-    let window = open_page(cx, Some("notetaker.summary"));
-    cx.update_window(window.into(), |_, w, cx| w.double_click("meeting.summary.text", cx)).unwrap();
-    frame(cx, &window);
-    assert_eq!(find(cx, &window, "meeting.summary.edit.frame").bounds().size.height, px(90.));
-}
-
 // parity: SUM-069
 #[flow_ui::gpui::test]
 async fn due_popover_is_two_hundred_twenty_wide(cx: &mut TestAppContext) {
@@ -2084,9 +2078,9 @@ async fn due_popover_is_two_hundred_twenty_wide(cx: &mut TestAppContext) {
 
 // parity: NOTE-019
 #[flow_ui::gpui::test]
-async fn new_note_is_twenty_eight_points_high(cx: &mut TestAppContext) {
+async fn new_note_is_twenty_nine_points_high(cx: &mut TestAppContext) {
     let window = open_page(cx, None);
-    assert_eq!(find(cx, &window, "meeting.start").bounds().size.height, px(28.));
+    assert_eq!(find(cx, &window, "meeting.start").bounds().size.height, px(29.));
 }
 
 // parity: SUM-059
@@ -2926,6 +2920,24 @@ async fn note_frames_and_date_read_like_swift(cx: &mut TestAppContext) {
 }
 // parity: MEET-018
 #[flow_ui::gpui::test]
+async fn title_field_grows_to_three_lines_and_return_saves(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    resize(cx, &window, 1400., 900.);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    let one = find(cx, &window, "meeting.title.frame").bounds().size.height;
+    type_in!(cx, &window, |p| p.title.clone(), "one\ntwo\nthree\nfour\nfive");
+    frame(cx, &window);
+    frame(cx, &window);
+    let grown = find(cx, &window, "meeting.title.frame").bounds().size.height;
+    assert_eq!(grown, one + px(92.), "three lines of 46, then it scrolls");
+    type_in!(cx, &window, |p| p.title.clone(), "By return");
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    frame(cx, &window);
+    assert_eq!(query(cx, |db| meeting(db, SEED_FULL).unwrap().unwrap().title).as_deref(), Some("By return"));
+    assert_eq!(read(cx, &window, |p| p.title.clone()).read_with(cx, |s, _| s.value().to_string()), "By return");
+}
+// parity: MEET-018
+#[flow_ui::gpui::test]
 async fn title_field_is_one_line(cx: &mut TestAppContext) {
     let window = open_page(cx, None);
     resize(cx, &window, 1400., 900.);
@@ -3256,12 +3268,19 @@ async fn a_jump_centres_the_row_and_the_flash_ends_after_two_seconds(cx: &mut Te
     window.update(cx, |p, _, cx| p.reveal_segment(&last.id, cx)).unwrap();
     frame(cx, &window);
     frame(cx, &window);
+    cx.executor().advance_clock(Duration::from_millis(96));
+    frame(cx, &window);
+    let early = read(cx, &window, |p| p.scroll.offset().y);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    frame(cx, &window);
+    let settled = read(cx, &window, |p| p.scroll.offset().y);
+    assert!(early > settled && early < px(0.), "the jump glides: {early:?} on the way to {settled:?}");
     let view = read(cx, &window, |p| p.scroll.bounds());
     let bubble = find(cx, &window, sid(format!("meeting.transcript.bubble.{}", last.ordinal))).bounds();
     assert!(read(cx, &window, |p| p.scroll.offset().y) < px(0.), "scrolled");
     assert!(bubble.bottom() <= view.bottom() + px(1.) && bubble.top() >= view.top(), "{bubble:?} in {view:?}");
     assert!(read(cx, &window, |p| !p.reveal_pending));
-    cx.executor().advance_clock(Duration::from_millis(1900));
+    cx.executor().advance_clock(Duration::from_millis(1600));
     frame(cx, &window);
     assert!(read(cx, &window, |p| p.pager.as_ref().unwrap().highlighted.is_some()));
     cx.executor().advance_clock(Duration::from_millis(200));
@@ -3978,4 +3997,184 @@ async fn mentions_carry_the_speakers_colour_and_id(cx: &mut TestAppContext) {
     let found = speaker_mentions(&text, &speakers);
     assert_eq!(found.len(), 1);
     assert_eq!((found[0].2.as_str(), found[0].3), (root.id.as_str(), root.color));
+}
+
+// --- Round 5: spot check 4.
+
+// parity: TRANS-073
+#[flow_ui::gpui::test]
+async fn section_title_shows_the_mini_progress_only_while_a_window_is_in_flight(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.section:interrupted"));
+    let progress = "meeting.section.progress";
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().window_in_flight = false; cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert!(!has(cx, &window, progress));
+    assert_eq!(sized("Transcript"), (13., 600., colors(cx).0));
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().window_in_flight = true; cx.notify() }).unwrap();
+    frame(cx, &window);
+    let spinner = find(cx, &window, progress).bounds();
+    assert_eq!(spinner.size.height, px(12.));
+}
+
+// parity: TRANS-058
+#[flow_ui::gpui::test]
+async fn live_rows_sit_three_points_apart(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.live"));
+    window.update(cx, |p, _, cx| {
+        p.status.as_mut().unwrap().segments = vec![("one".to_string(), "mic".to_string()), ("two".to_string(), "mic".to_string())];
+        cx.notify();
+    }).unwrap();
+    fresh(cx, &window);
+    let (first, second) = (find(cx, &window, "meeting.transcript.live.0").bounds(), find(cx, &window, "meeting.transcript.live.1").bounds());
+    assert_eq!(second.top() - first.bottom(), px(3.));
+}
+// parity: TRANS-058
+#[flow_ui::gpui::test]
+async fn live_list_keeps_the_two_hundred_newest(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.section:interrupted"));
+    window.update(cx, |p, _, cx| {
+        let s = p.status.as_mut().unwrap();
+        s.segments = (0..250).map(|i| (format!("line {i}"), "mic".to_string())).collect();
+        cx.notify();
+    }).unwrap();
+    fresh(cx, &window);
+    assert!(has(cx, &window, "meeting.section.row.199"));
+    assert!(!has(cx, &window, "meeting.section.row.200"), "capacity 200");
+    assert!(seen("line 249") && seen("line 50"));
+    assert!(!seen("line 49"), "the oldest went first");
+}
+
+// parity: LIVE-033
+#[flow_ui::gpui::test]
+async fn notes_editor_grows_from_ninety_to_two_hundred(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    let height = |cx: &mut TestAppContext| find(cx, &window, "meeting.notes.frame").bounds().size.height;
+    assert_eq!(height(cx), px(90.));
+    window.update(cx, |p, w, cx| p.thoughts.update(cx, |s, cx| s.set_value("a\nb\nc\nd\ne\nf\ng", w, cx))).unwrap();
+    frame(cx, &window);
+    assert_eq!(height(cx), px(142.));
+    window.update(cx, |p, w, cx| p.thoughts.update(cx, |s, cx| s.set_value("x\n".repeat(40), w, cx))).unwrap();
+    frame(cx, &window);
+    assert_eq!(height(cx), px(200.));
+}
+
+// parity: SUM-043
+#[flow_ui::gpui::test]
+async fn summary_editor_grows_past_ninety(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    resize(cx, &window, 1400., 900.);
+    window.update(cx, |p, w, cx| p.begin_summary_edit(w, cx)).unwrap();
+    frame(cx, &window);
+    let frame_id = "meeting.summary.edit.frame";
+    window.update(cx, |p, w, cx| p.summary.summary_input.update(cx, |s, cx| s.set_value("short", w, cx))).unwrap();
+    frame(cx, &window);
+    frame(cx, &window);
+    assert_eq!(find(cx, &window, frame_id).bounds().size.height, px(90.));
+    window.update(cx, |p, w, cx| p.summary.summary_input.update(cx, |s, cx| s.set_value("line\n".repeat(12), w, cx))).unwrap();
+    frame(cx, &window);
+    frame(cx, &window);
+    assert!(find(cx, &window, frame_id).bounds().size.height > px(120.));
+}
+
+// parity: SUM-078
+#[flow_ui::gpui::test]
+async fn due_label_carries_the_original_words_only_when_there_are_some(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = action_item(cx, &window, 0);
+    let id = sid(format!("meeting.summary.due.label.{}", item.ordinal));
+    assert_eq!(item.due_original.is_some(), has(cx, &window, id.clone()));
+    assert!(flow_ui::probe::seen().iter().any(|s| s.starts_with("Due ")));
+    query(cx, |db| db.conn.execute("UPDATE analysis_items SET due_original='by Friday' WHERE id=?1", [&item.id]).unwrap());
+    window.update(cx, |p, _, cx| { p.summary_refresh(cx); cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert!(has(cx, &window, id), "the tooltip's host appears");
+}
+
+// parity: SPK-041
+#[flow_ui::gpui::test]
+async fn correcting_a_segment_relabels_at_once_and_outdates_the_summary(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    let row = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().clone());
+    let target = read(cx, &window, |p| p.summary.roots.iter().find(|r| Some(r.label()) != row.label.as_ref().map(|l| l.text.clone())).unwrap().clone());
+    assert!(!read(cx, &window, |p| p.summary.model.as_ref().is_some_and(|m| m.stale)));
+    window.update(cx, |p, _, cx| p.correct(&row.id, Correction::Speaker(target.id.clone()), cx)).unwrap();
+    frame(cx, &window);
+    let after = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().clone());
+    assert_eq!(after.label.as_ref().map(|l| l.text.clone()), Some(target.label()), "the pager relabels");
+    assert!(read(cx, &window, |p| p.summary.model.as_ref().is_some_and(|m| m.stale)), "evidenceDidChange");
+}
+
+// parity: SUM-061
+#[flow_ui::gpui::test]
+async fn clicking_view_source_opens_transcript_and_scrolls_to_the_segment(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = read(cx, &window, |p| p.summary.model.as_ref().unwrap().action_items.iter().find(|i| matches!(i.sources.first(), Some(SourceRef::Segment(_)))).unwrap().clone());
+    let SourceRef::Segment(segment) = item.sources[0].clone() else { unreachable!() };
+    let scroll_at = read(cx, &window, |p| p.scroll.offset().y);
+    resize(cx, &window, 1180., 420.);
+    let row_top = find(cx, &window, sid(format!("meeting.summary.item.{}.{}", item.kind, item.ordinal))).bounds().top();
+    let view_top = read(cx, &window, |p| p.scroll.bounds()).top();
+    window.update(cx, |p, _, cx| { p.scroll.set_offset(point(px(0.), view_top - row_top)); cx.notify() }).unwrap();
+    frame(cx, &window);
+    hover(cx, &window, sid(format!("meeting.summary.item.{}.{}", item.kind, item.ordinal)));
+    frame(cx, &window);
+    click(cx, &window, sid(format!("meeting.summary.source.{}.{}", item.kind, item.ordinal)));
+    frame(cx, &window);
+    frame(cx, &window);
+    cx.executor().advance_clock(Duration::from_millis(300));
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.tab == Tab::Transcript));
+    let row = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().find(|r| r.id == segment).unwrap().clone());
+    assert_eq!(read(cx, &window, |p| p.pager.as_ref().unwrap().highlighted.clone()).as_deref(), Some(segment.as_str()));
+    let (view, bubble) = (read(cx, &window, |p| p.scroll.bounds()), find(cx, &window, sid(format!("meeting.transcript.bubble.{}", row.ordinal))).bounds());
+    assert!(bubble.top() >= view.top() && bubble.bottom() <= view.bottom() + px(1.), "{bubble:?} in {view:?}, from {scroll_at:?}");
+}
+
+// parity: MEET-073
+#[flow_ui::gpui::test]
+async fn disabled_playback_fades_glyph_and_label_alike(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.failed"));
+    fresh(cx, &window);
+    let (ink, ..) = colors(cx);
+    assert_eq!(find(cx, &window, "meeting.playback").disabled(), Some(true));
+    assert_eq!(sized("Playback"), (13., 500., ink), "the fade is the button's, not the label's");
+    assert_eq!(flow_ui::probe::symbol_color("play.circle"), Some(ink));
+    assert_eq!(find(cx, &window, "meeting.playback").bounds().size.height, px(29.));
+}
+
+// parity: LIVE-024 LIVE-025
+#[flow_ui::gpui::test]
+async fn finalizing_and_starting_show_the_small_progress(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    assert!(!has(cx, &window, "meeting.progress"), "recording has its buttons");
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().state = "preparing".into(); cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert!(has(cx, &window, "meeting.progress"));
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().state = "finalizing".into(); cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert!(has(cx, &window, "meeting.progress"));
+}
+
+// parity: SUM-012
+#[flow_ui::gpui::test]
+async fn running_header_draws_a_seventy_point_bar_when_a_run_reports_progress(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary-running"));
+    assert!(!has(cx, &window, "meeting.summary.progress"));
+    assert_eq!(sized("Analyzing").0, 13.);
+    let window = open_page(cx, Some("notetaker.summary-progress"));
+    assert_eq!(find(cx, &window, "meeting.summary.progress").bounds().size.width, px(70.));
+    assert!(seen("Writing the summary"), "the progress label replaces the stage");
+    assert!(!seen("Analyzing"));
+}
+
+// parity: MEET-057
+#[flow_ui::gpui::test]
+async fn saving_notes_outdates_the_summary(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    assert!(!read(cx, &window, |p| p.summary.model.as_ref().unwrap().stale));
+    window.update(cx, |p, w, cx| { let input = p.thoughts.clone(); p.thoughts_changed("New thoughts for the summary", input, w, cx) }).unwrap();
+    frame(cx, &window);
+    window.update(cx, |p, _, cx| p.flush_notes(cx)).unwrap();
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.summary.model.as_ref().unwrap().stale), "evidenceDidChange after the save");
 }

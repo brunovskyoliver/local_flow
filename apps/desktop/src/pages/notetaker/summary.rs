@@ -13,6 +13,8 @@ pub(crate) struct SummaryState {
     pub error: Option<String>,
     pub editing_summary: bool,
     pub summary_input: Entity<TextareaState>,
+    /// `status.progress`: (label, percent) while a run reports it.
+    pub progress: Option<(String, f32)>,
     /// (item id, field) while its text or owner or due date is being typed.
     pub editing: Option<(String, &'static str)>,
     pub item_input: Entity<InputState>,
@@ -39,7 +41,8 @@ impl SummaryState {
             copied: false,
             error: None,
             editing_summary: false,
-            summary_input: cx.new(|cx| TextareaState::new(window, cx)),
+            progress: None,
+            summary_input: cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 500)),
             due: cx.new(|cx| CalendarState::new(window, cx)),
             item_input,
             editing: None,
@@ -62,6 +65,10 @@ impl SummaryState {
             "eligible" => self.forced = Some(SummaryHeader::Eligible),
             "pending" => self.forced = Some(SummaryHeader::Pending(2)),
             "running" => self.forced = Some(SummaryHeader::Running("Analyzing".into())),
+            "progress" => {
+                self.forced = Some(SummaryHeader::Running("Analyzing".into()));
+                self.progress = Some(("Writing the summary".into(), 40.));
+            }
             "failed" => self.forced = Some(SummaryHeader::Failed(analysis_failure_text("backend_unavailable").into())),
             "not-finished" => self.forced = Some(SummaryHeader::NotEligible(NOT_FINISHED)),
             "stale" => self.forced_stale = true,
@@ -175,7 +182,7 @@ impl NotetakerPage {
         .detach();
         cx.notify();
     }
-    fn begin_summary_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn begin_summary_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.summary.model.as_ref().map_or(String::new(), |m| m.summary.clone());
         self.summary.summary_input.update(cx, |s, cx| s.set_value(text, window, cx));
         self.summary.editing_summary = true;
@@ -330,7 +337,10 @@ impl NotetakerPage {
                 SummaryHeader::NotEligible(_) => d,
                 SummaryHeader::Eligible => d.child(plain_ink("meeting.summary.generate", "Generate", cx)),
                 SummaryHeader::Pending(_) => d.child(t("Queued").size(13.).color(p.muted)).child(plain_ink("meeting.summary.cancel", "Cancel", cx)),
-                SummaryHeader::Running(text) => d.child(t(text.clone()).size(13.).color(p.muted).lines(1)).child(plain_ink("meeting.summary.cancel", "Cancel", cx)),
+                SummaryHeader::Running(text) => d
+                    // ponytail: nothing reports progress until the desktop runs analysis (ADR 0036); only a scenario sets it.
+                    .when_some(self.summary.progress.as_ref().map(|x| x.1), |d, value| d.child(div().id("meeting.summary.progress").test_support().w(px(70.)).child(Progress::new("meeting.summary.progressBar").value(value))))
+                    .child(t(self.summary.progress.as_ref().map_or(text.clone(), |x| x.0.clone())).size(13.).color(p.muted).lines(1)).child(plain_ink("meeting.summary.cancel", "Cancel", cx)),
                 SummaryHeader::Failed(text) => d.child(t(text.clone()).size(13.).color(red(cx)).lines(1)).child(plain_ink("meeting.summary.retry", "Retry", cx)),
                 SummaryHeader::Succeeded => d
                     .child(note_icon("meeting.summary.copy", if copied { "checkmark" } else { "square.on.square" }, if copied { "Copied" } else { "Copy summary" }, p.muted).on_click(cx.listener(|this, _, _, cx| this.copy_report(cx))))
@@ -385,7 +395,7 @@ impl NotetakerPage {
                         cx.notify();
                     }
                 }))
-                .child(div().id("meeting.summary.edit.frame").test_support().w_full().h(px(90.)).text_size(px(14.)).border_1().border_color(p.line).rounded(px(4.)).child(Textarea::new(&self.summary.summary_input).appearance(false).bordered(false).h_full().aria_label("Summary").accessibility_id("meeting.summary.editor")))
+                .child(div().id("meeting.summary.edit.frame").test_support().w_full().min_h(px(90.)).text_size(px(14.)).border_1().border_color(p.line).rounded(px(4.)).child(Textarea::new(&self.summary.summary_input).appearance(false).bordered(false).aria_label("Summary").accessibility_id("meeting.summary.editor")))
                 .child(h_flex().gap(px(8.)).child(prototype_button("meeting.summary.edit.save", "Save").on_click(cx.listener(|this, _, _, cx| this.save_summary_edit(cx)))).child(plain_button("meeting.summary.edit.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| {
                     this.summary.editing_summary = false;
                     cx.notify();
@@ -509,13 +519,19 @@ impl NotetakerPage {
         let due_date = if ai_shown { item.ai_due_date.clone() } else { item.due_date.clone() };
         let mut chips = h_flex().gap(px(8.)).child(self.owner_chip(item, owner, cx));
         if let Some(date) = due_date {
-            chips = chips.child(t(format!("Due {}", due_text(&date))).size(11.).swift_lines().color(p.muted));
+            let label = t(format!("Due {}", due_text(&date))).size(11.).swift_lines().color(p.muted);
+            // `.help(dueOriginal)`: the words the model read the date from.
+            chips = match item.due_original.clone() {
+                Some(original) => chips.child(crate::pages::dictionary::ui::help(sid(format!("meeting.summary.due.label.{}", item.ordinal)), original, label).test_support().into_any_element()),
+                None => chips.child(label.into_any_element()),
+            };
         } else if item.due_state == "unresolved" {
             let text = item.due_original.as_ref().map_or("Due: unclear".to_string(), |o| format!("Due: unclear (\"{o}\")"));
             chips = chips.child(t(text).size(11.).swift_lines().color(p.muted));
         }
         h_flex()
             .id(row_id)
+            .test_support()
             .group(group)
             .w_full()
             .items_start()

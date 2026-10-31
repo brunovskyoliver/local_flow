@@ -47,13 +47,15 @@ impl NotetakerPage {
     }
     fn flushed(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(db) = db_of(cx) else { return false };
-        match &mut self.editor {
-            Some(e) => {
-                e.flush(db);
-                !e.is_dirty
-            }
-            None => true,
+        let Some(e) = &mut self.editor else { return true };
+        let saves = e.save_count;
+        e.flush(db);
+        let (saved, clean) = (e.save_count != saves, !e.is_dirty);
+        if saved {
+            // `evidenceDidChange` after a notes save.
+            self.summary_refresh(cx);
         }
+        clean
     }
     /// `flushMeetingNotes`: the window is closing or the app is quitting.
     pub(crate) fn flush_notes(&mut self, cx: &mut Context<Self>) {
@@ -348,7 +350,7 @@ impl NotetakerPage {
             .w_full()
             .gap(px(8.))
             .pb(px(4.))
-            .child(div().id("meeting.title.frame").test_support().w_full().ml(px(-10.)).py(px(8.)).font_family(GARAMOND).child(Input::new(&self.title).appearance(false).text_size(px(38.)).line_height(px(46.)).h(px(46.)).aria_label("Note title").accessibility_id("meeting.title")))
+            .child(div().id("meeting.title.frame").test_support().w_full().ml(px(-10.)).font_family(GARAMOND).child(Textarea::new(&self.title).appearance(false).bordered(false).my(px(-7.)).text_size(px(38.)).line_height(px(46.)).aria_label("Note title").accessibility_id("meeting.title")))
             .child(t(date_time_text(m.created_at, offset)).size(15.).color(p.muted))
             .when(dropped, |w| w.child(div().id("meeting.captureLoss").test_support().child(h_flex().gap(px(6.)).child(icon("exclamationmark.triangle.fill", 13., orange(cx))).child(t("Some audio was lost during recording. The transcript may be incomplete.").size(13.).swift_lines().color(orange(cx))))))
             .when(!dropped && drift, |w| w.child(div().id("meeting.durationWarning").test_support().child(h_flex().gap(px(6.)).child(icon("exclamationmark.triangle.fill", 13., orange(cx))).child(t("A recording track does not match the meeting duration. Some audio may be missing.").size(13.).swift_lines().color(orange(cx))))))
@@ -395,7 +397,7 @@ impl NotetakerPage {
         }
         let track = d.track("microphone").or(d.track("system")).is_some();
         let playable = is_terminal(&d.meeting.state) && track;
-        row.child(symbol_button("meeting.playback", "Playback", "play.circle", 15., p.ink).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
+        row.child(symbol_button("meeting.playback", "Playback", "play.circle", 14., p.ink).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
             w.child(t(format!("0:00 / {}", duration_text(self.play_total))).size(12.).mono_digits().color(p.muted))
                 .child(prototype_button("meeting.playback.stop", "Stop").on_click(cx.listener(|this, _, _, cx| {
                     this.playing = false;

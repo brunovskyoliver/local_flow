@@ -182,7 +182,7 @@ impl NotetakerPage {
                     .rounded(px(14.))
                     .shadow_lg()
                     .child(div().px(px(32.)).pt(px(28.)).pb(px(11.)).child(t("Assign speakers").font(28., 400.).serif()))
-                    .child(div().absolute().top(px(22.)).right(px(22.)).child(plain_button("meeting.speakers.close", "Close").on_click(cx.listener(|this, _, _, cx| this.close_assign(cx))).content(div().size(px(30.)).flex().items_center().justify_center().child(icon("xmark", 16., p.ink)))))
+                    .child(div().absolute().top(px(22.)).right(px(22.)).child(plain_button("meeting.speakers.close", "Close").on_click(cx.listener(|this, _, _, cx| this.close_assign(cx))).content(div().size(px(30.)).flex().items_center().justify_center().child(icon("xmark@medium", 16., p.ink)))))
                     .child(
                         // The scroller shows that more voices follow below the fold (UI-14).
                         div().relative().w_full().flex().flex_col().child(scroll).child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Scrolling).styles(move |styles| styles.track(|x| x.bg(p.canvas)).thumb(|x| x.bg(p.muted.opacity(0.6)).width(px(7.)).radius(px(4.))).thumb_hover(|x| x.bg(p.muted.opacity(0.8)).width(px(7.)).radius(px(4.))).thumb_active(|x| x.bg(p.muted).width(px(7.)).radius(px(4.))))),

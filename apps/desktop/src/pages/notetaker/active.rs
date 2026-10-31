@@ -16,8 +16,19 @@ pub(crate) struct LiveStatus {
     pub transcription_requested: bool,
     /// (text, analysis tracks) of provisional rows.
     pub segments: Vec<(String, String)>,
+    /// `isWindowInFlight`: a transcription window is at the worker.
+    pub window_in_flight: bool,
+}
+/// `.frame(minHeight: 90, maxHeight: 200)`, tall enough for the text's lines at 13 pt.
+// ponytail: counts line breaks, not wraps; ask the layout if long wrapped notes matter.
+fn notes_height(text: &str) -> f32 {
+    (text.split('\n').count() as f32 * 18. + 16.).clamp(90., 200.)
 }
 impl LiveStatus {
+    /// `LiveTranscriptModel.capacity`: the 200 newest rows.
+    pub fn live_rows(&self) -> &[(String, String)] {
+        &self.segments[self.segments.len().saturating_sub(200)..]
+    }
     pub fn scenario(name: &str) -> Self {
         let state = match name {
             "paused" | "live-paused" => "paused",
@@ -43,6 +54,7 @@ impl LiveStatus {
             storage_warning: (name == "notice-card").then(|| "Less than 2 GB free".to_string()),
             notice: (name == "notice-card").then(|| "Recorded audio was recovered where possible.".to_string()),
             transcription_requested: name != "live-off",
+            window_in_flight: name == "live",
             segments,
         }
     }
@@ -105,7 +117,7 @@ impl NotetakerPage {
             card = card.child(match s.state.as_str() {
                 "recording" => h_flex().gap(px(8.)).child(native_button("meeting.pause", "Pause").on_click(cx.listener(|this, _, _, cx| this.live_action("Pause", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
                 "paused" => h_flex().gap(px(8.)).child(native_button("meeting.resume", "Resume").on_click(cx.listener(|this, _, _, cx| this.live_action("Resume", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
-                "finalizing" | "preparing" | "created" => h_flex().gap(px(8.)).child(Spinner::new().small()).child(t(if s.state == "finalizing" { "Finalizing…" } else { "Starting…" }).color(p.muted)),
+                "finalizing" | "preparing" | "created" => h_flex().gap(px(8.)).child(div().id("meeting.progress").test_support().child(Spinner::new().small())).child(t(if s.state == "finalizing" { "Finalizing…" } else { "Starting…" }).color(p.muted)),
                 _ => h_flex().child(native_button("meeting.dismiss", "Dismiss").on_click(dismiss(cx))),
             });
             if !is_terminal(&s.state) {
@@ -124,7 +136,7 @@ impl NotetakerPage {
                             .w_full()
                             .gap(px(6.))
                             .child(h_flex().w_full().child(t("Notes").font(13., 600.)).child(div().flex_1()).child(t(text).size(12.).color(color).id("meeting.notes.state")))
-                            .child(div().id("meeting.notes.frame").test_support().w_full().h(px(90.)).bg(p.surface).rounded(px(8.)).child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(13.)).aria_label("Notes").accessibility_id("meeting.notes")))
+                            .child(div().id("meeting.notes.frame").test_support().w_full().h(px(notes_height(&self.thoughts.read(cx).value()))).bg(p.surface).rounded(px(8.)).child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(13.)).aria_label("Notes").accessibility_id("meeting.notes")))
                             .when_some(notice, |d, n| d.child(t(n).size(12.).color(red(cx)))),
                     );
             }
@@ -196,7 +208,6 @@ pub(crate) fn dot_color(state: &str, cx: &App) -> Hsla {
     }
 }
 
-/// `TranscriptSectionView`: (status line, in-flight mini progress).
 /// `TranscriptSectionView.timestamp`: mm:ss, or h:mm:ss from an hour on.
 pub(crate) fn section_timestamp(ms: i64) -> String {
     let s = (ms / 1000).max(0);
@@ -211,11 +222,11 @@ fn section_view(line: &str, s: &LiveStatus, scroll: &ScrollHandle, cx: &App) -> 
         scroll.scroll_to_bottom();
     }
     let mut list = v_flex().id("meeting.section.list").test_support().w_full().h(px(180.)).overflow_y_scroll().track_scroll(scroll).gap(px(10.)).p(px(8.)).bg(p.surface).rounded(px(8.));
-    for (i, (text, _)) in s.segments.iter().enumerate() {
+    for (i, (text, _)) in s.live_rows().iter().enumerate() {
         // ponytail: live rows carry no start time until the worker sends them, so scenarios space them 4 s.
         list = list.child(h_flex().id(sid(format!("meeting.section.row.{i}"))).test_support().items_start().gap(px(10.)).child(t(section_timestamp(i as i64 * 4000)).size(13.).mono_digits().color(p.muted)).child(v_flex().flex_1().gap(px(3.)).child(t(text.clone()).size(13.).italic()).child(h_flex().gap(px(3.)).child(t("provisional").size(11.).italic().color(p.muted)).child(icon("circle.fill", 3., p.muted)))));
     }
-    v_flex().w_full().gap(px(8.)).child(h_flex().gap(px(8.)).child(t("Transcript").font(13., 600.)).child(t(line.to_string()).size(12.).color(p.muted).id("meeting.section.status"))).child(list)
+    v_flex().w_full().gap(px(8.)).child(h_flex().gap(px(8.)).child(t("Transcript").font(13., 600.)).when(s.window_in_flight, |d| d.child(div().id("meeting.section.progress").test_support().child(Spinner::new().with_size(px(12.))))).child(t(line.to_string()).size(12.).color(p.muted).id("meeting.section.status"))).child(list)
 }
 
 fn track_indicator(kind: &str, name: &'static str, text: &str, cx: &App) -> impl IntoElement {

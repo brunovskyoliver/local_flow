@@ -4358,6 +4358,42 @@ mod tests {
         assert_eq!(read_model(&db, SEED_FULL).unwrap().unwrap().summary, edited.ai_summary);
     }
 
+    // parity: SPK-058
+    #[test]
+    fn speaker_sections_order_you_colour_manual_first_ms_cluster_with_a_limit() {
+        let db = db();
+        let run: String = db.conn.query_row("SELECT DISTINCT run_id FROM meeting_speakers WHERE meeting_id=?1 AND run_id IS NOT NULL", [SEED_FULL], |r| r.get(0)).unwrap();
+        let manual = |id: &str, color: i64, first: i64, key: &str| {
+            db.conn.execute("INSERT INTO meeting_speakers (id,meeting_id,run_id,cluster_key,source,track,origin,label_ordinal,color_index,first_ms) VALUES (?1,?2,NULL,?3,'remote',NULL,'manual',90,?4,?5)", params![id, SEED_FULL, key, color, first]).unwrap();
+        };
+        manual("m-late", 7, 900, "a");
+        manual("m-b", 7, 100, "b");
+        manual("m-a", 7, 100, "a2");
+        db.conn.execute("INSERT INTO meeting_speakers (id,meeting_id,run_id,cluster_key,source,track,origin,label_ordinal,color_index,first_ms,speech_ms) VALUES ('engine',?1,?2,'z','remote','system','engine',91,7,5000,10)", params![SEED_FULL, run]).unwrap();
+        let roots = speaker_summaries(&db, SEED_FULL).unwrap();
+        assert!(roots[0].is_you(), "You first");
+        let last: Vec<&str> = roots[roots.len() - 4..].iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(last, ["engine", "m-a", "m-b", "m-late"], "colour, engine before manual, first_ms, cluster_key");
+        for i in 0..600 {
+            manual(&format!("bulk{i}"), 7, i, &format!("k{i}"));
+        }
+        let rows: i64 = db.conn.query_row("SELECT count(*) FROM meeting_speakers WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap();
+        assert!(rows > 512);
+        assert!(speaker_summaries(&db, SEED_FULL).unwrap().len() <= 512, "limit 512");
+    }
+
+    // parity: SPK-098
+    #[test]
+    fn confirming_a_suggestion_saves_the_user_confirmation_origin() {
+        let db = db();
+        let root: String = db.conn.query_row("SELECT meeting_speaker_id FROM identity_assignments WHERE meeting_id=?1 AND state='possible' LIMIT 1", [SEED_FULL], |r| r.get(0)).unwrap();
+        let mut m = AssignModel::new(&db, SEED_FULL, true);
+        m.set_action(&root, IdentityAction::Confirm);
+        assert!(m.save(&db, "unused"));
+        let (origin, state): (String, String) = db.conn.query_row("SELECT origin, state FROM identity_assignments WHERE meeting_speaker_id=?1 AND scope='self'", [&root], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(origin, "user_confirmation", "state {state}");
+    }
+
     // parity: SUM-033 SUM-054 SUM-055
     #[test]
     fn report_lists_title_date_and_blockers_without_dismissed_items() {
@@ -4405,6 +4441,9 @@ mod tests {
         let words: Vec<&str> = found.iter().map(|f| &"Marta Kováčová met Martami and Speaker 2, not Speaker 20 or You."[f.0..f.1]).collect();
         assert_eq!(words, vec!["Marta Kováčová", "Martami", "Speaker 2"]);
         assert_eq!(renamed("Speaker 1 and Speaker 10", &[("Speaker 1".into(), "Ada".into())]), "Ada and Speaker 10");
+        let one = vec![("a".to_string(), "Marta".to_string(), 1)];
+        assert_eq!(speaker_mentions("Martamiu", &one).len(), 1, "three trailing lowercase letters still match");
+        assert!(speaker_mentions("Martamius", &one).is_empty(), "four do not");
     }
 
     // parity: MEET-059
