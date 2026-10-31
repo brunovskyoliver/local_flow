@@ -679,6 +679,16 @@ fn notice(symbol: &'static str, message: String, max_width: f32, action: Option<
         .children(action)
 }
 
+/// A non-recording bar's height and opacity; Reduce Motion holds the static shape at full opacity.
+fn bar_target(i: usize, state: DictState, reduce: bool, time: f64) -> (f32, f32) {
+    match state {
+        DictState::Rewriting if !reduce => rewriting_wave(i, time),
+        DictState::Connecting if !reduce => (4., connecting_opacity(time)),
+        s if is_processing(s) && !reduce => (processing_height(i, time), 1.),
+        s => (static_height(i, s), 1.),
+    }
+}
+
 /// One bar: x from the slot's left, centered vertically.
 fn bar(slot: usize, x: f32, height: f32, opacity: f32) -> impl IntoElement {
     div().id(("pill.bar", slot)).absolute().left(px(x)).top(px((HEIGHT - 2. - height) / 2.)).w(px(3.)).h(px(height)).rounded(px(1.5)).bg(style::ink().opacity(opacity)).test_support()
@@ -722,12 +732,7 @@ impl PillView {
         } else {
             row = row.children((0..BAR_COUNT).map(|i| {
                 let x = i as f32 * PITCH;
-                let (h, o) = match state {
-                    DictState::Rewriting if !reduce => rewriting_wave(i, time),
-                    DictState::Connecting if !reduce => (4., connecting_opacity(time)),
-                    s if is_processing(s) && !reduce => (processing_height(i, time), 1.),
-                    s => (static_height(i, s), 1.),
-                };
+                let (h, o) = bar_target(i, state, reduce, time);
                 let r = if state == DictState::Rewriting { 1. } else { reveal_at(i) };
                 bar(i, x, h * (0.2 + 0.8 * r), o * r)
             }));
@@ -777,6 +782,7 @@ impl PillView {
                 }
                 div()
                     .id("pill.learned")
+                    .test_support()
                     .role(accesskit::Role::Group)
                     .aria_label(format!("Added {} to dictionary", n.word))
                     .child(notice("sparkles", n.message(), 360., Some(chip(id, title, a11y, Some(r), None, None, tap_learned, k).into_any_element()), k))
@@ -1176,7 +1182,20 @@ mod tests {
         assert_eq!((h[13], h[14]), (Waveform::height(0.2), 3.));
     }
 
-    // parity: PILL-030 PILL-031 PILL-036 PILL-037 PILL-042 PILL-043
+    // parity: PILL-031
+    /// Connecting pulses unless Reduce Motion: then bars rest at height 4, full opacity, in the frame too.
+    #[flow_ui::gpui::test]
+    async fn connecting_with_reduce_motion_is_static(cx: &mut TestAppContext) {
+        assert_eq!(bar_target(3, DictState::Connecting, true, 1.2), (4., 1.));
+        assert!((bar_target(3, DictState::Connecting, false, 1.2).1 - 0.35).abs() < 0.001);
+        let (w, ..) = view(cx);
+        cx.update(|cx| set_state(DictState::Connecting, 0., cx));
+        frame(cx, w);
+        let h = cx.update_window(w.into(), |_, win, _| win.find(("pill.bar", 5usize)).bounds().size.height).unwrap();
+        assert_eq!(h, px(4.));
+    }
+
+    // parity: PILL-030 PILL-036 PILL-037 PILL-042 PILL-043
     #[test]
     fn bars_follow_swift_formulas() {
         assert_eq!(static_height(5, DictState::Preparing), 4.);
@@ -1314,6 +1333,8 @@ mod tests {
         cx.update(|cx| show_learned("LocalFlow", LearnedKind::Added, cx));
         frame(cx, w);
         assert_saw(&["Added to dictionary", "Undo"]);
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "sparkles"));
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.learned").label().as_deref(), Some("Added LocalFlow to dictionary"))).unwrap();
         cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("dictionary.notice.undo").label().as_deref(), Some("Undo adding LocalFlow to dictionary"))).unwrap();
         assert_eq!(announced.borrow().last().unwrap(), "Added LocalFlow to dictionary.");
         cx.update_window(w.into(), |_, win, cx| win.click("dictionary.notice.undo", cx)).unwrap();
@@ -1410,9 +1431,22 @@ mod tests {
         assert!(pill(cx, |p| p.action.is_none()));
     }
 
-    // parity: PILL-096..PILL-109
-    /// The words and whether Retry is offered. No production caller yet: rewriting and refusing a
-    /// dictation arrive with Features 025 and 026; the table holds Swift's copy until then.
+    // parity: PILL-088..PILL-094
+    /// `RewriteNotice.text`'s live words: the bounded category text plus Swift's suffix. Whatever
+    /// posts them (Feature 026) gets the wording from here; flowd only supplies the category.
+    #[test]
+    fn rewrite_failure_categories_map_to_the_live_words() {
+        use flow_core::history::rewrite_notice;
+        let suffix = " Original text inserted.";
+        for (category, tail) in [("server_unreachable", suffix), ("transport_error", suffix), ("timeout", suffix), ("authentication_failed", ""), ("backend_unavailable", ""), ("malformed_response", ""), ("empty_response", "")] {
+            let live = format!("{}{tail}", rewrite_notice(category));
+            assert!(REWRITE_NOTICES.iter().any(|(m, retry)| *m == live && *retry), "{live}");
+        }
+        assert!(REWRITE_NOTICES.iter().any(|(m, _)| *m == "Rewrite connection failed. Original text inserted."));
+    }
+
+    // Copy only: nothing posts these until Features 025 and 026, so the rows stay `recorded`.
+    /// The words and whether Retry is offered. No production caller yet.
     #[test]
     fn rewrite_and_meeting_notices_keep_swifts_words() {
         let offers = |message: &str| REWRITE_NOTICES.iter().find(|(m, _)| *m == message).map(|(_, retry)| *retry);

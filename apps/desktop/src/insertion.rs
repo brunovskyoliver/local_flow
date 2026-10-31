@@ -306,15 +306,15 @@ pub fn review_sheet(cx: &mut App) -> impl IntoElement {
         cx,
         v_flex()
             .gap(px(18.))
-            .child(t("Review before inserting").font(26., 600.))
+            .child(div().id("insertion.title").test_support().child(t("Review before inserting").font(26., 600.)))
             .children(warnings.into_iter().map(|w| sf_label("exclamationmark.triangle", w, 14., p.ink)))
             .child(div().id("insertion.text").test_support().max_h(px(300.)).overflow_y_scroll().child(t(text)))
             .child(t("Choose a destination, then switch to the app and click an editable field. LocalFlow will ask you to confirm before inserting.").color(p.muted))
             .child(
                 h_flex()
                     .justify_between()
-                    .child(prototype_button("insertion.cancel", "Cancel").on_click(|_, _, cx| cancel(cx)))
-                    .child(primary_button("insertion.choose", "Choose destination").fill(p.accent).on_click(|_, _, cx| arm_selection(cx))),
+                    .child(native_button("insertion.cancel", "Cancel").on_click(|_, _, cx| cancel(cx)))
+                    .child(native_button("insertion.choose", "Choose destination").fill(p.accent).text_color(p.on_accent).on_click(|_, _, cx| arm_selection(cx))),
             ),
     )
 }
@@ -503,6 +503,12 @@ mod tests {
         assert_eq!(text.size.width, px(520. - 52.));
         assert_eq!(text.size.height, px(300.));
         assert_saw(&["Review before inserting"]);
+        // Padding 26 inside a centered 520 column, 18 to the next row, and a 26 point title's line.
+        let (title, size) = cx.update_window(window.into(), |_, w, _| (w.find("insertion.title").bounds(), w.viewport_size())).unwrap();
+        assert_eq!(title.origin.x, (size.width - px(520.)) / 2. + px(26.));
+        assert_eq!(text.origin.y - (title.origin.y + title.size.height), px(18.));
+        assert_eq!(title.size.height, px(27.), "the Figtree 26 line");
+        assert_eq!(title.size.width, px(468.));
     }
 
     // parity: SHELL-158

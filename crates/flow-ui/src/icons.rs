@@ -89,14 +89,39 @@ pub fn lucide(symbol: &str) -> &'static str {
     }
 }
 
+/// Width in em for symbols wider than their point size; SwiftUI lays a symbol out by its own width,
+/// which sets where a trailing symbol's left edge sits. Measured from `NSImage(systemSymbolName:).size`.
+fn advance(symbol: &str) -> f32 {
+    match symbol {
+        "laptopcomputer" => 1.66,
+        "person.2.wave.2" => 1.78,
+        "person.2" => 1.62,
+        "bolt.horizontal" => 1.55,
+        "externaldrive.badge.exclamationmark" => 1.52,
+        "keyboard" => 1.48,
+        "infinity" => 1.45,
+        "envelope" => 1.43,
+        "desktopcomputer" => 1.42,
+        "server.rack" | "sidebar.right" => 1.41,
+        "bubble.left" | "text.bubble" => 1.33,
+        _ => 1.,
+    }
+}
+
 /// A symbol drawn at `size` points in `color`, hidden from accessibility as SF Symbols with a
 /// neighboring label are.
 pub fn icon(symbol: &str, size: f32, color: impl Into<Hsla>) -> Svg {
+    #[cfg(feature = "test-support")]
+    crate::probe::record(&format!("symbol:{symbol}"));
     let path: SharedString = format!("flow-icons/{}.svg", lucide(symbol)).into();
-    // An SF glyph overhangs its point size: `sf-` boxes are 1.18 em (fitted on the contact sheet in `audit/icons`), `sfw-` 1.888 em at the same unit scale.
+    #[cfg(any(test, feature = "test-support"))]
+    crate::probe::record_symbol(symbol);
+    // An SF glyph overhangs its point size: `sf-` boxes are 1.18 em (fitted on the contact sheet in
+    // `audit/icons`), `sfw-` 1.888 em at the same unit scale. Layout takes the symbol's advance.
     let file = lucide(symbol);
-    let overhang = if file.starts_with("sfw-") { size * 0.444 } else if file.starts_with("sf-") { size * 0.09 } else { 0. };
-    svg().path(path).size(px(size + 2. * overhang)).m(px(-overhang)).flex_none().text_color(color.into())
+    let glyph = size * if file.starts_with("sfw-") { 1.888 } else if file.starts_with("sf-") { 1.18 } else { 1. };
+    let advance = size * advance(symbol);
+    svg().path(path).w(px(glyph)).h(px(glyph)).ml(px((advance - glyph) / 2.)).mr(px((advance - glyph) / 2.)).my(px((size - glyph) / 2.)).flex_none().text_color(color.into())
 }
 
 /// Bundled icons in front of Kit's own assets.
@@ -186,6 +211,12 @@ mod tests {
                 assert_ne!(lucide(symbol), lucide(outline), "{symbol} shares a file with its outline");
             }
         }
+    }
+
+    /// `server.rack` lays out at its own width, as SwiftUI does: a trailing rack starts further left.
+    #[::core::prelude::v1::test]
+    fn wide_symbols_take_their_advance() {
+        assert_eq!((advance("server.rack"), advance("laptopcomputer"), advance("mic")), (1.41, 1.66, 1.));
     }
 
     /// The symbols the audit named keep a distinct in-house drawing.

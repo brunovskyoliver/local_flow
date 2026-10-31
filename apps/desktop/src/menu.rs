@@ -213,7 +213,7 @@ mod tests {
     #[flow_ui::gpui::test]
     async fn quit_refuses_in_swifts_order(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
-        let window = open_shell(cx);
+        let _window = open_shell(cx);
         let status = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Session>().setup_status.clone());
         cx.update(|cx| update_session(cx, |s| {
             s.model_command = true;

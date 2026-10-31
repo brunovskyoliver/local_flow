@@ -1016,6 +1016,35 @@ mod tests {
         cx.update(|cx| assert!(!cx.global::<Core>().prefs.contains("selection")));
     }
 
+    // parity: SHELL-070
+    /// The Transcriptions destination carries Swift's wiring: copy, insert into review, delete through
+    /// the store (`delete_asks_then_removes_the_row`), and `globalBusy` from the dictation session.
+    #[flow_ui::gpui::test]
+    async fn transcriptions_destination_wires_copy_insert_and_busy(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        set(cx, |s| s.selection = Page::History);
+        frame(cx, window);
+        let (id, text) = cx.update(|cx| {
+            let page = flow_core::history::page(cx.global::<Core>().db.as_ref().unwrap(), "", None, flow_core::history::Direction::Older, None).unwrap();
+            let e = page.entries.into_iter().find(|e| !e.is_attempting()).unwrap();
+            (e.id, e.text)
+        });
+        let (copy, insert) = (SharedString::from(format!("history.copy.{id}")), SharedString::from(format!("history.insert.{id}")));
+        cx.update_window(window.into(), |_, w, cx| w.click(copy.clone(), cx)).unwrap();
+        assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()), Some(text.clone()));
+        frame(cx, window);
+        let off = |cx: &mut TestAppContext| cx.update_window(window.into(), |_, w, _| w.find(insert.clone()).disabled()).unwrap();
+        assert_ne!(off(cx), Some(true));
+        set(cx, |s| s.dictation = Some(Dictation { busy: true, ..Default::default() }));
+        frame(cx, window);
+        assert_eq!(off(cx), Some(true), "globalBusy disables Insert");
+        set(cx, |s| s.dictation = Some(Dictation::default()));
+        frame(cx, window);
+        cx.update_window(window.into(), |_, w, cx| w.click(insert.clone(), cx)).unwrap();
+        cx.update(|cx| assert_eq!(cx.global::<Session>().insertion.entry.as_ref().map(|e| e.text.clone()), Some(text)));
+    }
+
     // parity: SHELL-043 SHELL-044 SHELL-045 SHELL-046 SHELL-047
     #[flow_ui::gpui::test]
     async fn sidebar_rows_carry_swifts_labels_symbols_and_ids(cx: &mut TestAppContext) {

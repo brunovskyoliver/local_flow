@@ -3,11 +3,13 @@ use std::cell::RefCell;
 
 thread_local! {
     static SEEN: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    static SYMBOLS: RefCell<Vec<String>> = const { RefCell::new(vec![]) };
 }
 
 /// Starts recording on this thread.
 pub fn start() {
     SEEN.with(|s| *s.borrow_mut() = Some(vec![]));
+    SYMBOLS.with(|s| s.borrow_mut().clear());
 }
 
 pub(crate) fn record(text: &str) {
@@ -26,4 +28,14 @@ pub fn seen() -> Vec<String> {
 /// Clears the record; call before rendering the state under test.
 pub fn clear() {
     start();
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn record_symbol(symbol: &str) {
+    SYMBOLS.with(|s| s.borrow_mut().push(symbol.to_string()));
+}
+
+/// SF Symbol names `icon` drew since the last `start`, so a test can assert a row's symbol.
+pub fn symbols() -> Vec<String> {
+    SYMBOLS.with(|s| s.borrow().clone())
 }

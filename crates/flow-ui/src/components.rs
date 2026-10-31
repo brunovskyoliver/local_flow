@@ -287,6 +287,11 @@ impl InvisibleUntil for Div {
     }
 }
 
+/// A sidebar row's fill: `tint` when selected, otherwise nothing.
+pub fn nav_fill(selected: bool, tint: Hsla) -> Option<Hsla> {
+    selected.then_some(tint)
+}
+
 /// The sidebar row: 16 icon in a 20 frame, 15 title, 35 high, `tint` when selected.
 pub fn prototype_nav(id: &'static str, title: &'static str, symbol: &'static str, selected: bool, tint: Hsla, ink: Hsla) -> FlowButton {
     plain_button(id, title)
@@ -301,7 +306,7 @@ pub fn prototype_nav(id: &'static str, title: &'static str, symbol: &'static str
                 .h(px(35.))
                 .w_full()
                 .rounded(px(8.))
-                .when(selected, |d| d.bg(tint))
+                .when_some(nav_fill(selected, tint), |d, fill| d.bg(fill))
                 .child(div().w(px(20.)).flex().justify_center().child(icon(symbol, 16., ink)))
                 .child(t(title).size(15.).lines(1).a11y_hidden())
                 .into_any_element(),
@@ -403,7 +408,6 @@ impl RenderOnce for FlowSwitch {
             .flex_none()
             .w(px(w))
             .h(px(h))
-            .when(self.disabled, |s| s.opacity(0.5))
             .child(
                 SwitchTrack::new((self.id.clone(), "track"))
                     .checked(self.checked)
@@ -412,7 +416,8 @@ impl RenderOnce for FlowSwitch {
                     .w(px(w))
                     .h(px(h))
                     .rounded(px(h / 2.))
-                    .bg(track)
+                    // A disabled NSSwitch fades its track; the knob stays white.
+                    .bg(if self.disabled { track.opacity(track.a * 0.5) } else { track })
                     .when(focused, |t| t.border_2().border_color(p.accent.opacity(0.5)))
                     .child(
                         SwitchThumb::new(self.checked)
@@ -443,6 +448,17 @@ pub fn spring_value(id: impl Into<ElementId>, target: f32, response: f32, dampin
 mod tests {
     use super::*;
     use crate::tokens::{Mode, Palette};
+
+    // parity: SHELL-050
+    /// Unselected: no fill, and the plain button under the row has no hover or pressed visual.
+    #[::core::prelude::v1::test]
+    fn unselected_nav_row_has_no_fill_hover_or_press() {
+        let p = Palette::new(Mode::Light);
+        assert_eq!(nav_fill(false, p.tint), None);
+        assert_eq!(nav_fill(true, p.tint), Some(p.tint));
+        let (rest, pressed, ..) = ButtonKind::Plain.style(&p);
+        assert_eq!((rest.a, pressed.a), (0., 0.));
+    }
 
     // Sampled from audit/mac/dictionary/delete-{light,dark}-ref.png.
     #[::core::prelude::v1::test]
