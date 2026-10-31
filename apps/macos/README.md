@@ -151,6 +151,20 @@ sources plus `Core/SpeechBoundaries.swift` and `Core/ModelWorkloadBoundaries.swi
 `scripts/add-speech-worker-target.py` created the target;
 `scripts/register-xcode-sources.py --target flowd-speech` adds files to it.
 
+## Pairing and server mode (Feature 027)
+
+**Pair with Token** in Settings › Server takes an address and a one-time `lfp_` token. It needs no sign-in or fingerprint step and the device is approved at once. A `localflow://pair` link fills in the sheet and connects nothing until Pair. **Change Address** moves to a new route without pairing again when the server's key is unchanged, and proves the route first. `http://` works only on private and Tailscale addresses and on `.local`, `*.ts.net` and single-label names, with a not-TLS notice; elsewhere the app refuses it before connecting.
+
+**Server mode**, in the same section, makes this Mac a server (`Core/Remote/ServerModeController.swift`, `docs/distribution/remote-server.md`). It listens on all networks after a warning, copies the helpers from `Contents/Helpers`, and adopts an existing server without rewriting it. Local dictation doesn't depend on it, and development builds use only `.dev` labels and ports.
+
+- The Mac must stay logged in, because the agent runs in the login session and its key is in the login Keychain. Turn on automatic login if it restarts unattended.
+- Turning it off runs `launchctl bootout` and `launchctl disable`, and deletes nothing. Turning it on, `scripts/install-remote-server.sh` or Restart in LocalFlow Server each undo the disable.
+- **Pairing tokens › Manage…** creates, shows once, lists and revokes tokens through `flowd admin token`. Closing the sheet forgets the value.
+- `flowd-meeting` isn't bundled, so phone meeting handoff isn't available on a server made here.
+- The server's models load beside this Mac's, so one Mac doing both uses more memory. Not measured yet.
+
+The Rust client has no pairing yet; it comes after Features 025 and 026.
+
 ## One server (Feature 018)
 
 Settings › Server is the first section. It holds the Remote dictation setup above, and

@@ -102,6 +102,16 @@ Settings › Server connects the phone to a LocalFlow server, the same one the M
 Nothing leaves the phone before the device is approved and the switch is on. Sign out
 deletes the phone's credentials; the recordings stay.
 
+### Pair with a token
+
+**Pair with token** replaces steps 1 to 3: enter the address and paste a token from the server's owner (`flowd admin token create`). The phone needs no sign-in and no fingerprint comparison, because the token carries the server's key, and the phone is approved at once. A `localflow://pair` link or QR code only fills in the sheet; nothing connects until you tap Pair. Paste when you can: another installed app can claim the `localflow://` scheme and so receive a link.
+
+The address can change later with **Update address**, without pairing again, as long as the server's key is the same.
+
+`https://` works on any host. `http://` works only for private and Tailscale literals and for `.local`, `*.ts.net` and single-label names, and the app says the connection is not TLS while content stays encrypted. The app has `NSAllowsLocalNetworking`, a `ts.net` exception and `NSLocalNetworkUsageDescription` for this. `ws://` has been tested on the Simulator only; RFC 1918 and Tailscale literals on a real iPhone are on `specs/027-remote-pairing/acceptance/hardware.md`.
+
+A server created by the Mac app's server mode has no `flowd-meeting`, so meeting handoff from the phone isn't available there. Install with `scripts/install-remote-server.sh` for that.
+
 ### Tailscale
 
 The Mac mini serves the channel on the tailnet only (Tailscale Serve), so the phone needs

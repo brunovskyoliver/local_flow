@@ -68,5 +68,6 @@ Needs later features, so it doesn't work yet:
 - Keychain removal and the channel pool (ONB-107): the Turn Off path makes the calls, but on a real Mac nothing is deleted yet
 - Shortcut capture, dictation sessions and installer outcomes, so a real onboarding test run can't succeed yet
 - The capture worker behind live meetings
+- Token pairing and server mode (Feature 027), Swift only so far: the Rust client gets pairing after 025 and 026
 
 Owner decision: Rust keeps showing the review straight away from the History detail sheet, where Swift holds it until the sheet closes (HIST-184).

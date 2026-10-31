@@ -61,8 +61,19 @@
 
 ## Phase 8: Polish
 
-- [ ] T030 [P] Update docs/distribution/remote-server.md, server/README.md, apps/ios/README.md, apps/macos/README.md, specs/014-remote-dictation-server/contracts/flowd-cli.md
-- [ ] T031 Run `make check` including `scripts/check-parity-inventory.py`; record Rust pairing as deferred to after 025/026 in specs/024-gpui-desktop-views/progress.md's "Left" list or the inventory, whichever the check requires; create specs/027-remote-pairing/acceptance/hardware.md listing the owner's items as not run, including SC-001, real launchd start and stop, firewall and Local Network prompts on a signed build, and that a server-mode Mac needs auto-login
+- [X] T030 [P] Update docs/distribution/remote-server.md, server/README.md, apps/ios/README.md, apps/macos/README.md, specs/014-remote-dictation-server/contracts/flowd-cli.md
+- [X] T031 Run `make check` including `scripts/check-parity-inventory.py`; record Rust pairing as deferred to after 025/026 in specs/024-gpui-desktop-views/progress.md's "Left" list or the inventory, whichever the check requires; create specs/027-remote-pairing/acceptance/hardware.md listing the owner's items as not run, including SC-001, real launchd start and stop, firewall and Local Network prompts on a signed build, and that a server-mode Mac needs auto-login
+
+## Phase 9: Convergence
+
+- [X] T033 Make LocalFlow Server's Restart reload a stopped or disabled agent with `launchctl enable` before bootstrap, MTPLX first, per spec US3 (contradicts)
+- [X] T034 Run `launchctl enable` before both bootstraps in scripts/install-remote-server.sh per quickstart and spec US3 (partial)
+- [X] T035 Report a route that answers but breaks WebSockets as a usable-route failure, and prove the route in `updateAddress` before storing it, per spec edge case on proxies and FR-013 (partial)
+- [X] T036 State the memory cost in the turn-on explanation and the docs per spec edge case on one Mac running both (partial)
+- [X] T037 Show the revoked message for a `not_approved` reply to `pair` per the refusals in contracts/pairing.md (partial)
+- [X] T038 Remove the stale loopback refusal from flowd-cli.md per ADR 0037 (contradicts)
+- [X] T039 Give the QR codes a white quiet zone and whole-point modules, and test that they decode to the link, per spec US2 (partial)
+- [X] T040 Show URL placeholders as plain text, keep the consent text beside a pairing error on iOS, and show readable expiry dates in LocalFlow Server, per the offscreen render review and FR-012a's notice (partial)
 
 ## Dependencies
 

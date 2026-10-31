@@ -213,9 +213,42 @@ F="$DATA/bin/flowd"; A=(admin --data-dir "$DATA")
 
 After approval, the device's next dictation starts the check, and the one after it goes to the server; no restart is needed.
 
+## Pairing tokens (Feature 027)
+
+A pairing token lets a device join with no Apple or Google sign-in and no fingerprint comparison. Each token is one-time, expires after 1 hour, 24 hours or 7 days, and approves one device.
+
+```sh
+"$F" "${A[@]}" token create --label "Ada's iPhone" --ttl 24h --address https://flow.example.com
+"$F" "${A[@]}" token list
+"$F" "${A[@]}" token revoke <id>                 # a token nobody has used yet
+```
+
+`--user <id>` adds the device to an existing user instead of creating a new one. `--address` adds a link to the output; the token works without one, because the client asks for the address. `--json` prints the same fields for a script. The value is shown once, by `create`, and neither the database nor the log holds it. `token list` shows states and expiry only. To remove a device that has already paired, use `revoke device <id>`. The tokens control who gets in, so send one over a private channel. Whoever uses it first gets the device slot, and the real holder then sees it refused.
+
+The same commands sit behind Settings › Server › Pairing tokens in LocalFlow and the Pairing tab in LocalFlow Server. Both show a QR code when an address was chosen. Pasting the token is safer than opening a link on an iPhone: any installed app can register the `localflow://` scheme and claim the link.
+
+## Routes (Feature 027)
+
+A client stores a server's key, so the address can change without pairing again. `--remote-listen` takes any IP literal. The install script still binds 127.0.0.1, and a server created from the app binds 0.0.0.0:8090, all networks. Existing installs keep their bind until you choose **Open to the network** in LocalFlow, which changes only that flag, keeps the previous plist and restores it if the server isn't healthy within 60 seconds.
+
+Clients accept `https://` on any host. They accept `http://` only for loopback, RFC 1918, link-local, IPv6 unique-local and Tailscale (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) literals, and for `.local`, `*.ts.net` and single-label names. They refuse `http://` anywhere else before connecting. With `http://` the client says the connection is not TLS; content stays encrypted by the channel either way. flowd generates no certificates.
+
+A reverse proxy must pass WebSocket upgrades and leave the path alone. If it doesn't, the client reports that the address isn't a usable LocalFlow route and changes nothing.
+
+## Server mode (Feature 027)
+
+Settings › Server › Server mode turns any Mac with LocalFlow into a server, with no script. It copies the bundled helpers into the data directory, runs `flowd admin init`, loads the agent, and shows the addresses, fingerprint and anything missing. Models download only after you confirm.
+
+- **The Mac has to stay logged in.** The agent runs in the login session and its key is in the login Keychain. A server-mode Mac that restarts unattended needs automatic login.
+- **Turning off uses `launchctl disable`**, after `bootout`, so the server stays off across logins. Accounts, tokens, models and the identity stay. Turning server mode on again undoes it. So do `scripts/install-remote-server.sh`, which runs `launchctl enable` before it loads an agent, and Restart in LocalFlow Server. By hand: `launchctl enable "gui/$(id -u)/org.localflow.LocalFlow.remote"`, and the same for `.remote.mtplx`, then `launchctl bootstrap`.
+- **An existing server is adopted, not rewritten.** Its plist, binaries and flags stay, including `--google-client-id`.
+- **`flowd-meeting` isn't bundled**, so a server created from the app can't process meetings sent from a phone, and Settings says so. Meetings from a Mac are not affected. Install with the script if you need phone meeting handoff.
+- **Memory.** The server loads its own models beside the local ones, so one Mac doing both uses more memory. This has not been measured yet.
+- **macOS Firewall** may block flowd. If no client has connected, Settings points to it.
+
 ## The LocalFlow Server app
 
-`scripts/install-server-app.sh <ssh-host>` builds the LocalFlow Server menu bar app on a Mac with Xcode and installs it in the server's `/Applications` (ADR 0032). It shows flowd, both speech workers, MTPLX and oMLX as Ready, Loading or Down, restarts flowd and MTPLX, tails `flowd.log`, keeps request stats that survive log rotation, approves and revokes devices with the commands above (it runs in the GUI session, so the Keychain is unlocked), and switches the rewrite model and the summaries backend with a rollback if the agent doesn't come back healthy. The installer starts flowd with `--admin-listen 127.0.0.1:8093` for it; the token is in `$DATA/admin-token` (0600), and the admin routes are not on 8090 or 8091. See [server-app.md](server-app.md).
+`scripts/install-server-app.sh <ssh-host>` builds the LocalFlow Server menu bar app on a Mac with Xcode and installs it in the server's `/Applications` (ADR 0032). It shows flowd, both speech workers, MTPLX and oMLX as Ready, Loading or Down, restarts flowd and MTPLX, tails `flowd.log`, keeps request stats that survive log rotation, approves and revokes devices with the commands above, creates and revokes pairing tokens on its Pairing tab (it runs in the GUI session, so the Keychain is unlocked), and switches the rewrite model and the summaries backend with a rollback if the agent doesn't come back healthy. The installer starts flowd with `--admin-listen 127.0.0.1:8093` for it; the token is in `$DATA/admin-token` (0600), and the admin routes are not on 8090 or 8091. See [server-app.md](server-app.md).
 
 ## Uninstall
 

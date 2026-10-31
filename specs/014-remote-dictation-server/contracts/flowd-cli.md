@@ -6,7 +6,7 @@ Remote serving is off unless `--remote-listen` is given. Existing flags and rout
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--remote-listen` | unset | loopback `host:port` for `/v1/remote/*`; production 8090, development 18090 |
+| `--remote-listen` | unset | IP literal `host:port` for `/v1/remote/*`; production 8090, development 18090. Feature 027 removed the loopback limit (ADR 0037) |
 | `--data-dir` | required with `--remote-listen` | holds `flowd-remote.sqlite`; created 0700 |
 | `--speech-worker` | `<flowd dir>/flowd-speech` | worker executable |
 | `--speech-models` | `<data-dir>/Models` | passed to the worker |
@@ -16,7 +16,7 @@ Remote serving is off unless `--remote-listen` is given. Existing flags and rout
 | `--dev` | off | development variant: read the identity key from the Keychain service `org.localflow.LocalFlow.dev.remote.identity` instead of `org.localflow.LocalFlow.remote.identity` |
 | `--debug-busy` | off | debug builds only; every `dictation_start` gets `busy` |
 
-flowd refuses to start remote serving when the identity key is missing from Keychain, the listener is not loopback, or `--data-dir` is not private to the running user.
+flowd refuses to start remote serving when the identity key is missing from Keychain, the listen address is not an IP literal, or `--data-dir` is not private to the running user.
 
 ## `flowd admin`
 
@@ -33,6 +33,9 @@ flowd admin --data-dir <dir> reject user <id>
 flowd admin --data-dir <dir> revoke user <id>
 flowd admin --data-dir <dir> revoke device <id>
 flowd admin --data-dir <dir> audit [--limit N]    newest first, default 50
+flowd admin --data-dir <dir> token create --label L [--user ID] [--ttl 1h|24h|7d] [--address ORIGIN] [--json]
+flowd admin --data-dir <dir> token list [--json]
+flowd admin --data-dir <dir> token revoke <id>
 ```
 
 `list` output, one block per user (FR-011, User Story 3 scenario 1):
@@ -53,7 +56,7 @@ A successful state change prints one line, for example `device 7 approved`. Devi
 2026-10-03 08:55  system  rate_limited  -  busy
 ```
 
-`--limit` is 1 to 10,000. No command prints tokens, token hashes, keys or provider subjects.
+`--limit` is 1 to 10,000. No command prints tokens, token hashes, keys or provider subjects, with one exception: `token create` prints the new pairing token once, and its link when `--address` is given. `--ttl` defaults to 24h.
 
 Approving a device of a pending user does not approve the user; both must be approved. Exit codes: 0 success, 1 usage error, 2 not found, 3 invalid transition (for example approving a device that is already approved).
 

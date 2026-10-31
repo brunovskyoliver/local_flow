@@ -110,8 +110,8 @@ or resource measurements.
 ## Remote dictation server (Feature 014)
 
 flowd can also serve remote dictation to approved LocalFlow devices through a
-Cloudflare Tunnel. It is off unless `--remote-listen` is given, and it then opens a
-second loopback listener that serves only `/v1/remote/identity` and
+tunnel, a LAN or Tailscale. It is off unless `--remote-listen` is given, and it then opens a
+second listener, on any IP literal since Feature 027, that serves only `/v1/remote/identity` and
 `/v1/remote/channel` (an end-to-end encrypted WebSocket channel). The Feature 003
 and 011 routes and the shared rewrite token grant nothing there. Speech recognition
 runs in the `flowd-speech` worker, a Swift child process that uses the app's own
@@ -122,7 +122,7 @@ FluidAudio and term-boosting code; flowd loads no weights. Contracts:
 
 | Flag | Meaning |
 | --- | --- |
-| `--remote-listen 127.0.0.1:8090` | loopback address for the remote listener (development 18090) |
+| `--remote-listen 127.0.0.1:8090` | IP literal address for the remote listener (development 18090). The install script binds loopback; server mode in the app binds 0.0.0.0:8090 |
 | `--data-dir <dir>` | holds `flowd-remote.sqlite`; must be owned by this user, mode 0700 |
 | `--speech-worker <path>` | worker executable, default `flowd-speech` next to flowd |
 | `--speech-models <dir>` | models the worker verifies, default `<data-dir>/Models` |
@@ -142,6 +142,13 @@ DATA="$HOME/Library/Application Support/LocalFlow Server"
 "$DATA/bin/flowd" admin --data-dir "$DATA" revoke device 5   # live channels close within 1 s
 "$DATA/bin/flowd" admin --data-dir "$DATA" audit --limit 20
 ```
+
+`flowd admin token create --label L [--user ID] [--ttl 1h|24h|7d] [--address ORIGIN] [--json]`
+makes a one-time pairing token, which approves one device with no sign-in; `token list` and
+`token revoke <id>` manage them. The value is printed once and stored only as a hash. On a client,
+`http://` works only on private addresses and names (FR-012a of Feature 027). Server mode, turning
+it off with `launchctl disable` and how to undo that, the auto-login need and the missing
+`flowd-meeting` are in the guide below.
 
 Step-by-step setup, tunnel, administration and uninstall: [docs/distribution/remote-server.md](../docs/distribution/remote-server.md).
 
