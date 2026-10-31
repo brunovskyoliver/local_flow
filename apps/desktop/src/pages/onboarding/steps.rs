@@ -4,6 +4,7 @@ use super::parts::*;
 use super::parts::t;
 use flow_core::onboarding::*;
 use flow_platform::Permission;
+use flow_ui::gpui::base::TestSupportExt;
 use flow_ui::prelude::*;
 
 type Body = Vec<AnyElement>;
@@ -133,7 +134,7 @@ impl OnboardingPage {
             body.push(any(note("checkmark.shield", mac("Your text never leaves this Mac. Every download is pinned to an exact version and checksum."), cx)));
         }
         if meeting {
-            body.push(any(div().id("onboarding.meetingSkip").w_full().child(note("text.badge.xmark", mac("Skip for now to keep meetings on this Mac without a language model. You still get transcripts with speaker labels, but summaries won't be available."), cx))));
+            body.push(any(div().id("onboarding.meetingSkip").w_full().child(note("text.badge.xmark", mac("Skip for now to keep meetings on this Mac without a language model. You still get transcripts with speaker labels, but summaries won't be available."), cx)).test_support()));
         }
         body
     }
@@ -165,7 +166,7 @@ impl OnboardingPage {
                 .child(
                     v_flex()
                         .flex_none()
-                        .pl(px(12.))
+                        .pl(px(26.))
                         .items_end()
                         .gap(px(3.))
                         .child(t(if downloaded { "Downloaded".to_string() } else { bytes(m.download_bytes) }).font(13., 500.).mono_digits().color(if downloaded { p.accent } else { p.ink }))

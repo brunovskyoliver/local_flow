@@ -25,7 +25,7 @@ impl OnboardingPage {
             any(headline("Connect ", "your server", ".")),
             any(lede(format!("Turn on {name} and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this {word} once. You can change this later in Settings."), cx)),
             any(setup_card(cx).child(card)),
-            any(div().id("onboarding.remoteStatus").w_full().child(note("info.circle", privacy, cx))),
+            any(div().id("onboarding.remoteStatus").w_full().child(note("info.circle", privacy, cx)).test_support()),
         ];
         if !meeting {
             let p = pal(cx);
@@ -73,13 +73,13 @@ impl OnboardingPage {
             let trust = self.click(cx, |this, cx| this.trust_server(cx));
             details = details
                 .child(t("Server fingerprint").font(12., 500.).color(p.muted))
-                .child(div().id("settings.remoteFingerprint").child(t(fingerprint).mono().size(13.)))
+                .child(div().id("settings.remoteFingerprint").child(t(fingerprint).mono().size(13.).selectable()).test_support())
                 .child(t("Compare it with `flowd admin identity` on the server before trusting it.").size(12.).color(p.muted))
                 .child(native_button("settings.remoteTrust", "Trust This Server").on_click(trust));
         } else if state != "approved"
             && let Some(pinned) = self.remote.pinned.clone()
         {
-            details = details.child(t(format!("Pinned fingerprint  {pinned}")).mono().size(12.).color(p.muted));
+            details = details.child(t(format!("Pinned fingerprint  {pinned}")).mono().size(12.).color(p.muted).selectable());
         }
         if needs_sign_in {
             let apple = self.click(cx, |this, cx| this.sign_in("apple", cx));
@@ -148,8 +148,8 @@ impl OnboardingPage {
                         .bg(p.tint)
                         .rounded(px(10.))
                         .gap(px(1.))
-                        .child(t("LOCALFLOW_REWRITE_TOKEN=<key> flowd serve --listen 0.0.0.0:8080 \\").mono().size(12.))
-                        .child(t("  --backend http://127.0.0.1:8000/v1 --model <served-model-id>").mono().size(12.)),
+                        .child(t("LOCALFLOW_REWRITE_TOKEN=<key> flowd serve --listen 0.0.0.0:8080 \\").mono().size(12.).selectable())
+                        .child(t("  --backend http://127.0.0.1:8000/v1 --model <served-model-id>").mono().size(12.).selectable()),
                 )),
         ]
     }
@@ -163,6 +163,7 @@ impl OnboardingPage {
         let word = self.word(cx);
         let body = {
             let draft = self.server_draft.read(cx).value().to_string();
+            let focused = self.server_draft.read(cx).focus_handle(cx).is_focused(window);
             let origin = remote_origin(&draft);
             let prefs = &self.core(cx).prefs;
             let text = if Purpose::stored(prefs) == Purpose::Meetings || prefs.bool_or("server.only", false) { MEETING_CONSENT_TEXT } else { CONSENT_TEXT };
@@ -174,12 +175,12 @@ impl OnboardingPage {
                 .gap(px(16.))
                 .child(t("Use your LocalFlow server?").font(17., 500.))
                 .child(
-                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(8.)).border_2().border_color(p.accent).child(icon("server.rack", 16., p.muted)).child(h_flex().relative().flex_1().min_w_0().when(draft.is_empty(), |d| d.child(div().absolute().left_0().child(t("https://server.example.com").size(13.).color(p.link()).a11y_hidden()))).child(div().w_full().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL")))),
+                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.surface).rounded(px(8.)).border(px(if focused { 2. } else { 1. })).border_color(if focused { p.accent } else { p.line }).child(icon("server.rack", 16., p.muted)).child(h_flex().relative().flex_1().min_w_0().when(draft.is_empty(), |d| d.child(div().absolute().left_0().child(t("https://server.example.com").size(13.).color(p.link()).a11y_hidden()))).child(div().w_full().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL")))),
                 )
                 .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.))
                 .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
                 .when_some(self.remote.error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning)))
-                .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.21)).on_click(cancel)).child(prototype_button("settings.remoteConsentConfirm", "Turn On").fill(p.primary).text_color(p.on_primary).when(origin.is_none(), |b| b.fill(p.ink.opacity(0.1)).text_color(p.muted).disabled_opacity(1.)).disabled(origin.is_none()).on_click(confirm)))
+                .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.21)).on_click(cancel)).child(prototype_button("settings.remoteConsentConfirm", "Turn On").fill(p.primary).text_color(p.on_primary).when(origin.is_none(), |b| b.fill(p.ink.opacity(0.1)).text_color(p.muted.opacity(0.45)).disabled_opacity(1.)).disabled(origin.is_none()).on_click(confirm)))
         };
         Some(any(sheet_overlay("onboarding.modal", window, cx, div().bg(sheet_fill(cx)).rounded(px(12.)).child(body))))
     }

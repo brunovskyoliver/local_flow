@@ -174,7 +174,7 @@ pub fn download_row(symbol: &str, title: &'static str, detail: String, state: Ro
                 .flex_1()
                 .min_w_0()
                 .gap(px(8.))
-                .child(h_flex().w_full().items_start().gap(px(12.)).child(title_detail(title, detail, cx)).child(div().flex_none().pt(px(2.)).child(trailing)))
+                .child(h_flex().w_full().items_start().gap(px(28.)).child(title_detail(title, detail, cx)).child(div().flex_none().pt(px(2.)).child(trailing)))
                 .children(below),
         )
 }
