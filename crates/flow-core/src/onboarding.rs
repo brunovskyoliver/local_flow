@@ -1234,6 +1234,25 @@ mod tests {
         assert!(!p.bool_or("server.only", true));
         assert_eq!(s.effects, vec![Effect::AbandonServer]);
 
+        // Either flag alone abandons; neither just moves the purpose.
+        for (key, abandons) in [("server.only", true), ("remote.enabled", true), ("unrelated", false)] {
+            let mut p = Prefs::memory();
+            p.set("setup.purpose", "meetings");
+            p.set(key, true);
+            let mut s = Setup::new(&p);
+            s.resume_unfinished(&mut p);
+            assert_eq!(s.purpose, Purpose::Both, "{key}");
+            assert_eq!(s.effects.contains(&Effect::AbandonServer), abandons, "{key}");
+        }
+
+        // A finished install keeps meetings.
+        let mut p = Prefs::memory();
+        p.set("setupVersion", 1);
+        p.set("setup.purpose", "meetings");
+        let mut s = Setup::new(&p);
+        s.resume_unfinished(&mut p);
+        assert_eq!((s.purpose, p.string("setup.purpose").as_deref()), (Purpose::Meetings, Some("meetings")));
+
         // Finished: nothing changes, and no setup.purpose appears on an install without one.
         let mut p = Prefs::memory();
         p.set("setupVersion", 1);
@@ -1329,6 +1348,16 @@ mod tests {
         p.set("server.useForEverything", true);
         p.set("rewriteEnabled", true);
         s.advance(&snap, &mut p);
+        // A different purpose abandons, from the purpose step as well.
+        let (mut other, mut other_prefs) = at(Step::Ai, Purpose::Both, AiMode::Remote);
+        other.advance(&snap, &mut other_prefs);
+        other.back();
+        other.back();
+        other.purpose = Purpose::Dictation;
+        other.effects.clear();
+        other.advance(&snap, &mut other_prefs);
+        assert_eq!(other.step, Step::Ai);
+        assert!(other.effects.contains(&Effect::AbandonServer));
         // Back with the same choice keeps it.
         s.back();
         s.effects.clear();
@@ -1412,7 +1441,7 @@ mod tests {
         assert_eq!(speech_model_raw(&p), "parakeet-v3");
     }
 
-    // parity: ONB-390 ONB-392 ONB-393 ONB-394 ONB-395
+    // parity: ONB-390 ONB-392
     #[test]
     fn test_evidence_needs_the_armed_session() {
         let snap = ready();
@@ -1487,6 +1516,25 @@ mod tests {
         s.model_install_error = Some("Model installation cancelled.".into());
         assert_eq!(s.test_blocked_reason().as_deref(), Some("Model installation cancelled."));
 
+        // Each input of `readyForTest` alone turns it off.
+        let knocks: [fn(&mut Snapshot); 10] = [
+            |s| s.storage_available = false,
+            |s| s.model_installed = false,
+            |s| s.microphone = Perm::Denied,
+            |s| s.input_monitoring = Perm::Denied,
+            |s| s.shortcut_ready = false,
+            |s| s.shortcut.enabled = false,
+            |s| s.busy = true,
+            |s| s.installing = true,
+            |s| s.runtime_leased = true,
+            |s| s.controls_available = false,
+        ];
+        for (i, knock) in knocks.iter().enumerate() {
+            let mut s = ready();
+            knock(&mut s);
+            assert!(!s.ready_for_test(), "input {i}");
+        }
+
         // Accessibility and system audio never block.
         let mut s = ready();
         s.accessibility = Perm::Denied;
@@ -1548,6 +1596,15 @@ mod tests {
     // parity: ONB-079 ONB-080 ONB-181 ONB-182 ONB-183 ONB-184 ONB-185 ONB-186 ONB-187 ONB-188 ONB-189 ONB-190 ONB-191 ONB-221 ONB-223 ONB-224 ONB-225 ONB-226 ONB-227 ONB-228 ONB-229 ONB-216
     #[test]
     fn remote_status_privacy_and_gate() {
+        let mut p = Prefs::memory();
+        p.set("remote.state", "approved");
+        assert!(!enrolled(&p), "approved means nothing with the switch off");
+        p.set("remote.enabled", true);
+        assert!(enrolled(&p));
+        p.set("remote.state", "pending");
+        assert!(enrolled(&p), "pending may continue");
+        p.set("remote.state", "pinned");
+        assert!(!enrolled(&p));
         let mut p = Prefs::memory();
         assert_eq!(remote_status(&p, false), None);
         assert!(remote_privacy(&p).starts_with("Nothing leaves this Mac until you confirm"));
@@ -1686,7 +1743,7 @@ mod tests {
         assert_eq!(ai_state(&AiPhase::Ready), RowState::Done);
     }
 
-    // parity: ONB-296 ONB-297 ONB-298 ONB-299 ONB-300 ONB-301 ONB-302 ONB-303
+    // Strings only: no installer reports these yet, so no row is credited.
     #[test]
     fn ai_failure_messages() {
         assert_eq!(AI_ERROR_MISSING, "This copy of LocalFlow is missing its local AI files. Reinstall it.");
@@ -1700,7 +1757,7 @@ mod tests {
         assert_eq!(ai_state(&AiPhase::Failed(AI_ERROR_TIMEOUT.into())), RowState::Failed(AI_ERROR_TIMEOUT.into()));
     }
 
-    // parity: ONB-306
+    // No installer reports Ready yet, so the row is not credited.
     #[test]
     fn ai_ready_points_rewriting_at_the_local_helper() {
         let mut p = Prefs::memory();
@@ -1793,5 +1850,8 @@ mod tests {
         assert_eq!(v["kind"], "modifier_only");
         assert_eq!(v["deviceModifiers"], 0x2000);
         assert_eq!(v["keyCode"], 49);
+        assert_eq!((Shortcut::right_control().kind, Shortcut::right_control().modifiers, Shortcut::right_control().device_modifiers), (ShortcutKind::ModifierOnly, CONTROL, Some(0x2000)));
+        assert_eq!((Shortcut::right_option().kind, Shortcut::right_option().modifiers, Shortcut::right_option().device_modifiers), (ShortcutKind::ModifierOnly, OPTION, Some(0x40)));
+        assert_eq!(Shortcut::fn_globe(), Shortcut::default());
     }
 }

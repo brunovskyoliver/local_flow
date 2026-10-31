@@ -250,6 +250,7 @@ async fn introduction_copy(cx: &mut TestAppContext) {
         "Hold a key in any app, talk, and let go, or record a meeting and get notes. LocalFlow turns speech into clean text right here on your Mac.",
         "Speech recognition runs on this Mac. Audio leaves it only if you connect a LocalFlow server you run.",
         "Hold Right Control, speak, release. The text lands where your cursor is.",
+        "Meeting notes",
         "Records your calls, then writes a transcript with speaker labels and notes.",
         "Optional AI fixes punctuation, drops the ums and ahs, and writes meeting notes.",
         "Get started",
@@ -285,6 +286,10 @@ async fn purpose_copy_and_ids(cx: &mut TestAppContext) {
         "Continue",
         "Back",
     ]);
+    let muted = cx.update(|cx| pal(cx).muted);
+    let (back_x, primary_x) = w.update(cx, |_, w, _| (w.find("onboarding.back").bounds().origin.x, w.find("onboarding.primary").bounds().origin.x)).unwrap();
+    assert_eq!(flow_ui::probe::style_of("Back").map(|s| s.color), Some(muted));
+    assert!(back_x < primary_x, "Back sits at the left");
     w.update(cx, |_, w, _| {
         for id in ["onboarding.purpose.both", "onboarding.purpose.dictation", "onboarding.purpose.meetings"] {
             assert!(w.try_find(id).is_some(), "{id}");
@@ -321,6 +326,7 @@ async fn location_copy_for_dictation_and_both(cx: &mut TestAppContext) {
         "Use a LocalFlow server on another computer you run, for bigger models. Its administrator approves this Mac once.",
         "MTPLX engine",
         "About 550 MB, kept in LocalFlow's folder. No Homebrew or Python setup.",
+        "Two background services",
         "They start at login and only accept connections from this Mac.",
         "Your text never leaves this Mac. Every download is pinned to an exact version and checksum.",
         "Skip for now",
@@ -331,6 +337,9 @@ async fn location_copy_for_dictation_and_both(cx: &mut TestAppContext) {
     assert_saw(&["Once the server approves this Mac, dictation audio, meeting recordings and their text go to it. Until then, and whenever it can't be reached, dictation is transcribed on this Mac."]);
     assert!(!saw("MTPLX engine"));
     assert!(!cx.update(|cx| cx.global::<Core>().prefs.contains("remote.enabled")), "choosing a card stores nothing");
+    click(cx, w, "onboarding.ai.local");
+    assert_eq!(read(cx, w, |p, _| p.setup.ai_mode), AiMode::Local);
+    click(cx, w, "onboarding.ai.remote");
 }
 
 // parity: ONB-135 ONB-136 ONB-137 ONB-141 ONB-143 ONB-146 ONB-153
@@ -362,7 +371,7 @@ async fn model_picker_gates_and_starts_downloads(cx: &mut TestAppContext) {
         p.setup.step = Step::AiDetails;
         p.downloaded[1] = true;
     });
-    assert_saw(&["Choose a ", "This Mac has 16 GB of memory", "Qwen 3.5 4B Speed", "Uses about 2.9 GB", "Downloaded", "Needs 48 GB memory", "Download Qwen 3.5 4B Speed"]);
+    assert_saw(&["Choose a ", "model", "This Mac has 16 GB of memory", "Qwen 3.5 4B Speed", "Uses about 2.9 GB", "Downloaded", "Needs 48 GB memory", "Download Qwen 3.5 4B Speed"]);
     assert!(disabled(cx, w, "onboarding.model.4"));
     click(cx, w, "onboarding.model.4");
     assert_eq!(read(cx, w, |p, _| p.selection), 0, "a model that doesn't fit can't be chosen");
@@ -574,6 +583,8 @@ async fn meeting_path_has_its_own_card(cx: &mut TestAppContext) {
     });
     assert_saw(&["LocalFlow records your microphone and the other people on a call.", "Needed to record a meeting.", "Records the other people on a call. macOS calls this Screen Recording and may ask you to reopen LocalFlow. Without it, meetings record your microphone only."]);
     assert!(!saw("Input Monitoring") && !saw("Accessibility"), "no keyboard permissions");
+    let (mic_y, audio_y) = w.update(cx, |_, w, _| (w.find("onboarding.allow.Microphone").bounds().origin.y, w.find("onboarding.allow.System audio").bounds().origin.y)).unwrap();
+    assert!(mic_y < audio_y, "Microphone comes first");
     w.update(cx, |_, w, _| assert_eq!(w.find("onboarding.allow.Microphone").label().as_deref(), Some("Allow Microphone"))).unwrap();
     win_allow(cx, w, Permission::InputMonitoring);
     assert!(r.log.borrow().is_empty(), "ignored for meetings");
@@ -872,6 +883,7 @@ async fn test_step_arms_and_done_copy(cx: &mut TestAppContext) {
     assert!(!disabled(cx, w, "onboarding.primary"));
     set(cx, w, |p| p.setup.step = Step::Complete);
     assert_saw(&["You're ", "all set", "Hold your shortcut in any app to dictate."]);
+    assert_eq!(flow_ui::probe::style_of("Hold your shortcut in any app to dictate.").map(|s| s.color), Some(cx.update(|cx| pal(cx).muted)));
     w.update(cx, |_, w, _| {
         assert!(w.try_find("onboarding.primary").is_none() && w.try_find("onboarding.back").is_none() && w.try_find("onboarding.progress").is_none());
     })
@@ -891,7 +903,7 @@ async fn server_step_consent_trust_sign_in_and_turn_off(cx: &mut TestAppContext)
         p.setup.ai_mode = AiMode::Remote;
         p.remote.base = Some(http(vec![("/v1/remote/identity", 200, body.clone())]));
     });
-    assert_saw(&["Connect ", "your server", "Turn on Remote dictation", "Remote dictation", "Run dictation, rewriting", "Nothing leaves this Mac until", "Sign in to continue", "Use this server"]);
+    assert_saw(&["Connect ", "your server", "Turn on Remote dictation and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this Mac once. You can change this later in Settings.", "Remote dictation", "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run.", "Nothing leaves this Mac until", "Sign in to continue", "Use this server"]);
     assert!(disabled(cx, w, "onboarding.primary"));
     // Toggle shows consent; Cancel leaves it off.
     click(cx, w, "settings.remoteEnabled");
@@ -963,7 +975,7 @@ async fn server_step_consent_trust_sign_in_and_turn_off(cx: &mut TestAppContext)
     // Meeting wording, including the consent text with retention.
     cx.update(|cx| cx.global_mut::<Core>().prefs.set("setup.purpose", "meetings"));
     set(cx, w, |p| p.setup.purpose = Purpose::Meetings);
-    assert_saw(&["Turn on Your server", "Run meeting transcripts and notes"]);
+    assert_saw(&["Turn on Your server and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this Mac once. You can change this later in Settings.", "Run meeting transcripts and notes"]);
     assert!(!saw("Advanced: rewrite-only server"));
     click(cx, w, "settings.remoteEnabled");
     assert_saw(&["Meetings handed off to the server stay there"]);
@@ -1203,7 +1215,7 @@ async fn return_advances_and_escape_cancels_dictation(cx: &mut TestAppContext) {
     assert!(r.log.borrow().iter().any(|c| c.contains("Cancel")), "{:?}", r.log.borrow());
 }
 
-// parity: SHELL-035 ONB-411
+// parity: ONB-411
 #[flow_ui::gpui::test]
 async fn finishing_writes_prefs_and_opens_the_library(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);
@@ -1682,6 +1694,11 @@ async fn test_step_type_hint_and_final_disable(cx: &mut TestAppContext) {
         p.setup.test_succeeded = true;
     });
     assert!(disabled(cx, w, "onboarding.startTest"), "succeeded");
+    set(cx, w, |p| {
+        p.setup.test_succeeded = false;
+        p.performing = true;
+    });
+    assert!(disabled(cx, w, "onboarding.startTest"), "performing");
 }
 
 // parity: ONB-193 ONB-194 ONB-195 ONB-199 ONB-210 ONB-212 ONB-213 ONB-214 ONB-215 ONB-217
@@ -1800,4 +1817,80 @@ async fn launch_page_follows_the_purpose(cx: &mut TestAppContext) {
         cx.global_mut::<Core>().prefs.set("setup.purpose", "meetings");
         assert_eq!(crate::shell::landing_page(cx.global::<Core>()), crate::pages::Page::Meetings);
     });
+}
+
+// parity: ONB-339
+/// A refused preflight is denied, on the production path from the service answer.
+#[flow_ui::gpui::test]
+async fn refused_preflights_read_as_denied(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[(Permission::Accessibility, PermissionState::Granted)]).win;
+    let (input, access, audio, mic) = read(cx, w, |p, _| (p.snap.input_monitoring, p.snap.accessibility, p.snap.system_audio, p.snap.microphone));
+    assert_eq!(input, Perm::Denied);
+    assert_eq!(access, Perm::Granted);
+    assert_eq!(audio, Perm::Denied);
+    assert_eq!(mic, Perm::Unknown, "only the microphone has a not-asked state");
+}
+
+// parity: ONB-235
+#[flow_ui::gpui::test]
+async fn credential_errors_from_connect(cx: &mut TestAppContext) {
+    let r = rig(cx, false, &[]);
+    let w = r.win;
+    let (_, _, warning) = colours(cx);
+    let invalid = "Enter a valid endpoint before setting a credential.";
+    let keychain = "Could not access the credential in Keychain.";
+    set(cx, w, |p| {
+        p.setup.step = Step::AiDetails;
+        p.setup.ai_mode = AiMode::Remote;
+    });
+    click(cx, w, "onboarding.legacyRewriteServer");
+    w.update(cx, |p, w, cx| {
+        p.credential_input.update(cx, |s, cx| s.set_value("good-key", w, cx));
+        p.edit_endpoint("not a url".into(), cx);
+        p.connect(cx);
+    })
+    .unwrap();
+    frame(cx, w);
+    assert_style(invalid, 12., None, warning);
+    w.update(cx, |p, _, cx| {
+        p.edit_endpoint("https://rewrite.example.com".into(), cx);
+        p.connect(cx);
+    })
+    .unwrap();
+    frame(cx, w);
+    assert_style(keychain, 12., None, warning);
+    assert!(!read(cx, w, |p, _| p.credential_present), "a refused save leaves no credential");
+}
+
+// parity: ONB-062
+#[flow_ui::gpui::test]
+async fn primary_says_continue_on_each_default_step(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    let title = |cx: &mut TestAppContext, step| {
+        set(cx, w, |p| p.setup.step = step);
+        w.update(cx, |_, w, _| w.find("onboarding.primary").label().map(|l| l.to_string())).unwrap()
+    };
+    for step in [Step::Purpose, Step::Ai, Step::Downloads, Step::Permissions, Step::Personalize] {
+        assert_eq!(title(cx, step).as_deref(), Some("Continue"), "{step:?}");
+    }
+    assert_ne!(title(cx, Step::Introduction).as_deref(), Some("Continue"));
+}
+
+// parity: ONB-237
+#[flow_ui::gpui::test]
+async fn insecure_toggle_invalidates_the_test(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("rewriteEndpoint", "http://studio.local:8080"));
+    set(cx, w, |p| {
+        p.setup.step = Step::AiDetails;
+        p.setup.ai_mode = AiMode::Remote;
+    });
+    click(cx, w, "onboarding.legacyRewriteServer");
+    set(cx, w, |p| {
+        p.connection = Some(Ok(vec!["studio".into()]));
+        p.analysis = Some("x".into());
+    });
+    click(cx, w, "onboarding.allowInsecure");
+    assert!(cx.update(|cx| insecure_override(&cx.global::<Core>().prefs, "http://studio.local:8080")));
+    assert!(read(cx, w, |p, _| p.connection.is_none() && p.analysis.is_none()));
 }

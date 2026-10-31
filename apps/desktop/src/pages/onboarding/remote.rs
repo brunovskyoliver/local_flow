@@ -35,7 +35,7 @@ impl OnboardingPage {
                 cx.notify();
             });
             body.push(any(plain_button("onboarding.legacyRewriteServer", "Advanced: rewrite-only server").toggled(open).on_click(toggle).content(
-                h_flex().py(px(4.)).gap(px(1.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 11., p.muted)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
+                h_flex().py(px(4.)).gap(px(1.)).child(icon(if open { "chevron.down@bold" } else { "chevron.right@bold" }, 11., p.muted)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
             )));
             if open {
                 // The page's spacing is 24; `DisclosureGroup` puts its content 12 below the title.
@@ -92,7 +92,7 @@ impl OnboardingPage {
         }
         if matches!(state.as_str(), "pin_mismatch" | "revoked" | "rejected") {
             let again = self.click(cx, |this, cx| this.fetch_identity(cx));
-            details = details.child(native_button("settings.remoteEnrollAgain", "Enroll Again").disabled(self.remote.busy).on_click(again));
+            details = details.child(native_button("settings.remoteEnrollAgain", "Enroll Again").min_width(95.5).disabled(self.remote.busy).on_click(again));
         }
         if let Some(e) = self.remote.error.clone() {
             details = details.child(t(e).size(12.).color(p.warning));

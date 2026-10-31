@@ -91,6 +91,11 @@ fn step_transition(reduce: bool) -> Option<Duration> {
     (!reduce).then_some(Duration::from_millis(250))
 }
 
+/// The preflight checks answer only yes or no, so Swift has no not-asked state for these.
+fn preflight(s: PermissionState) -> Perm {
+    if perm(s) == Perm::Granted { Perm::Granted } else { Perm::Denied }
+}
+
 fn perm(s: PermissionState) -> Perm {
     match s {
         PermissionState::NotAsked => Perm::Unknown,
@@ -244,9 +249,9 @@ impl OnboardingPage {
         self.snap.model_installed |= s.speech_model_verified();
         let mut next = self.snap.clone();
         next.microphone = perm(s.permission(Permission::Microphone));
-        next.input_monitoring = perm(s.permission(Permission::InputMonitoring));
-        next.accessibility = perm(s.permission(Permission::Accessibility));
-        next.system_audio = perm(s.permission(Permission::SystemAudio));
+        next.input_monitoring = preflight(s.permission(Permission::InputMonitoring));
+        next.accessibility = preflight(s.permission(Permission::Accessibility));
+        next.system_audio = preflight(s.permission(Permission::SystemAudio));
         next.shortcut = Shortcut::load(&core.prefs);
         next.storage_available = core.db.is_some();
         next.speech_model = speech_model_name(&speech_model_raw(&core.prefs)).to_string();

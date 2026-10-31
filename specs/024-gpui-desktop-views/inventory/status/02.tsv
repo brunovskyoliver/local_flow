@@ -59,7 +59,7 @@ ONB-058	auto	test:model_picker_gates_and_starts_downloads
 ONB-059	auto	test:model_picker_gates_and_starts_downloads
 ONB-060	auto	test:test_step_arms_and_done_copy
 ONB-061	auto	test:meeting_personalize_gate
-ONB-062	auto	test:purpose_copy_and_ids
+ONB-062	auto	test:primary_says_continue_on_each_default_step
 ONB-063	auto	test:return_advances_and_escape_cancels_dictation ; test:rewrite_flag_only_turns_on_when_nothing_blocks_it
 ONB-064	auto	test:return_advances_and_escape_cancels_dictation ; test:advance_walks_steps_and_requests_models
 ONB-065	auto	test:path_follows_choices
@@ -121,7 +121,7 @@ ONB-120	auto	live:audit/mac/onboarding/intro-light-ref.png ; live:audit/mac/onbo
 ONB-121	live	live:audit/mac/onboarding/intro-light-rust.png ; live:audit/mac/onboarding/intro-light-ref.png ; live:audit/mac/onboarding/intro-dark-rust.png ; live:audit/mac/onboarding/intro-dark-ref.png
 ONB-122	auto	live:audit/mac/onboarding/intro-light-ref.png ; live:audit/mac/onboarding/intro-light-rust.png ; live:audit/mac/onboarding/intro-dark-ref.png ; live:audit/mac/onboarding/intro-dark-rust.png ; test:introduction_copy ; test:intro_and_purpose_draw_swifts_symbols
 ONB-123	auto	live:audit/mac/onboarding/intro-light-ref.png ; live:audit/mac/onboarding/intro-light-rust.png ; live:audit/mac/onboarding/intro-dark-ref.png ; live:audit/mac/onboarding/intro-dark-rust.png ; test:introduction_copy ; test:intro_and_purpose_draw_swifts_symbols
-ONB-124	auto	live:audit/mac/onboarding/intro-light-ref.png ; live:audit/mac/onboarding/intro-light-rust.png ; live:audit/mac/onboarding/intro-dark-ref.png ; live:audit/mac/onboarding/intro-dark-rust.png ; test:introduction_copy ; test:intro_and_purpose_draw_swifts_symbols
+ONB-124	auto	live:audit/mac/onboarding/intro-light-ref.png ; live:audit/mac/onboarding/intro-light-rust.png ; live:audit/mac/onboarding/intro-dark-ref.png ; live:audit/mac/onboarding/intro-dark-rust.png ; test:introduction_copy ; test:intro_and_purpose_draw_swifts_symbols ; note:person.2.wave.2 glyph is drawn in-house and still differs from SF (heavier, bigger waves); owned by the icon agent
 ONB-125	auto	live:audit/mac/onboarding/intro-light-ref.png ; live:audit/mac/onboarding/intro-light-rust.png ; live:audit/mac/onboarding/intro-dark-ref.png ; live:audit/mac/onboarding/intro-dark-rust.png ; test:introduction_copy ; test:intro_and_purpose_draw_swifts_symbols
 ONB-126	auto	live:audit/mac/onboarding/purpose-light-ref.png ; live:audit/mac/onboarding/purpose-light-rust.png ; live:audit/mac/onboarding/purpose-dark-ref.png ; live:audit/mac/onboarding/purpose-dark-rust.png ; test:purpose_copy_and_ids
 ONB-127	auto	live:audit/mac/onboarding/purpose-light-ref.png ; live:audit/mac/onboarding/purpose-light-rust.png ; live:audit/mac/onboarding/purpose-dark-ref.png ; live:audit/mac/onboarding/purpose-dark-rust.png ; test:purpose_copy_and_ids
@@ -232,9 +232,9 @@ ONB-231	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit
 ONB-232	live	test:placeholders_are_drawn_until_typed ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png
 ONB-233	auto	test:origins_and_overrides
 ONB-234	auto	live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; test:placeholders_are_drawn_until_typed
-ONB-235	auto	test:rewrite_flag_only_turns_on_when_nothing_blocks_it ; test:rewrite_form_type_masking_and_analysis_lines
+ONB-235	auto	test:rewrite_flag_only_turns_on_when_nothing_blocks_it ; test:rewrite_form_type_masking_and_analysis_lines ; test:credential_errors_from_connect
 ONB-236	auto	live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; test:rewrite_only_form_connects_and_reports
-ONB-237	auto	test:origins_and_overrides
+ONB-237	auto	test:origins_and_overrides ; test:insecure_toggle_invalidates_the_test
 ONB-238	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; test:rewrite_only_form_connects_and_reports ; test:rewrite_form_type_masking_and_analysis_lines
 ONB-239	auto	test:rewrite_only_form_connects_and_reports
 ONB-240	auto	test:rewrite_only_form_connects_and_reports ; test:rewrite_form_type_masking_and_analysis_lines
@@ -293,17 +293,17 @@ ONB-292	auto	test:ai_row_states
 ONB-293	auto	test:ai_row_states
 ONB-294	auto	test:ai_row_states
 ONB-295	auto	test:ai_row_states
-ONB-296	auto	test:ai_failure_messages
-ONB-297	auto	test:ai_failure_messages
-ONB-298	auto	test:ai_failure_messages
-ONB-299	auto	test:ai_failure_messages
-ONB-300	auto	test:ai_failure_messages
-ONB-301	auto	test:ai_failure_messages
-ONB-302	auto	test:ai_failure_messages
-ONB-303	auto	test:ai_failure_messages
+ONB-296	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
+ONB-297	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
+ONB-298	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
+ONB-299	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
+ONB-300	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
+ONB-301	service	service:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
+ONB-302	service	service:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
+ONB-303	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
 ONB-304	service	service:resume runs in refresh, but needs real background-service approval, Feature 025 ; test:polling_picks_up_a_new_permission
 ONB-305	recorded	recorded:swift-note: LocalAISetup.cancel() has no caller in the app, so nothing can reach this outcome
-ONB-306	auto	test:ai_ready_points_rewriting_at_the_local_helper
+ONB-306	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
 ONB-307	auto	test:meeting_row_states
 ONB-308	auto	test:meeting_row_states
 ONB-309	auto	test:meeting_row_states
@@ -336,7 +336,7 @@ ONB-335	auto	test:meeting_path_has_its_own_card
 ONB-336	auto	test:permission_group_shows_only_what_is_missing
 ONB-337	auto	test:readiness_and_block_order
 ONB-338	auto	test:readiness_and_block_order
-ONB-339	auto	test:readiness_and_block_order
+ONB-339	auto	test:refused_preflights_read_as_denied
 ONB-340	auto	test:allow_microphone_says_the_outcome
 ONB-341	auto	test:allow_microphone_says_the_outcome
 ONB-342	auto	test:allow_the_other_permissions
@@ -367,7 +367,7 @@ ONB-366	live	live:audit/mac/onboarding/personalize-light-rust.png ; live:audit/m
 ONB-367	auto	test:personalize_copy_and_first_shortcut ; test:personalize_labels_record_gate_and_errors
 ONB-368	auto	test:recording_gates_and_results
 ONB-369	service	service:the 30 s timeout and head-insert tap live in Services.record_shortcut on macOS; a headless test only reaches the Fake ; test:record_button_toggles_without_saving
-ONB-370	auto	test:record_button_toggles_without_saving
+ONB-370	service	service:no recorder exists yet: Services.record_shortcut is Unavailable on macOS and has no stop; the feature adding the recorder must add stop ; test:record_button_toggles_without_saving
 ONB-371	auto	test:capture_commits_after_release
 ONB-372	auto	test:recording_gates_and_results
 ONB-373	auto	test:recording_gates_and_results ; test:personalize_labels_record_gate_and_errors
@@ -390,9 +390,9 @@ ONB-389	auto	test:test_step_arms_and_done_copy ; test:test_step_type_hint_and_fi
 ONB-390	auto	test:test_evidence_needs_the_armed_session
 ONB-391	auto	test:preparing_the_test_skips_the_load_on_a_server
 ONB-392	auto	test:test_evidence_needs_the_armed_session
-ONB-393	auto	test:test_evidence_needs_the_armed_session
-ONB-394	auto	test:test_evidence_needs_the_armed_session
-ONB-395	auto	test:test_evidence_needs_the_armed_session
+ONB-393	recorded	recorded:not wired: no production caller feeds dictation sessions to Setup yet (dictation_started, dictation_ended, record_successful_dictation), so the test cannot complete a real run; the service session events add it
+ONB-394	recorded	recorded:not wired: no production caller feeds dictation sessions to Setup yet (dictation_started, dictation_ended, record_successful_dictation), so the test cannot complete a real run; the service session events add it
+ONB-395	recorded	recorded:not wired: no production caller feeds dictation sessions to Setup yet (dictation_started, dictation_ended, record_successful_dictation), so the test cannot complete a real run; the service session events add it
 ONB-396	auto	test:test_step_arms_and_done_copy ; test:test_step_type_hint_and_final_disable
 ONB-397	auto	test:finish_writes_setup_version_and_speech_model
 ONB-398	auto	test:finish_writes_setup_version_and_speech_model

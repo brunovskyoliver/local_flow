@@ -49,7 +49,7 @@ pub fn feature_row(symbol: &str, title: &'static str, detail: String, cx: &App) 
 /// SwiftUI's `Label` at Figtree 13 `muted`.
 pub fn note(symbol: &str, text: String, cx: &App) -> Div {
     let m = pal(cx).muted;
-    h_flex().w_full().items_start().gap(px(7.)).child(div().pt(px(0.5)).child(icon(symbol, 15., m))).child(div().flex_1().min_w_0().child(t(text).size(13.).color(m)))
+    h_flex().w_full().items_start().gap(px(8.)).child(div().pt(px(0.5)).child(icon(symbol, 15., m))).child(div().flex_1().min_w_0().child(t(text).size(13.).color(m)))
 }
 
 pub fn badge(text: &'static str, cx: &App) -> Div {
@@ -61,8 +61,8 @@ pub fn badge(text: &'static str, cx: &App) -> Div {
 /// The glyph is 17 across in a layout box 20 wide, as the SF one at this size is.
 fn radio(selected: bool, cx: &App) -> Div {
     let p = pal(cx);
-    let ring = h_flex().flex_none().justify_center().size(px(17.)).mt(px(1.)).rounded_full().border(px(1.2));
-    let ring = if selected { ring.border_color(p.accent).child(div().size(px(10.5)).rounded_full().bg(p.accent)) } else { ring.border_color(p.rule) };
+    let ring = h_flex().flex_none().justify_center().size(px(17.)).mt(px(1.5)).rounded_full().border(px(1.2));
+    let ring = if selected { ring.border(px(1.5)).border_color(p.accent).child(div().size(px(11.5)).rounded_full().bg(p.accent)) } else { ring.border_color(p.rule) };
     h_flex().flex_none().w(px(20.)).justify_center().items_start().child(ring)
 }
 

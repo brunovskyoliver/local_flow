@@ -37,6 +37,7 @@ pub struct FlowButton {
     custom: Option<AnyElement>,
     text_color: Option<Hsla>,
     fill: Option<Hsla>,
+    pressed: Option<Hsla>,
     toggled: Option<bool>,
     disabled_opacity: f32,
     tooltip: Option<SharedString>,
@@ -80,6 +81,7 @@ impl FlowButton {
             custom: None,
             text_color: None,
             fill: None,
+            pressed: None,
             toggled: None,
             disabled_opacity: 0.45,
             tooltip: None,
@@ -121,6 +123,12 @@ impl FlowButton {
         self
     }
     /// A fill other than the kind's, such as `.borderedProminent`'s accent.
+    /// The pressed fill, when it isn't `fill` at 80 percent.
+    pub fn pressed(mut self, c: impl Into<Hsla>) -> Self {
+        self.pressed = Some(c.into());
+        self
+    }
+
     pub fn fill(mut self, c: impl Into<Hsla>) -> Self {
         self.fill = Some(c.into());
         self
@@ -178,6 +186,7 @@ impl RenderOnce for FlowButton {
         let (bg, active, fg, size, weight, px_x, px_y) = self.kind.style(&p);
         let fg = self.text_color.unwrap_or(fg);
         let (bg, active) = self.fill.map_or((bg, active), |f| (f, f.opacity(0.8)));
+        let active = self.pressed.unwrap_or(active);
         let variant = ButtonCustomVariant::new(cx).color(bg).foreground(fg).hover(bg).active(active).shadow(false);
         let label = self.a11y_label.unwrap_or_else(|| self.label.clone());
         let content = match self.custom {
@@ -206,6 +215,8 @@ impl RenderOnce for FlowButton {
                 _ => 8.,
             }))
             .border_0()
+            // SwiftUI's regular control is 24 high whatever the text's line height.
+            .when(matches!(self.kind, ButtonKind::Native), |b| b.h(px(24.)).py_0())
             .when(self.min_width > 0., |b| b.min_w(px(self.min_width)))
             .when(self.full_width, |b| b.w_full());
         // Kit's custom variant fades its fill, so the real color goes on the instance style.
@@ -241,6 +252,8 @@ pub fn prototype_page(id: impl Into<ElementId>, max_width: f32, cx: &App, conten
         .text_size(px(14.))
         .child(
             div()
+                .id("page.column")
+                .test_support()
                 .w_full()
                 .max_w(px(max_width))
                 .px(px(if compact { 24. } else { 48. }))
