@@ -1412,7 +1412,7 @@ async fn placeholders_are_drawn_until_typed(cx: &mut TestAppContext) {
 }
 
 #[track_caller]
-fn style(text: &str, size: f32, weight: Option<f32>, color: Hsla) {
+fn assert_style(text: &str, size: f32, weight: Option<f32>, color: Hsla) {
     let s = flow_ui::probe::style_of(text).unwrap_or_else(|| panic!("not drawn: {text}"));
     assert_eq!(s.size, size, "size of {text}");
     if let Some(weight) = weight {
@@ -1422,7 +1422,7 @@ fn style(text: &str, size: f32, weight: Option<f32>, color: Hsla) {
 }
 
 #[track_caller]
-fn drew(symbols: &[&str]) {
+fn assert_drew(symbols: &[&str]) {
     let all = flow_ui::probe::symbols();
     for s in symbols {
         assert!(all.iter().any(|d| d == s), "{s} not in {all:?}");
@@ -1441,10 +1441,16 @@ fn colours(cx: &mut TestAppContext) -> (Hsla, Hsla, Hsla) {
 async fn intro_and_purpose_draw_swifts_symbols(cx: &mut TestAppContext) {
     let w = rig(cx, true, &[]).win;
     let (accent, ..) = colours(cx);
-    drew(&["waveform", "lock.shield", "keyboard", "person.2.wave.2", "sparkles"]);
+    assert_drew(&["waveform"]);
+    assert_drew(&["lock.shield"]);
+    assert_drew(&["keyboard"]);
+    assert_drew(&["person.2.wave.2"]);
+    assert_drew(&["sparkles"]);
     assert_eq!(flow_ui::probe::symbol_color("waveform"), Some(accent));
     click(cx, w, "onboarding.primary");
-    drew(&["square.stack", "keyboard", "person.2.wave.2"]);
+    assert_drew(&["square.stack"]);
+    assert_drew(&["keyboard"]);
+    assert_drew(&["person.2.wave.2"]);
     assert!(!flow_ui::probe::symbols().iter().any(|s| s == "lock.shield"));
 }
 
@@ -1457,17 +1463,26 @@ async fn ai_step_symbols_notes_and_skip(cx: &mut TestAppContext) {
     assert!(!saw("Skip for now"), "only on the AI step");
     set(cx, w, |p| p.setup.step = Step::Ai);
     assert_saw(&["Skip for now"]);
-    drew(&["laptopcomputer", "server.rack", "cpu", "square.stack.3d.up", "bolt.horizontal", "checkmark.shield"]);
-    style("Your text never leaves this Mac. Every download is pinned to an exact version and checksum.", 13., None, muted);
+    assert_drew(&["laptopcomputer"]);
+    assert_drew(&["server.rack"]);
+    assert_drew(&["cpu"]);
+    assert_drew(&["square.stack.3d.up"]);
+    assert_drew(&["bolt.horizontal"]);
+    assert_drew(&["checkmark.shield"]);
+    assert_style("Your text never leaves this Mac. Every download is pinned to an exact version and checksum.", 13., None, muted);
     set(cx, w, |p| p.setup.ai_mode = AiMode::Remote);
-    drew(&["laptopcomputer", "server.rack", "info.circle"]);
+    assert_drew(&["laptopcomputer"]);
+    assert_drew(&["server.rack"]);
+    assert_drew(&["info.circle"]);
     assert!(!flow_ui::probe::symbols().iter().any(|s| s == "cpu"), "the local panel leaves");
     set(cx, w, |p| {
         p.setup.purpose = Purpose::Meetings;
         p.setup.ai_mode = AiMode::Local;
     });
     assert_saw(&["Skip for now"]);
-    drew(&["laptopcomputer", "server.rack", "text.badge.xmark"]);
+    assert_drew(&["laptopcomputer"]);
+    assert_drew(&["server.rack"]);
+    assert_drew(&["text.badge.xmark"]);
     w.update(cx, |_, w, _| assert!(w.try_find("onboarding.meetingSkip").is_some())).unwrap();
     set(cx, w, |p| p.setup.step = Step::Permissions);
     assert!(!saw("Skip for now"));
@@ -1484,10 +1499,10 @@ async fn model_rows_type_colour_and_memory_gate(cx: &mut TestAppContext) {
         p.downloaded[1] = true;
     });
     let first = read(cx, w, |p, _| p.selected_model());
-    style(&bytes(first.download_bytes), 13., Some(500.), ink);
-    style("Downloaded", 13., Some(500.), accent);
-    style(&format!("Uses about {} GB", first.peak()), 12., None, muted);
-    style("Needs 48 GB memory", 12., None, warning);
+    assert_style(&bytes(first.download_bytes), 13., Some(500.), ink);
+    assert_style("Downloaded", 13., Some(500.), accent);
+    assert_style(&format!("Uses about {} GB", first.peak()), 12., None, muted);
+    assert_style("Needs 48 GB memory", 12., None, warning);
     // Meetings on this computer: the choice must fit the memory.
     set(cx, w, |p| {
         p.setup.purpose = Purpose::Meetings;
@@ -1511,14 +1526,15 @@ async fn download_row_states_read_like_swift(cx: &mut TestAppContext) {
         p.setup.step = Step::Downloads;
         p.setup.ai_mode = AiMode::Local;
     });
-    drew(&["waveform", "sparkles"]);
-    style("Queued", 12., None, muted);
+    assert_drew(&["waveform"]);
+    assert_drew(&["sparkles"]);
+    assert_style("Queued", 12., None, muted);
     assert_eq!(w.update(cx, |_, w, _| w.find_all("onboarding.bar").len()).unwrap(), 0, "waiting has no bar");
     set(cx, w, |p| {
         p.snap.installing = true;
         p.snap.progress = (10 << 20, 100 << 20);
     });
-    style(&format!("{} of {}", bytes(10 << 20), bytes(100 << 20)), 12., None, muted);
+    assert_style(&format!("{} of {}", bytes(10 << 20), bytes(100 << 20)), 12., None, muted);
     w.update(cx, |_, w, _| {
         let bars = w.find_all("onboarding.bar");
         assert_eq!(bars.len(), 1);
@@ -1531,7 +1547,7 @@ async fn download_row_states_read_like_swift(cx: &mut TestAppContext) {
         p.snap.model_installed = true;
         p.ai_phase = AiPhase::PreparingRuntime;
     });
-    style("Ready", 12., Some(500.), accent);
+    assert_style("Ready", 12., Some(500.), accent);
     assert_eq!(flow_ui::probe::symbol_color("checkmark.circle.fill"), Some(accent));
     w.update(cx, |_, w, _| {
         let bars = w.find_all("onboarding.bar");
@@ -1540,18 +1556,18 @@ async fn download_row_states_read_like_swift(cx: &mut TestAppContext) {
     })
     .unwrap();
     click(cx, w, "onboarding.meetingDownload");
-    drew(&["person.2.wave.2"]);
-    style("Stopped", 12., None, warning);
-    style("This build can't use this service yet.", 12., None, warning);
+    assert_drew(&["person.2.wave.2"]);
+    assert_style("Stopped", 12., None, warning);
+    assert_style("This build can't use this service yet.", 12., None, warning);
     assert_eq!(flow_ui::probe::symbol_color("exclamationmark.circle"), Some(warning));
     // The server row names the enrolled host, the rewrite host, or "Remote".
     set(cx, w, |p| p.setup.ai_mode = AiMode::Remote);
-    drew(&["server.rack"]);
+    assert_drew(&["server.rack"]);
     assert_saw(&["Your server"]);
-    style("Remote", 13., None, muted);
+    assert_style("Remote", 13., None, muted);
     cx.update(|cx| cx.global_mut::<Core>().prefs.set("rewriteEndpoint", "https://rewrite.example.com"));
     frame(cx, w);
-    style("rewrite.example.com", 13., None, muted);
+    assert_style("rewrite.example.com", 13., None, muted);
     cx.update(|cx| {
         let prefs = &mut cx.global_mut::<Core>().prefs;
         prefs.set("remote.enabled", true);
@@ -1559,7 +1575,7 @@ async fn download_row_states_read_like_swift(cx: &mut TestAppContext) {
         prefs.set("remote.state", "approved");
     });
     frame(cx, w);
-    style("box.example.com", 13., None, muted);
+    assert_style("box.example.com", 13., None, muted);
 }
 
 // parity: ONB-038 ONB-039
@@ -1573,7 +1589,7 @@ async fn live_ai_card_follows_mode_phase_and_step(cx: &mut TestAppContext) {
             p.ai_phase = AiPhase::PreparingRuntime;
         });
         assert_saw(&["On-device AI"]);
-        drew(&["sparkles"]);
+        assert_drew(&["sparkles"]);
         set(cx, w, |p| p.ai_phase = AiPhase::Ready);
         assert!(!saw("On-device AI"), "ready hides it on {step:?}");
         set(cx, w, |p| {
@@ -1600,11 +1616,12 @@ async fn access_rows_symbols_and_allowed_type(cx: &mut TestAppContext) {
         p.snap.microphone = Perm::Granted;
         p.snap.system_audio = Perm::Denied;
     });
-    drew(&["mic", "speaker.wave.2"]);
-    style("Allowed", 12., Some(500.), accent);
+    assert_drew(&["mic"]);
+    assert_drew(&["speaker.wave.2"]);
+    assert_style("Allowed", 12., Some(500.), accent);
     assert_eq!(flow_ui::probe::symbol_color("checkmark.circle.fill"), Some(accent));
     set(cx, w, |p| p.snap.system_audio = Perm::Granted);
-    style("Everything is allowed.", 14., Some(500.), accent);
+    assert_style("Everything is allowed.", 14., Some(500.), accent);
 }
 
 // parity: ONB-357 ONB-359 ONB-367 ONB-373 ONB-378
@@ -1639,7 +1656,7 @@ async fn personalize_labels_record_gate_and_errors(cx: &mut TestAppContext) {
     click(cx, w, "onboarding.preset.1");
     let busy = "Another dictation or model operation is still running. Wait for it to finish.";
     assert_eq!(read(cx, w, |p, _| p.recording_error.clone().or(p.error.clone())).as_deref(), Some(busy));
-    style(busy, 12., None, warning);
+    assert_style(busy, 12., None, warning);
 }
 
 // parity: ONB-053 ONB-384 ONB-385 ONB-389 ONB-396
@@ -1651,15 +1668,15 @@ async fn test_step_type_hint_and_final_disable(cx: &mut TestAppContext) {
         p.setup.step = Step::Test;
         ready(&mut p.snap);
     });
-    style("This test is optional. You can start dictating after setup.", 13., None, muted);
+    assert_style("This test is optional. You can start dictating after setup.", 13., None, muted);
     w.update(cx, |_, w, _| assert_eq!(w.find("onboarding.skipTest").label().as_deref(), Some("Skip test. Finish setup without recording a dictation."))).unwrap();
     set(cx, w, |p| p.setup.test_error = Some("The speech model is unavailable. Verify the local model in Settings.".into()));
-    style("The speech model is unavailable. Verify the local model in Settings.", 13., None, warning);
+    assert_style("The speech model is unavailable. Verify the local model in Settings.", 13., None, warning);
     set(cx, w, |p| {
         p.setup.test_error = None;
         p.snap.microphone = Perm::Denied;
     });
-    style("Allow Microphone access to record.", 14., None, warning);
+    assert_style("Allow Microphone access to record.", 14., None, warning);
     set(cx, w, |p| {
         p.snap.microphone = Perm::Granted;
         p.setup.test_succeeded = true;
@@ -1684,7 +1701,7 @@ async fn server_type_keys_prefill_and_trust_failure(cx: &mut TestAppContext) {
     click(cx, w, "settings.remoteEnabled");
     assert_eq!(read(cx, w, |p, cx| p.server_draft.read(cx).value().to_string()), "https://old.example.com");
     assert!(w.update(cx, |p, w, cx| p.server_draft.read(cx).focus_handle(cx).is_focused(w)).unwrap());
-    style("Server: old.example.com", 13., Some(500.), cx.update(|cx| pal(cx).ink));
+    assert_style("Server: old.example.com", 13., Some(500.), cx.update(|cx| pal(cx).ink));
     // Escape closes it, clears the draft and stores nothing.
     cx.update_window(w.into(), |_, w, cx| w.press("escape", cx)).unwrap();
     frame(cx, w);
@@ -1703,16 +1720,16 @@ async fn server_type_keys_prefill_and_trust_failure(cx: &mut TestAppContext) {
     assert!(disabled(cx, w, "settings.remoteConsentConfirm"));
     w.update(cx, |p, _, cx| p.confirm_consent(cx)).unwrap();
     frame(cx, w);
-    style("Enter the server's https:// address without a path.", 12., None, warning);
+    assert_style("Enter the server's https:// address without a path.", 12., None, warning);
     w.update(cx, |p, w, cx| p.server_draft.update(cx, |s, cx| s.set_value("https://box.example.com", w, cx))).unwrap();
     frame(cx, w);
     cx.update_window(w.into(), |_, w, cx| w.press("enter", cx)).unwrap();
     frame(cx, w);
     assert!(flag(cx, "remote.enabled"), "Return confirms a valid address");
-    style("Server fingerprint", 12., Some(500.), muted);
+    assert_style("Server fingerprint", 12., Some(500.), muted);
     assert_eq!(flow_ui::probe::style_of(&fingerprint).map(|s| s.size), Some(13.));
     w.update(cx, |_, w, _| assert!(w.try_find("settings.remoteFingerprint").is_some())).unwrap();
-    style("Compare it with `flowd admin identity` on the server before trusting it.", 12., None, muted);
+    assert_style("Compare it with `flowd admin identity` on the server before trusting it.", 12., None, muted);
     // The Keychain refusing the key is Swift's error, and nothing is pinned.
     r.ok.set(false);
     click(cx, w, "settings.remoteTrust");
@@ -1720,10 +1737,10 @@ async fn server_type_keys_prefill_and_trust_failure(cx: &mut TestAppContext) {
     assert_ne!(pref(cx, "remote.state").as_deref(), Some("pinned"));
     r.ok.set(true);
     click(cx, w, "settings.remoteTrust");
-    style(&format!("Pinned fingerprint  {fingerprint}"), 12., None, muted);
+    assert_style(&format!("Pinned fingerprint  {fingerprint}"), 12., None, muted);
     *r.enroll.borrow_mut() = Err("sign-in cancelled");
     click(cx, w, "settings.remoteSignInApple");
-    style("Sign-in did not finish.", 12., None, warning);
+    assert_style("Sign-in did not finish.", 12., None, warning);
 }
 
 // parity: ONB-222 ONB-235 ONB-238 ONB-240 ONB-241 ONB-242
@@ -1750,18 +1767,18 @@ async fn rewrite_form_type_masking_and_analysis_lines(cx: &mut TestAppContext) {
     });
     assert_saw(&["Connecting…"]);
     assert!(disabled(cx, w, "onboarding.connect"));
-    style("Enter a credential first.", 12., None, warning);
+    assert_style("Enter a credential first.", 12., None, warning);
     set(cx, w, |p| {
         p.connection_testing = false;
         p.credential_error = None;
         p.connection = Some(Ok(vec!["studio".into(), "qwen".into()]));
         p.analysis = Some("Meeting analysis: available.".into());
     });
-    style("Connected · studio · qwen", 13., Some(500.), accent);
+    assert_style("Connected · studio · qwen", 13., Some(500.), accent);
     assert_eq!(flow_ui::probe::symbol_color("checkmark.circle.fill"), Some(accent));
-    style("Meeting analysis: available.", 12., None, muted);
+    assert_style("Meeting analysis: available.", 12., None, muted);
     set(cx, w, |p| p.connection = Some(Err("Could not reach the server.".into())));
-    style("Could not reach the server.", 13., None, warning);
+    assert_style("Could not reach the server.", 13., None, warning);
     w.update(cx, |p, _, cx| p.edit_endpoint("not a url".into(), cx)).unwrap();
     frame(cx, w);
     assert!(disabled(cx, w, "onboarding.connect"), "an invalid endpoint");
