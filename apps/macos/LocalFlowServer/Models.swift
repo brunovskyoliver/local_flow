@@ -157,17 +157,20 @@ enum AgentChange {
 }
 
 extension Launchctl {
-  /// bootout, wait for the job to go, bootstrap from the plist. nil on success.
-  static func reload(_ label: String, plist: URL) async -> String? {
-    if await job(label) != nil {
-      _ = await runProcess("/bin/launchctl", ["bootout", "\(Server.domain)/\(label)"])
+  /// bootout, wait for the job to go, enable, bootstrap from the plist. nil on success.
+  /// Only an owner's action gets here, and bootstrap fails with an unhelpful error 5 on a label
+  /// that LocalFlow's Turn Off left disabled.
+  static func reload(_ label: String, plist: URL, run: Runner = runProcess) async -> String? {
+    if await job(label, run: run) != nil {
+      _ = await run("/bin/launchctl", ["bootout", "\(Server.domain)/\(label)"])
       // bootstrap fails with error 5 while the old job is still being torn down.
       for _ in 0..<50 {
-        if await job(label) == nil { break }
+        if await job(label, run: run) == nil { break }
         try? await Task.sleep(for: .milliseconds(200))
       }
     }
-    let result = await runProcess("/bin/launchctl", ["bootstrap", Server.domain, plist.path])
+    _ = await run("/bin/launchctl", ["enable", "\(Server.domain)/\(label)"])
+    let result = await run("/bin/launchctl", ["bootstrap", Server.domain, plist.path])
     return result.succeeded ? nil : "launchctl bootstrap failed: \(result.error)"
   }
 }

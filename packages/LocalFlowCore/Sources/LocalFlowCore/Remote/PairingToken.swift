@@ -61,11 +61,13 @@ public func pairingFailureMessage(_ error: any Error) -> String {
     "Update the LocalFlow server to pair with a token. The token was not used."
   case RemoteEnrollmentError.invalidIdentity:
     "The server did not answer with a LocalFlow identity. Check the address."
+  case RemoteEnrollmentError.unusableRoute:
+    "This address isn't a usable LocalFlow route: it answers, but a proxy may be blocking WebSockets or changing paths."
   case RemoteEnrollmentError.deviceKeyUnavailable:
     "This device can't create a device key."
   case RemoteChannelError.server(.pairingTokenInvalid):
     "This token has expired, been used or been revoked. Ask for a new one."
-  case RemoteChannelError.server(.revoked):
+  case RemoteChannelError.server(.revoked), RemoteChannelError.server(.notApproved):
     "The server removed this device or its account. Ask the server's owner."
   case RemoteChannelError.server(.unauthorized):
     "The server knows this device under another account. Ask the server's owner."

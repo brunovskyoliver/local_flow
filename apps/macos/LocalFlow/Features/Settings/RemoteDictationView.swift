@@ -364,7 +364,7 @@ struct RemoteDictationView: View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Use your LocalFlow server?").font(.flow(size: 17, weight: .medium))
       RewriteInputSurface(symbol: "server.rack") {
-        TextField("https://server.example.com", text: $model.serverDraft)
+        TextField("https://server.example.com" as String, text: $model.serverDraft)
           .accessibilityIdentifier("settings.remoteServerURL")
       }
       Text(model.currentConsentText).font(.flow(size: 13)).lineSpacing(3)
@@ -395,7 +395,7 @@ struct RemoteDictationView: View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Change the server address").font(.flow(size: 17, weight: .medium))
       RewriteInputSurface(symbol: "server.rack") {
-        TextField("https://server.example.com", text: $model.serverDraft)
+        TextField("https://server.example.com" as String, text: $model.serverDraft)
           .accessibilityIdentifier("settings.remoteServerURL")
       }
       Text("The server at the new address must have the identity this Mac already trusts.")

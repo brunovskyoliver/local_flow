@@ -1,3 +1,5 @@
+import AppKit
+import CoreImage
 import XCTest
 
 final class AdminTests: XCTestCase {
@@ -109,7 +111,11 @@ final class AdminTests: XCTestCase {
     XCTAssertEqual(model.message, "This flowd has no pairing tokens. Update the server first.")
   }
 
-  func testQRCodeEncodesALink() {
-    XCTAssertNotNil(PairingView.qrCode("localflow://pair?address=x#token=y"))
+  func testQRCodeEncodesALink() throws {
+    let link = "http://192.168.1.20:8090/#token=lfp_" + String(repeating: "q6ur", count: 28)
+    let tiff = try XCTUnwrap(PairingView.qrCode(link)?.tiffRepresentation)
+    let detector = CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: nil)
+    let found = detector?.features(in: try XCTUnwrap(CIImage(data: tiff)))
+    XCTAssertEqual((found?.first as? CIQRCodeFeature)?.messageString, link)
   }
 }

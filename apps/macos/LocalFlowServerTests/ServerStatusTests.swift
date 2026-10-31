@@ -88,3 +88,68 @@ final class ServerStatusTests: XCTestCase {
     XCTAssertNil(arguments.value(after: "--listen"))
   }
 }
+
+/// LocalFlow's Turn Off boots both agents out and disables them; launchd modelled, nothing started.
+final class LaunchctlRestartTests: XCTestCase {
+  final class FakeLaunchd: @unchecked Sendable {
+    private let lock = NSLock()
+    var loaded: Set<String> = []
+    var disabled: Set<String> = []
+    private(set) var verbs: [String] = []
+
+    func run(_ path: String, _ arguments: [String]) -> ProcessResult {
+      lock.withLock {
+        verbs.append(arguments[0])
+        let label = URL(fileURLWithPath: arguments.last ?? "").lastPathComponent
+          .replacingOccurrences(of: ".plist", with: "")
+        let ok = ProcessResult(status: 0, output: "\tstate = running\n", error: "")
+        switch arguments[0] {
+        case "print":
+          return loaded.contains(label) ? ok : ProcessResult(status: 113, output: "", error: "")
+        case "enable":
+          disabled.remove(label)
+          return ok
+        case "bootstrap":
+          // launchd's real answer on a disabled label.
+          guard !disabled.contains(label) else {
+            return ProcessResult(
+              status: 5, output: "", error: "Bootstrap failed: 5: Input/output error")
+          }
+          loaded.insert(label)
+          return ok
+        case "kickstart": return ok
+        default: return ok
+        }
+      }
+    }
+  }
+
+  func testRestartStartsAServerThatTurnOffDisabled() async {
+    let fake = FakeLaunchd()
+    fake.disabled = [Server.label, Server.mtplxLabel]
+    let plist = URL(fileURLWithPath: "/tmp/\(Server.label).plist")
+    let failure = await Launchctl.restart(Server.label, plist: plist) { fake.run($0, $1) }
+    XCTAssertNil(failure)
+    XCTAssertTrue(fake.loaded.contains(Server.label))
+    XCTAssertFalse(fake.verbs.contains("kickstart"))
+  }
+
+  func testRestartKickstartsALoadedServerAndEnablesNothing() async {
+    let fake = FakeLaunchd()
+    fake.loaded = [Server.label]
+    let plist = URL(fileURLWithPath: "/tmp/\(Server.label).plist")
+    let failure = await Launchctl.restart(Server.label, plist: plist) { fake.run($0, $1) }
+    XCTAssertNil(failure)
+    XCTAssertEqual(fake.verbs, ["print", "kickstart"])
+  }
+
+  func testReloadEnablesBeforeBootstrap() async {
+    let fake = FakeLaunchd()
+    fake.disabled = ["agent"]
+    let failure = await Launchctl.reload("agent", plist: URL(fileURLWithPath: "/tmp/agent.plist")) {
+      fake.run($0, $1)
+    }
+    XCTAssertNil(failure)
+    XCTAssertEqual(fake.verbs, ["print", "enable", "bootstrap"])
+  }
+}

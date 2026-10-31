@@ -11,7 +11,7 @@ struct ServerSettingsView: View {
   var body: some View {
     Form {
       Section {
-        TextField("https://server.example", text: $connection.addressDraft)
+        TextField("https://server.example" as String, text: $connection.addressDraft)
           .keyboardType(.URL)
           .textContentType(.URL)
           .textInputAutocapitalization(.never)
@@ -162,7 +162,7 @@ struct PhonePairingSheet: View {
     NavigationStack {
       Form {
         Section {
-          TextField("https://server.example", text: $connection.addressDraft)
+          TextField("https://server.example" as String, text: $connection.addressDraft)
             .keyboardType(.URL)
             .textContentType(.URL)
             .textInputAutocapitalization(.never)
@@ -181,9 +181,10 @@ struct PhonePairingSheet: View {
         } header: {
           Text("Token")
         } footer: {
-          if let error = connection.error {
-            Text(error).foregroundStyle(SottoPalette.warning)
-          } else {
+          VStack(alignment: .leading, spacing: 6) {
+            if let error = connection.error {
+              Text(error).foregroundStyle(SottoPalette.warning)
+            }
             Text(PhoneServerConnection.consentText)
           }
         }

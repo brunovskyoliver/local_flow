@@ -157,7 +157,7 @@ struct ServerModeView: View {
     SettingsRow("Custom address", detail: "A proxy or a name that reaches this Mac") {
       HStack(spacing: 8) {
         RewriteInputSurface(symbol: "link") {
-          TextField("https://server.example.com", text: $model.customDraft)
+          TextField("https://server.example.com" as String, text: $model.customDraft)
             .onSubmit { model.saveCustomAddress() }
             .accessibilityIdentifier("settings.serverModeCustomAddress")
         }
@@ -248,7 +248,7 @@ struct ServerModeView: View {
   private var explanation: String {
     switch model.confirm {
     case .turnOn:
-      "The server starts at login and listens on all networks, not just this one. Anyone who can reach this Mac can try to connect, and tokens control who gets in. Dictation on this Mac keeps working. Nothing is downloaded until you confirm it."
+      "The server starts at login and listens on all networks, not just this one. Anyone who can reach this Mac can try to connect, and tokens control who gets in. Dictation on this Mac keeps working, and the server loads its own models beside this Mac's, so the two together use more memory. Nothing is downloaded until you confirm it."
     case .turnOnExisting:
       "The server keeps the address and settings it already has."
     case .turnOff:

@@ -147,16 +147,19 @@ final class TokensModel {
 }
 
 enum PairingQRCode {
-  /// nil only if Core Image refuses the text; nearest-neighbor keeps the modules sharp.
+  /// nil only if Core Image refuses the text. Whole points per module and doubled pixels keep the
+  /// modules sharp, so the result can be a little larger than `side`.
   static func image(for text: String, side: CGFloat) -> NSImage? {
     guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
     filter.setValue(Data(text.utf8), forKey: "inputMessage")
     filter.setValue("M", forKey: "inputCorrectionLevel")
-    guard let output = filter.outputImage, output.extent.width > 0,
-      let image = CIContext().createCGImage(output, from: output.extent)
-    else { return nil }
-    let result = NSImage(cgImage: image, size: NSSize(width: side, height: side))
-    return result
+    guard let output = filter.outputImage, output.extent.width > 0 else { return nil }
+    let points = (side / output.extent.width).rounded(.up)
+    let scaled = output.transformed(by: CGAffineTransform(scaleX: points * 2, y: points * 2))
+    guard let image = CIContext().createCGImage(scaled, from: scaled.extent) else { return nil }
+    return NSImage(
+      cgImage: image, size: NSSize(width: scaled.extent.width / 2, height: scaled.extent.height / 2)
+    )
   }
 }
 
@@ -301,8 +304,9 @@ struct TokensView: View {
         }
       }
       if !created.link.isEmpty, let code = PairingQRCode.image(for: created.link, side: 180) {
-        Image(nsImage: code).interpolation(.none).accessibilityLabel(
-          "QR code with the pairing link")
+        // The white quiet zone is what makes it scan on a dark sheet.
+        Image(nsImage: code).interpolation(.none).padding(12).background(Color.white)
+          .accessibilityLabel("QR code with the pairing link")
       }
       Text(
         "Pasting the token is safest: on an iPhone another installed app could claim a link. Anyone who gets the token first can use it, so send it privately. Expires \(TokensView.date(created.expiresAt))."

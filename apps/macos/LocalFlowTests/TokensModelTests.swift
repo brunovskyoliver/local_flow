@@ -1,3 +1,5 @@
+import AppKit
+import CoreImage
 import XCTest
 
 @testable import LocalFlow
@@ -128,8 +130,12 @@ final class TokensModelTests: XCTestCase {
       [.init(id: 1, display: "Ada Lovelace"), .init(id: 4, display: "Grace's phone")])
   }
 
-  func testQRCodeEncodesALink() {
-    XCTAssertNotNil(PairingQRCode.image(for: "localflow://pair?address=x#token=y", side: 180))
+  func testQRCodeEncodesALink() throws {
+    let link = "http://192.168.1.20:8090/#token=lfp_" + String(repeating: "q6ur", count: 28)
+    let tiff = try XCTUnwrap(PairingQRCode.image(for: link, side: 180)?.tiffRepresentation)
+    let detector = CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: nil)
+    let found = detector?.features(in: try XCTUnwrap(CIImage(data: tiff)))
+    XCTAssertEqual((found?.first as? CIQRCodeFeature)?.messageString, link)
   }
 }
 

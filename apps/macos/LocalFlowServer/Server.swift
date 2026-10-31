@@ -84,14 +84,29 @@ struct LaunchJob: Equatable, Sendable {
 }
 
 enum Launchctl {
+  typealias Runner = @Sendable (String, [String]) async -> ProcessResult
+
   /// nil when the agent is not loaded.
-  static func job(_ label: String) async -> LaunchJob? {
-    let result = await runProcess("/bin/launchctl", ["print", "\(Server.domain)/\(label)"])
+  static func job(_ label: String, run: Runner = runProcess) async -> LaunchJob? {
+    let result = await run("/bin/launchctl", ["print", "\(Server.domain)/\(label)"])
     return result.succeeded ? LaunchJob.parse(result.output) : nil
   }
 
-  static func kickstart(_ label: String) async -> ProcessResult {
-    await runProcess("/bin/launchctl", ["kickstart", "-k", "\(Server.domain)/\(label)"])
+  /// Restarts a loaded agent. One that isn't loaded, as after LocalFlow's Turn Off, can't be
+  /// kickstarted, so it is started from its plist; flowd brings a stopped MTPLX with it, first,
+  /// so its backend probe finds it. nil on success.
+  static func restart(_ label: String, plist: URL, run: Runner = runProcess) async -> String? {
+    if await job(label, run: run) != nil {
+      let result = await run("/bin/launchctl", ["kickstart", "-k", "\(Server.domain)/\(label)"])
+      return result.succeeded
+        ? nil : result.error.isEmpty ? "launchctl exited \(result.status)" : result.error
+    }
+    if label == Server.label, FileManager.default.fileExists(atPath: Server.mtplxPlist.path),
+      await job(Server.mtplxLabel, run: run) == nil
+    {
+      _ = await reload(Server.mtplxLabel, plist: Server.mtplxPlist, run: run)
+    }
+    return await reload(label, plist: plist, run: run)
   }
 }
 

@@ -440,7 +440,7 @@ stop_agent() {
 # If provisioning fails, the earlier agent is started again rather than left down.
 stop_agent "$label"
 if ! run "$bin_dir/flowd-speech" provision --models "$data_dir/Models" --meeting; then
-  [ -f "$plist" ] && launchctl bootstrap "$domain" "$plist" || true
+  [ -f "$plist" ] && launchctl enable "$domain/$label" && launchctl bootstrap "$domain" "$plist" || true
   echo "error: model provisioning failed; $label was started again with its earlier plist." >&2
   exit 1
 fi
@@ -459,6 +459,8 @@ install_agent() {
     install -m 0644 "$stage/agent.plist" "$agent_plist"
   fi
   stop_agent "$agent_label"
+  # The app's Turn Off leaves the label disabled (launchctl disable), which blocks bootstrap.
+  run launchctl enable "$domain/$agent_label"
   run launchctl bootstrap "$domain" "$agent_plist"
 }
 install_agent "$mtplx_label" "$mtplx_plist" render_mtplx_plist

@@ -176,6 +176,9 @@ public enum RemoteEnrollmentError: Error, Equatable, Sendable {
   case wrongServer
   /// Feature 027: the server doesn't know `pair`. The token was not spent.
   case updateRequired
+  /// Feature 027: the address answers the identity route but carries no channel, as when a
+  /// proxy strips WebSocket upgrades or rewrites paths.
+  case unusableRoute
 }
 
 /// Enrollment and credentials for remote dictation (User Story 2): server identity and
@@ -259,8 +262,8 @@ public final class RemoteEnrollment {
   public var pinnedKey: Data? { try? credentials.read(.serverKey) }
 
   /// Moves to a new address for the same server (FR-013). The identity there must be the
-  /// pinned key exactly; on a match only the stored address changes, and on a mismatch
-  /// nothing does. The channel still proves the key, as for every connection.
+  /// pinned key exactly and a channel must open there; on a match only the stored address
+  /// changes, and otherwise nothing does.
   public func updateAddress(to address: URL) async throws {
     guard origin != nil, let pinned = pinnedKey,
       let checked = RemoteDictationSettings.origin(address.absoluteString)
@@ -268,7 +271,31 @@ public final class RemoteEnrollment {
     let identity = try await identityFetcher.fetch(origin: checked)
     guard let key = identity.validatedKey() else { throw RemoteEnrollmentError.invalidIdentity }
     guard key == pinned else { throw RemoteEnrollmentError.wrongServer }
+    guard let url = Self.channelURL(origin: checked) else {
+      throw RemoteEnrollmentError.notConfigured
+    }
+    let channel = try RemoteChannel(transport: try await transports.open(url), serverKey: pinned)
+    defer { Task { await channel.close() } }
+    do {
+      try await openChecked(channel)
+    } catch RemoteChannelError.pinMismatch {
+      throw RemoteEnrollmentError.wrongServer
+    }
     preferences.setRemoteOrigin(checked)
+  }
+
+  /// Opens an enroll channel at an address whose identity route just answered, so a failure
+  /// that isn't the server's own answer means the route doesn't carry WebSockets.
+  private func openChecked(_ channel: RemoteChannel) async throws {
+    do {
+      try await channel.open(purpose: .enroll)
+    } catch let error as RemoteChannelError {
+      switch error {
+      case .pinMismatch, .server: throw error
+      case .unreachable, .timeout, .protocolError, .closed:
+        throw RemoteEnrollmentError.unusableRoute
+      }
+    }
   }
 
   // MARK: Enrollment
@@ -356,7 +383,7 @@ public final class RemoteEnrollment {
       transport: try await transports.open(url), serverKey: token.serverKey)
     defer { Task { await channel.close() } }
     do {
-      try await channel.open(purpose: .enroll)
+      try await openChecked(channel)
       let signature = try keys.sign(
         Self.pairSignatureInput(binding: await channel.binding), handle: device.handle)
       try await channel.send(

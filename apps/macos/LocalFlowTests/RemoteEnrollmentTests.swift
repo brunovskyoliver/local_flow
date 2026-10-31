@@ -513,7 +513,8 @@ final class RemoteEnrollmentTests: XCTestCase {
     XCTAssertEqual(try RemoteCredentialItem.allCases.map { try credentials.read($0) }, before)
     XCTAssertEqual(preferences.remoteState, .approved)
     XCTAssertEqual(flowd.refreshCount, refreshes)
-    XCTAssertEqual(opener.openCount, opened)
+    // One channel to prove the route; it sends nothing but its hello.
+    XCTAssertEqual(opener.openCount, opened + 1)
     XCTAssertEqual(keys.created, created)
     XCTAssertTrue(signIn.nonces.count == 1)
     // The access token still works, and the next refresh goes to the new address.
@@ -534,6 +535,32 @@ final class RemoteEnrollmentTests: XCTestCase {
     XCTAssertEqual(preferences.remoteServerURL, "https://mini.example.com")
     XCTAssertEqual(try RemoteCredentialItem.allCases.map { try credentials.read($0) }, before)
     XCTAssertEqual(preferences.remoteState, .approved)
+  }
+
+  /// A proxy that answers HTTP but strips WebSocket upgrades: reported as a bad route, and
+  /// neither the address nor the token moves.
+  func testARouteWithoutWebSocketsIsReportedAndChangesNothing() async throws {
+    try await approvedDevice()
+    let before = try RemoteCredentialItem.allCases.map { try credentials.read($0) }
+    let stripped = RemoteEnrollment(
+      preferences: preferences, credentials: credentials, keys: keys, signIn: signIn,
+      identityFetcher: fetcher, transports: UnreachableTransportOpener(),
+      clock: clock, deviceName: "Test Mac")
+    do {
+      try await stripped.updateAddress(to: try XCTUnwrap(URL(string: "https://proxy.example")))
+      XCTFail("expected a refusal")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .unusableRoute) }
+    XCTAssertEqual(preferences.remoteServerURL, "https://mini.example.com")
+    XCTAssertEqual(try RemoteCredentialItem.allCases.map { try credentials.read($0) }, before)
+    do {
+      try await stripped.pair(token: try pairingToken())
+      XCTFail("expected a refusal")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .unusableRoute) }
+    XCTAssertTrue(flowd.pairs.isEmpty)
+    XCTAssertEqual(
+      pairingFailureMessage(RemoteEnrollmentError.unusableRoute),
+      "This address isn't a usable LocalFlow route: it answers, but a proxy may be blocking WebSockets or changing paths."
+    )
   }
 
   func testAnAddressChangeNeedsAPinAndAPermittedAddress() async throws {
@@ -627,4 +654,15 @@ final class RemoteEnrollmentTests: XCTestCase {
     XCTAssertNil(RemoteEnrollment.channelURL(origin: URL(string: "http://8.8.8.8:8090")!))
     XCTAssertNil(RemoteEnrollment.channelURL(origin: URL(string: "https://a.example/x")!))
   }
+}
+
+/// A route that answers the identity request and then fails the WebSocket upgrade.
+private final class UnreachableTransport: RemoteTransport, @unchecked Sendable {
+  func send(_ data: Data) async throws { throw RemoteTransportError.unreachable }
+  func receive() async throws -> RemoteTransportMessage { throw RemoteTransportError.unreachable }
+  func close(code: Int) {}
+}
+
+private struct UnreachableTransportOpener: RemoteTransportOpening {
+  func open(_ url: URL) async throws -> any RemoteTransport { UnreachableTransport() }
 }

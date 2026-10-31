@@ -83,7 +83,7 @@ struct PairingView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Text("Tokens are one-time and run `flowd admin token`. Each pairs one device.")
+        Text("Each token pairs one device, once. This tab runs `flowd admin token`.")
           .foregroundStyle(.secondary)
         Spacer()
         Button("Refresh") { Task { await model.reload() } }
@@ -95,7 +95,8 @@ struct PairingView: View {
           HStack {
             VStack(alignment: .leading) {
               Text(token.label)
-              Text("expires \(token.expiresAt)").font(.caption).foregroundStyle(.secondary)
+              Text("expires \(Self.date(token.expiresAt))").font(.caption).foregroundStyle(
+                .secondary)
             }
             Spacer()
             Text(token.state).foregroundStyle(token.state == "live" ? .green : .secondary)
@@ -160,7 +161,7 @@ struct PairingView: View {
         }
         GridRow {
           Text("Address")
-          TextField("Optional, for a link: http://192.168.1.20:8090", text: $address)
+          TextField("Optional, for a link: http://192.168.1.20:8090" as String, text: $address)
         }
       }
       .padding(4)
@@ -190,13 +191,14 @@ struct PairingView: View {
             Button("Done") { model.clearCreated() }
           }
           Text(
-            "Pasting the token is safest: on an iPhone another installed app could claim a link. Anyone who gets it first can use it. Expires \(created.expiresAt)."
+            "Pasting the token is safest: on an iPhone another installed app could claim a link. Anyone who gets it first can use it. Expires \(Self.date(created.expiresAt))."
           )
           .font(.caption).foregroundStyle(.secondary)
         }
         if !created.link.isEmpty, let code = Self.qrCode(created.link) {
-          Image(nsImage: code).interpolation(.none).accessibilityLabel(
-            "QR code with the pairing link")
+          // The white quiet zone is what makes it scan in dark mode.
+          Image(nsImage: code).interpolation(.none).padding(12).background(Color.white)
+            .accessibilityLabel("QR code with the pairing link")
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -213,13 +215,21 @@ struct PairingView: View {
       Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
   }
 
+  private static func date(_ text: String) -> String {
+    (try? Date(text, strategy: .iso8601))?.formatted(date: .abbreviated, time: .shortened) ?? text
+  }
+
   nonisolated static func qrCode(_ text: String) -> NSImage? {
     guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
     filter.setValue(Data(text.utf8), forKey: "inputMessage")
     filter.setValue("M", forKey: "inputCorrectionLevel")
-    guard let output = filter.outputImage, output.extent.width > 0,
-      let image = CIContext().createCGImage(output, from: output.extent)
-    else { return nil }
-    return NSImage(cgImage: image, size: NSSize(width: 160, height: 160))
+    guard let output = filter.outputImage, output.extent.width > 0 else { return nil }
+    // Whole points per module and doubled pixels keep the modules sharp.
+    let points = (160 / output.extent.width).rounded(.up)
+    let scaled = output.transformed(by: CGAffineTransform(scaleX: points * 2, y: points * 2))
+    guard let image = CIContext().createCGImage(scaled, from: scaled.extent) else { return nil }
+    return NSImage(
+      cgImage: image, size: NSSize(width: scaled.extent.width / 2, height: scaled.extent.height / 2)
+    )
   }
 }

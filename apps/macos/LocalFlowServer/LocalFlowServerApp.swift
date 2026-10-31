@@ -79,8 +79,8 @@ struct MenuContent: View {
       }
       Divider()
       HStack {
-        Button("Restart flowd") { restart("flowd", Server.label) }
-        Button("Restart MTPLX") { restart("MTPLX", Server.mtplxLabel) }
+        Button("Restart flowd") { restart("flowd", Server.label, Server.plist) }
+        Button("Restart MTPLX") { restart("MTPLX", Server.mtplxLabel, Server.mtplxPlist) }
         Spacer()
         Button("Open Window") {
           openWindow(id: "main")
@@ -101,7 +101,7 @@ struct MenuContent: View {
     .onDisappear { monitor.setMenuVisible(false) }
   }
 
-  private func restart(_ name: String, _ label: String) {
+  private func restart(_ name: String, _ label: String, _ plist: URL) {
     NSApp.activate()
     let alert = NSAlert()
     alert.messageText = "Restart \(name)?"
@@ -111,12 +111,10 @@ struct MenuContent: View {
     alert.addButton(withTitle: "Cancel")
     guard alert.runModal() == .alertFirstButtonReturn else { return }
     Task {
-      let result = await Launchctl.kickstart(label)
-      if !result.succeeded {
+      if let reason = await Launchctl.restart(label, plist: plist) {
         let failure = NSAlert()
         failure.messageText = "Could not restart \(name)"
-        failure.informativeText =
-          result.error.isEmpty ? "launchctl exited \(result.status)" : result.error
+        failure.informativeText = reason
         failure.runModal()
       }
       await monitor.refresh()

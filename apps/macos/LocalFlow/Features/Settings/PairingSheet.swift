@@ -10,7 +10,7 @@ struct PairingSheet: View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Pair with a token").font(.flow(size: 17, weight: .medium))
       RewriteInputSurface(symbol: "server.rack") {
-        TextField("https://server.example.com", text: $model.serverDraft)
+        TextField("https://server.example.com" as String, text: $model.serverDraft)
           .accessibilityIdentifier("settings.remoteServerURL")
       }
       RewriteInputSurface(symbol: "key") {
