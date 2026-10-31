@@ -8,6 +8,11 @@ status/<NN>.tsv rows: ID <tab> status <tab> evidence. Statuses:
   not-run   not-run:<why; owner or hardware only>
   recorded  recorded:<why this row has nothing to verify, such as a swift-note>
 Several evidence items can be joined with ` ; `. `--allow-open` reports progress without failing.
+
+Evidence must be able to fail. A test may tag no more rows than it has assertions. An `auto` row whose
+reference gives a geometry value must cite a test that reads bounds. A `live` row citing `-rust.png` must
+cite the `-ref.png` beside it, or say `rust-only:<why the reference can't reach it>`. `service` is only
+for rows the inventory's Needs column gives to a platform service, a worker or flowd.
 """
 import re
 import sys
@@ -16,22 +21,47 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 INV = ROOT / "specs/024-gpui-desktop-views/inventory"
 RUNS = Path.home() / "agent-runs/2026-10-31-gpui-views"
-ROW = re.compile(r"^\| ([A-Z]+-\d+) \|\s*([a-z-]+)", re.M)
+ROW = re.compile(r"^\| ([A-Z]+-\d+) \|\s*([a-z-]+)\s*\|(.*)$", re.M)
+GEOMETRY = re.compile(r"\b\d+(\.\d+)? (wide|high|tall)\b|\b(padding|spacing|radius|width|height|inset)\b", re.I)
+ASSERTION = re.compile(r"\bassert\w*!?\(")
 STATUSES = {"auto", "live", "service", "not-run", "recorded"}
 
-rows = {}
+rows, details = {}, {}
 for md in sorted(INV.glob("*.md")):
-    for rid, kind in ROW.findall(md.read_text()):
+    for rid, kind, rest in ROW.findall(md.read_text()):
         assert rid not in rows, f"duplicate row {rid}"
         rows[rid] = kind
+        details[rid] = rest
 
 # `// parity: A-1 A-2 A-5..A-9` directly above a test (attributes and other comments may intervene).
-tags = {}
+tags, bodies = {}, {}
+
+
+def body_of(lines, start):
+    depth, out, opened = 0, [], False
+    for line in lines[start:]:
+        out.append(line)
+        depth += line.count("{") - line.count("}")
+        opened = opened or "{" in line
+        if opened and depth <= 0:
+            break
+    return "\n".join(out)
+
+
+def assertions(body):
+    """Assertion macros, plus each item of `assert_saw(&[...])`, which asserts them one by one."""
+    count = len(ASSERTION.findall(body))
+    for items in re.findall(r"assert_saw\(&\[(.*?)\]\)", body, re.S):
+        count += max(items.count('"') // 2 - 1, 0)
+    return count
+
+
 for src in list((ROOT / "crates").rglob("*.rs")) + list((ROOT / "apps/desktop").rglob("*.rs")):
     if "/build/" in str(src):
         continue
     pending = set()
-    for line in src.read_text().splitlines():
+    lines = src.read_text().splitlines()
+    for number, line in enumerate(lines):
         m = re.search(r"//\s*parity:\s*(.*)", line)
         if m:
             for token in m.group(1).split():
@@ -46,6 +76,7 @@ for src in list((ROOT / "crates").rglob("*.rs")) + list((ROOT / "apps/desktop").
         if f:
             if pending:
                 tags.setdefault(f.group(1), set()).update(pending)
+                bodies[f.group(1)] = body_of(lines, number)
             pending = set()
 
 errors, seen, counts = [], {}, {}
@@ -76,6 +107,15 @@ for tsv in sorted((INV / "status").glob("*.tsv")) if (INV / "status").exists() e
             errors.append(f"{rid}: auto needs test:")
         if status == "live" and not any(i.startswith("live:") for i in items):
             errors.append(f"{rid}: live needs live:")
+        if status == "service" and not re.search(r"mac-service|worker|flowd", details.get(rid, "").rsplit("|", 2)[-2] if details.get(rid, "").count("|") >= 2 else ""):
+            errors.append(f"{rid}: service, but the Needs column gives it to the app")
+        if status == "auto" and rows.get(rid) in {"token", "view"} and GEOMETRY.search(details.get(rid, "")):
+            if not any(i.startswith("test:") and re.search(r"bounds|assert_geometry", bodies.get(i[5:], "")) for i in items):
+                errors.append(f"{rid}: geometry row, but no cited test reads bounds")
+        if status == "live" and not any(i.startswith("rust-only:") for i in items):
+            for item in items:
+                if item.endswith("-rust.png") and item.replace("-rust.png", "-ref.png") not in items:
+                    errors.append(f"{rid}: {item} without its -ref.png or rust-only: reason")
         for item in items:
             if item.startswith("test:"):
                 name = item[5:]
@@ -86,10 +126,15 @@ for tsv in sorted((INV / "status").glob("*.tsv")) if (INV / "status").exists() e
             elif item.startswith("live:") and RUNS.exists() and not (RUNS / item[5:]).exists():
                 errors.append(f"{rid}: missing {item}")
 
+for name, tagged in tags.items():
+    cited = {rid for rid in tagged if seen.get(rid) == "auto"}
+    if len(cited) > assertions(bodies[name]):
+        errors.append(f"test {name}: credits {len(cited)} rows with {assertions(bodies[name])} assertions")
+
 open_rows = sorted(set(rows) - set(seen))
 print(f"{len(rows)} rows: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + f", open {len(open_rows)}")
 if errors:
-    print("\n".join(errors[:60]), file=sys.stderr)
+    print("\n".join(errors if "--all" in sys.argv else errors[:60]), file=sys.stderr)
     print(f"{len(errors)} errors", file=sys.stderr)
     sys.exit(1)
 if open_rows and "--allow-open" not in sys.argv:
