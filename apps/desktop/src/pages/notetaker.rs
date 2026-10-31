@@ -502,6 +502,11 @@ impl NotetakerPage {
             s if s.starts_with("summary-") => {
                 open(self, SEED_FULL, Tab::Summary, window, cx);
                 self.summary.apply_scenario(&s["summary-".len()..]);
+                if s == "summary-done" {
+                    if let Some(item) = self.summary.model.as_ref().and_then(|m| m.action_items.first().cloned()) {
+                        self.set_item(&item, "status", "completed", Some(item.status.clone()), cx);
+                    }
+                }
             }
             _ => {}
         }

@@ -3860,6 +3860,7 @@ async fn owner_chips_and_due_labels_read_like_swift(cx: &mut TestAppContext) {
     let suggested = flow_ui::probe::seen().into_iter().find(|s| s.starts_with("might be ")).unwrap();
     assert!(suggested.ends_with('?'), "{suggested}");
     assert_eq!(sized(&suggested), (9., 400., muted));
+    assert_eq!(sized("Accept").0, 13., "Swift's default Button ignores the chip's 9 pt");
     assert_eq!(sized("Due: unclear (\"soon\")"), (11., 400., muted));
     let due = flow_ui::probe::seen().into_iter().find(|s| s.starts_with("Due ")).unwrap();
     assert_eq!(sized(&due), (11., 400., muted));

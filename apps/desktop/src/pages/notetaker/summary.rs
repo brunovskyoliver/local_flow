@@ -199,7 +199,7 @@ impl NotetakerPage {
         self.menu = if field == "owner" { Some(format!("owner.{}", item.id)) } else { None };
         cx.notify();
     }
-    fn set_item(&mut self, item: &Item, field: &str, value: &str, ai: Option<String>, cx: &mut Context<Self>) {
+    pub(super) fn set_item(&mut self, item: &Item, field: &str, value: &str, ai: Option<String>, cx: &mut Context<Self>) {
         let key = source_key(&item.sources);
         self.summary.editing = None;
         self.write(cx, |db, id| set_overlay(db, id, OverlayTarget::Item(&item.id), field, value, ai.as_deref(), Some(&item.ai_text), &key, now_ms()));
@@ -574,14 +574,15 @@ impl NotetakerPage {
                 let roots = self.summary.roots.clone();
                 h_flex()
                     .gap(px(6.))
-                    .child(chip.border_1().border_color(p.line).child(v_flex().gap(px(1.)).child(t(name).size(11.)).child(t("mentioned").size(9.).color(p.muted))))
+                    // Swift strokes an overlay, which takes no layout: the border comes out of the padding.
+                    .child(chip.px(px(7.)).py(px(2.)).border_1().border_color(p.line).child(v_flex().child(t(name).size(11.)).child(t("mentioned").size(9.).color(p.muted))))
                     .when_some(known, |d, (id, known_name)| {
                         let root = roots.iter().find(|r| r.identity.as_ref().and_then(|i| i.known_id.as_deref()) == Some(id.as_str())).map_or(id.clone(), |r| r.id.clone());
-                        d.child(h_flex().gap(px(4.)).child(t(format!("might be {known_name}?")).size(9.).color(p.muted)).child(plain_button("meeting.summary.owner.accept", "Accept").on_click(cx.listener(move |this, _, _, cx| this.set_item(&it, "owner", &owner_value_participant(&root), Some(ai.clone()), cx))).content(div().h(px(19.)).px(px(9.)).flex().items_center().rounded(px(5.)).bg(p.button).child(t("Accept").size(12.).color(p.muted).a11y_hidden()))))
+                        d.child(h_flex().gap(px(4.)).child(t(format!("might be {known_name}?")).size(9.).color(p.muted)).child(native_button("meeting.summary.owner.accept", "Accept").on_click(cx.listener(move |this, _, _, cx| this.set_item(&it, "owner", &owner_value_participant(&root), Some(ai.clone()), cx)))))
                     })
                     .into_any_element()
             }
-            Owner::Unresolved(label) => chip.id("meeting.summary.owner.unresolved").test_support().border_1().border_dashed().border_color(p.muted).child(t(label).size(11.).color(p.muted)).into_any_element(),
+            Owner::Unresolved(label) => chip.id("meeting.summary.owner.unresolved").test_support().px(px(7.)).py(px(2.)).border_1().border_dashed().border_color(p.muted).child(t(label).size(11.).color(p.muted)).into_any_element(),
         }
     }
 }
