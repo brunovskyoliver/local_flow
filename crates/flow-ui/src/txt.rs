@@ -101,6 +101,25 @@ pub struct Txt {
     on_link: Option<LinkHandler>,
 }
 
+thread_local! {
+    /// How many times each call site and text pair was built this frame, and whether a paint has
+    /// passed since, which means the next `t` starts a new frame.
+    static BUILT: std::cell::RefCell<(bool, std::collections::HashMap<u64, u64>)> = std::cell::RefCell::default();
+}
+
+/// Rows repeat the same text at the same call site ("Unused"), and an equal id drops the node from
+/// the accessibility tree. The nth repeat in a frame gets its own id; the same order keeps it stable.
+fn occurrence_id(hash: u64) -> u64 {
+    BUILT.with_borrow_mut(|(painted, seen)| {
+        if std::mem::take(painted) {
+            seen.clear();
+        }
+        let n = seen.entry(hash).or_insert(0);
+        *n += 1;
+        hash.wrapping_add(*n - 1)
+    })
+}
+
 /// Text at the inherited size and color. Id comes from the call site and the text.
 #[track_caller]
 pub fn t(text: impl Into<SharedString>) -> Txt {
@@ -117,7 +136,7 @@ pub fn rich(spans: Vec<Span>) -> Txt {
         s.text.hash(&mut hash);
     }
     Txt {
-        id: ElementId::Integer(hash.finish()),
+        id: ElementId::Integer(occurrence_id(hash.finish())),
         location,
         spans,
         size: None,
@@ -677,6 +696,7 @@ impl Element for Txt {
         window: &mut Window,
         cx: &mut App,
     ) {
+        BUILT.with_borrow_mut(|(painted, _)| *painted = true);
         if let Some(handler) = &self.on_link {
             for (hitbox, key) in links.drain(..) {
                 window.set_cursor_style(gpui_kit::CursorStyle::PointingHand, &hitbox);
@@ -803,7 +823,16 @@ fn paint_selection(id: &GlobalElementId, hitbox: &gpui_kit::Hitbox, bounds: Boun
 
 #[cfg(test)]
 mod tests {
-    use super::{word_at, wrap_points};
+    use super::{BUILT, occurrence_id, word_at, wrap_points};
+
+    #[test]
+    fn repeats_differ_within_a_frame_and_stay_stable_across_frames() {
+        let frame = || (occurrence_id(7), occurrence_id(7), occurrence_id(9));
+        let first = frame();
+        assert_ne!(first.0, first.1);
+        BUILT.with_borrow_mut(|(painted, _)| *painted = true);
+        assert_eq!(frame(), first);
+    }
 
     #[test]
     fn a_lone_last_word_takes_the_word_before_it() {
