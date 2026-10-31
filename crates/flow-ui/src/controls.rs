@@ -1,9 +1,10 @@
 //! Kit controls page code may use. Everything is re-exported from here so the pages don't name
 //! GPUI Kit directly.
 pub use gpui_kit::component::input::{Input, InputEvent as TextInputEvent, InputState};
+pub use gpui_kit::component::input::{Textarea, TextareaState};
 pub use gpui_kit::component::switch::Switch;
 pub use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem, ContextMenuExt};
-pub use gpui_kit::component::button::{Button, ButtonVariants};
+pub use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 pub use gpui_kit::component::{Disableable, Sizable, Size as ControlSize, Side, WindowExt as FlowWindowExt, ActiveTheme};
 pub use gpui_kit::component::popover::Popover;
 pub use gpui_kit::component::dialog::{Dialog, AlertDialog};

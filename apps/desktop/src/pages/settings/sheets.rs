@@ -67,14 +67,14 @@ impl SettingsPage {
             Modal::TurnOff => Self::dialog(
                 "Turn off remote dictation?".into(),
                 "This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.".into(),
-                prototype_button("settings.remoteTurnOff", "Turn Off").text_color(pl.warning).on_click(cx.listener(|this, _, _, cx| this.confirm_turn_off(cx))),
+                prototype_button("settings.remoteTurnOff", "Turn Off").full_width().text_color(pl.warning).on_click(cx.listener(|this, _, _, cx| this.confirm_turn_off(cx))),
                 "settings.remoteTurnOffCancel",
                 cx,
             )
             .into_any_element(),
             Modal::Download | Modal::AlternateDownload => {
                 let (title, message) = self.download_copy(modal);
-                Self::dialog(title, message, prototype_button("settings.downloadConfirm", "Download").on_click(cx.listener(|this, _, _, cx| this.confirm_download(cx))), "settings.downloadCancel", cx).into_any_element()
+                Self::dialog(title, message, prototype_button("settings.downloadConfirm", "Download").full_width().on_click(cx.listener(|this, _, _, cx| this.confirm_download(cx))), "settings.downloadCancel", cx).into_any_element()
             }
             Modal::Context(kind) => self.context_sheet(kind, window, cx).into_any_element(),
         };
@@ -113,12 +113,13 @@ impl SettingsPage {
 
     fn dialog(title: String, message: String, confirm: FlowButton, cancel: &'static str, cx: &mut Context<Self>) -> Div {
         v_flex()
-            .w(px(380.))
-            .p(px(24.))
+            // The size of a native alert, drawn here because Kit has no system alert.
+            .w(px(274.))
+            .p(px(20.))
             .gap(px(12.))
             .child(t(title).font(15., 600.))
             .child(t(message).size(13.).line_spacing(3.))
-            .child(h_flex().w_full().justify_end().gap(px(8.)).pt(px(4.)).child(prototype_button(cancel, "Cancel").on_click(cx.listener(|this, _, _, cx| this.close_modal(cx)))).child(confirm))
+            .child(h_flex().w_full().gap(px(8.)).pt(px(4.)).child(div().flex_1().child(prototype_button(cancel, "Cancel").full_width().on_click(cx.listener(|this, _, _, cx| this.close_modal(cx))))).child(div().flex_1().child(confirm)))
     }
 
     fn consent(&self, window: &Window, cx: &mut Context<Self>) -> Div {

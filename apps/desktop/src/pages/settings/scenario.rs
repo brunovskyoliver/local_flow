@@ -16,7 +16,7 @@ pub(super) fn seed(s: &str, p: &mut Prefs) {
         p.set("remote.state", state);
     };
     match s {
-        "approved" | "advanced" => approved(p, 2),
+        "approved" | "advanced" | "turn-off" => approved(p, 2),
         "consent-update" => approved(p, 1),
         "server-only" => {
             approved(p, 2);
@@ -82,9 +82,9 @@ pub(super) fn apply_snapshot(s: &str, n: &mut Snapshot) {
             n.speaker_installing = true;
             n.boost_installing = true;
         }
-        "alternate" | "alt-download" => n.alternate = Some(Alternate { choice: "parakeet-v3", installed: false, installing: false, completed: 0, total: 0, bytes: 2_500_000_000 }),
-        "alt-downloading" => n.alternate = Some(Alternate { choice: "parakeet-v3", installed: false, installing: true, completed: 30, total: 100, bytes: 2_500_000_000 }),
-        "alt-installed" => n.alternate = Some(Alternate { choice: "parakeet-v3", installed: true, installing: false, completed: 0, total: 0, bytes: 2_500_000_000 }),
+        "alternate" | "alt-download" => n.alternate = Some(Alternate { choice: "parakeet-ultra", installed: false, installing: false, completed: 0, total: 0, bytes: 2_500_000_000 }),
+        "alt-downloading" => n.alternate = Some(Alternate { choice: "parakeet-ultra", installed: false, installing: true, completed: 30, total: 100, bytes: 2_500_000_000 }),
+        "alt-installed" => n.alternate = Some(Alternate { choice: "parakeet-ultra", installed: true, installing: false, completed: 0, total: 0, bytes: 2_500_000_000 }),
         "permissions-granted" => all(n, Perm::Granted),
         "permissions-refused" => all(n, Perm::Denied),
         _ => {}
@@ -111,7 +111,6 @@ pub(super) fn apply_view(page: &mut SettingsPage, _window: &mut Window, cx: &mut
         "consent" => page.modal = Some(Modal::Consent),
         "turn-off" => {
             page.modal = Some(Modal::TurnOff);
-            prefs_mut(cx).set("remote.enabled", true);
         }
         "consent-update" => {}
         "download" => page.modal = Some(Modal::Download),

@@ -1194,7 +1194,7 @@ pub(super) fn stepper(id: &'static str, label: &'static str, value: String, down
 /// `DisclosureGroup`.
 pub(super) fn disclosure(id: &'static str, title: &'static str, open: bool, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, cx: &App) -> AnyElement {
     let m = pal(cx).muted;
-    plain_button(id, title).content(h_flex().gap(px(6.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 10., m)).child(t(title).size(12.).color(m).a11y_hidden()).into_any_element()).on_click(f)
+    h_flex().child(plain_button(id, title).content(h_flex().gap(px(6.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 10., m)).child(t(title).size(12.).color(m).a11y_hidden()).into_any_element()).on_click(f))
     .into_any_element()
 }
 
@@ -1212,7 +1212,7 @@ pub(super) fn input_surface(symbol: &'static str, input: Input, state: &Entity<I
         .border(px(if focused { 2. } else { 1. }))
         .border_color(if focused { pl.accent } else { pl.line })
         .child(div().w(px(16.)).flex().justify_center().child(icon(symbol, 14., pl.muted)))
-        .child(div().flex_1().min_w_0().child(input.appearance(false)))
+        .child(div().flex_1().min_w_0().text_size(px(13.)).child(input.appearance(false).px_0()))
 }
 
 fn saved_secret(label: &'static str, cx: &App) -> Div {

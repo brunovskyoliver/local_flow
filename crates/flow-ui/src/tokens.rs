@@ -226,6 +226,7 @@ mod tests {
     use super::*;
 
     // parity: SHELL-189..SHELL-219 Every Swift token, including high-contrast values and aliases.
+    // parity: SET-014
     #[test]
     fn palette_matches_sotto() {
         let (l, d, cl, cd) = (Hex::new(Mode::Light), Hex::new(Mode::Dark), Hex::new(Mode::ContrastLight), Hex::new(Mode::ContrastDark));

@@ -87,7 +87,8 @@ impl SettingsPage {
                 cx.notify();
             }), cx));
             if self.server_advanced {
-                advanced = advanced.children(self.advanced(&r, window, cx));
+                // `DisclosureGroup` content inherits the muted style and the native row spacing.
+                advanced = advanced.child(v_flex().w_full().py(px(8.)).gap(px(8.)).text_color(pal(cx).muted).children(self.advanced(&r, window, cx)));
             }
             body = body.child(hairline(cx)).child(div().w_full().py(px(14.)).child(advanced));
         }
