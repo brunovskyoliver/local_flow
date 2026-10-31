@@ -22,8 +22,13 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -86,6 +91,31 @@ func init() {
 		fmt.Printf("%x\n", der)
 		os.Exit(0)
 	}
+	if len(os.Args) == 4 && os.Args[1] == "test-issuer-keys" {
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		must(err)
+		must(os.WriteFile(os.Args[2], x509.MarshalPKCS1PrivateKey(key), 0o600))
+		jwks, err := json.Marshal(map[string]any{"keys": []map[string]string{{"kty": "RSA", "alg": "RS256", "use": "sig", "kid": "test", "n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": "AQAB"}}})
+		must(err)
+		must(os.WriteFile(os.Args[3], jwks, 0o600))
+		os.Exit(0)
+	}
+	if len(os.Args) == 6 && os.Args[1] == "test-mint" {
+		der, err := os.ReadFile(os.Args[2])
+		must(err)
+		key, err := x509.ParsePKCS1PrivateKey(der)
+		must(err)
+		now := time.Now().Unix()
+		claims, err := json.Marshal(map[string]any{"iss": os.Args[3], "aud": os.Args[4], "sub": "google-subject", "email_verified": true, "nonce": os.Args[5], "iat": now, "exp": now + 600})
+		must(err)
+		enc := base64.RawURLEncoding.EncodeToString
+		signed := enc([]byte(`{"alg":"RS256","kid":"test"}`)) + "." + enc(claims)
+		digest := sha256.Sum256([]byte(signed))
+		signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+		must(err)
+		fmt.Println(signed + "." + enc(signature))
+		os.Exit(0)
+	}
 	if len(os.Args) == 3 && os.Args[1] == "test-seed" {
 		ctx := context.Background()
 		store, err := accounts.Open(os.Args[2], time.Now)
@@ -138,7 +168,25 @@ fn output(command: &mut Command, what: &str) -> String {
 }
 
 impl Flowd {
+    pub const GOOGLE_CLIENT_ID: &str = "test-client.apps.googleusercontent.com";
+    const TEST_ISSUER: &str = "https://issuer.test";
+
     pub fn start() -> Flowd {
+        Flowd::launch(false)
+    }
+
+    /// A debug-tagged flowd that takes ID tokens from a local RS256 issuer as Google's.
+    pub fn start_with_test_issuer() -> Flowd {
+        Flowd::launch(true)
+    }
+
+    /// An ID token flowd accepts, for `nonce`.
+    pub fn mint_id_token(&self, nonce: &str) -> String {
+        let key = self.dir.join("issuer.der").display().to_string();
+        self.tool(&["test-mint", &key, Flowd::TEST_ISSUER, Flowd::GOOGLE_CLIENT_ID, nonce]).trim().to_string()
+    }
+
+    fn launch(test_issuer: bool) -> Flowd {
         let server = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(|a| a.join("server")).find(|s| s.join("go.mod").exists()).expect("server/go.mod");
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let dir = std::env::temp_dir().join(format!("flowd-test-{}-{unique}", std::process::id()));
@@ -148,7 +196,8 @@ impl Flowd {
         std::fs::write(&overlay_go, OVERLAY).unwrap();
         let replace = serde_json_escape(&server.join("cmd/flowd/zz_test_overlay.go"), &overlay_go);
         std::fs::write(&overlay_json, replace).unwrap();
-        output(Command::new("go").current_dir(&server).arg("build").arg("-overlay").arg(&overlay_json).arg("-o").arg(&bin).arg("./cmd/flowd"), "go build flowd");
+        let tags = if test_issuer { "localflow_debug" } else { "" };
+        output(Command::new("go").current_dir(&server).arg("build").arg("-tags").arg(tags).arg("-overlay").arg(&overlay_json).arg("-o").arg(&bin).arg("./cmd/flowd"), "go build flowd");
 
         let mut flowd = Flowd {
             remote: format!("http://127.0.0.1:{}", free_port()),
@@ -184,6 +233,11 @@ impl Flowd {
         let dead = addr(&flowd.down);
         let mut main_args: Vec<String> = ["--listen", &addr(&flowd.rewrite), "--backend", &format!("http://127.0.0.1:{backend}/v1"), "--remote-listen", &addr(&flowd.remote), "--dev", "--data-dir"].map(String::from).to_vec();
         main_args.push(data.display().to_string());
+        if test_issuer {
+            let (key, jwks) = (flowd.dir.join("issuer.der"), flowd.dir.join("jwks.json"));
+            output(&mut tool(&["test-issuer-keys".as_ref(), key.as_ref(), jwks.as_ref()]), "issuer keys");
+            main_args.extend(["--google-client-id".to_string(), Flowd::GOOGLE_CLIENT_ID.into(), "--test-issuer".into(), Flowd::TEST_ISSUER.into(), "--test-jwks".into(), jwks.display().to_string()]);
+        }
         flowd.children.push(serve(main_args));
         flowd.children.push(serve(["--listen", &addr(&flowd.no_backend), "--backend", &format!("http://{dead}/v1"), "--analysis=false"].map(String::from).to_vec()));
         flowd.children.push(serve(["--listen", &addr(&flowd.wrong_version), "--backend", &format!("http://127.0.0.1:{backend}/v1"), "--rewrite-protocol-versions", "2"].map(String::from).to_vec()));

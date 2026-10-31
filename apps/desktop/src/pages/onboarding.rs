@@ -28,6 +28,7 @@ pub struct RemoteState {
     pub error: Option<String>,
     pub consent_open: bool,
     pub confirm_off: bool,
+    pub apple: bool,
     pub google: bool,
 }
 
@@ -112,9 +113,9 @@ fn missing(e: Unavailable) -> String {
 
 impl OnboardingPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (mut setup, memory, google_prefs) = {
+        let (mut setup, memory, (apple, google_prefs)) = {
             let core = cx.global::<Core>();
-            (Setup::new(&core.prefs), core.services.physical_memory(), core.services.google_sign_in_available())
+            (Setup::new(&core.prefs), core.services.physical_memory(), (core.services.apple_sign_in_available(), core.services.google_sign_in_available()))
         };
         // `AppServices.start()`: before any shortcut is configured.
         setup.resume_unfinished(&mut cx.global_mut::<Core>().prefs);
@@ -183,7 +184,7 @@ impl OnboardingPage {
             downloaded,
             ai_phase: AiPhase::Idle,
             local_helpers_ready: false,
-            remote: RemoteState { google: google_prefs, pinned, ..Default::default() },
+            remote: RemoteState { apple, google: google_prefs, pinned, ..Default::default() },
             legacy_open: false,
             credential_present: false,
             credential_error: None,

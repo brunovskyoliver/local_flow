@@ -165,7 +165,10 @@ impl Services for Mac {
         if granted { PermissionState::Granted } else { PermissionState::NotAsked }
     }
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
-        std::process::Command::new("/usr/bin/open").arg(url).spawn().map(|_| ()).map_err(|_| Unavailable("opening a link"))
+        open_with_system(url)
+    }
+    fn google_sign_in_available(&self) -> bool {
+        crate::google_client().is_some()
     }
     fn set_app_appearance(&self, dark: Option<bool>) -> Result<(), Unavailable> {
         // SAFETY: NSApplication and NSAppearance exist with AppKit linked; a nil appearance means follow the system.
@@ -637,7 +640,14 @@ mod core_audio {
 }
 
 struct MacCredentials;
+fn open_with_system(url: &str) -> Result<(), Unavailable> {
+    std::process::Command::new("/usr/bin/open").arg(url).spawn().map(|_| ()).map_err(|_| Unavailable("opening a link"))
+}
+
 impl crate::Credentials for MacCredentials {
+    fn open_url(&self, url: &str) -> Result<(), Unavailable> {
+        open_with_system(url)
+    }
     fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
         crate::keychain_mac::read(name)
     }

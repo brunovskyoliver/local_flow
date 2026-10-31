@@ -40,11 +40,11 @@ impl SettingsPage {
             }
             if on && state == "pinned" && self.identity.is_none() {
                 let services = &cx.global::<Core>().services;
-                let google = services.google_sign_in_available();
+                let (apple, google) = (services.apple_sign_in_available(), services.google_sign_in_available());
                 details = details.child(
                     h_flex()
                         .gap(px(8.))
-                        .child(prototype_button("settings.remoteSignInApple", "Sign in with Apple").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| this.sign_in("apple", cx))))
+                        .when(apple, |d| d.child(prototype_button("settings.remoteSignInApple", "Sign in with Apple").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| this.sign_in("apple", cx)))))
                         .when(google, |d| d.child(prototype_button("settings.remoteSignInGoogle", "Sign in with Google").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| this.sign_in("google", cx))))),
                 );
             }

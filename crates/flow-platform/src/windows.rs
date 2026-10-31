@@ -31,6 +31,15 @@ impl Services for Win {
             .map(|_| ())
             .map_err(|_| Unavailable("Windows Settings"))
     }
+    fn open_url(&self, url: &str) -> Result<(), Unavailable> {
+        crate::win::system::open_url(url)
+    }
+    fn google_sign_in_available(&self) -> bool {
+        crate::google_client().is_some()
+    }
+    fn apple_sign_in_available(&self) -> bool {
+        false
+    }
     fn high_contrast(&self) -> bool {
         false
     }
@@ -80,6 +89,9 @@ impl Services for Win {
 
 struct WinCredentials;
 impl crate::Credentials for WinCredentials {
+    fn open_url(&self, url: &str) -> Result<(), Unavailable> {
+        crate::win::system::open_url(url)
+    }
     fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
         crate::win::secrets::read(name)
     }

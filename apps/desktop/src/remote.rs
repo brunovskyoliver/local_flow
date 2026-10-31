@@ -3,6 +3,7 @@
 use crate::core::Core;
 use flow_core::remote::channel::WebSockets;
 use flow_core::remote::enrollment::{EnrollError, Enrollment, HttpIdentity, IdentityProvider, Parts, RemoteSettings, SignIn, system_now};
+use flow_core::remote::google::GoogleClient;
 use flow_core::remote::pairing::{PairingLink, PairingToken, failure_message};
 use flow_core::remote::pool::Pool;
 use flow_core::remote::{DeviceKeys, Secrets, Unavailable, address, raw_signature_to_der};
@@ -47,8 +48,11 @@ impl DeviceKeys for Platform {
 }
 impl SignIn for Platform {
     fn sign_in(&self, provider: IdentityProvider, nonce: &str) -> Result<String, Unavailable> {
-        let name = if provider == IdentityProvider::Apple { "apple" } else { "google" };
-        self.0.sign_in(name, nonce).map_err(refused)
+        if provider == IdentityProvider::Apple {
+            return self.0.sign_in("apple", nonce).map_err(refused);
+        }
+        let (id, secret) = flow_platform::google_client().ok_or(Unavailable("Google sign-in"))?;
+        GoogleClient::new(id, secret).sign_in(nonce, &|url| self.0.open_url(url).map_err(refused))
     }
 }
 

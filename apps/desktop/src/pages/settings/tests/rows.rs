@@ -205,6 +205,16 @@ async fn sign_in_buttons_follow_state_google_and_busy(cx: &mut TestAppContext) {
     assert!(!has(cx, r.win, "settings.remoteSignInApple"), "identity nil only");
 }
 
+#[flow_ui::gpui::test]
+async fn windows_offers_google_without_apple(cx: &mut TestAppContext) {
+    let r = rig(cx, "", pinned);
+    r.windows.set(true);
+    r.google.set(true);
+    set(cx, r.win, |_, _, _| {});
+    assert!(!has(cx, r.win, "settings.remoteSignInApple"), "ADR 0036");
+    assert_eq!(label(cx, r.win, "settings.remoteSignInGoogle"), "Sign in with Google");
+}
+
 // parity: SET-059
 #[flow_ui::gpui::test]
 async fn pinned_line_is_12_muted_with_two_spaces(cx: &mut TestAppContext) {

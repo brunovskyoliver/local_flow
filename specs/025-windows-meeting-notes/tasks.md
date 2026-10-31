@@ -20,8 +20,8 @@ Every phase ends with `cargo test --workspace`, `./scripts/check-rust-boundaries
 - [X] T013 `apps/desktop/src/remote.rs` and views: the Rust pairing form on onboarding and Settings, link handling, address edit, turn off wired to real services, off the UI thread. Update view tests. Links work by pasting into the token field; opening `localflow://` isn't registered, since the Swift app owns the scheme until the cutover and a dev binary has no Info.plist (see `acceptance/hardware.md`).
 
 ## Phase 3: Google sign-in (US2)
-- [ ] T014 `remote/google.rs`: authorization URL, PKCE, loopback callback parsing (bound, deadline, state check), token exchange over a `Transport`. Tests with a fake server.
-- [ ] T015 Wire provider into enrollment. `google_sign_in_available` from a build-time value. Hidden otherwise.
+- [X] T014 `remote/google.rs`: authorization URL, PKCE, loopback callback parsing (bound, deadline, state check), token exchange over a `Transport`. Tests with a fake server.
+- [X] T015 Wire provider into enrollment. `google_sign_in_available` from a build-time value. Hidden otherwise.
 
 ## Phase 4: Windows system services and capture (US3)
 - [ ] T016 Windows `launch_at_login`, `free_disk_bytes`, `high_contrast`, `reduce_motion`, microphone consent, `open_url`, input catalog.

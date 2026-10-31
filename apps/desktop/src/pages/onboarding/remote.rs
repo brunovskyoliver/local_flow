@@ -94,8 +94,11 @@ impl OnboardingPage {
             details = details.child(t(format!("Pinned fingerprint  {pinned}")).mono().size(12.).color(p.muted).selectable());
         }
         if needs_sign_in {
-            let apple = self.click(cx, |this, cx| this.sign_in("apple", cx));
-            let mut row = h_flex().gap(px(8.)).child(native_button("settings.remoteSignInApple", "Sign in with Apple").disabled(self.remote.busy).on_click(apple));
+            let mut row = h_flex().gap(px(8.));
+            if self.remote.apple {
+                let apple = self.click(cx, |this, cx| this.sign_in("apple", cx));
+                row = row.child(native_button("settings.remoteSignInApple", "Sign in with Apple").disabled(self.remote.busy).on_click(apple));
+            }
             if self.remote.google {
                 let google = self.click(cx, |this, cx| this.sign_in("google", cx));
                 row = row.child(native_button("settings.remoteSignInGoogle", "Sign in with Google").disabled(self.remote.busy).on_click(google));
