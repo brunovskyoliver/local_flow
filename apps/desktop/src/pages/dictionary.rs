@@ -290,14 +290,12 @@ impl DictionaryPage {
     fn banner(&self, cx: &mut Context<Self>) -> Div {
         let white_a = |o: f32| white().opacity(o);
         let serif = |s: &'static str| span(s).serif(true);
-        // GPUI gradients take two stops; Swift's three become two halves.
-        let half = |a: u32, b: u32| div().flex_1().h_full().bg(linear_gradient(90., linear_color_stop(rgb(a), 0.), linear_color_stop(rgb(b), 1.)));
         div()
             .relative()
             .w_full()
             .mt(px(22.))
             .rounded(px(16.))
-            .child(h_flex().absolute().inset_0().child(half(0x211F1C, 0x3D3329).rounded_l(px(16.))).child(half(0x3D3329, 0x7A5C33).rounded_r(px(16.))))
+            .child(canvas(|_, _, _| {}, |b, _, w, _| banner_gradient(b, w)).absolute().size_full())
             .child(
                 v_flex()
                     .w_full()
@@ -332,7 +330,7 @@ impl DictionaryPage {
             .child(
                 div().absolute().top(px(12.)).right(px(12.)).child(
                     FlowButton::new("vocabulary.bannerDismiss", ButtonKind::Plain, "Dismiss introduction")
-                        .content(div().p(px(6.)).rounded_full().bg(white_a(0.14)).child(icon("xmark", 11.5, white_a(0.8))))
+                        .content(div().p(px(6.)).rounded_full().bg(white_a(0.14)).child(icon("xmark@semibold", 11.5, white_a(0.8))))
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.global_mut::<Core>().prefs.set("dictionary.bannerDismissed", true);
                             cx.notify();
@@ -354,7 +352,7 @@ impl DictionaryPage {
                         .gap(px(10.))
                         .px(px(18.))
                         .py(px(10.))
-                        .when(!s.alias.is_empty(), |d| d.child(t(s.alias.clone()).size(15.)).child(icon("arrow.right", 12., p.ink)))
+                        .when(!s.alias.is_empty(), |d| d.child(t(s.alias.clone()).size(15.)).child(icon("arrow.right@semibold", 12., p.ink)))
                         .child(t(s.canonical.clone()).size(15.))
                         .child(t(suggestion_note(s)).size(12.).color(p.muted))
                         .child(div().flex_1())
@@ -376,7 +374,7 @@ impl DictionaryPage {
                 )
                 .when(i + 1 < count, |d| d.child(hairline(cx)));
         }
-        v_flex().id("vocabulary.suggestions").w_full().mt(px(24.)).gap(px(10.)).child(t("Suggested").font(13., 500.).color(p.muted)).child(rows.child(outline(cx)))
+        v_flex().id("vocabulary.suggestions").w_full().mt(px(24.)).gap(px(9.)).child(t("Suggested").font(13., 500.).color(p.muted)).child(rows.child(outline(cx)))
     }
 
     fn list(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -394,7 +392,7 @@ impl DictionaryPage {
             return div().id("vocabulary.empty").test_support().w_full().mt(px(24.)).py(px(60.)).flex().justify_center().child(t(text).size(15.).color(p.muted)).into_any_element();
         }
         let count = entries.len();
-        let mut list = v_flex().id("vocabulary.list").relative().w_full().mt(px(24.));
+        let mut list = v_flex().id("vocabulary.list").test_support().relative().w_full().mt(px(24.));
         for (i, e) in entries.into_iter().enumerate() {
             list = list.child(self.row(i, e, window, cx)).when(i + 1 < count, |d| d.child(hairline(cx)));
         }
@@ -427,7 +425,7 @@ impl DictionaryPage {
                     aliases = aliases.child(div().flex_none().mr(px(4.)).child(t(",").size(15.).color(fg)));
                 }
             }
-            title = title.child(aliases).child(div().flex_none().child(icon("arrow.right", 12., fg))).child(div().flex_none().child(t(e.canonical.clone()).size(15.).color(fg)));
+            title = title.child(aliases).child(div().flex_none().child(icon("arrow.right@semibold", 12., fg))).child(div().flex_none().child(t(e.canonical.clone()).size(15.).color(fg)));
         }
         let chip = |text: &'static str| div().px(px(6.)).py(px(2.)).bg(p.tint).rounded_full().child(t(text).size(11.).color(p.muted));
         if self.model.is_provisional(&e) {
@@ -463,7 +461,8 @@ impl DictionaryPage {
                     })),
             );
 
-        let mut meta = h_flex().gap(px(8.)).child(t(usage).id("dictionary.entry.usage").size(12.).color(p.muted));
+        // `.mb(-1)`: `Txt` rounds the 12 line up; Swift's row is 1 shorter.
+        let mut meta = h_flex().gap(px(8.)).mb(px(-1.)).child(t(usage).id("dictionary.entry.usage").size(12.).color(p.muted));
         for (n, term) in retired.iter().enumerate() {
             let label = if term.is_boost() { "Boost off · Restore".to_string() } else { format!("Restore \u{2018}{}\u{2019}", term.term) };
             let (entry, term) = (e.clone(), term.clone());
@@ -482,6 +481,8 @@ impl DictionaryPage {
         let menu_entry = e.clone();
         v_flex()
             .id(format!("dictionary.row.{i}"))
+            .test_support()
+            .test_support()
             .group(group.clone())
             .w_full()
             .min_h(px(53.))
@@ -590,7 +591,7 @@ impl DictionaryPage {
             } else {
                 row = row.child(div().flex_1().min_w_0().overflow_hidden().child(t(canonical_text.clone()).size(13.).color(p.muted).lines(1))).child(
                     FlowButton::new(format!("vocabulary.removeAlias.{i}"), ButtonKind::Plain, format!("Remove misspelling {}", i + 1))
-                        .content(icon("xmark", 10., p.muted))
+                        .content(icon("xmark@semibold", 10., p.muted))
                         .on_click(cx.listener(move |this, _, w, cx| {
                             this.model.remove_alias(i);
                             this.sync_fields(w, cx);
@@ -678,6 +679,36 @@ fn toggle_row(title: &'static str, tip: &'static str, id: &'static str, on: bool
         .child(FlowSwitch::new(id).checked(on).with_size(ControlSize::Small).accessibility_label(title).on_click(handler))
 }
 
+/// Swift's three-stop gradient. Slices, not `linear_gradient`: GPUI's shader dither leaves vertical bands on this dark ramp.
+// ponytail: each corner is one solid colour, at most 2 levels off across its 16 pt.
+fn banner_gradient(b: Bounds<Pixels>, w: &mut Window) {
+    let at = |x: f32| {
+        let (t, (a, c)) = if x < 0.5 { (x * 2., ((0.13, 0.12, 0.11), (0.24, 0.2, 0.16))) } else { (x * 2. - 1., ((0.24, 0.2, 0.16), (0.48, 0.36, 0.2))) };
+        let mix = |p: f32, q: f32| p + (q - p) * t;
+        Hsla::from(Rgba { r: mix(a.0, c.0), g: mix(a.1, c.1), b: mix(a.2, c.2), a: 1. })
+    };
+    let (width, height, r) = (f32::from(b.size.width), f32::from(b.size.height), 16.);
+    let quad_at = |x: f32, y: f32, qw: f32, qh: f32| Bounds::new(point(b.origin.x + px(x), b.origin.y + px(y)), size(px(qw), px(qh)));
+    // Corners first and twice their radius, which GPUI otherwise halves; the slices paint over all but the curve.
+    for (x, y, corners) in [
+        (0., 0., Corners { top_left: px(r), ..Default::default() }),
+        (width - r * 2., 0., Corners { top_right: px(r), ..Default::default() }),
+        (0., height - r * 2., Corners { bottom_left: px(r), ..Default::default() }),
+        (width - r * 2., height - r * 2., Corners { bottom_right: px(r), ..Default::default() }),
+    ] {
+        let edge = if x == 0. { r / 2. } else { width - r / 2. };
+        w.paint_quad(fill(quad_at(x, y, r * 2., r * 2.), at(edge / width)).corner_radii(corners));
+    }
+    let mut x = 0.;
+    while x < width {
+        let inset = if x < r || x >= width - r { r } else { 0. };
+        // 2.5: slices overlap, so a fractional origin leaves no seam; stopped short of the right corners.
+        let slice = if inset == 0. { (width - r - x).min(2.5) } else { (width - x).min(2.5) };
+        w.paint_quad(fill(quad_at(x, inset, slice, height - inset * 2.), at((x + 1.) / width)));
+        x += 2.;
+    }
+}
+
 impl Render for DictionaryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
@@ -710,7 +741,9 @@ impl Render for DictionaryPage {
                     this.confirming_delete = None;
                     cx.notify();
                 }),
-            ))
+            )
+            // The glass picks up the banner behind it, measured from Swift's dialog.
+            .when(!dismissed, |d| d.bg(if pal(cx).ink.l > 0.5 { rgb(0x35322E) } else { rgb(0xBCBAB7) })))
         } else {
             None
         };
@@ -1188,9 +1221,12 @@ mod tests {
             flow_core::dictionary::save(cx.global::<Core>().db.as_ref().unwrap(), &e, None, "established").unwrap();
         });
         w.update(cx, |t, _, _| assert!(t.model.entries.iter().all(|e| e.id != "arrived"))).unwrap();
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute("DELETE FROM term_suggestions", []).unwrap());
+        w.update(cx, |t, _, _| assert!(!t.model.suggestions.is_empty())).unwrap();
         cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Dictionary));
         frame(cx, w);
         w.update(cx, |t, _, _| assert!(t.model.entries.iter().any(|e| e.id == "arrived"))).unwrap();
+        w.update(cx, |t, _, _| assert!(t.model.suggestions.is_empty(), "suggestions read again too")).unwrap();
     }
 
     // parity: DICT-002
@@ -1228,13 +1264,86 @@ mod tests {
     #[flow_ui::gpui::test]
     async fn saving_turns_off_every_write(cx: &mut TestAppContext) {
         let w = open(cx);
-        for id in ["vocabulary.suggestion.add.0", "dictionary.edit.0", "dictionary.toggle.0", "dictionary.delete.0", "vocabulary.add"] {
+        let writes = ["vocabulary.suggestion.add.0", "dictionary.edit.0", "dictionary.toggle.0", "dictionary.delete.0", "dictionary.alias.restore.0.0", "vocabulary.add"];
+        for id in writes {
             assert_ne!(disabled(cx, w, id), Some(true), "{id}");
         }
         state(cx, w, |t| t.model.saving = true);
-        for id in ["vocabulary.suggestion.add.0", "dictionary.edit.0", "dictionary.toggle.0", "dictionary.delete.0", "vocabulary.add"] {
+        for id in writes {
             assert_eq!(disabled(cx, w, id), Some(true), "{id}");
         }
+        // The click does nothing either: the retired alias stays retired.
+        click(cx, w, "dictionary.alias.restore.0.0");
+        assert_saw(&["Restore \u{2018}akme robotics\u{2019}"]);
+        // Save, with a draft that could otherwise be saved.
+        state(cx, w, |t| t.model.saving = false);
+        click(cx, w, "dictionary.edit.1");
+        assert_ne!(disabled(cx, w, "vocabulary.save"), Some(true), "a filled draft");
+        state(cx, w, |t| t.model.saving = true);
+        assert_eq!(disabled(cx, w, "vocabulary.save"), Some(true), "while saving");
+    }
+
+    // parity: DICT-013
+    #[flow_ui::gpui::test]
+    async fn a_regular_pill_is_13_ink_and_28_tall(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let ink = cx.update(|cx| pal(cx).ink);
+        let s = flow_ui::probe::style_of("Dismiss").unwrap();
+        assert_eq!((s.size, s.color), (13., ink));
+        assert_eq!(bounds(cx, w, "dictionary.edit.0").size.height, px(7. + 13. + 7.), "7 around a headless Figtree 13 line");
+    }
+
+    // parity: DICT-058
+    #[flow_ui::gpui::test]
+    async fn the_list_holds_every_row_inside_its_border(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let (list, first) = (bounds(cx, w, "vocabulary.list"), bounds(cx, w, "dictionary.row.0"));
+        assert_eq!(first.origin.y, list.origin.y, "the 1 pt border takes no layout");
+        let count = w.update(cx, |t, _, _| t.model.entries.len()).unwrap();
+        let last = bounds(cx, w, &format!("dictionary.row.{}", count - 1));
+        assert_eq!(last.bottom(), list.bottom(), "no divider after the last");
+    }
+
+    // parity: DICT-063
+    #[flow_ui::gpui::test]
+    async fn an_entry_row_has_its_padding_height_and_ink(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let (ink, muted) = cx.update(|cx| (pal(cx).ink, pal(cx).muted));
+        let entries = w.update(cx, |t, _, _| t.model.entries.clone()).unwrap();
+        let on = entries.iter().find(|e| e.enabled && e.aliases.is_empty()).unwrap();
+        let off = entries.iter().find(|e| !e.enabled).unwrap();
+        let (on_style, off_style) = (flow_ui::probe::style_of(&on.canonical).unwrap(), flow_ui::probe::style_of(&off.canonical).unwrap());
+        assert_eq!((on_style.size, on_style.color), (15., ink), "enabled");
+        assert_eq!((off_style.size, off_style.color), (15., muted), "disabled");
+        for i in 0..entries.len() {
+            assert!(bounds(cx, w, &format!("dictionary.row.{i}")).size.height >= px(53.), "row {i}");
+        }
+        let (row, delete) = (bounds(cx, w, "dictionary.row.1"), bounds(cx, w, "dictionary.delete.1"));
+        assert_eq!(row.right() - delete.right(), px(18.), "18 at the side");
+        assert_eq!(delete.top() - row.top(), px(10.), "10 on top");
+    }
+
+    // parity: DICT-103 DICT-117
+    #[flow_ui::gpui::test]
+    async fn a_word_alone_has_its_placeholder_and_its_error_below(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        w.update(cx, |t, win, cx| {
+            t.model.set_correcting(false);
+            t.sync_fields(win, cx);
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        let placeholder = cx.update_window(w.into(), |_, win, _| win.find_by_label("Word").placeholder().map(str::to_string)).unwrap();
+        assert_eq!(placeholder.as_deref(), Some("Word"));
+        let canonical = w.update(cx, |t, _, _| t.canonical.clone().unwrap()).unwrap();
+        type_into(cx, w, canonical, "two  spaces");
+        cx.update_window(w.into(), |_, win, cx| win.press("enter", cx)).unwrap();
+        frame(cx, w);
+        assert_saw(&["Separate words with single spaces."]);
+        let (error, field) = (bounds(cx, w, "vocabulary.canonicalError"), bounds(cx, w, "vocabulary.canonical.box"));
+        assert_eq!(error.origin.y - field.bottom(), px(4.), "below the Word field");
     }
 
     // parity: DICT-057
@@ -1946,8 +2055,17 @@ mod tests {
         });
         let usage_rev = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.query_row("SELECT revision FROM dictionary_usage_state WHERE id=1", [], |r| r.get::<_, i64>(0)).unwrap());
         let before = usage_rev(cx);
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute("INSERT INTO dictionary_usage_events (dictation_id, entry_id, key_id, outcome, at) VALUES ('d', ?, 'boost', 'kept', 1)", [&id]).unwrap());
+        let (events, vocab_rev) = (
+            |cx: &mut TestAppContext, id: &str| cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.query_row("SELECT count(*) FROM dictionary_usage_events WHERE entry_id=?", [id], |r| r.get::<_, i64>(0)).unwrap()),
+            |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.query_row("SELECT revision FROM vocabulary_state WHERE id=1", [], |r| r.get::<_, i64>(0)).unwrap()),
+        );
+        assert_eq!(events(cx, &id), 1);
+        let rev = vocab_rev(cx);
         click(cx, w, "vocabulary.deleteDialog.confirm");
         assert_saw(&["Entry deleted."]);
+        assert_eq!(events(cx, &id), 0, "usage events go");
+        assert!(vocab_rev(cx) > rev, "vocabulary revision bumped");
         w.update(cx, |t, _, _| assert!(t.model.draft.is_none())).unwrap();
         assert!(usage_rev(cx) > before, "usage revision bumped");
         let rows: i64 = cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.query_row("SELECT count(*) FROM dictionary_key_usage WHERE entry_id=?", [&id], |r| r.get(0)).unwrap());

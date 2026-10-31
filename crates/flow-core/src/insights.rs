@@ -411,6 +411,23 @@ mod tests {
         format!("00000000-0000-4000-8000-{:0>12}", n)
     }
 
+    // parity: INS-052 INS-054 INS-056
+    #[test]
+    fn every_listed_bundle_classifies_whatever_its_case() {
+        for (category, bundles) in [
+            (Category::Ai, &["com.openai.chat", "com.openai.codex", "com.anthropic.claudefordesktop", "com.t3tools.t3code", "com.emanueledipietro.synara", "ai.perplexity.mac", "com.google.GeminiMacOS", "com.mistral.lechat"][..]),
+            (Category::Emails, &["com.apple.mail", "com.microsoft.Outlook", "com.readdle.smartemail-Mac", "com.superhuman.electron", "it.bloop.airmail2", "com.mimestream.Mimestream", "com.freron.MailMate"][..]),
+            (Category::Documents, &["com.apple.iWork.Pages", "com.microsoft.Word", "com.apple.Notes", "com.apple.TextEdit", "notion.id", "md.obsidian", "com.lukilabs.lukiapp", "net.shinyfrog.bear", "com.microsoft.onenote.mac", "com.apple.iWork.Keynote"][..]),
+        ] {
+            for b in bundles {
+                assert_eq!(Category::classify(Some(b)), category, "{b}");
+                assert_eq!(Category::classify(Some(&b.to_uppercase())), category, "{b} upper");
+            }
+        }
+        assert_eq!(Category::classify(None), Category::Other);
+        assert_eq!(Category::classify(Some("com.example.unknown")), Category::Other);
+    }
+
     // parity: INS-053 INS-055
     #[test]
     fn message_bundles_classify_whatever_their_case() {
@@ -482,7 +499,7 @@ mod tests {
         assert_eq!(e.thresholds(), [1, 1, 1]);
     }
 
-    // parity: INS-030 INS-052 INS-053 INS-054 INS-055 INS-056 INS-063 INS-065 INS-070 INS-080 INS-081 INS-088 INS-091 INS-112
+    // parity: INS-030 INS-063 INS-065 INS-070 INS-080 INS-081 INS-088 INS-091 INS-112
     #[test]
     fn formulas() {
         assert_eq!(corrected_words("Hello, world.", "hello world"), 1);
@@ -569,6 +586,7 @@ mod tests {
 
     // parity: INS-041 INS-042 INS-093 INS-095 INS-044 INS-037 INS-040
     /// One exact fixture, every total named.
+    // parity: INS-108
     #[test]
     fn totals_on_an_exact_fixture() {
         let db = Db::memory();

@@ -13,6 +13,7 @@ pub fn pill(id: impl Into<ElementId>, label: impl Into<SharedString>, prominent:
         .fill(fill)
         .text_color(fg)
         .disabled_opacity(0.45)
+        .when(!prominent, |b| b.pressed(p.tint))
         .content(div().mx(px(pad.0)).my(px(pad.1)).child(t(label).font(size, weight).color(fg).a11y_hidden()))
 }
 
@@ -71,7 +72,8 @@ pub fn confirm_dialog(
 ) -> Div {
     let p = pal(cx);
     let dark = p.ink.l > 0.5;
-    let fill = if dark { hsla(0., 0., 0.164, 0.92) } else { hsla(0., 0., 0.862, 0.96) };
+    // ponytail: GPUI has no backdrop blur, so the glass is its measured colour over a plain page, opaque enough to hide what's behind. Real blur needs a native NSVisualEffectView.
+    let fill = if dark { hsla(0., 0., 0.165, 0.97) } else { hsla(0., 0., 0.859, 0.97) };
     // A native alert centers a short message and left-aligns one that wraps, at about 180 wide.
     let centered = !message.is_empty() && message.len() <= 24;
     v_flex()
@@ -79,14 +81,15 @@ pub fn confirm_dialog(
         .when(centered, |d| d.items_center())
         .px(px(21.))
         .font_family(".SystemUIFont")
-        .pt(px(20.5))
+        .pt(px(19.5))
         .pb(px(8.))
-        .gap(px(9.))
+        .gap(px(10.))
         .bg(fill)
         .rounded(px(26.))
-        .border_1()
-        .border_color(p.ink.opacity(0.1))
-        .shadow_lg()
+        .shadow(vec![
+            BoxShadow { color: black().opacity(0.3), offset: point(px(0.), px(0.)), blur_radius: px(1.), spread_radius: px(1.), inset: false },
+            BoxShadow { color: black().opacity(0.3), offset: point(px(0.), px(10.)), blur_radius: px(30.), spread_radius: px(0.), inset: false },
+        ])
         .child(t(title.to_string()).font(13., 600.).color(p.ink))
         .when(!message.is_empty(), |d| d.child(div().max_w(px(170.)).child(t(message.to_string()).size(13.).color(p.ink))))
         .child(
@@ -96,8 +99,8 @@ pub fn confirm_dialog(
                 .flex_none()
                 .mx(px(-5.))
                 .justify_between()
-                .pt(px(6.))
-                .pb(px(8.))
+                .pt(px(6.5))
+                .pb(px(7.5))
                 .child(prompt_button(format!("{prefix}.cancel"), "Cancel").on_click(on_cancel))
                 .child(destructive_prompt_button(format!("{prefix}.confirm"), action.to_string()).on_click(on_action)),
         )

@@ -618,7 +618,7 @@ impl HistoryPage {
                 v_flex()
                     .flex_none()
                     .w(px(if compact { 72. } else { 104. }))
-                    .pt(px(2.))
+                    .pt(px(1.5))
                     // `Txt` rounds lines up; Swift's fractional lines keep the column shorter.
                     .gap(px(2.))
                     .child(t(time).size(13.).mono_digits().color(p.muted))

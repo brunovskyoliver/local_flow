@@ -39,6 +39,8 @@ type Anchors = Rc<RefCell<HashMap<String, Bounds<Pixels>>>>;
 const LAYER: &str = "layer";
 /// Puts 11.5 caps on a 29 heading's first baseline; `Txt` reports no baseline to flex.
 const CAPS_ON_HEADING: f32 = 15.5;
+/// Measured against Swift: its grid sits 2 lower under the streak heading than `.padding(.top, 24)` gives here.
+const BASELINE_ROW: f32 = 2.;
 /// swift-note: the cell's `.aspectRatio(1, .fit)` in a row of unconstrained height collapses in
 /// SwiftUI's layout pass. Measured at 2x on the reference: the first row 3 pt, the second 2 pt, the
 /// rest 0. The inventory (INS-077) says square cells, see INS-114; this matches what Swift renders.
@@ -199,11 +201,12 @@ impl InsightsPage {
 
     // ponytail: the long label's 9.8 stands in for `.minimumScaleFactor`, measured at 1180 wide; compact cards fit it unscaled.
     fn stat(&self, value: String, label: &str, help: Option<(&str, &str)>, cx: &mut Context<Self>) -> Div {
+        let (has_help, long) = (help.is_some(), label.len() > 20 && !cx.global::<Flow>().compact);
         let info = help.map(|(id, h)| self.info(id, h, cx));
         v_flex()
-            .gap(px(8.))
+            .gap(px(9.))
             .child(t(value).font(28., 500.).mono_digits().tracking(-0.5).lines(1))
-            .child(h_flex().gap(px(6.)).child(caps(label, pal(cx).muted, if label.len() > 20 && !cx.global::<Flow>().compact { 9.8 } else { 11.5 })).when_some(info, |d, i| d.child(i)))
+            .child(h_flex().gap(px(6.)).when(long, |d| d.mb(px(-1.))).when(has_help, |d| d.h(px(15.))).child(caps(label, pal(cx).muted, if long { 9.8 } else { 11.5 })).when_some(info, |d, i| d.child(i)))
     }
 
     fn usage(&self, i: &Insights, cx: &mut Context<Self>) -> Div {
@@ -211,7 +214,7 @@ impl InsightsPage {
             .id("insights.pace")
             .test_support()
             .child(self.stat(i.words_per_minute().map_or("–".to_string(), |w| w.to_string()), "Words per minute", Some(("pace", "Your dictation pace, against typing at 40 words per minute")), cx))
-            .child(dial(i.words_per_minute().unwrap_or(0) as f32 / 200., versus_typing(i.words_per_minute()), cx));
+            .child(dial(dial_fraction(i.words_per_minute()), versus_typing(i.words_per_minute()), cx));
         let row = |value: i64, label: &str, id: &str, help: &str, this: &Self, cx: &mut Context<Self>| {
             h_flex().w_full().justify_between().gap(px(6.)).child(t(format!("{} {label}", grouped(value))).size(14.5).lines(1)).child(this.info(id, help, cx))
         };
@@ -262,7 +265,7 @@ impl InsightsPage {
     fn apps(&self, i: &Insights, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = pal(cx);
         let compact = cx.global::<Flow>().compact;
-        let mut rows = v_flex().gap(px(16.)).pt(px(25.));
+        let mut rows = v_flex().gap(px(16.)).pt(px(26.));
         for (n, (cat, count)) in i.category_rows().into_iter().enumerate() {
             let share = i.share(count);
             let (fill, label) = if count == 0 {
@@ -360,6 +363,7 @@ impl InsightsPage {
             .child(
                 h_flex()
                     .w_full()
+                    .pb(px(BASELINE_ROW))
                     .justify_between()
                     .items_start()
                     .gap(px(8.))
@@ -373,7 +377,7 @@ impl InsightsPage {
     fn hours(&self, i: &Insights, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = pal(cx);
         let peak = i.hours.iter().copied().max().unwrap_or(0).max(1);
-        let mut bars = h_flex().w_full().h(px(130.)).items_end().gap(px(6.)).mt(px(25.));
+        let mut bars = h_flex().w_full().h(px(130.)).items_end().gap(px(6.)).mt(px(26.));
         for h in 0..24usize {
             let (from, fill) = (hour_fill(&p, i.hours[h], h, self.previous_hour), hour_fill(&p, i.hours[h], h, self.hovered_hour));
             let height = (130. * i.hours[h] as f32 / peak as f32).max(5.);
@@ -389,7 +393,7 @@ impl InsightsPage {
                 .min_w_0();
             bars = bars.child(target);
         }
-        let mut labels = h_flex().w_full().h(px(25.)).pt(px(10.));
+        let mut labels = h_flex().w_full().h(px(24.)).pt(px(10.));
         for h in [0, 6, 12, 18] {
             labels = labels.child(div().flex_1().child(t(hour_label(h)).size(12.).color(p.muted)));
         }
@@ -499,11 +503,11 @@ fn caps(text: &str, color: Hsla, size: f32) -> Txt {
 
 fn insight_card(cx: &App) -> Div {
     let p = pal(cx);
-    v_flex().flex_1().min_w_0().items_start().px(px(17.)).py(px(18.)).bg(p.card).rounded(px(6.)).border_1().border_color(p.card_line)
+    v_flex().flex_1().min_w_0().items_start().px(px(17.)).py(px(17.)).bg(p.card).rounded(px(6.)).border_1().border_color(p.card_line)
 }
 
 fn rule(cx: &App) -> Div {
-    div().w_full().py(px(16.)).child(div().h(px(1.)).w_full().bg(pal(cx).rule.opacity(0.6)))
+    div().w_full().py(px(17.)).child(div().h(px(1.)).w_full().bg(pal(cx).rule.opacity(0.6)))
 }
 
 /// `cardRow`: side by side with equal heights, stacked in a compact window.
@@ -512,11 +516,15 @@ fn card_row(cx: &App) -> Div {
     div().w_full().flex().gap(px(24.)).items_stretch().when(compact, |d| d.flex_col()).when(!compact, |d| d.flex_row())
 }
 
+/// The dial runs to 200 words per minute; no pace yet is an empty dial.
+fn dial_fraction(pace: Option<i64>) -> f32 {
+    (pace.unwrap_or(0) as f32 / 200.).clamp(0., 1.)
+}
+
 /// `Dial`: a little over a half circle with round caps.
 fn dial(fraction: f32, center: String, cx: &App) -> impl IntoElement + use<> {
     let p = pal(cx);
     let (track, fill) = (p.heat_empty, p.data_strong);
-    let fraction = fraction.clamp(0., 1.);
     div()
         .relative()
         .mt(px(16.))
@@ -992,6 +1000,67 @@ mod tests {
         assert!(has(cx, w, "insights.pace"));
         assert_saw(&["WORDS PER MINUTE"]);
         cx.update(|cx| cx.global_mut::<Core>().db = db);
+    }
+
+    // parity: INS-028
+    #[test]
+    fn the_dial_runs_to_200_clamped_and_empty_without_a_pace() {
+        assert_eq!(dial_fraction(None), 0., "no pace");
+        assert_eq!(dial_fraction(Some(100)), 0.5);
+        assert_eq!(dial_fraction(Some(200)), 1.);
+        assert_eq!(dial_fraction(Some(400)), 1., "clamped");
+    }
+
+    // parity: INS-009
+    #[flow_ui::gpui::test]
+    async fn coming_back_to_the_page_reads_the_store_again(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(crate::shell::ensure_session);
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = crate::pages::Page::Insights));
+        let w = cx.add_window(|w, cx| InsightsPage::new(w, cx));
+        frame(cx, w);
+        let dictations = |cx: &mut TestAppContext| w.update(cx, |p, _, _| p.insights.as_ref().unwrap().dictations).unwrap();
+        let before = dictations(cx);
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = crate::pages::Page::History));
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute("DELETE FROM transcriptions WHERE id=?", [flow_core::history::seed_id(1)]).unwrap());
+        frame(cx, w);
+        assert_eq!(dictations(cx), before, "away: no read");
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = crate::pages::Page::Insights));
+        frame(cx, w);
+        assert_eq!(dictations(cx), before - 1);
+    }
+
+    // parity: INS-067
+    #[flow_ui::gpui::test]
+    async fn the_heat_map_is_19_columns_of_7_rows_8_apart(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let m = monday(cx);
+        let cells = (m - 133..m + 7)
+            .filter(|d| cx.update_window(w.into(), |_, win, _| win.try_find(SharedString::from(format!("insights.day.{d}"))).is_some()).unwrap())
+            .count();
+        assert_eq!(cells, 19 * 7);
+        let center = |b: Bounds<Pixels>| b.origin + point(b.size.width / 2., b.size.height / 2.);
+        let (a, down) = (center(bounds(cx, w, &format!("insights.day.{m}"))), center(bounds(cx, w, &format!("insights.day.{}", m + 1))));
+        assert_eq!(down.y - a.y, px(13. + 8.), "rows 13 tall, 8 apart");
+        let left = center(bounds(cx, w, &format!("insights.day.{}", m - 7)));
+        let slot = a.x - left.x - px(8.);
+        assert!(slot > px(0.), "columns share the width, 8 apart");
+        assert_eq!(bounds(cx, w, &format!("insights.day.{m}")).size.width, px(3.));
+    }
+
+    // parity: INS-094
+    #[flow_ui::gpui::test]
+    async fn the_longest_dictation_is_grouped(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "insights.tab.voice");
+        w.update(cx, |p, _, cx| {
+            p.insights.as_mut().unwrap().longest_words = 12_345;
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        assert_saw(&["LONGEST DICTATION", &grouped(12_345)]);
+        assert_ne!(grouped(12_345), "12345", "grouped for the locale");
     }
 
     // parity: INS-008

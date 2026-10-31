@@ -1201,6 +1201,28 @@ mod tests {
         assert_eq!(Code::Damaged.message(), "Stored vocabulary is invalid and cannot be used.");
     }
 
+    // parity: DICT-139 DICT-146
+    #[test]
+    fn a_refused_save_carries_swifts_words() {
+        let db = empty();
+        save(&db, &entry("Alpha", &["alfa"]), None, "established").unwrap();
+        let said = |e: &Entry| match save(&db, e, None, "established") {
+            Err(VocabError::Edit(x)) => x.code.message(),
+            o => panic!("{:?}", o.map(|s| s.revision)),
+        };
+        let repeat = "This alias repeats another term in the entry.";
+        assert_eq!(said(&entry("Beta", &["BETA"])), repeat, "its canonical, folded");
+        assert_eq!(said(&entry("Beta", &["gamma", "GAMMA"])), repeat, "another alias, folded");
+        for id in [String::new(), "x".repeat(129), "a\nb".to_string()] {
+            let mut bad = entry("Beta", &[]);
+            bad.id = id;
+            assert_eq!(said(&bad), "Entry identity is invalid.", "{:?}", bad.id);
+        }
+        let mut longest = entry("Beta", &[]);
+        longest.id = "x".repeat(128);
+        assert!(save(&db, &longest, None, "established").is_ok(), "128 bytes is allowed");
+    }
+
     // parity: DICT-037 DICT-038 DICT-123 DICT-124 DICT-125 DICT-126 DICT-148 DICT-151 DICT-152 DICT-154
     #[test]
     fn write_transaction_revisions_usage_and_staleness() {

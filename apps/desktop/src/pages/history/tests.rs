@@ -695,6 +695,7 @@ fn unavailable(cx: &mut TestAppContext, page: crate::pages::Page) {
 async fn transcriptions_are_unavailable_until_the_stores_exist(cx: &mut TestAppContext) {
     unavailable(cx, crate::pages::Page::History);
     assert_saw(&["Transcriptions unavailable", crate::shell::SETUP_STARTING]);
+    assert!(flow_ui::probe::symbols().iter().any(|s| s == "externaldrive.badge.exclamationmark"));
 }
 
 // parity: INS-002
@@ -702,6 +703,7 @@ async fn transcriptions_are_unavailable_until_the_stores_exist(cx: &mut TestAppC
 async fn insights_are_unavailable_until_the_stores_exist(cx: &mut TestAppContext) {
     unavailable(cx, crate::pages::Page::Insights);
     assert_saw(&["Insights unavailable", crate::shell::SETUP_STARTING]);
+    assert!(flow_ui::probe::symbols().iter().any(|s| s == "externaldrive.badge.exclamationmark"));
 }
 
 // parity: DICT-005
@@ -709,6 +711,7 @@ async fn insights_are_unavailable_until_the_stores_exist(cx: &mut TestAppContext
 async fn the_dictionary_is_unavailable_until_the_stores_exist(cx: &mut TestAppContext) {
     unavailable(cx, crate::pages::Page::Dictionary);
     assert_saw(&["Dictionary unavailable", crate::shell::SETUP_STARTING]);
+    assert!(flow_ui::probe::symbols().iter().any(|s| s == "externaldrive.badge.exclamationmark"));
 }
 
 // parity: HIST-163 HIST-164 HIST-166 HIST-173
@@ -1133,7 +1136,7 @@ async fn escape_dismisses_the_delete_dialog_like_cancel(cx: &mut TestAppContext)
     assert!(!saw("Delete this transcription?"));
 }
 
-// parity: HIST-091
+// parity: HIST-091 HIST-090
 #[flow_ui::gpui::test]
 async fn done_and_escape_clear_the_detail(cx: &mut TestAppContext) {
     let w = open(cx);
@@ -1609,13 +1612,49 @@ async fn both_menus_read_the_same_items_and_delete_can_be_off(cx: &mut TestAppCo
         cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
         frame(cx, w);
     }
-    // Busy: the Delete item does nothing, as a disabled item.
+    // The fifth item is Delete: the click asks about that row. The same click is dead below.
+    let click_delete = |cx: &mut TestAppContext| {
+        cx.update_window(w.into(), |_, win, cx| win.click(ElementId::Integer(4), cx)).unwrap();
+        frame(cx, w);
+        w.update(cx, |t, _, _| t.confirming_delete).unwrap()
+    };
+    open_menu(cx, &other, true);
+    assert!(click_delete(cx), "opens the dialog");
+    w.update(cx, |t, _, _| assert_eq!(t.model.selected.as_ref().map(|e| e.id.clone()), Some(other.clone()))).unwrap();
+    cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+    frame(cx, w);
+    // Attempting: off.
+    sql(cx, &format!("UPDATE transcriptions SET delivery_state='attempting' WHERE id='{other}'"));
+    w.update(cx, |t, _, cx| t.model.refresh(cx.global::<Core>().db.as_ref().unwrap())).unwrap();
+    frame(cx, w);
+    open_menu(cx, &other, true);
+    assert!(!click_delete(cx), "attempting");
+    cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+    frame(cx, w);
+    sql(cx, &format!("UPDATE transcriptions SET delivery_state='not_inserted' WHERE id='{other}'"));
+    w.update(cx, |t, _, cx| t.model.refresh(cx.global::<Core>().db.as_ref().unwrap())).unwrap();
+    frame(cx, w);
+    // Busy: off.
     cx.update(|cx| crate::shell::update_session(cx, |s| s.dictation.as_mut().unwrap().busy = true));
     frame(cx, w);
     open_menu(cx, &other, true);
-    cx.update_window(w.into(), |_, win, cx| win.click(ElementId::Integer(4), cx)).unwrap();
-    frame(cx, w);
-    w.update(cx, |t, _, _| assert!(!t.confirming_delete)).unwrap();
+    assert!(!click_delete(cx), "busy");
+}
+
+// parity: HIST-185
+#[flow_ui::gpui::test]
+async fn delete_stays_on_for_a_pending_rewrite_and_the_store_refuses(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let mut e = w.update(cx, |t, _, _| t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone()).unwrap();
+    e.rewrite_state = "pending".into();
+    assert!(!row_menu_state(&e, false, false).2, "only delivery and busy turn it off");
+    sql(cx, &format!("UPDATE transcriptions SET rewrite_state='pending' WHERE id='{}'", e.id));
+    let refused = cx.update(|cx| {
+        let db = cx.global::<Core>().db.as_ref().unwrap();
+        let revision = flow_core::history::get(db, &e.id).unwrap().unwrap().revision;
+        flow_core::history::delete_confirmed(db, &e.id, revision)
+    });
+    assert!(matches!(refused, Err(flow_core::history::StoreError::Busy)));
 }
 
 // parity: HIST-059
