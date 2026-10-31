@@ -2243,4 +2243,31 @@ mod tests {
         .unwrap();
         assert_eq!(stored(cx), before);
     }
+
+    /// The identifier an input hands AccessKit, as gpui-component's own test reads it.
+    fn author_id(cx: &mut TestAppContext, w: WindowHandle<DictionaryPage>, state: Entity<InputState>) -> Option<String> {
+        use flow_ui::gpui::{Element as _, IntoElement as _, Render as _, Role, accesskit::Node};
+        w.update(cx, |_, win, cx| {
+            state.update(cx, |s, cx| {
+                let input = s.render(win, cx).into_element();
+                let mut node = Node::new(Role::Unknown);
+                input.write_a11y_info(&mut node);
+                node.author_id().map(ToOwned::to_owned)
+            })
+        })
+        .unwrap()
+    }
+
+    // parity: DICT-023 DICT-103 DICT-104
+    #[flow_ui::gpui::test]
+    async fn inputs_carry_swifts_identifiers(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.searchToggle");
+        let search = w.update(cx, |t, _, _| t.search.clone()).unwrap();
+        assert_eq!(author_id(cx, w, search).as_deref(), Some("vocabulary.search"));
+        click(cx, w, "vocabulary.add");
+        let (canonical, alias) = w.update(cx, |t, _, _| (t.canonical.clone().unwrap(), t.aliases[0].clone())).unwrap();
+        assert_eq!(author_id(cx, w, canonical).as_deref(), Some("vocabulary.canonical"));
+        assert_eq!(author_id(cx, w, alias).as_deref(), Some("vocabulary.alias.0"));
+    }
 }
