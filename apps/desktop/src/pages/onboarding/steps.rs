@@ -233,7 +233,7 @@ impl OnboardingPage {
                     .gap(px(14.))
                     .child(row_icon("person.2.wave.2", cx))
                     .child(title_detail("Meeting transcription", format!("Whisper Turbo and speaker labels, {}. Only needed for meeting notes.", bytes(MEETING_BYTES)), cx))
-                    .child(v_flex().flex_none().pl(px(12.)).items_end().gap(px(4.)).child(prototype_button("onboarding.meetingDownload", "Download").on_click(press)).child(t("or skip for now").size(12.).color(pal(cx).muted))),
+                    .child(v_flex().flex_none().pl(px(26.)).items_end().gap(px(4.)).child(prototype_button("onboarding.meetingDownload", "Download").on_click(press)).child(t("or skip for now").size(12.).color(pal(cx).muted))),
             )
         };
         vec![

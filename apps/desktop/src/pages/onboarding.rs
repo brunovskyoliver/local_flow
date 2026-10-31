@@ -840,6 +840,7 @@ impl Render for OnboardingPage {
             .size_full()
             .bg(p.canvas)
             .text_color(p.ink)
+            .font_family(flow_ui::txt::FIGTREE)
             .text_size(px(14.))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| match e.keystroke.key.as_str() {
                 "enter" if this.remote.consent_open => this.confirm_consent(cx),

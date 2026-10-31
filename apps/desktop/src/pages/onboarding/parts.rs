@@ -105,7 +105,8 @@ pub fn choice_label(symbol: &str, title: &str, badge_text: Option<&'static str>,
                 .child(h_flex().gap(px(8.)).child(t(title.to_string()).font(15., 600.)).when_some(badge_text, |d, b| d.child(badge(b, cx))))
                 .child(t(detail).size(13.).color(m)),
         )
-        .child(div().flex_none().pl(px(12.)).child(icon(symbol, 22., m)))
+        // `Spacer(minLength: 12)` with the stack's 14 on both sides: 40 from the text.
+        .child(div().flex_none().pl(px(26.)).pt(px(1.)).child(icon(symbol, 21., m)))
 }
 
 /// Drawn, as Swift's is. Nil sweeps a segment; with Reduce Motion it holds a dimmed full track.

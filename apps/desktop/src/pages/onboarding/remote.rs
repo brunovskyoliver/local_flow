@@ -179,7 +179,7 @@ impl OnboardingPage {
                 .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.))
                 .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
                 .when_some(self.remote.error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning)))
-                .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.21)).on_click(cancel)).child(primary_button("settings.remoteConsentConfirm", "Turn On").when(origin.is_none(), |b| b.fill(p.ink.opacity(0.1)).text_color(p.muted).disabled_opacity(1.)).disabled(origin.is_none()).on_click(confirm)))
+                .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.21)).on_click(cancel)).child(prototype_button("settings.remoteConsentConfirm", "Turn On").fill(p.primary).text_color(p.on_primary).when(origin.is_none(), |b| b.fill(p.ink.opacity(0.1)).text_color(p.muted).disabled_opacity(1.)).disabled(origin.is_none()).on_click(confirm)))
         };
         Some(any(sheet_overlay("onboarding.modal", window, cx, div().bg(sheet_fill(cx)).rounded(px(12.)).child(body))))
     }
