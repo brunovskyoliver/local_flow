@@ -25,7 +25,7 @@ SHELL-024	auto	test:app_menu_has_swifts_groups
 SHELL-025	service	service:title is set; the NSWindow identifier localflow.main needs a platform call in the window phase
 SHELL-026	auto	test:window_sizes_match_swift
 SHELL-027	auto	test:window_sizes_match_swift
-SHELL-028	not-run	not-run:the audit window has no traffic lights by design; the normal window with a transparent titlebar was not opened because that takes focus, and the aerospace check is left to the owner
+SHELL-028	live	live:audit/tiling/normal-window-light.png
 SHELL-029	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-030	auto	test:sidebar_rows_navigate_and_mark_selection
 SHELL-031	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png

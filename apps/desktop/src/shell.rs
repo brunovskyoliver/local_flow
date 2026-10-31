@@ -382,10 +382,13 @@ pub fn open(destination: Option<Page>, cx: &mut App) {
         update_session(cx, |s| s.selection = page);
     }
     cx.set_activation_policy(ActivationPolicy::Regular);
-    let window = cx.global::<Session>().window;
-    let alive = window.is_some_and(|w| cx.update_window(w.into(), |_, w, _| w.activate_window()).is_ok());
-    if !alive {
-        open_main_window(cx);
+    // `window_closed` clears this. `update_window` also fails while the window is mid-update, so its
+    // result can't stand in for "closed": a menu press during a frame would open a second window.
+    match cx.global::<Session>().window {
+        Some(window) => cx.defer(move |cx| {
+            let _ = cx.update_window(window.into(), |_, w, _| w.activate_window());
+        }),
+        None => open_main_window(cx),
     }
     cx.activate(true);
 }
