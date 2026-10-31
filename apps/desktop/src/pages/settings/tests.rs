@@ -16,6 +16,7 @@ struct Stub {
     log: Log,
     secrets: Rc<RefCell<HashMap<String, String>>>,
     permissions: Rc<Cell<PermissionState>>,
+    catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
 }
 impl Stub {
     fn call(&self, name: String) -> Result<(), Unavailable> {
@@ -42,6 +43,9 @@ impl flow_platform::Services for Stub {
     fn request_permission(&self, p: Permission) -> Result<PermissionState, Unavailable> {
         self.call(format!("request {p:?}"))?;
         Ok(PermissionState::Denied)
+    }
+    fn input_catalog(&self) -> Option<flow_platform::InputCatalog> {
+        self.catalog.borrow().clone()
     }
     fn high_contrast(&self) -> bool {
         false
@@ -85,6 +89,9 @@ impl flow_platform::Services for Stub {
     }
     fn enroll_device(&self, provider: &str) -> Result<String, Unavailable> {
         self.call(format!("enroll {provider}"))?;
+        if provider == "unreachable" {
+            return Err(Unavailable(core::SERVER_UNREACHABLE));
+        }
         Ok("pending".into())
     }
     fn running_apps(&self) -> Vec<(String, String)> {
@@ -100,12 +107,14 @@ struct Rig {
     ok: Rc<Cell<bool>>,
     log: Log,
     secrets: Rc<RefCell<HashMap<String, String>>>,
+    catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
 }
 
 fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core::prefs::Prefs)) -> Rig {
     boot(cx, Mode::Light);
     let (ok, log, secrets, permissions) = (Rc::new(Cell::new(true)), Log::default(), Rc::new(RefCell::new(HashMap::new())), Rc::new(Cell::new(PermissionState::NotAsked)));
-    let stub = Stub { fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions };
+    let catalog = Rc::new(RefCell::new(None));
+    let stub = Stub { fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone() };
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
         core.services = Box::new(stub);
@@ -116,7 +125,7 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let bounds = Bounds::new(point(px(0.), px(0.)), size(px(1180.), px(6000.)));
     let win = cx.update(|cx| cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |w, cx| cx.new(|cx| SettingsPage::new(w, cx)))).unwrap();
     frame(cx, win);
-    Rig { win, ok, log, secrets }
+    Rig { win, ok, log, secrets, catalog }
 }
 fn frame(cx: &mut TestAppContext, win: Win) {
     cx.run_until_parked();
@@ -302,12 +311,14 @@ async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     assert_eq!(pref_b(cx, "server.only"), Some(true));
     assert!(disabled(cx, r.win, "settings.serverUseForEverything"));
     click(cx, r.win, "settings.remoteEnabled");
-    assert_saw(&["Turn off remote dictation?", "This Mac's sign-in, device key and server pin are deleted."]);
+    assert_eq!(cx.pending_prompt(), Some(("Turn off remote dictation?".to_string(), "This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.".to_string())));
     assert_eq!(pref_b(cx, "remote.enabled"), Some(true), "stays on until confirmed");
-    click(cx, r.win, "settings.remoteTurnOffCancel");
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
     assert_eq!(pref_b(cx, "remote.enabled"), Some(true));
     click(cx, r.win, "settings.remoteEnabled");
-    click(cx, r.win, "settings.remoteTurnOff");
+    cx.simulate_prompt_answer("Turn Off");
+    frame(cx, r.win);
     assert_eq!(pref_b(cx, "remote.enabled"), Some(false));
     assert_eq!(pref_s(cx, "remote.serverURL"), None);
     assert!(logged(&r, &format!("remove {}", core::remote_keychain("device-key"))));
@@ -622,11 +633,14 @@ fn rig_saw_loaded(cx: &mut TestAppContext) -> bool {
 async fn downloads_and_progress(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     click(cx, r.win, "settings.speechDownload");
-    assert_saw(&["Download Parakeet", "Download size unavailable.", "License: CC BY 4.0"]);
-    click(cx, r.win, "settings.downloadCancel");
+    let (title, message) = cx.pending_prompt().expect("native alert");
+    assert!(title.starts_with("Download Parakeet") && message.starts_with("Download size unavailable.\n") && message.contains("License: CC BY 4.0"), "{title} {message}");
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
     assert!(!logged(&r, "action download"));
     click(cx, r.win, "settings.speechDownload");
-    click(cx, r.win, "settings.downloadConfirm");
+    cx.simulate_prompt_answer("Download");
+    cx.run_until_parked();
     assert!(logged(&r, "action download"));
     click(cx, r.win, "settings.speechImport");
     assert!(logged(&r, "action importModel"));
@@ -640,8 +654,10 @@ async fn downloads_and_progress(cx: &mut TestAppContext) {
     let r = rig(cx, "alternate", |_| {});
     assert_saw(&["CC BY 4.0", "Not installed · "]);
     click(cx, r.win, "settings.alternateDownload");
-    assert_saw(&["from Hugging Face, verified against pinned hashes.", "Dictation keeps using"]);
-    click(cx, r.win, "settings.downloadConfirm");
+    let (_, message) = cx.pending_prompt().expect("native alert");
+    assert!(message.contains("from Hugging Face, verified against pinned hashes.") && message.contains("Dictation keeps using"), "{message}");
+    cx.simulate_prompt_answer("Download");
+    cx.run_until_parked();
     assert!(logged(&r, "action downloadAlternateSpeechModel"));
     let r = rig(cx, "alt-downloading", |_| {});
     assert_saw(&["Downloading…"]);
@@ -862,4 +878,102 @@ async fn flowd_end_to_end_when_configured(cx: &mut TestAppContext) {
     assert_saw(&["Connected.", "Meeting analysis"]);
     click(cx, r.win, "settings.rewriteAdvanced");
     assert_saw(&["Server: "]);
+}
+
+
+fn bounds(cx: &mut TestAppContext, win: Win, id: &'static str) -> Bounds<Pixels> {
+    cx.update_window(win.into(), |_, w, _| w.find(id).bounds()).unwrap()
+}
+
+// parity: SET-001 SET-092 SET-130 SET-149 SET-151 SET-166 SET-172 SET-288 SET-303 SET-330 SET-336
+#[flow_ui::gpui::test]
+async fn controls_have_swifts_measured_sizes(cx: &mut TestAppContext) {
+    let r = rig(cx, "advanced", |_| {});
+    assert_eq!((f32::from(bounds(cx, r.win, "settings.remoteEnabled").size.width), f32::from(bounds(cx, r.win, "settings.remoteEnabled").size.height)), (54., 24.));
+    let cell = bounds(cx, r.win, "settings.serverFallbackThreshold.cell");
+    assert_eq!((f32::from(cell.size.width), f32::from(cell.size.height)), STEPPER);
+    let (up, down) = (bounds(cx, r.win, "settings.serverFallbackThreshold.up"), bounds(cx, r.win, "settings.serverFallbackThreshold.down"));
+    assert_eq!((up.top(), up.bottom(), down.bottom()), (cell.top(), down.top(), cell.bottom()), "one cell split in two");
+    assert_eq!(bounds(cx, r.win, "settings.serverOverride.dictation.frame").size.width, px(150.));
+    assert!(bounds(cx, r.win, "settings.shortcut").size.width >= px(99.));
+    assert_eq!(bounds(cx, r.win, "settings.appearance.frame").size.width, px(110.));
+    assert_eq!(bounds(cx, r.win, "settings.meetingLanguage.frame").size.width, px(210.));
+    assert_eq!(bounds(cx, r.win, "settings.rewriteDefaultMode.frame").size.width, px(120.));
+    let r = rig(cx, "", |_| {});
+    assert_eq!(bounds(cx, r.win, "settings.summaryServer.frame").size.width, px(110.));
+    // SET-001: the audit's measured content box is 960 wide at most, padded 47 (Swift's 48 less the hairline).
+    assert_eq!(bounds(cx, r.win, "settings.content").size.width, px(960.));
+}
+
+// parity: SET-077 SET-212
+#[flow_ui::gpui::test]
+async fn sheets_have_swifts_width(cx: &mut TestAppContext) {
+    let r = rig(cx, "consent", |_| {});
+    assert_eq!(bounds(cx, r.win, "settings.sheet").size.width, px(460.));
+    let r = rig(cx, "exclusions", |_| {});
+    assert_eq!(bounds(cx, r.win, "settings.sheet").size.width, px(480.));
+}
+
+// parity: SET-067
+#[flow_ui::gpui::test]
+async fn sign_in_reports_an_unreachable_server(cx: &mut TestAppContext) {
+    let r = rig(cx, "pinned", |_| {});
+    set(cx, r.win, |p, _, cx| p.sign_in("unreachable", cx));
+    frame(cx, r.win);
+    assert_saw(&["The server could not be reached. Try again."]);
+    assert!(!saw("Sign-in did not finish."));
+}
+
+fn input(id: u32, uid: &str, name: &str, kind: &'static str) -> flow_platform::InputDevice {
+    flow_platform::InputDevice { device_id: id, uid: uid.into(), model_uid: None, name: name.into(), kind, alive: true }
+}
+
+// parity: SET-174 SET-177 SET-179 SET-180 SET-181 SET-184 SET-192 SET-196
+#[flow_ui::gpui::test]
+async fn microphones_follow_the_catalog(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    assert!(!saw("Microphones"), "hidden with no catalog");
+    *r.catalog.borrow_mut() = Some(flow_platform::InputCatalog { devices: vec![input(1, "BuiltIn", "MacBook Pro Microphone", "builtIn")], default_input: Some(1), clamshell: false });
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    frame(cx, r.win);
+    assert_saw(&["Microphones", "System default", "Currently: MacBook Pro Microphone"]);
+    // A new device becomes an Add item and, once added, is stored and survives unplugging.
+    r.catalog.borrow_mut().as_mut().unwrap().devices.push(input(2, "usb-1", "Blue Yeti", "usb"));
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    set(cx, r.win, |p, _, cx| p.add_mic("usb-1", cx));
+    frame(cx, r.win);
+    assert_saw(&["Blue Yeti", "USB"]);
+    assert_eq!(cx.update(|cx| core::load_inputs(&cx.global::<Core>().prefs).len()), 2, "stored");
+    r.catalog.borrow_mut().as_mut().unwrap().devices.pop();
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    frame(cx, r.win);
+    assert_saw(&["USB · Not connected"]);
+    // No default device reads as none; a closed lid takes the built-in out.
+    r.catalog.borrow_mut().as_mut().unwrap().default_input = None;
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    set(cx, r.win, |p, _, cx| p.add_mic("BuiltIn", cx));
+    frame(cx, r.win);
+    assert_saw(&["Currently: none", "All connected microphones are listed", "Built-in"]);
+    r.catalog.borrow_mut().as_mut().unwrap().clamshell = true;
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    frame(cx, r.win);
+    assert_saw(&["Built-in · Not connected"]);
+}
+
+// parity: SET-024 SET-055 SET-059 SET-133 SET-332 SET-333
+#[flow_ui::gpui::test]
+async fn selectable_text_copies(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    set(cx, r.win, |p, _, cx| {
+        p.error = Some("Something failed".into());
+        cx.notify();
+    });
+    frame(cx, r.win);
+    let b = bounds(cx, r.win, "settings.error");
+    let selected = cx.update_window(r.win.into(), |_, w, cx| {
+        w.drag(point(b.left() + px(1.), b.center().y), point(b.left() + px(400.), b.center().y), cx);
+        base::TextSelection::selected_text(w, cx)
+    })
+    .unwrap();
+    assert_eq!(selected, "Something failed");
 }

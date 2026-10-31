@@ -1,4 +1,4 @@
-//! The sheets and confirmation dialogs Settings opens, drawn over the whole window.
+//! The sheets Settings draws over the whole window, and its native confirmation alerts.
 use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -9,10 +9,7 @@ pub(crate) enum ContextKind {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Modal {
     Consent,
-    TurnOff,
     ConsentUpdate,
-    Download,
-    AlternateDownload,
     Context(ContextKind),
 }
 
@@ -27,10 +24,30 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn confirm_download(&mut self, cx: &mut Context<Self>) {
-        let action = if self.modal == Some(Modal::Download) { "download" } else { "downloadAlternateSpeechModel" };
-        self.modal = None;
-        self.run(action, cx);
+    /// `.confirmationDialog` is a native alert on macOS. The switch stays on until Turn Off is answered.
+    pub(super) fn prompt_turn_off(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let buttons = [PromptButton::Other("Turn Off".into()), PromptButton::Cancel("Cancel".into())];
+        let answer = window.prompt(PromptLevel::Warning, "Turn off remote dictation?", Some("This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on."), &buttons, cx);
+        cx.spawn(async move |this, cx| {
+            if answer.await == Ok(0) {
+                let _ = this.update(cx, |this, cx| this.confirm_turn_off(cx));
+            }
+        })
+        .detach();
+    }
+
+    /// The native download confirmation; `alternate` picks the second speech model's copy and action.
+    pub(super) fn prompt_download(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let (title, message) = self.download_copy(alternate);
+        let action = if alternate { "downloadAlternateSpeechModel" } else { "download" };
+        let buttons = [PromptButton::Ok("Download".into()), PromptButton::Cancel("Cancel".into())];
+        let answer = window.prompt(PromptLevel::Info, &title, Some(&message), &buttons, cx);
+        cx.spawn(async move |this, cx| {
+            if answer.await == Ok(0) {
+                let _ = this.update(cx, |this, cx| this.run(action, cx));
+            }
+        })
+        .detach();
     }
 
     fn cancel_consent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -51,8 +68,6 @@ impl SettingsPage {
             ("escape", Some(_)) => self.close_modal(cx),
             ("enter", Some(Modal::Consent)) => self.confirm_consent(cx),
             ("enter", Some(Modal::ConsentUpdate)) => self.confirm_consent_update(cx),
-            ("enter", Some(Modal::TurnOff)) => self.confirm_turn_off(cx),
-            ("enter", Some(Modal::Download | Modal::AlternateDownload)) => self.confirm_download(cx),
             ("enter", Some(Modal::Context(_))) => self.close_modal(cx),
             _ => {}
         }
@@ -64,18 +79,6 @@ impl SettingsPage {
         let body: AnyElement = match modal {
             Modal::Consent => self.consent(window, cx).into_any_element(),
             Modal::ConsentUpdate => self.consent_update(cx).into_any_element(),
-            Modal::TurnOff => Self::dialog(
-                "Turn off remote dictation?".into(),
-                "This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.".into(),
-                prototype_button("settings.remoteTurnOff", "Turn Off").full_width().text_color(pl.warning).on_click(cx.listener(|this, _, _, cx| this.confirm_turn_off(cx))),
-                "settings.remoteTurnOffCancel",
-                cx,
-            )
-            .into_any_element(),
-            Modal::Download | Modal::AlternateDownload => {
-                let (title, message) = self.download_copy(modal);
-                Self::dialog(title, message, prototype_button("settings.downloadConfirm", "Download").full_width().on_click(cx.listener(|this, _, _, cx| this.confirm_download(cx))), "settings.downloadCancel", cx).into_any_element()
-            }
             Modal::Context(kind) => self.context_sheet(kind, window, cx).into_any_element(),
         };
         let size = window.viewport_size();
@@ -89,16 +92,16 @@ impl SettingsPage {
                     .h(size.height)
                     .justify_center()
                     .bg(Hsla { h: 0., s: 0., l: 0., a: 0.25 })
-                    .child(div().bg(pl.surface).rounded(px(12.)).border_1().border_color(pl.line).text_color(pl.ink).child(body)),
+                    .child(div().id("settings.sheet").bg(pl.surface).rounded(px(12.)).text_color(pl.ink).child(body).test_support()),
             ))
             .into_any_element(),
         )
     }
 
-    fn download_copy(&self, modal: Modal) -> (String, String) {
+    fn download_copy(&self, alternate: bool) -> (String, String) {
         let s = &self.snapshot;
         let current = core::speech_name(s.speech_model);
-        if modal == Modal::Download {
+        if !alternate {
             let size = s.download_bytes.map_or("Download size unavailable.".to_string(), core::byte_count);
             return (format!("Download {current}?"), format!("{size}\n{}", core::speech_attribution(s.speech_model)));
         }
@@ -109,17 +112,6 @@ impl SettingsPage {
             ),
             None => ("Download speech model?".into(), String::new()),
         }
-    }
-
-    fn dialog(title: String, message: String, confirm: FlowButton, cancel: &'static str, cx: &mut Context<Self>) -> Div {
-        v_flex()
-            // The size of a native alert, drawn here because Kit has no system alert.
-            .w(px(274.))
-            .p(px(20.))
-            .gap(px(12.))
-            .child(t(title).font(15., 600.))
-            .child(t(message).size(13.).line_spacing(3.))
-            .child(h_flex().w_full().gap(px(8.)).pt(px(4.)).child(div().flex_1().child(prototype_button(cancel, "Cancel").full_width().on_click(cx.listener(|this, _, _, cx| this.close_modal(cx))))).child(div().flex_1().child(confirm)))
     }
 
     fn consent(&self, window: &Window, cx: &mut Context<Self>) -> Div {

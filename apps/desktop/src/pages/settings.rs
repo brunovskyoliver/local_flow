@@ -4,6 +4,7 @@ use crate::core::Core;
 use flow_core::settings as core;
 use flow_core::settings::{Connection, Failure, Health, Identity, InputSnapshot, Permission as Perm, RewriteSettings, Runtime, Shortcut, Snapshot};
 use flow_platform::Permission;
+use flow_ui::gpui::base::TestSupportExt;
 use flow_ui::prelude::*;
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -276,6 +277,32 @@ impl SettingsPage {
             self.summary_key_saved = saved;
             cx.notify();
         }
+        self.follow_catalog(cx);
+    }
+
+    /// `MicrophonesViewModel.watch`: rebuilds from the catalog and reconciles the stored list.
+    /// With no catalog the section stays hidden, as Swift's does until the catalog starts.
+    /// ponytail: polls with `tick` every 500 ms, a CoreAudio property listener if that ever shows up in a profile.
+    fn follow_catalog(&mut self, cx: &mut Context<Self>) {
+        if self.scenario == "microphones" {
+            return;
+        }
+        let Some(c) = cx.global::<Core>().services.input_catalog() else {
+            return;
+        };
+        let inputs = c.devices.into_iter().map(|d| core::ConnectedInput { device_id: d.device_id, uid: d.uid, model_uid: d.model_uid, name: d.name, kind: d.kind.into(), alive: d.alive }).collect();
+        let snapshot = InputSnapshot { inputs, default_input: c.default_input, clamshell: c.clamshell };
+        if self.mics.as_ref().is_some_and(|m| m.snapshot == snapshot) {
+            return;
+        }
+        let stored = core::load_inputs(prefs(cx));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0., |d| d.as_secs_f64());
+        let entries = core::reconcile_inputs(&stored, &snapshot, now);
+        if core::inputs_meaningfully_changed(&stored, &entries) {
+            core::save_inputs(prefs_mut(cx), entries.clone());
+        }
+        self.mics = Some(Mics { entries, snapshot });
+        cx.notify();
     }
 
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -853,7 +880,7 @@ impl SettingsPage {
                 cx,
             ));
             if let Some((Connection::Connected, Some(h), _)) = self.connection.as_ref().filter(|_| !served) {
-                advanced = advanced.child(div().id("settings.rewriteIdentity").w_full().pb(px(12.)).child(t(h.identity_text()).size(12.).color(pl.muted)));
+                advanced = advanced.child(div().id("settings.rewriteIdentity").w_full().pb(px(12.)).child(selectable("settings.rewriteIdentity.text", h.identity_text(), 12., false, pl.muted, 15.)));
             }
             if let Some((c, _, code)) = self.connection.as_ref().filter(|_| cfg!(debug_assertions)) {
                 advanced = advanced.child(disclosure("settings.rewriteDiagnostics", "Developer diagnostics", self.diagnostics_open, cx.listener(|this, _, _, cx| {
@@ -861,7 +888,7 @@ impl SettingsPage {
                     cx.notify();
                 }), cx));
                 if self.diagnostics_open {
-                    advanced = advanced.child(div().py(px(8.)).child(t(format!("connection_test={} code={code}", c.category())).mono().size(11.)));
+                    advanced = advanced.child(div().py(px(8.)).child(selectable("settings.rewriteDiagnostics.text", format!("connection_test={} code={code}", c.category()), 11., true, pl.ink, 13.)));
                 }
             }
         }
@@ -1059,7 +1086,7 @@ impl Render for SettingsPage {
         }
         column = column.child(self.permissions_section(cx));
         for line in [&self.recording_error, &self.error].into_iter().flatten() {
-            column = column.child(div().pt(px(16.)).child(t(line.clone()).color(pl.warning)));
+            column = column.child(div().pt(px(16.)).child(selectable("settings.error", line.clone(), 14., false, pl.warning, 17.)));
         }
         let overlay = self.modal_overlay(window, cx);
         div()
@@ -1069,6 +1096,7 @@ impl Render for SettingsPage {
             .size_full()
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, w, cx| w.focus(&this.focus, cx)))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| this.key(&e.keystroke.key, w, cx)))
+            .child(base::TextSelectionLayer)
             .child(
                 div()
                     .id("settings.scroll")
@@ -1080,7 +1108,7 @@ impl Render for SettingsPage {
                     .items_center()
                     .text_color(pl.ink)
                     .text_size(px(14.))
-                    .child(div().w_full().max_w(px(960.)).px(px(if compact { 23. } else { 47. })).pt(px(if compact { 31. } else { 47. })).pb(px(64.)).flex_none().child(column)),
+                    .child(div().id("settings.content").w_full().max_w(px(960.)).px(px(if compact { 23. } else { 47. })).pt(px(if compact { 31. } else { 47. })).pb(px(64.)).flex_none().child(column).test_support()),
             )
             .children(overlay)
     }
@@ -1106,7 +1134,7 @@ pub(super) fn row(title: impl Into<SharedString>, detail: Option<String>, contro
 }
 
 pub(super) fn switch(id: &'static str, label: &'static str, on: bool, disabled: bool, f: impl Fn(&bool, &mut Window, &mut App) + 'static) -> impl IntoElement {
-    Switch::new(id).checked(on).disabled(disabled).accessibility_label(label).large().on_click(f)
+    FlowSwitch::new(id).checked(on).disabled(disabled).accessibility_label(label).on_click(f)
 }
 
 /// A native `Picker`: fixed width, the value and two chevrons on a grey fill. The menu goes through
@@ -1121,11 +1149,12 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
     let this = cx.entity().downgrade();
     let key = id.clone();
     let fill = pl.ink.opacity(if pl.mode.is_dark() { 0.14 } else { 0.2 });
-    let chevrons = v_flex().items_center().gap(px(-1.)).child(icon("chevron.up", 9., pl.ink)).child(icon("chevron.down", 9., pl.ink));
+    let chevrons = icon("chevron.up.chevron.down", 14., pl.ink);
     // A native picker hugs its longest option and centres in its frame.
     // ponytail: width estimated from character count, measure the text if an option looks wrong.
     let longest = option_chars;
     let hug = (longest as f32 * 7. + 50.).min(width);
+    let frame = format!("{id}.frame");
     let button = Button::new(ElementId::Name(id))
         .custom(flow_ui::controls::ButtonCustomVariant::new(cx).color(fill).foreground(pl.ink).hover(fill).active(fill).shadow(false))
         .bg(fill)
@@ -1146,7 +1175,7 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
             }
             menu
         });
-    h_flex().w(px(width)).justify_center().child(button).into_any_element()
+    h_flex().id(SharedString::from(frame)).w(px(width)).justify_center().child(button).test_support().into_any_element()
 }
 
 /// `PillMenu`: the title and a chevron, as a menu.
@@ -1176,19 +1205,44 @@ pub(super) fn pill_menu(id: impl Into<SharedString>, title: String, options: Vec
     .into_any_element()
 }
 
-/// `Stepper`: the label and two arrows. Kit has no stepper, so these are two real buttons,
-/// `<id>.down` and `<id>.up`.
+/// `Stepper`: the label, then NSStepper's 20x24 rounded cell. Kit has no stepper, so the halves are
+/// two real buttons, `<id>.down` and `<id>.up`.
 pub(super) fn stepper(id: &'static str, label: &'static str, value: String, down: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, up: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, cx: &App) -> AnyElement {
-    let ink = pal(cx).ink;
+    let pl = pal(cx);
+    let half = |suffix: &str, symbol: &'static str, verb: &str| plain_button(SharedString::from(format!("{id}.{suffix}")), suffix.to_string()).a11y_label(format!("{label}, {verb}")).content(div().w(px(STEPPER.0)).h(px(STEPPER.1 / 2.)).flex().items_center().justify_center().child(icon(symbol, 11., pl.ink)).into_any_element());
     h_flex()
-        .gap(px(6.))
+        .gap(px(8.))
         .child(t(value).size(13.).mono_digits())
+        .child(v_flex().id(SharedString::from(format!("{id}.cell"))).w(px(STEPPER.0)).h(px(STEPPER.1)).rounded(px(5.)).bg(pl.ink.opacity(if pl.mode.is_dark() { 0.14 } else { 0.08 })).child(half("up", "chevron.up", "increase").on_click(up)).child(half("down", "chevron.down", "decrease").on_click(down)).test_support())
+        .into_any_element()
+}
+/// NSStepper's width and height as measured from the reference app, in points.
+pub(super) const STEPPER: (f32, f32) = (20., 24.);
+
+/// `.textSelection(.enabled)`: `SelectableText` paints and selects; the transparent `Txt` under it
+/// keeps layout, the accessibility text and the render probe. `Txt` paints its own glyphs, so it
+/// can't select by itself.
+/// ponytail: one line of text only, which is all Settings selects today except identity and errors, whose overlay wraps at the same width.
+pub(super) fn selectable(id: impl Into<SharedString>, text: impl Into<SharedString>, size: f32, mono: bool, color: Hsla, line: f32) -> impl IntoElement {
+    let id: SharedString = id.into();
+    let text: SharedString = text.into();
+    let txt = t(text.clone()).size(size).color(flow_ui::gpui::transparent_black());
+    div()
+        .id(ElementId::Name(id.clone()))
+        .relative()
+        .w_full()
+        .child(if mono { txt.mono() } else { txt })
         .child(
-            v_flex()
-                .child(plain_button(SharedString::from(format!("{id}.up")), "up").a11y_label(format!("{label}, increase")).content(icon("chevron.up", 10., ink)).on_click(up))
-                .child(plain_button(SharedString::from(format!("{id}.down")), "down").a11y_label(format!("{label}, decrease")).content(icon("chevron.down", 10., ink)).on_click(down)),
+            div()
+                .absolute()
+                .inset_0()
+                .text_size(px(size))
+                .text_color(color)
+                .font_family(if mono { flow_ui::txt::MONO } else { FIGTREE })
+                .line_height(px(line))
+                .child(base::SelectableText::new(ElementId::Name(format!("{id}.run").into()), text)),
         )
-    .into_any_element()
+        .test_support()
 }
 
 /// `DisclosureGroup`.

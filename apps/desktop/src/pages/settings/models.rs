@@ -52,7 +52,7 @@ impl SettingsPage {
             controls = controls.child(Self::action("settings.speechLoad", if loaded { "Unload" } else { "Load" }, if loaded { "unload" } else { "load" }, !self.controls_available(), cx)).child(self.test_button("speech", name, cx));
         } else if !s.installing {
             controls = controls
-                .child(prototype_button("settings.speechDownload", "Download…").on_click(cx.listener(|this, _, _, cx| this.open_modal(Modal::Download, cx))))
+                .child(prototype_button("settings.speechDownload", "Download…").on_click(cx.listener(|this, _, w, cx| this.prompt_download(false, w, cx))))
                 .child(Self::action("settings.speechImport", "Import…", "importModel", false, cx));
         }
         let speech_detail = format!("{} · {}", self.role("Dictation", Service::Dictation, cx), self.status("speech", s.model_readiness()));
@@ -79,7 +79,7 @@ impl SettingsPage {
                     this.run(&format!("useSpeechModel.{choice}"), cx);
                 }))
             } else {
-                prototype_button("settings.alternateDownload", "Download…").disabled(s.installing).on_click(cx.listener(|this, _, _, cx| this.open_modal(Modal::AlternateDownload, cx)))
+                prototype_button("settings.alternateDownload", "Download…").disabled(s.installing).on_click(cx.listener(|this, _, w, cx| this.prompt_download(true, w, cx)))
             };
             body = body.child(hairline(cx)).child(
                 v_flex()

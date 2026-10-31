@@ -95,7 +95,7 @@ fn demo_input(id: u32, uid: &str, name: &str, kind: &str) -> ConnectedInput {
     ConnectedInput { device_id: id, uid: uid.into(), model_uid: None, name: name.into(), kind: kind.into(), alive: true }
 }
 
-pub(super) fn apply_view(page: &mut SettingsPage, _window: &mut Window, cx: &mut Context<SettingsPage>) {
+pub(super) fn apply_view(page: &mut SettingsPage, window: &mut Window, cx: &mut Context<SettingsPage>) {
     // The audit window can't be scrolled from outside, so captures of lower sections ask for it.
     if let Some(y) = std::env::var("LOCALFLOW_SETTINGS_SCROLL").ok().and_then(|y| y.parse::<f32>().ok()) {
         page.scroll_handle().set_offset(point(px(0.), px(-y)));
@@ -109,12 +109,10 @@ pub(super) fn apply_view(page: &mut SettingsPage, _window: &mut Window, cx: &mut
             page.test_results.insert("speech", "Working · 412 ms".into());
         }
         "consent" => page.modal = Some(Modal::Consent),
-        "turn-off" => {
-            page.modal = Some(Modal::TurnOff);
-        }
+        "turn-off" => page.prompt_turn_off(window, cx),
         "consent-update" => {}
-        "download" => page.modal = Some(Modal::Download),
-        "alt-download" => page.modal = Some(Modal::AlternateDownload),
+        "download" => page.prompt_download(false, window, cx),
+        "alt-download" => page.prompt_download(true, window, cx),
         "exclusions" => page.modal = Some(Modal::Context(ContextKind::Exclusions)),
         "kinds" => page.modal = Some(Modal::Context(ContextKind::Kinds)),
         "microphones" => {

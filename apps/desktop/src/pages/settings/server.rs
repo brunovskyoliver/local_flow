@@ -20,13 +20,13 @@ impl SettingsPage {
             if let Some(identity) = &self.identity {
                 details = details
                     .child(t("Server fingerprint").font(12., 500.).color(pl.muted))
-                    .child(t(identity.fingerprint.clone()).mono().size(13.).id("settings.remoteFingerprint"))
+                    .child(div().id("settings.remoteFingerprint").w_full().child(selectable("settings.remoteFingerprint.text", identity.fingerprint.clone(), 13., true, pl.ink, 16.)))
                     .child(rich(vec![span("Compare it with "), span("flowd admin identity").serif(false), span(" on the server before trusting it.")]).size(12.).color(pl.muted))
                     .child(prototype_button("settings.remoteTrust", "Trust This Server").on_click(cx.listener(|this, _, _, cx| this.trust_server(cx))));
             } else if state != "approved"
                 && let Some(pinned) = &self.pinned
             {
-                details = details.child(t(format!("Pinned fingerprint  {pinned}")).mono().size(12.).color(pl.muted));
+                details = details.child(selectable("settings.pinnedFingerprint", format!("Pinned fingerprint  {pinned}"), 12., true, pl.muted, 15.));
             }
             if on && state == "pinned" && self.identity.is_none() {
                 let services = &cx.global::<Core>().services;
@@ -139,14 +139,19 @@ impl SettingsPage {
         );
         if let Some(fp) = &self.pinned {
             out.push(hairline(cx).into_any_element());
-            out.push(div().id("settings.serverFingerprint").w_full().child(row("Server fingerprint", Some(fp.clone()), div(), cx)).into_any_element());
+            out.push(
+                div().id("settings.serverFingerprint").w_full().py(px(19.)).child(
+                    v_flex().gap(px(5.)).child(t("Server fingerprint").size(14.)).child(selectable("settings.serverFingerprint.text", fp.clone(), 12., false, pal(cx).muted, 15.)),
+                )
+                .into_any_element(),
+            );
         }
         out
     }
 
     fn request_remote_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if prefs(cx).bool_or("remote.enabled", false) {
-            self.modal = Some(Modal::TurnOff);
+            self.prompt_turn_off(window, cx);
         } else {
             self.remote_error = None;
             let stored = core::remote_server_url(prefs(cx));
@@ -229,7 +234,6 @@ impl SettingsPage {
     }
 
     pub(super) fn confirm_turn_off(&mut self, cx: &mut Context<Self>) {
-        self.modal = None;
         self.identity = None;
         self.remote_error = None;
         let services = &cx.global::<Core>().services;
