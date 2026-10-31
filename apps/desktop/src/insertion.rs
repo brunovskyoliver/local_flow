@@ -288,6 +288,7 @@ fn finish(message: &str, cx: &mut App) {
             d.status = message.to_string();
             d.state = if d.state == DictState::Failed { DictState::Failed } else { DictState::Idle };
         }
+        s.history_revision += 1;
     });
     sync_panel(cx);
 }
@@ -307,7 +308,7 @@ pub fn review_sheet(cx: &mut App) -> impl IntoElement {
             .gap(px(18.))
             .child(t("Review before inserting").font(26., 600.))
             .children(warnings.into_iter().map(|w| sf_label("exclamationmark.triangle", w, 14., p.ink)))
-            .child(div().id("insertion.text").max_h(px(300.)).overflow_y_scroll().child(t(text)))
+            .child(div().id("insertion.text").test_support().max_h(px(300.)).overflow_y_scroll().child(t(text)))
             .child(t("Choose a destination, then switch to the app and click an editable field. LocalFlow will ask you to confirm before inserting.").color(p.muted))
             .child(
                 h_flex()
@@ -338,6 +339,7 @@ impl Render for ConfirmationPanel {
         let message = i.message.clone();
         v_flex()
             .id("insertion.panel")
+            .test_support()
             .size_full()
             .justify_center()
             .gap(px(16.))
@@ -456,7 +458,70 @@ mod tests {
         });
     }
 
-    // parity: SHELL-147 SHELL-148 SHELL-149 SHELL-150 SHELL-151 SHELL-152 SHELL-153 SHELL-154 SHELL-155 SHELL-156 SHELL-172 SHELL-178
+    // parity: SHELL-156
+    /// Escape, and the sheet's window closing: `closeInsertionReview` cancels while still reviewing.
+    #[flow_ui::gpui::test]
+    async fn sheet_dismissed_another_way_cancels(cx: &mut TestAppContext) {
+        start(cx, None, None);
+        cx.update(|cx| cx.global_mut::<Core>().prefs.set("setupVersion", 1));
+        cx.update(crate::menu::init);
+        let window = cx.add_window(|w, cx| Shell::new(w, cx));
+        cx.update(|cx| update_session(cx, |s| s.window = Some(window.into())));
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.press("escape", cx)).unwrap();
+        cx.run_until_parked();
+        assert_eq!(phase(cx), Phase::Idle);
+        assert_eq!(message(cx), "Insertion cancelled. The text remains saved.");
+        cx.update(|cx| assert!(begin_review(entry(), cx)));
+        cx.update(|cx| crate::shell::window_closed(window.window_id(), cx));
+        assert_eq!(phase(cx), Phase::Idle);
+        // Past the sheet, a closing window leaves the selection running: its panel is separate.
+        cx.update(|cx| {
+            update_session(cx, |s| s.window = Some(window.into()));
+            assert!(begin_review(entry(), cx));
+            arm_selection(cx);
+            crate::shell::window_closed(window.window_id(), cx);
+        });
+        assert_eq!(phase(cx), Phase::Selecting);
+        cx.update(cancel);
+    }
+
+    // parity: SHELL-147 SHELL-148
+    /// Sheet column 520 less 26 padding either side; the text scrolls past 300.
+    #[flow_ui::gpui::test]
+    async fn review_sheet_geometry(cx: &mut TestAppContext) {
+        start(cx, None, None);
+        cx.update(|cx| {
+            cx.global_mut::<Core>().prefs.set("setupVersion", 1);
+            update_session(cx, |s| s.insertion.entry.as_mut().unwrap().text = "A long saved line of words. ".repeat(200));
+        });
+        let window = cx.add_window(|w, cx| Shell::new(w, cx));
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
+        let text = cx.update_window(window.into(), |_, w, _| w.find("insertion.text").bounds()).unwrap();
+        assert_eq!(text.size.width, px(520. - 52.));
+        assert_eq!(text.size.height, px(300.));
+        assert_saw(&["Review before inserting"]);
+    }
+
+    // parity: SHELL-158
+    /// Leading 20, Cancel then Confirm, 12 apart; message over the row, 16 apart, centered in y.
+    #[flow_ui::gpui::test]
+    async fn panel_layout_matches_swift(cx: &mut TestAppContext) {
+        start(cx, Some(field()), None);
+        cx.update(arm_selection);
+        let panel = cx.add_window(|_, cx| ConfirmationPanel::new(cx));
+        cx.update_window(panel.into(), |_, w, cx| w.render_frame(cx)).unwrap();
+        let (cancel_b, confirm, whole) = cx.update_window(panel.into(), |_, w, _| (w.find("insertion.panel.cancel").bounds(), w.find("insertion.panel.confirm").bounds(), w.find("insertion.panel").bounds())).unwrap();
+        assert_eq!(cancel_b.origin.x - whole.origin.x, px(20.));
+        assert_eq!(confirm.origin.x - (cancel_b.origin.x + cancel_b.size.width), px(12.));
+        assert_eq!(cancel_b.origin.y, confirm.origin.y);
+        assert!(cancel_b.origin.y + cancel_b.size.height < whole.origin.y + whole.size.height);
+        cx.update(cancel);
+    }
+
+    // parity: SHELL-149 SHELL-150 SHELL-151 SHELL-152 SHELL-153 SHELL-154 SHELL-155 SHELL-172 SHELL-178
     #[flow_ui::gpui::test]
     async fn review_sheet_shows_warnings_and_buttons_work(cx: &mut TestAppContext) {
         start(cx, None, None);
@@ -500,7 +565,7 @@ mod tests {
         cx.update(cancel);
     }
 
-    // parity: SHELL-157 SHELL-158 SHELL-160 SHELL-161 SHELL-162 SHELL-163 SHELL-165 SHELL-168 SHELL-167 SHELL-173
+    // parity: SHELL-160 SHELL-161 SHELL-162 SHELL-163 SHELL-165 SHELL-168 SHELL-167 SHELL-173
     #[flow_ui::gpui::test]
     async fn panel_runs_select_confirm_insert(cx: &mut TestAppContext) {
         start(cx, Some(field()), Some(InsertOutcome::Confirmed));

@@ -590,8 +590,14 @@ pub fn remaining(elapsed: f32, seconds: f32, reduce_motion: bool) -> f32 {
     if reduce_motion { 1. } else { (1. - elapsed / seconds).clamp(0., 1.) }
 }
 
+/// `(fill, stroke)` of the capsule.
+fn capsule_colors(highlighted: bool) -> (Hsla, Hsla) {
+    if highlighted { (style::fill().opacity(0.92), style::white(0.22)) } else { (style::fill(), style::white(0.13)) }
+}
+
 fn capsule(highlighted: bool, k: f32) -> Div {
-    div().h(px(HEIGHT * k)).rounded(px(HEIGHT * k / 2.)).bg(style::fill().opacity(if highlighted { 0.92 } else { 1. })).border_1().border_color(style::white(if highlighted { 0.22 } else { 0.13 }))
+    let (fill, stroke) = capsule_colors(highlighted);
+    div().h(px(HEIGHT * k)).rounded(px(HEIGHT * k / 2.)).bg(fill).border_1().border_color(stroke)
 }
 
 /// The capsule stroke trimmed to `remaining`, 1.5 wide with round caps.
@@ -662,6 +668,7 @@ fn notice(symbol: &'static str, message: String, max_width: f32, action: Option<
     let trailing = if action.is_some() { 5. } else { 16. };
     capsule(false, k)
         .id("pill.notice")
+        .test_support()
         .flex()
         .items_center()
         .gap(px(10. * k))
@@ -673,8 +680,8 @@ fn notice(symbol: &'static str, message: String, max_width: f32, action: Option<
 }
 
 /// One bar: x from the slot's left, centered vertically.
-fn bar(x: f32, height: f32, opacity: f32) -> Div {
-    div().absolute().left(px(x)).top(px((HEIGHT - 2. - height) / 2.)).w(px(3.)).h(px(height)).rounded(px(1.5)).bg(style::ink().opacity(opacity))
+fn bar(slot: usize, x: f32, height: f32, opacity: f32) -> impl IntoElement {
+    div().id(("pill.bar", slot)).absolute().left(px(x)).top(px((HEIGHT - 2. - height) / 2.)).w(px(3.)).h(px(height)).rounded(px(1.5)).bg(style::ink().opacity(opacity)).test_support()
 }
 
 pub struct PillView {
@@ -710,7 +717,7 @@ impl PillView {
             row = row.overflow_hidden().children(heights.iter().enumerate().map(|(slot, h)| {
                 let x = slot as f32 * PITCH - PITCH * progress;
                 let r = reveal_at(slot.min(BAR_COUNT - 1));
-                bar(x, h * (0.2 + 0.8 * r), r * fade(x))
+                bar(slot, x, h * (0.2 + 0.8 * r), r * fade(x))
             }));
         } else {
             row = row.children((0..BAR_COUNT).map(|i| {
@@ -722,7 +729,7 @@ impl PillView {
                     s => (static_height(i, s), 1.),
                 };
                 let r = if state == DictState::Rewriting { 1. } else { reveal_at(i) };
-                bar(x, h * (0.2 + 0.8 * r), o * r)
+                bar(i, x, h * (0.2 + 0.8 * r), o * r)
             }));
         }
         if !reduce {
@@ -732,10 +739,11 @@ impl PillView {
         // Scale 0.6 to 1 on hover; Reduce Motion keeps scale 1 and only toggles opacity.
         let scale = if hover || reduce { 1. } else { 0.6 };
         let cancel = plain_button("pill.cancel", cancel_label(state))
-            .content(div().size(px(24. * scale)).flex().items_center().justify_center().rounded(px(12.)).bg(p.canvas).child(icon("xmark", 10. * scale, p.ink)))
+            .content(div().id("pill.cancel.face").test_support().size(px(24. * scale)).flex().items_center().justify_center().rounded(px(12.)).bg(p.canvas).child(icon("xmark", 10. * scale, p.ink)))
             .on_click(|_, _, cx| tap_cancel(cx));
         div()
             .id("pill.dictation")
+            .test_support()
             .relative()
             .w(px(INDICATOR_WIDTH))
             .h(px(HEIGHT))
@@ -745,7 +753,7 @@ impl PillView {
                 this.hovering = *h;
                 cx.notify();
             }))
-            .child(div().absolute().left(px((EXPANDED_WIDTH - width) / 2.)).top_0().w(px(width)).child(capsule(false, 1.).relative().w_full().overflow_hidden().child(row)))
+            .child(div().id("pill.capsule").test_support().absolute().left(px((EXPANDED_WIDTH - width) / 2.)).top_0().w(px(width)).h(px(HEIGHT)).child(capsule(false, 1.).relative().w_full().overflow_hidden().child(row)))
             .child(div().absolute().left(px(EXPANDED_WIDTH + 35. - 24.)).top(px(7.)).w(px(24.)).h(px(24.)).flex().items_center().justify_center().opacity(if hover { 1. } else { 0. }).child(cancel))
     }
 
@@ -799,6 +807,7 @@ impl PillView {
                 let scale = if hover { 1. } else { 0.5 };
                 h_flex()
                     .id("pill.background")
+                    .test_support()
                     .gap(px(6.))
                     .pl(px(28.))
                     .on_hover(cx.listener(|this, h: &bool, _, cx| {
@@ -1048,10 +1057,105 @@ mod tests {
     fn pill_colors_ignore_appearance() {
         assert_eq!(style::fill(), Hsla::from(rgb(0x242522)));
         assert_eq!(style::ink(), Hsla::from(rgb(0xF5F5F1)));
-        assert_eq!((style::white(0.13).a, style::white(0.22).a), (0.13, 0.22));
+        assert_eq!(capsule_colors(false), (style::fill(), Hsla::from(rgb(0xFFFFFF)).opacity(0.13)));
+        assert_eq!(capsule_colors(true), (Hsla::from(rgb(0x242522)).opacity(0.92), Hsla::from(rgb(0xFFFFFF)).opacity(0.22)));
     }
 
-    // parity: PILL-005 PILL-006 PILL-017 PILL-033 PILL-034 PILL-010
+    fn bounds_of(cx: &mut TestAppContext, w: WindowHandle<PillView>, id: &'static str) -> Vec<Bounds<Pixels>> {
+        cx.update_window(w.into(), |_, win, _| win.find_all(id).into_iter().map(|e| e.bounds()).collect()).unwrap()
+    }
+
+    fn bar_bounds(cx: &mut TestAppContext, w: WindowHandle<PillView>) -> Vec<Bounds<Pixels>> {
+        cx.update_window(w.into(), |_, win, _| (0..32usize).filter_map(|i| win.try_find(("pill.bar", i)).map(|e| e.bounds())).collect()).unwrap()
+    }
+
+    // parity: PILL-007 PILL-008 PILL-009 PILL-029 PILL-035 PILL-041
+    /// From laid-out bounds, under Reduce Motion so nothing animates.
+    #[flow_ui::gpui::test]
+    async fn dictation_lays_out_swifts_sizes(cx: &mut TestAppContext) {
+        let (w, _, _) = view(cx);
+        cx.update(|cx| set_state(DictState::Preparing, 0., cx));
+        frame(cx, w);
+        let whole = bounds_of(cx, w, "pill.dictation")[0];
+        assert_eq!(whole.size, size(px(153.), px(38.)));
+        assert_eq!(bounds_of(cx, w, "pill.capsule")[0].size.width, px(46.));
+        let bars = bar_bounds(cx, w);
+        assert_eq!(bars.len(), 15);
+        assert_eq!((bars[0].size.width, bars[1].origin.x - bars[0].origin.x), (px(3.), px(6.)));
+        assert!(bars.iter().all(|b| b.size.height == px(4.)));
+        cx.update(|cx| set_state(DictState::Recording, 0.5, cx));
+        frame(cx, w);
+        assert_eq!(bounds_of(cx, w, "pill.capsule")[0].size.width, px(118.));
+        let bars = bar_bounds(cx, w);
+        assert_eq!((bars[6].size.height, bars[14].size.height), (px(20.), px(4.5)), "27 and 6 at 0.75, on the layout grid");
+        cx.update(|cx| set_state(DictState::Transcribing, 0., cx));
+        frame(cx, w);
+        let bars = bar_bounds(cx, w);
+        assert_eq!((bars[3].size.height, bars[4].size.height), (px(14.), px(4.)));
+    }
+
+    // parity: PILL-032 PILL-034
+    #[flow_ui::gpui::test]
+    async fn recording_draws_sixteen_bars_at_the_level_height(cx: &mut TestAppContext) {
+        let (w, _, _) = view(cx);
+        cx.update(|cx| {
+            cx.global_mut::<Flow>().reduce_motion = false;
+            set_state(DictState::Recording, 1., cx);
+            update_session(cx, |s| s.pill.expand_since = None);
+        });
+        cx.update_window(w.into(), |_, win, cx| win.render_frame(cx)).unwrap();
+        let bars = bar_bounds(cx, w);
+        assert_eq!(bars.len(), 16);
+        assert_eq!(bars[15].size.height, px(28.), "a full level draws the tallest bar");
+        assert_eq!(bars[0].size.height, px(3.), "silence draws the shortest");
+        assert_eq!(bars[1].origin.x - bars[0].origin.x, px(6.));
+    }
+
+    // parity: PILL-047 PILL-048 PILL-049
+    /// The button's face is 24 on hover and under Reduce Motion, 0.6 of that at rest.
+    #[flow_ui::gpui::test]
+    async fn cancel_scales_with_hover_unless_reduce_motion(cx: &mut TestAppContext) {
+        let (w, _, _) = view(cx);
+        cx.update(|cx| set_state(DictState::Recording, 0., cx));
+        frame(cx, w);
+        assert_eq!(bounds_of(cx, w, "pill.cancel.face")[0].size.width, px(24.));
+        cx.update(|cx| cx.global_mut::<Flow>().reduce_motion = false);
+        cx.update_window(w.into(), |_, win, cx| win.render_frame(cx)).unwrap();
+        assert_eq!(bounds_of(cx, w, "pill.cancel.face")[0].size.width, px(14.5), "0.6 of 24, on the layout grid");
+        cx.update_window(w.into(), |_, win, cx| {
+            win.hover("pill.dictation", cx);
+            win.render_frame(cx);
+        }).unwrap();
+        assert_eq!(bounds_of(cx, w, "pill.cancel.face")[0].size.width, px(24.));
+        assert!(w.update(cx, |v, _, _| v.hovering).unwrap());
+    }
+
+    // parity: PILL-071
+    /// The message stops at 360; the rest of the capsule is padding, symbol and chip.
+    #[flow_ui::gpui::test]
+    async fn learned_message_stops_at_its_maximum(cx: &mut TestAppContext) {
+        let (w, _, _) = view(cx);
+        cx.update_window(w.into(), |_, win, _| win.resize(size(px(1000.), px(100.)))).unwrap();
+        cx.update(|cx| show_learned("LocalFlow".repeat(30), LearnedKind::Retired { alias: "x".into() }, cx));
+        frame(cx, w);
+        let long = bounds_of(cx, w, "pill.notice")[0].size.width;
+        assert!(long >= px(360.) && long <= px(14. + 11. + 10. + 360. + 90.), "{long:?}");
+    }
+
+    // parity: PILL-016
+    #[flow_ui::gpui::test]
+    async fn panel_width_is_a_whole_point_ceiling(cx: &mut TestAppContext) {
+        let _ = view(cx);
+        cx.update(|cx| {
+            assert_eq!(content_width(cx), INDICATOR_WIDTH);
+            show_microphone("Studio didn't respond", cx);
+            let width = content_width(cx);
+            assert_eq!(width.fract(), 0.);
+            assert!(width > 100.);
+        });
+    }
+
+    // parity: PILL-005 PILL-006 PILL-017 PILL-033
     #[test]
     fn timing_and_waveform_math() {
         assert_eq!(spring(0., MORPH), 0.);
@@ -1072,7 +1176,7 @@ mod tests {
         assert_eq!((h[13], h[14]), (Waveform::height(0.2), 3.));
     }
 
-    // parity: PILL-029 PILL-030 PILL-031 PILL-035 PILL-036 PILL-037 PILL-041 PILL-042 PILL-043 PILL-009
+    // parity: PILL-030 PILL-031 PILL-036 PILL-037 PILL-042 PILL-043
     #[test]
     fn bars_follow_swift_formulas() {
         assert_eq!(static_height(5, DictState::Preparing), 4.);
@@ -1092,30 +1196,33 @@ mod tests {
         assert_eq!((fade(0.), fade(0.28 * 87.)), (0., 1.));
     }
 
-    // parity: PILL-053..PILL-063 PILL-052
-    #[test]
-    fn announcements_match_swift() {
+    // parity: PILL-053..PILL-063
+    /// Through `set_state`, the path capture will call, into the platform's announce.
+    #[flow_ui::gpui::test]
+    async fn state_changes_announce_swifts_words(cx: &mut TestAppContext) {
         use DictState::*;
-        for (s, m) in [
-            (Preparing, "Preparing dictation. Microphone off."),
-            (Connecting, "Connecting to the microphone."),
-            (Recording, "Recording."),
-            (Transcribing, "Transcribing. Microphone off."),
-            (Persisting, "Saving dictation."),
-            (Rewriting, "Rewriting text. Microphone off."),
-            (Inserting, "Inserting saved text."),
-            (Cancelling, "Cancelling dictation."),
-            (Recovery, "Text saved for review."),
-            (Failed, "Dictation failed. Open LocalFlow for details."),
-        ] {
-            assert_eq!(announcement(Idle, s), Some(m));
-            assert_eq!(announcement(s, s), None);
-        }
-        assert_eq!(announcement(Cancelling, Idle), Some("Dictation cancelled."));
-        assert_eq!(announcement(Recording, Idle), Some("Dictation stopped."));
+        let (_w, announced, _) = view(cx);
+        let spoken = |state, cx: &mut TestAppContext| {
+            announced.borrow_mut().clear();
+            cx.update(|cx| set_state(state, 0., cx));
+            announced.borrow().first().cloned().unwrap_or_default()
+        };
+        assert_eq!(spoken(Preparing, cx), "Preparing dictation. Microphone off.");
+        assert_eq!(spoken(Connecting, cx), "Connecting to the microphone.");
+        assert_eq!(spoken(Recording, cx), "Recording.");
+        assert_eq!(spoken(Recording, cx), "", "the same state says nothing");
+        assert_eq!(spoken(Transcribing, cx), "Transcribing. Microphone off.");
+        assert_eq!(spoken(Persisting, cx), "Saving dictation.");
+        assert_eq!(spoken(Rewriting, cx), "Rewriting text. Microphone off.");
+        assert_eq!(spoken(Inserting, cx), "Inserting saved text.");
+        assert_eq!(spoken(Cancelling, cx), "Cancelling dictation.");
+        assert_eq!(spoken(Idle, cx), "Dictation cancelled.");
+        assert_eq!(spoken(Recovery, cx), "Text saved for review.");
+        assert_eq!(spoken(Failed, cx), "Dictation failed. Open LocalFlow for details.");
+        assert_eq!(spoken(Idle, cx), "Dictation stopped.");
     }
 
-    // parity: PILL-013 PILL-014 PILL-007 PILL-008 PILL-016
+    // parity: PILL-013 PILL-014
     #[test]
     fn panel_position() {
         let visible = Bounds { origin: point(px(0.), px(25.)), size: size(px(1440.), px(875.)) };
@@ -1173,7 +1280,7 @@ mod tests {
         assert_eq!(pill(cx, |p| p.layouts), layouts + 1);
     }
 
-    // parity: PILL-032 PILL-038 PILL-039 PILL-040 PILL-047 PILL-048 PILL-049 PILL-050 PILL-051
+    // parity: PILL-038 PILL-039 PILL-040 PILL-050 PILL-051
     #[flow_ui::gpui::test]
     async fn dictation_labels_and_cancel(cx: &mut TestAppContext) {
         let (w, _, commands) = view(cx);
@@ -1183,6 +1290,8 @@ mod tests {
             cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.cancel").label().as_deref(), Some(cancel_label(s)))).unwrap();
         }
         assert_eq!(accessibility_label(DictState::Persisting), "Processing, microphone off");
+        assert_eq!(accessibility_label(DictState::Inserting), "Processing, microphone off");
+        assert_eq!(accessibility_label(DictState::Cancelling), "Processing, microphone off");
         assert_eq!(cancel_label(DictState::Rewriting), "Cancel rewrite");
         cx.update(|cx| {
             update_session(cx, |s| s.dictation.as_mut().unwrap().busy = true);
@@ -1198,7 +1307,7 @@ mod tests {
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::CancelRewrite));
     }
 
-    // parity: PILL-064 PILL-065 PILL-066 PILL-067 PILL-068 PILL-069 PILL-070 PILL-071 PILL-072 PILL-073 PILL-074
+    // parity: PILL-064 PILL-065 PILL-066 PILL-067 PILL-068 PILL-069 PILL-070 PILL-072 PILL-073 PILL-074
     #[flow_ui::gpui::test]
     async fn learned_notice_copy_actions_and_timer(cx: &mut TestAppContext) {
         let (w, announced, commands) = view(cx);
@@ -1276,19 +1385,17 @@ mod tests {
         assert!(pill(cx, |p| p.clipboard.is_none()));
     }
 
-    // parity: PILL-084..PILL-109
+    // parity: PILL-084 PILL-085 PILL-086 PILL-087
     #[flow_ui::gpui::test]
-    async fn action_notices_show_every_message(cx: &mut TestAppContext) {
+    async fn action_notice_retry_chip_and_timer(cx: &mut TestAppContext) {
         let (w, announced, commands) = view(cx);
-        for (message, retry) in REWRITE_NOTICES {
-            cx.update(|cx| show_action(*message, *retry, cx));
-            frame(cx, w);
-            assert_saw(&[message]);
-            assert_eq!(announced.borrow().last().unwrap(), message);
-            cx.update_window(w.into(), |_, win, _| assert_eq!(win.try_find("rewrite.notice.retry").is_some(), *retry, "{message}")).unwrap();
-        }
+        cx.update(|cx| show_action("Rewrite took too long. Original text inserted.", false, cx));
+        frame(cx, w);
+        assert_eq!(announced.borrow().last().unwrap(), "Rewrite took too long. Original text inserted.");
+        cx.update_window(w.into(), |_, win, _| assert!(win.try_find("rewrite.notice.retry").is_none())).unwrap();
         cx.update(|cx| show_action("Rewrite took too long. Original text inserted.", true, cx));
         frame(cx, w);
+        assert_saw(&["Rewrite took too long. Original text inserted.", "Retry"]);
         cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("rewrite.notice.retry").label().as_deref(), Some("Retry rewrite"))).unwrap();
         cx.update_window(w.into(), |_, win, cx| win.click("rewrite.notice.retry", cx)).unwrap();
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::RetryRewrite));
@@ -1303,24 +1410,49 @@ mod tests {
         assert!(pill(cx, |p| p.action.is_none()));
     }
 
-    // parity: PILL-112..PILL-120 PILL-122..PILL-125
+    // parity: PILL-096..PILL-109
+    /// The words and whether Retry is offered. No production caller yet: rewriting and refusing a
+    /// dictation arrive with Features 025 and 026; the table holds Swift's copy until then.
+    #[test]
+    fn rewrite_and_meeting_notices_keep_swifts_words() {
+        let offers = |message: &str| REWRITE_NOTICES.iter().find(|(m, _)| *m == message).map(|(_, retry)| *retry);
+        assert_eq!(offers("Rewriting skipped: unencrypted connection blocked. Original text inserted."), Some(true));
+        assert_eq!(offers("Rewriting skipped: the endpoint is invalid. Original text inserted."), Some(true));
+        assert_eq!(offers("Rewriting skipped: the text is too long. Original text inserted."), Some(true));
+        assert_eq!(offers("Rewriting skipped: history is full. Original text inserted."), Some(true));
+        assert_eq!(offers("This dictation already has ten rewrite attempts."), Some(false));
+        assert_eq!(offers("Two rewrites are still running. Original text inserted."), Some(true));
+        assert_eq!(offers("Rewrite was interrupted by a restart."), Some(true));
+        assert_eq!(offers("Rewrite used on-screen text you did not say; inserted your transcript."), Some(true));
+        assert_eq!(offers("Rewrite cancelled. Original text inserted."), Some(true));
+        assert_eq!(offers("Previous dictation saved to history, not inserted."), Some(false));
+        assert_eq!(offers("Meeting in progress"), Some(false));
+        assert_eq!(offers("Meeting transcript is finalizing. Wait for it to finish."), Some(false));
+        assert_eq!(offers("Server only is on, so this Mac doesn't run models. Change it in Settings › Server."), Some(false));
+        assert_eq!(offers("This meeting can't be moved to this Mac right now."), Some(false));
+    }
+
+    // parity: PILL-113 PILL-115..PILL-120 PILL-122..PILL-125
     #[flow_ui::gpui::test]
     async fn background_notice(cx: &mut TestAppContext) {
         let (w, announced, _) = view(cx);
         let n = |kind, progress| Some(BackgroundNotice { meeting_id: "m1".into(), kind, progress });
-        for (kind, progress, text, symbol) in [
-            (BackgroundKind::Finalizing, None, "Finalizing transcript", "text.badge.checkmark"),
-            (BackgroundKind::Finalizing, Some(0.424), "Finalizing transcript · 42 %", "text.badge.checkmark"),
-            (BackgroundKind::Resuming, None, "Resuming interrupted transcript", "text.badge.checkmark"),
-            (BackgroundKind::Labeling, None, "Labeling speakers", "person.2"),
-            (BackgroundKind::Summarizing { queued: 0 }, None, "Summarizing…", "text.quote"),
-            (BackgroundKind::Summarizing { queued: 3 }, None, "Summarizing… (3 queued)", "text.quote"),
-        ] {
+        let shown = |kind, progress, cx: &mut TestAppContext| {
             cx.update(|cx| set_background(n(kind, progress), cx));
             frame(cx, w);
-            assert_saw(&[text]);
-            assert_eq!(n(kind, progress).unwrap().symbol(), symbol);
-        }
+            let b = n(kind, progress).unwrap();
+            assert_saw(&[&b.text()]);
+            (b.text(), b.symbol(), b.tab())
+        };
+        assert_eq!(shown(BackgroundKind::Finalizing, None, cx), ("Finalizing transcript".to_string(), "text.badge.checkmark", "transcript"));
+        assert_eq!(shown(BackgroundKind::Finalizing, Some(0.424), cx).0, "Finalizing transcript · 42 %");
+        assert_eq!(shown(BackgroundKind::Resuming, None, cx), ("Resuming interrupted transcript".to_string(), "text.badge.checkmark", "transcript"));
+        assert_eq!(shown(BackgroundKind::Labeling, None, cx), ("Labeling speakers".to_string(), "person.2", "transcript"));
+        assert_eq!(shown(BackgroundKind::Summarizing { queued: 0 }, None, cx), ("Summarizing…".to_string(), "text.quote", "summary"));
+        assert_eq!(shown(BackgroundKind::Summarizing { queued: 3 }, None, cx).0, "Summarizing… (3 queued)");
+        // Hovering highlights the capsule and reveals the hide button.
+        cx.update_window(w.into(), |_, win, cx| win.hover("pill.background", cx)).unwrap();
+        assert!(w.update(cx, |v, _, _| v.hovering).unwrap());
         // Progress updates in one stage announce nothing new.
         cx.update(|cx| set_background(n(BackgroundKind::Finalizing, Some(0.1)), cx));
         let count = announced.borrow().len();
