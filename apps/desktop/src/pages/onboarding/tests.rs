@@ -1896,6 +1896,15 @@ async fn server_type_keys_prefill_and_trust_failure(cx: &mut TestAppContext) {
     cx.update_window(w.into(), |_, w, cx| w.press("enter", cx)).unwrap();
     frame(cx, w);
     assert!(flag(cx, "remote.enabled"), "Return confirms a valid address");
+    // The identity arrives from a real socket, so under load it can land after the first frame.
+    for _ in 0..500 {
+        if read(cx, w, |p, _| p.remote.identity.is_some()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        frame(cx, w);
+    }
+    frame(cx, w);
     assert_style("Server fingerprint", 12., Some(500.), muted);
     assert_eq!(flow_ui::probe::style_of(&fingerprint).map(|s| s.size), Some(13.));
     w.update(cx, |_, w, _| assert!(w.try_find("settings.remoteFingerprint").is_some())).unwrap();

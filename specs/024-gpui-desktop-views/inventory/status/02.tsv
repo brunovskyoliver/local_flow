@@ -104,7 +104,7 @@ ONB-103	auto	test:advance_walks_steps_and_requests_models
 ONB-104	auto	test:advance_walks_steps_and_requests_models
 ONB-105	auto	test:skip_abandon_and_back
 ONB-106	auto	test:skip_abandon_and_back
-ONB-107	auto	test:turning_off_removes_every_credential_and_closes_the_parked_channel ; note:the Rust Mac Services returns Unavailable for Keychain removal and has no channel pool yet (Feature 026), so the test proves the calls are made through Services, not a real Keychain delete or channel close
+ONB-107	service	service:mac-service: Keychain removal and the channel pool have no Rust service yet (Feature 026) ; test:turning_off_removes_every_credential_and_closes_the_parked_channel ; note:the Rust Mac Services returns Unavailable for Keychain removal and has no channel pool yet (Feature 026), so the test proves the calls are made through Services, not a real Keychain delete or channel close
 ONB-108	auto	test:skip_abandon_and_back
 ONB-109	auto	test:skip_abandon_and_back
 ONB-110	auto	test:set_up_dictation_keeps_the_server_choice
@@ -219,7 +219,7 @@ ONB-218	auto	test:turn_off_alert_is_destructive ; test:server_step_consent_trust
 ONB-219	auto	test:server_step_consent_trust_sign_in_and_turn_off
 ONB-220	auto	test:busy_disables_sign_in_and_offline_stays_enrolled
 ONB-221	auto	test:remote_status_privacy_and_gate
-ONB-222	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/server-light-ref.png ; live:audit/mac/onboarding/server-light-rust.png ; live:audit/mac/onboarding/server-dark-ref.png ; live:audit/mac/onboarding/server-dark-rust.png ; live:audit/mac/onboarding/approved-light-rust.png ; live:audit/mac/onboarding/approved-light-ref.png ; live:audit/mac/onboarding/pending-light-rust.png ; live:audit/mac/onboarding/pending-light-ref.png ; live:audit/mac/onboarding/approved-dark-rust.png ; live:audit/mac/onboarding/approved-dark-ref.png ; live:audit/mac/onboarding/pending-dark-rust.png ; live:audit/mac/onboarding/pending-dark-ref.png ; test:server_step_consent_trust_sign_in_and_turn_off ; test:rewrite_form_type_masking_and_analysis_lines
+ONB-222	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/server-light-ref.png ; live:audit/mac/onboarding/server-light-rust.png ; live:audit/mac/onboarding/server-dark-ref.png ; live:audit/mac/onboarding/server-dark-rust.png ; live:audit/mac/onboarding/approved-light-rust.png ; live:audit/mac/onboarding/approved-light-ref.png ; live:audit/mac/onboarding/pending-light-rust.png ; live:audit/mac/onboarding/pending-light-ref.png ; live:audit/mac/onboarding/approved-dark-rust.png ; live:audit/mac/onboarding/approved-dark-ref.png ; live:audit/mac/onboarding/pending-dark-rust.png ; live:audit/mac/onboarding/pending-dark-ref.png ; test:server_step_consent_trust_sign_in_and_turn_off ; test:rewrite_form_type_masking_and_analysis_lines ; note:approved-light-ref is 2200x1520 against the Rust shot at 2360x1560, so that pair compares content, not window size
 ONB-223	auto	test:remote_status_privacy_and_gate ; test:privacy_lines_word_for_word
 ONB-224	auto	test:remote_status_privacy_and_gate ; test:privacy_lines_word_for_word
 ONB-225	auto	test:remote_status_privacy_and_gate ; test:privacy_lines_word_for_word

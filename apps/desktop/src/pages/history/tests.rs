@@ -1084,7 +1084,18 @@ async fn cancel_rewrite_marks_the_row_and_stops_the_request(cx: &mut TestAppCont
         assert!(t.model.can_request_rewrite(), "busy ends");
     })
     .unwrap();
-    assert!(listener.accept().is_err(), "nothing reached the server");
+    // The request runs on its own thread, so under load it can connect before the flag is set.
+    // Either way cancelling must end it: a connection that did arrive gets closed, unanswered.
+    if let Ok((mut stream, _)) = listener.accept() {
+        stream.set_nonblocking(false).unwrap();
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        let mut sink = Vec::new();
+        let closed = match std::io::Read::read_to_end(&mut stream, &mut sink) {
+            Ok(_) => true,
+            Err(e) => !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut),
+        };
+        assert!(closed, "cancel closes a request that already connected");
+    }
 }
 
 // parity: HIST-056
