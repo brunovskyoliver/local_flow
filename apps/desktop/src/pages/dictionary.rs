@@ -98,10 +98,26 @@ impl DictionaryPage {
             }
             "misspelling" => {
                 self.model.begin_add();
-                self.model.set_correcting(true);
+                self.model.add_alias();
+                self.sync_fields(window, cx);
+            }
+            "word" => {
+                self.model.begin_add();
+                self.model.set_correcting(false);
                 self.sync_fields(window, cx);
             }
             "delete" => self.confirming_delete = self.model.entries.first().cloned(),
+            "edit" => {
+                if let Some(e) = self.model.entries.first().cloned() {
+                    self.begin_edit(&e, window, cx);
+                }
+            }
+            "disabled" => self.filter = Filter::Disabled,
+            "learned" => self.filter = Filter::Learned,
+            "search" => {
+                self.searching = true;
+                self.search.update(cx, |s, cx| s.set_value("Ac", window, cx));
+            }
             "saving" => self.model.saving = true,
             _ => {}
         }
@@ -374,14 +390,16 @@ impl DictionaryPage {
             let strike = retired.iter().any(|r| r.term == e.canonical && !r.is_boost());
             title = title.child(rich(vec![if strike { span(e.canonical.clone()).strike() } else { span(e.canonical.clone()) }]).size(15.).color(fg));
         } else {
-            let mut spans = vec![];
+            // Swift's `HStack(spacing: 0)`: each alias is its own text and wraps on its own.
+            let mut aliases = h_flex().min_w_0();
             for (n, a) in e.aliases.iter().enumerate() {
-                spans.push(if is_retired_alias(a) { span(a.clone()).strike().color(fg.opacity(0.55)) } else { span(a.clone()) });
+                let word = if is_retired_alias(a) { span(a.clone()).strike().color(fg.opacity(0.55)) } else { span(a.clone()) };
+                aliases = aliases.child(div().min_w_0().child(rich(vec![word]).size(15.).color(fg)));
                 if n + 1 < e.aliases.len() {
-                    spans.push(span(", "));
+                    aliases = aliases.child(div().flex_none().child(t(", ").size(15.).color(fg)));
                 }
             }
-            title = title.child(rich(spans).size(15.).color(fg)).child(icon("arrow.right", 12., fg)).child(t(e.canonical.clone()).size(15.).color(fg));
+            title = title.child(aliases).child(div().flex_none().child(icon("arrow.right", 12., fg))).child(div().flex_none().child(t(e.canonical.clone()).size(15.).color(fg)));
         }
         let chip = |text: &'static str| div().px(px(6.)).py(px(2.)).bg(p.tint).rounded_full().child(t(text).size(11.).color(p.muted));
         if self.model.is_provisional(&e) {

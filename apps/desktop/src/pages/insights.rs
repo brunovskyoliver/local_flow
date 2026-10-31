@@ -720,7 +720,9 @@ mod tests {
         assert_saw(&["Your dictation pace, against typing at 40 words per minute"]);
         let (target, tip) = (bounds(cx, w, "insights.info.pace"), bounds(cx, w, "insights.tip"));
         assert_eq!(tip.bottom() + px(8.), target.top());
-        assert!((f32::from(tip.center().x) - f32::from(target.center().x)).abs() <= 1.);
+        // Near the card's left edge it clamps to the container.
+        let layer = w.update(cx, |t, _, _| t.anchors.borrow()[LAYER]).unwrap();
+        assert_eq!(tip.left(), layer.left());
         // Leaving removes it.
         cx.update_window(w.into(), |_, win, cx| win.hover("insights.tab.usage", cx)).unwrap();
         frame(cx, w);
@@ -736,6 +738,9 @@ mod tests {
         assert_saw(&["Words your rewrites changed before inserting"]);
         hover(cx, w, "insights.info.fixes");
         assert_saw(&["Words spelled from your dictionary"]);
+        // Clear of the edges it centers on the target.
+        let (target, tip) = (bounds(cx, w, "insights.info.fixes"), bounds(cx, w, "insights.tip"));
+        assert!((f32::from(tip.center().x) - f32::from(target.center().x)).abs() <= 1., "{tip:?} {target:?}");
     }
 
     // parity: INS-083

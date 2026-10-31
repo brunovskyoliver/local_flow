@@ -25,6 +25,7 @@ pub struct HistoryPage {
     stage: detail::Stage,
     open: HashSet<String>,
     scroll: ScrollHandle,
+    detail_scroll: ScrollHandle,
     tops: Rc<RefCell<HashMap<String, Pixels>>>,
     /// The row kept in place while pages join above it, and where it was.
     pin: Rc<RefCell<Option<(String, Pixels)>>>,
@@ -96,6 +97,7 @@ impl HistoryPage {
             stage: detail::Stage::Normalized,
             open: HashSet::new(),
             scroll: ScrollHandle::new(),
+            detail_scroll: ScrollHandle::new(),
             tops: Default::default(),
             pin: Default::default(),
             focus: cx.focus_handle(),
@@ -151,6 +153,16 @@ impl HistoryPage {
             "detail" => {
                 if let (Some(id), Some(db)) = (first, cx.global::<Core>().db.as_ref()) {
                     self.model.show_detail(db, &id);
+                }
+            }
+            "processing" | "lower" => {
+                if let (Some(id), Some(db)) = (first, cx.global::<Core>().db.as_ref()) {
+                    self.model.show_detail(db, &id);
+                }
+                if scenario.ends_with("lower") {
+                    self.detail_scroll.set_offset(point(px(0.), px(-400.)));
+                } else {
+                    self.open.insert("history.detail.processing".into());
                 }
             }
             "detailError" => {

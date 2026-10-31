@@ -18,7 +18,7 @@ const SEGMENT_RULE: f32 = 0.33;
 /// The default macOS `Button`: 24 high, radius 6, the fill the system gives it inside a sheet.
 fn native_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> FlowButton {
     let p = pal(cx);
-    FlowButton::new(id, ButtonKind::Prototype, label).fill(p.ink.opacity(SEGMENT_ON)).disabled_opacity(0.45).content(div().h(px(24.)).px(px(12.)).flex().items_center().child(t(label).size(14.).color(p.ink).a11y_hidden()))
+    FlowButton::new(id, ButtonKind::Prototype, label).fill(p.ink.opacity(SEGMENT_ON)).disabled_opacity(0.45).content(div().mx(px(-12.)).my(px(-7.)).h(px(24.)).px(px(12.)).flex().items_center().child(t(label).size(14.).color(p.ink).a11y_hidden()))
 }
 
 fn stage_text(text: &str) -> Txt {
@@ -95,7 +95,7 @@ impl HistoryPage {
                     cx.notify();
                 }))),
             )
-            .child(div().id("history.detail.scroll").test_support().flex_1().min_h_0().w_full().overflow_y_scroll().child(body))
+            .child(div().id("history.detail.scroll").test_support().flex_1().min_h_0().w_full().overflow_y_scroll().track_scroll(&self.detail_scroll).child(body))
             .into_any_element()
     }
 

@@ -512,6 +512,8 @@ async fn rewrite_columns_buttons_and_mode(cx: &mut TestAppContext) {
     frame(cx, w);
     assert_saw(&["Saved text", "The faithful transcript.", "Current rewrite (Polished)", "AI-generated rewrite, not the transcript.", "Retry", "Mode"]);
     let text = w.update(cx, |t, _, _| t.model.envelope.as_ref().unwrap().entry.text.clone()).unwrap();
+    let h = cx.update_window(w.into(), |_, win, _| win.find("history.detail.copy.saved").bounds().size.height).unwrap();
+    assert_eq!(h, px(24.));
     cx.update_window(w.into(), |_, win, cx| win.scroll("history.detail.scroll", ScrollDelta::Pixels(point(px(0.), px(-500.))), cx)).unwrap();
     frame(cx, w);
     click(cx, w, "history.detail.copy.saved".into());
