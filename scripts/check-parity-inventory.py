@@ -12,8 +12,12 @@ Several evidence items can be joined with ` ; `. `--allow-open` reports progress
 Evidence must be able to fail. A test may tag no more rows than it has assertions. An `auto` row whose
 reference gives a geometry value must cite a test that reads bounds. A `live` row citing `-rust.png` must
 cite the `-ref.png` beside it, or say `rust-only:<why the reference can't reach it>`. `service` is only
-for rows the inventory's Needs column gives to a platform service, a worker or flowd.
+for rows the inventory's Needs column gives to a platform service, a worker or flowd. Two different
+states citing byte-identical `-rust.png` files are an error, since one of them shows the wrong state,
+unless both are named together in SAME_IMAGE_ALLOWED.
 """
+import hashlib
+import itertools
 import re
 import sys
 from pathlib import Path
@@ -25,6 +29,8 @@ ROW = re.compile(r"^\| ([A-Z]+-\d+) \|\s*([a-z-]+)\s*\|(.*)$", re.M)
 GEOMETRY = re.compile(r"\b\d+(\.\d+)? (wide|high|tall)\b|\b(padding|spacing|radius|width|height|inset)\b", re.I)
 ASSERTION = re.compile(r"\bassert\w*!?\(")
 STATUSES = {"auto", "live", "service", "not-run", "recorded"}
+# Pairs of evidence paths that really do look the same, each with its reason. Empty: none needed yet.
+SAME_IMAGE_ALLOWED = {}
 
 rows, details = {}, {}
 for md in sorted(INV.glob("*.md")):
@@ -79,7 +85,7 @@ for src in list((ROOT / "crates").rglob("*.rs")) + list((ROOT / "apps/desktop").
                 bodies[f.group(1)] = body_of(lines, number)
             pending = set()
 
-errors, seen, counts = [], {}, {}
+errors, seen, counts, rust_images = [], {}, {}, {}
 for tsv in sorted((INV / "status").glob("*.tsv")) if (INV / "status").exists() else []:
     for n, line in enumerate(tsv.read_text().splitlines(), 1):
         if not line.strip() or line.startswith("#"):
@@ -123,13 +129,21 @@ for tsv in sorted((INV / "status").glob("*.tsv")) if (INV / "status").exists() e
                     errors.append(f"{rid}: no test {name} with a parity tag")
                 elif rid not in tags[name]:
                     errors.append(f"{rid}: test {name} doesn't list it in its parity tag")
-            elif item.startswith("live:") and RUNS.exists() and not (RUNS / item[5:]).exists():
-                errors.append(f"{rid}: missing {item}")
+            elif item.startswith("live:") and RUNS.exists():
+                if not (RUNS / item[5:]).exists():
+                    errors.append(f"{rid}: missing {item}")
+                elif item.endswith("-rust.png"):
+                    rust_images.setdefault(hashlib.sha256((RUNS / item[5:]).read_bytes()).digest(), set()).add(item[5:])
 
 for name, tagged in tags.items():
     cited = {rid for rid in tagged if seen.get(rid) == "auto"}
     if len(cited) > assertions(bodies[name]):
         errors.append(f"test {name}: credits {len(cited)} rows with {assertions(bodies[name])} assertions")
+
+for paths in rust_images.values():
+    for a, b in itertools.combinations(sorted(paths), 2):
+        if frozenset((a, b)) not in SAME_IMAGE_ALLOWED:
+            errors.append(f"{a} and {b} are byte-identical: one shows the wrong state, or name them in SAME_IMAGE_ALLOWED")
 
 open_rows = sorted(set(rows) - set(seen))
 print(f"{len(rows)} rows: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + f", open {len(open_rows)}")
