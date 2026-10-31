@@ -1,4 +1,4 @@
-SET-001	auto	test:page_rows_and_sections_are_spaced_like_swift
+SET-001	auto	test:page_padding_at_both_widths ; note:Rust uses 47, 23 and 31 where the row says 48, 24 and 32; measured on the light default and compact pairs, the title ink starts within 1 device pixel (0.5 pt) of the reference at these values; why Swift lands there was not established
 SET-002	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png
 SET-003	auto	test:sections_stack_in_swifts_order
 SET-004	auto	test:section_titles_are_14_medium
@@ -8,9 +8,9 @@ SET-007	auto	test:page_rows_and_sections_are_spaced_like_swift
 SET-008	recorded	recorded:no Settings row passes info (SET-009), so nothing renders it
 SET-009	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-010	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png ; note:pressed fill not captured
-SET-011	live	live:audit/mac/settings/exclusions-light-ref.png ; live:audit/mac/settings/exclusions-light-rust.png ; live:audit/mac/settings/exclusions-dark-ref.png ; live:audit/mac/settings/exclusions-dark-rust.png ; note:prominent Done compared; pressed fill not captured
-SET-012	live	live:audit/mac/settings/default+rewriting-light-ref.png ; live:audit/mac/settings/default+rewriting-light-rust.png ; live:audit/mac/settings/default+rewriting-dark-ref.png ; live:audit/mac/settings/default+rewriting-dark-rust.png ; live:audit/mac/settings/consent-light-ref.png ; live:audit/mac/settings/consent-light-rust.png ; live:audit/mac/settings/consent-dark-ref.png ; live:audit/mac/settings/consent-dark-rust.png ; note:link-shaped placeholders are drawn in the sampled link colour over the field; Kit has one placeholder colour
-SET-013	auto	test:pill_menu_reads_like_swift ; live:audit/mac/settings/exclusions-light-ref.png ; live:audit/mac/settings/exclusions-light-rust.png ; note:chevron thinner than the SF Symbol, drawn asset
+SET-011	live	live:audit/mac/settings/exclusions-light-ref.png ; live:audit/mac/settings/exclusions-light-rust.png ; live:audit/mac/settings/exclusions-dark-ref.png ; live:audit/mac/settings/exclusions-dark-rust.png ; note:prominent Done compared; pressed fill not captured ; note:the reference image shows the sheet alone, not the window behind it, so this pair compares the sheet only
+SET-012	live	live:audit/mac/settings/default+rewriting-light-ref.png ; live:audit/mac/settings/default+rewriting-light-rust.png ; live:audit/mac/settings/default+rewriting-dark-ref.png ; live:audit/mac/settings/default+rewriting-dark-rust.png ; live:audit/mac/settings/consent-light-ref.png ; live:audit/mac/settings/consent-light-rust.png ; live:audit/mac/settings/consent-dark-ref.png ; live:audit/mac/settings/consent-dark-rust.png ; note:link-shaped placeholders are drawn in the sampled link colour over the field; Kit has one placeholder colour ; note:the reference image shows the sheet alone, not the window behind it, so this pair compares the sheet only
+SET-013	auto	test:pill_menu_reads_like_swift ; live:audit/mac/settings/exclusions-light-ref.png ; live:audit/mac/settings/exclusions-light-rust.png ; note:chevron thinner than the SF Symbol, drawn asset ; note:the reference image shows the sheet alone, not the window behind it, so this pair compares the sheet only
 SET-014	auto	test:palette_matches_sotto
 SET-015	auto	test:the_page_takes_focus_from_a_field
 SET-016	auto	test:refresh_assigns_only_a_changed_snapshot

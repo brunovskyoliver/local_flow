@@ -108,7 +108,7 @@ ONB-107	auto	test:turning_off_removes_every_credential_and_closes_the_parked_cha
 ONB-108	auto	test:skip_abandon_and_back
 ONB-109	auto	test:skip_abandon_and_back
 ONB-110	auto	test:set_up_dictation_keeps_the_server_choice
-ONB-111	auto	test:skip_abandon_and_back
+ONB-111	auto	test:back_after_skip_selects_nothing_and_continue_skips
 ONB-112	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
 ONB-113	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
 ONB-114	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
@@ -130,7 +130,7 @@ ONB-129	auto	live:audit/mac/onboarding/purpose-light-ref.png ; live:audit/mac/on
 ONB-130	auto	live:audit/mac/onboarding/purpose-light-ref.png ; live:audit/mac/onboarding/purpose-light-rust.png ; live:audit/mac/onboarding/purpose-dark-ref.png ; live:audit/mac/onboarding/purpose-dark-rust.png ; test:purpose_copy_and_ids ; test:intro_and_purpose_draw_swifts_symbols
 ONB-131	auto	live:audit/mac/onboarding/purpose-light-ref.png ; live:audit/mac/onboarding/purpose-light-rust.png ; live:audit/mac/onboarding/purpose-dark-ref.png ; live:audit/mac/onboarding/purpose-dark-rust.png ; test:purpose_copy_and_ids ; test:intro_and_purpose_draw_swifts_symbols
 ONB-132	auto	test:resume_rules
-ONB-133	auto	test:advance_walks_steps_and_requests_models
+ONB-133	auto	test:choosing_a_purpose_card_stores_nothing_until_leaving
 ONB-134	auto	test:purpose_copy_and_ids
 ONB-135	live	live:audit/mac/onboarding/ai-dark-rust.png ; live:audit/mac/onboarding/ai-dark-ref.png ; live:audit/mac/onboarding/ai-meetings-light-ref.png ; live:audit/mac/onboarding/ai-meetings-light-rust.png ; live:audit/mac/onboarding/ai-meetings-dark-ref.png ; live:audit/mac/onboarding/ai-meetings-dark-rust.png ; test:location_copy_for_meetings
 ONB-136	auto	live:audit/mac/onboarding/ai-meetings-light-ref.png ; live:audit/mac/onboarding/ai-meetings-light-rust.png ; live:audit/mac/onboarding/ai-meetings-dark-ref.png ; live:audit/mac/onboarding/ai-meetings-dark-rust.png ; test:location_copy_for_meetings
@@ -204,7 +204,7 @@ ONB-203	auto	test:server_step_consent_trust_sign_in_and_turn_off
 ONB-204	auto	test:server_step_consent_trust_sign_in_and_turn_off
 ONB-205	auto	live:audit/mac/onboarding/server-light-ref.png ; live:audit/mac/onboarding/server-light-rust.png ; live:audit/mac/onboarding/server-dark-ref.png ; live:audit/mac/onboarding/server-dark-rust.png ; live:audit/mac/onboarding/fingerprint-light-rust.png ; live:audit/mac/onboarding/signin-light-rust.png ; live:audit/mac/onboarding/signin-light-ref.png ; live:audit/mac/onboarding/mismatch-light-rust.png ; live:audit/mac/onboarding/mismatch-light-ref.png ; live:audit/mac/onboarding/fingerprint-dark-rust.png ; live:audit/mac/onboarding/signin-dark-rust.png ; live:audit/mac/onboarding/signin-dark-ref.png ; live:audit/mac/onboarding/mismatch-dark-rust.png ; live:audit/mac/onboarding/mismatch-dark-ref.png ; rust-only:needs an https identity with a trusted certificate in the reference ; rust-only:needs an https identity with a trusted certificate in the reference ; test:server_step_consent_trust_sign_in_and_turn_off
 ONB-206	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/consent-light-ref.png ; live:audit/mac/onboarding/consent-light-rust.png ; live:audit/mac/onboarding/consent-dark-ref.png ; live:audit/mac/onboarding/consent-dark-rust.png ; test:server_step_consent_trust_sign_in_and_turn_off
-ONB-207	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/consent-light-ref.png ; live:audit/mac/onboarding/consent-light-rust.png ; live:audit/mac/onboarding/consent-dark-ref.png ; live:audit/mac/onboarding/consent-dark-rust.png ; test:server_step_consent_trust_sign_in_and_turn_off
+ONB-207	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/consent-light-ref.png ; live:audit/mac/onboarding/consent-light-rust.png ; live:audit/mac/onboarding/consent-dark-ref.png ; live:audit/mac/onboarding/consent-dark-rust.png ; test:server_step_consent_trust_sign_in_and_turn_off ; test:consent_opens_with_the_address_field_focused
 ONB-208	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/consent-light-ref.png ; live:audit/mac/onboarding/consent-light-rust.png ; live:audit/mac/onboarding/consent-dark-ref.png ; live:audit/mac/onboarding/consent-dark-rust.png ; test:server_step_consent_trust_sign_in_and_turn_off
 ONB-209	auto	live:audit/mac/onboarding/consent-light-ref.png ; live:audit/mac/onboarding/consent-light-rust.png ; live:audit/mac/onboarding/consent-dark-ref.png ; live:audit/mac/onboarding/consent-dark-rust.png ; test:server_step_consent_trust_sign_in_and_turn_off
 ONB-210	auto	test:server_step_consent_trust_sign_in_and_turn_off ; test:server_type_keys_prefill_and_trust_failure
@@ -230,7 +230,7 @@ ONB-229	auto	test:busy_disables_sign_in_and_offline_stays_enrolled ; test:remote
 ONB-230	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; test:rewrite_only_form_connects_and_reports ; test:advanced_disclosure_spacing
 ONB-231	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; test:rewrite_only_form_connects_and_reports
 ONB-232	live	test:placeholders_are_drawn_until_typed ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png
-ONB-233	auto	test:origins_and_overrides
+ONB-233	auto	test:editing_the_address_writes_each_keystroke_and_invalidates
 ONB-234	auto	live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; test:placeholders_are_drawn_until_typed
 ONB-235	auto	test:rewrite_flag_only_turns_on_when_nothing_blocks_it ; test:rewrite_form_type_masking_and_analysis_lines ; test:credential_errors_from_connect
 ONB-236	auto	live:audit/mac/onboarding/serverlegacy-light-rust.png ; live:audit/mac/onboarding/serverlegacy-light-ref.png ; live:audit/mac/onboarding/serverlegacy-dark-rust.png ; live:audit/mac/onboarding/serverlegacy-dark-ref.png ; test:rewrite_only_form_connects_and_reports

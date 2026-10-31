@@ -1,6 +1,6 @@
-NOTE-001	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
+NOTE-001	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-002	auto	test:library_load_copies_the_transcription_preference ; test:each_appearance_copies_the_preference_again_and_a_toggle_persists_nothing
-NOTE-003	live	test:compact_width_trades_the_preview_for_an_overview_popover ; live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
+NOTE-003	live	test:compact_width_trades_the_preview_for_an_overview_popover ; live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-004	auto	test:compact_width_trades_the_preview_for_an_overview_popover
 NOTE-005	auto	test:library_icon_buttons_name_their_symbol_and_label ; test:compact_width_trades_the_preview_for_an_overview_popover
 NOTE-006	auto	test:compact_width_trades_the_preview_for_an_overview_popover
@@ -9,14 +9,14 @@ NOTE-008	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_t
 NOTE-009	auto	test:a_changed_active_meeting_refreshes_the_library
 NOTE-010	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_the_summary
 NOTE-011	auto	test:a_new_window_starts_without_the_old_note
-NOTE-012	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; test:library_title_line_is_thirty_one_high
-NOTE-013	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-012	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; test:library_title_line_is_thirty_one_high ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-013	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-014	live	test:options_popover_has_twenty_points_inside ; live:audit/mac/notetaker/options-light-rust.png ; live:audit/mac/notetaker/options-light-ref.png
 NOTE-015	auto	test:recording_options_and_refresh_click
 NOTE-016	auto	test:each_appearance_copies_the_preference_again_and_a_toggle_persists_nothing
 NOTE-017	auto	test:start_controls_wait_for_reconciliation_and_the_active_meeting
 NOTE-018	auto	test:each_appearance_copies_the_preference_again_and_a_toggle_persists_nothing
-NOTE-019	live	test:new_note_is_twenty_nine_points_high ; test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-019	live	test:new_note_is_twenty_nine_points_high ; test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-020	service	service:mac-service: ScreenCaptureKit system audio, AVCapture microphone, AAC encoder; desktop plan phase adds it, view surfaces Unavailable
 NOTE-021	auto	test:start_controls_wait_for_reconciliation_and_the_active_meeting
 NOTE-022	auto	test:start_refuses_while_busy_or_dictating
@@ -26,9 +26,9 @@ NOTE-025	service	test:start_refuses_without_the_screen_permission ; service:mac-
 NOTE-026	service	test:start_checks_free_space ; service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
 NOTE-027	service	test:start_checks_free_space ; service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
 NOTE-028	auto	test:failure_reasons_read_like_swift
-NOTE-029	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-030	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
-NOTE-031	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-029	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-030	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-031	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-032	auto	test:library_pages_and_evicts ; test:refresh_button_reads_the_rows_again_and_clears_the_notice
 NOTE-033	auto	test:recording_row_is_pinned ; test:today_summary_reads_like_swift
 NOTE-034	auto	test:paused_row_says_paused ; test:today_summary_reads_like_swift
@@ -36,50 +36,50 @@ NOTE-035	auto	test:finalizing_row_says_finishing ; test:today_summary_reads_like
 NOTE-036	auto	test:library_states ; test:today_summary_reads_like_swift
 NOTE-037	auto	test:today_summary_reads_like_swift
 NOTE-038	auto	test:today_summary_reads_like_swift
-NOTE-039	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-039	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-040	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 NOTE-041	auto	test:attention_replaces_the_summary_line
-NOTE-042	live	test:notice_shows_the_page_error ; live:audit/mac/notetaker/notice-light-rust.png ; live:audit/mac/notetaker/notice-light-ref.png ; test:library_notice_is_red
+NOTE-042	live	test:notice_shows_the_page_error ; live:audit/mac/notetaker/notice-light-rust.png ; live:audit/mac/notetaker/notice-light-ref.png ; test:library_notice_is_red ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-043	auto	test:notice_shows_the_page_error
 NOTE-044	auto	test:older_page_failure_and_the_loading_guard
-NOTE-045	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-045	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-046	auto	test:past_notes_tab_does_nothing
 NOTE-047	auto	test:library_icon_buttons_name_their_symbol_and_label ; test:search_toggle_hides_the_field_and_keeps_the_query
 NOTE-048	auto	test:search_toggle_hides_the_field_and_keeps_the_query
 NOTE-049	live	test:search_field_is_twelve_under_the_tab_row_at_thirty_seven_high ; live:audit/mac/notetaker/search-open-light-rust.png ; live:audit/mac/notetaker/search-open-light-ref.png
 NOTE-050	auto	test:search_filters_the_loaded_rows_by_title
 NOTE-051	auto	test:a_hidden_query_keeps_filtering
-NOTE-052	live	test:library_states ; live:audit/mac/notetaker/empty-light-rust.png ; live:audit/mac/notetaker/empty-light-ref.png ; test:empty_lines_are_muted_with_sixty_points_around
+NOTE-052	live	test:library_states ; live:audit/mac/notetaker/empty-light-rust.png ; live:audit/mac/notetaker/empty-light-ref.png ; test:empty_lines_are_muted_with_sixty_points_around ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-053	auto	test:search_filters_the_loaded_rows_by_title ; test:empty_lines_are_muted_with_sixty_points_around
-NOTE-054	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-055	live	test:evicted_offers_show_newest ; live:audit/mac/notetaker/evicted-light-rust.png ; live:audit/mac/notetaker/evicted-dark-rust.png ; rust-only:Load older notes is below the fold and scroll events do not reach the reference's hidden window, so the eviction can't be triggered ; test:show_newest_appears_only_after_eviction_and_refreshes
+NOTE-054	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-055	live	test:evicted_offers_show_newest ; live:audit/mac/notetaker/evicted-light-rust.png ; live:audit/mac/notetaker/evicted-dark-rust.png ; rust-only:Load older notes is below the fold and scroll events do not reach the reference's hidden window, so the eviction can't be triggered ; test:show_newest_appears_only_after_eviction_and_refreshes ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-056	auto	test:library_pages_and_evicts ; test:show_newest_appears_only_after_eviction_and_refreshes
-NOTE-057	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:load_older_sits_twenty_under_the_list
+NOTE-057	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:load_older_sits_twenty_under_the_list ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-058	auto	test:library_pages_and_evicts
 NOTE-059	auto	test:older_page_failure_and_the_loading_guard
 NOTE-060	auto	test:library_pages_and_evicts
 NOTE-061	auto	test:library_pages_and_evicts
-NOTE-062	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-062	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-063	auto	test:dates_format_like_swift
 NOTE-064	auto	test:dates_format_like_swift
 NOTE-065	auto	test:dates_format_like_swift
-NOTE-066	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:row_glyph_is_a_muted_document
-NOTE-067	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
-NOTE-068	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
-NOTE-069	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-066	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:row_glyph_is_a_muted_document ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-067	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-068	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-069	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-070	auto	test:a_real_tab_press_reaches_a_row_reveals_its_menu_and_previews ; test:keyboard_focus_on_a_row_reveals_its_menu_and_previews ; test:hovering_a_row_reveals_its_menu
 NOTE-071	auto	test:opening_a_note_renames_it_and_navigates ; test:row_click_opens_the_thoughts_tab_even_after_another_tab
-NOTE-072	live	test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-NOTE-073	live	test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-NOTE-074	live	test:waveform_layers_light_one_after_another ; test:recording_badge_pulses_and_paused_does_not ; test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from live MeetingCoordinator status and needs real capture
-NOTE-075	live	test:paused_badge_is_muted_and_still ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+NOTE-072	live	test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-073	live	test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-074	live	test:waveform_layers_light_one_after_another ; test:recording_badge_pulses_and_paused_does_not ; test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from live MeetingCoordinator status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-075	live	test:paused_badge_is_muted_and_still ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-076	auto	test:waiting_row_runs_on_this_mac ; test:waiting_row_is_muted_labelled_and_moves_to_this_mac
 NOTE-077	auto	test:waiting_row_is_muted_labelled_and_moves_to_this_mac
 NOTE-078	service	test:waiting_row_is_muted_labelled_and_moves_to_this_mac ; service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
 NOTE-079	auto	test:run_on_this_mac_refusals_come_from_the_store_and_preference
 NOTE-080	auto	test:run_on_this_mac_refusals_come_from_the_store_and_preference
 NOTE-081	auto	test:row_shows_state_badge ; test:state_badge_shows_for_unfinished_rows_unless_waiting
-NOTE-082	live	test:warning_triangle_is_orange_labelled_and_follows_a_pending_deletion ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
+NOTE-082	live	test:warning_triangle_is_orange_labelled_and_follows_a_pending_deletion ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-083	auto	test:overflow_button_popover_and_disabled_delete
 NOTE-084	auto	test:overflow_button_popover_and_disabled_delete ; test:overflow_delete_is_red_inset_eight_and_closes_into_the_dialog
 NOTE-085	auto	test:overflow_delete_is_red_inset_eight_and_closes_into_the_dialog
@@ -100,13 +100,13 @@ NOTE-099	auto	test:preview_states
 NOTE-100	auto	test:preview_states
 NOTE-101	auto	test:preview_states
 NOTE-102	auto	test:preview_states ; test:preview_type_limit_and_trimming
-NOTE-103	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
-NOTE-104	live	test:icon_button_is_a_labelled_twenty_eight_square ; live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:the tooltip itself is passed to Kit and no test can read it
+NOTE-103	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+NOTE-104	live	test:icon_button_is_a_labelled_twenty_eight_square ; live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:the tooltip itself is passed to Kit and no test can read it ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-105	service	service:mac-service: NSScroller.preferredScrollerStyle; desktop plan phase adds it, view surfaces Unavailable
 NOTE-106	auto	test:library_pages_and_evicts
 NOTE-107	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-MEET-001	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
-MEET-002	live	test:back_has_its_symbol_and_label ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
+MEET-001	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+MEET-002	live	test:back_has_its_symbol_and_label ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-003	auto	test:back_saves_typing_before_the_debounce
 MEET-004	auto	test:a_failed_save_keeps_the_note_open_until_retry_works
 MEET-005	auto	test:detail_header_names_previous_and_next
@@ -127,10 +127,10 @@ MEET-019	auto	test:title_saves_on_enter_and_blur_trims_and_clears ; test:title_r
 MEET-020	auto	test:title_too_long_shows_the_limit ; test:title_revision_rules
 MEET-021	auto	test:stale_title_and_delete_reload_and_say_the_meeting_changed ; test:title_revision_rules
 MEET-022	auto	test:title_write_failure_reports
-MEET-023	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
-MEET-024	live	test:warnings_and_reason_have_their_type_and_colour ; test:warnings_show_on_the_untitled_note ; live:audit/mac/notetaker/untitled-light-rust.png ; live:audit/mac/notetaker/untitled-light-ref.png
+MEET-023	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+MEET-024	live	test:warnings_and_reason_have_their_type_and_colour ; test:warnings_show_on_the_untitled_note ; live:audit/mac/notetaker/untitled-light-rust.png ; live:audit/mac/notetaker/untitled-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-025	auto	test:warnings_and_reason_have_their_type_and_colour ; test:duration_warning_shows_for_a_drifting_track
-MEET-026	live	test:warnings_and_reason_have_their_type_and_colour ; test:interrupted_note_shows_its_reason ; live:audit/mac/notetaker/interrupted-light-rust.png ; live:audit/mac/notetaker/interrupted-light-ref.png
+MEET-026	live	test:warnings_and_reason_have_their_type_and_colour ; test:interrupted_note_shows_its_reason ; live:audit/mac/notetaker/interrupted-light-rust.png ; live:audit/mac/notetaker/interrupted-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-027	auto	test:failure_reasons_read_like_swift
 MEET-028	auto	test:failure_reasons_read_like_swift
 MEET-029	auto	test:failure_reasons_read_like_swift
@@ -142,24 +142,24 @@ MEET-034	auto	test:failure_reasons_read_like_swift
 MEET-035	auto	test:failure_reasons_read_like_swift
 MEET-036	auto	test:failure_reasons_read_like_swift
 MEET-037	auto	test:failure_reasons_read_like_swift
-MEET-038	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
+MEET-038	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-039	auto	test:tab_starts_from_the_request_and_clicks_switch_it ; test:final_transcript_offers_retranscribe_and_tabs_switch
-MEET-040	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
+MEET-040	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-041	auto	test:detail_notice_is_red_twelve_with_a_native_retry ; test:detail_read_failures
 MEET-042	auto	test:detail_read_failures
 MEET-043	auto	test:detail_read_failures
 MEET-044	auto	test:detail_notice_is_red_twelve_with_a_native_retry ; test:files_left_behind_keep_the_row_and_offer_retry
 MEET-045	auto	test:detail_notice_is_red_twelve_with_a_native_retry ; test:delete_keeps_row_while_files_remain_then_removes
-MEET-046	live	test:waiting_row_is_muted_twelve_with_a_twelve_point_gap ; test:waiting_detail_offers_this_mac ; live:audit/mac/notetaker/waiting-detail-light-rust.png ; live:audit/mac/notetaker/waiting-detail-dark-rust.png ; rust-only:Swift fills the waiting sets in coordinator memory while a server job is pending, which the seeded reference has none of
+MEET-046	live	test:waiting_row_is_muted_twelve_with_a_twelve_point_gap ; test:waiting_detail_offers_this_mac ; live:audit/mac/notetaker/waiting-detail-light-rust.png ; live:audit/mac/notetaker/waiting-detail-dark-rust.png ; rust-only:Swift fills the waiting sets in coordinator memory while a server job is pending, which the seeded reference has none of ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-047	auto	test:waiting_row_is_muted_twelve_with_a_twelve_point_gap ; test:run_on_this_mac_has_swifts_label ; test:waiting_detail_offers_this_mac
 MEET-048	service	service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
-MEET-049	live	test:provenance_is_muted_twelve_spoken_and_follows_the_transcript_state ; test:provenance_reads_stored_paths ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
+MEET-049	live	test:provenance_is_muted_twelve_spoken_and_follows_the_transcript_state ; test:provenance_reads_stored_paths ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-050	auto	test:provenance_names_the_place
 MEET-051	auto	test:provenance_names_the_place
 MEET-052	auto	test:provenance_names_the_place
 MEET-053	auto	test:provenance_reads_stored_paths
 MEET-054	auto	test:provenance_is_muted_twelve_spoken_and_follows_the_transcript_state ; test:provenance_reads_stored_paths
-MEET-055	live	test:thoughts_placeholder_is_faded_muted_fourteen_at_top_four ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
+MEET-055	live	test:thoughts_placeholder_is_faded_muted_fourteen_at_top_four ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-056	auto	test:thoughts_placeholder_is_faded_muted_fourteen_at_top_four ; test:thoughts_placeholder_only_while_empty
 MEET-057	auto	test:steady_typing_saves_within_ten_seconds_and_a_failed_save_tries_again ; test:thoughts_autosave_after_two_seconds ; test:saving_notes_outdates_the_summary
 MEET-058	auto	test:editor_notices_show_on_the_page ; test:notes_editor_saves_and_retries_stale
@@ -169,14 +169,14 @@ MEET-061	auto	test:retry_save_is_red_twelve_and_runs_the_flush ; test:a_failed_s
 MEET-062	auto	test:retry_save_is_red_twelve_and_runs_the_flush ; test:a_failed_save_keeps_the_note_open_until_retry_works
 MEET-063	auto	test:retry_save_is_red_twelve_and_runs_the_flush ; test:notes_editor_saves_and_retries_stale
 MEET-064	service	test:leaving_the_page_saves_the_notes ; service:mac-service: AVQueuePlayer; desktop plan phase adds it; the notes flush is real
-MEET-065	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
-MEET-066	live	test:live_footer_has_pause_and_a_green_stop ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+MEET-065	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+MEET-066	live	test:live_footer_has_pause_and_a_green_stop ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-067	auto	test:paused_controls_read_resume ; test:paused_footer_offers_resume_which_reports_the_missing_worker
-MEET-068	live	test:live_footer_has_pause_and_a_green_stop ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+MEET-068	live	test:live_footer_has_pause_and_a_green_stop ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-069	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
 MEET-070	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
 MEET-071	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
-MEET-072	live	test:playback_button_has_its_symbol_and_label ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:the playing "Pause" state needs the Mac player and is not reachable yet
+MEET-072	live	test:playback_button_has_its_symbol_and_label ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:the playing "Pause" state needs the Mac player and is not reachable yet ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-073	auto	test:playback_needs_a_finished_meeting_with_a_track ; test:disabled_playback_fades_glyph_and_label_alike
 MEET-074	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
 MEET-075	service	service:mac-service: AVQueuePlayer time observer; desktop plan phase adds it, view surfaces Unavailable
@@ -198,34 +198,34 @@ MEET-090	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_t
 MEET-091	auto	test:notice_counts_orphans_and_deferred_in_swifts_order ; test:orphan_folder_becomes_an_interrupted_meeting_and_a_notice ; test:launch_reconciliation_ends_what_no_process_owns ; test:active_rows_recover_as_swift_does_and_lose_no_frames ; test:recovery_refuses_symlinks_and_paths_outside_the_root ; test:start_controls_wait_for_reconciliation_and_the_active_meeting ; note:active rows now follow MeetingReconciler: ADTS scan, cut only the torn tail, rename, zero-frame files kept as .part. Guarded by .instance.lock, the flock Swift holds, so it never runs while Swift records
 MEET-092	auto	test:detail_read_orders_tracks_and_segments
 MEET-093	auto	test:launch_notices_go_to_the_pill
-LIVE-001	live	live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; test:panel_type_colours_and_frames
-LIVE-002	live	test:state_dot_is_ten_points_and_follows_the_state ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-001	live	live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; test:panel_type_colours_and_frames ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+LIVE-002	live	test:state_dot_is_ten_points_and_follows_the_state ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 LIVE-003	auto	test:state_dot_is_ten_points_and_follows_the_state ; test:dot_paints_the_states_colour
 LIVE-004	auto	test:state_dot_is_ten_points_and_follows_the_state ; test:dot_paints_the_states_colour
-LIVE-005	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-005	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 LIVE-006	auto	test:pause_reason_reads_sleep_or_user ; test:pause_reason_only_shows_while_paused
 LIVE-007	auto	test:panel_type_colours_and_frames ; note:SF Rounded isn't drawn, Txt has flow and mono only; size, weight and digits match
-LIVE-008	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-008	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 LIVE-009	auto	test:failed_card_says_it_could_not_start ; test:banners_and_tracks_of_an_ended_card
-LIVE-010	live	test:storage_warning_and_lost_audio_are_orange ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
-LIVE-011	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
-LIVE-012	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
-LIVE-013	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
-LIVE-014	live	test:failed_and_not_started_tracks_have_their_own_colours ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
-LIVE-015	live	test:failed_and_not_started_tracks_have_their_own_colours ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
-LIVE-016	live	test:dropped_frames_warn_that_audio_was_lost ; test:storage_warning_and_lost_audio_are_orange ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
-LIVE-017	live	test:refusal_shows_the_message_and_settings ; test:notice_card_shows_storage_and_notice ; test:settings_button_opens_the_pane_the_refusal_names ; live:audit/mac/notetaker/refusal-light-rust.png ; live:audit/mac/notetaker/refusal-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-010	live	test:storage_warning_and_lost_audio_are_orange ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+LIVE-011	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+LIVE-012	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+LIVE-013	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+LIVE-014	live	test:failed_and_not_started_tracks_have_their_own_colours ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+LIVE-015	live	test:failed_and_not_started_tracks_have_their_own_colours ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+LIVE-016	live	test:dropped_frames_warn_that_audio_was_lost ; test:storage_warning_and_lost_audio_are_orange ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+LIVE-017	live	test:refusal_shows_the_message_and_settings ; test:notice_card_shows_storage_and_notice ; test:settings_button_opens_the_pane_the_refusal_names ; live:audit/mac/notetaker/refusal-light-rust.png ; live:audit/mac/notetaker/refusal-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 LIVE-018	auto	test:refusal_shows_the_message_and_settings
 LIVE-019	service	test:settings_button_opens_the_pane_the_refusal_names ; service:mac-service: NSWorkspace; the Mac opens the pane; refusal_permission picks which
 LIVE-020	auto	test:paused_controls_read_resume ; test:panel_shows_controls_title_and_notes
 LIVE-021	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
-LIVE-022	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-022	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 LIVE-023	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
 LIVE-024	auto	test:panel_says_finalizing_or_starting ; test:progress_states_are_muted_and_hide_the_buttons ; test:finalizing_and_starting_show_the_small_progress
 LIVE-025	auto	test:panel_says_finalizing_or_starting ; test:progress_states_are_muted_and_hide_the_buttons ; test:finalizing_and_starting_show_the_small_progress
 LIVE-026	auto	test:new_note_surfaces_the_missing_recorder ; test:active_card_states
 LIVE-027	auto	test:new_note_surfaces_the_missing_recorder
-LIVE-028	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-028	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 LIVE-029	auto	test:active_title_is_revision_checked_with_swifts_messages ; test:title_field_starts_from_the_stored_title
 LIVE-030	auto	test:active_title_is_revision_checked_with_swifts_messages
 LIVE-031	auto	test:active_title_is_revision_checked_with_swifts_messages
@@ -243,8 +243,8 @@ LIVE-042	service	service:mac-service: AVCapture device notifications; desktop pl
 LIVE-043	auto	test:status_poll_reads_the_stored_state_every_250ms
 LIVE-044	service	service:mac-service: TCC; desktop plan phase adds it, view surfaces Unavailable
 LIVE-045	auto	test:section_interrupted
-TRANS-001	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
-TRANS-002	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
+TRANS-001	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+TRANS-002	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 TRANS-003	auto	test:header_badge_shows_only_when_not_final
 TRANS-004	auto	test:badges_read_like_swift
 TRANS-005	auto	test:badges_read_like_swift
@@ -269,7 +269,7 @@ TRANS-023	auto	test:match_counts_and_empty_texts
 TRANS-024	auto	test:match_counts_and_empty_texts
 TRANS-025	auto	test:match_counts_and_empty_texts
 TRANS-026	auto	test:transcript_read_failures
-TRANS-027	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png ; note:22 wide as measured on the ref, the menu shrinks its 28 frame; help unasserted
+TRANS-027	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png ; note:22 wide as measured on the ref, the menu shrinks its 28 frame; help unasserted ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 TRANS-028	auto	test:copy_menu_reads_like_swift ; test:copy_menu_selected_item
 TRANS-029	auto	test:copy_menu_selected_item
 TRANS-030	service	test:copy_menu_selected_item ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
@@ -285,8 +285,8 @@ TRANS-039	auto	test:a_new_page_keeps_the_row_the_reader_was_on ; test:pager_edge
 TRANS-040	auto	test:transcript_read_failures
 TRANS-041	auto	test:finality_rule
 TRANS-042	auto	test:finalizing_previews_the_last_page_of_the_pass
-TRANS-043	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
-TRANS-044	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
+TRANS-043	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+TRANS-044	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 TRANS-045	auto	test:bubble_colors_follow_state
 TRANS-046	auto	test:bubble_colors_follow_state
 TRANS-047	auto	test:source_labels_and_failure_have_their_colours ; test:bubble_colors_follow_state
@@ -297,9 +297,9 @@ TRANS-051	auto	test:source_labels_and_failure_have_their_colours ; test:source_l
 TRANS-052	auto	test:segment_menu_reads_select_or_deselect_and_change_speaker ; test:transcript_reads_labels_search_and_selection ; test:bubble_context_menu_selects_and_plays
 TRANS-053	auto	test:bubble_context_menu_selects_and_plays
 TRANS-054	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
-TRANS-055	live	test:divider_is_muted_twelve_with_a_mic ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png
-TRANS-056	live	test:live_off_says_transcription_is_off ; test:live_rows_are_muted_and_follow_the_search ; live:audit/mac/notetaker/live-off-light-rust.png ; live:audit/mac/notetaker/live-off-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
-TRANS-057	live	test:live_empty_says_listening_or_off ; test:live_rows_are_muted_and_follow_the_search ; live:audit/mac/notetaker/live-listening-light-rust.png ; live:audit/mac/notetaker/live-listening-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+TRANS-055	live	test:divider_is_muted_twelve_with_a_mic ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+TRANS-056	live	test:live_off_says_transcription_is_off ; test:live_rows_are_muted_and_follow_the_search ; live:audit/mac/notetaker/live-off-light-rust.png ; live:audit/mac/notetaker/live-off-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+TRANS-057	live	test:live_empty_says_listening_or_off ; test:live_rows_are_muted_and_follow_the_search ; live:audit/mac/notetaker/live-listening-light-rust.png ; live:audit/mac/notetaker/live-listening-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 TRANS-058	auto	test:live_rows_sit_three_points_apart ; test:live_list_keeps_the_two_hundred_newest ; test:live_transcript_lists_provisional_rows ; test:live_rows_are_muted_and_follow_the_search
 TRANS-059	auto	test:source_labels_and_failure_have_their_colours ; test:transcript_failures_read_like_swift
 TRANS-060	auto	test:transcript_failures_read_like_swift
@@ -327,18 +327,18 @@ TRANS-081	auto	test:section_degraded ; test:section_status_reads_like_swift
 TRANS-082	auto	test:section_status_reads_like_swift
 TRANS-083	auto	test:section_status_reads_like_swift
 TRANS-084	auto	test:section_status_reads_like_swift
-TRANS-085	live	test:section_list_and_rows_read_like_swift ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+TRANS-085	live	test:section_list_and_rows_read_like_swift ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 TRANS-086	auto	test:section_list_follows_near_the_bottom_only
-TRANS-087	live	test:section_list_and_rows_read_like_swift ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+TRANS-087	live	test:section_list_and_rows_read_like_swift ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 TRANS-088	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 TRANS-089	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SPK-001	auto	test:transcript_icon_buttons_name_their_symbol_and_label ; test:assign_opens_shows_sections_and_closes
 SPK-002	auto	test:assign_control_needs_a_final_finished_meeting_with_labels
 SPK-003	auto	test:assign_opens_shows_sections_and_closes ; test:sheet_focuses_the_first_section_or_the_named_one_scrolled_to_the_top
-SPK-004	live	test:labels_updating ; live:audit/mac/notetaker/labeling-update-light-rust.png ; live:audit/mac/notetaker/labeling-update-light-ref.png
+SPK-004	live	test:labels_updating ; live:audit/mac/notetaker/labeling-update-light-rust.png ; live:audit/mac/notetaker/labeling-update-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-005	auto	test:labels_waiting
 SPK-006	auto	test:labels_running ; service:worker: flowd-speech diarization; desktop plan phase adds it, view surfaces Unavailable
-SPK-007	live	test:labels_failed ; live:audit/mac/notetaker/label-failed-light-rust.png ; live:audit/mac/notetaker/label-failed-light-ref.png
+SPK-007	live	test:labels_failed ; live:audit/mac/notetaker/label-failed-light-rust.png ; live:audit/mac/notetaker/label-failed-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-008	service	service:worker: diarization; desktop plan phase adds it, view surfaces Unavailable
 SPK-009	auto	test:diarization_failures_read_like_swift
 SPK-010	auto	test:diarization_failures_read_like_swift
@@ -364,11 +364,11 @@ SPK-029	auto	test:identification_failures_read_like_swift
 SPK-030	auto	test:identification_failures_read_like_swift
 SPK-031	auto	test:identification_failures_read_like_swift
 SPK-032	auto	test:identification_failures_read_like_swift
-SPK-033	live	test:past_search_prompt ; live:audit/mac/notetaker/past-prompt-light-rust.png ; live:audit/mac/notetaker/past-prompt-dark-rust.png ; rust-only:Swift raises this prompt only from the callback after a voice enrollment stores, which takes a voice sample and the worker
+SPK-033	live	test:past_search_prompt ; live:audit/mac/notetaker/past-prompt-light-rust.png ; live:audit/mac/notetaker/past-prompt-dark-rust.png ; rust-only:Swift raises this prompt only from the callback after a voice enrollment stores, which takes a voice sample and the worker ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-034	auto	test:look_queues_meetings_with_unknown_remote_speakers
 SPK-035	auto	test:past_prompt_not_now_hides
-SPK-036	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; test:transcript_speaker_label_uses_the_palette
-SPK-037	live	test:confirming_a_suggested_speaker ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; test:transcript_speaker_label_uses_the_palette
+SPK-036	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; test:transcript_speaker_label_uses_the_palette ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+SPK-037	live	test:confirming_a_suggested_speaker ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; test:transcript_speaker_label_uses_the_palette ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-038	auto	test:confirming_a_suggested_speaker
 SPK-039	auto	test:confirming_a_suggested_speaker
 SPK-040	auto	test:segment_menu_reads_select_or_deselect_and_change_speaker ; test:change_speaker_submenu_writes_the_correction
@@ -377,23 +377,23 @@ SPK-042	auto	test:corrections_write_manual_columns_and_a_segment_correction ; te
 SPK-043	auto	test:corrections_and_merges_persist
 SPK-044	auto	test:correction_and_merge_failures_surface
 SPK-045	auto	test:correction_and_merge_failures_surface
-SPK-046	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
-SPK-047	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
-SPK-048	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-046	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+SPK-047	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+SPK-048	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-049	auto	test:assign_opens_shows_sections_and_closes
-SPK-050	live	test:sheet_scroller_shows_more_voices_below ; live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-050	live	test:sheet_scroller_shows_more_voices_below ; live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-051	auto	test:sheet_loading_empty_and_failed
 SPK-052	auto	test:sheet_loading_empty_and_failed ; test:sheet_notices_are_red_twelve_point
 SPK-053	auto	test:sheet_loading_empty_and_failed ; test:sheet_notices_are_red_twelve_point
 SPK-054	auto	test:review_notice_row_has_twelve_point_padding ; test:review_notice_dismisses_or_says_it_could_not ; test:review_row_type_symbol_and_label
 SPK-055	auto	test:review_notice_dismisses_or_says_it_could_not
 SPK-056	auto	test:review_notice_dismisses_or_says_it_could_not
-SPK-057	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-057	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-058	auto	test:speaker_sections_order_you_colour_manual_first_ms_cluster_with_a_limit
 SPK-059	auto	test:merge_and_undo_apply_at_once_and_relabel_the_transcript ; test:corrections_and_merges_persist
 SPK-060	auto	test:corrections_and_merges_persist ; test:merge_and_undo_apply_at_once_and_relabel_the_transcript ; test:merges_stay_one_level_deep_and_undo_clears_the_merged_identity
-SPK-061	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
-SPK-062	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-061	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+SPK-062	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-063	auto	test:sheet_focuses_the_first_section_or_the_named_one_scrolled_to_the_top
 SPK-064	auto	test:enter_in_a_name_field_saves
 SPK-065	auto	test:assign_sheet_labels_suggestions_and_cancel ; test:suggestions_sit_six_points_inside_their_outline ; test:suggestions_filter_by_prefix_and_pick
@@ -423,10 +423,10 @@ SPK-088	recorded	recorded:the Stored outcome needs a sample from the voice worke
 SPK-089	recorded	recorded:NoUsableSample needs the voice worker, which the desktop client lacks; the text exists in EnrollOutcome but nothing produces it yet
 SPK-090	auto	test:enrolling_with_identification_off_says_so
 SPK-091	auto	test:a_failed_enrollment_keeps_the_sheet_open_with_done ; test:enroll_outcomes_read_like_swift
-SPK-092	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-092	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-093	auto	test:assign_sheet_labels_suggestions_and_cancel ; test:assign_escape_style_cancel_writes_nothing ; test:escape_cancels_from_a_name_field
 SPK-094	auto	test:assign_escape_style_cancel_writes_nothing ; test:merge_and_undo_apply_at_once_and_relabel_the_transcript
-SPK-095	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; test:a_failed_enrollment_keeps_the_sheet_open_with_done
+SPK-095	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; test:a_failed_enrollment_keeps_the_sheet_open_with_done ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SPK-096	auto	test:long_name_blocks_saving ; test:field_errors_are_red_and_disable_save
 SPK-097	auto	test:assign_speakers_saves_a_name ; test:assign_model_saves_names_and_identities ; test:saving_records_renames_and_identity_origins
 SPK-098	auto	test:assign_model_saves_names_and_identities ; test:saving_records_renames_and_identity_origins ; test:confirming_a_suggestion_saves_the_user_confirmation_origin
@@ -438,10 +438,10 @@ SPK-103	auto	test:sheet_save_failures_keep_it_open
 SPK-104	auto	test:sheet_save_failures_keep_it_open
 SPK-105	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SPK-106	service	test:a_rerun_inherits_names_merges_and_corrections ; service:worker: diarization run adoption (SpeakerStore.swift:350); carry_over is tested through a_rerun_inherits_names_merges_and_corrections but no production caller until the worker exists
-SPK-107	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:speaker_palette_matches_swift_and_cycles
-SUM-001	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
-SUM-002	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png ; test:summary_header_and_body_have_swifts_type_and_frames
-SUM-003	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:summary_header_and_body_have_swifts_type_and_frames
+SPK-107	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:speaker_palette_matches_swift_and_cycles ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+SUM-001	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+SUM-002	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png ; test:summary_header_and_body_have_swifts_type_and_frames ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+SUM-003	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:summary_header_and_body_have_swifts_type_and_frames ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-004	auto	test:reading_time_rounds_up_with_a_minimum_of_one
 SUM-005	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:summary_not_finished ; test:summary_overlays_and_report ; test:summary_header_states_read_thirteen_point
 SUM-006	auto	test:summary_not_finished ; test:summary_overlays_and_report
@@ -453,7 +453,7 @@ SUM-011	auto	test:summary_queued ; test:summary_header_states_read_thirteen_poin
 SUM-012	auto	test:summary_header_states_read_thirteen_point ; test:running_header_draws_a_seventy_point_bar_when_a_run_reports_progress
 SUM-013	auto	test:pending_cancel_reports_and_empty_states
 SUM-014	auto	test:summary_request_refused_when_the_queue_is_full
-SUM-015	live	test:summary_failed ; live:audit/mac/notetaker/summary-failed-light-rust.png ; live:audit/mac/notetaker/summary-failed-light-ref.png ; test:summary_header_states_read_thirteen_point
+SUM-015	live	test:summary_failed ; live:audit/mac/notetaker/summary-failed-light-rust.png ; live:audit/mac/notetaker/summary-failed-light-ref.png ; test:summary_header_states_read_thirteen_point ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-016	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
 SUM-017	auto	test:pending_cancel_reports_and_empty_states
 SUM-018	auto	test:pending_cancel_reports_and_empty_states ; test:summary_header_states_read_thirteen_point
@@ -477,17 +477,17 @@ SUM-035	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase a
 SUM-036	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:summary_reads_stored_analysis_and_marks_an_item_done
 SUM-037	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
 SUM-038	auto	test:removing_edits_fails_silently_as_swift_does
-SUM-039	live	test:summary_states ; live:audit/mac/notetaker/summary-stale-light-rust.png ; live:audit/mac/notetaker/summary-stale-light-ref.png ; test:stale_banner_type_and_frame
+SUM-039	live	test:summary_states ; live:audit/mac/notetaker/summary-stale-light-rust.png ; live:audit/mac/notetaker/summary-stale-light-ref.png ; test:stale_banner_type_and_frame ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-040	auto	test:edit_failure_shows_under_the_header ; test:stale_banner_type_and_frame
-SUM-041	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-041	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-042	auto	test:summary_text_menu_and_editor_read_like_swift ; test:summary_text_edits_through_its_context_menu
 SUM-043	auto	test:summary_editor_grows_past_ninety ; test:summary_text_menu_and_editor_read_like_swift
 SUM-044	auto	test:summary_overlays_and_report ; test:summary_text_edits_through_its_context_menu
 SUM-045	auto	test:summary_text_edits_through_its_context_menu
 SUM-046	auto	test:summary_text_menu_and_editor_read_like_swift ; test:removing_one_overlay_restores_the_generated_value
-SUM-047	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-047	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-048	auto	test:topic_summary_is_stored_but_not_shown
-SUM-049	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-049	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-050	auto	test:section_titles_read_fifteen_semibold
 SUM-051	auto	test:section_titles_read_fifteen_semibold
 SUM-052	auto	test:section_titles_read_fifteen_semibold
@@ -500,9 +500,9 @@ SUM-058	auto	test:attribution_follows_the_item_unless_the_sentence_names_it
 SUM-059	auto	test:item_menus_and_popovers_read_like_swift ; test:item_menu_is_twenty_points_square
 SUM-060	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels ; note:the hover reveal is exercised by clicking_view_source_opens_transcript_and_scrolls_to_the_segment
 SUM-061	auto	test:clicking_view_source_opens_transcript_and_scrolls_to_the_segment
-SUM-062	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:status_toggle_labels_symbols_and_snapshot
+SUM-062	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:status_toggle_labels_symbols_and_snapshot ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-063	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report ; test:status_toggle_labels_symbols_and_snapshot
-SUM-064	live	live:audit/mac/notetaker/summary-done-light-rust.png ; live:audit/mac/notetaker/summary-done-light-ref.png ; test:done_items_strike_and_editing_keeps_the_status_circle
+SUM-064	live	live:audit/mac/notetaker/summary-done-light-rust.png ; live:audit/mac/notetaker/summary-done-light-ref.png ; test:done_items_strike_and_editing_keeps_the_status_circle ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-065	auto	test:item_menus_and_popovers_read_like_swift ; test:owner_submenu_picks_someone_else_or_no_owner
 SUM-066	auto	test:owner_submenu_picks_someone_else_or_no_owner
 SUM-067	auto	test:item_menus_and_popovers_read_like_swift ; test:owner_submenu_picks_someone_else_or_no_owner ; test:popover_buttons_are_native_and_due_snapshot_is_the_plain_date
@@ -511,11 +511,11 @@ SUM-069	auto	test:item_menus_and_popovers_read_like_swift ; test:due_popover_is_
 SUM-070	auto	test:due_date_picks_from_the_calendar_and_clears ; test:popover_buttons_are_native_and_due_snapshot_is_the_plain_date
 SUM-071	auto	test:item_menus_and_popovers_read_like_swift ; test:dismiss_then_reopen
 SUM-072	auto	test:dismiss_then_reopen ; test:status_toggle_labels_symbols_and_snapshot
-SUM-073	live	test:owner_chips_and_due_labels_read_like_swift ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
-SUM-074	live	test:owner_chips_and_due_labels_read_like_swift ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-073	live	test:owner_chips_and_due_labels_read_like_swift ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
+SUM-074	live	test:owner_chips_and_due_labels_read_like_swift ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-075	auto	test:owner_chips_and_due_labels_read_like_swift
 SUM-076	auto	test:accept_writes_the_suggested_owner ; test:owner_chips_and_due_labels_read_like_swift
-SUM-077	live	test:unresolved_owner_gets_the_outlined_chip ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:owner_chips_and_due_labels_read_like_swift
+SUM-077	live	test:unresolved_owner_gets_the_outlined_chip ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:owner_chips_and_due_labels_read_like_swift ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 SUM-078	auto	test:owner_chips_and_due_labels_read_like_swift ; test:dates_format_like_swift ; test:due_label_carries_the_original_words_only_when_there_are_some
 SUM-079	auto	test:owner_chips_and_due_labels_read_like_swift
 SUM-080	auto	test:due_date_picks_from_the_calendar_and_clears

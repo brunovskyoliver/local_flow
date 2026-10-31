@@ -245,7 +245,7 @@ INS-082	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insig
 INS-083	auto	test:a_day_tip_is_a_250_card ; test:the_day_tip_has_swifts_type_and_shadow
 INS-084	auto	test:hovering_a_day_shows_its_card ; test:tips_read_their_counts_and_top_app
 INS-085	auto	test:a_days_top_app_has_most_words_and_ties_go_to_the_smaller_id ; test:aggregates_over_the_seed
-INS-086	auto	test:a_note_tip_has_its_type_and_clamps_at_both_edges ; test:a_note_tip_sits_8_above_its_target_and_centered
+INS-086	auto	test:a_note_tip_has_its_type_and_clamps_at_both_edges ; test:a_note_tip_sits_8_above_its_target_and_centered ; test:a_note_bubble_has_its_padding_radius_spacing_and_ink
 INS-087	auto	test:a_note_tip_has_its_type_and_clamps_at_both_edges ; test:a_note_tip_sits_8_above_its_target_and_centered
 INS-088	auto	test:formulas ; test:targets_expose_their_tip_as_a_value
 INS-089	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png ; live:audit/mac/insights/voice-tall-light-ref.png ; live:audit/mac/insights/voice-tall-dark-ref.png
@@ -274,7 +274,7 @@ INS-111	recorded	recorded:Swift defect or note, kept as Swift behaves
 INS-112	recorded	test:formulas ; recorded:Swift defect or note, kept as Swift behaves
 INS-113	recorded	recorded:Swift defect or note, kept as Swift behaves
 INS-114	recorded	test:heat_cells_are_the_dots_swift_renders ; recorded:swift-note, cells collapse to dots in Swift; Rust matches
-HIST-001	live	live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-dark-ref.png
+HIST-001	live	test:the_page_shell_has_its_padding_at_both_widths ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-dark-ref.png ; live:audit/mac/history/compact-dark-rust.png ; live:audit/mac/history/compact-dark-ref.png ; live:audit/mac/history/compact-light-rust.png ; live:audit/mac/history/compact-light-ref.png
 HIST-002	auto	test:pages_join_and_leave_without_moving_the_row_in_view ; test:sentinels_pin_and_first_load
 HIST-003	auto	test:transcriptions_are_unavailable_until_the_stores_exist
 HIST-004	auto	test:appearing_replaces_the_list_and_reloads_pending_and_an_insertion_end_refreshes ; test:leaving_clears_detail_and_coming_back_reloads
@@ -321,7 +321,7 @@ HIST-044	live	live:audit/mac/history/default-dark-rust.png ; live:audit/mac/hist
 HIST-045	auto	test:a_local_row_says_local_only_while_remote_dictation_is_on ; test:labels_and_day_groups
 HIST-046	auto	test:every_server_failure_reads_its_reason ; test:labels_and_day_groups
 HIST-047	auto	test:row_text_and_labels_have_their_type ; test:row_text_selects_by_drag_and_copies
-HIST-048	auto	test:only_the_row_tab_reached_keeps_its_actions ; test:tab_reaches_the_row_actions_and_keeps_them_visible ; live:audit/mac/history/delete-dark-rust.png ; live:audit/mac/history/delete-dark-ref.png
+HIST-048	auto	test:only_the_row_tab_reached_keeps_its_actions ; test:tab_reaches_the_row_actions_and_keeps_them_visible ; live:audit/mac/history/delete-dark-rust.png ; live:audit/mac/history/delete-dark-ref.png ; note:differs from the reference: traffic lights read lighter behind its native sheet and grey under the Rust scrim; the row text drifts about 1 px
 HIST-049	auto	test:row_buttons_read_their_symbols_labels_and_states ; test:row_icon_buttons_are_28_and_insert_follows_delivery
 HIST-050	auto	test:copy_writes_the_clipboard_and_shows_a_check ; test:row_buttons_read_their_symbols_labels_and_states
 HIST-051	auto	test:copy_writes_the_clipboard_and_shows_a_check ; test:row_buttons_read_their_symbols_labels_and_states
@@ -334,7 +334,7 @@ HIST-057	auto	test:the_row_menu_runs_the_row_actions
 HIST-058	auto	test:row_and_menu_insert_review_the_row_and_are_ignored_while_blocked
 HIST-059	auto	test:details_from_the_menu_stay_on_while_busy_and_clear_what_was_open ; test:details_show_status_stages_and_processing ; test:more_button_and_menu_state_follow_the_row
 HIST-060	auto	test:both_menus_read_the_same_items_and_delete_can_be_off ; test:delete_asks_then_removes_the_row
-HIST-061	auto	test:delete_asks_then_removes_the_row ; test:the_delete_dialog_reads_its_buttons_and_refuses_when_it_must ; live:audit/mac/history/delete-dark-rust.png ; live:audit/mac/history/delete-dark-ref.png
+HIST-061	auto	test:delete_asks_then_removes_the_row ; test:the_delete_dialog_reads_its_buttons_and_refuses_when_it_must ; live:audit/mac/history/delete-dark-rust.png ; live:audit/mac/history/delete-dark-ref.png ; note:differs from the reference: traffic lights read lighter behind its native sheet and grey under the Rust scrim; the row text drifts about 1 px
 HIST-062	auto	test:delete_asks_then_removes_the_row ; test:delete_cascades_and_subtracts_every_byte ; test:delivery_rewrite_and_delete_writes ; test:the_delete_dialog_reads_its_buttons_and_refuses_when_it_must
 HIST-063	auto	test:delivery_rewrite_and_delete_writes ; test:the_delete_dialog_reads_its_buttons_and_refuses_when_it_must
 HIST-064	auto	test:deleting_while_full_reports_whether_there_is_room ; test:room_for_a_recording_follows_rows_bytes_and_disk
@@ -403,7 +403,7 @@ HIST-126	auto	test:context_lines_read_every_outcome_and_kind ; test:detail_decod
 HIST-127	auto	test:detail_decodes_and_lists_every_row ; test:stages_and_sections_read_their_text_and_type ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
 HIST-128	live	test:stages_and_sections_read_their_text_and_type ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
 HIST-129	auto	test:context_disclosures_are_8_apart ; test:context_lines_read_every_outcome_and_kind ; test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
-HIST-130	live	test:details_show_status_stages_and_processing ; test:stages_and_sections_read_their_text_and_type ; live:audit/mac/history/lower-light-rust.png ; live:audit/mac/history/lower-dark-rust.png ; live:audit/mac/history/lower-light-ref.png ; live:audit/mac/history/lower-dark-ref.png
+HIST-130	live	test:details_show_status_stages_and_processing ; test:stages_and_sections_read_their_text_and_type ; live:audit/mac/history/lower-light-rust.png ; live:audit/mac/history/lower-dark-rust.png ; live:audit/mac/history/lower-light-ref.png ; live:audit/mac/history/lower-dark-ref.png ; note:both sides show the first row with Attempts 1 and 2; the gap from App context to the Saved text is about 3 pt taller in Rust
 HIST-131	auto	test:detail_decodes_and_lists_every_row ; test:rewrite_lines_read_each_state_and_the_current_rule ; test:the_rewrite_section_reads_and_drives_its_columns_and_attempts ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
 HIST-132	auto	test:detail_decodes_and_lists_every_row ; test:rewrite_lines_read_each_state_and_the_current_rule ; test:the_rewrite_section_reads_and_drives_its_columns_and_attempts
 HIST-133	auto	test:rewrite_notices_and_attempt_texts ; test:the_notice_is_none_until_a_refusal_or_cancel_and_has_its_type
@@ -430,7 +430,7 @@ HIST-153	auto	test:delivery_rewrite_and_delete_writes ; test:rewrite_endings_wri
 HIST-154	auto	test:cancel_rewrite_is_there_only_while_one_is_pending ; test:rewrite_columns_buttons_and_mode
 HIST-155	auto	test:an_answer_after_cancel_is_dropped ; test:cancel_closes_the_connection_while_waiting ; test:cancel_rewrite_marks_the_row_and_stops_the_request ; test:delivery_rewrite_and_delete_writes
 HIST-156	auto	test:rewrite_notices_and_attempt_texts ; test:the_rewrite_section_reads_and_drives_its_columns_and_attempts
-HIST-157	live	test:details_show_status_stages_and_processing ; test:the_rewrite_section_reads_and_drives_its_columns_and_attempts ; live:audit/mac/history/lower-light-rust.png ; live:audit/mac/history/lower-dark-rust.png ; live:audit/mac/history/lower-light-ref.png ; live:audit/mac/history/lower-dark-ref.png
+HIST-157	live	test:details_show_status_stages_and_processing ; test:the_rewrite_section_reads_and_drives_its_columns_and_attempts ; live:audit/mac/history/lower-light-rust.png ; live:audit/mac/history/lower-dark-rust.png ; live:audit/mac/history/lower-light-ref.png ; live:audit/mac/history/lower-dark-ref.png ; note:both sides show the first row with Attempts 1 and 2; the gap from App context to the Saved text is about 3 pt taller in Rust
 HIST-158	auto	test:detail_decodes_and_lists_every_row ; test:rewrite_lines_read_each_state_and_the_current_rule ; test:the_rewrite_section_reads_and_drives_its_columns_and_attempts
 HIST-159	auto	test:rewrite_notices_and_attempt_texts
 HIST-160	auto	test:rewrite_notices_and_attempt_texts ; test:the_rewrite_section_reads_and_drives_its_columns_and_attempts
