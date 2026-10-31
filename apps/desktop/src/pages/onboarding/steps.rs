@@ -1,6 +1,7 @@
 //! The step bodies, in `OnboardingView`'s order.
 use super::OnboardingPage;
 use super::parts::*;
+use super::parts::t;
 use flow_core::onboarding::*;
 use flow_platform::Permission;
 use flow_ui::prelude::*;

@@ -108,6 +108,10 @@ impl flow_platform::Services for Stub {
         self.log.borrow_mut().push(format!("appearance {dark:?}"));
         Ok(())
     }
+    fn mark_alert_button_destructive(&self, title: &str) -> bool {
+        self.log.borrow_mut().push(format!("destructive {title}"));
+        true
+    }
     fn take_recorded_shortcut(&self) -> Option<Option<String>> {
         self.recorded.borrow_mut().take()
     }
@@ -381,7 +385,7 @@ async fn model_picker_gates_and_starts_downloads(cx: &mut TestAppContext) {
     assert!(r.log.borrow().contains(&format!("ai {id}")));
 }
 
-// parity: ONB-249 ONB-250 ONB-251 ONB-252 ONB-254 ONB-257 ONB-258 ONB-259 ONB-260 ONB-263 ONB-272 ONB-273 ONB-046 ONB-047 ONB-038 ONB-039 ONB-277 ONB-280
+// parity: ONB-249 ONB-250 ONB-251 ONB-254 ONB-257 ONB-258 ONB-259 ONB-260 ONB-263 ONB-272 ONB-273 ONB-046 ONB-047 ONB-038 ONB-039 ONB-277 ONB-280
 #[flow_ui::gpui::test]
 async fn downloads_show_each_row_and_retry(cx: &mut TestAppContext) {
     let r = rig(cx, false, &[]);
@@ -469,7 +473,7 @@ async fn preparing_the_test_skips_the_load_on_a_server(cx: &mut TestAppContext) 
     assert!(r.log.borrow().iter().all(|c| !c.contains("load")), "{:?}", r.log.borrow());
 }
 
-// parity: ONB-253 ONB-255 ONB-256 ONB-276 ONB-278 ONB-279
+// parity: ONB-253 ONB-255 ONB-256 ONB-276 ONB-278
 #[flow_ui::gpui::test]
 async fn download_rows_read_like_swift(cx: &mut TestAppContext) {
     let w = rig(cx, true, &[]).win;
@@ -1316,4 +1320,93 @@ async fn progress_fill_tweens_and_reduce_motion_lands_at_once(cx: &mut TestAppCo
     })
     .unwrap();
     assert_eq!(fill_width(cx, w), 100.);
+}
+
+// parity: ONB-252
+/// The first card follows the AI choice; the real Skip leaves speech alone in it.
+#[flow_ui::gpui::test]
+async fn first_download_card_follows_the_ai_choice(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    set(cx, w, |p| {
+        p.setup.step = Step::Downloads;
+        p.setup.ai_mode = AiMode::Local;
+    });
+    assert_saw(&["Speech recognition", "On-device AI"]);
+    assert!(!saw("Your server"));
+    set(cx, w, |p| p.setup.ai_mode = AiMode::Remote);
+    assert_saw(&["Speech recognition", "Your server"]);
+    assert!(!saw("On-device AI"));
+    set(cx, w, |p| {
+        p.setup.step = Step::Ai;
+        p.setup.ai_mode = AiMode::Local;
+    });
+    click(cx, w, "onboarding.skipAI");
+    assert_eq!(read(cx, w, |p, _| (p.setup.step, p.setup.ai_mode)), (Step::Downloads, AiMode::Off));
+    assert_saw(&["Speech recognition"]);
+    assert!(!saw("On-device AI") && !saw("Your server"), "nothing extra with Skip");
+}
+
+// parity: ONB-330
+/// Microphone in the permissions group: Allow is at least 99 wide, named for screen readers,
+/// off while an action runs, and asks for the microphone.
+#[flow_ui::gpui::test]
+async fn microphone_group_row(cx: &mut TestAppContext) {
+    let r = rig(cx, true, &[]);
+    let w = r.win;
+    set(cx, w, |p| {
+        p.setup.step = Step::Permissions;
+        p.snap.microphone = Perm::Unknown;
+    });
+    let (width, label) = w.update(cx, |_, w, _| (w.find("onboarding.allow.Microphone").bounds().size.width, w.find("onboarding.allow.Microphone").label().map(|l| l.to_string()))).unwrap();
+    assert_eq!(f32::from(width), 99.);
+    assert_eq!(label.as_deref(), Some("Allow Microphone"));
+    assert!(!disabled(cx, w, "onboarding.allow.Microphone"));
+    click(cx, w, "onboarding.allow.Microphone");
+    assert!(r.log.borrow().iter().any(|c| c == "request Microphone"), "{:?}", r.log.borrow());
+    set(cx, w, |p| p.performing = true);
+    assert!(disabled(cx, w, "onboarding.allow.Microphone"));
+}
+
+// parity: ONB-218
+/// The native alert's Turn Off carries `role: .destructive`; Cancel doesn't.
+#[flow_ui::gpui::test]
+async fn turn_off_alert_is_destructive(cx: &mut TestAppContext) {
+    let r = rig(cx, true, &[]);
+    let w = r.win;
+    cx.update(|cx| {
+        let prefs = &mut cx.global_mut::<Core>().prefs;
+        prefs.set("remote.enabled", true);
+        prefs.set("remote.serverURL", "https://box.example.com");
+        prefs.set("remote.state", "approved");
+    });
+    set(cx, w, |p| {
+        p.setup.step = Step::AiDetails;
+        p.setup.ai_mode = AiMode::Remote;
+    });
+    click(cx, w, "settings.remoteEnabled");
+    let (message, detail) = cx.pending_prompt().expect("Swift's alert is native");
+    assert_eq!(message, "Turn off remote dictation?");
+    assert_eq!(detail, "This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.");
+    cx.run_until_parked();
+    assert_eq!(r.log.borrow().iter().filter(|c| c.starts_with("destructive")).cloned().collect::<Vec<_>>(), ["destructive Turn Off"]);
+    cx.simulate_prompt_answer("Turn Off");
+    cx.run_until_parked();
+    assert!(!flag(cx, "remote.enabled"));
+}
+
+// parity: ONB-232 ONB-234
+/// Both placeholders show until there's a value, and the address's is a link colour.
+#[flow_ui::gpui::test]
+async fn placeholders_are_drawn_until_typed(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    set(cx, w, |p| {
+        p.setup.step = Step::AiDetails;
+        p.setup.ai_mode = AiMode::Remote;
+        p.legacy_open = true;
+    });
+    assert_saw(&["https://studio.local:8080", "The server's LOCALFLOW_REWRITE_TOKEN"]);
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("rewriteEndpoint", "https://a.example.com"));
+    w.update(cx, |p, w, cx| p.credential_input.update(cx, |s, cx| s.set_value("k", w, cx))).unwrap();
+    frame(cx, w);
+    assert!(!saw("https://studio.local:8080") && !saw("The server's LOCALFLOW_REWRITE_TOKEN"));
 }

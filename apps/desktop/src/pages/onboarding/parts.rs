@@ -5,8 +5,14 @@ use std::time::Duration;
 
 pub type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
+/// Every text on these pages lays out at SwiftUI's whole-point line heights.
+#[track_caller]
+pub fn t(text: impl Into<SharedString>) -> Txt {
+    flow_ui::prelude::t(text).swift_lines()
+}
+
 pub fn headline(lead: &str, emphasis: &str, tail: &str) -> Txt {
-    rich(vec![span(lead.to_string()), span(emphasis.to_string()).italic(), span(tail.to_string())]).serif().font(38., 400.).tracking(-0.4)
+    rich(vec![span(lead.to_string()), span(emphasis.to_string()).italic(), span(tail.to_string())]).serif().font(38., 400.).tracking(-0.4).swift_lines()
 }
 
 pub fn lede(text: String, cx: &App) -> Txt {
@@ -43,7 +49,7 @@ pub fn feature_row(symbol: &str, title: &'static str, detail: String, cx: &App) 
 /// SwiftUI's `Label` at Figtree 13 `muted`.
 pub fn note(symbol: &str, text: String, cx: &App) -> Div {
     let m = pal(cx).muted;
-    h_flex().w_full().items_start().gap(px(7.)).child(div().pt(px(1.)).child(icon(symbol, 15., m))).child(div().flex_1().min_w_0().child(t(text).size(13.).color(m)))
+    h_flex().w_full().items_start().gap(px(7.)).child(div().pt(px(0.5)).child(icon(symbol, 15., m))).child(div().flex_1().min_w_0().child(t(text).size(13.).color(m)))
 }
 
 pub fn badge(text: &'static str, cx: &App) -> Div {
@@ -52,10 +58,12 @@ pub fn badge(text: &'static str, cx: &App) -> Div {
 }
 
 /// `largecircle.fill.circle` and `circle`: drawn, since Lucide's dot is much smaller than the SF one.
+/// The glyph is 17 across in a layout box 20 wide, as the SF one at this size is.
 fn radio(selected: bool, cx: &App) -> Div {
     let p = pal(cx);
     let ring = h_flex().flex_none().justify_center().size(px(17.)).mt(px(1.)).rounded_full().border(px(1.2));
-    if selected { ring.border_color(p.accent).child(div().size(px(10.5)).rounded_full().bg(p.accent)) } else { ring.border_color(p.rule) }
+    let ring = if selected { ring.border_color(p.accent).child(div().size(px(10.5)).rounded_full().bg(p.accent)) } else { ring.border_color(p.rule) };
+    h_flex().flex_none().w(px(20.)).justify_center().items_start().child(ring)
 }
 
 /// A radio-style card; the whole card is the button.
@@ -186,10 +194,29 @@ pub fn settings_row(title: impl Into<SharedString>, detail: Option<String>, cont
         .child(div().flex_none().child(control))
 }
 
-/// `InputField`: a 38 high box with a leading icon around a Kit input.
-pub fn input_field(symbol: &str, input: Input, cx: &App) -> Div {
+/// `InputField`: a 38 high box with a leading icon around a Kit input. `placeholder` is drawn here
+/// since Kit's has one colour, and Swift's address placeholder is a link (see `Palette`).
+pub fn input_field(symbol: &str, input: Input, placeholder: Option<Txt>, cx: &App) -> Div {
     let p = pal(cx);
-    h_flex().w_full().h(px(38.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(9.)).border_1().border_color(p.card_line).child(icon(symbol, 16., p.muted)).child(div().flex_1().min_w_0().child(input.appearance(false).px(px(0.))))
+    h_flex()
+        .w_full()
+        .h(px(38.))
+        // SwiftUI strokes inside the padding, GPUI adds the border to it.
+        .px(px(11.))
+        .gap(px(10.))
+        .bg(p.canvas)
+        .rounded(px(9.))
+        .border_1()
+        .border_color(p.card_line)
+        .child(icon(symbol, 16., p.muted))
+        .child(
+            h_flex()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .when_some(placeholder, |d, text| d.child(div().absolute().left_0().child(text.a11y_hidden())))
+                .child(div().w_full().child(input.appearance(false).px(px(0.)))),
+        )
 }
 
 /// A miniature window in fixed colors, so a card previews its theme whatever the current one is.

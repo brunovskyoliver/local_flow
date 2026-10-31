@@ -142,6 +142,11 @@ pub trait Services: 'static {
     fn input_catalog(&self) -> Option<InputCatalog> {
         None
     }
+    /// Gives a button of the alert now on screen `role: .destructive`. False while it isn't up yet.
+    fn mark_alert_button_destructive(&self, title: &str) -> bool {
+        let _ = title;
+        true
+    }
     /// `ProcessInfo.physicalMemory`; 0 where unknown, which fits no local model.
     fn physical_memory(&self) -> u64 {
         0

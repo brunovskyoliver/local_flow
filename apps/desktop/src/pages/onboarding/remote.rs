@@ -1,6 +1,7 @@
 //! The server step: `RemoteDictationView` and the older rewrite-only form.
 use super::OnboardingPage;
 use super::parts::*;
+use super::parts::t;
 use flow_core::onboarding::*;
 use flow_ui::gpui::base::TestSupportExt;
 use flow_ui::prelude::*;
@@ -34,7 +35,7 @@ impl OnboardingPage {
                 cx.notify();
             });
             body.push(any(plain_button("onboarding.legacyRewriteServer", "Advanced: rewrite-only server").toggled(open).on_click(toggle).content(
-                h_flex().gap(px(1.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 11., p.muted)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
+                h_flex().py(px(4.)).gap(px(1.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 11., p.muted)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
             )));
             if open {
                 // The page's spacing is 24; `DisclosureGroup` puts its content 12 below the title.
@@ -107,15 +108,16 @@ impl OnboardingPage {
         let origin = rewrite_origin(&endpoint);
         let insecure = is_unencrypted_remote(&endpoint);
         let allowed = origin.as_deref().is_some_and(|o| insecure_override(&self.core(cx).prefs, o));
+        let key_empty = self.credential_input.read(cx).value().is_empty();
         let connect = self.click(cx, |this, cx| this.connect(cx));
         let mut form = setup_card(cx)
-            .child(v_flex().w_full().gap(px(8.)).child(field_label("Server address", cx)).child(input_field("link", Input::new(&self.endpoint_input).aria_label("Server address").accessibility_id("onboarding.serverAddress"), cx)))
+            .child(v_flex().w_full().gap(px(8.)).child(field_label("Server address", cx)).child(input_field("link", Input::new(&self.endpoint_input).aria_label("Server address").accessibility_id("onboarding.serverAddress"), endpoint.is_empty().then(|| t("https://studio.local:8080").size(14.).color(p.link())), cx)))
             .child(
                 v_flex()
                     .w_full()
                     .gap(px(8.))
                     .child(field_label("Access key", cx))
-                    .child(input_field("key", Input::new(&self.credential_input).aria_label("Access key").accessibility_id("onboarding.accessKey"), cx))
+                    .child(input_field("key", Input::new(&self.credential_input).aria_label("Access key").accessibility_id("onboarding.accessKey"), key_empty.then(|| t("The server's LOCALFLOW_REWRITE_TOKEN").size(14.).color(p.placeholder())), cx))
                     .when_some(self.credential_error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning))),
             );
         if insecure {
@@ -153,7 +155,7 @@ impl OnboardingPage {
     }
 
     /// The consent sheet, over the whole page.
-    pub(super) fn overlays(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn overlays(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.remote.consent_open {
             return None;
         }
@@ -172,20 +174,13 @@ impl OnboardingPage {
                 .gap(px(16.))
                 .child(t("Use your LocalFlow server?").font(17., 500.))
                 .child(
-                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(8.)).border_2().border_color(p.accent).child(icon("server.rack", 16., p.muted)).child(div().flex_1().min_w_0().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL"))),
+                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(8.)).border_2().border_color(p.accent).child(icon("server.rack", 16., p.muted)).child(h_flex().relative().flex_1().min_w_0().when(draft.is_empty(), |d| d.child(div().absolute().left_0().child(t("https://server.example.com").size(13.).color(p.link()).a11y_hidden()))).child(div().w_full().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL")))),
                 )
                 .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.))
                 .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
                 .when_some(self.remote.error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning)))
                 .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.21)).on_click(cancel)).child(primary_button("settings.remoteConsentConfirm", "Turn On").when(origin.is_none(), |b| b.fill(p.ink.opacity(0.1)).text_color(p.muted).disabled_opacity(1.)).disabled(origin.is_none()).on_click(confirm)))
         };
-        // Stops clicks reaching the page behind, as a sheet does.
-        Some(any(deferred(
-            h_flex().id("onboarding.modal").occlude().absolute().inset_0().justify_center().bg(sheet_scrim(cx)).child(div().bg(sheet_fill(cx)).rounded(px(12.)).child(body)),
-        )))
+        Some(any(sheet_overlay("onboarding.modal", window, cx, div().bg(sheet_fill(cx)).rounded(px(12.)).child(body))))
     }
-}
-
-fn gpui_black(alpha: f32) -> Hsla {
-    Hsla { h: 0., s: 0., l: 0., a: alpha }
 }

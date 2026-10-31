@@ -97,6 +97,15 @@ impl OnboardingPage {
                 p.progress = (210 << 20, 632 << 20);
                 self.ai_phase = AiPhase::PreparingRuntime;
             }
+            // The state the reference reaches without downloading anything: a server path, speech queued.
+            "downloadsserver" => {
+                s.step = Step::Downloads;
+                s.ai_mode = AiMode::Remote;
+                let prefs = &mut cx.global_mut::<Core>().prefs;
+                prefs.set("remote.enabled", true);
+                prefs.set("remote.serverURL", "https://server.example.com");
+                prefs.set("remote.state", "approved");
+            }
             "downloadsoffer" => {
                 s.step = Step::Downloads;
                 s.ai_mode = AiMode::Off;

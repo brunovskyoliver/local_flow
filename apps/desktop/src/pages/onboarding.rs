@@ -13,7 +13,7 @@ use flow_core::onboarding::*;
 use flow_core::settings as server;
 use flow_platform::{Permission, PermissionState, SessionCommand, Unavailable};
 use flow_ui::prelude::*;
-use parts::Click;
+use parts::{Click, t};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -130,9 +130,9 @@ impl OnboardingPage {
             cx.global_mut::<Core>().prefs.set("rewriteEndpoint", "http://ref.invalid:8080");
         }
         let endpoint = cx.global::<Core>().prefs.string("rewriteEndpoint").unwrap_or_default();
-        let server_draft = cx.new(|cx| InputState::new(window, cx).placeholder("https://server.example.com"));
-        let endpoint_input = cx.new(|cx| InputState::new(window, cx).placeholder("https://studio.local:8080").default_value(endpoint));
-        let credential_input = cx.new(|cx| InputState::new(window, cx).placeholder("The server's LOCALFLOW_REWRITE_TOKEN").masked(true));
+        let server_draft = cx.new(|cx| InputState::new(window, cx));
+        let endpoint_input = cx.new(|cx| InputState::new(window, cx).default_value(endpoint));
+        let credential_input = cx.new(|cx| InputState::new(window, cx).masked(true));
         let subs = vec![
             cx.subscribe_in(&endpoint_input, window, |this, input, e: &TextInputEvent, _, cx| {
                 if matches!(e, TextInputEvent::Change) {
@@ -612,6 +612,16 @@ impl OnboardingPage {
         let message = format!("This {}'s sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.", self.word(cx));
         let buttons = [PromptButton::Other("Turn Off".into()), PromptButton::Cancel("Cancel".into())];
         let answer = window.prompt(PromptLevel::Warning, "Turn off remote dictation?", Some(&message), &buttons, cx);
+        // `role: .destructive`. GPUI presents the alert on a later turn and has no such role.
+        cx.spawn(async move |_, cx| {
+            for _ in 0..20 {
+                if cx.update(|cx| cx.global::<Core>().services.mark_alert_button_destructive("Turn Off")) {
+                    break;
+                }
+                cx.background_executor().timer(Duration::from_millis(25)).await;
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let turn_off = answer.await == Ok(0);
             let _ = this.update(cx, |this, cx| {
@@ -822,7 +832,7 @@ impl Render for OnboardingPage {
             Some(duration) => content.with_animation(("onboarding.step", step as u64), Animation::new(duration), |d, delta| d.opacity(delta)).into_any_element(),
         };
         let footer = self.footer(cx).into_any_element();
-        let overlays = self.overlays(cx);
+        let overlays = self.overlays(window, cx);
         v_flex()
             .id("onboarding")
             .track_focus(&self.focus)
@@ -850,7 +860,7 @@ impl Render for OnboardingPage {
                     .px(px(40.))
                     .pt(px(52.))
                     .pb(px(12.))
-                    .child(icon("chart.bar.xaxis", 19., p.ink))
+                    .child(div().flex_none().w(px(21.5)).child(icon("chart.bar.xaxis", 20.5, p.ink)))
                     .child(t("LocalFlow").font(17., 700.).tracking(-0.4))
                     .child(div().flex_1())
                     .when(step != Step::Complete, |d| d.child(self.progress(cx))),

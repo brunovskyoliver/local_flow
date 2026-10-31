@@ -250,7 +250,8 @@ impl Txt {
     }
     /// AppKit's standard line break strategy, which SwiftUI text gets: a single word never sits
     /// alone on the last line; the word before it moves down too.
-    /// Whole-point line height, as SwiftUI lays out this font at 11 to 13: 11 is 13, 12 is 14, 13 is 15.
+    /// Whole-point line height, as SwiftUI lays out text: ascent and descent round separately,
+    /// so Figtree 11 is 13, 12 is 14, 13 is 15, 14 is 17, 16 is 19. The baseline moves with the ascent.
     /// The default rounds the text's height up, which adds about 1pt per line.
     pub fn swift_lines(mut self) -> Self {
         self.swift_lines = true;
@@ -460,10 +461,11 @@ fn layout(r: &Resolved, max: Option<f32>, window: &mut Window) -> Laid {
         }
         offset = end + 1;
     }
-    laid.line_height = laid.ascent + laid.descent;
     if r.swift_lines {
-        laid.line_height = laid.line_height.floor();
+        laid.ascent = laid.ascent.round();
+        laid.descent = laid.descent.round();
     }
+    laid.line_height = laid.ascent + laid.descent;
     if laid.line_height == 0.0 {
         laid.line_height = r.size * 1.2;
     }

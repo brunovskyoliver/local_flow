@@ -124,6 +124,43 @@ impl Services for Mac {
         }
         Ok(())
     }
+    fn mark_alert_button_destructive(&self, title: &str) -> bool {
+        let Ok(title) = std::ffi::CString::new(title) else { return true };
+        // SAFETY: on the main thread with AppKit linked; every selector exists on the receiver's class,
+        // checked with `isKindOfClass:` for the views of the sheet walked here.
+        unsafe {
+            let count: unsafe extern "C" fn(Id, Id) -> usize = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let at: unsafe extern "C" fn(Id, Id, usize) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let is_a: unsafe extern "C" fn(Id, Id, Id) -> bool = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let equal: unsafe extern "C" fn(Id, Id, Id) -> bool = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let set: unsafe extern "C" fn(Id, Id, bool) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let (count_sel, at_sel) = (sel_registerName(c"count".as_ptr()), sel_registerName(c"objectAtIndex:".as_ptr()));
+            let button_class = objc_getClass(c"NSButton".as_ptr());
+            let wanted = ns_string(&title);
+            let windows = send(send(objc_getClass(c"NSApplication".as_ptr()), c"sharedApplication"), c"windows");
+            for i in 0..count(windows, count_sel) {
+                let sheet = send(at(windows, at_sel, i), c"attachedSheet");
+                if sheet.is_null() {
+                    continue;
+                }
+                let mut views = vec![send(sheet, c"contentView")];
+                while let Some(view) = views.pop() {
+                    if view.is_null() {
+                        continue;
+                    }
+                    if is_a(view, sel_registerName(c"isKindOfClass:".as_ptr()), button_class) && equal(send(view, c"title"), sel_registerName(c"isEqualToString:".as_ptr()), wanted) {
+                        set(view, sel_registerName(c"setHasDestructiveAction:".as_ptr()), true);
+                        return true;
+                    }
+                    let subviews = send(view, c"subviews");
+                    for j in 0..count(subviews, count_sel) {
+                        views.push(at(subviews, at_sel, j));
+                    }
+                }
+            }
+        }
+        false
+    }
     fn set_window_identifier(&self, window: &dyn raw_window_handle::HasWindowHandle, identifier: &str) -> Result<(), Unavailable> {
         let unavailable = || Unavailable("window identifiers");
         let raw_window_handle::RawWindowHandle::AppKit(handle) = window.window_handle().map_err(|_| unavailable())?.as_raw() else { return Err(unavailable()) };

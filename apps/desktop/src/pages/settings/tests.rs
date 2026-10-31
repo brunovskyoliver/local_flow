@@ -354,6 +354,20 @@ async fn consent_sheet_stores_nothing_until_turn_on(cx: &mut TestAppContext) {
     assert!(read(cx, r.win, |p, _| p.modal.is_none()));
 }
 
+// parity: ONB-110
+/// Meetings only: purpose becomes both, Right Control goes in, `server.only` stays.
+#[flow_ui::gpui::test]
+async fn set_up_dictation_keeps_the_server_choice(cx: &mut TestAppContext) {
+    let r = rig(cx, "meeting-only", |_| {});
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("server.only", true));
+    assert!(!cx.update(|cx| flow_core::onboarding::Shortcut::is_saved(&cx.global::<Core>().prefs)));
+    click(cx, r.win, "settings.setUpDictation");
+    assert_eq!(pref_s(cx, "setup.purpose").as_deref(), Some("both"));
+    assert_eq!(pref_b(cx, "server.only"), Some(true));
+    assert!(cx.update(|cx| flow_core::onboarding::Shortcut::load(&cx.global::<Core>().prefs)) == flow_core::onboarding::Shortcut::right_control());
+    assert!(logged(&r, "install"));
+}
+
 // parity: SET-038 SET-147 SET-148 SET-149 SET-150 SET-349 SET-082 SET-076
 #[flow_ui::gpui::test]
 async fn meeting_only_variant(cx: &mut TestAppContext) {

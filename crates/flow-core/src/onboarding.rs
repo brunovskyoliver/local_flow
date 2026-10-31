@@ -457,16 +457,6 @@ impl Setup {
         self.purpose = Purpose::Both;
     }
 
-    /// Settings' Set up dictation. Returns whether the caller should install the first shortcut.
-    pub fn set_up_dictation(&mut self, prefs: &mut Prefs) -> bool {
-        if Purpose::stored(prefs) != Purpose::Meetings {
-            return false;
-        }
-        prefs.set("setup.purpose", Purpose::Both.raw());
-        self.purpose = Purpose::Both;
-        true
-    }
-
     fn abandon_server_choice(&mut self, prefs: &mut Prefs) {
         self.server_purpose = None;
         undo_server_choice(prefs);
@@ -1198,7 +1188,27 @@ mod tests {
         assert!(!at(S::Ai, Both, Local).0.path().contains(&S::Complete), "the capsules exclude complete");
     }
 
-    // parity: ONB-005 ONB-006 ONB-007 ONB-008 ONB-009 ONB-132 ONB-409
+    // parity: ONB-005
+    /// A relaunch starts over whatever the last run reached and set: nothing here is stored.
+    #[test]
+    fn a_relaunch_forgets_the_step_and_session_choices() {
+        let mut p = Prefs::memory();
+        let snap = ready();
+        let mut s = Setup::new(&p);
+        s.purpose = Purpose::Dictation;
+        s.ai_mode = AiMode::Remote;
+        s.advance(&snap, &mut p);
+        s.advance(&snap, &mut p);
+        assert_eq!(s.step, Step::Ai, "the run really moved on");
+        s.download_meeting_models();
+        s.test_armed = true;
+        s.test_succeeded = true;
+        let fresh = Setup::new(&p);
+        assert_eq!((fresh.step, fresh.ai_mode), (Step::Introduction, AiMode::Local));
+        assert!(!fresh.meetings_requested && !fresh.test_armed && !fresh.test_succeeded);
+    }
+
+    // parity: ONB-006 ONB-007 ONB-008 ONB-009 ONB-132 ONB-409
     #[test]
     fn resume_rules() {
         let mut p = Prefs::memory();
@@ -1374,19 +1384,6 @@ mod tests {
         assert!(!s.test_armed && s.test_error.is_none() && s.test_succeeded);
         assert!(!p.contains("setup.purpose"));
         p.set("a", 1);
-    }
-
-    // parity: ONB-110
-    #[test]
-    fn set_up_dictation_changes_only_meetings() {
-        let mut p = Prefs::memory();
-        p.set("setup.purpose", "meetings");
-        p.set("server.only", true);
-        let mut s = Setup::new(&p);
-        assert!(s.set_up_dictation(&mut p));
-        assert_eq!(p.string("setup.purpose").as_deref(), Some("both"));
-        assert!(p.bool_or("server.only", false));
-        assert!(!s.set_up_dictation(&mut p));
     }
 
     // parity: ONB-054 ONB-399 ONB-400 ONB-401 ONB-402 ONB-410 ONB-002 ONB-398 ONB-397
