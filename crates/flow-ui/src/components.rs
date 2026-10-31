@@ -278,6 +278,12 @@ pub fn hover_or_focus_revealed(group: impl Into<SharedString>, keep: bool, focus
     hover_revealed(group, keep, d).track_focus(focus).in_focus(|s| s.opacity(1.))
 }
 
+/// `hover_or_focus_revealed` for a row inside a focused page: `in_focus` also matches when an ancestor
+/// holds focus, which shows every row's action at once. This asks whether focus is inside `d`.
+pub fn focus_revealed(group: impl Into<SharedString>, keep: bool, focus: &FocusHandle, window: &Window, cx: &App, d: Div) -> Div {
+    hover_revealed(group, keep || focus.contains_focused(window, cx), d).track_focus(focus)
+}
+
 trait InvisibleUntil {
     fn invisible_until_group_hover(self, g: SharedString) -> Self;
 }
@@ -417,7 +423,7 @@ impl RenderOnce for FlowSwitch {
                     .h(px(h))
                     .rounded(px(h / 2.))
                     // A disabled NSSwitch fades its track; the knob stays white.
-                    .bg(if self.disabled { track.opacity(track.a * 0.5) } else { track })
+                    .bg(if self.disabled { track.opacity(0.5) } else { track })
                     .when(focused, |t| t.border_2().border_color(p.accent.opacity(0.5)))
                     .child(
                         SwitchThumb::new(self.checked)

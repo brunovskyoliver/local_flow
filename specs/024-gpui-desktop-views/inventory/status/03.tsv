@@ -9,7 +9,7 @@ SET-008	recorded	recorded:no Settings row passes info (SET-009), so nothing rend
 SET-009	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-010	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png ; note:pressed fill not captured
 SET-011	live	live:audit/mac/settings/exclusions-light-ref.png ; live:audit/mac/settings/exclusions-light-rust.png ; live:audit/mac/settings/exclusions-dark-ref.png ; live:audit/mac/settings/exclusions-dark-rust.png ; note:prominent Done compared; pressed fill not captured
-SET-012	live	live:audit/mac/settings/custom-light-ref.png ; live:audit/mac/settings/custom-light-rust.png ; live:audit/mac/settings/custom-dark-ref.png ; live:audit/mac/settings/custom-dark-rust.png ; note:focused border compared in the consent pair; Swift draws URL placeholders as blue links, Rust grey, Input has no placeholder colour
+SET-012	live	live:audit/mac/settings/default+rewriting-light-ref.png ; live:audit/mac/settings/default+rewriting-light-rust.png ; live:audit/mac/settings/default+rewriting-dark-ref.png ; live:audit/mac/settings/default+rewriting-dark-rust.png ; live:audit/mac/settings/consent-light-ref.png ; live:audit/mac/settings/consent-light-rust.png ; live:audit/mac/settings/consent-dark-ref.png ; live:audit/mac/settings/consent-dark-rust.png ; note:link-shaped placeholders are drawn in the sampled link colour over the field; Kit has one placeholder colour
 SET-013	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png ; note:chevron is thinner than the native picker
 SET-014	auto	test:palette_matches_sotto
 SET-015	auto	test:leaving_clears_the_test_and_secret_draft
@@ -76,7 +76,7 @@ SET-075	recorded	recorded:swift-note, Swift behaviour kept and nothing added to 
 SET-076	auto	test:meeting_only_variant
 SET-077	auto	test:consent_sheet_stores_nothing_until_turn_on ; test:sheets_have_swifts_geometry
 SET-078	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-079	auto	test:consent_sheet_stores_nothing_until_turn_on
+SET-079	live	live:audit/mac/settings/consent-light-ref.png ; live:audit/mac/settings/consent-light-rust.png ; live:audit/mac/settings/consent-dark-ref.png ; live:audit/mac/settings/consent-dark-rust.png ; test:consent_sheet_stores_nothing_until_turn_on ; note:accessibility id is set in code, not observed in an AX dump
 SET-080	auto	test:consent_sheet_stores_nothing_until_turn_on ; test:sheets_have_swifts_geometry
 SET-081	auto	test:remote_status_answers_and_reset
 SET-082	auto	test:meeting_only_variant ; test:remote_status_answers_and_reset
@@ -89,7 +89,7 @@ SET-088	auto	test:consent_sheet_stores_nothing_until_turn_on
 SET-089	auto	test:consent_sheet_stores_nothing_until_turn_on
 SET-090	auto	test:address_and_credential_validators_match_swift
 SET-091	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
-SET-092	auto	test:approved_server_shows_routing_and_turns_off ; test:controls_have_swifts_measured_sizes
+SET-092	live	live:audit/mac/settings/turn-off-light-ref.png ; live:audit/mac/settings/turn-off-light-rust.png ; live:audit/mac/settings/turn-off-dark-ref.png ; live:audit/mac/settings/turn-off-dark-rust.png ; test:approved_server_shows_routing_and_turns_off ; note:drawn alert, not native, because a native one cannot colour Turn Off from gpui; title type is Figtree where AppKit draws SF, glass is an averaged fill
 SET-093	auto	test:approved_server_shows_routing_and_turns_off
 SET-094	auto	test:approved_server_shows_routing_and_turns_off ; service:test uses a stub, real Keychain `<bundle id>.remote` not exercised
 SET-095	auto	test:approved_server_shows_routing_and_turns_off ; test:remote_status_answers_and_reset
@@ -127,7 +127,7 @@ SET-126	auto	test:server_advanced_writes_each_override
 SET-127	auto	test:server_advanced_writes_each_override
 SET-128	auto	test:server_advanced_writes_each_override
 SET-129	auto	test:server_advanced_writes_each_override ; test:controls_have_swifts_measured_sizes
-SET-130	auto	test:server_advanced_writes_each_override ; test:controls_have_swifts_measured_sizes
+SET-130	auto	test:fallback_threshold_stops_at_both_limits ; note:monospaced digits not asserted
 SET-131	auto	test:server_advanced_writes_each_override
 SET-132	auto	test:server_advanced_writes_each_override
 SET-133	auto	test:trust_pins_the_key_and_shows_the_pin ; service:test uses a stub, real Keychain `server-key` not exercised
@@ -183,11 +183,11 @@ SET-182	auto	test:microphones_list_edits ; test:microphone_list_rules
 SET-183	auto	test:microphone_list_rules
 SET-184	auto	test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real IOKit clamshell state not exercised
 SET-185	auto	test:microphone_list_rules
-SET-186	auto	test:microphones_list_edits
+SET-186	auto	test:remove_is_always_shown_except_on_system_default
 SET-187	auto	test:microphones_list_edits ; test:microphone_list_rules
 SET-188	auto	test:microphones_list_edits ; test:microphone_list_rules
 SET-189	auto	test:dragging_over_a_row_shows_the_two_point_bar
-SET-190	auto	test:microphone_list_rules ; note:rank rules only; Kit has no custom accessibility actions, so Move up and Move down are not exposed to VoiceOver
+SET-190	auto	test:voice_over_gets_move_buttons_within_the_rank_limits ; test:microphone_list_rules ; note:differs from Swift: Kit has no custom accessibility actions, so VoiceOver users get real Move up and Move down buttons, read when the page opens
 SET-191	auto	test:microphones_list_edits
 SET-192	auto	test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real CoreAudio not exercised
 SET-193	auto	test:microphones_list_edits ; test:microphone_list_rules
@@ -201,7 +201,7 @@ SET-200	auto	test:default_page_shows_every_section_in_order
 SET-201	auto	test:app_context_switches
 SET-202	auto	test:default_page_shows_every_section_in_order
 SET-203	auto	test:app_context_switches
-SET-204	auto	test:default_page_shows_every_section_in_order
+SET-204	auto	test:context_rewrite_says_turn_on_rewriting_when_only_that_is_off
 SET-205	auto	test:app_context_switches
 SET-206	auto	test:default_page_shows_every_section_in_order
 SET-207	auto	test:app_context_switches
@@ -217,9 +217,9 @@ SET-216	auto	test:exclusions_and_kinds
 SET-217	auto	test:sheets_have_swifts_geometry
 SET-218	service	service:LaunchServices name and icon lookup not in flow_platform yet, rows show the bundle ID, so order differs from Swift; platform service phase
 SET-219	auto	test:exclusions_sheet ; test:exclusions_and_kinds
-SET-220	auto	test:exclusions_sheet
+SET-220	auto	test:context_rows_use_the_app_name_and_show_remove_on_focus ; note:opacity 0 at rest seen in exclusions pair; hover and focus reveal not captured
 SET-221	auto	test:exclusions_sheet ; test:exclusions_and_kinds
-SET-222	auto	test:kinds_sheet
+SET-222	auto	test:context_rows_use_the_app_name_and_show_remove_on_focus ; note:opacity not asserted
 SET-223	auto	test:kinds_sheet ; test:exclusions_and_kinds
 SET-224	auto	test:kinds_sheet
 SET-225	auto	test:kinds_sheet ; test:exclusions_and_kinds
@@ -252,12 +252,12 @@ SET-251	auto	test:installed_model_controls
 SET-252	auto	test:default_page_shows_every_section_in_order
 SET-253	auto	test:downloads_and_progress ; test:download_sizes_are_the_manifests
 SET-254	auto	test:downloads_and_progress ; test:snapshot_readiness_copy
-SET-255	auto	test:downloads_and_progress ; service:test uses a stub, real model provisioner not exercised
+SET-255	auto	test:downloads_and_progress ; note:handoff is tested through Services::speech_install, which no real provisioner implements yet; macOS returns None
 SET-256	auto	test:default_page_shows_every_section_in_order
 SET-257	auto	test:downloads_and_progress ; service:test uses a stub, real NSOpenPanel not exercised
 SET-258	auto	test:downloads_and_progress ; test:lower_sections_are_spaced_like_swift
 SET-259	auto	test:downloads_and_progress ; service:test uses a stub, real model provisioner not exercised
-SET-260	auto	test:downloads_and_progress
+SET-260	auto	test:alternate_row_detail_and_when_it_shows
 SET-261	auto	test:downloads_and_progress ; test:snapshot_readiness_copy
 SET-262	auto	test:downloads_and_progress ; test:download_sizes_are_the_manifests ; test:snapshot_readiness_copy ; service:test uses a stub, real model provisioner not exercised
 SET-263	auto	test:downloads_and_progress
@@ -282,7 +282,7 @@ SET-281	auto	test:other_models ; service:test uses a stub, real model provisione
 SET-282	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-283	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-284	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
-SET-285	auto	test:default_page_shows_every_section_in_order ; test:other_models
+SET-285	auto	test:other_models
 SET-286	auto	test:other_models
 SET-287	auto	test:rewrite_model_rows_need_the_loopback_endpoint
 SET-288	auto	test:rewrite_model_rows_need_the_loopback_endpoint ; test:controls_have_swifts_measured_sizes
@@ -326,7 +326,7 @@ SET-325	auto	test:test_connection_preflight_and_advanced
 SET-326	auto	test:real_flowd_through_the_page ; test:real_flowd_health_outcomes
 SET-327	auto	test:real_flowd_through_the_page ; test:rewrite_settings_copy ; test:real_flowd_health_outcomes
 SET-328	auto	test:real_flowd_through_the_page ; test:real_flowd_health_outcomes
-SET-329	auto	test:test_connection_preflight_and_advanced ; test:lower_sections_are_spaced_like_swift
+SET-329	auto	test:rewrite_advanced_starts_collapsed_with_padding_14 ; note:font and colour compared by eye in default+rewriting pair
 SET-330	auto	test:test_connection_preflight_and_advanced
 SET-331	auto	test:test_connection_preflight_and_advanced
 SET-332	auto	test:real_flowd_through_the_page ; test:rewrite_settings_copy ; test:real_flowd_health_outcomes
@@ -338,7 +338,7 @@ SET-337	auto	test:summaries_fields_and_key
 SET-338	auto	test:summaries_fields_and_key ; test:lower_sections_are_spaced_like_swift
 SET-339	auto	test:summaries_fields_and_key
 SET-340	auto	test:summaries_fields_and_key
-SET-341	auto	test:summaries_fields_and_key
+SET-341	live	live:audit/mac/settings/summary-remote-light-ref.png ; live:audit/mac/settings/summary-remote-light-rust.png ; live:audit/mac/settings/summary-remote-dark-ref.png ; live:audit/mac/settings/summary-remote-dark-rust.png ; test:summaries_fields_and_key ; note:accessibility id is set in code, not observed in an AX dump
 SET-342	auto	test:summaries_fields_and_key
 SET-343	auto	test:summaries_fields_and_key ; service:test uses a stub, real Keychain `<bundle id>.rewrite` / `summary-server` not exercised
 SET-344	auto	test:summaries_fields_and_key
@@ -348,8 +348,8 @@ SET-347	recorded	recorded:swift-note, Swift behaviour kept and nothing added to 
 SET-348	auto	test:summary_headers_follow_the_routing
 SET-349	auto	test:meeting_only_variant ; service:test uses a stub, real AVFoundation not exercised
 SET-350	auto	test:refresh_reads_permissions_and_all_granted_hides_the_section
-SET-351	auto	test:default_page_shows_every_section_in_order ; service:test uses a stub, real AVFoundation, CGPreflightListenEventAccess, AXIsProcessTrusted not exercised
-SET-352	auto	test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
+SET-351	auto	test:permissions_list_only_what_is_missing_in_order ; service:real AVFoundation, CGPreflightListenEventAccess, AXIsProcessTrusted not exercised
+SET-352	auto	test:permissions_list_only_what_is_missing_in_order ; test:controls_have_swifts_measured_sizes
 SET-353	auto	test:permission_buttons ; service:test uses a stub, real AVFoundation not exercised
 SET-354	auto	test:permission_buttons ; service:test uses a stub, real AVFoundation not exercised
 SET-355	auto	test:permission_buttons ; service:test uses a stub, real CGRequestListenEventAccess not exercised
@@ -371,7 +371,7 @@ SET-370	auto	test:known_speakers_model
 SET-371	auto	test:known_speakers_model
 SET-372	auto	test:known_speakers_model
 SET-373	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
-SET-374	auto	test:automatic_enrollment_follows_the_binding
+SET-374	auto	test:automatic_enrollment_follows_the_binding ; test:usage_enrollment_runs_when_approved_with_a_device_key ; note:store half only; a true result should start enrollment, and nothing sends it yet
 SET-375	auto	test:usage_notices_and_backoff_are_kept ; service:test uses a stub, real wss /v1/remote/channel op `usage` not exercised
 SET-376	auto	test:usage_notices_and_backoff_are_kept
 SET-377	auto	test:preference_defaults_and_keys_match_swift
@@ -403,7 +403,7 @@ SET-402	auto	test:preference_defaults_and_keys_match_swift
 SET-403	auto	test:address_and_credential_validators_match_swift
 SET-404	auto	test:preference_defaults_and_keys_match_swift
 SET-405	auto	test:preference_defaults_and_keys_match_swift
-SET-406	auto	test:preference_defaults_and_keys_match_swift
+SET-406	auto	test:consent_version_gates_dictation_at_one_and_the_rest_at_two ; test:preference_defaults_and_keys_match_swift
 SET-407	auto	test:preference_defaults_and_keys_match_swift
 SET-408	auto	test:preference_defaults_and_keys_match_swift
 SET-409	auto	test:preference_defaults_and_keys_match_swift

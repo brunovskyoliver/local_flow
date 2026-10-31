@@ -22,6 +22,7 @@ pub(super) fn seed(s: &str, p: &mut Prefs) {
             approved(p, 2);
             p.set("server.only", true);
         }
+        "summary-remote" => p.set("summaryServer", "remote"),
         "custom" => {
             approved(p, 2);
             p.set("server.override.rewrite", "custom");
@@ -118,7 +119,8 @@ pub(super) fn apply_view(page: &mut SettingsPage, window: &mut Window, cx: &mut 
         "alt-download" => page.prompt_download(true, window, cx),
         "exclusions" => page.modal = Some(Modal::Context(ContextKind::Exclusions)),
         "kinds" => page.modal = Some(Modal::Context(ContextKind::Kinds)),
-        "microphones" => {
+        "microphones" | "voice-over" => {
+            page.voice_over = page.scenario == "voice-over";
             let snapshot = InputSnapshot {
                 inputs: vec![demo_input(1, "BuiltInMicrophoneDevice", "MacBook Pro Microphone", "builtIn"), demo_input(2, "usb-AAAA-1111", "Blue Yeti", "usb"), demo_input(3, "bt-XXXX-3F2A", "AirPods Pro", "bluetooth")],
                 default_input: Some(1),

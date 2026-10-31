@@ -210,6 +210,45 @@ impl Services for Mac {
             set_duration(context, sel_registerName(c"setDuration:".as_ptr()), duration as f64);
             let make_curve: unsafe extern "C" fn(Id, Id, f32, f32, f32, f32) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
             let timing = make_curve(objc_getClass(c"CAMediaTimingFunction".as_ptr()), sel_registerName(c"functionWithControlPoints::::".as_ptr()), curve[0], curve[1], curve[2], curve[3]);
+    fn app_name(&self, bundle_id: &str) -> Option<String> {
+        let path = app_path(bundle_id)?;
+        // SAFETY: AppKit is linked and `path` is a live NSString on the main thread.
+        let name = unsafe {
+            let manager = send(objc_getClass(c"NSFileManager".as_ptr()), c"defaultManager");
+            let display: unsafe extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let name = display(manager, sel_registerName(c"displayNameAtPath:".as_ptr()), path);
+            std::ffi::CStr::from_ptr(send(name, c"UTF8String") as *const std::ffi::c_char).to_string_lossy().into_owned()
+        };
+        Some(name.replace(".app", ""))
+    }
+    fn app_icon_png(&self, bundle_id: &str) -> Option<Vec<u8>> {
+        let path = app_path(bundle_id)?;
+        // SAFETY: AppKit is linked; each cast matches the selector's signature, and the rep and data are read before they drain.
+        unsafe {
+            let workspace = send(objc_getClass(c"NSWorkspace".as_ptr()), c"sharedWorkspace");
+            let by_path: unsafe extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let image = by_path(workspace, sel_registerName(c"iconForFile:".as_ptr()), path);
+            // 24 points at 2x, so the file stays small.
+            let mut rect = Rect { x: 0., y: 0., w: 48., h: 48. };
+            let cg: unsafe extern "C" fn(Id, Id, *mut Rect, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let cg_image = cg(image, sel_registerName(c"CGImageForProposedRect:context:hints:".as_ptr()), &raw mut rect, std::ptr::null_mut(), std::ptr::null_mut());
+            if cg_image.is_null() {
+                return None;
+            }
+            let rep = send(objc_getClass(c"NSBitmapImageRep".as_ptr()), c"alloc");
+            let rep = by_path(rep, sel_registerName(c"initWithCGImage:".as_ptr()), cg_image);
+            let png: unsafe extern "C" fn(Id, Id, usize, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let data = png(rep, sel_registerName(c"representationUsingType:properties:".as_ptr()), 4, send(objc_getClass(c"NSDictionary".as_ptr()), c"dictionary"));
+            let bytes = if data.is_null() {
+                None
+            } else {
+                let len: unsafe extern "C" fn(Id, Id) -> usize = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+                Some(std::slice::from_raw_parts(send(data, c"bytes") as *const u8, len(data, sel_registerName(c"length".as_ptr()))).to_vec())
+            };
+            send(rep, c"release");
+            bytes
+        }
+    }
             let set_timing: unsafe extern "C" fn(Id, Id, Id) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
             set_timing(context, sel_registerName(c"setTimingFunction:".as_ptr()), timing);
             let set_frame: unsafe extern "C" fn(Id, Id, Rect, bool) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
@@ -294,6 +333,18 @@ mod core_audio {
         static kCFAllocatorDefault: *const c_void;
         fn CFRelease(value: *const c_void);
         fn CFStringGetCString(string: *const c_void, buffer: *mut c_char, size: isize, encoding: u32) -> bool;
+/// `NSWorkspace.urlForApplication(withBundleIdentifier:)`'s path; autoreleased.
+fn app_path(bundle_id: &str) -> Option<Id> {
+    let text = std::ffi::CString::new(bundle_id).ok()?;
+    // SAFETY: AppKit is linked; the argument is a live NSString, and a nil URL is checked.
+    unsafe {
+        let workspace = send(objc_getClass(c"NSWorkspace".as_ptr()), c"sharedWorkspace");
+        let lookup: unsafe extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let url = lookup(workspace, sel_registerName(c"URLForApplicationWithBundleIdentifier:".as_ptr()), ns_string(&text));
+        if url.is_null() { None } else { Some(send(url, c"path")) }
+    }
+}
+
         fn CFStringCreateWithCString(allocator: *const c_void, text: *const c_char, encoding: u32) -> *const c_void;
         fn CFBooleanGetValue(value: *const c_void) -> bool;
     }

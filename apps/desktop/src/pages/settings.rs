@@ -59,6 +59,11 @@ pub struct SettingsPage {
     pub(super) updates: Updates,
     pub(super) mics: Option<Mics>,
     pub(super) modal: Option<Modal>,
+    apps: std::cell::RefCell<std::collections::HashMap<String, sheets::AppInfo>>,
+    remove_focus: std::cell::RefCell<std::collections::HashMap<String, FocusHandle>>,
+    voice_over: bool,
+    /// The origin usage enrollment last looked at, so the Keychain isn't read on every refresh.
+    usage_origin: Option<String>,
     // Server
     /// A plain-HTTP identity base for the local-server test; production uses the stored origin.
     pub(super) remote_base: Option<String>,
@@ -124,13 +129,13 @@ impl SettingsPage {
         core::migrate(prefs_mut(cx));
         let p = prefs(cx);
         let (endpoint_text, url_text, model_text) = (p.string("rewriteEndpoint").unwrap_or_default(), p.string("summaryServerURL").unwrap_or_default(), p.string("summaryServerModel").unwrap_or_default());
-        let endpoint = cx.new(|cx| InputState::new(window, cx).placeholder("http://127.0.0.1:8080").default_value(endpoint_text));
+        let endpoint = cx.new(|cx| InputState::new(window, cx).default_value(endpoint_text));
         let credential = cx.new(|cx| InputState::new(window, cx).placeholder("Enter server secret").masked(true));
         let credential_plain = cx.new(|cx| InputState::new(window, cx).placeholder("Enter server secret"));
-        let summary_url = cx.new(|cx| InputState::new(window, cx).placeholder("http://host:8000/v1").default_value(url_text));
+        let summary_url = cx.new(|cx| InputState::new(window, cx).default_value(url_text));
         let summary_model = cx.new(|cx| InputState::new(window, cx).placeholder("Model").default_value(model_text));
         let summary_key = cx.new(|cx| InputState::new(window, cx).placeholder("API key").masked(true));
-        let server_draft = cx.new(|cx| InputState::new(window, cx).placeholder("https://server.example.com"));
+        let server_draft = cx.new(|cx| InputState::new(window, cx));
         let bundle_draft = cx.new(|cx| InputState::new(window, cx).placeholder("Bundle ID"));
         let subs = vec![
             cx.subscribe_in(&endpoint, window, |this, input, e: &TextInputEvent, w, cx| {
@@ -208,6 +213,10 @@ impl SettingsPage {
             updates: if cx.global::<Core>().services.can_check_for_updates() { Updates::Sparkle { automatic: false, can_check: true } } else { Updates::Manual },
             mics: None,
             modal: None,
+            apps: Default::default(),
+            remove_focus: Default::default(),
+            voice_over: cx.global::<Core>().services.voice_over_on(),
+            usage_origin: None,
             remote_base: None,
             identity: None,
             pinned: None,
@@ -271,6 +280,12 @@ impl SettingsPage {
             storage_available: core_state.db.is_some(),
             ..Snapshot::default()
         };
+        if let Some((completed, total, verifying)) = core_state.services.speech_install() {
+            next.installing = true;
+            next.completed = completed;
+            next.total = total;
+            next.verifying = verifying;
+        }
         scenario::apply_snapshot(&self.scenario, &mut next);
         let pinned = core_state.services.secret(&core::remote_keychain("server-key")).ok().flatten().and_then(|k| core::base64url_decode(&k)).map(|k| core::fingerprint_of(&k));
         let rewrite = RewriteSettings::capture(p, |origin| Self::secret_present(cx, &core::rewrite_keychain(origin)));
@@ -284,13 +299,32 @@ impl SettingsPage {
             cx.notify();
         }
         self.follow_catalog(cx);
+        self.follow_usage_binding(cx);
+    }
+
+    /// `prepareAutomaticEnrollment`, once per origin and device key: needs approval and a device key.
+    /// ponytail: the store half; sending the reports is the usage service (SET-375).
+    fn follow_usage_binding(&mut self, cx: &mut Context<Self>) {
+        let core_state = cx.global::<Core>();
+        let p = &core_state.prefs;
+        if !p.bool_or("remote.enabled", false) || core::remote_state(p) != "approved" {
+            self.usage_origin = None;
+            return;
+        }
+        let origin = core::remote_server_url(p);
+        if self.usage_origin.as_ref() == Some(&origin) {
+            return;
+        }
+        let (Some(db), Ok(Some(key))) = (core_state.db.as_ref(), core_state.services.secret(&core::remote_keychain("device-key"))) else { return };
+        let _ = core::prepare_automatic_enrollment(db, &origin, &core::usage_fingerprint(key.as_bytes()));
+        self.usage_origin = Some(origin);
     }
 
     /// `MicrophonesViewModel.watch`: rebuilds from the catalog and reconciles the stored list.
     /// With no catalog the section stays hidden, as Swift's does until the catalog starts.
     /// ponytail: polls with `tick` every 500 ms, a CoreAudio property listener if that ever shows up in a profile.
     fn follow_catalog(&mut self, cx: &mut Context<Self>) {
-        if self.scenario == "microphones" {
+        if matches!(self.scenario.as_str(), "microphones" | "voice-over") {
             return;
         }
         let Some(c) = cx.global::<Core>().services.input_catalog() else {
@@ -667,8 +701,6 @@ impl SettingsPage {
         cx.notify();
     }
     /// The Move up and Move down accessibility actions, one step at a time.
-    /// ponytail: Kit exposes no custom accessibility actions yet; called from tests.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn move_mic(&mut self, id: &str, delta: isize, cx: &mut Context<Self>) {
         self.edit_mics(
             |entries| {
@@ -772,6 +804,13 @@ impl SettingsPage {
             let drop_id = r.id.clone();
             let remove_id = r.id.clone();
             let remove = (!r.is_default).then(|| prototype_button("settings.microphones.remove", "Remove").on_click(cx.listener(move |this, _, _, cx| this.edit_mics(|e| e.iter().filter(|x| x.id != remove_id).cloned().collect(), cx))));
+            // Kit has no custom accessibility actions, so VoiceOver users get them as real buttons.
+            // ponytail: read when the page opens; Swift's actions need no switch at all.
+            let move_button = |suffix: &str, verb: &'static str, delta: isize, show: bool, cx: &mut Context<Self>| {
+                let (mic, label) = (id.clone(), r.a11y_label());
+                (self.voice_over && show).then(|| prototype_button(SharedString::from(format!("settings.microphones.{suffix}.{mic}")), verb).a11y_label(format!("{verb}: {label}")).on_click(cx.listener(move |this, _, _, cx| this.move_mic(&mic, delta, cx))))
+            };
+            let (up, down) = (move_button("moveUp", "Move up", -1, r.rank > 1, cx), move_button("moveDown", "Move down", 1, r.rank < r.count, cx));
             let accent = pal(cx).accent;
             let drag = DragMic(id.clone());
             body = body
@@ -795,13 +834,16 @@ impl SettingsPage {
                             d.child(div().id("settings.microphones.dropBar").test_support().absolute().top_0().left_0().right_0().h(px(2.)).bg(accent))
                         })
                         .on_drop(cx.listener(move |this, d: &DragMic, _, cx| this.edit_mics(|e| core::move_input(e, &d.0, &drop_id), cx)))
-                        .child(row(r.title(), Some(r.detail()), div().children(remove), cx)),
+                        .child(row(r.title(), Some(r.detail()), h_flex().gap(px(8.)).children(up).children(down).children(remove), cx)),
                 )
                 .child(hairline(cx));
         }
         let items: Vec<(String, String)> = list.add.iter().map(|i| (format!("{} · {}", i.name, core::kind_label(&i.kind)), i.uid.clone())).collect();
         let this = cx.entity().downgrade();
-        let add = Button::new("settings.microphones.add").small().label("Add…").disabled(list.add_disabled.is_some()).dropdown_menu(move |mut menu, _, _| {
+        // `Menu` with `PrototypeButtonStyle`: the tint pill, 13 medium, and no indicator.
+        let pl = pal(cx);
+        let unavailable = list.add_disabled.is_some();
+        let add = Button::new("settings.microphones.add").custom(flow_ui::controls::ButtonCustomVariant::new(cx).color(pl.tint).foreground(pl.ink).hover(pl.tint).active(pl.button).shadow(false)).bg(pl.tint).accessibility_label("Add…").h_auto().px(px(12.)).py(px(7.)).rounded(px(8.)).border_0().child(t("Add…").font(13., 500.).a11y_hidden()).disabled(unavailable).when(unavailable, |b| b.opacity(0.45)).dropdown_menu(move |mut menu, _, _| {
             for (title, uid) in items.clone() {
                 let this = this.clone();
                 menu = menu.item(PopupMenuItem::new(title).on_click(move |_, _, cx| {
@@ -917,7 +959,7 @@ impl SettingsPage {
                 }
             }
         }
-        body = body.child(hairline(cx)).child(div().w_full().py(px(14.)).child(advanced));
+        body = body.child(hairline(cx)).child(div().id("settings.rewriteAdvancedRow").w_full().py(px(14.)).child(advanced).test_support());
         let warning = self.rewrite.warning().map(|w| div().id("settings.rewriteWarning").pb(px(12.)).child(t(w).size(12.).color(pl.warning)).into_any_element());
         let mut out = vec![Self::section_title("Rewriting").into_any_element()];
         out.extend(warning);
@@ -935,7 +977,7 @@ impl SettingsPage {
                 .pt(px(18.))
                 .pb(px(14.))
                 .child(t("Server URL").font(12., 500.).color(pl.muted))
-                .child(input_surface("link", Input::new(&self.endpoint).aria_label("Rewrite server endpoint").accessibility_id("settings.rewriteEndpoint"), &self.endpoint, window, cx))
+                .child(input_surface("link", Some("http://127.0.0.1:8080"), Input::new(&self.endpoint).aria_label("Rewrite server endpoint").accessibility_id("settings.rewriteEndpoint"), &self.endpoint, window, cx))
                 .into_any_element(),
             self.credential_controls(window, cx).into_any_element(),
         ];
@@ -979,7 +1021,7 @@ impl SettingsPage {
                     .test_support()
                     .w_full()
                     .gap(px(8.))
-                    .child(div().flex_1().child(input_surface("key", Input::new(state).aria_label("Rewrite server credential").accessibility_id("settings.rewriteCredential"), state, window, cx)))
+                    .child(div().flex_1().child(input_surface("key", None, Input::new(state).aria_label("Rewrite server credential").accessibility_id("settings.rewriteCredential"), state, window, cx)))
                     .child(prototype_button("settings.rewriteCredentialSave", "Save").a11y_label("Set rewrite server credential").disabled(draft_empty || !self.rewrite.valid()).on_click(cx.listener(|this, _, w, cx| this.save_credential(w, cx)))),
             );
             if present {
@@ -1030,9 +1072,9 @@ impl SettingsPage {
             .gap(px(14.))
             .py(px(18.))
             .child(label("Server URL"))
-            .child(div().id("settings.summaryURLField").test_support().child(input_surface("link", Input::new(&self.summary_url).aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx)))
+            .child(div().id("settings.summaryURLField").test_support().child(input_surface("link", Some("http://host:8000/v1"), Input::new(&self.summary_url).aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx)))
             .child(div().id("settings.summaryModelLabel").child(label("Model")).test_support())
-            .child(input_surface("cpu", Input::new(&self.summary_model).aria_label("Model").accessibility_id("settings.summaryServerModel"), &self.summary_model, window, cx))
+            .child(input_surface("cpu", None, Input::new(&self.summary_model).aria_label("Model").accessibility_id("settings.summaryServerModel"), &self.summary_model, window, cx))
             .child(label("API key"));
         if self.summary_key_saved && !self.editing_summary_key {
             out = out.child(h_flex().w_full().gap(px(8.)).child(div().flex_1().child(saved_secret("API key saved", cx))).child(prototype_button("settings.summaryServerKeyEdit", "Edit").on_click(cx.listener(|this, _, _, cx| {
@@ -1047,7 +1089,7 @@ impl SettingsPage {
                     .test_support()
                     .w_full()
                     .gap(px(8.))
-                    .child(div().flex_1().child(input_surface("key", Input::new(&self.summary_key).aria_label("API key").accessibility_id("settings.summaryServerKey"), &self.summary_key, window, cx)))
+                    .child(div().flex_1().child(input_surface("key", None, Input::new(&self.summary_key).aria_label("API key").accessibility_id("settings.summaryServerKey"), &self.summary_key, window, cx)))
                     .child(prototype_button("settings.summaryServerKeySave", "Save").disabled(empty).on_click(cx.listener(|this, _, w, cx| this.save_summary_key(w, cx))))
                     .when(self.summary_key_saved, |d| {
                         d.child(prototype_button("settings.summaryServerKeyCancel", "Cancel").on_click(cx.listener(|this, _, w, cx| {
@@ -1224,7 +1266,7 @@ pub(super) fn pill_menu(id: impl Into<SharedString>, title: String, options: Vec
         .px(px(12.))
         .py(px(7.))
         .rounded(px(8.))
-        .child(h_flex().gap(px(6.)).child(t(title).size(13.).a11y_hidden()).child(icon("chevron.down", 9., pl.muted)))
+        .child(h_flex().gap(px(6.)).child(t(title).size(13.).a11y_hidden()).child(icon("chevron.down", 13., pl.muted)))
         .dropdown_menu(move |mut menu, _, _| {
             for (name, value) in options.clone() {
                 let (this, key) = (this.clone(), key.clone());
@@ -1285,9 +1327,10 @@ pub(super) fn disclosure(id: &'static str, title: &'static str, open: bool, f: i
 }
 
 /// `RewriteInputSurface`.
-pub(super) fn input_surface(symbol: &'static str, input: Input, state: &Entity<InputState>, window: &Window, cx: &App) -> Div {
+pub(super) fn input_surface(symbol: &'static str, link_hint: Option<&'static str>, input: Input, state: &Entity<InputState>, window: &Window, cx: &App) -> Div {
     let pl = pal(cx);
     let focused = state.read(cx).focus_handle(cx).is_focused(window);
+    let empty = state.read(cx).value().is_empty();
     h_flex()
         .w_full()
         .min_h(px(40.))
@@ -1298,7 +1341,16 @@ pub(super) fn input_surface(symbol: &'static str, input: Input, state: &Entity<I
         .border(px(if focused { 2. } else { 1. }))
         .border_color(if focused { pl.accent } else { pl.line })
         .child(div().w(px(16.)).flex().justify_center().child(icon(symbol, 14., pl.muted)))
-        .child(div().flex_1().min_w_0().text_size(px(13.)).child(input.appearance(false).px_0()))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .relative()
+                .text_size(px(13.))
+                .child(input.appearance(false).px_0())
+                // Kit paints every placeholder in one theme colour, so a link-shaped one is drawn here.
+                .when_some(link_hint.filter(|_| empty), |d, hint| d.child(h_flex().absolute().inset_0().child(t(hint).size(13.).lines(1).color(pl.link())))),
+        )
 }
 
 fn saved_secret(label: &'static str, cx: &App) -> Div {

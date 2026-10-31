@@ -86,7 +86,8 @@ impl SettingsPage {
                     .id("settings.alternateSpeechModel")
                     .w_full()
                     .child(row(a.name(), Some(detail), control, cx))
-                    .when(a.installing && a.total > 0, |d| d.child(div().pb(px(19.)).child(Progress::new("settings.alternateProgress").value(a.completed as f32 / a.total as f32 * 100.)))),
+                    .when(a.installing && a.total > 0, |d| d.child(div().pb(px(19.)).child(Progress::new("settings.alternateProgress").value(a.completed as f32 / a.total as f32 * 100.))))
+                    .test_support(),
             );
         }
         let whisper_status = format!("{} · {}", self.role("Meeting transcripts", Service::FinalTranscript, cx), self.status("meeting", s.meeting_readiness()));

@@ -1100,17 +1100,7 @@ pub fn speech_attribution(choice: &str) -> &'static str {
 }
 /// `ByteCountFormatter` with `.file`: decimal units, up to two fractional digits for GB.
 pub fn byte_count(bytes: u64) -> String {
-    let b = bytes as f64;
-    if b >= 1e9 {
-        let s = format!("{:.2}", b / 1e9);
-        format!("{} GB", super::onboarding::localized(s.trim_end_matches('0').trim_end_matches('.')))
-    } else if b >= 1e6 {
-        format!("{:.0} MB", b / 1e6)
-    } else if b >= 1e3 {
-        format!("{:.0} KB", b / 1e3)
-    } else {
-        format!("{bytes} bytes")
-    }
+    super::onboarding::bytes(bytes as i64)
 }
 
 /// `SettingsViewModel.Snapshot`: the model and permission state the page draws. Everything here
@@ -2211,6 +2201,11 @@ pub const USAGE_NOTICES: [&str; 10] = [
 ];
 /// `prepareAutomaticEnrollment`: no binding enrolls, an inactive one stays off, a changed server or key wipes the days and enrolls again.
 /// ponytail: the store half of enrollment. The channel that sends the reports is the usage service (SET-375).
+/// The usage binding's `credentialFingerprint`: SHA-256 of the device key as lower-case hex.
+pub fn usage_fingerprint(key: &[u8]) -> String {
+    hex_of(&sha256(key))
+}
+
 pub fn prepare_automatic_enrollment(db: &Db, origin: &str, fingerprint: &str) -> rusqlite::Result<bool> {
     let conn = &db.conn;
     let Some((raw, enabled)) = conn
@@ -2283,7 +2278,7 @@ mod tests {
         assert_eq!(remote_server_url(&p), "");
     }
 
-    // parity: SET-377 SET-378 SET-379 SET-380 SET-381 SET-382 SET-383 SET-384 SET-385 SET-386 SET-387 SET-388 SET-389 SET-390 SET-391 SET-392 SET-393 SET-394 SET-395 SET-396 SET-397 SET-398 SET-399 SET-402 SET-404 SET-405 SET-406 SET-407 SET-408 SET-409 SET-410 SET-411 SET-412 SET-413 SET-422
+    // parity: SET-406 SET-377 SET-378 SET-379 SET-380 SET-381 SET-382 SET-383 SET-384 SET-385 SET-386 SET-387 SET-388 SET-389 SET-390 SET-391 SET-392 SET-393 SET-394 SET-395 SET-396 SET-397 SET-398 SET-399 SET-402 SET-404 SET-405 SET-407 SET-408 SET-409 SET-410 SET-411 SET-412 SET-413 SET-422
     #[test]
     fn preference_defaults_and_keys_match_swift() {
         let mut p = Prefs::memory();
@@ -2909,6 +2904,22 @@ mod tests {
         assert_eq!(summary_headers(&p, None, false), vec![("X-LocalFlow-Primary-URL", "http://h:8000/v1".to_string()), ("X-LocalFlow-Primary-Model", "m".to_string())]);
         assert_eq!(summary_headers(&p, Some("k"), true).len(), 4);
         assert_eq!(custom_summaries_host(&p).as_deref(), Some("h"));
+    }
+
+    // parity: SET-406
+    #[test]
+    fn consent_version_gates_dictation_at_one_and_the_rest_at_two() {
+        let mut p = Prefs::memory();
+        p.set("remote.enabled", true);
+        p.set("remote.serverURL", "https://flow.example.com");
+        p.set("remote.state", "approved");
+        assert_eq!(CONSENT_VERSION, 2);
+        for (version, dictation, current) in [(None, false, false), (Some(1), true, false), (Some(2), true, true)] {
+            if let Some(v) = version {
+                p.set("remote.consentVersion", v);
+            }
+            assert_eq!((routes_to_server(&p), consent_current(&p)), (dictation, current), "{version:?}");
+        }
     }
 
     // parity: SET-374

@@ -150,6 +150,11 @@ impl Palette {
     pub fn destructive(&self) -> Hsla {
         rgb(if self.mode.is_dark() { 0xFF453A } else { 0xFF3B30 }).into()
     }
+    /// A link-shaped placeholder: AppKit detects the address and draws it in the system link colour.
+    /// Sampled from `audit/mac/settings/consent-{light,dark}-ref.png`.
+    pub fn link(&self) -> Hsla {
+        rgb(if self.mode.is_dark() { 0x659AF9 } else { 0x3A68D4 }).into()
+    }
     /// A native text field's placeholder, sampled from `audit/mac/dictionary/add-*-ref.png`: 252 to
     /// 127 in light, 20 to 149 in dark.
     pub fn placeholder(&self) -> Hsla {

@@ -125,6 +125,19 @@ pub trait Services: 'static {
     fn running_apps(&self) -> Vec<(String, String)> {
         vec![]
     }
+    /// An installed app's display name without ".app", from its bundle ID. `None` when it isn't installed.
+    fn app_name(&self, _bundle_id: &str) -> Option<String> {
+        None
+    }
+    /// An installed app's icon as PNG bytes, from its bundle ID.
+    fn app_icon_png(&self, _bundle_id: &str) -> Option<Vec<u8>> {
+        None
+    }
+    /// The speech model install in progress as (completed, total, verifying), once the model
+    /// provisioner has one. `settings_action("download")` returns at once and this takes over.
+    fn speech_install(&self) -> Option<(u64, u64, bool)> {
+        None
+    }
     /// The input devices, or `None` where this platform has no catalog yet.
     fn input_catalog(&self) -> Option<InputCatalog> {
         None
