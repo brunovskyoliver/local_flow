@@ -398,7 +398,7 @@ impl NotetakerPage {
                     spans.push(span(attribution_text.clone()).color(p.muted));
                 }
                 rich(spans).size(15.).line_spacing(5.).into_any_element()
-            });
+            } });
         }
         if ai_shown {
             body = body.child(t(format!("AI: {}", item.ai_text)).size(12.).color(p.muted));

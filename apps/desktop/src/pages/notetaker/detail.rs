@@ -277,7 +277,7 @@ impl NotetakerPage {
             .w_full()
             .gap(px(8.))
             .pb(px(4.))
-            .child(div().w_full().ml(px(-10.)).font_family(GARAMOND).child(Input::new(&self.title).appearance(false).text_size(px(38.)).line_height(px(46.)).h(px(46.)).aria_label("Note title").accessibility_id("meeting.title")))
+            .child(div().w_full().ml(px(-10.)).py(px(8.)).font_family(GARAMOND).child(Input::new(&self.title).appearance(false).text_size(px(38.)).line_height(px(46.)).h(px(46.)).aria_label("Note title").accessibility_id("meeting.title")))
             .child(t(date_time_text(m.created_at, offset)).size(15.).color(p.muted))
             .when(dropped, |w| w.child(div().id("meeting.captureLoss").child(sf_label("exclamationmark.triangle.fill", "Some audio was lost during recording. The transcript may be incomplete.", 13., orange(cx)))))
             .when(!dropped && drift, |w| w.child(div().id("meeting.durationWarning").child(sf_label("exclamationmark.triangle.fill", "A recording track does not match the meeting duration. Some audio may be missing.", 13., orange(cx)))))
