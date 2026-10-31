@@ -12,6 +12,10 @@ use std::panic::Location;
 
 pub const FIGTREE: &str = "Figtree";
 pub const GARAMOND: &str = "EB Garamond";
+#[cfg(target_os = "windows")]
+pub const MONO: &str = "Consolas";
+#[cfg(not(target_os = "windows"))]
+pub const MONO: &str = "Menlo";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Align {
@@ -79,6 +83,7 @@ pub struct Txt {
     accessible: bool,
     opacity: f32,
     mono_digits: bool,
+    mono: bool,
 }
 
 /// Text at the inherited size and color. Id comes from the call site and the text.
@@ -112,6 +117,7 @@ pub fn rich(spans: Vec<Span>) -> Txt {
         accessible: true,
         opacity: 1.0,
         mono_digits: false,
+        mono: false,
     }
 }
 
@@ -190,6 +196,11 @@ impl Txt {
     /// `.monospacedDigit()`: Figtree's `tnum` feature.
     pub fn mono_digits(mut self) -> Self {
         self.mono_digits = true;
+        self
+    }
+    /// `.system(design: .monospaced)`.
+    pub fn mono(mut self) -> Self {
+        self.mono = true;
         self
     }
     pub fn text(&self) -> String {
@@ -410,7 +421,7 @@ impl Txt {
         let mut marks = vec![];
         let mut text = String::new();
         let make = |serif: bool, weight: FontWeight, italic: bool| Font {
-            family: if serif { GARAMOND.into() } else { FIGTREE.into() },
+            family: if self.mono { MONO.into() } else if serif { GARAMOND.into() } else { FIGTREE.into() },
             features: features.clone(),
             fallbacks: style.font_fallbacks.clone(),
             weight,
