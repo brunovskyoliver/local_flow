@@ -26,8 +26,8 @@ fn stage_text(text: &str) -> Txt {
     t(if text.is_empty() { "(Empty stage)".to_string() } else { text.to_string() }).size(14.).selectable().no_widow()
 }
 
-fn meta(label: String, value: String, cx: &App) -> Div {
-    v_flex().gap(px(2.)).child(t(label).size(13.).color(pal(cx).muted).selectable()).child(t(value).size(13.).selectable())
+fn meta(label: String, value: String, cx: &App) -> impl IntoElement {
+    v_flex().id(SharedString::from(format!("history.meta.{label}"))).test_support().gap(px(2.)).child(t(label).size(13.).color(pal(cx).muted).selectable()).child(t(value).size(13.).selectable())
 }
 
 fn lines(items: Vec<Line>, cx: &App) -> Div {
@@ -55,7 +55,7 @@ impl HistoryPage {
                 FlowButton::new(SharedString::from(key.to_string()), ButtonKind::Plain, title.clone())
                     .a11y_selected(on)
                     // The native indicator: chevron centered 4 from the leading edge, title at 12.
-                    .content(h_flex().py(px(2.)).child(div().w(px(8.)).flex().justify_center().child(icon(if on { "chevron.down" } else { "chevron.right" }, 11., if p.ink.l > 0.5 { p.ink } else { p.muted }))).child(div().w(px(4.))).child(t(title).size(size).a11y_hidden()))
+                    .content(h_flex().py(px(3.5)).child(div().w(px(8.)).flex().justify_center().child(icon(if on { "chevron.down" } else { "chevron.right" }, 11., if p.ink.l > 0.5 { p.ink } else { p.muted }))).child(div().w(px(4.))).child(t(title).size(size).a11y_hidden()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !this.open.remove(&k) {
                             this.open.insert(k.clone());
@@ -103,7 +103,10 @@ impl HistoryPage {
     fn envelope_view(&mut self, env: &Envelope, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = pal(cx);
         let e = &env.entry;
+        // Swift's spacing 4 over 15.6 lines is 19.6 apart; `Txt` rounds a line to 16, so 3 keeps the pitch.
         let status = v_flex()
+            .id("history.detail.status")
+            .test_support()
             .gap(px(3.))
             .child(t(format!("Completeness: {}", e.quality_label().unwrap_or("Complete"))).size(13.).selectable())
             .child(t(format!("Recognized: {}", e.path_label(true).unwrap_or_else(|| "Local".into()))).size(13.).selectable())
@@ -138,7 +141,7 @@ impl HistoryPage {
                     v_flex()
                         .pt(px(10.))
                         .gap(px(8.))
-                        .child(lines(processing_lines(&d2), cx))
+                        .child(div().id("history.detail.processing.lines").test_support().child(lines(processing_lines(&d2), cx)))
                         .child(this.disclosure("history.detail.hashes", "Evidence hashes".into(), 13., move |_, cx| div().pt(px(8.)).child(lines(hashes, cx)).into_any_element(), cx))
                         .into_any_element()
                 },
@@ -272,8 +275,7 @@ impl HistoryPage {
                 h_flex()
                     .gap(px(8.))
                     .child(picker)
-                    // Disabled until Rust has a rewrite client (`has_rewriter`), never a fake result.
-                    .child(native_button("history.detail.rewrite.retry", if m.attempts.is_empty() { "Rewrite" } else { "Retry" }, cx).disabled(!m.can_request_rewrite()))
+                    .child(native_button("history.detail.rewrite.retry", if m.attempts.is_empty() { "Rewrite" } else { "Retry" }, cx).disabled(!m.can_request_rewrite()).on_click(cx.listener(|this, _, _, cx| this.request_rewrite(cx))))
                     .when(m.pending_rewrite().is_some(), |d| {
                         d.child(native_button("history.detail.rewrite.cancel", "Cancel rewrite", cx).on_click(cx.listener(|this, _, _, cx| {
                             if let Some(db) = cx.global::<crate::core::Core>().db.as_ref() {

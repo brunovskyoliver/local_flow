@@ -36,6 +36,7 @@ impl DictionaryPage {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let _search_sub = cx.subscribe(&search, |_, _, _: &TextInputEvent, cx| cx.notify());
         let mut shown = cx.try_global::<Session>().map(|s| s.selection);
+        let mut revision = cx.try_global::<Session>().map_or(0, |s| s.history_revision);
         let _session_sub = cx.observe_global::<Session>(move |this, cx| {
             let now = Some(cx.global::<Session>().selection);
             if now != shown && now == Some(Page::Dictionary) {
@@ -45,6 +46,13 @@ impl DictionaryPage {
                 cx.notify();
             }
             shown = now;
+            // The learner's `reload()`: it reports through the same notification once it exists (Feature 025).
+            let latest = cx.global::<Session>().history_revision;
+            if latest != revision && now == Some(Page::Dictionary) {
+                this.refresh(cx);
+                cx.notify();
+            }
+            revision = latest;
         });
         let mut page = DictionaryPage {
             model: Model::default(),
@@ -395,7 +403,8 @@ impl DictionaryPage {
             let mut aliases = h_flex().min_w_0();
             for (n, a) in e.aliases.iter().enumerate() {
                 let word = if is_retired_alias(a) { span(a.clone()).strike().color(fg.opacity(0.55)) } else { span(a.clone()) };
-                aliases = aliases.child(div().min_w_0().child(rich(vec![word]).size(15.).color(fg)));
+                // ponytail: SwiftUI wraps the first alias and keeps later ones whole here; very long later aliases clip.
+                aliases = aliases.child(div().when(n > 0, |d| d.flex_none()).when(n == 0, |d| d.min_w_0()).child(rich(vec![word]).size(15.).color(fg)));
                 if n + 1 < e.aliases.len() {
                     // `Txt` measures no trailing space, so it is a margin here.
                     aliases = aliases.child(div().flex_none().mr(px(4.)).child(t(",").size(15.).color(fg)));
@@ -412,7 +421,7 @@ impl DictionaryPage {
             title = title.child(help(format!("dictionary.learned.{i}"), "Learned from a correction you made", icon("sparkles", 10., rgb(0xFFCC00))).test_support());
         }
         if !e.enabled {
-            title = title.child(chip("Off"));
+            title = title.child(div().id(SharedString::from(format!("dictionary.off.{i}"))).test_support().child(chip("Off")));
         }
 
         let (edit, toggle, delete) = (e.clone(), e.clone(), e.clone());
@@ -601,16 +610,21 @@ fn error_text(text: String, cx: &App) -> Txt {
 }
 
 /// `DictionaryField`: bordered plain field; the store owns validation.
-fn field(state: &Entity<InputState>, label: &str, id: &str, cx: &App) -> Stateful<Div> {
+fn field(state: &Entity<InputState>, label: &str, id: &str, cx: &App) -> impl IntoElement {
     let p = pal(cx);
     div()
         .id(SharedString::from(format!("{id}.box")))
         .w_full()
+        .h(px(29.))
+        .flex()
+        .items_center()
+        .overflow_hidden()
         .bg(p.surface)
         .rounded(px(8.))
         .border_1()
         .border_color(p.line)
         .child(Input::new(state).appearance(false).h(px(27.)).text_size(px(13.)).aria_label(label.to_string()).accessibility_id(id.to_string()))
+        .test_support()
 }
 
 fn toggle_row(title: &'static str, tip: &'static str, id: &'static str, on: bool, cx: &App, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Div {
@@ -780,6 +794,8 @@ mod tests {
             type_into(cx, w, a, "tatra");
         }
         assert_saw(&["Repeats another misspelling.", "Remove duplicates"]);
+        let (add, remove) = (bounds(cx, w, "vocabulary.addAlias"), bounds(cx, w, "vocabulary.deduplicate"));
+        assert_eq!(remove.origin.x - add.right(), px(12.));
         click(cx, w, "vocabulary.deduplicate");
         assert!(!saw("Repeats another misspelling."));
         w.update(cx, |this, _, _| assert_eq!(this.aliases.len(), 1)).unwrap();
@@ -1172,5 +1188,94 @@ mod tests {
         click(cx, w, "vocabulary.cancel");
         menu(cx, 2);
         w.update(cx, |t, _, _| assert_eq!(t.confirming_delete.as_ref().map(|e| e.id.clone()), Some(first.id.clone()))).unwrap();
+    }
+
+    fn bounds(cx: &mut TestAppContext, w: WindowHandle<DictionaryPage>, id: &str) -> Bounds<Pixels> {
+        let id = SharedString::from(id.to_string());
+        cx.update_window(w.into(), |_, win, _| win.find(id).bounds()).unwrap()
+    }
+
+    // parity: DICT-015
+    #[flow_ui::gpui::test]
+    async fn a_filter_tab_is_label_gap_and_underline(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let tab = bounds(cx, w, "vocabulary.filter.disabled");
+        // Headless Figtree 15 is a 16 line, then spacing 6 and the 2 pt underline.
+        assert_eq!(tab.size.height, px(16. + 6. + 2.));
+    }
+
+    // parity: DICT-021 DICT-023
+    #[flow_ui::gpui::test]
+    async fn the_search_field_is_150_wide_8_before_the_icon_and_90_when_compact(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.searchToggle");
+        let (field, toggle) = (bounds(cx, w, "vocabulary.searchField"), bounds(cx, w, "vocabulary.searchToggle"));
+        assert_eq!(field.size.width, px(150.));
+        assert_eq!(toggle.origin.x - field.right(), px(8.));
+        let add = bounds(cx, w, "vocabulary.add");
+        assert_eq!(toggle.right(), add.right(), "right aligned with the page");
+        cx.update(|cx| cx.global_mut::<Flow>().compact = true);
+        w.update(cx, |_, _, cx| cx.notify()).unwrap();
+        frame(cx, w);
+        assert_eq!(bounds(cx, w, "vocabulary.searchField").size.width, px(90.));
+    }
+
+    // parity: DICT-032
+    #[flow_ui::gpui::test]
+    async fn the_banner_dismiss_sits_12_in_from_the_trailing_edge(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let (dismiss, add) = (bounds(cx, w, "vocabulary.bannerDismiss"), bounds(cx, w, "vocabulary.add"));
+        assert_eq!(add.right() - dismiss.right(), px(12.));
+        assert_eq!(dismiss.size.width, dismiss.size.height, "a circle");
+    }
+
+    // parity: DICT-071
+    #[flow_ui::gpui::test]
+    async fn the_off_badge_has_its_padding(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let i = w.update(cx, |t, _, _| t.model.entries.iter().position(|e| !e.enabled).unwrap()).unwrap();
+        let badge = bounds(cx, w, &format!("dictionary.off.{i}"));
+        // Headless Figtree 11 is a 12 line, with 2 above and below.
+        assert_eq!(badge.size.height, px(12. + 2. + 2.));
+    }
+
+    // parity: DICT-082
+    #[flow_ui::gpui::test]
+    async fn row_actions_are_4_apart_and_right_aligned(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let (edit, toggle, delete) = (bounds(cx, w, "dictionary.edit.0"), bounds(cx, w, "dictionary.toggle.0"), bounds(cx, w, "dictionary.delete.0"));
+        assert_eq!(toggle.origin.x - edit.right(), px(4.));
+        assert_eq!(delete.origin.x - toggle.right(), px(4.));
+        // The row's 18 trailing padding; the list ends at the page's right edge.
+        assert_eq!(bounds(cx, w, "vocabulary.add").right() - delete.right(), px(18.));
+    }
+
+    // parity: DICT-120
+    #[flow_ui::gpui::test]
+    async fn sheet_rows_keep_their_spacing(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        let (cancel, save) = (bounds(cx, w, "vocabulary.cancel"), bounds(cx, w, "vocabulary.save"));
+        let field = bounds(cx, w, "vocabulary.canonical.box");
+        assert_eq!(field.size.height, px(29.), "Swift's field, measured from the pair");
+        assert_eq!(save.origin.x - cancel.right(), px(8.));
+    }
+
+    // parity: DICT-007
+    #[flow_ui::gpui::test]
+    async fn a_store_change_elsewhere_reloads_while_shown(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(crate::shell::ensure_session);
+        let w = cx.add_window(|w, cx| DictionaryPage::new(w, cx));
+        frame(cx, w);
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Dictionary));
+        cx.run_until_parked();
+        let (before, gone) = w.update(cx, |t, _, _| (t.model.entries.len(), t.model.entries[0].id.clone())).unwrap();
+        cx.update(|cx| {
+            flow_core::dictionary::delete(cx.global::<Core>().db.as_ref().unwrap(), &gone, None).unwrap();
+            crate::shell::history_changed(cx);
+        });
+        cx.run_until_parked();
+        assert!(w.update(cx, |t, _, _| t.model.entries.len()).unwrap() < before);
     }
 }

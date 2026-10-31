@@ -800,6 +800,183 @@ fn mirror_rewrite_state(db: &Db, id: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+pub const MAX_ROWS: i64 = 100_000;
+pub const MAX_PAYLOAD_BYTES: i64 = 1024 * 1024 * 1024;
+const RESERVATION_BYTES: i64 = 393_216 + 106_496;
+const RESERVE_FREE_BYTES: u64 = 129 * 1024 * 1024 + RESERVATION_BYTES as u64;
+
+/// `TranscriptionStore.reserve()` as a question: is there room for one more recording?
+pub fn has_room(db: &Db, free_bytes: Option<u64>) -> bool {
+    let usage: rusqlite::Result<(i64, i64)> = db.conn.query_row("SELECT row_count,payload_bytes FROM history_usage WHERE id=1", [], |r| Ok((r.get(0)?, r.get(1)?)));
+    free_bytes.is_none_or(|f| f >= RESERVE_FREE_BYTES) && usage.is_ok_and(|(rows, bytes)| rows < MAX_ROWS && bytes + RESERVATION_BYTES <= MAX_PAYLOAD_BYTES)
+}
+
+fn pending_rewrites(db: &Db) -> usize {
+    db.conn.query_row("SELECT count(*) FROM rewrite_attempts WHERE state='pending'", [], |r| r.get::<_, i64>(0)).unwrap_or(0) as usize
+}
+
+/// What `RewriteCoordinator.admit` decided before any network work.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Admission {
+    NotEligible,
+    Refused(&'static str),
+    Admitted(String),
+}
+
+/// The admission order of `RewriteCoordinator.admit`: enabled and text, settings, then `begin_rewrite`.
+pub fn admit_rewrite(db: &Db, dictation: &str, text: &str, mode: &str, enabled: bool, settings: &crate::settings::RewriteSettings) -> Admission {
+    if !enabled || text.trim().is_empty() {
+        return Admission::NotEligible;
+    }
+    if settings.valid() && settings.is_unencrypted_remote() && !settings.insecure_override {
+        return Admission::Refused("insecure_endpoint_blocked");
+    }
+    if settings.valid() && !settings.is_loopback() && !settings.credential_present {
+        return Admission::Refused("missing_credential");
+    }
+    if !settings.valid() {
+        return Admission::Refused("invalid_settings");
+    }
+    match begin_rewrite(db, dictation, mode, text, &settings.origin) {
+        Ok(id) => Admission::Admitted(id),
+        Err(StoreError::Refused(category)) => Admission::Refused(category),
+        Err(_) => Admission::Refused("capacity_exceeded"),
+    }
+}
+
+/// An admitted attempt, on its way to `POST /v1/rewrite`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RewriteRequest {
+    pub dictation: String,
+    pub attempt: String,
+    pub mode: &'static str,
+    pub text: String,
+    pub origin: String,
+}
+
+const MAX_REWRITE_LINE: usize = 8_192;
+const MAX_REWRITE_RESULT: usize = 65_536;
+
+/// `RewriteFailureCategory.forServerCode`.
+fn server_code_category(code: &str) -> &'static str {
+    match code {
+        "shield_restore_failed" | "backend_error" | "too_large" | "invalid_request" => "server_validation_failed",
+        "output_too_large" => "oversized_response",
+        "backend_timeout" | "backend_first_token_timeout" | "backend_unavailable" | "server_busy" => "backend_unavailable",
+        "unauthorized" => "authentication_failed",
+        "unsupported_version" => "unsupported_schema_version",
+        _ => "malformed_response",
+    }
+}
+
+/// `RewriteFailureCategory.forHTTPStatus`.
+fn http_status_category(status: u16, code: Option<&str>) -> &'static str {
+    match status {
+        400 if code == Some("unsupported_version") => "unsupported_schema_version",
+        400 | 413 => "server_validation_failed",
+        401 | 403 => "authentication_failed",
+        429 | 503 => "backend_unavailable",
+        _ => "transport_error",
+    }
+}
+
+/// `RewriteResultValidator`, one line at a time: `Some` is the validated text, an error ends the attempt.
+// ponytail: skips `isTranslation`, which needs NLLanguageRecognizer; a `Services` method when Rust has a language recognizer.
+fn rewrite_line(line: &[u8], request: &RewriteRequest) -> Result<Option<String>, &'static str> {
+    use serde_json::Value;
+    let v: Value = serde_json::from_slice(line).map_err(|_| "malformed_response")?;
+    let event = v.get("event").and_then(Value::as_str).ok_or("malformed_response")?;
+    if event != "result" && line.len() > MAX_REWRITE_LINE {
+        return Err("malformed_response");
+    }
+    let check_id = || match v.get("request_id").and_then(Value::as_str) {
+        None => Err("malformed_response"),
+        Some(id) if !id.eq_ignore_ascii_case(&request.attempt) => Err("request_mismatch"),
+        Some(_) => Ok(()),
+    };
+    match event {
+        "result" => {
+            if v.get("schema_version").and_then(Value::as_i64) != Some(1) {
+                return Err("unsupported_schema_version");
+            }
+            check_id()?;
+            if v.get("mode").and_then(Value::as_str) != Some(request.mode) {
+                return Err("malformed_response");
+            }
+            let text = v.get("text").and_then(Value::as_str).ok_or("malformed_response")?;
+            if text.trim().is_empty() {
+                return Err("empty_response");
+            }
+            if text.len() > (4 * request.text.len()).min(MAX_REWRITE_RESULT) {
+                return Err("oversized_response");
+            }
+            let identity = |parent: &str, field: &str| v.get(parent).and_then(|o| o.get(field)).and_then(Value::as_str).is_some_and(|s| !s.is_empty() && s.len() <= 128);
+            let count = |parent: &str, field: &str| v.get(parent).and_then(|o| o.get(field)).and_then(Value::as_i64).is_some_and(|n| n >= 0);
+            let complete = identity("server", "name")
+                && identity("server", "version")
+                && identity("backend", "kind")
+                && identity("backend", "model")
+                && v.get("prompt_version").and_then(Value::as_i64).is_some_and(|n| n >= 0)
+                && count("shield", "version")
+                && count("shield", "placeholders")
+                && count("shield", "restored")
+                && v.get("timing").is_some_and(Value::is_object);
+            if !complete {
+                return Err("malformed_response");
+            }
+            if text.contains(['⟦', '⟧']) {
+                return Err("server_validation_failed");
+            }
+            Ok(Some(text.to_string()))
+        }
+        "error" => {
+            let code = v.get("code").and_then(Value::as_str).ok_or("malformed_response")?;
+            check_id()?;
+            Err(server_code_category(code))
+        }
+        _ => check_id().map(|()| None),
+    }
+}
+
+/// `RewriteClient.rewrite`: protocol v1. Blocking; run it off the UI thread.
+// ponytail: never sends v2 context, the snapshot has no Rust capture yet. Cancel marks the row and lets this run out its timeout.
+pub fn send_rewrite(request: &RewriteRequest, secret: Option<&str>, timeout: std::time::Duration) -> Result<String, &'static str> {
+    use std::io::{BufRead, BufReader, Read};
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(timeout)).max_redirects(0).http_status_as_error(false).proxy(None).build().into();
+    let body = serde_json::json!({"schema_version": 1, "request_id": request.attempt, "mode": request.mode, "text": request.text, "language_hints": [], "stream_deltas": false});
+    let mut post = agent.post(format!("{}/v1/rewrite", request.origin.trim_end_matches('/'))).header("Content-Type", "application/json").header("Accept", "application/x-ndjson");
+    if let Some(secret) = secret {
+        post = post.header("Authorization", format!("Bearer {secret}"));
+    }
+    let failed = |e: ureq::Error| match e {
+        ureq::Error::Timeout(_) => "timeout",
+        ureq::Error::HostNotFound | ureq::Error::ConnectionFailed => "server_unreachable",
+        ureq::Error::Io(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => "server_unreachable",
+        ureq::Error::Io(e) if e.kind() == std::io::ErrorKind::TimedOut => "timeout",
+        _ => "transport_error",
+    };
+    let mut response = post.send(body.to_string()).map_err(failed)?;
+    let status = response.status().as_u16();
+    if status != 200 {
+        let body = response.body_mut().with_config().limit(MAX_REWRITE_LINE as u64).read_to_vec().unwrap_or_default();
+        let code = serde_json::from_slice::<serde_json::Value>(&body).ok();
+        return Err(http_status_category(status, code.as_ref().and_then(|v| v.get("error")?.get("code")?.as_str())));
+    }
+    let cap = (4 * request.text.len() + MAX_REWRITE_LINE).min(73_728);
+    let mut total = 0;
+    for line in BufReader::new(response.into_body().into_reader().take(cap as u64 + 1)).split(b'\n') {
+        let line = line.map_err(|e| if e.kind() == std::io::ErrorKind::TimedOut { "timeout" } else { "transport_error" })?;
+        total += line.len() + 1;
+        if total > cap + 1 {
+            return Err("oversized_response");
+        }
+        if let Some(text) = rewrite_line(&line, request)? {
+            return Ok(text);
+        }
+    }
+    Err("malformed_response")
+}
+
 /// Attempt admission: rechecks limits, reserves quota, inserts the pending row, mirrors the state.
 pub fn begin_rewrite(db: &Db, transcription: &str, mode: &str, input: &str, origin: &str) -> Result<String, StoreError> {
     if input.is_empty() || input.len() > MAX_REWRITE_INPUT || input.chars().count() > MAX_REWRITE_SCALARS {
@@ -1062,6 +1239,13 @@ impl RewriteMode {
             RewriteMode::Concise => "Concise",
         }
     }
+    pub fn raw(self) -> &'static str {
+        match self {
+            RewriteMode::Clean => "clean",
+            RewriteMode::Polished => "polished",
+            RewriteMode::Concise => "concise",
+        }
+    }
 }
 
 /// `HistoryViewModel`. Reads are synchronous on the UI thread, so its generation counters and worker
@@ -1085,6 +1269,8 @@ pub struct Model {
     pub rewrite_mode: RewriteMode,
     /// False until a rewrite client exists in Rust; the button is then disabled, never faked.
     pub has_rewriter: bool,
+    /// Pending attempts on every dictation, as of the last read of the open detail.
+    pub rewrites_running: usize,
     pub rewrite_busy: bool,
     pub pending_items: Vec<PendingItem>,
     pub pending_error: Option<String>,
@@ -1223,6 +1409,7 @@ impl Model {
         match envelope(db, &id) {
             Ok(e) => {
                 self.attempts = attempts(db, &id).unwrap_or_default();
+                self.rewrites_running = pending_rewrites(db);
                 self.envelope = Some(e);
             }
             Err(LoadError::Missing) => self.did_delete(&id),
@@ -1280,6 +1467,7 @@ impl Model {
             && !self.rewrite_busy
             && self.rewrite_limit_explanation().is_none()
             && self.pending_rewrite().is_none()
+            && self.rewrites_running < MAX_PENDING_OVERALL
             && self.envelope.as_ref().is_some_and(|e| e.entry.quality == "complete")
     }
     pub fn delivered_line(&self) -> String {
@@ -1308,6 +1496,7 @@ impl Model {
     pub fn reload_attempts(&mut self, db: &Db) {
         let Some(id) = self.detail_id.clone() else { return };
         self.attempts = attempts(db, &id).unwrap_or_default();
+        self.rewrites_running = pending_rewrites(db);
         if let Ok(Some(entry)) = get(db, &id) {
             if let Some(i) = self.entries.iter().position(|e| e.id == id) {
                 self.entries[i] = entry.clone();
@@ -1316,6 +1505,42 @@ impl Model {
                 env.entry = entry;
             }
         }
+    }
+
+    /// The Rewrite/Retry button: the first attempt's input, or the saved text. An admitted attempt
+    /// comes back as the request to send; `finish_rewrite` takes the answer.
+    pub fn request_rewrite(&mut self, db: &Db, enabled: bool, settings: &crate::settings::RewriteSettings) -> Option<RewriteRequest> {
+        if !self.can_request_rewrite() {
+            return None;
+        }
+        let (id, saved) = (self.detail_id.clone()?, self.envelope.as_ref()?.entry.text.clone());
+        let input = self.attempts.first().map_or(saved, |a| a.input_text.clone());
+        let mode = self.rewrite_mode.raw();
+        let mut request = None;
+        self.rewrite_notice = match admit_rewrite(db, &id, &input, mode, enabled, settings) {
+            Admission::NotEligible => None,
+            Admission::Refused(category) => Some(rewrite_notice(category).into()),
+            Admission::Admitted(attempt) => {
+                request = Some(RewriteRequest { dictation: id, attempt, mode, text: input, origin: settings.origin.clone() });
+                None
+            }
+        };
+        self.reload_list(db);
+        self.reload_attempts(db);
+        request
+    }
+
+    /// Stores the answer. A row that is no longer pending was cancelled: its answer is dropped.
+    pub fn finish_rewrite(&mut self, db: &Db, request: &RewriteRequest, answer: Result<String, &'static str>, duration_ms: i64) {
+        let stored = match &answer {
+            Ok(text) => record_rewrite_result(db, &request.attempt, text, Some(duration_ms)),
+            Err(category) => terminate_rewrite(db, &request.attempt, Some(category), Some(duration_ms)),
+        };
+        if stored.is_ok() && self.detail_id.as_deref() == Some(&request.dictation) {
+            self.rewrite_notice = answer.err().map(|category| rewrite_notice(category).into());
+        }
+        self.reload_list(db);
+        self.reload_attempts(db);
     }
 
     /// Marks the pending attempt cancelled. No network task exists in Rust yet to stop.
@@ -1769,6 +1994,331 @@ mod tests {
         let left: i64 = db.conn.query_row("SELECT count(*) FROM rewrite_attempts WHERE transcription_id=?", [&id], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
         assert_eq!(delete_confirmed(&db, &id, repaired.revision).unwrap_err(), StoreError::Stale);
+    }
+
+    fn rewrite_ready() -> (Db, Model, String) {
+        let db = Db::memory();
+        seed(&db);
+        let id = seed_id(40);
+        let mut m = Model::default();
+        m.show_detail(&db, &id);
+        for a in m.attempts.clone() {
+            db.conn.execute("DELETE FROM rewrite_attempts WHERE id=?", [&a.id]).unwrap();
+        }
+        db.conn.execute("UPDATE transcriptions SET quality='complete' WHERE id=?", [&id]).unwrap();
+        m.has_rewriter = true;
+        m.show_detail(&db, &id);
+        assert!(m.can_request_rewrite(), "the baseline each condition below turns off");
+        (db, m, id)
+    }
+
+    // parity: HIST-147
+    #[test]
+    fn rewrite_gate_needs_a_rewriter() {
+        let (_, mut m, _) = rewrite_ready();
+        m.has_rewriter = false;
+        assert!(!m.can_request_rewrite());
+    }
+
+    #[test]
+    fn rewrite_gate_needs_an_idle_entry() {
+        let (_, mut m, _) = rewrite_ready();
+        m.rewrite_busy = true;
+        assert!(!m.can_request_rewrite());
+    }
+
+    #[test]
+    fn rewrite_gate_stops_at_ten_attempts() {
+        let (db, mut m, id) = rewrite_ready();
+        let text = m.envelope.as_ref().unwrap().entry.text.clone();
+        for n in 0..MAX_ATTEMPTS {
+            assert!(m.can_request_rewrite(), "attempt {n}");
+            let a = begin_rewrite(&db, &id, "clean", &text, "https://x.test").unwrap();
+            terminate_rewrite(&db, &a, Some("timeout"), None).unwrap();
+            m.reload_attempts(&db);
+        }
+        assert!(!m.can_request_rewrite());
+    }
+
+    #[test]
+    fn rewrite_gate_stops_on_a_pending_attempt_here() {
+        let (db, mut m, id) = rewrite_ready();
+        let text = m.envelope.as_ref().unwrap().entry.text.clone();
+        begin_rewrite(&db, &id, "clean", &text, "https://x.test").unwrap();
+        m.reload_attempts(&db);
+        assert!(!m.can_request_rewrite());
+    }
+
+    // parity: HIST-147 HIST-180
+    #[test]
+    fn rewrite_gate_stops_when_two_run_elsewhere() {
+        let (db, mut m, id) = rewrite_ready();
+        let others: Vec<String> = entries_page(&db, 5).into_iter().filter(|e| e != &id).take(2).collect();
+        let a = begin_rewrite(&db, &others[0], "clean", "words", "https://x.test").unwrap();
+        m.reload_attempts(&db);
+        assert!(m.can_request_rewrite(), "one elsewhere still leaves room");
+        begin_rewrite(&db, &others[1], "clean", "words", "https://x.test").unwrap();
+        m.reload_attempts(&db);
+        assert!(!m.can_request_rewrite());
+        assert!(m.rewrite_notice.is_none(), "no reason is given, as in Swift");
+        terminate_rewrite(&db, &a, Some("timeout"), None).unwrap();
+        m.reload_attempts(&db);
+        assert!(m.can_request_rewrite());
+    }
+
+    // parity: HIST-147 HIST-180
+    #[test]
+    fn rewrite_gate_needs_complete_quality() {
+        let (db, mut m, id) = rewrite_ready();
+        db.conn.execute("UPDATE transcriptions SET quality='incomplete' WHERE id=?", [&id]).unwrap();
+        m.reload_attempts(&db);
+        assert!(!m.can_request_rewrite());
+        assert!(m.rewrite_notice.is_none(), "no reason is given, as in Swift");
+    }
+
+    fn entries_page(db: &Db, n: i64) -> Vec<String> {
+        let mut s = db.conn.prepare("SELECT id FROM transcriptions ORDER BY created_at DESC LIMIT ?").unwrap();
+        s.query_map([n], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    fn remote(origin: &str, insecure: bool, credential: bool) -> crate::settings::RewriteSettings {
+        crate::settings::RewriteSettings { origin: origin.into(), insecure_override: insecure, credential_present: credential }
+    }
+
+    // parity: HIST-149
+    #[test]
+    fn admission_checks_in_swifts_order() {
+        let (db, _, id) = rewrite_ready();
+        let ok = remote("https://x.test", false, true);
+        // Rewriting off outranks every settings problem, and writes nothing.
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", false, &remote("http://x.test", false, false)), Admission::NotEligible);
+        assert_eq!(admit_rewrite(&db, &id, " \n", "clean", true, &ok), Admission::NotEligible);
+        assert!(attempts(&db, &id).unwrap().is_empty());
+        // Blocked plain HTTP, then the credential, then the endpoint.
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", true, &remote("http://x.test", false, false)), Admission::Refused("insecure_endpoint_blocked"));
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", true, &remote("https://x.test", false, false)), Admission::Refused("missing_credential"));
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", true, &remote("", false, false)), Admission::Refused("invalid_settings"));
+        // Settings outrank the input bound; the bound outranks the store.
+        assert_eq!(admit_rewrite(&db, &id, &"x".repeat(20_001), "clean", true, &ok), Admission::Refused("input_too_large"));
+        assert_eq!(admit_rewrite(&db, &id, &"é".repeat(32_769), "clean", true, &ok), Admission::Refused("input_too_large"));
+        let Admission::Admitted(attempt) = admit_rewrite(&db, &id, "words", "clean", true, &ok) else { panic!("admitted") };
+        assert_eq!(admit_rewrite(&db, &id, "words", "clean", true, &ok), Admission::Refused("concurrency_limit"));
+        assert_eq!(attempts(&db, &id).unwrap().iter().find(|a| a.id == attempt).unwrap().state, "pending");
+    }
+
+    // parity: HIST-179
+    #[test]
+    fn rewrite_with_rewriting_off_clears_the_notice_and_writes_nothing() {
+        let (db, mut m, id) = rewrite_ready();
+        m.rewrite_notice = Some("old".into());
+        assert!(m.can_request_rewrite(), "the button stays enabled with rewriting off");
+        assert!(m.request_rewrite(&db, false, &remote("https://x.test", false, true)).is_none());
+        assert!(m.rewrite_notice.is_none());
+        assert!(attempts(&db, &id).unwrap().is_empty());
+    }
+
+    // parity: HIST-136
+    #[test]
+    fn a_refused_rewrite_shows_the_refusal_and_keeps_no_row() {
+        let (db, mut m, id) = rewrite_ready();
+        assert!(m.request_rewrite(&db, true, &remote("https://x.test", false, false)).is_none());
+        assert_eq!(m.rewrite_notice.as_deref(), Some("Rewriting skipped: no credential for this server."));
+        assert!(attempts(&db, &id).unwrap().is_empty());
+    }
+
+    /// One HTTP exchange on a loopback port: answers `status` and `body`, returns what it was sent.
+    fn server(status: u16, body: String) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let thread = std::thread::spawn(move || {
+            let (mut c, _) = listener.accept().unwrap();
+            let (mut got, mut buf) = (Vec::new(), [0; 4096]);
+            loop {
+                let n = c.read(&mut buf).unwrap();
+                got.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&got).to_string();
+                let Some(head) = text.find("\r\n\r\n") else { continue };
+                let wanted = text.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length: ").map(|v| v.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                if got.len() >= head + 4 + wanted {
+                    write!(c, "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    return text;
+                }
+            }
+        });
+        (origin, thread)
+    }
+
+    fn result_line(id: &str, mode: &str, text: &str) -> String {
+        serde_json::json!({"event":"result","schema_version":1,"request_id":id,"mode":mode,"text":text,"server":{"name":"s","version":"1"},"backend":{"kind":"k","model":"m"},"prompt_version":1,"shield":{"version":1,"placeholders":0,"restored":0},"timing":{}}).to_string() + "\n"
+    }
+
+    fn sample_request(origin: &str) -> RewriteRequest {
+        RewriteRequest { dictation: "d".into(), attempt: "ABC".into(), mode: "clean", text: "some spoken words".into(), origin: origin.into() }
+    }
+
+    fn send(status: u16, body: String) -> Result<String, &'static str> {
+        let (origin, thread) = server(status, body);
+        let out = send_rewrite(&sample_request(&origin), Some("key"), std::time::Duration::from_secs(5));
+        thread.join().unwrap();
+        out
+    }
+
+    // parity: HIST-148
+    #[test]
+    fn an_answered_rewrite_is_stored_and_a_retry_sends_the_first_input() {
+        let (db, mut m, id) = rewrite_ready();
+        let saved = m.envelope.as_ref().unwrap().entry.text.clone();
+        m.rewrite_mode = RewriteMode::Concise;
+        let first = m.request_rewrite(&db, true, &remote("https://x.test", false, true)).unwrap();
+        assert_eq!(m.pending_rewrite().map(|a| a.mode.as_str()), Some("concise"), "pending until answered");
+        m.finish_rewrite(&db, &first, Ok("Short.".into()), 12);
+        let a = attempts(&db, &id).unwrap();
+        assert_eq!((a[0].state.as_str(), a[0].input_text.as_str()), ("succeeded", saved.as_str()));
+        assert!(m.rewrite_notice.is_none());
+        db.conn.execute("UPDATE transcriptions SET text='changed' WHERE id=?", [&id]).unwrap();
+        m.reload_attempts(&db);
+        assert_eq!(m.request_rewrite(&db, true, &remote("https://x.test", false, true)).unwrap().text, saved);
+    }
+
+    // parity: HIST-155
+    #[test]
+    fn an_answer_after_cancel_is_dropped() {
+        let (db, mut m, id) = rewrite_ready();
+        let request = m.request_rewrite(&db, true, &remote("https://x.test", false, true)).unwrap();
+        m.cancel_rewrite(&db);
+        m.finish_rewrite(&db, &request, Ok("Late.".into()), 1);
+        assert_eq!(m.rewrite_notice.as_deref(), Some("Rewrite cancelled."));
+        assert_eq!(attempts(&db, &id).unwrap()[0].state, "cancelled");
+    }
+
+    #[test]
+    fn the_request_carries_protocol_v1_and_the_credential() {
+        let (origin, thread) = server(200, result_line("abc", "clean", "Clean words."));
+        assert_eq!(send_rewrite(&sample_request(&origin), Some("key"), std::time::Duration::from_secs(5)), Ok("Clean words.".into()));
+        let got = thread.join().unwrap();
+        assert!(got.starts_with("POST /v1/rewrite HTTP/1.1"), "{got}");
+        assert!(got.to_lowercase().contains("authorization: bearer key"));
+        let body: serde_json::Value = serde_json::from_str(got.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body, serde_json::json!({"schema_version":1,"request_id":"ABC","mode":"clean","text":"some spoken words","language_hints":[],"stream_deltas":false}));
+    }
+
+    // parity: HIST-134
+    #[test]
+    fn connection_failures_map_to_their_notices() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        assert_eq!(send_rewrite(&sample_request(&origin), None, std::time::Duration::from_secs(5)), Err("server_unreachable"));
+        assert_eq!(send(500, String::new()), Err("transport_error"));
+        assert_eq!(send(401, String::new()), Err("authentication_failed"));
+        assert_eq!(send(503, String::new()), Err("backend_unavailable"));
+        // Accepts and never answers.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", silent.local_addr().unwrap());
+        assert_eq!(send_rewrite(&sample_request(&origin), None, std::time::Duration::from_millis(200)), Err("timeout"));
+    }
+
+    // parity: HIST-135
+    #[test]
+    fn unusable_replies_map_to_their_categories() {
+        assert_eq!(send(200, "not json\n".into()), Err("malformed_response"));
+        assert_eq!(send(200, String::new()), Err("malformed_response"), "no terminal event");
+        assert_eq!(send(200, result_line("other", "clean", "Words.")), Err("request_mismatch"));
+        assert_eq!(send(200, result_line("abc", "polished", "Words.")), Err("malformed_response"));
+        assert_eq!(send(200, result_line("abc", "clean", "  ")), Err("empty_response"));
+        assert_eq!(send(200, result_line("abc", "clean", &"x".repeat(69))), Err("oversized_response"));
+        assert_eq!(send(200, result_line("abc", "clean", "⟦0⟧ words")), Err("server_validation_failed"));
+        assert_eq!(send(200, result_line("abc", "clean", "Words.").replace("\"schema_version\":1", "\"schema_version\":9")), Err("unsupported_schema_version"));
+        assert_eq!(send(200, format!("{{\"event\":\"error\",\"request_id\":\"abc\",\"code\":\"backend_error\"}}\n")), Err("server_validation_failed"));
+        // Progress is checked and skipped; the first terminal event decides.
+        let lines = format!("{{\"event\":\"accepted\",\"request_id\":\"abc\"}}\n{}{}", result_line("abc", "clean", "First."), result_line("abc", "clean", "Second."));
+        assert_eq!(send(200, lines), Ok("First.".into()));
+    }
+
+    // parity: HIST-134
+    #[test]
+    fn connection_notice_copy() {
+        for (category, text) in [
+            ("server_unreachable", "Rewrite server unreachable."),
+            ("transport_error", "Rewrite connection failed."),
+            ("timeout", "Rewrite took too long."),
+            ("authentication_failed", "Rewrite server rejected the credential. Check Settings."),
+            ("backend_unavailable", "Rewrite model is not available on the server."),
+        ] {
+            assert_eq!(rewrite_notice(category), text);
+        }
+    }
+
+    // parity: HIST-135
+    #[test]
+    fn result_notice_copy() {
+        for category in ["malformed_response", "unsupported_schema_version", "request_mismatch"] {
+            assert_eq!(rewrite_notice(category), "Rewrite server sent an unusable reply.");
+        }
+        for category in ["empty_response", "oversized_response", "server_validation_failed"] {
+            assert_eq!(rewrite_notice(category), "Rewrite result was rejected.");
+        }
+    }
+
+    // parity: HIST-136
+    #[test]
+    fn skipped_notice_copy() {
+        for (category, text) in [
+            ("missing_credential", "Rewriting skipped: no credential for this server."),
+            ("insecure_endpoint_blocked", "Rewriting skipped: unencrypted connection blocked."),
+            ("invalid_settings", "Rewriting skipped: the endpoint is invalid."),
+            ("input_too_large", "Rewriting skipped: the text is too long."),
+            ("capacity_exceeded", "Rewriting skipped: history is full."),
+        ] {
+            assert_eq!(rewrite_notice(category), text);
+        }
+    }
+
+    // parity: HIST-137
+    #[test]
+    fn limit_notice_copy() {
+        for (category, text) in [
+            ("attempt_limit", "This dictation already has ten rewrite attempts."),
+            ("concurrency_limit", "Two rewrites are still running."),
+            ("interrupted", "Rewrite was interrupted by a restart."),
+            ("context_copied", "Rewrite used on-screen text you did not say."),
+        ] {
+            assert_eq!(rewrite_notice(category), text);
+        }
+    }
+
+    // parity: HIST-177 INS-107
+    #[test]
+    fn a_failed_insert_still_reads_as_delivered() {
+        let (db, mut m, id) = rewrite_ready();
+        let e = get(&db, &id).unwrap().unwrap();
+        let a = begin_rewrite(&db, &id, "clean", &e.text, "https://x.test").unwrap();
+        record_rewrite_result(&db, &a, "Short words.", Some(1)).unwrap();
+        let (attempt, rev) = begin_attempt(&db, &id, e.revision).unwrap();
+        record_outcome(&db, &id, rev, &attempt, Outcome::NotInserted, Some(&a)).unwrap();
+        let delivered: i64 = db.conn.query_row("SELECT delivered FROM rewrite_attempts WHERE id=?", [&a], |r| r.get(0)).unwrap();
+        assert_eq!(delivered, 1, "recorded as delivered although nothing was inserted");
+        m.reload_attempts(&db);
+        assert!(m.delivered_line().starts_with("Delivered: rewrite attempt 1"), "{}", m.delivered_line());
+        assert!(crate::insights::load(&db).unwrap().words_corrected > 0);
+    }
+
+    // parity: HIST-064
+    #[test]
+    fn room_for_a_recording_follows_rows_bytes_and_disk() {
+        let (db, _, _) = rewrite_ready();
+        let set = |rows: i64, bytes: i64| db.conn.execute("UPDATE history_usage SET row_count=?,payload_bytes=?", [rows, bytes]).unwrap();
+        set(1, 0);
+        assert!(has_room(&db, None));
+        assert!(!has_room(&db, Some(RESERVE_FREE_BYTES - 1)));
+        assert!(has_room(&db, Some(RESERVE_FREE_BYTES)));
+        set(MAX_ROWS, 0);
+        assert!(!has_room(&db, None));
+        set(MAX_ROWS - 1, MAX_PAYLOAD_BYTES - RESERVATION_BYTES);
+        assert!(has_room(&db, None));
+        set(1, MAX_PAYLOAD_BYTES - RESERVATION_BYTES + 1);
+        assert!(!has_room(&db, None));
     }
 
     // parity: HIST-070 HIST-073 HIST-074 HIST-080 HIST-083 HIST-084 HIST-085 HIST-189

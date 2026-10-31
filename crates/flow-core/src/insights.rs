@@ -265,7 +265,7 @@ pub fn talk_time(seconds: f64) -> String {
 pub fn versus_typing(pace: Option<i64>) -> String {
     pace.map_or("–".into(), |p| {
         let ratio = p as f64 / 40.0;
-        region_number(ratio, 1).unwrap_or_else(|| format!("{ratio:.1}")) + "×"
+        region_number(ratio, 1).unwrap_or_else(|| crate::onboarding::localized(&format!("{ratio:.1}"))) + "×"
     })
 }
 

@@ -21,6 +21,47 @@ fn click(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, id: String) {
     frame(cx, w);
 }
 
+/// What the Mac build has today: the save panel keeps `Services`' default, `Unavailable`.
+struct NoSavePanel;
+impl flow_platform::Services for NoSavePanel {
+    fn name(&self) -> &'static str {
+        "test"
+    }
+    fn device_word(&self) -> &'static str {
+        "Desktop"
+    }
+    fn app_data_dir(&self) -> std::path::PathBuf {
+        std::env::temp_dir()
+    }
+    fn permission(&self, _: flow_platform::Permission) -> flow_platform::PermissionState {
+        flow_platform::PermissionState::Granted
+    }
+    fn open_permission_settings(&self, _: flow_platform::Permission) -> Result<(), flow_platform::Unavailable> {
+        Ok(())
+    }
+    fn high_contrast(&self) -> bool {
+        false
+    }
+    fn reduce_motion(&self) -> bool {
+        false
+    }
+    fn launch_at_login(&self) -> Result<bool, flow_platform::Unavailable> {
+        Ok(false)
+    }
+    fn set_launch_at_login(&self, _: bool) -> Result<(), flow_platform::Unavailable> {
+        Ok(())
+    }
+    fn free_disk_bytes(&self) -> Option<u64> {
+        None
+    }
+    fn secret(&self, _: &str) -> Result<Option<String>, flow_platform::Unavailable> {
+        Ok(None)
+    }
+    fn set_secret(&self, _: &str, _: &str) -> Result<(), flow_platform::Unavailable> {
+        Ok(())
+    }
+}
+
 fn exists(cx: &mut TestAppContext, id: String) -> bool {
     cx.update(|cx| cx.global::<Core>().db.as_ref().map(|db| get(db, &id).unwrap().is_some()).unwrap())
 }
@@ -102,17 +143,6 @@ async fn details_show_status_stages_and_processing(cx: &mut TestAppContext) {
     assert!(!saw("Completeness: "));
 }
 
-// parity: HIST-147
-#[flow_ui::gpui::test]
-async fn rewrite_is_disabled_without_a_client(cx: &mut TestAppContext) {
-    let w = open(cx);
-    w.update(cx, |t, _, cx| {
-        t.show_detail(&seed_id(1), cx);
-        assert!(!t.model.can_request_rewrite());
-    })
-    .unwrap();
-}
-
 // parity: HIST-102
 #[flow_ui::gpui::test]
 async fn legacy_row_explains_missing_details(cx: &mut TestAppContext) {
@@ -134,7 +164,11 @@ async fn pending_rows_save_failure_and_discard(cx: &mut TestAppContext) {
         cx.notify();
     })
     .unwrap();
-    cx.update(|cx| cx.global_mut::<Core>().paths = flow_core::paths::Paths::new(dir.clone()));
+    cx.update(|cx| {
+        let core = cx.global_mut::<Core>();
+        core.paths = flow_core::paths::Paths::new(dir.clone());
+        core.services = Box::new(NoSavePanel);
+    });
     frame(cx, w);
     assert_saw(&["WAITING FOR SERVER", "Recognize Locally", "Save Audio…", "Discard"]);
     let id = seed_id(9201);
@@ -633,3 +667,208 @@ async fn review_warns_and_cancel_or_timeout_keep_the_text(cx: &mut TestAppContex
     cx.run_until_parked();
     assert_eq!(status(cx), "Selection expired. Your text remains saved.");
 }
+
+fn first_id(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, n: usize) -> String {
+    w.update(cx, |t, _, _| t.model.entries[n].id.clone()).unwrap()
+}
+
+// parity: HIST-040
+#[flow_ui::gpui::test]
+async fn hovering_a_row_fills_it_and_leaving_clears_it(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let (a, b) = (first_id(cx, w, 0), first_id(cx, w, 1));
+    let canvas = cx.update(|cx| pal(cx).canvas);
+    let fill = |cx: &mut TestAppContext, id: &str| {
+        let id = id.to_string();
+        w.update(cx, move |t, _, cx| t.row_fill(&id, &pal(cx))).unwrap()
+    };
+    assert_eq!(fill(cx, &a), gpui::transparent_black());
+    cx.update_window(w.into(), |_, win, cx| win.hover(SharedString::from(format!("history.text.{a}")), cx)).unwrap();
+    frame(cx, w);
+    assert_eq!(fill(cx, &a), canvas);
+    assert_eq!(fill(cx, &b), gpui::transparent_black());
+    cx.update_window(w.into(), |_, win, cx| win.hover(SharedString::from(format!("history.text.{b}")), cx)).unwrap();
+    frame(cx, w);
+    assert_eq!(fill(cx, &a), gpui::transparent_black());
+    assert_eq!(fill(cx, &b), canvas);
+}
+
+// parity: HIST-064
+#[flow_ui::gpui::test]
+async fn deleting_while_full_reports_whether_there_is_room(cx: &mut TestAppContext) {
+    let w = open(cx);
+    session(cx);
+    let status = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Session>().dictation.as_ref().map(|d| (d.capacity_blocked, d.status.clone())).unwrap());
+    let remove_one = |cx: &mut TestAppContext, full: bool| {
+        cx.update(|cx| {
+            crate::shell::update_session(cx, |s| s.dictation.as_mut().unwrap().capacity_blocked = true);
+            let rows = if full { MAX_ROWS + 5 } else { 1 };
+            cx.global::<Core>().db.as_ref().unwrap().conn.execute("UPDATE history_usage SET row_count=?", [rows]).unwrap();
+        });
+        w.update(cx, |t, _, cx| {
+            let e = t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone();
+            t.ask_delete(&e, cx);
+        })
+        .unwrap();
+        frame(cx, w);
+        click(cx, w, "history.deleteDialog.confirm".into());
+    };
+    remove_one(cx, true);
+    assert_eq!(status(cx), (true, CAPACITY_STILL_FULL.to_string()));
+    remove_one(cx, false);
+    assert_eq!(status(cx), (false, CAPACITY_FREED.to_string()));
+}
+
+// parity: HIST-178
+#[flow_ui::gpui::test]
+async fn a_day_that_turns_while_away_keeps_the_old_headings(cx: &mut TestAppContext) {
+    let w = open(cx);
+    const DAY: i64 = 86_400_000;
+    let was = w.update(cx, |t, _, _| t.now).unwrap();
+    w.update(cx, |t, _, cx| t.note_clock(was + DAY, false, cx)).unwrap();
+    assert_eq!(w.update(cx, |t, _, _| t.now).unwrap(), was, "missed while away");
+    w.update(cx, |t, _, cx| t.note_clock(was + DAY, true, cx)).unwrap();
+    assert_eq!(w.update(cx, |t, _, _| t.now).unwrap(), was, "the same day, even once shown");
+    w.update(cx, |t, _, cx| t.note_clock(was + 2 * DAY, true, cx)).unwrap();
+    assert_eq!(w.update(cx, |t, _, _| t.now).unwrap(), was + 2 * DAY);
+}
+
+// parity: HIST-183
+#[flow_ui::gpui::test]
+async fn a_refresh_starts_an_open_detail_over(cx: &mut TestAppContext) {
+    let w = open(cx);
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
+    frame(cx, w);
+    click(cx, w, "history.detail.stage.raw".into());
+    click(cx, w, "history.detail.processing".into());
+    w.update(cx, |t, _, cx| {
+        assert_eq!(t.stage, detail::Stage::Raw);
+        assert!(!t.open.is_empty());
+        t.reload(cx);
+        assert_eq!(t.stage, detail::Stage::Normalized);
+        assert!(t.open.is_empty());
+    })
+    .unwrap();
+}
+
+// parity: HIST-148
+#[flow_ui::gpui::test]
+async fn the_rewrite_button_sends_the_request_and_shows_the_failure(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let id = seed_id(40);
+    // Nothing listens on this port once the listener is gone, so the real client fails to connect.
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    cx.update(|cx| {
+        let core = cx.global_mut::<Core>();
+        core.prefs.set("rewriteEnabled", true);
+        core.prefs.set("rewriteEndpoint", format!("http://127.0.0.1:{port}"));
+        let db = core.db.as_ref().unwrap();
+        db.conn.execute("DELETE FROM rewrite_attempts WHERE transcription_id=?", [&id]).unwrap();
+        db.conn.execute("UPDATE transcriptions SET quality='complete' WHERE id=?", [&id]).unwrap();
+    });
+    w.update(cx, |t, _, cx| t.show_detail(&id, cx)).unwrap();
+    frame(cx, w);
+    click(cx, w, "history.detail.rewrite.retry".into());
+    cx.run_until_parked();
+    w.update(cx, |t, _, _| {
+        assert_eq!(t.model.rewrite_notice.as_deref(), Some("Rewrite server unreachable."));
+        assert_eq!(t.model.attempts.iter().map(|a| a.state.as_str()).collect::<Vec<_>>(), ["failed"]);
+    })
+    .unwrap();
+}
+
+// parity: HIST-179
+#[flow_ui::gpui::test]
+async fn the_rewrite_button_stays_on_and_does_nothing_with_rewriting_off(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let id = seed_id(40);
+    cx.update(|cx| {
+        cx.global_mut::<Core>().prefs.set("rewriteEnabled", false);
+        let db = cx.global::<Core>().db.as_ref().unwrap();
+        db.conn.execute("DELETE FROM rewrite_attempts WHERE transcription_id=?", [&id]).unwrap();
+        db.conn.execute("UPDATE transcriptions SET quality='complete' WHERE id=?", [&id]).unwrap();
+    });
+    w.update(cx, |t, _, cx| t.show_detail(&id, cx)).unwrap();
+    frame(cx, w);
+    let retry = cx.update_window(w.into(), |_, win, _| win.find("history.detail.rewrite.retry").disabled()).unwrap();
+    assert_ne!(retry, Some(true));
+    // A real notice first: enabled, with no endpoint, the click is refused.
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("rewriteEnabled", true));
+    click(cx, w, "history.detail.rewrite.retry".into());
+    w.update(cx, |t, _, _| assert_eq!(t.model.rewrite_notice.as_deref(), Some("Rewriting skipped: the endpoint is invalid."))).unwrap();
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("rewriteEnabled", false));
+    // The notice pushed the button below the sheet's fold.
+    w.update(cx, |t, _, cx| {
+        t.detail_scroll.scroll_to_bottom();
+        cx.notify();
+    })
+    .unwrap();
+    frame(cx, w);
+    click(cx, w, "history.detail.rewrite.retry".into());
+    w.update(cx, |t, _, _| {
+        assert!(t.model.rewrite_notice.is_none());
+        assert!(t.model.attempts.is_empty());
+    })
+    .unwrap();
+}
+
+fn bounds(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, id: &str) -> Bounds<Pixels> {
+    let id = SharedString::from(id.to_string());
+    cx.update_window(w.into(), |_, win, _| win.find(id).bounds()).unwrap()
+}
+
+// parity: HIST-029
+#[flow_ui::gpui::test]
+async fn the_error_row_has_its_top_padding(cx: &mut TestAppContext) {
+    let w = open(cx);
+    w.update(cx, |t, _, cx| {
+        t.model.error = Some(READ_ERROR.into());
+        cx.notify();
+    })
+    .unwrap();
+    frame(cx, w);
+    let (row, retry) = (bounds(cx, w, "history.errorRow"), bounds(cx, w, "history.retry"));
+    assert_eq!(retry.origin.y - row.origin.y, px(20.));
+}
+
+// parity: HIST-098
+#[flow_ui::gpui::test]
+async fn the_status_block_is_five_lines_at_its_pitch(cx: &mut TestAppContext) {
+    let w = open(cx);
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
+    frame(cx, w);
+    // Headless Figtree 13 is a 14 line; on screen `Txt` gives 16 and the pitch matches Swift's.
+    assert_eq!(bounds(cx, w, "history.detail.status").size.height, px(5. * 14. + 4. * 3.));
+}
+
+// parity: HIST-110 HIST-123
+#[flow_ui::gpui::test]
+async fn processing_lines_and_hashes_keep_their_spacing(cx: &mut TestAppContext) {
+    let w = open(cx);
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
+    frame(cx, w);
+    click(cx, w, "history.detail.processing".into());
+    let (list, hashes) = (bounds(cx, w, "history.detail.processing.lines"), bounds(cx, w, "history.detail.hashes"));
+    assert_eq!(hashes.origin.y - list.bottom(), px(8.));
+    let d = w.update(cx, |t, _, _| t.model.envelope.as_ref().unwrap().detail.clone().unwrap()).unwrap();
+    let items = processing_lines(&d);
+    let (a, b) = items.windows(2).find_map(|w| match (&w[0], &w[1]) {
+        (Line::Meta(a, _), Line::Meta(b, _)) => Some((a.clone(), b.clone())),
+        _ => None,
+    }).unwrap();
+    let (first, second) = (bounds(cx, w, &format!("history.meta.{a}")), bounds(cx, w, &format!("history.meta.{b}")));
+    assert_eq!(second.origin.y - first.bottom(), px(8.));
+    // Two headless Figtree 13 lines, spacing 2.
+    assert_eq!(first.size.height, px(14. + 2. + 14.));
+}
+
+// parity: HIST-129
+#[flow_ui::gpui::test]
+async fn context_disclosures_are_8_apart(cx: &mut TestAppContext) {
+    let w = open(cx);
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
+    frame(cx, w);
+    let (before, snapshot) = (bounds(cx, w, "history.detail.context.before"), bounds(cx, w, "history.detail.context.snapshot"));
+    assert_eq!(snapshot.origin.y - before.bottom(), px(8.));
+}
+

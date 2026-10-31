@@ -67,14 +67,17 @@ pub fn confirm_dialog(
 ) -> Div {
     let p = pal(cx);
     let dark = p.ink.l > 0.5;
-    let fill = if dark { hsla(0., 0., 0.2, 0.92) } else { hsla(40. / 360., 0.08, 0.74, 0.96) };
+    let fill = if dark { hsla(0., 0., 0.164, 0.92) } else { hsla(0., 0., 0.862, 0.96) };
     // AppKit's system red.
     let red = if dark { rgb(0xFF453A) } else { rgb(0xFF3B30) };
     let button = |id: String, label: String, bg: Hsla, fg: Hsla| {
         FlowButton::new(id, ButtonKind::Plain, label.clone()).content(div().w(px(110.)).h(px(28.)).rounded_full().bg(bg).flex().items_center().justify_center().child(t(label).size(13.).color(fg).a11y_hidden()))
     };
+    // A native alert centers a short message and left-aligns one that wraps, at about 180 wide.
+    let centered = !message.is_empty() && message.len() <= 24;
     v_flex()
         .w(px(260.))
+        .when(centered, |d| d.items_center())
         .px(px(22.))
         .pt(px(21.))
         .pb(px(8.))
@@ -82,10 +85,10 @@ pub fn confirm_dialog(
         .bg(fill)
         .rounded(px(26.))
         .border_1()
-        .border_color(p.ink.opacity(0.25))
+        .border_color(p.ink.opacity(0.1))
         .shadow_lg()
         .child(t(title.to_string()).font(13., 600.).color(p.ink))
-        .when(!message.is_empty(), |d| d.child(t(message.to_string()).size(13.).color(p.ink)))
+        .when(!message.is_empty(), |d| d.child(div().max_w(px(180.)).child(t(message.to_string()).size(13.).color(p.ink))))
         .child(
             h_flex()
                 .w_full()

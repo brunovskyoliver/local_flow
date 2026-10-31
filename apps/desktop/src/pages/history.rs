@@ -14,6 +14,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+pub(super) const CAPACITY_FREED: &str = "History has space for another recording.";
+pub(super) const CAPACITY_STILL_FULL: &str = "History entry deleted. More space is needed before recording; explicitly delete another entry.";
+
 pub struct HistoryPage {
     model: Model,
     searching: bool,
@@ -39,6 +42,12 @@ pub struct HistoryPage {
     seen: RefCell<HashMap<String, Instant>>,
     /// The first list has been drawn, so a new row is news.
     settled: bool,
+    /// The row under the pointer, whose fill is `canvas`.
+    hovered_row: Option<String>,
+    /// `regroup`'s `now`: day headings keep this until the next rollover seen while shown.
+    now: i64,
+    /// The local day of the last rollover check.
+    clock_day: i64,
     _subs: Vec<Subscription>,
 }
 
@@ -107,8 +116,13 @@ impl HistoryPage {
             voice_over: cx.global::<Core>().services.voice_over_on(),
             seen: Default::default(),
             settled: false,
+            hovered_row: None,
+            now: now_ms(),
+            clock_day: 0,
             _subs: subs,
         };
+        page.clock_day = cx.global::<Core>().db.as_ref().map_or(0, |db| local(db, page.now).day_number());
+        page.model.has_rewriter = true;
         page.signature = cx.global::<Core>().db.as_ref().map(signature);
         page.reload(cx);
         page.apply_scenario(window, cx);
@@ -116,6 +130,11 @@ impl HistoryPage {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
+        // A refresh reloads an open detail, which starts over on its first stage (HIST-183).
+        if self.model.detail_id.is_some() {
+            self.stage = detail::Stage::Normalized;
+            self.open.clear();
+        }
         match cx.global::<Core>().db.as_ref() {
             Some(db) => self.model.refresh(db),
             None => self.model.error = Some(READ_ERROR.into()),
@@ -267,13 +286,68 @@ impl HistoryPage {
 
     fn delete(&mut self, cx: &mut Context<Self>) {
         self.confirming_delete = false;
+        let free = cx.global::<Core>().services.free_disk_bytes();
+        let (mut deleted, mut room) = (false, false);
         if let Some(db) = cx.global::<Core>().db.as_ref() {
-            if self.model.delete_selected(db) {
+            deleted = self.model.delete_selected(db);
+            if deleted {
                 self.model.refresh(db);
                 self.signature = Some(signature(db));
+                room = has_room(db, free);
             }
         }
+        // `deleteOrThrow`: a blocked recorder asks again once a row has gone.
+        if deleted && cx.has_global::<Session>() {
+            crate::shell::update_session(cx, |s| {
+                if let Some(d) = s.dictation.as_mut().filter(|d| d.capacity_blocked) {
+                    d.capacity_blocked = !room;
+                    d.status = if room { CAPACITY_FREED } else { CAPACITY_STILL_FULL }.into();
+                }
+            });
+        }
         cx.notify();
+    }
+
+    /// `HistoryViewModel.requestRewrite`: admission now, the request off the UI thread.
+    fn request_rewrite(&mut self, cx: &mut Context<Self>) {
+        let core = cx.global::<Core>();
+        let settings = flow_core::settings::RewriteSettings::capture(&core.prefs, |origin| matches!(core.services.secret(&flow_core::settings::rewrite_keychain(origin)), Ok(Some(_))));
+        let timeout = Duration::from_secs(flow_core::settings::rewrite_timeout(&core.prefs) as u64);
+        let enabled = core.prefs.bool_or("rewriteEnabled", false);
+        let secret = core.services.secret(&flow_core::settings::rewrite_keychain(&settings.origin)).ok().flatten();
+        let request = core.db.as_ref().and_then(|db| self.model.request_rewrite(db, enabled, &settings));
+        cx.notify();
+        let Some(request) = request else { return };
+        cx.spawn(async move |this, cx| {
+            let started = Instant::now();
+            let sent = request.clone();
+            let answer = cx.background_spawn(async move { flow_core::history::send_rewrite(&sent, secret.as_deref(), timeout) }).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(db) = cx.global::<Core>().db.as_ref() {
+                    this.model.finish_rewrite(db, &request, answer, started.elapsed().as_millis() as i64);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `NSCalendarDayChanged`: observed only while the page is shown, so a day that turns while
+    /// away leaves the old headings until the next one (HIST-178).
+    /// ponytail: checked when drawn, so a window left untouched over midnight relabels on its next frame.
+    fn note_clock(&mut self, now: i64, shown: bool, cx: &App) {
+        let Some(db) = cx.global::<Core>().db.as_ref() else { return };
+        let day = local(db, now).day_number();
+        if day != self.clock_day {
+            self.clock_day = day;
+            if shown {
+                self.now = now;
+            }
+        }
+    }
+
+    fn row_fill(&self, id: &str, p: &Palette) -> Hsla {
+        if self.hovered_row.as_deref() == Some(id) { p.canvas } else { gpui::transparent_black() }
     }
 
     /// Remembers the first row in view so a page joining above it doesn't move it.
@@ -457,7 +531,18 @@ impl HistoryPage {
             .pr(px(12.))
             .when(first, |d| d.rounded_tl(px(12.)).rounded_tr(px(12.)))
             .when(last, |d| d.rounded_bl(px(12.)).rounded_br(px(12.)))
-            .hover(|s| s.bg(p.canvas))
+            .bg(self.row_fill(&e.id, &p))
+            .on_hover(cx.listener({
+                let id = e.id.clone();
+                move |this, over: &bool, _, cx| {
+                    if *over {
+                        this.hovered_row = Some(id.clone());
+                    } else if this.hovered_row.as_deref() == Some(id.as_str()) {
+                        this.hovered_row = None;
+                    }
+                    cx.notify();
+                }
+            }))
             .child(
                 v_flex()
                     .flex_none()
@@ -510,7 +595,7 @@ impl HistoryPage {
     fn list(&self, cx: &mut Context<Self>) -> Div {
         let p = pal(cx);
         let busy = self.busy(cx);
-        let groups = cx.global::<Core>().db.as_ref().map(|db| self.model.date_groups(db, now_ms())).unwrap_or_default();
+        let groups = cx.global::<Core>().db.as_ref().map(|db| self.model.date_groups(db, self.now)).unwrap_or_default();
         let mut col = v_flex().w_full();
         if self.model.has_newer {
             col = col.child(self.sentinel(false, cx));
@@ -559,6 +644,8 @@ impl Render for HistoryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The shell keeps this page alive, so a change while away refreshes when it's next drawn.
         // ponytail: checked at most once a second, a "page shown" call is exact.
+        let shown = cx.try_global::<Session>().is_none_or(|s| s.selection == Page::History);
+        self.note_clock(now_ms(), shown, cx);
         let due = self.checked_at.is_none_or(|l| l.elapsed() > Duration::from_secs(1));
         if due && cx.global::<Core>().scenario.is_none() && self.model.detail_id.is_none() {
             self.checked_at = Some(Instant::now());
@@ -576,6 +663,8 @@ impl Render for HistoryPage {
         if let Some(e) = self.model.error.clone() {
             content = content.child(
                 h_flex()
+                    .id("history.errorRow")
+                    .test_support()
                     .pt(px(20.))
                     .gap(px(8.))
                     .child(t(e).color(p.warning).selectable())
