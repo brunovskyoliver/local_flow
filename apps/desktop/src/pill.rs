@@ -27,6 +27,10 @@ pub const CLIPBOARD_SECONDS: u64 = 6;
 pub const ACTION_SECONDS: u64 = 6;
 pub const HIDDEN_GRACE_SECONDS: u64 = 10;
 pub const RESIZE: f32 = 0.32;
+const BOUNCE: f32 = 0.4;
+const PULSE: f64 = 1.6;
+/// Longer than the swap spring takes to settle.
+const HOVER_SETTLE: f32 = 0.6;
 /// Swift's `CAMediaTimingFunction(controlPoints:)` for the panel frame.
 pub const RESIZE_CURVE: [f32; 4] = [0.2, 0.9, 0.25, 1.];
 
@@ -240,6 +244,13 @@ impl Learned {
             LearnedKind::Added => "Added to dictionary".into(),
             LearnedKind::Retired { alias } if *alias == self.word => format!("Stopped listening for \u{2018}{}\u{2019}", self.word),
             LearnedKind::Retired { alias } => format!("Stopped changing \u{2018}{alias}\u{2019} to \u{2018}{}\u{2019}", self.word),
+        }
+    }
+    /// Swift labels the group by the word when added and by the message when retired.
+    fn group_label(&self) -> String {
+        match self.kind {
+            LearnedKind::Added => format!("Added {} to dictionary", self.word),
+            LearnedKind::Retired { .. } => self.message(),
         }
     }
     pub fn announcement(&self) -> String {
@@ -664,19 +675,57 @@ fn chip(id: &'static str, title: &'static str, a11y: String, remaining: Option<f
     b
 }
 
-fn notice(symbol: &'static str, message: String, max_width: f32, action: Option<AnyElement>, k: f32) -> impl IntoElement {
+/// A notice's symbol, `up` points above its resting place.
+fn glyph(symbol: &'static str, up: f32, k: f32) -> AnyElement {
+    div().id("pill.notice.symbol").test_support().relative().top(px(-up)).child(icon(symbol, 11. * k, style::ink().opacity(0.9))).into_any_element()
+}
+
+/// `spacer` is Swift's `Spacer(minLength: 4)`, in the learned and clipboard notices only.
+/// The capsule's 1 stroke sits inside Swift's padding but outside GPUI's, hence the `- 1.`.
+fn notice(symbol: AnyElement, message: String, label: String, max_width: f32, spacer: bool, action: Option<AnyElement>, k: f32) -> impl IntoElement {
     let trailing = if action.is_some() { 5. } else { 16. };
     capsule(false, k)
         .id("pill.notice")
         .test_support()
+        .role(accesskit::Role::Group)
+        .aria_label(label)
         .flex()
         .items_center()
         .gap(px(10. * k))
-        .pl(px(14. * k))
-        .pr(px(trailing * k))
-        .child(icon(symbol, 11. * k, style::ink().opacity(0.9)))
-        .child(div().max_w(px(max_width * k)).child(t(message).font(12. * k, 500.).color(style::ink()).lines(1)))
+        .pl(px(14. * k - 1.))
+        .pr(px(trailing * k - 1.))
+        .child(symbol)
+        .child(div().id("pill.notice.message").test_support().max_w(px(max_width * k)).child(t(message).font(12. * k, 500.).color(style::ink()).lines(1)))
+        .when(spacer, |d| d.child(div().w(px(4. * k)).flex_none()))
         .children(action)
+}
+
+/// Swift's `.truncationMode(.middle)`: keeps both ends, the centre becomes an ellipsis.
+pub fn truncate_middle(text: &str, max: f32, width: impl Fn(&str) -> f32) -> String {
+    if width(text) <= max {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let fit = |keep: usize| -> String {
+        let (head, tail) = (keep.div_ceil(2), keep / 2);
+        chars[..head].iter().chain(['\u{2026}'].iter()).chain(chars[chars.len() - tail..].iter()).collect()
+    };
+    let (mut lo, mut hi) = (0, chars.len());
+    while lo < hi {
+        let keep = (lo + hi).div_ceil(2);
+        if width(&fit(keep)) <= max { lo = keep } else { hi = keep - 1 }
+    }
+    fit(lo)
+}
+
+/// One symbol bounce, in points above rest. ponytail: an approximation of `.symbolEffect(.bounce)`, whose curve isn't published.
+pub fn bounce(t: f32) -> f32 {
+    if (0. ..BOUNCE).contains(&t) { 2.5 * (std::f32::consts::PI * t / BOUNCE).sin() } else { 0. }
+}
+
+/// A repeating symbol pulse. ponytail: an approximation of `.symbolEffect(.pulse, options: .repeating)`.
+pub fn pulse(time: f64) -> f32 {
+    (0.65 + 0.35 * (time * std::f64::consts::TAU / PULSE).cos()) as f32
 }
 
 /// A non-recording bar's height and opacity; Reduce Motion holds the static shape at full opacity.
@@ -696,6 +745,8 @@ fn bar(slot: usize, x: f32, height: f32, opacity: f32) -> impl IntoElement {
 
 pub struct PillView {
     hovering: bool,
+    /// The running hover animation: when it began and the mix it began from.
+    hover_anim: Option<(Instant, f32)>,
     shown_at: Instant,
     hide_since: Option<Instant>,
     shown: Content,
@@ -705,7 +756,31 @@ pub struct PillView {
 
 impl PillView {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        PillView { hovering: false, shown_at: Instant::now(), hide_since: None, shown: cx.global::<Session>().pill.content(), swap_since: None, _sub: cx.observe_global::<Session>(|_, cx| cx.notify()) }
+        PillView { hovering: false, hover_anim: None, shown_at: Instant::now(), hide_since: None, shown: cx.global::<Session>().pill.content(), swap_since: None, _sub: cx.observe_global::<Session>(|_, cx| cx.notify()) }
+    }
+
+    fn set_hover(&mut self, hovering: bool, cx: &mut Context<Self>) {
+        let from = self.hover_mix();
+        self.hovering = hovering;
+        self.hover_anim = Some((Instant::now(), from));
+        cx.notify();
+    }
+
+    /// 1 hovered, 0 not, on the swap spring between them.
+    fn hover_mix(&self) -> f32 {
+        let target = if self.hovering { 1. } else { 0. };
+        self.hover_anim.map_or(target, |(since, from)| from + (target - from) * spring(since.elapsed().as_secs_f32(), SWAP).clamp(0., 1.))
+    }
+
+    /// The mix for this frame, asking for the next while it moves. `animated` false jumps to the end.
+    fn hover_frame(&mut self, animated: bool, window: &mut Window) -> f32 {
+        if !animated || self.hover_anim.is_some_and(|(since, _)| since.elapsed().as_secs_f32() >= HOVER_SETTLE) {
+            self.hover_anim = None;
+        }
+        if self.hover_anim.is_some() {
+            window.request_animation_frame();
+        }
+        self.hover_mix()
     }
 
     fn dictation(&mut self, time: f64, reduce: bool, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -740,9 +815,9 @@ impl PillView {
         if !reduce {
             window.request_animation_frame();
         }
-        let hover = self.hovering;
+        let hover = self.hover_frame(!reduce, window);
         // Scale 0.6 to 1 on hover; Reduce Motion keeps scale 1 and only toggles opacity.
-        let scale = if hover || reduce { 1. } else { 0.6 };
+        let scale = if reduce { 1. } else { 0.6 + 0.4 * hover };
         let cancel = plain_button("pill.cancel", cancel_label(state))
             .content(div().id("pill.cancel.face").test_support().size(px(24. * scale)).flex().items_center().justify_center().rounded(px(12.)).bg(p.canvas).child(icon("xmark", 10. * scale, p.ink)))
             .on_click(|_, _, cx| tap_cancel(cx));
@@ -754,12 +829,9 @@ impl PillView {
             .h(px(HEIGHT))
             .role(accesskit::Role::Group)
             .aria_label(accessibility_label(state))
-            .on_hover(cx.listener(|this, h: &bool, _, cx| {
-                this.hovering = *h;
-                cx.notify();
-            }))
+            .on_hover(cx.listener(|this, h: &bool, _, cx| this.set_hover(*h, cx)))
             .child(div().id("pill.capsule").test_support().absolute().left(px((EXPANDED_WIDTH - width) / 2.)).top_0().w(px(width)).h(px(HEIGHT)).child(capsule(false, 1.).relative().w_full().overflow_hidden().child(row)))
-            .child(div().absolute().left(px(EXPANDED_WIDTH + 35. - 24.)).top(px(7.)).w(px(24.)).h(px(24.)).flex().items_center().justify_center().opacity(if hover { 1. } else { 0. }).child(cancel))
+            .child(div().absolute().left(px(EXPANDED_WIDTH + 35. - 24.)).top(px(7.)).w(px(24.)).h(px(24.)).flex().items_center().justify_center().opacity(hover).child(cancel))
     }
 
     fn content(&mut self, time: f64, reduce: bool, k: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -771,7 +843,7 @@ impl PillView {
             Content::Microphone => {
                 let m = pill.microphone.clone().unwrap();
                 let action = chip("dictation.notice.microphones", "Microphones…", "Open Microphones settings".into(), None, None, None, tap_microphones, k);
-                notice("mic.slash", m.message, 420., Some(action.into_any_element()), k).into_any_element()
+                notice(glyph("mic.slash", 0., k), m.message.clone(), m.message, 420., false, Some(action.into_any_element()), k).into_any_element()
             }
             Content::Learned => {
                 let n = pill.learned.clone().unwrap();
@@ -780,23 +852,20 @@ impl PillView {
                 if !reduce {
                     window.request_animation_frame();
                 }
-                div()
-                    .id("pill.learned")
-                    .test_support()
-                    .role(accesskit::Role::Group)
-                    .aria_label(format!("Added {} to dictionary", n.word))
-                    .child(notice("sparkles", n.message(), 360., Some(chip(id, title, a11y, Some(r), None, None, tap_learned, k).into_any_element()), k))
-                    .into_any_element()
+                let message = truncate_middle(&n.message(), 360., |s| text_width(s, 12., 500., cx));
+                notice(glyph("sparkles", 0., k), message, n.group_label(), 360., true, Some(chip(id, title, a11y, Some(r), None, None, tap_learned, k).into_any_element()), k).into_any_element()
             }
             Content::Clipboard => {
                 let c = pill.clipboard.clone().unwrap();
                 let r = countdown(c.shown, CLIPBOARD_SECONDS);
-                if !reduce {
+                let appeared = c.shown.elapsed().as_secs_f32();
+                // The bounce has no Reduce Motion guard in Swift either (SHELL-238).
+                if !reduce || appeared < BOUNCE {
                     window.request_animation_frame();
                 }
                 let keycap = h_flex().gap(px(1.)).child(icon("command", 9. * k, style::ink())).child(t("V").font(11. * k, 600.).color(style::ink()).a11y_hidden());
                 let action = chip("clipboard.notice.dismiss", "V", "Dismiss. Paste with Command-V".into(), Some(r), Some("Paste with Command-V"), Some(keycap.into_any_element()), |cx| update_session(cx, |s| s.pill.clipboard = None), k);
-                notice("doc.on.clipboard", c.message().to_string(), 420., Some(action.into_any_element()), k).into_any_element()
+                notice(glyph("doc.on.clipboard", bounce(appeared), k), c.message().to_string(), c.message().to_string(), 420., true, Some(action.into_any_element()), k).into_any_element()
             }
             Content::Action => {
                 let a = pill.action.clone().unwrap();
@@ -804,33 +873,31 @@ impl PillView {
                 if !reduce && a.can_retry {
                     window.request_animation_frame();
                 }
-                let action = a.can_retry.then(|| div().id("rewrite.notice.retry.group").child(chip("rewrite.notice.retry", "Retry", "Retry rewrite".into(), Some(r), None, None, tap_retry, k)).aria_description("Available here briefly. Retry is also in History.").into_any_element());
-                notice("text.badge.xmark", a.message, 420., action, k).into_any_element()
+                let action = a.can_retry.then(|| div().id("rewrite.notice.retry.group").test_support().child(chip("rewrite.notice.retry", "Retry", "Retry rewrite".into(), Some(r), None, None, tap_retry, k)).aria_description("Available here briefly. Retry is also in History.").into_any_element());
+                notice(glyph("text.badge.xmark", 0., k), a.message.clone(), a.message, 420., false, action, k).into_any_element()
             }
             Content::Background => {
                 let b = pill.background.clone().unwrap();
-                let hover = self.hovering;
-                let scale = if hover { 1. } else { 0.5 };
+                // No Reduce Motion guard on the hover spring or the pulse in Swift either (SHELL-238).
+                let hover = self.hover_frame(true, window);
+                let scale = 0.5 + 0.5 * hover;
+                window.request_animation_frame();
                 h_flex()
                     .id("pill.background")
                     .test_support()
                     .gap(px(6.))
                     .pl(px(28.))
-                    .on_hover(cx.listener(|this, h: &bool, _, cx| {
-                        this.hovering = *h;
-                        cx.notify();
-                    }))
-                    .child(
+                    .on_hover(cx.listener(|this, h: &bool, _, cx| this.set_hover(*h, cx)))
+                    .child(div().id("background.notice.group").test_support().aria_description("Opens LocalFlow").child(
                         plain_button("background.notice", b.text())
-                            .tooltip("Opens LocalFlow")
-                            .content(capsule(hover, k).flex().items_center().gap(px(10. * k)).px(px(16. * k)).child(icon(b.symbol(), 11. * k, style::ink().opacity(0.9))).child(div().max_w(px(420. * k)).child(t(b.text()).font(12. * k, 500.).color(style::ink()).lines(1).mono_digits().a11y_hidden())))
+                            .content(capsule(self.hovering, k).id("background.notice.capsule").test_support().flex().items_center().gap(px(10. * k)).px(px(16. * k - 1.)).child(div().opacity(pulse(time)).child(icon(b.symbol(), 11. * k, style::ink().opacity(0.9)))).child(div().max_w(px(420. * k)).child(t(b.text()).font(12. * k, 500.).color(style::ink()).lines(1).mono_digits().a11y_hidden())))
                             .on_click(|_, _, cx| tap_background(cx)),
-                    )
+                    ))
                     .child(
-                        div().size(px(22.)).flex().items_center().justify_center().opacity(if hover { 1. } else { 0. }).child(
+                        div().size(px(22.)).flex().items_center().justify_center().opacity(hover).child(
                             plain_button("background.notice.hide", "Hide progress")
                                 .tooltip("Hide until this meeting is done")
-                                .content(div().size(px(22. * scale)).flex().items_center().justify_center().rounded(px(11.)).bg(style::fill()).border_1().border_color(style::white(0.13)).child(icon("xmark", 9. * scale, style::ink().opacity(0.85))))
+                                .content(div().id("background.notice.hide.face").test_support().size(px(22. * scale)).flex().items_center().justify_center().rounded(px(11.)).bg(style::fill()).border_1().border_color(style::white(0.13)).child(icon("xmark", 9. * scale, style::ink().opacity(0.85))))
                                 .on_click(|_, _, cx| tap_hide(cx)),
                         ),
                     )
@@ -895,17 +962,19 @@ pub fn panel_origin(visible: Bounds<Pixels>, width: f32, dictating: bool) -> Poi
     point(px(x.round()), px(y))
 }
 
+/// A line's width in Figtree. ponytail: sums advances without kerning; only a window can shape a line, and the panel's width is needed before one exists.
+fn text_width(text: &str, size: f32, weight: f32, cx: &App) -> f32 {
+    let mut f = font(FIGTREE);
+    f.weight = FontWeight(weight);
+    let system = cx.text_system();
+    let id = system.resolve_font(&f);
+    text.chars().map(|c| system.advance(id, px(size), c).map_or(0., |a| f32::from(a.width))).sum::<f32>() + 2.
+}
+
 /// The ceiling of what the content lays out to, since a window can't follow its view here.
 pub fn content_width(cx: &App) -> f32 {
     let pill = &cx.global::<Session>().pill;
-    let text_width = |text: &str, size: f32, weight: f32| -> f32 {
-        let mut f = font(FIGTREE);
-        f.weight = FontWeight(weight);
-        // ponytail: sums advances without kerning; only a window can shape a line, and this runs before one exists.
-        let system = cx.text_system();
-        let id = system.resolve_font(&f);
-        text.chars().map(|c| system.advance(id, px(size), c).map_or(0., |a| f32::from(a.width))).sum::<f32>() + 2.
-    };
+    let text_width = |text: &str, size: f32, weight: f32| text_width(text, size, weight, cx);
     let notice = |message: &str, max: f32, chip: Option<f32>| 14. + 11. + 10. + text_width(message, 12., 500.).min(max) + chip.map_or(16., |c| 10. + c + 5.);
     let chip = |title: &str, ring: bool| 24. + text_width(title, 11., 600.) + if ring { 2. } else { 0. };
     let width: f32 = match pill.content() {
@@ -913,14 +982,17 @@ pub fn content_width(cx: &App) -> f32 {
         Content::Microphone => notice(&pill.microphone.as_ref().unwrap().message, 420., Some(chip("Microphones…", false))),
         Content::Learned => {
             let n = pill.learned.as_ref().unwrap();
-            notice(&n.message(), 360., Some(chip(n.action().0, true)))
+            notice(&n.message(), 360., Some(4. + 10. + chip(n.action().0, true)))
         }
-        Content::Clipboard => notice(pill.clipboard.as_ref().unwrap().message(), 420., Some(chip("V", true) + 10.)),
+        Content::Clipboard => notice(pill.clipboard.as_ref().unwrap().message(), 420., Some(4. + 10. + chip("V", true) + 10.)),
         Content::Action => {
             let a = pill.action.as_ref().unwrap();
             notice(&a.message, 420., a.can_retry.then(|| chip("Retry", true)))
         }
-        Content::Background => 28. + 32. + 11. + 10. + text_width(&pill.background.as_ref().unwrap().text(), 12., 500.).min(420.) + 6. + 22.,
+        Content::Background => {
+            let b = pill.background.as_ref().unwrap();
+            28. + 32. + 11. * flow_ui::icons::advance(b.symbol()) + 10. + text_width(&b.text(), 12., 500.).min(420.) + 6. + 22.
+        }
     };
     width.ceil()
 }
@@ -969,7 +1041,14 @@ pub fn sync_window(cx: &mut App) {
     let visible = cx.primary_display().map(|d| d.visible_bounds()).unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) });
     let origin = panel_origin(visible, width, content == Content::Dictation);
     let bounds = Bounds { origin, size: size(px(width), px(HEIGHT + RISE)) };
-    let options = WindowOptions {
+    if let Ok((handle, view)) = flow_ui::open_bare_window(panel_options(bounds), cx, |_, cx| cx.new(PillView::new)) {
+        cx.set_global(PillWindow { handle, view, key });
+    }
+}
+
+/// Borderless and nonactivating: `PopUp` is GPUI's NSPanel, which also joins all Spaces and full-screen ones.
+fn panel_options(bounds: Bounds<Pixels>) -> WindowOptions {
+    WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,
         focus: false,
@@ -978,9 +1057,6 @@ pub fn sync_window(cx: &mut App) {
         is_resizable: false,
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
-    };
-    if let Ok((handle, view)) = flow_ui::open_bare_window(options, cx, |_, cx| cx.new(PillView::new)) {
-        cx.set_global(PillWindow { handle, view, key });
     }
 }
 
@@ -1084,9 +1160,13 @@ mod tests {
         frame(cx, w);
         let whole = bounds_of(cx, w, "pill.dictation")[0];
         assert_eq!(whole.size, size(px(153.), px(38.)));
-        assert_eq!(bounds_of(cx, w, "pill.capsule")[0].size.width, px(46.));
+        let capsule = bounds_of(cx, w, "pill.capsule")[0];
+        assert_eq!(capsule.size.width, px(46.));
         let bars = bar_bounds(cx, w);
         assert_eq!(bars.len(), 15);
+        // The 87-wide row is wider than the compact capsule and centered on it, which clips it.
+        assert!(bars[0].origin.x < capsule.origin.x && bars[14].right() > capsule.right());
+        assert_eq!(bars[0].origin.x + bars[14].right(), capsule.origin.x + capsule.right());
         assert_eq!((bars[0].size.width, bars[1].origin.x - bars[0].origin.x), (px(3.), px(6.)));
         assert!(bars.iter().all(|b| b.size.height == px(4.)));
         cx.update(|cx| set_state(DictState::Recording, 0.5, cx));
@@ -1132,33 +1212,161 @@ mod tests {
             win.hover("pill.dictation", cx);
             win.render_frame(cx);
         }).unwrap();
-        assert_eq!(bounds_of(cx, w, "pill.cancel.face")[0].size.width, px(24.));
         assert!(w.update(cx, |v, _, _| v.hovering).unwrap());
+        // The swap spring carries it: part way after 0.05 s, 1 once settled.
+        w.update(cx, |v, _, _| v.hover_anim = Some((Instant::now() - Duration::from_millis(50), 0.))).unwrap();
+        let mid = w.update(cx, |v, _, _| v.hover_mix()).unwrap();
+        assert!(mid > 0.05 && mid < 0.95, "{mid}");
+        w.update(cx, |v, _, cx| {
+            v.hover_anim = Some((Instant::now() - Duration::from_secs(1), 0.));
+            cx.notify();
+        }).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.render_frame(cx)).unwrap();
+        let (face, whole) = (bounds_of(cx, w, "pill.cancel.face")[0], bounds_of(cx, w, "pill.dictation")[0]);
+        assert_eq!(face.size.width, px(24.));
+        assert_eq!((face.right() - whole.origin.x, face.origin.y - whole.origin.y), (px(153.), px(7.)), "35 right of the 118 slot's end, less its 24");
+        assert!(w.update(cx, |v, _, _| v.hover_anim.is_none()).unwrap());
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "xmark"));
+    }
+
+    fn wide(cx: &mut TestAppContext) -> (WindowHandle<PillView>, Rc<RefCell<Vec<String>>>, Rc<RefCell<Vec<SessionCommand>>>) {
+        let v = view(cx);
+        cx.update_window(v.0.into(), |_, win, _| win.resize(size(px(1000.), px(100.)))).unwrap();
+        v
     }
 
     // parity: PILL-071
-    /// The message stops at 360; the rest of the capsule is padding, symbol and chip.
+    /// The message stops at 360 with its middle gone, and 4 of spacer keeps the chip 24 away.
     #[flow_ui::gpui::test]
-    async fn learned_message_stops_at_its_maximum(cx: &mut TestAppContext) {
-        let (w, _, _) = view(cx);
-        cx.update_window(w.into(), |_, win, _| win.resize(size(px(1000.), px(100.)))).unwrap();
+    async fn learned_message_truncates_its_middle_at_the_maximum(cx: &mut TestAppContext) {
+        let chars = |s: &str| s.chars().count() as f32;
+        assert_eq!(truncate_middle("short", 10., chars), "short");
+        assert_eq!(truncate_middle("abcdefghij", 5., chars), "ab\u{2026}ij");
+        let (w, _, _) = wide(cx);
         cx.update(|cx| show_learned("LocalFlow".repeat(30), LearnedKind::Retired { alias: "x".into() }, cx));
         frame(cx, w);
-        let long = bounds_of(cx, w, "pill.notice")[0].size.width;
-        assert!(long >= px(360.) && long <= px(14. + 11. + 10. + 360. + 90.), "{long:?}");
+        let message = bounds_of(cx, w, "pill.notice.message")[0];
+        assert!(message.size.width <= px(360.) && message.size.width > px(300.), "{message:?}");
+        let seen = flow_ui::probe::seen();
+        let line = seen.iter().find(|s| s.starts_with("Stopped")).expect("message drawn");
+        assert!(line.contains('\u{2026}') && line.ends_with("LocalFlow\u{2019}"), "{line}");
+        assert_eq!(bounds_of(cx, w, "dictionary.notice.restore")[0].origin.x - message.right(), px(24.));
+    }
+
+    // parity: PILL-064 PILL-065 PILL-066 PILL-085
+    /// Measured in a laid-out notice. The ring's trim start and round cap are painted, not laid out.
+    #[flow_ui::gpui::test]
+    async fn notices_lay_out_swifts_padding_and_chips(cx: &mut TestAppContext) {
+        let (w, _, _) = wide(cx);
+        cx.update(|cx| show_microphone("No microphone available", cx));
+        frame(cx, w);
+        let (capsule, symbol, message, plain) = (bounds_of(cx, w, "pill.notice")[0], bounds_of(cx, w, "pill.notice.symbol")[0], bounds_of(cx, w, "pill.notice.message")[0], bounds_of(cx, w, "dictation.notice.microphones")[0]);
+        assert_eq!(capsule.size.height, px(38.));
+        assert_eq!(symbol.origin.x - capsule.origin.x, px(14.));
+        assert_eq!(message.origin.x - symbol.right(), px(10.));
+        assert_eq!(plain.origin.x - message.right(), px(10.), "no spacer without a countdown");
+        assert_eq!(capsule.right() - plain.right(), px(5.));
+        let style = flow_ui::probe::style_of("No microphone available").unwrap();
+        assert_eq!((style.size, style.weight, style.color), (12., 500., style::ink()));
+        let chip = flow_ui::probe::style_of("Microphones\u{2026}").unwrap();
+        assert_eq!((chip.size, chip.weight, chip.color), (11., 600., style::ink()));
+
+        cx.update(|cx| show_action("Rewrite took too long.", true, cx));
+        cx.update(|cx| update_session(cx, |s| s.pill.microphone = None));
+        frame(cx, w);
+        let ringed = bounds_of(cx, w, "rewrite.notice.retry")[0];
+        assert_eq!(ringed.size.height - plain.size.height, px(2.), "the ring adds 1 outer padding");
+
+        cx.update(|cx| show_action("Rewrite took too long.", false, cx));
+        frame(cx, w);
+        let (capsule, message) = (bounds_of(cx, w, "pill.notice")[0], bounds_of(cx, w, "pill.notice.message")[0]);
+        assert_eq!(capsule.right() - message.right(), px(16.), "no chip, trailing 16");
+        assert_eq!(remaining(1.5, 6., false), 0.75, "drains linearly");
     }
 
     // parity: PILL-016
+    /// The window fits what the content then lays out to, within the kerning the sum ignores.
     #[flow_ui::gpui::test]
     async fn panel_width_is_a_whole_point_ceiling(cx: &mut TestAppContext) {
-        let _ = view(cx);
-        cx.update(|cx| {
-            assert_eq!(content_width(cx), INDICATOR_WIDTH);
-            show_microphone("Studio didn't respond", cx);
-            let width = content_width(cx);
+        let (w, _, _) = wide(cx);
+        cx.update(|cx| assert_eq!(content_width(cx), INDICATOR_WIDTH));
+        let clear = |cx: &mut TestAppContext| cx.update(|cx| update_session(cx, |s| s.pill = Pill::default()));
+        let fits = |cx: &mut TestAppContext, id: &'static str| {
+            frame(cx, w);
+            let (laid, width) = (bounds_of(cx, w, id)[0].size.width, cx.update(|cx| content_width(cx)));
             assert_eq!(width.fract(), 0.);
-            assert!(width > 100.);
-        });
+            assert!(laid <= px(width) && px(width) - laid < px(12.), "{id}: laid {laid:?}, window {width}");
+        };
+        cx.update(|cx| show_microphone("Studio didn't respond", cx));
+        fits(cx, "pill.notice");
+        clear(cx);
+        cx.update(|cx| show_learned("LocalFlow", LearnedKind::Added, cx));
+        fits(cx, "pill.notice");
+        clear(cx);
+        cx.update(|cx| show_clipboard(false, cx));
+        fits(cx, "pill.notice");
+        clear(cx);
+        cx.update(|cx| set_background(Some(BackgroundNotice { meeting_id: "m".into(), kind: BackgroundKind::Labeling, progress: None }), cx));
+        fits(cx, "pill.background");
+    }
+
+    // parity: PILL-011 PILL-012
+    /// The options the production panel opens with.
+    #[test]
+    fn panel_is_a_borderless_nonactivating_popup() {
+        let o = panel_options(Bounds::default());
+        assert!(!o.focus && !o.is_movable && !o.is_resizable && o.titlebar.is_none());
+        assert_eq!(o.kind, WindowKind::PopUp);
+        assert_eq!(o.window_background, WindowBackgroundAppearance::Transparent);
+    }
+
+    // parity: PILL-017 PILL-018
+    /// Starts 10 low, settles to 0; a hide goes back toward 10 on an ease-in, half way at 2.5.
+    #[flow_ui::gpui::test]
+    async fn show_rises_and_hide_drops_in_the_frame(cx: &mut TestAppContext) {
+        panels(cx, false, false);
+        cx.update(|cx| show_microphone("No microphone available", cx));
+        let w = cx.add_window(|_, cx| PillView::new(cx));
+        let y = |cx: &mut TestAppContext| {
+            cx.update_window(w.into(), |_, win, cx| win.render_frame(cx)).unwrap();
+            f32::from(bounds_of(cx, w, "pill.notice")[0].origin.y)
+        };
+        w.update(cx, |v, _, cx| {
+            v.shown_at = Instant::now();
+            cx.notify();
+        }).unwrap();
+        assert!(y(cx) > 5., "starts low");
+        w.update(cx, |v, _, cx| {
+            v.shown_at = Instant::now() - Duration::from_secs(1);
+            cx.notify();
+        }).unwrap();
+        assert_eq!(y(cx), 0.);
+        assert!((settle(0.5) - 0.5).abs() > 0.2, "the cubic is not linear");
+        w.update(cx, |v, _, cx| {
+            v.hide_since = Some(Instant::now() - Duration::from_millis(90));
+            cx.notify();
+        }).unwrap();
+        let halfway = y(cx);
+        assert!((2.5..4.5).contains(&halfway), "{halfway}");
+    }
+
+    // parity: PILL-079
+    #[flow_ui::gpui::test]
+    async fn clipboard_symbol_bounces_once_and_the_keycap_draws(cx: &mut TestAppContext) {
+        assert_eq!((bounce(0.), bounce(0.2), bounce(0.4)), (0., 2.5, 0.));
+        let (w, _, _) = wide(cx);
+        cx.update(|cx| show_clipboard(false, cx));
+        let at = |cx: &mut TestAppContext, ms: u64| {
+            cx.update(|cx| update_session(cx, |s| s.pill.clipboard.as_mut().unwrap().shown = Instant::now() - Duration::from_millis(ms)));
+            frame(cx, w);
+            bounds_of(cx, w, "pill.notice.symbol")[0].origin.y
+        };
+        let up = at(cx, 200) - at(cx, 1000);
+        assert!(up <= px(-2.), "{up:?}");
+        let symbols = flow_ui::probe::symbols();
+        assert!(symbols.iter().any(|s| s == "doc.on.clipboard") && symbols.iter().any(|s| s == "command"), "{symbols:?}");
+        let v = flow_ui::probe::style_of("V").unwrap();
+        assert_eq!((v.size, v.weight), (11., 600.));
     }
 
     // parity: PILL-005 PILL-006 PILL-017 PILL-033
@@ -1167,7 +1375,9 @@ mod tests {
         assert_eq!(spring(0., MORPH), 0.);
         assert!((spring(2., MORPH) - 1.).abs() < 0.001);
         assert!((spring(2., SWAP) - 1.).abs() < 0.001);
-        assert_eq!((MORPH, SWAP), ((0.42, 0.86), (0.34, 0.9)));
+        // The bars and the swap read the constants; these literals are Swift's.
+        assert_eq!(reveal(14, 0.014 + 0.42), spring(0.42, (0.42, 0.86)).clamp(0., 1.));
+        assert_eq!(swap_style(0.2).0, spring(0.2, (0.34, 0.9)).clamp(0., 1.));
         assert!((settle(1.) - 1.).abs() < 0.01 && settle(0.).abs() < 0.01 && settle(0.3) > 0.7);
         assert_eq!((Waveform::height(0.), Waveform::height(0.2), Waveform::height(1.), Waveform::height(f32::NAN)), (3., 28., 28., 3.));
         let mut w = Waveform::default();
@@ -1180,9 +1390,18 @@ mod tests {
         let h = w.heights();
         // Two slices ended: the loud one, then silence for the gap.
         assert_eq!((h[13], h[14]), (Waveform::height(0.2), 3.));
+        // History resets on entering recording, and only then.
+        let mut p = Pill::default();
+        p.set_state(DictState::Recording);
+        p.waveform.borrow_mut().advance(0., 1.);
+        p.set_state(DictState::Recording);
+        assert_eq!(*p.waveform.borrow().heights().last().unwrap(), 28.);
+        p.set_state(DictState::Transcribing);
+        p.set_state(DictState::Recording);
+        assert_eq!(*p.waveform.borrow().heights().last().unwrap(), 3.);
     }
 
-    // parity: PILL-031
+    // parity: PILL-030 PILL-031
     /// Connecting pulses unless Reduce Motion: then bars rest at height 4, full opacity, in the frame too.
     #[flow_ui::gpui::test]
     async fn connecting_with_reduce_motion_is_static(cx: &mut TestAppContext) {
@@ -1195,9 +1414,17 @@ mod tests {
         assert_eq!(h, px(4.));
     }
 
-    // parity: PILL-030 PILL-036 PILL-037 PILL-042 PILL-043
+    // parity: PILL-036 PILL-037 PILL-038 PILL-039 PILL-040 PILL-042 PILL-043
     #[test]
     fn bars_follow_swift_formulas() {
+        // The crest in the states that share it, through what the frame draws.
+        let crest_time = 1.2 * (7. + 3.) / 21.;
+        for s in [DictState::Transcribing, DictState::Persisting, DictState::Inserting, DictState::Cancelling] {
+            assert!((bar_target(7, s, false, crest_time).0 - 16.).abs() < 0.001, "{s:?}");
+            assert_eq!(bar_target(3, s, true, crest_time).0, 14.);
+        }
+        // Delay `(15 - slot) * 0.014`: still nothing at the end of it.
+        assert_eq!((reveal(14, 0.014), reveal(0, 0.21)), (0., 0.));
         assert_eq!(static_height(5, DictState::Preparing), 4.);
         assert!((connecting_opacity(0.4) - 1.).abs() < 0.001);
         assert!((connecting_opacity(1.2) - 0.35).abs() < 0.001);
@@ -1260,6 +1487,13 @@ mod tests {
             assert_eq!(pill(cx, |p| p.content()), Content::None);
         }
         assert!(announced.borrow().contains(&"Text saved for review.".to_string()));
+        // Cancelled has no look of its own: idle, nothing shown, and it says so.
+        cx.update(|cx| {
+            set_state(DictState::Cancelling, 0., cx);
+            set_state(DictState::Idle, 0., cx);
+        });
+        assert_eq!(pill(cx, |p| p.content()), Content::None);
+        assert_eq!(announced.borrow().last().unwrap(), "Dictation cancelled.");
         cx.update(|cx| {
             set_background(Some(BackgroundNotice { meeting_id: "m".into(), kind: BackgroundKind::Labeling, progress: None }), cx);
             assert_eq!(cx.global::<Session>().pill.content(), Content::Background);
@@ -1285,7 +1519,7 @@ mod tests {
         });
     }
 
-    // parity: PILL-027 PILL-022
+    // parity: PILL-027
     #[flow_ui::gpui::test]
     async fn meter_updates_skip_layout(cx: &mut TestAppContext) {
         let _ = view(cx);
@@ -1299,7 +1533,7 @@ mod tests {
         assert_eq!(pill(cx, |p| p.layouts), layouts + 1);
     }
 
-    // parity: PILL-038 PILL-039 PILL-040 PILL-050 PILL-051
+    // parity: PILL-050
     #[flow_ui::gpui::test]
     async fn dictation_labels_and_cancel(cx: &mut TestAppContext) {
         let (w, _, commands) = view(cx);
@@ -1308,9 +1542,11 @@ mod tests {
             frame(cx, w);
             cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.cancel").label().as_deref(), Some(cancel_label(s)))).unwrap();
         }
-        assert_eq!(accessibility_label(DictState::Persisting), "Processing, microphone off");
-        assert_eq!(accessibility_label(DictState::Inserting), "Processing, microphone off");
-        assert_eq!(accessibility_label(DictState::Cancelling), "Processing, microphone off");
+        for (s, label) in [(DictState::Preparing, "Preparing, microphone off"), (DictState::Connecting, "Connecting to the microphone"), (DictState::Recording, "Recording"), (DictState::Transcribing, "Processing, microphone off"), (DictState::Persisting, "Processing, microphone off"), (DictState::Inserting, "Processing, microphone off"), (DictState::Cancelling, "Processing, microphone off"), (DictState::Rewriting, "Rewriting text, microphone off")] {
+            cx.update(|cx| set_state(s, 0.1, cx));
+            frame(cx, w);
+            cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.dictation").label().as_deref(), Some(label), "{s:?}")).unwrap();
+        }
         assert_eq!(cancel_label(DictState::Rewriting), "Cancel rewrite");
         cx.update(|cx| {
             update_session(cx, |s| s.dictation.as_mut().unwrap().busy = true);
@@ -1326,7 +1562,7 @@ mod tests {
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::CancelRewrite));
     }
 
-    // parity: PILL-064 PILL-065 PILL-066 PILL-067 PILL-068 PILL-069 PILL-070 PILL-072 PILL-073 PILL-074
+    // parity: PILL-067 PILL-068 PILL-069 PILL-070 PILL-074
     #[flow_ui::gpui::test]
     async fn learned_notice_copy_actions_and_timer(cx: &mut TestAppContext) {
         let (w, announced, commands) = view(cx);
@@ -1334,7 +1570,7 @@ mod tests {
         frame(cx, w);
         assert_saw(&["Added to dictionary", "Undo"]);
         assert!(flow_ui::probe::symbols().iter().any(|s| s == "sparkles"));
-        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.learned").label().as_deref(), Some("Added LocalFlow to dictionary"))).unwrap();
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.notice").label().as_deref(), Some("Added LocalFlow to dictionary"))).unwrap();
         cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("dictionary.notice.undo").label().as_deref(), Some("Undo adding LocalFlow to dictionary"))).unwrap();
         assert_eq!(announced.borrow().last().unwrap(), "Added LocalFlow to dictionary.");
         cx.update_window(w.into(), |_, win, cx| win.click("dictionary.notice.undo", cx)).unwrap();
@@ -1344,9 +1580,14 @@ mod tests {
         cx.update(|cx| show_learned("flow", LearnedKind::Retired { alias: "flow".into() }, cx));
         frame(cx, w);
         assert_saw(&["Stopped listening for \u{2018}flow\u{2019}", "Restore"]);
+        cx.update_window(w.into(), |_, win, _| {
+            assert_eq!(win.find("pill.notice").label().as_deref(), Some("Stopped listening for \u{2018}flow\u{2019}"));
+            assert_eq!(win.find("dictionary.notice.restore").label().as_deref(), Some("Restore flow"));
+        }).unwrap();
         cx.update(|cx| show_learned("LocalFlow", LearnedKind::Retired { alias: "local flow".into() }, cx));
         frame(cx, w);
         assert_saw(&["Stopped changing \u{2018}local flow\u{2019} to \u{2018}LocalFlow\u{2019}"]);
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.notice").label().as_deref(), Some("Stopped changing \u{2018}local flow\u{2019} to \u{2018}LocalFlow\u{2019}"))).unwrap();
         assert_eq!(announced.borrow().last().unwrap(), "Stopped changing local flow to LocalFlow. Restore is available.");
         cx.update_window(w.into(), |_, win, cx| win.click("dictionary.notice.restore", cx)).unwrap();
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::RestoreLearned));
@@ -1385,7 +1626,7 @@ mod tests {
         assert!(pill(cx, |p| p.microphone.is_none()));
     }
 
-    // parity: PILL-079 PILL-080 PILL-081 PILL-082 PILL-083
+    // parity: PILL-080 PILL-081 PILL-082 PILL-083
     #[flow_ui::gpui::test]
     async fn clipboard_notice(cx: &mut TestAppContext) {
         let (w, announced, _) = view(cx);
@@ -1396,6 +1637,7 @@ mod tests {
         cx.update(|cx| show_clipboard(false, cx));
         frame(cx, w);
         assert_saw(&["Couldn't insert · copied to clipboard"]);
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.notice").label().as_deref(), Some("Couldn't insert · copied to clipboard"))).unwrap();
         cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("clipboard.notice.dismiss").label().as_deref(), Some("Dismiss. Paste with Command-V"))).unwrap();
         cx.update_window(w.into(), |_, win, cx| win.click("clipboard.notice.dismiss", cx)).unwrap();
         assert!(pill(cx, |p| p.clipboard.is_none()));
@@ -1407,7 +1649,7 @@ mod tests {
         assert!(pill(cx, |p| p.clipboard.is_none()));
     }
 
-    // parity: PILL-084 PILL-085 PILL-086 PILL-087
+    // parity: PILL-084 PILL-087
     #[flow_ui::gpui::test]
     async fn action_notice_retry_chip_and_timer(cx: &mut TestAppContext) {
         let (w, announced, commands) = view(cx);
@@ -1418,6 +1660,15 @@ mod tests {
         cx.update(|cx| show_action("Rewrite took too long. Original text inserted.", true, cx));
         frame(cx, w);
         assert_saw(&["Rewrite took too long. Original text inserted.", "Retry"]);
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "text.badge.xmark"));
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("rewrite.notice.retry.group").description().as_deref(), Some("Available here briefly. Retry is also in History."))).unwrap();
+        cx.update_window(w.into(), |_, win, _| win.resize(size(px(1000.), px(100.)))).unwrap();
+        cx.update(|cx| show_action("Rewrite took too long. ".repeat(40), true, cx));
+        frame(cx, w);
+        let long = bounds_of(cx, w, "pill.notice.message")[0].size.width;
+        assert!(long <= px(420.) && long > px(400.), "{long:?}");
+        cx.update(|cx| show_action("Rewrite took too long. Original text inserted.", true, cx));
+        frame(cx, w);
         cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("rewrite.notice.retry").label().as_deref(), Some("Retry rewrite"))).unwrap();
         cx.update_window(w.into(), |_, win, cx| win.click("rewrite.notice.retry", cx)).unwrap();
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::RetryRewrite));
@@ -1467,7 +1718,43 @@ mod tests {
         assert_eq!(offers("This meeting can't be moved to this Mac right now."), Some(false));
     }
 
-    // parity: PILL-113 PILL-115..PILL-120 PILL-122..PILL-125
+    // parity: PILL-112 PILL-113 PILL-114
+    /// The capsule, the always laid out hide button, the hint and the hover spring.
+    #[flow_ui::gpui::test]
+    async fn background_capsule_and_hide_button(cx: &mut TestAppContext) {
+        let (w, _, _) = wide(cx);
+        cx.update(|cx| set_background(Some(BackgroundNotice { meeting_id: "m".into(), kind: BackgroundKind::Labeling, progress: None }), cx));
+        frame(cx, w);
+        let (whole, capsule, face) = (bounds_of(cx, w, "pill.background")[0], bounds_of(cx, w, "background.notice.capsule")[0], bounds_of(cx, w, "background.notice.hide.face")[0]);
+        assert_eq!(capsule.origin.x - whole.origin.x, px(28.));
+        assert_eq!(capsule.size.height, px(38.));
+        assert_eq!(face.size.width, px(11.), "0.5 of 22 at rest");
+        assert_eq!(face.origin.x + px(5.5) - capsule.right(), px(6. + 11.), "6 gap to the centre of a 22 slot");
+        let style = flow_ui::probe::style_of("Labeling speakers").unwrap();
+        assert_eq!((style.size, style.weight, style.color), (12., 500., style::ink()));
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "xmark"));
+        assert!(pulse(0.) == 1. && (pulse(0.8) - 0.3).abs() < 0.001, "repeats from full to dim");
+        cx.update_window(w.into(), |_, win, _| {
+            assert_eq!(win.find("background.notice.group").description().as_deref(), Some("Opens LocalFlow"));
+            assert_eq!(win.find("background.notice").label().as_deref(), Some("Labeling speakers"));
+            assert_eq!(win.find("background.notice.hide").label().as_deref(), Some("Hide progress"));
+        }).unwrap();
+        // Hover: animated from rest, the button at 22 once settled.
+        cx.update_window(w.into(), |_, win, cx| win.hover("pill.background", cx)).unwrap();
+        assert!(w.update(cx, |v, _, _| v.hover_anim.is_some() && v.hover_mix() < 0.9).unwrap());
+        w.update(cx, |v, _, cx| {
+            v.hover_anim = Some((Instant::now() - Duration::from_secs(1), 0.));
+            cx.notify();
+        }).unwrap();
+        frame(cx, w);
+        assert_eq!(bounds_of(cx, w, "background.notice.hide.face")[0].size.width, px(22.));
+        // Text is capped at 420 like the other notices.
+        cx.update(|cx| set_background(Some(BackgroundNotice { meeting_id: "m".into(), kind: BackgroundKind::Summarizing { queued: 0 }, progress: None }), cx));
+        frame(cx, w);
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "text.quote"));
+    }
+
+    // parity: PILL-115..PILL-120 PILL-122..PILL-125
     #[flow_ui::gpui::test]
     async fn background_notice(cx: &mut TestAppContext) {
         let (w, announced, _) = view(cx);
@@ -1584,7 +1871,7 @@ mod tests {
         assert_ne!(panel(cx), Some(first));
     }
 
-    // parity: PILL-018
+    // parity: PILL-018 PILL-022
     /// Hiding starts the 0.18 s fade, stays on screen for it, then orders out.
     #[flow_ui::gpui::test]
     async fn hide_fades_then_closes(cx: &mut TestAppContext) {
@@ -1604,6 +1891,7 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
         assert!(cx.update(|cx| handle.update(cx, |_, _, _| ()).is_err()), "ordered out");
+        assert!(cx.update(|cx| !cx.has_global::<PillWindow>()), "nothing keeps the view or its callbacks");
     }
 
     // parity: PILL-025 PILL-026

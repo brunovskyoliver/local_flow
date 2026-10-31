@@ -91,7 +91,7 @@ pub fn lucide(symbol: &str) -> &'static str {
 
 /// Width in em for symbols wider than their point size; SwiftUI lays a symbol out by its own width,
 /// which sets where a trailing symbol's left edge sits. Measured from `NSImage(systemSymbolName:).size`.
-fn advance(symbol: &str) -> f32 {
+pub fn advance(symbol: &str) -> f32 {
     match symbol {
         "laptopcomputer" => 1.66,
         "person.2.wave.2" => 1.78,
@@ -111,6 +111,9 @@ fn advance(symbol: &str) -> f32 {
 /// A symbol drawn at `size` points in `color`, hidden from accessibility as SF Symbols with a
 /// neighboring label are.
 pub fn icon(symbol: &str, size: f32, color: impl Into<Hsla>) -> Svg {
+    let color: Hsla = color.into();
+    #[cfg(any(test, feature = "test-support"))]
+    crate::probe::record_symbol_color(symbol, color);
     #[cfg(feature = "test-support")]
     crate::probe::record(&format!("symbol:{symbol}"));
     let path: SharedString = format!("flow-icons/{}.svg", lucide(symbol)).into();
@@ -121,7 +124,7 @@ pub fn icon(symbol: &str, size: f32, color: impl Into<Hsla>) -> Svg {
     let file = lucide(symbol);
     let glyph = size * if file.starts_with("sfw-") { 1.888 } else if file.starts_with("sf-") { 1.18 } else { 1. };
     let advance = size * advance(symbol);
-    svg().path(path).w(px(glyph)).h(px(glyph)).ml(px((advance - glyph) / 2.)).mr(px((advance - glyph) / 2.)).my(px((size - glyph) / 2.)).flex_none().text_color(color.into())
+    svg().path(path).w(px(glyph)).h(px(glyph)).ml(px((advance - glyph) / 2.)).mr(px((advance - glyph) / 2.)).my(px((size - glyph) / 2.)).flex_none().text_color(color)
 }
 
 /// Bundled icons in front of Kit's own assets.

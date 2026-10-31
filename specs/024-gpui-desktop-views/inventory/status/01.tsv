@@ -182,44 +182,44 @@ PILL-007	auto	test:dictation_lays_out_swifts_sizes
 PILL-008	auto	test:dictation_lays_out_swifts_sizes
 PILL-009	auto	test:dictation_lays_out_swifts_sizes
 PILL-010	recorded	recorded:GPUI redraws per display frame through request_animation_frame; no interval value exists to assert
-PILL-011	live	live:audit/mac/shell/pill-recording-dark-rust.png ; live:audit/mac/shell/pill-action-light-rust.png ; rust-only:the reference pill needs a live dictation and microphone
-PILL-012	live	live:audit/mac/shell/pill-recording-dark-rust.png ; live:audit/mac/shell/pill-action-light-rust.png ; rust-only:the reference pill needs a live dictation and microphone
+PILL-011	auto	test:panel_is_a_borderless_nonactivating_popup ; note:WindowKind::PopUp in gpui_macos window.rs gives the nonactivating panel, all Spaces and full-screen auxiliary, read in source. Difference: level is NSPopUpWindowLevel 101, not floating 3, and animation behaviour is utility, not none; GPUI sets both
+PILL-012	auto	test:panel_is_a_borderless_nonactivating_popup ; note:focus false asserted; canBecomeKey read in gpui_macos, not observed against a target app here
 PILL-013	auto	test:panel_position
 PILL-014	auto	test:panel_position
 PILL-015	service	service:choosing the target screen needs AX in the capture phase; primary display used
-PILL-016	auto	test:panel_width_is_a_whole_point_ceiling
-PILL-017	auto	test:timing_and_waveform_math
-PILL-018	auto	test:hide_fades_then_closes
+PILL-016	auto	test:panel_width_is_a_whole_point_ceiling ; note:found and fixed: wide symbols overflowed the window by 5 points
+PILL-017	auto	test:show_rises_and_hide_drops_in_the_frame ; note:window alpha and position are drawn inside the panel, since GPUI cannot move or fade a window; the panel is 10 taller for it
+PILL-018	auto	test:hide_fades_then_closes ; test:show_rises_and_hide_drops_in_the_frame
 PILL-019	live	live:audit/mac/shell/pill-swap-frames.txt ; test:resize_animates_the_same_panel ; test:unavailable_frames_reopen_the_panel
 PILL-020	auto	test:reduce_motion_resizes_and_hides_at_once
 PILL-021	service	service:reposition triggers need NSWorkspace in the platform phase
-PILL-022	auto	test:meter_updates_skip_layout
+PILL-022	auto	test:hide_fades_then_closes ; note:observers and target point do not exist here; dropping the panel global and window drops the view and its callbacks
 PILL-023	auto	test:precedence_and_show_decision
 PILL-024	auto	test:precedence_and_show_decision
-PILL-025	auto	test:content_swap_springs_in_and_reduce_motion_cuts
+PILL-025	auto	test:content_swap_springs_in_and_reduce_motion_cuts ; note:difference: the outgoing content has no 0.1 s fade, its notice is already gone from Session
 PILL-026	auto	test:content_swap_springs_in_and_reduce_motion_cuts
 PILL-027	auto	test:meter_updates_skip_layout
 PILL-028	auto	test:precedence_and_show_decision
-PILL-029	auto	test:dictation_lays_out_swifts_sizes
-PILL-030	auto	test:bars_follow_swift_formulas
+PILL-029	auto	test:dictation_lays_out_swifts_sizes ; test:dictation_labels_and_cancel
+PILL-030	auto	test:connecting_with_reduce_motion_is_static ; test:dictation_labels_and_cancel
 PILL-031	auto	test:connecting_with_reduce_motion_is_static
 PILL-032	auto	test:recording_draws_sixteen_bars_at_the_level_height
 PILL-033	auto	test:timing_and_waveform_math
 PILL-034	auto	test:recording_draws_sixteen_bars_at_the_level_height
 PILL-035	auto	test:dictation_lays_out_swifts_sizes
-PILL-036	auto	test:bars_follow_swift_formulas
-PILL-037	auto	test:bars_follow_swift_formulas
-PILL-038	auto	test:dictation_labels_and_cancel
-PILL-039	auto	test:dictation_labels_and_cancel
-PILL-040	auto	test:dictation_labels_and_cancel
+PILL-036	auto	test:bars_follow_swift_formulas ; test:dictation_lays_out_swifts_sizes ; note:difference: collapse jumps with no swap animation; no path returns from an expanded state to preparing or connecting
+PILL-037	auto	test:bars_follow_swift_formulas ; test:dictation_labels_and_cancel
+PILL-038	auto	test:bars_follow_swift_formulas ; test:dictation_labels_and_cancel
+PILL-039	auto	test:bars_follow_swift_formulas ; test:dictation_labels_and_cancel
+PILL-040	auto	test:bars_follow_swift_formulas ; test:dictation_labels_and_cancel
 PILL-041	auto	test:dictation_lays_out_swifts_sizes
 PILL-042	auto	test:bars_follow_swift_formulas
 PILL-043	auto	test:bars_follow_swift_formulas
 PILL-044	auto	test:precedence_and_show_decision
 PILL-045	auto	test:precedence_and_show_decision
 PILL-046	auto	test:precedence_and_show_decision
-PILL-047	live	live:audit/mac/shell/pill-recording-dark-rust.png ; rust-only:the reference pill needs a live dictation and microphone ; test:cancel_scales_with_hover_unless_reduce_motion
-PILL-048	auto	test:cancel_scales_with_hover_unless_reduce_motion
+PILL-047	auto	test:cancel_scales_with_hover_unless_reduce_motion ; note:symbol weight does not apply to the bundled SVG; no reference, the reference pill needs a live dictation
+PILL-048	auto	test:cancel_scales_with_hover_unless_reduce_motion ; note:difference: VoiceOver focus does not reveal the button, GPUI has no accessibility focus API
 PILL-049	auto	test:cancel_scales_with_hover_unless_reduce_motion
 PILL-050	auto	test:dictation_labels_and_cancel
 PILL-051	recorded	recorded:difference. Swift puts a named action on the pill group; GPUI's a11y actions are a fixed set with no named custom action, so the same name and result come from the group's real pill.cancel button instead. See test dictation_labels_and_cancel
@@ -235,29 +235,29 @@ PILL-060	auto	test:state_changes_announce_swifts_words
 PILL-061	auto	test:state_changes_announce_swifts_words
 PILL-062	auto	test:state_changes_announce_swifts_words
 PILL-063	auto	test:state_changes_announce_swifts_words
-PILL-064	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the reference notices need a live dictation ; test:learned_notice_copy_actions_and_timer
-PILL-065	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the reference notices need a live dictation ; test:learned_notice_copy_actions_and_timer
-PILL-066	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the reference notices need a live dictation ; test:learned_notice_copy_actions_and_timer
+PILL-064	auto	test:notices_lay_out_swifts_padding_and_chips ; note:found and fixed: the capsule stroke added 1 to each padding. No reference pair, the reference notices need a live dictation
+PILL-065	auto	test:notices_lay_out_swifts_padding_and_chips ; note:no reference pair
+PILL-066	auto	test:notices_lay_out_swifts_padding_and_chips ; note:width, outer padding and linear drain asserted; round cap and trim start are in the ring painter, seen only in the clipboard capture
 PILL-067	auto	test:learned_notice_copy_actions_and_timer
 PILL-068	auto	test:learned_notice_copy_actions_and_timer
 PILL-069	auto	test:learned_notice_copy_actions_and_timer
 PILL-070	auto	test:learned_notice_copy_actions_and_timer
-PILL-071	auto	test:learned_message_stops_at_its_maximum
-PILL-072	auto	test:learned_notice_copy_actions_and_timer
-PILL-073	auto	test:learned_notice_copy_actions_and_timer
+PILL-071	auto	test:learned_message_truncates_its_middle_at_the_maximum ; test:learned_notice_copy_actions_and_timer ; note:found and fixed: middle truncation and the spacer were missing
+PILL-072	recorded	recorded:not working yet. Production session_command returns Unavailable and no learner exists until Feature 025; the button path through the fake is tested in learned_notice_copy_actions_and_timer
+PILL-073	recorded	recorded:not working yet. Production session_command returns Unavailable and no dictionary usage store write exists until Feature 025; the button path through the fake is tested in learned_notice_copy_actions_and_timer
 PILL-074	auto	test:learned_notice_copy_actions_and_timer
 PILL-075	auto	test:microphone_notice
 PILL-076	auto	test:microphone_notice
 PILL-077	auto	test:microphone_notice
 PILL-078	auto	test:microphone_notice
-PILL-079	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the reference notices need a live dictation ; test:clipboard_notice
+PILL-079	auto	test:clipboard_symbol_bounces_once_and_the_keycap_draws ; test:clipboard_notice ; note:bounce curve is an approximation, one 2.5 point lift over 0.4 s. Tooltip set in code; the test API cannot read a tooltip. No reference pair
 PILL-080	auto	test:clipboard_notice
 PILL-081	auto	test:clipboard_notice
 PILL-082	auto	test:clipboard_notice
 PILL-083	auto	test:clipboard_notice
-PILL-084	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the reference notices need a live dictation ; test:action_notice_retry_chip_and_timer
-PILL-085	auto	test:action_notice_retry_chip_and_timer
-PILL-086	auto	test:action_notice_retry_chip_and_timer
+PILL-084	auto	test:action_notice_retry_chip_and_timer ; note:no reference pair
+PILL-085	auto	test:notices_lay_out_swifts_padding_and_chips ; test:action_notice_retry_chip_and_timer
+PILL-086	recorded	recorded:not working yet. Production session_command returns Unavailable and no rewrite client exists until Feature 025; the button path through the fake is tested in action_notice_retry_chip_and_timer
 PILL-087	auto	test:action_notice_retry_chip_and_timer
 PILL-088	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
 PILL-089	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
@@ -283,9 +283,9 @@ PILL-108	recorded	recorded:not working yet. The words are held in pill REWRITE_N
 PILL-109	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
 PILL-110	auto	test:launch_recovery_notices_reach_the_pill
 PILL-111	recorded	recorded:debug-only Swift strings, out of scope
-PILL-112	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the reference notices need a live dictation
-PILL-113	auto	test:background_notice
-PILL-114	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the reference notices need a live dictation
+PILL-112	auto	test:background_capsule_and_hide_button ; test:background_notice ; note:difference: pulse is a drawn opacity approximation, no replace effect on the symbol and no numeric text transition. No reference pair
+PILL-113	auto	test:background_capsule_and_hide_button ; test:pill_colors_ignore_appearance ; note:difference: VoiceOver focus does not reveal the hide button
+PILL-114	auto	test:background_capsule_and_hide_button ; note:tooltip set in code, the test API cannot read a tooltip; symbol weight does not apply to the SVG. No reference pair
 PILL-115	auto	test:background_notice
 PILL-116	auto	test:background_notice
 PILL-117	auto	test:background_notice
