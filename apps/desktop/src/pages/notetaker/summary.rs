@@ -262,7 +262,7 @@ impl NotetakerPage {
         for topic in &model.topics {
             let mut column = v_flex().w_full().gap(px(9.)).pt(px(14.)).child(t(topic.title.clone()).font(15., 600.));
             for bullet in &topic.bullets {
-                column = column.child(h_flex().items_start().gap(px(8.)).pl(px(6.)).child(t("•").size(15.)).child(div().flex_1().child(self.highlighted(bullet, cx).size(15.).line_spacing(5.))));
+                column = column.child(h_flex().items_start().gap(px(8.)).pl(px(6.)).child(t("•").size(15.).a11y_hidden()).child(div().flex_1().child(self.highlighted(bullet, cx).size(15.).line_spacing(5.))));
             }
             out = out.child(column);
         }
@@ -395,7 +395,11 @@ impl NotetakerPage {
             .into_any_element()
     }
 
+    /// Scopes the ids that repeat per item, which accessibility requires to be unique.
     fn item_row(&mut self, item: &Item, cx: &mut Context<Self>) -> impl IntoElement {
+        div().id(sid(format!("meeting.summary.item.{}.{}", item.kind, item.ordinal))).w_full().child(self.item_row_body(item, cx))
+    }
+    fn item_row_body(&mut self, item: &Item, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let action = item.kind == "action_item";
         let row_id = sid(format!("meeting.summary.item.{}.{}", item.kind, item.ordinal));
@@ -485,7 +489,12 @@ impl NotetakerPage {
             .child(plain_button(sid(format!("meeting.summary.status.{}", item.ordinal)), if done { "Mark open" } else { "Mark completed" }).on_click(cx.listener(move |this, _, _, cx| {
                 let next = if status_item.status == "open" { "completed" } else { "open" };
                 this.set_item(&status_item, "status", next, Some("open".into()), cx);
-            })).content(div().pt(px(3.)).child(icon(if completed { "checkmark.circle.fill" } else { "circle" }, 13., if completed { p.success } else { p.muted }))))
+            })).content(div().pt(px(3.)).child(if completed {
+                // ponytail: the Kit icon set has no filled check, so the fill is drawn here.
+                div().size(px(13.)).rounded_full().bg(p.success).flex().items_center().justify_center().child(icon("checkmark", 9., gpui::white())).into_any_element()
+            } else {
+                icon("circle", 13., p.muted).into_any_element()
+            })))
             .child(v_flex().flex_1().min_w_0().gap(px(5.)).child(body).child(chips))
             .child(controls)
             .into_any_element()

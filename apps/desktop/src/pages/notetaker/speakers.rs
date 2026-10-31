@@ -248,7 +248,7 @@ impl NotetakerPage {
     fn identity_view(&mut self, id: &str, s: &Section, b: IdentityBlock, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let id = id.to_string();
-        let mut out = v_flex().id("identity.block").w_full().items_start().gap(px(8.));
+        let mut out = v_flex().id(sid(format!("identity.block.{id}"))).w_full().items_start().gap(px(8.));
         if let Some(remembered) = b.local_remembered {
             if !remembered {
                 if s.action == IdentityAction::RememberLocal {

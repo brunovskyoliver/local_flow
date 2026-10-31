@@ -3024,7 +3024,7 @@ mod tests {
         assert_ne!(id, new_id());
     }
 
-    // parity: NOTE-032 NOTE-056 NOTE-058 NOTE-061 NOTE-106
+    // parity: NOTE-032 NOTE-056 NOTE-058 NOTE-060 NOTE-061 NOTE-106
     #[test]
     fn library_pages_and_evicts() {
         let db = db();
@@ -3164,6 +3164,63 @@ mod tests {
         p.export(&db, &path).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), full);
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// Adds segments after the seed's twelve, in the same pass.
+    fn more_segments(db: &Db, total: i64) {
+        let actual: Vec<String> = db.conn.prepare("SELECT name FROM pragma_table_info('transcript_segments')").unwrap().query_map([], |r| r.get(0)).unwrap().map(|n| n.unwrap()).collect();
+        let copied = actual.iter().filter(|c| *c != "id" && *c != "ordinal").cloned().collect::<Vec<_>>().join(",");
+        db.conn
+            .execute_batch(&format!(
+                "WITH RECURSIVE n(i) AS (SELECT 12 UNION ALL SELECT i+1 FROM n WHERE i<{}) INSERT INTO transcript_segments (id, ordinal, {copied}) SELECT lower(hex(randomblob(16))), i, {copied} FROM n, (SELECT * FROM transcript_segments WHERE meeting_id='{SEED_FULL}' AND ordinal=0)",
+                total - 1
+            ))
+            .unwrap();
+    }
+
+    // parity: TRANS-039
+    #[test]
+    fn pager_edges_load_the_next_and_previous_pages() {
+        let db = db();
+        more_segments(&db, 650);
+        let mut p = Pager::new(SEED_FULL);
+        p.load_first(&db);
+        assert_eq!(p.rows().count(), TRANSCRIPT_PAGE);
+        assert!(!p.has_previous() && p.has_next());
+        p.load_next(&db);
+        p.load_next(&db);
+        // Two resident pages: the first was evicted, so the top edge can load again.
+        assert_eq!(p.rows().next().unwrap().ordinal, TRANSCRIPT_PAGE as i64);
+        assert_eq!(p.rows().count(), 2 * TRANSCRIPT_PAGE);
+        assert!(p.has_previous());
+        p.load_previous(&db);
+        assert_eq!(p.rows().next().unwrap().ordinal, 0);
+        assert_eq!(p.rows().count(), 2 * TRANSCRIPT_PAGE);
+    }
+
+    // parity: TRANS-042
+    #[test]
+    fn finalizing_previews_the_last_page_of_the_pass() {
+        let db = db();
+        more_segments(&db, 250);
+        db.conn.execute_batch(&format!("PRAGMA ignore_check_constraints=ON; UPDATE transcript_segments SET finality='final' WHERE meeting_id='{SEED_FULL}'; UPDATE meeting_transcriptions SET state='finalizing' WHERE meeting_id='{SEED_FULL}';")).unwrap();
+        let mut p = Pager::new(SEED_FULL);
+        p.load_first(&db);
+        assert!(p.previewing_final_pass());
+        assert_eq!(p.final_pass_count, 250);
+        assert_eq!(p.rows().next().unwrap().ordinal, 50, "the last {TRANSCRIPT_PAGE} of 250");
+        assert!(!p.has_next(), "a preview doesn't page forward");
+    }
+
+    // parity: SUM-004
+    #[test]
+    fn reading_time_rounds_up_with_a_minimum_of_one() {
+        let mut m = ReadModel::default();
+        assert_eq!(m.minutes(), 1);
+        m.summary = vec!["word"; 200].join(" ");
+        assert_eq!(m.minutes(), 1);
+        m.summary.push_str(" more");
+        assert_eq!(m.minutes(), 2);
     }
 
     // parity: SPK-041 SPK-042 SPK-043 SPK-058 SPK-059 SPK-060 SPK-071

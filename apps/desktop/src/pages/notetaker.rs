@@ -449,16 +449,15 @@ impl NotetakerPage {
         deferred(
             window_backdrop("notetaker.confirm").flex().items_center().justify_center().bg(gpui::black().opacity(0.2)).occlude().child(
                 v_flex()
-                    .w(px(280.))
+                    .w(px(260.))
                     .p(px(20.))
                     .gap(px(10.))
                     .bg(p.surface)
-                    .rounded(px(14.))
+                    .rounded(px(24.))
                     .shadow_lg()
-                    .items_center()
-                    .child(t(title).font(13., 700.).center())
-                    .child(t(message).size(11.).center())
-                    .child(v_flex().w_full().gap(px(6.)).pt(px(6.)).child(prototype_button(action_id, action).full_width().text_color(red(cx)).on_click(cx.listener(|this, _, w, cx| this.confirmed(w, cx)))).child(prototype_button("notetaker.delete.cancel", "Cancel").full_width().on_click(cx.listener(|this, _, _, cx| {
+                    .child(t(title).font(13., 700.))
+                    .child(t(message).size(13.))
+                    .child(v_flex().w_full().gap(px(6.)).pt(px(6.)).child(plain_button(action_id, action).full_width().content(div().w_full().h(px(28.)).flex().items_center().justify_center().rounded_full().bg(red(cx).opacity(0.2)).child(t(action).size(13.).color(red(cx)).a11y_hidden())).on_click(cx.listener(|this, _, w, cx| this.confirmed(w, cx)))).child(plain_button("notetaker.delete.cancel", "Cancel").full_width().content(div().w_full().h(px(28.)).flex().items_center().justify_center().rounded_full().bg(p.button).child(t("Cancel").size(13.).a11y_hidden())).on_click(cx.listener(|this, _, _, cx| {
                         this.confirm = None;
                         cx.notify();
                     })))),
