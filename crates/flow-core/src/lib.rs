@@ -7,5 +7,6 @@ pub mod meetings;
 pub mod onboarding;
 pub mod paths;
 pub mod prefs;
+pub mod remote;
 pub mod seed;
 pub mod settings;

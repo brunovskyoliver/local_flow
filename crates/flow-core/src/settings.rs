@@ -34,11 +34,16 @@ pub const CONTEXT_DISCLOSURE: &str = "Reads the app name, window title and text 
 pub fn loopback_endpoint() -> String {
     format!("http://127.0.0.1:{}", PORT_BASE + 80)
 }
+/// The Keychain service prefix. Swift's is the bundle ID (or its `.dev` variant), so this build can
+/// never read the installed app's items, as `paths::Paths` keeps it from its data. Items are otherwise
+/// laid out as Swift's: `<prefix>.remote` with raw `server-key` and `device-key` and UTF-8 tokens.
+/// The Mac cutover (Feature 028) sets this to `BUNDLE_ID` and deletes `keychain_mac::OWNER_SERVICES`.
+pub const KEYCHAIN_PREFIX: &str = "org.localflow.LocalFlow.rust-dev";
 pub fn remote_keychain(account: &str) -> String {
-    format!("{BUNDLE_ID}.remote/{account}")
+    format!("{KEYCHAIN_PREFIX}.remote/{account}")
 }
 pub fn rewrite_keychain(account: &str) -> String {
-    format!("{BUNDLE_ID}.rewrite/{account}")
+    format!("{KEYCHAIN_PREFIX}.rewrite/{account}")
 }
 pub const SUMMARY_ACCOUNT: &str = "summary-server";
 
@@ -818,9 +823,8 @@ pub fn channel_round_trip(origin: &str, server_key: &[u8], token: Option<&str>) 
 }
 
 /// Swift's `ping()`: nil when this device has no pinned key or token, or the channel fails.
-pub fn ping(origin: &str, server_key: Option<&str>, token: Option<&str>) -> Option<(u128, Option<Capabilities>)> {
-    let key = base64url_decode(server_key?)?;
-    channel_round_trip(origin, &key, Some(token?)).ok()
+pub fn ping(origin: &str, server_key: Option<&[u8]>, token: Option<&str>) -> Option<(u128, Option<Capabilities>)> {
+    channel_round_trip(origin, server_key?, Some(token?)).ok()
 }
 
 /// The eight connection-test outcomes.
@@ -2362,9 +2366,9 @@ mod tests {
         set_insecure_override(&mut p, "http://a:80", true);
         assert!(insecure_override(&p, "http://a:80"));
         assert!(!insecure_override(&p, "http://b:80"));
-        assert_eq!(rewrite_keychain("http://a:80"), "org.localflow.LocalFlow.rewrite/http://a:80");
-        assert_eq!(rewrite_keychain(SUMMARY_ACCOUNT), "org.localflow.LocalFlow.rewrite/summary-server");
-        assert_eq!(remote_keychain("device-key"), "org.localflow.LocalFlow.remote/device-key");
+        assert_eq!(rewrite_keychain("http://a:80"), "org.localflow.LocalFlow.rust-dev.rewrite/http://a:80");
+        assert_eq!(rewrite_keychain(SUMMARY_ACCOUNT), "org.localflow.LocalFlow.rust-dev.rewrite/summary-server");
+        assert_eq!(remote_keychain("device-key"), "org.localflow.LocalFlow.rust-dev.remote/device-key");
         assert_eq!(loopback_endpoint(), "http://127.0.0.1:8080");
     }
 
@@ -2998,7 +3002,7 @@ mod tests {
         assert_eq!(base64url_decode(&base64url_encode(&[255, 0, 3, 9])).as_deref(), Some(&[255, 0, 3, 9][..]));
         // `sessionInputs` nil: nothing connects, so a closed port would not even be tried.
         assert_eq!(ping("http://127.0.0.1:9", None, Some("t")), None);
-        assert_eq!(ping("http://127.0.0.1:9", Some("AAAA"), None), None);
+        assert_eq!(ping("http://127.0.0.1:9", Some(&[0; 32]), None), None);
     }
 
     // parity: SET-045 SET-071
@@ -3021,9 +3025,9 @@ mod tests {
         let identity = fetch_identity(&f.remote).unwrap();
         let key = identity.validated_key().unwrap();
         assert!(channel_round_trip(&f.remote, &key, None).is_ok(), "enroll reaches ready");
-        let (_, offered) = ping(&f.remote, Some(&identity.server_key), Some(&f.access_token)).expect("an approved device's session reaches ready");
+        let (_, offered) = ping(&f.remote, identity.validated_key().as_deref(), Some(&f.access_token)).expect("an approved device's session reaches ready");
         assert!(offered.is_some(), "ready carries the capabilities");
-        assert_eq!(ping(&f.remote, Some(&identity.server_key), Some("not-a-token")), None);
+        assert_eq!(ping(&f.remote, identity.validated_key().as_deref(), Some("not-a-token")), None);
         assert!(matches!(channel_round_trip(&f.remote, &key, Some("not-a-token")), Err(ChannelError::Server(_))), "a bad token is refused in the channel");
         assert_eq!(channel_round_trip(&f.remote, &[7u8; 32], None), Err(ChannelError::Unreachable), "a hello sealed to another key is closed");
         assert_eq!(channel_round_trip(&f.down, &key, None), Err(ChannelError::Unreachable));

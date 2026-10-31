@@ -126,7 +126,7 @@ Cutting the Mac over must not lose anyone's data or force re-enrollment.
 - **Same database and file locations on the Mac.** Rust uses `rusqlite` and reads GRDB's `grdb_migrations` table, so an existing database opens as is.
 - **One schema across three languages.** iOS and `flowd-meeting` still use the Swift migrator, and `bundle.sqlite` crosses between clients and the server. Swift stays the schema's source of truth until the cutover. A new test generates a database with Swift and asserts the Rust schema is identical, and round-trips a handoff bundle both ways.
 - **Same wire protocol.** `protocol/schemas` and `fixtures/remote` become conformance tests for the Rust client. HPKE, ChaCha20-Poly1305 and WebSocket framing are ported and tested against the real `flowd`.
-- **Same bundle ID and signing team on the Mac,** so TCC grants, Keychain items and the Secure Enclave key handle survive.
+- **Same bundle ID and signing team on the Mac,** so TCC grants, Keychain items and the Secure Enclave key handle survive. Until the cutover the Rust client uses Keychain services under `org.localflow.LocalFlow.rust-dev` (`settings::KEYCHAIN_PREFIX`), so it can't read the installed app's items. The cutover sets that prefix to the bundle ID and deletes `keychain_mac::OWNER_SERVICES`.
 - **Windows data** lives in `%LOCALAPPDATA%\LocalFlow`. There is no sync between devices (ADR 0006).
 
 ## Meeting-first onboarding

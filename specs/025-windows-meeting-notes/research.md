@@ -6,10 +6,13 @@ Needed for WASAPI, Media Foundation, NCrypt, Credential Manager and registry cal
 ## R2 Hand-written FFI on macOS
 Security.framework calls follow the existing pattern in `crates/flow-platform/src/macos.rs`. No new crate.
 
+The Secure Enclave is the exception. Swift's `device-key` item holds CryptoKit's `dataRepresentation`, and Security.framework's public API can't load that blob. A Security.framework key would be a different format and would need keychain entitlements, so everyone would re-enroll at the cutover, which `docs/architecture/cross-platform-gpui.md` rules out. `crates/flow-platform/src/enclave.swift` is a small `@_cdecl` shim over CryptoKit, built by `build.rs` with `swiftc` from Xcode, on macOS targets only. No new crate.
+
 ## R3 Process loopback
 `ActivateAudioInterfaceAsync` with `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`, on our own PID. Microsoft lists build 20348 as minimum; Phase 0 verified exclusion in the VM (below -97 dBFS) and failed mic alignment there. Alignment on real hardware stays open.
 
 ## R4 TPM
+Services return raw r||s on both platforms, and either public key form. `flow-core` does the conversion, because `flow-platform` and `flow-core` don't depend on each other.
 `NCryptOpenStorageProvider(MS_PLATFORM_CRYPTO_PROVIDER)`, `NCRYPT_ECDSA_P256_ALGORITHM`, persisted, no export policy set. Output is raw r||s and flowd expects DER, so a pure converter lives in `flow-core` and is tested against known values. `BCRYPT_ECCPUBLIC_BLOB` is converted to the 65-byte X9.63 form `fixtures/remote/pairing-vectors.json` uses.
 
 ## R5 Installer

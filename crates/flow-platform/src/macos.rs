@@ -1,5 +1,5 @@
-//! Read-only permission checks plus Settings links; capture, Keychain and login items are later
-//! features, so they report `Unavailable`.
+//! Read-only permission checks plus Settings links; capture and login items are later features, so
+//! they report `Unavailable`.
 use crate::{InputCatalog, InputDevice, Permission, PermissionState, Services, Unavailable};
 use std::path::PathBuf;
 
@@ -423,11 +423,33 @@ impl Services for Mac {
     fn free_disk_bytes(&self) -> Option<u64> {
         None
     }
-    fn secret(&self, _: &str) -> Result<Option<String>, Unavailable> {
-        Err(Unavailable("Keychain"))
+    fn secret(&self, name: &str) -> Result<Option<String>, Unavailable> {
+        crate::keychain_mac::read(name)?.map(|v| String::from_utf8(v).map_err(|_| Unavailable("Keychain"))).transpose()
     }
-    fn set_secret(&self, _: &str, _: &str) -> Result<(), Unavailable> {
-        Err(Unavailable("Keychain"))
+    fn set_secret(&self, name: &str, value: &str) -> Result<(), Unavailable> {
+        crate::keychain_mac::write(name, value.as_bytes())
+    }
+    fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
+        crate::keychain_mac::remove(name)
+    }
+    fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        crate::keychain_mac::read(name)
+    }
+    fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
+        crate::keychain_mac::write(name, value)
+    }
+    fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
+        crate::keys_mac::create()
+    }
+    fn device_key_public_key(&self, handle: &[u8]) -> Option<Vec<u8>> {
+        crate::keys_mac::public_key(handle)
+    }
+    fn device_key_sign(&self, handle: &[u8], message: &[u8]) -> Result<Vec<u8>, Unavailable> {
+        crate::keys_mac::sign(handle, message)
+    }
+    /// The enclave keeps nothing per key: dropping the handle from Keychain is what destroys it.
+    fn device_key_delete(&self, _: &[u8]) -> Result<(), Unavailable> {
+        Ok(())
     }
 }
 

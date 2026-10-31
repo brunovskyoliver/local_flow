@@ -205,3 +205,7 @@ in `packaging/sparkle/LICENSE` and copied into packaged application notices.
 The patch bounds downloads and temporary feed buffers, restricts transport to
 HTTPS and limits old download-cache retention. No VoiceInk source is used.
 Source: https://github.com/sparkle-project/Sparkle/tree/2.10.0
+
+## Windows system APIs
+
+The Rust client's `flow-platform` crate links Microsoft's `windows` crate 0.62 (MIT or Apache-2.0) on Windows targets only, for Credential Manager and NCrypt. It was already compiled through GPUI.

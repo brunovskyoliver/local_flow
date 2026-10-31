@@ -112,6 +112,29 @@ pub trait Services: 'static {
     fn remove_secret(&self, _name: &str) -> Result<(), Unavailable> {
         Err(Unavailable("Keychain"))
     }
+    /// The item's bytes: `server-key` and `device-key` aren't text. `secret` is for those that are.
+    fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        Ok(self.secret(name)?.map(String::into_bytes))
+    }
+    fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
+        self.set_secret(name, std::str::from_utf8(value).map_err(|_| Unavailable("binary secrets"))?)
+    }
+    /// A new non-exportable P-256 key as (handle, public key). The key is X9.63 or a
+    /// `BCRYPT_ECCPUBLIC_BLOB`; `flow_core::remote::x963_public_key` takes either. No software fallback.
+    fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
+        Err(Unavailable("device key"))
+    }
+    /// `None` when the handle no longer loads. Same forms as `device_key_create`.
+    fn device_key_public_key(&self, _handle: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+    /// Raw r||s over the SHA-256 of `message`; `flow_core::remote::raw_signature_to_der` converts it.
+    fn device_key_sign(&self, _handle: &[u8], _message: &[u8]) -> Result<Vec<u8>, Unavailable> {
+        Err(Unavailable("device key"))
+    }
+    fn device_key_delete(&self, _handle: &[u8]) -> Result<(), Unavailable> {
+        Err(Unavailable("device key"))
+    }
     /// `RemoteRewriteChannels.closeParked()`. The channel pool arrives with the remote transport (Feature 026).
     fn close_parked_channels(&self) -> Result<(), Unavailable> {
         Err(Unavailable("remote channels"))
@@ -292,9 +315,18 @@ pub trait Services: 'static {
 }
 
 #[cfg(target_os = "macos")]
+mod keychain_mac;
+#[cfg(target_os = "macos")]
+mod keys_mac;
+#[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
 mod region_mac;
+#[cfg(target_os = "windows")]
+mod win {
+    pub mod secrets;
+    pub mod tpm;
+}
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -307,8 +339,22 @@ pub fn native() -> Box<dyn Services> {
     panic!("LocalFlow supports macOS and Windows");
 }
 
+/// The key a `Fake` hands out. Its signature is whatever the test scripts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FakeDeviceKey {
+    pub handle: Vec<u8>,
+    pub public_key: Vec<u8>,
+    pub raw_signature: Vec<u8>,
+}
+
 /// A scriptable double for tests and the audit's scenarios.
 pub struct Fake {
+    /// Secrets by full name. Any call fails while `secrets_fail` is true.
+    pub secrets: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Vec<u8>>>>,
+    pub secrets_fail: std::cell::Cell<bool>,
+    /// `device_key_create` hands out the next one; none left is `Unavailable`, like a missing TPM.
+    pub device_keys: std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<FakeDeviceKey>>>,
+    pub live_device_keys: std::cell::RefCell<Vec<FakeDeviceKey>>,
     pub device: &'static str,
     /// Records `animate_panel_frame` as (width, duration, curve). None stays `Unavailable`.
     pub panel_frames: Option<std::rc::Rc<std::cell::RefCell<Vec<(f32, f32, [f32; 4])>>>>,
@@ -334,7 +380,13 @@ pub struct Fake {
 
 impl Default for Fake {
     fn default() -> Self {
-        Fake { device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
+        Fake { secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
+    }
+}
+
+impl Fake {
+    fn fake_secrets(&self) -> Result<std::cell::RefMut<'_, std::collections::BTreeMap<String, Vec<u8>>>, Unavailable> {
+        if self.secrets_fail.get() { Err(Unavailable("Keychain")) } else { Ok(self.secrets.borrow_mut()) }
     }
 }
 
@@ -403,10 +455,37 @@ impl Services for Fake {
     fn free_disk_bytes(&self) -> Option<u64> {
         Some(100 << 30)
     }
-    fn secret(&self, _: &str) -> Result<Option<String>, Unavailable> {
-        Ok(None)
+    fn secret(&self, name: &str) -> Result<Option<String>, Unavailable> {
+        self.secret_data(name)?.map(|v| String::from_utf8(v).map_err(|_| Unavailable("Keychain"))).transpose()
     }
-    fn set_secret(&self, _: &str, _: &str) -> Result<(), Unavailable> {
+    fn set_secret(&self, name: &str, value: &str) -> Result<(), Unavailable> {
+        self.set_secret_data(name, value.as_bytes())
+    }
+    fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
+        self.fake_secrets()?.remove(name);
+        Ok(())
+    }
+    fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        Ok(self.fake_secrets()?.get(name).cloned())
+    }
+    fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
+        self.fake_secrets()?.insert(name.into(), value.to_vec());
+        Ok(())
+    }
+    fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
+        let key = self.device_keys.borrow_mut().pop_front().ok_or(Unavailable("device key"))?;
+        let made = (key.handle.clone(), key.public_key.clone());
+        self.live_device_keys.borrow_mut().push(key);
+        Ok(made)
+    }
+    fn device_key_public_key(&self, handle: &[u8]) -> Option<Vec<u8>> {
+        self.live_device_keys.borrow().iter().find(|k| k.handle == handle).map(|k| k.public_key.clone())
+    }
+    fn device_key_sign(&self, handle: &[u8], _: &[u8]) -> Result<Vec<u8>, Unavailable> {
+        self.live_device_keys.borrow().iter().find(|k| k.handle == handle).map(|k| k.raw_signature.clone()).ok_or(Unavailable("device key"))
+    }
+    fn device_key_delete(&self, handle: &[u8]) -> Result<(), Unavailable> {
+        self.live_device_keys.borrow_mut().retain(|k| k.handle != handle);
         Ok(())
     }
     fn physical_memory(&self) -> u64 {
@@ -428,5 +507,37 @@ impl Services for Fake {
         }
         self.commands.borrow_mut().push(command);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fake_scripts_secrets_and_keys() {
+        let fake = Fake::default();
+        assert_eq!(fake.secret("a/b"), Ok(None));
+        fake.set_secret_data("a/b", &[0xff, 0]).unwrap();
+        assert_eq!(fake.secret_data("a/b").unwrap().unwrap(), [0xff, 0]);
+        assert!(fake.secret("a/b").is_err(), "binary isn't text");
+        fake.set_secret("a/c", "text").unwrap();
+        assert_eq!(fake.secret("a/c").unwrap().as_deref(), Some("text"));
+        fake.remove_secret("a/b").unwrap();
+        assert_eq!(fake.secret_data("a/b"), Ok(None));
+        fake.secrets_fail.set(true);
+        assert!(fake.secret("a/c").is_err());
+        assert!(fake.set_secret("a/c", "x").is_err());
+
+        assert!(fake.device_key_create().is_err(), "nothing scripted is a missing TPM");
+        let key = FakeDeviceKey { handle: vec![1], public_key: vec![4; 65], raw_signature: vec![7; 64] };
+        fake.device_keys.borrow_mut().push_back(key.clone());
+        assert_eq!(fake.device_key_public_key(&key.handle), None, "not created yet");
+        assert_eq!(fake.device_key_create(), Ok((key.handle.clone(), key.public_key.clone())));
+        assert_eq!(fake.device_key_public_key(&key.handle), Some(key.public_key.clone()));
+        assert_eq!(fake.device_key_sign(&key.handle, b"m"), Ok(key.raw_signature.clone()));
+        fake.device_key_delete(&key.handle).unwrap();
+        assert_eq!(fake.device_key_public_key(&key.handle), None);
+        assert!(fake.device_key_sign(&key.handle, b"m").is_err());
     }
 }

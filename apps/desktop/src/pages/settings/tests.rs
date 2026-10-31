@@ -17,7 +17,7 @@ struct Stub {
     fake: Fake,
     ok: Rc<Cell<bool>>,
     log: Log,
-    secrets: Rc<RefCell<HashMap<String, String>>>,
+    secrets: Rc<RefCell<HashMap<String, Vec<u8>>>>,
     permissions: Rc<Cell<PermissionState>>,
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
     install: Rc<Cell<Option<(u64, u64, bool)>>>,
@@ -74,11 +74,17 @@ impl flow_platform::Services for Stub {
         None
     }
     fn secret(&self, name: &str) -> Result<Option<String>, Unavailable> {
-        if self.ok.get() { Ok(self.secrets.borrow().get(name).cloned()) } else { Err(Unavailable("test")) }
+        Ok(self.secret_data(name)?.map(|v| String::from_utf8(v).unwrap()))
     }
     fn set_secret(&self, name: &str, value: &str) -> Result<(), Unavailable> {
+        self.set_secret_data(name, value.as_bytes())
+    }
+    fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        if self.ok.get() { Ok(self.secrets.borrow().get(name).cloned()) } else { Err(Unavailable("test")) }
+    }
+    fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
         self.call(format!("set {name}"))?;
-        self.secrets.borrow_mut().insert(name.into(), value.into());
+        self.secrets.borrow_mut().insert(name.into(), value.to_vec());
         Ok(())
     }
     fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
@@ -123,7 +129,7 @@ struct Rig {
     win: Win,
     ok: Rc<Cell<bool>>,
     log: Log,
-    secrets: Rc<RefCell<HashMap<String, String>>>,
+    secrets: Rc<RefCell<HashMap<String, Vec<u8>>>>,
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
     permissions: Rc<Cell<PermissionState>>,
     install: Rc<Cell<Option<(u64, u64, bool)>>>,
@@ -458,7 +464,7 @@ async fn trust_pins_the_key_and_shows_the_pin(cx: &mut TestAppContext) {
     set(cx, r.win, |p, _, _| p.identity = Some(identity(key, &fp)));
     assert_saw(&["Compare the fingerprint", "Server fingerprint", &fp, "Compare it with ", "flowd admin identity", "Trust This Server"]);
     click(cx, r.win, "settings.remoteTrust");
-    assert_eq!(r.secrets.borrow().get(&core::remote_keychain("server-key")).map(String::as_str), Some(key));
+    assert_eq!(r.secrets.borrow().get(&core::remote_keychain("server-key")), Some(&raw), "the raw bytes, as Swift stores them");
     assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("pinned"));
     assert!(logged(&r, &format!("remove {}", core::remote_keychain("refresh-token"))));
     assert_saw(&[&format!("Pinned fingerprint  {fp}"), "Sign in to finish"]);
@@ -470,7 +476,7 @@ async fn trust_pins_the_key_and_shows_the_pin(cx: &mut TestAppContext) {
     // Advanced shows it too once pinned.
     r.ok.set(true);
     let r = rig(cx, "advanced", |_| {});
-    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), key.into());
+    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), raw.clone());
     set(cx, r.win, |p, _, cx| p.refresh(cx));
     assert_saw(&["Server fingerprint", &fp]);
 }
@@ -962,7 +968,7 @@ async fn rewriting_blocks_until_address_and_secret_are_right(cx: &mut TestAppCon
     assert_saw(&["Transcripts and the credential travel unencrypted to 10.0.0.5.", "Set a credential for this server first."]);
     type_into(cx, r.win, |p| p.credential.clone(), "s3cret-value");
     click(cx, r.win, "settings.rewriteCredentialSave");
-    assert_eq!(r.secrets.borrow().get(&core::rewrite_keychain("http://10.0.0.5:8080")).map(String::as_str), Some("s3cret-value"), "the typed text, not its mask");
+    assert_eq!(r.secrets.borrow().get(&core::rewrite_keychain("http://10.0.0.5:8080")).map(Vec::as_slice), Some(b"s3cret-value".as_slice()), "the typed text, not its mask");
     assert!(!disabled(cx, r.win, "settings.rewriteEnabled"));
     click(cx, r.win, "settings.rewriteEnabled");
     assert_eq!(pref_b(cx, "rewriteEnabled"), Some(true));
@@ -1053,7 +1059,7 @@ async fn summaries_fields_and_key(cx: &mut TestAppContext) {
     assert_saw(&["Remove surrounding whitespace and line breaks."]);
     type_into(cx, r.win, |p| p.summary_key.clone(), "key-1");
     click(cx, r.win, "settings.summaryServerKeySave");
-    assert_eq!(r.secrets.borrow().get(&core::rewrite_keychain(core::SUMMARY_ACCOUNT)).map(String::as_str), Some("key-1"));
+    assert_eq!(r.secrets.borrow().get(&core::rewrite_keychain(core::SUMMARY_ACCOUNT)).map(Vec::as_slice), Some(b"key-1".as_slice()));
     assert_saw(&["••••••••••••"]);
     click(cx, r.win, "settings.summaryServerKeyEdit");
     assert!(has(cx, r.win, "settings.summaryServerKeyCancel"));
@@ -1120,8 +1126,8 @@ async fn real_flowd_through_the_page(cx: &mut TestAppContext) {
     frame(cx, r.win);
     assert_saw(&["Server unreachable"]);
     let identity = core::fetch_identity(&identity_url).unwrap();
-    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), identity.server_key);
-    r.secrets.borrow_mut().insert(core::remote_keychain("access-token"), flowd.access_token.clone());
+    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), identity.validated_key().unwrap());
+    r.secrets.borrow_mut().insert(core::remote_keychain("access-token"), flowd.access_token.clone().into_bytes());
     flow_ui::probe::clear();
     click(cx, r.win, "settings.serverCheckConnection");
     wait(cx, r.win, &|p| !p.checking);
@@ -1145,7 +1151,7 @@ async fn real_flowd_through_the_page(cx: &mut TestAppContext) {
     wait(cx, r.win, &|p| !p.connection_testing);
     frame(cx, r.win);
     assert_saw(&["The server rejected the credential."]);
-    r.secrets.borrow_mut().insert(account, token);
+    r.secrets.borrow_mut().insert(account, token.into_bytes());
     click(cx, r.win, "settings.rewriteTestConnection");
     wait(cx, r.win, &|p| !p.connection_testing);
     frame(cx, r.win);

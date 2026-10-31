@@ -46,10 +46,31 @@ impl Services for Win {
     fn free_disk_bytes(&self) -> Option<u64> {
         None
     }
-    fn secret(&self, _: &str) -> Result<Option<String>, Unavailable> {
-        Err(Unavailable("Credential Manager"))
+    fn secret(&self, name: &str) -> Result<Option<String>, Unavailable> {
+        crate::win::secrets::read(name)?.map(|v| String::from_utf8(v).map_err(|_| Unavailable("Credential Manager"))).transpose()
     }
-    fn set_secret(&self, _: &str, _: &str) -> Result<(), Unavailable> {
-        Err(Unavailable("Credential Manager"))
+    fn set_secret(&self, name: &str, value: &str) -> Result<(), Unavailable> {
+        crate::win::secrets::write(name, value.as_bytes())
+    }
+    fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
+        crate::win::secrets::remove(name)
+    }
+    fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        crate::win::secrets::read(name)
+    }
+    fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
+        crate::win::secrets::write(name, value)
+    }
+    fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
+        crate::win::tpm::create()
+    }
+    fn device_key_public_key(&self, handle: &[u8]) -> Option<Vec<u8>> {
+        crate::win::tpm::public_key(handle)
+    }
+    fn device_key_sign(&self, handle: &[u8], message: &[u8]) -> Result<Vec<u8>, Unavailable> {
+        crate::win::tpm::sign(handle, message)
+    }
+    fn device_key_delete(&self, handle: &[u8]) -> Result<(), Unavailable> {
+        crate::win::tpm::delete(handle)
     }
 }

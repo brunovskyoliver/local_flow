@@ -202,16 +202,16 @@ impl SettingsPage {
     /// `pin`: credentials go, the key is stored, the state moves to pinned.
     pub(super) fn trust_server(&mut self, cx: &mut Context<Self>) {
         let Some(identity) = self.identity.clone() else { return };
-        if identity.validated_key().is_none() {
+        let Some(key) = identity.validated_key() else {
             self.remote_error = Some("The server identity could not be saved.".into());
             cx.notify();
             return;
-        }
+        };
         let services = &cx.global::<Core>().services;
         for account in ["device-key", "refresh-token", "access-token"] {
             let _ = services.remove_secret(&core::remote_keychain(account));
         }
-        if services.set_secret(&core::remote_keychain("server-key"), &identity.server_key).is_err() {
+        if services.set_secret_data(&core::remote_keychain("server-key"), &key).is_err() {
             self.remote_error = Some("The server identity could not be saved.".into());
             cx.notify();
             return;
@@ -257,7 +257,7 @@ impl SettingsPage {
         }
         let base = self.remote_base.clone().unwrap_or_else(|| core::remote_server_url(prefs(cx)));
         let services = &cx.global::<Core>().services;
-        let key = services.secret(&core::remote_keychain("server-key")).ok().flatten();
+        let key = services.secret_data(&core::remote_keychain("server-key")).ok().flatten();
         let token = services.secret(&core::remote_keychain("access-token")).ok().flatten();
         self.checking = true;
         cx.notify();

@@ -157,7 +157,7 @@ impl OnboardingPage {
             }),
         ];
         apply_native_appearance(cx);
-        let pinned = cx.global::<Core>().services.secret(&server::remote_keychain("server-key")).ok().flatten().and_then(|k| server::base64url_decode(&k)).map(|k| server::fingerprint_of(&k));
+        let pinned = cx.global::<Core>().services.secret_data(&server::remote_keychain("server-key")).ok().flatten().map(|k| server::fingerprint_of(&k));
         let mut page = OnboardingPage {
             setup,
             snap: Snapshot::default(),
@@ -581,7 +581,8 @@ impl OnboardingPage {
         for account in ["device-key", "refresh-token", "access-token"] {
             let _ = services.remove_secret(&server::remote_keychain(account));
         }
-        if services.set_secret(&server::remote_keychain("server-key"), &identity.server_key).is_err() {
+        let saved = server::base64url_decode(&identity.server_key).is_some_and(|key| services.set_secret_data(&server::remote_keychain("server-key"), &key).is_ok());
+        if !saved {
             self.remote.error = Some("The server identity could not be saved.".into());
         } else {
             let prefs = &mut cx.global_mut::<Core>().prefs;

@@ -3,12 +3,12 @@
 Every phase ends with `cargo test --workspace`, `./scripts/check-rust-boundaries.sh`, and where Windows code changed `cargo xwin check -p localflow --target x86_64-pc-windows-msvc`. Swift remote code in `packages/LocalFlowCore/Sources/LocalFlowCore/Remote/` is the behaviour reference; port behaviour and its tests, not line by line. No test touches the owner's Keychain, data or server.
 
 ## Phase 1: Foundations for credentials (US1)
-- [ ] T001 Add `windows` as a Windows-only dependency of `flow-platform`, with only the needed features; notes in `THIRD_PARTY_NOTICES.md`.
-- [ ] T002 Traits in `flow-core::remote`: `Secrets`, `DeviceKeys`, with in-memory fakes. Pure helpers: raw r||s to DER, BCrypt blob to X9.63. Tests.
-- [ ] T003 Mac Keychain in `flow-platform`: `secret`, `set_secret`, `remove_secret` via Security.framework with existing names. A test against a temporary keychain file only.
-- [ ] T004 Mac Secure Enclave `device_key_create`, `public_key`, `sign`, `delete` via FFI. Without entitlements it reports unavailable. Not run live: list in hardware.md.
-- [ ] T005 Windows Credential Manager secrets, explicit failure over the blob limit. TPM key through NCrypt. Cross-check only.
-- [ ] T006 `Fake` gains scripted keys and secrets.
+- [X] T001 Add `windows` as a Windows-only dependency of `flow-platform`, with only the needed features; notes in `THIRD_PARTY_NOTICES.md`.
+- [X] T002 Traits in `flow-core::remote`: `Secrets`, `DeviceKeys`, with in-memory fakes. Pure helpers: raw r||s to DER, BCrypt blob to X9.63. Tests.
+- [X] T003 Mac Keychain in `flow-platform`: `secret`, `set_secret`, `remove_secret` via Security.framework with existing names. A test against a temporary keychain file only.
+- [X] T004 Mac Secure Enclave `device_key_create`, `public_key`, `sign`, `delete` via FFI. Without entitlements it reports unavailable. Not run live: list in hardware.md.
+- [X] T005 Windows Credential Manager secrets, explicit failure over the blob limit. TPM key through NCrypt. Cross-check only.
+- [X] T006 `Fake` gains scripted keys and secrets.
 
 ## Phase 2: Channel, enrollment, pairing (US1)
 - [ ] T007 Move the channel from `settings.rs` into `remote/channel.rs`, complete it (sequence numbers, session, round trips, errors) per `RemoteChannel.swift`; keep existing callers working. Check `hpke-vectors.json`.

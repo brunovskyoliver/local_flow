@@ -287,7 +287,7 @@ impl SettingsPage {
             next.verifying = verifying;
         }
         scenario::apply_snapshot(&self.scenario, &mut next);
-        let pinned = core_state.services.secret(&core::remote_keychain("server-key")).ok().flatten().and_then(|k| core::base64url_decode(&k)).map(|k| core::fingerprint_of(&k));
+        let pinned = core_state.services.secret_data(&core::remote_keychain("server-key")).ok().flatten().map(|k| core::fingerprint_of(&k));
         let rewrite = RewriteSettings::capture(p, |origin| Self::secret_present(cx, &core::rewrite_keychain(origin)));
         let saved = Self::secret_present(cx, &core::rewrite_keychain(core::SUMMARY_ACCOUNT));
         let changed = next != self.snapshot || pinned != self.pinned || rewrite != self.rewrite || saved != self.summary_key_saved;
@@ -315,8 +315,8 @@ impl SettingsPage {
         if self.usage_origin.as_ref() == Some(&origin) {
             return;
         }
-        let (Some(db), Ok(Some(key))) = (core_state.db.as_ref(), core_state.services.secret(&core::remote_keychain("device-key"))) else { return };
-        let _ = core::prepare_automatic_enrollment(db, &origin, &core::usage_fingerprint(key.as_bytes()));
+        let (Some(db), Ok(Some(key))) = (core_state.db.as_ref(), core_state.services.secret_data(&core::remote_keychain("device-key"))) else { return };
+        let _ = core::prepare_automatic_enrollment(db, &origin, &core::usage_fingerprint(&key));
         self.usage_origin = Some(origin);
     }
 

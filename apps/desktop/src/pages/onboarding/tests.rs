@@ -67,6 +67,9 @@ impl flow_platform::Services for Stub {
     fn set_secret(&self, name: &str, _: &str) -> Result<(), Unavailable> {
         self.call(format!("secret {name}"), ())
     }
+    fn set_secret_data(&self, name: &str, _: &[u8]) -> Result<(), Unavailable> {
+        self.call(format!("secret {name}"), ())
+    }
     fn physical_memory(&self) -> u64 {
         16 << 30
     }

@@ -208,8 +208,7 @@ async fn sign_in_buttons_follow_state_google_and_busy(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn pinned_line_is_12_muted_with_two_spaces(cx: &mut TestAppContext) {
     let r = rig(cx, "", pinned);
-    let key = core::base64url_encode(&[1u8; 32]);
-    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), key);
+    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), vec![1; 32]);
     set(cx, r.win, |p, _, cx| p.refresh(cx));
     let fp = read(cx, r.win, |p, _| p.pinned.clone()).unwrap();
     assert_eq!(fp, core::fingerprint_of(&[1u8; 32]));
@@ -406,7 +405,7 @@ async fn fallback_stepper_label_and_steps(cx: &mut TestAppContext) {
 async fn advanced_fingerprint_row_has_its_id_and_selects(cx: &mut TestAppContext) {
     let r = rig(cx, "advanced", |_| {});
     assert!(!has(cx, r.win, "settings.serverFingerprint.text"), "only when pinned");
-    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), core::base64url_encode(&[2u8; 32]));
+    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), vec![2; 32]);
     set(cx, r.win, |p, _, cx| p.refresh(cx));
     let fp = core::fingerprint_of(&[2u8; 32]);
     let muted = palette(cx).muted;
@@ -898,7 +897,7 @@ async fn summary_fields_read_and_save(cx: &mut TestAppContext) {
     assert!(!has(cx, r.win, "settings.summaryServerKeyCancel"), "only if already saved");
     type_into(cx, r.win, |p| p.summary_key.clone(), "k3y");
     press(cx, r.win, "enter");
-    assert_eq!(r.secrets.borrow().get(&core::rewrite_keychain(core::SUMMARY_ACCOUNT)).map(String::as_str), Some("k3y"), "Return saves, on summary-server");
+    assert_eq!(r.secrets.borrow().get(&core::rewrite_keychain(core::SUMMARY_ACCOUNT)).map(Vec::as_slice), Some(b"k3y".as_slice()), "Return saves, on summary-server");
     assert_eq!(label(cx, r.win, "API key saved"), "API key saved");
     assert_eq!(read(cx, r.win, |p, cx| val(&p.summary_key, cx)), "", "clears the draft");
     click(cx, r.win, "settings.summaryServerKeyEdit");
