@@ -413,18 +413,7 @@ impl InsightsPage {
         let (content, est): (AnyElement, f32) = match &tip {
             Tip::Note { title, detail } => {
                 let long = detail.iter().flat_map(|d| d.split('\n')).map(|l| l.chars().count() as f32 * 6.).fold(title.chars().count() as f32 * 7., f32::max);
-                (
-                    v_flex()
-                        .gap(px(3.))
-                        .px(px(11.))
-                        .py(px(8.))
-                        .bg(p.ink)
-                        .rounded(px(7.))
-                        .child(t(title.clone()).font(13., 500.).color(p.surface))
-                        .when_some(detail.clone(), |d, x| d.child(t(x).size(11.5).color(p.surface).opacity(0.75)))
-                        .into_any_element(),
-                    long + 22.,
-                )
+                (note_bubble(title.clone(), detail.clone(), cx).into_any_element(), long + 22.)
             }
             Tip::Day { day, words, apps, top } => {
                 let row = |l: &str, v: String| h_flex().w_full().justify_between().gap(px(12.)).child(t(l.to_string()).size(12.5).color(p.ink)).child(t(v).font(12.5, 500.).color(p.ink).lines(1));
@@ -456,7 +445,7 @@ impl InsightsPage {
         let arrow = matches!(tip, Tip::Note { .. }).then(|| {
             // `TipArrow`: a 12 by 6 triangle under the note.
             let ink = p.ink;
-            canvas(
+            div().id("insights.tip.arrow").test_support().child(canvas(
                 |_, _, _| {},
                 move |b, _, w, _| {
                     let o = b.origin;
@@ -469,7 +458,7 @@ impl InsightsPage {
                         w.paint_path(path, ink);
                     }
                 },
-            )
+            ).size_full())
             .absolute()
             .left(px(mid - 6.))
             .bottom(px(bottom - 6.5))
@@ -478,6 +467,19 @@ impl InsightsPage {
         });
         Some(div().absolute().inset_0().child(wrap.bottom(px(bottom))).children(arrow))
     }
+}
+
+/// `InsightTips`' note: its text over `ink`.
+fn note_bubble(title: String, detail: Option<String>, cx: &App) -> Div {
+    let p = pal(cx);
+    v_flex()
+        .gap(px(3.))
+        .px(px(11.))
+        .py(px(8.))
+        .bg(p.ink)
+        .rounded(px(7.))
+        .child(t(title).font(13., 500.).color(p.surface))
+        .when_some(detail, |d, x| d.child(t(x).size(11.5).color(p.surface).opacity(0.75)))
 }
 
 fn hour_tip(i: &Insights, h: usize) -> Tip {
@@ -1185,7 +1187,11 @@ mod tests {
         assert_eq!((title.size, title.weight, title.color), (13., 500., surface));
         let range = format!("{} – {}", hour_time(h as i64), hour_time((h as i64 + 1) % 24));
         let detail = flow_ui::probe::style_of(&range).unwrap();
-        assert_eq!(detail.size, 11.5);
+        assert_eq!((detail.size, detail.color), (11.5, surface.opacity(0.75)));
+        // The arrow is 12 by 6 and centered on the target.
+        let (arrow, target) = (bounds(cx, w, "insights.tip.arrow"), bounds(cx, w, &format!("insights.hour.{h}")));
+        assert_eq!((arrow.size.width, arrow.size.height), (px(12.), px(6.)));
+        assert!((arrow.center().x - target.center().x).abs() < px(0.5), "{arrow:?} over {target:?}");
         // Last anchor wins: the tip replaces the one before.
         hover(cx, w, "insights.hour.23");
         let tip = bounds(cx, w, "insights.tip");
@@ -1207,6 +1213,22 @@ mod tests {
         let i = w.update(cx, |t, _, _| t.insights.clone().unwrap()).unwrap();
         let (words, apps, top) = i.days.get(&m).map_or((0, 0, None), |u| (u.words, u.apps.len() as i64, u.top_app().map(fallback_app_name)));
         assert_eq!(value(cx, format!("insights.day.{m}")), Some(day_spoken(m, words, apps, top.as_deref())));
+    }
+
+    // parity: INS-086
+    /// Headless frames can't read paint, so this reads the style the bubble was built with.
+    #[flow_ui::gpui::test]
+    async fn a_note_bubble_has_its_padding_radius_spacing_and_ink(cx: &mut TestAppContext) {
+        let _ = open(cx);
+        let ink = cx.update(|cx| pal(cx).ink);
+        let mut bubble = cx.update(|cx| note_bubble("t".into(), None, cx));
+        let s = bubble.style();
+        let length = |l: Option<DefiniteLength>| l.expect("set");
+        assert_eq!((length(s.padding.left), length(s.padding.right)), (px(11.).into(), px(11.).into()));
+        assert_eq!((length(s.padding.top), length(s.padding.bottom)), (px(8.).into(), px(8.).into()));
+        assert_eq!(s.corner_radii.top_left, Some(px(7.).into()));
+        assert_eq!(s.gap.height, Some(px(3.).into()));
+        assert_eq!(s.background, Some(ink.into()));
     }
 
     // parity: INS-071 INS-073 INS-074 INS-076 INS-070

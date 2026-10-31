@@ -1580,14 +1580,19 @@ mod tests {
             assert!(suppressed(cx));
             show_action("a", false, cx);
             assert_eq!(cx.global::<Session>().pill.content(), Content::Action);
+            assert!(cx.global::<Session>().pill.should_show(true), "Action presents even when background is suppressed");
             show_clipboard(false, cx);
             assert_eq!(cx.global::<Session>().pill.content(), Content::Clipboard);
+            assert!(cx.global::<Session>().pill.should_show(true), "Clipboard presents even when background is suppressed");
             show_learned("w", LearnedKind::Added, cx);
             assert_eq!(cx.global::<Session>().pill.content(), Content::Learned);
+            assert!(cx.global::<Session>().pill.should_show(true), "Learned presents even when background is suppressed");
             show_microphone("m", cx);
             assert_eq!(cx.global::<Session>().pill.content(), Content::Microphone);
+            assert!(cx.global::<Session>().pill.should_show(true), "Microphone presents even when background is suppressed");
             set_state(DictState::Recording, 0., cx);
             assert_eq!(cx.global::<Session>().pill.content(), Content::Dictation);
+            assert!(cx.global::<Session>().pill.should_show(true), "Dictation presents even when background is suppressed");
         });
     }
 
@@ -1772,8 +1777,21 @@ mod tests {
     fn rewrite_failure_categories_map_to_the_live_words() {
         use flow_core::history::rewrite_notice;
         let suffix = " Original text inserted.";
-        for (category, tail) in [("server_unreachable", suffix), ("transport_error", suffix), ("timeout", suffix), ("authentication_failed", ""), ("backend_unavailable", ""), ("malformed_response", ""), ("empty_response", ""), ("missing_credential", suffix)] {
+        let unusable = "Rewrite server sent an unusable reply.";
+        for (category, tail, words) in [
+            ("server_unreachable", suffix, "Rewrite server unreachable. Original text inserted."),
+            ("transport_error", suffix, "Rewrite connection failed. Original text inserted."),
+            ("timeout", suffix, "Rewrite took too long. Original text inserted."),
+            ("authentication_failed", "", "Rewrite server rejected the credential. Check Settings."),
+            ("backend_unavailable", "", "Rewrite model is not available on the server."),
+            ("malformed_response", "", unusable),
+            ("unsupported_schema_version", "", unusable),
+            ("request_mismatch", "", unusable),
+            ("empty_response", "", "Rewrite result was rejected."),
+            ("missing_credential", suffix, "Rewriting skipped: no credential for this server. Original text inserted."),
+        ] {
             let live = format!("{}{tail}", rewrite_notice(category));
+            assert_eq!(live, words, "{category}");
             assert!(REWRITE_NOTICES.iter().any(|(m, retry)| *m == live && *retry), "{live}");
         }
         assert!(REWRITE_NOTICES.iter().any(|(m, _)| *m == "Rewrite connection failed. Original text inserted."));

@@ -336,6 +336,8 @@ async fn failures_read_at_the_page_bottom(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn consent_sheet_stores_nothing_until_turn_on(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
+    let shown = |cx: &mut TestAppContext| cx.update_window(r.win.into(), |_, w, _| w.find("settings.remoteEnabled").checked()).unwrap();
+    assert_eq!(shown(cx), Some(false), "the switch shows remote.enabled");
     click(cx, r.win, "settings.remoteEnabled");
     assert_saw(&["https://server.example.com"]);
     assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find_by_label("Server address").label().map(|l| l.to_string())).unwrap().as_deref(), Some("Server address"));
@@ -359,6 +361,7 @@ async fn consent_sheet_stores_nothing_until_turn_on(cx: &mut TestAppContext) {
     assert_eq!(pref_b(cx, "remote.enabled"), Some(true));
     assert_eq!(pref_i(cx, "remote.consentVersion", 0), 2);
     assert!(read(cx, r.win, |p, _| p.modal.is_none()));
+    assert_eq!(shown(cx), Some(true));
 }
 
 // parity: ONB-110
@@ -1184,7 +1187,7 @@ async fn controls_have_swifts_measured_sizes(cx: &mut TestAppContext) {
     assert_eq!(bounds(cx, r.win, "settings.localModelIdleUnload.frame").size.width, px(130.));
 }
 
-// parity: SET-001 SET-004 SET-005 SET-007 SET-240
+// parity: SET-004 SET-005 SET-007 SET-240
 #[flow_ui::gpui::test]
 async fn page_rows_and_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -1198,6 +1201,23 @@ async fn page_rows_and_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
     assert_eq!((gap(left, switch), row.size.height), (44., switch.size.height + px(38.)), "spacing 22 on each side of the Spacer, vertical padding 19");
     let r = rig(cx, "installed", |_| {});
     assert_eq!(gap(bounds(cx, r.win, "settings.speechLoad"), bounds(cx, r.win, "settings.test.speech")), 8., "model controls");
+}
+
+// parity: SET-001
+/// 47, 23 and 31 rather than the row's 48, 24 and 32: at these values the title ink is within 0.5 pt of
+/// the reference in the measured light pairs. Bottom and max width are the row's.
+#[flow_ui::gpui::test]
+async fn page_padding_at_both_widths(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let padding = |cx: &mut TestAppContext| {
+        let (page, column) = (bounds(cx, r.win, "settings.content"), bounds(cx, r.win, "settings.column"));
+        (column.left() - page.left(), column.top() - page.top(), page.bottom() - column.bottom())
+    };
+    assert_eq!(bounds(cx, r.win, "settings.content").size.width, px(960.));
+    assert_eq!(padding(cx), (px(47.), px(47.), px(64.)));
+    cx.update(|cx| cx.global_mut::<Flow>().compact = true);
+    set(cx, r.win, |_, _, cx| cx.notify());
+    assert_eq!(padding(cx), (px(23.), px(31.), px(64.)));
 }
 
 // parity: SET-077 SET-080 SET-107 SET-212 SET-213 SET-215 SET-217 SET-226 SET-229 SET-011

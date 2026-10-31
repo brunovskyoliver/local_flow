@@ -1262,7 +1262,7 @@ mod tests {
         assert!(p.bool_or("server.only", false));
     }
 
-    // parity: ONB-093 ONB-094 ONB-095 ONB-096 ONB-097 ONB-098 ONB-099 ONB-100 ONB-101 ONB-102 ONB-103 ONB-104 ONB-064 ONB-133 ONB-268
+    // parity: ONB-093 ONB-094 ONB-095 ONB-096 ONB-097 ONB-098 ONB-099 ONB-100 ONB-101 ONB-102 ONB-103 ONB-104 ONB-064 ONB-268
     #[test]
     fn advance_walks_steps_and_requests_models() {
         let snap = ready();
@@ -1333,7 +1333,7 @@ mod tests {
         assert_eq!(s.step, Step::Test, "no finish before success");
     }
 
-    // parity: ONB-052 ONB-105 ONB-106 ONB-108 ONB-109 ONB-111 ONB-266 ONB-267 ONB-043 ONB-115 ONB-264
+    // parity: ONB-052 ONB-105 ONB-106 ONB-108 ONB-109 ONB-266 ONB-267 ONB-043 ONB-115 ONB-264
     #[test]
     fn skip_abandon_and_back() {
         let snap = ready();
@@ -1543,7 +1543,7 @@ mod tests {
         assert!(s.has_missing_permissions());
     }
 
-    // parity: ONB-211 ONB-233 ONB-237
+    // parity: ONB-211 ONB-237
     #[test]
     fn origins_and_overrides() {
         assert_eq!(remote_origin(" https://Server.Example.com:8443/ ").as_deref(), Some("https://server.example.com:8443"));

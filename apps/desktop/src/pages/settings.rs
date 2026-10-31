@@ -1204,7 +1204,7 @@ impl Render for SettingsPage {
                     .items_center()
                     .text_color(pl.ink)
                     .text_size(px(14.))
-                    .child(div().id("settings.content").w_full().max_w(px(960.)).px(px(if compact { 23. } else { 47. })).pt(px(if compact { 31. } else { 47. })).pb(px(64.)).flex_none().child(column).test_support()),
+                    .child(div().id("settings.content").w_full().max_w(px(960.)).px(px(if compact { 23. } else { 47. })).pt(px(if compact { 31. } else { 47. })).pb(px(64.)).flex_none().child(div().id("settings.column").w_full().child(column).test_support()).test_support()),
             )
             .children(overlay)
     }

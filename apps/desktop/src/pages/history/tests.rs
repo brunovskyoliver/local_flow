@@ -896,6 +896,22 @@ fn bounds(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, id: &str) -> Bo
     cx.update_window(w.into(), |_, win, _| win.find(id).bounds()).unwrap()
 }
 
+// parity: HIST-001
+#[flow_ui::gpui::test]
+async fn the_page_shell_has_its_padding_at_both_widths(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let padding = |cx: &mut TestAppContext| {
+        let (page, list, title) = (bounds(cx, w, "history.content"), bounds(cx, w, "history.list"), bounds(cx, w, "history.title"));
+        (list.left() - page.left(), title.top() - page.top(), page.bottom() - list.bottom())
+    };
+    assert_eq!(bounds(cx, w, "history.content").size.width, px(960.));
+    assert_eq!(padding(cx), (px(48.), px(48.), px(64.)));
+    cx.update(|cx| cx.global_mut::<Flow>().compact = true);
+    w.update(cx, |_, _, cx| cx.notify()).unwrap();
+    frame(cx, w);
+    assert_eq!(padding(cx), (px(24.), px(32.), px(64.)));
+}
+
 // parity: HIST-029
 #[flow_ui::gpui::test]
 async fn the_error_row_has_its_top_padding(cx: &mut TestAppContext) {

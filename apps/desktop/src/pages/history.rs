@@ -734,7 +734,7 @@ impl Render for HistoryPage {
             self.focus.focus(window, cx);
         }
         let p = pal(cx);
-        let mut content = v_flex().w_full().text_color(p.ink).text_size(px(14.)).child(self.header(cx));
+        let mut content = v_flex().w_full().text_color(p.ink).text_size(px(14.)).child(div().id("history.title").w_full().child(self.header(cx)).test_support());
         if let Some(e) = self.model.error.clone() {
             content = content.child(
                 h_flex()
@@ -767,7 +767,7 @@ impl Render for HistoryPage {
             .flex()
             .flex_col()
             .items_center()
-            .child(div().w_full().max_w(px(960.)).flex_none().px(px(if compact { 24. } else { 48. })).pt(px(if compact { 32. } else { 48. })).pb(px(64.)).child(content));
+            .child(div().id("history.content").test_support().w_full().max_w(px(960.)).flex_none().px(px(if compact { 24. } else { 48. })).pt(px(if compact { 32. } else { 48. })).pb(px(64.)).child(content));
         let detail = if self.model.detail_id.is_some() { Some(self.detail_sheet(cx)) } else { None };
         let confirm = if self.confirming_delete {
             Some(confirm_dialog(

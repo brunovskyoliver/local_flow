@@ -163,7 +163,6 @@ impl OnboardingPage {
         let word = self.word(cx);
         let body = {
             let draft = self.server_draft.read(cx).value().to_string();
-            let focused = self.server_draft.read(cx).focus_handle(cx).is_focused(window);
             let origin = remote_origin(&draft);
             let prefs = &self.core(cx).prefs;
             let text = if Purpose::stored(prefs) == Purpose::Meetings || prefs.bool_or("server.only", false) { MEETING_CONSENT_TEXT } else { CONSENT_TEXT };

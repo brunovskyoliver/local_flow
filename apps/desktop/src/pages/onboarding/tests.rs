@@ -534,14 +534,122 @@ async fn server_row_follows_approval_and_skip_has_no_row(cx: &mut TestAppContext
 }
 
 // parity: ONB-010
-/// A model already on disk reads as done on return, through the service.
+/// Models already on disk read "Ready" on return. The speech one through the service; the meeting
+/// flags have no launch check until Feature 025, so this proves only how they render.
 #[flow_ui::gpui::test]
 async fn resume_counts_a_verified_model_as_installed(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);
-    assert!(!read(cx, r.win, |p, _| p.snap.model_installed));
+    let readies = || flow_ui::probe::seen().iter().filter(|s| *s == "Ready").count();
+    set(cx, r.win, |p| {
+        p.setup.step = Step::Downloads;
+        p.setup.ai_mode = AiMode::Off;
+        p.setup.purpose = Purpose::Both;
+        p.setup.meetings_requested = true;
+    });
+    assert_eq!(readies(), 0);
     r.verified.set(true);
-    r.win.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
-    assert!(read(cx, r.win, |p, _| p.snap.model_installed));
+    r.win
+        .update(cx, |p, _, cx| {
+            p.frozen = false;
+            p.refresh(cx);
+            p.frozen = true;
+        })
+        .unwrap();
+    frame(cx, r.win);
+    assert_eq!(readies(), 1, "speech recognition");
+    set(cx, r.win, |p| {
+        p.snap.meeting_model_installed = true;
+        p.snap.speaker_model_installed = true;
+    });
+    assert_eq!(readies(), 2, "speech recognition and meeting transcription");
+}
+
+// parity: ONB-133
+/// The card sets the choice only; the preference is written on leaving the step.
+#[flow_ui::gpui::test]
+async fn choosing_a_purpose_card_stores_nothing_until_leaving(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    set(cx, w, |p| p.setup.step = Step::Purpose);
+    click(cx, w, "onboarding.purpose.dictation");
+    assert_eq!(read(cx, w, |p, _| p.setup.purpose), Purpose::Dictation);
+    assert_eq!(cx.update_window(w.into(), |_, w, _| w.find("onboarding.purpose.dictation").checked()).unwrap(), Some(true));
+    assert_eq!(pref(cx, "setup.purpose"), None);
+    click(cx, w, "onboarding.primary");
+    assert_eq!(pref(cx, "setup.purpose").as_deref(), Some("dictation"));
+}
+
+// parity: ONB-111
+/// After Skip, Back shows neither card selected, the local panel, and Continue does what Skip did.
+#[flow_ui::gpui::test]
+async fn back_after_skip_selects_nothing_and_continue_skips(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    set(cx, w, |p| {
+        p.setup.step = Step::Ai;
+        p.setup.purpose = Purpose::Dictation;
+        p.setup.ai_mode = AiMode::Local;
+    });
+    click(cx, w, "onboarding.skipAI");
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::Downloads);
+    click(cx, w, "onboarding.back");
+    assert_eq!(read(cx, w, |p, _| (p.setup.step, p.setup.ai_mode)), (Step::Ai, AiMode::Off));
+    let checked = |cx: &mut TestAppContext, id: &'static str| cx.update_window(w.into(), |_, w, _| w.find(id).checked()).unwrap();
+    assert_eq!(checked(cx, "onboarding.ai.local"), Some(false));
+    assert_eq!(checked(cx, "onboarding.ai.remote"), Some(false));
+    assert_saw(&["MTPLX engine"]);
+    click(cx, w, "onboarding.primary");
+    assert_eq!(read(cx, w, |p, _| (p.setup.step, p.setup.ai_mode)), (Step::Downloads, AiMode::Off));
+}
+
+// parity: ONB-233
+/// `edit_endpoint` itself: every keystroke writes; an origin change clears both overrides, hides the
+/// credential and turns blocked rewriting off; any edit invalidates the test.
+#[flow_ui::gpui::test]
+async fn editing_the_address_writes_each_keystroke_and_invalidates(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    let (a, b) = ("http://a.local:80", "http://b.local:80");
+    cx.update(|cx| {
+        let prefs = &mut cx.global_mut::<Core>().prefs;
+        prefs.set("rewriteEndpoint", a);
+        prefs.set("rewriteEnabled", true);
+        set_insecure_override(prefs, a, true);
+        set_insecure_override(prefs, b, true);
+    });
+    set(cx, w, |p| p.credential_present = true);
+    let revision = read(cx, w, |p, _| p.connection_revision);
+    let edit = |cx: &mut TestAppContext, text: &str| {
+        w.update(cx, |p, _, cx| {
+            p.connection_testing = true;
+            p.edit_endpoint(text.into(), cx);
+        })
+        .unwrap();
+    };
+    let allowed = |cx: &mut TestAppContext, origin: &str| cx.update(|cx| insecure_override(&cx.global::<Core>().prefs, origin));
+
+    edit(cx, "http://a.local:80/");
+    assert_eq!(pref(cx, "rewriteEndpoint").as_deref(), Some("http://a.local:80/"), "written on the keystroke");
+    assert!(allowed(cx, a) && allowed(cx, b), "the same origin keeps its override");
+    assert!(read(cx, w, |p, _| p.credential_present) && flag(cx, "rewriteEnabled"), "nothing blocks it yet");
+    assert_eq!(read(cx, w, |p, _| (p.connection_revision, p.connection_testing, p.connection.is_none())), (revision + 1, false, true));
+
+    edit(cx, b);
+    assert_eq!(pref(cx, "rewriteEndpoint").as_deref(), Some(b));
+    assert!(!allowed(cx, a) && !allowed(cx, b), "both origins lose theirs");
+    assert!(!read(cx, w, |p, _| p.credential_present), "the old credential is hidden");
+    assert!(!flag(cx, "rewriteEnabled"), "blocked rewriting turns off");
+    assert_eq!(read(cx, w, |p, _| (p.connection_revision, p.connection_testing)), (revision + 2, false));
+}
+
+// parity: ONB-207
+/// The consent sheet opens with the address field focused, so it draws the focus ring.
+#[flow_ui::gpui::test]
+async fn consent_opens_with_the_address_field_focused(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    set(cx, w, |p| {
+        p.setup.step = Step::AiDetails;
+        p.setup.ai_mode = AiMode::Remote;
+    });
+    click(cx, w, "settings.remoteEnabled");
+    w.update(cx, |p, win, cx| assert!(p.server_draft.read(cx).focus_handle(cx).is_focused(win))).unwrap();
 }
 
 // parity: ONB-315 ONB-317 ONB-327 ONB-331 ONB-332 ONB-333 ONB-049 ONB-334 ONB-336
