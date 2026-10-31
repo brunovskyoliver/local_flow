@@ -4,6 +4,7 @@ mod detail;
 use super::dictionary::ui::{confirm_dialog, overlay, sheet_card};
 use crate::core::Core;
 use crate::insertion::{Delivery, Quality, ReviewEntry, begin_review};
+use crate::pages::Page;
 use crate::shell::Session;
 use flow_core::history::*;
 use flow_ui::prelude::*;
@@ -30,13 +31,14 @@ pub struct HistoryPage {
     focus: FocusHandle,
     checked_at: Option<Instant>,
     signature: Option<(i64, i64)>,
+    /// Keyboard focus inside a row's actions keeps them visible.
+    action_focus: RefCell<HashMap<String, FocusHandle>>,
+    voice_over: bool,
+    /// Rows first seen a moment ago; they fade in (`.transition(.opacity)`).
+    seen: RefCell<HashMap<String, Instant>>,
+    /// The first list has been drawn, so a new row is news.
+    settled: bool,
     _subs: Vec<Subscription>,
-}
-
-/// `.dateTime.hour().minute()` under the owner's region: "01:37".
-fn time_of(db: &flow_core::db::Db, ms: i64) -> String {
-    let l = local(db, ms);
-    format!("{:02}:{:02}", l.hour, l.minute)
 }
 
 pub(super) fn review_entry(e: &Entry, text: String) -> ReviewEntry {
@@ -57,7 +59,23 @@ pub(super) fn review_entry(e: &Entry, text: String) -> ReviewEntry {
 impl HistoryPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
-        let subs = vec![cx.subscribe_in(&search, window, |this, _, e: &TextInputEvent, window, cx| this.search_event(e, window, cx))];
+        let mut shown = cx.try_global::<Session>().map(|s| s.selection);
+        let subs = vec![
+            cx.subscribe_in(&search, window, |this, _, e: &TextInputEvent, window, cx| this.search_event(e, window, cx)),
+            cx.observe_global::<Session>(move |this, cx| {
+                let now = Some(cx.global::<Session>().selection);
+                if now == shown {
+                    return;
+                }
+                if shown == Some(Page::History) {
+                    this.model.clear_detail();
+                } else if now == Some(Page::History) {
+                    this.appear(cx);
+                }
+                shown = now;
+                cx.notify();
+            }),
+        ];
         let mut page = HistoryPage {
             model: Model::default(),
             searching: false,
@@ -74,6 +92,10 @@ impl HistoryPage {
             focus: cx.focus_handle(),
             checked_at: None,
             signature: None,
+            action_focus: Default::default(),
+            voice_over: cx.global::<Core>().services.voice_over_on(),
+            seen: Default::default(),
+            settled: false,
             _subs: subs,
         };
         page.signature = cx.global::<Core>().db.as_ref().map(signature);
@@ -88,6 +110,13 @@ impl HistoryPage {
             None => self.model.error = Some(READ_ERROR.into()),
         }
         cx.notify();
+    }
+
+    /// `.onAppear`: the newest page, an open detail retried, pending reloaded.
+    fn appear(&mut self, cx: &mut Context<Self>) {
+        self.voice_over = cx.global::<Core>().services.voice_over_on();
+        self.signature = cx.global::<Core>().db.as_ref().map(signature);
+        self.reload(cx);
     }
 
     fn apply_scenario(&mut self, cx: &mut Context<Self>) {
@@ -302,7 +331,7 @@ impl HistoryPage {
         let mut rows = v_flex().w_full().border_1().border_color(p.line).rounded(px(12.));
         for item in &self.model.pending_items {
             let (id, id2) = (item.id.clone(), item.id.clone());
-            let when = core.db.as_ref().map(|db| format!("{} at {}", short_day(db, item.created_at), time_of(db, item.created_at))).unwrap_or_default();
+            let when = core.db.as_ref().map(|db| day_time(db, item.created_at)).unwrap_or_default();
             let local_ok = self.model.local_speech;
             rows = rows.child(
                 h_flex()
@@ -361,6 +390,7 @@ impl HistoryPage {
         let pin = self.pin.clone();
         let scroll = self.scroll.clone();
         let key = e.id.clone();
+        let action_focus = self.action_focus.borrow_mut().entry(e.id.clone()).or_insert_with(|| cx.focus_handle()).clone();
 
         let action = |id: String, symbol: &'static str, label: &str, tip: bool| {
             let b = FlowButton::new(SharedString::from(id), ButtonKind::Plain, label.to_string()).content(div().size(px(28.)).flex().items_center().justify_center().child(icon(symbol, 14., p.muted)));
@@ -387,7 +417,7 @@ impl HistoryPage {
                         move |menu, _, _| row_menu(menu, page.clone(), m.clone(), insert_off, busy)
                     }),
             );
-        div()
+        let row = div()
             .id(group.clone())
             .group(group.clone())
             .relative()
@@ -413,8 +443,8 @@ impl HistoryPage {
                     .when_some(e.quality_label(), |d, q| d.child(t(q).font(11., 500.).color(p.warning)))
                     .when_some(path, |d, l| d.child(t(l).id("history.pathLabel").size(11.).color(p.muted))),
             )
-            .child(div().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.)))
-            .child(hover_revealed(group, false, actions))
+            .child(div().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.).selectable()))
+            .child(hover_or_focus_revealed(group, self.voice_over, &action_focus, actions))
             .when(!last, |d| d.child(div().absolute().bottom_0().left(px(1.)).right(px(1.)).h(px(1.)).bg(p.line)))
             .child(
                 canvas(
@@ -434,8 +464,15 @@ impl HistoryPage {
                 .absolute()
                 .size(px(0.)),
             )
-            .context_menu(move |menu, _, _| row_menu(menu, page.clone(), m.clone(), insert_off, busy))
-            .into_any_element()
+            .context_menu(move |menu, _, _| row_menu(menu, page.clone(), m.clone(), insert_off, busy));
+        // ponytail: fades rows in only; a removed row leaves at once, Swift fades it out too.
+        let first_seen = *self.seen.borrow_mut().entry(e.id.clone()).or_insert_with(Instant::now);
+        if self.settled && first_seen.elapsed() < Duration::from_millis(300) {
+            let id = SharedString::from(format!("history.fade.{}", e.id));
+            row.with_animation(id, Animation::new(Duration::from_millis(200)).with_easing(ease_out_quint()), |d, delta| d.opacity(delta)).into_any_element()
+        } else {
+            row.into_any_element()
+        }
     }
 
     fn list(&self, cx: &mut Context<Self>) -> Div {
@@ -502,7 +539,7 @@ impl Render for HistoryPage {
                 h_flex()
                     .pt(px(20.))
                     .gap(px(8.))
-                    .child(t(e).color(p.warning))
+                    .child(t(e).color(p.warning).selectable())
                     .child(prototype_button("history.retry", "Retry").on_click(cx.listener(|this, _, _, cx| {
                         this.model.error = None;
                         this.reload(cx);
@@ -516,6 +553,7 @@ impl Render for HistoryPage {
             content = content.child(div().w_full().py(px(80.)).flex().justify_center().child(t(if self.model.is_no_matches() { "No matches" } else { "No transcriptions yet" }).color(p.muted)));
         } else {
             content = content.child(div().id("history.list").w_full().child(self.list(cx)));
+            self.settled = true;
         }
         let compact = cx.global::<Flow>().compact;
         let page = div()
@@ -589,9 +627,9 @@ impl Render for HistoryPage {
                 }
             }))
             .child(page)
-            .when_some(detail, |d, s| d.child(overlay("history.detailOverlay", cx, s)))
-            .when_some(confirm, |d, c| d.child(overlay("history.deleteOverlay", cx, c)))
-            .when_some(discard, |d, c| d.child(overlay("history.discardOverlay", cx, c)))
+            .when_some(detail, |d, s| d.child(overlay("history.detailOverlay", window, cx, s)))
+            .when_some(confirm, |d, c| d.child(overlay("history.deleteOverlay", window, cx, c)))
+            .when_some(discard, |d, c| d.child(overlay("history.discardOverlay", window, cx, c)))
     }
 }
 

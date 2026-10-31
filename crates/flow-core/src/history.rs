@@ -132,12 +132,61 @@ pub fn month_short(m: i64) -> &'static str {
     &MONTHS[(m - 1).clamp(0, 11) as usize][..3]
 }
 
-/// Swift's `.day().month(.abbreviated)` under the owner's region: "24 Sept", year added when not this year.
+/// The system locale's formats, set once at launch by the composition root. Without one (Windows
+/// until its service is written, and tests) the fallbacks below print a fixed en-GB shape.
+#[derive(Clone, Copy)]
+pub struct Region {
+    /// (milliseconds, template such as "dMMM" or "short-time", read the fields as UTC).
+    pub date: fn(i64, &str, bool) -> Option<String>,
+    /// (value, exact fraction digits).
+    pub number: fn(f64, u8) -> Option<String>,
+    /// 1 is Sunday, as in `Calendar.firstWeekday`.
+    pub first_weekday: i64,
+}
+
+thread_local! {
+    // ponytail: per thread, because every format call is on the UI thread; tests get their own.
+    static REGION: std::cell::Cell<Option<Region>> = const { std::cell::Cell::new(None) };
+}
+
+pub fn set_region(region: Region) {
+    REGION.with(|r| r.set(Some(region)));
+}
+
+pub fn region() -> Option<Region> {
+    REGION.with(|r| r.get())
+}
+
+/// A date in the region's format; `None` when no region is set.
+pub fn region_date(ms: i64, template: &str, utc: bool) -> Option<String> {
+    region().and_then(|r| (r.date)(ms, template, utc))
+}
+
+pub fn region_number(value: f64, digits: u8) -> Option<String> {
+    region().and_then(|r| (r.number)(value, digits))
+}
+
+/// `.dateTime.hour().minute()`.
+pub fn time_of(db: &Db, ms: i64) -> String {
+    region_date(ms, "jmm", false).unwrap_or_else(|| {
+        let l = local(db, ms);
+        format!("{:02}:{:02}", l.hour, l.minute)
+    })
+}
+
+/// `.dateTime.day().month().hour().minute()`, for a waiting recording.
+pub fn day_time(db: &Db, ms: i64) -> String {
+    region_date(ms, "dMMMjmm", false).unwrap_or_else(|| {
+        let l = local(db, ms);
+        format!("{} {}, {:02}:{:02}", l.day, month_short(l.month), l.hour, l.minute)
+    })
+}
+
+/// Swift's `.day().month(.abbreviated)`, with the year when it isn't this year.
 pub fn short_day(db: &Db, ms: i64) -> String {
     let d = local(db, ms);
     let now = local(db, now_ms());
-    let month = if d.month == 9 { "Sept" } else { month_short(d.month) };
-    if d.year == now.year { format!("{} {month}", d.day) } else { format!("{} {month} {}", d.day, d.year) }
+    region_date(ms, if d.year == now.year { "dMMM" } else { "yMMMd" }, false).unwrap_or_else(|| if d.year == now.year { format!("{} {}", d.day, month_short(d.month)) } else { format!("{} {} {}", d.day, month_short(d.month), d.year) })
 }
 
 /// Swift's `Double.description` for values that appear in the detail view.
@@ -1459,7 +1508,7 @@ pub fn seed(db: &Db) {
 fn seed_detail_extras(db: &Db) {
     let first = seed_id(1);
     let snapshot = json!({"after_cursor": " Best regards", "app_category": "email", "app_name": "Mail", "before_cursor": "Hi team,", "field_kind": "multi_line",
-        "schema_version": 1, "style_hints": false, "terms": [{"kind": "name", "source": "screen", "text": "Northwind"}], "truncated": ["before_cursor"], "window_title": "Kickoff"})
+        "schema_version": 1, "style_hints": false, "terms": [{"kind": "name", "source": "window_title", "text": "Northwind"}], "truncated": ["before_cursor"], "window_title": "Kickoff"})
     .to_string();
     let changes = json!([{"length": 9, "match": "exact_fold", "original": "north wind", "replacement": "Northwind", "source_part": "window_title", "start": 40}]).to_string();
     db.conn

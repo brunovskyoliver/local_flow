@@ -17,6 +17,9 @@ impl Global for Core {}
 
 impl Core {
     pub fn load(services: Box<dyn Services>) -> Core {
+        if let Some(f) = services.formats() {
+            flow_core::history::set_region(flow_core::history::Region { date: f.date, number: f.number, first_weekday: f.first_weekday });
+        }
         let paths = Paths::resolve(services.app_data_dir());
         let prefs = Prefs::open(paths.preferences());
         let (db, db_error) = match Db::open_or_create(&paths.database()) {

@@ -1,7 +1,7 @@
 //! Aggregates behind the Insights page: port of `UsageInsights`. Rows come from the history store,
 //! so there's nothing to seed here.
 use crate::db::Db;
-use crate::history::{civil_from_days, days_from_civil};
+use crate::history::{civil_from_days, days_from_civil, region, region_date, region_number};
 use std::collections::{BTreeMap, HashSet};
 
 pub fn seed(_db: &Db) {}
@@ -263,12 +263,17 @@ pub fn talk_time(seconds: f64) -> String {
 }
 
 pub fn versus_typing(pace: Option<i64>) -> String {
-    pace.map_or("–".into(), |p| format!("{:.1}×", p as f64 / 40.0).replace('.', ","))
+    pace.map_or("–".into(), |p| {
+        let ratio = p as f64 / 40.0;
+        region_number(ratio, 1).unwrap_or_else(|| format!("{ratio:.1}")) + "×"
+    })
 }
 
-/// Grouping for the owner's region as `formatted()` printed it: a no-break space.
-// ponytail: fixed region, read the system locale through `Services` when another one matters.
+/// `formatted()`; the fallback groups with a no-break space.
 pub fn grouped(n: i64) -> String {
+    if let Some(s) = region_number(n as f64, 0) {
+        return s;
+    }
     let digits = n.abs().to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -295,33 +300,55 @@ pub fn fallback_app_name(bundle: &str) -> String {
     }
 }
 
-/// Monday of the week containing `day`.
-/// ponytail: Monday-first, the owner's region; a Sunday-first locale needs a `Services` first weekday.
+const DAY_MS: i64 = 86_400_000;
+
+/// `Calendar.firstWeekday`, Monday when no region is set.
+fn first_weekday() -> i64 {
+    region().map_or(2, |r| r.first_weekday)
+}
+
+/// The first day of the week containing `day`. Day 0 was a Thursday.
 pub fn week_start(day: i64) -> i64 {
-    day - (day + 3).rem_euclid(7)
+    // 1 is Sunday: Thursday's index is 5.
+    day - (day + 5 - (first_weekday())).rem_euclid(7)
 }
 
 pub const WEEKS: i64 = 19;
-pub const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/// `shortWeekdaySymbols` from the calendar's first weekday; `offset` counts rows down the grid.
+pub fn weekday_label(offset: i64) -> String {
+    // 2026-11-01 was a Sunday.
+    let sunday = days_from_civil(2026, 11, 1);
+    let day = sunday + (first_weekday() - 1 + offset).rem_euclid(7);
+    region_date(day * DAY_MS, "EEE", true).unwrap_or_else(|| ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][(day - sunday) as usize].to_string())
+}
 
 pub fn columns(today: i64, page: i64) -> Vec<i64> {
     (0..WEEKS).map(|c| week_start(today) + 7 * (c - (WEEKS - 1) - page * WEEKS)).collect()
 }
 
 /// The abbreviated month when this week contains a 1st.
-pub fn month_label(week: i64) -> Option<&'static str> {
-    (0..7).map(|o| civil_from_days(week + o)).find(|(_, _, d)| *d == 1).map(|(_, m, _)| crate::history::month_short(m))
+pub fn month_label(week: i64) -> Option<String> {
+    let first = (0..7).map(|o| week + o).find(|day| civil_from_days(*day).2 == 1)?;
+    Some(region_date(first * DAY_MS, "MMM", true).unwrap_or_else(|| crate::history::month_short(civil_from_days(first).1).to_string()))
 }
 
-/// `date(.long)`, as the reference app shows it: "31 October 2026".
+/// `date(.long)`, "31 October 2026" in the fallback.
 pub fn long_date(day: i64) -> String {
-    let (y, m, d) = civil_from_days(day);
-    format!("{d} {} {y}", crate::history::MONTHS[(m - 1) as usize])
+    region_date(day * DAY_MS, "yMMMMd", true).unwrap_or_else(|| {
+        let (y, m, d) = civil_from_days(day);
+        format!("{d} {} {y}", crate::history::MONTHS[(m - 1) as usize])
+    })
 }
 
-/// `time: .shortened` as the owner's region printed it: "1:00", "13:00".
+/// `time: .shortened` for an hour of the day: "1:00", "13:00" in the fallback.
 pub fn hour_time(h: i64) -> String {
-    format!("{h}:00")
+    region_date(h * 3_600_000, "short-time", true).unwrap_or_else(|| format!("{h}:00"))
+}
+
+/// `.dateTime.hour()` for the axis: "00", "06" in the fallback.
+pub fn hour_label(h: i64) -> String {
+    region_date(h * 3_600_000, "j", true).unwrap_or_else(|| format!("{h:02}"))
 }
 
 /// The tip's plain sentence, which is also the element's accessibility value.
@@ -391,7 +418,7 @@ mod tests {
         assert_eq!(talk_time(59.4), "59s");
         assert_eq!(talk_time(3599.0), "59m");
         assert_eq!(talk_time(3660.0), "1h 1m");
-        assert_eq!(versus_typing(Some(150)), "3,8×");
+        assert_eq!(versus_typing(Some(150)), "3.8×");
         assert_eq!(versus_typing(None), "–");
         assert_eq!(grouped(1234567), "1\u{A0}234\u{A0}567");
         assert_eq!(counted(1, "word", "words"), "1 word");
@@ -427,7 +454,7 @@ mod tests {
         assert_eq!(c.len(), 19);
         assert_eq!(c[18], week_start(sat));
         assert_eq!(columns(sat, 1)[18], c[0] - 7);
-        assert_eq!(month_label(days_from_civil(2026, 9, 28)), Some("Oct"));
+        assert_eq!(month_label(days_from_civil(2026, 9, 28)).as_deref(), Some("Oct"));
         assert_eq!(month_label(days_from_civil(2026, 10, 5)), None);
         assert_eq!(note_spoken("3 words", Some("a · b\nMost in Mail")), "3 words, a · b, Most in Mail");
         assert!(day_spoken(sat, 1, 2, Some("Mail")).ends_with("1 word, 2 apps used, most in Mail"));

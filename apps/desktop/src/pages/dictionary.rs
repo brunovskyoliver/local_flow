@@ -2,6 +2,8 @@
 pub mod ui;
 
 use crate::core::Core;
+use crate::pages::Page;
+use crate::shell::Session;
 use flow_core::dictionary::{Entry, Field, Filter, MAX_ENTRIES, Model, RetiredTerm, Source, Suggestion};
 use flow_ui::prelude::*;
 use ui::{confirm_dialog, help, overlay, pill, sheet_card};
@@ -23,13 +25,27 @@ pub struct DictionaryPage {
     aliases: Vec<Entity<InputState>>,
     field_subs: Vec<Subscription>,
     focus: FocusHandle,
+    action_focus: std::cell::RefCell<std::collections::HashMap<usize, FocusHandle>>,
+    voice_over: bool,
     _search_sub: Subscription,
+    _session_sub: Subscription,
 }
 
 impl DictionaryPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let _search_sub = cx.subscribe(&search, |_, _, _: &TextInputEvent, cx| cx.notify());
+        let mut shown = cx.try_global::<Session>().map(|s| s.selection);
+        let _session_sub = cx.observe_global::<Session>(move |this, cx| {
+            let now = Some(cx.global::<Session>().selection);
+            if now != shown && now == Some(Page::Dictionary) {
+                // `.task`: refreshes every time the page appears.
+                this.voice_over = cx.global::<Core>().services.voice_over_on();
+                this.refresh(cx);
+                cx.notify();
+            }
+            shown = now;
+        });
         let mut page = DictionaryPage {
             model: Model::default(),
             filter: Filter::All,
@@ -40,7 +56,10 @@ impl DictionaryPage {
             aliases: vec![],
             field_subs: vec![],
             focus: cx.focus_handle(),
+            action_focus: Default::default(),
+            voice_over: cx.global::<Core>().services.voice_over_on(),
             _search_sub,
+            _session_sub,
         };
         page.refresh(cx);
         page.apply_scenario(window, cx);
@@ -347,6 +366,7 @@ impl DictionaryPage {
         let retired = self.model.retired_terms(&e);
         let usage = cx.global::<Core>().db.as_ref().map(|db| self.model.usage_summary(db, &e)).unwrap_or_default();
         let group: SharedString = format!("dictionary.row.{i}").into();
+        let action_focus = self.action_focus.borrow_mut().entry(i).or_insert_with(|| cx.focus_handle()).clone();
         let is_retired_alias = |a: &String| retired.iter().any(|r| !r.is_boost() && r.term != e.canonical && &r.term == a);
 
         let mut title = h_flex().gap(px(10.)).flex_1().min_w_0();
@@ -421,7 +441,7 @@ impl DictionaryPage {
             .py(px(10.))
             .gap(px(4.))
             .text_color(fg)
-            .child(h_flex().w_full().gap(px(10.)).child(title).child(hover_revealed(group, busy, actions)))
+            .child(h_flex().w_full().gap(px(10.)).child(title).child(hover_or_focus_revealed(group, busy || self.voice_over, &action_focus, actions)))
             .child(meta)
             .context_menu(move |menu, _, _| {
                 let (a, b, c) = (page.clone(), page.clone(), page.clone());
@@ -581,11 +601,11 @@ fn toggle_row(title: &'static str, tip: &'static str, id: &'static str, on: bool
         .child(t(title).size(13.))
         .child(help(format!("{id}.info"), tip, icon("info.circle", 11., p.muted)))
         .child(div().flex_1())
-        .child(Switch::new(id).checked(on).with_size(ControlSize::Small).accessibility_label(title).on_click(handler))
+        .child(FlowSwitch::new(id).checked(on).with_size(ControlSize::Small).accessibility_label(title).on_click(handler))
 }
 
 impl Render for DictionaryPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let dismissed = cx.global::<Core>().prefs.bool_or("dictionary.bannerDismissed", false);
         let search_empty = self.search.read(cx).value().is_empty();
@@ -594,7 +614,7 @@ impl Render for DictionaryPage {
             content = content.child(self.banner(cx));
         }
         if let Some(e) = self.model.load_error.clone() {
-            content = content.child(div().pt(px(24.)).child(t(e).id("vocabulary.loadError").size(13.).color(p.warning)));
+            content = content.child(div().pt(px(24.)).child(t(e).id("vocabulary.loadError").size(13.).color(p.warning).selectable()));
         }
         if self.filter == Filter::All && search_empty && !self.model.suggestions.is_empty() {
             content = content.child(self.suggestions(cx));
@@ -624,8 +644,8 @@ impl Render for DictionaryPage {
             .relative()
             .size_full()
             .child(prototype_page("dictionary.page", 960., cx, content))
-            .when_some(sheet, |d, s| d.child(overlay("vocabulary.sheetOverlay", cx, s)))
-            .when_some(confirm, |d, c| d.child(overlay("vocabulary.deleteOverlay", cx, c)))
+            .when_some(sheet, |d, s| d.child(overlay("vocabulary.sheetOverlay", window, cx, s)))
+            .when_some(confirm, |d, c| d.child(overlay("vocabulary.deleteOverlay", window, cx, c)))
     }
 }
 

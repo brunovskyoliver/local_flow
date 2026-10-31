@@ -21,27 +21,23 @@ pub fn help(id: impl Into<ElementId>, text: impl Into<SharedString>, child: impl
     div().id(id).child(child).tooltip(move |w, cx| Tooltip::new(text.clone()).build(w, cx))
 }
 
-/// A sheet or confirmation over the page. The shell has no Kit `Root`, so Kit dialogs can't open;
-/// this dims the window and blocks what's under it, as a sheet does.
-pub fn overlay(id: impl Into<ElementId>, cx: &App, content: impl IntoElement) -> Stateful<Div> {
-    let dim = if pal(cx).ink.l > 0.5 { 0.5 } else { 0.25 };
-    div()
-        .id(id)
-        .absolute()
-        .inset_0()
-        .rounded(px(16.))
-        .occlude()
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(black().opacity(dim))
-        .child(content)
+/// A sheet or confirmation. The shell has no Kit `Root`, so Kit dialogs can't open; this dims the
+/// whole window, sidebar included, and blocks what's under it, as an AppKit sheet does. Measured on
+/// the reference: canvas (247,246,243) becomes (201,201,199).
+pub fn overlay(id: impl Into<ElementId>, window: &Window, cx: &App, content: impl IntoElement) -> Deferred {
+    let dim = if pal(cx).ink.l > 0.5 { SHEET_DIM_DARK } else { SHEET_DIM };
+    let viewport = window.viewport_size();
+    let scrim = div().id(id).w(viewport.width).h(viewport.height).occlude().flex().items_center().justify_center().bg(black().opacity(dim)).child(content);
+    deferred(anchored().position(point(px(0.), px(0.))).snap_to_window().child(scrim)).with_priority(1)
 }
 
-/// The sheet's card: surface fill, rounded, with a border and a soft shadow.
+pub const SHEET_DIM: f32 = 0.186;
+pub const SHEET_DIM_DARK: f32 = 0.186;
+
+/// The sheet's card: surface fill, rounded, no border, as an AppKit sheet shows it.
 pub fn sheet_card(width: f32, cx: &App) -> Div {
     let p = pal(cx);
-    div().w(px(width)).bg(p.surface).rounded(px(12.)).border_1().border_color(p.line).shadow_lg().flex().flex_col()
+    div().w(px(width)).bg(p.surface).rounded(px(16.)).shadow_lg().flex().flex_col()
 }
 
 /// macOS `confirmationDialog`: title, message, destructive action, Cancel.

@@ -1,12 +1,13 @@
 //! Insights page: dictation pace, fixes, volume, where dictation goes, and the daily streak.
 use crate::core::Core;
-use flow_core::history::{local, now_ms, signature};
+use crate::pages::Page;
+use crate::shell::Session;
+use flow_core::history::{local, now_ms};
 use flow_core::insights::*;
 use flow_ui::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Tab {
@@ -35,6 +36,10 @@ impl Tip {
 
 type Anchors = Rc<RefCell<HashMap<String, Bounds<Pixels>>>>;
 const LAYER: &str = "layer";
+/// swift-note: the cell's `.aspectRatio(1, .fit)` in a row of unconstrained height collapses in
+/// SwiftUI's layout pass. Measured at 2x on the reference: the first row 3 pt, the second 2 pt, the
+/// rest 0. The inventory (INS-078) says square cells; this matches what Swift renders.
+const HEAT_DOT: [f32; 7] = [3., 2., 0., 0., 0., 0., 0.];
 
 pub struct InsightsPage {
     insights: Option<Insights>,
@@ -45,8 +50,7 @@ pub struct InsightsPage {
     hovered_hour: Option<usize>,
     tip: Option<(String, Tip)>,
     anchors: Anchors,
-    loaded_at: Option<Instant>,
-    signature: Option<(i64, i64)>,
+    _session_sub: Subscription,
 }
 
 // ponytail: `AppName.display` needs NSWorkspace; the fallback is Swift's for an uninstalled app.
@@ -56,8 +60,17 @@ fn app_name(bundle: &str) -> String {
 
 impl InsightsPage {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut page = InsightsPage { insights: None, error: None, tab: Tab::Usage, page: 0, hovered_hour: None, tip: None, anchors: Default::default(), loaded_at: None, signature: None };
-        page.signature = cx.global::<Core>().db.as_ref().map(signature);
+        let mut shown = cx.try_global::<Session>().map(|s| s.selection);
+        // `.task`: refreshes on every appearance, and not while shown.
+        let _session_sub = cx.observe_global::<Session>(move |this, cx| {
+            let now = Some(cx.global::<Session>().selection);
+            if now != shown && now == Some(Page::Insights) && cx.global::<Core>().scenario.is_none() {
+                this.refresh(cx);
+                cx.notify();
+            }
+            shown = now;
+        });
+        let mut page = InsightsPage { insights: None, error: None, tab: Tab::Usage, page: 0, hovered_hour: None, tip: None, anchors: Default::default(), _session_sub };
         page.refresh(cx);
         let scenario = cx.global::<Core>().scenario.clone().unwrap_or_default();
         match scenario.as_str() {
@@ -184,7 +197,7 @@ impl InsightsPage {
                     .items_end()
                     .justify_between()
                     .gap(px(8.))
-                    .child(v_flex().gap(px(8.)).child(h_flex().gap(px(7.)).child(icon("desktopcomputer", 15., p.ink)).child(t("Desktop").size(14.5))).child(t(format!("{} words", grouped(i.total_words))).size(14.5)))
+                    .child(v_flex().gap(px(8.)).child(h_flex().gap(px(8.)).child(div().w(px(21.)).child(icon("desktopcomputer", 15., p.ink))).child(t("Desktop").size(14.5))).child(t(format!("{} words", grouped(i.total_words))).size(14.5)))
                     .child(t(format!("{} dictations", grouped(i.dictations))).size(14.5).color(p.muted)),
             );
         let apps = self.apps(i, cx);
@@ -262,15 +275,15 @@ impl InsightsPage {
                     cx.notify();
                 }))
         };
-        let mut months = h_flex().w_full().gap(px(8.)).relative().pb(px(16.)).child(div().w(px(34.)).flex_none().child(chevron("insights.earlierWeeks", "chevron.left", "Earlier weeks", earliest.is_some_and(|e| e < cols[0]), 1, cx)));
+        let mut months = h_flex().w_full().gap(px(8.)).relative().pb(px(16.)).child(div().w(px(34.)).flex_none().flex().items_start().child(chevron("insights.earlierWeeks", "chevron.left", "Earlier weeks", earliest.is_some_and(|e| e < cols[0]), 1, cx)));
         for w in &cols {
             // The label overflows its column, as `.fixedSize()` does in Swift's overlay.
-            months = months.child(div().flex_1().min_w_0().h(px(16.)).relative().when_some(month_label(*w), |d, l| d.child(div().absolute().left_0().top_0().w(px(30.)).child(t(l).size(11.).color(p.muted)))));
+            months = months.child(div().flex_1().min_w_0().h(px(16.)).relative().when_some(month_label(*w), |d, l: String| d.child(div().absolute().left_0().top_0().w(px(30.)).child(t(l).size(11.).color(p.muted)))));
         }
         months = months.child(div().absolute().right_0().top_0().bg(p.card).child(chevron("insights.laterWeeks", "chevron.right", "Later weeks", self.page > 0, -1, cx)));
         let mut grid = v_flex().w_full().gap(px(8.)).pt(px(24.)).child(months);
         for wd in 0..7i64 {
-            let mut r = h_flex().w_full().gap(px(8.)).child(div().w(px(34.)).flex_none().child(t(WEEKDAYS[wd as usize]).size(11.).color(p.muted)));
+            let mut r = h_flex().w_full().gap(px(8.)).child(div().w(px(34.)).flex_none().child(t(weekday_label(wd)).size(11.).color(p.muted)));
             for w in &cols {
                 let day = w + wd;
                 let usage = i.days.get(&day);
@@ -283,8 +296,8 @@ impl InsightsPage {
                     p.data_scale[level(count, &limits)]
                 };
                 let tip = (day <= today).then(|| Tip::Day { day, words: count, apps: usage.map_or(0, |u| u.apps.len() as i64), top: usage.and_then(|u| u.top_app()).map(app_name) });
-                let cell = div().w_full().aspect_square().rounded(px(3.)).bg(fill).when(streaks.current_days.contains(&day), |d| d.border(px(1.5)).border_color(p.streak_outline));
-                r = r.child(self.target(format!("insights.day.{day}"), tip, cell, cx).test_support().flex_1().min_w_0());
+                let cell = div().size(px(HEAT_DOT[wd as usize])).rounded(px(3.)).bg(fill).when(streaks.current_days.contains(&day), |d| d.border(px(1.5)).border_color(p.streak_outline));
+                r = r.child(div().flex_1().min_w_0().flex().justify_center().child(self.target(format!("insights.day.{day}"), tip, cell, cx).test_support()));
             }
             grid = grid.child(r);
         }
@@ -337,8 +350,7 @@ impl InsightsPage {
         }
         let mut labels = h_flex().w_full().pt(px(10.));
         for h in [0, 6, 12, 18] {
-            // `.dateTime.hour()` under the owner's region: "00", "06".
-            labels = labels.child(div().flex_1().child(t(format!("{h:02}")).size(12.).color(p.muted)));
+            labels = labels.child(div().flex_1().child(t(hour_label(h)).size(12.).color(p.muted)));
         }
         insight_card(cx).id("insights.hours").child(t("When you dictate").font(29., 500.).tracking(-0.6)).child(bars).child(labels)
     }
@@ -526,16 +538,6 @@ fn arc(c: Point<Pixels>, r: f32, half: f32, start: f32, sweep: f32, color: Hsla,
 
 impl Render for InsightsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Swift refreshes on every appearance; the shell keeps this page alive, so it reloads when
-        // the rows change. ponytail: checked at most once a second, a "page shown" call is exact.
-        if self.loaded_at.is_none_or(|l| l.elapsed() > Duration::from_secs(1)) && cx.global::<Core>().scenario.is_none() {
-            self.loaded_at = Some(Instant::now());
-            let signature = cx.global::<Core>().db.as_ref().map(signature);
-            if signature != self.signature {
-                self.signature = signature;
-                self.refresh(cx);
-            }
-        }
         let p = pal(cx);
         let mut col = v_flex().w_full().child(t("Insights").font(26., 500.).tracking(-0.4)).child(self.tabs(cx));
         if let Some(e) = self.error.clone() {
