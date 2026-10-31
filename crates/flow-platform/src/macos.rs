@@ -210,43 +210,6 @@ impl Services for Mac {
     fn input_catalog(&self) -> Option<InputCatalog> {
         Some(core_audio::catalog())
     }
-    fn physical_memory(&self) -> u64 {
-        let mut value = 0u64;
-        let mut size = std::mem::size_of::<u64>();
-        // SAFETY: the name is NUL-terminated and value and size describe a live u64.
-        let ok = unsafe { sysctlbyname(c"hw.memsize".as_ptr(), (&raw mut value).cast(), &raw mut size, std::ptr::null_mut(), 0) };
-        if ok == 0 { value } else { 0 }
-    }
-    fn animate_panel_frame(&self, window: &dyn raw_window_handle::HasWindowHandle, x: f32, width: f32, duration: f32, curve: [f32; 4]) -> Result<(), Unavailable> {
-        let unavailable = Unavailable("animated window frames");
-        let raw_window_handle::RawWindowHandle::AppKit(handle) = window.window_handle().map_err(|_| unavailable.clone())?.as_raw() else { return Err(unavailable) };
-        // SAFETY: called on the main thread with GPUI's live NSView; each cast matches the selector's AppKit signature.
-        // NSRect is returned through a hidden pointer on x86_64 and in registers on arm64.
-        unsafe {
-            let window = send(handle.ns_view.as_ptr(), c"window");
-            if window.is_null() {
-                return Err(unavailable);
-            }
-            let frame_sel = sel_registerName(c"frame".as_ptr());
-            #[cfg(target_arch = "x86_64")]
-            let frame = {
-                let f: unsafe extern "C" fn(*mut Rect, Id, Id) = std::mem::transmute(objc_msgSend_stret as unsafe extern "C" fn());
-                let mut r = Rect { x: 0., y: 0., w: 0., h: 0. };
-                f(&raw mut r, window, frame_sel);
-                r
-            };
-            #[cfg(not(target_arch = "x86_64"))]
-            let frame = {
-                let f: unsafe extern "C" fn(Id, Id) -> Rect = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
-                f(window, frame_sel)
-            };
-            let context_class = objc_getClass(c"NSAnimationContext".as_ptr());
-            send(context_class, c"beginGrouping");
-            let context = send(context_class, c"currentContext");
-            let set_duration: unsafe extern "C" fn(Id, Id, f64) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
-            set_duration(context, sel_registerName(c"setDuration:".as_ptr()), duration as f64);
-            let make_curve: unsafe extern "C" fn(Id, Id, f32, f32, f32, f32) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
-            let timing = make_curve(objc_getClass(c"CAMediaTimingFunction".as_ptr()), sel_registerName(c"functionWithControlPoints::::".as_ptr()), curve[0], curve[1], curve[2], curve[3]);
     fn app_name(&self, bundle_id: &str) -> Option<String> {
         let path = app_path(bundle_id)?;
         // SAFETY: AppKit is linked and `path` is a live NSString on the main thread.
@@ -286,6 +249,43 @@ impl Services for Mac {
             bytes
         }
     }
+    fn physical_memory(&self) -> u64 {
+        let mut value = 0u64;
+        let mut size = std::mem::size_of::<u64>();
+        // SAFETY: the name is NUL-terminated and value and size describe a live u64.
+        let ok = unsafe { sysctlbyname(c"hw.memsize".as_ptr(), (&raw mut value).cast(), &raw mut size, std::ptr::null_mut(), 0) };
+        if ok == 0 { value } else { 0 }
+    }
+    fn animate_panel_frame(&self, window: &dyn raw_window_handle::HasWindowHandle, x: f32, width: f32, duration: f32, curve: [f32; 4]) -> Result<(), Unavailable> {
+        let unavailable = Unavailable("animated window frames");
+        let raw_window_handle::RawWindowHandle::AppKit(handle) = window.window_handle().map_err(|_| unavailable.clone())?.as_raw() else { return Err(unavailable) };
+        // SAFETY: called on the main thread with GPUI's live NSView; each cast matches the selector's AppKit signature.
+        // NSRect is returned through a hidden pointer on x86_64 and in registers on arm64.
+        unsafe {
+            let window = send(handle.ns_view.as_ptr(), c"window");
+            if window.is_null() {
+                return Err(unavailable);
+            }
+            let frame_sel = sel_registerName(c"frame".as_ptr());
+            #[cfg(target_arch = "x86_64")]
+            let frame = {
+                let f: unsafe extern "C" fn(*mut Rect, Id, Id) = std::mem::transmute(objc_msgSend_stret as unsafe extern "C" fn());
+                let mut r = Rect { x: 0., y: 0., w: 0., h: 0. };
+                f(&raw mut r, window, frame_sel);
+                r
+            };
+            #[cfg(not(target_arch = "x86_64"))]
+            let frame = {
+                let f: unsafe extern "C" fn(Id, Id) -> Rect = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+                f(window, frame_sel)
+            };
+            let context_class = objc_getClass(c"NSAnimationContext".as_ptr());
+            send(context_class, c"beginGrouping");
+            let context = send(context_class, c"currentContext");
+            let set_duration: unsafe extern "C" fn(Id, Id, f64) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            set_duration(context, sel_registerName(c"setDuration:".as_ptr()), duration as f64);
+            let make_curve: unsafe extern "C" fn(Id, Id, f32, f32, f32, f32) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let timing = make_curve(objc_getClass(c"CAMediaTimingFunction".as_ptr()), sel_registerName(c"functionWithControlPoints::::".as_ptr()), curve[0], curve[1], curve[2], curve[3]);
             let set_timing: unsafe extern "C" fn(Id, Id, Id) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
             set_timing(context, sel_registerName(c"setTimingFunction:".as_ptr()), timing);
             let set_frame: unsafe extern "C" fn(Id, Id, Rect, bool) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
@@ -333,6 +333,18 @@ impl Services for Mac {
     }
 }
 
+/// `NSWorkspace.urlForApplication(withBundleIdentifier:)`'s path; autoreleased.
+fn app_path(bundle_id: &str) -> Option<Id> {
+    let text = std::ffi::CString::new(bundle_id).ok()?;
+    // SAFETY: AppKit is linked; the argument is a live NSString, and a nil URL is checked.
+    unsafe {
+        let workspace = send(objc_getClass(c"NSWorkspace".as_ptr()), c"sharedWorkspace");
+        let lookup: unsafe extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let url = lookup(workspace, sel_registerName(c"URLForApplicationWithBundleIdentifier:".as_ptr()), ns_string(&text));
+        if url.is_null() { None } else { Some(send(url, c"path")) }
+    }
+}
+
 fn read_universal_access(key: &str) -> bool {
     std::process::Command::new("defaults")
         .args(["read", "com.apple.universalaccess", key])
@@ -370,18 +382,6 @@ mod core_audio {
         static kCFAllocatorDefault: *const c_void;
         fn CFRelease(value: *const c_void);
         fn CFStringGetCString(string: *const c_void, buffer: *mut c_char, size: isize, encoding: u32) -> bool;
-/// `NSWorkspace.urlForApplication(withBundleIdentifier:)`'s path; autoreleased.
-fn app_path(bundle_id: &str) -> Option<Id> {
-    let text = std::ffi::CString::new(bundle_id).ok()?;
-    // SAFETY: AppKit is linked; the argument is a live NSString, and a nil URL is checked.
-    unsafe {
-        let workspace = send(objc_getClass(c"NSWorkspace".as_ptr()), c"sharedWorkspace");
-        let lookup: unsafe extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
-        let url = lookup(workspace, sel_registerName(c"URLForApplicationWithBundleIdentifier:".as_ptr()), ns_string(&text));
-        if url.is_null() { None } else { Some(send(url, c"path")) }
-    }
-}
-
         fn CFStringCreateWithCString(allocator: *const c_void, text: *const c_char, encoding: u32) -> *const c_void;
         fn CFBooleanGetValue(value: *const c_void) -> bool;
     }
