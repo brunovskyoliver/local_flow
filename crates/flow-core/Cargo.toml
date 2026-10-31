@@ -13,5 +13,8 @@ hpke.workspace = true
 rand_core.workspace = true
 tungstenite.workspace = true
 
+[features]
+test-support = []
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -55,11 +55,39 @@ impl Services for Win {
     fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
         crate::win::secrets::remove(name)
     }
+    fn credentials(&self) -> std::sync::Arc<dyn crate::Credentials> {
+        std::sync::Arc::new(WinCredentials)
+    }
     fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
         crate::win::secrets::read(name)
     }
     fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
         crate::win::secrets::write(name, value)
+    }
+    fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
+        crate::win::tpm::create()
+    }
+    fn device_key_public_key(&self, handle: &[u8]) -> Option<Vec<u8>> {
+        crate::win::tpm::public_key(handle)
+    }
+    fn device_key_sign(&self, handle: &[u8], message: &[u8]) -> Result<Vec<u8>, Unavailable> {
+        crate::win::tpm::sign(handle, message)
+    }
+    fn device_key_delete(&self, handle: &[u8]) -> Result<(), Unavailable> {
+        crate::win::tpm::delete(handle)
+    }
+}
+
+struct WinCredentials;
+impl crate::Credentials for WinCredentials {
+    fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        crate::win::secrets::read(name)
+    }
+    fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
+        crate::win::secrets::write(name, value)
+    }
+    fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
+        crate::win::secrets::remove(name)
     }
     fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
         crate::win::tpm::create()

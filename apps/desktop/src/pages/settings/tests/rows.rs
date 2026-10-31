@@ -162,7 +162,8 @@ async fn fetched_identity_reads_with_swifts_type(cx: &mut TestAppContext) {
     assert_type("Compare it with flowd admin identity on the server before trusting it.", 12., 400., pl.muted);
     assert_eq!(label(cx, r.win, "settings.remoteTrust"), "Trust This Server");
     let (details, value) = (bounds(cx, r.win, "settings.setupDetails"), bounds(cx, r.win, "settings.remoteFingerprint"));
-    let row = bounds(cx, r.win, "settings.row.Remote dictation");
+    // Swift puts the pairing row between the switch and the details.
+    let row = bounds(cx, r.win, "settings.row.Pair with a token");
     assert_eq!(details.top() - row.bottom(), px(1.), "one point line above");
     assert_eq!(details.size.width, row.size.width, "full width");
     let caption = bounds(cx, r.win, "settings.remoteFingerprintLabel");
@@ -180,7 +181,7 @@ async fn trust_refuses_a_key_that_does_not_validate(cx: &mut TestAppContext) {
     click(cx, r.win, "settings.remoteTrust");
     assert_saw(&["The server identity could not be saved."]);
     assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("pending"), "state unmoved");
-    assert!(r.log.borrow().is_empty(), "no credential touched: {:?}", r.log.borrow());
+    assert!(r.log.borrow().iter().all(|c| c.starts_with("read ")), "no credential touched: {:?}", r.log.borrow());
 }
 
 // parity: SET-060 SET-061 SET-062

@@ -135,9 +135,14 @@ pub trait Services: 'static {
     fn device_key_delete(&self, _handle: &[u8]) -> Result<(), Unavailable> {
         Err(Unavailable("device key"))
     }
-    /// `RemoteRewriteChannels.closeParked()`. The channel pool arrives with the remote transport (Feature 026).
-    fn close_parked_channels(&self) -> Result<(), Unavailable> {
-        Err(Unavailable("remote channels"))
+    /// Whether an item exists, without reading its value. The Keychain then can't prompt for it, so
+    /// this is what polling uses.
+    fn secret_exists(&self, name: &str) -> Result<bool, Unavailable> {
+        Ok(self.secret_data(name)?.is_some())
+    }
+    /// The same store and keys for background threads. None here unless a platform has them.
+    fn credentials(&self) -> std::sync::Arc<dyn Credentials> {
+        std::sync::Arc::new(NoCredentials)
     }
     /// Opens a web address in the browser.
     fn open_url(&self, _url: &str) -> Result<(), Unavailable> {
@@ -218,14 +223,6 @@ pub trait Services: 'static {
     /// `performSetting(.load)` before the first test dictation (Feature 025).
     fn load_speech_model(&self) -> Result<(), Unavailable> {
         Err(Unavailable("speech model loading"))
-    }
-    /// `GET /v1/remote/identity`: the fingerprint to compare (Feature 026).
-    fn fetch_server_identity(&self, _origin: &str) -> Result<String, Unavailable> {
-        Err(Unavailable("server identity"))
-    }
-    /// Secure Enclave key, channel-bound sign-in and enrollment; returns the new `remote.state`.
-    fn enroll_device(&self, _provider: &str) -> Result<String, Unavailable> {
-        Err(Unavailable("server sign-in"))
     }
     /// Rewrite and analysis health. Ok is (server name, backend model, analysis status).
     fn rewrite_health(&self, _endpoint: &str) -> Result<(Option<String>, Option<String>, String), Unavailable> {
@@ -345,6 +342,51 @@ pub struct FakeDeviceKey {
     pub handle: Vec<u8>,
     pub public_key: Vec<u8>,
     pub raw_signature: Vec<u8>,
+}
+
+/// Secrets and device keys for remote enrollment, which runs off the UI thread. Same contracts as the
+/// `Services` methods of the same names.
+pub trait Credentials: Send + Sync {
+    fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable>;
+    fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable>;
+    fn remove_secret(&self, name: &str) -> Result<(), Unavailable>;
+    fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable>;
+    fn device_key_public_key(&self, handle: &[u8]) -> Option<Vec<u8>>;
+    fn device_key_sign(&self, handle: &[u8], message: &[u8]) -> Result<Vec<u8>, Unavailable>;
+    fn device_key_delete(&self, handle: &[u8]) -> Result<(), Unavailable>;
+    /// An ID token from the provider, carrying `nonce`. Apple's needs a signed app, Google's Feature 025's T015.
+    fn sign_in(&self, _provider: &str, _nonce: &str) -> Result<String, Unavailable> {
+        Err(Unavailable("server sign-in"))
+    }
+    /// What the server's admin list shows for this device.
+    fn device_name(&self) -> String {
+        std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "LocalFlow".into())
+    }
+}
+
+struct NoCredentials;
+impl Credentials for NoCredentials {
+    fn secret_data(&self, _: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        Err(Unavailable("Keychain"))
+    }
+    fn set_secret_data(&self, _: &str, _: &[u8]) -> Result<(), Unavailable> {
+        Err(Unavailable("Keychain"))
+    }
+    fn remove_secret(&self, _: &str) -> Result<(), Unavailable> {
+        Err(Unavailable("Keychain"))
+    }
+    fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
+        Err(Unavailable("device key"))
+    }
+    fn device_key_public_key(&self, _: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+    fn device_key_sign(&self, _: &[u8], _: &[u8]) -> Result<Vec<u8>, Unavailable> {
+        Err(Unavailable("device key"))
+    }
+    fn device_key_delete(&self, _: &[u8]) -> Result<(), Unavailable> {
+        Err(Unavailable("device key"))
+    }
 }
 
 /// A scriptable double for tests and the audit's scenarios.

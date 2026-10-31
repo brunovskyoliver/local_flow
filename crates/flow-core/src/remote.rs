@@ -1,7 +1,16 @@
 //! Remote client logic (Feature 025). The OS sits behind `Secrets` and `DeviceKeys`; `apps/desktop`
 //! adapts the platform services to them.
-use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
+pub mod address;
+pub mod channel;
+pub mod enrollment;
+pub mod pairing;
+pub mod pool;
+#[cfg(any(test, feature = "test-support"))]
+pub mod scripted;
 
 /// Swift's `RemoteCredentialItem`.
 pub const CREDENTIAL_ACCOUNTS: [&str; 4] = ["device-key", "server-key", "refresh-token", "access-token"];
@@ -11,7 +20,7 @@ pub const CREDENTIAL_ACCOUNTS: [&str; 4] = ["device-key", "server-key", "refresh
 pub struct Unavailable(pub &'static str);
 
 /// `RemoteCredentialStoring`. `server-key` and `device-key` are raw bytes, tokens UTF-8.
-pub trait Secrets {
+pub trait Secrets: Send + Sync {
     fn read(&self, account: &str) -> Result<Option<Vec<u8>>, Unavailable>;
     fn write(&self, account: &str, value: &[u8]) -> Result<(), Unavailable>;
     /// Nothing to remove isn't an error.
@@ -23,7 +32,7 @@ pub trait Secrets {
 }
 
 /// `RemoteDeviceKeys`: a non-exportable P-256 key.
-pub trait DeviceKeys {
+pub trait DeviceKeys: Send + Sync {
     /// A new key: its handle (stored as `device-key`) and X9.63 public key (65 bytes).
     fn create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable>;
     /// `None` when the handle no longer loads, for example after a restore onto new hardware.
@@ -36,32 +45,32 @@ pub trait DeviceKeys {
 /// In-memory `Secrets`. `failing` makes every call refuse.
 #[derive(Default)]
 pub struct MemorySecrets {
-    pub items: RefCell<BTreeMap<String, Vec<u8>>>,
-    pub failing: Cell<bool>,
+    pub items: Mutex<BTreeMap<String, Vec<u8>>>,
+    pub failing: AtomicBool,
 }
 
 impl MemorySecrets {
     fn check(&self) -> Result<(), Unavailable> {
-        if self.failing.get() { Err(Unavailable("memory secrets")) } else { Ok(()) }
+        if self.failing.load(Ordering::SeqCst) { Err(Unavailable("memory secrets")) } else { Ok(()) }
     }
 }
 
 impl Secrets for MemorySecrets {
     fn read(&self, account: &str) -> Result<Option<Vec<u8>>, Unavailable> {
         self.check()?;
-        Ok(self.items.borrow().get(account).cloned())
+        Ok(self.items.lock().unwrap().get(account).cloned())
     }
     fn write(&self, account: &str, value: &[u8]) -> Result<(), Unavailable> {
         self.check()?;
         if value.is_empty() {
             return Err(Unavailable("an empty credential"));
         }
-        self.items.borrow_mut().insert(account.into(), value.to_vec());
+        self.items.lock().unwrap().insert(account.into(), value.to_vec());
         Ok(())
     }
     fn remove(&self, account: &str) -> Result<(), Unavailable> {
         self.check()?;
-        self.items.borrow_mut().remove(account);
+        self.items.lock().unwrap().remove(account);
         Ok(())
     }
 }
@@ -70,16 +79,16 @@ impl Secrets for MemorySecrets {
 /// to verify it brings a real signer.
 #[derive(Default)]
 pub struct MemoryDeviceKeys {
-    pub keys: RefCell<Vec<u8>>,
-    next: Cell<u8>,
+    pub keys: Mutex<Vec<u8>>,
+    next: AtomicU8,
     /// No hardware key: `create` and `sign` refuse.
-    pub unavailable: Cell<bool>,
+    pub unavailable: AtomicBool,
 }
 
 impl MemoryDeviceKeys {
     fn live(&self, handle: &[u8]) -> Option<u8> {
         match handle {
-            [id] if self.keys.borrow().contains(id) => Some(*id),
+            [id] if self.keys.lock().unwrap().contains(id) => Some(*id),
             _ => None,
         }
     }
@@ -87,12 +96,11 @@ impl MemoryDeviceKeys {
 
 impl DeviceKeys for MemoryDeviceKeys {
     fn create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
-        if self.unavailable.get() {
+        if self.unavailable.load(Ordering::SeqCst) {
             return Err(Unavailable("device key"));
         }
-        let id = self.next.get().wrapping_add(1);
-        self.next.set(id);
-        self.keys.borrow_mut().push(id);
+        let id = self.next.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+        self.keys.lock().unwrap().push(id);
         let mut public = vec![4];
         public.resize(65, id);
         Ok((vec![id], public))
@@ -104,7 +112,7 @@ impl DeviceKeys for MemoryDeviceKeys {
         Some(public)
     }
     fn sign(&self, _message: &[u8], handle: &[u8]) -> Result<Vec<u8>, Unavailable> {
-        if self.unavailable.get() {
+        if self.unavailable.load(Ordering::SeqCst) {
             return Err(Unavailable("device key"));
         }
         let id = self.live(handle).ok_or(Unavailable("device key"))?;
@@ -112,7 +120,7 @@ impl DeviceKeys for MemoryDeviceKeys {
     }
     fn delete(&self, handle: &[u8]) -> Result<(), Unavailable> {
         if let Some(id) = self.live(handle) {
-            self.keys.borrow_mut().retain(|k| *k != id);
+            self.keys.lock().unwrap().retain(|k| *k != id);
         }
         Ok(())
     }
@@ -225,9 +233,9 @@ mod tests {
         assert_eq!(store.read("refresh-token").unwrap().unwrap(), b"lfr_two");
         assert!(store.write("refresh-token", b"").is_err(), "empty values are refused");
         store.remove_all().unwrap();
-        assert!(store.items.borrow().is_empty());
+        assert!(store.items.lock().unwrap().is_empty());
         store.remove_all().unwrap();
-        store.failing.set(true);
+        store.failing.store(true, Ordering::SeqCst);
         assert!(store.read("server-key").is_err());
         assert!(store.remove_all().is_err());
     }
@@ -235,7 +243,7 @@ mod tests {
     /// One failure still lets the other items go, as Swift's `removeAll` does.
     #[test]
     fn remove_all_tries_every_item() {
-        struct Refuses(RefCell<Vec<String>>);
+        struct Refuses(Mutex<Vec<String>>);
         impl Secrets for Refuses {
             fn read(&self, _: &str) -> Result<Option<Vec<u8>>, Unavailable> {
                 Ok(None)
@@ -244,13 +252,13 @@ mod tests {
                 Ok(())
             }
             fn remove(&self, account: &str) -> Result<(), Unavailable> {
-                self.0.borrow_mut().push(account.into());
+                self.0.lock().unwrap().push(account.into());
                 if account == "device-key" { Err(Unavailable("first")) } else { Ok(()) }
             }
         }
-        let store = Refuses(RefCell::default());
+        let store = Refuses(Mutex::default());
         assert_eq!(store.remove_all(), Err(Unavailable("first")));
-        assert_eq!(*store.0.borrow(), CREDENTIAL_ACCOUNTS);
+        assert_eq!(*store.0.lock().unwrap(), CREDENTIAL_ACCOUNTS);
     }
 
     #[test]
@@ -266,7 +274,7 @@ mod tests {
         assert_eq!(keys.public_key(&handle), None, "a lost key no longer loads");
         assert!(keys.sign(b"m", &handle).is_err());
         assert!(keys.public_key(&other).is_some());
-        keys.unavailable.set(true);
+        keys.unavailable.store(true, Ordering::SeqCst);
         assert!(keys.create().is_err(), "no software fallback");
     }
 }

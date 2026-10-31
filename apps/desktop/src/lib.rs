@@ -4,6 +4,7 @@ pub mod insertion;
 pub mod menu;
 pub mod pages;
 pub mod pill;
+pub mod remote;
 pub mod shell;
 #[cfg(test)]
 pub mod testing;

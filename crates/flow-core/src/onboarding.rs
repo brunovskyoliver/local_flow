@@ -805,25 +805,9 @@ fn split_host_port(authority: &str) -> Option<(String, Option<u32>)> {
     Some((host.to_lowercase(), port))
 }
 
-/// `RemoteDictationSettings.origin`: an `https://` origin with no path, query, fragment or
-/// credentials. Lowercases the host and keeps the port.
+/// `RemoteDictationSettings.origin`.
 pub fn remote_origin(text: &str) -> Option<String> {
-    let trimmed = text.trim();
-    if trimmed.chars().any(|c| c.is_whitespace()) {
-        return None;
-    }
-    let (authority, tail) = split_authority(trimmed.strip_prefix("https://")?)?;
-    if !(tail.is_empty() || tail == "/") || authority.contains('@') {
-        return None;
-    }
-    let (host, port) = split_host_port(authority)?;
-    if host.is_empty() {
-        return None;
-    }
-    Some(match port {
-        Some(p) => format!("https://{host}:{p}"),
-        None => format!("https://{host}"),
-    })
+    crate::remote::address::origin(text)
 }
 
 /// The host of a stored URL, or the text itself (`OnboardingView.serverHost`).
@@ -1548,7 +1532,7 @@ mod tests {
     fn origins_and_overrides() {
         assert_eq!(remote_origin(" https://Server.Example.com:8443/ ").as_deref(), Some("https://server.example.com:8443"));
         assert_eq!(remote_origin("https://server.example.com").as_deref(), Some("https://server.example.com"));
-        for bad in ["http://a", "https://", "https://u:p@a", "https://a/x", "https://a?x=1", "https://a#f", "a.example", "https://a b", ""] {
+        for bad in ["http://a.example", "https://", "https://u:p@a", "https://a/x", "https://a?x=1", "https://a#f", "a.example", "https://a b", ""] {
             assert_eq!(remote_origin(bad), None, "{bad}");
         }
         assert_eq!(rewrite_origin("https://Studio.local").as_deref(), Some("https://studio.local:443"));
@@ -1608,7 +1592,7 @@ mod tests {
         let mut p = Prefs::memory();
         assert_eq!(remote_status(&p, false), None);
         assert!(remote_privacy(&p).starts_with("Nothing leaves this Mac until you confirm"));
-        assert!(!confirm_remote_consent(&mut p, "http://nope"));
+        assert!(!confirm_remote_consent(&mut p, "http://a.example"));
         assert!(!remote_on(&p));
         assert!(confirm_remote_consent(&mut p, "https://s.example"));
         assert_eq!(p.string("remote.serverURL").as_deref(), Some("https://s.example"));

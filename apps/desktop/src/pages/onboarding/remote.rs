@@ -65,6 +65,18 @@ impl OnboardingPage {
         let needs_sign_in = on && state == "pinned" && self.remote.identity.is_none();
         let toggle = FlowSwitch::new("settings.remoteEnabled").checked(on).accessibility_label(title).on_click(cx.listener(|this, _: &bool, w, cx| this.request_toggle(w, cx)));
         let mut card = v_flex().w_full().child(settings_row(title, Some(detail), toggle, cx));
+        if !on || state != "approved" {
+            let open = cx.listener(|this: &mut Self, _: &ClickEvent, w, cx| crate::remote::open_pair(this, None, w, cx));
+            let button = native_button("settings.remotePairWithToken", "Pair with Token").on_click(open);
+            card = card.child(hairline(cx)).child(settings_row("Pair with a token", Some("Use a token from your server's owner.".to_string()), button, cx));
+        }
+        if on && self.remote.pinned.is_some() {
+            let url = self.core(cx).prefs.string("remote.serverURL").unwrap_or_default();
+            let shown = flow_core::remote::address::address_notice(&url).map_or(url.clone(), str::to_string);
+            let open = cx.listener(|this: &mut Self, _: &ClickEvent, w, cx| crate::remote::open_address(this, w, cx));
+            let button = native_button("settings.remoteAddressEdit", "Change Address").on_click(open);
+            card = card.child(hairline(cx)).child(settings_row("Server address", Some(shown), button, cx));
+        }
         if !show_details {
             return card;
         }
@@ -156,6 +168,9 @@ impl OnboardingPage {
 
     /// The consent sheet, over the whole page.
     pub(super) fn overlays(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if let Some(body) = crate::remote::sheet_view(self, window, cx) {
+            return Some(any(sheet_overlay("onboarding.modal", window, cx, div().bg(sheet_fill(cx)).rounded(px(12.)).child(body))));
+        }
         if !self.remote.consent_open {
             return None;
         }
@@ -177,10 +192,24 @@ impl OnboardingPage {
                     crate::pages::settings::input_surface("server.rack", Some("https://server.example.com"), Input::new(&self.server_draft).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &self.server_draft, window, cx),
                 )
                 .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.).swift_lines())
+                .when_some(flow_core::remote::address::address_notice(&draft), |d, n| d.child(t(n).size(12.).color(p.muted)))
                 .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
                 .when_some(self.remote.error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning)))
                 .child(h_flex().w_full().justify_end().gap(px(8.)).child(native_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.2)).text_color(p.ink).on_click(cancel)).child(native_button("settings.remoteConsentConfirm", "Turn On").fill(p.ink.opacity(0.2)).text_color(p.ink).disabled(origin.is_none()).on_click(confirm)))
         };
         Some(any(sheet_overlay("onboarding.modal", window, cx, div().bg(sheet_fill(cx)).rounded(px(12.)).child(body))))
+    }
+}
+
+impl crate::remote::RemotePage for OnboardingPage {
+    fn form(&mut self) -> &mut crate::remote::PairForm {
+        &mut self.pair
+    }
+    fn form_ref(&self) -> &crate::remote::PairForm {
+        &self.pair
+    }
+    fn remote_changed(&mut self, cx: &mut Context<Self>) {
+        self.remote.pinned = cx.global::<crate::core::Core>().services.secret_data(&flow_core::settings::remote_keychain("server-key")).ok().flatten().map(|k| flow_core::settings::fingerprint_of(&k));
+        cx.notify();
     }
 }

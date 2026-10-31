@@ -15,8 +15,6 @@ pub fn seed(_db: &Db) {}
 
 pub const BUNDLE_ID: &str = "org.localflow.LocalFlow";
 pub const PORT_BASE: u16 = 8000;
-/// The reason `enroll_device` gives when the channel failed rather than the sign-in (SET-067).
-pub const SERVER_UNREACHABLE: &str = "server unreachable";
 pub const CONSENT_VERSION: i64 = 2;
 pub const DICTATION_CONSENT_VERSION: i64 = 1;
 pub const MAX_CONTEXT_RULES: usize = 200;
@@ -105,6 +103,12 @@ pub fn remote_notice(p: &Prefs) -> Option<&'static str> {
 pub fn remote_server_url(p: &Prefs) -> String {
     p.string("remote.serverURL").and_then(|s| remote_origin(&s)).unwrap_or_default()
 }
+/// `remoteEnrollmentOrigin`: the origin once consent is confirmed and the feature is on. `None`
+/// before that, so nothing connects.
+pub fn remote_enrollment_origin(p: &Prefs) -> Option<String> {
+    let on = p.bool_or("remote.enabled", false) && p.int_or("remote.consentVersion", 0) >= DICTATION_CONSENT_VERSION;
+    on.then(|| remote_server_url(p)).filter(|o| !o.is_empty())
+}
 pub fn fallback_threshold(p: &Prefs) -> i64 {
     p.int_or("remote.fallbackThresholdMs", 1500)
 }
@@ -170,20 +174,9 @@ fn split_authority(authority: &str) -> Option<(String, Option<u32>)> {
     Some((host.to_lowercase(), port))
 }
 
-/// `RemoteDictationSettings.origin`: https, a host, no user, query, fragment or path.
+/// `RemoteDictationSettings.origin`.
 pub fn remote_origin(text: &str) -> Option<String> {
-    let (scheme, authority, tail) = split_url(text.trim())?;
-    if scheme != "https" || (!tail.is_empty() && tail != "/") {
-        return None;
-    }
-    let (host, port) = split_authority(authority)?;
-    if host.is_empty() || host.chars().any(|c| c.is_whitespace()) || port.is_some_and(|p| p > 65535) {
-        return None;
-    }
-    Some(match port {
-        Some(p) => format!("https://{host}:{p}"),
-        None => format!("https://{host}"),
-    })
+    crate::remote::address::origin(text)
 }
 
 /// The host part of a stored origin, for "Server: <host>".
@@ -575,41 +568,39 @@ pub fn remote_detail(p: &Prefs, has_identity: bool) -> String {
 pub fn consent_text(p: &Prefs) -> &'static str {
     if meeting_only(p) || p.bool_or("server.only", false) { MEETING_CONSENT_TEXT } else { CONSENT_TEXT }
 }
-/// Which server answers map to what `RemoteEnrollment` stores. Returns the Keychain accounts to
-/// remove.
-pub fn apply_server_answer(p: &mut Prefs, code: &str) -> Vec<&'static str> {
+/// What a server answer does: the state and notice to store, the Keychain accounts to remove.
+pub struct ServerAnswer {
+    pub state: Option<&'static str>,
+    pub notice: Option<&'static str>,
+    pub remove: &'static [&'static str],
+}
+
+/// `RemoteEnrollment.apply`, for a device now in `state`.
+pub fn server_answer(code: &str, state: &str) -> ServerAnswer {
+    let answer = |state, notice, remove| ServerAnswer { state, notice, remove };
     match code {
-        "revoked" => {
-            p.set("remote.state", "revoked");
-            vec!["access-token", "refresh-token"]
-        }
-        "not_approved" => {
-            if remote_state(p) != "rejected" {
-                p.set("remote.state", "pending");
-            }
-            vec!["access-token"]
-        }
-        "unauthorized" => {
-            p.set("remote.state", "pinned");
-            p.set("remote.notice", "sign_in_again");
-            vec!["access-token", "refresh-token"]
-        }
-        "unsupported_version" => {
-            p.set("remote.notice", "update_required");
-            vec![]
-        }
-        "token_expired" => vec!["access-token"],
-        "pin_mismatch" => {
-            p.set("remote.state", "pin_mismatch");
-            vec!["access-token"]
-        }
-        "device_key_lost" => {
-            p.set("remote.state", "pinned");
-            p.set("remote.notice", "sign_in_again");
-            vec!["access-token", "refresh-token", "device-key"]
-        }
-        _ => vec![],
+        "revoked" => answer(Some("revoked"), None, &["access-token", "refresh-token"]),
+        // The refresh token stays valid; a rejected device stays shown as rejected.
+        "not_approved" => answer((state != "rejected").then_some("pending"), None, &["access-token"]),
+        "unauthorized" => answer(Some("pinned"), Some("sign_in_again"), &["access-token", "refresh-token"]),
+        "unsupported_version" => answer(None, Some("update_required"), &[]),
+        "token_expired" => answer(None, None, &["access-token"]),
+        "pin_mismatch" => answer(Some("pin_mismatch"), None, &["access-token"]),
+        "device_key_lost" => answer(Some("pinned"), Some("sign_in_again"), &["access-token", "refresh-token", "device-key"]),
+        _ => answer(None, None, &[]),
     }
+}
+
+/// `server_answer` on `Prefs`. Returns the Keychain accounts to remove.
+pub fn apply_server_answer(p: &mut Prefs, code: &str) -> Vec<&'static str> {
+    let answer = server_answer(code, remote_state(p));
+    if let Some(state) = answer.state {
+        p.set("remote.state", state);
+    }
+    if let Some(notice) = answer.notice {
+        p.set("remote.notice", notice);
+    }
+    answer.remove.to_vec()
 }
 
 // MARK: Server HTTP
@@ -728,104 +719,25 @@ fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(timeout)).max_redirects(0).http_status_as_error(false).proxy(None).build().into()
 }
 
-/// 10 s, must be a 200 of at most 4,096 bytes with a valid key.
-pub fn fetch_identity(origin: &str) -> Result<Identity, ()> {
-    let mut response = agent(Duration::from_secs(10)).get(format!("{}/v1/remote/identity", origin.trim_end_matches('/'))).call().map_err(|_| ())?;
-    if response.status().as_u16() != 200 {
-        return Err(());
-    }
-    let body = response.body_mut().with_config().limit(4096).read_to_vec().map_err(|_| ())?;
-    let identity: Identity = serde_json::from_slice(&body).map_err(|_| ())?;
-    identity.validated_key().map(|_| identity).ok_or(())
-}
-
-/// `wss://<host>/v1/remote/channel` for an origin; `ws://` only for a plain-HTTP local test server.
-pub fn channel_url(origin: &str) -> String {
-    let origin = origin.trim_end_matches('/');
-    let socket = origin.strip_prefix("https://").map(|h| format!("wss://{h}")).or_else(|| origin.strip_prefix("http://").map(|h| format!("ws://{h}"))).unwrap_or_else(|| origin.to_string());
-    format!("{socket}/v1/remote/channel")
-}
-
-/// Why a channel didn't reach `ready`. Swift maps all of these to "Server unreachable".
-#[derive(Debug, PartialEq, Eq)]
-pub enum ChannelError {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityError {
     Unreachable,
-    Protocol,
-    /// The server's `error.code`.
-    Server(String),
+    /// It answered, with something other than a v1 identity.
+    Invalid,
 }
 
-/// `RemoteChannel.open` and `RemoteChannelPool.roundTrip`: a fresh channel with the HPKE hello
-/// sealed to the pinned key, timed to `ready`, then closed. Returns the milliseconds and what
-/// `ready` offered. `token` makes it a session hello; `None` is an anonymous enroll hello.
-pub fn channel_round_trip(origin: &str, server_key: &[u8], token: Option<&str>) -> Result<(u128, Option<Capabilities>), ChannelError> {
-    use hpke::{Deserializable, Kem as _, OpModeR, OpModeS, Serializable, aead::ChaCha20Poly1305 as Aead, kdf::HkdfSha256 as Kdf, kem::X25519HkdfSha256 as Kem};
-    use rand_core::{OsRng, TryRngCore};
-    use tungstenite::Message;
-    const MAX_FRAME: usize = 70_000;
-    let bad = |_| ChannelError::Protocol;
-    let key = <Kem as hpke::Kem>::PublicKey::from_bytes(server_key).map_err(bad)?;
-    let mut rng = OsRng.unwrap_err();
-    let (reply_private, reply_public) = Kem::gen_keypair(&mut rng);
-    let (enc, mut sender) = hpke::setup_sender::<Aead, Kdf, Kem, _>(&OpModeS::Base, &key, b"localflow remote v1", &mut rng).map_err(bad)?;
-    let mut s2c_info = [0u8; 32];
-    sender.export(b"localflow v1 s2c info", &mut s2c_info).map_err(bad)?;
-    let mut hello = serde_json::json!({"schema_version": 1, "type": "hello", "reply_key": base64url_encode(&reply_public.to_bytes()), "purpose": if token.is_some() { "session" } else { "enroll" }});
-    if let Some(token) = token {
-        hello["access_token"] = token.into();
+/// 10 s, must be a 200 of at most 4,096 bytes with a valid key.
+pub fn fetch_identity(origin: &str) -> Result<Identity, IdentityError> {
+    let mut response = agent(Duration::from_secs(10)).get(format!("{}/v1/remote/identity", origin.trim_end_matches('/'))).call().map_err(|_| IdentityError::Unreachable)?;
+    if response.status().as_u16() != 200 {
+        return Err(IdentityError::Invalid);
     }
-    let seq = 0u64.to_be_bytes();
-    let aad = [&b"LFR1"[..], &seq].concat();
-    let sealed = sender.seal(hello.to_string().as_bytes(), &aad).map_err(bad)?;
-    let frame = [&b"LFR1"[..], &enc.to_bytes(), &seq, &sealed].concat();
-
-    let url = channel_url(origin);
-    let started = std::time::Instant::now();
-    let timeout = Duration::from_secs(10);
-    let authority = url.split_once("://").map_or("", |u| u.1).split('/').next().unwrap_or_default();
-    let port_default = if url.starts_with("wss") { 443 } else { 80 };
-    let target = if authority.rsplit(':').next().is_some_and(|p| p.parse::<u16>().is_ok()) && !authority.ends_with(']') { authority.to_string() } else { format!("{authority}:{port_default}") };
-    let address = std::net::ToSocketAddrs::to_socket_addrs(&target).ok().and_then(|mut a| a.next()).ok_or(ChannelError::Unreachable)?;
-    let stream = std::net::TcpStream::connect_timeout(&address, timeout).map_err(|_| ChannelError::Unreachable)?;
-    stream.set_read_timeout(Some(timeout)).map_err(|_| ChannelError::Unreachable)?;
-    stream.set_write_timeout(Some(timeout)).map_err(|_| ChannelError::Unreachable)?;
-    let (mut socket, _) = tungstenite::client_tls(url.as_str(), stream).map_err(|_| ChannelError::Unreachable)?;
-    socket.send(Message::binary(frame)).map_err(|_| ChannelError::Unreachable)?;
-    let body = loop {
-        match socket.read().map_err(|_| ChannelError::Unreachable)? {
-            Message::Binary(b) => break b,
-            Message::Ping(_) | Message::Pong(_) => continue,
-            _ => return Err(ChannelError::Unreachable),
-        }
-    };
-    if body.len() > MAX_FRAME || body.len() <= 40 {
-        return Err(ChannelError::Protocol);
-    }
-    let enc_s2c = <Kem as hpke::Kem>::EncappedKey::from_bytes(&body[..32]).map_err(bad)?;
-    let mut recipient = hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &reply_private, &enc_s2c, &s2c_info).map_err(bad)?;
-    let seq = &body[32..40];
-    if seq != 0u64.to_be_bytes() {
-        return Err(ChannelError::Protocol);
-    }
-    let plain = recipient.open(&body[40..], seq).map_err(bad)?;
-    let elapsed = started.elapsed().as_millis();
-    let _ = socket.close(None);
-    let (kind, json) = plain.split_first().ok_or(ChannelError::Protocol)?;
-    if *kind != 0 {
-        return Err(ChannelError::Protocol);
-    }
-    let message: Value = serde_json::from_slice(json).map_err(|_| ChannelError::Protocol)?;
-    match message.get("type").and_then(Value::as_str) {
-        Some("ready") => Ok((elapsed, message.get("capabilities").and_then(|c| serde_json::from_value(c.clone()).ok()))),
-        Some("error") => Err(ChannelError::Server(message.get("code").and_then(Value::as_str).unwrap_or_default().to_string())),
-        _ => Err(ChannelError::Protocol),
-    }
+    let body = response.body_mut().with_config().limit(4096).read_to_vec().map_err(|_| IdentityError::Invalid)?;
+    let identity: Identity = serde_json::from_slice(&body).map_err(|_| IdentityError::Invalid)?;
+    identity.validated_key().map(|_| identity).ok_or(IdentityError::Invalid)
 }
 
-/// Swift's `ping()`: nil when this device has no pinned key or token, or the channel fails.
-pub fn ping(origin: &str, server_key: Option<&[u8]>, token: Option<&str>) -> Option<(u128, Option<Capabilities>)> {
-    channel_round_trip(origin, server_key?, Some(token?)).ok()
-}
+pub use crate::remote::channel::{ChannelError, channel_round_trip, channel_url, ping};
 
 /// The eight connection-test outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2238,7 +2150,7 @@ pub fn usage_backoff(previous: u64) -> u64 {
 }
 
 #[cfg(all(test, unix))]
-mod test_flowd;
+pub(crate) mod test_flowd;
 
 #[cfg(test)]
 mod tests {
@@ -2277,7 +2189,7 @@ mod tests {
         assert_eq!(validate_credential("a\nb"), Err(CredentialError::InvalidCharacters));
         assert_eq!(validate_credential("ok"), Ok(()));
         let mut p = Prefs::memory();
-        p.set("remote.serverURL", "http://not-valid");
+        p.set("remote.serverURL", "http://not-valid.example");
         assert_eq!(remote_server_url(&p), "");
     }
 
@@ -2996,8 +2908,8 @@ mod tests {
     // parity: SET-118
     #[test]
     fn channel_url_and_ping_need_pin_and_token() {
-        assert_eq!(channel_url("https://flow.example.com:8443/"), "wss://flow.example.com:8443/v1/remote/channel");
-        assert_eq!(channel_url("http://127.0.0.1:9"), "ws://127.0.0.1:9/v1/remote/channel");
+        assert_eq!(channel_url("https://flow.example.com:8443/").as_deref(), Some("wss://flow.example.com:8443/v1/remote/channel"));
+        assert_eq!(channel_url("http://127.0.0.1:9").as_deref(), Some("ws://127.0.0.1:9/v1/remote/channel"));
         assert_eq!(base64url_decode(&base64url_encode(b"ab")).as_deref(), Some(&b"ab"[..]));
         assert_eq!(base64url_decode(&base64url_encode(&[255, 0, 3, 9])).as_deref(), Some(&[255, 0, 3, 9][..]));
         // `sessionInputs` nil: nothing connects, so a closed port would not even be tried.
@@ -3029,7 +2941,7 @@ mod tests {
         assert!(offered.is_some(), "ready carries the capabilities");
         assert_eq!(ping(&f.remote, identity.validated_key().as_deref(), Some("not-a-token")), None);
         assert!(matches!(channel_round_trip(&f.remote, &key, Some("not-a-token")), Err(ChannelError::Server(_))), "a bad token is refused in the channel");
-        assert_eq!(channel_round_trip(&f.remote, &[7u8; 32], None), Err(ChannelError::Unreachable), "a hello sealed to another key is closed");
+        assert_eq!(channel_round_trip(&f.remote, &[7u8; 32], None), Err(ChannelError::PinMismatch), "a hello sealed to another key is closed with 4001");
         assert_eq!(channel_round_trip(&f.down, &key, None), Err(ChannelError::Unreachable));
     }
 

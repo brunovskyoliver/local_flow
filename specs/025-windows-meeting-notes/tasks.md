@@ -11,13 +11,13 @@ Every phase ends with `cargo test --workspace`, `./scripts/check-rust-boundaries
 - [X] T006 `Fake` gains scripted keys and secrets.
 
 ## Phase 2: Channel, enrollment, pairing (US1)
-- [ ] T007 Move the channel from `settings.rs` into `remote/channel.rs`, complete it (sequence numbers, session, round trips, errors) per `RemoteChannel.swift`; keep existing callers working. Check `hpke-vectors.json`.
-- [ ] T008 `remote/pairing.rs`: `PairingToken`, `PairingLink`, messages, redaction. Vectors from `pairing-vectors.json`.
-- [ ] T009 `remote/address.rs`: FR-012a and `serverAddressKind`, `addressNotice`. Same table of cases as the Swift tests.
-- [ ] T010 `remote/enrollment.rs`: `fetchServerIdentity`, `pin`, `updateAddress`, `enroll`, `pair`, `accessToken`, `refreshNow`, `apply`, `handlePinMismatch`, device-key loss, `turnOff`.
-- [ ] T011 `remote/pool.rs`: parked channels and `closeParked`.
-- [ ] T012 Tests against throwaway flowd (`settings/test_flowd.rs`): pair, wrong key, spent token, refresh rotation, address edit, turn off, revocation.
-- [ ] T013 `apps/desktop/src/remote.rs` and views: the Rust pairing form on onboarding and Settings, link handling, address edit, turn off wired to real services, off the UI thread. Update view tests.
+- [X] T007 Move the channel from `settings.rs` into `remote/channel.rs`, complete it (sequence numbers, session, round trips, errors) per `RemoteChannel.swift`; keep existing callers working. Check `hpke-vectors.json`.
+- [X] T008 `remote/pairing.rs`: `PairingToken`, `PairingLink`, messages, redaction. Vectors from `pairing-vectors.json`.
+- [X] T009 `remote/address.rs`: FR-012a and `serverAddressKind`, `addressNotice`. Same table of cases as the Swift tests.
+- [X] T010 `remote/enrollment.rs`: `fetchServerIdentity`, `pin`, `updateAddress`, `enroll`, `pair`, `accessToken`, `refreshNow`, `apply`, `handlePinMismatch`, device-key loss, `turnOff`.
+- [X] T011 `remote/pool.rs`: parked channels and `closeParked`.
+- [X] T012 Tests against throwaway flowd (`settings/test_flowd.rs`): pair, wrong key, spent token, refresh rotation, address edit, turn off, revocation.
+- [X] T013 `apps/desktop/src/remote.rs` and views: the Rust pairing form on onboarding and Settings, link handling, address edit, turn off wired to real services, off the UI thread. Update view tests. Links work by pasting into the token field; opening `localflow://` isn't registered, since the Swift app owns the scheme until the cutover and a dev binary has no Info.plist (see `acceptance/hardware.md`).
 
 ## Phase 3: Google sign-in (US2)
 - [ ] T014 `remote/google.rs`: authorization URL, PKCE, loopback callback parsing (bound, deadline, state check), token exchange over a `Transport`. Tests with a fake server.

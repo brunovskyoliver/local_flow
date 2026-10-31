@@ -60,6 +60,7 @@ pub struct OnboardingPage {
     pub frozen: bool,
     pending_credential_clear: bool,
     server_draft: Entity<InputState>,
+    pub pair: crate::remote::PairForm,
     endpoint_input: Entity<InputState>,
     credential_input: Entity<InputState>,
     focus: FocusHandle,
@@ -136,6 +137,7 @@ impl OnboardingPage {
         }
         let endpoint = cx.global::<Core>().prefs.string("rewriteEndpoint").unwrap_or_default();
         let server_draft = cx.new(|cx| InputState::new(window, cx));
+        let pair = crate::remote::PairForm::new(window, cx);
         let endpoint_input = cx.new(|cx| InputState::new(window, cx).default_value(endpoint));
         let credential_input = cx.new(|cx| InputState::new(window, cx).masked(true));
         let subs = vec![
@@ -148,6 +150,16 @@ impl OnboardingPage {
             cx.subscribe_in(&server_draft, window, |this, _, e: &TextInputEvent, _, cx| match e {
                 TextInputEvent::Change => cx.notify(),
                 TextInputEvent::PressEnter { .. } => this.confirm_consent(cx),
+                _ => {}
+            }),
+            cx.subscribe_in(&pair.token, window, |this, _, e: &TextInputEvent, w, cx| match e {
+                TextInputEvent::PressEnter { .. } => crate::remote::confirm(this, cx),
+                TextInputEvent::Change => crate::remote::token_edited(this, w, cx),
+                _ => {}
+            }),
+            cx.subscribe_in(&pair.address, window, |this, _, e: &TextInputEvent, _, cx| match e {
+                TextInputEvent::PressEnter { .. } => crate::remote::confirm(this, cx),
+                TextInputEvent::Change => cx.notify(),
                 _ => {}
             }),
             cx.observe_window_activation(window, |this, w, cx| {
@@ -183,6 +195,7 @@ impl OnboardingPage {
             frozen: false,
             pending_credential_clear: false,
             server_draft,
+            pair,
             endpoint_input,
             credential_input,
             focus: cx.focus_handle(),
@@ -544,7 +557,7 @@ impl OnboardingPage {
         }
         let draft = self.server_draft.read(cx).value().to_string();
         if !confirm_remote_consent(&mut cx.global_mut::<Core>().prefs, &draft) {
-            self.remote.error = Some("Enter the server's https:// address without a path.".into());
+            self.remote.error = Some("Enter the server's address without a path.".into());
             cx.notify();
             return;
         }
@@ -553,7 +566,7 @@ impl OnboardingPage {
     }
 
     pub fn fetch_identity(&mut self, cx: &mut Context<Self>) {
-        let base = self.remote.base.clone().unwrap_or_else(|| cx.global::<Core>().prefs.string("remote.serverURL").unwrap_or_default());
+        let base = self.remote.base.clone().unwrap_or_else(|| server::remote_server_url(&cx.global::<Core>().prefs));
         self.remote.busy = true;
         self.remote.error = None;
         cx.notify();
@@ -563,7 +576,7 @@ impl OnboardingPage {
                 this.remote.busy = false;
                 match answer {
                     Ok(identity) => this.remote.identity = Some(identity),
-                    Err(()) => {
+                    Err(_) => {
                         this.remote.identity = None;
                         this.remote.error = Some("The server did not answer with a LocalFlow identity. Check the address.".into());
                     }
@@ -577,6 +590,9 @@ impl OnboardingPage {
     /// `pin`: credentials go, the key is stored, the state moves to pinned.
     pub fn trust_server(&mut self, cx: &mut Context<Self>) {
         let Some(identity) = self.remote.identity.clone() else { return };
+        if let Some(remote) = &cx.global::<Core>().remote {
+            remote.enrollment.cancel();
+        }
         let services = &cx.global::<Core>().services;
         for account in ["device-key", "refresh-token", "access-token"] {
             let _ = services.remove_secret(&server::remote_keychain(account));
@@ -594,25 +610,18 @@ impl OnboardingPage {
         cx.notify();
     }
 
-    /// `busy` covers the whole sign-in; the call runs a turn later so a frame shows it.
+    /// `busy` covers the whole sign-in.
     pub fn sign_in(&mut self, provider: &str, cx: &mut Context<Self>) {
         self.remote.error = None;
         self.remote.busy = true;
         cx.notify();
-        let provider = provider.to_string();
-        cx.spawn(async move |this, cx| {
-            let _ = this.update(cx, |this, cx| {
-                this.remote.busy = false;
-                match cx.global::<Core>().services.enroll_device(&provider) {
-                    // A pin mismatch is a state, not an error line.
-                    Ok(state) => cx.global_mut::<Core>().prefs.set("remote.state", state),
-                    Err(Unavailable(server::SERVER_UNREACHABLE)) => this.remote.error = Some("The server could not be reached. Try again.".into()),
-                    Err(_) => this.remote.error = Some("Sign-in did not finish.".into()),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        let provider = crate::remote::provider(provider);
+        crate::remote::run(cx, move |e| e.enroll(provider), |this: &mut Self, result, _| {
+            this.remote.busy = false;
+            if let Err(error) = result {
+                this.remote.error = crate::remote::sign_in_message(&error).map(str::to_string);
+            }
+        });
     }
 
     /// `.confirmationDialog`: native on macOS.
@@ -676,7 +685,7 @@ impl OnboardingPage {
         }
         if changed {
             self.credential_error = None;
-            self.credential_present = new.is_some_and(|o| matches!(cx.global::<Core>().services.secret(&server::rewrite_keychain(&o)), Ok(Some(_))));
+            self.credential_present = new.is_some_and(|o| matches!(cx.global::<Core>().services.secret_exists(&server::rewrite_keychain(&o)), Ok(true)));
         }
         self.connection = None;
         self.connection_revision += 1;

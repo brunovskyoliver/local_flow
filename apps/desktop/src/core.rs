@@ -18,6 +18,8 @@ pub struct Core {
     pub reconciled: bool,
     /// Launch recovery's notices, until the Notetaker page publishes them to the pill.
     pub meeting_notices: Vec<String>,
+    /// Enrollment and channels, built on first use.
+    pub remote: Option<std::sync::Arc<crate::remote::Remote>>,
 }
 impl Global for Core {}
 
@@ -37,18 +39,30 @@ impl Core {
             Err(e) => (None, Some(e)),
         };
         let scenario = std::env::var("LOCALFLOW_SCENARIO").ok();
-        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![] }
+        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], remote: None }
     }
 
-    /// `turnOffRemoteDictation()`: enrollment `turnOff()` removes the four Keychain items and the
-    /// remote settings, history stays, and a parked rewrite channel is closed. Failures are ignored
-    /// as Swift's `try?` and detached task ignore them.
+    pub fn remote(&mut self) -> std::sync::Arc<crate::remote::Remote> {
+        let services = &self.services;
+        self.remote.get_or_insert_with(|| crate::remote::Remote::native(services.credentials())).clone()
+    }
+
+    /// `turnOffRemoteDictation()`: enrollment `turnOff()` removes the device key, the four Keychain
+    /// items and the remote settings, history stays, parked channels close and whatever is running
+    /// stores nothing. Failures are ignored as Swift's `try?` and detached task ignore them.
     pub fn turn_off_remote(&mut self) {
+        if let Some(remote) = &self.remote {
+            remote.enrollment.cancel();
+            remote.pool.close_parked();
+            remote.enrollment.turn_off();
+        }
+        if let Ok(Some(handle)) = self.services.secret_data(&flow_core::settings::remote_keychain("device-key")) {
+            let _ = self.services.device_key_delete(&handle);
+        }
         for account in ["device-key", "server-key", "refresh-token", "access-token"] {
             let _ = self.services.remove_secret(&flow_core::settings::remote_keychain(account));
         }
         flow_core::settings::reset_remote(&mut self.prefs);
-        let _ = self.services.close_parked_channels();
     }
 
     /// In-memory database with the seed, memory preferences and fake services.
@@ -65,6 +79,7 @@ impl Core {
             scenario: None,
             reconciled: true,
             meeting_notices: vec![],
+            remote: None,
         }
     }
 

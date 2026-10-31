@@ -20,8 +20,14 @@ const OVERLAY: &str = r#"package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"strings"
 	"time"
@@ -60,6 +66,26 @@ func init() {
 		panic("test overlay without FLOWD_TEST_IDENTITY")
 	}
 	keychainRunner = fileKey{}
+	if len(os.Args) == 2 && os.Args[1] == "test-keygen" {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		must(err)
+		fmt.Printf("%x %x\n", key.D.FillBytes(make([]byte, 32)), elliptic.Marshal(elliptic.P256(), key.X, key.Y))
+		os.Exit(0)
+	}
+	if len(os.Args) == 4 && os.Args[1] == "test-sign" {
+		scalar, err := hex.DecodeString(os.Args[2])
+		must(err)
+		message, err := hex.DecodeString(os.Args[3])
+		must(err)
+		key := &ecdsa.PrivateKey{D: new(big.Int).SetBytes(scalar)}
+		key.Curve = elliptic.P256()
+		key.X, key.Y = elliptic.P256().ScalarBaseMult(scalar)
+		digest := sha256.Sum256(message)
+		der, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
+		must(err)
+		fmt.Printf("%x\n", der)
+		os.Exit(0)
+	}
 	if len(os.Args) == 3 && os.Args[1] == "test-seed" {
 		ctx := context.Background()
 		store, err := accounts.Open(os.Args[2], time.Now)
@@ -96,6 +122,9 @@ pub struct Flowd {
     pub access_token: String,
     children: Vec<Child>,
     dir: PathBuf,
+    bin: PathBuf,
+    identity: PathBuf,
+    data: PathBuf,
 }
 
 fn free_port() -> u16 {
@@ -132,6 +161,9 @@ impl Flowd {
             access_token: String::new(),
             children: vec![],
             dir,
+            bin: bin.clone(),
+            identity: identity.clone(),
+            data: data.clone(),
         };
         let tool = |args: &[&std::ffi::OsStr]| {
             let mut c = Command::new(&bin);
@@ -161,6 +193,42 @@ impl Flowd {
         flowd
     }
 
+    fn tool(&self, args: &[&str]) -> String {
+        output(Command::new(&self.bin).args(args).env("FLOWD_TEST_IDENTITY", &self.identity), "flowd test tool")
+    }
+
+    /// `flowd admin --data-dir <data> --dev <args>`.
+    pub fn admin(&self, args: &[&str]) -> String {
+        let data = self.data.display().to_string();
+        self.tool(&[&["admin", "--data-dir", &data, "--dev"], args].concat())
+    }
+
+    /// A new pairing token from the admin tool.
+    pub fn pair_token(&self, label: &str) -> String {
+        let json = self.admin(&["token", "create", "--label", label, "--json"]);
+        json_text(&json, "token").unwrap_or_else(|| panic!("no token field in the admin tool's answer"))
+    }
+
+    /// Revokes the device that redeemed the most recent token.
+    pub fn revoke_newest_device(&self) {
+        let list = self.admin(&["token", "list", "--json"]);
+        let id = list.rsplit("\"device_id\":").next().and_then(|tail| tail.split(|c: char| !c.is_ascii_digit() && c != ' ').find(|s| !s.trim().is_empty())).unwrap_or_else(|| panic!("no device in {list}")).trim().to_string();
+        self.admin(&["revoke", "device", &id]);
+    }
+
+    /// A software P-256 key: scalar hex and X9.63 public key.
+    pub fn keygen(&self) -> (String, Vec<u8>) {
+        let out = self.tool(&["test-keygen"]);
+        let (scalar, public) = out.trim().split_once(' ').unwrap();
+        (scalar.to_string(), unhex(public))
+    }
+
+    /// DER ECDSA over the SHA-256 of `message`.
+    pub fn sign(&self, scalar: &str, message: &[u8]) -> Vec<u8> {
+        let hex: String = message.iter().map(|b| format!("{b:02x}")).collect();
+        unhex(self.tool(&["test-sign", scalar, &hex]).trim())
+    }
+
     fn wait(&mut self, addr: &str) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while TcpStream::connect(addr).is_err() {
@@ -181,6 +249,16 @@ impl Drop for Flowd {
         }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+}
+
+/// A string field of a flat JSON answer: this file stays std only.
+fn json_text(json: &str, key: &str) -> Option<String> {
+    let tail = json.split(&format!("\"{key}\"")).nth(1)?.trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
+    Some(tail.split('"').next()?.to_string())
 }
 
 fn serde_json_escape(from: &Path, to: &Path) -> String {

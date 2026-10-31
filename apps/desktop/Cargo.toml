@@ -14,3 +14,5 @@ tray-icon = { version = "0.23", default-features = false }
 
 [dev-dependencies]
 flow-ui = { workspace = true, features = ["test-support"] }
+flow-core = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true

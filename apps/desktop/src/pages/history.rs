@@ -337,7 +337,7 @@ impl HistoryPage {
     /// context to send; otherwise it happens now. The request runs off the UI thread.
     fn request_rewrite(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<Core>();
-        let settings = flow_core::settings::RewriteSettings::capture(&core.prefs, |origin| matches!(core.services.secret(&flow_core::settings::rewrite_keychain(origin)), Ok(Some(_))));
+        let settings = flow_core::settings::RewriteSettings::capture(&core.prefs, |origin| matches!(core.services.secret_exists(&flow_core::settings::rewrite_keychain(origin)), Ok(true)));
         let enabled = core.prefs.bool_or("rewriteEnabled", false);
         let sends_context = core.prefs.bool_or("contextEnabled", false) && core.prefs.bool_or("contextRewriteEnabled", false);
         let secret = core.services.secret(&flow_core::settings::rewrite_keychain(&settings.origin)).ok().flatten();

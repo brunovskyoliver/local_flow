@@ -15,6 +15,16 @@ impl SettingsPage {
         let needs_consent = on && !r.consent_current;
         let toggle = switch("settings.remoteEnabled", title, on, false, cx.listener(|this, _: &bool, w, cx| this.request_remote_toggle(w, cx)));
         let mut body = group(cx).child(row(title, Some(detail), toggle, cx));
+        if !on || state != "approved" {
+            let button = prototype_button("settings.remotePairWithToken", "Pair with Token").on_click(cx.listener(|this, _, w, cx| crate::remote::open_pair(this, None, w, cx)));
+            body = body.child(hairline(cx)).child(row("Pair with a token", Some("Use a token from your server's owner.".into()), button, cx));
+        }
+        if on && self.pinned.is_some() {
+            let url = core::remote_server_url(p);
+            let shown = flow_core::remote::address::address_notice(&url).map_or(url.clone(), str::to_string);
+            let button = prototype_button("settings.remoteAddressEdit", "Change Address").on_click(cx.listener(|this, _, w, cx| crate::remote::open_address(this, w, cx)));
+            body = body.child(hairline(cx)).child(row("Server address", Some(shown), button, cx));
+        }
         if on && (state != "approved" || self.identity.is_some() || self.remote_error.is_some()) {
             let mut details = v_flex().id("settings.setupDetails").test_support().w_full().items_start().gap(px(12.)).py(px(16.));
             if let Some(identity) = &self.identity {
@@ -188,7 +198,7 @@ impl SettingsPage {
                 this.busy = false;
                 match answer {
                     Ok(identity) => this.identity = Some(identity),
-                    Err(()) => {
+                    Err(_) => {
                         this.identity = None;
                         this.remote_error = Some("The server did not answer with a LocalFlow identity. Check the address.".into());
                     }
@@ -207,6 +217,9 @@ impl SettingsPage {
             cx.notify();
             return;
         };
+        if let Some(remote) = &cx.global::<Core>().remote {
+            remote.enrollment.cancel();
+        }
         let services = &cx.global::<Core>().services;
         for account in ["device-key", "refresh-token", "access-token"] {
             let _ = services.remove_secret(&core::remote_keychain(account));
@@ -224,16 +237,19 @@ impl SettingsPage {
         cx.notify();
     }
 
-    /// Apple and Google need the Mac's sign-in services and a Secure Enclave key.
+    /// Apple and Google need the platform's sign-in and a device key.
     pub(super) fn sign_in(&mut self, provider: &str, cx: &mut Context<Self>) {
         self.remote_error = None;
-        match cx.global::<Core>().services.enroll_device(provider) {
-            Ok(state) => prefs_mut(cx).set("remote.state", state),
-            Err(flow_platform::Unavailable(core::SERVER_UNREACHABLE)) => self.remote_error = Some("The server could not be reached. Try again.".into()),
-            Err(_) => self.remote_error = Some("Sign-in did not finish.".into()),
-        }
-        self.refresh(cx);
+        self.busy = true;
         cx.notify();
+        let provider = crate::remote::provider(provider);
+        crate::remote::run(cx, move |e| e.enroll(provider), |this: &mut Self, result, cx| {
+            this.busy = false;
+            if let Err(error) = result {
+                this.remote_error = crate::remote::sign_in_message(&error).map(str::to_string);
+            }
+            this.refresh(cx);
+        });
     }
 
     pub(super) fn confirm_turn_off(&mut self, cx: &mut Context<Self>) {
@@ -278,5 +294,17 @@ impl SettingsPage {
             });
         })
         .detach();
+    }
+}
+
+impl crate::remote::RemotePage for SettingsPage {
+    fn form(&mut self) -> &mut crate::remote::PairForm {
+        &mut self.pair
+    }
+    fn form_ref(&self) -> &crate::remote::PairForm {
+        &self.pair
+    }
+    fn remote_changed(&mut self, cx: &mut Context<Self>) {
+        self.refresh(cx);
     }
 }

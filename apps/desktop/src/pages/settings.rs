@@ -71,6 +71,10 @@ pub struct SettingsPage {
     pub(super) pinned: Option<String>,
     pub(super) busy: bool,
     pub(super) remote_error: Option<String>,
+    pub(super) pair: crate::remote::PairForm,
+    /// Whether rewrite items exist, by name, and the pin. Polling reads these; `refresh` starts over.
+    secrets_seen: std::cell::RefCell<std::collections::HashMap<String, bool>>,
+    pin_seen: Option<(String, Option<String>)>,
     pub(super) checking: bool,
     pub(super) check_result: Option<String>,
     pub(super) server_advanced: bool,
@@ -136,6 +140,7 @@ impl SettingsPage {
         let summary_model = cx.new(|cx| InputState::new(window, cx).placeholder("Model").default_value(model_text));
         let summary_key = cx.new(|cx| InputState::new(window, cx).placeholder("API key").masked(true));
         let server_draft = cx.new(|cx| InputState::new(window, cx));
+        let pair = crate::remote::PairForm::new(window, cx);
         let bundle_draft = cx.new(|cx| InputState::new(window, cx).placeholder("Bundle ID"));
         let subs = vec![
             cx.subscribe_in(&endpoint, window, |this, input, e: &TextInputEvent, w, cx| {
@@ -175,6 +180,16 @@ impl SettingsPage {
             }),
             cx.subscribe_in(&server_draft, window, |this, _, e: &TextInputEvent, _, cx| match e {
                 TextInputEvent::PressEnter { .. } => this.confirm_consent(cx),
+                TextInputEvent::Change => cx.notify(),
+                _ => {}
+            }),
+            cx.subscribe_in(&pair.token, window, |this, _, e: &TextInputEvent, w, cx| match e {
+                TextInputEvent::PressEnter { .. } => crate::remote::confirm(this, cx),
+                TextInputEvent::Change => crate::remote::token_edited(this, w, cx),
+                _ => {}
+            }),
+            cx.subscribe_in(&pair.address, window, |this, _, e: &TextInputEvent, _, cx| match e {
+                TextInputEvent::PressEnter { .. } => crate::remote::confirm(this, cx),
                 TextInputEvent::Change => cx.notify(),
                 _ => {}
             }),
@@ -222,6 +237,9 @@ impl SettingsPage {
             pinned: None,
             busy: false,
             remote_error: None,
+            pair,
+            secrets_seen: Default::default(),
+            pin_seen: None,
             checking: false,
             check_result: None,
             server_advanced: false,
@@ -257,12 +275,21 @@ impl SettingsPage {
         page
     }
 
-    fn secret_present(cx: &App, name: &str) -> bool {
-        matches!(cx.global::<Core>().services.secret(name), Ok(Some(_)))
+    /// Asks the store for existence only, once per name until `refresh`: this runs on the UI thread
+    /// every 500 ms while the page shows.
+    fn secret_present(&self, cx: &App, name: &str) -> bool {
+        *self.secrets_seen.borrow_mut().entry(name.to_string()).or_insert_with(|| matches!(cx.global::<Core>().services.secret_exists(name), Ok(true)))
     }
 
-    /// `refreshSettingsState` and `model.refresh`: assigned only if it changed.
+    /// `refreshSettingsState` and `model.refresh`, reading the store again.
     pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.secrets_seen.borrow_mut().clear();
+        self.pin_seen = None;
+        self.poll(cx);
+    }
+
+    /// `refresh` with what the store last said: assigned only if it changed.
+    fn poll(&mut self, cx: &mut Context<Self>) {
         let core_state = cx.global::<Core>();
         let permission = |p| map_perm(core_state.services.permission(p));
         let p = &core_state.prefs;
@@ -287,9 +314,15 @@ impl SettingsPage {
             next.verifying = verifying;
         }
         scenario::apply_snapshot(&self.scenario, &mut next);
-        let pinned = core_state.services.secret_data(&core::remote_keychain("server-key")).ok().flatten().map(|k| core::fingerprint_of(&k));
-        let rewrite = RewriteSettings::capture(p, |origin| Self::secret_present(cx, &core::rewrite_keychain(origin)));
-        let saved = Self::secret_present(cx, &core::rewrite_keychain(core::SUMMARY_ACCOUNT));
+        // The pin changes with the state, except through `refresh`.
+        let state = core::remote_state(p).to_string();
+        let pinned = match self.pin_seen.take().filter(|seen| seen.0 == state) {
+            Some(seen) => seen.1,
+            None => core_state.services.secret_data(&core::remote_keychain("server-key")).ok().flatten().map(|k| core::fingerprint_of(&k)),
+        };
+        self.pin_seen = Some((state, pinned.clone()));
+        let rewrite = RewriteSettings::capture(p, |origin| self.secret_present(cx, &core::rewrite_keychain(origin)));
+        let saved = self.secret_present(cx, &core::rewrite_keychain(core::SUMMARY_ACCOUNT));
         let changed = next != self.snapshot || pinned != self.pinned || rewrite != self.rewrite || saved != self.summary_key_saved;
         if changed {
             self.snapshot = next;
@@ -313,6 +346,10 @@ impl SettingsPage {
         }
         let origin = core::remote_server_url(p);
         if self.usage_origin.as_ref() == Some(&origin) {
+            return;
+        }
+        // Polled: don't read a value that isn't there on every tick.
+        if !matches!(core_state.services.secret_exists(&core::remote_keychain("device-key")), Ok(true)) {
             return;
         }
         let (Some(db), Ok(Some(key))) = (core_state.db.as_ref(), core_state.services.secret_data(&core::remote_keychain("device-key"))) else { return };
@@ -355,7 +392,7 @@ impl SettingsPage {
         // `settingsPollingWanted`: nothing while the app is inactive; the next active tick refreshes.
         // ponytail: window activity stands in for `NSApp.isActive`, the app has one main window.
         if visible && window.is_window_active() {
-            self.refresh(cx);
+            self.poll(cx);
             self.take_anchor(cx);
         }
     }
@@ -1381,7 +1418,7 @@ pub(super) fn disclosure(id: &'static str, title: &'static str, open: bool, f: i
 }
 
 /// `RewriteInputSurface`.
-pub(super) fn input_surface(symbol: &'static str, link_hint: Option<&'static str>, input: Input, state: &Entity<InputState>, window: &Window, cx: &App) -> Div {
+pub(crate) fn input_surface(symbol: &'static str, link_hint: Option<&'static str>, input: Input, state: &Entity<InputState>, window: &Window, cx: &App) -> Div {
     let pl = pal(cx);
     let focused = state.read(cx).focus_handle(cx).is_focused(window);
     let empty = state.read(cx).value().is_empty();

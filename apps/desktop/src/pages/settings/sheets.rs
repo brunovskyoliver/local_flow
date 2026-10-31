@@ -105,6 +105,14 @@ impl SettingsPage {
 
     /// Esc is the cancel action, Return the default action; with no sheet Esc focuses the page.
     pub(super) fn key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pair.sheet.is_some() {
+            match key {
+                "escape" => crate::remote::cancel(self, window, cx),
+                "enter" => crate::remote::confirm(self, cx),
+                _ => {}
+            }
+            return;
+        }
         match (key, self.modal) {
             ("escape", None) => window.focus(&self.focus, cx),
             ("escape", Some(Modal::Consent)) => self.cancel_consent(window, cx),
@@ -118,8 +126,11 @@ impl SettingsPage {
     }
 
     pub(super) fn modal_overlay(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let modal = self.modal?;
         let pl = pal(cx);
+        if let Some(body) = crate::remote::sheet_view(self, window, cx) {
+            return Some(sheet_overlay("settings.modal", window, cx, div().id("settings.sheet").bg(sheet_fill(cx)).rounded(px(12.)).text_color(pl.ink).child(body).test_support()).into_any_element());
+        }
+        let modal = self.modal?;
         let body: AnyElement = match modal {
             Modal::Consent => self.consent(window, cx).into_any_element(),
             Modal::ConsentUpdate => self.consent_update(cx).into_any_element(),
@@ -165,6 +176,7 @@ impl SettingsPage {
             .child(t("Use your LocalFlow server?").font(17., 500.))
             .child(input_surface("server.rack", Some("https://server.example.com"), Input::new(&self.server_draft).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &self.server_draft, window, cx))
             .child(div().id("settings.consentBody").w_full().child(t(text).size(13.).line_spacing(3.).swift_lines()).test_support())
+            .when_some(flow_core::remote::address::address_notice(&val(&self.server_draft, cx)), |d, n| d.child(t(n).size(12.).color(pl.muted)))
             .when_some(origin.as_ref(), |d, o| d.child(t(format!("Server: {}", core::origin_host(o))).font(13., 500.)))
             .when_some(self.remote_error.clone(), |d, e| d.child(t(e).size(12.).color(pl.warning)))
             .child(

@@ -432,6 +432,12 @@ impl Services for Mac {
     fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
         crate::keychain_mac::remove(name)
     }
+    fn secret_exists(&self, name: &str) -> Result<bool, Unavailable> {
+        crate::keychain_mac::exists(name)
+    }
+    fn credentials(&self) -> std::sync::Arc<dyn crate::Credentials> {
+        std::sync::Arc::new(MacCredentials)
+    }
     fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
         crate::keychain_mac::read(name)
     }
@@ -627,5 +633,43 @@ mod core_audio {
             assert!(catalog.devices.iter().all(|d| !d.uid.is_empty() && data_size(d.device_id, code(b"stm#"), INPUT) > 0));
             eprintln!("{} inputs, default {:?}, clamshell {}", catalog.devices.len(), catalog.default_input, catalog.clamshell);
         }
+    }
+}
+
+struct MacCredentials;
+impl crate::Credentials for MacCredentials {
+    fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        crate::keychain_mac::read(name)
+    }
+    fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
+        crate::keychain_mac::write(name, value)
+    }
+    fn remove_secret(&self, name: &str) -> Result<(), Unavailable> {
+        crate::keychain_mac::remove(name)
+    }
+    fn device_key_create(&self) -> Result<(Vec<u8>, Vec<u8>), Unavailable> {
+        crate::keys_mac::create()
+    }
+    fn device_key_public_key(&self, handle: &[u8]) -> Option<Vec<u8>> {
+        crate::keys_mac::public_key(handle)
+    }
+    fn device_key_sign(&self, handle: &[u8], message: &[u8]) -> Result<Vec<u8>, Unavailable> {
+        crate::keys_mac::sign(handle, message)
+    }
+    /// See `Services::device_key_delete`: nothing to do beyond dropping the handle.
+    fn device_key_delete(&self, _: &[u8]) -> Result<(), Unavailable> {
+        Ok(())
+    }
+    fn device_name(&self) -> String {
+        unsafe extern "C" {
+            fn gethostname(name: *mut std::ffi::c_char, length: usize) -> i32;
+        }
+        let mut buffer = [0u8; 256];
+        // SAFETY: the pointer and length describe `buffer`.
+        let status = unsafe { gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+        let end = buffer.iter().position(|b| *b == 0).unwrap_or(buffer.len());
+        // ponytail: the host name, where Swift shows the Mac's localized name; SCDynamicStore if the owner minds in the admin list.
+        let name = String::from_utf8_lossy(&buffer[..end]);
+        if status == 0 && !name.is_empty() { name.trim_end_matches(".local").to_string() } else { "Mac".into() }
     }
 }

@@ -125,6 +125,27 @@ pub fn write(name: &str, value: &[u8]) -> Result<(), Unavailable> {
 pub fn remove(name: &str) -> Result<(), Unavailable> {
     remove_in(name, None)
 }
+pub fn exists(name: &str) -> Result<bool, Unavailable> {
+    exists_in(name, None)
+}
+
+/// Asks for no data and no attributes, so the value isn't touched and no access prompt can appear.
+fn exists_in(name: &str, keychain: Option<Cf>) -> Result<bool, Unavailable> {
+    let item = Item::new(name, keychain)?;
+    let mut result: Cf = null();
+    // SAFETY: the dictionary lives across the call; nothing is requested, so nothing comes back to own.
+    let status = unsafe {
+        let mut query = item.query();
+        query.push((kSecMatchLimit, kSecMatchLimitOne));
+        SecItemCopyMatching(dictionary(&query).0, &mut result)
+    };
+    let _result = Owned(result);
+    match status {
+        0 => Ok(true),
+        NOT_FOUND => Ok(false),
+        _ => Err(UNAVAILABLE),
+    }
+}
 
 fn read_in(name: &str, keychain: Option<Cf>) -> Result<Option<Vec<u8>>, Unavailable> {
     let item = Item::new(name, keychain)?;
@@ -272,5 +293,19 @@ mod tests {
         }
         assert_eq!(read("no-slash"), Err(UNAVAILABLE));
         assert_eq!(split("a.b/http://h:1/p"), Ok(("a.b", "http://h:1/p")));
+    }
+
+    /// Existence comes from the attributes: the answer holds for an item whose value can't be read
+    /// back here, and asks nothing of the caller.
+    #[test]
+    fn exists_answers_without_the_value() {
+        let temp = Temp::new("exists");
+        let keychain = Some(temp.0);
+        assert_eq!(exists_in("org.test.remote/a", keychain), Ok(false));
+        write_in("org.test.remote/a", b"v", keychain).unwrap();
+        assert_eq!(exists_in("org.test.remote/a", keychain), Ok(true));
+        remove_in("org.test.remote/a", keychain).unwrap();
+        assert_eq!(exists_in("org.test.remote/a", keychain), Ok(false));
+        assert!(exists_in("org.localflow.LocalFlow.remote/a", keychain).is_err(), "the Swift app's items stay out of reach");
     }
 }

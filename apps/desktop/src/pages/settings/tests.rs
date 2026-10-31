@@ -1,4 +1,6 @@
 use super::*;
+use crate::remote::testing::install;
+use flow_core::remote::scripted::Reply;
 use crate::testing::{assert_saw, boot, saw};
 use flow_platform::{Fake, PermissionState, Unavailable};
 use flow_ui::test::{TestAppContext, TestQueryExt, TestWindowExt};
@@ -79,7 +81,11 @@ impl flow_platform::Services for Stub {
     fn set_secret(&self, name: &str, value: &str) -> Result<(), Unavailable> {
         self.set_secret_data(name, value.as_bytes())
     }
+    fn secret_exists(&self, name: &str) -> Result<bool, Unavailable> {
+        if self.ok.get() { Ok(self.secrets.borrow().contains_key(name)) } else { Err(Unavailable("test")) }
+    }
     fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+        self.log.borrow_mut().push(format!("read {name}"));
         if self.ok.get() { Ok(self.secrets.borrow().get(name).cloned()) } else { Err(Unavailable("test")) }
     }
     fn set_secret_data(&self, name: &str, value: &[u8]) -> Result<(), Unavailable> {
@@ -91,9 +97,6 @@ impl flow_platform::Services for Stub {
         self.call(format!("remove {name}"))?;
         self.secrets.borrow_mut().remove(name);
         Ok(())
-    }
-    fn close_parked_channels(&self) -> Result<(), Unavailable> {
-        self.call("close parked".into())
     }
     fn settings_action(&self, action: &str) -> Result<(), Unavailable> {
         self.call(format!("action {action}"))
@@ -109,13 +112,6 @@ impl flow_platform::Services for Stub {
     }
     fn install_shortcut(&self, _: &str) -> Result<(), Unavailable> {
         self.call("install".into())
-    }
-    fn enroll_device(&self, provider: &str) -> Result<String, Unavailable> {
-        self.call(format!("enroll {provider}"))?;
-        if provider == "unreachable" {
-            return Err(Unavailable(core::SERVER_UNREACHABLE));
-        }
-        Ok("pending".into())
     }
     fn running_apps(&self) -> Vec<(String, String)> {
         vec![("Zed".into(), "dev.zed.Zed".into()), ("Arc".into(), "company.thebrowser.Browser".into())]
@@ -426,7 +422,6 @@ async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     for item in ["access-token", "refresh-token", "server-key"] {
         assert!(logged(&r, &format!("remove {}", core::remote_keychain(item))), "{item}");
     }
-    assert!(logged(&r, "close parked"), "turnOffRemoteDictation closes the parked channel");
     assert_saw(&["Server only"]);
     assert!(!saw("Use this server for everything"));
 }
@@ -441,11 +436,13 @@ async fn remote_status_lines_and_their_controls(cx: &mut TestAppContext) {
         assert_eq!(has(cx, r.win, "settings.remoteSignInApple"), sign_in, "{scenario}");
         assert!(!has(cx, r.win, "settings.remoteSignInGoogle"), "no client ID hides Google");
         if sign_in {
-            r.ok.set(false);
+            cx.update(|cx| install(cx, vec![Reply::ready()], false, true));
             click(cx, r.win, "settings.remoteSignInApple");
+            frame(cx, r.win);
             assert_saw(&["Sign-in did not finish."]);
-            r.ok.set(true);
+            cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("pending", Some("lfr_1"))], true, true));
             click(cx, r.win, "settings.remoteSignInApple");
+            frame(cx, r.win);
             assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("pending"));
         }
     }
@@ -1088,6 +1085,7 @@ async fn permission_buttons(cx: &mut TestAppContext) {
 
 #[cfg(unix)]
 #[path = "../../../../../crates/flow-core/src/settings/test_flowd.rs"]
+#[allow(dead_code)]
 mod test_flowd;
 
 // parity: SET-045 SET-055 SET-070 SET-072 SET-119 SET-326 SET-327 SET-328 SET-332
@@ -1298,7 +1296,8 @@ async fn microphones_anchor_scrolls_there_once(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn sign_in_reports_an_unreachable_server(cx: &mut TestAppContext) {
     let r = rig(cx, "pinned", |_| {});
-    set(cx, r.win, |p, _, cx| p.sign_in("unreachable", cx));
+    cx.update(|cx| install(cx, vec![Reply::Close(1006)], true, true));
+    set(cx, r.win, |p, _, cx| p.sign_in("apple", cx));
     frame(cx, r.win);
     assert_saw(&["The server could not be reached. Try again."]);
     assert!(!saw("Sign-in did not finish."));
@@ -1359,3 +1358,141 @@ async fn selectable_text_copies(cx: &mut TestAppContext) {
 }
 
 mod rows;
+
+fn fill_pair(cx: &mut TestAppContext, win: Win, address: &str, token: &str) {
+    let (address, token) = (address.to_string(), token.to_string());
+    win.update(cx, |p, w, cx| {
+        p.pair.address.update(cx, |s, cx| s.set_value(address, w, cx));
+        p.pair.token.update(cx, |s, cx| s.set_value(token, w, cx));
+    })
+    .unwrap();
+    frame(cx, win);
+}
+
+// parity: SET-068 SET-097
+#[flow_ui::gpui::test]
+async fn the_pairing_sheet(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let w = r.win;
+    assert_saw(&["Pair with a token", "Use a token from your server's owner."]);
+    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")], true, false));
+    click(cx, w, "settings.remotePairWithToken");
+    assert!(disabled(cx, w, "settings.remotePairConfirm"), "nothing filled");
+    // http:// is refused before anything connects, and the sheet says why.
+    fill_pair(cx, w, "http://8.8.8.8", &server.token());
+    assert_saw(&["http:// works only for private and Tailscale addresses. Use https:// for this one."]);
+    assert!(disabled(cx, w, "settings.remotePairConfirm"));
+    fill_pair(cx, w, "http://192.168.1.20:8090", "lfp_nope");
+    assert_saw(&["This connection is not TLS. Content stays encrypted between this device and the server.", "Server: 192.168.1.20"]);
+    assert!(disabled(cx, w, "settings.remotePairConfirm"), "not a token");
+    assert_eq!(server.counters.opened(), 0);
+    // A token from another server: said so, no socket, nothing stored; Cancel undoes the switch.
+    let other = format!("lfp_{}", core::base64url_encode(&[5u8; 64]));
+    fill_pair(cx, w, "https://flow.example.com", &other);
+    click(cx, w, "settings.remotePairConfirm");
+    frame(cx, w);
+    assert_saw(&["This address reaches a different server. Check the address or ask for a new token."]);
+    assert_eq!(server.counters.opened(), 0);
+    assert_eq!(pref_b(cx, "remote.enabled"), Some(true));
+    click(cx, w, "settings.remotePairCancel");
+    assert_eq!(pref_b(cx, "remote.enabled"), Some(false));
+    assert_eq!(read(cx, w, |p, cx| p.pair.token.read(cx).value().to_string()), "");
+    // The right token pairs, through the real enrollment.
+    click(cx, w, "settings.remotePairWithToken");
+    fill_pair(cx, w, "https://flow.example.com", &server.token());
+    click(cx, w, "settings.remotePairConfirm");
+    frame(cx, w);
+    assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("approved"));
+    assert_eq!(pref_s(cx, "remote.serverURL").as_deref(), Some("https://flow.example.com"));
+    assert_eq!(read(cx, w, |p, _| p.pair.sheet), None);
+    assert!(!has(cx, w, "settings.remotePairWithToken"), "an approved device has nothing to pair");
+    assert_eq!(server.secrets.items.lock().unwrap().get("refresh-token").map(Vec::as_slice), Some(b"lfr_2".as_slice()));
+}
+
+// parity: SET-098
+#[flow_ui::gpui::test]
+async fn pairing_a_device_on_another_server_is_refused(cx: &mut TestAppContext) {
+    let r = rig(cx, "pinned", |_| {});
+    let server = cx.update(|cx| install(cx, vec![], true, true));
+    click(cx, r.win, "settings.remotePairWithToken");
+    fill_pair(cx, r.win, "https://elsewhere.example.com", &server.token());
+    click(cx, r.win, "settings.remotePairConfirm");
+    frame(cx, r.win);
+    assert_saw(&["This Mac already uses another server. Turn off remote dictation first."]);
+    assert_eq!(server.counters.opened(), 0);
+    assert_ne!(pref_s(cx, "remote.serverURL").as_deref(), Some("https://elsewhere.example.com"));
+}
+
+// parity: SET-099
+#[flow_ui::gpui::test]
+async fn the_address_sheet(cx: &mut TestAppContext) {
+    let r = rig(cx, "approved", |_| {});
+    let w = r.win;
+    r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), vec![1; 32]);
+    set(cx, w, |p, _, cx| p.refresh(cx));
+    assert_saw(&["Server address"]);
+    cx.update(|cx| install(cx, vec![Reply::Close(4001)], true, true));
+    click(cx, w, "settings.remoteAddressEdit");
+    assert_saw(&["Change the server address", "The server at the new address must have the identity this Mac already trusts."]);
+    let before = pref_s(cx, "remote.serverURL");
+    w.update(cx, |p, w, cx| p.pair.address.update(cx, |s, cx| s.set_value("https://new.example.com", w, cx))).unwrap();
+    frame(cx, w);
+    click(cx, w, "settings.remoteAddressConfirm");
+    frame(cx, w);
+    assert_saw(&["This address reaches a different server. Check the address or ask for a new token."]);
+    assert_eq!(pref_s(cx, "remote.serverURL"), before);
+    cx.update(|cx| install(cx, vec![Reply::ready()], true, true));
+    click(cx, w, "settings.remoteAddressConfirm");
+    frame(cx, w);
+    assert_eq!(read(cx, w, |p, _| p.pair.sheet), None);
+    assert_eq!(pref_s(cx, "remote.serverURL").as_deref(), Some("https://new.example.com"));
+    assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("approved"), "only the address changes");
+}
+
+/// The 500 ms poll asks about existence once and never reads a value (Swift keeps a flag, too).
+#[flow_ui::gpui::test]
+async fn polling_reads_no_keychain_values(cx: &mut TestAppContext) {
+    let r = rig(cx, "approved", |_| {});
+    r.secrets.borrow_mut().insert(core::rewrite_keychain(core::SUMMARY_ACCOUNT), "k".into());
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    assert!(read(cx, r.win, |p, _| p.summary_key_saved));
+    r.log.borrow_mut().clear();
+    set(cx, r.win, |p, _, cx| {
+        for _ in 0..3 {
+            p.poll(cx);
+        }
+    });
+    assert!(!r.log.borrow().iter().any(|c| c.starts_with("read ")), "{:?}", r.log.borrow());
+    r.secrets.borrow_mut().remove(&core::rewrite_keychain(core::SUMMARY_ACCOUNT));
+    set(cx, r.win, |p, _, cx| p.poll(cx));
+    assert!(read(cx, r.win, |p, _| p.summary_key_saved), "cached until an explicit refresh");
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    assert!(!read(cx, r.win, |p, _| p.summary_key_saved));
+}
+
+/// Turning off stops the remote side too: parked channels close and the credentials go.
+#[flow_ui::gpui::test]
+async fn turn_off_closes_parked_channels_and_removes_credentials(cx: &mut TestAppContext) {
+    use flow_core::remote::pairing::PairingToken;
+    use flow_core::remote::pool::Role;
+    let r = rig(cx, "", |p| {
+        p.set("remote.enabled", true);
+        p.set("remote.consentVersion", 2);
+        p.set("remote.serverURL", "https://flow.example.com");
+    });
+    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("a", "b"), Reply::ready()], true, false));
+    let remote = cx.update(|cx| {
+        let remote = cx.global_mut::<Core>().remote();
+        remote.enrollment.load(flow_core::remote::enrollment::RemoteSettings::from_prefs(&cx.global::<Core>().prefs));
+        remote
+    });
+    remote.enrollment.pair(&PairingToken::parse(&server.token()).unwrap()).unwrap();
+    let (channel, op) = remote.pool.lease(Role::Background).unwrap();
+    remote.pool.release(Role::Background, channel, Some(op + 1));
+    let closed = server.counters.closed();
+    set(cx, r.win, |p, _, cx| p.confirm_turn_off(cx));
+    assert_eq!(server.counters.closed(), closed + 1);
+    assert!(server.secrets.items.lock().unwrap().is_empty());
+    assert_eq!(pref_b(cx, "remote.enabled"), Some(false));
+    assert_eq!(remote.enrollment.access_token(), None, "nothing goes out after turning off");
+}

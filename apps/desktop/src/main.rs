@@ -21,6 +21,7 @@ fn main() {
         let (contrast, motion) = (core.services.high_contrast(), core.services.reduce_motion());
         flow_ui::init(Mode::new(is_dark, contrast), motion, cx);
         cx.set_global(core);
+        localflow::remote::start_refreshing(cx);
         menu::init(cx);
         shell::start(cx);
         cx.on_window_closed(|cx, id| shell::window_closed(id, cx)).detach();
