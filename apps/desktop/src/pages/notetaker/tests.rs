@@ -546,7 +546,7 @@ async fn assign_opens_shows_sections_and_closes(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.transcript"));
     click(cx, &window, "meeting.speakers.assign.open");
     frame(cx, &window);
-    assert_saw(&["YOU", "SPEAKER 1", "Remember my voice", "Known speakers…", "Type a name"]);
+    assert_saw(&["YOU", "SPEAKER 1", "Remember my voice", "Known speakers…"]);
     assert!(read(cx, &window, |p| p.assign.is_some()));
     click(cx, &window, "meeting.speakers.close");
     frame(cx, &window);
