@@ -336,6 +336,16 @@ mod tests {
         assert_eq!(sent(Command::Cancel, cx), Some(SessionCommand::CancelDictation));
     }
 
+    // parity: MENU-030
+    #[flow_ui::gpui::test]
+    async fn quit_item_runs_the_quit_sequence(cx: &mut TestAppContext) {
+        let _ = routed(cx);
+        cx.update(|cx| run(Command::Quit, cx));
+        cx.update(|cx| assert!(cx.global::<Session>().quitting));
+        cx.run_until_parked();
+        cx.update(|cx| assert!(cx.global::<Session>().ready_to_terminate));
+    }
+
     // parity: MENU-027
     #[flow_ui::gpui::test]
     async fn start_opens_notetaker_and_starts_only_when_allowed(cx: &mut TestAppContext) {

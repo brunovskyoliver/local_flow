@@ -1134,7 +1134,7 @@ mod tests {
         cx.update(|cx| f(&cx.global::<Session>().pill))
     }
 
-    // parity: PILL-001 PILL-002 PILL-003 PILL-004
+    // parity: PILL-001 PILL-002 PILL-003 PILL-004 PILL-113
     #[test]
     fn pill_colors_ignore_appearance() {
         assert_eq!(style::fill(), Hsla::from(rgb(0x242522)));
@@ -1151,7 +1151,7 @@ mod tests {
         cx.update_window(w.into(), |_, win, _| (0..32usize).filter_map(|i| win.try_find(("pill.bar", i)).map(|e| e.bounds())).collect()).unwrap()
     }
 
-    // parity: PILL-007 PILL-008 PILL-009 PILL-029 PILL-035 PILL-041
+    // parity: PILL-007 PILL-008 PILL-009 PILL-029 PILL-035 PILL-036 PILL-041
     /// From laid-out bounds, under Reduce Motion so nothing animates.
     #[flow_ui::gpui::test]
     async fn dictation_lays_out_swifts_sizes(cx: &mut TestAppContext) {
@@ -1533,7 +1533,7 @@ mod tests {
         assert_eq!(pill(cx, |p| p.layouts), layouts + 1);
     }
 
-    // parity: PILL-050
+    // parity: PILL-029 PILL-030 PILL-037 PILL-038 PILL-039 PILL-040 PILL-050
     #[flow_ui::gpui::test]
     async fn dictation_labels_and_cancel(cx: &mut TestAppContext) {
         let (w, _, commands) = view(cx);
@@ -1562,7 +1562,7 @@ mod tests {
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::CancelRewrite));
     }
 
-    // parity: PILL-067 PILL-068 PILL-069 PILL-070 PILL-074
+    // parity: PILL-067 PILL-068 PILL-069 PILL-070 PILL-071 PILL-074
     #[flow_ui::gpui::test]
     async fn learned_notice_copy_actions_and_timer(cx: &mut TestAppContext) {
         let (w, announced, commands) = view(cx);
@@ -1626,7 +1626,7 @@ mod tests {
         assert!(pill(cx, |p| p.microphone.is_none()));
     }
 
-    // parity: PILL-080 PILL-081 PILL-082 PILL-083
+    // parity: PILL-079 PILL-080 PILL-081 PILL-082 PILL-083
     #[flow_ui::gpui::test]
     async fn clipboard_notice(cx: &mut TestAppContext) {
         let (w, announced, _) = view(cx);
@@ -1649,7 +1649,7 @@ mod tests {
         assert!(pill(cx, |p| p.clipboard.is_none()));
     }
 
-    // parity: PILL-084 PILL-087
+    // parity: PILL-084 PILL-085 PILL-087
     #[flow_ui::gpui::test]
     async fn action_notice_retry_chip_and_timer(cx: &mut TestAppContext) {
         let (w, announced, commands) = view(cx);
@@ -1754,7 +1754,7 @@ mod tests {
         assert!(flow_ui::probe::symbols().iter().any(|s| s == "text.quote"));
     }
 
-    // parity: PILL-115..PILL-120 PILL-122..PILL-125
+    // parity: PILL-112 PILL-113 PILL-115..PILL-120 PILL-122..PILL-125
     #[flow_ui::gpui::test]
     async fn background_notice(cx: &mut TestAppContext) {
         let (w, announced, _) = view(cx);

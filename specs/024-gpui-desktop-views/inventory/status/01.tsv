@@ -16,12 +16,12 @@ SHELL-015	auto	test:activation_rereads_reduce_motion
 SHELL-016	auto	test:app_menu_has_swifts_groups
 SHELL-017	service	service:Services::check_for_updates returns Unavailable until the updater phase
 SHELL-018	auto	test:app_menu_has_swifts_groups
-SHELL-019	auto	test:app_menu_has_swifts_groups
+SHELL-019	auto	test:shortcuts_and_standard_menus ; test:command_comma_opens_settings
 SHELL-020	auto	test:command_comma_opens_settings
-SHELL-021	auto	test:app_menu_has_swifts_groups
+SHELL-021	auto	test:shortcuts_and_standard_menus
 SHELL-022	auto	test:quit_refuses_in_swifts_order
-SHELL-023	auto	test:escape_cancels_only_while_busy
-SHELL-024	auto	test:app_menu_has_swifts_groups
+SHELL-023	auto	test:the_escape_key_cancels_insertion_first ; test:escape_cancels_only_while_busy
+SHELL-024	auto	test:shortcuts_and_standard_menus ; test:command_w_closes_the_window ; note:Rust rebuilds File, Edit, View, Window and Help by hand. Their contents follow SwiftUI's defaults from knowledge; the off-screen reference only exposes the Apple and app menus, so they were not compared. System-added Fill and Center items are not controlled
 SHELL-025	auto	test:window_options_and_identifier_match_swift
 SHELL-026	auto	test:window_options_and_identifier_match_swift
 SHELL-027	auto	test:window_options_and_identifier_match_swift
@@ -30,29 +30,29 @@ SHELL-029	auto	test:sidebar_geometry_follows_the_breakpoint
 SHELL-030	auto	test:sidebar_geometry_follows_the_breakpoint
 SHELL-031	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-032	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
-SHELL-033	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
-SHELL-034	auto	test:landing_page_follows_purpose
+SHELL-033	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png ; test:card_rows_and_footer_sit_where_swift_puts_them
+SHELL-034	auto	test:onboarding_owns_the_window_until_setup_finishes
 SHELL-035	auto	test:finishing_writes_prefs_and_opens_the_library
 SHELL-036	auto	test:closing_the_window_saves_the_notes
 SHELL-037	auto	test:open_selects_keeps_one_window_and_close_keeps_the_selection
-SHELL-038	auto	test:only_an_active_settings_or_setup_window_polls
+SHELL-038	auto	test:only_an_active_settings_or_setup_window_polls ; test:the_settings_poll_redraws_only_on_settings
 SHELL-039	auto	test:appearance_preference_switches_palette_and_app
 SHELL-040	auto	test:sidebar_geometry_follows_the_breakpoint
 SHELL-041	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png
-SHELL-042	auto	test:sidebar_geometry_follows_the_breakpoint
+SHELL-042	auto	test:sidebar_geometry_follows_the_breakpoint ; test:card_rows_and_footer_sit_where_swift_puts_them
 SHELL-043	auto	test:sidebar_rows_carry_swifts_labels_symbols_and_ids
 SHELL-044	auto	test:sidebar_rows_carry_swifts_labels_symbols_and_ids
 SHELL-045	auto	test:sidebar_rows_carry_swifts_labels_symbols_and_ids
 SHELL-046	auto	test:sidebar_rows_carry_swifts_labels_symbols_and_ids
-SHELL-047	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png ; test:sidebar_rows_carry_swifts_labels_symbols_and_ids
-SHELL-048	auto	test:sidebar_geometry_follows_the_breakpoint
+SHELL-047	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png ; test:sidebar_rows_carry_swifts_labels_symbols_and_ids ; test:card_rows_and_footer_sit_where_swift_puts_them
+SHELL-048	auto	test:sidebar_geometry_follows_the_breakpoint ; test:card_rows_and_footer_sit_where_swift_puts_them ; note:difference: GPUI has no minimum scale factor, so a longer label truncates instead of shrinking to 0.85; every current label fits at 15
 SHELL-049	auto	test:only_the_selected_row_is_marked
 SHELL-050	auto	test:unselected_nav_row_has_no_fill_hover_or_press ; live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png
 SHELL-051	auto	test:sidebar_rows_open_their_pages
-SHELL-052	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
-SHELL-053	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png ; test:active_note_card_opens_its_meeting
+SHELL-052	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png ; test:card_rows_and_footer_sit_where_swift_puts_them
+SHELL-053	auto	test:active_note_card_opens_its_meeting ; note:no reference pair; a reference meeting would need the microphone
 SHELL-054	auto	test:active_note_card_opens_its_meeting
-SHELL-055	auto	test:live_badge_reads_each_meeting_state
+SHELL-055	auto	test:live_badge_reads_each_meeting_state ; note:difference: the iterative variable-colour effect is approximated by an opacity pulse over the whole symbol
 SHELL-056	auto	test:live_badge_reads_each_meeting_state
 SHELL-057	auto	test:live_badge_reads_each_meeting_state
 SHELL-058	auto	test:active_note_card_opens_its_meeting
@@ -76,18 +76,18 @@ SHELL-075	auto	test:sidebar_rows_open_their_pages
 SHELL-076	auto	test:pages_show_unavailable_until_stores_exist
 SHELL-077	auto	test:sidebar_rows_open_their_pages
 SHELL-078	auto	test:pages_show_unavailable_until_stores_exist
-SHELL-079	live	live:audit/mac/shell/unsaved-light-rust.png ; rust-only:an unsaved dictation needs capture
+SHELL-079	auto	test:recovery_states_render_and_disable_while_busy ; note:no reference pair; an unsaved dictation on the reference needs capture. Rust capture audit/mac/shell/unsaved-light-rust.png viewed only
 SHELL-080	auto	test:pages_show_unavailable_until_stores_exist
-SHELL-081	auto	test:recovery_states_render_and_disable_while_busy
-SHELL-082	auto	test:recovery_actions_retry_copy_and_discard
+SHELL-081	auto	test:recovery_states_render_and_disable_while_busy ; note:native-style buttons through native_button
+SHELL-082	auto	test:recovery_actions_retry_copy_and_discard ; note:command path checked through the Fake service; the production dictation session arrives with Feature 025
 SHELL-083	auto	test:recovery_states_render_and_disable_while_busy
 SHELL-084	auto	test:recovery_states_render_and_disable_while_busy
 SHELL-085	auto	test:recovery_states_render_and_disable_while_busy
-SHELL-086	auto	test:recovery_actions_retry_copy_and_discard
+SHELL-086	auto	test:recovery_actions_retry_copy_and_discard ; note:command path checked through the Fake service; the production dictation session arrives with Feature 025
 SHELL-087	auto	test:recovery_actions_retry_copy_and_discard
-SHELL-088	auto	test:recovery_actions_retry_copy_and_discard
+SHELL-088	auto	test:recovery_actions_retry_copy_and_discard ; note:native-style button in the destructive colour
 SHELL-089	auto	test:recovery_states_render_and_disable_while_busy
-SHELL-090	auto	test:recovery_actions_retry_copy_and_discard
+SHELL-090	auto	test:recovery_actions_retry_copy_and_discard ; note:difference: the native prompt's Discard can't be red, GPUI's prompt doesn't set hasDestructiveAction
 SHELL-091	auto	test:recovery_actions_retry_copy_and_discard
 SHELL-092	auto	test:recovery_actions_retry_copy_and_discard
 SHELL-093	auto	test:readiness_follows_swift_order
@@ -101,23 +101,23 @@ SHELL-100	auto	test:readiness_follows_swift_order
 SHELL-101	auto	test:readiness_follows_swift_order
 SHELL-102	auto	test:readiness_follows_swift_order
 SHELL-103	auto	test:pages_show_unavailable_until_stores_exist
-SHELL-104	service	service:launchctl helper restart arrives with the model lifecycle service; the copy is in SETUP_STATUS_COPY
+SHELL-104	service	service:launchctl helper restart and its status copy arrive with the model lifecycle service
 SHELL-105	auto	test:start_recovers_meetings_and_checks_the_model
 SHELL-106	auto	test:a_second_instance_lands_in_the_launch_failure
 SHELL-107	recorded	recorded:DEBUG-only Swift string, out of release parity
 SHELL-108	recorded	recorded:env-gated benchmark strings, no release path
-SHELL-109	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
-SHELL-110	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
-SHELL-111	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
-SHELL-112	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
-SHELL-113	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
+SHELL-109	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
+SHELL-110	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
+SHELL-111	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
+SHELL-112	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
+SHELL-113	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-114	service	service:CGEvent shortcut arrives with the capture service, Feature 025; copy not posted yet
-SHELL-115	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
-SHELL-116	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
+SHELL-115	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
+SHELL-116	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-117	service	service:microphone authorization arrives with Feature 025; copy not posted yet
 SHELL-118	service	service:Accessibility prompt arrives with Feature 025; copy not posted yet
-SHELL-119	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
-SHELL-120	auto	test:setup_status_copy_matches_swift_and_renders ; note:copy only, no production caller until the feature that posts it
+SHELL-119	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
+SHELL-120	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-121	auto	test:quit_refuses_in_swifts_order
 SHELL-122	auto	test:quit_refuses_in_swifts_order
 SHELL-123	auto	test:quit_refuses_in_swifts_order
@@ -125,7 +125,7 @@ SHELL-124	auto	test:quit_refuses_in_swifts_order
 SHELL-125	auto	test:quit_refuses_in_swifts_order
 SHELL-126	auto	test:quit_refuses_in_swifts_order
 SHELL-127	auto	test:quit_refuses_in_swifts_order
-SHELL-128	auto	test:quit_stops_an_active_meeting_then_terminates
+SHELL-128	auto	test:quit_stops_an_active_meeting_then_terminates ; note:partial: the shortcut, input catalog and recorder steps don't exist in Rust yet, they arrive with Feature 025
 SHELL-129	auto	test:busy_model_shutdown_refuses_the_quit
 SHELL-130	auto	test:incomplete_export_reports_and_quits_anyway
 SHELL-131	service	service:the native alert copy shows under scenario shell.recording-cant-wait; its trigger needs flowd capture, Feature 025 ; live:audit/mac/shell/recording-cant-wait-light-rust.png
@@ -171,7 +171,7 @@ MENU-026	auto	test:idle_menu_lists_swifts_items
 MENU-027	auto	test:start_opens_notetaker_and_starts_only_when_allowed
 MENU-028	auto	test:idle_menu_lists_swifts_items
 MENU-029	auto	test:idle_menu_lists_swifts_items
-MENU-030	auto	test:quit_refuses_in_swifts_order
+MENU-030	auto	test:quit_item_runs_the_quit_sequence
 PILL-001	auto	test:pill_colors_ignore_appearance
 PILL-002	auto	test:pill_colors_ignore_appearance
 PILL-003	auto	test:pill_colors_ignore_appearance
@@ -183,7 +183,7 @@ PILL-008	auto	test:dictation_lays_out_swifts_sizes
 PILL-009	auto	test:dictation_lays_out_swifts_sizes
 PILL-010	recorded	recorded:GPUI redraws per display frame through request_animation_frame; no interval value exists to assert
 PILL-011	auto	test:panel_is_a_borderless_nonactivating_popup ; note:WindowKind::PopUp in gpui_macos window.rs gives the nonactivating panel, all Spaces and full-screen auxiliary, read in source. Difference: level is NSPopUpWindowLevel 101, not floating 3, and animation behaviour is utility, not none; GPUI sets both
-PILL-012	auto	test:panel_is_a_borderless_nonactivating_popup ; note:focus false asserted; canBecomeKey read in gpui_macos, not observed against a target app here
+PILL-012	auto	test:panel_is_a_borderless_nonactivating_popup ; note:difference: focus false is asserted, but GPUI's panel class returns YES from canBecomeKeyWindow where Swift returns false, so a click on the pill can make it key. Read in gpui_macos source, not observed against a target app. A fix belongs in flow-platform
 PILL-013	auto	test:panel_position
 PILL-014	auto	test:panel_position
 PILL-015	service	service:choosing the target screen needs AX in the capture phase; primary display used
@@ -299,8 +299,8 @@ PILL-124	auto	test:background_notice
 PILL-125	auto	test:background_notice
 SHELL-145	auto	test:a_rewrite_marks_its_attempt_delivered ; test:begin_review_refuses_silently
 SHELL-146	auto	test:begin_review_refuses_silently
-SHELL-147	auto	test:review_sheet_geometry ; note:title weight 600 read from source only; no reference capture, rows reveal Insert only on hover, which does not reach the off-screen reference window
-SHELL-148	live	live:audit/mac/shell/review-light-rust.png ; rust-only:the reference rows reveal Insert only on pointer hover, and AeroSpace returns its window off screen; checked against Swift source ; test:review_sheet_geometry
+SHELL-147	auto	test:review_sheet_geometry ; note:no reference pair; the reference rows reveal Insert only on pointer hover, which doesn't reach its off-screen window
+SHELL-148	auto	test:review_sheet_geometry ; note:no reference pair for the same reason as SHELL-147; selectable set in source, a test can't drag a selection
 SHELL-149	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-150	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-151	auto	test:review_sheet_shows_warnings_and_buttons_work
@@ -309,7 +309,7 @@ SHELL-153	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-154	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-155	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-156	auto	test:sheet_dismissed_another_way_cancels
-SHELL-157	live	live:audit/mac/shell/review-light-rust.png ; rust-only:ax press on the reference history row found no Insert control
+SHELL-157	auto	test:panel_sits_near_the_bottom_center ; note:difference: GPUI's popup kind sits at level 101, not floating (3), and accepts key status; no reference pair, ax press on the reference row found no Insert control
 SHELL-158	auto	test:panel_layout_matches_swift
 SHELL-159	auto	test:panel_sits_near_the_bottom_center
 SHELL-160	auto	test:panel_runs_select_confirm_insert
@@ -330,7 +330,7 @@ SHELL-174	auto	test:cancelling_and_failure_copy ; test:delivery_is_recorded_arou
 SHELL-175	auto	test:cancelling_and_failure_copy ; test:delivery_is_recorded_around_the_insert
 SHELL-176	auto	test:cancelling_and_failure_copy ; test:delivery_is_recorded_around_the_insert
 SHELL-177	auto	test:cancelling_and_failure_copy ; test:delivery_is_recorded_around_the_insert
-SHELL-178	auto	test:review_sheet_shows_warnings_and_buttons_work
+SHELL-178	auto	test:finish_clears_the_operation
 SHELL-179	recorded	recorded:Swift note or unconstructed view; no reachable behaviour to port
 SHELL-180	recorded	recorded:Swift note or unconstructed view; no reachable behaviour to port
 SHELL-181	recorded	recorded:Swift note or unconstructed view; no reachable behaviour to port
@@ -374,14 +374,14 @@ SHELL-218	auto	test:palette_matches_sotto
 SHELL-219	auto	test:palette_matches_sotto
 SHELL-220	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-221	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
-SHELL-222	auto	test:button_styles_match_swift
+SHELL-222	auto	test:button_styles_match_swift ; note:name table of the bundled TTF read; the test platform has no font registry, so the rendered family is not observed here
 SHELL-223	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-224	auto	test:sidebar_geometry_follows_the_breakpoint
 SHELL-225	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-226	auto	test:compact_page_padding_is_24_and_32
 SHELL-227	auto	test:button_styles_match_swift
 SHELL-228	auto	test:button_styles_match_swift
-SHELL-229	live	live:audit/mac/shell/unsaved-busy-light-rust.png ; rust-only:an unsaved dictation needs capture
+SHELL-229	auto	test:button_styles_match_swift ; note:opacity value read, not rendered pixels; unsaved-busy-light-rust.png viewed with no reference pair
 SHELL-230	auto	test:button_styles_match_swift
 SHELL-231	auto	test:button_styles_match_swift
 SHELL-232	auto	test:button_styles_match_swift

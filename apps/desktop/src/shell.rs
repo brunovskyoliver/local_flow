@@ -90,49 +90,6 @@ pub struct MeetingStatus {
     pub elapsed_ms: i64,
 }
 
-/// Swift's `AppServices.setupStatus` copy that only later features can trigger; the unavailable
-/// views and the menu bar already display whichever is current.
-pub const SETUP_STATUS_COPY: &[&str] = &[
-    "The bundled AI helper could not restart. It will retry before the next request.",
-    "Verified local model available.",
-    "Import the pinned model before dictating.",
-    "Whisper Turbo import failed. Install it in Settings to finalize meetings.",
-    "Running the resource benchmark…",
-    "Benchmark failed; see its result file.",
-    "Benchmark complete.",
-    "Running the remote dictation benchmark…",
-    "Could not prepare speech model. ",
-    "Preparing speech model…",
-    "Speech model ready. Hold the shortcut to dictate.",
-    "Local model files verified.",
-    "Local model verification failed. Verify or reinstall the model in Settings.",
-    "Whisper Turbo verified.",
-    "Install Whisper Turbo in Settings to finalize meetings.",
-    "Install or verify Whisper Turbo in Settings to finalize meetings.",
-    "Whisper Turbo verified. Final meeting transcripts use it locally.",
-    "Speaker labeling model verified.",
-    "Speaker labeling model isn't installed.",
-    "Term booster verified. Dictionary terms are checked against your speech.",
-    "Shortcut updated.",
-    "Shortcut disabled.",
-    "The chosen speech model is missing; dictating with Parakeet v3.",
-    "Dictation now uses Parakeet v3.",
-    "Parakeet v3 downloaded and verified.",
-    "Parakeet v3 download cancelled.",
-    "Parakeet v3 download failed. Check the connection and available storage.",
-    "Microphone allowed.",
-    "Microphone permission is needed for dictation.",
-    "Accessibility allowed. Insertion is available in supported fields.",
-    "Enable LocalFlow in Accessibility settings. The app is shown in Finder if you need to add it.",
-    "Meeting models did not finish downloading. Retry in Settings.",
-    "Downloading model files…",
-    "Importing model files…",
-    "Model verified. Hold the shortcut for a short test.",
-    "Provisioning unavailable: the pinned manifest is missing verified hashes.",
-    "Model installation cancelled.",
-    "Installation failed. Check the pinned files, connection and available storage.",
-];
-
 /// Sidebar rows above the spacer, then Settings under its divider.
 const NAV: [(Page, &str, &str, &str); 5] = [
     (Page::Meetings, "Notetaker", "record.circle", "navigation.notetaker"),
@@ -626,7 +583,8 @@ impl Shell {
                     v_flex()
                         .w_full()
                         .gap(px(8.))
-                        .p(px(14.))
+                        // 14 with the stroke inside it, as Swift's overlay is.
+                        .p(px(13.))
                         .bg(p.surface)
                         .border_1()
                         .border_color(p.line)
@@ -642,6 +600,8 @@ impl Shell {
         let p = pal(cx);
         let attention = cx.global::<Session>().needs_attention();
         v_flex()
+            .id("shell.sidebar")
+            .test_support()
             .h_full()
             .px(px(12.))
             .child(
@@ -661,8 +621,8 @@ impl Shell {
             )
             .child(div().flex_1())
             .children(self.active_note(cx))
-            .when(attention, |d| d.child(div().px(px(10.)).pb(px(8.)).child(sf_label("exclamationmark.circle", "Review needed", 13., p.warning))))
-            .child(hairline(cx).mb(px(8.)))
+            .when(attention, |d| d.child(div().id("shell.reviewNeeded").test_support().px(px(10.)).pb(px(8.)).child(sf_label("exclamationmark.circle", "Review needed", 13., p.warning))))
+            .child(div().id("shell.divider").test_support().pb(px(8.)).child(hairline(cx)))
             .child(div().pb(px(12.)).child(self.nav_item(NAV[4], cx)))
             .into_any_element()
     }
@@ -677,6 +637,10 @@ impl Shell {
         let symbol = "externaldrive.badge.exclamationmark";
         Some(
             v_flex()
+                .id("recovery.notice")
+                .test_support()
+                // GPUI's overflow doesn't clip to the card's corners.
+                .rounded_t(px(15.))
                 .w_full()
                 .flex_none()
                 .gap(px(10.))
@@ -688,7 +652,7 @@ impl Shell {
                         h_flex()
                             .justify_between()
                             .child(sf_label(symbol, "Storage needs attention. Your saved text is retained.", 14., p.ink))
-                            .child(prototype_button("recovery.retryStorage", "Retry storage").disabled(d.busy).on_click(|_, _, cx| retry_storage(cx))),
+                            .child(native_button("recovery.retryStorage", "Retry storage").disabled(d.busy).on_click(|_, _, cx| retry_storage(cx))),
                     )
                 })
                 .when(d.capacity_blocked, |v| v.child(sf_label(symbol, "History is full. Open Transcriptions and delete saved text before recording again.", 14., p.ink)))
@@ -696,16 +660,16 @@ impl Shell {
                     let copied = text.clone();
                     v.child(h_flex().gap(px(6.)).child(icon("exclamationmark.triangle", 14., p.ink)).child(t("Unsaved text").font(14., 600.)))
                         .child(t("This text will be lost if you quit. Copy does not save it."))
-                        .child(div().id("recovery.unsaved").max_h(px(150.)).overflow_y_scroll().child(t(text)))
+                        .child(div().id("recovery.unsaved").test_support().max_h(px(150.)).overflow_y_scroll().child(t(text).selectable()))
                         .child(
                             h_flex()
                                 .gap(px(8.))
-                                .child(prototype_button("recovery.retrySave", "Retry save").disabled(d.busy).on_click(|_, _, cx| retry_save(cx)))
-                                .child(prototype_button("recovery.copy", "Copy").disabled(d.busy).on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))))
+                                .child(native_button("recovery.retrySave", "Retry save").disabled(d.busy).on_click(|_, _, cx| retry_save(cx)))
+                                .child(native_button("recovery.copy", "Copy").disabled(d.busy).on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))))
                                 .child(
-                                    prototype_button("recovery.discard", "Discard…")
+                                    native_button("recovery.discard", "Discard…")
                                         .disabled(d.busy)
-                                        .text_color(p.warning)
+                                        .text_color(p.destructive())
                                         .on_click(|_, w, cx| present_alert(Alert::DiscardUnsaved, w, cx)),
                                 ),
                         )
@@ -798,7 +762,7 @@ pub fn modal(id: &'static str, width: f32, padding: f32, cx: &App, content: impl
 }
 
 /// Title, message and buttons, in the order Swift adds them.
-fn alert_content(alert: Alert) -> (PromptLevel, &'static str, &'static str, Vec<PromptButton>) {
+pub(crate) fn alert_content(alert: Alert) -> (PromptLevel, &'static str, &'static str, Vec<PromptButton>) {
     let (cancel, other) = (|l: &'static str| PromptButton::Cancel(l.into()), |l: &'static str| PromptButton::Other(l.into()));
     match alert {
         Alert::DiscardUnsaved => (PromptLevel::Warning, "Discard unsaved text?", "This text has not been saved. Discarding it cannot be undone.", vec![cancel("Keep text"), other("Discard")]),
@@ -874,6 +838,8 @@ impl Render for Shell {
             .child(
                 div().flex_1().min_w_0().h_full().pt(px(44.)).pr(px(8.)).pb(px(8.)).child(
                     v_flex()
+                        .id("shell.card")
+                        .test_support()
                         .size_full()
                         .bg(p.surface)
                         .border_1()
@@ -981,7 +947,21 @@ mod tests {
         });
     }
 
-    // parity: SHELL-003 SHELL-061 SHELL-034
+    // parity: SHELL-034
+    /// Until setup finishes the onboarding page owns the window: no sidebar, no card.
+    #[flow_ui::gpui::test]
+    async fn onboarding_owns_the_window_until_setup_finishes(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        cx.update(|cx| cx.global_mut::<Core>().prefs.set("setupVersion", 0));
+        frame(cx, window);
+        cx.update_window(window.into(), |_, w, _| assert!(w.try_find("shell.sidebar").is_none() && w.try_find("shell.card").is_none())).unwrap();
+        cx.update(|cx| cx.global_mut::<Core>().prefs.set("setupVersion", 1));
+        frame(cx, window);
+        cx.update_window(window.into(), |_, w, _| assert!(w.try_find("shell.sidebar").is_some() && w.try_find("shell.card").is_some())).unwrap();
+    }
+
+    // parity: SHELL-003 SHELL-061
     #[flow_ui::gpui::test]
     async fn landing_page_follows_purpose(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
@@ -1068,6 +1048,34 @@ mod tests {
         }
     }
 
+    // parity: SHELL-033 SHELL-042 SHELL-047 SHELL-048 SHELL-052
+    /// From laid-out bounds: the card's outer padding, the row's inner geometry and the footer.
+    #[flow_ui::gpui::test]
+    async fn card_rows_and_footer_sit_where_swift_puts_them(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        cx.simulate_window_resize(window.into(), size(px(1000.), px(700.)));
+        frame(cx, window);
+        let card = bounds_of(cx, window, "shell.card");
+        assert_eq!((card.origin.x, card.origin.y, card.right(), card.bottom()), (px(216.), px(44.), px(992.), px(692.)));
+        let (row, icon, title) = (bounds_of(cx, window, "navigation.notetaker"), bounds_of(cx, window, "navigation.notetaker.icon"), bounds_of(cx, window, "navigation.notetaker.title"));
+        assert_eq!((icon.origin.x - row.origin.x, icon.size.width), (px(10.), px(20.)));
+        assert_eq!(title.origin.x - icon.right(), px(10.));
+        let style = flow_ui::probe::style_of("Notetaker").unwrap();
+        assert_eq!(style.size, 15.);
+        // Settings is below the divider and 12 off the bottom; the rows above stack 5 apart.
+        let (settings, divider, dictionary) = (bounds_of(cx, window, "navigation.settings"), bounds_of(cx, window, "shell.divider"), bounds_of(cx, window, "navigation.dictionary"));
+        assert_eq!(settings.bottom(), px(700. - 12.));
+        assert_eq!((divider.bottom(), divider.size.height), (settings.origin.y, px(1. + 8.)));
+        assert_eq!(dictionary.origin.y - bounds_of(cx, window, "navigation.insights").origin.y, px(40.));
+        assert!(dictionary.bottom() < divider.origin.y);
+        // The longest label fits at the compact width, so Swift's minimum scale never has to act.
+        cx.simulate_window_resize(window.into(), size(px(800.), px(700.)));
+        frame(cx, window);
+        let (row, title) = (bounds_of(cx, window, "navigation.transcriptions"), bounds_of(cx, window, "navigation.transcriptions.title"));
+        assert!(title.right() <= row.right() - px(10.), "{title:?} in {row:?}");
+    }
+
     // parity: SHELL-029 SHELL-030 SHELL-040 SHELL-042 SHELL-048 SHELL-224
     /// Row bounds: 216 wide less 12 either side, 35 tall, 5 apart; 180 wide at the 800 breakpoint.
     #[flow_ui::gpui::test]
@@ -1099,6 +1107,8 @@ mod tests {
         let selected = |cx: &mut TestAppContext, id: &'static str| cx.update_window(window.into(), |_, w, _| w.find(id).checked().or(w.find(id).selected())).unwrap();
         assert_eq!(selected(cx, "navigation.insights"), Some(true));
         assert_eq!(selected(cx, "navigation.dictionary"), Some(false));
+        let tint = cx.update(|cx| pal(cx).tint);
+        assert_eq!((flow_ui::components::nav_fill(true, tint), flow_ui::components::nav_fill(false, tint)), (Some(tint), None));
     }
 
     // parity: SHELL-069 SHELL-071 SHELL-073 SHELL-076 SHELL-078 SHELL-080 SHELL-103 SHELL-095
@@ -1129,29 +1139,6 @@ mod tests {
         cx.update(|cx| assert_eq!(readiness(cx), "Setup could not finish. Check app storage and the model manifest."));
     }
 
-    // parity: SHELL-109 SHELL-110 SHELL-111 SHELL-112 SHELL-113 SHELL-115 SHELL-116 SHELL-119 SHELL-120
-    /// The copy each later service will post. Nothing posts it yet (plan: no model code in 024), so this
-    /// holds the literal text and shows that the view renders whatever is current.
-    #[flow_ui::gpui::test]
-    async fn setup_status_copy_matches_swift_and_renders(cx: &mut TestAppContext) {
-        let has = |text: &str| SETUP_STATUS_COPY.contains(&text);
-        assert!(has("Could not prepare speech model. ") && has("Preparing speech model…") && has("Speech model ready. Hold the shortcut to dictate."));
-        assert!(has("Local model files verified.") && has("Local model verification failed. Verify or reinstall the model in Settings."));
-        assert!(has("Whisper Turbo verified.") && has("Install Whisper Turbo in Settings to finalize meetings.") && has("Install or verify Whisper Turbo in Settings to finalize meetings.") && has("Whisper Turbo verified. Final meeting transcripts use it locally."));
-        assert!(has("Speaker labeling model verified.") && has("Speaker labeling model isn't installed."));
-        assert!(has("Term booster verified. Dictionary terms are checked against your speech."));
-        assert!(has("The chosen speech model is missing; dictating with Parakeet v3.") && has("Dictation now uses Parakeet v3."));
-        assert!(has("Parakeet v3 downloaded and verified.") && has("Parakeet v3 download cancelled.") && has("Parakeet v3 download failed. Check the connection and available storage."));
-        assert!(has("Meeting models did not finish downloading. Retry in Settings."));
-        assert!(has("Downloading model files…") && has("Importing model files…") && has("Model verified. Hold the shortcut for a short test.") && has("Provisioning unavailable: the pinned manifest is missing verified hashes.") && has("Model installation cancelled.") && has("Installation failed. Check the pinned files, connection and available storage."));
-        boot(cx, Mode::Light);
-        let window = open_shell(cx);
-        set(cx, |s| s.stores_ready = false);
-        set(cx, |s| s.setup_status = "Local model files verified.".into());
-        frame(cx, window);
-        assert_saw(&["Local model files verified."]);
-    }
-
     // parity: SHELL-053 SHELL-054 SHELL-058
     #[flow_ui::gpui::test]
     async fn active_note_card_opens_its_meeting(cx: &mut TestAppContext) {
@@ -1162,9 +1149,13 @@ mod tests {
         set(cx, |s| s.meeting = Some(MeetingStatus { id: flow_core::meetings::SEED_FULL.into(), title: None, state: MeetingState::Recording, elapsed_ms: 754_000 }));
         frame(cx, window);
         assert_saw(&["Untitled note"]);
+        let title = flow_ui::probe::style_of("Untitled note").unwrap();
+        assert_eq!((title.size, title.weight), (13., 500.));
         // Sits in the sidebar's 192 column; 14 padding around a line of 13 and a 12 badge, spaced 8.
         let card = bounds_of(cx, window, "navigation.activeNote");
         assert_eq!((card.origin.x, card.size.width), (px(12.), px(192.)));
+        let badge = bounds_of(cx, window, "meeting.elapsed");
+        assert_eq!((badge.origin.x - card.origin.x, card.bottom() - badge.bottom()), (px(14.), px(14.)));
         assert!(card.size.height >= px(28. + 8. + 13. + 12.) && card.size.height < px(28. + 8. + 45.), "{card:?}");
         cx.update_window(window.into(), |_, w, cx| w.click("navigation.activeNote", cx)).unwrap();
         frame(cx, window);
@@ -1195,9 +1186,13 @@ mod tests {
         assert_eq!(label(cx, MeetingState::Recording), (Some("Recording".to_string()), Some("12:34".to_string())));
         assert_eq!(badge_style(MeetingState::Recording, &p), ("waveform", p.success));
         assert_drew("waveform");
+        let timer = flow_ui::probe::style_of("12:34").unwrap();
+        assert_eq!((timer.size, timer.color), (12., p.success));
+        assert_eq!(flow_ui::probe::symbol_color("waveform"), Some(p.success));
         assert_eq!(label(cx, MeetingState::Paused).0.as_deref(), Some("Paused"));
         assert_eq!(badge_style(MeetingState::Paused, &p), ("pause.fill", p.muted));
         assert_drew("pause.fill");
+        assert_eq!(flow_ui::probe::style_of("12:34").unwrap().color, p.muted);
         assert_eq!(label(cx, MeetingState::Preparing).0.as_deref(), Some("Preparing"));
         assert_eq!(label(cx, MeetingState::Created).0.as_deref(), Some("Created"));
         assert_eq!(label(cx, MeetingState::Finalizing).0.as_deref(), Some("Finalizing"));
@@ -1223,9 +1218,18 @@ mod tests {
         let window = open_shell(cx);
         frame(cx, window);
         assert!(!crate::testing::saw("Review needed"));
+        cx.update_window(window.into(), |_, w, _| assert!(w.try_find("recovery.notice").is_none(), "no notice, no space")).unwrap();
         set(cx, |s| s.dictation.as_mut().unwrap().storage_blocked = true);
         frame(cx, window);
         assert_saw(&["Review needed", "Storage needs attention. Your saved text is retained.", "Retry storage"]);
+        let warning = cx.update(|cx| pal(cx).warning);
+        let review = flow_ui::probe::style_of("Review needed").unwrap();
+        assert_eq!((review.size, review.color), (13., warning));
+        assert_eq!(bounds_of(cx, window, "shell.reviewNeeded").bottom(), bounds_of(cx, window, "shell.divider").origin.y);
+        let (notice, button, card) = (bounds_of(cx, window, "recovery.notice"), bounds_of(cx, window, "recovery.retryStorage"), bounds_of(cx, window, "shell.card"));
+        assert_eq!(notice.right() - button.right(), px(20.));
+        assert_eq!(button.origin.y - notice.origin.y, px(20.));
+        assert!(notice.size.width >= card.size.width - px(2.));
         assert_drew("exclamationmark.circle");
         assert_drew("externaldrive.badge.exclamationmark");
         set(cx, |s| {
@@ -1245,6 +1249,12 @@ mod tests {
         frame(cx, window);
         assert_saw(&["Unsaved text", "This text will be lost if you quit. Copy does not save it.", "Keep this", "Retry save", "Copy", "Discard…"]);
         assert_drew("exclamationmark.triangle");
+        let heading = flow_ui::probe::style_of("Unsaved text").unwrap();
+        assert_eq!((heading.size, heading.weight), (14., 600.));
+        // A long buffer scrolls in at most 150.
+        set(cx, |s| s.dictation.as_mut().unwrap().unsaved = Some("Keep this line of text. ".repeat(400)));
+        frame(cx, window);
+        assert_eq!(bounds_of(cx, window, "recovery.unsaved").size.height, px(150.));
         set(cx, |s| {
             let d = s.dictation.as_mut().unwrap();
             d.unsaved = None;
@@ -1264,7 +1274,8 @@ mod tests {
             d.status = "Busy".into();
         });
         frame(cx, window);
-        for id in ["recovery.retryStorage", "recovery.retrySave", "recovery.discard"] {
+        for id in ["recovery.retryStorage", "recovery.retrySave", "recovery.copy", "recovery.discard"] {
+            assert_eq!(cx.update_window(window.into(), |_, w, _| w.find(id).disabled()).unwrap(), Some(true), "{id}");
             cx.update_window(window.into(), |_, w, cx| w.click(id, cx)).unwrap();
         }
         assert_eq!(get(cx, |s| s.dictation.as_ref().unwrap().status.clone()), "Busy");
@@ -1393,6 +1404,38 @@ mod tests {
     }
 
     // parity: SHELL-023
+    /// The key, in Swift's order: an armed insertion first, then the rewrite, then a busy session.
+    #[flow_ui::gpui::test]
+    async fn the_escape_key_cancels_insertion_first(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let commands = std::rc::Rc::default();
+        cx.update(|cx| {
+            let fake = Fake { commands: std::rc::Rc::clone(&commands), ..Default::default() };
+            fake.session_ok.set(true);
+            cx.global_mut::<Core>().services = Box::new(fake);
+        });
+        let window = open_shell(cx);
+        frame(cx, window);
+        let escape = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, w, cx| w.press("escape", cx)).unwrap();
+            cx.run_until_parked();
+        };
+        set(cx, |s| {
+            s.dictation.as_mut().unwrap().busy = true;
+            s.insertion.entry = Some(ReviewEntry { id: "e".into(), text: "t".into(), quality: Quality::Complete, delivery: Delivery::None });
+            s.insertion.phase = Phase::Reviewing;
+        });
+        frame(cx, window);
+        escape(cx);
+        assert!(get(cx, |s| !s.insertion.is_active()));
+        assert!(commands.borrow().is_empty(), "the insertion took it");
+        set(cx, |s| s.dictation.as_mut().unwrap().busy = true);
+        frame(cx, window);
+        escape(cx);
+        assert_eq!(*commands.borrow(), vec![SessionCommand::CancelDictation]);
+    }
+
+    // parity: SHELL-023
     #[flow_ui::gpui::test]
     async fn escape_cancels_only_while_busy(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
@@ -1440,6 +1483,11 @@ mod tests {
         assert_eq!(get(cx, |s| s.window.map(|w| w.window_id())), Some(window.window_id()), "no second window");
         cx.update(|cx| window_closed(window.window_id(), cx));
         assert_eq!(get(cx, |s| (s.selection, s.window.is_none(), s.window_focused)), (Page::Dictionary, true, false));
+        // The window takes its pages with it, the meeting detail among them; a reopen builds them again.
+        let page = window.update(cx, |shell, _, _| shell.meetings.downgrade()).unwrap();
+        window.update(cx, |_, w, _| w.remove_window()).unwrap();
+        cx.run_until_parked();
+        assert!(page.upgrade().is_none());
     }
 
     // parity: SHELL-063
@@ -1494,6 +1542,27 @@ mod tests {
     }
 
     // parity: SHELL-038
+    /// The poll itself: an active window on Settings redraws every 500 ms, on History it parks.
+    #[flow_ui::gpui::test]
+    async fn the_settings_poll_redraws_only_on_settings(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        window.update(cx, |_, w, _| w.activate_window()).unwrap();
+        set(cx, |s| s.selection = Page::History);
+        frame(cx, window);
+        flow_ui::probe::clear();
+        cx.executor().advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+        assert!(flow_ui::probe::seen().is_empty(), "parked on History");
+        set(cx, |s| s.selection = Page::Settings);
+        frame(cx, window);
+        flow_ui::probe::clear();
+        cx.executor().advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+        assert!(!flow_ui::probe::seen().is_empty(), "polled on Settings");
+    }
+
+    // parity: SHELL-038
     #[test]
     fn only_an_active_settings_or_setup_window_polls() {
         assert!(polls(Page::Settings, true, true));
@@ -1537,7 +1606,7 @@ mod tests {
         }
     }
 
-    // parity: SHELL-227 SHELL-228 SHELL-230 SHELL-231 SHELL-232 SHELL-222
+    // parity: SHELL-227 SHELL-228 SHELL-229 SHELL-230 SHELL-231 SHELL-232 SHELL-222
     /// Padding shows in the bounds; the state colours come from the style table.
     #[flow_ui::gpui::test]
     async fn button_styles_match_swift(cx: &mut TestAppContext) {
@@ -1559,8 +1628,10 @@ mod tests {
             let (bg, active, fg, size, weight, x, y) = ButtonKind::Primary.style(&p);
             assert_eq!((bg, active, fg, size, weight, x, y), (p.primary, p.primary.opacity(0.8), p.on_primary, 14., 500., 16., 9.));
             assert_eq!(primary_button("x", "y").disabled_level(), 0.45);
-            // Swift's serif family name; `fonts.rs` embeds both faces at compile time.
-            assert_eq!(GARAMOND, "EB Garamond");
+            // The bundled face names itself what `GARAMOND` asks for; the test platform has no font registry to ask.
+            let name: Vec<u8> = GARAMOND.encode_utf16().flat_map(u16::to_be_bytes).collect();
+            let face = include_bytes!("../../../crates/flow-ui/assets/fonts/EBGaramond-Regular.ttf");
+            assert!(face.windows(name.len()).any(|w| w == name), "{GARAMOND} not in the font's name table");
         });
     }
 

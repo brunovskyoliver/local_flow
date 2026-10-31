@@ -2,9 +2,10 @@
 use crate::core::Core;
 use crate::pages::Page;
 use crate::shell::{self, Alert, update_session};
+use flow_ui::prelude::base::input as kit;
 use flow_ui::prelude::*;
 
-actions!(localflow, [OpenSettings, Quit, CheckForUpdates, CancelSession, Hide, HideOthers, ShowAll]);
+actions!(localflow, [OpenSettings, Quit, CheckForUpdates, CancelSession, Hide, HideOthers, ShowAll, CloseWindow, Minimize, Zoom, ToggleFullScreen, BringAllToFront]);
 
 /// Registers actions, shortcuts and the menu bar. Call once at launch.
 pub fn init(cx: &mut App) {
@@ -14,6 +15,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
+        KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-m", Minimize, None),
+        KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
         KeyBinding::new("escape", CancelSession, Some("Shell")),
     ]);
     cx.on_action(|_: &OpenSettings, cx| shell::open(Some(Page::Settings), cx));
@@ -24,11 +28,24 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &CloseWindow, cx| on_active_window(cx, |w| w.remove_window()));
+    cx.on_action(|_: &Minimize, cx| on_active_window(cx, |w| w.minimize_window()));
+    cx.on_action(|_: &Zoom, cx| on_active_window(cx, |w| w.zoom_window()));
+    cx.on_action(|_: &ToggleFullScreen, cx| on_active_window(cx, |w| w.toggle_fullscreen()));
+    cx.on_action(|_: &BringAllToFront, cx| cx.activate(true));
     let can_check = cx.global::<Core>().services.can_check_for_updates();
     cx.set_menus(app_menus(can_check));
 }
 
-/// Swift customizes three app-menu groups; the others are SwiftUI's defaults.
+fn on_active_window(cx: &mut App, f: fn(&mut Window)) {
+    // Deferred: a shortcut runs inside the window's own dispatch, where it can't be updated.
+    if let Some(window) = cx.active_window() {
+        cx.defer(move |cx| drop(window.update(cx, |_, w, _| f(w))));
+    }
+}
+
+/// Swift customizes three app-menu groups; the others are SwiftUI's defaults, which `set_menus`
+/// would otherwise drop: it replaces the whole bar.
 pub fn app_menus(can_check: bool) -> Vec<Menu> {
     let updates = MenuItem::action("Check for Updates…", CheckForUpdates).disabled(!can_check);
     vec![
@@ -49,6 +66,28 @@ pub fn app_menus(can_check: bool) -> Vec<Menu> {
             ],
             disabled: false,
         },
+        Menu { name: "File".into(), items: vec![MenuItem::action("Close", CloseWindow)], disabled: false },
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                MenuItem::os_action("Undo", kit::Undo, OsAction::Undo),
+                MenuItem::os_action("Redo", kit::Redo, OsAction::Redo),
+                MenuItem::separator(),
+                MenuItem::os_action("Cut", kit::Cut, OsAction::Cut),
+                MenuItem::os_action("Copy", kit::Copy, OsAction::Copy),
+                MenuItem::os_action("Paste", kit::Paste, OsAction::Paste),
+                MenuItem::os_action("Select All", kit::SelectAll, OsAction::SelectAll),
+            ],
+            disabled: false,
+        },
+        Menu { name: "View".into(), items: vec![MenuItem::action("Enter Full Screen", ToggleFullScreen)], disabled: false },
+        Menu {
+            name: "Window".into(),
+            items: vec![MenuItem::action("Minimize", Minimize), MenuItem::action("Zoom", Zoom), MenuItem::separator(), MenuItem::action("Bring All to Front", BringAllToFront)],
+            disabled: false,
+        },
+        // ponytail: an empty Help; AppKit adds its search field. Swift's item only says no help book exists.
+        Menu { name: "Help".into(), items: vec![], disabled: false },
     ]
 }
 
@@ -130,7 +169,51 @@ mod tests {
         }).collect()
     }
 
-    // parity: SHELL-016 SHELL-018 SHELL-019 SHELL-021 SHELL-024
+    // parity: SHELL-019 SHELL-021 SHELL-024 MENU-011 MENU-029
+    /// The shortcuts through the real key dispatch, and the system menus `set_menus` would drop.
+    #[flow_ui::gpui::test]
+    async fn shortcuts_and_standard_menus(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        let names: Vec<String> = app_menus(false).iter().map(|m| m.name.to_string()).collect();
+        assert_eq!(names, ["LocalFlow", "File", "Edit", "View", "Window", "Help"]);
+        let items = |menu: usize| actions_of(&app_menus(false)[menu]);
+        assert_eq!(items(1), ["Close"]);
+        assert_eq!(items(2), ["Undo", "Redo", "Cut", "Copy", "Paste", "Select All"]);
+        assert_eq!(items(3), ["Enter Full Screen"]);
+        assert_eq!(items(4), ["Minimize", "Zoom", "Bring All to Front"]);
+        cx.update(|cx| {
+            let bound = |action: &dyn Action| cx.key_bindings().borrow().bindings_for_action(action).count();
+            assert!(bound(&Minimize) == 1 && bound(&ToggleFullScreen) == 1 && bound(&CheckForUpdates) == 0, "Check for Updates has no shortcut");
+        });
+        cx.update_window(window.into(), |_, w, cx| w.press("cmd-,", cx)).unwrap();
+        cx.update(|cx| assert_eq!(cx.global::<Session>().selection, Page::Settings));
+        cx.update_window(window.into(), |_, w, cx| w.press("cmd-q", cx)).unwrap();
+        cx.update(|cx| assert!(cx.global::<Session>().quitting, "cmd-q runs the quit sequence"));
+        cx.run_until_parked();
+    }
+
+    fn actions_of(menu: &Menu) -> Vec<String> {
+        menu.items.iter().filter_map(|i| match i {
+            MenuItem::Action { name, .. } => Some(name.to_string()),
+            _ => None,
+        }).collect()
+    }
+
+    // parity: SHELL-024
+    /// Close comes back through the key: the window goes, the app stays.
+    #[flow_ui::gpui::test]
+    async fn command_w_closes_the_window(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        window.update(cx, |_, w, _| w.activate_window()).unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, w, cx| w.press("cmd-w", cx)).unwrap();
+        cx.run_until_parked();
+        assert!(window.update(cx, |_, _, _| ()).is_err());
+    }
+
+    // parity: SHELL-016 SHELL-018
     #[test]
     fn app_menu_has_swifts_groups() {
         let (off, on) = (actions(&app_menus(false)), actions(&app_menus(true)));
@@ -138,11 +221,11 @@ mod tests {
         assert_eq!(on[0], ("Check for Updates…".to_string(), false));
         assert_eq!(off[1], ("Settings…".to_string(), false));
         assert_eq!(off.last().unwrap(), &("Quit LocalFlow".to_string(), false));
-        // Only the app menu is customized; the rest stays the system's.
-        assert_eq!(app_menus(false).len(), 1);
+        // Swift's bar has no About in its app menu; Check for Updates comes first.
+        assert_eq!(actions_of(&app_menus(false)[0])[0], "Check for Updates…");
     }
 
-    // parity: SHELL-020
+    // parity: SHELL-020 SHELL-019
     #[flow_ui::gpui::test]
     async fn command_comma_opens_settings(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
@@ -209,12 +292,14 @@ mod tests {
         });
     }
 
-    // parity: SHELL-121 SHELL-122 SHELL-123 SHELL-124 SHELL-022 MENU-030 SHELL-125 SHELL-126 SHELL-127
+    // parity: SHELL-121 SHELL-122 SHELL-123 SHELL-124 SHELL-022 SHELL-125 SHELL-126 SHELL-127
     #[flow_ui::gpui::test]
     async fn quit_refuses_in_swifts_order(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
         let _window = open_shell(cx);
         let status = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Session>().setup_status.clone());
+        // Keep Open is the default button.
+        assert!(matches!(shell::alert_content(Alert::QuitUnsaved).3[0], PromptButton::Ok(_)));
         cx.update(|cx| update_session(cx, |s| {
             s.model_command = true;
             s.installing = true;
@@ -225,6 +310,7 @@ mod tests {
         cx.update(|cx| update_session(cx, |s| s.model_command = false));
         cx.update(quit);
         assert_eq!(status(cx), "Cancelling installation. Quit again after cleanup finishes.");
+        cx.update(|cx| assert!(!cx.global::<Session>().installing, "the install is cancelled"));
         cx.update(quit);
         assert_eq!(status(cx), "Cancelling. Quit again after work stops.");
         cx.update(|cx| update_session(cx, |s| s.dictation.as_mut().unwrap().busy = false));

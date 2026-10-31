@@ -313,8 +313,8 @@ pub fn prototype_nav(id: &'static str, title: &'static str, symbol: &'static str
                 .w_full()
                 .rounded(px(8.))
                 .when_some(nav_fill(selected, tint), |d, fill| d.bg(fill))
-                .child(div().w(px(20.)).flex().justify_center().child(icon(symbol, 16., ink)))
-                .child(t(title).size(15.).lines(1).a11y_hidden())
+                .child(div().id(SharedString::from(format!("{id}.icon"))).test_support().w(px(20.)).flex().justify_center().child(icon(symbol, 16., ink)))
+                .child(div().id(SharedString::from(format!("{id}.title"))).test_support().child(t(title).size(15.).lines(1).a11y_hidden()))
                 .into_any_element(),
         )
 }

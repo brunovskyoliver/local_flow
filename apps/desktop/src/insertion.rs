@@ -293,6 +293,12 @@ fn finish(message: &str, cx: &mut App) {
     sync_panel(cx);
 }
 
+/// `.borderedProminent` tinted with the accent: AppKit shades the tint and keeps the title white.
+/// Measured from a SwiftUI button rendered offscreen with each mode's accent.
+fn prominent_fill(dark: bool) -> Rgba {
+    rgb(if dark { 0x58B1A0 } else { 0x1F665F })
+}
+
 /// Sheet width 520, padding 26, spacing 18.
 pub fn review_sheet(cx: &mut App) -> impl IntoElement {
     let p = pal(cx);
@@ -308,13 +314,13 @@ pub fn review_sheet(cx: &mut App) -> impl IntoElement {
             .gap(px(18.))
             .child(div().id("insertion.title").test_support().child(t("Review before inserting").font(26., 600.)))
             .children(warnings.into_iter().map(|w| sf_label("exclamationmark.triangle", w, 14., p.ink)))
-            .child(div().id("insertion.text").test_support().max_h(px(300.)).overflow_y_scroll().child(t(text)))
+            .child(div().id("insertion.text").test_support().max_h(px(300.)).overflow_y_scroll().child(t(text).selectable()))
             .child(t("Choose a destination, then switch to the app and click an editable field. LocalFlow will ask you to confirm before inserting.").color(p.muted))
             .child(
                 h_flex()
                     .justify_between()
                     .child(native_button("insertion.cancel", "Cancel").on_click(|_, _, cx| cancel(cx)))
-                    .child(native_button("insertion.choose", "Choose destination").fill(p.accent).text_color(p.on_accent).on_click(|_, _, cx| arm_selection(cx))),
+                    .child(native_button("insertion.choose", "Choose destination").fill(prominent_fill(p.mode.is_dark())).text_color(rgb(0xFFFFFF)).on_click(|_, _, cx| arm_selection(cx))),
             ),
     )
 }
@@ -346,14 +352,15 @@ impl Render for ConfirmationPanel {
             .px(px(20.))
             .bg(pill::window_background(p.mode.is_dark()))
             .text_color(p.ink)
-            .font_family(FIGTREE)
-            .child(t(message).size(13.))
+            // Swift's panel uses the system font, unlike the rest of the app.
+            .font_family(".SystemUIFont")
+            .child(div().id("insertion.panel.message").test_support().role(accesskit::Role::Label).aria_label("Insertion destination").aria_value(message.clone()).child(t(message).size(13.).a11y_hidden()))
             .child(
                 h_flex()
                     .gap(px(12.))
-                    .child(prototype_button("insertion.panel.cancel", "Cancel").on_click(|_, _, cx| cancel(cx)))
+                    .child(native_button("insertion.panel.cancel", "Cancel").on_click(|_, _, cx| cancel(cx)))
                     .child(
-                        prototype_button("insertion.panel.confirm", if selecting { "Use focused field" } else { "Confirm insertion" })
+                        native_button("insertion.panel.confirm", if selecting { "Use focused field" } else { "Confirm insertion" })
                             .disabled(!enabled)
                             .on_click(move |_, _, cx| if selecting { select_target(cx) } else { confirm(cx) }),
                     ),
@@ -370,6 +377,10 @@ pub fn panel_bounds(visible: Bounds<Pixels>) -> Bounds<Pixels> {
     Bounds { origin, size: size(px(420.), px(138.)) }
 }
 
+fn panel_options(visible: Bounds<Pixels>) -> WindowOptions {
+    WindowOptions { window_bounds: Some(WindowBounds::Windowed(panel_bounds(visible))), titlebar: None, focus: false, kind: WindowKind::PopUp, is_movable: false, is_resizable: false, ..Default::default() }
+}
+
 /// Opens or closes the panel to match the phase.
 fn sync_panel(cx: &mut App) {
     let show = cx.global::<crate::shell::Session>().insertion.panel_visible();
@@ -377,8 +388,7 @@ fn sync_panel(cx: &mut App) {
     match (show, open) {
         (true, None) => {
             let visible = cx.primary_display().map(|d| d.visible_bounds()).unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) });
-            let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(panel_bounds(visible))), titlebar: None, focus: false, kind: WindowKind::PopUp, is_movable: false, is_resizable: false, ..Default::default() };
-            if let Ok((handle, _)) = flow_ui::open_window(options, cx, |_, cx| cx.new(ConfirmationPanel::new)) {
+            if let Ok((handle, _)) = flow_ui::open_window(panel_options(visible), cx, |_, cx| cx.new(ConfirmationPanel::new)) {
                 cx.set_global(PanelWindow(handle));
             }
         }
@@ -428,6 +438,33 @@ mod tests {
 
     fn field() -> CapturedTarget {
         CapturedTarget { bundle_id: "com.example.app".into(), own_process: false, delivery: InsertDelivery::Accessibility, selection_location: 4 }
+    }
+
+    // parity: SHELL-178
+    /// `finish`: everything the operation held goes, busy is released and history hears of it.
+    #[flow_ui::gpui::test]
+    async fn finish_clears_the_operation(cx: &mut TestAppContext) {
+        start(cx, Some(field()), Some(InsertOutcome::Confirmed));
+        let before = cx.update(|cx| cx.global::<Session>().history_revision);
+        cx.update(arm_selection);
+        assert!(cx.update(|cx| cx.has_global::<PanelWindow>()), "armed: panel open");
+        cx.update(select_target);
+        cx.executor().advance_clock(Duration::from_millis(5));
+        cx.run_until_parked();
+        cx.update(confirm);
+        cx.executor().advance_clock(Duration::from_millis(5));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let s = cx.global::<Session>();
+            assert_eq!(s.insertion.phase, Phase::Idle);
+            assert!(s.insertion.entry.is_none());
+            assert!(s.insertion.target.is_none());
+            let d = s.dictation.as_ref().unwrap();
+            assert!(!d.busy);
+            assert_eq!(d.status, "Text inserted. The original remains in history.");
+            assert_eq!(s.history_revision, before + 1);
+            assert!(!cx.has_global::<PanelWindow>(), "panel closed");
+        });
     }
 
     // parity: SHELL-145 SHELL-146
@@ -509,6 +546,8 @@ mod tests {
         assert_eq!(text.origin.y - (title.origin.y + title.size.height), px(18.));
         assert_eq!(title.size.height, px(27.), "the Figtree 26 line");
         assert_eq!(title.size.width, px(468.));
+        let style = flow_ui::probe::style_of("Review before inserting").unwrap();
+        assert_eq!((style.size, style.weight), (26., 600.));
     }
 
     // parity: SHELL-158
@@ -523,11 +562,19 @@ mod tests {
         assert_eq!(cancel_b.origin.x - whole.origin.x, px(20.));
         assert_eq!(confirm.origin.x - (cancel_b.origin.x + cancel_b.size.width), px(12.));
         assert_eq!(cancel_b.origin.y, confirm.origin.y);
-        assert!(cancel_b.origin.y + cancel_b.size.height < whole.origin.y + whole.size.height);
+        let message_box = cx.update_window(panel.into(), |_, w, _| {
+            let m = w.find("insertion.panel.message");
+            assert_eq!(m.label(), Some("Insertion destination"));
+            assert_eq!(m.value(), Some("Focus the destination field, then click Use focused field here."));
+            m.bounds()
+        }).unwrap();
+        assert_eq!(cancel_b.origin.y - message_box.bottom(), px(16.));
+        assert_eq!(message_box.origin.y - whole.origin.y, whole.bottom() - cancel_b.bottom(), "centered in y");
+        assert_eq!(flow_ui::probe::style_of("Focus the destination field, then click Use focused field here.").unwrap().size, 13.);
         cx.update(cancel);
     }
 
-    // parity: SHELL-149 SHELL-150 SHELL-151 SHELL-152 SHELL-153 SHELL-154 SHELL-155 SHELL-172 SHELL-178
+    // parity: SHELL-149 SHELL-150 SHELL-151 SHELL-152 SHELL-153 SHELL-154 SHELL-155 SHELL-172
     #[flow_ui::gpui::test]
     async fn review_sheet_shows_warnings_and_buttons_work(cx: &mut TestAppContext) {
         start(cx, None, None);
@@ -580,8 +627,18 @@ mod tests {
         let panel = cx.add_window(|_, cx| ConfirmationPanel::new(cx));
         cx.update_window(panel.into(), |_, w, cx| w.render_frame(cx)).unwrap();
         assert_saw(&["Focus the destination field, then click Use focused field here.", "Use focused field", "Cancel"]);
+        let off = |cx: &mut TestAppContext, id: &'static str| {
+            cx.update_window(panel.into(), |_, w, cx| {
+                w.render_frame(cx);
+                w.find(id).disabled().unwrap_or(false)
+            }).unwrap()
+        };
+        assert!(!off(cx, "insertion.panel.confirm"), "selecting: enabled");
         cx.update_window(panel.into(), |_, w, cx| w.click("insertion.panel.confirm", cx)).unwrap();
         assert_eq!(message(cx), "Checking the focused field…");
+        cx.run_until_parked();
+        assert!(off(cx, "insertion.panel.confirm"), "checking: disabled");
+        assert!(!off(cx, "insertion.panel.cancel"), "Cancel always enabled");
         cx.executor().advance_clock(Duration::from_millis(5));
         cx.run_until_parked();
         assert_eq!(phase(cx), Phase::Confirming);
@@ -591,18 +648,24 @@ mod tests {
         assert_saw(&["Confirm insertion"]);
         cx.update_window(panel.into(), |_, w, cx| w.click("insertion.panel.confirm", cx)).unwrap();
         assert_eq!((phase(cx), message(cx).as_str()), (Phase::Inserting, "Inserting…"));
+        cx.run_until_parked();
+        assert!(off(cx, "insertion.panel.confirm"), "inserting: disabled");
+        assert!(!off(cx, "insertion.panel.cancel"), "Cancel always enabled");
         cx.executor().advance_clock(Duration::from_millis(5));
         cx.run_until_parked();
         assert_eq!(phase(cx), Phase::Idle);
         cx.update(|cx| assert_eq!(cx.global::<Session>().insertion.finished.as_deref(), Some("Text inserted. The original remains in history.")));
     }
 
-    // parity: SHELL-159
+    // parity: SHELL-157 SHELL-159
     #[test]
     fn panel_sits_near_the_bottom_center() {
         let visible = Bounds { origin: point(px(0.), px(25.)), size: size(px(1440.), px(800.)) };
         let b = panel_bounds(visible);
         assert_eq!((b.origin.x, b.origin.y, b.size.width, b.size.height), (px(510.), px(617.), px(420.), px(138.)));
+        let o = panel_options(visible);
+        assert!(!o.focus && !o.is_movable && !o.is_resizable && o.titlebar.is_none());
+        assert_eq!(o.kind, WindowKind::PopUp);
     }
 
     // parity: SHELL-163 SHELL-164
@@ -671,6 +734,7 @@ mod tests {
         cx.executor().advance_clock(Duration::from_secs(61));
         cx.run_until_parked();
         assert_eq!(finished(cx), "Selection expired. Your text remains saved.");
+        cx.update(|cx| assert!(!cx.has_global::<PanelWindow>(), "expired: panel closed"));
 
         // An outcome that can't be recorded blocks storage.
         cx.update(|cx| assert!(begin_review(entry(), cx)));
