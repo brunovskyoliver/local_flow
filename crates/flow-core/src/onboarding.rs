@@ -1195,6 +1195,7 @@ mod tests {
         assert_eq!(at(S::Ai, Meetings, Off).0.path(), skip[..6].to_vec());
         assert_ne!(at(S::Ai, Both, Local).0.path().len(), at(S::Ai, Both, Off).0.path().len(), "the capsule count follows the choice");
         assert!(!at(S::Ai, Meetings, Remote).0.path().contains(&S::Test), "only dictation paths have a test");
+        assert!(!at(S::Ai, Both, Local).0.path().contains(&S::Complete), "the capsules exclude complete");
     }
 
     // parity: ONB-005 ONB-006 ONB-007 ONB-008 ONB-009 ONB-132 ONB-409

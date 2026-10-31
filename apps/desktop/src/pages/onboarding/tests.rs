@@ -20,6 +20,7 @@ struct Stub {
     enroll: Rc<RefCell<Result<String, &'static str>>>,
     recorded: Rc<RefCell<Option<Option<String>>>>,
     background: Rc<Cell<bool>>,
+    verified: Rc<Cell<bool>>,
 }
 
 impl Stub {
@@ -113,6 +114,9 @@ impl flow_platform::Services for Stub {
     fn background_services_enabled(&self) -> bool {
         self.background.get()
     }
+    fn speech_model_verified(&self) -> bool {
+        self.verified.get()
+    }
     fn session_command(&self, c: SessionCommand) -> Result<(), Unavailable> {
         self.call(format!("{c:?}"), ())
     }
@@ -126,6 +130,7 @@ struct Rig {
     enroll: Rc<RefCell<Result<String, &'static str>>>,
     recorded: Rc<RefCell<Option<Option<String>>>>,
     background: Rc<Cell<bool>>,
+    verified: Rc<Cell<bool>>,
 }
 
 /// A real HTTP server on loopback answering each path with a status and body. An unknown path is a 404.
@@ -171,14 +176,15 @@ fn rig(cx: &mut TestAppContext, ok: bool, perms: &[(Permission, PermissionState)
     let answer = Rc::new(Cell::new(PermissionState::Denied));
     let enroll: Rc<RefCell<Result<String, &'static str>>> = Rc::new(RefCell::new(Ok("pending".to_string())));
     let (recorded, background): (Rc<RefCell<Option<Option<String>>>>, _) = (Default::default(), Rc::new(Cell::new(false)));
+    let verified = Rc::new(Cell::new(false));
     let fake = Fake::default();
     *fake.permissions.borrow_mut() = perms.to_vec();
-    let services = Stub { fake, ok: ok.clone(), log: log.clone(), answer: answer.clone(), enroll: enroll.clone(), recorded: recorded.clone(), background: background.clone() };
+    let services = Stub { fake, ok: ok.clone(), log: log.clone(), answer: answer.clone(), enroll: enroll.clone(), recorded: recorded.clone(), background: background.clone(), verified: verified.clone() };
     cx.update(|cx| cx.global_mut::<Core>().services = Box::new(services));
     let win = cx.add_window(|w, cx| OnboardingPage::new(w, cx));
     frame(cx, win);
     log.borrow_mut().clear();
-    Rig { win, ok, log, answer, enroll, recorded, background }
+    Rig { win, ok, log, answer, enroll, recorded, background, verified }
 }
 
 fn frame(cx: &mut TestAppContext, win: Win) {
@@ -231,7 +237,7 @@ fn disabled(cx: &mut TestAppContext, win: Win, id: &'static str) -> bool {
     win.update(cx, |_, w, _| w.find(id).disabled().unwrap_or(false)).unwrap()
 }
 
-// parity: ONB-012 ONB-036 ONB-042 ONB-056 ONB-076 ONB-119 ONB-120 ONB-122 ONB-123 ONB-124 ONB-125
+// parity: ONB-036 ONB-042 ONB-056 ONB-076 ONB-119 ONB-120 ONB-122 ONB-123 ONB-124 ONB-125
 #[flow_ui::gpui::test]
 async fn introduction_copy(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);
@@ -432,6 +438,94 @@ async fn downloads_show_each_row_and_retry(cx: &mut TestAppContext) {
     assert_saw(&["On-device AI", "Starting…"]);
     set(cx, w, |p| p.ai_phase = AiPhase::Ready);
     assert!(!saw("On-device AI"));
+}
+
+// parity: ONB-391
+/// `prepareTest` loads the model unless the server serves dictation.
+#[flow_ui::gpui::test]
+async fn preparing_the_test_skips_the_load_on_a_server(cx: &mut TestAppContext) {
+    let r = rig(cx, true, &[]);
+    let w = r.win;
+    set(cx, w, |p| {
+        ready(&mut p.snap);
+        p.setup.step = Step::Test;
+    });
+    r.log.borrow_mut().clear();
+    w.update(cx, |p, _, cx| p.arm_test(cx)).unwrap();
+    assert!(r.log.borrow().iter().any(|c| c.contains("load")), "{:?}", r.log.borrow());
+    r.log.borrow_mut().clear();
+    cx.update(|cx| {
+        let prefs = &mut cx.global_mut::<Core>().prefs;
+        prefs.set("remote.enabled", true);
+        prefs.set("remote.serverURL", "https://box.example.com");
+        prefs.set("remote.state", "approved");
+        prefs.set("remote.consentVersion", 2);
+    });
+    set(cx, w, |p| {
+        p.setup.back();
+        p.setup.step = Step::Test;
+    });
+    w.update(cx, |p, _, cx| p.arm_test(cx)).unwrap();
+    assert!(r.log.borrow().iter().all(|c| !c.contains("load")), "{:?}", r.log.borrow());
+}
+
+// parity: ONB-253 ONB-255 ONB-256 ONB-276 ONB-278 ONB-279
+#[flow_ui::gpui::test]
+async fn download_rows_read_like_swift(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    set(cx, w, |p| {
+        p.setup.step = Step::Downloads;
+        p.setup.ai_mode = AiMode::Local;
+    });
+    let (speech, model) = read(cx, w, |p, _| (p.snap.speech_model.to_string(), p.selected_model()));
+    assert_saw(&["Speech recognition", &format!("{speech} · {}", bytes(SPEECH_FALLBACK_BYTES))]);
+    assert_saw(&["On-device AI", &format!("{} · {}", model.name, bytes(model.download_bytes))]);
+    assert_saw(&["Queued"]);
+    set(cx, w, |p| {
+        let i = p.selection;
+        p.downloaded[i] = true;
+    });
+    assert_saw(&[&format!("{} · already on this Mac", model.name)]);
+    set(cx, w, |p| {
+        p.snap.installing = true;
+        p.snap.progress = (10 << 20, 100 << 20);
+    });
+    assert_saw(&[&format!("{} of {}", bytes(10 << 20), bytes(100 << 20))]);
+    set(cx, w, |p| {
+        p.snap.installing = false;
+        p.snap.model_installed = true;
+    });
+    assert_saw(&["Ready"]);
+}
+
+// parity: ONB-261 ONB-262
+#[flow_ui::gpui::test]
+async fn server_row_follows_approval_and_skip_has_no_row(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    cx.update(|cx| {
+        let prefs = &mut cx.global_mut::<Core>().prefs;
+        prefs.set("remote.enabled", true);
+        prefs.set("remote.serverURL", "https://box.example.com");
+        prefs.set("remote.state", "approved");
+    });
+    set(cx, w, |p| {
+        p.setup.step = Step::Downloads;
+        p.setup.ai_mode = AiMode::Remote;
+    });
+    assert_saw(&["Your server", "box.example.com", "Ready"]);
+    set(cx, w, |p| p.setup.ai_mode = AiMode::Off);
+    assert!(!saw("Your server") && !saw("On-device AI"));
+}
+
+// parity: ONB-010
+/// A model already on disk reads as done on return, through the service.
+#[flow_ui::gpui::test]
+async fn resume_counts_a_verified_model_as_installed(cx: &mut TestAppContext) {
+    let r = rig(cx, true, &[]);
+    assert!(!read(cx, r.win, |p, _| p.snap.model_installed));
+    r.verified.set(true);
+    r.win.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+    assert!(read(cx, r.win, |p, _| p.snap.model_installed));
 }
 
 // parity: ONB-315 ONB-317 ONB-327 ONB-331 ONB-332 ONB-333 ONB-049 ONB-334 ONB-336
@@ -733,7 +827,7 @@ async fn record_button_toggles_without_saving(cx: &mut TestAppContext) {
     assert!(pref(cx, "shortcut").is_none(), "stopping saves nothing");
 }
 
-// parity: ONB-381 ONB-382 ONB-383 ONB-384 ONB-385 ONB-386 ONB-387 ONB-388 ONB-389 ONB-391 ONB-396 ONB-060 ONB-053 ONB-087 ONB-088 ONB-404 ONB-405 ONB-406 ONB-407 ONB-033
+// parity: ONB-381 ONB-382 ONB-383 ONB-384 ONB-385 ONB-386 ONB-387 ONB-388 ONB-389 ONB-396 ONB-060 ONB-053 ONB-087 ONB-088 ONB-404 ONB-405 ONB-406 ONB-407 ONB-033
 #[flow_ui::gpui::test]
 async fn test_step_arms_and_done_copy(cx: &mut TestAppContext) {
     let r = rig(cx, false, &[]);
@@ -935,7 +1029,7 @@ async fn polling_picks_up_a_new_permission(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let fake = Fake::default();
         *fake.permissions.borrow_mut() = vec![(Permission::Microphone, PermissionState::Granted)];
-        let stub = Stub { fake, ok: r.ok.clone(), log: r.log.clone(), answer: r.answer.clone(), enroll: r.enroll.clone(), recorded: r.recorded.clone(), background: r.background.clone() };
+        let stub = Stub { fake, ok: r.ok.clone(), log: r.log.clone(), answer: r.answer.clone(), enroll: r.enroll.clone(), recorded: r.recorded.clone(), background: r.background.clone(), verified: r.verified.clone() };
         cx.global_mut::<Core>().services = Box::new(stub);
     });
     cx.executor().advance_clock(Duration::from_millis(600));

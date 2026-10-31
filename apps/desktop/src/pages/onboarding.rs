@@ -240,6 +240,8 @@ impl OnboardingPage {
         }
         let core = cx.global::<Core>();
         let s = &core.services;
+        // `LocalAISetup.downloaded`/installed models count as done on return.
+        self.snap.model_installed |= s.speech_model_verified();
         let mut next = self.snap.clone();
         next.microphone = perm(s.permission(Permission::Microphone));
         next.input_monitoring = perm(s.permission(Permission::InputMonitoring));
