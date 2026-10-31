@@ -58,7 +58,12 @@ pub fn new_id() -> String {
     )
 }
 
-// MARK: dates. `offset` is the local UTC offset in seconds at that instant, from `Services`.
+// MARK: dates. `offset` is the local UTC offset in seconds at that instant.
+
+/// SQLite reads the zone database, so this needs no OS call.
+pub fn local_offset(db: &Db, ms: i64) -> i32 {
+    db.conn.query_row("SELECT CAST(strftime('%s', ?1/1000, 'unixepoch', 'localtime') AS INTEGER) - ?1/1000", [ms], |r| r.get::<_, i64>(0)).unwrap_or(0) as i32
+}
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3085,9 +3090,9 @@ mod tests {
     #[test]
     fn mentions_prefer_full_names_and_endings() {
         let speakers = vec![("a".to_string(), "Marta Kováčová".to_string(), 1), ("b".to_string(), "Speaker 2".to_string(), 2), ("c".to_string(), "You".to_string(), 0)];
-        let found = speaker_mentions("Marta Kováčová met Martou and Speaker 2, not Speaker 20 or You.", &speakers);
-        let words: Vec<&str> = found.iter().map(|f| &"Marta Kováčová met Martou and Speaker 2, not Speaker 20 or You."[f.0..f.1]).collect();
-        assert_eq!(words, vec!["Marta Kováčová", "Martou", "Speaker 2"]);
+        let found = speaker_mentions("Marta Kováčová met Martami and Speaker 2, not Speaker 20 or You.", &speakers);
+        let words: Vec<&str> = found.iter().map(|f| &"Marta Kováčová met Martami and Speaker 2, not Speaker 20 or You."[f.0..f.1]).collect();
+        assert_eq!(words, vec!["Marta Kováčová", "Martami", "Speaker 2"]);
         assert_eq!(renamed("Speaker 1 and Speaker 10", &[("Speaker 1".into(), "Ada".into())]), "Ada and Speaker 10");
     }
 
