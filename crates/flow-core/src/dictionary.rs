@@ -858,6 +858,10 @@ impl Model {
         terms
     }
     pub fn restore(&mut self, db: &Db, e: &Entry, term: &RetiredTerm, is_english: impl Fn(&str) -> bool) {
+        // Single writer: a write is ignored while one runs.
+        if self.saving {
+            return;
+        }
         if restore_key(db, &e.id, &term.key_id).is_err() {
             self.status = Some(format!("Could not restore {}. Try again.", term.term));
             return;
@@ -1372,6 +1376,25 @@ mod tests {
         assert_eq!((refused.field, refused.code), (Field::Entry, Code::PayloadCapacity));
         assert_eq!(refused.code.message(), "Vocabulary storage is full.");
         assert!(load(&db).unwrap().state.payload_bytes as usize <= MAX_PAYLOAD);
+    }
+
+    // parity: DICT-128
+    #[test]
+    fn restore_is_ignored_while_a_write_runs() {
+        let db = empty();
+        seed(&db);
+        let mut m = Model::default();
+        m.refresh(&db, |_| false);
+        let z = m.entries.iter().find(|e| e.canonical == "Z\u{fc}rich").unwrap().clone();
+        let term = m.retired_terms(&z)[0].clone();
+        let retired = |db: &Db| db.conn.query_row("SELECT count(*) FROM dictionary_key_usage WHERE state='retired'", [], |r| r.get::<_, i64>(0)).unwrap();
+        let before = retired(&db);
+        m.saving = true;
+        m.restore(&db, &z, &term, |_| false);
+        assert_eq!(retired(&db), before);
+        m.saving = false;
+        m.restore(&db, &z, &term, |_| false);
+        assert_eq!(retired(&db), before - 1);
     }
 
     // parity: DICT-076

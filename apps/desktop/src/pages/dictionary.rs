@@ -315,7 +315,7 @@ impl DictionaryPage {
                     .child(
                         h_flex()
                             .gap(px(8.))
-                            .pt(px(4.))
+                            .pt(px(5.))
                             .child(
                                 FlowButton::new("vocabulary.bannerAdd", ButtonKind::Primary, "Add new word")
                                     .fill(white_a(0.18))
@@ -331,7 +331,7 @@ impl DictionaryPage {
             .child(
                 div().absolute().top(px(12.)).right(px(12.)).child(
                     FlowButton::new("vocabulary.bannerDismiss", ButtonKind::Plain, "Dismiss introduction")
-                        .content(div().p(px(6.)).rounded_full().bg(white_a(0.14)).child(icon("xmark", 13., white_a(0.8))))
+                        .content(div().p(px(6.)).rounded_full().bg(white_a(0.14)).child(icon("xmark", 11.5, white_a(0.8))))
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.global_mut::<Core>().prefs.set("dictionary.bannerDismissed", true);
                             cx.notify();

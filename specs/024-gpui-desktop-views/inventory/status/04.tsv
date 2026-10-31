@@ -92,7 +92,7 @@ DICT-091	auto	test:cancel_and_escape_both_close_the_delete_dialog
 DICT-092	live	test:status_stays_below_the_list ; live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-093	live	test:add_a_word_through_the_sheet ; live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-dark-rust.png ; live:audit/mac/dictionary/add-light-ref.png ; live:audit/mac/dictionary/add-dark-ref.png
 DICT-094	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
-DICT-095	auto	test:edit_opens_filled_and_focuses_the_word
+DICT-095	recorded	recorded:focus goes to the right field at once, not after Swift's 120 ms delay; test:edit_opens_filled_and_focuses_the_word covers the field
 DICT-096	auto	test:switching_mode_moves_focus_and_fields
 DICT-097	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
 DICT-098	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
@@ -125,7 +125,7 @@ DICT-124	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-125	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-126	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-127	auto	test:sheet_shows_a_validation_error_and_stays_open
-DICT-128	auto	test:saving_turns_off_every_write
+DICT-128	auto	test:saving_turns_off_every_write ; test:restore_is_ignored_while_a_write_runs
 DICT-129	auto	test:folding_key_ids_and_term_validation
 DICT-130	auto	test:folding_key_ids_and_term_validation
 DICT-131	auto	test:folding_key_ids_and_term_validation

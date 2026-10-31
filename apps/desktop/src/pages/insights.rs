@@ -426,7 +426,7 @@ impl InsightsPage {
                         .rounded(px(10.))
                         .border_1()
                         .border_color(p.card_line)
-                        .shadow_lg()
+                        .shadow(vec![flow_ui::gpui::BoxShadow { color: flow_ui::gpui::black().opacity(0.12), offset: point(px(0.), px(5.)), blur_radius: px(14.), spread_radius: px(0.), inset: false }])
                         .child(div().pb(px(14.)).child(t(long_date(*day)).font(13., 500.).color(p.ink)))
                         .child(v_flex().gap(px(10.)).child(row("Total words", grouped(*words))).child(row("Total apps used", grouped(*apps))).when_some(top.clone(), |d, a| d.child(row("Top app", a))))
                         .into_any_element(),
