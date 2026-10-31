@@ -1,3 +1,4 @@
+<!-- 2026-10-31: version 5.0.0 amends principle 15 so that a one-time, hashed, expiring pairing token issued by the administrator is a second way in beside OIDC identities, and adds to principle 8 that the client app may hold server mode, as proposed in ADR 0037 and approved by the owner. ADRs 0028 and 0032 are amended to match. Templates and delivery gates need no change. -->
 <!-- 2026-10-31: version 4.0.0 amends principles 1, 5, 7 and 14 for the Rust and GPUI desktop client, as proposed in ADR 0036 and approved by the owner. The Swift Mac app stays valid and shipping until its cutover (plan Phase 7); iOS, the server and the workers stay as they are. -->
 <!-- 2026-10-23: version 3.0.0 amends principle 5 for user-requested automatic approved-account usage. Feature 021 spec/plan/tasks and ADR 0035 record the scope; all other privacy defaults remain. -->
 <!-- Sync impact report
@@ -45,7 +46,7 @@ Structured data MUST use SQLite, preferably GRDB.swift on Swift clients and `rus
 
 ### 8. Server isolation
 
-The control server MUST use Go and run independently of every model runtime, including under launchd without Docker. It MUST NOT load model weights: LLM, ASR, diarization and embedding models run in separate worker processes behind server adapters, and a worker crash MUST NOT take down the server. Clients speak LocalFlow API only; backend-specific inference stays behind a server adapter. Idle server RSS target is 100 MB; ordinary processing target is 250 MB excluding model worker processes.
+The control server MUST use Go and run independently of every model runtime, including under launchd without Docker. It MUST NOT load model weights: LLM, ASR, diarization and embedding models run in separate worker processes behind server adapters, and a worker crash MUST NOT take down the server. The client app may hold server mode (ADR 0037): it may install and start flowd as a separate launchd agent and manage it through `flowd admin`, but its own process opens no server listener, and its local work MUST NOT depend on that agent. Clients speak LocalFlow API only; backend-specific inference stays behind a server adapter. Idle server RSS target is 100 MB; ordinary processing target is 250 MB excluding model worker processes.
 
 ### 9. Recoverability
 
@@ -73,7 +74,7 @@ Build thin feature slices through Spec Kit. Do not add speculative infrastructur
 
 ### 15. Authenticated, isolated server access
 
-A LocalFlow server serves only approved users. Identity comes from Sign in with Apple, Google or another OIDC provider, verified by the server against the provider's keys; a new identity starts pending and gets no inference until an administrator approves it. There is no open registration and no shared static secret for remote clients. Server-issued access tokens MUST be short-lived, refresh MUST be bound to a per-device key, and administrators MUST be able to revoke a device or user immediately. Every request MUST be scoped by the user identity from the verified token, never from the request body. One user's audio, text, caches and results MUST NOT be visible to another; shared caches may hold only content common to all users, such as fixed prompts. Scheduling MUST be fair and bounded per user, with dictation ahead of rewriting and rewriting ahead of meeting work; overload returns an explicit busy result rather than unbounded queuing.
+A LocalFlow server serves only approved users. Identity comes from Sign in with Apple, Google or another OIDC provider, verified by the server against the provider's keys; a new identity starts pending and gets no inference until an administrator approves it. A one-time, expiring pairing token issued by the administrator and stored only as a hash is the other way in; redeeming it binds a device key and counts as that approval (ADR 0037). There is no open registration and no shared static secret for remote clients. Server-issued access tokens MUST be short-lived, refresh MUST be bound to a per-device key, and administrators MUST be able to revoke a device or user immediately. Every request MUST be scoped by the user identity from the verified token, never from the request body. One user's audio, text, caches and results MUST NOT be visible to another; shared caches may hold only content common to all users, such as fixed prompts. Scheduling MUST be fair and bounded per user, with dictation ahead of rewriting and rewriting ahead of meeting work; overload returns an explicit busy result rather than unbounded queuing.
 
 ## Delivery gates
 
@@ -83,4 +84,4 @@ Substantial changes follow specify, clarify where needed, plan, tasks, analyze, 
 
 This constitution takes precedence over convenience and feature-local designs. Reviewers MUST check compliance. Exceptions require an ADR documenting the conflict, evidence, mitigation and approval; an ADR alone does not silently amend a mandatory principle. Amendments record rationale, update affected templates/docs/specs and use semantic versioning: major for incompatible principles, minor for additions, patch for clarifications. Unmeasured targets MUST NOT be represented as achieved.
 
-**Version**: 4.0.0 | **Ratified**: 2026-09-16 | **Last amended**: 2026-10-31
+**Version**: 5.0.0 | **Ratified**: 2026-09-16 | **Last amended**: 2026-10-31

@@ -52,3 +52,9 @@ The app shares no code with the client app. LocalFlowCore holds client storage a
 - **Keep SSH and scripts**: the Keychain lock makes `flowd admin` awkward, and there is no live view.
 - **A web dashboard served by flowd**: the constitution forbids embedded UI web servers, and it would put an admin surface on a process that serves remote users.
 - **A settings pane in the client app**: the client runs on the owner's laptop, not on the server, and must not gain server-admin powers.
+
+## Amendment: server mode in the client app (2026-10-31)
+
+ADR 0037 reverses the last line above for the Mac client: it may install, start and stop the `org.localflow.LocalFlow.remote` agent and create, list and revoke pairing tokens, by the owner's choice, so that any install can become a server. A client on a Mac that isn't a server has no such agent to manage. The client still opens no listener and loads no server model in its own process, and every change goes through `flowd admin`.
+
+This app gains a Pairing tab that runs `flowd admin token create`, `list` and `revoke`, beside the operations listed under "It may". Showing a new token once, for the owner to send, is an exception to "may not display tokens"; the app doesn't log or store it. The two apps still share no code.

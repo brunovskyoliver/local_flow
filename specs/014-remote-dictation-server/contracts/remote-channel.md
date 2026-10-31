@@ -100,6 +100,10 @@ The ID token's `nonce` claim must equal `base64url(binding)` for Google and `hex
 
 `state` is the user's and device's combined state: `pending`, `approved`, or `rejected` (a rejected user gets no refresh token). An identity already known on the server with a new device key creates a new pending device for that user.
 
+### Pairing (`purpose: enroll`)
+
+Feature 027 adds a `pair` message on the same hello purpose, redeeming a one-time token for the same `enrolled` reply. The message, its signature and its refusals are in [`specs/027-remote-pairing/contracts/pairing.md`](../../027-remote-pairing/contracts/pairing.md).
+
 ### Refresh (`purpose: refresh`)
 
 ```json
@@ -186,6 +190,7 @@ Server replies with `{ "type": "rewrite_event", "op": 2, "event": { …rewrite-e
 | `limit_exceeded` | frame, message or session length over its bound | fall back |
 | `worker_unavailable` | worker crashed, timed out or has no model | fall back |
 | `internal` | anything else | fall back |
+| `pairing_token_invalid` | unknown, expired, used or revoked pairing token; only in reply to `pair` | show that the token can't be used and ask for a new one |
 
 An identifier the channel does not know (an `op` never started, or one from another channel) gets `invalid_message`, the same answer as any stray value, and a `cross_user_attempt` audit entry when the channel is authenticated. After any error during a dictation the server ends that operation; after hello errors, sequence failures and `revoked` it closes the channel.
 
@@ -202,4 +207,4 @@ An identifier the channel does not know (an `op` never started, or one from anot
 
 ## Compatibility
 
-`protocol_versions` in the identity response lists channel versions. Adding optional fields is compatible; removing, renaming or retyping a field, adding a required field or changing an enum needs a new `schema_version`. Rewrite messages inside the channel keep their own schema versions.
+`protocol_versions` in the identity response lists channel versions. Adding optional fields is compatible; removing, renaming or retyping a field, adding a required field or changing an enum needs a new `schema_version`. Rewrite messages inside the channel keep their own schema versions. `pair` and `pairing_token_invalid` keep `schema_version` 1 although they extend an enum: the code is sent only in reply to `pair`, which clients that don't know the code never send.

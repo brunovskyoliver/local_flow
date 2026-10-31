@@ -37,6 +37,8 @@ Error codes: `unauthorized`, `token_expired`, `not_approved`, `revoked`, `busy`,
 
 ## Remote channel additions (Feature 018)
 
+Feature 027 adds `pair` and the error code `pairing_token_invalid` (`specs/027-remote-pairing/contracts/pairing.md`), with `protocol_versions` still `[1]`.
+
 Summaries and meeting work run on the same channel. `protocol_versions` stays `[1]` and every addition is optional: a client that never sends the new messages behaves as under Feature 014. `schemas/remote-message.schema.json` adds the types below (each with `schema_version` 1, a closed field set and an `op`) and the optional `ready.capabilities`; `fixtures/remote/messages/` has valid and invalid examples of each. A device may hold 3 channels (was 2); the client uses them as interactive, live and background roles, and the server enforces only the count and one op at a time per channel. Feature 020 raises the count to 4 for a Mac's `handoff_watch` channel (`specs/020-ios-meeting-recording/contracts/handoff-v2.md`).
 
 - Frame kind `0x02`: meeting samples, 16 kHz mono s16le, 1–32,000 samples (64,000 bytes) per frame. Accepted only while a `live_window` or `meeting_job` collects samples; anywhere else, and for an over-limit or odd-length frame, the op closes with `invalid_message`. Kinds `0x00` (control, ≤ 65,536 bytes) and `0x01` (dictation f32le, ≤ 16,000 samples) are unchanged.

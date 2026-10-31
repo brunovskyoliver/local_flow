@@ -52,3 +52,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0034: Meetings recorded on the iPhone, with a copy for the Mac](0034-phone-meetings.md)
 
 - [0036: One Rust and GPUI desktop client for macOS and Windows](0036-rust-gpui-desktop-client.md)
+
+- [0037: Token pairing, any route, and server mode in the client app](0037-token-pairing-and-server-mode.md)

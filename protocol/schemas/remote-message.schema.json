@@ -11,6 +11,9 @@
       "$ref": "#/$defs/enroll"
     },
     {
+      "$ref": "#/$defs/pair"
+    },
+    {
       "$ref": "#/$defs/enrolled"
     },
     {
@@ -115,7 +118,8 @@
         "limit_exceeded",
         "worker_unavailable",
         "internal",
-        "not_offered"
+        "not_offered",
+        "pairing_token_invalid"
       ]
     },
     "b64url": {
@@ -204,10 +208,56 @@
         }
       }
     },
+    "pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client, purpose enroll, within 5 minutes of ready (Feature 027). signature is DER ECDSA P-256 over \"localflow-v1-pair\" || binding. Answered by enrolled with state approved, or by error with pairing_token_invalid, unauthorized, revoked or busy.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "pairing_token",
+        "device_name",
+        "device_key",
+        "signature"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "pair"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "pairing_token": {
+          "type": "string",
+          "pattern": "^lfp_[A-Za-z0-9_-]{86}$",
+          "description": "lfp_ plus the 32-byte server public key and 32 random bytes, base64url without padding."
+        },
+        "device_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "At most 64 UTF-8 bytes after control characters are removed."
+        },
+        "device_key": {
+          "type": "string",
+          "pattern": "^B[A-Za-z0-9_-]{86}$",
+          "description": "Device P-256 public key, X9.63 uncompressed (65 bytes, first byte 0x04), base64url without padding."
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{11,96}$",
+          "description": "DER ECDSA signature, 8 to 72 bytes, base64url without padding."
+        }
+      }
+    },
     "enrolled": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Server reply to enroll. state is the combined user and device state; a rejected user gets no refresh token.",
+      "description": "Server reply to enroll or pair. state is the combined user and device state; a rejected user gets no refresh token.",
       "required": [
         "schema_version",
         "type",

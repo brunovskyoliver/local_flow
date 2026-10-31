@@ -67,3 +67,9 @@ Constitution check:
 - Principle 4 (local-first operation): off the tailnet the server is unreachable, so dictation falls back to local models or keeps the audio for a retry, as before.
 - Principle 5 (privacy): TLS still terminates on the mini, now inside WireGuard. The HPKE inner channel is unchanged. No third party terminates TLS.
 - Principles 8 and 15 are unchanged: flowd authenticates every user and device, and only the remote listener is served (not 8091).
+
+## Amendment: pairing tokens and any route (2026-10-31)
+
+ADR 0037 (Feature 027, constitution 5.0.0) adds a second way in beside "Sign in with Apple or Google, then admin approval": a one-time, hashed, expiring token issued by the administrator. Redeeming it binds a device key and counts as approval. Sign-in stays for servers configured for it.
+
+The exposure also changes. `--remote-listen` may bind any IP literal, so a server can be reached directly on a LAN or tailnet, or through any proxy, with no tunnel. Clients may use `http://` on private addresses and names. The HPKE channel, the pinned key and the device-bound tokens don't change, and they are what protect content on those routes.
