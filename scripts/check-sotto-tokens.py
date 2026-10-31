@@ -10,7 +10,8 @@ IOS = ROOT / "apps/ios/Shared/Sotto/SottoTokens.swift"
 RUST = ROOT / "crates/flow-ui/src/tokens.rs"
 # systemGreen stands in for Swift's `.systemGreen`, which has no hex in Appearance.swift.
 # The pill's fill and ink are in DictationIndicator.swift as RGB; the rest are AppKit's windowBackgroundColor.
-RUST_ONLY = {"28CD41", "32D74B", "242522", "F5F5F1", "323232", "ECECEC"}
+# systemRed for destructive buttons; the blue is the tint SwiftUI draws link-style placeholders with, sampled from the reference.
+RUST_ONLY = {"28CD41", "32D74B", "242522", "F5F5F1", "323232", "ECECEC", "FF3B30", "FF453A", "3A68D4", "659AF9"}
 
 
 def colours(path):
