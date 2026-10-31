@@ -1,6 +1,6 @@
 //! Store and logic behind the settings views: preference keys and their defaults, routing,
 //! validators, the microphone list, shortcut rules, known speakers and the server's HTTP calls.
-//! Keychain, audio and model work stay behind `flow_platform::Services`.
+//! Keychain, audio and model work stay behind the platform crate's `Services`.
 use crate::db::Db;
 use crate::prefs::Prefs;
 use rusqlite::{OptionalExtension, params};
@@ -2317,7 +2317,7 @@ mod tests {
             (Failure::ModelUnavailable, "The speech model is unavailable. Verify the local model in Settings."),
             (Failure::Cancelled, "The operation was cancelled."),
             (Failure::ServerOnly, "Server only is on, but this Mac can't use your server. Check Settings › Server."),
-            (Failure::Other("flow_platform.Unavailable".into(), 0), "Error type flow_platform.Unavailable, code 0."),
+            (Failure::Other("Unavailable".into(), 0), "Error type Unavailable, code 0."),
         ] {
             assert_eq!(describe(&f), s);
         }

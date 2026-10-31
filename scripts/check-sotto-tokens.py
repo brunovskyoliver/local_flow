@@ -9,7 +9,8 @@ MAC = ROOT / "apps/macos/LocalFlow/UI/Appearance.swift"
 IOS = ROOT / "apps/ios/Shared/Sotto/SottoTokens.swift"
 RUST = ROOT / "crates/flow-ui/src/tokens.rs"
 # systemGreen stands in for Swift's `.systemGreen`, which has no hex in Appearance.swift.
-RUST_ONLY = {"28CD41", "32D74B"}
+# The pill's fill and ink are in DictationIndicator.swift as RGB; the rest are AppKit's windowBackgroundColor.
+RUST_ONLY = {"28CD41", "32D74B", "242522", "F5F5F1", "323232", "ECECEC"}
 
 
 def colours(path):
