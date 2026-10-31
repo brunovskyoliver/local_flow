@@ -201,7 +201,7 @@ async fn live_off_says_transcription_is_off(cx: &mut TestAppContext) {
     assert_eq!(inner.origin.y - outer.origin.y, px(20.), "v20");
 }
 
-// parity: NOTE-071 MEET-002 MEET-003 MEET-006 MEET-007 MEET-019 MEET-038 MEET-072
+// parity: NOTE-071 MEET-006
 #[flow_ui::gpui::test]
 async fn opening_a_note_renames_it_and_navigates(cx: &mut TestAppContext) {
     let window = open_page(cx, None);
@@ -220,7 +220,7 @@ async fn opening_a_note_renames_it_and_navigates(cx: &mut TestAppContext) {
     assert!(read(cx, &window, |p| p.lib.detail.is_none()));
 }
 
-// parity: MEET-057 MEET-055
+// parity: MEET-057
 #[flow_ui::gpui::test]
 async fn thoughts_autosave_after_two_seconds(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.detail"));
@@ -2842,4 +2842,306 @@ async fn progress_states_are_muted_and_hide_the_buttons(cx: &mut TestAppContext)
         assert_eq!(sized(text).2, muted);
         assert!(!has(cx, &window, "meeting.stopCard") && !has(cx, &window, "meeting.pause"));
     }
+}
+
+// Round 4 row review: the open note.
+
+// parity: MEET-001 MEET-038 MEET-040 MEET-065 MEET-023
+#[flow_ui::gpui::test]
+async fn note_frames_and_date_read_like_swift(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    resize(cx, &window, 1400., 900.);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    let (toolbar, column, tabs, rule, footer) = (find(cx, &window, "meeting.toolbar").bounds(), find(cx, &window, "meeting.column").bounds(), find(cx, &window, "meeting.tabs").bounds(), find(cx, &window, "meeting.rule").bounds(), find(cx, &window, "meeting.footer.frame").bounds());
+    assert_eq!((toolbar.size.width, rule.size.width, column.size.width), (px(860.), px(860.), px(660.)));
+    assert_eq!(toolbar.origin.y, px(17.), "18 less the panel's 1 pt inset");
+    let (back, options) = (find(cx, &window, "meeting.back").bounds(), find(cx, &window, "meeting.options").bounds());
+    assert_eq!((back.origin.x, options.origin.y), (toolbar.origin.x, toolbar.origin.y));
+    let (previous, next) = (find(cx, &window, "meeting.previous").bounds(), find(cx, &window, "meeting.next").bounds());
+    assert_eq!(next.origin.x - previous.origin.x - previous.size.width, px(4.), "toolbar spacing");
+    let (first, second) = (find(cx, &window, "meeting.tab.thoughts").bounds(), find(cx, &window, "meeting.tab.transcript").bounds());
+    assert_eq!(second.origin.x - first.origin.x - first.size.width, px(20.));
+    assert_eq!(tabs.origin.x, column.origin.x + px(30.), "the header and the body share a 600 column");
+    let thoughts = find(cx, &window, "meeting.thoughts.frame").bounds();
+    assert_eq!(thoughts.size.height, px(420.));
+    assert_eq!(thoughts.size.width, px(600.));
+    let play = find(cx, &window, "meeting.playback").bounds();
+    assert_eq!(play.origin.y - footer.origin.y, px(12.));
+    assert_eq!(footer.origin.y + footer.size.height - play.origin.y - play.size.height, px(20.));
+    let (_, muted, ..) = colors(cx);
+    let created = read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.created_at);
+    let date = date_time_text(created, cx.update(|cx| offset_at(created, cx)));
+    assert_eq!(sized(&date), (15., 400., muted));
+}
+// parity: MEET-018
+#[flow_ui::gpui::test]
+async fn title_field_is_one_line(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    resize(cx, &window, 1400., 900.);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert_eq!(find(cx, &window, "meeting.title.frame").bounds().size.height, px(48.), "one line; the date below lands where the detail pair puts it");
+    assert_eq!(read(cx, &window, |p| p.title.clone()).read_with(cx, |s, _| s.value().to_string()), "Lamp prototype review");
+}
+// parity: MEET-002
+#[flow_ui::gpui::test]
+async fn back_has_its_symbol_and_label(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    assert_labelled(cx, &window, "meeting.back", "Back to past notes");
+    assert_symbols(&["chevron.left"]);
+}
+// parity: MEET-003
+#[flow_ui::gpui::test]
+async fn back_saves_typing_before_the_debounce(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    type_in!(cx, &window, |p| p.thoughts.clone(), "Just typed.");
+    click(cx, &window, "meeting.back");
+    frame(cx, &window);
+    assert_eq!(query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0), "Just typed.");
+    assert!(read(cx, &window, |p| p.lib.detail.is_none()));
+}
+// parity: MEET-007
+#[flow_ui::gpui::test]
+async fn next_saves_first_and_keeps_the_tab(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    type_in!(cx, &window, |p| p.thoughts.clone(), "Saved by next.");
+    click(cx, &window, "meeting.tab.summary");
+    click(cx, &window, "meeting.next");
+    frame(cx, &window);
+    assert_eq!(query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0), "Saved by next.");
+    assert_ne!(read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.id.clone()), SEED_FULL);
+    assert!(read(cx, &window, |p| p.tab == Tab::Summary));
+    let id = read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.id.clone());
+    refuse(cx, "UPDATE", "meeting_notes");
+    click(cx, &window, "meeting.tab.thoughts");
+    type_in!(cx, &window, |p| p.thoughts.clone(), "Cannot save.");
+    click(cx, &window, "meeting.next");
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.id.clone()), id, "a dirty editor stays");
+}
+// parity: MEET-008
+#[flow_ui::gpui::test]
+async fn adjacent_buttons_disable_at_the_ends(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let rows: Vec<String> = read(cx, &window, |p| p.lib.rows.iter().map(|r| r.id.clone()).collect());
+    open(cx, &window, &rows[0], Tab::Thoughts);
+    assert_eq!(find(cx, &window, "meeting.previous").disabled(), Some(true));
+    assert_ne!(find(cx, &window, "meeting.next").disabled(), Some(true));
+    open(cx, &window, rows.last().unwrap(), Tab::Thoughts);
+    assert_ne!(find(cx, &window, "meeting.previous").disabled(), Some(true));
+    assert_eq!(find(cx, &window, "meeting.next").disabled(), Some(true));
+}
+// parity: MEET-019
+#[flow_ui::gpui::test]
+async fn title_saves_on_enter_and_blur_trims_and_clears(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    let stored = |cx: &mut TestAppContext| query(cx, |db| { let m = meeting(db, SEED_FULL).unwrap().unwrap(); (m.title, m.revision) });
+    let (_, start) = stored(cx);
+    window.update(cx, |p, w, cx| p.save_title(w, cx)).unwrap();
+    assert_eq!(stored(cx).1, start, "untouched saves nothing");
+    type_in!(cx, &window, |p| p.title.clone(), "  By enter  ");
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    frame(cx, &window);
+    assert_eq!(stored(cx), (Some("By enter".to_string()), start + 1));
+    window.update(cx, |_, w, _| w.activate_window()).unwrap();
+    frame(cx, &window);
+    type_in!(cx, &window, |p| p.title.clone(), "By blur");
+    frame(cx, &window);
+    window.update(cx, |p, w, cx| p.thoughts.read(cx).focus_handle(cx).focus(w, cx)).unwrap();
+    frame(cx, &window);
+    frame(cx, &window);
+    assert_eq!(stored(cx), (Some("By blur".to_string()), start + 2));
+    type_in!(cx, &window, |p| p.title.clone(), "   ");
+    window.update(cx, |p, w, cx| p.save_title(w, cx)).unwrap();
+    frame(cx, &window);
+    assert_eq!(stored(cx), (None, start + 3), "blank stores NULL");
+}
+// parity: MEET-024 MEET-025 MEET-026
+#[flow_ui::gpui::test]
+async fn warnings_and_reason_have_their_type_and_colour(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let (.., red, orange, _) = colors(cx);
+    let lost = "Some audio was lost during recording. The transcript may be incomplete.";
+    sql(cx, &format!("UPDATE meeting_tracks SET dropped_frames=1, duration_warning=1 WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert_eq!(sized(lost), (13., 400., orange));
+    assert_eq!(flow_ui::probe::symbol_color("exclamationmark.triangle.fill"), Some(orange));
+    assert!(has(cx, &window, "meeting.captureLoss"));
+    assert!(!has(cx, &window, "meeting.durationWarning"), "else if");
+    sql(cx, &format!("UPDATE meeting_tracks SET dropped_frames=0 WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert_eq!(sized("A recording track does not match the meeting duration. Some audio may be missing."), (13., 400., orange));
+    assert_eq!(flow_ui::probe::symbol_color("exclamationmark.triangle.fill"), Some(orange));
+    open(cx, &window, SEED_INTERRUPTED, Tab::Thoughts);
+    assert_eq!(sized("LocalFlow did not exit cleanly during this meeting. Recorded audio was recovered where possible."), (13., 400., red));
+}
+// parity: MEET-041 MEET-044 MEET-045
+#[flow_ui::gpui::test]
+async fn detail_notice_is_red_twelve_with_a_native_retry(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let (.., red, _, _) = colors(cx);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    sql(cx, "ALTER TABLE meeting_notes RENAME TO notes_gone;");
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert_eq!(sized("Meeting details could not be loaded."), (12., 400., red));
+    sql(cx, "ALTER TABLE notes_gone RENAME TO meeting_notes;");
+    assert!(!has(cx, &window, "meeting.retryDeletion"), "only while deletion is pending");
+    window.update(cx, |p, _, cx| { p.lib.deletion_pending.insert(SEED_FULL.to_string()); p.lib.detail_notice = Some("Left".into()); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_eq!(sized("Retry deletion").0, 12.);
+    assert_eq!(find(cx, &window, "meeting.retryDeletion").bounds().origin.y - find(cx, &window, "meeting.notice").bounds().origin.y, px(12.), "padding 12");
+    let revision = read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.revision);
+    assert!(query(cx, |db| meeting(db, SEED_FULL).unwrap().unwrap().revision) == revision);
+    click(cx, &window, "meeting.retryDeletion");
+    frame(cx, &window);
+    assert!(query(cx, |db| meeting(db, SEED_FULL).unwrap().is_none()), "retry deletes with the current revision");
+}
+// parity: MEET-046 MEET-047
+#[flow_ui::gpui::test]
+async fn waiting_row_is_muted_twelve_with_a_twelve_point_gap(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.waiting-detail"));
+    let (_, muted, ..) = colors(cx);
+    assert_eq!(sized("Waiting for your server"), (12., 400., muted));
+    assert_eq!(sized("Run on this Mac").0, 12.);
+    assert_labelled(cx, &window, "notetaker.detail.runOnThisMac", "Run this meeting on this Mac");
+    let (row, button) = (find(cx, &window, "meeting.waiting").bounds(), find(cx, &window, "notetaker.detail.runOnThisMac").bounds());
+    assert_eq!(button.origin.y - row.origin.y, px(12.), "padding 12");
+}
+// parity: MEET-049 MEET-054
+#[flow_ui::gpui::test]
+async fn provenance_is_muted_twelve_spoken_and_follows_the_transcript_state(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let (_, muted, ..) = colors(cx);
+    sql(cx, &format!("UPDATE meeting_transcriptions SET inference_path='server' WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    let text = read(cx, &window, |p| p.provenance.clone()).unwrap();
+    assert!(text.starts_with("Transcript: your server · Speaker labels:"), "{text}");
+    assert_eq!(sized(&text), (12., 400., muted));
+    assert_saw(&[&format!("Produced on: {text}")]);
+    sql(cx, &format!("UPDATE meeting_transcriptions SET state='finalizing' WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    sql(cx, &format!("UPDATE meeting_transcriptions SET inference_path='custom', state='final' WHERE meeting_id='{SEED_FULL}';"));
+    cx.executor().advance_clock(Duration::from_secs(6));
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.provenance.clone()).unwrap().contains("your custom server"), "re-read when finalizing ends");
+}
+// parity: MEET-055 MEET-056
+#[flow_ui::gpui::test]
+async fn thoughts_placeholder_is_faded_muted_fourteen_at_top_four(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let (_, muted, ..) = colors(cx);
+    sql(cx, &format!("UPDATE meeting_notes SET text='' WHERE meeting_id='{SEED_UNTITLED}';"));
+    open(cx, &window, SEED_UNTITLED, Tab::Thoughts);
+    assert_eq!(sized("Capture your thoughts here"), (14., 400., muted.opacity(0.7)));
+    let (frame_b, holder) = (find(cx, &window, "meeting.thoughts.frame").bounds(), find(cx, &window, "meeting.thoughts.placeholder").bounds());
+    assert_eq!(holder.origin.y - frame_b.origin.y, px(4.));
+    assert_eq!(frame_b.size.height, px(420.));
+}
+// parity: MEET-057
+#[flow_ui::gpui::test]
+async fn steady_typing_saves_within_ten_seconds_and_a_failed_save_tries_again(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    for i in 0..11 {
+        type_in!(cx, &window, |p| p.thoughts.clone(), &format!("edit {i}"));
+        cx.executor().advance_clock(Duration::from_secs(1));
+        frame(cx, &window);
+    }
+    let saved = query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0);
+    assert!(saved.starts_with("edit "), "forced within 10 s, got {saved:?}");
+    assert_ne!(saved, "edit 10", "the debounce never fired");
+    cx.executor().advance_clock(Duration::from_secs(3));
+    frame(cx, &window);
+    assert_eq!(query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0), "edit 10", "later edits follow");
+    refuse(cx, "UPDATE", "meeting_notes");
+    type_in!(cx, &window, |p| p.thoughts.clone(), "Comes back.");
+    cx.executor().advance_clock(Duration::from_secs(3));
+    fresh(cx, &window);
+    assert_saw(&["Notes not saved"]);
+    allow(cx, "UPDATE", "meeting_notes");
+    cx.executor().advance_clock(Duration::from_secs(3));
+    fresh(cx, &window);
+    assert_eq!(query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0), "Comes back.", "no click needed");
+    assert!(!seen("Notes not saved"));
+}
+// parity: MEET-058 MEET-059
+#[flow_ui::gpui::test]
+async fn editor_notices_show_on_the_page(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    let huge = "x".repeat(1024 * 1024 + 1);
+    type_in!(cx, &window, |p| p.thoughts.clone(), "Short.");
+    // Typing a mebibyte through the Kit field in a test takes minutes; this is the Change handler.
+    window.update(cx, |p, w, cx| { let input = p.thoughts.clone(); p.thoughts_changed(&huge, input, w, cx) }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Notes are limited to 1 MiB. The last edit was not applied."]);
+    assert_eq!(read(cx, &window, |p| p.thoughts.clone()).read_with(cx, |s, _| s.value().to_string()), "Short.", "the field keeps the text");
+    window.update(cx, |p, _, cx| p.reveal_note(1, "not-this-hash", cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["This note has changed"]);
+}
+// parity: MEET-061 MEET-062 MEET-063
+#[flow_ui::gpui::test]
+async fn retry_save_is_red_twelve_and_runs_the_flush(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    let (.., red, _, _) = colors(cx);
+    refuse(cx, "UPDATE", "meeting_notes");
+    type_in!(cx, &window, |p| p.thoughts.clone(), "Stuck.");
+    click(cx, &window, "meeting.back");
+    fresh(cx, &window);
+    assert_eq!(sized("Notes not saved"), (12., 400., red));
+    assert_eq!(sized("Retry save").0, 12.);
+    allow(cx, "UPDATE", "meeting_notes");
+    click(cx, &window, "meeting.retrySave");
+    frame(cx, &window);
+    assert_eq!(query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0), "Stuck.");
+}
+// parity: MEET-064
+#[flow_ui::gpui::test]
+async fn leaving_the_page_saves_the_notes(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    cx.update(crate::shell::ensure_session);
+    cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = crate::pages::Page::Meetings));
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    type_in!(cx, &window, |p| p.thoughts.clone(), "Typed, then Settings.");
+    cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = crate::pages::Page::History));
+    frame(cx, &window);
+    assert_eq!(query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0), "Typed, then Settings.");
+    assert!(read(cx, &window, |p| p.editor.is_none()));
+}
+// parity: MEET-066 MEET-068
+#[flow_ui::gpui::test]
+async fn live_footer_has_pause_and_a_green_stop(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.live"));
+    let (ink, _, _, _, green) = colors(cx);
+    assert_eq!(flow_ui::probe::symbol_color("pause.fill"), Some(ink));
+    assert_eq!(flow_ui::probe::symbol_color("stop.fill"), Some(green));
+    assert_labelled(cx, &window, "meeting.pause", "Pause");
+    assert_labelled(cx, &window, "meeting.stop", "Stop");
+}
+// parity: MEET-072
+#[flow_ui::gpui::test]
+async fn playback_button_has_its_symbol_and_label(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    assert_labelled(cx, &window, "meeting.playback", "Playback");
+    assert_symbols(&["play.circle"]);
+}
+// parity: MEET-078
+#[flow_ui::gpui::test]
+async fn playback_notice_is_muted_twelve(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    let (_, muted, ..) = colors(cx);
+    click(cx, &window, "meeting.playback");
+    fresh(cx, &window);
+    assert_eq!(sized("No playable audio"), (12., 400., muted));
+}
+// parity: MEET-039
+#[flow_ui::gpui::test]
+async fn tab_starts_from_the_request_and_clicks_switch_it(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert!(read(cx, &window, |p| p.tab == Tab::Transcript));
+    click(cx, &window, "meeting.tab.summary");
+    assert!(read(cx, &window, |p| p.tab == Tab::Summary));
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert!(read(cx, &window, |p| p.tab == Tab::Thoughts), "not persisted");
 }

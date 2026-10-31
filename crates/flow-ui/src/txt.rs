@@ -93,6 +93,7 @@ pub struct Txt {
     align: Align,
     lines: Option<usize>,
     accessible: bool,
+    spoken: Option<SharedString>,
     opacity: f32,
     mono_digits: bool,
     mono: bool,
@@ -151,6 +152,7 @@ pub fn rich(spans: Vec<Span>) -> Txt {
         align: Align::Left,
         lines: None,
         accessible: true,
+        spoken: None,
         opacity: 1.0,
         mono_digits: false,
         mono: false,
@@ -223,6 +225,13 @@ impl Txt {
     /// `.accessibilityHidden(true)`: for text whose meaning a parent's label already carries.
     pub fn a11y_hidden(mut self) -> Self {
         self.accessible = false;
+        self
+    }
+    /// What VoiceOver reads when it isn't the visible text, Swift's `accessibilityLabel` on a `Text`.
+    pub fn a11y_value(mut self, s: impl Into<SharedString>) -> Self {
+        let s = s.into();
+        crate::probe::record(&s);
+        self.spoken = Some(s);
         self
     }
     /// A stable id when text changes but the element is logically the same, such as a counter.
@@ -633,7 +642,10 @@ impl Element for Txt {
         self.accessible.then_some(accesskit::Role::Label)
     }
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
-        node.set_value(self.text());
+        match &self.spoken {
+            Some(s) => node.set_value(s.as_ref()),
+            None => node.set_value(self.text()),
+        }
     }
 
     fn request_layout(

@@ -38,7 +38,9 @@ impl NotetakerPage {
         self.poll_finalizing(cx);
         cx.notify();
     }
-    pub(crate) fn close_note_state(&mut self, _: &mut Window, _: &mut Context<Self>) {
+    /// `onDisappear`: whatever closes the note saves it first.
+    pub(crate) fn close_note_state(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.flushed(cx);
         self.editor = None;
         self.pager = None;
         self.assign = None;
@@ -105,13 +107,21 @@ impl NotetakerPage {
             cx.notify();
             return;
         }
+        self.schedule_save(cx);
+        cx.notify();
+    }
+    /// 2 s after the last edit, at most 10 s after the first unsaved one. A save that fails
+    /// tries again on the same timers, as `save()` reschedules while the text stays dirty.
+    fn schedule_save(&mut self, cx: &mut Context<Self>) {
         self.save_epoch += 1;
         let epoch = self.save_epoch;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             this.update(cx, |this, cx| {
                 if this.save_epoch == epoch {
-                    this.flushed(cx);
+                    if !this.flushed(cx) {
+                        this.schedule_save(cx);
+                    }
                     cx.notify();
                 }
             })
@@ -131,7 +141,6 @@ impl NotetakerPage {
             })
             .detach();
         }
-        cx.notify();
     }
     /// View source on a note: switch tabs and select the paragraph, or say it changed.
     pub(crate) fn reveal_note(&mut self, ordinal: i64, hash: &str, cx: &mut Context<Self>) {
@@ -166,6 +175,8 @@ impl NotetakerPage {
                         let same = this.lib.detail.as_ref().is_some_and(|d| d.meeting.id == id);
                         let (Some(db), Some(p), true) = (db_of(cx), &mut this.pager, same) else { return false };
                         p.load_first(db);
+                        // `ProvenanceKey` follows the transcript state.
+                        this.provenance = provenance(db, &id).ok().flatten();
                         cx.notify();
                         p.row.as_ref().is_some_and(|r| r.state == "finalizing")
                     })
@@ -211,17 +222,17 @@ impl NotetakerPage {
                         .w_full()
                         .max_w(px(600.))
                         .child(self.note_header(&d, live.as_ref(), window, cx))
-                        .child(h_flex().gap(px(20.)).child(tab_button("meeting.tab.thoughts", "My thoughts", tab == Tab::Thoughts, Tab::Thoughts, cx)).child(tab_button("meeting.tab.transcript", "Transcript", tab == Tab::Transcript, Tab::Transcript, cx)).child(tab_button("meeting.tab.summary", "Summary", tab == Tab::Summary, Tab::Summary, cx))),
+                        .child(h_flex().id("meeting.tabs").test_support().gap(px(20.)).child(tab_button("meeting.tab.thoughts", "My thoughts", tab == Tab::Thoughts, Tab::Thoughts, cx)).child(tab_button("meeting.tab.transcript", "Transcript", tab == Tab::Transcript, Tab::Transcript, cx)).child(tab_button("meeting.tab.summary", "Summary", tab == Tab::Summary, Tab::Summary, cx))),
                 ),
             )
-            .child(div().w_full().max_w(px(860.)).child(hairline(cx)))
+            .child(div().id("meeting.rule").test_support().w_full().max_w(px(860.)).child(hairline(cx)))
             .when_some(notice, |d, n| {
-                d.child(h_flex().gap(px(8.)).p(px(12.)).child(t(n).size(12.).color(red(cx))).when(pending, |d| {
-                    d.child(prototype_button("meeting.retryDeletion", "Retry deletion").on_click(cx.listener(move |this, _, w, cx| this.delete(&retry_id, retry_rev, w, cx))))
-                }))
+                d.child(div().id("meeting.notice").test_support().child(h_flex().gap(px(8.)).p(px(12.)).child(t(n).size(12.).color(red(cx))).when(pending, |d| {
+                    d.child(small_native("meeting.retryDeletion", "Retry deletion", cx).on_click(cx.listener(move |this, _, w, cx| this.delete(&retry_id, retry_rev, w, cx))))
+                })))
             })
             .when(waits, |d| {
-                d.child(h_flex().gap(px(12.)).p(px(12.)).child(t("Waiting for your server").size(12.).color(p.muted)).child(prototype_button("notetaker.detail.runOnThisMac", "Run on this Mac").a11y_label("Run this meeting on this Mac").on_click(cx.listener(move |this, _, _, cx| this.run_on_this_mac(&wait_id, cx)))))
+                d.child(div().id("meeting.waiting").test_support().child(h_flex().gap(px(12.)).p(px(12.)).child(t("Waiting for your server").size(12.).color(p.muted)).child(small_native("notetaker.detail.runOnThisMac", "Run on this Mac", cx).a11y_label("Run this meeting on this Mac").on_click(cx.listener(move |this, _, _, cx| this.run_on_this_mac(&wait_id, cx))))))
             })
             .child(
                 div()
@@ -237,6 +248,8 @@ impl NotetakerPage {
                     .items_center()
                     .child(
                         v_flex()
+                            .id("meeting.column")
+                            .test_support()
                             .w_full()
                             .max_w(px(660.))
                             .flex_none()
@@ -244,11 +257,14 @@ impl NotetakerPage {
                             .pt(px(20.))
                             .pb(px(24.))
                             .gap(px(16.))
-                            .when_some(produced, |d, text| d.child(t(text).size(12.).swift_lines().color(p.muted)))
+                            .when_some(produced, |d, text| {
+                                let spoken = format!("Produced on: {text}");
+                                d.child(t(text).size(12.).swift_lines().color(p.muted).a11y_value(spoken))
+                            })
                             .child(body),
                     ),
             )
-            .child(div().w_full().flex().justify_center().px(px(30.)).pt(px(12.)).pb(px(20.)).child(self.footer(&d, live.as_ref(), cx)))
+            .child(div().id("meeting.footer.frame").test_support().w_full().flex().justify_center().px(px(30.)).pt(px(12.)).pb(px(20.)).child(self.footer(&d, live.as_ref(), cx)))
     }
 
     fn toolbar(&mut self, d: &Detail, cx: &mut Context<Self>) -> impl IntoElement {
@@ -258,12 +274,14 @@ impl NotetakerPage {
         let open = self.menu.as_deref() == Some("note");
         let action = self.transcript_menu_action(m);
         let terminal = is_terminal(&m.state);
-        let leaving = self.leaving;
+        // ponytail: `leaving` has no Rust state; the flush is synchronous, so no frame sees it.
         h_flex()
+            .id("meeting.toolbar")
+            .test_support()
             .w_full()
             .max_w(px(860.))
             .gap(px(4.))
-            .child(div().bg(p.button).rounded(px(6.)).child(note_icon("meeting.back", "chevron.left", "Back to past notes", p.ink).disabled(leaving).on_click(cx.listener(|this, _, w, cx| this.go_back(w, cx)))))
+            .child(div().bg(p.button).rounded(px(6.)).child(note_icon("meeting.back", "chevron.left", "Back to past notes", p.ink).on_click(cx.listener(|this, _, w, cx| this.go_back(w, cx)))))
             .child(div().flex_1())
             .child(
                 div()
@@ -288,8 +306,8 @@ impl NotetakerPage {
                         w.child(popover_panel(190., 32., cx, items))
                     }),
             )
-            .child(note_icon("meeting.previous", "chevron.left", "Previous note", p.ink).disabled(!previous || leaving).on_click(cx.listener(|this, _, w, cx| this.navigate(-1, w, cx))))
-            .child(note_icon("meeting.next", "chevron.right", "Next note", p.ink).disabled(!next || leaving).on_click(cx.listener(|this, _, w, cx| this.navigate(1, w, cx))))
+            .child(note_icon("meeting.previous", "chevron.left", "Previous note", p.ink).disabled(!previous).on_click(cx.listener(|this, _, w, cx| this.navigate(-1, w, cx))))
+            .child(note_icon("meeting.next", "chevron.right", "Next note", p.ink).disabled(!next).on_click(cx.listener(|this, _, w, cx| this.navigate(1, w, cx))))
     }
 
     /// `requestFinalization`: admission first, then the worker.
@@ -330,7 +348,7 @@ impl NotetakerPage {
             .w_full()
             .gap(px(8.))
             .pb(px(4.))
-            .child(div().w_full().ml(px(-10.)).py(px(8.)).font_family(GARAMOND).child(Input::new(&self.title).appearance(false).text_size(px(38.)).line_height(px(46.)).h(px(46.)).aria_label("Note title").accessibility_id("meeting.title")))
+            .child(div().id("meeting.title.frame").test_support().w_full().ml(px(-10.)).py(px(8.)).font_family(GARAMOND).child(Input::new(&self.title).appearance(false).text_size(px(38.)).line_height(px(46.)).h(px(46.)).aria_label("Note title").accessibility_id("meeting.title")))
             .child(t(date_time_text(m.created_at, offset)).size(15.).color(p.muted))
             .when(dropped, |w| w.child(div().id("meeting.captureLoss").test_support().child(h_flex().gap(px(6.)).child(icon("exclamationmark.triangle.fill", 13., orange(cx))).child(t("Some audio was lost during recording. The transcript may be incomplete.").size(13.).swift_lines().color(orange(cx))))))
             .when(!dropped && drift, |w| w.child(div().id("meeting.durationWarning").test_support().child(h_flex().gap(px(6.)).child(icon("exclamationmark.triangle.fill", 13., orange(cx))).child(t("A recording track does not match the meeting duration. Some audio may be missing.").size(13.).swift_lines().color(orange(cx))))))
@@ -346,6 +364,8 @@ impl NotetakerPage {
             .gap(px(12.))
             .child(
                 div()
+                    .id("meeting.thoughts.frame")
+                    .test_support()
                     .relative()
                     .w_full()
                     .h(px(420.))
@@ -357,7 +377,7 @@ impl NotetakerPage {
                     .when(empty, |d| d.child(div().id("meeting.thoughts.placeholder").test_support().absolute().top(px(4.)).left(px(10.)).child(t("Capture your thoughts here").size(14.).color(p.muted.opacity(0.7)).a11y_hidden()))),
             )
             .when_some(notice, |d, n| {
-                d.child(h_flex().gap(px(8.)).child(t(n).size(12.).color(red(cx))).child(prototype_button("meeting.retrySave", "Retry save").on_click(cx.listener(|this, _, _, cx| {
+                d.child(h_flex().gap(px(8.)).child(t(n).size(12.).color(red(cx))).child(small_native("meeting.retrySave", "Retry save", cx).on_click(cx.listener(|this, _, _, cx| {
                     this.flushed(cx);
                     cx.notify();
                 }))))
@@ -385,6 +405,12 @@ impl NotetakerPage {
                 .when_some(self.play_notice.clone(), |w, n| w.child(t(n).size(12.).color(p.muted).lines(1)))
         })
     }
+}
+
+/// A default `Button` under `.font(.flow(size: 12))`.
+fn small_native(id: &'static str, label: &'static str, cx: &App) -> FlowButton {
+    let (.., text, _, _, _, _) = ButtonKind::Native.style(&pal(cx));
+    native_button(id, label).content(t(label).size(12.).color(text).a11y_hidden())
 }
 
 fn tab_button(id: &'static str, title: &'static str, selected: bool, tab: Tab, cx: &mut Context<NotetakerPage>) -> impl IntoElement {
