@@ -21,7 +21,7 @@ impl NotetakerPage {
                         .when_some(self.lib.notice.clone().or(self.lib.detail_notice.clone()), |d, n| d.child(div().pb(px(12.)).child(t(n).size(13.).swift_lines().color(red(cx)))))
                         .child(self.tab_row(cx))
                         .when(self.show_search, |d| d.child(div().id("notetaker.searchField").test_support().mt(px(12.)).h(px(37.)).flex().items_center().bg(p.canvas).rounded(px(8.)).text_size(px(14.)).child(Input::new(&self.query).appearance(false).aria_label("Search").accessibility_id("notetaker.search"))))
-                        .child(self.note_list(cx)),
+                        .child(self.note_list(window, cx)),
                 ),
             )
             .when(!compact, |d| d.child(div().w(px(1.)).h_full().bg(p.line)).child(div().w(px(230.)).h_full().flex_none().child(self.preview_view(cx))))
@@ -134,7 +134,7 @@ impl NotetakerPage {
             .child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(p.line))
     }
 
-    fn note_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn note_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         if self.lib.rows.is_empty() {
             return empty_line("No notes yet", cx).into_any_element();
@@ -155,7 +155,7 @@ impl NotetakerPage {
                 list = list.child(div().pt(px(if index == 0 { 0. } else { 24. })).pb(px(6.)).pl(px(4.)).child(t(day_heading(row.created_at, offset, today)).font(12., 500.).tracking(1.2).color(p.muted)));
             }
             previous = Some(day);
-            list = list.child(self.note_row(row, offset, cx));
+            list = list.child(self.note_row(row, offset, window, cx));
         }
         if rows.is_empty() {
             list = list.child(empty_line("No matches", cx));
@@ -171,7 +171,7 @@ impl NotetakerPage {
         list.into_any_element()
     }
 
-    fn note_row(&mut self, row: &MeetingRow, offset: i32, cx: &mut Context<Self>) -> impl IntoElement {
+    fn note_row(&mut self, row: &MeetingRow, offset: i32, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let id = row.id.clone();
         let group = sid(format!("notetaker.row.{id}"));
@@ -181,6 +181,15 @@ impl NotetakerPage {
         let pending = self.lib.deletion_pending.contains(&id);
         let key = format!("row.{id}");
         let open_menu = self.menu.as_deref() == Some(key.as_str());
+        // `@FocusState focusedID`: only the row's main button counts, and it asks for the preview too.
+        let focus = self.row_focus.entry(id.clone()).or_insert_with(|| cx.focus_handle()).clone();
+        let focused = focus.contains_focused(window, cx);
+        if focused && self.focused_row.as_ref() != Some(&id) {
+            self.focused_row = Some(id.clone());
+            self.request_preview(&id, cx);
+        } else if !focused && self.focused_row.as_ref() == Some(&id) {
+            self.focused_row = None;
+        }
         let (open_id, hover_id, run_id, delete_id, revision) = (id.clone(), id.clone(), id.clone(), id.clone(), row.revision);
         let terminal = is_terminal(&row.state);
         let mut row_label = format!("{title}, {}", time_text(row.created_at, offset));
@@ -202,13 +211,13 @@ impl NotetakerPage {
             .w_full()
             .rounded(px(10.))
             .hover(|s| s.bg(p.canvas))
-            .when(open_menu, |d| d.bg(p.canvas))
+            .when(open_menu || focused, |d| d.bg(p.canvas))
             .on_hover(cx.listener(move |this, inside: &bool, _, cx| {
                 if *inside {
                     this.request_preview(&hover_id, cx);
                 }
             }))
-            .child(div().flex_1().min_w_0().child(
+            .child(div().flex_1().min_w_0().track_focus(&focus).child(
                 plain_button(sid(format!("notetaker.note.{id}")), sid(title.clone())).a11y_label(sid(row_label)).full_width().on_click(cx.listener(move |this, _, w, cx| this.open_note(&open_id, Tab::Thoughts, w, cx))).content(
                     h_flex()
                         .flex_1()
@@ -247,7 +256,7 @@ impl NotetakerPage {
                 div()
                     .px(px(8.))
                     .relative()
-                    .child(hover_revealed(group, open_menu, div()).id(sid(format!("notetaker.overflowReveal.{id}"))).test_support().child(note_icon(sid(format!("notetaker.overflow.{id}")), "ellipsis", "Note options", p.ink).on_click({
+                    .child(hover_revealed(group, open_menu || focused, div()).id(sid(format!("notetaker.overflowReveal.{id}"))).test_support().child(note_icon(sid(format!("notetaker.overflow.{id}")), "ellipsis", "Note options", p.ink).on_click({
                         let key = key.clone();
                         cx.listener(move |this, _, _, cx| this.toggle_menu(&key, cx))
                     })))
@@ -336,11 +345,25 @@ pub(crate) fn live_badge(state: &str, elapsed: i64, size: f32, cx: &App) -> impl
     let text = duration_text(elapsed);
     let paused = state == "paused";
     let glyph = div().child(icon(if paused { "pause.fill" } else { "waveform" }, size - 1., color));
-    // The iterative variable-color effect, approximated as a pulse as in the shell's badge: Lucide glyphs have no layers.
-    let glyph = if paused || cx.global::<flow_ui::tokens::Flow>().reduce_motion {
-        glyph.into_any_element()
-    } else {
-        div().id("meeting.waveform").test_support().child(glyph.with_animation("meeting.waveform.pulse", Animation::new(std::time::Duration::from_millis(1200)).repeat(), |d, f| d.opacity(0.45 + 0.55 * (1. - (2. * f - 1.).abs())))).into_any_element()
-    };
+    let glyph = if paused || cx.global::<flow_ui::tokens::Flow>().reduce_motion { glyph.into_any_element() } else { waveform_iterating(size - 1., color).into_any_element() };
     h_flex().id("meeting.elapsed").gap(px(8.)).child(glyph).child(t(text).size(size).mono_digits().color(color))
+}
+/// x and half height of each bar of `sf-waveform.svg`, in its 24 unit box.
+const WAVEFORM_BARS: [(f32, f32); 8] = [(2., 2.6), (5., 5.5), (8., 3.8), (11., 8.6), (14., 5.), (17., 7.), (20., 3.4), (22.6, 1.6)];
+/// `.variableColor.iterative`: one layer at full colour travelling across, the rest dimmed.
+pub(crate) fn variable_color(layer: usize, f: f32) -> f32 {
+    let head = f * WAVEFORM_BARS.len() as f32;
+    let behind = (head - layer as f32).rem_euclid(WAVEFORM_BARS.len() as f32);
+    0.35 + 0.65 * (1. - behind).max(0.)
+}
+/// The SF glyph drawn bar by bar, because an SVG has no layers to animate one at a time.
+// ponytail: 1.2 s a cycle by eye; no reference recording exists without real capture.
+fn waveform_iterating(size: f32, color: Hsla) -> impl IntoElement {
+    let unit = size * 1.25 / 24.;
+    let mut glyph = div().id("meeting.waveform").test_support().relative().size(px(size * 1.25)).m(px(-size * 0.125)).flex_none();
+    for (i, (x, half)) in WAVEFORM_BARS.into_iter().enumerate() {
+        let bar = div().absolute().left(px((x - 0.85) * unit)).top(px((12. - half - 0.85) * unit)).w(px(1.7 * unit)).h(px((2. * half + 1.7) * unit)).rounded_full().bg(color);
+        glyph = glyph.child(bar.with_animation(("meeting.waveform.layer", i), Animation::new(std::time::Duration::from_millis(1200)).repeat(), move |d, f| d.opacity(variable_color(i, f))));
+    }
+    glyph
 }

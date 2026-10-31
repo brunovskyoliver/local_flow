@@ -463,7 +463,7 @@
 | SPK-103 | state | Rejects capacity | AssignSpeakersModel.swift | "This meeting has too many rejected matches to save more." | core: `rejected_candidates` |
 | SPK-104 | state | Identities failed | AssignSpeakersModel.swift | "Speaker identities could not be saved." | core: `identity_assignments` |
 | SPK-105 | swift-note | saved() on failure | AssignSpeakersModel.swift | `saved()` callback runs even when the save failed | ui-only |
-| SPK-106 | behavior | Carry-over on rerun | SpeakerStore.swift `carryOver` | Names, merges and corrections map onto new clusters; unmapped become `needs_review` | core: `speaker_corrections`, `meeting_speakers` |
+| SPK-106 | behavior | Carry-over on rerun | SpeakerStore.swift `carryOver` | Names, merges and corrections map onto new clusters; unmapped become `needs_review` | core: `speaker_corrections`, `meeting_speakers`, worker: diarization run adoption (SpeakerStore.swift:350) |
 | SPK-107 | view | Palette | SpeakerPalette.swift | Dots light/dark: 1F6FD1/5AA2FF, C2570C/FF9A4D, 1E8A4C/4CC983, 7B4BD1/A98BFF, 0E7C86/3CC6CF, C23B3B/FF7373, B8397D/F07AB8, 8A6A1F/D4B25A; light text 1D66C0, A84B0A, 187441, 7B4BD1, 0C717A, B23636, A8346F, 7E611C; dark text same as dot; index cycles | ui-only |
 
 ## Summary

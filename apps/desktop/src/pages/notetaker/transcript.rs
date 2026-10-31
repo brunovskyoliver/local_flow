@@ -225,15 +225,15 @@ impl NotetakerPage {
                 let title = copy_selected_title(selected);
                 let page = cx.entity().downgrade();
                 w.child(menu_trigger("meeting.transcript.copy", "Copy or export transcript", "doc.on.doc", 13., 22., p.accent).dropdown_menu(move |menu, _, _| {
-                    menu.item(PopupMenuItem::new(title.clone()).disabled(selected == 0).on_click(act(&page, |this, _, cx| {
+                    menu.item(menu_entry(title.clone()).disabled(selected == 0).on_click(act(&page, |this, _, cx| {
                         this.transcript_notice = None;
                         if let Some(x) = &this.pager {
                             cx.write_to_clipboard(ClipboardItem::new_string(x.selection_text()));
                         }
                         cx.notify();
                     })))
-                    .item(PopupMenuItem::new("Copy Full Transcript").on_click(act(&page, |this, _, cx| this.copy_full(cx))))
-                    .item(PopupMenuItem::new("Export Transcript…").on_click(act(&page, |this, _, cx| {
+                    .item(menu_entry("Copy Full Transcript").on_click(act(&page, |this, _, cx| this.copy_full(cx))))
+                    .item(menu_entry("Export Transcript…").on_click(act(&page, |this, _, cx| {
                         // The save panel is an OS service; the export itself is `Pager::export`.
                         this.transcript_notice = Self::worker("Choosing a save location", cx).err().map(|_| "The transcript could not be exported.".to_string());
                         cx.notify();
@@ -275,7 +275,7 @@ impl NotetakerPage {
                     d.child(plain_button("meeting.speakers.retry", "Retry").on_click(cx.listener(|this, _, _, cx| {
                         this.transcript_notice = Self::worker("Speaker labeling", cx).err();
                         cx.notify();
-                    })).content(t("Retry").size(11.).swift_lines().color(p.accent).a11y_hidden()))
+                    })).content(t("Retry").size(11.).swift_lines().color(p.muted).a11y_hidden()))
                 })
             }
             _ => line,
@@ -290,7 +290,7 @@ impl NotetakerPage {
                 this.past_search = None;
                 this.past_queue.clear();
                 cx.notify();
-            })).content(t("Cancel").size(11.).swift_lines().color(p.accent).a11y_hidden()));
+            })).content(t("Cancel").size(11.).swift_lines().color(p.muted).a11y_hidden()));
         }
         let run = self.identify_run.clone();
         match run.as_ref().map(|r| r.state.as_str()) {
@@ -302,7 +302,7 @@ impl NotetakerPage {
                     d.child(plain_button("meeting.identification.retry", "Retry").on_click(cx.listener(|this, _, _, cx| {
                         this.transcript_notice = Self::worker("Speaker identification", cx).err();
                         cx.notify();
-                    })).content(t("Retry").size(11.).swift_lines().color(p.accent).a11y_hidden()))
+                    })).content(t("Retry").size(11.).swift_lines().color(p.muted).a11y_hidden()))
                 })
             }
             _ => line.when(self.enrolling, |d| d.child(t("Storing voice sample…").size(11.).swift_lines().color(p.muted))),
@@ -389,24 +389,24 @@ impl NotetakerPage {
                     .items_start()
                     .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).test_support().max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).child(t(row.text.clone()).size(13.).line_spacing(4.).swift_lines().color(color).selectable()).context_menu(move |menu, window, cx| {
                         let segment = id.clone();
-                        let mut menu = menu.item(PopupMenuItem::new(if selected { "Deselect" } else { "Select" }).on_click(act(&page, move |this, _, cx| {
+                        let mut menu = menu.item(menu_entry(if selected { "Deselect segment" } else { "Select segment" }).on_click(act(&page, move |this, _, cx| {
                             if let Some(x) = &mut this.pager {
                                 x.toggle_selection(&segment);
                             }
                             cx.notify();
                         })));
                         if seek {
-                            menu = menu.item(PopupMenuItem::new("Play from here").on_click(act(&page, |this, _, cx| this.play(cx))));
+                            menu = menu.item(menu_entry("Play from here").on_click(act(&page, |this, _, cx| this.play(cx))));
                         }
                         if correctable {
                             let (page, id, choices) = (page.clone(), id.clone(), choices.clone());
-                            menu = menu.submenu("Change speaker", window, cx, move |mut menu, _, _| {
+                            menu = menu.submenu(menu_title("Change speaker"), window, cx, move |mut menu, _, _| {
                                 for (speaker, label) in choices.clone() {
                                     let segment = id.clone();
-                                    menu = menu.item(PopupMenuItem::new(label).on_click(act(&page, move |this, _, cx| this.correct(&segment, Correction::Speaker(speaker.clone()), cx))));
+                                    menu = menu.item(menu_entry(label).on_click(act(&page, move |this, _, cx| this.correct(&segment, Correction::Speaker(speaker.clone()), cx))));
                                 }
                                 let (unknown, new) = (id.clone(), id.clone());
-                                menu.separator().item(PopupMenuItem::new("Unknown").on_click(act(&page, move |this, _, cx| this.correct(&unknown, Correction::Unknown, cx)))).item(PopupMenuItem::new("New speaker").on_click(act(&page, move |this, _, cx| this.correct(&new, Correction::New, cx))))
+                                menu.separator().item(menu_entry("Unknown").on_click(act(&page, move |this, _, cx| this.correct(&unknown, Correction::Unknown, cx)))).item(menu_entry("New speaker").on_click(act(&page, move |this, _, cx| this.correct(&new, Correction::New, cx))))
                             });
                         }
                         menu

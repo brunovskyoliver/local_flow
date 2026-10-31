@@ -323,12 +323,12 @@ impl NotetakerPage {
                             .relative()
                             .child(menu_trigger("meeting.summary.options", "Summary options", "ellipsis", 13., 20., p.accent).dropdown_menu(move |menu, _, _| {
                                 let mut menu = menu
-                                    .item(PopupMenuItem::new("Regenerate").on_click(act(&page, |this, _, cx| this.generate(cx))))
-                                    .item(PopupMenuItem::new("Previous edits").disabled(!has_previous).on_click(act(&page, |this, _, cx| {
+                                    .item(menu_entry("Regenerate").on_click(act(&page, |this, _, cx| this.generate(cx))))
+                                    .item(menu_entry("Previous edits").disabled(!has_previous).on_click(act(&page, |this, _, cx| {
                                         this.menu = Some("summary.edits".into());
                                         cx.notify();
                                     })))
-                                    .item(PopupMenuItem::new("Remove all edits…").disabled(!has_edits).on_click(act(&page, |this, _, cx| {
+                                    .item(menu_entry("Remove all edits…").disabled(!has_edits).on_click(act(&page, |this, _, cx| {
                                         this.confirm = Some(Confirm::RemoveEdits);
                                         cx.notify();
                                     })));
@@ -379,7 +379,7 @@ impl NotetakerPage {
         let ai_shown = self.summary.shown_ai.contains("summary");
         let mut paragraphs = v_flex().w_full().gap(px(10.)).pb(px(4.));
         for part in if ai_shown { &model.ai_summary } else { &model.summary }.split("\n\n") {
-            paragraphs = paragraphs.child(self.highlighted(part, cx).size(15.).line_spacing(6.));
+            paragraphs = paragraphs.child(self.highlighted(part, cx).size(15.).line_spacing(6.).no_widow());
         }
         let overlay = model.summary_overlay.clone();
         let page = cx.entity().downgrade();
@@ -394,9 +394,9 @@ impl NotetakerPage {
             }))
             .child(paragraphs)
             .context_menu(move |menu, _, _| {
-                let menu = menu.item(PopupMenuItem::new("Edit summary").on_click(act(&page, |this, w, cx| this.begin_summary_edit(w, cx))));
+                let menu = menu.item(menu_entry("Edit summary").on_click(act(&page, |this, w, cx| this.begin_summary_edit(w, cx))));
                 let Some(id) = overlay.clone() else { return menu };
-                menu.item(PopupMenuItem::new(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(&page, |this, _, cx| this.toggle_ai("summary", cx)))).item(PopupMenuItem::new("Remove text edit").on_click(act(&page, move |this, _, cx| {
+                menu.item(menu_entry(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(&page, |this, _, cx| this.toggle_ai("summary", cx)))).item(menu_entry("Remove text edit").on_click(act(&page, move |this, _, cx| {
                     let id = id.clone();
                     this.write(cx, move |db, _| remove_overlay(db, &id));
                 })))
@@ -571,11 +571,11 @@ fn item_menu(menu: PopupMenu, page: &WeakEntity<NotetakerPage>, item: &Item, ai_
     let mut menu = menu;
     if let Some(field) = editable_field(&item.kind) {
         let it = item.clone();
-        menu = menu.item(PopupMenuItem::new("Edit text").on_click(act(page, move |this, w, cx| this.begin_item_edit(&it, field, it.text.clone(), w, cx))));
+        menu = menu.item(menu_entry("Edit text").on_click(act(page, move |this, w, cx| this.begin_item_edit(&it, field, it.text.clone(), w, cx))));
     }
     if action {
         let (page2, it, list) = (page.clone(), item.clone(), choices.to_vec());
-        menu = menu.submenu("Owner", window, cx, move |menu, _, _| {
+        menu = menu.submenu(menu_title("Owner"), window, cx, move |menu, _, _| {
             let mut menu = menu;
             for (id, name, color) in list.clone() {
                 let it2 = it.clone();
@@ -587,27 +587,27 @@ fn item_menu(menu: PopupMenu, page: &WeakEntity<NotetakerPage>, item: &Item, ai_
             }
             let (other, none) = (it.clone(), it.clone());
             menu.separator()
-                .item(PopupMenuItem::new("Someone else…").on_click(act(&page2, move |this, w, cx| this.begin_item_edit(&other, "owner", String::new(), w, cx))))
-                .item(PopupMenuItem::new("No owner").on_click(act(&page2, move |this, _, cx| this.set_item(&none, "owner", OWNER_VALUE_NONE, Some(owner_json(&none.ai_owner)), cx))))
+                .item(menu_entry("Someone else…").on_click(act(&page2, move |this, w, cx| this.begin_item_edit(&other, "owner", String::new(), w, cx))))
+                .item(menu_entry("No owner").on_click(act(&page2, move |this, _, cx| this.set_item(&none, "owner", OWNER_VALUE_NONE, Some(owner_json(&none.ai_owner)), cx))))
         });
         let (page2, it) = (page.clone(), item.clone());
-        menu = menu.submenu("Due date", window, cx, move |menu, _, _| {
+        menu = menu.submenu(menu_title("Due date"), window, cx, move |menu, _, _| {
             let pick = it.clone();
-            let menu = menu.item(PopupMenuItem::new("Pick date…").on_click(act(&page2, move |this, w, cx| this.begin_due(&pick, w, cx))));
+            let menu = menu.item(menu_entry("Pick date…").on_click(act(&page2, move |this, w, cx| this.begin_due(&pick, w, cx))));
             if it.due_date.is_some() || it.overlay("due_date").is_some() {
                 let clear = it.clone();
-                menu.item(PopupMenuItem::new("Clear").on_click(act(&page2, move |this, _, cx| this.set_due(&clear, None, cx))))
+                menu.item(menu_entry("Clear").on_click(act(&page2, move |this, _, cx| this.set_due(&clear, None, cx))))
             } else {
                 menu
             }
         });
         let it = item.clone();
         let dismissed = it.status == "dismissed";
-        menu = menu.item(PopupMenuItem::new(if dismissed { "Reopen" } else { "Dismiss" }).on_click(act(page, move |this, _, cx| this.set_item(&it, "status", if dismissed { "open" } else { "dismissed" }, Some("open".into()), cx))));
+        menu = menu.item(menu_entry(if dismissed { "Reopen" } else { "Dismiss" }).on_click(act(page, move |this, _, cx| this.set_item(&it, "status", if dismissed { "open" } else { "dismissed" }, Some("open".into()), cx))));
     }
     if !item.overlays.is_empty() {
         let id = item.id.clone();
-        menu = menu.separator().item(PopupMenuItem::new(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(page, move |this, _, cx| this.toggle_ai(&id, cx))));
+        menu = menu.separator().item(menu_entry(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(page, move |this, _, cx| this.toggle_ai(&id, cx))));
         let mut overlays = item.overlays.clone();
         overlays.sort();
         for (field, overlay) in overlays {
@@ -617,7 +617,7 @@ fn item_menu(menu: PopupMenu, page: &WeakEntity<NotetakerPage>, item: &Item, ai_
                 "status" => "status",
                 _ => "text",
             };
-            menu = menu.item(PopupMenuItem::new(format!("Remove {name} edit")).on_click(act(page, move |this, _, cx| {
+            menu = menu.item(menu_entry(format!("Remove {name} edit")).on_click(act(page, move |this, _, cx| {
                 let overlay = overlay.clone();
                 this.write(cx, move |db, _| remove_overlay(db, &overlay));
             })));

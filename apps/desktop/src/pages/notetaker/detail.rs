@@ -195,8 +195,13 @@ impl NotetakerPage {
             Tab::Transcript => self.transcript_section(&d, live.as_ref(), cx).into_any_element(),
             Tab::Summary => self.summary_section(&m, cx).into_any_element(),
         };
+        // Swift's page reaches under the panel's 1 pt stroke, which a compact width shows.
         v_flex()
-            .size_full()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(-1.))
+            .right(px(-1.))
             .items_center()
             .text_size(px(15.))
             .child(div().w_full().flex().justify_center().px(px(20.)).pt(px(17.)).pb(px(17.)).child(self.toolbar(&d, cx)))
@@ -370,7 +375,7 @@ impl NotetakerPage {
         }
         let track = d.track("microphone").or(d.track("system")).is_some();
         let playable = is_terminal(&d.meeting.state) && track;
-        row.child(symbol_button("meeting.playback", "Playback", "play.circle", 15., p.ink).disabled_opacity(0.7).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
+        row.child(symbol_button("meeting.playback", "Playback", "play.circle", 15., p.ink).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
             w.child(t(format!("0:00 / {}", duration_text(self.play_total))).size(12.).mono_digits().color(p.muted))
                 .child(prototype_button("meeting.playback.stop", "Stop").on_click(cx.listener(|this, _, _, cx| {
                     this.playing = false;

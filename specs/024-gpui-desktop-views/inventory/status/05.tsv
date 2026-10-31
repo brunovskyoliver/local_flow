@@ -2,7 +2,7 @@ NOTE-001	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/no
 NOTE-002	auto	test:library_load_copies_the_transcription_preference
 NOTE-003	live	test:compact_width_trades_the_preview_for_an_overview_popover ; live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
 NOTE-004	auto	test:compact_width_trades_the_preview_for_an_overview_popover
-NOTE-005	auto	test:compact_width_trades_the_preview_for_an_overview_popover
+NOTE-005	auto	test:library_icon_buttons_name_their_symbol_and_label ; test:compact_width_trades_the_preview_for_an_overview_popover
 NOTE-006	auto	test:compact_width_trades_the_preview_for_an_overview_popover
 NOTE-007	auto	test:preview_waits_before_loading_and_is_empty_until_then
 NOTE-008	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_the_summary
@@ -22,9 +22,9 @@ NOTE-021	auto	test:start_controls_wait_for_reconciliation_and_the_active_meeting
 NOTE-022	auto	test:start_refuses_while_busy_or_dictating
 NOTE-023	auto	test:start_refuses_while_busy_or_dictating
 NOTE-024	auto	test:refusal_shows_the_message_and_settings ; service:mac-service: TCC, AVCaptureDevice authorization; desktop plan phase adds it, view surfaces Unavailable
-NOTE-025	service	service:mac-service: TCC, CGPreflightScreenCaptureAccess; desktop plan phase adds it, view surfaces Unavailable
-NOTE-026	service	service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
-NOTE-027	service	service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
+NOTE-025	service	test:start_refuses_without_the_screen_permission ; service:mac-service: TCC, CGPreflightScreenCaptureAccess; desktop plan phase adds it, view surfaces Unavailable
+NOTE-026	service	test:start_checks_free_space ; service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
+NOTE-027	service	test:start_checks_free_space ; service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
 NOTE-028	auto	test:failure_reasons_read_like_swift
 NOTE-029	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
 NOTE-030	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
@@ -44,7 +44,7 @@ NOTE-043	auto	test:notice_shows_the_page_error
 NOTE-044	auto	test:older_page_failure_and_the_loading_guard
 NOTE-045	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
 NOTE-046	auto	test:past_notes_tab_does_nothing
-NOTE-047	auto	test:search_toggle_hides_the_field_and_keeps_the_query
+NOTE-047	auto	test:library_icon_buttons_name_their_symbol_and_label ; test:search_toggle_hides_the_field_and_keeps_the_query
 NOTE-048	auto	test:search_toggle_hides_the_field_and_keeps_the_query
 NOTE-049	live	test:search_field_sits_twelve_under_the_tabs_on_the_canvas ; live:audit/mac/notetaker/search-open-light-rust.png ; live:audit/mac/notetaker/search-open-light-ref.png
 NOTE-050	auto	test:search_filters_the_loaded_rows_by_title
@@ -52,7 +52,7 @@ NOTE-051	recorded	recorded:swift-note kept as Swift behaves; no separate behavio
 NOTE-052	live	test:library_states ; live:audit/mac/notetaker/empty-light-rust.png ; live:audit/mac/notetaker/empty-light-ref.png
 NOTE-053	auto	test:search_filters_the_loaded_rows_by_title
 NOTE-054	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-055	live	test:evicted_offers_show_newest ; live:audit/mac/notetaker/evicted-light-rust.png ; rust-only:Load older notes is below the fold and scroll events do not reach the reference's hidden window, so the eviction can't be triggered
+NOTE-055	live	test:evicted_offers_show_newest ; live:audit/mac/notetaker/evicted-light-rust.png ; live:audit/mac/notetaker/evicted-dark-rust.png ; rust-only:Load older notes is below the fold and scroll events do not reach the reference's hidden window, so the eviction can't be triggered
 NOTE-056	auto	test:library_pages_and_evicts
 NOTE-057	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
 NOTE-058	auto	test:library_pages_and_evicts
@@ -67,12 +67,12 @@ NOTE-066	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/no
 NOTE-067	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
 NOTE-068	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
 NOTE-069	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
-NOTE-070	not-run	test:hovering_a_row_reveals_its_menu ; not-run:needs a real pointer over an active window; the audit neither moves the owner's cursor nor takes focus
+NOTE-070	auto	test:keyboard_focus_on_a_row_reveals_its_menu_and_previews ; test:hovering_a_row_reveals_its_menu ; note:hover uses the pointer test; the focus test moves focus through the row focus handle, a real Tab key press is not exercised
 NOTE-071	auto	test:opening_a_note_renames_it_and_navigates
-NOTE-072	live	test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-NOTE-073	live	test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-NOTE-074	live	test:recording_badge_pulses_and_paused_does_not ; test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-NOTE-075	live	test:paused_row_says_paused ; live:audit/mac/notetaker/live-paused-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+NOTE-072	live	test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+NOTE-073	live	test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+NOTE-074	live	test:waveform_layers_light_one_after_another ; test:recording_badge_pulses_and_paused_does_not ; test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from live MeetingCoordinator status and needs real capture. Bars light one after another at 1.2 s by eye; Swift timing not measured
+NOTE-075	live	test:paused_row_says_paused ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 NOTE-076	auto	test:waiting_row_runs_on_this_mac
 NOTE-077	auto	test:waiting_row_runs_on_this_mac
 NOTE-078	service	service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
@@ -85,17 +85,17 @@ NOTE-084	auto	test:overflow_button_popover_and_disabled_delete
 NOTE-085	auto	test:deleting_a_row_removes_the_meeting_after_confirming
 NOTE-086	auto	test:overflow_button_popover_and_disabled_delete
 NOTE-087	auto	test:deleting_a_row_removes_the_meeting_after_confirming
-NOTE-088	live	test:deleting_a_row_removes_the_meeting_after_confirming ; live:audit/mac/notetaker/delete-row-light-rust.png ; rust-only:the row's overflow button shows only under a real pointer or key focus, and the reference window may not take either
+NOTE-088	auto	test:delete_dialog_has_swifts_geometry_and_a_translucent_fill ; test:deleting_a_row_removes_the_meeting_after_confirming ; note:not counted live. GPUI Window::prompt can't set a destructive role, so this is a custom panel at the dialog's geometry and wording; differences kept: no real backdrop blur, a trace of the page shows through at 4 percent, red text slightly more orange
 NOTE-089	auto	test:deleting_a_row_removes_the_meeting_after_confirming ; test:delete_keeps_row_while_files_remain_then_removes
 NOTE-090	auto	test:delete_cancel_writes_nothing
 NOTE-091	auto	test:files_left_behind_keep_the_row_and_offer_retry
 NOTE-092	auto	test:delete_refusals_read_like_swift
-NOTE-093	auto	test:delete_keeps_row_while_files_remain_then_removes
+NOTE-093	auto	test:stale_title_and_delete_reload_and_say_the_meeting_changed ; test:delete_keeps_row_while_files_remain_then_removes
 NOTE-094	auto	test:delete_refusals_read_like_swift
 NOTE-095	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 NOTE-096	auto	test:preview_waits_before_loading_and_is_empty_until_then
 NOTE-097	auto	test:preview_keeps_twenty_point_padding_around_header_and_notes ; test:preview_states
-NOTE-098	auto	test:preview_keeps_twenty_point_padding_around_header_and_notes
+NOTE-098	auto	test:preview_heads_the_notes_my_thoughts ; test:preview_keeps_twenty_point_padding_around_header_and_notes
 NOTE-099	auto	test:preview_states
 NOTE-100	auto	test:preview_states
 NOTE-101	auto	test:preview_states
@@ -109,8 +109,8 @@ MEET-001	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac
 MEET-002	live	test:opening_a_note_renames_it_and_navigates ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
 MEET-003	auto	test:opening_a_note_renames_it_and_navigates
 MEET-004	auto	test:a_failed_save_keeps_the_note_open_until_retry_works
-MEET-005	auto	test:previous_disabled_on_first_note_then_goes_back
-MEET-006	auto	test:opening_a_note_renames_it_and_navigates
+MEET-005	auto	test:detail_header_names_previous_and_next ; test:previous_disabled_on_first_note_then_goes_back
+MEET-006	auto	test:detail_header_names_previous_and_next ; test:opening_a_note_renames_it_and_navigates
 MEET-007	auto	test:opening_a_note_renames_it_and_navigates
 MEET-008	auto	test:previous_disabled_on_first_note_then_goes_back
 MEET-009	live	test:final_transcript_offers_retranscribe_and_tabs_switch ; test:overflow_title_follows_the_transcription_state ; live:audit/mac/notetaker/detail-menu-light-rust.png ; live:audit/mac/notetaker/detail-menu-light-ref.png
@@ -120,12 +120,12 @@ MEET-012	auto	test:final_transcript_offers_retranscribe_and_tabs_switch
 MEET-013	auto	test:overflow_title_follows_the_transcription_state
 MEET-014	service	service:worker: flowd-speech; desktop plan phase adds it, view surfaces Unavailable
 MEET-015	auto	test:transcript_request_refused_when_the_queue_is_full
-MEET-016	live	test:deleting_the_open_note_returns_to_the_library ; live:audit/mac/notetaker/delete-light-rust.png ; live:audit/mac/notetaker/delete-light-ref.png
+MEET-016	auto	test:delete_dialog_has_swifts_geometry_and_a_translucent_fill ; test:deleting_the_open_note_returns_to_the_library ; note:not counted live, same custom panel and same kept differences as NOTE-088. Compared with audit/mac/notetaker/delete-light-ref.png
 MEET-017	auto	test:deleting_the_open_note_returns_to_the_library ; test:delete_keeps_row_while_files_remain_then_removes
 MEET-018	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
 MEET-019	auto	test:opening_a_note_renames_it_and_navigates ; test:title_revision_rules
 MEET-020	auto	test:title_too_long_shows_the_limit ; test:title_revision_rules
-MEET-021	auto	test:title_revision_rules
+MEET-021	auto	test:stale_title_and_delete_reload_and_say_the_meeting_changed ; test:title_revision_rules
 MEET-022	auto	test:title_write_failure_reports
 MEET-023	live	test:detail_shows_provenance ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
 MEET-024	live	test:warnings_show_on_the_untitled_note ; live:audit/mac/notetaker/untitled-light-rust.png ; live:audit/mac/notetaker/untitled-light-ref.png
@@ -150,8 +150,8 @@ MEET-042	auto	test:detail_read_failures
 MEET-043	auto	test:detail_read_failures
 MEET-044	auto	test:files_left_behind_keep_the_row_and_offer_retry
 MEET-045	auto	test:delete_keeps_row_while_files_remain_then_removes
-MEET-046	live	test:waiting_detail_offers_this_mac ; live:audit/mac/notetaker/waiting-detail-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-MEET-047	auto	test:waiting_detail_offers_this_mac
+MEET-046	live	test:waiting_detail_offers_this_mac ; live:audit/mac/notetaker/waiting-detail-light-rust.png ; live:audit/mac/notetaker/waiting-detail-dark-rust.png ; rust-only:Swift fills the waiting sets in coordinator memory while a server job is pending, which the seeded reference has none of
+MEET-047	auto	test:run_on_this_mac_has_swifts_label ; test:waiting_detail_offers_this_mac
 MEET-048	service	service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
 MEET-049	live	test:detail_shows_provenance ; test:provenance_reads_stored_paths ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
 MEET-050	auto	test:provenance_names_the_place
@@ -160,7 +160,7 @@ MEET-052	auto	test:provenance_names_the_place
 MEET-053	auto	test:provenance_reads_stored_paths
 MEET-054	auto	test:provenance_reads_stored_paths
 MEET-055	live	test:thoughts_autosave_after_two_seconds ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
-MEET-056	auto	test:thoughts_placeholder_only_while_empty
+MEET-056	auto	test:detail_header_names_previous_and_next ; test:thoughts_placeholder_only_while_empty
 MEET-057	auto	test:thoughts_autosave_after_two_seconds
 MEET-058	auto	test:notes_editor_saves_and_retries_stale ; test:evidence_hash_matches_the_swift_stream_and_tracks_changes
 MEET-059	auto	test:paragraphs_and_reveal
@@ -170,9 +170,9 @@ MEET-062	auto	test:a_failed_save_keeps_the_note_open_until_retry_works
 MEET-063	auto	test:notes_editor_saves_and_retries_stale ; test:evidence_hash_matches_the_swift_stream_and_tracks_changes
 MEET-064	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
 MEET-065	live	test:detail_shows_provenance ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png
-MEET-066	live	test:live_transcript_lists_provisional_rows ; live:audit/mac/notetaker/live-paused-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-MEET-067	auto	test:paused_footer_offers_resume_which_reports_the_missing_worker
-MEET-068	live	test:live_transcript_lists_provisional_rows ; live:audit/mac/notetaker/live-paused-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+MEET-066	live	test:live_transcript_lists_provisional_rows ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+MEET-067	auto	test:paused_controls_read_resume ; test:paused_footer_offers_resume_which_reports_the_missing_worker
+MEET-068	live	test:live_transcript_lists_provisional_rows ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 MEET-069	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
 MEET-070	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
 MEET-071	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
@@ -180,7 +180,7 @@ MEET-072	live	test:opening_a_note_renames_it_and_navigates ; live:audit/mac/note
 MEET-073	auto	test:playback_needs_a_finished_meeting_with_a_track
 MEET-074	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
 MEET-075	service	service:mac-service: AVQueuePlayer time observer; desktop plan phase adds it, view surfaces Unavailable
-MEET-076	auto	test:playback_without_files_says_so_and_stop_clears_it
+MEET-076	auto	test:playback_stop_reads_stop ; test:playback_without_files_says_so_and_stop_clears_it
 MEET-077	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
 MEET-078	auto	test:playback_without_files_says_so_and_stop_clears_it
 MEET-079	service	service:mac-service: AVURLAsset; desktop plan phase adds it, view surfaces Unavailable
@@ -195,46 +195,46 @@ MEET-087	recorded	recorded:swift-note kept as Swift behaves; no separate behavio
 MEET-088	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 MEET-089	auto	test:finalizing_transcript_reloads_every_five_seconds
 MEET-090	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_the_summary
-MEET-091	auto	test:launch_reconciliation_ends_what_no_process_owns ; test:start_controls_wait_for_reconciliation_and_the_active_meeting
+MEET-091	auto	test:notice_counts_orphans_and_deferred_in_swifts_order ; test:orphan_folder_becomes_an_interrupted_meeting_and_a_notice ; test:launch_reconciliation_ends_what_no_process_owns ; test:start_controls_wait_for_reconciliation_and_the_active_meeting ; note:orphan folders and deferred counts are ported. Active rows keep an existence check, not the Swift frame validation and truncate, because truncating a .part file while Swift may be recording would destroy audio; add it at cutover
 MEET-092	auto	test:detail_read_orders_tracks_and_segments
 MEET-093	auto	test:launch_notices_go_to_the_pill
-LIVE-001	live	live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-002	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-003	auto	test:state_dot_is_ten_points_and_follows_the_state
-LIVE-004	auto	test:state_dot_is_ten_points_and_follows_the_state
-LIVE-005	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-001	live	live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-002	live	test:state_dot_is_ten_points_and_follows_the_state ; test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-003	auto	test:active_title_saves_on_enter_and_reports_failures ; test:state_dot_is_ten_points_and_follows_the_state
+LIVE-004	auto	test:active_title_saves_on_enter_and_reports_failures ; test:state_dot_is_ten_points_and_follows_the_state
+LIVE-005	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-006	auto	test:pause_reason_reads_sleep_or_user
-LIVE-007	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-008	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-007	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-008	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-009	auto	test:failed_card_says_it_could_not_start
-LIVE-010	live	test:notice_card_shows_storage_and_notice ; live:audit/mac/notetaker/notice-card-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-011	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-012	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-013	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-014	live	test:failed_card_says_it_could_not_start ; live:audit/mac/notetaker/failed-card-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-015	live	test:failed_card_says_it_could_not_start ; live:audit/mac/notetaker/failed-card-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-016	live	test:dropped_frames_warn_that_audio_was_lost ; live:audit/mac/notetaker/notice-card-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-017	live	test:refusal_shows_the_message_and_settings ; live:audit/mac/notetaker/refusal-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-010	live	test:notice_card_shows_storage_and_notice ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-011	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-012	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-013	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-014	live	test:failed_card_says_it_could_not_start ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-015	live	test:failed_card_says_it_could_not_start ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-016	live	test:dropped_frames_warn_that_audio_was_lost ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-017	live	test:refusal_shows_the_message_and_settings ; live:audit/mac/notetaker/refusal-light-rust.png ; live:audit/mac/notetaker/refusal-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-018	auto	test:refusal_shows_the_message_and_settings
 LIVE-019	service	service:mac-service: NSWorkspace; desktop plan phase adds it, view surfaces Unavailable
-LIVE-020	auto	test:active_card_states ; test:panel_shows_controls_title_and_notes
+LIVE-020	auto	test:paused_controls_read_resume ; test:active_card_states ; test:panel_shows_controls_title_and_notes
 LIVE-021	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
-LIVE-022	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-022	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-023	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
 LIVE-024	auto	test:panel_says_finalizing_or_starting
 LIVE-025	auto	test:panel_says_finalizing_or_starting
 LIVE-026	auto	test:new_note_surfaces_the_missing_recorder ; test:active_card_states
 LIVE-027	auto	test:new_note_surfaces_the_missing_recorder
-LIVE-028	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-028	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-029	auto	test:active_title_is_revision_checked_with_swifts_messages
 LIVE-030	auto	test:active_title_is_revision_checked_with_swifts_messages
 LIVE-031	auto	test:active_title_is_revision_checked_with_swifts_messages
-LIVE-032	auto	test:refusal_shows_the_message_and_settings
-LIVE-033	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-032	auto	test:refusal_row_carries_the_warning_triangle ; test:refusal_shows_the_message_and_settings
+LIVE-033	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-034	auto	test:panel_notes_state_follows_the_editor
 LIVE-035	auto	test:panel_notes_state_follows_the_editor
 LIVE-036	auto	test:panel_notes_state_follows_the_editor
-LIVE-037	live	test:panel_notes_state_follows_the_editor ; live:audit/mac/notetaker/panel-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-037	live	test:panel_notes_state_follows_the_editor ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-038	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 LIVE-039	service	service:mac-service: capture, TCC; desktop plan phase adds it, view surfaces Unavailable
 LIVE-040	auto	test:failure_reasons_read_like_swift
@@ -253,11 +253,11 @@ TRANS-007	auto	test:badges_read_like_swift
 TRANS-008	auto	test:badges_read_like_swift
 TRANS-009	auto	test:badges_read_like_swift
 TRANS-010	auto	test:badges_read_like_swift
-TRANS-011	auto	test:transcript_reads_labels_search_and_selection
+TRANS-011	auto	test:transcript_icon_buttons_name_their_symbol_and_label ; test:transcript_reads_labels_search_and_selection
 TRANS-012	live	test:transcript_reads_labels_search_and_selection ; live:audit/mac/notetaker/transcript-search-light-rust.png ; live:audit/mac/notetaker/transcript-search-light-ref.png
 TRANS-013	auto	test:search_keys_close_and_the_navigator_is_twenty_points
 TRANS-014	auto	test:transcript_reads_labels_search_and_selection ; test:pager_labels_search_and_copy
-TRANS-015	auto	test:search_keys_close_and_the_navigator_is_twenty_points
+TRANS-015	auto	test:transcript_icon_buttons_name_their_symbol_and_label ; test:search_keys_close_and_the_navigator_is_twenty_points
 TRANS-016	auto	test:view_source_jumps_to_transcript ; test:pager_labels_search_and_copy
 TRANS-017	auto	test:match_counts_and_empty_texts
 TRANS-018	auto	test:pager_labels_search_and_copy
@@ -270,14 +270,14 @@ TRANS-024	auto	test:match_counts_and_empty_texts
 TRANS-025	auto	test:match_counts_and_empty_texts
 TRANS-026	auto	test:transcript_read_failures
 TRANS-027	live	test:export_and_status_lines_surface_failures ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png
-TRANS-028	auto	test:copy_menu_selected_item
+TRANS-028	auto	test:copy_menu_reads_like_swift ; test:copy_menu_selected_item
 TRANS-029	auto	test:copy_menu_selected_item
 TRANS-030	service	test:copy_menu_selected_item ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
-TRANS-031	auto	test:copy_full_writes_or_says_why_not
+TRANS-031	auto	test:copy_menu_reads_like_swift ; test:copy_full_writes_or_says_why_not
 TRANS-032	auto	test:pager_labels_search_and_copy ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
 TRANS-033	auto	test:copy_too_long_points_to_export
 TRANS-034	auto	test:copy_full_writes_or_says_why_not
-TRANS-035	auto	test:export_and_status_lines_surface_failures
+TRANS-035	auto	test:copy_menu_reads_like_swift ; test:export_and_status_lines_surface_failures
 TRANS-036	auto	test:pager_labels_search_and_copy ; service:mac-service: NSSavePanel; desktop plan phase adds it, view surfaces Unavailable
 TRANS-037	auto	test:export_and_status_lines_surface_failures
 TRANS-038	auto	test:pager_labels_search_and_copy
@@ -294,13 +294,13 @@ TRANS-048	auto	test:pager_labels_search_and_copy
 TRANS-049	live	test:transcript_reads_labels_search_and_selection ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png
 TRANS-050	auto	test:source_labels_for_rows_without_speakers
 TRANS-051	auto	test:source_labels_for_rows_without_speakers
-TRANS-052	auto	test:transcript_reads_labels_search_and_selection ; test:bubble_context_menu_selects_and_plays
+TRANS-052	auto	test:segment_menu_reads_select_or_deselect_and_change_speaker ; test:transcript_reads_labels_search_and_selection ; test:bubble_context_menu_selects_and_plays
 TRANS-053	auto	test:bubble_context_menu_selects_and_plays
 TRANS-054	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
 TRANS-055	live	test:transcript_reads_labels_search_and_selection ; test:bubble_context_menu_selects_and_plays ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png
-TRANS-056	live	test:live_off_says_transcription_is_off ; live:audit/mac/notetaker/live-off-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-TRANS-057	live	test:live_empty_says_listening_or_off ; live:audit/mac/notetaker/live-listening-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-TRANS-058	live	test:live_transcript_lists_provisional_rows ; live:audit/mac/notetaker/live-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-056	live	test:live_off_says_transcription_is_off ; live:audit/mac/notetaker/live-off-light-rust.png ; live:audit/mac/notetaker/live-off-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-057	live	test:live_empty_says_listening_or_off ; live:audit/mac/notetaker/live-listening-light-rust.png ; live:audit/mac/notetaker/live-listening-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-058	live	test:live_transcript_lists_provisional_rows ; live:audit/mac/notetaker/live-light-rust.png ; live:audit/mac/notetaker/live-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 TRANS-059	auto	test:transcript_failures_read_like_swift
 TRANS-060	auto	test:transcript_failures_read_like_swift
 TRANS-061	auto	test:transcript_failures_read_like_swift
@@ -315,7 +315,7 @@ TRANS-069	auto	test:transcript_failures_read_like_swift
 TRANS-070	auto	test:transcript_failures_read_like_swift
 TRANS-071	auto	test:transcript_failures_read_like_swift
 TRANS-072	auto	test:waiting_detail_offers_this_mac ; service:flowd: `meeting_job` on `/v1/remote/channel`; desktop plan phase adds it, view surfaces Unavailable
-TRANS-073	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-073	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 TRANS-074	auto	test:section_status_reads_like_swift
 TRANS-075	auto	test:section_status_reads_like_swift
 TRANS-076	auto	test:section_status_reads_like_swift
@@ -327,12 +327,12 @@ TRANS-081	auto	test:section_degraded ; test:section_status_reads_like_swift
 TRANS-082	auto	test:section_status_reads_like_swift
 TRANS-083	auto	test:section_status_reads_like_swift
 TRANS-084	auto	test:section_status_reads_like_swift
-TRANS-085	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-085	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 TRANS-086	auto	test:section_list_follows_near_the_bottom_only
-TRANS-087	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-087	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 TRANS-088	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 TRANS-089	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SPK-001	auto	test:assign_opens_shows_sections_and_closes
+SPK-001	auto	test:transcript_icon_buttons_name_their_symbol_and_label ; test:assign_opens_shows_sections_and_closes
 SPK-002	auto	test:assign_control_needs_a_final_finished_meeting_with_labels
 SPK-003	auto	test:assign_opens_shows_sections_and_closes
 SPK-004	live	test:labels_updating ; live:audit/mac/notetaker/labeling-update-light-rust.png ; live:audit/mac/notetaker/labeling-update-light-ref.png
@@ -364,14 +364,14 @@ SPK-029	auto	test:identification_failures_read_like_swift
 SPK-030	auto	test:identification_failures_read_like_swift
 SPK-031	auto	test:identification_failures_read_like_swift
 SPK-032	auto	test:identification_failures_read_like_swift
-SPK-033	live	test:past_search_prompt ; live:audit/mac/notetaker/past-prompt-light-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+SPK-033	live	test:past_search_prompt ; live:audit/mac/notetaker/past-prompt-light-rust.png ; live:audit/mac/notetaker/past-prompt-dark-rust.png ; rust-only:Swift raises this prompt only from the callback after a voice enrollment stores, which takes a voice sample and the worker
 SPK-034	auto	test:look_queues_meetings_with_unknown_remote_speakers
 SPK-035	auto	test:past_prompt_not_now_hides
 SPK-036	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
 SPK-037	live	test:confirming_a_suggested_speaker ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
 SPK-038	auto	test:confirming_a_suggested_speaker
 SPK-039	auto	test:confirming_a_suggested_speaker
-SPK-040	auto	test:change_speaker_submenu_writes_the_correction
+SPK-040	auto	test:segment_menu_reads_select_or_deselect_and_change_speaker ; test:change_speaker_submenu_writes_the_correction
 SPK-041	auto	test:corrections_and_merges_persist
 SPK-042	auto	test:corrections_and_merges_persist ; test:change_speaker_submenu_writes_the_correction
 SPK-043	auto	test:corrections_and_merges_persist
@@ -396,12 +396,12 @@ SPK-061	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/noteta
 SPK-062	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
 SPK-063	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png
 SPK-064	auto	test:enter_in_a_name_field_saves
-SPK-065	auto	test:suggestions_sit_six_points_inside_their_outline ; test:suggestions_filter_by_prefix_and_pick
+SPK-065	auto	test:assign_sheet_labels_suggestions_and_cancel ; test:suggestions_sit_six_points_inside_their_outline ; test:suggestions_filter_by_prefix_and_pick
 SPK-066	auto	test:suggestions_filter_by_prefix_and_pick
 SPK-067	recorded	test:suggestions_filter_by_prefix_and_pick ; recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SPK-068	auto	test:long_name_blocks_saving
 SPK-069	auto	test:assign_model_saves_names_and_identities
-SPK-070	auto	test:assign_model_saves_names_and_identities
+SPK-070	auto	test:a_name_another_speaker_has_offers_to_merge ; test:assign_model_saves_names_and_identities
 SPK-071	auto	test:corrections_and_merges_persist
 SPK-072	auto	test:correction_and_merge_failures_surface
 SPK-073	auto	test:correction_and_merge_failures_surface
@@ -424,7 +424,7 @@ SPK-089	auto	test:enroll_outcomes_read_like_swift
 SPK-090	auto	test:enrolling_with_identification_off_says_so
 SPK-091	auto	test:enroll_outcomes_read_like_swift
 SPK-092	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png
-SPK-093	auto	test:assign_escape_style_cancel_writes_nothing
+SPK-093	auto	test:assign_sheet_labels_suggestions_and_cancel ; test:assign_escape_style_cancel_writes_nothing
 SPK-094	auto	test:assign_escape_style_cancel_writes_nothing
 SPK-095	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
 SPK-096	auto	test:long_name_blocks_saving
@@ -437,17 +437,17 @@ SPK-102	auto	test:sheet_save_failures_keep_it_open
 SPK-103	auto	test:sheet_save_failures_keep_it_open
 SPK-104	auto	test:sheet_save_failures_keep_it_open
 SPK-105	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SPK-106	auto	test:a_rerun_inherits_names_merges_and_corrections
+SPK-106	service	test:a_rerun_inherits_names_merges_and_corrections ; service:worker: diarization run adoption (SpeakerStore.swift:350); carry_over is tested through a_rerun_inherits_names_merges_and_corrections but no production caller until the worker exists
 SPK-107	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png
 SUM-001	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
 SUM-002	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
 SUM-003	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
 SUM-004	auto	test:reading_time_rounds_up_with_a_minimum_of_one
-SUM-005	auto	test:summary_not_finished ; test:summary_overlays_and_report
+SUM-005	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:summary_not_finished ; test:summary_overlays_and_report
 SUM-006	auto	test:summary_not_finished ; test:summary_overlays_and_report
 SUM-007	auto	test:summary_off ; test:summary_overlays_and_report
 SUM-008	auto	test:generate_reports_the_missing_worker
-SUM-009	auto	test:generate_reports_the_missing_worker
+SUM-009	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:generate_reports_the_missing_worker
 SUM-010	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
 SUM-011	auto	test:summary_queued
 SUM-012	live	test:summary_running ; live:audit/mac/notetaker/summary-running-light-rust.png ; live:audit/mac/notetaker/summary-running-light-ref.png
@@ -472,19 +472,19 @@ SUM-030	auto	test:summary_failures_read_like_swift
 SUM-031	auto	test:cancelled_run_with_an_accepted_summary_reads_succeeded
 SUM-032	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
 SUM-033	auto	test:summary_overlays_and_report ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
-SUM-034	auto	test:dates_format_like_swift
+SUM-034	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:dates_format_like_swift
 SUM-035	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
-SUM-036	auto	test:summary_reads_stored_analysis_and_marks_an_item_done
+SUM-036	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:summary_reads_stored_analysis_and_marks_an_item_done
 SUM-037	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
 SUM-038	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SUM-039	live	test:summary_states ; live:audit/mac/notetaker/summary-stale-light-rust.png ; live:audit/mac/notetaker/summary-stale-light-ref.png
 SUM-040	auto	test:edit_failure_shows_under_the_header
 SUM-041	live	test:summary_shows_sections_chips_and_attribution ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
-SUM-042	auto	test:summary_text_edits_through_its_context_menu
-SUM-043	auto	test:summary_editor_is_ninety_points_high ; test:summary_text_edits_through_its_context_menu
+SUM-042	auto	test:summary_text_menu_and_editor_read_like_swift ; test:summary_text_edits_through_its_context_menu
+SUM-043	auto	test:summary_text_menu_and_editor_read_like_swift ; test:summary_editor_is_ninety_points_high ; test:summary_text_edits_through_its_context_menu
 SUM-044	auto	test:summary_overlays_and_report ; test:summary_text_edits_through_its_context_menu
 SUM-045	auto	test:summary_text_edits_through_its_context_menu
-SUM-046	auto	test:removing_one_overlay_restores_the_generated_value
+SUM-046	auto	test:summary_text_menu_and_editor_read_like_swift ; test:removing_one_overlay_restores_the_generated_value
 SUM-047	live	test:summary_shows_sections_chips_and_attribution ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
 SUM-048	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SUM-049	live	test:summary_shows_sections_chips_and_attribution ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
@@ -495,21 +495,21 @@ SUM-053	auto	test:summary_shows_sections_chips_and_attribution
 SUM-054	auto	test:summary_overlays_and_report
 SUM-055	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SUM-056	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SUM-057	auto	test:item_double_click_edits_and_escape_cancels
+SUM-057	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels
 SUM-058	auto	test:summary_shows_sections_chips_and_attribution
-SUM-059	auto	test:item_menu_is_twenty_points_square
-SUM-060	auto	test:item_double_click_edits_and_escape_cancels
+SUM-059	auto	test:item_menus_and_popovers_read_like_swift ; test:item_menu_is_twenty_points_square
+SUM-060	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels
 SUM-061	auto	test:view_source_jumps_to_transcript
 SUM-062	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
 SUM-063	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
 SUM-064	live	live:audit/mac/notetaker/summary-done-light-rust.png ; live:audit/mac/notetaker/summary-done-light-ref.png
-SUM-065	auto	test:owner_submenu_picks_someone_else_or_no_owner
+SUM-065	auto	test:item_menus_and_popovers_read_like_swift ; test:owner_submenu_picks_someone_else_or_no_owner
 SUM-066	auto	test:owner_submenu_picks_someone_else_or_no_owner
-SUM-067	auto	test:owner_submenu_picks_someone_else_or_no_owner
-SUM-068	auto	test:due_date_picks_from_the_calendar_and_clears
-SUM-069	auto	test:due_popover_is_two_hundred_twenty_wide ; test:due_date_picks_from_the_calendar_and_clears
+SUM-067	auto	test:item_menus_and_popovers_read_like_swift ; test:owner_submenu_picks_someone_else_or_no_owner
+SUM-068	auto	test:item_menus_and_popovers_read_like_swift ; test:due_date_picks_from_the_calendar_and_clears
+SUM-069	auto	test:item_menus_and_popovers_read_like_swift ; test:due_popover_is_two_hundred_twenty_wide ; test:due_date_picks_from_the_calendar_and_clears
 SUM-070	auto	test:due_date_picks_from_the_calendar_and_clears
-SUM-071	auto	test:dismiss_then_reopen
+SUM-071	auto	test:item_menus_and_popovers_read_like_swift ; test:dismiss_then_reopen
 SUM-072	auto	test:dismiss_then_reopen
 SUM-073	live	test:summary_shows_sections_chips_and_attribution ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
 SUM-074	live	test:summary_shows_sections_chips_and_attribution ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
@@ -519,7 +519,7 @@ SUM-077	live	test:unresolved_owner_gets_the_outlined_chip ; test:summary_overlay
 SUM-078	auto	test:summary_shows_sections_chips_and_attribution ; test:dates_format_like_swift
 SUM-079	auto	test:summary_shows_sections_chips_and_attribution
 SUM-080	auto	test:due_date_picks_from_the_calendar_and_clears
-SUM-081	auto	test:previous_edits_list_and_delete
+SUM-081	auto	test:previous_edits_rows_read_delete ; test:previous_edits_list_and_delete
 SUM-082	auto	test:removing_one_overlay_restores_the_generated_value
 SUM-083	auto	test:speaker_mentions_open_assign_speakers
 SUM-084	auto	test:mentions_prefer_full_names_and_endings

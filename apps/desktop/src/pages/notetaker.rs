@@ -62,6 +62,8 @@ pub struct NotetakerPage {
     pub(crate) play_total: i64,
     pub(crate) polling: bool,
     pub(crate) preview_epoch: u64,
+    pub(crate) row_focus: std::collections::HashMap<String, FocusHandle>,
+    pub(crate) focused_row: Option<String>,
     // Open note.
     pub(crate) tab: Tab,
     pub(crate) title: Entity<InputState>,
@@ -125,10 +127,10 @@ pub(crate) fn speaker_text(i: usize, cx: &App) -> Hsla {
     let (l, d) = SPEAKER_TEXT[i % 8];
     sys(cx, l, d)
 }
-/// A sheet dims the whole window. The page sits 220 + 45 in from its top left and 9 from the rest.
-// ponytail: fixed to the shell's page inset; a window-level overlay if the shell ever gets one.
-pub(crate) fn window_backdrop(id: &'static str) -> Stateful<Div> {
-    div().id(id).absolute().top(px(-45.)).left(px(-217.)).right(px(-9.)).bottom(px(-9.)).rounded(px(12.))
+/// The alert's material, sampled over the wash: 218 in light and 42 in dark.
+pub(crate) fn dialog_fill(cx: &App) -> Hsla {
+    let level = if pal(cx).mode.is_dark() { 42.9 } else { 218.7 };
+    hsla(0., 0., level / 255., 0.96)
 }
 pub(crate) fn sid(text: impl Into<String>) -> SharedString {
     SharedString::from(text.into())
@@ -147,6 +149,21 @@ pub(crate) fn symbol_button(id: impl Into<ElementId>, label: &'static str, symbo
 /// The trigger of a native `Menu`: a borderless symbol in a square.
 pub(crate) fn menu_trigger(id: impl Into<ElementId>, label: &'static str, symbol: &'static str, size: f32, frame: f32, color: Hsla) -> Button {
     Button::new(id).ghost().p_0().h(px(frame)).w(px(frame)).accessibility_label(label).child(div().size(px(frame)).flex().items_center().justify_center().child(icon(symbol, size, color)))
+}
+#[cfg(test)]
+thread_local! {
+    /// Every menu title built on this thread: GPUI Kit draws them out of the probe's reach.
+    pub(crate) static MENU_TITLES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(vec![]) };
+}
+/// A menu's own words, seen by tests. `menu_entry` and `submenu` titles route through here.
+pub(crate) fn menu_title(title: impl Into<SharedString>) -> SharedString {
+    let title = title.into();
+    #[cfg(test)]
+    MENU_TITLES.with(|m| m.borrow_mut().push(title.to_string()));
+    title
+}
+pub(crate) fn menu_entry(title: impl Into<SharedString>) -> PopupMenuItem {
+    PopupMenuItem::new(menu_title(title))
 }
 /// A menu item's click, delivered to the page.
 pub(crate) fn act(page: &WeakEntity<NotetakerPage>, f: impl Fn(&mut NotetakerPage, &mut Window, &mut Context<NotetakerPage>) + 'static) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -281,6 +298,8 @@ impl NotetakerPage {
             play_total: 0,
             polling: false,
             preview_epoch: 0,
+            row_focus: Default::default(),
+            focused_row: None,
             tab: Tab::Thoughts,
             title,
             thoughts,
@@ -493,13 +512,16 @@ impl Render for NotetakerPage {
             .text_size(px(13.))
             .child(body)
             .when(self.assign.is_some(), |d| d.child(self.assign_sheet(window, cx)))
-            .when(self.confirm.is_some(), |d| d.child(self.confirm_dialog(cx)))
+            .when(self.confirm.is_some(), |d| d.child(self.confirm_dialog(window, cx)))
     }
 }
 
 impl NotetakerPage {
-    fn confirm_dialog(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = pal(cx);
+    /// `.confirmationDialog`. GPUI's `Window::prompt` is a real NSAlert, but it can't set
+    /// `hasDestructiveAction` or an element id, and its icon and layout aren't this dialog's;
+    /// nor can GPUI blur behind one element. So: Swift's geometry and system font on a fill that
+    /// comes out at the sampled material colour and lets a trace of the page through.
+    fn confirm_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let offset_title = self.lib.detail.as_ref().map(|d| d.meeting.display_title(offset_at(d.meeting.created_at, cx)));
         let (title, message, action): (String, &str, &str) = match self.confirm {
             Some(Confirm::DeleteRow(..)) => ("Delete this note?".into(), "This removes the recording, transcript and thoughts from this Mac.", "Delete note"),
@@ -507,24 +529,28 @@ impl NotetakerPage {
             _ => ("Remove all edits?".into(), "Your changes to the summary, owners, due dates and items are deleted, and the generated text comes back. This can't be undone.", "Remove All Edits"),
         };
         let action_id: SharedString = if matches!(self.confirm, Some(Confirm::RemoveEdits)) { "meeting.summary.removeEdits.confirm".into() } else { "notetaker.delete.confirm".into() };
-        deferred(
-            window_backdrop("notetaker.confirm").flex().items_center().justify_center().bg(gpui::black().opacity(0.2)).occlude().child(
+        let panel = v_flex()
+            .id("notetaker.confirm.panel")
+            .test_support()
+            .w(px(260.))
+            .p(px(16.))
+            .bg(dialog_fill(cx))
+            .rounded(px(24.))
+            .shadow_lg()
+            .font_family(".SystemUIFont")
+            .child(v_flex().px(px(6.)).pt(px(4.)).gap(px(10.)).child(t(title).font(13., 700.)).child(t(message).size(13.)))
+            .child(
                 v_flex()
-                    .w(px(260.))
-                    .p(px(20.))
-                    .gap(px(10.))
-                    .bg(p.surface)
-                    .rounded(px(24.))
-                    .shadow_lg()
-                    .child(t(title).font(13., 700.))
-                    .child(t(message).size(13.))
-                    .child(v_flex().w_full().gap(px(6.)).pt(px(6.)).child(plain_button(action_id, action).full_width().content(div().w_full().h(px(28.)).flex().items_center().justify_center().rounded_full().bg(red(cx).opacity(0.2)).child(t(action).size(13.).color(red(cx)).a11y_hidden())).on_click(cx.listener(|this, _, w, cx| this.confirmed(w, cx)))).child(plain_button("notetaker.delete.cancel", "Cancel").full_width().content(div().w_full().h(px(28.)).flex().items_center().justify_center().rounded_full().bg(p.button).child(t("Cancel").size(13.).a11y_hidden())).on_click(cx.listener(|this, _, _, cx| {
+                    .w_full()
+                    .gap(px(6.))
+                    .pt(px(17.))
+                    .child(destructive_prompt_button(action_id, action).full_width().on_click(cx.listener(|this, _, w, cx| this.confirmed(w, cx))))
+                    .child(prompt_button("notetaker.delete.cancel", "Cancel").full_width().on_click(cx.listener(|this, _, _, cx| {
                         this.confirm = None;
                         cx.notify();
-                    })))),
-            ),
-        )
-        .with_priority(3)
+                    }))),
+            );
+        sheet_overlay("notetaker.confirm", window, cx, panel).with_priority(3)
     }
     fn confirmed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.confirm.take() {

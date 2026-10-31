@@ -3713,6 +3713,25 @@ mod tests {
         assert_eq!(l.rows[0].id, SEED_FAILED);
     }
 
+    // parity: MEET-021 NOTE-093
+    #[test]
+    fn stale_title_and_delete_reload_and_say_the_meeting_changed() {
+        let db = db();
+        let root = std::env::temp_dir().join(format!("lf-stale-{}", new_id()));
+        let mut lib = Library::default();
+        lib.open(&db, SEED_FULL);
+        set_title(&db, SEED_FULL, "Moved on", 0, 5).unwrap();
+        lib.set_title(&db, SEED_FULL, "Mine", 0, None);
+        assert_eq!(lib.detail_notice.as_deref(), Some("The meeting changed. Try again."));
+        assert_eq!(lib.detail.as_ref().unwrap().meeting.title.as_deref(), Some("Moved on"), "the detail was read again");
+        set_title(&db, SEED_FULL, "Moved again", 1, 6).unwrap();
+        lib.detail_notice = None;
+        lib.delete(&db, &root, SEED_FULL, 1, None);
+        assert_eq!(lib.detail_notice.as_deref(), Some("The meeting changed. Try again."));
+        assert_eq!(lib.detail.as_ref().unwrap().meeting.title.as_deref(), Some("Moved again"), "the detail was read again");
+        assert!(meeting(&db, SEED_FULL).unwrap().is_some());
+    }
+
     // parity: MEET-019 MEET-020 MEET-021
     #[test]
     fn title_revision_rules() {
