@@ -1011,7 +1011,7 @@ pub fn sync_window(cx: &mut App) {
         let reduce = cx.global::<Flow>().reduce_motion;
         if show && !reduce {
             // The same panel moves to its new frame over 0.32 s; `PillView` swaps the content.
-            let visible = cx.primary_display().map(|d| d.visible_bounds()).unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) });
+            let visible = panel_screen(cx);
             let x = f32::from(panel_origin(visible, width, content == Content::Dictation).x);
             let moved = handle.update(cx, |_, w, cx| cx.global::<Core>().services.animate_panel_frame(w, x, width, RESIZE, RESIZE_CURVE).is_ok());
             if matches!(moved, Ok(true)) {
@@ -1038,15 +1038,32 @@ pub fn sync_window(cx: &mut App) {
     if !show {
         return;
     }
-    let visible = cx.primary_display().map(|d| d.visible_bounds()).unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) });
+    let visible = panel_screen(cx);
     let origin = panel_origin(visible, width, content == Content::Dictation);
     let bounds = Bounds { origin, size: size(px(width), px(HEIGHT + RISE)) };
     if let Ok((handle, view)) = flow_ui::open_bare_window(panel_options(bounds), cx, |_, cx| cx.new(PillView::new)) {
+        let _ = handle.update(cx, |_, w, cx| cx.global::<Core>().services.pin_panel(w));
         cx.set_global(PillWindow { handle, view, key });
     }
 }
 
 /// Borderless and nonactivating: `PopUp` is GPUI's NSPanel, which also joins all Spaces and full-screen ones.
+/// The visible frame of the screen under `point`, Swift's `NSMouseInRect` over `NSScreen.screens`.
+fn screen_under(point: Option<Point<Pixels>>, screens: &[(Bounds<Pixels>, Bounds<Pixels>)]) -> Option<Bounds<Pixels>> {
+    let point = point?;
+    screens.iter().find(|(frame, _)| frame.contains(&point)).map(|(_, visible)| *visible)
+}
+
+/// Where the panels show: the mouse's screen, then the primary one.
+/// ponytail: Swift tries the target AX window's screen first; the capture feature has no window frame yet.
+pub(crate) fn panel_screen(cx: &App) -> Bounds<Pixels> {
+    let pointer = cx.global::<Core>().services.pointer_location().map(|(x, y)| point(px(x), px(y)));
+    let screens: Vec<_> = cx.displays().iter().map(|d| (d.bounds(), d.visible_bounds())).collect();
+    screen_under(pointer, &screens)
+        .or_else(|| cx.primary_display().map(|d| d.visible_bounds()))
+        .unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) })
+}
+
 fn panel_options(bounds: Bounds<Pixels>) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -1134,7 +1151,45 @@ mod tests {
         cx.update(|cx| f(&cx.global::<Session>().pill))
     }
 
-    // parity: PILL-001 PILL-002 PILL-003 PILL-004 PILL-113
+    // parity: PILL-011 PILL-012
+    #[flow_ui::gpui::test]
+    async fn opening_the_pill_pins_its_panel(cx: &mut TestAppContext) {
+        boot(cx, Mode::Dark);
+        let pinned: Rc<std::cell::Cell<usize>> = Default::default();
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.global_mut::<Flow>().reduce_motion = true;
+            cx.global_mut::<Core>().services = Box::new(Fake { pinned_panels: pinned.clone(), ..Default::default() });
+            show_microphone("No microphone available", cx);
+            sync_window(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(pinned.get(), 1);
+        assert!(cx.update(|cx| cx.has_global::<PillWindow>()));
+    }
+
+    // parity: PILL-015
+    #[flow_ui::gpui::test]
+    async fn panels_show_on_the_mouses_screen(cx: &mut TestAppContext) {
+        let rect = |x: f32, y: f32, w: f32, h: f32| Bounds { origin: point(px(x), px(y)), size: size(px(w), px(h)) };
+        let (left, right) = (rect(0., 0., 1440., 900.), rect(1440., -100., 2560., 1440.));
+        let (left_visible, right_visible) = (rect(0., 25., 1440., 800.), rect(1440., -75., 2560., 1400.));
+        let screens = [(left, left_visible), (right, right_visible)];
+        assert_eq!(screen_under(Some(point(px(100.), px(100.))), &screens), Some(left_visible));
+        assert_eq!(screen_under(Some(point(px(2000.), px(-50.))), &screens), Some(right_visible));
+        assert_eq!(screen_under(Some(point(px(-5.), px(-5.))), &screens), None);
+        assert_eq!(screen_under(None, &screens), None);
+        // Off every screen, through the production path: the primary display.
+        boot(cx, Mode::Dark);
+        cx.update(|cx| {
+            let fake = Fake::default();
+            fake.pointer.set(Some((-5000., -5000.)));
+            cx.global_mut::<Core>().services = Box::new(fake);
+            assert_eq!(panel_screen(cx), cx.primary_display().unwrap().visible_bounds());
+        });
+    }
+
+    // parity: PILL-001 PILL-002 PILL-003 PILL-004
     #[test]
     fn pill_colors_ignore_appearance() {
         assert_eq!(style::fill(), Hsla::from(rgb(0x242522)));
@@ -1542,11 +1597,19 @@ mod tests {
             frame(cx, w);
             cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.cancel").label().as_deref(), Some(cancel_label(s)))).unwrap();
         }
-        for (s, label) in [(DictState::Preparing, "Preparing, microphone off"), (DictState::Connecting, "Connecting to the microphone"), (DictState::Recording, "Recording"), (DictState::Transcribing, "Processing, microphone off"), (DictState::Persisting, "Processing, microphone off"), (DictState::Inserting, "Processing, microphone off"), (DictState::Cancelling, "Processing, microphone off"), (DictState::Rewriting, "Rewriting text, microphone off")] {
+        let spoken = |cx: &mut TestAppContext, s: DictState| {
             cx.update(|cx| set_state(s, 0.1, cx));
             frame(cx, w);
-            cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.dictation").label().as_deref(), Some(label), "{s:?}")).unwrap();
-        }
+            cx.update_window(w.into(), |_, win, _| win.find("pill.dictation").label().map(str::to_string)).unwrap().unwrap()
+        };
+        assert_eq!(spoken(cx, DictState::Preparing), "Preparing, microphone off");
+        assert_eq!(spoken(cx, DictState::Connecting), "Connecting to the microphone");
+        assert_eq!(spoken(cx, DictState::Recording), "Recording");
+        assert_eq!(spoken(cx, DictState::Transcribing), "Processing, microphone off");
+        assert_eq!(spoken(cx, DictState::Persisting), "Processing, microphone off");
+        assert_eq!(spoken(cx, DictState::Inserting), "Processing, microphone off");
+        assert_eq!(spoken(cx, DictState::Cancelling), "Processing, microphone off");
+        assert_eq!(spoken(cx, DictState::Rewriting), "Rewriting text, microphone off");
         assert_eq!(cancel_label(DictState::Rewriting), "Cancel rewrite");
         cx.update(|cx| {
             update_session(cx, |s| s.dictation.as_mut().unwrap().busy = true);

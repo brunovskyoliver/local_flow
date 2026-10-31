@@ -16,7 +16,7 @@ SHELL-015	auto	test:activation_rereads_reduce_motion
 SHELL-016	auto	test:app_menu_has_swifts_groups
 SHELL-017	service	service:Services::check_for_updates returns Unavailable until the updater phase
 SHELL-018	auto	test:app_menu_has_swifts_groups
-SHELL-019	auto	test:shortcuts_and_standard_menus ; test:command_comma_opens_settings
+SHELL-019	auto	test:shortcuts_and_standard_menus
 SHELL-020	auto	test:command_comma_opens_settings
 SHELL-021	auto	test:shortcuts_and_standard_menus
 SHELL-022	auto	test:quit_refuses_in_swifts_order
@@ -182,11 +182,11 @@ PILL-007	auto	test:dictation_lays_out_swifts_sizes
 PILL-008	auto	test:dictation_lays_out_swifts_sizes
 PILL-009	auto	test:dictation_lays_out_swifts_sizes
 PILL-010	recorded	recorded:GPUI redraws per display frame through request_animation_frame; no interval value exists to assert
-PILL-011	auto	test:panel_is_a_borderless_nonactivating_popup ; note:WindowKind::PopUp in gpui_macos window.rs gives the nonactivating panel, all Spaces and full-screen auxiliary, read in source. Difference: level is NSPopUpWindowLevel 101, not floating 3, and animation behaviour is utility, not none; GPUI sets both
-PILL-012	auto	test:panel_is_a_borderless_nonactivating_popup ; note:difference: focus false is asserted, but GPUI's panel class returns YES from canBecomeKeyWindow where Swift returns false, so a click on the pill can make it key. Read in gpui_macos source, not observed against a target app. A fix belongs in flow-platform
+PILL-011	auto	test:panel_is_a_borderless_nonactivating_popup ; test:opening_the_pill_pins_its_panel ; note:pin_panel swaps GPUI's panel class for a subclass answering NO to canBecomeKey and canBecomeMain and sets level 3. The class answers are unit-tested in flow-platform; not observed on a running panel, because a real pill would show on the owner's screen
+PILL-012	auto	test:panel_is_a_borderless_nonactivating_popup ; test:opening_the_pill_pins_its_panel ; note:pin_panel swaps GPUI's panel class for a subclass answering NO to canBecomeKey and canBecomeMain and sets level 3. The class answers are unit-tested in flow-platform; not observed on a running panel, because a real pill would show on the owner's screen
 PILL-013	auto	test:panel_position
 PILL-014	auto	test:panel_position
-PILL-015	service	service:choosing the target screen needs AX in the capture phase; primary display used
+PILL-015	auto	test:panels_show_on_the_mouses_screen ; note:partial: mouse screen then primary; Swift's first choice, the target AX window's screen, waits for the capture service
 PILL-016	auto	test:panel_width_is_a_whole_point_ceiling ; note:found and fixed: wide symbols overflowed the window by 5 points
 PILL-017	auto	test:show_rises_and_hide_drops_in_the_frame ; note:window alpha and position are drawn inside the panel, since GPUI cannot move or fade a window; the panel is 10 taller for it
 PILL-018	auto	test:hide_fades_then_closes ; test:show_rises_and_hide_drops_in_the_frame
@@ -284,7 +284,7 @@ PILL-109	recorded	recorded:not working yet. The words are held in pill REWRITE_N
 PILL-110	auto	test:launch_recovery_notices_reach_the_pill
 PILL-111	recorded	recorded:debug-only Swift strings, out of scope
 PILL-112	auto	test:background_capsule_and_hide_button ; test:background_notice ; note:difference: pulse is a drawn opacity approximation, no replace effect on the symbol and no numeric text transition. No reference pair
-PILL-113	auto	test:background_capsule_and_hide_button ; test:pill_colors_ignore_appearance ; note:difference: VoiceOver focus does not reveal the hide button
+PILL-113	auto	test:background_capsule_and_hide_button ; note:difference: VoiceOver focus does not reveal the hide button
 PILL-114	auto	test:background_capsule_and_hide_button ; note:tooltip set in code, the test API cannot read a tooltip; symbol weight does not apply to the SVG. No reference pair
 PILL-115	auto	test:background_notice
 PILL-116	auto	test:background_notice
@@ -309,9 +309,9 @@ SHELL-153	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-154	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-155	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-156	auto	test:sheet_dismissed_another_way_cancels
-SHELL-157	auto	test:panel_sits_near_the_bottom_center ; note:difference: GPUI's popup kind sits at level 101, not floating (3), and accepts key status; no reference pair, ax press on the reference row found no Insert control
+SHELL-157	auto	test:panel_sits_near_the_bottom_center ; test:the_panel_is_pinned_on_the_mouses_screen ; note:pin_panel swaps GPUI's panel class for a subclass answering NO to canBecomeKey and canBecomeMain and sets level 3. The class answers are unit-tested in flow-platform; not observed on a running panel, because a real pill would show on the owner's screen. No reference pair: ax press on the reference row found no Insert control
 SHELL-158	auto	test:panel_layout_matches_swift
-SHELL-159	auto	test:panel_sits_near_the_bottom_center ; note:difference: Rust always uses the primary display's visible frame; Swift picks the target window's or the mouse's screen. Appearance follows the app palette
+SHELL-159	auto	test:panel_sits_near_the_bottom_center ; test:the_panel_is_pinned_on_the_mouses_screen ; note:partial: mouse screen then primary; the target window's screen waits for the capture service, which has no window frame yet. Appearance follows the app palette
 SHELL-160	auto	test:panel_runs_select_confirm_insert
 SHELL-161	auto	test:panel_runs_select_confirm_insert
 SHELL-162	auto	test:panel_runs_select_confirm_insert

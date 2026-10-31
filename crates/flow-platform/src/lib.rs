@@ -228,6 +228,14 @@ pub trait Services: 'static {
     fn set_window_identifier(&self, _window: &dyn HasWindowHandle, _identifier: &str) -> Result<(), Unavailable> {
         Err(Unavailable("window identifiers"))
     }
+    /// A panel that floats and never becomes key or main, Swift's `level = .floating` and `canBecomeKey` false.
+    fn pin_panel(&self, _window: &dyn HasWindowHandle) -> Result<(), Unavailable> {
+        Err(Unavailable("panel window traits"))
+    }
+    /// `NSEvent.mouseLocation` in global coordinates from the primary display's top left, as GPUI's displays are.
+    fn pointer_location(&self) -> Option<(f32, f32)> {
+        None
+    }
     /// `lifecycle.shutdownIfIdle`: false refuses the quit.
     fn shutdown_models_if_idle(&self) -> bool {
         true
@@ -300,6 +308,9 @@ pub struct Fake {
     pub device: &'static str,
     /// Records `animate_panel_frame` as (width, duration, curve). None stays `Unavailable`.
     pub panel_frames: Option<std::rc::Rc<std::cell::RefCell<Vec<(f32, f32, [f32; 4])>>>>,
+    /// Counts `pin_panel` calls.
+    pub pinned_panels: std::rc::Rc<std::cell::Cell<usize>>,
+    pub pointer: std::cell::Cell<Option<(f32, f32)>>,
     pub permissions: std::cell::RefCell<Vec<(Permission, PermissionState)>>,
     pub login: std::cell::Cell<bool>,
     pub dir: PathBuf,
@@ -319,7 +330,7 @@ pub struct Fake {
 
 impl Default for Fake {
     fn default() -> Self {
-        Fake { device: "Mac", panel_frames: None, permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
+        Fake { device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
     }
 }
 
@@ -329,6 +340,13 @@ impl Services for Fake {
     }
     fn speech_model_verified(&self) -> bool {
         self.model_verified.get()
+    }
+    fn pin_panel(&self, _: &dyn HasWindowHandle) -> Result<(), Unavailable> {
+        self.pinned_panels.set(self.pinned_panels.get() + 1);
+        Ok(())
+    }
+    fn pointer_location(&self) -> Option<(f32, f32)> {
+        self.pointer.get()
     }
     fn set_window_identifier(&self, _: &dyn HasWindowHandle, identifier: &str) -> Result<(), Unavailable> {
         self.identifiers.borrow_mut().push(identifier.into());

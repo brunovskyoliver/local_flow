@@ -45,6 +45,69 @@ unsafe extern "C" {
     fn objc_msgSend_stret();
     fn objc_getClass(name: *const std::ffi::c_char) -> Id;
     fn sel_registerName(name: *const std::ffi::c_char) -> Id;
+    fn objc_allocateClassPair(superclass: Id, name: *const std::ffi::c_char, extra: usize) -> Id;
+    fn objc_registerClassPair(class: Id);
+    fn class_addMethod(class: Id, selector: Id, imp: extern "C" fn(Id, Id) -> bool, types: *const std::ffi::c_char) -> bool;
+    fn object_getClass(object: Id) -> Id;
+    fn object_setClass(object: Id, class: Id) -> Id;
+}
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGEventCreate(source: Id) -> Id;
+    fn CGEventGetLocation(event: Id) -> CgPoint;
+}
+#[repr(C)]
+struct CgPoint {
+    x: f64,
+    y: f64,
+}
+
+extern "C" fn answers_no(_: Id, _: Id) -> bool {
+    false
+}
+
+/// The subclass of GPUI's panel class that refuses key and main, which GPUI's own class accepts.
+/// The name is registered once, so every panel shares it.
+unsafe fn non_key_class(panel: Id) -> Id {
+    let name = c"LocalFlowPanel";
+    // SAFETY: called on the main thread with a live class; both selectors take no arguments and return BOOL.
+    unsafe {
+        let existing = objc_getClass(name.as_ptr());
+        if !existing.is_null() {
+            return existing;
+        }
+        let class = objc_allocateClassPair(panel, name.as_ptr(), 0);
+        if class.is_null() {
+            return class;
+        }
+        class_addMethod(class, sel_registerName(c"canBecomeKeyWindow".as_ptr()), answers_no, c"c@:".as_ptr());
+        class_addMethod(class, sel_registerName(c"canBecomeMainWindow".as_ptr()), answers_no, c"c@:".as_ptr());
+        objc_registerClassPair(class);
+        class
+    }
+}
+
+#[cfg(test)]
+mod panel_tests {
+    use super::*;
+    #[test]
+    fn pinned_panels_refuse_key_and_main() {
+        unsafe extern "C" {
+            fn class_getMethodImplementation(class: Id, selector: Id) -> *const std::ffi::c_void;
+            fn class_getSuperclass(class: Id) -> Id;
+        }
+        // SAFETY: NSPanel is linked through AppKit; nothing is instantiated, so no main thread is needed.
+        unsafe {
+            let panel = objc_getClass(c"NSPanel".as_ptr());
+            let class = non_key_class(panel);
+            assert_eq!(class_getSuperclass(class), panel);
+            assert_eq!(non_key_class(panel), class, "registered once");
+            for name in [c"canBecomeKeyWindow", c"canBecomeMainWindow"] {
+                let imp = class_getMethodImplementation(class, sel_registerName(name.as_ptr()));
+                assert_eq!(imp, answers_no as *const std::ffi::c_void);
+            }
+        }
+    }
 }
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {
@@ -160,6 +223,41 @@ impl Services for Mac {
             }
         }
         false
+    }
+    fn pin_panel(&self, window: &dyn raw_window_handle::HasWindowHandle) -> Result<(), Unavailable> {
+        let unavailable = || Unavailable("panel window traits");
+        let raw_window_handle::RawWindowHandle::AppKit(handle) = window.window_handle().map_err(|_| unavailable())?.as_raw() else {
+            return Err(unavailable());
+        };
+        // SAFETY: the handle's NSView is alive on the main thread. The subclass adds no ivars, so swapping
+        // the class of GPUI's panel keeps its layout and its inherited dealloc.
+        unsafe {
+            let panel = send(handle.ns_view.as_ptr(), c"window");
+            if panel.is_null() {
+                return Err(unavailable());
+            }
+            let class = non_key_class(object_getClass(panel));
+            if class.is_null() {
+                return Err(unavailable());
+            }
+            object_setClass(panel, class);
+            let set: unsafe extern "C" fn(Id, Id, isize) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            // NSFloatingWindowLevel; GPUI's popup kind sets NSPopUpWindowLevel.
+            set(panel, sel_registerName(c"setLevel:".as_ptr()), 3);
+        }
+        Ok(())
+    }
+    fn pointer_location(&self) -> Option<(f32, f32)> {
+        // SAFETY: a null source is allowed, and the event is released once.
+        unsafe {
+            let event = CGEventCreate(std::ptr::null_mut());
+            if event.is_null() {
+                return None;
+            }
+            let p = CGEventGetLocation(event);
+            CFRelease(event);
+            Some((p.x as f32, p.y as f32))
+        }
     }
     fn set_window_identifier(&self, window: &dyn raw_window_handle::HasWindowHandle, identifier: &str) -> Result<(), Unavailable> {
         let unavailable = || Unavailable("window identifiers");

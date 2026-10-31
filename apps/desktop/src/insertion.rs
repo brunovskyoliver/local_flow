@@ -387,8 +387,9 @@ fn sync_panel(cx: &mut App) {
     let open = cx.try_global::<PanelWindow>().map(|p| p.0);
     match (show, open) {
         (true, None) => {
-            let visible = cx.primary_display().map(|d| d.visible_bounds()).unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) });
+            let visible = crate::pill::panel_screen(cx);
             if let Ok((handle, _)) = flow_ui::open_window(panel_options(visible), cx, |_, cx| cx.new(ConfirmationPanel::new)) {
+                let _ = handle.update(cx, |_, w, cx| cx.global::<Core>().services.pin_panel(w));
                 cx.set_global(PanelWindow(handle));
             }
         }
@@ -438,6 +439,25 @@ mod tests {
 
     fn field() -> CapturedTarget {
         CapturedTarget { bundle_id: "com.example.app".into(), own_process: false, delivery: InsertDelivery::Accessibility, selection_location: 4 }
+    }
+
+    // parity: SHELL-157 SHELL-159
+    #[flow_ui::gpui::test]
+    async fn the_panel_is_pinned_on_the_mouses_screen(cx: &mut TestAppContext) {
+        start(cx, Some(field()), None);
+        let pinned: std::rc::Rc<std::cell::Cell<usize>> = Default::default();
+        let display = cx.update(|cx| cx.primary_display().unwrap().bounds());
+        cx.update(|cx| {
+            let fake = flow_platform::Fake { pinned_panels: pinned.clone(), ..Default::default() };
+            fake.pointer.set(Some((f32::from(display.origin.x) + 10., f32::from(display.origin.y) + 10.)));
+            cx.global_mut::<Core>().services = Box::new(fake);
+        });
+        cx.update(arm_selection);
+        assert_eq!(pinned.get(), 1);
+        let panel = cx.update(|cx| cx.global::<PanelWindow>().0);
+        let visible = cx.update(|cx| cx.primary_display().unwrap().visible_bounds());
+        let origin = cx.update_window(panel.into(), |_, w, _| w.bounds().origin).unwrap();
+        assert_eq!(origin, panel_bounds(visible).origin);
     }
 
     // parity: SHELL-178

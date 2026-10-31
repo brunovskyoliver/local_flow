@@ -1627,7 +1627,8 @@ mod tests {
             assert_eq!((bg, active, fg, size, weight, x, y), (p.tint, p.button, p.ink, 13., 500., 12., 7.));
             let (bg, active, fg, size, weight, x, y) = ButtonKind::Primary.style(&p);
             assert_eq!((bg, active, fg, size, weight, x, y), (p.primary, p.primary.opacity(0.8), p.on_primary, 14., 500., 16., 9.));
-            assert_eq!(primary_button("x", "y").disabled_level(), 0.45);
+            assert_eq!(primary_button("x", "y").disabled_level(), 0.45, "SHELL-232");
+            assert_eq!(prototype_button("x", "y").disabled_level(), 0.45, "SHELL-229");
             // The bundled face names itself what `GARAMOND` asks for; the test platform has no font registry to ask.
             let name: Vec<u8> = GARAMOND.encode_utf16().flat_map(u16::to_be_bytes).collect();
             let face = include_bytes!("../../../crates/flow-ui/assets/fonts/EBGaramond-Regular.ttf");

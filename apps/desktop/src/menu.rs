@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(actions_of(&app_menus(false)[0])[0], "Check for Updates…");
     }
 
-    // parity: SHELL-020 SHELL-019
+    // parity: SHELL-020
     #[flow_ui::gpui::test]
     async fn command_comma_opens_settings(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
