@@ -16,8 +16,9 @@ pub const FIGTREE: &str = "Figtree";
 pub const GARAMOND: &str = "EB Garamond";
 #[cfg(target_os = "windows")]
 pub const MONO: &str = "Consolas";
+/// `NSFont.monospacedSystemFont`, what `.system(design: .monospaced)` draws.
 #[cfg(not(target_os = "windows"))]
-pub const MONO: &str = "Menlo";
+pub const MONO: &str = ".AppleSystemUIFontMonospaced";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Align {
@@ -558,7 +559,7 @@ impl Txt {
         let mut links = vec![];
         let mut text = String::new();
         let make = |serif: bool, weight: FontWeight, italic: bool| Font {
-            family: if self.mono { MONO.into() } else if serif { GARAMOND.into() } else { FIGTREE.into() },
+            family: if self.mono { MONO.into() } else if serif { GARAMOND.into() } else if style.font_family.as_ref() == ".SystemUIFont" { style.font_family.clone() } else { FIGTREE.into() },
             features: features.clone(),
             fallbacks: style.font_fallbacks.clone(),
             weight,
