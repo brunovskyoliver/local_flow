@@ -52,6 +52,10 @@ impl NotetakerPage {
             None => true,
         }
     }
+    /// `flushMeetingNotes`: the window is closing or the app is quitting.
+    pub(crate) fn flush_notes(&mut self, cx: &mut Context<Self>) {
+        self.flushed(cx);
+    }
     /// Flush first; a note that couldn't save stays open with its notice.
     fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.flushed(cx) {
@@ -337,4 +341,37 @@ fn tab_button(id: &'static str, title: &'static str, selected: bool, tab: Tab, c
         this.summary_refresh(cx);
         cx.notify();
     }))
+}
+
+#[cfg(test)]
+mod close_tests {
+    use crate::core::Core;
+    use crate::pages::notetaker::Tab;
+    use flow_core::meetings::SEED_FULL;
+    use crate::shell::Shell;
+    use crate::testing::boot;
+    use flow_ui::prelude::*;
+    use flow_ui::test::TestAppContext;
+
+    // parity: SHELL-036
+    /// Autosave is two seconds off; the closing window can't wait for it.
+    #[flow_ui::gpui::test]
+    async fn closing_the_window_saves_the_notes(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| cx.global_mut::<Core>().prefs.set("setupVersion", 1));
+        let window = cx.add_window(|w, cx| Shell::new(w, cx));
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, w, cx| {
+                shell.meetings.clone().update(cx, |page, cx| {
+                    page.open_note(SEED_FULL, Tab::Transcript, w, cx);
+                    page.editor.as_mut().unwrap().edit("Typed just before closing.");
+                });
+            })
+            .unwrap();
+        window.update(cx, |_, w, _| w.remove_window()).unwrap();
+        cx.run_until_parked();
+        let saved = cx.update(|cx| flow_core::meetings::notes(cx.global::<Core>().db.as_ref().unwrap(), SEED_FULL).unwrap().unwrap().0);
+        assert_eq!(saved, "Typed just before closing.");
+    }
 }
