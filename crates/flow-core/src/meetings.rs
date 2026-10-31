@@ -2905,13 +2905,15 @@ pub struct Recovery {
     pub transcripts_failed: i64,
     /// `finalizing` rows of finished meetings, which Swift resumes automatically.
     pub transcripts_to_resume: i64,
+    pub orphans_reconstructed: i64,
+    /// Rows and directory entries past the per-launch bound.
+    pub deferred: i64,
 }
 impl Recovery {
     /// The two notices Swift publishes after reconciling.
-    // ponytail: no orphan-file or deferred-part notices; the file scan that finds them lands with the capture worker.
     pub fn notices(&self) -> Vec<String> {
         let mut out = vec![];
-        if self.meetings_found > 0 {
+        if self.meetings_found > 0 || self.orphans_reconstructed > 0 || self.deferred > 0 {
             let mut parts = vec![];
             if self.recovered > 0 {
                 parts.push(format!("{} meeting{} recovered", self.recovered, if self.recovered == 1 { "" } else { "s" }));
@@ -2919,9 +2921,15 @@ impl Recovery {
             if self.unrecoverable > 0 {
                 parts.push(format!("{} with audio that could not be made playable", self.unrecoverable));
             }
+            if self.orphans_reconstructed > 0 {
+                parts.push(format!("{} found without a record", self.orphans_reconstructed));
+            }
             let failed = self.meetings_found - self.recovered - self.unrecoverable;
             if failed > 0 {
                 parts.push(format!("{failed} marked failed"));
+            }
+            if self.deferred > 0 {
+                parts.push(format!("{} deferred to the next launch", self.deferred));
             }
             out.push(parts.join(", "));
         }
@@ -3048,6 +3056,8 @@ pub fn carry_over(db: &Db, meeting: &str, previous: &str, run: &str, now: i64) -
 pub fn reconcile_launch(db: &Db, root: &Path, now: i64) -> Res<Recovery> {
     let c = &db.conn;
     let mut out = Recovery::default();
+    let active: i64 = c.query_row("SELECT count(*) FROM meetings WHERE state IN ('created','preparing','recording','paused','finalizing')", [], |r| r.get(0))?;
+    out.deferred += (active - 100).max(0);
     let rows: Vec<(String, String, Option<String>, Option<i64>, i64)> = c
         .prepare("SELECT id,state,finalization_stage,stopped_at,updated_at FROM meetings WHERE state IN ('created','preparing','recording','paused','finalizing') ORDER BY created_at,id LIMIT 100")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
@@ -3090,6 +3100,7 @@ pub fn reconcile_launch(db: &Db, root: &Path, now: i64) -> Res<Recovery> {
         }
         outcome(c, &id, now, &found, stage.as_deref(), recovered, missing, paused, &format!("recovered={recovered} unrecoverable=0 missing={missing} truncated=0"))?;
     }
+    reconstruct_orphans(db, root, now, &mut out)?;
     let transcripts: Vec<(String, String, i64, i64)> = c
         .prepare("SELECT meeting_id,state,segment_count,revision FROM meeting_transcriptions WHERE state IN ('pending','live','finalizing') ORDER BY updated_at LIMIT 100")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
@@ -3124,6 +3135,178 @@ pub fn reconcile_launch(db: &Db, root: &Path, now: i64) -> Res<Recovery> {
     Ok(out)
 }
 #[allow(clippy::too_many_arguments)]
+/// `ADTSValidator.scan`: complete frames, their length in bytes, the sample rate and channels.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AdtsScan {
+    frames: i64,
+    bytes: u64,
+    trailing: u64,
+    sample_rate: i64,
+    channels: i64,
+}
+impl AdtsScan {
+    fn duration_ms(&self) -> i64 {
+        if self.sample_rate > 0 { self.frames * 1024 * 1000 / self.sample_rate } else { 0 }
+    }
+}
+/// Sync word, MPEG-4, layer 0, AAC-LC and a frame longer than its header: (length, rate, channels).
+fn adts_header(b: &[u8; 7]) -> Option<(u64, i64, i64)> {
+    const RATES: [i64; 16] = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350, 0, 0, 0];
+    if b[0] != 0xFF || b[1] & 0xF6 != 0xF0 || b[2] >> 6 != 1 {
+        return None;
+    }
+    let rate = RATES[((b[2] >> 2) & 0x0F) as usize];
+    let channels = (((b[2] & 1) << 2) | (b[3] >> 6)) as i64;
+    let length = ((b[3] as u64 & 3) << 11) | ((b[4] as u64) << 3) | (b[5] as u64 >> 5);
+    (rate > 0 && channels > 0 && length > 7).then_some((length, rate, channels))
+}
+/// Stops at the first inconsistent header or at the end. Reads headers only and refuses a symlink.
+fn adts_scan(path: &Path) -> std::io::Result<AdtsScan> {
+    use std::io::{Read, Seek, SeekFrom};
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.is_file() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    let mut file = std::fs::File::open(path)?;
+    let mut scan = AdtsScan::default();
+    let mut header = [0u8; 7];
+    while meta.len() - scan.bytes >= 7 {
+        file.seek(SeekFrom::Start(scan.bytes))?;
+        file.read_exact(&mut header)?;
+        let Some((length, rate, channels)) = adts_header(&header) else { break };
+        if scan.frames > 0 && (rate, channels) != (scan.sample_rate, scan.channels) {
+            break;
+        }
+        if scan.frames == 0 {
+            (scan.sample_rate, scan.channels) = (rate, channels);
+        }
+        if meta.len() - scan.bytes < length {
+            break;
+        }
+        scan.bytes += length;
+        scan.frames += 1;
+    }
+    scan.trailing = meta.len() - scan.bytes;
+    Ok(scan)
+}
+/// `MeetingReconciler.parse`: `mic-0001.aac` or `system-0001.aac.part`.
+fn parse_segment_name(name: &str) -> Option<(&'static str, i64, bool)> {
+    let (name, part) = name.strip_suffix(".part").map_or((name, false), |n| (n, true));
+    let name = name.strip_suffix(".aac")?;
+    for (kind, prefix) in [("microphone", "mic-"), ("system", "system-")] {
+        if let Some(digits) = name.strip_prefix(prefix) {
+            let sequence = digits.parse::<i64>().ok().filter(|s| digits.len() == 4 && digits.bytes().all(|b| b.is_ascii_digit()) && *s >= 1)?;
+            return Some((kind, sequence, part));
+        }
+    }
+    None
+}
+/// Swift's `UUID(uuidString:)` shape, returned in its uppercase form.
+fn parse_uuid(name: &str) -> Option<String> {
+    let shape = name.len() == 36 && name.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() });
+    shape.then(|| name.to_uppercase())
+}
+fn truncate_and_rename(from: &Path, to: &Path, length: u64) -> std::io::Result<()> {
+    let file = std::fs::OpenOptions::new().write(true).open(from)?;
+    file.set_len(length)?;
+    file.sync_all()?;
+    std::fs::rename(from, to)
+}
+/// `reconstructOrphans`: a meeting folder with no row becomes an `interrupted` meeting.
+/// Nothing is deleted. 1,000 directory entries a launch; the rest are deferred.
+fn reconstruct_orphans(db: &Db, root: &Path, now: i64, out: &mut Recovery) -> Res<()> {
+    let Ok(listing) = std::fs::read_dir(root) else { return Ok(()) };
+    let mut entries: Vec<String> = listing.flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
+    entries.sort();
+    out.deferred += (entries.len() as i64 - 1000).max(0);
+    for entry in entries.iter().take(1000) {
+        let Some(id) = parse_uuid(entry) else { continue };
+        let known: bool = db.conn.query_row("SELECT EXISTS(SELECT 1 FROM meetings WHERE upper(id)=?1)", [&id], |r| r.get(0))?;
+        let dir = root.join(entry);
+        let Ok(meta) = std::fs::symlink_metadata(&dir) else { continue };
+        if known || !meta.is_dir() {
+            continue;
+        }
+        let created = meta.modified().ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or(now, |d| d.as_millis() as i64);
+        if reconstruct_orphan(db, &id, &dir, created, now).is_ok() {
+            out.orphans_reconstructed += 1;
+        }
+    }
+    Ok(())
+}
+fn reconstruct_orphan(db: &Db, id: &str, dir: &Path, created: i64, now: i64) -> Res<()> {
+    let mut names: Vec<String> = std::fs::read_dir(dir).map_or(vec![], |l| l.flatten().filter_map(|e| e.file_name().into_string().ok()).collect());
+    names.sort();
+    let tx = db.conn.unchecked_transaction()?;
+    let (mic, sys) = (new_id(), new_id());
+    let (mut offsets, mut totals, mut channels) = ([0i64; 2], [0i64; 2], [1i64, 2]);
+    let (mut validated, mut seen) = ([false; 2], [false; 2]);
+    let (mut recovered, mut unrecoverable, mut truncated, mut files) = (0i64, 0i64, 0i64, 0i64);
+    let mut segments = vec![];
+    for name in &names {
+        let Some((kind, sequence, part)) = parse_segment_name(name) else { continue };
+        let k = (kind == "system") as usize;
+        seen[k] = true;
+        files += 1;
+        let prefix = if k == 0 { "mic" } else { "system" };
+        let final_name = format!("{prefix}-{sequence:04}.aac");
+        let path = dir.join(name);
+        let scan = adts_scan(&path).ok().filter(|s| s.frames > 0);
+        let usable = scan.as_ref().is_some_and(|s| !(part || s.trailing > 0) || truncate_and_rename(&path, &dir.join(&final_name), s.bytes).is_ok());
+        let note = scan.is_none().then(|| "reconstructed frames=0".to_string());
+        let reason = if sequence == 1 { "start" } else { "resume" };
+        let track = if k == 0 { &mic } else { &sys };
+        match scan.filter(|_| usable) {
+            Some(s) => {
+                truncated += s.trailing as i64;
+                recovered += 1;
+                validated[k] = true;
+                if k == 1 {
+                    channels[1] = s.channels.clamp(1, 2);
+                }
+                segments.push((new_id(), track.clone(), sequence, format!("{id}/{final_name}"), "finalized", offsets[k], s.duration_ms(), s.bytes as i64, reason, Some("recovered"), Some(format!("reconstructed truncated={}", s.trailing)), None));
+                offsets[k] += s.duration_ms();
+                totals[k] += s.bytes as i64;
+            }
+            None => {
+                unrecoverable += 1;
+                segments.push((new_id(), track.clone(), sequence, format!("{id}/{name}"), "unrecoverable", offsets[k], 0, 0, reason, None, note, Some("unrecoverable_media")));
+            }
+        }
+    }
+    let c = &tx;
+    c.execute(
+        "INSERT INTO meetings (id,state,created_at,started_at,stopped_at,completed_at,wall_clock_ms,recorded_ms,failure_reason,failure_detail,updated_at,revision) VALUES (?1,'interrupted',?2,?2,?2,?3,0,?4,'record_missing','reconstructed',?3,0)",
+        params![id, created, now, offsets[0].max(offsets[1])],
+    )?;
+    c.execute("INSERT INTO meeting_notes (meeting_id,text,author,updated_at,revision) VALUES (?1,'','user',?2,0)", params![id, now])?;
+    c.execute("INSERT INTO meeting_diarization (meeting_id,in_room,updated_at,revision) VALUES (?1,0,?2,0)", params![id, now])?;
+    c.execute("INSERT INTO meeting_identification (meeting_id,updated_at) VALUES (?1,?2)", params![id, now])?;
+    c.execute("INSERT INTO meeting_analysis (meeting_id,updated_at,revision) VALUES (?1,?2,0)", params![id, now])?;
+    for (k, (track, kind, bitrate)) in [(&mic, "microphone", 64000), (&sys, "system", 96000)].into_iter().enumerate() {
+        let (health, reason, failed) = match (validated[k], seen[k]) {
+            (true, _) => ("finalized", None, None),
+            (false, true) => ("unrecoverable", Some("unrecoverable_media"), Some(now)),
+            (false, false) => ("unrecoverable", Some("file_missing"), Some(now)),
+        };
+        c.execute(
+            "INSERT INTO meeting_tracks (id,meeting_id,type,codec,container,sample_rate,channel_count,bitrate,health,failure_reason,failed_at,total_duration_ms,total_bytes) VALUES (?1,?2,?3,'aac_lc','adts',48000,?4,?5,?6,?7,?8,?9,?10)",
+            params![track, id, kind, channels[k], bitrate, health, reason, failed, offsets[k], totals[k]],
+        )?;
+    }
+    for (segment, track, sequence, path, state, start, duration, bytes, reason, close, note, failure) in segments {
+        c.execute(
+            "INSERT INTO meeting_segments (id,track_id,sequence,relative_path,state,start_offset_ms,duration_ms,byte_size,started_at,host_start_ns,open_reason,close_reason,recovery_note,failure_reason) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,0,?10,?11,?12,?13)",
+            params![segment, track, sequence, path, state, start, duration, bytes, created, reason, close, note, failure],
+        )?;
+    }
+    c.execute(
+        "INSERT INTO meeting_recovery_outcomes (id,meeting_id,ran_at,found_state,segments_recovered,segments_unrecoverable,bytes_truncated,summary) VALUES (?1,?2,?3,'interrupted',?4,?5,?6,?7)",
+        params![new_id(), id, now, recovered, unrecoverable, truncated, format!("record missing; files={files}")],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
 fn outcome(c: &Connection, id: &str, now: i64, found: &str, stage: Option<&str>, recovered: i64, missing: i64, paused: bool, summary: &str) -> Res<()> {
     c.execute(
         "INSERT INTO meeting_recovery_outcomes (id,meeting_id,ran_at,found_state,found_stage,segments_recovered,segments_missing,pause_closed,summary) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
@@ -3388,6 +3571,72 @@ mod tests {
         let run: String = db.conn.query_row("SELECT state FROM analysis_runs WHERE meeting_id=?1 ORDER BY created_at DESC LIMIT 1", [SEED_FULL], |r| r.get(0)).unwrap();
         assert_eq!(run, "interrupted");
         assert_eq!(reconcile_launch(&db, &root, 100).unwrap().meetings_found, 0, "a second run finds nothing active");
+    }
+
+    /// An ADTS file of `frames` 48 kHz stereo frames of 100 bytes, then `tail` loose bytes.
+    fn adts(frames: usize, tail: usize) -> Vec<u8> {
+        let frame = [0xFF, 0xF1, 0x4C, 0x80, 0x0C, 0x80, 0xFC].into_iter().chain([0; 93]);
+        let mut out: Vec<u8> = frame.cycle().take(frames * 100).collect();
+        out.extend(vec![0u8; tail]);
+        out
+    }
+
+    // parity: MEET-091
+    #[test]
+    fn orphan_folder_becomes_an_interrupted_meeting_and_a_notice() {
+        let db = db();
+        let root = std::env::temp_dir().join(format!("lf-orphan-{}", new_id()));
+        let id = "11111111-2222-4333-8444-555555555555".to_uppercase();
+        let dir = root.join(&id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("mic-0001.aac"), adts(3, 0)).unwrap();
+        std::fs::write(dir.join("mic-0002.aac.part"), adts(2, 5)).unwrap();
+        std::fs::write(dir.join("system-0001.aac"), b"not audio").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"ignored").unwrap();
+        std::fs::create_dir_all(root.join("not-a-meeting")).unwrap();
+        std::fs::create_dir_all(root.join(SEED_FULL)).unwrap();
+
+        let r = reconcile_launch(&db, &root, 99).unwrap();
+        assert_eq!(r.orphans_reconstructed, 1, "the known meeting's folder and the stray one are left alone");
+        assert!(r.notices()[0].contains("1 found without a record"), "{:?}", r.notices());
+        let m = meeting(&db, &id).unwrap().unwrap();
+        assert_eq!((m.state.as_str(), m.failure_reason.as_deref()), ("interrupted", Some("record_missing")));
+        assert_eq!(m.recorded_ms, 5 * 1024 * 1000 / 48000, "the longest track's validated frames");
+        assert_eq!(std::fs::metadata(dir.join("mic-0002.aac")).unwrap().len(), 200, "the torn tail goes and .part is renamed");
+        assert!(!dir.join("mic-0002.aac.part").exists());
+        assert!(dir.join("system-0001.aac").exists(), "nothing is deleted");
+        let tracks: Vec<(String, String, Option<String>)> = db.conn.prepare("SELECT type,health,failure_reason FROM meeting_tracks WHERE meeting_id=?1 ORDER BY type").unwrap().query_map([&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(tracks, [("microphone".to_string(), "finalized".to_string(), None), ("system".to_string(), "unrecoverable".to_string(), Some("unrecoverable_media".to_string()))]);
+        let outcome: (i64, i64, i64, String) = db.conn.query_row("SELECT segments_recovered,segments_unrecoverable,bytes_truncated,summary FROM meeting_recovery_outcomes WHERE meeting_id=?1", [&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+        assert_eq!(outcome, (2, 1, 5, "record missing; files=3".to_string()));
+        assert_eq!(reconcile_launch(&db, &root, 100).unwrap().orphans_reconstructed, 0, "the row exists now");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // parity: MEET-091
+    #[test]
+    fn notice_counts_orphans_and_deferred_in_swifts_order() {
+        let r = Recovery { meetings_found: 3, recovered: 1, unrecoverable: 1, orphans_reconstructed: 2, deferred: 4, ..Default::default() };
+        assert_eq!(r.notices(), ["1 meeting recovered, 1 with audio that could not be made playable, 2 found without a record, 1 marked failed, 4 deferred to the next launch"]);
+        assert_eq!(Recovery { deferred: 1, ..Default::default() }.notices(), ["1 deferred to the next launch"]);
+        assert!(Recovery::default().notices().is_empty());
+    }
+
+    #[test]
+    fn adts_scan_stops_at_a_torn_or_changed_frame() {
+        let dir = std::env::temp_dir().join(format!("lf-adts-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.aac");
+        std::fs::write(&path, adts(2, 40)).unwrap();
+        assert_eq!(adts_scan(&path).unwrap(), AdtsScan { frames: 2, bytes: 200, trailing: 40, sample_rate: 48000, channels: 2 });
+        let mut changed = adts(2, 0);
+        changed[102] = 0x50; // 44.1 kHz in the second frame
+        std::fs::write(&path, changed).unwrap();
+        assert_eq!(adts_scan(&path).unwrap().frames, 1);
+        assert_eq!(parse_segment_name("system-0012.aac.part"), Some(("system", 12, true)));
+        assert_eq!(parse_segment_name("mic-12.aac"), None);
+        assert_eq!(parse_segment_name("mic-0000.aac"), None);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     // parity: SPK-106
