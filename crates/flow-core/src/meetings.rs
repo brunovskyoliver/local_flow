@@ -4104,7 +4104,7 @@ mod tests {
             .unwrap();
     }
 
-    // parity: TRANS-039
+    // parity: TRANS-038 TRANS-039
     #[test]
     fn pager_edges_load_the_next_and_previous_pages() {
         let db = db();
@@ -4122,6 +4122,42 @@ mod tests {
         p.load_previous(&db);
         assert_eq!(p.rows().next().unwrap().ordinal, 0);
         assert_eq!(p.rows().count(), 2 * TRANSCRIPT_PAGE);
+        let top = p.rows().next().unwrap().id.clone();
+        p.toggle_selection(&top);
+        p.load_next(&db);
+        assert!(!p.selection.contains(&top), "eviction removes its rows from the selection");
+    }
+
+    // parity: TRANS-014
+    #[test]
+    fn search_stops_at_a_thousand_matches_and_marks_it() {
+        let db = db();
+        more_segments(&db, 1100);
+        let mut p = Pager::new(SEED_FULL);
+        p.load_first(&db);
+        p.search(&db, "e");
+        let (hits, truncated) = p.search_hits.clone().unwrap();
+        assert_eq!((hits.len(), truncated), (SEARCH_LIMIT, true));
+        assert_eq!(SEARCH_LIMIT, 1000);
+        assert_eq!(p.match_count_text(), "1,000+ matches");
+    }
+
+    // parity: TRANS-016
+    #[test]
+    fn matches_wrap_and_load_their_page() {
+        let db = db();
+        more_segments(&db, 650);
+        let mut p = Pager::new(SEED_FULL);
+        p.load_first(&db);
+        p.search(&db, "e");
+        let n = p.search_hits.as_ref().unwrap().0.len();
+        p.show_match(&db, false);
+        assert_eq!(p.current_match, Some(n - 1), "backwards from the top goes to the last");
+        let last = p.search_hits.as_ref().unwrap().0[n - 1].clone();
+        assert!(p.rows().any(|r| r.id == last.1), "its page loaded");
+        assert_eq!(p.highlighted.as_deref(), Some(last.1.as_str()));
+        p.show_match(&db, true);
+        assert_eq!(p.current_match, Some(0), "forward from the last wraps");
     }
 
     // parity: TRANS-042

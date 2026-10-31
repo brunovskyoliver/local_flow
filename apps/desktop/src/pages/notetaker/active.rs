@@ -197,6 +197,12 @@ pub(crate) fn dot_color(state: &str, cx: &App) -> Hsla {
 }
 
 /// `TranscriptSectionView`: (status line, in-flight mini progress).
+/// `TranscriptSectionView.timestamp`: mm:ss, or h:mm:ss from an hour on.
+pub(crate) fn section_timestamp(ms: i64) -> String {
+    let s = (ms / 1000).max(0);
+    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{:02}:{:02}", s / 60, s % 60) }
+}
+
 fn section_view(line: &str, s: &LiveStatus, scroll: &ScrollHandle, cx: &App) -> impl IntoElement {
     let p = pal(cx);
     // Follows while within 190 of the bottom, as `TranscriptSectionView` does.
@@ -204,9 +210,10 @@ fn section_view(line: &str, s: &LiveStatus, scroll: &ScrollHandle, cx: &App) -> 
     if max - y <= 190. {
         scroll.scroll_to_bottom();
     }
-    let mut list = v_flex().id("meeting.section.list").w_full().h(px(180.)).overflow_y_scroll().track_scroll(scroll).gap(px(10.)).p(px(8.)).bg(p.surface).rounded(px(8.));
+    let mut list = v_flex().id("meeting.section.list").test_support().w_full().h(px(180.)).overflow_y_scroll().track_scroll(scroll).gap(px(10.)).p(px(8.)).bg(p.surface).rounded(px(8.));
     for (i, (text, _)) in s.segments.iter().enumerate() {
-        list = list.child(h_flex().items_start().gap(px(8.)).child(t(duration_text(i as i64 * 4000)).size(11.).mono_digits().color(p.muted)).child(div().flex_1().child(t(text.clone()).size(13.).italic())).child(h_flex().gap(px(4.)).child(div().size(px(3.)).rounded_full().bg(p.muted)).child(t("provisional").size(11.).italic().color(p.muted))));
+        // ponytail: live rows carry no start time until the worker sends them, so scenarios space them 4 s.
+        list = list.child(h_flex().id(sid(format!("meeting.section.row.{i}"))).test_support().items_start().gap(px(10.)).child(t(section_timestamp(i as i64 * 4000)).size(13.).mono_digits().color(p.muted)).child(v_flex().flex_1().gap(px(3.)).child(t(text.clone()).size(13.).italic()).child(h_flex().gap(px(3.)).child(t("provisional").size(11.).italic().color(p.muted)).child(icon("circle.fill", 3., p.muted)))));
     }
     v_flex().w_full().gap(px(8.)).child(h_flex().gap(px(8.)).child(t("Transcript").font(13., 600.)).child(t(line.to_string()).size(12.).color(p.muted).id("meeting.section.status"))).child(list)
 }

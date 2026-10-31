@@ -249,7 +249,7 @@ async fn warnings_show_on_the_untitled_note(cx: &mut TestAppContext) {
     assert_saw(&["Some audio was lost during recording."]);
 }
 
-// parity: TRANS-011 TRANS-012 TRANS-014 TRANS-049 TRANS-052 TRANS-055
+// parity: TRANS-052
 #[flow_ui::gpui::test]
 async fn transcript_reads_labels_search_and_selection(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.transcript"));
@@ -3144,4 +3144,169 @@ async fn tab_starts_from_the_request_and_clicks_switch_it(cx: &mut TestAppContex
     assert!(read(cx, &window, |p| p.tab == Tab::Summary));
     open(cx, &window, SEED_FULL, Tab::Thoughts);
     assert!(read(cx, &window, |p| p.tab == Tab::Thoughts), "not persisted");
+}
+
+// Round 4 row review: the transcript tab.
+
+// parity: TRANS-001 TRANS-002 TRANS-012 TRANS-027 TRANS-043
+#[flow_ui::gpui::test]
+async fn transcript_header_and_bubble_read_like_swift(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    let (_, muted, ..) = colors(cx);
+    assert_eq!(find(cx, &window, "meeting.transcript.header").bounds().size.height, px(32.));
+    assert_eq!(sized("12:34"), (11., 400., muted));
+    assert_symbols(&["clock", "square.on.square", "magnifyingglass", "person.badge.plus"]);
+    assert_labelled(cx, &window, "meeting.transcript.copy", "Copy or export transcript");
+    assert!(!flow_ui::probe::symbols().iter().any(|s| s == "doc.on.doc"));
+    let first = "Let us start with the release date for the desk lamp prototype.";
+    assert_eq!(sized(first).0, 13.);
+    let bubble = find(cx, &window, sid("meeting.transcript.bubble.0".to_string())).bounds();
+    assert_eq!(bubble.size.height, px(13. + 14.), "one 13 pt line and v7");
+    click(cx, &window, "meeting.transcript.search.open");
+    fresh(cx, &window);
+    assert_eq!(find(cx, &window, "meeting.transcript.search.frame").bounds().size.width, px(170.));
+}
+// parity: TRANS-014 TRANS-018 TRANS-019 TRANS-020 TRANS-021
+#[flow_ui::gpui::test]
+async fn match_count_shows_each_state_after_a_quarter_second(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    let (_, muted, ..) = colors(cx);
+    click(cx, &window, "meeting.transcript.search.open");
+    frame(cx, &window);
+    let search = |cx: &mut TestAppContext, q: &str| {
+        type_in!(cx, &window, |p| p.search.clone(), q);
+        cx.executor().advance_clock(Duration::from_millis(200));
+        fresh(cx, &window);
+        assert_saw(&["Searching…"]);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        fresh(cx, &window);
+    };
+    search(cx, "zebra");
+    assert_eq!(sized("No matches"), (11., 400., muted));
+    assert_eq!(sized("No matches.").0, 15., "and the empty list says so");
+    search(cx, "hinge");
+    assert_eq!(sized("1 match"), (11., 400., muted));
+    search(cx, "the");
+    assert_eq!(sized("11 matches"), (11., 400., muted));
+    click(cx, &window, "meeting.transcript.search.next");
+    click(cx, &window, "meeting.transcript.search.next");
+    fresh(cx, &window);
+    assert_eq!(sized("2 of 11"), (11., 400., muted));
+    assert_eq!(read(cx, &window, |p| p.search.clone()).read_with(cx, |s, _| s.value().to_string()), "the");
+    let resident = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().filter(|r| Pager::matches(r, "the")).count());
+    assert_eq!(resident, 11, "the rows are filtered on the client too");
+}
+// parity: TRANS-016
+#[flow_ui::gpui::test]
+async fn a_jump_centres_the_row_and_the_flash_ends_after_two_seconds(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    resize(cx, &window, 1180., 520.);
+    let last = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().last().unwrap().clone());
+    window.update(cx, |p, _, cx| p.reveal_segment(&last.id, cx)).unwrap();
+    frame(cx, &window);
+    frame(cx, &window);
+    let view = read(cx, &window, |p| p.scroll.bounds());
+    let bubble = find(cx, &window, sid(format!("meeting.transcript.bubble.{}", last.ordinal))).bounds();
+    assert!(read(cx, &window, |p| p.scroll.offset().y) < px(0.), "scrolled");
+    assert!(bubble.bottom() <= view.bottom() + px(1.) && bubble.top() >= view.top(), "{bubble:?} in {view:?}");
+    assert!(read(cx, &window, |p| !p.reveal_pending));
+    cx.executor().advance_clock(Duration::from_millis(1900));
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.pager.as_ref().unwrap().highlighted.is_some()));
+    cx.executor().advance_clock(Duration::from_millis(200));
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.pager.as_ref().unwrap().highlighted.is_none()));
+}
+// parity: TRANS-039
+#[flow_ui::gpui::test]
+async fn a_new_page_keeps_the_row_the_reader_was_on(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    query(cx, |db| {
+        let names: Vec<String> = db.conn.prepare("SELECT name FROM pragma_table_info('transcript_segments')").unwrap().query_map([], |r| r.get(0)).unwrap().map(|n| n.unwrap()).collect();
+        let copied = names.iter().filter(|c| *c != "id" && *c != "ordinal").cloned().collect::<Vec<_>>().join(",");
+        db.conn.execute_batch(&format!("WITH RECURSIVE n(i) AS (SELECT 12 UNION ALL SELECT i+1 FROM n WHERE i<649) INSERT INTO transcript_segments (id, ordinal, {copied}) SELECT lower(hex(randomblob(16))), i, {copied} FROM n, (SELECT * FROM transcript_segments WHERE meeting_id='{SEED_FULL}' AND ordinal=0);")).unwrap();
+    });
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    let bottom = |cx: &mut TestAppContext| read(cx, &window, |p| { let m = p.scroll.max_offset().y; p.scroll.set_offset(point(px(0.), -m)) });
+    bottom(cx);
+    frame(cx, &window);
+    window.update(cx, |p, _, cx| p.page_on_scroll(cx)).unwrap();
+    frame(cx, &window);
+    bottom(cx);
+    frame(cx, &window);
+    let row = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().last().unwrap().ordinal);
+    let id = sid(format!("meeting.transcript.bubble.{row}"));
+    let before = find(cx, &window, id.clone()).bounds().origin.y;
+    window.update(cx, |p, _, cx| p.page_on_scroll(cx)).unwrap();
+    frame(cx, &window);
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().ordinal), 200, "the first page was evicted");
+    assert_eq!(find(cx, &window, id).bounds().origin.y, before);
+}
+// parity: TRANS-047 TRANS-049 TRANS-050 TRANS-051 TRANS-059
+#[flow_ui::gpui::test]
+async fn source_labels_and_failure_have_their_colours(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let (ink, muted, red, orange, _) = colors(cx);
+    let purple = cx.update(|cx| purple(cx));
+    sql(cx, &format!("UPDATE meeting_diarization SET accepted_run_id=NULL WHERE meeting_id='{SEED_FULL}'; UPDATE transcript_segments SET analysis_tracks='mic' WHERE meeting_id='{SEED_FULL}' AND ordinal=0; UPDATE transcript_segments SET analysis_tracks='system' WHERE meeting_id='{SEED_FULL}' AND ordinal=1; UPDATE transcript_segments SET analysis_tracks='both' WHERE meeting_id='{SEED_FULL}' AND ordinal=2;"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert_eq!(sized("You"), (12., 500., purple));
+    assert_eq!(sized("Others"), (12., 500., orange));
+    assert_eq!(sized("Unassigned"), (12., 500., muted));
+    assert_eq!((source_explanation("mic"), source_explanation("system"), source_explanation("both")), ("Microphone audio", "System audio; may include multiple people", "Mixed microphone and system audio; speaker unknown"));
+    assert_eq!(find(cx, &window, sid("meeting.transcript.bubble.0".to_string())).bounds().origin.y - find(cx, &window, sid("meeting.transcript.source.0".to_string())).bounds().bottom(), px(5.), "spacing 5");
+    let text = "Let us start with the release date for the desk lamp prototype.";
+    assert_eq!(sized(text).2, ink);
+    sql(cx, &format!("UPDATE meeting_transcriptions SET failure_category='engine_failed', state='failed' WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    let message = read(cx, &window, |p| p.pager.as_ref().unwrap().row.clone()).unwrap();
+    let failure = transcript_failure_text(message.failure_category.as_deref().unwrap(), message.segment_count, false, message.engine.as_deref() == Some("whisper.cpp"));
+    assert_eq!(sized(&failure), (15., 400., red));
+    sql(cx, &format!("UPDATE meeting_transcriptions SET failure_category=NULL, state='live' WHERE meeting_id='{SEED_FULL}'; UPDATE transcript_segments SET finality='provisional' WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert_eq!(sized(text).2, muted, "provisional text is muted");
+}
+// parity: TRANS-055
+#[flow_ui::gpui::test]
+async fn divider_is_muted_twelve_with_a_mic(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    let (_, muted, ..) = colors(cx);
+    let text = flow_ui::probe::seen().into_iter().find(|t| t.starts_with("Microphone changed")).unwrap();
+    assert_eq!(sized(&text), (12., 400., muted));
+    assert_eq!(flow_ui::probe::symbol_color("mic"), Some(muted));
+    assert!(has(cx, &window, "meeting.transcript.microphoneChanged"));
+}
+// parity: TRANS-056 TRANS-057 TRANS-058
+#[flow_ui::gpui::test]
+async fn live_rows_are_muted_and_follow_the_search(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.live"));
+    let (_, muted, ..) = colors(cx);
+    let row = "Let us start with the hinge samples.";
+    assert_eq!(sized(row), (13., 400., muted));
+    click(cx, &window, "meeting.transcript.search.open");
+    type_in!(cx, &window, |p| p.search.clone(), "zzz");
+    fresh(cx, &window);
+    assert!(!seen(row));
+    assert_eq!(sized("Listening…").2, muted);
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().transcription_requested = false; cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_eq!(sized("Transcription is off for this note.").2, muted);
+}
+// parity: TRANS-073 TRANS-085 TRANS-087
+#[flow_ui::gpui::test]
+async fn section_list_and_rows_read_like_swift(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.section:interrupted"));
+    let (_, muted, ..) = colors(cx);
+    assert_eq!(sized("Transcript").0, 13.);
+    assert_eq!(sized("Transcript").1, 600.);
+    assert_eq!(sized("Interrupted"), (12., 400., muted));
+    assert_eq!(find(cx, &window, "meeting.section.list").bounds().size.height, px(180.));
+    assert_eq!(sized("00:00"), (13., 400., muted));
+    assert_eq!(sized("provisional"), (11., 400., muted));
+    assert_eq!(flow_ui::probe::symbol_color("circle.fill"), Some(muted));
+    let (list, first, second) = (find(cx, &window, "meeting.section.list").bounds(), find(cx, &window, sid("meeting.section.row.0".to_string())).bounds(), find(cx, &window, sid("meeting.section.row.1".to_string())).bounds());
+    assert_eq!(second.origin.y - first.bottom(), px(10.));
+    assert_eq!(first.origin.x - list.origin.x, px(8.));
+    assert_eq!((active::section_timestamp(61_000), active::section_timestamp(3_661_000)), ("01:01".to_string(), "1:01:01".to_string()));
 }

@@ -243,8 +243,8 @@ LIVE-042	service	service:mac-service: AVCapture device notifications; desktop pl
 LIVE-043	auto	test:status_poll_reads_the_stored_state_every_250ms
 LIVE-044	service	service:mac-service: TCC; desktop plan phase adds it, view surfaces Unavailable
 LIVE-045	auto	test:section_interrupted
-TRANS-001	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
-TRANS-002	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
+TRANS-001	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
+TRANS-002	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
 TRANS-003	auto	test:header_badge_shows_only_when_not_final
 TRANS-004	auto	test:badges_read_like_swift
 TRANS-005	auto	test:badges_read_like_swift
@@ -253,23 +253,23 @@ TRANS-007	auto	test:badges_read_like_swift
 TRANS-008	auto	test:badges_read_like_swift
 TRANS-009	auto	test:badges_read_like_swift
 TRANS-010	auto	test:badges_read_like_swift
-TRANS-011	auto	test:transcript_icon_buttons_name_their_symbol_and_label ; test:transcript_reads_labels_search_and_selection
-TRANS-012	live	test:transcript_reads_labels_search_and_selection ; live:audit/mac/notetaker/transcript-search-light-rust.png ; live:audit/mac/notetaker/transcript-search-light-ref.png
+TRANS-011	auto	test:transcript_icon_buttons_name_their_symbol_and_label
+TRANS-012	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-search-light-rust.png ; live:audit/mac/notetaker/transcript-search-light-ref.png
 TRANS-013	auto	test:search_keys_close_and_the_navigator_is_twenty_points
-TRANS-014	auto	test:transcript_reads_labels_search_and_selection ; test:pager_labels_search_and_copy
+TRANS-014	auto	test:match_count_shows_each_state_after_a_quarter_second ; test:search_stops_at_a_thousand_matches_and_marks_it
 TRANS-015	auto	test:transcript_icon_buttons_name_their_symbol_and_label ; test:search_keys_close_and_the_navigator_is_twenty_points
-TRANS-016	auto	test:view_source_jumps_to_transcript ; test:pager_labels_search_and_copy
+TRANS-016	auto	test:matches_wrap_and_load_their_page ; test:a_jump_centres_the_row_and_the_flash_ends_after_two_seconds ; note:the jump is instant, Swift animates it
 TRANS-017	auto	test:match_counts_and_empty_texts
-TRANS-018	auto	test:pager_labels_search_and_copy
-TRANS-019	auto	test:pager_labels_search_and_copy
-TRANS-020	auto	test:pager_labels_search_and_copy
-TRANS-021	auto	test:pager_labels_search_and_copy
+TRANS-018	auto	test:match_count_shows_each_state_after_a_quarter_second
+TRANS-019	auto	test:match_count_shows_each_state_after_a_quarter_second
+TRANS-020	auto	test:match_count_shows_each_state_after_a_quarter_second
+TRANS-021	auto	test:match_count_shows_each_state_after_a_quarter_second
 TRANS-022	auto	test:match_counts_and_empty_texts
 TRANS-023	auto	test:match_counts_and_empty_texts
 TRANS-024	auto	test:match_counts_and_empty_texts
 TRANS-025	auto	test:match_counts_and_empty_texts
 TRANS-026	auto	test:transcript_read_failures
-TRANS-027	live	test:export_and_status_lines_surface_failures ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png
+TRANS-027	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png ; note:22 wide as measured on the ref, the menu shrinks its 28 frame; help unasserted
 TRANS-028	auto	test:copy_menu_reads_like_swift ; test:copy_menu_selected_item
 TRANS-029	auto	test:copy_menu_selected_item
 TRANS-030	service	test:copy_menu_selected_item ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
@@ -281,27 +281,27 @@ TRANS-035	auto	test:copy_menu_reads_like_swift ; test:export_and_status_lines_su
 TRANS-036	auto	test:pager_labels_search_and_copy ; service:mac-service: NSSavePanel; desktop plan phase adds it, view surfaces Unavailable
 TRANS-037	auto	test:export_and_status_lines_surface_failures
 TRANS-038	auto	test:pager_labels_search_and_copy
-TRANS-039	auto	test:pager_edges_load_the_next_and_previous_pages
+TRANS-039	auto	test:a_new_page_keeps_the_row_the_reader_was_on ; test:pager_edges_load_the_next_and_previous_pages
 TRANS-040	auto	test:transcript_read_failures
 TRANS-041	auto	test:finality_rule
 TRANS-042	auto	test:finalizing_previews_the_last_page_of_the_pass
-TRANS-043	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
+TRANS-043	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
 TRANS-044	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
 TRANS-045	auto	test:bubble_colors_follow_state
 TRANS-046	auto	test:bubble_colors_follow_state
-TRANS-047	auto	test:bubble_colors_follow_state
+TRANS-047	auto	test:source_labels_and_failure_have_their_colours ; test:bubble_colors_follow_state
 TRANS-048	auto	test:pager_labels_search_and_copy
-TRANS-049	live	test:transcript_reads_labels_search_and_selection ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png
-TRANS-050	auto	test:source_labels_for_rows_without_speakers
-TRANS-051	auto	test:source_labels_for_rows_without_speakers
+TRANS-049	auto	test:source_labels_and_failure_have_their_colours
+TRANS-050	auto	test:source_labels_and_failure_have_their_colours ; test:source_labels_for_rows_without_speakers
+TRANS-051	auto	test:source_labels_and_failure_have_their_colours ; test:source_labels_for_rows_without_speakers
 TRANS-052	auto	test:segment_menu_reads_select_or_deselect_and_change_speaker ; test:transcript_reads_labels_search_and_selection ; test:bubble_context_menu_selects_and_plays
 TRANS-053	auto	test:bubble_context_menu_selects_and_plays
 TRANS-054	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
-TRANS-055	live	test:transcript_reads_labels_search_and_selection ; test:bubble_context_menu_selects_and_plays ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png
-TRANS-056	live	test:live_off_says_transcription_is_off ; live:audit/mac/notetaker/live-off-light-rust.png ; live:audit/mac/notetaker/live-off-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-TRANS-057	live	test:live_empty_says_listening_or_off ; live:audit/mac/notetaker/live-listening-light-rust.png ; live:audit/mac/notetaker/live-listening-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-TRANS-058	live	test:live_transcript_lists_provisional_rows ; live:audit/mac/notetaker/live-light-rust.png ; live:audit/mac/notetaker/live-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-TRANS-059	auto	test:transcript_failures_read_like_swift
+TRANS-055	live	test:divider_is_muted_twelve_with_a_mic ; live:audit/mac/notetaker/transcript-light-rust.png ; live:audit/mac/notetaker/transcript-light-ref.png
+TRANS-056	live	test:live_off_says_transcription_is_off ; test:live_rows_are_muted_and_follow_the_search ; live:audit/mac/notetaker/live-off-light-rust.png ; live:audit/mac/notetaker/live-off-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+TRANS-057	live	test:live_empty_says_listening_or_off ; test:live_rows_are_muted_and_follow_the_search ; live:audit/mac/notetaker/live-listening-light-rust.png ; live:audit/mac/notetaker/live-listening-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+TRANS-058	live	test:live_transcript_lists_provisional_rows ; test:live_rows_are_muted_and_follow_the_search ; live:audit/mac/notetaker/live-light-rust.png ; live:audit/mac/notetaker/live-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+TRANS-059	auto	test:source_labels_and_failure_have_their_colours ; test:transcript_failures_read_like_swift
 TRANS-060	auto	test:transcript_failures_read_like_swift
 TRANS-061	auto	test:transcript_failures_read_like_swift
 TRANS-062	auto	test:transcript_failures_read_like_swift
@@ -315,7 +315,7 @@ TRANS-069	auto	test:transcript_failures_read_like_swift
 TRANS-070	auto	test:transcript_failures_read_like_swift
 TRANS-071	auto	test:transcript_failures_read_like_swift
 TRANS-072	auto	test:waiting_detail_offers_this_mac ; service:flowd: `meeting_job` on `/v1/remote/channel`; desktop plan phase adds it, view surfaces Unavailable
-TRANS-073	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-073	live	test:section_list_and_rows_read_like_swift ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
 TRANS-074	auto	test:section_status_reads_like_swift
 TRANS-075	auto	test:section_status_reads_like_swift
 TRANS-076	auto	test:section_status_reads_like_swift
@@ -327,9 +327,9 @@ TRANS-081	auto	test:section_degraded ; test:section_status_reads_like_swift
 TRANS-082	auto	test:section_status_reads_like_swift
 TRANS-083	auto	test:section_status_reads_like_swift
 TRANS-084	auto	test:section_status_reads_like_swift
-TRANS-085	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-085	live	test:section_list_and_rows_read_like_swift ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
 TRANS-086	auto	test:section_list_follows_near_the_bottom_only
-TRANS-087	live	test:section_interrupted ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+TRANS-087	live	test:section_list_and_rows_read_like_swift ; live:audit/mac/notetaker/section-light-rust.png ; live:audit/mac/notetaker/section-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
 TRANS-088	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 TRANS-089	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SPK-001	auto	test:transcript_icon_buttons_name_their_symbol_and_label ; test:assign_opens_shows_sections_and_closes

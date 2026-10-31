@@ -39,10 +39,13 @@ impl NotetakerPage {
         let (y, max) = (-self.scroll.offset().y.as_f32(), self.scroll.max_offset().y.as_f32());
         let Some(db) = db_of(cx) else { return };
         let Some(p) = &mut self.pager else { return };
+        let pin = |id: Option<String>| id.and_then(|id| self.page_tops.borrow().get(&id).map(|top| (id, *top)));
         if y >= max - 200. && p.has_next() {
+            *self.page_pin.borrow_mut() = pin(p.rows().last().map(|r| r.id.clone()));
             p.load_next(db);
             cx.notify();
         } else if y < 200. && p.has_previous() {
+            *self.page_pin.borrow_mut() = pin(p.rows().next().map(|r| r.id.clone()));
             p.load_previous(db);
             cx.notify();
         }
@@ -109,6 +112,7 @@ impl NotetakerPage {
     }
     fn schedule_highlight_clear(&mut self, cx: &mut Context<Self>) {
         let target = self.pager.as_ref().and_then(|p| p.highlighted.clone());
+        self.reveal_pending = target.is_some();
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             this.update(cx, |this, cx| {
@@ -189,6 +193,8 @@ impl NotetakerPage {
         let copy = live.is_none() && self.pager.as_ref().is_some_and(|x| x.count() > 0 || x.rows().next().is_some());
         let elapsed = live.map_or(d.meeting.recorded_ms, |s| s.elapsed_ms);
         h_flex()
+            .id("meeting.transcript.header")
+            .test_support()
             .w_full()
             .h(px(32.))
             .pl(px(12.))
@@ -205,7 +211,7 @@ impl NotetakerPage {
                         h_flex()
                             .gap(px(6.))
                             .child(icon("magnifyingglass", 11., p.muted))
-                            .child(div().w(px(170.)).text_size(px(11.)).on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| {
+                            .child(div().id("meeting.transcript.search.frame").test_support().w(px(170.)).text_size(px(11.)).on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| {
                                 if e.keystroke.key == "escape" {
                                     this.close_search(w, cx);
                                 }
@@ -224,7 +230,7 @@ impl NotetakerPage {
                 let selected = self.pager.as_ref().map_or(0, |x| x.selection.len());
                 let title = copy_selected_title(selected);
                 let page = cx.entity().downgrade();
-                w.child(menu_trigger("meeting.transcript.copy", "Copy or export transcript", "doc.on.doc", 13., 22., p.accent).dropdown_menu(move |menu, _, _| {
+                w.child(menu_trigger("meeting.transcript.copy", "Copy or export transcript", "square.on.square", 13., 22., p.accent).dropdown_menu(move |menu, _, _| {
                     menu.item(menu_entry(title.clone()).disabled(selected == 0).on_click(act(&page, |this, _, cx| {
                         this.transcript_notice = None;
                         if let Some(x) = &this.pager {
@@ -351,6 +357,7 @@ impl NotetakerPage {
         let (fill, color) = bubble_colors(highlighted, selected, &row.finality, cx);
         let identify = cx.global::<Core>().prefs.bool_or("speakerIdentificationEnabled", true);
         let (page, choices) = (cx.entity().downgrade(), choices.to_vec());
+        let (tops, pin, scroll, key, reveal, reveal_page) = (self.page_tops.clone(), self.page_pin.clone(), self.scroll.clone(), row.id.clone(), highlighted && self.reveal_pending, page.clone());
         v_flex()
             .id(sid(format!("meeting.transcript.row.{}", row.ordinal)))
             .w_full()
@@ -373,7 +380,7 @@ impl NotetakerPage {
                             "system" => orange(cx),
                             _ => p.muted,
                         };
-                        d.child(div().pt(px(14.)).id(sid(format!("meeting.transcript.source.{}", row.ordinal))).tooltip({
+                        d.child(div().pt(px(14.)).id(sid(format!("meeting.transcript.source.{}", row.ordinal))).test_support().tooltip({
                             let text = source_explanation(&row.tracks);
                             move |w, cx| Tooltip::new(text).build(w, cx)
                         }).child(t(source_label(&row.tracks)).font(12., 500.).swift_lines().color(color)))
@@ -387,6 +394,29 @@ impl NotetakerPage {
                     .flex()
                     .flex_col()
                     .items_start()
+                    // `pageAnchor` and the centred jump: both need the row's laid-out place.
+                    .child(
+                        canvas(
+                            move |b, window, cx| {
+                                tops.borrow_mut().insert(key.clone(), b.top());
+                                let o = scroll.offset();
+                                let mut pin = pin.borrow_mut();
+                                if let Some((_, was)) = pin.take_if(|(id, _)| id == &key) {
+                                    scroll.set_offset(point(o.x, o.y - (b.top() - was)));
+                                    window.refresh();
+                                }
+                                if reveal {
+                                    let y = o.y + scroll.bounds().center().y - b.center().y;
+                                    scroll.set_offset(point(o.x, y.clamp(-scroll.max_offset().y, px(0.))));
+                                    reveal_page.update(cx, |p, _| p.reveal_pending = false).ok();
+                                    window.refresh();
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
                     .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).test_support().max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).child(t(row.text.clone()).size(13.).line_spacing(4.).swift_lines().color(color).selectable()).context_menu(move |menu, window, cx| {
                         let segment = id.clone();
                         let mut menu = menu.item(menu_entry(if selected { "Deselect segment" } else { "Select segment" }).on_click(act(&page, move |this, _, cx| {
@@ -454,5 +484,5 @@ pub(crate) fn copy_selected_title(selected: usize) -> String {
 fn mic_divider(name: Option<&str>, cx: &App) -> impl IntoElement {
     let p = pal(cx);
     let text = name.map_or("Microphone changed".to_string(), |n| format!("Microphone changed to {n}"));
-    h_flex().id("meeting.transcript.microphoneChanged").w_full().gap(px(10.)).py(px(8.)).child(div().flex_1().child(hairline(cx))).child(sf_label("mic", text, 12., p.muted)).child(div().flex_1().child(hairline(cx)))
+    h_flex().id("meeting.transcript.microphoneChanged").test_support().w_full().gap(px(10.)).py(px(8.)).child(div().flex_1().child(hairline(cx))).child(sf_label("mic", text, 12., p.muted)).child(div().flex_1().child(hairline(cx)))
 }
