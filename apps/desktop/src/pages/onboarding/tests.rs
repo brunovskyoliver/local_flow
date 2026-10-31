@@ -505,13 +505,24 @@ async fn server_step_consent_trust_sign_in_and_turn_off(cx: &mut TestAppContext)
     click(cx, w, "settings.remoteEnrollAgain");
     assert_saw(&["The server did not answer with a LocalFlow identity. Check the address."]);
     r.ok.set(true);
+    // Swift's switch: a 54 by 24 track, not the Kit's 44 by 24.
+    let track = cx.update_window(w.into(), |_, w, cx| {
+        w.render_frame(cx);
+        w.find("settings.remoteEnabled").bounds().size
+    })
+    .unwrap();
+    assert_eq!((f32::from(track.width), f32::from(track.height)), (54., 24.));
     // Turn off asks first; Cancel keeps it; Turn Off clears it.
     click(cx, w, "settings.remoteEnabled");
-    assert_saw(&["Turn off remote dictation?", "device key and server pin are deleted"]);
-    click(cx, w, "settings.remoteTurnOffCancel");
+    let (message, detail) = cx.pending_prompt().expect("Swift's turn-off alert is native");
+    assert_eq!(message, "Turn off remote dictation?");
+    assert!(detail.contains("device key and server pin are deleted"));
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
     assert!(flag(cx, "remote.enabled"));
     click(cx, w, "settings.remoteEnabled");
-    click(cx, w, "settings.remoteTurnOff");
+    cx.simulate_prompt_answer("Turn Off");
+    cx.run_until_parked();
     assert!(!flag(cx, "remote.enabled"));
     assert!(read(cx, w, |p, _| p.remote.identity.is_none() && p.remote.pinned.is_none()));
     // Meeting wording, including the consent text with retention.
@@ -675,4 +686,50 @@ async fn shell_swaps_to_the_library_and_notetaker_on_a_meetings_finish(cx: &mut 
     assert!(cx.update(|cx| cx.global::<crate::shell::Session>().selection == Page::Meetings));
     cx.update_window(win.into(), |_, w, _| assert!(w.try_find("navigation.settings").is_some())).unwrap();
     cx.update_window(win.into(), |_, w, _| assert!(w.try_find("onboarding.primary").is_none())).unwrap();
+}
+
+struct BarView(Option<f64>);
+
+impl Render for BarView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(200.)).child(parts::bar(self.0, cx))
+    }
+}
+
+fn fill_width(cx: &mut TestAppContext, w: WindowHandle<BarView>) -> f32 {
+    cx.update_window(w.into(), |_, w, cx| {
+        w.render_frame(cx);
+        f32::from(w.find("onboarding.bar.fill").bounds().size.width)
+    })
+    .unwrap()
+}
+
+// parity: ONB-281
+/// `.animation(reduceMotion ? nil : .smooth, value: fraction)`: the fill tweens, or lands at once under Reduce Motion.
+#[flow_ui::gpui::test]
+async fn progress_fill_tweens_and_reduce_motion_lands_at_once(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    let w = cx.add_window(|_, _| BarView(Some(0.)));
+    fill_width(cx, w);
+    w.update(cx, |v, _, cx| {
+        v.0 = Some(1.);
+        cx.notify();
+    })
+    .unwrap();
+    let first = fill_width(cx, w);
+    assert!(first < 100., "starts from the old value, was {first}");
+    cx.executor().advance_clock(Duration::from_millis(100));
+    let mid = fill_width(cx, w);
+    assert!(mid > first && mid < 200., "moves over time, was {mid}");
+    cx.executor().advance_clock(Duration::from_secs(3));
+    fill_width(cx, w);
+    cx.executor().advance_clock(Duration::from_millis(16));
+    assert_eq!(fill_width(cx, w), 200.);
+    cx.update(|cx| cx.global_mut::<Flow>().reduce_motion = true);
+    w.update(cx, |v, _, cx| {
+        v.0 = Some(0.5);
+        cx.notify();
+    })
+    .unwrap();
+    assert_eq!(fill_width(cx, w), 100.);
 }

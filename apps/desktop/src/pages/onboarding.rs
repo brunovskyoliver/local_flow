@@ -144,6 +144,9 @@ impl OnboardingPage {
         page.effects(cx);
         page.refresh(cx);
         page.apply_scenario(cx);
+        if page.remote.confirm_off {
+            cx.defer_in(window, |this, w, cx| this.present_turn_off(w, cx));
+        }
         // `settingsPageChanged` loop: every 500 ms while the window is active and setup unfinished.
         page._polling = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -406,7 +409,7 @@ impl OnboardingPage {
 
     fn request_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if remote_on(&cx.global::<Core>().prefs) {
-            self.remote.confirm_off = true;
+            self.present_turn_off(window, cx);
         } else {
             self.remote.error = None;
             let stored = cx.global::<Core>().prefs.string("remote.serverURL").unwrap_or_default();
@@ -473,6 +476,25 @@ impl OnboardingPage {
             Err(_) => self.remote.error = Some("Sign-in did not finish.".into()),
         }
         cx.notify();
+    }
+
+    /// `.confirmationDialog`: native on macOS.
+    pub fn present_turn_off(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remote.confirm_off = true;
+        let message = format!("This {}'s sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.", self.word(cx));
+        let buttons = [PromptButton::Other("Turn Off".into()), PromptButton::Cancel("Cancel".into())];
+        let answer = window.prompt(PromptLevel::Warning, "Turn off remote dictation?", Some(&message), &buttons, cx);
+        cx.spawn(async move |this, cx| {
+            let turn_off = answer.await == Ok(0);
+            let _ = this.update(cx, |this, cx| {
+                this.remote.confirm_off = false;
+                if turn_off {
+                    this.confirm_turn_off(cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn confirm_turn_off(&mut self, cx: &mut Context<Self>) {
@@ -654,10 +676,6 @@ impl Render for OnboardingPage {
                 "enter" if this.remote.consent_open => this.confirm_consent(cx),
                 "enter" if !this.remote.confirm_off => this.primary(cx),
                 "escape" if this.remote.consent_open => this.cancel_consent(cx),
-                "escape" if this.remote.confirm_off => {
-                    this.remote.confirm_off = false;
-                    cx.notify();
-                }
                 // `onExitCommand`: cancels a dictation. It does not go Back.
                 "escape" => {
                     let _ = cx.global::<Core>().services.session_command(SessionCommand::CancelDictation);

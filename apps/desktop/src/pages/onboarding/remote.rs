@@ -60,7 +60,7 @@ impl OnboardingPage {
         };
         let show_details = on && (state != "approved" || self.remote.identity.is_some() || self.remote.error.is_some());
         let needs_sign_in = on && state == "pinned" && self.remote.identity.is_none();
-        let toggle = Switch::new("settings.remoteEnabled").checked(on).accessibility_label(title).on_click(cx.listener(|this, _: &bool, w, cx| this.request_toggle(w, cx)));
+        let toggle = FlowSwitch::new("settings.remoteEnabled").checked(on).accessibility_label(title).on_click(cx.listener(|this, _: &bool, w, cx| this.request_toggle(w, cx)));
         let mut card = v_flex().w_full().child(settings_row(title, Some(detail), toggle, cx));
         if !show_details {
             return card;
@@ -117,7 +117,7 @@ impl OnboardingPage {
                     .when_some(self.credential_error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning))),
             );
         if insecure {
-            let toggle = Switch::new("onboarding.allowInsecure").checked(allowed).accessibility_label("Allow unencrypted HTTP to this server").on_click(cx.listener(|this, on: &bool, _, cx| this.set_insecure(*on, cx)));
+            let toggle = FlowSwitch::new("onboarding.allowInsecure").checked(allowed).accessibility_label("Allow unencrypted HTTP to this server").on_click(cx.listener(|this, on: &bool, _, cx| this.set_insecure(*on, cx)));
             form = form.child(h_flex().gap(px(8.)).child(toggle).child(t("Allow unencrypted HTTP to this server").size(13.).a11y_hidden()));
         }
         let mut result = h_flex().w_full().gap(px(12.)).child(prototype_button("onboarding.connect", if self.connection_testing { "Connecting…" } else { "Connect" }).disabled(self.connection_testing || origin.is_none()).on_click(connect));
@@ -149,14 +149,14 @@ impl OnboardingPage {
         ]
     }
 
-    /// The consent sheet and the turn-off dialog, over the whole page.
+    /// The consent sheet, over the whole page.
     pub(super) fn overlays(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.remote.consent_open && !self.remote.confirm_off {
+        if !self.remote.consent_open {
             return None;
         }
         let p = pal(cx);
         let word = self.word(cx);
-        let body = if self.remote.consent_open {
+        let body = {
             let draft = self.server_draft.read(cx).value().to_string();
             let origin = remote_origin(&draft);
             let prefs = &self.core(cx).prefs;
@@ -176,19 +176,6 @@ impl OnboardingPage {
                 .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
                 .when_some(self.remote.error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning)))
                 .child(h_flex().w_full().justify_end().gap(px(8.)).child(prototype_button("settings.remoteConsentCancel", "Cancel").on_click(cancel)).child(primary_button("settings.remoteConsentConfirm", "Turn On").disabled(origin.is_none()).on_click(confirm)))
-        } else {
-            let cancel = self.click(cx, |this, cx| {
-                this.remote.confirm_off = false;
-                cx.notify();
-            });
-            let off = self.click(cx, |this, cx| this.confirm_turn_off(cx));
-            v_flex()
-                .w(px(380.))
-                .p(px(24.))
-                .gap(px(12.))
-                .child(t("Turn off remote dictation?").font(15., 600.))
-                .child(t(format!("This {word}'s sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.")).size(13.).line_spacing(3.))
-                .child(h_flex().w_full().justify_end().gap(px(8.)).pt(px(4.)).child(prototype_button("settings.remoteTurnOffCancel", "Cancel").on_click(cancel)).child(prototype_button("settings.remoteTurnOff", "Turn Off").text_color(p.warning).on_click(off)))
         };
         // Stops clicks reaching the page behind, as a sheet does.
         Some(any(deferred(

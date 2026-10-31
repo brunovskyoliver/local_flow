@@ -26,6 +26,9 @@ pub const MICROPHONE_SECONDS: u64 = 8;
 pub const CLIPBOARD_SECONDS: u64 = 6;
 pub const ACTION_SECONDS: u64 = 6;
 pub const HIDDEN_GRACE_SECONDS: u64 = 10;
+pub const RESIZE: f32 = 0.32;
+/// Swift's `CAMediaTimingFunction(controlPoints:)` for the panel frame.
+pub const RESIZE_CURVE: [f32; 4] = [0.2, 0.9, 0.25, 1.];
 
 /// `showsPanel`.
 pub fn shows_dictation(s: DictState) -> bool {
@@ -178,6 +181,12 @@ impl Waveform {
         let loud = if level.is_finite() { (level * 5.).clamp(0., 1.) } else { 0. };
         3. + 25. * loud.powf(0.7)
     }
+}
+
+/// The incoming content's `(opacity, scale)`: scale from 0.88 with opacity on the swap spring.
+pub fn swap_style(elapsed: f32) -> (f32, f32) {
+    let f = spring(elapsed, SWAP).clamp(0., 1.);
+    (f, 0.88 + 0.12 * f)
 }
 
 /// Left fade of the recording strip: clear at 0 to opaque at 0.28 of the 87 window.
@@ -581,8 +590,8 @@ pub fn remaining(elapsed: f32, seconds: f32, reduce_motion: bool) -> f32 {
     if reduce_motion { 1. } else { (1. - elapsed / seconds).clamp(0., 1.) }
 }
 
-fn capsule(highlighted: bool) -> Div {
-    div().h(px(HEIGHT)).rounded(px(HEIGHT / 2.)).bg(style::fill().opacity(if highlighted { 0.92 } else { 1. })).border_1().border_color(style::white(if highlighted { 0.22 } else { 0.13 }))
+fn capsule(highlighted: bool, k: f32) -> Div {
+    div().h(px(HEIGHT * k)).rounded(px(HEIGHT * k / 2.)).bg(style::fill().opacity(if highlighted { 0.92 } else { 1. })).border_1().border_color(style::white(if highlighted { 0.22 } else { 0.13 }))
 }
 
 /// The capsule stroke trimmed to `remaining`, 1.5 wide with round caps.
@@ -630,14 +639,15 @@ fn ring(remaining: f32) -> impl IntoElement {
     .size_full()
 }
 
-fn chip(id: &'static str, title: &'static str, a11y: String, remaining: Option<f32>, tip: Option<&'static str>, content: Option<AnyElement>, f: fn(&mut App)) -> impl IntoElement {
+#[allow(clippy::too_many_arguments)]
+fn chip(id: &'static str, title: &'static str, a11y: String, remaining: Option<f32>, tip: Option<&'static str>, content: Option<AnyElement>, f: fn(&mut App), k: f32) -> impl IntoElement {
     let mut body = div()
         .relative()
-        .rounded(px(19.))
-        .px(px(12.))
-        .py(px(6.))
+        .rounded(px(19. * k))
+        .px(px(12. * k))
+        .py(px(6. * k))
         .bg(style::white(0.1))
-        .child(content.unwrap_or_else(|| t(title).font(11., 600.).color(style::ink()).a11y_hidden().into_any_element()));
+        .child(content.unwrap_or_else(|| t(title).font(11. * k, 600.).color(style::ink()).a11y_hidden().into_any_element()));
     if let Some(r) = remaining {
         body = body.child(ring(r));
     }
@@ -648,16 +658,17 @@ fn chip(id: &'static str, title: &'static str, a11y: String, remaining: Option<f
     b
 }
 
-fn notice(symbol: &'static str, message: String, max_width: f32, action: Option<AnyElement>) -> impl IntoElement {
+fn notice(symbol: &'static str, message: String, max_width: f32, action: Option<AnyElement>, k: f32) -> impl IntoElement {
     let trailing = if action.is_some() { 5. } else { 16. };
-    capsule(false)
+    capsule(false, k)
+        .id("pill.notice")
         .flex()
         .items_center()
-        .gap(px(10.))
-        .pl(px(14.))
-        .pr(px(trailing))
-        .child(icon(symbol, 11., style::ink().opacity(0.9)))
-        .child(div().max_w(px(max_width)).child(t(message).font(12., 500.).color(style::ink()).lines(1)))
+        .gap(px(10. * k))
+        .pl(px(14. * k))
+        .pr(px(trailing * k))
+        .child(icon(symbol, 11. * k, style::ink().opacity(0.9)))
+        .child(div().max_w(px(max_width * k)).child(t(message).font(12. * k, 500.).color(style::ink()).lines(1)))
         .children(action)
 }
 
@@ -670,12 +681,14 @@ pub struct PillView {
     hovering: bool,
     shown_at: Instant,
     hide_since: Option<Instant>,
+    shown: Content,
+    swap_since: Option<Instant>,
     _sub: Subscription,
 }
 
 impl PillView {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        PillView { hovering: false, shown_at: Instant::now(), hide_since: None, _sub: cx.observe_global::<Session>(|_, cx| cx.notify()) }
+        PillView { hovering: false, shown_at: Instant::now(), hide_since: None, shown: cx.global::<Session>().pill.content(), swap_since: None, _sub: cx.observe_global::<Session>(|_, cx| cx.notify()) }
     }
 
     fn dictation(&mut self, time: f64, reduce: bool, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -732,11 +745,11 @@ impl PillView {
                 this.hovering = *h;
                 cx.notify();
             }))
-            .child(div().absolute().left(px((EXPANDED_WIDTH - width) / 2.)).top_0().w(px(width)).child(capsule(false).relative().w_full().overflow_hidden().child(row)))
+            .child(div().absolute().left(px((EXPANDED_WIDTH - width) / 2.)).top_0().w(px(width)).child(capsule(false, 1.).relative().w_full().overflow_hidden().child(row)))
             .child(div().absolute().left(px(EXPANDED_WIDTH + 35. - 24.)).top(px(7.)).w(px(24.)).h(px(24.)).flex().items_center().justify_center().opacity(if hover { 1. } else { 0. }).child(cancel))
     }
 
-    fn content(&mut self, time: f64, reduce: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn content(&mut self, time: f64, reduce: bool, k: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let pill = &cx.global::<Session>().pill;
         let content = pill.content();
         let countdown = |shown: Instant, seconds: u64| remaining(shown.elapsed().as_secs_f32(), seconds as f32, reduce);
@@ -744,8 +757,8 @@ impl PillView {
             Content::Dictation => self.dictation(time, reduce, window, cx).into_any_element(),
             Content::Microphone => {
                 let m = pill.microphone.clone().unwrap();
-                let action = chip("dictation.notice.microphones", "Microphones…", "Open Microphones settings".into(), None, None, None, tap_microphones);
-                notice("mic.slash", m.message, 420., Some(action.into_any_element())).into_any_element()
+                let action = chip("dictation.notice.microphones", "Microphones…", "Open Microphones settings".into(), None, None, None, tap_microphones, k);
+                notice("mic.slash", m.message, 420., Some(action.into_any_element()), k).into_any_element()
             }
             Content::Learned => {
                 let n = pill.learned.clone().unwrap();
@@ -758,7 +771,7 @@ impl PillView {
                     .id("pill.learned")
                     .role(accesskit::Role::Group)
                     .aria_label(format!("Added {} to dictionary", n.word))
-                    .child(notice("sparkles", n.message(), 360., Some(chip(id, title, a11y, Some(r), None, None, tap_learned).into_any_element())))
+                    .child(notice("sparkles", n.message(), 360., Some(chip(id, title, a11y, Some(r), None, None, tap_learned, k).into_any_element()), k))
                     .into_any_element()
             }
             Content::Clipboard => {
@@ -767,9 +780,9 @@ impl PillView {
                 if !reduce {
                     window.request_animation_frame();
                 }
-                let keycap = h_flex().gap(px(1.)).child(icon("command", 9., style::ink())).child(t("V").font(11., 600.).color(style::ink()).a11y_hidden());
-                let action = chip("clipboard.notice.dismiss", "V", "Dismiss. Paste with Command-V".into(), Some(r), Some("Paste with Command-V"), Some(keycap.into_any_element()), |cx| update_session(cx, |s| s.pill.clipboard = None));
-                notice("doc.on.clipboard", c.message().to_string(), 420., Some(action.into_any_element())).into_any_element()
+                let keycap = h_flex().gap(px(1.)).child(icon("command", 9. * k, style::ink())).child(t("V").font(11. * k, 600.).color(style::ink()).a11y_hidden());
+                let action = chip("clipboard.notice.dismiss", "V", "Dismiss. Paste with Command-V".into(), Some(r), Some("Paste with Command-V"), Some(keycap.into_any_element()), |cx| update_session(cx, |s| s.pill.clipboard = None), k);
+                notice("doc.on.clipboard", c.message().to_string(), 420., Some(action.into_any_element()), k).into_any_element()
             }
             Content::Action => {
                 let a = pill.action.clone().unwrap();
@@ -777,8 +790,8 @@ impl PillView {
                 if !reduce && a.can_retry {
                     window.request_animation_frame();
                 }
-                let action = a.can_retry.then(|| div().id("rewrite.notice.retry.group").child(chip("rewrite.notice.retry", "Retry", "Retry rewrite".into(), Some(r), None, None, tap_retry)).aria_description("Available here briefly. Retry is also in History.").into_any_element());
-                notice("text.badge.xmark", a.message, 420., action).into_any_element()
+                let action = a.can_retry.then(|| div().id("rewrite.notice.retry.group").child(chip("rewrite.notice.retry", "Retry", "Retry rewrite".into(), Some(r), None, None, tap_retry, k)).aria_description("Available here briefly. Retry is also in History.").into_any_element());
+                notice("text.badge.xmark", a.message, 420., action, k).into_any_element()
             }
             Content::Background => {
                 let b = pill.background.clone().unwrap();
@@ -795,7 +808,7 @@ impl PillView {
                     .child(
                         plain_button("background.notice", b.text())
                             .tooltip("Opens LocalFlow")
-                            .content(capsule(hover).flex().items_center().gap(px(10.)).px(px(16.)).child(icon(b.symbol(), 11., style::ink().opacity(0.9))).child(div().max_w(px(420.)).child(t(b.text()).font(12., 500.).color(style::ink()).lines(1).mono_digits().a11y_hidden())))
+                            .content(capsule(hover, k).flex().items_center().gap(px(10. * k)).px(px(16. * k)).child(icon(b.symbol(), 11. * k, style::ink().opacity(0.9))).child(div().max_w(px(420. * k)).child(t(b.text()).font(12. * k, 500.).color(style::ink()).lines(1).mono_digits().a11y_hidden())))
                             .on_click(|_, _, cx| tap_background(cx)),
                     )
                     .child(
@@ -830,8 +843,25 @@ impl Render for PillView {
                 window.request_animation_frame();
             }
         }
-        let content = self.content(time, reduce, window, cx);
-        div().size_full().font_family(FIGTREE).opacity(opacity).pt(px(drop)).child(content)
+        // The new content fades in and scales from 0.88. GPUI has no view scale, so sizes carry it.
+        // ponytail: the outgoing content isn't kept for Swift's 0.1 s fade: its notice is already gone from `Session`.
+        // The dictation pill fades without scaling, since its bars animate their own geometry.
+        let current = cx.global::<Session>().pill.content();
+        if current != self.shown {
+            self.shown = current;
+            self.swap_since = (!reduce).then(Instant::now);
+        }
+        let (fade_in, mut k) = self.swap_since.map_or((1., 1.), |t| swap_style(t.elapsed().as_secs_f32()));
+        if self.swap_since.is_some_and(|t| t.elapsed().as_secs_f32() >= 1.) {
+            self.swap_since = None;
+        } else if self.swap_since.is_some() {
+            window.request_animation_frame();
+        }
+        if current == Content::Dictation {
+            k = 1.;
+        }
+        let content = self.content(time, reduce, k, window, cx);
+        div().size_full().flex().justify_center().font_family(FIGTREE).opacity(opacity * fade_in).pt(px(drop)).child(content)
     }
 }
 
@@ -891,9 +921,20 @@ pub fn sync_window(cx: &mut App) {
         if show && old == key {
             return;
         }
+        let reduce = cx.global::<Flow>().reduce_motion;
+        if show && !reduce {
+            // The same panel moves to its new frame over 0.32 s; `PillView` swaps the content.
+            let visible = cx.primary_display().map(|d| d.visible_bounds()).unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) });
+            let x = f32::from(panel_origin(visible, width, content == Content::Dictation).x);
+            let moved = handle.update(cx, |_, w, cx| cx.global::<Core>().services.animate_panel_frame(w, x, width, RESIZE, RESIZE_CURVE).is_ok());
+            if matches!(moved, Ok(true)) {
+                cx.global_mut::<PillWindow>().key = key;
+                return;
+            }
+        }
         cx.remove_global::<PillWindow>();
-        if show || cx.global::<Flow>().reduce_motion {
-            // ponytail: GPUI windows can't move, so a new size is a new window; no animated resize (PILL-019).
+        if show || reduce {
+            // Reduce Motion resizes at once; where the platform can't animate a frame, a new window takes the new size.
             let _ = handle.update(cx, |_, w, _| w.remove_window());
         } else {
             view.update(cx, |v, cx| {
@@ -970,7 +1011,7 @@ mod tests {
 
     fn view(cx: &mut TestAppContext) -> (WindowHandle<PillView>, Rc<RefCell<Vec<String>>>, Rc<RefCell<Vec<SessionCommand>>>) {
         boot(cx, Mode::Dark);
-        // Motion asks for a next frame forever, which never parks; the audit covers the animated paths.
+        // Reduce Motion freezes the running timers, so the assertions read fixed values.
         cx.update(|cx| cx.global_mut::<Flow>().reduce_motion = true);
         let (announced, commands): (Rc<RefCell<Vec<String>>>, Rc<RefCell<Vec<SessionCommand>>>) = Default::default();
         cx.update(|cx| {
@@ -1297,5 +1338,118 @@ mod tests {
             assert_eq!(s.selection, Page::Meetings);
             assert_eq!(s.open_meeting, Some(("m1".to_string(), Some("transcript"))));
         });
+    }
+
+    fn panel(cx: &TestAppContext) -> Option<AnyWindowHandle> {
+        cx.update(|cx| cx.try_global::<PillWindow>().map(|w| w.handle))
+    }
+
+    fn panels(cx: &mut TestAppContext, reduce: bool, refuse: bool) -> Rc<RefCell<Vec<(f32, f32, [f32; 4])>>> {
+        boot(cx, Mode::Dark);
+        let calls: Rc<RefCell<Vec<(f32, f32, [f32; 4])>>> = Default::default();
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.global_mut::<Flow>().reduce_motion = reduce;
+            cx.global_mut::<Core>().services = Box::new(Fake { panel_frames: (!refuse).then(|| calls.clone()), ..Default::default() });
+        });
+        calls
+    }
+
+    // parity: PILL-019
+    /// A new size animates the same panel over 0.32 s on Swift's cubic.
+    #[flow_ui::gpui::test]
+    async fn resize_animates_the_same_panel(cx: &mut TestAppContext) {
+        let calls = panels(cx, false, false);
+        cx.update(|cx| show_clipboard(false, cx));
+        cx.update(sync_window);
+        let first = panel(cx).expect("open");
+        assert!(calls.borrow().is_empty(), "opening isn't a resize");
+        cx.update(|cx| show_microphone("No microphone available", cx));
+        cx.update(sync_window);
+        assert_eq!(panel(cx), Some(first), "same panel");
+        let call = calls.borrow().last().copied().expect("frame animated");
+        assert_eq!((call.1, call.2), (0.32, [0.2, 0.9, 0.25, 1.]));
+        assert_eq!(call.0, cx.update(|cx| content_width(cx)));
+    }
+
+    // parity: PILL-020
+    /// Reduce Motion resizes at once, without the animator, and hides without a fade.
+    #[flow_ui::gpui::test]
+    async fn reduce_motion_resizes_and_hides_at_once(cx: &mut TestAppContext) {
+        let calls = panels(cx, true, false);
+        cx.update(|cx| show_clipboard(false, cx));
+        cx.update(sync_window);
+        let first = panel(cx).expect("open");
+        cx.update(|cx| show_microphone("No microphone available", cx));
+        cx.update(sync_window);
+        assert!(calls.borrow().is_empty());
+        assert_ne!(panel(cx), Some(first));
+        let last = panel(cx).unwrap();
+        cx.update(|cx| {
+            update_session(cx, |s| s.pill = Pill::default());
+            sync_window(cx);
+        });
+        cx.run_until_parked();
+        assert!(panel(cx).is_none());
+        assert!(cx.update(|cx| last.update(cx, |_, _, _| ()).is_err()), "gone without waiting for a fade");
+    }
+
+    // parity: PILL-019
+    /// Where the platform refuses, a new window takes the new size.
+    #[flow_ui::gpui::test]
+    async fn unavailable_frames_reopen_the_panel(cx: &mut TestAppContext) {
+        panels(cx, false, true);
+        cx.update(|cx| show_clipboard(false, cx));
+        cx.update(sync_window);
+        let first = panel(cx).expect("open");
+        cx.update(|cx| show_microphone("No microphone available", cx));
+        cx.update(sync_window);
+        assert_ne!(panel(cx), Some(first));
+    }
+
+    // parity: PILL-018
+    /// Hiding starts the 0.18 s fade, stays on screen for it, then orders out.
+    #[flow_ui::gpui::test]
+    async fn hide_fades_then_closes(cx: &mut TestAppContext) {
+        panels(cx, false, false);
+        cx.update(|cx| show_microphone("No microphone available", cx));
+        cx.update(sync_window);
+        let handle = panel(cx).unwrap();
+        let view = cx.update(|cx| cx.global::<PillWindow>().view.clone());
+        cx.update(|cx| {
+            update_session(cx, |s| s.pill = Pill::default());
+            sync_window(cx);
+        });
+        assert!(cx.update(|cx| view.read(cx).hide_since.is_some()));
+        assert_eq!(HIDE, 0.18);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        assert!(cx.update(|cx| handle.update(cx, |_, _, _| ()).is_ok()), "still fading");
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert!(cx.update(|cx| handle.update(cx, |_, _, _| ()).is_err()), "ordered out");
+    }
+
+    // parity: PILL-025 PILL-026
+    /// A swap restarts the fade and the 0.88 scale; Reduce Motion has neither.
+    #[flow_ui::gpui::test]
+    async fn content_swap_springs_in_and_reduce_motion_cuts(cx: &mut TestAppContext) {
+        assert_eq!(swap_style(0.), (0., 0.88));
+        assert!((swap_style(2.).0 - 1.).abs() < 0.001 && (swap_style(2.).1 - 1.).abs() < 0.001);
+        let mid = swap_style(0.08);
+        assert!(mid.0 > 0. && mid.0 < 1. && mid.1 > 0.88 && mid.1 < 1.);
+        panels(cx, false, false);
+        cx.update(|cx| show_clipboard(false, cx));
+        let w = cx.add_window(|_, cx| PillView::new(cx));
+        cx.update_window(w.into(), |_, w, cx| w.render_frame(cx)).unwrap();
+        assert!(w.update(cx, |v, _, _| v.swap_since.is_none()).unwrap());
+        cx.update(|cx| show_microphone("No microphone available", cx));
+        w.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.update_window(w.into(), |_, w, cx| w.render_frame(cx)).unwrap();
+        assert!(w.update(cx, |v, _, _| v.swap_since.is_some() && v.shown == Content::Microphone).unwrap());
+        cx.update(|cx| cx.global_mut::<Flow>().reduce_motion = true);
+        cx.update(|cx| update_session(cx, |s| s.pill.microphone = None));
+        w.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.update_window(w.into(), |_, w, cx| w.render_frame(cx)).unwrap();
+        assert!(w.update(cx, |v, _, _| v.swap_since.is_none() && v.shown == Content::Clipboard).unwrap());
     }
 }

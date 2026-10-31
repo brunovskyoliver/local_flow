@@ -229,6 +229,11 @@ pub fn hover_revealed(group: impl Into<SharedString>, keep: bool, d: Div) -> Div
     d.when(!keep, |d| d.invisible_until_group_hover(g))
 }
 
+/// Also shown while keyboard focus is inside `d`, as Swift's `@FocusState` row actions are.
+pub fn hover_or_focus_revealed(group: impl Into<SharedString>, keep: bool, focus: &FocusHandle, d: Div) -> Div {
+    hover_revealed(group, keep, d).track_focus(focus).in_focus(|s| s.opacity(1.))
+}
+
 trait InvisibleUntil {
     fn invisible_until_group_hover(self, g: SharedString) -> Self;
 }
@@ -269,4 +274,140 @@ pub fn h_flex() -> Div {
 }
 pub fn v_flex() -> Div {
     div().flex().flex_col()
+}
+
+/// SwiftUI's `.toggleStyle(.switch)`: NSSwitch's geometry on macOS 26, measured from the reference
+/// app and `NSSwitch.fittingSize`. Regular 54x24 with a 32x20 capsule knob, small 44x20 with 26x16.
+/// Takes the same builder calls as Kit's `Switch`. `ControlSize::Small` is `.controlSize(.small)`;
+/// every other size is regular. The track is the accent while the window is key and grey when it isn't.
+#[derive(IntoElement)]
+pub struct FlowSwitch {
+    id: ElementId,
+    checked: bool,
+    disabled: bool,
+    label: Option<SharedString>,
+    size: gpui_kit::component::Size,
+    on_change: Option<std::rc::Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+}
+
+impl FlowSwitch {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        FlowSwitch { id: id.into(), checked: false, disabled: false, label: None, size: gpui_kit::component::Size::Medium, on_change: None }
+    }
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
+        self
+    }
+    pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+    pub fn on_click(mut self, f: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_change = Some(std::rc::Rc::new(f));
+        self
+    }
+    /// (track width, track height, knob width, knob height) in points.
+    pub fn geometry(small: bool) -> (f32, f32, f32, f32) {
+        if small { (44., 20., 26., 16.) } else { (54., 24., 32., 20.) }
+    }
+    /// The track colour measured from the reference app.
+    pub fn track_color(checked: bool, key_window: bool, p: &crate::tokens::Palette) -> Hsla {
+        let wash = |a: f32| if p.mode.is_dark() { gpui_kit::white().opacity(a) } else { gpui_kit::black().opacity(a) };
+        match (checked, key_window) {
+            (true, true) => p.accent,
+            (true, false) => wash(0.14),
+            (false, _) => wash(if p.mode.is_dark() { 0.09 } else { 0.11 }),
+        }
+    }
+}
+
+impl Sizable for FlowSwitch {
+    fn with_size(mut self, size: impl Into<gpui_kit::component::Size>) -> Self {
+        self.size = size.into();
+        self
+    }
+}
+
+impl Disableable for FlowSwitch {
+    fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+}
+
+impl RenderOnce for FlowSwitch {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        use gpui_kit::base::{Switch as BaseSwitch, SwitchThumb, SwitchTrack, spring};
+        use gpui_kit::component::{ActiveTheme, Size};
+        let p = pal(cx);
+        let small = matches!(self.size, Size::Small | Size::XSmall);
+        let (w, h, kw, kh) = Self::geometry(small);
+        let inset = (h - kh) / 2.;
+        let focus = window.use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle()).read(cx).clone();
+        let focused = focus.is_focused(window);
+        let policy = cx.theme().motion_tokens().spring_move;
+        let x = spring((self.id.clone(), "knob"), px(if self.checked { w - kw - inset } else { inset }), policy, window, cx);
+        let track = Self::track_color(self.checked, window.is_window_active(), &p);
+        let on_change = self.on_change;
+        BaseSwitch::new(self.id.clone())
+            .checked(self.checked)
+            .disabled(self.disabled)
+            .when_some(self.label, |s, l| s.accessibility_label(l))
+            .when_some(on_change, |s, f| s.on_change(move |next, _, w, cx| f(&next, w, cx)))
+            .track_focus(&focus)
+            .flex()
+            .flex_none()
+            .w(px(w))
+            .h(px(h))
+            .when(self.disabled, |s| s.opacity(0.5))
+            .child(
+                SwitchTrack::new((self.id.clone(), "track"))
+                    .checked(self.checked)
+                    .disabled(self.disabled)
+                    .relative()
+                    .w(px(w))
+                    .h(px(h))
+                    .rounded(px(h / 2.))
+                    .bg(track)
+                    .when(focused, |t| t.border_2().border_color(p.accent.opacity(0.5)))
+                    .child(
+                        SwitchThumb::new(self.checked)
+                            .absolute()
+                            .top(px(inset))
+                            .left(x)
+                            .w(px(kw))
+                            .h(px(kh))
+                            .rounded(px(kh / 2.))
+                            .bg(gpui_kit::white())
+                            .shadow(vec![BoxShadow { color: gpui_kit::black().opacity(0.22), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false }]),
+                    ),
+            )
+    }
+}
+
+/// A value springing to `target`, for SwiftUI's `.animation(.spring(response, damping), value:)`.
+/// `.smooth` is response 0.5, damping 1. Reduce Motion lands on the target at once.
+pub fn spring_value(id: impl Into<ElementId>, target: f32, response: f32, damping: f32, window: &mut Window, cx: &mut App) -> f32 {
+    if cx.global::<crate::tokens::Flow>().reduce_motion {
+        return target;
+    }
+    let policy = gpui_kit::base::Spring::new(std::time::Duration::from_secs_f32(response)).with_damping(damping).with_epsilon(0.001);
+    f32::from(gpui_kit::base::spring(id.into(), px(target), policy, window, cx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tokens::{Mode, Palette};
+
+    // Measured from the Swift reference at 2x.
+    #[::core::prelude::v1::test]
+    fn switch_matches_nsswitch_geometry_and_colours() {
+        assert_eq!(FlowSwitch::geometry(false), (54., 24., 32., 20.));
+        assert_eq!(FlowSwitch::geometry(true), (44., 20., 26., 16.));
+        let (light, dark) = (Palette::new(Mode::Light), Palette::new(Mode::Dark));
+        assert_eq!(FlowSwitch::track_color(true, true, &light), light.accent);
+        assert_eq!((FlowSwitch::track_color(false, true, &light).a, FlowSwitch::track_color(false, true, &dark).a), (0.11, 0.09));
+        assert_eq!(FlowSwitch::track_color(true, false, &dark).a, 0.14);
+    }
 }

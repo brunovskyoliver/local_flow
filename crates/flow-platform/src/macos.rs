@@ -17,6 +17,49 @@ unsafe extern "C" {
     fn sysctlbyname(name: *const std::ffi::c_char, old: *mut std::ffi::c_void, oldlen: *mut usize, new: *mut std::ffi::c_void, newlen: usize) -> i32;
 }
 
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    static kCFLocaleDecimalSeparator: *const std::ffi::c_void;
+    fn CFLocaleCopyCurrent() -> *const std::ffi::c_void;
+    fn CFLocaleGetValue(locale: *const std::ffi::c_void, key: *const std::ffi::c_void) -> *const std::ffi::c_void;
+    fn CFStringGetLength(s: *const std::ffi::c_void) -> isize;
+    fn CFStringGetCharacterAtIndex(s: *const std::ffi::c_void, index: isize) -> u16;
+    fn CFRelease(o: *const std::ffi::c_void);
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Rect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+type Id = *mut std::ffi::c_void;
+
+#[link(name = "objc")]
+unsafe extern "C" {
+    fn objc_msgSend();
+    #[cfg(target_arch = "x86_64")]
+    fn objc_msgSend_stret();
+    fn objc_getClass(name: *const std::ffi::c_char) -> Id;
+    fn sel_registerName(name: *const std::ffi::c_char) -> Id;
+}
+#[link(name = "AppKit", kind = "framework")]
+unsafe extern "C" {}
+#[link(name = "QuartzCore", kind = "framework")]
+unsafe extern "C" {}
+
+/// `[receiver selector]` with no arguments, returning an object.
+unsafe fn send(receiver: Id, selector: &std::ffi::CStr) -> Id {
+    // SAFETY: the caller names a selector taking no arguments and returning an object or void.
+    unsafe {
+        let f: unsafe extern "C" fn(Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        f(receiver, sel_registerName(selector.as_ptr()))
+    }
+}
+
 pub struct Mac;
 
 impl Services for Mac {
@@ -69,6 +112,60 @@ impl Services for Mac {
         // SAFETY: the name is NUL-terminated and value and size describe a live u64.
         let ok = unsafe { sysctlbyname(c"hw.memsize".as_ptr(), (&raw mut value).cast(), &raw mut size, std::ptr::null_mut(), 0) };
         if ok == 0 { value } else { 0 }
+    }
+    fn animate_panel_frame(&self, window: &dyn raw_window_handle::HasWindowHandle, x: f32, width: f32, duration: f32, curve: [f32; 4]) -> Result<(), Unavailable> {
+        let unavailable = Unavailable("animated window frames");
+        let raw_window_handle::RawWindowHandle::AppKit(handle) = window.window_handle().map_err(|_| unavailable.clone())?.as_raw() else { return Err(unavailable) };
+        // SAFETY: called on the main thread with GPUI's live NSView; each cast matches the selector's AppKit signature.
+        // NSRect is returned through a hidden pointer on x86_64 and in registers on arm64.
+        unsafe {
+            let window = send(handle.ns_view.as_ptr(), c"window");
+            if window.is_null() {
+                return Err(unavailable);
+            }
+            let frame_sel = sel_registerName(c"frame".as_ptr());
+            #[cfg(target_arch = "x86_64")]
+            let frame = {
+                let f: unsafe extern "C" fn(*mut Rect, Id, Id) = std::mem::transmute(objc_msgSend_stret as unsafe extern "C" fn());
+                let mut r = Rect { x: 0., y: 0., w: 0., h: 0. };
+                f(&raw mut r, window, frame_sel);
+                r
+            };
+            #[cfg(not(target_arch = "x86_64"))]
+            let frame = {
+                let f: unsafe extern "C" fn(Id, Id) -> Rect = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+                f(window, frame_sel)
+            };
+            let context_class = objc_getClass(c"NSAnimationContext".as_ptr());
+            send(context_class, c"beginGrouping");
+            let context = send(context_class, c"currentContext");
+            let set_duration: unsafe extern "C" fn(Id, Id, f64) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            set_duration(context, sel_registerName(c"setDuration:".as_ptr()), duration as f64);
+            let make_curve: unsafe extern "C" fn(Id, Id, f32, f32, f32, f32) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let timing = make_curve(objc_getClass(c"CAMediaTimingFunction".as_ptr()), sel_registerName(c"functionWithControlPoints::::".as_ptr()), curve[0], curve[1], curve[2], curve[3]);
+            let set_timing: unsafe extern "C" fn(Id, Id, Id) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            set_timing(context, sel_registerName(c"setTimingFunction:".as_ptr()), timing);
+            let set_frame: unsafe extern "C" fn(Id, Id, Rect, bool) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            set_frame(send(window, c"animator"), sel_registerName(c"setFrame:display:".as_ptr()), Rect { x: x as f64, y: frame.y, w: width as f64, h: frame.h }, true);
+            send(context_class, c"endGrouping");
+        }
+        Ok(())
+    }
+    fn decimal_separator(&self) -> char {
+        // SAFETY: CFLocaleCopyCurrent returns an owned locale, released below; the value is borrowed from it and read first.
+        unsafe {
+            let locale = CFLocaleCopyCurrent();
+            let value = CFLocaleGetValue(locale, kCFLocaleDecimalSeparator);
+            let c = if !value.is_null() && CFStringGetLength(value) > 0 { char::from_u32(CFStringGetCharacterAtIndex(value, 0) as u32) } else { None };
+            CFRelease(locale);
+            c.unwrap_or('.')
+        }
+    }
+    fn formats(&self) -> Option<crate::Formats> {
+        Some(crate::region_mac::formats())
+    }
+    fn voice_over_on(&self) -> bool {
+        read_universal_access("voiceOverOnOffKey")
     }
     fn high_contrast(&self) -> bool {
         read_universal_access("increaseContrast")

@@ -38,6 +38,7 @@ pub fn init(mode: tokens::Mode, reduce_motion: bool, cx: &mut gpui_kit::App) {
     fonts::register(cx);
     cx.set_global(tokens::Flow { palette: tokens::Palette::new(mode), reduce_motion, compact: false });
     kit_theme::apply(cx);
+    cx.set_reduce_motion(reduce_motion);
 }
 
 /// The same setup for a headless test.

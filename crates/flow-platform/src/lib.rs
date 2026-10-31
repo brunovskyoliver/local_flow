@@ -22,6 +22,8 @@ pub enum PermissionState {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Unavailable(pub &'static str);
 
+pub use raw_window_handle::HasWindowHandle;
+
 /// A connected audio input (Swift's `ConnectedInput`). Read-only: nothing here opens the device.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputDevice {
@@ -82,6 +84,17 @@ pub enum SessionCommand {
 }
 
 /// OS services a view calls. Tests use `Fake`.
+/// Region formats as plain functions, so `flow-core` can call them without knowing `Services`.
+#[derive(Clone, Copy)]
+pub struct Formats {
+    /// (milliseconds, template such as "dMMM" or "short-time", read the fields as UTC).
+    pub date: fn(i64, &str, bool) -> Option<String>,
+    /// (value, exact fraction digits).
+    pub number: fn(f64, u8) -> Option<String>,
+    /// 1 is Sunday, as in `Calendar.firstWeekday`.
+    pub first_weekday: i64,
+}
+
 pub trait Services: 'static {
     fn name(&self) -> &'static str;
     /// "Mac" or "PC" in copy that says "this Mac".
@@ -192,6 +205,23 @@ pub trait Services: 'static {
     fn check_for_updates(&self) -> Result<(), Unavailable> {
         Err(Unavailable("Sparkle"))
     }
+    /// Animates a window to `x` and `width`, keeping its y and height, over `duration` seconds on the
+    /// cubic Bezier `curve` (Swift's `animator().setFrame`). Main thread only.
+    fn animate_panel_frame(&self, _window: &dyn raw_window_handle::HasWindowHandle, _x: f32, _width: f32, _duration: f32, _curve: [f32; 4]) -> Result<(), Unavailable> {
+        Err(Unavailable("animated window frames"))
+    }
+    /// The current locale's decimal separator, which `.formatted()` and `ByteCountFormatter` use.
+    fn decimal_separator(&self) -> char {
+        '.'
+    }
+    /// The system locale's formats; `None` where they aren't read yet.
+    fn formats(&self) -> Option<Formats> {
+        None
+    }
+    /// `NSWorkspace.isVoiceOverEnabled`: rows keep their actions in the accessibility tree.
+    fn voice_over_on(&self) -> bool {
+        false
+    }
     /// Save panel for a kept recording; `Ok(None)` when the user cancels.
     fn choose_save_path(&self, _default_name: &str) -> Result<Option<PathBuf>, Unavailable> {
         Err(Unavailable("save panel"))
@@ -200,6 +230,8 @@ pub trait Services: 'static {
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod region_mac;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -215,6 +247,8 @@ pub fn native() -> Box<dyn Services> {
 /// A scriptable double for tests and the audit's scenarios.
 pub struct Fake {
     pub device: &'static str,
+    /// Records `animate_panel_frame` as (width, duration, curve). None stays `Unavailable`.
+    pub panel_frames: Option<std::rc::Rc<std::cell::RefCell<Vec<(f32, f32, [f32; 4])>>>>,
     pub permissions: std::cell::RefCell<Vec<(Permission, PermissionState)>>,
     pub login: std::cell::Cell<bool>,
     pub dir: PathBuf,
@@ -228,13 +262,18 @@ pub struct Fake {
 
 impl Default for Fake {
     fn default() -> Self {
-        Fake { device: "Mac", permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default() }
+        Fake { device: "Mac", panel_frames: None, permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default() }
     }
 }
 
 impl Services for Fake {
     fn name(&self) -> &'static str {
         "fake"
+    }
+    fn animate_panel_frame(&self, _: &dyn HasWindowHandle, _: f32, width: f32, duration: f32, curve: [f32; 4]) -> Result<(), Unavailable> {
+        let frames = self.panel_frames.as_ref().ok_or(Unavailable("animated window frames"))?;
+        frames.borrow_mut().push((width, duration, curve));
+        Ok(())
     }
     fn device_word(&self) -> &'static str {
         self.device

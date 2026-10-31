@@ -136,8 +136,7 @@ pub const SETUP_STATUS_COPY: &[&str] = &[
 pub const SETUP_STARTING: &str = "Starting…";
 pub const SETUP_FAILED: &str = "Setup could not finish. Check app storage and the model manifest.";
 
-/// A modal on top of the window. Swift uses SwiftUI's `.alert` and `NSAlert`; an in-window panel
-/// keeps the text exposed to accessibility on both platforms.
+/// A native alert, as Swift's SwiftUI `.alert` and `NSAlert` are. Set while one is on screen.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Alert {
     DiscardUnsaved,
@@ -360,6 +359,7 @@ pub fn apply_appearance(cx: &mut App) {
 fn refresh_display_options(cx: &mut App) {
     let reduce = cx.global::<Core>().services.reduce_motion();
     cx.global_mut::<Flow>().reduce_motion = reduce;
+    cx.set_reduce_motion(reduce);
     apply_appearance(cx);
 }
 
@@ -480,6 +480,9 @@ pub struct Shell {
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         ensure_session(cx);
+        if let Some(alert) = cx.global::<Session>().alert {
+            cx.defer_in(window, move |_, w, cx| present_alert(alert, w, cx));
+        }
         let subs = vec![
             cx.observe_global::<Session>(|_, cx| cx.notify()),
             cx.observe_window_appearance(window, |_, _, cx| apply_appearance(cx)),
@@ -623,7 +626,7 @@ impl Shell {
                                     prototype_button("recovery.discard", "Discard…")
                                         .disabled(d.busy)
                                         .text_color(p.warning)
-                                        .on_click(|_, _, cx| update_session(cx, |s| s.alert = Some(Alert::DiscardUnsaved))),
+                                        .on_click(|_, w, cx| present_alert(Alert::DiscardUnsaved, w, cx)),
                                 ),
                         )
                 })
@@ -710,43 +713,54 @@ pub fn modal(id: &'static str, width: f32, padding: f32, cx: &App, content: impl
         .child(v_flex().w(px(width)).p(px(padding)).bg(p.surface).border_1().border_color(p.line).rounded(px(14.)).shadow_lg().text_color(p.ink).text_size(px(14.)).child(content))
 }
 
-fn alert_view(alert: Alert, cx: &mut App) -> impl IntoElement {
-    let p = pal(cx);
-    let (id, title, message) = match alert {
-        Alert::DiscardUnsaved => ("alert.discard", "Discard unsaved text?", "This text has not been saved. Discarding it cannot be undone."),
-        Alert::QuitUnsaved => ("alert.quit", "Quit with unsaved text?", "This text will be lost. Copy it or retry saving before quitting."),
-        Alert::RecordingCantWait => ("alert.recording", "This recording can't wait for your server", "Twenty dictations are already waiting, or the recording could not be stored. Save its audio to keep it, or discard it."),
-    };
-    let close = |_: &ClickEvent, _: &mut Window, cx: &mut App| update_session(cx, |s| s.alert = None);
-    let row = h_flex().gap(px(8.)).justify_end();
-    let buttons = match alert {
-        Alert::DiscardUnsaved => row.child(prototype_button("alert.keep", "Keep text").on_click(close)).child(prototype_button("alert.confirmDiscard", "Discard").text_color(p.warning).on_click(|_, _, cx| {
-            update_session(cx, |s| {
-                let d = s.dictation.as_mut().unwrap();
-                d.unsaved = None;
-                d.status = "Unsaved text discarded.".into();
-                s.alert = None;
-            })
-        })),
-        Alert::QuitUnsaved => row.child(primary_button("alert.keepOpen", "Keep Open").on_click(close)).child(prototype_button("alert.quitLose", "Quit and Lose Text").on_click(|_, _, cx| {
-            update_session(cx, |s| s.alert = None);
-            crate::menu::finish_quit(cx);
-        })),
-        Alert::RecordingCantWait => row
-            .child(primary_button("alert.saveAudio", "Save Audio…").on_click(|_, _, cx| {
-                // Read and write errors are silent in Swift too (SHELL-248).
-                let _ = cx.global::<Core>().services.choose_save_path("LocalFlow dictation.wav");
-                update_session(cx, |s| s.alert = None);
-            }))
-            .child(prototype_button("alert.discardRecording", "Discard").on_click(close)),
-    };
-    modal(id, 340., 20., cx, v_flex().gap(px(12.)).child(t(title).font(14., 600.)).child(t(message).size(13.)).child(buttons))
+/// Title, message and buttons, in the order Swift adds them.
+fn alert_content(alert: Alert) -> (PromptLevel, &'static str, &'static str, Vec<PromptButton>) {
+    let (cancel, other) = (|l: &'static str| PromptButton::Cancel(l.into()), |l: &'static str| PromptButton::Other(l.into()));
+    match alert {
+        Alert::DiscardUnsaved => (PromptLevel::Warning, "Discard unsaved text?", "This text has not been saved. Discarding it cannot be undone.", vec![cancel("Keep text"), other("Discard")]),
+        Alert::QuitUnsaved => (PromptLevel::Warning, "Quit with unsaved text?", "This text will be lost. Copy it or retry saving before quitting.", vec![PromptButton::Ok("Keep Open".into()), other("Quit and Lose Text")]),
+        Alert::RecordingCantWait => (PromptLevel::Warning, "This recording can't wait for your server", "Twenty dictations are already waiting, or the recording could not be stored. Save its audio to keep it, or discard it.", vec![PromptButton::Ok("Save Audio…".into()), other("Discard")]),
+    }
+}
+
+fn alert_answered(alert: Alert, answer: usize, cx: &mut App) {
+    update_session(cx, |s| s.alert = None);
+    match (alert, answer) {
+        (Alert::DiscardUnsaved, 1) => update_session(cx, |s| {
+            let d = s.dictation.as_mut().unwrap();
+            d.unsaved = None;
+            d.status = "Unsaved text discarded.".into();
+        }),
+        (Alert::QuitUnsaved, 1) => crate::menu::finish_quit(cx),
+        // Read and write errors are silent in Swift too (SHELL-248).
+        (Alert::RecordingCantWait, 0) => drop(cx.global::<Core>().services.choose_save_path("LocalFlow dictation.wav")),
+        _ => {}
+    }
+}
+
+/// Presents `alert` natively on `window`; the answer applies when the user picks a button.
+pub fn present_alert(alert: Alert, window: &mut Window, cx: &mut App) {
+    update_session(cx, |s| s.alert = Some(alert));
+    let (level, title, message, buttons) = alert_content(alert);
+    let answer = window.prompt(level, title, Some(message), &buttons, cx);
+    cx.spawn(async move |cx| {
+        if let Ok(i) = answer.await {
+            let _ = cx.update(|cx| alert_answered(alert, i, cx));
+        }
+    })
+    .detach();
+}
+
+/// The same from code with no window at hand, on the main window.
+pub fn show_alert(alert: Alert, cx: &mut App) {
+    if let Some(w) = cx.global::<Session>().window {
+        let _ = w.update(cx, |_, w, cx| present_alert(alert, w, cx));
+    }
 }
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
-        let alert = cx.global::<Session>().alert;
         let reviewing = cx.global::<Session>().insertion.is_reviewing();
         if !Self::onboarded(cx) {
             return div().size_full().bg(p.canvas).text_color(p.ink).child(self.onboarding.clone()).into_any_element();
@@ -756,7 +770,6 @@ impl Render for Shell {
         let page = self.destination(cx);
         let notice = self.recovery_notice(cx);
         let sidebar = self.sidebar(cx);
-        let alert_el = alert.map(|a| alert_view(a, cx).into_any_element());
         let review_el = reviewing.then(|| insertion::review_sheet(cx).into_any_element());
         h_flex()
             .id("shell.library")
@@ -783,7 +796,6 @@ impl Render for Shell {
                 ),
             )
             .children(review_el)
-            .children(alert_el)
             .into_any_element()
     }
 }
@@ -1018,14 +1030,16 @@ mod tests {
         assert!(!get(cx, |s| s.dictation.as_ref().unwrap().storage_blocked));
         frame(cx, window);
         cx.update_window(window.into(), |_, w, cx| w.click("recovery.discard", cx)).unwrap();
-        frame(cx, window);
-        assert_saw(&["Discard unsaved text?", "This text has not been saved. Discarding it cannot be undone.", "Keep text", "Discard"]);
-        cx.update_window(window.into(), |_, w, cx| w.click("alert.keep", cx)).unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.pending_prompt(), Some(("Discard unsaved text?".to_string(), "This text has not been saved. Discarding it cannot be undone.".to_string())));
+        cx.simulate_prompt_answer("Keep text");
+        cx.run_until_parked();
         assert!(get(cx, |s| s.alert.is_none() && s.dictation.as_ref().unwrap().unsaved.is_some()));
         frame(cx, window);
         cx.update_window(window.into(), |_, w, cx| w.click("recovery.discard", cx)).unwrap();
-        frame(cx, window);
-        cx.update_window(window.into(), |_, w, cx| w.click("alert.confirmDiscard", cx)).unwrap();
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Discard");
+        cx.run_until_parked();
         assert!(get(cx, |s| s.alert.is_none() && s.dictation.as_ref().unwrap().unsaved.is_none()));
         frame(cx, window);
         assert!(!crate::testing::saw("Unsaved text"));

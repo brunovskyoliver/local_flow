@@ -878,7 +878,7 @@ impl LocalAiModel {
     }
     /// `.formatted()` of the peak: no trailing zero.
     pub fn peak(&self) -> String {
-        format!("{}", self.peak_gb)
+        localized(&format!("{}", self.peak_gb))
     }
     /// A finished pull in `models`, from LocalFlow or MTPLX.app.
     pub fn is_downloaded(&self, models: &Path) -> bool {
@@ -1005,13 +1005,33 @@ pub fn meeting_state(s: &Snapshot) -> RowState {
     RowState::Waiting(if s.installing { "After speech recognition" } else { "Queued" }.into())
 }
 
+static DECIMAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new('.' as u32);
+
+/// The current locale's decimal separator, set once at launch from `Services::decimal_separator`.
+pub fn set_decimal_separator(c: char) {
+    DECIMAL.store(c as u32, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn decimal_separator() -> char {
+    char::from_u32(DECIMAL.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or('.')
+}
+
+/// A number already formatted with `.`, in the current locale (Swift's `.formatted()`).
+pub fn localized(number: &str) -> String {
+    number.replace('.', &decimal_separator().to_string())
+}
+
 /// `ByteCountFormatter` with `.file`: decimal units, whole KB, one decimal MB, two decimals GB.
 pub fn bytes(v: i64) -> String {
+    bytes_in(v, decimal_separator())
+}
+
+fn bytes_in(v: i64, separator: char) -> String {
     let f = v as f64;
     let trim = |n: f64, places: usize, unit: &str| {
         let s = format!("{n:.places$}");
         let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.') } else { &s };
-        format!("{s} {unit}")
+        format!("{} {unit}", s.replace('.', &separator.to_string()))
     };
     match v {
         0 => "Zero KB".into(),
@@ -1052,6 +1072,15 @@ mod tests {
         s.purpose = purpose;
         s.ai_mode = ai;
         (s, prefs)
+    }
+
+    // parity: ONB-150 ONB-166
+    #[test]
+    fn numbers_use_the_locale_separator() {
+        assert_eq!(bytes_in(2_570_000_000, ','), "2,57 GB");
+        assert_eq!(bytes_in(2_570_000_000, '.'), "2.57 GB");
+        assert_eq!(bytes_in(1_500_000, ','), "1,5 MB");
+        assert_eq!(bytes_in(2_000_000_000, ','), "2 GB");
     }
 
     // parity: ONB-034 ONB-065 ONB-066 ONB-067 ONB-068 ONB-069 ONB-070 ONB-071 ONB-072 ONB-073 ONB-074 ONB-075

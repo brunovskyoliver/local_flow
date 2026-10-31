@@ -7,6 +7,7 @@ fn main() {
     app.on_reopen(|cx| shell::open(None, cx));
     app.run(|cx| {
         let services = flow_platform::native();
+        flow_core::onboarding::set_decimal_separator(services.decimal_separator());
         let dark = matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark);
         let core = Core::load(services);
         let appearance = core.prefs.string("appearance");

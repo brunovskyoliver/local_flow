@@ -101,19 +101,34 @@ pub fn choice_label(symbol: &str, title: &str, badge_text: Option<&'static str>,
 }
 
 /// Drawn, as Swift's is. Nil sweeps a segment; with Reduce Motion it holds a dimmed full track.
-pub fn bar(fraction: Option<f64>, cx: &App) -> impl IntoElement {
-    let p = pal(cx);
-    let reduce = cx.global::<Flow>().reduce_motion;
-    let track = div().id("onboarding.bar").relative().w_full().h(px(5.)).flex_none().bg(p.line).rounded_full().overflow_hidden().role(flow_ui::gpui::accesskit::Role::ProgressIndicator).aria_label("Progress").aria_value(RowState::percent(fraction));
-    match fraction {
-        Some(f) => track.child(div().h_full().min_w(px(6.)).w(relative(f as f32)).bg(p.accent).rounded_full()).test_support().into_any_element(),
-        None if reduce => track.child(div().size_full().bg(p.accent.opacity(0.45)).rounded_full()).test_support().into_any_element(),
-        None => track
-            .child(
-                div().absolute().top_0().bottom_0().w(relative(0.28)).bg(p.accent).rounded_full().with_animation("onboarding.sweep", Animation::new(Duration::from_millis(1600)).repeat(), |d, phase| d.left(relative(1.28 * phase - 0.28))),
-            )
-            .test_support()
-            .into_any_element(),
+pub fn bar(fraction: Option<f64>, _: &App) -> impl IntoElement {
+    Bar { fraction }
+}
+
+#[derive(IntoElement)]
+struct Bar {
+    fraction: Option<f64>,
+}
+
+impl RenderOnce for Bar {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let p = pal(cx);
+        let reduce = cx.global::<Flow>().reduce_motion;
+        let track = div().id("onboarding.bar").relative().w_full().h(px(5.)).flex_none().bg(p.line).rounded_full().overflow_hidden().role(flow_ui::gpui::accesskit::Role::ProgressIndicator).aria_label("Progress").aria_value(RowState::percent(self.fraction));
+        match self.fraction {
+            Some(f) => {
+                // `.animation(.smooth, value: fraction)`.
+                let f = spring_value("onboarding.bar.tween", f.clamp(0., 1.) as f32, 0.5, 1., window, cx);
+                track.child(div().id("onboarding.bar.fill").h_full().min_w(px(6.)).w(relative(f)).bg(p.accent).rounded_full().test_support()).test_support().into_any_element()
+            }
+            None if reduce => track.child(div().size_full().bg(p.accent.opacity(0.45)).rounded_full()).test_support().into_any_element(),
+            None => track
+                .child(
+                    div().absolute().top_0().bottom_0().w(relative(0.28)).bg(p.accent).rounded_full().with_animation("onboarding.sweep", Animation::new(Duration::from_millis(1600)).repeat(), |d, phase| d.left(relative(1.28 * phase - 0.28))),
+                )
+                .test_support()
+                .into_any_element(),
+        }
     }
 }
 

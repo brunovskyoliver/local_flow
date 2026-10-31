@@ -72,8 +72,10 @@ pub fn quit(cx: &mut App) {
         shell::cancel_dictation(cx);
         update_session(cx, |s| s.setup_status = "Cancelling. Quit again after work stops.".into());
     } else if unsaved {
-        update_session(cx, |s| s.alert = Some(Alert::QuitUnsaved));
         shell::open(None, cx);
+        if cx.global::<shell::Session>().alert.is_none() {
+            shell::show_alert(Alert::QuitUnsaved, cx);
+        }
     } else {
         finish_quit(cx);
     }
@@ -159,15 +161,16 @@ mod tests {
         cx.update(quit);
         cx.run_until_parked();
         cx.update(|cx| assert_eq!(cx.global::<Session>().alert, Some(Alert::QuitUnsaved)));
-        flow_ui::probe::clear();
-        cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
-        crate::testing::assert_saw(&["Quit with unsaved text?", "This text will be lost. Copy it or retry saving before quitting.", "Keep Open", "Quit and Lose Text"]);
-        cx.update_window(window.into(), |_, w, cx| w.click("alert.keepOpen", cx)).unwrap();
+        let prompt = cx.pending_prompt().expect("Swift's quit alert is native");
+        assert_eq!(prompt, ("Quit with unsaved text?".to_string(), "This text will be lost. Copy it or retry saving before quitting.".to_string()));
+        cx.simulate_prompt_answer("Keep Open");
+        cx.run_until_parked();
         cx.update(|cx| assert!(!cx.global::<Session>().ready_to_terminate));
+        cx.update(|cx| assert_eq!(cx.global::<Session>().alert, None));
         cx.update(quit);
         cx.run_until_parked();
-        cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
-        cx.update_window(window.into(), |_, w, cx| w.click("alert.quitLose", cx)).unwrap();
+        cx.simulate_prompt_answer("Quit and Lose Text");
+        cx.run_until_parked();
         cx.update(|cx| assert!(cx.global::<Session>().ready_to_terminate));
         // A second request after teardown started is a no-op.
         cx.update(quit);
