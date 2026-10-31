@@ -9,7 +9,8 @@ fn main() {
         let services = flow_platform::native();
         flow_core::onboarding::set_decimal_separator(services.decimal_separator());
         let dark = matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark);
-        let core = Core::load(services);
+        let mut core = Core::load(services);
+        core.reconcile_meetings();
         let appearance = core.prefs.string("appearance");
         let is_dark = match appearance.as_deref() {
             Some("dark") => true,
@@ -20,6 +21,7 @@ fn main() {
         flow_ui::init(Mode::new(is_dark, contrast), motion, cx);
         cx.set_global(core);
         menu::init(cx);
+        shell::start(cx);
         cx.on_window_closed(|cx, id| shell::window_closed(id, cx)).detach();
         cx.observe_global::<shell::Session>(|cx| pill::sync_window(cx)).detach();
         pill::apply_scenario(cx);

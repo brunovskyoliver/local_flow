@@ -133,6 +133,15 @@ pub const SETUP_STATUS_COPY: &[&str] = &[
     "Installation failed. Check the pinned files, connection and available storage.",
 ];
 
+/// Sidebar rows above the spacer, then Settings under its divider.
+const NAV: [(Page, &str, &str, &str); 5] = [
+    (Page::Meetings, "Notetaker", "record.circle", "navigation.notetaker"),
+    (Page::History, "Transcriptions", "mic", "navigation.transcriptions"),
+    (Page::Insights, "Insights", "chart.bar", "navigation.insights"),
+    (Page::Dictionary, "Dictionary", "text.book.closed", "navigation.dictionary"),
+    (Page::Settings, "Settings", "gearshape", "navigation.settings"),
+];
+
 pub const SETUP_STARTING: &str = "Starting…";
 pub const SETUP_FAILED: &str = "Setup could not finish. Check app storage and the model manifest.";
 
@@ -172,6 +181,8 @@ pub struct Session {
     pub ready_to_terminate: bool,
     pub insertion: Insertion,
     pub pill: Pill,
+    /// Bumped whenever saved dictations change; Insights watches it while selected.
+    pub history_revision: u64,
 }
 impl Global for Session {}
 
@@ -200,6 +211,7 @@ impl Session {
             ready_to_terminate: false,
             insertion: Insertion::default(),
             pill: Pill::default(),
+            history_revision: 0,
         };
         if let Some(scenario) = core.scenario.as_deref() {
             s.apply_scenario(scenario);
@@ -343,16 +355,37 @@ fn page_named(n: &str) -> Option<Page> {
     })
 }
 
-/// `applyAppearance()`: the `appearance` preference over the system's, plus Increase Contrast.
 const DEFAULT_SIZE: Size<Pixels> = size(px(1100.), px(760.));
 const MIN_SIZE: Size<Pixels> = size(px(720.), px(560.));
 
+/// `AppServices.start()`, as far as this client has services: appearance, launch recovery of
+/// meetings and the model check. Runs at launch only, so the tests' `boot` leaves it out.
+pub fn start(cx: &mut App) {
+    apply_appearance(cx);
+    cx.global_mut::<Core>().reconcile_meetings();
+    let verified = cx.global::<Core>().services.speech_model_verified();
+    let (reconciled, stores) = (cx.global::<Core>().reconciled, cx.global::<Core>().db.is_some());
+    update_session(cx, |s| {
+        s.model_installed = verified;
+        s.can_start_meeting = reconciled;
+        if stores {
+            s.setup_status = if verified { "Verified local model available." } else { "Import the pinned model before dictating." }.into();
+        }
+    });
+}
+
+/// `applyAppearance()`: the `appearance` preference over the system's, plus Increase Contrast.
 /// The settings page calls this after writing the preference.
 pub fn apply_appearance(cx: &mut App) {
-    let dark = match cx.global::<Core>().prefs.string("appearance").as_deref() {
-        Some("dark") => true,
-        Some("light") => false,
-        _ => matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark),
+    let preference = match cx.global::<Core>().prefs.string("appearance").as_deref() {
+        Some("dark") => Some(true),
+        Some("light") => Some(false),
+        _ => None,
+    };
+    let _ = cx.global::<Core>().services.set_app_appearance(preference);
+    let dark = match preference {
+        Some(dark) => dark,
+        None => matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark),
     };
     let contrast = cx.global::<Core>().services.high_contrast();
     let mode = Mode::new(dark, contrast);
@@ -399,6 +432,16 @@ pub fn show_microphones(cx: &mut App) {
     open(Some(Page::Settings), cx);
 }
 
+/// Title "LocalFlow", default 1100 x 760, minimum 720 x 560, hidden titlebar with the traffic lights kept.
+fn main_window_options(cx: &App) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, DEFAULT_SIZE, cx))),
+        titlebar: Some(TitlebarOptions { title: Some("LocalFlow".into()), appears_transparent: true, traffic_light_position: Some(point(px(9.), px(9.))) }),
+        window_min_size: Some(MIN_SIZE),
+        ..Default::default()
+    }
+}
+
 pub fn open_main_window(cx: &mut App) {
     // The audit opens a window that takes no focus and stays out of the tiling layout.
     let audit = std::env::var_os("LOCALFLOW_AUDIT_WINDOW").is_some();
@@ -407,22 +450,39 @@ pub fn open_main_window(cx: &mut App) {
         let bounds = Bounds { origin: point(px(30.), px(60.)), size: size(px(length("LOCALFLOW_AUDIT_WIDTH", 1180.)), px(length("LOCALFLOW_AUDIT_HEIGHT", 780.))) };
         WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: None, focus: false, kind: WindowKind::PopUp, is_movable: false, ..Default::default() }
     } else {
-        let bounds = Bounds::centered(None, DEFAULT_SIZE, cx);
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions { title: Some("LocalFlow".into()), appears_transparent: true, traffic_light_position: Some(point(px(9.), px(9.))) }),
-            window_min_size: Some(MIN_SIZE),
-            ..Default::default()
-        }
+        main_window_options(cx)
     };
     let (handle, _) = flow_ui::open_window(options, cx, |w, cx| cx.new(|cx| Shell::new(w, cx))).expect("main window opens");
     update_session(cx, |s| s.window = Some(handle));
+    tag_main_window(handle, cx);
+}
+
+/// `attach(window)`: Swift's `localflow.main`, which the system reads as the AX identifier.
+fn tag_main_window(handle: AnyWindowHandle, cx: &mut App) {
+    let _ = handle.update(cx, |_, w, cx| cx.global::<Core>().services.set_window_identifier(w, "localflow.main"));
+}
+
+/// `flushMeetingNotes`, from quit. A closing window flushes through `Shell`'s release.
+pub fn flush_notes(cx: &mut App) {
+    let shell = cx.global::<Session>().window.and_then(|w| w.downcast::<Shell>());
+    if let Some(shell) = shell {
+        let _ = shell.update(cx, |shell, _, cx| shell.meetings.update(cx, |page, cx| page.flush_notes(cx)));
+    }
+}
+
+/// `AppServices`' history observer: the selected Insights page re-reads when dictations change.
+pub fn history_changed(cx: &mut App) {
+    update_session(cx, |s| s.history_revision += 1);
 }
 
 /// Closing keeps the app in the menu bar; the policy drops back so the Dock icon goes.
 pub fn window_closed(id: WindowId, cx: &mut App) {
     if cx.global::<Session>().window.map(|w| w.window_id()) != Some(id) {
         return;
+    }
+    // The sheet went with its window: `closeInsertionReview`.
+    if cx.global::<Session>().insertion.is_reviewing() {
+        insertion::cancel(cx);
     }
     update_session(cx, |s| {
         s.window = None;
@@ -481,15 +541,19 @@ fn retry_save(cx: &mut App) {
             d.status = "Still unsaved. Check available disk space or Copy the text.".into();
         }
     });
+    if ok {
+        history_changed(cx);
+    }
 }
 
 pub struct Shell {
-    meetings: Entity<NotetakerPage>,
+    pub(crate) meetings: Entity<NotetakerPage>,
     history: Entity<HistoryPage>,
     insights: Entity<InsightsPage>,
     dictionary: Entity<DictionaryPage>,
     settings: Entity<SettingsPage>,
     onboarding: Entity<OnboardingPage>,
+    focus: FocusHandle,
     _subs: Vec<Subscription>,
     _polling: Task<()>,
 }
@@ -511,6 +575,8 @@ impl Shell {
                     refresh_display_options(cx);
                 }
             }),
+            // `onDisappear`: notes are saved before the editor goes away; capture is untouched.
+            cx.on_release(|shell: &mut Shell, cx| shell.meetings.update(cx, |page, cx| page.flush_notes(cx))),
         ];
         // `observeSettingsWhileVisible`: only Settings and onboarding poll, every 500 ms.
         let polling = cx.spawn_in(window, async move |_, cx| {
@@ -533,6 +599,7 @@ impl Shell {
             dictionary: cx.new(|cx| DictionaryPage::new(window, cx)),
             settings: cx.new(|cx| SettingsPage::new(window, cx)),
             onboarding: cx.new(|cx| OnboardingPage::new(window, cx)),
+            focus: cx.focus_handle(),
             _subs: subs,
             _polling: polling,
         }
@@ -541,7 +608,7 @@ impl Shell {
         cx.global::<Core>().prefs.int_or("setupVersion", 0) >= 1
     }
 
-    fn nav_item(&self, page: Page, title: &'static str, symbol: &'static str, id: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+    fn nav_item(&self, (page, title, symbol, id): (Page, &'static str, &'static str, &'static str), cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let selected = cx.global::<Session>().selection == page;
         prototype_nav(id, title, symbol, selected, p.tint, p.ink).on_click(cx.listener(move |_, _, _, cx| update_session(cx, |s| s.selection = page)))
@@ -590,16 +657,13 @@ impl Shell {
             .child(
                 v_flex()
                     .gap(px(5.))
-                    .child(self.nav_item(Page::Meetings, "Notetaker", "record.circle", "navigation.notetaker", cx))
-                    .child(self.nav_item(Page::History, "Transcriptions", "mic", "navigation.transcriptions", cx))
-                    .child(self.nav_item(Page::Insights, "Insights", "chart.bar", "navigation.insights", cx))
-                    .child(self.nav_item(Page::Dictionary, "Dictionary", "text.book.closed", "navigation.dictionary", cx)),
+                    .children(NAV[..4].iter().map(|row| self.nav_item(*row, cx).into_any_element()).collect::<Vec<_>>()),
             )
             .child(div().flex_1())
             .children(self.active_note(cx))
             .when(attention, |d| d.child(div().px(px(10.)).pb(px(8.)).child(sf_label("exclamationmark.circle", "Review needed", 13., p.warning))))
             .child(hairline(cx).mb(px(8.)))
-            .child(div().pb(px(12.)).child(self.nav_item(Page::Settings, "Settings", "gearshape", "navigation.settings", cx)))
+            .child(div().pb(px(12.)).child(self.nav_item(NAV[4], cx)))
             .into_any_element()
     }
 
@@ -683,15 +747,19 @@ impl Shell {
     }
 }
 
+fn badge_style(state: MeetingState, p: &Palette) -> (&'static str, Hsla) {
+    if state == MeetingState::Paused { ("pause.fill", p.muted) } else { ("waveform", p.success) }
+}
+
 /// `LiveRecordingBadge`: waveform or pause symbol and a tabular timer.
 pub fn live_badge(state: MeetingState, elapsed_ms: i64, size: f32, p: &Palette, reduce_motion: bool) -> impl IntoElement {
-    let color = if state == MeetingState::Paused { p.muted } else { p.success };
-    let symbol = if state == MeetingState::Paused { "pause.fill" } else { "waveform" };
+    let (symbol, color) = badge_style(state, p);
     let duration = duration_text(elapsed_ms);
     let glyph = div().child(icon(symbol, size - 1., color));
     let animated = state == MeetingState::Recording && !reduce_motion;
     h_flex()
         .id("meeting.elapsed")
+        .test_support()
         .gap(px(8.))
         .role(accesskit::Role::Label)
         .aria_label(state.badge_text())
@@ -781,6 +849,10 @@ impl Render for Shell {
         if !Self::onboarded(cx) {
             return div().size_full().bg(p.canvas).text_color(p.ink).child(self.onboarding.clone()).into_any_element();
         }
+        // Keys reach "Shell" bindings only through a focused node: Escape needs one with nothing else focused.
+        if window.focused(cx).is_none() || (reviewing && !self.focus.contains_focused(window, cx)) {
+            self.focus.focus(window, cx);
+        }
         let compact = window.viewport_size().width <= px(800.);
         cx.global_mut::<Flow>().compact = compact;
         let page = self.destination(cx);
@@ -790,6 +862,7 @@ impl Render for Shell {
         h_flex()
             .id("shell.library")
             .key_context("Shell")
+            .track_focus(&self.focus)
             .relative()
             .size_full()
             .bg(p.canvas)
@@ -848,11 +921,58 @@ mod tests {
         cx.update(|cx| f(cx.global::<Session>()))
     }
 
-    // parity: SHELL-026 SHELL-027
-    #[test]
-    fn window_sizes_match_swift() {
-        assert_eq!(DEFAULT_SIZE, size(px(1100.), px(760.)));
-        assert_eq!(MIN_SIZE, size(px(720.), px(560.)));
+    // parity: SHELL-026 SHELL-027 SHELL-025
+    #[flow_ui::gpui::test]
+    async fn window_options_and_identifier_match_swift(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let identifiers = std::rc::Rc::default();
+        cx.update(|cx| cx.global_mut::<Core>().services = Box::new(Fake { identifiers: std::rc::Rc::clone(&identifiers), ..Default::default() }));
+        let options = cx.update(|cx| main_window_options(cx));
+        let Some(WindowBounds::Windowed(bounds)) = options.window_bounds else { panic!("windowed") };
+        assert_eq!(bounds.size, size(px(1100.), px(760.)));
+        assert_eq!(options.window_min_size, Some(size(px(720.), px(560.))));
+        assert_eq!(options.titlebar.and_then(|t| t.title).as_deref(), Some("LocalFlow"));
+        let window = open_shell(cx);
+        cx.update(|cx| tag_main_window(window.into(), cx));
+        assert_eq!(*identifiers.borrow(), vec!["localflow.main".to_string()]);
+    }
+
+    // parity: SHELL-007 SHELL-106
+    /// A second launch on the same data root: no lock, no stores, Swift's launch failure.
+    #[flow_ui::gpui::test]
+    async fn a_second_instance_lands_in_the_launch_failure(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let dir = std::env::temp_dir().join(format!("lf-second-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let load = || Core::load(Box::new(Fake { dir: dir.clone(), ..Default::default() }));
+        let first = load();
+        assert!(first.instance_lock.is_some() && first.db.is_some());
+        let second = load();
+        assert!(second.instance_lock.is_none() && second.db.is_none());
+        let session = Session::new(&second);
+        assert_eq!(session.setup_status, SETUP_FAILED);
+        drop((first, second));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // parity: SHELL-004 SHELL-105
+    #[flow_ui::gpui::test]
+    async fn start_recovers_meetings_and_checks_the_model(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.global_mut::<Core>().reconciled = false;
+            assert!(!cx.global::<Session>().can_start_meeting);
+            start(cx);
+            assert!(cx.global::<Core>().reconciled);
+            assert!(cx.global::<Session>().can_start_meeting);
+            assert_eq!(cx.global::<Session>().setup_status, "Import the pinned model before dictating.");
+            let fake = Fake::default();
+            fake.model_verified.set(true);
+            cx.global_mut::<Core>().services = Box::new(fake);
+            start(cx);
+            assert_eq!(cx.global::<Session>().setup_status, "Verified local model available.");
+        });
     }
 
     // parity: SHELL-003 SHELL-061 SHELL-034
@@ -867,33 +987,83 @@ mod tests {
         });
     }
 
-    // parity: SHELL-040..SHELL-051 SHELL-060 SHELL-224 SHELL-029 SHELL-030 SHELL-068 SHELL-070 SHELL-072 SHELL-075 SHELL-077
+    fn bounds_of(cx: &mut TestAppContext, window: WindowHandle<Shell>, id: &'static str) -> Bounds<Pixels> {
+        cx.update_window(window.into(), |_, w, _| w.find(id).bounds()).unwrap()
+    }
+
+    // parity: SHELL-051 SHELL-060 SHELL-068 SHELL-070 SHELL-072 SHELL-075 SHELL-077
     #[flow_ui::gpui::test]
-    async fn sidebar_rows_navigate_and_mark_selection(cx: &mut TestAppContext) {
+    async fn sidebar_rows_open_their_pages(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
         let window = open_shell(cx);
         frame(cx, window);
-        assert_saw(&["LocalFlow", "Notetaker", "Transcriptions", "Insights", "Dictionary", "Settings"]);
-        for (id, page) in [
-            ("navigation.notetaker", Page::Meetings),
-            ("navigation.insights", Page::Insights),
-            ("navigation.dictionary", Page::Dictionary),
-            ("navigation.settings", Page::Settings),
-            ("navigation.transcriptions", Page::History),
-        ] {
+        let click = |cx: &mut TestAppContext, id: &'static str| {
             cx.update_window(window.into(), |_, w, cx| w.click(id, cx)).unwrap();
             frame(cx, window);
-            assert_eq!(get(cx, |s| s.selection), page);
-            cx.update_window(window.into(), |_, w, _| {
-                let row = w.find(id);
-                assert_eq!(row.bounds().size.height, px(35.), "{id}");
-            }).unwrap();
-        }
+            get(cx, |s| s.selection)
+        };
+        assert_eq!(click(cx, "navigation.notetaker"), Page::Meetings);
+        assert_saw(&["Past notes"]);
+        assert_eq!(click(cx, "navigation.insights"), Page::Insights);
+        assert_saw(&["Desktop usage"]);
+        assert_eq!(click(cx, "navigation.dictionary"), Page::Dictionary);
+        assert_saw(&["Add new word"]);
+        assert_eq!(click(cx, "navigation.settings"), Page::Settings);
+        assert_saw(&["Remote dictation"]);
+        assert_eq!(click(cx, "navigation.transcriptions"), Page::History);
+        assert!(!crate::testing::saw("Remote dictation"));
         // Clicking persists nothing: the landing page stays derived from the purpose.
         cx.update(|cx| assert!(!cx.global::<Core>().prefs.contains("selection")));
     }
 
-    // parity: SHELL-069 SHELL-071 SHELL-073 SHELL-076 SHELL-078 SHELL-080 SHELL-103 SHELL-106 SHELL-095
+    // parity: SHELL-043 SHELL-044 SHELL-045 SHELL-046 SHELL-047
+    #[flow_ui::gpui::test]
+    async fn sidebar_rows_carry_swifts_labels_symbols_and_ids(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        frame(cx, window);
+        let label = |cx: &mut TestAppContext, id: &'static str| cx.update_window(window.into(), |_, w, _| w.find(id).label().map(str::to_string)).unwrap();
+        assert_eq!((label(cx, "navigation.notetaker").as_deref(), NAV[0].2), (Some("Notetaker"), "record.circle"));
+        assert_eq!((label(cx, "navigation.transcriptions").as_deref(), NAV[1].2), (Some("Transcriptions"), "mic"));
+        assert_eq!((label(cx, "navigation.insights").as_deref(), NAV[2].2), (Some("Insights"), "chart.bar"));
+        assert_eq!((label(cx, "navigation.dictionary").as_deref(), NAV[3].2), (Some("Dictionary"), "text.book.closed"));
+        assert_eq!((label(cx, "navigation.settings").as_deref(), NAV[4].2), (Some("Settings"), "gearshape"));
+    }
+
+    // parity: SHELL-029 SHELL-030 SHELL-040 SHELL-042 SHELL-048 SHELL-224
+    /// Row bounds: 216 wide less 12 either side, 35 tall, 5 apart; 180 wide at the 800 breakpoint.
+    #[flow_ui::gpui::test]
+    async fn sidebar_geometry_follows_the_breakpoint(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        assert!(!cx.update(|cx| cx.global::<Flow>().compact), "prototypeCompact defaults to false");
+        let window = open_shell(cx);
+        cx.simulate_window_resize(window.into(), size(px(801.), px(700.)));
+        frame(cx, window);
+        let first = bounds_of(cx, window, "navigation.notetaker");
+        let second = bounds_of(cx, window, "navigation.transcriptions");
+        assert_eq!((first.origin.x, first.size.width), (px(12.), px(192.)));
+        assert_eq!(first.size.height, px(35.));
+        assert_eq!(second.origin.y - first.origin.y, px(40.));
+        cx.update(|cx| assert!(!cx.global::<Flow>().compact));
+        cx.simulate_window_resize(window.into(), size(px(800.), px(700.)));
+        frame(cx, window);
+        cx.update(|cx| assert!(cx.global::<Flow>().compact));
+        assert_eq!(bounds_of(cx, window, "navigation.notetaker").size.width, px(156.));
+    }
+
+    // parity: SHELL-049 SHELL-050
+    #[flow_ui::gpui::test]
+    async fn only_the_selected_row_is_marked(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        set(cx, |s| s.selection = Page::Insights);
+        frame(cx, window);
+        let selected = |cx: &mut TestAppContext, id: &'static str| cx.update_window(window.into(), |_, w, _| w.find(id).checked().or(w.find(id).selected())).unwrap();
+        assert_eq!(selected(cx, "navigation.insights"), Some(true));
+        assert_eq!(selected(cx, "navigation.dictionary"), Some(false));
+    }
+
+    // parity: SHELL-069 SHELL-071 SHELL-073 SHELL-076 SHELL-078 SHELL-080 SHELL-103 SHELL-095
     #[flow_ui::gpui::test]
     async fn pages_show_unavailable_until_stores_exist(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
@@ -903,65 +1073,107 @@ mod tests {
             s.meetings_available = false;
             s.dictation = None;
         });
-        for (page, title) in [(Page::Meetings, "Meetings unavailable"), (Page::History, "Transcriptions unavailable"), (Page::Insights, "Insights unavailable"), (Page::Dictionary, "Dictionary unavailable")] {
+        let shows = |cx: &mut TestAppContext, page: Page, title: &str| {
             set(cx, |s| s.selection = page);
             frame(cx, window);
-            assert_saw(&[title, SETUP_STARTING]);
-        }
-        // Settings is always available.
-        set(cx, |s| s.selection = Page::Settings);
-        frame(cx, window);
-        assert!(!crate::testing::saw("unavailable"));
-        // A database that can't open reports the launch failure, through the same views.
-        set(cx, |s| {
-            s.setup_status = SETUP_FAILED.into();
-            s.selection = Page::History;
-        });
-        frame(cx, window);
-        assert_saw(&[SETUP_FAILED]);
-        cx.update(|cx| assert_eq!(readiness(cx), SETUP_FAILED));
+            crate::testing::saw(title) && crate::testing::saw("Starting…")
+        };
+        assert!(shows(cx, Page::Meetings, "Meetings unavailable"));
+        assert!(shows(cx, Page::History, "Transcriptions unavailable"));
+        assert!(shows(cx, Page::Insights, "Insights unavailable"));
+        assert!(shows(cx, Page::Dictionary, "Dictionary unavailable"));
+        // Settings is always available, and no coordinator means no recovery notice.
+        assert!(!shows(cx, Page::Settings, "unavailable"));
+        cx.update_window(window.into(), |_, w, _| assert!(w.try_find("recovery.retryStorage").is_none())).unwrap();
+        assert_eq!(SETUP_STARTING, "Starting…");
+        // The menu's readiness line shows the setup status while nothing else exists.
+        set(cx, |s| s.setup_status = SETUP_FAILED.into());
+        cx.update(|cx| assert_eq!(readiness(cx), "Setup could not finish. Check app storage and the model manifest."));
     }
 
-    // parity: SHELL-104 SHELL-105 SHELL-107..SHELL-120
+    // parity: SHELL-109 SHELL-110 SHELL-111 SHELL-112 SHELL-113 SHELL-115 SHELL-116 SHELL-119 SHELL-120
+    /// The copy each later service will post. Nothing posts it yet (plan: no model code in 024), so this
+    /// holds the literal text and shows that the view renders whatever is current.
     #[flow_ui::gpui::test]
-    async fn setup_status_copy_reaches_the_unavailable_view(cx: &mut TestAppContext) {
+    async fn setup_status_copy_matches_swift_and_renders(cx: &mut TestAppContext) {
+        let has = |text: &str| SETUP_STATUS_COPY.contains(&text);
+        assert!(has("Could not prepare speech model. ") && has("Preparing speech model…") && has("Speech model ready. Hold the shortcut to dictate."));
+        assert!(has("Local model files verified.") && has("Local model verification failed. Verify or reinstall the model in Settings."));
+        assert!(has("Whisper Turbo verified.") && has("Install Whisper Turbo in Settings to finalize meetings.") && has("Install or verify Whisper Turbo in Settings to finalize meetings.") && has("Whisper Turbo verified. Final meeting transcripts use it locally."));
+        assert!(has("Speaker labeling model verified.") && has("Speaker labeling model isn't installed."));
+        assert!(has("Term booster verified. Dictionary terms are checked against your speech."));
+        assert!(has("The chosen speech model is missing; dictating with Parakeet v3.") && has("Dictation now uses Parakeet v3."));
+        assert!(has("Parakeet v3 downloaded and verified.") && has("Parakeet v3 download cancelled.") && has("Parakeet v3 download failed. Check the connection and available storage."));
+        assert!(has("Meeting models did not finish downloading. Retry in Settings."));
+        assert!(has("Downloading model files…") && has("Importing model files…") && has("Model verified. Hold the shortcut for a short test.") && has("Provisioning unavailable: the pinned manifest is missing verified hashes.") && has("Model installation cancelled.") && has("Installation failed. Check the pinned files, connection and available storage."));
         boot(cx, Mode::Light);
         let window = open_shell(cx);
         set(cx, |s| s.stores_ready = false);
-        for copy in SETUP_STATUS_COPY {
-            set(cx, |s| s.setup_status = (*copy).into());
-            frame(cx, window);
-            assert_saw(&[copy]);
-        }
+        set(cx, |s| s.setup_status = "Local model files verified.".into());
+        frame(cx, window);
+        assert_saw(&["Local model files verified."]);
     }
 
-    // parity: SHELL-053 SHELL-054 SHELL-055 SHELL-056 SHELL-057 SHELL-058
+    // parity: SHELL-053 SHELL-054 SHELL-058
     #[flow_ui::gpui::test]
     async fn active_note_card_opens_its_meeting(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
         let window = open_shell(cx);
         frame(cx, window);
         cx.update_window(window.into(), |_, w, _| assert!(w.try_find("navigation.activeNote").is_none())).unwrap();
-        let meeting = |state, title: Option<&str>| Some(MeetingStatus { id: "m1".into(), title: title.map(Into::into), state, elapsed_ms: 754_000 });
-        for (state, label) in [(MeetingState::Recording, "Recording"), (MeetingState::Paused, "Paused"), (MeetingState::Preparing, "Preparing"), (MeetingState::Created, "Created"), (MeetingState::Finalizing, "Finalizing")] {
-            set(cx, |s| s.meeting = meeting(state, Some("Weekly planning")));
-            frame(cx, window);
-            assert_saw(&["Weekly planning", "12:34"]);
-            assert_eq!(state.badge_text(), label);
-        }
-        set(cx, |s| s.meeting = meeting(MeetingState::Recording, None));
+        set(cx, |s| s.meeting = Some(MeetingStatus { id: flow_core::meetings::SEED_FULL.into(), title: None, state: MeetingState::Recording, elapsed_ms: 754_000 }));
         frame(cx, window);
         assert_saw(&["Untitled note"]);
+        // Sits in the sidebar's 192 column; 14 padding around a line of 13 and a 12 badge, spaced 8.
+        let card = bounds_of(cx, window, "navigation.activeNote");
+        assert_eq!((card.origin.x, card.size.width), (px(12.), px(192.)));
+        assert!(card.size.height >= px(28. + 8. + 13. + 12.) && card.size.height < px(28. + 8. + 45.), "{card:?}");
         cx.update_window(window.into(), |_, w, cx| w.click("navigation.activeNote", cx)).unwrap();
-        assert_eq!(get(cx, |s| s.selection), Page::Meetings);
-        cx.update(|cx| {
-            open_note("m1".into(), cx);
-            assert_eq!(cx.global::<Session>().open_meeting.clone().map(|m| m.0), Some("m1".to_string()));
-        });
+        frame(cx, window);
+        assert_eq!(get(cx, |s| (s.selection, s.open_meeting.is_none())), (Page::Meetings, true));
+        let opened = window.update(cx, |shell, _, cx| shell.meetings.read(cx).editor.as_ref().map(|e| e.meeting_id.clone())).unwrap();
+        assert_eq!(opened.as_deref(), Some(flow_core::meetings::SEED_FULL));
         // A finished meeting has no card.
-        set(cx, |s| s.meeting = meeting(MeetingState::Completed, None));
+        set(cx, |s| s.meeting = Some(MeetingStatus { id: "m1".into(), title: None, state: MeetingState::Completed, elapsed_ms: 0 }));
         frame(cx, window);
         cx.update_window(window.into(), |_, w, _| assert!(w.try_find("navigation.activeNote").is_none())).unwrap();
+    }
+
+    // parity: SHELL-055 SHELL-056 SHELL-057
+    #[flow_ui::gpui::test]
+    async fn live_badge_reads_each_meeting_state(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        let p = cx.update(|cx| pal(cx));
+        let label = |cx: &mut TestAppContext, state| {
+            set(cx, |s| s.meeting = Some(MeetingStatus { id: "m1".into(), title: Some("Planning".into()), state, elapsed_ms: 754_000 }));
+            frame(cx, window);
+            cx.update_window(window.into(), |_, w, _| {
+                let badge = w.find("meeting.elapsed");
+                (badge.label().map(str::to_string), badge.value().map(str::to_string))
+            })
+            .unwrap()
+        };
+        assert_eq!(label(cx, MeetingState::Recording), (Some("Recording".to_string()), Some("12:34".to_string())));
+        assert_eq!(badge_style(MeetingState::Recording, &p), ("waveform", p.success));
+        assert_eq!(label(cx, MeetingState::Paused).0.as_deref(), Some("Paused"));
+        assert_eq!(badge_style(MeetingState::Paused, &p), ("pause.fill", p.muted));
+        assert_eq!(label(cx, MeetingState::Preparing).0.as_deref(), Some("Preparing"));
+        assert_eq!(label(cx, MeetingState::Created).0.as_deref(), Some("Created"));
+        assert_eq!(label(cx, MeetingState::Finalizing).0.as_deref(), Some("Finalizing"));
+        assert_eq!(badge_style(MeetingState::Finalizing, &p), ("waveform", p.success));
+    }
+
+    // parity: PILL-110
+    /// The published meeting notices reach the pill through the Notetaker page, as launch recovery posts them.
+    #[flow_ui::gpui::test]
+    async fn launch_recovery_notices_reach_the_pill(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| cx.global_mut::<Core>().meeting_notices = vec!["1 transcript was interrupted".into()]);
+        let window = open_shell(cx);
+        set(cx, |s| s.selection = Page::Meetings);
+        frame(cx, window);
+        assert_eq!(get(cx, |s| s.pill.action.as_ref().map(|a| (a.message.clone(), a.can_retry))), Some(("1 transcript was interrupted".to_string(), false)));
     }
 
     // parity: SHELL-059 SHELL-079 SHELL-081 SHELL-083 SHELL-084 SHELL-085 SHELL-089 MENU-007
@@ -1067,6 +1279,7 @@ mod tests {
     }
 
     // parity: SHELL-093 SHELL-094 SHELL-096..SHELL-102 MENU-006 ONB-020
+    // The readiness text the menu's first line shows, from every branch of `AppServices.readinessStatus`.
     #[flow_ui::gpui::test]
     async fn readiness_follows_swift_order(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
@@ -1094,20 +1307,44 @@ mod tests {
             d.busy = true;
             d.status = "Recording".into();
             assert_eq!(read(&s), "Recording");
+            let d = s.dictation.as_mut().unwrap();
+            d.busy = false;
+            d.state = DictState::Failed;
+            d.status = "Failed".into();
+            assert_eq!(read(&s), "Failed");
+            s.dictation = None;
+            s.setup_status = "Set up".into();
+            assert_eq!(read(&s), "Set up");
         });
     }
 
-    // parity: SHELL-039 SHELL-015
+    // parity: SHELL-039
     #[flow_ui::gpui::test]
-    async fn appearance_preference_switches_the_palette(cx: &mut TestAppContext) {
+    async fn appearance_preference_switches_palette_and_app(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
+        let appearances = std::rc::Rc::default();
         cx.update(|cx| {
+            cx.global_mut::<Core>().services = Box::new(Fake { appearances: std::rc::Rc::clone(&appearances), ..Default::default() });
             cx.global_mut::<Core>().prefs.set("appearance", "dark");
             apply_appearance(cx);
             assert_eq!(pal(cx).mode, Mode::Dark);
             cx.global_mut::<Core>().prefs.set("appearance", "light");
-            refresh_display_options(cx);
+            apply_appearance(cx);
             assert_eq!(pal(cx).mode, Mode::Light);
+            cx.global_mut::<Core>().prefs.set("appearance", "system");
+            apply_appearance(cx);
+        });
+        assert_eq!(*appearances.borrow(), vec![Some(true), Some(false), None]);
+    }
+
+    // parity: SHELL-015
+    #[flow_ui::gpui::test]
+    async fn activation_rereads_reduce_motion(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| {
+            cx.global_mut::<Flow>().reduce_motion = true;
+            refresh_display_options(cx);
+            assert!(!cx.global::<Flow>().reduce_motion, "the Fake's system value wins");
         });
     }
 
@@ -1135,15 +1372,81 @@ mod tests {
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::CancelRewrite));
     }
 
-    // parity: SHELL-005 SHELL-010 SHELL-037 SHELL-063 SHELL-064 SHELL-065 SHELL-066 SHELL-062
+    // parity: SHELL-062 SHELL-065
     #[flow_ui::gpui::test]
-    async fn router_keeps_selection_across_close(cx: &mut TestAppContext) {
+    async fn show_microphones_opens_settings_at_the_anchor_once(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
         let window = open_shell(cx);
         cx.update(|cx| show_microphones(cx));
         assert_eq!(get(cx, |s| (s.selection, s.microphones_anchor)), (Page::Settings, true));
+        frame(cx, window);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(!get(cx, |s| s.microphones_anchor), "Settings takes the anchor while shown");
+    }
+
+    // parity: SHELL-064 SHELL-066 SHELL-037
+    #[flow_ui::gpui::test]
+    async fn open_selects_keeps_one_window_and_close_keeps_the_selection(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        cx.update(|cx| open(Some(Page::Dictionary), cx));
+        cx.run_until_parked();
+        assert_eq!(get(cx, |s| s.selection), Page::Dictionary);
+        assert_eq!(get(cx, |s| s.window.map(|w| w.window_id())), Some(window.window_id()), "no second window");
         cx.update(|cx| window_closed(window.window_id(), cx));
-        assert_eq!(get(cx, |s| (s.selection, s.window.is_none())), (Page::Settings, true));
+        assert_eq!(get(cx, |s| (s.selection, s.window.is_none(), s.window_focused)), (Page::Dictionary, true, false));
+    }
+
+    // parity: SHELL-063
+    #[flow_ui::gpui::test]
+    async fn window_focus_follows_activation(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        window.update(cx, |_, w, _| w.activate_window()).unwrap();
+        cx.run_until_parked();
+        assert!(get(cx, |s| s.window_focused));
+        flow_ui::gpui::VisualTestContext::from_window(window.into(), cx).deactivate_window();
+        cx.run_until_parked();
+        assert!(!get(cx, |s| s.window_focused));
+    }
+
+    // parity: SHELL-074
+    #[flow_ui::gpui::test]
+    async fn a_save_marks_history_changed(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        set(cx, |s| s.dictation.as_mut().unwrap().unsaved = Some("Keep".into()));
+        frame(cx, window);
+        let before = get(cx, |s| s.history_revision);
+        cx.update(|cx| {
+            let fake = Fake::default();
+            fake.session_ok.set(true);
+            cx.global_mut::<Core>().services = Box::new(fake);
+        });
+        cx.update_window(window.into(), |_, w, cx| w.click("recovery.retrySave", cx)).unwrap();
+        assert_eq!(get(cx, |s| s.history_revision), before + 1);
+    }
+
+    // parity: SHELL-133
+    #[flow_ui::gpui::test]
+    async fn recording_alert_discard_writes_nothing(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let saves = std::rc::Rc::default();
+        cx.update(|cx| cx.global_mut::<Core>().services = Box::new(Fake { save_prompts: std::rc::Rc::clone(&saves), ..Default::default() }));
+        let window = open_shell(cx);
+        cx.update(|cx| show_alert(Alert::RecordingCantWait, cx));
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Discard");
+        cx.run_until_parked();
+        assert!(saves.borrow().is_empty());
+        assert_eq!(get(cx, |s| s.alert), None);
+        cx.update(|cx| show_alert(Alert::RecordingCantWait, cx));
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Save Audio…");
+        cx.run_until_parked();
+        assert_eq!(*saves.borrow(), vec!["LocalFlow dictation.wav".to_string()]);
+        let _ = window;
     }
 
     // parity: SHELL-038

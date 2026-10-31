@@ -231,49 +231,69 @@ mod tests {
         }
     }
 
-    // parity: ONB-019 MENU-006 MENU-007 MENU-008 MENU-009 MENU-011 MENU-013 MENU-015 MENU-016 MENU-019 MENU-022 MENU-023 MENU-024 MENU-025 MENU-026 MENU-028 MENU-029
+    fn meeting(state: MeetingState) -> Option<MeetingStatus> {
+        Some(MeetingStatus { id: "m".into(), title: None, state, elapsed_ms: 0 })
+    }
+
+    // parity: ONB-019 MENU-006 MENU-008 MENU-009 MENU-011 MENU-015 MENU-025 MENU-026 MENU-028 MENU-029
     #[flow_ui::gpui::test]
-    async fn items_follow_session_state(cx: &mut TestAppContext) {
+    async fn idle_menu_lists_swifts_items(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
         cx.update(|cx| {
             ensure_session(cx);
             let session = |cx: &mut App| entries(cx.global::<Session>(), "Ready".into());
-            assert_eq!(titles(&session(cx)), ["Ready", "-", "Open LocalFlow", "Settings…", "-", "Start Meeting", "-", "Quit LocalFlow"]);
-            assert!(session(cx).contains(&Entry::Item { title: "Settings…", command: Command::Settings, enabled: true, shortcut: Some("cmd-,") }));
-            assert!(session(cx).contains(&Entry::Item { title: "Quit LocalFlow", command: Command::Quit, enabled: true, shortcut: Some("cmd-q") }));
-            assert!(session(cx).contains(&Entry::Item { title: "Start Meeting", command: Command::Start, enabled: false, shortcut: None }));
+            let e = session(cx);
+            assert_eq!(e[0], Entry::Text("Ready".into(), None), "readiness line is not interactive");
+            assert_eq!(e[1], Entry::Separator);
+            assert_eq!(e[2], Entry::Item { title: "Open LocalFlow", command: Command::Open, enabled: true, shortcut: None });
+            assert_eq!(e[3], Entry::Item { title: "Settings…", command: Command::Settings, enabled: true, shortcut: Some("cmd-,") });
+            assert_eq!(e[4], Entry::Separator, "meeting group divider");
+            assert_eq!(e[5], Entry::Item { title: "Start Meeting", command: Command::Start, enabled: false, shortcut: None });
+            assert_eq!(e[6], Entry::Separator);
+            assert_eq!(e[7], Entry::Item { title: "Quit LocalFlow", command: Command::Quit, enabled: true, shortcut: Some("cmd-q") });
             update_session(cx, |s| s.can_start_meeting = true);
-            assert!(session(cx).contains(&Entry::Item { title: "Start Meeting", command: Command::Start, enabled: true, shortcut: None }));
-
-            update_session(cx, |s| s.dictation = Some(Dictation { busy: true, storage_blocked: true, ..Default::default() }));
-            let e = titles(&session(cx));
-            assert_eq!(e[1], "Review needed");
-            assert!(e.contains(&"Cancel".to_string()));
-
-            let meeting = |state| Some(MeetingStatus { id: "m".into(), title: None, state, elapsed_ms: 0 });
-            update_session(cx, |s| s.dictation = Some(Dictation::default()));
-            for (state, expect) in [
-                (MeetingState::Recording, vec!["Pause Meeting", "Stop Meeting"]),
-                (MeetingState::Paused, vec!["Resume Meeting", "Stop Meeting"]),
-                (MeetingState::Preparing, vec!["Meeting preparing…"]),
-                (MeetingState::Created, vec!["Meeting created…"]),
-                (MeetingState::Finalizing, vec!["Meeting finalizing…"]),
-                (MeetingState::Completed, vec!["Start Meeting"]),
-                (MeetingState::Interrupted, vec!["Start Meeting"]),
-                (MeetingState::Failed, vec!["Start Meeting"]),
-            ] {
-                update_session(cx, |s| s.meeting = meeting(state));
-                let e = titles(&session(cx));
-                assert_eq!(e[5..5 + expect.len()], expect[..], "{state:?}");
-            }
+            assert_eq!(session(cx)[5], Entry::Item { title: "Start Meeting", command: Command::Start, enabled: true, shortcut: None });
             update_session(cx, |s| s.meetings_available = false);
             assert_eq!(titles(&session(cx)), ["Ready", "-", "Open LocalFlow", "Settings…", "-", "Quit LocalFlow"]);
         });
     }
 
-    // parity: MENU-010 MENU-012 MENU-014 MENU-017 MENU-018 MENU-020 MENU-021 MENU-027
+    // parity: MENU-007 MENU-013
     #[flow_ui::gpui::test]
-    async fn commands_route_to_the_session(cx: &mut TestAppContext) {
+    async fn attention_and_busy_add_their_items(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| {
+            ensure_session(cx);
+            update_session(cx, |s| s.dictation = Some(Dictation { busy: true, storage_blocked: true, ..Default::default() }));
+            let e = entries(cx.global::<Session>(), "Ready".into());
+            assert_eq!(e[1], Entry::Text("Review needed".into(), Some("exclamationmark.circle")));
+            assert!(e.contains(&Entry::Item { title: "Cancel", command: Command::Cancel, enabled: true, shortcut: None }));
+        });
+    }
+
+    // parity: MENU-016 MENU-019 MENU-022 MENU-023 MENU-024
+    #[flow_ui::gpui::test]
+    async fn meeting_items_follow_its_state(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| {
+            ensure_session(cx);
+            let at = |state, cx: &mut App| {
+                update_session(cx, |s| s.meeting = meeting(state));
+                entries(cx.global::<Session>(), "Ready".into())[5..].to_vec()
+            };
+            let (pause, resume, stop) = (item("Pause Meeting", Command::Pause), item("Resume Meeting", Command::Resume), item("Stop Meeting", Command::Stop));
+            assert_eq!(at(MeetingState::Recording, cx)[..2], [pause, stop.clone()]);
+            assert_eq!(at(MeetingState::Paused, cx)[..2], [resume, stop]);
+            assert_eq!(at(MeetingState::Preparing, cx)[0], Entry::Text("Meeting preparing…".into(), None));
+            assert_eq!(at(MeetingState::Created, cx)[0], Entry::Text("Meeting created…".into(), None));
+            assert_eq!(at(MeetingState::Finalizing, cx)[0], Entry::Text("Meeting finalizing…".into(), None));
+            for ended in [MeetingState::Completed, MeetingState::Interrupted, MeetingState::Failed] {
+                assert!(matches!(at(ended, cx)[0], Entry::Item { title: "Start Meeting", .. }));
+            }
+        });
+    }
+
+    fn routed(cx: &mut TestAppContext) -> std::rc::Rc<std::cell::RefCell<Vec<SessionCommand>>> {
         boot(cx, Mode::Light);
         let commands = std::rc::Rc::default();
         let window = cx.add_window(|_, _| flow_ui::gpui::Empty);
@@ -283,22 +303,48 @@ mod tests {
             fake.session_ok.set(true);
             cx.global_mut::<Core>().services = Box::new(fake);
             update_session(cx, |s| s.window = Some(window.into()));
+        });
+        commands
+    }
+
+    // parity: MENU-010 MENU-012
+    #[flow_ui::gpui::test]
+    async fn open_keeps_the_selection_and_settings_selects(cx: &mut TestAppContext) {
+        let _ = routed(cx);
+        cx.update(|cx| {
             run(Command::Open, cx);
-            assert_eq!(cx.global::<Session>().selection, Page::History, "selection unchanged");
+            assert_eq!(cx.global::<Session>().selection, Page::History);
             run(Command::Settings, cx);
             assert_eq!(cx.global::<Session>().selection, Page::Settings);
-            run(Command::Pause, cx);
-            run(Command::Resume, cx);
-            run(Command::Stop, cx);
-            run(Command::Start, cx);
-            assert_eq!(cx.global::<Session>().selection, Page::Meetings);
-            update_session(cx, |s| {
-                s.can_start_meeting = true;
-                s.dictation.as_mut().unwrap().busy = true;
-            });
-            run(Command::Start, cx);
-            run(Command::Cancel, cx);
         });
-        assert_eq!(*commands.borrow(), vec![SessionCommand::PauseMeeting, SessionCommand::ResumeMeeting, SessionCommand::StopMeeting, SessionCommand::StartMeeting, SessionCommand::CancelDictation]);
+    }
+
+    // parity: MENU-014 MENU-017 MENU-018 MENU-020 MENU-021
+    #[flow_ui::gpui::test]
+    async fn meeting_and_cancel_items_send_their_commands(cx: &mut TestAppContext) {
+        let commands = routed(cx);
+        let sent = |command, cx: &mut TestAppContext| {
+            cx.update(|cx| run(command, cx));
+            commands.borrow_mut().pop()
+        };
+        assert_eq!(sent(Command::Pause, cx), Some(SessionCommand::PauseMeeting));
+        assert_eq!(sent(Command::Resume, cx), Some(SessionCommand::ResumeMeeting));
+        assert_eq!(sent(Command::Stop, cx), Some(SessionCommand::StopMeeting));
+        cx.update(|cx| update_session(cx, |s| s.meeting = meeting(MeetingState::Paused)));
+        assert_eq!(sent(Command::Stop, cx), Some(SessionCommand::StopMeeting));
+        cx.update(|cx| update_session(cx, |s| s.dictation.as_mut().unwrap().busy = true));
+        assert_eq!(sent(Command::Cancel, cx), Some(SessionCommand::CancelDictation));
+    }
+
+    // parity: MENU-027
+    #[flow_ui::gpui::test]
+    async fn start_opens_notetaker_and_starts_only_when_allowed(cx: &mut TestAppContext) {
+        let commands = routed(cx);
+        cx.update(|cx| run(Command::Start, cx));
+        cx.update(|cx| assert_eq!(cx.global::<Session>().selection, Page::Meetings));
+        assert!(commands.borrow().is_empty());
+        cx.update(|cx| update_session(cx, |s| s.can_start_meeting = true));
+        cx.update(|cx| run(Command::Start, cx));
+        assert_eq!(*commands.borrow(), vec![SessionCommand::StartMeeting]);
     }
 }

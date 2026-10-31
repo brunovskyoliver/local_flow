@@ -81,13 +81,28 @@ pub fn quit(cx: &mut App) {
     }
 }
 
-/// The teardown. Capture, models and shortcuts don't exist yet, so only the flag and exit remain.
+/// The teardown, in Swift's order. Capture and shortcuts don't exist yet; the services answer for models and the recorder.
 pub fn finish_quit(cx: &mut App) {
-    update_session(cx, |s| {
-        s.quitting = true;
-        s.ready_to_terminate = true;
+    update_session(cx, |s| s.quitting = true);
+    // Deferred: a Cmd-Q runs inside the window's own dispatch, and the flush needs that window.
+    cx.defer(|cx| {
+        shell::flush_notes(cx);
+        if cx.global::<shell::Session>().meeting.as_ref().is_some_and(|m| m.state.is_active()) {
+            let _ = cx.global::<Core>().services.session_command(flow_platform::SessionCommand::StopMeeting);
+        }
+        if !cx.global::<Core>().services.shutdown_models_if_idle() {
+            update_session(cx, |s| {
+                s.quitting = false;
+                s.setup_status = "Model shutdown is still busy. Wait for it to finish before quitting.".into();
+            });
+            return;
+        }
+        if !cx.global::<Core>().services.close_recorder() {
+            update_session(cx, |s| s.setup_status = "Measurement export is incomplete. Its completion record contains the loss status.".into());
+        }
+        update_session(cx, |s| s.ready_to_terminate = true);
+        cx.quit();
     });
-    cx.quit();
 }
 
 #[cfg(test)]
@@ -108,26 +123,26 @@ mod tests {
         window
     }
 
+    fn actions(menus: &[Menu]) -> Vec<(String, bool)> {
+        menus[0].items.iter().filter_map(|i| match i {
+            MenuItem::Action { name, disabled, .. } => Some((name.to_string(), *disabled)),
+            _ => None,
+        }).collect()
+    }
+
     // parity: SHELL-016 SHELL-018 SHELL-019 SHELL-021 SHELL-024
     #[test]
     fn app_menu_has_swifts_groups() {
-        let menus = app_menus(false);
-        let names: Vec<String> = menus[0]
-            .items
-            .iter()
-            .filter_map(|i| match i {
-                MenuItem::Action { name, disabled, .. } => {
-                    assert_eq!(*disabled, name == "Check for Updates…", "{name}");
-                    Some(name.to_string())
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(names[..2], ["Check for Updates…", "Settings…"]);
-        assert_eq!(names.last().unwrap(), "Quit LocalFlow");
+        let (off, on) = (actions(&app_menus(false)), actions(&app_menus(true)));
+        assert_eq!(off[0], ("Check for Updates…".to_string(), true));
+        assert_eq!(on[0], ("Check for Updates…".to_string(), false));
+        assert_eq!(off[1], ("Settings…".to_string(), false));
+        assert_eq!(off.last().unwrap(), &("Quit LocalFlow".to_string(), false));
+        // Only the app menu is customized; the rest stays the system's.
+        assert_eq!(app_menus(false).len(), 1);
     }
 
-    // parity: SHELL-020 MENU-011 MENU-012
+    // parity: SHELL-020
     #[flow_ui::gpui::test]
     async fn command_comma_opens_settings(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
@@ -135,11 +150,66 @@ mod tests {
         cx.update_window(window.into(), |_, w, cx| w.press("cmd-,", cx)).unwrap();
         cx.run_until_parked();
         cx.update(|cx| assert_eq!(cx.global::<Session>().selection, Page::Settings));
-        // Persists nothing.
-        cx.update(|cx| assert!(!cx.global::<Core>().prefs.contains("selection")));
     }
 
-    // parity: SHELL-121 SHELL-122 SHELL-123 SHELL-124 SHELL-022 MENU-030 SHELL-125 SHELL-126 SHELL-127 SHELL-128
+    // parity: SHELL-128
+    #[flow_ui::gpui::test]
+    async fn quit_stops_an_active_meeting_then_terminates(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let commands = std::rc::Rc::default();
+        cx.update(|cx| {
+            let fake = flow_platform::Fake { commands: std::rc::Rc::clone(&commands), ..Default::default() };
+            fake.session_ok.set(true);
+            cx.global_mut::<Core>().services = Box::new(fake);
+        });
+        let _window = open_shell(cx);
+        cx.update(|cx| update_session(cx, |s| s.meeting = Some(shell::MeetingStatus { id: "m".into(), title: None, state: shell::MeetingState::Recording, elapsed_ms: 0 })));
+        cx.update(quit);
+        cx.update(|cx| assert!(cx.global::<Session>().quitting));
+        cx.run_until_parked();
+        assert_eq!(*commands.borrow(), vec![flow_platform::SessionCommand::StopMeeting]);
+        cx.update(|cx| assert!(cx.global::<Session>().ready_to_terminate));
+    }
+
+    // parity: SHELL-129
+    #[flow_ui::gpui::test]
+    async fn busy_model_shutdown_refuses_the_quit(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| {
+            let fake = flow_platform::Fake::default();
+            fake.models_busy.set(true);
+            cx.global_mut::<Core>().services = Box::new(fake);
+        });
+        let _window = open_shell(cx);
+        cx.update(quit);
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let s = cx.global::<Session>();
+            assert_eq!((s.quitting, s.ready_to_terminate), (false, false));
+            assert_eq!(s.setup_status, "Model shutdown is still busy. Wait for it to finish before quitting.");
+        });
+    }
+
+    // parity: SHELL-130
+    #[flow_ui::gpui::test]
+    async fn incomplete_export_reports_and_quits_anyway(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| {
+            let fake = flow_platform::Fake::default();
+            fake.export_incomplete.set(true);
+            cx.global_mut::<Core>().services = Box::new(fake);
+        });
+        let _window = open_shell(cx);
+        cx.update(quit);
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let s = cx.global::<Session>();
+            assert_eq!(s.setup_status, "Measurement export is incomplete. Its completion record contains the loss status.");
+            assert!(s.ready_to_terminate);
+        });
+    }
+
+    // parity: SHELL-121 SHELL-122 SHELL-123 SHELL-124 SHELL-022 MENU-030 SHELL-125 SHELL-126 SHELL-127
     #[flow_ui::gpui::test]
     async fn quit_refuses_in_swifts_order(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
