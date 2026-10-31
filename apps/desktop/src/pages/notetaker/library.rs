@@ -62,7 +62,7 @@ impl NotetakerPage {
                                 plain_button("notetaker.transcribeNew", "Transcribe new recordings").disabled(!can).toggled(on).on_click(cx.listener(|this, _, _, cx| {
                                     this.transcribe = !this.transcribe;
                                     cx.notify();
-                                })).content(checkbox_row("Transcribe new recordings", on, cx)),
+                                })).content(checkbox_row("Transcribe new recordings", on, 13., cx)),
                             ),
                         ))
                     }),
@@ -332,12 +332,12 @@ pub(crate) fn empty_line(title: &'static str, cx: &App) -> impl IntoElement {
     div().id("notetaker.emptyLine").test_support().w_full().py(px(60.)).child(t(title).size(15.).color(pal(cx).muted).center())
 }
 /// `.toggleStyle(.checkbox)` as content for a real button.
-pub(crate) fn checkbox_row(title: &'static str, on: bool, cx: &App) -> impl IntoElement {
+pub(crate) fn checkbox_row(title: &'static str, on: bool, size: f32, cx: &App) -> impl IntoElement {
     let p = pal(cx);
     h_flex()
         .gap(px(6.))
         .child(div().size(px(14.)).flex().items_center().justify_center().rounded(px(3.)).when(on, |d| d.bg(p.accent)).when(!on, |d| d.border_1().border_color(p.line)).when(on, |d| d.child(icon("checkmark", 10., p.on_accent))))
-        .child(t(title).size(13.).a11y_hidden())
+        .child(t(title).size(size).a11y_hidden())
 }
 /// `LiveRecordingBadge`.
 pub(crate) fn live_badge(state: &str, elapsed: i64, size: f32, cx: &App) -> impl IntoElement {

@@ -25,7 +25,9 @@ impl NotetakerPage {
             subs.push(cx.subscribe_in(&input, window, move |this, input, e: &TextInputEvent, window, cx| this.name_event(&speaker, input.clone(), e, window, cx)));
             inputs.insert(s.speaker.id.clone(), input);
         }
-        let first = focus.or(model.sections.iter().find(|s| s.speaker.includes.is_empty()).map(|s| s.speaker.id.clone()));
+        // `initialFocus` when it is still a section, the first section otherwise; only a named one scrolls.
+        let named = focus.as_ref().and_then(|f| model.sections.iter().position(|s| &s.speaker.id == f));
+        let first = named.or((!model.sections.is_empty()).then_some(0)).map(|i| model.sections[i].speaker.id.clone());
         if let Some(input) = first.as_ref().and_then(|f| inputs.get(f)) {
             input.read(cx).focus_handle(cx).focus(window, cx);
         }
@@ -33,7 +35,11 @@ impl NotetakerPage {
         if let (Some(f), Some(db)) = (&first, db_of(cx)) {
             model.refresh_suggestions(db, f);
         }
-        self.assign = Some(AssignState { model, inputs, focused: first, scroll: ScrollHandle::new(), _subs: subs });
+        let scroll = ScrollHandle::new();
+        if let Some(i) = named {
+            scroll.scroll_to_top_of_item(model.reviews.len() + i);
+        }
+        self.assign = Some(AssignState { model, inputs, focused: first, scroll, _subs: subs });
         cx.notify();
     }
     fn name_event(&mut self, speaker: &str, input: Entity<InputState>, e: &TextInputEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -98,6 +104,20 @@ impl NotetakerPage {
         if let Some(a) = &mut self.assign {
             a.model.merge(db, id, target);
         }
+        self.structure_changed(cx);
+    }
+    pub(crate) fn unmerge(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(db) = db_of(cx) else { return };
+        if let Some(a) = &mut self.assign {
+            a.model.unmerge(db, id);
+        }
+        self.structure_changed(cx);
+    }
+    /// `structureChanged`: merges apply at once, so the transcript behind the sheet relabels now.
+    fn structure_changed(&mut self, cx: &mut Context<Self>) {
+        if let (Some(db), Some(p)) = (db_of(cx), &mut self.pager) {
+            p.refresh_labels(db);
+        }
         cx.notify();
     }
 
@@ -109,7 +129,8 @@ impl NotetakerPage {
         let (notice, can_save, none) = (a.model.notice.clone(), a.model.can_save(), sections.is_empty());
         let done = a.model.enrollment_completed;
         let handle = a.scroll.clone();
-        let mut scroll = v_flex().w_full().gap(px(28.)).px(px(32.)).pt(px(20.)).pb(px(28.));
+        // The sections are direct children of the scroller so `scroll_to_top_of_item` can find them.
+        let mut scroll = div().id("meeting.speakers.scroll").test_support().w_full().min_h(px(160.)).max_h(px(480.)).overflow_y_scroll().track_scroll(&handle).flex().flex_col().gap(px(28.)).px(px(32.)).pt(px(20.)).pb(px(28.));
         if none && a.model.is_loading {
             scroll = scroll.child(div().id("meeting.speakers.loading").test_support().w_full().p(px(20.)).flex().justify_center().child(Spinner::new()));
         } else if none {
@@ -145,9 +166,14 @@ impl NotetakerPage {
                 v_flex()
                     .id("meeting.speakers.assign")
                     .test_support()
-                    .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                    .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                         if e.keystroke.key == "escape" {
                             this.close_assign(cx);
+                        }
+                        // `.defaultAction`; a focused name field saves through its own PressEnter.
+                        let in_field = this.assign.as_ref().is_some_and(|a| a.inputs.values().any(|i| i.read(cx).focus_handle(cx).is_focused(window)));
+                        if e.keystroke.key == "enter" && !in_field {
+                            this.save_assign(window, cx);
                         }
                     }))
                     .relative()
@@ -156,10 +182,10 @@ impl NotetakerPage {
                     .rounded(px(14.))
                     .shadow_lg()
                     .child(div().px(px(32.)).pt(px(28.)).pb(px(11.)).child(t("Assign speakers").font(28., 400.).serif()))
-                    .child(div().absolute().top(px(22.)).right(px(22.)).child(plain_button("meeting.speakers.close", "Close").on_click(cx.listener(|this, _, _, cx| this.close_assign(cx))).content(div().size(px(30.)).flex().items_center().justify_center().child(icon("xmark", 19., p.ink)))))
+                    .child(div().absolute().top(px(22.)).right(px(22.)).child(plain_button("meeting.speakers.close", "Close").on_click(cx.listener(|this, _, _, cx| this.close_assign(cx))).content(div().size(px(30.)).flex().items_center().justify_center().child(icon("xmark", 16., p.ink)))))
                     .child(
                         // The scroller shows that more voices follow below the fold (UI-14).
-                        div().relative().w_full().flex().flex_col().child(div().id("meeting.speakers.scroll").test_support().w_full().min_h(px(160.)).max_h(px(480.)).overflow_y_scroll().track_scroll(&handle).child(scroll)).child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Scrolling).styles(move |styles| styles.track(|x| x.bg(p.canvas)).thumb(|x| x.bg(p.muted.opacity(0.6)).width(px(7.)).radius(px(4.))).thumb_hover(|x| x.bg(p.muted.opacity(0.8)).width(px(7.)).radius(px(4.))).thumb_active(|x| x.bg(p.muted).width(px(7.)).radius(px(4.))))),
+                        div().relative().w_full().flex().flex_col().child(scroll).child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Scrolling).styles(move |styles| styles.track(|x| x.bg(p.canvas)).thumb(|x| x.bg(p.muted.opacity(0.6)).width(px(7.)).radius(px(4.))).thumb_hover(|x| x.bg(p.muted.opacity(0.8)).width(px(7.)).radius(px(4.))).thumb_active(|x| x.bg(p.muted).width(px(7.)).radius(px(4.))))),
                     )
                     .child(hairline(cx))
                     .child(
@@ -183,7 +209,7 @@ impl NotetakerPage {
         let input = a.inputs.get(&id).cloned();
         let focused = a.focused.as_deref() == Some(id.as_str());
         let suggestions = if focused { a.model.suggestions.clone() } else { vec![] };
-        let duplicate = a.model.duplicate(&id).map(|d| (d.speaker.id.clone(), d.preview()));
+        let duplicate = a.model.duplicate(&id).map(|d| (d.speaker.id.clone(), d.speaker.anonymous()));
         let block = a.model.identity_block(&id);
         let error = s.error();
         let label = s.speaker.anonymous();
@@ -191,10 +217,7 @@ impl NotetakerPage {
         for merged in s.speaker.includes.clone() {
             let includes = format!("Includes {}", merged.label);
             column = column.child(h_flex().gap(px(8.)).child(t(includes).size(13.).color(p.muted)).child(plain_button(sid(format!("meeting.speakers.unmerge.{}", merged.id)), "Undo merge").a11y_label(sid(format!("Undo merge of {}", merged.label))).on_click(cx.listener(move |this, _, _, cx| {
-                if let (Some(db), Some(a)) = (db_of(cx), &mut this.assign) {
-                    a.model.unmerge(db, &merged.id);
-                }
-                cx.notify();
+                this.unmerge(&merged.id, cx);
             })).content(t("Undo merge").font(13., 500.).a11y_hidden())));
         }
         if !s.speaker.quotes.is_empty() {
@@ -209,14 +232,17 @@ impl NotetakerPage {
                 div()
                     .w_full()
                     .h(px(46.))
-                    .px(px(4.))
+                    // Kit's own 10 plus the stroke: the text stays 16 in from the edge either way.
+                    .px(px(if focused { 4. } else { 5. }))
                     .flex()
                     .items_center()
                     .rounded(px(12.))
                     .when(focused, |d| d.border_2().border_color(p.ink))
                     .when(!focused, |d| d.border_1().border_color(p.line))
-                    .text_size(px(15.))
-                    .child(Input::new(&input).appearance(false).aria_label(sid(format!("Name for {label}"))).accessibility_id(sid(format!("meeting.speakers.name.{position}")))),
+                    // ponytail: the stroke snaps; Swift eases it over 0.12 s (SPK-063).
+                    .id(sid(format!("meeting.speakers.field.{}", position + 1)))
+                    .test_support()
+                    .child(Input::new(&input).appearance(false).text_size(px(15.)).aria_label(sid(format!("Name for {label}"))).accessibility_id(sid(format!("meeting.speakers.name.{}", position + 1)))),
             );
         }
         if !suggestions.is_empty() {
@@ -253,7 +279,7 @@ impl NotetakerPage {
     fn identity_view(&mut self, id: &str, s: &Section, b: IdentityBlock, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let id = id.to_string();
-        let mut out = v_flex().id(sid(format!("identity.block.{id}"))).w_full().items_start().gap(px(8.));
+        let mut out = v_flex().id(sid(format!("identity.block.{id}"))).test_support().w_full().items_start().gap(px(8.));
         if let Some(remembered) = b.local_remembered {
             if !remembered {
                 if s.action == IdentityAction::RememberLocal {
@@ -302,7 +328,7 @@ impl NotetakerPage {
                     h_flex()
                         .w_full()
                         .gap(px(10.))
-                        .child(div().flex_1().min_w_0().child(t(format!("Is this {} you already remember?", k.name)).font(13., 500.)))
+                        .child(div().min_w_0().child(t(format!("Is this {} you already remember?", k.name)).font(13., 500.)))
                         .child(identity_button("identity.samePerson", "Same person", true, cx, move |this, cx| this.set_identity(&a1, IdentityAction::SamePerson(k.id.clone()), cx)))
                         .child(identity_button("identity.someoneNew", "Someone new", false, cx, move |this, cx| this.set_identity(&a2, IdentityAction::RememberNew, cx))),
                 );
@@ -317,7 +343,7 @@ impl NotetakerPage {
                             h_flex()
                                 .w_full()
                                 .gap(px(10.))
-                                .child(div().flex_1().min_w_0().child(t(REMEMBER_QUESTION).font(13., 500.)))
+                                .child(div().min_w_0().child(t(REMEMBER_QUESTION).font(13., 500.)))
                                 .child(identity_button("identity.remember", "Remember", s.action == IdentityAction::Remember, cx, move |this, cx| this.set_identity(&a1, IdentityAction::Remember, cx)))
                                 .child(div().opacity(if not_now { 1. } else { 0.7 }).child(identity_button("identity.notNow", "Not now", false, cx, move |this, cx| this.set_identity(&a2, IdentityAction::NotNow, cx)))),
                         )
@@ -331,7 +357,7 @@ impl NotetakerPage {
                         a.model.set_also_remember(&speaker, !on);
                     }
                     cx.notify();
-                })).content(library::checkbox_row("Also remember this voice sample", on, cx)));
+                })).content(library::checkbox_row("Also remember this voice sample", on, 12., cx)));
             }
         }
         if let Some(r) = s.enrollment_result.clone() {
@@ -366,12 +392,12 @@ impl NotetakerPage {
 /// A `.borderlessButton` `Menu`: accent title and chevron.
 fn text_menu(id: &'static str, title: &'static str, size: f32, cx: &App) -> Button {
     let p = pal(cx);
-    Button::new(id).ghost().p_0().h_auto().accessibility_label(title).child(h_flex().pl(px(3.)).gap(px(4.)).child(t(title).size(size).color(p.accent).a11y_hidden()).child(icon("chevron.down", 12., p.accent)))
+    Button::new(id).ghost().p_0().h_auto().accessibility_label(title).child(h_flex().pl(px(3.)).gap(px(3.)).child(t(title).size(size).color(p.accent).a11y_hidden()).child(icon("chevron.down", 10., p.accent)))
 }
 fn sheet_button(title: &'static str, primary: bool, cx: &App) -> impl IntoElement {
     let p = pal(cx);
     let (fill, text) = if primary { (p.ink, p.surface) } else { (p.canvas, p.ink) };
-    div().h(px(38.)).px(px(18.)).flex().items_center().rounded(px(9.)).bg(fill).child(t(title).font(14., 500.).color(text).a11y_hidden())
+    div().id(title).h(px(38.)).px(px(18.)).flex().items_center().rounded(px(9.)).bg(fill).active(|d| d.opacity(0.8)).child(t(title).font(14., 500.).color(text).a11y_hidden())
 }
 fn identity_button(id: &'static str, title: &'static str, prominent: bool, cx: &mut Context<NotetakerPage>, on: impl Fn(&mut NotetakerPage, &mut Context<NotetakerPage>) + 'static) -> impl IntoElement {
     plain_button(id, title).a11y_selected(prominent).on_click(cx.listener(move |this, _, _, cx| on(this, cx))).content(sheet_button(title, prominent, cx))

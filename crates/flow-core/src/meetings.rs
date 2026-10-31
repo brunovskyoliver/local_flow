@@ -4185,7 +4185,7 @@ mod tests {
         assert_eq!(m.minutes(), 2);
     }
 
-    // parity: SPK-041 SPK-042 SPK-043 SPK-058 SPK-059 SPK-060 SPK-071
+    // parity: SPK-043 SPK-058 SPK-059 SPK-060 SPK-071
     #[test]
     fn corrections_and_merges_persist() {
         let db = db();
@@ -4207,6 +4207,95 @@ mod tests {
         unmerge(&db, SEED_FULL, &a, 10).unwrap();
         let undone: i64 = db.conn.query_row("SELECT count(*) FROM speaker_corrections WHERE kind='merge' AND undone_at=10", [], |r| r.get(0)).unwrap();
         assert_eq!(undone, 1);
+    }
+
+    // parity: SPK-041 SPK-042
+    #[test]
+    fn corrections_write_manual_columns_and_a_segment_correction() {
+        let db = db();
+        let target = speaker_summaries(&db, SEED_FULL).unwrap()[2].id.clone();
+        let segment = seed_uuid(0xD00);
+        correct_segment(&db, SEED_FULL, &segment, &Correction::Speaker(target.clone()), 9).unwrap();
+        let row: (String, Option<String>, i64) = db.conn.query_row("SELECT manual_kind, manual_speaker_id, manual_at FROM speaker_assignments WHERE segment_id=?1", [&segment], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert_eq!(row, ("speaker".to_string(), Some(target), 9));
+        correct_segment(&db, SEED_FULL, &segment, &Correction::Unknown, 10).unwrap();
+        let (kind, value): (String, Option<String>) = db.conn.query_row("SELECT kind, new_value FROM speaker_corrections WHERE segment_id=?1 ORDER BY created_at DESC LIMIT 1", [&segment], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((kind.as_str(), value.as_deref()), ("segment", Some("unknown")));
+    }
+
+    // parity: SPK-058 SPK-060 SPK-071
+    #[test]
+    fn merges_stay_one_level_deep_and_undo_clears_the_merged_identity() {
+        let db = db();
+        let roots = speaker_summaries(&db, SEED_FULL).unwrap();
+        // You first, then colour order among the rest.
+        assert!(roots[0].is_you());
+        assert!(roots[1..].windows(2).all(|w| w[0].color <= w[1].color));
+        let (a, b, c) = (roots[1].id.clone(), roots[2].id.clone(), roots[3].id.clone());
+        let before: i64 = db.conn.query_row("SELECT count(*) FROM speaker_corrections WHERE kind='merge'", [], |r| r.get(0)).unwrap();
+        assert_eq!(merge(&db, SEED_FULL, &a, &b, 9).unwrap(), 1);
+        assert_eq!(merge(&db, SEED_FULL, &b, &c, 9).unwrap(), 2, "a root moves with its member");
+        let into = |id: &str| -> Option<String> { db.conn.query_row("SELECT merged_into FROM meeting_speakers WHERE id=?1", [id], |r| r.get(0)).unwrap() };
+        assert_eq!((into(&a), into(&b)), (Some(c.clone()), Some(c.clone())), "depth stays one");
+        let after: i64 = db.conn.query_row("SELECT count(*) FROM speaker_corrections WHERE kind='merge'", [], |r| r.get(0)).unwrap();
+        assert_eq!(after - before, 3, "one correction per moved speaker");
+        db.conn.execute("INSERT INTO identity_assignments (id, meeting_id, meeting_speaker_id, scope, state, origin, created_at, updated_at) VALUES ('m1',?1,?2,'merged','unknown','user_confirmation',1,1)", params![SEED_FULL, c]).unwrap();
+        unmerge(&db, SEED_FULL, &a, 11).unwrap();
+        assert_eq!(into(&a), None);
+        let merged: i64 = db.conn.query_row("SELECT count(*) FROM identity_assignments WHERE meeting_speaker_id=?1 AND scope='merged'", [&c], |r| r.get(0)).unwrap();
+        assert_eq!(merged, 0);
+        let unmerges: i64 = db.conn.query_row("SELECT count(*) FROM speaker_corrections WHERE kind='unmerge' AND speaker_id=?1 AND created_at=11", [&a], |r| r.get(0)).unwrap();
+        assert_eq!(unmerges, 1);
+    }
+
+    // parity: SPK-066
+    #[test]
+    fn suggestions_put_the_latest_rename_first_and_stop_at_eight() {
+        let db = db();
+        let run: String = db.conn.query_row("SELECT accepted_run_id FROM meeting_diarization WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap();
+        let ids: Vec<String> = speaker_summaries(&db, SEED_FULL).unwrap().iter().map(|s| s.id.clone()).collect();
+        save_names(&db, SEED_FULL, &[(ids[1].clone(), Some("Zora Old".into()))], 100).unwrap();
+        save_names(&db, SEED_FULL, &[(ids[2].clone(), Some("Zora New".into()))], 200).unwrap();
+        assert_eq!(name_suggestions(&db, "Zora", 8).unwrap(), vec!["Zora New".to_string(), "Zora Old".to_string()]);
+        assert_eq!(name_suggestions(&db, "", 8).unwrap()[0], "Zora New", "an empty field shows the recent ones");
+        for i in 0..12 {
+            db.conn.execute("INSERT INTO meeting_speakers (id, meeting_id, run_id, cluster_key, source, label_ordinal, color_index, first_ms, speech_ms, display_name, origin) VALUES (?1,?2,NULL,?1,'remote',?3,0,0,0,?4,'manual')", params![format!("x{i}"), SEED_FULL, 50 + i, format!("Yan {i}")]).unwrap();
+        }
+        assert_eq!(name_suggestions(&db, "Yan", 8).unwrap().len(), 8);
+        assert_eq!(name_suggestions(&db, "Yan", 50).unwrap().len(), 8);
+    }
+
+    // parity: SPK-097 SPK-098 SPK-100
+    #[test]
+    fn saving_records_renames_and_identity_origins() {
+        let db = db();
+        let mut m = AssignModel::new(&db, SEED_FULL, true);
+        let known = m.known.iter().find(|k| !k.is_local).unwrap().id.clone();
+        let other = {
+            db.conn.execute("INSERT INTO known_speakers (id, display_name, is_local_user, revision, created_at, updated_at) VALUES ('k9','Second',0,0,1,1)", []).unwrap();
+            "k9".to_string()
+        };
+        let (a, b, c) = (m.sections[1].speaker.id.clone(), m.sections[3].speaker.id.clone(), m.sections[2].speaker.id.clone());
+        m.set_draft(&b, "Dana");
+        m.set_action(&a, IdentityAction::Pick(known.clone()));
+        m.set_action(&c, IdentityAction::ChooseAnother(other.clone()));
+        let renames = |db: &Db| -> i64 { db.conn.query_row("SELECT count(*) FROM speaker_corrections WHERE kind='rename' AND speaker_id=?1", [&b], |r| r.get(0)).unwrap() };
+        let start = renames(&db);
+        assert!(m.save(&db, "unused"));
+        assert_eq!(renames(&db), start + 1, "one rename per change");
+        let origin = |id: &str| -> String { db.conn.query_row("SELECT origin FROM identity_assignments WHERE meeting_speaker_id=?1 AND scope='self'", [id], |r| r.get(0)).unwrap() };
+        assert_eq!(origin(&a), "manual_profile_selection");
+        assert_eq!(origin(&c), "manual_correction");
+        let mut m = AssignModel::new(&db, SEED_FULL, true);
+        assert!(m.save(&db, "unused"));
+        assert_eq!(renames(&db), start + 1, "an unchanged name writes nothing");
+        // A merged root resolves to a known speaker or to Keep Unknown under scope merged.
+        resolve_merged(&db, SEED_FULL, &a, Some(&known), 5).unwrap();
+        let (state, linked): (String, Option<String>) = db.conn.query_row("SELECT state, known_speaker_id FROM identity_assignments WHERE meeting_speaker_id=?1 AND scope='merged'", [&a], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(linked.as_deref(), Some(known.as_str()), "state {state}");
+        resolve_merged(&db, SEED_FULL, &a, None, 6).unwrap();
+        let linked: Option<String> = db.conn.query_row("SELECT known_speaker_id FROM identity_assignments WHERE meeting_speaker_id=?1 AND scope='merged'", [&a], |r| r.get(0)).unwrap();
+        assert_eq!(linked, None);
     }
 
     // parity: SPK-069 SPK-070 SPK-097 SPK-098

@@ -334,7 +334,7 @@ TRANS-088	recorded	recorded:swift-note kept as Swift behaves; no separate behavi
 TRANS-089	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SPK-001	auto	test:transcript_icon_buttons_name_their_symbol_and_label ; test:assign_opens_shows_sections_and_closes
 SPK-002	auto	test:assign_control_needs_a_final_finished_meeting_with_labels
-SPK-003	auto	test:assign_opens_shows_sections_and_closes
+SPK-003	auto	test:assign_opens_shows_sections_and_closes ; test:sheet_focuses_the_first_section_or_the_named_one_scrolled_to_the_top
 SPK-004	live	test:labels_updating ; live:audit/mac/notetaker/labeling-update-light-rust.png ; live:audit/mac/notetaker/labeling-update-light-ref.png
 SPK-005	auto	test:labels_waiting
 SPK-006	auto	test:labels_running ; service:worker: flowd-speech diarization; desktop plan phase adds it, view surfaces Unavailable
@@ -367,78 +367,78 @@ SPK-032	auto	test:identification_failures_read_like_swift
 SPK-033	live	test:past_search_prompt ; live:audit/mac/notetaker/past-prompt-light-rust.png ; live:audit/mac/notetaker/past-prompt-dark-rust.png ; rust-only:Swift raises this prompt only from the callback after a voice enrollment stores, which takes a voice sample and the worker
 SPK-034	auto	test:look_queues_meetings_with_unknown_remote_speakers
 SPK-035	auto	test:past_prompt_not_now_hides
-SPK-036	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
-SPK-037	live	test:confirming_a_suggested_speaker ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png
+SPK-036	live	live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; test:transcript_speaker_label_uses_the_palette
+SPK-037	live	test:confirming_a_suggested_speaker ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; test:transcript_speaker_label_uses_the_palette
 SPK-038	auto	test:confirming_a_suggested_speaker
 SPK-039	auto	test:confirming_a_suggested_speaker
 SPK-040	auto	test:segment_menu_reads_select_or_deselect_and_change_speaker ; test:change_speaker_submenu_writes_the_correction
-SPK-041	auto	test:corrections_and_merges_persist
-SPK-042	auto	test:corrections_and_merges_persist ; test:change_speaker_submenu_writes_the_correction
+SPK-041	auto	test:corrections_write_manual_columns_and_a_segment_correction
+SPK-042	auto	test:corrections_write_manual_columns_and_a_segment_correction ; test:change_speaker_submenu_writes_the_correction
 SPK-043	auto	test:corrections_and_merges_persist
 SPK-044	auto	test:correction_and_merge_failures_surface
 SPK-045	auto	test:correction_and_merge_failures_surface
-SPK-046	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
-SPK-047	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
-SPK-048	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
+SPK-046	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-047	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-048	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
 SPK-049	auto	test:assign_opens_shows_sections_and_closes
-SPK-050	live	test:sheet_scroller_shows_more_voices_below ; live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png
+SPK-050	live	test:sheet_scroller_shows_more_voices_below ; live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
 SPK-051	auto	test:sheet_loading_empty_and_failed
-SPK-052	auto	test:sheet_loading_empty_and_failed
-SPK-053	auto	test:sheet_loading_empty_and_failed
-SPK-054	auto	test:review_notice_row_has_twelve_point_padding ; test:review_notice_dismisses_or_says_it_could_not
+SPK-052	auto	test:sheet_loading_empty_and_failed ; test:sheet_notices_are_red_twelve_point
+SPK-053	auto	test:sheet_loading_empty_and_failed ; test:sheet_notices_are_red_twelve_point
+SPK-054	auto	test:review_notice_row_has_twelve_point_padding ; test:review_notice_dismisses_or_says_it_could_not ; test:review_row_type_symbol_and_label
 SPK-055	auto	test:review_notice_dismisses_or_says_it_could_not
 SPK-056	auto	test:review_notice_dismisses_or_says_it_could_not
-SPK-057	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
-SPK-058	auto	test:corrections_and_merges_persist
-SPK-059	auto	test:corrections_and_merges_persist
-SPK-060	auto	test:corrections_and_merges_persist
-SPK-061	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
-SPK-062	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
-SPK-063	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png
+SPK-057	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-058	auto	test:corrections_and_merges_persist ; test:merges_stay_one_level_deep_and_undo_clears_the_merged_identity
+SPK-059	auto	test:merge_and_undo_apply_at_once_and_relabel_the_transcript ; test:corrections_and_merges_persist
+SPK-060	auto	test:corrections_and_merges_persist ; test:merge_and_undo_apply_at_once_and_relabel_the_transcript ; test:merges_stay_one_level_deep_and_undo_clears_the_merged_identity
+SPK-061	live	test:assign_opens_shows_sections_and_closes ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-062	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-063	auto	test:sheet_focuses_the_first_section_or_the_named_one_scrolled_to_the_top
 SPK-064	auto	test:enter_in_a_name_field_saves
 SPK-065	auto	test:assign_sheet_labels_suggestions_and_cancel ; test:suggestions_sit_six_points_inside_their_outline ; test:suggestions_filter_by_prefix_and_pick
-SPK-066	auto	test:suggestions_filter_by_prefix_and_pick
+SPK-066	auto	test:suggestions_filter_by_prefix_and_pick ; test:suggestions_put_the_latest_rename_first_and_stop_at_eight
 SPK-067	recorded	test:suggestions_filter_by_prefix_and_pick ; recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SPK-068	auto	test:long_name_blocks_saving
-SPK-069	auto	test:assign_model_saves_names_and_identities
-SPK-070	auto	test:a_name_another_speaker_has_offers_to_merge ; test:assign_model_saves_names_and_identities
-SPK-071	auto	test:corrections_and_merges_persist
+SPK-068	auto	test:long_name_blocks_saving ; test:field_errors_are_red_and_disable_save
+SPK-069	auto	test:assign_model_saves_names_and_identities ; test:field_errors_are_red_and_disable_save
+SPK-070	auto	test:a_name_another_speaker_has_offers_to_merge ; test:assign_model_saves_names_and_identities ; test:merge_and_undo_apply_at_once_and_relabel_the_transcript
+SPK-071	auto	test:corrections_and_merges_persist ; test:merge_and_undo_apply_at_once_and_relabel_the_transcript ; test:merges_stay_one_level_deep_and_undo_clears_the_merged_identity
 SPK-072	auto	test:correction_and_merge_failures_surface
 SPK-073	auto	test:correction_and_merge_failures_surface
-SPK-074	auto	test:assign_shows_identity_choices
-SPK-075	auto	test:assign_opens_shows_sections_and_closes
-SPK-076	auto	test:merged_speaker_must_choose_an_identity
+SPK-074	auto	test:assign_shows_identity_choices ; test:local_voice_offer_type_and_branches
+SPK-075	auto	test:local_voice_offer_type_and_branches
+SPK-076	auto	test:merged_speaker_must_choose_an_identity ; test:pickers_list_names_samples_and_re_enrollment
 SPK-077	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SPK-078	auto	test:assign_opens_shows_sections_and_closes
-SPK-079	auto	test:possible_match_offers_confirm_another_and_keep_unknown
+SPK-078	auto	test:pickers_list_names_samples_and_re_enrollment
+SPK-079	auto	test:possible_match_offers_confirm_another_and_keep_unknown ; test:identity_buttons_turn_prominent_when_chosen
 SPK-080	auto	test:possible_match_offers_confirm_another_and_keep_unknown
-SPK-081	auto	test:possible_match_offers_confirm_another_and_keep_unknown
-SPK-082	auto	test:merged_speaker_must_choose_an_identity
-SPK-083	auto	test:typed_name_asks_to_remember_then_about_the_duplicate
-SPK-084	auto	test:typed_name_asks_to_remember_then_about_the_duplicate
-SPK-085	auto	test:possible_match_offers_confirm_another_and_keep_unknown
+SPK-081	auto	test:possible_match_offers_confirm_another_and_keep_unknown ; test:identity_buttons_turn_prominent_when_chosen
+SPK-082	auto	test:pickers_list_names_samples_and_re_enrollment
+SPK-083	auto	test:remember_rows_read_like_swift
+SPK-084	auto	test:remember_rows_read_like_swift
+SPK-085	auto	test:possible_match_offers_confirm_another_and_keep_unknown ; test:identity_buttons_turn_prominent_when_chosen
 SPK-086	service	service:worker: voice embedding; desktop plan phase adds it, view surfaces Unavailable
-SPK-087	auto	test:enroll_outcomes_read_like_swift
-SPK-088	auto	test:enroll_outcomes_read_like_swift
-SPK-089	auto	test:enroll_outcomes_read_like_swift
+SPK-087	recorded	recorded:the Stored outcome needs a sample from the voice worker, which the desktop client lacks; the text exists in EnrollOutcome but nothing produces it yet
+SPK-088	recorded	recorded:the Stored outcome needs a sample from the voice worker, which the desktop client lacks; the text exists in EnrollOutcome but nothing produces it yet
+SPK-089	recorded	recorded:NoUsableSample needs the voice worker, which the desktop client lacks; the text exists in EnrollOutcome but nothing produces it yet
 SPK-090	auto	test:enrolling_with_identification_off_says_so
-SPK-091	auto	test:enroll_outcomes_read_like_swift
-SPK-092	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png
-SPK-093	auto	test:assign_sheet_labels_suggestions_and_cancel ; test:assign_escape_style_cancel_writes_nothing
-SPK-094	auto	test:assign_escape_style_cancel_writes_nothing
-SPK-095	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png
-SPK-096	auto	test:long_name_blocks_saving
-SPK-097	auto	test:assign_speakers_saves_a_name ; test:assign_model_saves_names_and_identities
-SPK-098	auto	test:assign_model_saves_names_and_identities
+SPK-091	auto	test:a_failed_enrollment_keeps_the_sheet_open_with_done ; test:enroll_outcomes_read_like_swift
+SPK-092	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols
+SPK-093	auto	test:assign_sheet_labels_suggestions_and_cancel ; test:assign_escape_style_cancel_writes_nothing ; test:escape_cancels_from_a_name_field
+SPK-094	auto	test:assign_escape_style_cancel_writes_nothing ; test:merge_and_undo_apply_at_once_and_relabel_the_transcript
+SPK-095	live	test:assign_speakers_saves_a_name ; live:audit/mac/notetaker/assign-light-rust.png ; live:audit/mac/notetaker/assign-light-ref.png ; test:assign_sheet_has_swifts_frames_type_and_symbols ; test:a_failed_enrollment_keeps_the_sheet_open_with_done
+SPK-096	auto	test:long_name_blocks_saving ; test:field_errors_are_red_and_disable_save
+SPK-097	auto	test:assign_speakers_saves_a_name ; test:assign_model_saves_names_and_identities ; test:saving_records_renames_and_identity_origins
+SPK-098	auto	test:assign_model_saves_names_and_identities ; test:saving_records_renames_and_identity_origins
 SPK-099	auto	test:possible_match_offers_confirm_another_and_keep_unknown
-SPK-100	auto	test:merged_speaker_must_choose_an_identity
+SPK-100	auto	test:merged_speaker_must_choose_an_identity ; test:pickers_list_names_samples_and_re_enrollment ; test:saving_records_renames_and_identity_origins
 SPK-101	service	service:worker: voice embedding; desktop plan phase adds it, view surfaces Unavailable
-SPK-102	auto	test:sheet_save_failures_keep_it_open
+SPK-102	auto	test:sheet_save_failures_keep_it_open ; test:sheet_notices_are_red_twelve_point
 SPK-103	auto	test:sheet_save_failures_keep_it_open
 SPK-104	auto	test:sheet_save_failures_keep_it_open
 SPK-105	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 SPK-106	service	test:a_rerun_inherits_names_merges_and_corrections ; service:worker: diarization run adoption (SpeakerStore.swift:350); carry_over is tested through a_rerun_inherits_names_merges_and_corrections but no production caller until the worker exists
-SPK-107	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png
+SPK-107	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:speaker_palette_matches_swift_and_cycles
 SUM-001	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
 SUM-002	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
 SUM-003	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png

@@ -476,61 +476,108 @@ async fn summary_off(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn labels_updating(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.labeling-update"));
-    assert_saw(&["Updating speaker labels…"]);
+    let (_, muted, ..) = colors(cx);
+    let (size, _, color) = sized("Updating speaker labels…");
+    assert_eq!((size, color), (11., muted));
 }
 // parity: SPK-005
 #[flow_ui::gpui::test]
 async fn labels_waiting(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.label-waiting"));
-    assert_saw(&["Waiting to label speakers…"]);
+    let (_, muted, ..) = colors(cx);
+    let (size, _, color) = sized("Waiting to label speakers…");
+    assert_eq!((size, color), (11., muted));
 }
 // parity: SPK-006
 #[flow_ui::gpui::test]
 async fn labels_running(cx: &mut TestAppContext) {
-    let _window = open_page(cx, Some("notetaker.labeling"));
-    assert_saw(&["Labeling speakers…"]);
+    let window = open_page(cx, Some("notetaker.labeling"));
+    let percent = read(cx, &window, |p| p.speaker_run.as_ref().unwrap().percent);
+    let (_, muted, ..) = colors(cx);
+    let (size, _, color) = sized(&format!("Labeling speakers… {percent}%"));
+    assert_eq!((size, color), (11., muted));
 }
 // parity: SPK-007
 #[flow_ui::gpui::test]
 async fn labels_failed(cx: &mut TestAppContext) {
-    let _window = open_page(cx, Some("notetaker.label-failed"));
-    assert_saw(&["Retry"]);
+    let window = open_page(cx, Some("notetaker.label-failed"));
+    let (_, muted, red, ..) = colors(cx);
+    let category = read(cx, &window, |p| p.speaker_run.as_ref().unwrap().failure.clone()).unwrap();
+    let (size, _, color) = sized(&diarization_failure_text(&category));
+    assert_eq!((size, color), (11., red));
+    let (size, _, color) = sized("Retry");
+    assert_eq!((size, color), (11., muted));
+    assert!(has(cx, &window, "meeting.speakers.retry"));
+    window.update(cx, |p, _, cx| { p.speaker_run.as_mut().unwrap().failure = Some("os_unsupported".into()); cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert!(!has(cx, &window, "meeting.speakers.retry"), "macOS too old: nothing to retry");
 }
 // parity: SPK-021
 #[flow_ui::gpui::test]
 async fn identify_waiting(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.identify-waiting"));
-    assert_saw(&["Waiting to identify speakers…"]);
+    let (_, muted, ..) = colors(cx);
+    let (size, _, color) = sized("Waiting to identify speakers…");
+    assert_eq!((size, color), (11., muted));
 }
 // parity: SPK-022
 #[flow_ui::gpui::test]
 async fn identify_running(cx: &mut TestAppContext) {
-    let _window = open_page(cx, Some("notetaker.identifying"));
-    assert_saw(&["Identifying speakers…"]);
+    let window = open_page(cx, Some("notetaker.identifying"));
+    let percent = read(cx, &window, |p| p.identify_run.as_ref().unwrap().percent);
+    let (_, muted, ..) = colors(cx);
+    let (size, _, color) = sized(&format!("Identifying speakers… {percent}%"));
+    assert_eq!((size, color), (11., muted));
 }
 // parity: SPK-023
 #[flow_ui::gpui::test]
 async fn identify_failed(cx: &mut TestAppContext) {
-    let _window = open_page(cx, Some("notetaker.identify-failed"));
-    assert_saw(&["Identification failed:", "Retry"]);
+    let window = open_page(cx, Some("notetaker.identify-failed"));
+    let (_, _, red, ..) = colors(cx);
+    let category = read(cx, &window, |p| p.identify_run.as_ref().unwrap().failure.clone()).unwrap();
+    let (size, _, color) = sized(&format!("Identification failed: {}", identification_failure_text(&category)));
+    assert_eq!((size, color), (11., red));
+    assert!(has(cx, &window, "meeting.identification.retry"));
+    window.update(cx, |p, _, cx| { p.identify_run.as_mut().unwrap().failure = Some("os_unsupported".into()); cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert!(!has(cx, &window, "meeting.identification.retry"));
 }
 // parity: SPK-024
 #[flow_ui::gpui::test]
 async fn identify_enrolling(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.enrolling"));
-    assert_saw(&["Storing voice sample…"]);
+    let (_, muted, ..) = colors(cx);
+    let (size, _, color) = sized("Storing voice sample…");
+    assert_eq!((size, color), (11., muted));
 }
 // parity: SPK-019
 #[flow_ui::gpui::test]
 async fn past_search_running(cx: &mut TestAppContext) {
-    let _window = open_page(cx, Some("notetaker.past-search"));
-    assert_saw(&["in past meetings", "Cancel"]);
+    let window = open_page(cx, Some("notetaker.past-search"));
+    let (name, left) = read(cx, &window, |p| p.past_search.clone()).unwrap();
+    let (_, muted, ..) = colors(cx);
+    let (size, _, color) = sized(&format!("Looking for {name} in past meetings ({left} left)"));
+    assert_eq!((size, color), (11., muted));
+    let (size, _, color) = sized("Cancel");
+    assert_eq!((size, color), (11., muted));
 }
 // parity: SPK-033
 #[flow_ui::gpui::test]
 async fn past_search_prompt(cx: &mut TestAppContext) {
-    let _window = open_page(cx, Some("notetaker.past-prompt"));
-    assert_saw(&["Look for this voice in past meetings?"]);
+    let window = open_page(cx, Some("notetaker.past-prompt"));
+    resize(cx, &window, 1400., 900.);
+    let shown = flow_ui::probe::seen().into_iter().find(|s| s.starts_with("Look for this voice in past meetings? ")).unwrap();
+    assert!(shown.ends_with(" would be checked."), "{shown}");
+    assert_eq!(sized(&shown).0, 12.);
+    let (prompt, not_now) = (find(cx, &window, "identity.pastSearchPrompt").bounds(), find(cx, &window, "identity.pastSearch.notNow").bounds());
+    assert_eq!(prompt.origin.x + prompt.size.width - (not_now.origin.x + not_now.size.width), px(10.), "padding 10");
+    let row = |n: &str| format!("Look for this voice in past meetings? {n} would be checked.");
+    window.update(cx, |p, _, cx| { p.past_prompt.as_mut().unwrap().1 = 1; cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&[&row("1 meeting")]);
+    window.update(cx, |p, _, cx| { p.past_prompt.as_mut().unwrap().1 = 3; cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&[&row("3 meetings")]);
 }
 
 // parity: LIVE-034 LIVE-035 LIVE-036 LIVE-037
@@ -1960,12 +2007,9 @@ async fn look_queues_meetings_with_unknown_remote_speakers(cx: &mut TestAppConte
     assert_eq!(read(cx, &window, |p| p.past_queue.clone()), vec![SEED_FULL.to_string()]);
     assert_eq!(read(cx, &window, |p| p.past_search.clone().map(|s| s.1)), Some(1));
 }
-// parity: SPK-087 SPK-088 SPK-089 SPK-091
+// parity: SPK-091
 #[flow_ui::gpui::test]
 async fn enroll_outcomes_read_like_swift(_: &mut TestAppContext) {
-    assert_eq!(EnrollOutcome::Stored(1).text(), "1 sample stored");
-    assert_eq!(EnrollOutcome::Stored(3).text(), "3 samples stored");
-    assert_eq!(EnrollOutcome::NoUsableSample.text(), "No usable voice sample was found in this meeting");
     assert_eq!(EnrollOutcome::Failed("Could not read.".into()).text(), "Could not read.");
 }
 // parity: SPK-090
@@ -2335,7 +2379,12 @@ async fn a_name_another_speaker_has_offers_to_merge(cx: &mut TestAppContext) {
     let taken = read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find_map(|s| (s.speaker.id != id).then(|| s.speaker.name.clone()).flatten()).unwrap());
     type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), &taken);
     fresh(cx, &window);
-    assert_saw(&[&format!("Same name as {taken}."), "Merge"]);
+    let other = read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.name.as_deref() == Some(&taken)).unwrap().speaker.anonymous());
+    let (_, muted, ..) = colors(cx);
+    let (size, _, color) = sized(&format!("Same name as {other}."));
+    assert_eq!((size, color), (12., muted), "the other speaker's anonymous label, not the name just typed");
+    assert_eq!(sized("Merge").0, 12.);
+    assert_eq!(sized("Merge").1, 500.);
 }
 
 // --- Round 4 row review: the library.
@@ -3309,4 +3358,342 @@ async fn section_list_and_rows_read_like_swift(cx: &mut TestAppContext) {
     assert_eq!(second.origin.y - first.bottom(), px(10.));
     assert_eq!(first.origin.x - list.origin.x, px(8.));
     assert_eq!((active::section_timestamp(61_000), active::section_timestamp(3_661_000)), ("01:01".to_string(), "1:01:01".to_string()));
+}
+
+// --- Round 4 row review: Assign speakers.
+
+fn section_id(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, i: usize) -> String {
+    read(cx, window, |p| p.assign.as_ref().unwrap().model.sections[i].speaker.id.clone())
+}
+
+// parity: SPK-046 SPK-047 SPK-048 SPK-050 SPK-057 SPK-061 SPK-062 SPK-092 SPK-095
+#[flow_ui::gpui::test]
+async fn assign_sheet_has_swifts_frames_type_and_symbols(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    resize(cx, &window, 1400., 1100.);
+    fresh(cx, &window);
+    let (ink, muted, ..) = colors(cx);
+    let surface = cx.update(|cx| pal(cx).surface);
+    let sheet = find(cx, &window, "meeting.speakers.assign").bounds();
+    assert_eq!(sheet.size.width, px(560.));
+    assert_eq!(sized("Assign speakers"), (28., 400., ink));
+    let close = find(cx, &window, "meeting.speakers.close").bounds();
+    assert_eq!(close.size, size(px(30.), px(30.)));
+    assert_eq!(close.origin.y - sheet.origin.y, px(22.));
+    assert_eq!(sheet.origin.x + sheet.size.width - (close.origin.x + close.size.width), px(22.));
+    assert_labelled(cx, &window, "meeting.speakers.close", "Close");
+    assert_symbols(&["xmark"]);
+    assert_eq!(find(cx, &window, "meeting.speakers.scroll").bounds().size.height, px(480.));
+    assert_eq!(sized("YOU"), (12., 600., ink));
+    let quote = read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections[0].speaker.quotes[0].clone());
+    let (size_, _, color) = sized(&format!("\u{201C}{quote}\u{201D}"));
+    assert_eq!((size_, color), (14., ink.opacity(0.85)));
+    let field = find(cx, &window, "meeting.speakers.field.1").bounds();
+    assert_eq!(field.size.height, px(46.));
+    assert_eq!(field.size.width, px(560. - 64.), "padding h32");
+    assert_eq!(field.origin.x - sheet.origin.x, px(32.));
+    let (cancel, save) = (find(cx, &window, "meeting.speakers.cancel").bounds(), find(cx, &window, "meeting.speakers.save").bounds());
+    assert_eq!((cancel.size.height, save.size.height), (px(38.), px(38.)));
+    assert_eq!(save.origin.x - (cancel.origin.x + cancel.size.width), px(10.));
+    assert_eq!(sheet.origin.x + sheet.size.width - (save.origin.x + save.size.width), px(28.));
+    assert_eq!(sheet.origin.y + sheet.size.height - (save.origin.y + save.size.height), px(18.));
+    assert_eq!(sized("Save names"), (14., 500., surface));
+    assert_eq!(sized("Cancel"), (14., 500., ink));
+    window.update(cx, |p, _, cx| { let m = &mut p.assign.as_mut().unwrap().model; m.sections.clear(); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_eq!(find(cx, &window, "meeting.speakers.scroll").bounds().size.height, px(160.), "minimum height");
+    assert_eq!(sized("There are no speakers to name."), (14., 400., muted));
+}
+
+// parity: SPK-052 SPK-053 SPK-102
+#[flow_ui::gpui::test]
+async fn sheet_notices_are_red_twelve_point(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (_, _, red, ..) = colors(cx);
+    let id = unnamed(cx, &window);
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), "Jana Horvat");
+    refuse(cx, "UPDATE", "meeting_speakers");
+    click(cx, &window, "meeting.speakers.save");
+    fresh(cx, &window);
+    assert_eq!(sized("Names could not be saved."), (12., 400., red));
+    allow(cx, "UPDATE", "meeting_speakers");
+    window.update(cx, |p, _, cx| { p.assign = None; cx.notify() }).unwrap();
+    sql(cx, "ALTER TABLE meeting_speakers RENAME TO speakers_gone;");
+    window.update(cx, |p, w, cx| p.open_assign(None, w, cx)).unwrap();
+    fresh(cx, &window);
+    assert_eq!(sized("Speakers could not be loaded."), (12., 400., red));
+    assert_eq!(sized("There are no speakers to name.").0, 14.);
+}
+
+// parity: SPK-054
+#[flow_ui::gpui::test]
+async fn review_row_type_symbol_and_label(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let run: String = query(cx, |db| db.conn.query_row("SELECT accepted_run_id FROM meeting_diarization WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap());
+    sql(cx, &format!("INSERT INTO speaker_corrections (id, meeting_id, run_id, kind, new_value, needs_review, created_at) VALUES ('review-3','{SEED_FULL}','{run}','rename','Marta',1,1);"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    window.update(cx, |p, w, cx| p.open_assign(None, w, cx)).unwrap();
+    fresh(cx, &window);
+    let (_, muted, _, orange, _) = colors(cx);
+    assert_eq!(flow_ui::probe::symbol_color("exclamationmark.triangle"), Some(orange));
+    assert_eq!(sized("Dismiss"), (12., 500., muted));
+    let label = find(cx, &window, "meeting.speakers.review.dismiss").label().unwrap().to_string();
+    assert!(label.starts_with("Dismiss notice: "), "{label}");
+    let text = read(cx, &window, |p| p.assign.as_ref().unwrap().model.reviews[0].1.clone());
+    assert_eq!(sized(&text).0, 13.);
+}
+
+// parity: SPK-059 SPK-060 SPK-070 SPK-071 SPK-094
+#[flow_ui::gpui::test]
+async fn merge_and_undo_apply_at_once_and_relabel_the_transcript(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (_, muted, ..) = colors(cx);
+    let (source, target) = read(cx, &window, |p| {
+        let m = &p.assign.as_ref().unwrap().model;
+        let target = m.sections.iter().position(|s| !s.speaker.is_you() && s.speaker.name.is_some()).unwrap();
+        let source = m.sections.iter().position(|s| !s.speaker.is_you() && s.speaker.name.is_none()).unwrap();
+        (source, target)
+    });
+    assert!(target < source, "the earlier section is the one offered");
+    let (id, into) = (section_id(cx, &window, source), section_id(cx, &window, target));
+    let (anon_source, anon_target, name) = read(cx, &window, |p| {
+        let m = &p.assign.as_ref().unwrap().model;
+        (m.sections[source].speaker.anonymous(), m.sections[target].speaker.anonymous(), m.sections[target].speaker.name.clone().unwrap())
+    });
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), &name);
+    fresh(cx, &window);
+    assert_labelled(cx, &window, sid(format!("meeting.speakers.merge.{source}")), &format!("Merge into {anon_target}"));
+    sheet_click(cx, &window, &format!("meeting.speakers.merge.{source}"));
+    fresh(cx, &window);
+    let merged_into = |cx: &mut TestAppContext| read(cx, &window, |p| p.pager.as_ref().unwrap().speakers.as_ref().unwrap().1.iter().find(|x| x.id == id).unwrap().merged_into.clone());
+    assert_eq!(merged_into(cx), Some(into.clone()), "the pager relabels while the sheet is open");
+    assert_eq!(sized(&format!("Includes {anon_source}")), (13., 400., muted));
+    assert_eq!(sized("Undo merge").0, 13.);
+    assert_eq!(sized("Undo merge").1, 500.);
+    let member = sid(format!("meeting.speakers.unmerge.{id}"));
+    assert_labelled(cx, &window, member.clone(), &format!("Undo merge of {anon_source}"));
+    sheet_click(cx, &window, &member);
+    fresh(cx, &window);
+    assert_eq!(merged_into(cx), None);
+    assert!(!seen("Includes "));
+    let unmerges: i64 = query(cx, |db| db.conn.query_row("SELECT count(*) FROM speaker_corrections WHERE kind='unmerge' AND speaker_id=?1", [&id], |r| r.get(0)).unwrap());
+    assert_eq!(unmerges, 1);
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), &name);
+    fresh(cx, &window);
+    sheet_click(cx, &window, &format!("meeting.speakers.merge.{source}"));
+    frame(cx, &window);
+    click(cx, &window, "meeting.speakers.cancel");
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.assign.is_none()));
+    let kept: Option<String> = query(cx, |db| db.conn.query_row("SELECT merged_into FROM meeting_speakers WHERE id=?1", [&id], |r| r.get(0)).unwrap());
+    assert_eq!(kept, Some(into), "Cancel leaves an applied merge alone");
+}
+
+// parity: SPK-003 SPK-063
+#[flow_ui::gpui::test]
+async fn sheet_focuses_the_first_section_or_the_named_one_scrolled_to_the_top(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (first, last) = (section_id(cx, &window, 0), read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.last().unwrap().speaker.id.clone()));
+    assert_eq!(read(cx, &window, |p| p.assign.as_ref().unwrap().focused.clone()), Some(first.clone()));
+    assert_eq!(read(cx, &window, |p| p.assign.as_ref().unwrap().scroll.offset().y), px(0.));
+    let area = find(cx, &window, "meeting.speakers.scroll").bounds();
+    let count = read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.len());
+    window.update(cx, |p, _, cx| { p.assign = None; cx.notify() }).unwrap();
+    frame(cx, &window);
+    window.update(cx, |p, w, cx| p.open_assign(Some(last.clone()), w, cx)).unwrap();
+    frame(cx, &window);
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.assign.as_ref().unwrap().focused.clone()), Some(last.clone()));
+    assert!(read(cx, &window, |p| p.assign.as_ref().unwrap().scroll.offset().y) < px(0.), "scrolled to the voice");
+    let field = find(cx, &window, sid(format!("meeting.speakers.field.{count}"))).bounds();
+    assert!(field.origin.y >= area.origin.y && field.origin.y < area.origin.y + area.size.height);
+    window.update(cx, |p, _, cx| { p.assign = None; cx.notify() }).unwrap();
+    frame(cx, &window);
+    window.update(cx, |p, w, cx| p.open_assign(Some("gone".into()), w, cx)).unwrap();
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.assign.as_ref().unwrap().focused.clone()), Some(first), "a stale id falls back");
+}
+
+// parity: SPK-093
+#[flow_ui::gpui::test]
+async fn escape_cancels_from_a_name_field(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    cx.update_window(window.into(), |_, w, cx| w.press("escape", cx)).unwrap();
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.assign.is_none()), "escape closes from the name field");
+}
+
+// parity: SPK-068 SPK-069 SPK-096
+#[flow_ui::gpui::test]
+async fn field_errors_are_red_and_disable_save(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (_, _, red, ..) = colors(cx);
+    let id = unnamed(cx, &window);
+    assert_ne!(find(cx, &window, "meeting.speakers.save").disabled(), Some(true));
+    window.update(cx, |p, _, cx| { p.assign.as_mut().unwrap().model.set_draft(&id, "A\u{7}"); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_eq!(sized("Remove the control character."), (12., 400., red));
+    assert_eq!(find(cx, &window, "meeting.speakers.save").disabled(), Some(true));
+    window.update(cx, |p, _, cx| { p.assign.as_mut().unwrap().model.set_draft(&id, &"n".repeat(81)); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_eq!(sized("Use 80 characters or fewer."), (12., 400., red));
+    assert_eq!(find(cx, &window, "meeting.speakers.save").disabled(), Some(true));
+}
+
+// parity: SPK-074 SPK-075
+#[flow_ui::gpui::test]
+async fn local_voice_offer_type_and_branches(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (ink, muted, ..) = colors(cx);
+    assert_eq!(sized("Remember my voice"), (12., 500., ink));
+    sheet_click(cx, &window, "identity.rememberLocal");
+    fresh(cx, &window);
+    assert_eq!(sized("Your voice will be remembered from this Mac's microphone."), (12., 400., muted));
+    assert!(!seen("Remember my voice"));
+    window.update(cx, |p, _, cx| {
+        let m = &mut p.assign.as_mut().unwrap().model;
+        m.known.push(KnownSpeaker { id: "me".into(), name: "Me".into(), samples: 1, is_local: true });
+        cx.notify();
+    }).unwrap();
+    fresh(cx, &window);
+    assert!(!seen("Remember my voice") && !seen("Your voice will be remembered"), "hidden once remembered");
+}
+
+// parity: SPK-076 SPK-078 SPK-082 SPK-100
+#[flow_ui::gpui::test]
+async fn pickers_list_names_samples_and_re_enrollment(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (_, _, _, orange, _) = colors(cx);
+    let accent = cx.update(|cx| pal(cx).accent);
+    let id = section_id(cx, &window, 1);
+    window.update(cx, |p, _, cx| {
+        let m = &mut p.assign.as_mut().unwrap().model;
+        m.known.retain(|k| k.is_local);
+        for (i, (name, samples)) in [("Ada", 1), ("Ben", 3), ("Cyr", 0)].into_iter().enumerate() {
+            m.known.push(KnownSpeaker { id: format!("k{i}"), name: name.into(), samples, is_local: false });
+        }
+        cx.notify();
+    }).unwrap();
+    fresh(cx, &window);
+    assert_eq!(sized("Known speakers…").0, 14.);
+    assert_eq!(sized("Known speakers…").2, accent);
+    menu_clear();
+    let block = sid(format!("identity.block.{id}"));
+    let (area, target) = (find(cx, &window, "meeting.speakers.scroll").bounds(), find(cx, &window, block.clone()).bounds());
+    window.update(cx, |p, _, _| p.assign.as_ref().unwrap().scroll.set_offset(point(px(0.), area.origin.y - target.origin.y + px(20.)))).unwrap();
+    frame(cx, &window);
+    cx.update_window(window.into(), |_, w, cx| w.within(block.clone()).click("identity.picker", cx)).unwrap();
+    frame(cx, &window);
+    assert_menu_saw(&["Ada \u{2014} 1 voice sample", "Ben \u{2014} 3 voice samples", "Cyr \u{2014} 0 voice samples · needs re-enrollment"]);
+    menu_item(cx, &window, 0);
+    let draft = read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.id == id).unwrap().draft.clone());
+    assert_eq!(draft, read(cx, &window, |p| p.assign.as_ref().unwrap().model.known.iter().find(|k| k.id == "k0").unwrap().name.clone()));
+    let input = window.read_with(cx, |p, cx| p.assign.as_ref().unwrap().inputs[&id].read(cx).value().to_string()).unwrap();
+    assert_eq!(input, "Ada", "the field follows the pick");
+    with_identity(cx, &window, &id, "unknown", None, true);
+    assert_eq!(sized("Choose an identity"), (12., 500., orange));
+    assert_eq!(sized("Choose a known speaker…").2, accent);
+    menu_clear();
+    sheet_click(cx, &window, "identity.mergedPicker");
+    frame(cx, &window);
+    assert_menu_saw(&["Ada", "Ben", "Cyr"]);
+    menu_item(cx, &window, 1);
+    assert_eq!(read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.id == id).unwrap().action.clone()), IdentityAction::ResolveMerged(Some("k1".into())));
+}
+
+// parity: SPK-079 SPK-081 SPK-085
+#[flow_ui::gpui::test]
+async fn identity_buttons_turn_prominent_when_chosen(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (ink, ..) = colors(cx);
+    let surface = cx.update(|cx| pal(cx).surface);
+    let id = unnamed(cx, &window);
+    let known = query(cx, |db| known_speakers(db).unwrap().into_iter().find(|k| !k.is_local).unwrap());
+    with_identity(cx, &window, &id, "possible", Some((&known.id, &known.name)), false);
+    assert_eq!(sized("Confirm"), (14., 500., ink));
+    assert_eq!(sized("Keep Unknown"), (14., 500., ink));
+    sheet_click(cx, &window, "identity.confirm");
+    fresh(cx, &window);
+    assert_eq!(sized("Confirm"), (14., 500., surface));
+    assert_eq!(sized("Also remember this voice sample").0, 12.);
+    sheet_click(cx, &window, "identity.alsoRemember");
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.id == id).unwrap().also_remember));
+    sheet_click(cx, &window, "identity.keepUnknown");
+    fresh(cx, &window);
+    assert_eq!(sized("Keep Unknown"), (14., 500., surface));
+    assert!(!read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.id == id).unwrap().also_remember), "Keep Unknown clears it");
+}
+
+// parity: SPK-083 SPK-084
+#[flow_ui::gpui::test]
+async fn remember_rows_read_like_swift(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (ink, muted, ..) = colors(cx);
+    let id = read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| !s.speaker.is_you()).unwrap().speaker.id.clone());
+    let known = query(cx, |db| known_speakers(db).unwrap().into_iter().find(|k| !k.is_local).unwrap());
+    let name = known.name.clone();
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), &name);
+    fresh(cx, &window);
+    assert_eq!(sized("Remember this voice for future meetings?"), (13., 500., ink));
+    assert_eq!(sized("LocalFlow will store data that can recognize this voice in future meetings on this Mac. It stays on this Mac and you can delete it in Settings \u{203A} Known speakers."), (12., 400., muted));
+    sheet_click(cx, &window, "identity.remember");
+    fresh(cx, &window);
+    assert_eq!(sized(&format!("Is this {name} you already remember?")), (13., 500., ink));
+    let surface = cx.update(|cx| pal(cx).surface);
+    assert_eq!(sized("Same person").2, surface);
+    assert_eq!(sized("Someone new").2, ink);
+}
+
+// parity: SPK-091 SPK-095
+#[flow_ui::gpui::test]
+async fn a_failed_enrollment_keeps_the_sheet_open_with_done(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (_, muted, ..) = colors(cx);
+    let you = section_id(cx, &window, 0);
+    window.update(cx, |p, _, cx| p.set_identity(&you, IdentityAction::RememberLocal, cx)).unwrap();
+    click(cx, &window, "meeting.speakers.save");
+    fresh(cx, &window);
+    assert_eq!(sized("The voice sample could not be stored on this Mac."), (12., 400., muted));
+    assert!(read(cx, &window, |p| p.assign.is_some()));
+    assert_labelled(cx, &window, "meeting.speakers.save", "Done");
+    assert_eq!(sized("Done").0, 14.);
+    click(cx, &window, "meeting.speakers.save");
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.assign.is_none()));
+}
+
+// parity: SPK-036 SPK-037
+#[flow_ui::gpui::test]
+async fn transcript_speaker_label_uses_the_palette(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    let (_, muted, ..) = colors(cx);
+    let label = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().find_map(|r| r.label.clone().filter(|l| l.color.is_some() && l.suggested.is_none())).unwrap());
+    let color = cx.update(|cx| speaker_text(label.color.unwrap(), cx));
+    assert_eq!(sized(&label.text), (12., 500., color));
+    assert_symbols(&["checkmark.circle"]);
+    assert_eq!(flow_ui::probe::symbol_color("checkmark.circle"), Some(muted));
+}
+
+// parity: SPK-107
+#[flow_ui::gpui::test]
+async fn speaker_palette_matches_swift_and_cycles(cx: &mut TestAppContext) {
+    let _window = open_page(cx, None);
+    let hsla = |v: u32| -> Hsla { flow_ui::gpui::rgb(v).into() };
+    let dots = [(0x1F6FD1, 0x5AA2FF), (0xC2570C, 0xFF9A4D), (0x1E8A4C, 0x4CC983), (0x7B4BD1, 0xA98BFF), (0x0E7C86, 0x3CC6CF), (0xC23B3B, 0xFF7373), (0xB8397D, 0xF07AB8), (0x8A6A1F, 0xD4B25A)];
+    let text = [0x1D66C0, 0xA84B0A, 0x187441, 0x7B4BD1, 0x0C717A, 0xB23636, 0xA8346F, 0x7E611C];
+    for mode in [flow_ui::tokens::Mode::Light, flow_ui::tokens::Mode::Dark] {
+        cx.update(|cx| flow_ui::tokens::set_mode(mode, cx));
+        let dark = mode == flow_ui::tokens::Mode::Dark;
+        for i in 0..8 {
+            let (l, d) = dots[i];
+            let dot = if dark { d } else { l };
+            let label = if dark { d } else { text[i] };
+            cx.update(|cx| {
+                assert_eq!(speaker_dot(i, cx), hsla(dot), "dot {i}");
+                assert_eq!(speaker_text(i, cx), hsla(label), "text {i}");
+                assert_eq!(speaker_dot(i + 8, cx), hsla(dot), "cycles");
+            });
+        }
+    }
 }

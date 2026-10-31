@@ -150,7 +150,8 @@ impl NotetakerPage {
                 let noun = if count == 1 { "meeting" } else { "meetings" };
                 out = out.child(
                     h_flex()
-                        .id("identity.pastSearchPrompt")
+                        .id("identity.pastSearchPrompt").test_support()
+                        .self_start()
                         .gap(px(10.))
                         .p(px(10.))
                         .bg(p.canvas)
