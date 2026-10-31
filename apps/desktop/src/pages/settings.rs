@@ -1236,6 +1236,13 @@ pub(super) fn switch(id: &'static str, label: &'static str, on: bool, disabled: 
 
 /// A native `Picker`: fixed width, the value and two chevrons on a grey fill. The menu goes through
 /// `apply_pick` with this element's id.
+/// `PrototypeButtonStyle`: 7 + Figtree's 15 pt SwiftUI line + 7 is 29 pt. The Kit line is 16.
+// ponytail: settings only; other pages have the same 30 pt button, move this into FlowButton at cutover.
+pub(super) fn prototype_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> FlowButton {
+    let label: SharedString = label.into();
+    flow_ui::components::prototype_button(id, label.clone()).content(t(label).font(13., 500.).swift_lines().a11y_hidden())
+}
+
 pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>, width: f32, current: &str, options: &[(&'static str, &'static str)], disabled: bool, cx: &mut Context<SettingsPage>) -> AnyElement {
     let id: SharedString = id.into();
     let pl = pal(cx);
@@ -1248,7 +1255,7 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
     let chevrons = icon("chevron.up.chevron.down", 12., pl.ink);
     // A native picker hugs its longest option and centres in its frame: a zero-height stack of the
     // options sets the width. Plain strings so the render probe and VoiceOver don't read them.
-    let sizer = v_flex().h_0().overflow_hidden().text_size(px(13.5)).pr(px(23.)).children(options.iter().map(|o| div().whitespace_nowrap().child(o.0)));
+    let sizer = v_flex().h_0().overflow_hidden().text_size(px(13.5)).pr(px(27.)).children(options.iter().map(|o| div().whitespace_nowrap().child(o.0)));
     let frame = format!("{id}.frame");
     let button = Button::new(ElementId::Name(id))
         .custom(flow_ui::controls::ButtonCustomVariant::new(cx).color(fill).foreground(pl.ink).hover(fill).active(fill).shadow(false))
@@ -1258,7 +1265,8 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
         .when(disabled, |b| b.opacity(0.45))
         .h(px(24.))
         .max_w(px(width))
-        .px(px(12.))
+        .pl(px(12.))
+        .pr(px(8.))
         .rounded(px(7.))
         .child(v_flex().child(h_flex().w_full().justify_between().child(t(title).size(13.5).lines(1).a11y_hidden()).child(chevrons)).child(sizer))
         .dropdown_menu(move |mut menu, _, _| {
