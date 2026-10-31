@@ -1,7 +1,7 @@
 //! Transcriptions page: search, waiting dictations, the day-grouped list and its row actions.
 mod detail;
 
-use super::dictionary::ui::{confirm_dialog, overlay, sheet_card};
+use super::dictionary::ui::{confirm_dialog, overlay, sheet_card, under_card_border};
 use crate::core::Core;
 use crate::insertion::{Delivery, Quality, ReviewEntry, begin_review};
 use crate::pages::Page;
@@ -60,9 +60,18 @@ impl HistoryPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let mut shown = cx.try_global::<Session>().map(|s| s.selection);
+        let mut insertion = cx.try_global::<Session>().map(|s| s.insertion.generation());
         let subs = vec![
             cx.subscribe_in(&search, window, |this, _, e: &TextInputEvent, window, cx| this.search_event(e, window, cx)),
             cx.observe_global::<Session>(move |this, cx| {
+                // `refreshHistory`: an insertion that ended changed its row.
+                let run = Some(cx.global::<Session>().insertion.generation());
+                if run != insertion {
+                    insertion = run;
+                    if !cx.global::<Session>().insertion.is_active() {
+                        this.reload(cx);
+                    }
+                }
                 let now = Some(cx.global::<Session>().selection);
                 if now == shown {
                     return;
@@ -443,7 +452,7 @@ impl HistoryPage {
                     .when_some(e.quality_label(), |d, q| d.child(t(q).font(11., 500.).color(p.warning)))
                     .when_some(path, |d, l| d.child(t(l).id("history.pathLabel").size(11.).color(p.muted))),
             )
-            .child(div().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.).selectable()))
+            .child(div().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.).selectable().no_widow()))
             .child(hover_or_focus_revealed(group, self.voice_over, &action_focus, actions))
             .when(!last, |d| d.child(div().absolute().bottom_0().left(px(1.)).right(px(1.)).h(px(1.)).bg(p.line)))
             .child(
@@ -626,7 +635,7 @@ impl Render for HistoryPage {
                     cx.notify();
                 }
             }))
-            .child(page)
+            .child(under_card_border(page))
             .when_some(detail, |d, s| d.child(overlay("history.detailOverlay", window, cx, s)))
             .when_some(confirm, |d, c| d.child(overlay("history.deleteOverlay", window, cx, c)))
             .when_some(discard, |d, c| d.child(overlay("history.discardOverlay", window, cx, c)))

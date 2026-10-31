@@ -3,6 +3,7 @@
 //! the panel reports no supported field rather than pretending to find one.
 use crate::core::Core;
 use crate::shell::{DictState, modal, update_session};
+use flow_core::history;
 use flow_platform::{CapturedTarget, InsertDelivery, InsertOutcome};
 use flow_ui::prelude::*;
 use flow_ui::tokens::pill;
@@ -51,12 +52,19 @@ pub struct Insertion {
     pub capturing: bool,
     pub cancelled: bool,
     pub expired: bool,
+    /// The row's revision when the review opened, and the rewrite attempt this text came from.
+    source: Option<(i64, Option<String>)>,
     generation: u64,
     /// The last `finish` message, which Swift stores in `coordinator.status` (SHELL-234).
     pub finished: Option<String>,
 }
 
 impl Insertion {
+    /// Changes when an operation starts or finishes; History reloads on it (`refreshHistory`).
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn is_active(&self) -> bool {
         self.phase != Phase::Idle
     }
@@ -85,6 +93,12 @@ impl Insertion {
 
 /// `services.reviewInsertion`: silent `false` when anything refuses, as in Swift.
 pub fn begin_review(entry: ReviewEntry, cx: &mut App) -> bool {
+    let source = cx.global::<Core>().db.as_ref().and_then(|db| {
+        let row = history::get(db, &entry.id).ok()??;
+        // ponytail: found by text because History passes only the text; two attempts with the same words mark the first as delivered.
+        let attempt = if row.text == entry.text { None } else { history::attempts(db, &entry.id).ok()?.into_iter().find(|a| a.deliverable() == Some(entry.text.as_str())).map(|a| a.id) };
+        Some((row.revision, attempt))
+    });
     update_session(cx, |s| {
         if s.installing || s.model_command || s.insertion.phase != Phase::Idle {
             return false;
@@ -100,6 +114,7 @@ pub fn begin_review(entry: ReviewEntry, cx: &mut App) -> bool {
         i.cancelled = false;
         i.expired = false;
         i.entry = Some(entry);
+        i.source = source;
         i.message = "Review the text, then choose a destination.".into();
         i.phase = Phase::Reviewing;
         true
@@ -184,6 +199,8 @@ fn stop_message(expired: bool) -> &'static str {
     if expired { "Selection expired. Your text remains saved." } else { "Insertion cancelled. The text remains saved." }
 }
 
+const PREPARE_FAILED: &str = "Could not prepare insertion. The text remains saved; refresh history and try again.";
+
 /// `confirm`: once, with the attempt recorded before dispatch and the outcome after.
 pub fn confirm(cx: &mut App) {
     let ready = update_session(cx, |s| {
@@ -201,18 +218,30 @@ pub fn confirm(cx: &mut App) {
     cx.spawn(async move |cx| {
         cx.background_executor().timer(Duration::from_millis(1)).await;
         let _ = cx.update(|cx| {
-            // ponytail: `beginAttempt`/`recordOutcome` wait for the delivery columns in `flow_core::history`; a store that can't open is the one failure reachable now.
-            if cx.global::<Core>().db.is_none() {
-                finish("Could not prepare insertion. The text remains saved; refresh history and try again.", cx);
-                return;
-            }
             let s = cx.global::<crate::shell::Session>();
-            let (cancelled, target, text) = (s.insertion.cancelled, s.insertion.target.clone(), s.insertion.entry.as_ref().map(|e| e.text.clone()));
-            let outcome = match (cancelled, target, text) {
-                (false, Some(t), Some(text)) => cx.global::<Core>().services.insert_once(&t, &text).unwrap_or(InsertOutcome::NotInserted),
+            let (cancelled, target, entry, source) = (s.insertion.cancelled, s.insertion.target.clone(), s.insertion.entry.clone(), s.insertion.source.clone());
+            let (Some(entry), Some((revision, rewrite))) = (entry, source) else {
+                finish(PREPARE_FAILED, cx);
+                return;
+            };
+            let core = cx.global::<Core>();
+            let Some(Ok((attempt, revision))) = core.db.as_ref().map(|db| history::begin_attempt(db, &entry.id, revision)) else {
+                finish(PREPARE_FAILED, cx);
+                return;
+            };
+            let outcome = match (cancelled, target) {
+                (false, Some(t)) => core.services.insert_once(&t, &entry.text).unwrap_or(InsertOutcome::NotInserted),
                 _ => InsertOutcome::NotInserted,
             };
-            finish(outcome_message(Ok(outcome)), cx);
+            let recorded = match outcome {
+                InsertOutcome::Confirmed => history::Outcome::Confirmed,
+                InsertOutcome::NotInserted => history::Outcome::NotInserted,
+                InsertOutcome::Uncertain => history::Outcome::Uncertain,
+            };
+            match core.db.as_ref().map(|db| history::record_outcome(db, &entry.id, revision, &attempt, recorded, rewrite.as_deref())) {
+                Some(Ok(_)) => finish(outcome_message(Ok(outcome)), cx),
+                _ => outcome_not_saved(cx),
+            }
         });
     })
     .detach();
@@ -367,8 +396,12 @@ mod tests {
     use flow_platform::Fake;
     use flow_ui::test::{TestAppContext, TestWindowExt};
 
+    fn row_id() -> String {
+        history::seed_id(20)
+    }
+
     fn entry() -> ReviewEntry {
-        ReviewEntry { id: "e1".into(), text: "Saved words".into(), quality: Quality::Complete, delivery: Delivery::None }
+        ReviewEntry { id: row_id(), text: "Saved words".into(), quality: Quality::Complete, delivery: Delivery::None }
     }
 
     fn phase(cx: &mut TestAppContext) -> Phase {
@@ -589,5 +622,70 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(5));
         cx.run_until_parked();
         assert_eq!(finished(cx), "Could not prepare insertion. The text remains saved; refresh history and try again.");
+    }
+
+    fn run_to_outcome(cx: &mut TestAppContext) {
+        cx.update(arm_selection);
+        cx.update(select_target);
+        cx.executor().advance_clock(Duration::from_millis(5));
+        cx.run_until_parked();
+        cx.update(confirm);
+        cx.executor().advance_clock(Duration::from_millis(5));
+        cx.run_until_parked();
+    }
+
+    fn row(cx: &mut TestAppContext) -> history::Entry {
+        cx.update(|cx| history::get(cx.global::<Core>().db.as_ref().unwrap(), &row_id()).unwrap().unwrap())
+    }
+
+    // parity: SHELL-166 SHELL-174 SHELL-175 SHELL-176 SHELL-177
+    /// The attempt is written before dispatch and the outcome after, against the row's revision.
+    #[flow_ui::gpui::test]
+    async fn delivery_is_recorded_around_the_insert(cx: &mut TestAppContext) {
+        start(cx, Some(field()), Some(InsertOutcome::Uncertain));
+        let before = row(cx).revision;
+        run_to_outcome(cx);
+        let saved = row(cx);
+        assert_eq!((saved.delivery_state.as_str(), saved.revision), ("uncertain", before + 2));
+        assert_eq!(saved.delivered_source.as_deref(), Some("faithful"));
+
+        // A row that changed after the review opened is never dispatched.
+        cx.update(|cx| assert!(begin_review(entry(), cx)));
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute("UPDATE transcriptions SET revision=revision+1 WHERE id=?", [row_id()]).unwrap());
+        let stale = row(cx).revision;
+        run_to_outcome(cx);
+        cx.update(|cx| assert_eq!(cx.global::<Session>().insertion.finished.as_deref(), Some(PREPARE_FAILED)));
+        assert_eq!((row(cx).delivery_state.as_str(), row(cx).revision), ("uncertain", stale));
+
+        // An outcome the store refuses blocks storage. A trigger fails only the outcome write.
+        cx.update(|cx| {
+            cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("CREATE TEMP TRIGGER refuse BEFORE UPDATE OF delivery_state ON transcriptions WHEN NEW.delivery_state <> 'attempting' BEGIN SELECT RAISE(ABORT, 'refused'); END;").unwrap();
+            assert!(begin_review(entry(), cx));
+        });
+        run_to_outcome(cx);
+        cx.update(|cx| {
+            let s = cx.global::<Session>();
+            assert_eq!(s.insertion.finished.as_deref(), Some("Delivery status could not be saved. Retry storage before continuing."));
+            assert!(s.dictation.as_ref().unwrap().storage_blocked);
+        });
+    }
+
+    // parity: SHELL-145 SHELL-166
+    /// Text from a succeeded rewrite marks that attempt delivered; the transcript marks the source faithful.
+    #[flow_ui::gpui::test]
+    async fn a_rewrite_marks_its_attempt_delivered(cx: &mut TestAppContext) {
+        start(cx, Some(field()), Some(InsertOutcome::Confirmed));
+        cx.update(cancel);
+        cx.executor().advance_clock(Duration::from_millis(5));
+        cx.run_until_parked();
+        let (id, text, attempt) = cx.update(|cx| {
+            let db = cx.global::<Core>().db.as_ref().unwrap();
+            db.conn.execute("INSERT INTO rewrite_attempts (id,transcription_id,ordinal,mode,state,input_text,input_hash,output_text,output_hash,unchanged,started_at,protocol_version,endpoint_origin,delivered) VALUES ('att1',?,1,'polish','succeeded','in','h','Rewritten words','h',0,0,1,'https://rewrite.example.test',0)", [row_id()]).unwrap();
+            (row_id(), "Rewritten words".to_string(), "att1")
+        });
+        cx.update(|cx| assert!(begin_review(ReviewEntry { id, text, quality: Quality::Complete, delivery: Delivery::None }, cx)));
+        run_to_outcome(cx);
+        let saved = row(cx);
+        assert_eq!((saved.delivery_state.as_str(), saved.delivered_source.as_deref(), saved.delivered_rewrite_attempt_id.as_deref()), ("confirmed", Some("rewrite"), Some(attempt)));
     }
 }
