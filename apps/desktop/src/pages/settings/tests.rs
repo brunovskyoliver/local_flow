@@ -400,7 +400,7 @@ async fn server_advanced_writes_each_override(cx: &mut TestAppContext) {
     assert!(!has(cx, r.win, "settings.rewriteTestConnection"), "served: fields move to Advanced");
     assert!(!has(cx, r.win, "settings.summaryServer"), "Summaries hides while the switch applies");
     click(cx, r.win, "settings.serverAdvanced");
-    assert_saw(&["Dictation", "Speech recognition; rewriting follows its own row", "Rewriting", "Summaries", "Meetings", "Transcripts, speaker labels and voice matching", "Fallback threshold", "Dictation uses this Mac after this wait", "1500 ms"]);
+    assert_saw(&["Dictation", "Speech recognition; rewriting follows its own row", "Rewriting", "Summaries", "Meetings", "Transcripts, speaker labels and voice matching", "Fallback threshold", "Dictation uses this Mac after this wait", &format!("{} ms", flow_core::insights::grouped(1500))]);
     set(cx, r.win, |p, _, _| p.check_result = Some("Answered in 3 ms".into()));
     pick(cx, r.win, "settings.serverOverride.dictation", "thisMac");
     assert_eq!(pref_s(cx, "server.override.dictation").as_deref(), Some("thisMac"));
@@ -922,6 +922,9 @@ async fn sheets_have_swifts_width(cx: &mut TestAppContext) {
     assert_eq!(bounds(cx, r.win, "settings.sheet").size.width, px(460.));
     let r = rig(cx, "exclusions", |_| {});
     assert_eq!(bounds(cx, r.win, "settings.sheet").size.width, px(480.));
+    // Swift's prominent pill: 15pt with 10pt vertical padding, about 38 tall in the reference.
+    let done = bounds(cx, r.win, "settings.contextDone").size;
+    assert!(done.height >= px(36.) && done.height <= px(40.), "{done:?}");
 }
 
 // parity: SET-067

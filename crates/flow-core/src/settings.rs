@@ -1091,7 +1091,7 @@ pub fn byte_count(bytes: u64) -> String {
     let b = bytes as f64;
     if b >= 1e9 {
         let s = format!("{:.2}", b / 1e9);
-        format!("{} GB", s.trim_end_matches('0').trim_end_matches('.'))
+        format!("{} GB", super::onboarding::localized(s.trim_end_matches('0').trim_end_matches('.')))
     } else if b >= 1e6 {
         format!("{:.0} MB", b / 1e6)
     } else if b >= 1e3 {
@@ -2868,6 +2868,7 @@ mod tests {
         assert_eq!(ping("http://127.0.0.1:9", Some("AAAA"), None), None);
     }
 
+    // parity: SET-045 SET-055 SET-071 SET-118 SET-119 SET-326 SET-327 SET-328 SET-332
     #[test]
     fn real_flowd_when_configured() {
         let Ok(remote) = std::env::var("FLOWD_REMOTE_URL") else {

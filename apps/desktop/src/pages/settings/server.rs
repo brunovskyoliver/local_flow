@@ -88,7 +88,7 @@ impl SettingsPage {
             }), cx));
             if self.server_advanced {
                 // `DisclosureGroup` content inherits the muted style and the native row spacing.
-                advanced = advanced.child(v_flex().w_full().py(px(8.)).gap(px(8.)).text_color(pal(cx).muted).children(self.advanced(&r, window, cx)));
+                advanced = advanced.child(v_flex().w_full().pt(px(4.)).gap(px(8.)).text_color(pal(cx).muted).children(self.advanced(&r, window, cx)));
             }
             body = body.child(hairline(cx)).child(div().w_full().py(px(14.)).child(advanced));
         }
@@ -132,7 +132,7 @@ impl SettingsPage {
             row(
                 "Fallback threshold",
                 Some("Dictation uses this Mac after this wait".into()),
-                stepper("settings.serverFallbackThreshold", "Remote dictation fallback threshold in milliseconds", format!("{threshold} ms"), cx.listener(step(-250)), cx.listener(step(250)), cx),
+                stepper("settings.serverFallbackThreshold", "Remote dictation fallback threshold in milliseconds", format!("{} ms", flow_core::insights::grouped(threshold as i64)), cx.listener(step(-250)), cx.listener(step(250)), cx),
                 cx,
             )
             .into_any_element(),
@@ -156,6 +156,7 @@ impl SettingsPage {
             self.remote_error = None;
             let stored = core::remote_server_url(prefs(cx));
             self.server_draft.update(cx, |s, cx| s.set_value(stored, window, cx));
+            self.server_draft.read(cx).focus_handle(cx).focus(window, cx); // SwiftUI focuses a sheet's first field.
             self.modal = Some(Modal::Consent);
         }
         cx.notify();

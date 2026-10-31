@@ -17,7 +17,7 @@ pub(super) fn seed(s: &str, p: &mut Prefs) {
     };
     match s {
         "approved" | "advanced" | "turn-off" => approved(p, 2),
-        "consent-update" => approved(p, 1),
+        "consent-update" | "consent-update-sheet" => approved(p, 1),
         "server-only" => {
             approved(p, 2);
             p.set("server.only", true);
@@ -108,9 +108,12 @@ pub(super) fn apply_view(page: &mut SettingsPage, window: &mut Window, cx: &mut 
         "test-passed" => {
             page.test_results.insert("speech", "Working · 412 ms".into());
         }
-        "consent" => page.modal = Some(Modal::Consent),
+        "consent" => {
+            page.server_draft.read(cx).focus_handle(cx).focus(window, cx);
+            page.modal = Some(Modal::Consent);
+        }
         "turn-off" => page.prompt_turn_off(window, cx),
-        "consent-update" => {}
+        "consent-update-sheet" => page.modal = Some(Modal::ConsentUpdate),
         "download" => page.prompt_download(false, window, cx),
         "alt-download" => page.prompt_download(true, window, cx),
         "exclusions" => page.modal = Some(Modal::Context(ContextKind::Exclusions)),

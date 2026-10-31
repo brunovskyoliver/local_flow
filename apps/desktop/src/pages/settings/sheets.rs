@@ -228,7 +228,9 @@ impl SettingsPage {
                     .flex_1()
                     .min_w_0()
                     .px(px(10.))
-                    .py(px(1.))
+                    .h(px(30.))
+                    .flex()
+                    .items_center()
                     .bg(pl.surface)
                     .rounded(px(8.))
                     .border(px(if focused { 2. } else { 1. }))
@@ -252,7 +254,9 @@ impl SettingsPage {
             .when_some(error, |d, e| d.child(t(e).size(12.).color(pl.warning)))
             .child(
                 h_flex().w_full().justify_end().child(
-                    prototype_button("settings.contextDone", "Done").fill(pl.ink).text_color(pl.surface).on_click(cx.listener(|this, _, _, cx| this.close_modal(cx))),
+                    plain_button("settings.contextDone", "Done")
+                        .content(div().px(px(18.)).py(px(10.)).rounded(px(8.)).bg(pl.ink).child(t("Done").font(15., 500.).color(pl.surface)))
+                        .on_click(cx.listener(|this, _, _, cx| this.close_modal(cx))),
                 ),
             )
     }

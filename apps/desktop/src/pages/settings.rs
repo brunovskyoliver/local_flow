@@ -1207,7 +1207,7 @@ pub(super) fn pill_menu(id: impl Into<SharedString>, title: String, options: Vec
 /// two real buttons, `<id>.down` and `<id>.up`.
 pub(super) fn stepper(id: &'static str, label: &'static str, value: String, down: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, up: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, cx: &App) -> AnyElement {
     let pl = pal(cx);
-    let half = |suffix: &str, symbol: &'static str, verb: &str| plain_button(SharedString::from(format!("{id}.{suffix}")), suffix.to_string()).a11y_label(format!("{label}, {verb}")).content(div().w(px(STEPPER.0)).h(px(STEPPER.1 / 2.)).flex().items_center().justify_center().child(icon(symbol, 11., pl.ink)).into_any_element());
+    let half = |suffix: &str, symbol: &'static str, verb: &str| plain_button(SharedString::from(format!("{id}.{suffix}")), suffix.to_string()).a11y_label(format!("{label}, {verb}")).content(div().w(px(STEPPER.0)).h(px(STEPPER.1 / 2.)).flex().items_center().justify_center().child(icon(symbol, 13., pl.ink)).into_any_element());
     h_flex()
         .gap(px(8.))
         .child(t(value).size(13.).mono_digits())
@@ -1246,7 +1246,7 @@ pub(super) fn selectable(id: impl Into<SharedString>, text: impl Into<SharedStri
 /// `DisclosureGroup`.
 pub(super) fn disclosure(id: &'static str, title: &'static str, open: bool, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static, cx: &App) -> AnyElement {
     let m = pal(cx).muted;
-    h_flex().child(plain_button(id, title).content(h_flex().gap(px(6.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 10., m)).child(t(title).size(12.).color(m).a11y_hidden()).into_any_element()).on_click(f))
+    h_flex().child(plain_button(id, title).content(h_flex().h(px(22.)).gap(px(2.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 10., m)).child(t(title).size(12.).color(m).a11y_hidden()).into_any_element()).on_click(f))
     .into_any_element()
 }
 
