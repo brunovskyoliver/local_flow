@@ -21,7 +21,12 @@ fn main() {
         let options = if audit {
             WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: None, focus: false, kind: WindowKind::PopUp, is_movable: false, ..Default::default() }
         } else {
-            WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions { title: Some("LocalFlow".into()), appears_transparent: true, traffic_light_position: Some(point(px(9.), px(9.))) }),
+                window_min_size: Some(size(px(640.), px(480.))),
+                ..Default::default()
+            }
         };
         flow_ui::open_window(options, cx, |w, cx| cx.new(|cx| Shell::new(w, cx))).expect("main window opens");
         if !audit {

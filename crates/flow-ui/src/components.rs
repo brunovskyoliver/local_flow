@@ -198,3 +198,30 @@ impl InvisibleUntil for Div {
         self.opacity(0.).group_hover(g, |s| s.opacity(1.))
     }
 }
+
+/// The sidebar row: 16 icon in a 20 frame, 15 title, 35 high, `tint` when selected.
+pub fn prototype_nav(id: &'static str, title: &'static str, symbol: &'static str, selected: bool, tint: Hsla, ink: Hsla) -> FlowButton {
+    plain_button(id, title)
+        .full_width()
+        .content(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .px(px(10.))
+                .h(px(35.))
+                .w_full()
+                .rounded(px(8.))
+                .when(selected, |d| d.bg(tint))
+                .child(div().w(px(20.)).flex().justify_center().child(icon(symbol, 16., ink)))
+                .child(t(title).size(15.).lines(1).a11y_hidden())
+                .into_any_element(),
+        )
+}
+
+pub fn h_flex() -> Div {
+    div().flex().flex_row().items_center()
+}
+pub fn v_flex() -> Div {
+    div().flex().flex_col()
+}
