@@ -187,7 +187,7 @@ Sizes are rough estimates for one developer working with agents. They are not me
 | 3 | Feature 024: `flow-ui` and pages | Tokens, components, all five pages and onboarding, on a copy of real data | Side-by-side screenshots of each page, light and dark, approved by you | 6-10 weeks |
 | 4 | Feature 025: Windows meeting notes on a server | WASAPI capture, AAC, TPM key, Google sign-in, installer | First public Windows build. Full meeting through `flowd` on real hardware | 3-5 weeks |
 | 5 | Feature 026: dictation on both platforms | Hotkey, insertion, pill, worker contract, `flow-speech-win` | Latency and quality measured on both | 6-8 weeks |
-| 6 | Feature 027: local meetings on Windows | whisper.cpp, diarization, identification | Attribution measured against the Mac baseline | 4-6 weeks |
+| 6 | Feature 029: local meetings on Windows (planned as 027; `specs/027-remote-pairing` took that number) | whisper.cpp, diarization, identification | Attribution measured against the Mac baseline | 4-6 weeks |
 | 7 | Feature 028: Mac cutover | Update path, migration test from the shipped version, delete the SwiftUI app | Parity checklist, RSS within budget, upgrade tested on a real install | 2-3 weeks |
 
 The total is roughly 7-11 months. Phase 1 ships value on its own and is the cheapest thing on this list. The SwiftUI Mac app keeps shipping until Phase 7, and `LocalFlow Dev` carries the GPUI build alongside it.
