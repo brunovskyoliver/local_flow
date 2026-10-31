@@ -644,12 +644,6 @@ async fn title_too_long_shows_the_limit(cx: &mut TestAppContext) {
     assert_ne!(query(cx, |db| meeting(db, SEED_FULL).unwrap().unwrap().title).as_deref(), Some(long.as_str()));
 }
 
-// parity: SUM-041 SUM-047 SUM-049 SUM-051 SUM-053 SUM-058 SUM-075 SUM-079 SUM-073 SUM-074 SUM-078
-#[flow_ui::gpui::test]
-async fn summary_shows_sections_chips_and_attribution(cx: &mut TestAppContext) {
-    let _window = open_page(cx, Some("notetaker.summary"));
-    assert_saw(&["The order waits until both quotes are in", "Hinges and supplier", "•", "Next steps", "Open questions", "Risks", "Pick the review up again on Friday — You", "Due: unclear (\"soon\")", "might be Tomas Novak?", "Accept", "mentioned", "Owner unresolved", "Due 6 Nov"]);
-}
 // parity: SPK-001 SPK-003 SPK-048 SPK-049 SPK-057 SPK-061 SPK-075 SPK-078
 #[flow_ui::gpui::test]
 async fn assign_opens_shows_sections_and_closes(cx: &mut TestAppContext) {
@@ -1563,7 +1557,8 @@ async fn edit_failure_shows_under_the_header(cx: &mut TestAppContext) {
     refuse(cx, "INSERT", "analysis_overlays");
     click(cx, &window, "meeting.summary.status.0");
     fresh(cx, &window);
-    assert_saw(&["The edit could not be saved."]);
+    let (_, _, red, ..) = colors(cx);
+    assert_eq!(sized("The summary couldn't be saved."), (11., 400., red));
     assert!(has(cx, &window, "meeting.summary.editError"));
 }
 // parity: SUM-042 SUM-043 SUM-044 SUM-045
@@ -2284,9 +2279,12 @@ async fn summary_options_menu_and_remove_all_dialog_read_like_swift(cx: &mut Tes
     click(cx, &window, "meeting.summary.options");
     frame(cx, &window);
     assert_menu_saw(&["Regenerate", "Previous edits", "Remove all edits\u{2026}"]);
+    let generated = read(cx, &window, |p| generated_text(p.summary.model.as_ref().unwrap().generated_at, 0));
+    let shown = crate::pages::notetaker::MENU_TITLES.with(|m| m.borrow().clone());
+    assert!(shown.iter().any(|s| s.starts_with("Generated ") && s.ends_with(" · AI-generated") && s.len() == generated.len()), "{shown:?}");
     menu_item(cx, &window, 2);
     fresh(cx, &window);
-    assert_saw(&["Remove all edits?", "Remove All Edits", "Cancel", "Your changes to the summary, owners, due dates and items are deleted"]);
+    assert_saw(&["Remove all edits?", "Remove All Edits", "Cancel", "Your changes to the summary, owners, due dates and items are deleted, and the generated text comes back. This can't be undone."]);
 }
 // parity: SUM-042 SUM-043 SUM-046
 #[flow_ui::gpui::test]
@@ -2873,11 +2871,15 @@ async fn settings_button_opens_the_pane_the_refusal_names(cx: &mut TestAppContex
 async fn notes_state_reads_twelve_points_and_red_when_failed(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.panel"));
     let (_, muted, red, ..) = colors(cx);
-    for (dirty, state, text, color) in [(true, SaveState::Idle, "Unsaved", muted), (true, SaveState::Saving, "Saving…", muted), (false, SaveState::Saved, "Saved", muted), (true, SaveState::NotSaved, "Not saved", red)] {
+    let mut state = |cx: &mut TestAppContext, dirty, state, text: &str| {
         window.update(cx, |p, _, cx| { let e = p.editor.as_mut().unwrap(); e.is_dirty = dirty; e.state = state; cx.notify() }).unwrap();
         fresh(cx, &window);
-        assert_eq!((sized(text).0, sized(text).2), (12., color), "{text}");
-    }
+        (sized(text).0, sized(text).2)
+    };
+    assert_eq!(state(cx, true, SaveState::Idle, "Unsaved"), (12., muted));
+    assert_eq!(state(cx, true, SaveState::Saving, "Saving…"), (12., muted));
+    assert_eq!(state(cx, false, SaveState::Saved, "Saved"), (12., muted));
+    assert_eq!(state(cx, true, SaveState::NotSaved, "Not saved"), (12., red));
 }
 
 // parity: LIVE-024 LIVE-025
@@ -3696,4 +3698,283 @@ async fn speaker_palette_matches_swift_and_cycles(cx: &mut TestAppContext) {
             });
         }
     }
+}
+
+// --- Round 4 row review: Summary.
+
+// parity: SUM-002 SUM-003 SUM-041 SUM-047 SUM-049
+#[flow_ui::gpui::test]
+async fn summary_header_and_body_have_swifts_type_and_frames(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    resize(cx, &window, 1400., 900.);
+    fresh(cx, &window);
+    let (ink, muted, ..) = colors(cx);
+    let minutes = read(cx, &window, |p| p.summary.model.as_ref().unwrap().reading_minutes);
+    assert_eq!(sized(&format!("{minutes} MIN READ")), (12., 500., muted));
+    assert_symbols(&["lightbulb"]);
+    let bar = find(cx, &window, "meeting.summary.header").bounds();
+    let options = find(cx, &window, "meeting.summary.options").bounds();
+    assert_eq!(bar.size.height, px(44.));
+    assert_eq!(bar.origin.x + bar.size.width - (options.origin.x + options.size.width), px(6.), "trailing 6");
+    assert_eq!(sized("Hinges and supplier"), (15., 600., ink));
+    assert_eq!(sized("Two hinge samples are too stiff").0, 15.);
+    assert_eq!(sized("•").0, 15.);
+    assert_eq!(sized("Action items"), (15., 600., ink));
+    let paragraph = flow_ui::probe::seen().into_iter().find(|s| s.starts_with("The order waits")).unwrap();
+    assert_eq!(sized(&paragraph).0, 15.);
+    let body = read(cx, &window, |p| p.summary.model.as_ref().unwrap().summary.clone());
+    assert!(body.contains("\n\n") && !seen(&body), "one element per paragraph");
+}
+
+// parity: SUM-005 SUM-009 SUM-011 SUM-012 SUM-015 SUM-018
+#[flow_ui::gpui::test]
+async fn summary_header_states_read_thirteen_point(cx: &mut TestAppContext) {
+    let _w = open_page(cx, Some("notetaker.summary-eligible"));
+    let (ink, muted, red, ..) = colors(cx);
+    assert_eq!(sized("Generate"), (13., 400., ink));
+    assert_eq!(sized("No summary yet.").2, muted);
+    assert!(seen("SUMMARY"));
+    let _w = open_page(cx, Some("notetaker.summary-pending"));
+    assert_eq!(sized("Queued"), (13., 400., muted));
+    assert_eq!(sized("Cancel"), (13., 400., ink));
+    let _w = open_page(cx, Some("notetaker.summary-running"));
+    assert_eq!(sized("Analyzing"), (13., 400., muted));
+    let _w = open_page(cx, Some("notetaker.summary-failed"));
+    assert_eq!(sized("The server's language model is not running."), (13., 400., red));
+    assert_eq!(sized("Retry"), (13., 400., ink));
+    let accent = cx.update(|cx| pal(cx).accent);
+    let _w = open_page(cx, Some("notetaker.summary-not-finished"));
+    assert_eq!(sized("Read transcript").2, accent);
+    assert_eq!(sized("The transcript is not finished yet.").2, muted);
+}
+
+// parity: SUM-032 SUM-033
+#[flow_ui::gpui::test]
+async fn copy_writes_the_report_and_says_copied_for_two_seconds(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    fresh(cx, &window);
+    assert_symbols(&["square.on.square"]);
+    assert_labelled(cx, &window, "meeting.summary.copy", "Copy summary");
+    click(cx, &window, "meeting.summary.copy");
+    fresh(cx, &window);
+    assert_symbols(&["checkmark"]);
+    assert_labelled(cx, &window, "meeting.summary.copy", "Copied");
+    let copied = cx.update(|cx| cx.read_from_clipboard()).and_then(|c| c.text()).unwrap();
+    assert!(copied.ends_with("Generated by LocalFlow from the meeting transcript and notes."), "{copied}");
+    assert!(copied.contains("- [ ] Ask the workshop to loosen the hinge tolerance"), "{copied}");
+    cx.executor().advance_clock(Duration::from_secs(3));
+    fresh(cx, &window);
+    assert_labelled(cx, &window, "meeting.summary.copy", "Copy summary");
+}
+
+// parity: SUM-038 SUM-082
+#[flow_ui::gpui::test]
+async fn removing_edits_fails_silently_as_swift_does(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    click(cx, &window, "meeting.summary.status.0");
+    frame(cx, &window);
+    sql(cx, &format!("UPDATE analysis_overlays SET orphaned_at=1, item_id=NULL WHERE meeting_id='{SEED_FULL}';"));
+    window.update(cx, |p, _, cx| { p.summary_refresh(cx); p.menu = Some("summary.edits".into()); cx.notify() }).unwrap();
+    frame(cx, &window);
+    let edit = read(cx, &window, |p| p.summary.model.as_ref().unwrap().previous_edits[0].id.clone());
+    let delete = sid(format!("meeting.summary.previous.delete.{edit}"));
+    refuse(cx, "DELETE", "analysis_overlays");
+    click(cx, &window, delete.clone());
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.summary.error.clone()), None);
+    assert_eq!(read(cx, &window, |p| p.summary.model.as_ref().unwrap().previous_edits.len()), 1);
+    window.update(cx, |p, _, cx| p.remove_all_edits(cx)).unwrap();
+    assert_eq!(read(cx, &window, |p| p.summary.error.clone()), None);
+    allow(cx, "DELETE", "analysis_overlays");
+    window.update(cx, |p, _, cx| { p.menu = Some("summary.edits".into()); cx.notify() }).unwrap();
+    frame(cx, &window);
+    click(cx, &window, delete);
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.summary.model.as_ref().unwrap().previous_edits.is_empty()));
+}
+
+// parity: SUM-062 SUM-063 SUM-072
+#[flow_ui::gpui::test]
+async fn status_toggle_labels_symbols_and_snapshot(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let (_, muted, ..) = colors(cx);
+    let item = action_item(cx, &window, 0);
+    fresh(cx, &window);
+    assert_labelled(cx, &window, "meeting.summary.status.0", "Mark completed");
+    assert_eq!(flow_ui::probe::symbol_color("circle"), Some(muted));
+    click(cx, &window, "meeting.summary.status.0");
+    fresh(cx, &window);
+    assert_labelled(cx, &window, "meeting.summary.status.0", "Mark open");
+    let ai: Option<String> = query(cx, |db| db.conn.query_row("SELECT ai_value_snapshot FROM analysis_overlays WHERE item_id=?1 AND field='status'", [&item.id], |r| r.get(0)).unwrap());
+    assert_eq!(ai.as_deref(), Some("open"));
+    open_item_menu(cx, &window, &item);
+    menu_item(cx, &window, 3);
+    assert_eq!(action_item(cx, &window, 0).status, "dismissed");
+    fresh(cx, &window);
+    assert_labelled(cx, &window, "meeting.summary.status.0", "Mark completed");
+    click(cx, &window, "meeting.summary.status.0");
+    frame(cx, &window);
+    assert_eq!(action_item(cx, &window, 0).status, "open", "a dismissed item reopens");
+}
+
+// parity: SUM-064 SUM-057
+#[flow_ui::gpui::test]
+async fn done_items_strike_and_editing_keeps_the_status_circle(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let (ink, muted, ..) = colors(cx);
+    let item = action_item(cx, &window, 0);
+    assert_eq!(sized(&item.text).2, ink);
+    click(cx, &window, "meeting.summary.status.0");
+    fresh(cx, &window);
+    assert_eq!(sized(&item.text).2, muted);
+    cx.update_window(window.into(), |_, w, cx| w.double_click(sid(format!("meeting.summary.text.{}.{}", item.kind, item.ordinal)), cx)).unwrap();
+    frame(cx, &window);
+    assert!(has(cx, &window, "meeting.summary.status.0"), "Swift keeps the circle beside the field");
+    assert!(has(cx, &window, "meeting.summary.edit.save"));
+}
+
+// parity: SUM-039 SUM-040
+#[flow_ui::gpui::test]
+async fn stale_banner_type_and_frame(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary-stale"));
+    let (ink, ..) = colors(cx);
+    let warning = cx.update(|cx| pal(cx).warning);
+    assert_eq!(sized("The transcript, speakers or notes changed after this summary."), (12., 400., ink));
+    assert_eq!(flow_ui::probe::symbol_color("exclamationmark.triangle"), Some(warning));
+    let (banner, button) = (find(cx, &window, "meeting.summary.stale").bounds(), find(cx, &window, "meeting.summary.stale.regenerate").bounds());
+    assert_eq!(banner.origin.x + banner.size.width - (button.origin.x + button.size.width), px(10.));
+    assert_eq!(button.origin.y - banner.origin.y, px(10.));
+}
+
+// parity: SUM-073 SUM-074 SUM-075 SUM-076 SUM-077 SUM-078 SUM-079
+#[flow_ui::gpui::test]
+async fn owner_chips_and_due_labels_read_like_swift(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    resize(cx, &window, 1400., 2000.);
+    fresh(cx, &window);
+    let (_, muted, ..) = colors(cx);
+    assert_eq!(sized("You").0, 11.);
+    assert_eq!(sized("mentioned"), (9., 400., muted));
+    assert_eq!(sized("Owner unresolved"), (11., 400., muted));
+    assert_eq!(sized("Tomas Novak").0, 11.);
+    let suggested = flow_ui::probe::seen().into_iter().find(|s| s.starts_with("might be ")).unwrap();
+    assert!(suggested.ends_with('?'), "{suggested}");
+    assert_eq!(sized(&suggested), (9., 400., muted));
+    assert_eq!(sized("Due: unclear (\"soon\")"), (11., 400., muted));
+    let due = flow_ui::probe::seen().into_iter().find(|s| s.starts_with("Due ")).unwrap();
+    assert_eq!(sized(&due), (11., 400., muted));
+    let item = read(cx, &window, |p| p.summary.model.as_ref().unwrap().action_items.iter().find(|i| matches!(&i.owner, Owner::Mentioned(_, Some(_)))).unwrap().clone());
+    let Owner::Mentioned(_, Some((known, _))) = item.owner.clone() else { unreachable!() };
+    let linked = read(cx, &window, |p| p.summary.roots.iter().find(|r| r.identity.as_ref().and_then(|i| i.known_id.as_deref()) == Some(known.as_str())).map(|r| r.id.clone()));
+    click(cx, &window, "meeting.summary.owner.accept");
+    frame(cx, &window);
+    let (value, ai): (String, Option<String>) = query(cx, |db| db.conn.query_row("SELECT user_value, ai_value_snapshot FROM analysis_overlays WHERE item_id=?1 AND field='owner'", [&item.id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap());
+    assert_eq!(value, owner_value_participant(&linked.unwrap_or(known)), "the linked speaker, else the profile");
+    assert_eq!(ai.as_deref(), Some(item.ai_owner.text()));
+}
+
+// parity: SUM-067 SUM-069 SUM-070
+#[flow_ui::gpui::test]
+async fn popover_buttons_are_native_and_due_snapshot_is_the_plain_date(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = action_item(cx, &window, 0);
+    let roots = read(cx, &window, |p| owner_choices(&p.summary.roots).len());
+    open_item_menu(cx, &window, &item);
+    submenu_item(cx, &window, 1, roots + 1);
+    fresh(cx, &window);
+    assert_eq!(sized("Owner name"), (11., 600., colors(cx).0));
+    let (panel, save) = (find(cx, &window, "notetaker.popover").bounds(), find(cx, &window, "meeting.summary.owner.save").bounds());
+    assert_eq!(panel.origin.x + panel.size.width - (save.origin.x + save.size.width), px(13.), "Save sits right: padding 12 inside the 1 pt border");
+    window.update(cx, |p, _, cx| { p.menu = None; p.summary.editing = None; cx.notify() }).unwrap();
+    frame(cx, &window);
+    open_item_menu(cx, &window, &item);
+    submenu_item(cx, &window, 2, 0);
+    let (clear, save) = (find(cx, &window, "meeting.summary.due.popover.clear").bounds(), find(cx, &window, "meeting.summary.due.save").bounds());
+    let due = find(cx, &window, "meeting.summary.due").bounds();
+    assert_eq!(clear.origin.x - due.origin.x, px(12.), "padding 12");
+    assert_eq!(due.origin.x + due.size.width - (save.origin.x + save.size.width), px(12.));
+    window.update(cx, |p, w, cx| p.summary.due.update(cx, |s, cx| s.set_date(calendar_date("2027-03-09"), w, cx))).unwrap();
+    frame(cx, &window);
+    click(cx, &window, "meeting.summary.due.save");
+    frame(cx, &window);
+    let (value, ai): (String, Option<String>) = query(cx, |db| db.conn.query_row("SELECT user_value, ai_value_snapshot FROM analysis_overlays WHERE item_id=?1 AND field='due_date'", [&item.id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap());
+    assert_eq!(value, due_value(Some("2027-03-09")));
+    assert_eq!(ai, item.ai_due_date, "the raw AI date, as Swift stores it");
+}
+
+// parity: SUM-081
+#[flow_ui::gpui::test]
+async fn previous_edits_panel_type_and_frames(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let (_, _, red, ..) = colors(cx);
+    click(cx, &window, "meeting.summary.status.0");
+    frame(cx, &window);
+    sql(cx, &format!("UPDATE analysis_overlays SET orphaned_at=1, item_id=NULL WHERE meeting_id='{SEED_FULL}';"));
+    window.update(cx, |p, _, cx| { p.summary_refresh(cx); p.menu = Some("summary.edits".into()); cx.notify() }).unwrap();
+    frame(cx, &window);
+    fresh(cx, &window);
+    assert_eq!(sized("Previous edits").0, 12.);
+    assert_eq!(sized("Previous edits").1, 600.);
+    assert_eq!(sized("Delete"), (11., 400., red));
+    assert_eq!(find(cx, &window, "notetaker.popover").bounds().size.width, px(280.));
+}
+
+// parity: SUM-050 SUM-051 SUM-052 SUM-053 SUM-054
+#[flow_ui::gpui::test]
+async fn section_titles_read_fifteen_semibold(cx: &mut TestAppContext) {
+    let _window = open_page(cx, Some("notetaker.summary"));
+    let (ink, ..) = colors(cx);
+    assert_eq!(sized("Action items"), (15., 600., ink));
+    assert_eq!(sized("Next steps"), (15., 600., ink));
+    assert_eq!(sized("Decisions"), (15., 600., ink));
+    assert_eq!(sized("Open questions"), (15., 600., ink));
+    assert_eq!(sized("Risks"), (15., 600., ink));
+    assert!(!seen("Risks / blockers"), "the screen says Risks, only the report says blockers");
+}
+
+// parity: SUM-058
+#[flow_ui::gpui::test]
+async fn attribution_follows_the_item_unless_the_sentence_names_it(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    assert!(seen("Pick the review up again on Friday — You"));
+    let item = read(cx, &window, |p| p.summary.model.as_ref().unwrap().next_steps[0].clone());
+    query(cx, |db| set_overlay(db, SEED_FULL, OverlayTarget::Item(&item.id), "next_step_text", "you pick it up on Friday", Some(&item.ai_text), Some(&item.ai_text), "", 5).unwrap());
+    window.update(cx, |p, _, cx| { p.summary_refresh(cx); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert!(seen("you pick it up on Friday"));
+    assert!(!seen("you pick it up on Friday — You"), "case-insensitive, as Swift");
+}
+
+// parity: SUM-056
+#[flow_ui::gpui::test]
+async fn questions_and_risks_have_no_edit_path(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    for (kind, item) in [("open_question", read(cx, &window, |p| p.summary.model.as_ref().unwrap().open_questions[0].clone())), ("risk", read(cx, &window, |p| p.summary.model.as_ref().unwrap().risks[0].clone()))] {
+        assert_eq!(item.kind, kind);
+        assert!(!has(cx, &window, sid(format!("meeting.summary.editMenu.{kind}.{}", item.ordinal))), "no menu without an edit");
+        cx.update_window(window.into(), |_, w, cx| w.double_click(sid(format!("meeting.summary.text.{kind}.{}", item.ordinal)), cx)).unwrap();
+        frame(cx, &window);
+        assert!(read(cx, &window, |p| p.summary.editing.is_none()), "{kind} does not edit");
+    }
+}
+
+// parity: SUM-048
+#[flow_ui::gpui::test]
+async fn topic_summary_is_stored_but_not_shown(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let stored: String = query(cx, |db| db.conn.query_row("SELECT summary FROM analysis_topics WHERE summary<>'' LIMIT 1", [], |r| r.get(0)).unwrap());
+    fresh(cx, &window);
+    assert!(!flow_ui::probe::seen().iter().any(|s| s.contains(&stored)), "{stored}");
+}
+
+// parity: SUM-083
+#[flow_ui::gpui::test]
+async fn mentions_carry_the_speakers_colour_and_id(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let root = read(cx, &window, |p| p.summary.roots.iter().find(|r| r.color != 0).unwrap().clone());
+    let speakers = vec![(root.id.clone(), root.label(), root.color)];
+    let text = format!("Ask {} first", root.label());
+    let found = speaker_mentions(&text, &speakers);
+    assert_eq!(found.len(), 1);
+    assert_eq!((found[0].2.as_str(), found[0].3), (root.id.as_str(), root.color));
 }

@@ -440,23 +440,23 @@ SPK-105	recorded	recorded:swift-note kept as Swift behaves; no separate behavior
 SPK-106	service	test:a_rerun_inherits_names_merges_and_corrections ; service:worker: diarization run adoption (SpeakerStore.swift:350); carry_over is tested through a_rerun_inherits_names_merges_and_corrections but no production caller until the worker exists
 SPK-107	live	live:audit/mac/notetaker/assign-dark-rust.png ; live:audit/mac/notetaker/assign-dark-ref.png ; test:speaker_palette_matches_swift_and_cycles
 SUM-001	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
-SUM-002	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
-SUM-003	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-002	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png ; test:summary_header_and_body_have_swifts_type_and_frames
+SUM-003	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:summary_header_and_body_have_swifts_type_and_frames
 SUM-004	auto	test:reading_time_rounds_up_with_a_minimum_of_one
-SUM-005	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:summary_not_finished ; test:summary_overlays_and_report
+SUM-005	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:summary_not_finished ; test:summary_overlays_and_report ; test:summary_header_states_read_thirteen_point
 SUM-006	auto	test:summary_not_finished ; test:summary_overlays_and_report
 SUM-007	auto	test:summary_off ; test:summary_overlays_and_report
 SUM-008	auto	test:generate_reports_the_missing_worker
-SUM-009	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:generate_reports_the_missing_worker
+SUM-009	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:generate_reports_the_missing_worker ; test:summary_header_states_read_thirteen_point
 SUM-010	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
-SUM-011	auto	test:summary_queued
-SUM-012	live	test:summary_running ; live:audit/mac/notetaker/summary-running-light-rust.png ; live:audit/mac/notetaker/summary-running-light-ref.png
+SUM-011	auto	test:summary_queued ; test:summary_header_states_read_thirteen_point
+SUM-012	recorded	test:summary_header_states_read_thirteen_point ; recorded:the 70 pt progress bar is absent; the desktop has no progress source, and the ref running pair shows none without progress
 SUM-013	auto	test:pending_cancel_reports_and_empty_states
 SUM-014	auto	test:summary_request_refused_when_the_queue_is_full
-SUM-015	live	test:summary_failed ; live:audit/mac/notetaker/summary-failed-light-rust.png ; live:audit/mac/notetaker/summary-failed-light-ref.png
+SUM-015	live	test:summary_failed ; live:audit/mac/notetaker/summary-failed-light-rust.png ; live:audit/mac/notetaker/summary-failed-light-ref.png ; test:summary_header_states_read_thirteen_point
 SUM-016	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
 SUM-017	auto	test:pending_cancel_reports_and_empty_states
-SUM-018	auto	test:pending_cancel_reports_and_empty_states
+SUM-018	auto	test:pending_cancel_reports_and_empty_states ; test:summary_header_states_read_thirteen_point
 SUM-019	auto	test:summary_overlays_and_report
 SUM-020	auto	test:summary_failures_read_like_swift
 SUM-021	auto	test:summary_failures_read_like_swift
@@ -470,58 +470,58 @@ SUM-028	auto	test:summary_failures_read_like_swift
 SUM-029	auto	test:summary_failures_read_like_swift
 SUM-030	auto	test:summary_failures_read_like_swift
 SUM-031	auto	test:cancelled_run_with_an_accepted_summary_reads_succeeded
-SUM-032	live	live:audit/mac/notetaker/summary-stale-dark-rust.png ; live:audit/mac/notetaker/summary-stale-dark-ref.png
-SUM-033	auto	test:summary_overlays_and_report ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
+SUM-032	auto	test:copy_writes_the_report_and_says_copied_for_two_seconds
+SUM-033	auto	test:summary_overlays_and_report ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable ; test:copy_writes_the_report_and_says_copied_for_two_seconds ; test:report_lists_title_date_and_blockers_without_dismissed_items
 SUM-034	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:dates_format_like_swift
 SUM-035	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
 SUM-036	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:summary_reads_stored_analysis_and_marks_an_item_done
 SUM-037	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
-SUM-038	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SUM-039	live	test:summary_states ; live:audit/mac/notetaker/summary-stale-light-rust.png ; live:audit/mac/notetaker/summary-stale-light-ref.png
-SUM-040	auto	test:edit_failure_shows_under_the_header
-SUM-041	live	test:summary_shows_sections_chips_and_attribution ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-038	auto	test:removing_edits_fails_silently_as_swift_does
+SUM-039	live	test:summary_states ; live:audit/mac/notetaker/summary-stale-light-rust.png ; live:audit/mac/notetaker/summary-stale-light-ref.png ; test:stale_banner_type_and_frame
+SUM-040	auto	test:edit_failure_shows_under_the_header ; test:stale_banner_type_and_frame
+SUM-041	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
 SUM-042	auto	test:summary_text_menu_and_editor_read_like_swift ; test:summary_text_edits_through_its_context_menu
 SUM-043	auto	test:summary_text_menu_and_editor_read_like_swift ; test:summary_editor_is_ninety_points_high ; test:summary_text_edits_through_its_context_menu
 SUM-044	auto	test:summary_overlays_and_report ; test:summary_text_edits_through_its_context_menu
 SUM-045	auto	test:summary_text_edits_through_its_context_menu
 SUM-046	auto	test:summary_text_menu_and_editor_read_like_swift ; test:removing_one_overlay_restores_the_generated_value
-SUM-047	live	test:summary_shows_sections_chips_and_attribution ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
-SUM-048	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SUM-049	live	test:summary_shows_sections_chips_and_attribution ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
-SUM-050	auto	test:summary_reads_stored_analysis_and_marks_an_item_done
-SUM-051	auto	test:summary_shows_sections_chips_and_attribution
-SUM-052	auto	test:summary_reads_stored_analysis_and_marks_an_item_done
-SUM-053	auto	test:summary_shows_sections_chips_and_attribution
-SUM-054	auto	test:summary_overlays_and_report
-SUM-055	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SUM-056	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SUM-057	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels
-SUM-058	auto	test:summary_shows_sections_chips_and_attribution
+SUM-047	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-048	auto	test:topic_summary_is_stored_but_not_shown
+SUM-049	live	test:summary_header_and_body_have_swifts_type_and_frames ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-050	auto	test:section_titles_read_fifteen_semibold
+SUM-051	auto	test:section_titles_read_fifteen_semibold
+SUM-052	auto	test:section_titles_read_fifteen_semibold
+SUM-053	auto	test:section_titles_read_fifteen_semibold
+SUM-054	auto	test:section_titles_read_fifteen_semibold ; test:report_lists_title_date_and_blockers_without_dismissed_items
+SUM-055	auto	test:report_lists_title_date_and_blockers_without_dismissed_items
+SUM-056	auto	test:questions_and_risks_have_no_edit_path
+SUM-057	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels ; test:done_items_strike_and_editing_keeps_the_status_circle
+SUM-058	auto	test:attribution_follows_the_item_unless_the_sentence_names_it
 SUM-059	auto	test:item_menus_and_popovers_read_like_swift ; test:item_menu_is_twenty_points_square
 SUM-060	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels
 SUM-061	auto	test:view_source_jumps_to_transcript
-SUM-062	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
-SUM-063	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
-SUM-064	live	live:audit/mac/notetaker/summary-done-light-rust.png ; live:audit/mac/notetaker/summary-done-light-ref.png
+SUM-062	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:status_toggle_labels_symbols_and_snapshot
+SUM-063	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report ; test:status_toggle_labels_symbols_and_snapshot
+SUM-064	live	live:audit/mac/notetaker/summary-done-light-rust.png ; live:audit/mac/notetaker/summary-done-light-ref.png ; test:done_items_strike_and_editing_keeps_the_status_circle
 SUM-065	auto	test:item_menus_and_popovers_read_like_swift ; test:owner_submenu_picks_someone_else_or_no_owner
 SUM-066	auto	test:owner_submenu_picks_someone_else_or_no_owner
-SUM-067	auto	test:item_menus_and_popovers_read_like_swift ; test:owner_submenu_picks_someone_else_or_no_owner
+SUM-067	auto	test:item_menus_and_popovers_read_like_swift ; test:owner_submenu_picks_someone_else_or_no_owner ; test:popover_buttons_are_native_and_due_snapshot_is_the_plain_date
 SUM-068	auto	test:item_menus_and_popovers_read_like_swift ; test:due_date_picks_from_the_calendar_and_clears
-SUM-069	auto	test:item_menus_and_popovers_read_like_swift ; test:due_popover_is_two_hundred_twenty_wide ; test:due_date_picks_from_the_calendar_and_clears
-SUM-070	auto	test:due_date_picks_from_the_calendar_and_clears
+SUM-069	auto	test:item_menus_and_popovers_read_like_swift ; test:due_popover_is_two_hundred_twenty_wide ; test:due_date_picks_from_the_calendar_and_clears ; test:popover_buttons_are_native_and_due_snapshot_is_the_plain_date
+SUM-070	auto	test:due_date_picks_from_the_calendar_and_clears ; test:popover_buttons_are_native_and_due_snapshot_is_the_plain_date
 SUM-071	auto	test:item_menus_and_popovers_read_like_swift ; test:dismiss_then_reopen
-SUM-072	auto	test:dismiss_then_reopen
-SUM-073	live	test:summary_shows_sections_chips_and_attribution ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
-SUM-074	live	test:summary_shows_sections_chips_and_attribution ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
-SUM-075	auto	test:summary_shows_sections_chips_and_attribution
-SUM-076	auto	test:accept_writes_the_suggested_owner
-SUM-077	live	test:unresolved_owner_gets_the_outlined_chip ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
-SUM-078	auto	test:summary_shows_sections_chips_and_attribution ; test:dates_format_like_swift
-SUM-079	auto	test:summary_shows_sections_chips_and_attribution
+SUM-072	auto	test:dismiss_then_reopen ; test:status_toggle_labels_symbols_and_snapshot
+SUM-073	live	test:owner_chips_and_due_labels_read_like_swift ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-074	live	test:owner_chips_and_due_labels_read_like_swift ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png
+SUM-075	auto	test:owner_chips_and_due_labels_read_like_swift
+SUM-076	auto	test:accept_writes_the_suggested_owner ; test:owner_chips_and_due_labels_read_like_swift
+SUM-077	live	test:unresolved_owner_gets_the_outlined_chip ; test:summary_overlays_and_report ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:owner_chips_and_due_labels_read_like_swift
+SUM-078	auto	test:owner_chips_and_due_labels_read_like_swift ; test:dates_format_like_swift
+SUM-079	auto	test:owner_chips_and_due_labels_read_like_swift
 SUM-080	auto	test:due_date_picks_from_the_calendar_and_clears
-SUM-081	auto	test:previous_edits_rows_read_delete ; test:previous_edits_list_and_delete
-SUM-082	auto	test:removing_one_overlay_restores_the_generated_value
-SUM-083	auto	test:speaker_mentions_open_assign_speakers
+SUM-081	auto	test:previous_edits_rows_read_delete ; test:previous_edits_list_and_delete ; test:previous_edits_panel_type_and_frames
+SUM-082	auto	test:removing_one_overlay_restores_the_generated_value ; test:removing_edits_fails_silently_as_swift_does
+SUM-083	auto	test:speaker_mentions_open_assign_speakers ; test:mentions_carry_the_speakers_colour_and_id
 SUM-084	auto	test:mentions_prefer_full_names_and_endings
-SUM-085	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-SUM-086	auto	test:summary_overlays_and_report
+SUM-085	recorded	recorded:Rust links each name to its own root; Swift's shared-slot limit does not carry over
+SUM-086	auto	test:read_model_orders_by_stored_ordinals_and_keeps_snapshots ; test:summary_overlays_and_report

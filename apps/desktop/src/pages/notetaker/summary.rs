@@ -141,13 +141,23 @@ impl NotetakerPage {
     fn write(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&Db, &str) -> Res<()>) {
         let Some(id) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()) else { return };
         let Some(db) = db_of(cx) else { return };
-        self.summary.error = f(db, &id).err().map(|_| "The edit could not be saved.".to_string());
+        // `writeOverlay`: a capacity refusal reads as the persistence message too.
+        self.summary.error = f(db, &id).err().map(|_| analysis_failure_text("persistence_failure").to_string());
+        self.menu = None;
+        self.summary_refresh(cx);
+        cx.notify();
+    }
+    /// `removeAllEdits` and `removeEdit` use `try?`: a failure shows nothing (SUM-038).
+    fn remove_quietly(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&Db, &str) -> Res<()>) {
+        let Some(id) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()) else { return };
+        let Some(db) = db_of(cx) else { return };
+        f(db, &id).ok();
         self.menu = None;
         self.summary_refresh(cx);
         cx.notify();
     }
     pub(crate) fn remove_all_edits(&mut self, cx: &mut Context<Self>) {
-        self.write(cx, |db, id| remove_all_overlays(db, id));
+        self.remove_quietly(cx, |db, id| remove_all_overlays(db, id));
     }
     fn copy_report(&mut self, cx: &mut Context<Self>) {
         let (Some(m), Some(d)) = (self.summary.model.clone(), self.lib.detail.clone()) else { return };
@@ -180,7 +190,10 @@ impl NotetakerPage {
         self.write(cx, |db, id| set_overlay(db, id, OverlayTarget::Summary, "summary_text", &value, Some(&m.ai_summary), Some(&m.ai_summary), &key, now_ms()));
     }
     fn begin_item_edit(&mut self, item: &Item, field: &'static str, initial: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.summary.item_input.update(cx, |s, cx| s.set_value(initial, window, cx));
+        self.summary.item_input.update(cx, |s, cx| {
+            s.set_placeholder(if field == "owner" { "Name" } else { "Edit" }, window, cx);
+            s.set_value(initial, window, cx);
+        });
         self.summary.item_input.read(cx).focus_handle(cx).focus(window, cx);
         self.summary.editing = Some((item.id.clone(), field));
         self.menu = if field == "owner" { Some(format!("owner.{}", item.id)) } else { None };
@@ -198,7 +211,7 @@ impl NotetakerPage {
         let value = self.summary.item_input.read(cx).value().trim().to_string();
         match field {
             "owner" if value.is_empty() => {}
-            "owner" => self.set_item(&item, "owner", &owner_value_mentioned(&value), Some(owner_json(&item.ai_owner)), cx),
+            "owner" => self.set_item(&item, "owner", &owner_value_mentioned(&value), Some(owner_text(&item.ai_owner)), cx),
             f => self.set_item(&item, f, &value, Some(item.ai_text.clone()), cx),
         }
     }
@@ -212,7 +225,7 @@ impl NotetakerPage {
         cx.notify();
     }
     fn set_due(&mut self, item: &Item, date: Option<&str>, cx: &mut Context<Self>) {
-        self.set_item(item, "due_date", &due_value(date), Some(due_value(item.ai_due_date.as_deref())), cx);
+        self.set_item(item, "due_date", &due_value(date), item.ai_due_date.clone(), cx);
     }
     fn toggle_ai(&mut self, key: &str, cx: &mut Context<Self>) {
         if !self.summary.shown_ai.remove(key) {
@@ -237,6 +250,7 @@ impl NotetakerPage {
             out = out.child(
                 h_flex()
                     .id("meeting.summary.stale")
+                    .test_support()
                     .w_full()
                     .gap(px(10.))
                     .p(px(10.))
@@ -299,8 +313,10 @@ impl NotetakerPage {
         let edits_open = self.menu.as_deref() == Some("summary.edits");
         let generated = model.map(|x| generated_text(x.generated_at, offset));
         let edits = model.map(|x| x.previous_edits.clone()).unwrap_or_default();
-        let plain_ink = |id: &'static str, title: &'static str, cx: &mut Context<Self>| plain_button(id, title).on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t(title).color(p.ink).a11y_hidden());
+        let plain_ink = |id: &'static str, title: &'static str, cx: &mut Context<Self>| plain_button(id, title).on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t(title).size(13.).color(p.ink).a11y_hidden());
         h_flex()
+            .id("meeting.summary.header")
+            .test_support()
             .w_full()
             .h(px(44.))
             .pl(px(14.))
@@ -308,7 +324,7 @@ impl NotetakerPage {
             .gap(px(10.))
             .bg(p.canvas)
             .rounded(px(8.))
-            .child(h_flex().gap(px(6.)).child(icon("lightbulb", 13., p.muted)).child(t(label).font(12., 500.).tracking(1.2).swift_lines().mono_digits().color(p.muted).id("meeting.summary.readingTime")))
+            .child(h_flex().gap(px(6.)).child(icon("lightbulb", 12., p.muted)).child(t(label).font(12., 500.).tracking(1.2).swift_lines().mono_digits().color(p.muted).id("meeting.summary.readingTime")))
             .child(div().flex_1())
             .map(|d| match header {
                 SummaryHeader::NotEligible(_) => d,
@@ -317,7 +333,7 @@ impl NotetakerPage {
                 SummaryHeader::Running(text) => d.child(t(text.clone()).size(13.).color(p.muted).lines(1)).child(plain_ink("meeting.summary.cancel", "Cancel", cx)),
                 SummaryHeader::Failed(text) => d.child(t(text.clone()).size(13.).color(red(cx)).lines(1)).child(plain_ink("meeting.summary.retry", "Retry", cx)),
                 SummaryHeader::Succeeded => d
-                    .child(note_icon("meeting.summary.copy", if copied { "checkmark" } else { "doc.on.doc" }, if copied { "Copied" } else { "Copy summary" }, p.muted).on_click(cx.listener(|this, _, _, cx| this.copy_report(cx))))
+                    .child(note_icon("meeting.summary.copy", if copied { "checkmark" } else { "square.on.square" }, if copied { "Copied" } else { "Copy summary" }, p.muted).on_click(cx.listener(|this, _, _, cx| this.copy_report(cx))))
                     .child(
                         div()
                             .relative()
@@ -333,7 +349,7 @@ impl NotetakerPage {
                                         cx.notify();
                                     })));
                                 if let Some(g) = generated.clone() {
-                                    menu = menu.separator().label(g);
+                                    menu = menu.separator().label(menu_title(g));
                                 }
                                 menu
                             }))
@@ -347,7 +363,7 @@ impl NotetakerPage {
                                             .when_some(e.item_text.clone(), |d, x| d.child(t(x).size(11.).color(p.muted).lines(2)))
                                             .child(h_flex().gap(px(8.)).child(div().flex_1().min_w_0().child(t(e.user_value.clone()).size(11.).lines(1))).child(plain_button(sid(format!("meeting.summary.previous.delete.{}", e.id)), "Delete").on_click(cx.listener(move |this, _, _, cx| {
                                                 let overlay = overlay.clone();
-                                                this.write(cx, move |db, _| remove_overlay(db, &overlay));
+                                                this.remove_quietly(cx, move |db, _| remove_overlay(db, &overlay));
                                             })).content(t("Delete").size(11.).color(red(cx)).a11y_hidden()))),
                                     );
                                 }
@@ -398,7 +414,7 @@ impl NotetakerPage {
                 let Some(id) = overlay.clone() else { return menu };
                 menu.item(menu_entry(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(&page, |this, _, cx| this.toggle_ai("summary", cx)))).item(menu_entry("Remove text edit").on_click(act(&page, move |this, _, cx| {
                     let id = id.clone();
-                    this.write(cx, move |db, _| remove_overlay(db, &id));
+                    this.remove_quietly(cx, move |db, _| remove_overlay(db, &id));
                 })))
             })
             .into_any_element()
@@ -417,11 +433,23 @@ impl NotetakerPage {
         let (owner_key, due_key) = (format!("owner.{}", item.id), format!("due.{}", item.id));
         let popover = self.menu.as_deref() == Some(owner_key.as_str()) || self.menu.as_deref() == Some(due_key.as_str());
         let editing = self.summary.editing.as_ref().is_some_and(|e| e.0 == item.id && e.1 != "owner");
+        let status_item = item.clone();
+        let completed = item.status == "completed";
+        let status_button = plain_button(sid(format!("meeting.summary.status.{}", item.ordinal)), if completed { "Mark open" } else { "Mark completed" }).on_click(cx.listener(move |this, _, _, cx| {
+            let next = if status_item.status == "open" { "completed" } else { "open" };
+            this.set_item(&status_item, "status", next, Some(status_item.status.clone()), cx);
+        })).content(div().w(px(15.)).pt(px(3.)).child(if completed {
+            // ponytail: the Kit icon set has no filled check, so the fill is drawn here.
+            div().size(px(13.)).rounded_full().bg(p.success).flex().items_center().justify_center().child(icon("checkmark", 9., gpui::white())).into_any_element()
+        } else {
+            icon("circle", 13., p.muted).into_any_element()
+        }));
         if editing {
             return h_flex()
                 .id(row_id)
                 .w_full()
                 .gap(px(8.))
+                .when(action, |d| d.py(px(3.)).child(status_button))
                 .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                     if e.keystroke.key == "escape" {
                         this.summary.editing = None;
@@ -429,7 +457,7 @@ impl NotetakerPage {
                     }
                 }))
                 .child(div().flex_1().child(Input::new(&self.summary.item_input).aria_label("Edit").accessibility_id("meeting.summary.editor.item")))
-                .child(prototype_button("meeting.summary.edit.save", "Save").on_click(cx.listener(|this, _, _, cx| this.save_editing_item(cx))))
+                .child(native_button("meeting.summary.edit.save", "Save").on_click(cx.listener(|this, _, _, cx| this.save_editing_item(cx))))
                 .into_any_element();
         }
         let text = if ai_shown { item.ai_text.clone() } else { item.text.clone() };
@@ -454,7 +482,7 @@ impl NotetakerPage {
                 this.begin_item_edit(&open_edit, f, open_edit.text.clone(), w, cx);
             }
         })).child(text_el);
-        let mut controls = h_flex();
+        let mut controls = h_flex().gap(px(8.)).items_center();
         if edit_field.is_some() || !item.overlays.is_empty() {
             let label = if action { "Edit action item" } else { "Edit item" };
             let trigger = menu_trigger(sid(format!("meeting.summary.editMenu.{}.{}", item.kind, item.ordinal)), label, "ellipsis", 11., 20., p.muted);
@@ -462,7 +490,7 @@ impl NotetakerPage {
             controls = controls.child(trigger.dropdown_menu(move |menu, w, cx| item_menu(menu, &page, &it, ai_shown, &choices, w, cx)));
         }
         if let Some(s) = item.sources.first().cloned() {
-            controls = controls.child(plain_button(sid(format!("meeting.summary.source.{}.{}", item.kind, item.ordinal)), "View source").tooltip("View source").on_click(cx.listener(move |this, _, _, cx| this.view_source(&s, cx))).content(div().size(px(20.)).flex().items_center().justify_center().child(icon("arrow.up.right.square", 11., p.muted))));
+            controls = controls.child(plain_button(sid(format!("meeting.summary.source.{}.{}", item.kind, item.ordinal)), "View source").tooltip("View source").on_click(cx.listener(move |this, _, _, cx| this.view_source(&s, cx))).content(icon("arrow.up.right.square", 11., p.muted)));
         }
         let controls = hover_revealed(group.clone(), popover, div()).relative().child(controls).when(popover, |d| {
             let it = item.clone();
@@ -477,8 +505,6 @@ impl NotetakerPage {
         if !action {
             return h_flex().id(row_id).group(group).w_full().items_start().gap(px(8.)).pl(px(6.)).child(t("•").size(15.)).child(div().flex_1().min_w_0().child(body)).child(controls).into_any_element();
         }
-        let status_item = item.clone();
-        let completed = item.status == "completed";
         let owner = if ai_shown { item.ai_owner.clone() } else { item.owner.clone() };
         let due_date = if ai_shown { item.ai_due_date.clone() } else { item.due_date.clone() };
         let mut chips = h_flex().gap(px(8.)).child(self.owner_chip(item, owner, cx));
@@ -495,15 +521,7 @@ impl NotetakerPage {
             .items_start()
             .gap(px(8.))
             .py(px(3.))
-            .child(plain_button(sid(format!("meeting.summary.status.{}", item.ordinal)), if done { "Mark open" } else { "Mark completed" }).on_click(cx.listener(move |this, _, _, cx| {
-                let next = if status_item.status == "open" { "completed" } else { "open" };
-                this.set_item(&status_item, "status", next, Some("open".into()), cx);
-            })).content(div().w(px(15.)).pt(px(3.)).child(if completed {
-                // ponytail: the Kit icon set has no filled check, so the fill is drawn here.
-                div().size(px(13.)).rounded_full().bg(p.success).flex().items_center().justify_center().child(icon("checkmark", 9., gpui::white())).into_any_element()
-            } else {
-                icon("circle", 13., p.muted).into_any_element()
-            })))
+            .child(status_button)
             .child(v_flex().flex_1().min_w_0().gap(px(5.)).child(body).child(chips))
             .child(controls)
             .into_any_element()
@@ -517,7 +535,7 @@ impl NotetakerPage {
             .gap(px(8.))
             .child(t("Owner name").font(11., 600.))
             .child(Input::new(&self.summary.item_input).aria_label("Name").accessibility_id("meeting.summary.owner.name"))
-            .child(prototype_button("meeting.summary.owner.save", "Save").disabled(blank).on_click(cx.listener(|this, _, _, cx| this.save_editing_item(cx))))
+            .child(h_flex().w_full().justify_end().child(native_button("meeting.summary.owner.save", "Save").disabled(blank).on_click(cx.listener(|this, _, _, cx| this.save_editing_item(cx)))))
     }
 
     /// `Pick date…`: the graphical date picker.
@@ -535,9 +553,9 @@ impl NotetakerPage {
                 h_flex()
                     .w_full()
                     .px(px(12.))
-                    .child(plain_button("meeting.summary.due.popover.clear", "Clear").on_click(cx.listener(move |this, _, _, cx| this.set_due(&clear, None, cx))).content(t("Clear").a11y_hidden()))
+                    .child(native_button("meeting.summary.due.popover.clear", "Clear").on_click(cx.listener(move |this, _, _, cx| this.set_due(&clear, None, cx))))
                     .child(div().flex_1())
-                    .child(prototype_button("meeting.summary.due.save", "Save").on_click(cx.listener(move |this, _, _, cx| {
+                    .child(native_button("meeting.summary.due.save", "Save").on_click(cx.listener(move |this, _, _, cx| {
                         let picked = calendar_text(&this.summary.due.read(cx).date());
                         this.set_due(&save, picked.as_deref(), cx);
                     }))),
@@ -551,12 +569,15 @@ impl NotetakerPage {
             Owner::Participant(name, color, local) => chip.gap(px(6.)).bg(p.button).child(div().size(px(8.)).rounded_full().bg(speaker_dot(color, cx))).child(t(if local { "You".to_string() } else { name }).size(11.).swift_lines()).into_any_element(),
             Owner::Mentioned(name, known) => {
                 let it = item.clone();
-                let ai = owner_json(&item.ai_owner);
+                let ai = owner_text(&item.ai_owner);
+                // `acceptSuggestion`: the meeting speaker linked to that profile, else the profile.
+                let roots = self.summary.roots.clone();
                 h_flex()
-                    .gap(px(4.))
+                    .gap(px(6.))
                     .child(chip.border_1().border_color(p.line).child(v_flex().gap(px(1.)).child(t(name).size(11.)).child(t("mentioned").size(9.).color(p.muted))))
                     .when_some(known, |d, (id, known_name)| {
-                        d.child(t(format!("might be {known_name}?")).size(9.).color(p.muted)).child(plain_button("meeting.summary.owner.accept", "Accept").on_click(cx.listener(move |this, _, _, cx| this.set_item(&it, "owner", &owner_value_participant(&id), Some(ai.clone()), cx))).content(div().h(px(19.)).px(px(9.)).flex().items_center().rounded(px(5.)).bg(p.button).child(t("Accept").size(12.).color(p.muted).a11y_hidden())))
+                        let root = roots.iter().find(|r| r.identity.as_ref().and_then(|i| i.known_id.as_deref()) == Some(id.as_str())).map_or(id.clone(), |r| r.id.clone());
+                        d.child(h_flex().gap(px(4.)).child(t(format!("might be {known_name}?")).size(9.).color(p.muted)).child(plain_button("meeting.summary.owner.accept", "Accept").on_click(cx.listener(move |this, _, _, cx| this.set_item(&it, "owner", &owner_value_participant(&root), Some(ai.clone()), cx))).content(div().h(px(19.)).px(px(9.)).flex().items_center().rounded(px(5.)).bg(p.button).child(t("Accept").size(12.).color(p.muted).a11y_hidden()))))
                     })
                     .into_any_element()
             }
@@ -582,13 +603,13 @@ fn item_menu(menu: PopupMenu, page: &WeakEntity<NotetakerPage>, item: &Item, ai_
                 let page3 = page2.clone();
                 menu = menu.item(
                     PopupMenuItem::element(move |_, cx| h_flex().gap(px(6.)).child(div().size(px(8.)).rounded_full().bg(speaker_dot(color, cx))).child(t(name.clone()).size(13.)))
-                        .on_click(act(&page3, move |this, _, cx| this.set_item(&it2, "owner", &owner_value_participant(&id), Some(owner_json(&it2.ai_owner)), cx))),
+                        .on_click(act(&page3, move |this, _, cx| this.set_item(&it2, "owner", &owner_value_participant(&id), Some(owner_text(&it2.ai_owner)), cx))),
                 );
             }
             let (other, none) = (it.clone(), it.clone());
             menu.separator()
                 .item(menu_entry("Someone else…").on_click(act(&page2, move |this, w, cx| this.begin_item_edit(&other, "owner", String::new(), w, cx))))
-                .item(menu_entry("No owner").on_click(act(&page2, move |this, _, cx| this.set_item(&none, "owner", OWNER_VALUE_NONE, Some(owner_json(&none.ai_owner)), cx))))
+                .item(menu_entry("No owner").on_click(act(&page2, move |this, _, cx| this.set_item(&none, "owner", OWNER_VALUE_NONE, Some(owner_text(&none.ai_owner)), cx))))
         });
         let (page2, it) = (page.clone(), item.clone());
         menu = menu.submenu(menu_title("Due date"), window, cx, move |menu, _, _| {
@@ -603,11 +624,14 @@ fn item_menu(menu: PopupMenu, page: &WeakEntity<NotetakerPage>, item: &Item, ai_
         });
         let it = item.clone();
         let dismissed = it.status == "dismissed";
-        menu = menu.item(menu_entry(if dismissed { "Reopen" } else { "Dismiss" }).on_click(act(page, move |this, _, cx| this.set_item(&it, "status", if dismissed { "open" } else { "dismissed" }, Some("open".into()), cx))));
+        menu = menu.item(menu_entry(if dismissed { "Reopen" } else { "Dismiss" }).on_click(act(page, move |this, _, cx| this.set_item(&it, "status", if dismissed { "open" } else { "dismissed" }, Some(it.status.clone()), cx))));
     }
     if !item.overlays.is_empty() {
         let id = item.id.clone();
-        menu = menu.separator().item(menu_entry(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(page, move |this, _, cx| this.toggle_ai(&id, cx))));
+        if editable_field(&item.kind).is_some() {
+            menu = menu.separator();
+        }
+        menu = menu.item(menu_entry(if ai_shown { "Hide AI value" } else { "Show AI value" }).on_click(act(page, move |this, _, cx| this.toggle_ai(&id, cx))));
         let mut overlays = item.overlays.clone();
         overlays.sort();
         for (field, overlay) in overlays {
@@ -619,7 +643,7 @@ fn item_menu(menu: PopupMenu, page: &WeakEntity<NotetakerPage>, item: &Item, ai_
             };
             menu = menu.item(menu_entry(format!("Remove {name} edit")).on_click(act(page, move |this, _, cx| {
                 let overlay = overlay.clone();
-                this.write(cx, move |db, _| remove_overlay(db, &overlay));
+                this.remove_quietly(cx, move |db, _| remove_overlay(db, &overlay));
             })));
         }
     }
@@ -637,9 +661,7 @@ fn editable_field(kind: &str) -> Option<&'static str> {
         _ => None,
     }
 }
-fn owner_json(owner: &Owner) -> String {
-    match owner {
-        Owner::Participant(name, ..) | Owner::Mentioned(name, _) => owner_value_mentioned(name),
-        Owner::Unresolved(_) => OWNER_VALUE_NONE.to_string(),
-    }
+/// `ownerText`: the overlay's AI snapshot is the owner's visible text.
+fn owner_text(owner: &Owner) -> String {
+    owner.text().to_string()
 }

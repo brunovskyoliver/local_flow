@@ -4358,6 +4358,45 @@ mod tests {
         assert_eq!(read_model(&db, SEED_FULL).unwrap().unwrap().summary, edited.ai_summary);
     }
 
+    // parity: SUM-033 SUM-054 SUM-055
+    #[test]
+    fn report_lists_title_date_and_blockers_without_dismissed_items() {
+        let db = db();
+        let model = read_model(&db, SEED_FULL).unwrap().unwrap();
+        let gone = &model.action_items[1];
+        set_overlay(&db, SEED_FULL, OverlayTarget::Item(&gone.id), "status", "dismissed", Some("open"), Some(&gone.ai_text), "", 5).unwrap();
+        let report = report_text(&read_model(&db, SEED_FULL).unwrap().unwrap(), "T", "1 Sep 2026");
+        let lines: Vec<&str> = report.lines().collect();
+        assert_eq!(&lines[..2], ["T", "1 Sep 2026"], "{report}");
+        assert!(lines.contains(&"Summary"), "{report}");
+        assert!(lines.contains(&"Risks / blockers"), "{report}");
+        assert!(!lines.contains(&"Risks"), "the report has its own heading");
+        assert!(!report.contains(&gone.text), "dismissed items are omitted");
+        for topic in &model.topics {
+            assert!(lines.contains(&topic.title.as_str()), "{report}");
+        }
+    }
+
+    // parity: SUM-086
+    #[test]
+    fn read_model_orders_by_stored_ordinals_and_keeps_snapshots() {
+        let db = db();
+        let before = read_model(&db, SEED_FULL).unwrap().unwrap();
+        db.conn.execute_batch("UPDATE analysis_topics SET ordinal=100-ordinal; UPDATE analysis_items SET ordinal=100-ordinal WHERE kind='action_item';").unwrap();
+        let after = read_model(&db, SEED_FULL).unwrap().unwrap();
+        let titles = |m: &ReadModel| m.topics.iter().map(|t| t.title.clone()).collect::<Vec<_>>();
+        let tasks = |m: &ReadModel| m.action_items.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
+        assert_eq!(titles(&after), titles(&before).into_iter().rev().collect::<Vec<_>>());
+        assert_eq!(tasks(&after), tasks(&before).into_iter().rev().collect::<Vec<_>>());
+        let item = &before.action_items[0];
+        set_overlay(&db, SEED_FULL, OverlayTarget::Item(&item.id), "status", "completed", Some("open"), Some("snap"), "", 5).unwrap();
+        set_overlay(&db, SEED_FULL, OverlayTarget::Item(&item.id), "task_text", "Edited.", Some("x"), Some("y"), "", 5).unwrap();
+        db.conn.execute_batch("UPDATE analysis_overlays SET orphaned_at=1, item_id=NULL, created_at=2 WHERE field='status'; UPDATE analysis_overlays SET orphaned_at=1, item_id=NULL, created_at=1 WHERE field='task_text';").unwrap();
+        let edits = read_model(&db, SEED_FULL).unwrap().unwrap().previous_edits;
+        assert_eq!(edits.iter().map(|e| e.field.as_str()).collect::<Vec<_>>(), ["task_text", "status"], "created_at order");
+        assert_eq!((edits[1].ai_value.as_deref(), edits[1].item_text.as_deref()), (Some("open"), Some("snap")));
+    }
+
     // parity: SUM-084
     #[test]
     fn mentions_prefer_full_names_and_endings() {
