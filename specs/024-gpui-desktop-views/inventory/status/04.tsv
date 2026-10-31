@@ -1,35 +1,35 @@
-DICT-001	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-001	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-002	auto	test:compact_narrows_the_search
-DICT-003	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-004	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-005	auto	test:the_three_pages_are_unavailable_until_the_stores_exist
+DICT-003	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-004	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-005	auto	test:the_dictionary_is_unavailable_until_the_stores_exist
 DICT-006	auto	test:coming_back_to_the_page_reloads
-DICT-007	service	service:learner events do not exist in Rust yet; reload runs on page load only; Mac services work for Feature 024 after the view port
-DICT-008	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png
-DICT-009	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-007	auto	test:a_store_change_elsewhere_reloads_while_shown
+DICT-008	live	test:page_shows_title_banner_suggestions_and_rows ; live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-009	live	test:page_shows_title_banner_suggestions_and_rows ; live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-010	auto	test:add_a_word_through_the_sheet
 DICT-011	auto	test:full_dictionary_blocks_adding
-DICT-012	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-013	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-014	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png
-DICT-015	auto	test:filter_tabs_narrow_the_list ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-012	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-013	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-014	live	test:page_shows_title_banner_suggestions_and_rows ; live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-015	auto	test:a_filter_tab_is_label_gap_and_underline ; test:filter_tabs_narrow_the_list ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-016	auto	test:filter_tabs_narrow_the_list
 DICT-017	auto	test:page_shows_title_banner_suggestions_and_rows
 DICT-018	auto	test:filter_tabs_narrow_the_list
 DICT-019	auto	test:filter_tabs_narrow_the_list
 DICT-020	auto	test:filter_tabs_narrow_the_list
-DICT-021	auto	test:search_filters_and_reports_no_matches ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-021	auto	test:the_search_field_is_150_wide_8_before_the_icon_and_90_when_compact ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-022	auto	test:search_filters_and_reports_no_matches
-DICT-023	auto	test:search_filters_and_reports_no_matches
+DICT-023	auto	test:the_search_field_is_150_wide_8_before_the_icon_and_90_when_compact
 DICT-024	auto	test:search_filters_and_reports_no_matches
 DICT-025	auto	test:folding_key_ids_and_term_validation
-DICT-026	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-027	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png
-DICT-028	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-029	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-026	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-027	live	test:page_shows_title_banner_suggestions_and_rows ; live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-028	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-029	live	test:page_shows_title_banner_suggestions_and_rows ; live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-030	auto	test:full_dictionary_blocks_adding
 DICT-031	auto	test:full_dictionary_blocks_adding
-DICT-032	auto	test:banner_dismissal_persists ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-032	auto	test:the_banner_dismiss_sits_12_in_from_the_trailing_edge ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-033	auto	test:banner_dismissal_persists
 DICT-034	auto	test:banner_dismissal_persists
 DICT-035	auto	test:empty_and_error_states
@@ -38,48 +38,48 @@ DICT-037	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-038	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-039	auto	test:hash_serialization_matches_swift_bytes
 DICT-040	auto	test:non_ascii_terms_sort_after_z
-DICT-041	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-041	live	test:page_shows_title_banner_suggestions_and_rows ; live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-042	auto	test:filter_tabs_narrow_the_list
-DICT-043	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-044	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-045	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-043	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-044	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-045	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-046	auto	test:suggestion_add_fills_the_sheet_and_dismiss_persists
 DICT-047	auto	test:saving_turns_off_every_write
-DICT-048	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-048	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-049	auto	test:suggestion_add_fills_the_sheet_and_dismiss_persists
 DICT-050	auto	test:suggestions_are_mined_like_swift
 DICT-051	auto	test:suggestions_are_mined_like_swift
-DICT-052	service	service:NSSpellChecker language filter off, no Services method; Mac services work for Feature 024 after the view port ; test:suggestions_are_mined_like_swift
+DICT-052	service	test:suggestions_are_mined_like_swift ; service:NSSpellChecker language filter off, no Services method; Mac services work for Feature 024 after the view port
 DICT-053	auto	test:suggestions_are_mined_like_swift
 DICT-054	auto	test:suggestions_are_mined_like_swift
 DICT-055	auto	test:suggestions_are_mined_like_swift
 DICT-056	auto	test:suggestions_are_mined_like_swift
 DICT-057	auto	test:unreadable_suggestions_stay_quiet
-DICT-058	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-058	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-059	auto	test:empty_and_error_states
 DICT-060	auto	test:full_dictionary_blocks_adding
 DICT-061	auto	test:search_filters_and_reports_no_matches
 DICT-062	auto	test:before_the_load_add_stays_off
-DICT-063	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-064	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png
-DICT-065	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-066	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-063	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-064	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-065	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-066	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-067	auto	test:folding_key_ids_and_term_validation
-DICT-068	live	live:audit/mac/dictionary/learned-light-rust.png ; live:audit/mac/dictionary/learned-dark-rust.png
+DICT-068	live	test:learned_rows_show_their_marks ; live:audit/mac/dictionary/learned-light-rust.png ; live:audit/mac/dictionary/learned-dark-rust.png ; live:audit/mac/dictionary/learned-light-ref.png ; live:audit/mac/dictionary/learned-dark-ref.png
 DICT-069	auto	test:seed_loads_and_restore_retrusts
-DICT-070	live	live:audit/mac/dictionary/learned-light-rust.png ; live:audit/mac/dictionary/learned-dark-rust.png
-DICT-071	auto	test:page_shows_title_banner_suggestions_and_rows
-DICT-072	live	live:audit/mac/dictionary/default-dark-rust.png
-DICT-073	auto	test:usage_formula_and_trust_policy ; live:audit/mac/dictionary/default-dark-rust.png
-DICT-074	live	live:audit/mac/dictionary/default-dark-rust.png
+DICT-070	live	test:learned_rows_show_their_marks ; live:audit/mac/dictionary/learned-light-rust.png ; live:audit/mac/dictionary/learned-dark-rust.png ; live:audit/mac/dictionary/learned-light-ref.png ; live:audit/mac/dictionary/learned-dark-ref.png
+DICT-071	auto	test:page_shows_title_banner_suggestions_and_rows ; test:the_off_badge_has_its_padding
+DICT-072	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-073	auto	test:usage_formula_and_trust_policy ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-074	live	live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-075	auto	test:usage_formula_and_trust_policy
 DICT-076	auto	test:usage_formula_and_trust_policy
-DICT-077	auto	test:restore_clears_a_retired_alias ; live:audit/mac/dictionary/default-dark-rust.png
+DICT-077	auto	test:restore_clears_a_retired_alias ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-dark-ref.png
 DICT-078	auto	test:seed_loads_and_restore_retrusts
 DICT-079	auto	test:seed_loads_and_restore_retrusts
 DICT-080	auto	test:restore_clears_a_retired_alias
 DICT-081	auto	test:usage_formula_and_trust_policy
-DICT-082	auto	test:disable_and_delete_write_through
+DICT-082	auto	test:disable_and_delete_write_through ; test:row_actions_are_4_apart_and_right_aligned
 DICT-083	auto	test:tab_reaches_row_actions_and_keeps_them_visible
 DICT-084	auto	test:edit_opens_filled_and_focuses_the_word
 DICT-085	auto	test:disable_and_delete_write_through
@@ -89,23 +89,23 @@ DICT-088	auto	test:the_row_menu_runs_the_row_actions
 DICT-089	auto	test:disable_and_delete_write_through
 DICT-090	auto	test:disable_and_delete_write_through
 DICT-091	auto	test:disable_and_delete_write_through
-DICT-092	live	live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png
-DICT-093	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-dark-rust.png
-DICT-094	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-092	live	test:status_stays_below_the_list ; live:audit/mac/dictionary/default-light-rust.png ; live:audit/mac/dictionary/default-dark-rust.png ; live:audit/mac/dictionary/default-light-ref.png ; live:audit/mac/dictionary/default-dark-ref.png
+DICT-093	live	test:add_a_word_through_the_sheet ; live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-dark-rust.png ; live:audit/mac/dictionary/add-light-ref.png ; live:audit/mac/dictionary/add-dark-ref.png
+DICT-094	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
 DICT-095	auto	test:edit_opens_filled_and_focuses_the_word
 DICT-096	auto	test:switching_mode_moves_focus_and_fields
-DICT-097	live	live:audit/mac/dictionary/add-light-rust.png
-DICT-098	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-097	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
+DICT-098	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
 DICT-099	auto	test:sheet_modes_alias_limit_and_cancel
-DICT-100	live	live:audit/mac/dictionary/add-light-rust.png
+DICT-100	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
 DICT-101	auto	test:enabled_switch_is_written_on_save
-DICT-102	live	live:audit/mac/dictionary/add-light-rust.png
-DICT-103	live	live:audit/mac/dictionary/word-light-rust.png ; live:audit/mac/dictionary/word-dark-rust.png
-DICT-104	live	live:audit/mac/dictionary/add-light-rust.png
-DICT-105	live	live:audit/mac/dictionary/misspelling-light-rust.png ; live:audit/mac/dictionary/misspelling-dark-rust.png
+DICT-102	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
+DICT-103	live	test:edit_opens_filled_and_focuses_the_word ; test:switching_mode_moves_focus_and_fields ; live:audit/mac/dictionary/word-light-rust.png ; live:audit/mac/dictionary/word-dark-rust.png ; live:audit/mac/dictionary/word-light-ref.png ; live:audit/mac/dictionary/word-dark-ref.png
+DICT-104	live	live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
+DICT-105	live	test:switching_mode_moves_focus_and_fields ; live:audit/mac/dictionary/misspelling-light-rust.png ; live:audit/mac/dictionary/misspelling-dark-rust.png ; live:audit/mac/dictionary/misspelling-light-ref.png ; live:audit/mac/dictionary/misspelling-dark-ref.png
 DICT-106	auto	test:sheet_shows_one_error_and_edits_clear_them
 DICT-107	auto	test:sheet_modes_alias_limit_and_cancel
-DICT-108	auto	test:misspelling_fields_add_remove_and_report_duplicates ; live:audit/mac/dictionary/add-light-rust.png
+DICT-108	auto	test:misspelling_fields_add_remove_and_report_duplicates ; live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
 DICT-109	auto	test:misspelling_fields_add_remove_and_report_duplicates
 DICT-110	auto	test:sheet_modes_alias_limit_and_cancel
 DICT-111	auto	test:misspelling_fields_add_remove_and_report_duplicates
@@ -115,11 +115,11 @@ DICT-114	auto	test:misspelling_fields_add_remove_and_report_duplicates
 DICT-115	auto	test:sheet_shows_a_validation_error_and_stays_open
 DICT-116	auto	test:sheet_shows_one_error_and_edits_clear_them
 DICT-117	auto	test:sheet_shows_a_validation_error_and_stays_open
-DICT-118	auto	test:sheet_modes_alias_limit_and_cancel ; live:audit/mac/dictionary/add-light-rust.png
+DICT-118	auto	test:sheet_modes_alias_limit_and_cancel ; live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
 DICT-119	auto	test:sheet_modes_alias_limit_and_cancel
-DICT-120	auto	test:sheet_shows_a_validation_error_and_stays_open ; live:audit/mac/dictionary/add-light-rust.png
+DICT-120	auto	test:sheet_rows_keep_their_spacing ; live:audit/mac/dictionary/add-light-rust.png ; live:audit/mac/dictionary/add-light-ref.png
 DICT-121	auto	test:add_a_word_through_the_sheet
-DICT-122	auto	test:add_a_word_through_the_sheet
+DICT-122	auto	test:a_repeated_misspelling_blocks_the_save ; test:add_a_word_through_the_sheet
 DICT-123	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-124	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-125	auto	test:write_transaction_revisions_usage_and_staleness
@@ -130,7 +130,7 @@ DICT-129	auto	test:folding_key_ids_and_term_validation
 DICT-130	auto	test:folding_key_ids_and_term_validation
 DICT-131	auto	test:folding_key_ids_and_term_validation
 DICT-132	auto	test:folding_key_ids_and_term_validation
-DICT-133	auto	test:folding_key_ids_and_term_validation ; test:sheet_shows_a_validation_error_and_stays_open
+DICT-133	auto	test:folding_key_ids_and_term_validation
 DICT-134	auto	test:folding_key_ids_and_term_validation
 DICT-135	auto	test:folding_key_ids_and_term_validation
 DICT-136	auto	test:folding_key_ids_and_term_validation
@@ -151,141 +151,141 @@ DICT-150	auto	test:suggestions_are_mined_like_swift
 DICT-151	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-152	auto	test:write_transaction_revisions_usage_and_staleness
 DICT-153	recorded	recorded:Swift defect or note, kept as Swift behaves
-DICT-154	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:write_transaction_revisions_usage_and_staleness
+DICT-154	recorded	test:write_transaction_revisions_usage_and_staleness ; recorded:Swift defect or note, kept as Swift behaves
 DICT-155	recorded	recorded:Swift defect or note, kept as Swift behaves
 DICT-156	recorded	recorded:Swift defect or note, kept as Swift behaves
-DICT-157	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:misspelling_fields_add_remove_and_report_duplicates
+DICT-157	recorded	test:misspelling_fields_add_remove_and_report_duplicates ; recorded:Swift defect or note, kept as Swift behaves
 DICT-158	recorded	recorded:Swift defect or note, kept as Swift behaves
 DICT-159	recorded	recorded:Swift defect or note, kept as Swift behaves
-DICT-160	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:empty_and_error_states
+DICT-160	recorded	test:empty_and_error_states ; recorded:Swift defect or note, kept as Swift behaves
 DICT-161	recorded	recorded:Swift defect or note, kept as Swift behaves
 DICT-162	recorded	recorded:Swift defect or note, kept as Swift behaves
-INS-001	live	live:audit/mac/insights/usage-light-rust.png
-INS-002	auto	test:the_three_pages_are_unavailable_until_the_stores_exist
-INS-003	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
-INS-004	live	live:audit/mac/insights/usage-light-rust.png
-INS-005	live	live:audit/mac/insights/usage-light-rust.png
-INS-006	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
-INS-007	live	live:audit/mac/insights/usage-light-rust.png
+INS-001	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-002	auto	test:insights_are_unavailable_until_the_stores_exist
+INS-003	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
+INS-004	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-005	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-006	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
+INS-007	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-008	auto	test:voice_tab_shows_stats_and_hours
 INS-009	auto	test:load_failure_shows_the_error
-INS-010	service	service:historyChanged is replaced by a once-a-second signature check; dictation events arrive with Mac services work for Feature 024 after the view port
+INS-010	auto	test:history_change_refreshes_only_the_selected_page
 INS-011	auto	test:before_the_first_result_only_title_and_tabs_show
 INS-012	auto	test:load_failure_shows_the_error
 INS-013	auto	test:empty_store_shows_zero_values
-INS-014	live	live:audit/mac/insights/usage-light-rust.png
-INS-015	live	live:audit/mac/insights/usage-light-rust.png
+INS-014	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-015	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-016	auto	test:voice_tab_shows_stats_and_hours
-INS-017	live	live:audit/mac/insights/usage-light-rust.png
-INS-018	live	live:audit/mac/insights/usage-light-rust.png
-INS-019	live	live:audit/mac/insights/usage-light-rust.png
-INS-020	live	live:audit/mac/insights/usage-light-rust.png
-INS-021	live	live:audit/mac/insights/usage-light-rust.png
-INS-022	live	live:audit/mac/insights/usage-light-rust.png
-INS-023	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
+INS-017	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-018	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-019	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-020	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-021	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-022	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-023	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
 INS-024	auto	test:a_note_tip_sits_8_above_its_target_and_centered
 INS-025	auto	test:aggregates_over_the_seed
 INS-026	auto	test:aggregates_over_the_seed
-INS-027	live	live:audit/mac/insights/usage-light-rust.png
-INS-028	live	live:audit/mac/insights/usage-light-rust.png
-INS-029	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
-INS-030	auto	test:formulas ; live:audit/mac/insights/usage-light-rust.png
-INS-031	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
-INS-032	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
+INS-027	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-028	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-029	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
+INS-030	auto	test:formulas ; test:versus_typing_uses_the_locale_decimal ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-031	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
+INS-032	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
 INS-033	auto	test:fixes_tips_read_as_in_swift
 INS-034	auto	test:fixes_tips_read_as_in_swift
 INS-035	auto	test:aggregates_over_the_seed
 INS-036	auto	test:aggregates_over_the_seed
 INS-037	auto	test:aggregates_over_the_seed
-INS-038	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
-INS-039	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
+INS-038	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
+INS-039	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
 INS-040	auto	test:aggregates_over_the_seed
 INS-041	auto	test:aggregates_over_the_seed
 INS-042	auto	test:aggregates_over_the_seed
-INS-043	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
+INS-043	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
 INS-044	auto	test:aggregates_over_the_seed
-INS-045	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
-INS-046	live	live:audit/mac/insights/usage-light-rust.png
-INS-047	live	live:audit/mac/insights/usage-light-rust.png
+INS-045	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
+INS-046	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-047	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-048	auto	test:personal_messages_has_its_bar
-INS-049	live	live:audit/mac/insights/usage-light-rust.png
-INS-050	live	live:audit/mac/insights/usage-light-rust.png
-INS-051	live	live:audit/mac/insights/usage-tall-light-rust.png ; live:audit/mac/insights/usage-tall-dark-rust.png
+INS-049	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-050	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-051	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-tall-light-rust.png ; live:audit/mac/insights/usage-tall-dark-rust.png ; live:audit/mac/insights/usage-tall-light-ref.png ; live:audit/mac/insights/usage-tall-dark-ref.png
 INS-052	auto	test:formulas
 INS-053	auto	test:formulas
 INS-054	auto	test:formulas
 INS-055	auto	test:formulas
 INS-056	auto	test:formulas
 INS-057	auto	test:aggregates_over_the_seed
-INS-058	live	live:audit/mac/insights/usage-light-rust.png
+INS-058	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-059	auto	test:aggregates_over_the_seed
-INS-060	live	live:audit/mac/insights/usage-light-rust.png
+INS-060	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-061	service	service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port
 INS-062	auto	test:aggregates_over_the_seed
-INS-063	service	service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port ; test:formulas
-INS-064	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
+INS-063	service	test:formulas ; service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port
+INS-064	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
 INS-065	auto	test:formulas
 INS-066	auto	test:aggregates_over_the_seed
-INS-067	live	live:audit/mac/insights/usage-light-rust.png
-INS-068	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png
-INS-069	live	live:audit/mac/insights/usage-light-rust.png
+INS-067	live	test:heat_cells_are_the_dots_swift_renders ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-068	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
+INS-069	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-070	auto	test:formulas
-INS-071	auto	test:chevrons_page_the_heat_map ; live:audit/mac/insights/usage-light-rust.png
+INS-071	auto	test:chevrons_are_18_square_and_later_sits_at_the_trailing_edge ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-072	auto	test:chevrons_page_the_heat_map
 INS-073	auto	test:chevrons_page_the_heat_map
-INS-074	auto	test:chevrons_page_the_heat_map ; live:audit/mac/insights/usage-light-rust.png
+INS-074	auto	test:chevrons_are_18_square_and_later_sits_at_the_trailing_edge ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-075	auto	test:chevrons_page_the_heat_map
 INS-076	auto	test:chevrons_page_the_heat_map
-INS-077	live	live:audit/mac/insights/usage-light-rust.png
-INS-078	live	live:audit/mac/insights/usage-light-rust.png
-INS-079	live	live:audit/mac/insights/usage-light-rust.png
-INS-080	auto	test:formulas ; live:audit/mac/insights/usage-light-rust.png
+INS-077	live	test:heat_cells_are_the_dots_swift_renders ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-078	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-079	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
+INS-080	auto	test:formulas ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-081	auto	test:formulas
-INS-082	live	live:audit/mac/insights/usage-light-rust.png
+INS-082	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-083	auto	test:a_day_tip_is_a_250_card
-INS-084	service	service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port ; test:hovering_a_day_shows_its_card
+INS-084	service	test:hovering_a_day_shows_its_card ; service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port
 INS-085	auto	test:aggregates_over_the_seed
 INS-086	auto	test:a_note_tip_sits_8_above_its_target_and_centered
 INS-087	auto	test:a_note_tip_sits_8_above_its_target_and_centered
 INS-088	auto	test:formulas
-INS-089	live	live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png
-INS-090	live	live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png
-INS-091	auto	test:formulas ; live:audit/mac/insights/voice-dark-rust.png
-INS-092	live	live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png
+INS-089	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png ; live:audit/mac/insights/voice-tall-light-ref.png ; live:audit/mac/insights/voice-tall-dark-ref.png
+INS-090	live	test:voice_tab_shows_stats_and_hours ; live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png ; live:audit/mac/insights/voice-tall-light-ref.png ; live:audit/mac/insights/voice-tall-dark-ref.png
+INS-091	auto	test:formulas ; live:audit/mac/insights/voice-dark-rust.png ; live:audit/mac/insights/voice-dark-ref.png
+INS-092	live	test:voice_tab_shows_stats_and_hours ; live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png ; live:audit/mac/insights/voice-tall-light-ref.png ; live:audit/mac/insights/voice-tall-dark-ref.png
 INS-093	auto	test:aggregates_over_the_seed
-INS-094	live	live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png
+INS-094	live	test:voice_tab_shows_stats_and_hours ; live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png ; live:audit/mac/insights/voice-tall-light-ref.png ; live:audit/mac/insights/voice-tall-dark-ref.png
 INS-095	auto	test:aggregates_over_the_seed
-INS-096	live	live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png
-INS-097	live	live:audit/mac/insights/voice-dark-rust.png
-INS-098	live	live:audit/mac/insights/voice-dark-rust.png
-INS-099	live	live:audit/mac/insights/voice-dark-rust.png
+INS-096	live	test:voice_tab_shows_stats_and_hours ; live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png ; live:audit/mac/insights/voice-tall-light-ref.png ; live:audit/mac/insights/voice-tall-dark-ref.png
+INS-097	live	live:audit/mac/insights/voice-dark-rust.png ; live:audit/mac/insights/voice-dark-ref.png
+INS-098	live	live:audit/mac/insights/voice-dark-rust.png ; live:audit/mac/insights/voice-dark-ref.png
+INS-099	live	live:audit/mac/insights/voice-dark-rust.png ; live:audit/mac/insights/voice-dark-ref.png
 INS-100	auto	test:voice_tab_shows_stats_and_hours
 INS-101	auto	test:aggregates_over_the_seed
-INS-102	live	live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png
+INS-102	live	test:voice_tab_shows_stats_and_hours ; live:audit/mac/insights/voice-tall-light-rust.png ; live:audit/mac/insights/voice-tall-dark-rust.png ; live:audit/mac/insights/voice-tall-light-ref.png ; live:audit/mac/insights/voice-tall-dark-ref.png
 INS-103	auto	test:voice_tab_shows_stats_and_hours
-INS-104	service	service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port ; test:voice_tab_shows_stats_and_hours
+INS-104	service	test:voice_tab_shows_stats_and_hours ; service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port
 INS-105	recorded	recorded:states an absence of shortcuts and menus
 INS-106	auto	test:aggregates_over_the_seed
-INS-107	recorded	recorded:Swift defect or note, kept as Swift behaves
+INS-107	auto	test:a_failed_insert_still_reads_as_delivered
 INS-108	recorded	recorded:Swift defect or note, kept as Swift behaves
 INS-109	recorded	recorded:Swift defect or note, kept as Swift behaves
 INS-110	recorded	recorded:Swift defect or note, kept as Swift behaves
 INS-111	recorded	recorded:Swift defect or note, kept as Swift behaves
-INS-112	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:formulas
+INS-112	recorded	test:formulas ; recorded:Swift defect or note, kept as Swift behaves
 INS-113	recorded	recorded:Swift defect or note, kept as Swift behaves
-INS-114	recorded	recorded:swift-note, cells collapse to dots in Swift; Rust matches ; test:heat_cells_are_the_dots_swift_renders
-HIST-001	live	live:audit/mac/history/default-dark-rust.png
+INS-114	recorded	test:heat_cells_are_the_dots_swift_renders ; recorded:swift-note, cells collapse to dots in Swift; Rust matches
+HIST-001	live	live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-dark-ref.png
 HIST-002	auto	test:sentinels_pin_and_first_load
-HIST-003	auto	test:the_three_pages_are_unavailable_until_the_stores_exist
+HIST-003	auto	test:transcriptions_are_unavailable_until_the_stores_exist
 HIST-004	auto	test:leaving_clears_detail_and_coming_back_reloads
 HIST-005	auto	test:leaving_clears_detail_and_coming_back_reloads
 HIST-006	auto	test:leaving_clears_detail_and_coming_back_reloads
 HIST-007	service	service:calendar and time zone notifications not in Services; Mac services work for Feature 024 after the view port
-HIST-008	live	live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png
-HIST-009	live	live:audit/mac/history/search-light-rust.png ; live:audit/mac/history/search-dark-rust.png
+HIST-008	live	test:list_groups_rows_by_day_with_labels ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
+HIST-009	live	test:search_filters_after_the_wait_and_reports_no_matches ; live:audit/mac/history/search-light-rust.png ; live:audit/mac/history/search-dark-rust.png ; live:audit/mac/history/search-light-ref.png ; live:audit/mac/history/search-dark-ref.png
 HIST-010	auto	test:search_filters_after_the_wait_and_reports_no_matches
 HIST-011	auto	test:cmd_f_opens_search_and_escape_closes_it
-HIST-012	live	live:audit/mac/history/search-light-rust.png ; live:audit/mac/history/search-dark-rust.png
+HIST-012	live	test:search_filters_after_the_wait_and_reports_no_matches ; live:audit/mac/history/search-light-rust.png ; live:audit/mac/history/search-dark-rust.png ; live:audit/mac/history/search-light-ref.png ; live:audit/mac/history/search-dark-ref.png
 HIST-013	auto	test:search_filters_after_the_wait_and_reports_no_matches
 HIST-014	auto	test:cmd_f_opens_search_and_escape_closes_it
 HIST-015	auto	test:blur_with_empty_text_closes_search
@@ -302,22 +302,22 @@ HIST-025	auto	test:sentinels_pin_and_first_load
 HIST-026	auto	test:sentinels_pin_and_first_load
 HIST-027	auto	test:empty_and_error_states
 HIST-028	auto	test:search_filters_after_the_wait_and_reports_no_matches
-HIST-029	auto	test:empty_and_error_states
+HIST-029	auto	test:the_error_row_has_its_top_padding
 HIST-030	auto	test:empty_and_error_states
 HIST-031	auto	test:empty_and_error_states
 HIST-032	auto	test:failed_delete_reports_and_keeps_the_row
-HIST-033	live	live:audit/mac/history/pending-dark-rust.png
-HIST-034	live	live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png
+HIST-033	live	live:audit/mac/history/pending-dark-rust.png ; rust-only:a waiting recording in Swift needs a live capture and microphone use is off limits
+HIST-034	live	test:list_groups_rows_by_day_with_labels ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
 HIST-035	auto	test:labels_and_day_groups
 HIST-036	auto	test:paging_search_and_the_resident_window
-HIST-037	live	live:audit/mac/history/default-dark-rust.png
+HIST-037	live	live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-dark-ref.png
 HIST-038	auto	test:only_rows_arriving_later_fade
-HIST-039	live	live:audit/mac/history/default-dark-rust.png
-HIST-040	not-run	not-run:hover fill needs a real pointer over the row; moving the owner's pointer is off limits and a synthetic move did not reach the audit shot
-HIST-041	live	live:audit/mac/history/default-dark-rust.png
-HIST-042	live	live:audit/mac/history/default-dark-rust.png
+HIST-039	live	live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-dark-ref.png
+HIST-040	auto	test:hovering_a_row_fills_it_and_leaving_clears_it
+HIST-041	live	live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-dark-ref.png
+HIST-042	live	live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-dark-ref.png
 HIST-043	auto	test:labels_and_day_groups
-HIST-044	live	live:audit/mac/history/default-dark-rust.png
+HIST-044	live	live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-dark-ref.png
 HIST-045	auto	test:labels_and_day_groups
 HIST-046	auto	test:labels_and_day_groups
 HIST-047	auto	test:row_text_selects_by_drag_and_copies
@@ -332,58 +332,58 @@ HIST-055	auto	test:more_button_and_menu_state_follow_the_row
 HIST-056	auto	test:the_row_menu_runs_the_row_actions
 HIST-057	auto	test:the_row_menu_runs_the_row_actions
 HIST-058	service	service:Accessibility insertion through Services insert_once, Unavailable until Mac services work for Feature 024 after the view port
-HIST-059	auto	test:details_show_status_stages_and_processing
+HIST-059	auto	test:details_show_status_stages_and_processing ; test:more_button_and_menu_state_follow_the_row
 HIST-060	auto	test:delete_asks_then_removes_the_row
-HIST-061	auto	test:delete_asks_then_removes_the_row ; live:audit/mac/history/delete-dark-rust.png
+HIST-061	auto	test:delete_asks_then_removes_the_row ; live:audit/mac/history/delete-dark-rust.png ; live:audit/mac/history/delete-dark-ref.png
 HIST-062	auto	test:delete_asks_then_removes_the_row ; test:delivery_rewrite_and_delete_writes
 HIST-063	auto	test:delivery_rewrite_and_delete_writes
-HIST-064	service	service:capacity reserve belongs to the dictation coordinator, Feature 025
+HIST-064	auto	test:deleting_while_full_reports_whether_there_is_room ; test:room_for_a_recording_follows_rows_bytes_and_disk
 HIST-065	auto	test:delete_asks_then_removes_the_row
 HIST-066	recorded	recorded:no audio player exists, nothing to run
 HIST-067	recorded	recorded:no edit action exists, nothing to run
-HIST-068	live	live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png
+HIST-068	live	test:pending_rows_save_failure_and_discard ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
 HIST-069	auto	test:pending_rows_save_failure_and_discard
 HIST-070	auto	test:waiting_dictations
-HIST-071	live	live:audit/mac/history/pending-dark-rust.png
-HIST-072	live	live:audit/mac/history/pending-dark-rust.png
-HIST-073	auto	test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png
-HIST-074	auto	test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png
+HIST-071	live	live:audit/mac/history/pending-dark-rust.png ; rust-only:a waiting recording in Swift needs a live capture and microphone use is off limits
+HIST-072	live	live:audit/mac/history/pending-dark-rust.png ; rust-only:a waiting recording in Swift needs a live capture and microphone use is off limits
+HIST-073	auto	test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png ; rust-only:a waiting recording in Swift needs a live capture and microphone use is off limits
+HIST-074	auto	test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png ; rust-only:a waiting recording in Swift needs a live capture and microphone use is off limits
 HIST-075	service	service:flowd remote channel retrier not in Rust; Mac services work for Feature 024 after the view port
-HIST-076	live	live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png
+HIST-076	live	test:pending_rows_save_failure_and_discard ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
 HIST-077	service	service:local speech model not reachable, button disabled; Mac services work for Feature 024 after the view port
 HIST-078	service	service:local speech model not reachable, button disabled; Mac services work for Feature 024 after the view port
-HIST-079	live	live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png
-HIST-080	service	service:Services choose_save_path returns Unavailable and the pending error shows; WAV writer tested in flow-core; Mac services work for Feature 024 after the view port ; test:waiting_dictations
-HIST-081	live	live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png
+HIST-079	live	test:pending_rows_save_failure_and_discard ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
+HIST-080	service	test:waiting_dictations ; service:Services choose_save_path returns Unavailable and the pending error shows; WAV writer tested in flow-core; Mac services work for Feature 024 after the view port
+HIST-081	live	test:pending_rows_save_failure_and_discard ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
 HIST-082	auto	test:pending_rows_save_failure_and_discard
 HIST-083	auto	test:waiting_dictations
 HIST-084	auto	test:pending_rows_save_failure_and_discard ; test:waiting_dictations
 HIST-085	auto	test:waiting_dictations
 HIST-086	auto	test:paging_search_and_the_resident_window
-HIST-087	auto	test:delivery_rewrite_and_delete_writes
+HIST-087	auto	test:rewrite_attempts_has_swifts_columns_and_rules
 HIST-088	auto	test:detail_decodes_and_lists_every_row
-HIST-089	live	live:audit/mac/history/detail-light-rust.png
-HIST-090	live	live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-dark-rust.png
+HIST-089	live	live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
+HIST-090	live	test:details_show_status_stages_and_processing ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-dark-rust.png ; live:audit/mac/history/detail-light-ref.png ; live:audit/mac/history/detail-dark-ref.png
 HIST-091	auto	test:details_show_status_stages_and_processing
 HIST-092	auto	test:detail_loading_error_retry_and_missing
 HIST-093	auto	test:detail_loading_error_retry_and_missing
 HIST-094	auto	test:detail_loading_error_retry_and_missing
 HIST-095	auto	test:detail_loading_error_retry_and_missing
 HIST-096	auto	test:detail_decodes_and_lists_every_row
-HIST-097	auto	test:row_text_selects_by_drag_and_copies ; test:segments_are_121_by_24
-HIST-098	auto	test:labels_and_day_groups ; live:audit/mac/history/detail-light-rust.png
+HIST-097	auto	test:detail_is_spaced_14_and_its_text_selects
+HIST-098	auto	test:labels_and_day_groups ; test:the_status_block_is_five_lines_at_its_pitch ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
 HIST-099	auto	test:labels_and_day_groups
 HIST-100	auto	test:labels_and_day_groups
 HIST-101	auto	test:labels_and_day_groups
 HIST-102	auto	test:legacy_row_explains_missing_details
-HIST-103	live	live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-dark-rust.png
-HIST-104	live	live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-dark-rust.png
+HIST-103	live	test:details_show_status_stages_and_processing ; test:segments_are_121_by_24 ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-dark-rust.png ; live:audit/mac/history/detail-light-ref.png ; live:audit/mac/history/detail-dark-ref.png
+HIST-104	live	test:details_show_status_stages_and_processing ; test:segments_are_121_by_24 ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-dark-rust.png ; live:audit/mac/history/detail-light-ref.png ; live:audit/mac/history/detail-dark-ref.png
 HIST-105	auto	test:stages_and_processing_lines
 HIST-106	auto	test:stages_and_processing_lines
-HIST-107	live	live:audit/mac/history/processing-light-rust.png ; live:audit/mac/history/processing-dark-rust.png
+HIST-107	live	test:details_show_status_stages_and_processing ; live:audit/mac/history/processing-light-rust.png ; live:audit/mac/history/processing-dark-rust.png ; live:audit/mac/history/processing-light-ref.png ; live:audit/mac/history/processing-dark-ref.png
 HIST-108	auto	test:stages_and_processing_lines
-HIST-109	live	live:audit/mac/history/processing-light-rust.png ; live:audit/mac/history/processing-dark-rust.png
-HIST-110	auto	test:stages_and_processing_lines
+HIST-109	live	test:details_show_status_stages_and_processing ; live:audit/mac/history/processing-light-rust.png ; live:audit/mac/history/processing-dark-rust.png ; live:audit/mac/history/processing-light-ref.png ; live:audit/mac/history/processing-dark-ref.png
+HIST-110	auto	test:processing_lines_and_hashes_keep_their_spacing ; test:stages_and_processing_lines
 HIST-111	auto	test:detail_decodes_and_lists_every_row
 HIST-112	auto	test:detail_decodes_and_lists_every_row
 HIST-113	auto	test:detail_decodes_and_lists_every_row
@@ -396,21 +396,21 @@ HIST-119	auto	test:stages_and_processing_lines
 HIST-120	auto	test:detail_decodes_and_lists_every_row
 HIST-121	auto	test:detail_decodes_and_lists_every_row
 HIST-122	auto	test:detail_decodes_and_lists_every_row
-HIST-123	auto	test:detail_decodes_and_lists_every_row
-HIST-124	live	live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-dark-rust.png
-HIST-125	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
-HIST-126	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
-HIST-127	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
-HIST-128	live	live:audit/mac/history/detail-light-rust.png
-HIST-129	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
-HIST-130	live	live:audit/mac/history/lower-light-rust.png ; live:audit/mac/history/lower-dark-rust.png
-HIST-131	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png
+HIST-123	auto	test:detail_decodes_and_lists_every_row ; test:processing_lines_and_hashes_keep_their_spacing
+HIST-124	live	test:details_show_status_stages_and_processing ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-dark-rust.png ; live:audit/mac/history/detail-light-ref.png ; live:audit/mac/history/detail-dark-ref.png
+HIST-125	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
+HIST-126	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
+HIST-127	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
+HIST-128	live	live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
+HIST-129	auto	test:context_disclosures_are_8_apart ; test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
+HIST-130	live	test:details_show_status_stages_and_processing ; live:audit/mac/history/lower-light-rust.png ; live:audit/mac/history/lower-dark-rust.png ; live:audit/mac/history/lower-light-ref.png ; live:audit/mac/history/lower-dark-ref.png
+HIST-131	auto	test:detail_decodes_and_lists_every_row ; live:audit/mac/history/detail-light-rust.png ; live:audit/mac/history/detail-light-ref.png
 HIST-132	auto	test:detail_decodes_and_lists_every_row
 HIST-133	auto	test:rewrite_notices_and_attempt_texts
-HIST-134	service	service:POST /v1/rewrite client not in Rust, Rewrite button disabled; Mac services work for Feature 024 after the view port
-HIST-135	service	service:POST /v1/rewrite client not in Rust, Rewrite button disabled; Mac services work for Feature 024 after the view port
-HIST-136	auto	test:rewrite_notices_and_attempt_texts
-HIST-137	auto	test:rewrite_notices_and_attempt_texts
+HIST-134	auto	test:connection_failures_map_to_their_notices ; test:connection_notice_copy
+HIST-135	auto	test:result_notice_copy ; test:unusable_replies_map_to_their_categories
+HIST-136	auto	test:a_refused_rewrite_shows_the_refusal_and_keeps_no_row ; test:rewrite_notices_and_attempt_texts ; test:skipped_notice_copy
+HIST-137	auto	test:limit_notice_copy ; test:rewrite_notices_and_attempt_texts
 HIST-138	auto	test:detail_decodes_and_lists_every_row
 HIST-139	auto	test:rewrite_columns_buttons_and_mode
 HIST-140	auto	test:rewrite_columns_buttons_and_mode
@@ -420,23 +420,23 @@ HIST-143	service	service:Accessibility insertion through Services insert_once, U
 HIST-144	auto	test:rewrite_columns_buttons_and_mode
 HIST-145	auto	test:rewrite_columns_buttons_and_mode
 HIST-146	auto	test:rewrite_columns_buttons_and_mode
-HIST-147	auto	test:delivery_rewrite_and_delete_writes ; test:rewrite_is_disabled_without_a_client
-HIST-148	service	service:POST /v1/rewrite client not in Rust, Rewrite button disabled; Mac services work for Feature 024 after the view port
-HIST-149	auto	test:delivery_rewrite_and_delete_writes
+HIST-147	auto	test:rewrite_gate_needs_a_rewriter ; test:rewrite_gate_needs_complete_quality ; test:rewrite_gate_stops_when_two_run_elsewhere
+HIST-148	auto	test:an_answered_rewrite_is_stored_and_a_retry_sends_the_first_input ; test:the_rewrite_button_sends_the_request_and_shows_the_failure
+HIST-149	auto	test:admission_checks_in_swifts_order ; test:delivery_rewrite_and_delete_writes
 HIST-150	auto	test:delivery_rewrite_and_delete_writes
 HIST-151	auto	test:delivery_rewrite_and_delete_writes
 HIST-152	auto	test:delivery_rewrite_and_delete_writes
 HIST-153	auto	test:delivery_rewrite_and_delete_writes
 HIST-154	auto	test:rewrite_columns_buttons_and_mode
-HIST-155	service	service:POST /v1/rewrite client not in Rust, Rewrite button disabled; Mac services work for Feature 024 after the view port ; test:delivery_rewrite_and_delete_writes
+HIST-155	auto	test:an_answer_after_cancel_is_dropped ; test:delivery_rewrite_and_delete_writes
 HIST-156	auto	test:rewrite_notices_and_attempt_texts
-HIST-157	live	live:audit/mac/history/lower-light-rust.png ; live:audit/mac/history/lower-dark-rust.png
+HIST-157	live	test:details_show_status_stages_and_processing ; live:audit/mac/history/lower-light-rust.png ; live:audit/mac/history/lower-dark-rust.png ; live:audit/mac/history/lower-light-ref.png ; live:audit/mac/history/lower-dark-ref.png
 HIST-158	auto	test:detail_decodes_and_lists_every_row
 HIST-159	auto	test:rewrite_notices_and_attempt_texts
 HIST-160	auto	test:rewrite_notices_and_attempt_texts
 HIST-161	auto	test:rewrite_columns_buttons_and_mode
 HIST-162	service	service:Accessibility insertion through Services insert_once, Unavailable until Mac services work for Feature 024 after the view port
-HIST-163	auto	test:insert_opens_the_review_through_the_session ; test:review_warns_and_cancel_or_timeout_keep_the_text
+HIST-163	auto	test:review_warns_and_cancel_or_timeout_keep_the_text ; test:the_review_sheet_is_520_wide_with_a_300_text_limit
 HIST-164	auto	test:review_warns_and_cancel_or_timeout_keep_the_text
 HIST-165	auto	test:insert_opens_the_review_through_the_session
 HIST-166	auto	test:review_warns_and_cancel_or_timeout_keep_the_text
@@ -450,19 +450,19 @@ HIST-173	auto	test:review_warns_and_cancel_or_timeout_keep_the_text
 HIST-174	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
 HIST-175	auto	test:delivery_rewrite_and_delete_writes
 HIST-176	auto	test:delivery_rewrite_and_delete_writes
-HIST-177	recorded	recorded:Swift defect or note, kept as Swift behaves
-HIST-178	recorded	recorded:Swift defect or note, kept as Swift behaves
-HIST-179	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-177	auto	test:a_failed_insert_still_reads_as_delivered
+HIST-178	auto	test:a_day_that_turns_while_away_keeps_the_old_headings
+HIST-179	auto	test:rewrite_with_rewriting_off_clears_the_notice_and_writes_nothing ; test:the_rewrite_button_stays_on_and_does_nothing_with_rewriting_off
 HIST-180	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-181	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-182	recorded	recorded:Swift defect or note, kept as Swift behaves
-HIST-183	recorded	recorded:Swift defect or note, kept as Swift behaves
+HIST-183	auto	test:a_refresh_starts_an_open_detail_over
 HIST-184	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-185	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-186	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-187	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-188	recorded	recorded:Swift defect or note, kept as Swift behaves
-HIST-189	recorded	recorded:Swift defect or note, kept as Swift behaves ; test:waiting_dictations
+HIST-189	recorded	test:waiting_dictations ; recorded:Swift defect or note, kept as Swift behaves
 HIST-190	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-191	recorded	recorded:Swift defect or note, kept as Swift behaves
 HIST-192	recorded	recorded:Swift defect or note, kept as Swift behaves

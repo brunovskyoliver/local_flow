@@ -7,8 +7,8 @@ use crate::insertion::{Delivery, Quality, ReviewEntry, begin_review};
 use crate::pages::Page;
 use crate::shell::Session;
 use flow_core::history::*;
-use flow_ui::prelude::*;
 use flow_ui::prelude::Context;
+use flow_ui::prelude::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -63,7 +63,12 @@ pub(super) fn review_entry(e: &Entry, text: String) -> ReviewEntry {
         "confirmed" => Delivery::Confirmed,
         _ => Delivery::None,
     };
-    ReviewEntry { id: e.id.clone(), text, quality, delivery }
+    ReviewEntry {
+        id: e.id.clone(),
+        text,
+        quality,
+        delivery,
+    }
 }
 
 impl HistoryPage {
@@ -72,7 +77,11 @@ impl HistoryPage {
         let mut shown = cx.try_global::<Session>().map(|s| s.selection);
         let mut insertion = cx.try_global::<Session>().map(|s| s.insertion.generation());
         let subs = vec![
-            cx.subscribe_in(&search, window, |this, _, e: &TextInputEvent, window, cx| this.search_event(e, window, cx)),
+            cx.subscribe_in(
+                &search,
+                window,
+                |this, _, e: &TextInputEvent, window, cx| this.search_event(e, window, cx),
+            ),
             cx.observe_global::<Session>(move |this, cx| {
                 // `refreshHistory`: an insertion that ended changed its row.
                 let run = Some(cx.global::<Session>().insertion.generation());
@@ -121,7 +130,11 @@ impl HistoryPage {
             clock_day: 0,
             _subs: subs,
         };
-        page.clock_day = cx.global::<Core>().db.as_ref().map_or(0, |db| local(db, page.now).day_number());
+        page.clock_day = cx
+            .global::<Core>()
+            .db
+            .as_ref()
+            .map_or(0, |db| local(db, page.now).day_number());
         page.model.has_rewriter = true;
         page.signature = cx.global::<Core>().db.as_ref().map(signature);
         page.reload(cx);
@@ -176,7 +189,8 @@ impl HistoryPage {
             }
             "search" => {
                 self.searching = true;
-                self.search.update(cx, |s, cx| s.set_value("kickoff", window, cx));
+                self.search
+                    .update(cx, |s, cx| s.set_value("kickoff", window, cx));
                 self.model.set_search("kickoff");
                 self.reload(cx);
             }
@@ -208,7 +222,8 @@ impl HistoryPage {
                 let text = self.search.read(cx).value().to_string();
                 if !self.model.set_search(&text) {
                     let kept = self.model.search_text.clone();
-                    self.search.update(cx, |s, cx| s.set_value(kept, window, cx));
+                    self.search
+                        .update(cx, |s, cx| s.set_value(kept, window, cx));
                     cx.notify();
                     return;
                 }
@@ -216,7 +231,9 @@ impl HistoryPage {
                 let generation = self.search_generation;
                 // ponytail: the 250 ms wait stands in for Swift's request debounce.
                 cx.spawn(async move |this, cx| {
-                    cx.background_executor().timer(Duration::from_millis(250)).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(250))
+                        .await;
                     let _ = this.update(cx, |this, cx| {
                         if this.search_generation == generation {
                             this.reload(cx);
@@ -240,7 +257,8 @@ impl HistoryPage {
     }
 
     fn busy(&self, cx: &App) -> bool {
-        cx.try_global::<Session>().is_some_and(|s| s.dictation.as_ref().is_some_and(|d| d.busy))
+        cx.try_global::<Session>()
+            .is_some_and(|s| s.dictation.as_ref().is_some_and(|d| d.busy))
     }
 
     pub(super) fn copy(&mut self, text: String, cx: &mut Context<Self>) {
@@ -253,7 +271,9 @@ impl HistoryPage {
         self.copied.insert(id.clone());
         cx.notify();
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(1200)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(1200))
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.copied.remove(&id);
                 cx.notify();
@@ -301,7 +321,12 @@ impl HistoryPage {
             crate::shell::update_session(cx, |s| {
                 if let Some(d) = s.dictation.as_mut().filter(|d| d.capacity_blocked) {
                     d.capacity_blocked = !room;
-                    d.status = if room { CAPACITY_FREED } else { CAPACITY_STILL_FULL }.into();
+                    d.status = if room {
+                        CAPACITY_FREED
+                    } else {
+                        CAPACITY_STILL_FULL
+                    }
+                    .into();
                 }
             });
         }
@@ -311,20 +336,42 @@ impl HistoryPage {
     /// `HistoryViewModel.requestRewrite`: admission now, the request off the UI thread.
     fn request_rewrite(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<Core>();
-        let settings = flow_core::settings::RewriteSettings::capture(&core.prefs, |origin| matches!(core.services.secret(&flow_core::settings::rewrite_keychain(origin)), Ok(Some(_))));
+        let settings = flow_core::settings::RewriteSettings::capture(&core.prefs, |origin| {
+            matches!(
+                core.services
+                    .secret(&flow_core::settings::rewrite_keychain(origin)),
+                Ok(Some(_))
+            )
+        });
         let timeout = Duration::from_secs(flow_core::settings::rewrite_timeout(&core.prefs) as u64);
         let enabled = core.prefs.bool_or("rewriteEnabled", false);
-        let secret = core.services.secret(&flow_core::settings::rewrite_keychain(&settings.origin)).ok().flatten();
-        let request = core.db.as_ref().and_then(|db| self.model.request_rewrite(db, enabled, &settings));
+        let secret = core
+            .services
+            .secret(&flow_core::settings::rewrite_keychain(&settings.origin))
+            .ok()
+            .flatten();
+        let request = core
+            .db
+            .as_ref()
+            .and_then(|db| self.model.request_rewrite(db, enabled, &settings));
         cx.notify();
         let Some(request) = request else { return };
         cx.spawn(async move |this, cx| {
             let started = Instant::now();
             let sent = request.clone();
-            let answer = cx.background_spawn(async move { flow_core::history::send_rewrite(&sent, secret.as_deref(), timeout) }).await;
+            let answer = cx
+                .background_spawn(async move {
+                    flow_core::history::send_rewrite(&sent, secret.as_deref(), timeout)
+                })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if let Some(db) = cx.global::<Core>().db.as_ref() {
-                    this.model.finish_rewrite(db, &request, answer, started.elapsed().as_millis() as i64);
+                    this.model.finish_rewrite(
+                        db,
+                        &request,
+                        answer,
+                        started.elapsed().as_millis() as i64,
+                    );
                 }
                 cx.notify();
             });
@@ -336,7 +383,9 @@ impl HistoryPage {
     /// away leaves the old headings until the next one (HIST-178).
     /// ponytail: checked when drawn, so a window left untouched over midnight relabels on its next frame.
     fn note_clock(&mut self, now: i64, shown: bool, cx: &App) {
-        let Some(db) = cx.global::<Core>().db.as_ref() else { return };
+        let Some(db) = cx.global::<Core>().db.as_ref() else {
+            return;
+        };
         let day = local(db, now).day_number();
         if day != self.clock_day {
             self.clock_day = day;
@@ -347,14 +396,22 @@ impl HistoryPage {
     }
 
     fn row_fill(&self, id: &str, p: &Palette) -> Hsla {
-        if self.hovered_row.as_deref() == Some(id) { p.canvas } else { gpui::transparent_black() }
+        if self.hovered_row.as_deref() == Some(id) {
+            p.canvas
+        } else {
+            gpui::transparent_black()
+        }
     }
 
     /// Remembers the first row in view so a page joining above it doesn't move it.
     fn pin_first_visible(&self) {
         let tops = self.tops.borrow();
         let top = self.scroll.bounds().top();
-        let first = self.model.entries.iter().find_map(|e| tops.get(&e.id).filter(|y| **y >= top).map(|y| (e.id.clone(), *y)));
+        let first = self.model.entries.iter().find_map(|e| {
+            tops.get(&e.id)
+                .filter(|y| **y >= top)
+                .map(|y| (e.id.clone(), *y))
+        });
         *self.pin.borrow_mut() = first;
     }
 
@@ -362,7 +419,11 @@ impl HistoryPage {
         let page = cx.entity().downgrade();
         let loading = self.model.is_loading;
         div()
-            .id(if older { "history.sentinel.older" } else { "history.sentinel.newer" })
+            .id(if older {
+                "history.sentinel.older"
+            } else {
+                "history.sentinel.newer"
+            })
             .test_support()
             .w_full()
             .h(px(44.))
@@ -388,7 +449,10 @@ impl HistoryPage {
     }
 
     fn load_page(&mut self, older: bool, cx: &mut Context<Self>) {
-        if self.model.is_loading || (older && !self.model.has_older) || (!older && !self.model.has_newer) {
+        if self.model.is_loading
+            || (older && !self.model.has_older)
+            || (!older && !self.model.has_newer)
+        {
             return;
         }
         self.pin_first_visible();
@@ -414,16 +478,40 @@ impl HistoryPage {
                 .rounded(px(8.))
                 .text_size(px(14.))
                 .child(icon("magnifyingglass", 14., p.muted))
-                .child(div().w(px(if compact { 90. } else { 160. })).child(Input::new(&self.search).appearance(false).aria_label("Search transcriptions").accessibility_id("history.search")))
+                .child(
+                    div().w(px(if compact { 90. } else { 160. })).child(
+                        Input::new(&self.search)
+                            .appearance(false)
+                            .px_0()
+                            .aria_label("Search transcriptions")
+                            .accessibility_id("history.search"),
+                    ),
+                )
                 .into_any_element()
         } else {
-            FlowButton::new("history.searchToggle", ButtonKind::Plain, "Search transcriptions")
-                .tooltip("Search")
-                .content(div().size(px(32.)).flex().items_center().justify_center().child(icon("magnifyingglass", 17.5, p.muted)))
-                .on_click(cx.listener(|this, _, w, cx| this.open_search(w, cx)))
-                .into_any_element()
+            FlowButton::new(
+                "history.searchToggle",
+                ButtonKind::Plain,
+                "Search transcriptions",
+            )
+            .tooltip("Search")
+            .content(
+                div()
+                    .size(px(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("magnifyingglass", 17.5, p.muted)),
+            )
+            .on_click(cx.listener(|this, _, w, cx| this.open_search(w, cx)))
+            .into_any_element()
         };
-        h_flex().w_full().justify_between().pb(px(12.)).child(t("Transcriptions").font(26., 500.).tracking(-0.4)).child(right)
+        h_flex()
+            .w_full()
+            .justify_between()
+            .pb(px(12.))
+            .child(t("Transcriptions").font(26., 500.).tracking(-0.4))
+            .child(right)
     }
 
     fn pending(&self, cx: &mut Context<Self>) -> Div {
@@ -433,7 +521,11 @@ impl HistoryPage {
         let mut rows = v_flex().relative().w_full();
         for item in &self.model.pending_items {
             let (id, id2) = (item.id.clone(), item.id.clone());
-            let when = core.db.as_ref().map(|db| day_time(db, item.created_at)).unwrap_or_default();
+            let when = core
+                .db
+                .as_ref()
+                .map(|db| day_time(db, item.created_at))
+                .unwrap_or_default();
             let local_ok = self.model.local_speech;
             rows = rows.child(
                 h_flex()
@@ -442,24 +534,55 @@ impl HistoryPage {
                     .gap(px(12.))
                     .py(px(14.))
                     .px(px(18.))
-                    .child(v_flex().flex_1().gap(px(4.)).child(t(when).size(13.).mono_digits().color(p.muted)).child(t(item.status(now)).size(14.)).child(t(item.length_label()).size(12.).color(p.muted)))
                     .child(
-                        prototype_button(format!("history.pending.recognize.{id}"), "Recognize Locally")
-                            .disabled(!local_ok)
-                            .tooltip(if local_ok { "Recognize with the speech model on this Mac" } else { "Install the local speech model first" }),
+                        v_flex()
+                            .flex_1()
+                            .gap(px(4.))
+                            .child(t(when).size(13.).mono_digits().color(p.muted))
+                            .child(t(item.status(now)).size(14.))
+                            .child(t(item.length_label()).size(12.).color(p.muted)),
                     )
-                    .child(prototype_button(format!("history.pending.save.{id}"), "Save Audio…").on_click(cx.listener(move |this, _, _, cx| this.save_audio(id.clone(), cx))))
-                    .child(prototype_button(format!("history.pending.discard.{id2}"), "Discard").on_click(cx.listener(move |this, _, _, cx| {
-                        this.discarding = Some(id2.clone());
-                        cx.notify();
-                    }))),
+                    .child(
+                        prototype_button(
+                            format!("history.pending.recognize.{id}"),
+                            "Recognize Locally",
+                        )
+                        .disabled(!local_ok)
+                        .tooltip(if local_ok {
+                            "Recognize with the speech model on this Mac"
+                        } else {
+                            "Install the local speech model first"
+                        }),
+                    )
+                    .child(
+                        prototype_button(format!("history.pending.save.{id}"), "Save Audio…")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.save_audio(id.clone(), cx)),
+                            ),
+                    )
+                    .child(
+                        prototype_button(format!("history.pending.discard.{id2}"), "Discard")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.discarding = Some(id2.clone());
+                                cx.notify();
+                            })),
+                    ),
             );
         }
         v_flex()
             .w_full()
-            .child(div().pt(px(28.)).pb(px(12.)).child(t("WAITING FOR SERVER").font(12., 500.).tracking(1.2).color(p.muted)))
+            .child(
+                div().pt(px(28.)).pb(px(12.)).child(
+                    t("WAITING FOR SERVER")
+                        .font(12., 500.)
+                        .tracking(1.2)
+                        .color(p.muted),
+                ),
+            )
             .child(rows.child(outline(cx)))
-            .when_some(self.model.pending_error.clone(), |d, e| d.child(div().pt(px(8.)).child(t(e).size(12.).color(p.warning))))
+            .when_some(self.model.pending_error.clone(), |d, e| {
+                d.child(div().pt(px(8.)).child(t(e).size(12.).color(p.warning)))
+            })
     }
 
     /// `NSSavePanel`, through `Services`; without one, the failure Swift would show.
@@ -478,24 +601,52 @@ impl HistoryPage {
         cx.notify();
     }
 
-    fn row(&self, e: &Entry, first: bool, last: bool, busy: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn row(
+        &self,
+        e: &Entry,
+        first: bool,
+        last: bool,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = pal(cx);
         let compact = cx.global::<Flow>().compact;
         let core = cx.global::<Core>();
-        let time = core.db.as_ref().map(|db| time_of(db, e.created_at)).unwrap_or_default();
+        let time = core
+            .db
+            .as_ref()
+            .map(|db| time_of(db, e.created_at))
+            .unwrap_or_default();
         let path = e.path_label(self.model.local_speech);
         let group: SharedString = format!("history.row.{}", e.id).into();
         let insert_off = busy || e.is_attempting();
-        let insert_label = if e.is_confirmed() { "Insert again" } else { "Insert" };
+        let insert_label = if e.is_confirmed() {
+            "Insert again"
+        } else {
+            "Insert"
+        };
         let copied = self.copied.contains(&e.id);
         let tops = self.tops.clone();
         let pin = self.pin.clone();
         let scroll = self.scroll.clone();
         let key = e.id.clone();
-        let action_focus = self.action_focus.borrow_mut().entry(e.id.clone()).or_insert_with(|| cx.focus_handle()).clone();
+        let action_focus = self
+            .action_focus
+            .borrow_mut()
+            .entry(e.id.clone())
+            .or_insert_with(|| cx.focus_handle())
+            .clone();
 
         let action = |id: String, symbol: &'static str, label: &str, tip: bool| {
-            let b = FlowButton::new(SharedString::from(id), ButtonKind::Plain, label.to_string()).content(div().size(px(28.)).flex().items_center().justify_center().child(icon(symbol, 14., p.muted)));
+            let b = FlowButton::new(SharedString::from(id), ButtonKind::Plain, label.to_string())
+                .content(
+                    div()
+                        .size(px(28.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(symbol, 14., p.muted)),
+                );
             if tip { b.tooltip(label.to_string()) } else { b }
         };
         let (c, i, m) = (e.clone(), e.clone(), e.clone());
@@ -504,8 +655,25 @@ impl HistoryPage {
             .gap(px(2.))
             .ml(px(16.))
             .mt(px(-4.))
-            .child(action(format!("history.copy.{}", e.id), if copied { "checkmark" } else { "doc.on.doc" }, "Copy", true).on_click(cx.listener(move |this, _, _, cx| this.copy_row(&c, cx))))
-            .child(action(format!("history.insert.{}", e.id), "text.insert", insert_label, true).disabled(insert_off).on_click(cx.listener(move |this, _, _, cx| this.insert(&i, i.text.clone(), cx))))
+            .child(
+                action(
+                    format!("history.copy.{}", e.id),
+                    if copied { "checkmark" } else { "doc.on.doc" },
+                    "Copy",
+                    true,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.copy_row(&c, cx))),
+            )
+            .child(
+                action(
+                    format!("history.insert.{}", e.id),
+                    "text.insert",
+                    insert_label,
+                    true,
+                )
+                .disabled(insert_off)
+                .on_click(cx.listener(move |this, _, _, cx| this.insert(&i, i.text.clone(), cx))),
+            )
             .child(
                 Button::new(SharedString::from(format!("history.more.{}", e.id)))
                     .ghost()
@@ -513,7 +681,14 @@ impl HistoryPage {
                     .h(px(28.))
                     .w(px(28.))
                     .accessibility_label("More")
-                    .child(div().size(px(28.)).flex().items_center().justify_center().child(icon("ellipsis", 14., p.muted)))
+                    .child(
+                        div()
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon("ellipsis", 14., p.muted)),
+                    )
                     .dropdown_menu({
                         let (page, m) = (page.clone(), m.clone());
                         move |menu, _, _| row_menu(menu, page.clone(), m.clone(), insert_off, busy)
@@ -551,12 +726,49 @@ impl HistoryPage {
                     // `Txt` rounds lines up; Swift's fractional lines keep the column shorter.
                     .gap(px(2.))
                     .child(t(time).size(13.).mono_digits().color(p.muted))
-                    .when_some(e.quality_label(), |d, q| d.child(t(q).font(11., 500.).color(p.warning).no_widow()))
-                    .when_some(path, |d, l| d.child(t(l).id("history.pathLabel").size(11.).color(p.muted).no_widow())),
+                    .when_some(e.quality_label(), |d, q| {
+                        d.child(t(q).font(11., 500.).color(p.warning).no_widow())
+                    })
+                    .when_some(path, |d, l| {
+                        d.child(
+                            t(l).id("history.pathLabel")
+                                .size(11.)
+                                .color(p.muted)
+                                .no_widow(),
+                        )
+                    }),
             )
-            .child(div().id(SharedString::from(format!("history.text.{}", e.id))).test_support().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.).selectable().no_widow()))
-            .child(hover_or_focus_revealed(group, self.voice_over, &action_focus, actions))
-            .when(!last, |d| d.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(p.line)))
+            .child(
+                div()
+                    .id(SharedString::from(format!("history.text.{}", e.id)))
+                    .test_support()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        t(e.text.clone())
+                            .size(15.)
+                            .line_spacing(4.)
+                            .selectable()
+                            .no_widow(),
+                    ),
+            )
+            .child(hover_or_focus_revealed(
+                group,
+                self.voice_over,
+                &action_focus,
+                actions,
+            ))
+            .when(!last, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(1.))
+                        .bg(p.line),
+                )
+            })
             .child(
                 canvas(
                     move |b, window, _| {
@@ -575,11 +787,18 @@ impl HistoryPage {
                 .absolute()
                 .size(px(0.)),
             )
-            .context_menu(move |menu, _, _| row_menu(menu, page.clone(), m.clone(), insert_off, busy));
+            .context_menu(move |menu, _, _| {
+                row_menu(menu, page.clone(), m.clone(), insert_off, busy)
+            });
         // ponytail: fades rows in only; a removed row leaves at once, Swift fades it out too.
         if self.fades(&e.id) {
             let id = SharedString::from(format!("history.fade.{}", e.id));
-            row.with_animation(id, Animation::new(Duration::from_millis(200)).with_easing(ease_out_quint()), |d, delta| d.opacity(delta)).into_any_element()
+            row.with_animation(
+                id,
+                Animation::new(Duration::from_millis(200)).with_easing(ease_out_quint()),
+                |d, delta| d.opacity(delta),
+            )
+            .into_any_element()
         } else {
             row.into_any_element()
         }
@@ -588,20 +807,42 @@ impl HistoryPage {
     /// A row is new when it arrives after the first list was drawn; it fades for the next 300 ms.
     fn fades(&self, id: &str) -> bool {
         const FADE: Duration = Duration::from_millis(300);
-        let first_seen = *self.seen.borrow_mut().entry(id.to_string()).or_insert_with(|| if self.settled { Instant::now() } else { Instant::now() - FADE });
+        let first_seen = *self
+            .seen
+            .borrow_mut()
+            .entry(id.to_string())
+            .or_insert_with(|| {
+                if self.settled {
+                    Instant::now()
+                } else {
+                    Instant::now() - FADE
+                }
+            });
         first_seen.elapsed() < FADE
     }
 
     fn list(&self, cx: &mut Context<Self>) -> Div {
         let p = pal(cx);
         let busy = self.busy(cx);
-        let groups = cx.global::<Core>().db.as_ref().map(|db| self.model.date_groups(db, self.now)).unwrap_or_default();
+        let groups = cx
+            .global::<Core>()
+            .db
+            .as_ref()
+            .map(|db| self.model.date_groups(db, self.now))
+            .unwrap_or_default();
         let mut col = v_flex().w_full();
         if self.model.has_newer {
             col = col.child(self.sentinel(false, cx));
         }
         for g in &groups {
-            col = col.child(div().pt(px(28.)).pb(px(11.)).child(t(g.title.to_uppercase()).font(12., 500.).tracking(1.2).color(p.muted)));
+            col = col.child(
+                div().pt(px(28.)).pb(px(11.)).child(
+                    t(g.title.to_uppercase())
+                        .font(12., 500.)
+                        .tracking(1.2)
+                        .color(p.muted),
+                ),
+            );
             let n = g.entries.len();
             let mut group = v_flex().relative().w_full();
             for (i, e) in g.entries.iter().enumerate() {
@@ -618,35 +859,62 @@ impl HistoryPage {
 
 /// The row menu's insert label, and whether Insert and Delete are off.
 fn row_menu_state(e: &Entry, insert_off: bool, busy: bool) -> (&'static str, bool, bool) {
-    (if e.is_confirmed() { "Insert again…" } else { "Insert…" }, insert_off, busy || e.is_attempting())
+    (
+        if e.is_confirmed() {
+            "Insert again…"
+        } else {
+            "Insert…"
+        },
+        insert_off,
+        busy || e.is_attempting(),
+    )
 }
 
-fn row_menu(menu: PopupMenu, page: WeakEntity<HistoryPage>, e: Entry, insert_off: bool, busy: bool) -> PopupMenu {
+fn row_menu(
+    menu: PopupMenu,
+    page: WeakEntity<HistoryPage>,
+    e: Entry,
+    insert_off: bool,
+    busy: bool,
+) -> PopupMenu {
     let (a, b, c, d) = (page.clone(), page.clone(), page.clone(), page);
     let (ea, eb, ec, ed) = (e.clone(), e.clone(), e.clone(), e.clone());
     let (insert, insert_off, delete_off) = row_menu_state(&e, insert_off, busy);
     menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
         a.update(cx, |this, cx| this.copy(ea.text.clone(), cx)).ok();
     }))
-    .item(PopupMenuItem::new(insert).disabled(insert_off).on_click(move |_, _, cx| {
-        b.update(cx, |this, cx| this.insert(&eb, eb.text.clone(), cx)).ok();
-    }))
+    .item(
+        PopupMenuItem::new(insert)
+            .disabled(insert_off)
+            .on_click(move |_, _, cx| {
+                b.update(cx, |this, cx| this.insert(&eb, eb.text.clone(), cx))
+                    .ok();
+            }),
+    )
     .item(PopupMenuItem::new("Details").on_click(move |_, _, cx| {
         c.update(cx, |this, cx| this.show_detail(&ec.id, cx)).ok();
     }))
     .separator()
-    .item(PopupMenuItem::new("Delete").disabled(delete_off).on_click(move |_, _, cx| {
-        d.update(cx, |this, cx| this.ask_delete(&ed, cx)).ok();
-    }))
+    .item(
+        PopupMenuItem::new("Delete")
+            .disabled(delete_off)
+            .on_click(move |_, _, cx| {
+                d.update(cx, |this, cx| this.ask_delete(&ed, cx)).ok();
+            }),
+    )
 }
 
 impl Render for HistoryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The shell keeps this page alive, so a change while away refreshes when it's next drawn.
         // ponytail: checked at most once a second, a "page shown" call is exact.
-        let shown = cx.try_global::<Session>().is_none_or(|s| s.selection == Page::History);
+        let shown = cx
+            .try_global::<Session>()
+            .is_none_or(|s| s.selection == Page::History);
         self.note_clock(now_ms(), shown, cx);
-        let due = self.checked_at.is_none_or(|l| l.elapsed() > Duration::from_secs(1));
+        let due = self
+            .checked_at
+            .is_none_or(|l| l.elapsed() > Duration::from_secs(1));
         if due && cx.global::<Core>().scenario.is_none() && self.model.detail_id.is_none() {
             self.checked_at = Some(Instant::now());
             let now = cx.global::<Core>().db.as_ref().map(signature);
@@ -659,7 +927,11 @@ impl Render for HistoryPage {
             self.focus.focus(window, cx);
         }
         let p = pal(cx);
-        let mut content = v_flex().w_full().text_color(p.ink).text_size(px(14.)).child(self.header(cx));
+        let mut content = v_flex()
+            .w_full()
+            .text_color(p.ink)
+            .text_size(px(14.))
+            .child(self.header(cx));
         if let Some(e) = self.model.error.clone() {
             content = content.child(
                 h_flex()
@@ -668,17 +940,30 @@ impl Render for HistoryPage {
                     .pt(px(20.))
                     .gap(px(8.))
                     .child(t(e).color(p.warning).selectable())
-                    .child(prototype_button("history.retry", "Retry").on_click(cx.listener(|this, _, _, cx| {
-                        this.model.error = None;
-                        this.reload(cx);
-                    }))),
+                    .child(
+                        prototype_button("history.retry", "Retry").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.model.error = None;
+                                this.reload(cx);
+                            },
+                        )),
+                    ),
             );
         }
         if !self.model.pending_items.is_empty() {
             content = content.child(self.pending(cx));
         }
         if self.model.entries.is_empty() && !self.model.is_loading {
-            content = content.child(div().w_full().py(px(80.)).flex().justify_center().child(t(if self.model.is_no_matches() { "No matches" } else { "No transcriptions yet" }).color(p.muted)));
+            content = content.child(
+                div().w_full().py(px(80.)).flex().justify_center().child(
+                    t(if self.model.is_no_matches() {
+                        "No matches"
+                    } else {
+                        "No transcriptions yet"
+                    })
+                    .color(p.muted),
+                ),
+            );
         } else {
             content = content.child(div().id("history.list").w_full().child(self.list(cx)));
             self.settled = true;
@@ -692,8 +977,21 @@ impl Render for HistoryPage {
             .flex()
             .flex_col()
             .items_center()
-            .child(div().w_full().max_w(px(960.)).flex_none().px(px(if compact { 24. } else { 48. })).pt(px(if compact { 32. } else { 48. })).pb(px(64.)).child(content));
-        let detail = if self.model.detail_id.is_some() { Some(self.detail_sheet(cx)) } else { None };
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(960.))
+                    .flex_none()
+                    .px(px(if compact { 24. } else { 48. }))
+                    .pt(px(if compact { 32. } else { 48. }))
+                    .pb(px(64.))
+                    .child(content),
+            );
+        let detail = if self.model.detail_id.is_some() {
+            Some(self.detail_sheet(cx))
+        } else {
+            None
+        };
         let confirm = if self.confirming_delete {
             Some(confirm_dialog(
                 "history.deleteDialog",
@@ -746,7 +1044,11 @@ impl Render for HistoryPage {
                     this.open_search(w, cx);
                 } else if k.key == "tab" {
                     // ponytail: no Kit `Root` in this shell, so no window-wide Tab; each page with row actions binds it.
-                    if k.modifiers.shift { w.focus_prev(cx) } else { w.focus_next(cx) }
+                    if k.modifiers.shift {
+                        w.focus_prev(cx)
+                    } else {
+                        w.focus_next(cx)
+                    }
                 } else if k.key == "escape" {
                     if this.model.detail_id.is_some() {
                         this.model.clear_detail();
@@ -758,9 +1060,15 @@ impl Render for HistoryPage {
                 }
             }))
             .child(under_card_border(page))
-            .when_some(detail, |d, s| d.child(overlay("history.detailOverlay", window, cx, s)))
-            .when_some(confirm, |d, c| d.child(overlay("history.deleteOverlay", window, cx, c)))
-            .when_some(discard, |d, c| d.child(overlay("history.discardOverlay", window, cx, c)))
+            .when_some(detail, |d, s| {
+                d.child(overlay("history.detailOverlay", window, cx, s))
+            })
+            .when_some(confirm, |d, c| {
+                d.child(overlay("history.deleteOverlay", window, cx, c))
+            })
+            .when_some(discard, |d, c| {
+                d.child(overlay("history.discardOverlay", window, cx, c))
+            })
     }
 }
 
