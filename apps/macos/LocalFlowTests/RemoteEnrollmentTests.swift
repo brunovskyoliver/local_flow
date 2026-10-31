@@ -494,6 +494,27 @@ final class RemoteEnrollmentTests: XCTestCase {
     XCTAssertEqual(preferences.remoteState, .approved)
   }
 
+  func testABusyAnswerKeepsTheKeyAndAFinalRefusalDropsIt() async throws {
+    configure()
+    let token = try pairingToken()
+    flowd.pairError = "busy"
+    do {
+      try await enrollment.pair(token: token)
+      XCTFail("expected busy")
+    } catch { XCTAssertEqual(error as? RemoteChannelError, .server(.busy)) }
+    flowd.pairError = "pairing_token_invalid"
+    do {
+      try await enrollment.pair(token: token)
+      XCTFail("expected a refusal")
+    } catch {
+      XCTAssertEqual(error as? RemoteChannelError, .server(.pairingTokenInvalid))
+    }
+    XCTAssertEqual(flowd.pairs[0].key, flowd.pairs[1].key, "busy must not lose the key")
+    flowd.pairError = nil
+    try await enrollment.pair(token: token)
+    XCTAssertEqual(keys.created, 2, "a final refusal starts over")
+  }
+
   // MARK: Changing the address (Feature 027, FR-013)
 
   private func approvedDevice() async throws {

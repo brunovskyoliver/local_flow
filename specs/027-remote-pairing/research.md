@@ -40,14 +40,14 @@ T3 Code facts come from a source read of `pingdotgg/t3code` at `15fe2832` (nothi
 | Stolen used token | Worthless |
 | Stolen refresh token | Device-key signature is already required; reuse revokes the device |
 | Database stolen | Hashes only; the identity key stays in Keychain |
-| Spoofed `Cf-Connecting-Ip` | R7 |
+| Spoofed forwarding headers | R7 |
 | Admin reached remotely | No admin routes on the remote listener; main and admin stay on loopback; tokens carry no scope |
 
 Default for new server mode: `0.0.0.0:8090`. `--remote-listen` accepts any IP literal, and existing plists keep theirs. `http://` follows FR-012a. No certificates are generated, because TLS adds nothing the channel doesn't already give beyond metadata. A proxy or Tailscale Serve provides it when wanted.
 
 ## R7. Client address behind proxies
 
-**Decision**: Headers count only when the socket peer is loopback: `Cf-Connecting-Ip`, then the rightmost `X-Forwarded-For` entry. Otherwise the peer address is used.
+**Decision**: Headers count only when the socket peer is loopback: the rightmost `X-Forwarded-For` entry. `Cf-Connecting-Ip` is no longer read, because other proxies pass it through from the client. Otherwise the peer address is used. IPv6 clients share a bucket per /64. Every refused enrollment or pairing closes its channel, so the hello limit bounds attempts.
 **Ceiling**: A proxy on another host shares one bucket, 10 account hellos per minute. A `--trusted-proxy` flag can follow if that bites. A client behind a local proxy that doesn't overwrite these headers could choose its bucket; the server-wide cap of 60 per minute still holds.
 
 ## R8. Server mode on a Mac

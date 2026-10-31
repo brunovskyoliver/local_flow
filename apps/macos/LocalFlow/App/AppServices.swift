@@ -639,7 +639,10 @@ final class AppServices {
       settings.server?.serverMode = ServerModeModel(
         controller: serverMode, interfaces: ServerAddresses.interfaceIPs)
       if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
-        Task { await serverMode.resyncIfUpdated() }
+        Task {
+          await serverMode.recoverInterruptedOpen()
+          await serverMode.resyncIfUpdated()
+        }
       }
       if let pendingPairing { openPairing(pendingPairing) }
       // Always wired: whether a dictation is rewritten is read from the per-attempt

@@ -155,6 +155,7 @@ struct ServerAgentJob: Equatable, Sendable {
 @MainActor
 final class ServerModeController {
   nonisolated static let plistHashKey = "serverMode.plistSHA256"
+  nonisolated static let openPendingKey = "serverMode.openPending"
   nonisolated static let helpersStampKey = "serverMode.helpersStamp"
   nonisolated static let enabledKey = "serverMode.enabled"
   nonisolated static let customAddressKey = "serverMode.customAddress"
@@ -221,8 +222,8 @@ final class ServerModeController {
       status.listen = nil
       if !helpersPresent { status.missing.append(ServerModeError.helpersMissing.errorDescription!) }
     }
-    if status.running, let port = status.listen.flatMap(Self.port(listen:)) {
-      status.fingerprint = await probe(healthURL(port: port))?.fingerprint
+    if status.running, let listen = status.listen, let url = healthURL(listen: listen) {
+      status.fingerprint = await probe(url)?.fingerprint
       let people = await admin.run(["list"])
       status.clientConnected = people.succeeded && people.output.contains(/last seen \d/)
     }
@@ -279,7 +280,9 @@ final class ServerModeController {
   func addresses(listen: String?, interfaces: [String]) -> [ServerAddress] {
     var found: [ServerAddress] = []
     if let listen, !Self.isLoopback(listen: listen), let port = Self.port(listen: listen) {
-      found = ServerAddresses.list(ips: interfaces, port: port)
+      let host = Self.host(listen: listen)
+      let wildcard = host == "0.0.0.0" || host == "::"
+      found = ServerAddresses.list(ips: wildcard ? interfaces : [host], port: port)
     }
     if let custom = defaults.string(forKey: Self.customAddressKey),
       let origin = RemoteDictationSettings.origin(custom)?.absoluteString
@@ -386,7 +389,7 @@ final class ServerModeController {
     else { return .failed("This server's plist has no --remote-listen to change.") }
     let wasManaged = ownership(loaded: true) == .managed
     let previousPID = await job(paths.label)?.pid
-    let backup = backups.appending(path: "\(paths.label).plist")
+    let backup = backupPlist
     var changed = current
     changed[index + 1] = "0.0.0.0:\(port)"
     do {
@@ -398,10 +401,12 @@ final class ServerModeController {
       let reason = error.localizedDescription
       return .failed("Could not write \(paths.plist.lastPathComponent): \(reason)")
     }
+    defaults.set(true, forKey: Self.openPendingKey)
+    defer { defaults.removeObject(forKey: Self.openPendingKey) }
     if let failure = await reload() {
-      await restore(backup: backup)
-      return .rolledBack(failure)
+      return await rolledBack(failure, backup: backup)
     }
+    let health = URL(string: "http://127.0.0.1:\(port)")!
     let clock = ContinuousClock()
     let end = clock.now + deadline
     var healthyChecks = 0
@@ -410,7 +415,7 @@ final class ServerModeController {
       let job = await job(paths.label)
       let healthy: Bool
       if let job, job.running, job.pid != previousPID {
-        healthy = await probe(healthURL(port: port)) != nil
+        healthy = await probe(health) != nil
       } else {
         healthy = false
       }
@@ -422,13 +427,35 @@ final class ServerModeController {
         return .opened
       }
     }
-    await restore(backup: backup)
-    return .rolledBack("The server did not report healthy within \(deadline.components.seconds) s.")
+    return await rolledBack(
+      "The server did not report healthy within \(deadline.components.seconds) s.", backup: backup)
   }
 
-  private func restore(backup: URL) async {
-    _ = try? files.replaceItemAt(paths.plist, withItemAt: backup, backupItemName: nil)
-    _ = await reload()
+  private var backupPlist: URL { backups.appending(path: "\(paths.label).plist") }
+
+  private func rolledBack(_ reason: String, backup: URL) async -> OpenOutcome {
+    if let failure = await restore(backup: backup) {
+      return .failed("\(reason) The previous settings were restored, but: \(failure)")
+    }
+    return .rolledBack(reason)
+  }
+
+  /// nil once the previous plist is back and loaded.
+  private func restore(backup: URL) async -> String? {
+    do {
+      _ = try files.replaceItemAt(paths.plist, withItemAt: backup, backupItemName: nil)
+    } catch {
+      return "could not restore the plist: \(error.localizedDescription)"
+    }
+    return await reload()
+  }
+
+  /// The app quit during an open's health window: nothing proved the new bind healthy, so
+  /// the previous settings come back (FR-010). Runs at launch.
+  func recoverInterruptedOpen() async {
+    guard defaults.bool(forKey: Self.openPendingKey) else { return }
+    defaults.removeObject(forKey: Self.openPendingKey)
+    _ = await restore(backup: backupPlist)
   }
 
   /// bootout, wait for the job to go, bootstrap from the plist. nil on success.
@@ -680,8 +707,17 @@ final class ServerModeController {
     return plist["ProgramArguments"] as? [String]
   }
 
-  private func healthURL(port: Int) -> URL {
-    URL(string: "http://127.0.0.1:\(port)")!
+  /// Where the server answers on this Mac; a wildcard bind answers on loopback.
+  private func healthURL(listen: String) -> URL? {
+    guard let port = Self.port(listen: listen) else { return nil }
+    let host = Self.host(listen: listen)
+    let local = host == "0.0.0.0" || host == "::" ? "127.0.0.1" : host
+    return URL(string: "http://\(local.contains(":") ? "[\(local)]" : local):\(port)")
+  }
+
+  nonisolated static func host(listen: String) -> String {
+    guard let colon = listen.lastIndex(of: ":") else { return listen }
+    return listen[..<colon].trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
   }
 
   private static func hash(_ data: Data) -> String {

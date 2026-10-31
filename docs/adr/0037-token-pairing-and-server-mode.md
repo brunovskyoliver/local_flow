@@ -32,7 +32,8 @@ Constitution principle 15 allows identity only from an OIDC provider. ADR 0032 s
 | Stolen used token | Worthless, unless it comes with the device key that redeemed it |
 | Stolen refresh token | The device-key signature is already required; reuse revokes the device |
 | Database stolen | Hashes only; the identity key stays in Keychain |
-| Spoofed `Cf-Connecting-Ip` | Forwarding headers count only from a loopback peer (research R7) |
+| Spoofed forwarding headers | Only the rightmost `X-Forwarded-For` from a loopback peer counts; `Cf-Connecting-Ip` is not read (research R7) |
+| Attempts on one channel, audit flooding | A refused enrollment or pairing closes its channel; unknown tokens and bad signatures write no audit row |
 | Administration reached remotely | No admin routes on the remote listener; main and admin stay on loopback; tokens carry no scope |
 
 Sending a token is outside what LocalFlow can protect. Anyone who reads it first can redeem it first. The expiry, the single use and the refused second attempt limit the damage; they don't prevent it.

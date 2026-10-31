@@ -127,7 +127,7 @@ Existing users, devices, pins and refresh tokens carry on with no action. A serv
 - **FR-003**: A token MUST carry the server's public key, so that holding the token authenticates the server without manual comparison. It MUST be available as text and, where a screen exists, as a QR code and an app link.
 - **FR-004**: Clients MUST verify the key at the entered route against the token's fingerprint before sending the token, and MUST send the token only inside the encrypted channel sealed to that key.
 - **FR-005**: Redeeming a token MUST be atomic, MUST bind the resulting device to a device-held key and MUST issue the existing short-lived access token and rotating refresh token.
-- **FR-006**: Issuing a token MUST count as the administrator's approval, so the device it creates starts approved. The audit log MUST record creation, redemption, failed redemption and revocation without token values.
+- **FR-006**: Issuing a token MUST count as the administrator's approval, so the device it creates starts approved. The audit log MUST record creation, redemption, refused redemption of a known token and revocation without token values. Refusals of unknown tokens and bad signatures go to the log only, so unauthenticated callers can't push history out of the capped audit log.
 - **FR-007**: Owners MUST be able to list tokens and revoke an unredeemed one. Revoking a device or user MUST use the existing path and close live channels within 1 second.
 - **FR-008**: Tokens MUST NOT grant administration. Administration stays on the server Mac and is never reachable on the remote listener.
 

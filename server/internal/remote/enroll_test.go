@@ -285,7 +285,9 @@ func TestEnrollSignature(t *testing.T) {
 	if users, _ := h.store.Users(ctx); len(users) != 0 {
 		t.Fatal("a refused enrollment created a user")
 	}
-	if got := auditActions(t, h.store); len(got) == 0 || got[0] != "sign_in system  unauthorized" {
+	// Refusals before any proven identity write no audit row, so strangers can't
+	// push the admin history out of the capped log.
+	if got := auditActions(t, h.store); len(got) != 0 {
 		t.Fatal(got)
 	}
 }
@@ -342,18 +344,15 @@ func TestEnrollWithinFiveMinutesOfReady(t *testing.T) {
 	}
 
 	// After a first failed attempt the channel idles 30 s, but a second
-	// enroll past 5 minutes from ready is still refused.
+	// A refused enroll closes the channel, so one channel gets one attempt.
 	h.clock.Advance(AccountHelloWindow)
 	c, _ = h.hello(PurposeEnroll, "")
-	h.clock.waitTimer(t, EnrollIdleTimeout)
-	h.clock.Advance(EnrollIdleTimeout - 10*time.Second)
 	d := newDevice(t)
 	binding := c.channel.Binding()
 	c.send(Enroll{Op: 1, Provider: "apple", IDToken: h.appleToken("late", binding), DeviceName: "Mac",
 		DeviceKey: d.public, Signature: d.sign(t, []byte("wrong"), binding)})
 	expectError(t, c.recv(), 1, CodeUnauthorized)
-	h.clock.Advance(20 * time.Second)
-	expectError(t, h.sendEnroll(c, 2, "late", d), 2, CodeUnauthorized)
+	expectChannelClosed(t, c)
 	users, _ := h.store.Users(context.Background())
 	for _, u := range users {
 		if u.Subject == "late" {

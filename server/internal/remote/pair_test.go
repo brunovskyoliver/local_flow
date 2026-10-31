@@ -111,7 +111,7 @@ func TestPairApprovesAndRefreshes(t *testing.T) {
 	}
 }
 
-// Bad signature: unauthorized, the token stays live, one audit row.
+// Bad signature: unauthorized, the token stays live, no audit row, channel closed.
 func TestPairBadSignature(t *testing.T) {
 	h := newAccountsHarness(t, nil)
 	value, row := h.newToken(0, accounts.DefaultPairingLifetime)
@@ -123,58 +123,47 @@ func TestPairBadSignature(t *testing.T) {
 	if h.tokenState(row.ID) != accounts.PairingLive {
 		t.Fatal("token spent by a bad signature")
 	}
-	if got := auditActions(t, h.store); got[len(got)-1] != "pair system  unauthorized" {
+	if got := auditActions(t, h.store); got[len(got)-1] != "token_create admin:oliver token:1 ok" {
 		t.Fatal(got)
 	}
-
-	// A signature with the enroll label does not pass as a pair signature.
-	c.send(Pair{Op: 2, PairingToken: value, DeviceName: "Phone", DeviceKey: d.public,
-		Signature: d.sign(t, []byte(EnrollSignatureLabel), c.channel.Binding())})
-	expectError(t, c.recv(), 2, CodeUnauthorized)
+	expectChannelClosed(t, c)
 }
 
-// Pair is refused more than 5 minutes after ready, like enroll: a failed first
-// attempt keeps the channel idling past that point.
-func TestPairAfterTheEnrollWindow(t *testing.T) {
+// One channel gets one attempt, so the hello limit bounds redemption attempts.
+func TestPairRefusalClosesTheChannel(t *testing.T) {
 	h := newAccountsHarness(t, nil)
-	value, row := h.newToken(0, accounts.DefaultPairingLifetime)
-	d := newDevice(t)
-	c, _ := h.hello(PurposeEnroll, "")
-	h.clock.waitTimer(t, EnrollIdleTimeout)
-	h.clock.Advance(EnrollIdleTimeout - 10*time.Second)
-	binding := c.channel.Binding()
-	c.send(Pair{Op: 1, PairingToken: value, DeviceName: "Phone", DeviceKey: d.public, Signature: d.sign(t, []byte("wrong"), binding)})
-	expectError(t, c.recv(), 1, CodeUnauthorized)
-	h.clock.Advance(20 * time.Second)
-	c.send(Pair{Op: 2, PairingToken: value, DeviceName: "Phone", DeviceKey: d.public, Signature: d.sign(t, []byte(PairSignatureLabel), binding)})
-	expectError(t, c.recv(), 2, CodeUnauthorized)
-	if h.tokenState(row.ID) != accounts.PairingLive {
-		t.Fatal("token spent late")
+	unknown, _, err := accounts.NewPairingToken(h.identity.PublicKey())
+	if err != nil {
+		t.Fatal(err)
 	}
+	c, reply := h.sendPair(unknown, newDevice(t))
+	expectError(t, reply, 1, CodePairingTokenInvalid)
+	expectChannelClosed(t, c)
 }
 
-// Unknown, expired, used by another key and revoked tokens get one answer, and
-// the store's audit row is the only one.
+// Unknown, expired, used by another key and revoked tokens get one answer. A
+// known token gets the store's one audit row; an unknown one gets none.
 func TestPairTokenInvalid(t *testing.T) {
 	h := newAccountsHarness(t, nil)
-	expect := func(name, token string) {
+	expectRows := func(name, token string, rows int) {
 		t.Helper()
 		before := len(auditActions(t, h.store))
 		c, reply := h.sendPair(token, newDevice(t))
 		expectError(t, reply, 1, CodePairingTokenInvalid)
 		c.ws.CloseNow()
 		got := auditActions(t, h.store)
-		if len(got) != before+1 || !strings.HasSuffix(got[len(got)-1], "pairing_token_invalid") {
+		if len(got) != before+rows || (rows > 0 && !strings.HasSuffix(got[len(got)-1], "pairing_token_invalid")) {
 			t.Fatalf("%s: audit %v", name, got)
 		}
 		h.clock.Advance(AccountHelloWindow)
 	}
+	expect := func(name, token string) { t.Helper(); expectRows(name, token, 1) }
 
 	unknown, _, err := accounts.NewPairingToken(h.identity.PublicKey())
 	if err != nil {
 		t.Fatal(err)
 	}
-	expect("unknown", unknown)
+	expectRows("unknown", unknown, 0)
 
 	expired, _ := h.newToken(0, time.Hour)
 	h.clock.Advance(time.Hour + time.Second)
@@ -549,4 +538,13 @@ func TestPairingVectors(t *testing.T) {
 func sha256Of(s string) []byte {
 	sum := sha256.Sum256([]byte(s))
 	return sum[:]
+}
+
+func expectChannelClosed(t *testing.T, c *testClient) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := c.ws.Read(ctx); err == nil || ctx.Err() != nil {
+		t.Fatalf("channel still open after a refusal: %v", err)
+	}
 }

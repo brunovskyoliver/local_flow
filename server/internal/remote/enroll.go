@@ -95,9 +95,10 @@ func (a *accountOps) enroll(ctx context.Context, c *Conn, m Message) (Operation,
 	}
 	binding := c.Binding()
 	if !verifyDeviceSignature(message.DeviceKey, message.Signature, []byte(EnrollSignatureLabel), binding) {
+		// Unproven callers close the channel and write no audit row (see pair).
 		outcome = CodeUnauthorized
-		a.audit(ctx, c, accounts.AuditEntry{Actor: accounts.SystemActor, Action: "sign_in", Outcome: string(outcome)})
-		return nil, coded(outcome, "device signature")
+		c.Fail(message.Op, outcome)
+		return nil, nil
 	}
 	identity, err := a.cfg.Verifier.Verify(ctx, message.Provider, message.IDToken, binding)
 	if err != nil {
@@ -105,8 +106,8 @@ func (a *accountOps) enroll(ctx context.Context, c *Conn, m Message) (Operation,
 		if errors.Is(err, oidc.ErrUnavailable) {
 			outcome = CodeInternal
 		}
-		a.audit(ctx, c, accounts.AuditEntry{Actor: accounts.SystemActor, Action: "sign_in", Outcome: string(outcome)})
-		return nil, coded(outcome, "id token")
+		c.Fail(message.Op, outcome)
+		return nil, nil
 	}
 	account, _, err := a.cfg.Store.EnsureUser(ctx, identity.Provider, identity.Subject, identity.Display)
 	switch {

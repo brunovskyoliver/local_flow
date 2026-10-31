@@ -239,7 +239,7 @@ func (h *harness) dial() *testClient {
 	return h.dialFrom("")
 }
 
-// dialFrom dials as the client cloudflared reports in Cf-Connecting-Ip (none
+// dialFrom dials as the client a local proxy reports in X-Forwarded-For (none
 // when empty: the loopback peer address is the client).
 func (h *harness) dialFrom(client string) *testClient {
 	h.t.Helper()
@@ -259,7 +259,7 @@ func (h *harness) tryDial(client string, onPing func(context.Context, []byte) bo
 	defer cancel()
 	header := http.Header{}
 	if client != "" {
-		header.Set("Cf-Connecting-Ip", client)
+		header.Set("X-Forwarded-For", client)
 	}
 	ws, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(h.url, "http")+"/v1/remote/channel", &websocket.DialOptions{
 		HTTPHeader: header, OnPingReceived: onPing,
@@ -406,10 +406,10 @@ func TestClientAddress(t *testing.T) {
 		want           string
 	}{
 		{"loopback, no headers", "127.0.0.1:5", "", nil, "127.0.0.1"},
-		{"loopback, cloudflared", "127.0.0.1:5", "203.0.113.1", nil, "203.0.113.1"},
-		{"loopback v6, cloudflared", "[::1]:5", "2001:db8::1", nil, "2001:db8::1"},
-		{"mapped loopback", "[::ffff:127.0.0.1]:5", "203.0.113.1", nil, "203.0.113.1"},
-		{"cf wins over xff", "127.0.0.1:5", "203.0.113.1", []string{"198.51.100.1"}, "203.0.113.1"},
+		{"loopback, cf ignored", "127.0.0.1:5", "203.0.113.1", nil, "127.0.0.1"},
+		{"forwarded v6 by /64", "[::1]:5", "", []string{"2001:db8:1:2:3::9"}, "2001:db8:1:2::/64"},
+		{"mapped loopback", "[::ffff:127.0.0.1]:5", "", []string{"203.0.113.1"}, "203.0.113.1"},
+		{"xff wins over cf", "127.0.0.1:5", "203.0.113.1", []string{"198.51.100.1"}, "198.51.100.1"},
 		{"rightmost xff", "127.0.0.1:5", "", []string{"198.51.100.9, 203.0.113.2"}, "203.0.113.2"},
 		{"last xff header", "127.0.0.1:5", "", []string{"198.51.100.9", "203.0.113.3"}, "203.0.113.3"},
 		{"garbage cf falls to xff", "127.0.0.1:5", "nonsense", []string{"203.0.113.2"}, "203.0.113.2"},
@@ -418,7 +418,7 @@ func TestClientAddress(t *testing.T) {
 		{"spoofed cf from the LAN", "192.168.1.9:5", "203.0.113.1", nil, "192.168.1.9"},
 		{"spoofed xff from the LAN", "192.168.1.9:5", "", []string{"203.0.113.1"}, "192.168.1.9"},
 		{"spoofed from Tailscale", "100.64.0.9:5", "127.0.0.1", []string{"127.0.0.1"}, "100.64.0.9"},
-		{"spoofed from v6", "[fd7a:115c:a1e0::9]:5", "203.0.113.1", nil, "fd7a:115c:a1e0::9"},
+		{"spoofed from v6", "[fd7a:115c:a1e0::9]:5", "203.0.113.1", nil, "fd7a:115c:a1e0::/64"},
 		{"unparseable peer", "pipe", "203.0.113.1", nil, "pipe"},
 	} {
 		r := httptest.NewRequest("GET", "/v1/remote/channel", nil)

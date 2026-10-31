@@ -171,9 +171,11 @@ const (
 
 // clientAddress names the client for per-client limits. Forwarding headers
 // count only from a loopback peer, where the proxy runs on this machine
-// (cloudflared, Tailscale Serve): Cf-Connecting-Ip, then the rightmost
-// X-Forwarded-For entry, the one that proxy added. Otherwise the socket peer is
-// the client, so nobody on the network can choose their bucket (research R7).
+// (cloudflared, Tailscale Serve): the rightmost X-Forwarded-For entry, the one
+// nearest that proxy. Cf-Connecting-Ip is not read, because other proxies pass it
+// through from the client. Otherwise the socket peer is the client, so nobody on
+// the network can choose their bucket (research R7). IPv6 clients share a bucket
+// per /64, the block one host normally controls.
 // ponytail: a proxy on another host shares one bucket; add --trusted-proxy if that bites.
 func clientAddress(r *http.Request) string {
 	peer, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -181,18 +183,23 @@ func clientAddress(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	if ip := net.ParseIP(peer); ip == nil || !ip.IsLoopback() {
-		return peer
-	}
-	if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip"))); ip != nil {
-		return ip.String()
+		return clientBucket(peer)
 	}
 	if values := r.Header.Values("X-Forwarded-For"); len(values) > 0 {
 		last := values[len(values)-1]
-		if ip := net.ParseIP(strings.TrimSpace(last[strings.LastIndex(last, ",")+1:])); ip != nil {
-			return ip.String()
+		if forwarded := strings.TrimSpace(last[strings.LastIndex(last, ",")+1:]); net.ParseIP(forwarded) != nil {
+			return clientBucket(forwarded)
 		}
 	}
 	return peer
+}
+
+func clientBucket(address string) string {
+	ip := net.ParseIP(address)
+	if ip == nil || ip.To4() != nil {
+		return address
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // admitChannel takes an anonymous slot for a new channel from client.

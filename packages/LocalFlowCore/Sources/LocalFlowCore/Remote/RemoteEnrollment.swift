@@ -409,7 +409,9 @@ public final class RemoteEnrollment {
       pairAttempt = nil
       throw RemoteEnrollmentError.wrongServer
     } catch RemoteChannelError.server(let code) {
-      pairAttempt = nil
+      // A temporary refusal keeps the key: the token may already be redeemed by it, and
+      // only that key can get its credentials after a lost reply.
+      if code != .busy && code != .internal { pairAttempt = nil }
       // A flowd without `pair` refuses the unknown type with invalid_message, then closes.
       guard code == .invalidMessage || code == .unsupportedVersion else {
         throw RemoteChannelError.server(code)

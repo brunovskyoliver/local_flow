@@ -221,10 +221,10 @@ func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string
 	defer tx.Rollback()
 	now := s.millis()
 	refuse := func(id int64, outcome string, refusal error) (Pairing, error) {
-		entry := AuditEntry{Actor: SystemActor, Action: "pair", Outcome: outcome}
-		if id != 0 {
-			entry.Target = TokenTarget(id)
+		if id == 0 { // an unknown token: anyone can send these, so no audit row
+			return Pairing{}, refusal
 		}
+		entry := AuditEntry{Actor: SystemActor, Action: "pair", Target: TokenTarget(id), Outcome: outcome}
 		if err := insertAudit(ctx, tx, now, entry); err != nil {
 			return Pairing{}, err
 		}

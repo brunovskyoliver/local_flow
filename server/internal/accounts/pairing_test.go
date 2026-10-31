@@ -473,7 +473,6 @@ func TestPairingAudit(t *testing.T) {
 		{Actor: testAdmin, Action: "token_create", Target: target, Outcome: "ok"},
 		{Actor: DeviceActor(pairing.DeviceID), Action: "pair", Target: target, Outcome: "ok"},
 		{Actor: SystemActor, Action: "pair", Target: target, Outcome: "pairing_token_invalid"},
-		{Actor: SystemActor, Action: "pair", Outcome: "pairing_token_invalid"},
 		{Actor: testAdmin, Action: "token_create", Target: TokenTarget(revoked.ID), Outcome: "ok"},
 		{Actor: testAdmin, Action: "token_revoke", Target: TokenTarget(revoked.ID), Outcome: "ok"},
 	}

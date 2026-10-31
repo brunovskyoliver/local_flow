@@ -357,6 +357,22 @@ final class ServerModeControllerTests: XCTestCase {
     XCTAssertEqual(changes.filter { $0[0] == "bootstrap" }.count, 2)
   }
 
+  func testAnOpenInterruptedByQuittingIsUndoneAtLaunch() async throws {
+    let server = controller(dev: false)
+    let original = try writeScriptInstalledPlist(server.paths)
+    launchd.load(server.paths.label)
+    let outcome = await server.openToNetwork(deadline: .seconds(5))
+    XCTAssertEqual(outcome, .opened)
+    await server.recoverInterruptedOpen()
+    XCTAssertNotEqual(try Data(contentsOf: server.paths.plist), original, "a finished open stands")
+
+    defaults.set(true, forKey: ServerModeController.openPendingKey)
+    await server.recoverInterruptedOpen()
+    XCTAssertEqual(try Data(contentsOf: server.paths.plist), original)
+    XCTAssertTrue(launchd.isLoaded(server.paths.label))
+    XCTAssertFalse(defaults.bool(forKey: ServerModeController.openPendingKey))
+  }
+
   func testOpenOfAManagedServerStaysManaged() async throws {
     let server = controller()
     try await server.turnOn()
@@ -519,6 +535,9 @@ final class ServerModeControllerTests: XCTestCase {
     XCTAssertTrue(
       server.addresses(listen: "127.0.0.1:18090", interfaces: ["10.0.0.2"]).isEmpty,
       "a loopback bind isn't reachable on the machine's addresses")
+    XCTAssertEqual(
+      server.addresses(listen: "10.0.0.7:18090", interfaces: ["10.0.0.2"]).map(\.origin),
+      ["http://10.0.0.7:18090"], "a bind to one address lists only that one")
     XCTAssertFalse(server.setCustomAddress("http://example.com"), "public http is refused")
     XCTAssertFalse(server.setCustomAddress("https://example.com/path"))
     XCTAssertEqual(server.customAddress, "")
