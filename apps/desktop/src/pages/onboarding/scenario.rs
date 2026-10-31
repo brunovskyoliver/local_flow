@@ -50,11 +50,14 @@ impl OnboardingPage {
                 s.step = Step::AiDetails;
                 s.ai_mode = AiMode::Remote;
                 self.legacy_open = true;
-                self.connection = Some(Err("Could not reach the server.".into()));
-                self.credential_error = Some("Could not access the credential in Keychain.".into());
-                cx.global_mut::<Core>().prefs.set("rewriteEndpoint", "http://studio.local:8080");
             }
-            "fingerprint" | "signin" | "approved" | "pending" | "mismatch" | "consent" | "turnoff" => {
+            "serverlegacyhttp" => {
+                s.step = Step::AiDetails;
+                s.ai_mode = AiMode::Remote;
+                self.legacy_open = true;
+                self.connection = Some(Err("Could not reach the server.".into()));
+            }
+            "fingerprint" | "signin" | "signinerror" | "approved" | "pending" | "mismatch" | "consent" | "turnoff" => {
                 s.step = Step::AiDetails;
                 s.ai_mode = AiMode::Remote;
                 let prefs = &mut cx.global_mut::<Core>().prefs;
@@ -66,16 +69,20 @@ impl OnboardingPage {
                     }
                 }
                 match body {
-                    "fingerprint" => self.remote.identity = Some("SHA256:synthetic-fixture-fingerprint".into()),
+                    "fingerprint" => self.remote.identity = Some(flow_core::settings::Identity { server_key: String::new(), fingerprint: "SHA256:synthetic-fixture-fingerprint".into(), protocol_versions: vec![], schema_version: 1, server: Default::default(), suite: String::new() }),
                     "signin" => {
+                        prefs.set("remote.state", "pinned");
+                        self.remote.pinned = Some("SHA256:synthetic-fixture-fingerprint".into());
+                    }
+                    "approved" => prefs.set("remote.state", "approved"),
+                    "pending" => prefs.set("remote.state", "pending"),
+                    "mismatch" => prefs.set("remote.state", "pin_mismatch"),
+                    "signinerror" => {
                         prefs.set("remote.state", "pinned");
                         self.remote.pinned = Some("SHA256:synthetic-fixture-fingerprint".into());
                         self.remote.google = true;
                         self.remote.error = Some("Sign-in did not finish.".into());
                     }
-                    "approved" => prefs.set("remote.state", "approved"),
-                    "pending" => prefs.set("remote.state", "pending"),
-                    "mismatch" => prefs.set("remote.state", "pin_mismatch"),
                     "turnoff" => {
                         prefs.set("remote.state", "approved");
                         self.remote.confirm_off = true;
@@ -118,6 +125,16 @@ impl OnboardingPage {
                 p.accessibility = Perm::Unknown;
                 p.system_audio = Perm::Unknown;
                 self.ai_phase = AiPhase::Starting;
+            }
+            // The reference's state on this Mac: a server path, system audio allowed, microphone not.
+            "permissionsserver" => {
+                s.step = Step::Permissions;
+                s.ai_mode = AiMode::Remote;
+                p.model_installed = true;
+                p.storage_available = true;
+                p.controls_available = true;
+                p.microphone = Perm::Unknown;
+                p.system_audio = Perm::Granted;
             }
             "allowed" => {
                 s.step = Step::Permissions;

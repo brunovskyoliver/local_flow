@@ -2,6 +2,7 @@
 use super::OnboardingPage;
 use super::parts::*;
 use flow_core::onboarding::*;
+use flow_ui::gpui::base::TestSupportExt;
 use flow_ui::prelude::*;
 
 /// Version `REMOTE_CONSENT_VERSION` of both texts; don't edit without a new consent version.
@@ -33,10 +34,11 @@ impl OnboardingPage {
                 cx.notify();
             });
             body.push(any(plain_button("onboarding.legacyRewriteServer", "Advanced: rewrite-only server").toggled(open).on_click(toggle).content(
-                h_flex().gap(px(6.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 11., p.muted)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
+                h_flex().gap(px(1.)).child(icon(if open { "chevron.down" } else { "chevron.right" }, 11., p.muted)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
             )));
             if open {
-                body.extend(self.legacy_server(cx));
+                // The page's spacing is 24; `DisclosureGroup` puts its content 12 below the title.
+                body.push(any(v_flex().id("onboarding.legacyContent").w_full().items_start().mt(px(-12.)).gap(px(16.)).children(self.legacy_server(cx)).test_support()));
             }
         }
         body
@@ -66,13 +68,13 @@ impl OnboardingPage {
             return card;
         }
         let mut details = v_flex().w_full().items_start().gap(px(12.)).py(px(16.));
-        if let Some(fingerprint) = self.remote.identity.clone() {
+        if let Some(fingerprint) = self.remote.identity.as_ref().map(|i| i.fingerprint.clone()) {
             let trust = self.click(cx, |this, cx| this.trust_server(cx));
             details = details
                 .child(t("Server fingerprint").font(12., 500.).color(p.muted))
                 .child(div().id("settings.remoteFingerprint").child(t(fingerprint).mono().size(13.)))
                 .child(t("Compare it with `flowd admin identity` on the server before trusting it.").size(12.).color(p.muted))
-                .child(prototype_button("settings.remoteTrust", "Trust This Server").on_click(trust));
+                .child(native_button("settings.remoteTrust", "Trust This Server").on_click(trust));
         } else if state != "approved"
             && let Some(pinned) = self.remote.pinned.clone()
         {
@@ -80,16 +82,16 @@ impl OnboardingPage {
         }
         if needs_sign_in {
             let apple = self.click(cx, |this, cx| this.sign_in("apple", cx));
-            let mut row = h_flex().gap(px(8.)).child(prototype_button("settings.remoteSignInApple", "Sign in with Apple").disabled(self.remote.busy).on_click(apple));
+            let mut row = h_flex().gap(px(8.)).child(native_button("settings.remoteSignInApple", "Sign in with Apple").disabled(self.remote.busy).on_click(apple));
             if self.remote.google {
                 let google = self.click(cx, |this, cx| this.sign_in("google", cx));
-                row = row.child(prototype_button("settings.remoteSignInGoogle", "Sign in with Google").disabled(self.remote.busy).on_click(google));
+                row = row.child(native_button("settings.remoteSignInGoogle", "Sign in with Google").disabled(self.remote.busy).on_click(google));
             }
             details = details.child(row);
         }
         if matches!(state.as_str(), "pin_mismatch" | "revoked" | "rejected") {
             let again = self.click(cx, |this, cx| this.fetch_identity(cx));
-            details = details.child(prototype_button("settings.remoteEnrollAgain", "Enroll Again").disabled(self.remote.busy).on_click(again));
+            details = details.child(native_button("settings.remoteEnrollAgain", "Enroll Again").disabled(self.remote.busy).on_click(again));
         }
         if let Some(e) = self.remote.error.clone() {
             details = details.child(t(e).size(12.).color(p.warning));
@@ -143,6 +145,7 @@ impl OnboardingPage {
                         .p(px(12.))
                         .bg(p.tint)
                         .rounded(px(10.))
+                        .gap(px(1.))
                         .child(t("LOCALFLOW_REWRITE_TOKEN=<key> flowd serve --listen 0.0.0.0:8080 \\").mono().size(12.))
                         .child(t("  --backend http://127.0.0.1:8000/v1 --model <served-model-id>").mono().size(12.)),
                 )),

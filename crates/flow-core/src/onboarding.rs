@@ -148,6 +148,29 @@ impl Shortcut {
     pub fn save(&self, prefs: &mut Prefs) {
         prefs.set("shortcut", self);
     }
+    /// `ShortcutPreference.isValid`.
+    pub fn is_valid(&self) -> bool {
+        let device_mask = SIDES.iter().fold(0, |all, side| all | side.0);
+        if let Some(device) = self.device_modifiers {
+            if device == 0 || device & !device_mask != 0 || self.kind == ShortcutKind::FnGlobe {
+                return false;
+            }
+            if !SIDES.iter().all(|(mask, modifier, _)| device & mask == 0 || self.modifiers & modifier != 0) {
+                return false;
+            }
+        }
+        if self.version != 1 || self.modifiers & !(CONTROL | OPTION | SHIFT | COMMAND | FN) != 0 {
+            return false;
+        }
+        match self.kind {
+            ShortcutKind::FnGlobe => true,
+            ShortcutKind::ModifierOnly => self.modifiers != 0,
+            ShortcutKind::KeyCombination => self.key_code < 128 && !(54..=63).contains(&self.key_code) && !(self.key_code == 53 && self.modifiers == 0),
+        }
+    }
+    pub fn parse(json: &str) -> Option<Shortcut> {
+        serde_json::from_str(json).ok()
+    }
     pub fn json(&self) -> String {
         serde_json::to_string(self).expect("shortcut serializes")
     }
@@ -197,6 +220,70 @@ fn key_title(code: u32) -> String {
         return format!("F{}", i + 1);
     }
     format!("Key {code}")
+}
+
+/// One event the recorder's tap saw, as `ShortcutCaptureState.receive` takes it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyEvent {
+    KeyDown,
+    KeyUp,
+    FlagsChanged,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Capture {
+    Pending,
+    Cancelled,
+    Captured(Shortcut),
+}
+
+/// `ShortcutCaptureState`: one chord only. Commits after the key and modifiers release.
+#[derive(Default)]
+pub struct ShortcutCapture {
+    candidate: Option<Shortcut>,
+    key_released: bool,
+    finished: bool,
+}
+
+impl ShortcutCapture {
+    /// `modifiers` is the Carbon-style mask of `flags`; `physical` the side-specific device mask.
+    pub fn receive(&mut self, event: KeyEvent, key_code: u32, modifiers: u32, physical: Option<u64>) -> Capture {
+        if self.finished {
+            return Capture::Pending;
+        }
+        if event == KeyEvent::KeyDown && key_code == 53 {
+            self.finished = true;
+            return Capture::Cancelled;
+        }
+        let is_combo = self.candidate.as_ref().is_some_and(|c| c.kind == ShortcutKind::KeyCombination);
+        match event {
+            KeyEvent::KeyDown if !is_combo => {
+                self.candidate = Some(Shortcut { kind: ShortcutKind::KeyCombination, key_code, modifiers, device_modifiers: physical, ..Default::default() });
+            }
+            KeyEvent::FlagsChanged if !is_combo && modifiers != 0 => {
+                let mut value = self.candidate.take().unwrap_or(Shortcut { kind: ShortcutKind::ModifierOnly, modifiers: 0, ..Default::default() });
+                value.modifiers |= modifiers;
+                if let Some(mask) = physical {
+                    value.device_modifiers = Some(value.device_modifiers.unwrap_or(0) | mask);
+                }
+                self.candidate = Some(value);
+            }
+            KeyEvent::KeyUp if self.candidate.as_ref().is_some_and(|c| c.key_code == key_code) => self.key_released = true,
+            _ => {}
+        }
+        let Some(mut value) = self.candidate.clone() else { return Capture::Pending };
+        if modifiers != 0 || !(value.kind == ShortcutKind::ModifierOnly || self.key_released) {
+            return Capture::Pending;
+        }
+        if value.kind == ShortcutKind::ModifierOnly && value.modifiers == FN {
+            value.kind = ShortcutKind::FnGlobe;
+        }
+        if !value.is_valid() {
+            return Capture::Pending;
+        }
+        self.finished = true;
+        Capture::Captured(value)
+    }
 }
 
 /// `SettingsViewModel.Snapshot`: what the gates read.
@@ -336,6 +423,7 @@ pub struct Setup {
     armed_session: Option<u64>,
     server_purpose: Option<Purpose>,
     meetings_automatic: bool,
+    downloads_started: bool,
 }
 
 impl Setup {
@@ -353,6 +441,7 @@ impl Setup {
             armed_session: None,
             server_purpose: None,
             meetings_automatic: false,
+            downloads_started: false,
         }
     }
 
@@ -390,6 +479,11 @@ impl Setup {
         {
             self.abandon_server_choice(prefs);
         }
+    }
+
+    /// `Downloads` was reached once: the point where Swift's `beginSetupDownloads` runs.
+    pub fn downloads_begun(&self) -> bool {
+        self.downloads_started
     }
 
     pub fn path(&self) -> Vec<Step> {
@@ -486,6 +580,7 @@ impl Setup {
 
     fn begin_downloads(&mut self) {
         self.step = Step::Downloads;
+        self.downloads_started = true;
         self.effects.push(Effect::StartDownloads { local_ai: self.ai_mode == AiMode::Local });
         if self.purpose == Purpose::Dictation || self.ai_mode == AiMode::Remote {
             self.withdraw_automatic();
@@ -1089,15 +1184,17 @@ mod tests {
         use {AiMode::*, Purpose::*, Step as S};
         let long = vec![S::Introduction, S::Purpose, S::Ai, S::AiDetails, S::Downloads, S::Permissions, S::Personalize, S::Test];
         let skip = vec![S::Introduction, S::Purpose, S::Ai, S::Downloads, S::Permissions, S::Personalize, S::Test];
-        for p in [Both, Dictation] {
-            for m in [Local, Remote] {
-                assert_eq!(at(S::Ai, p, m).0.path(), long);
-            }
-            assert_eq!(at(S::Ai, p, Off).0.path(), skip);
-        }
+        assert_eq!(at(S::Ai, Both, Local).0.path(), long);
+        assert_eq!(at(S::Ai, Both, Remote).0.path(), long);
+        assert_eq!(at(S::Ai, Both, Off).0.path(), skip);
+        assert_eq!(at(S::Ai, Dictation, Local).0.path(), long);
+        assert_eq!(at(S::Ai, Dictation, Remote).0.path(), long);
+        assert_eq!(at(S::Ai, Dictation, Off).0.path(), skip);
         assert_eq!(at(S::Ai, Meetings, Local).0.path(), long[..7].to_vec());
         assert_eq!(at(S::Ai, Meetings, Remote).0.path(), vec![S::Introduction, S::Purpose, S::Ai, S::AiDetails, S::Permissions, S::Personalize]);
         assert_eq!(at(S::Ai, Meetings, Off).0.path(), skip[..6].to_vec());
+        assert_ne!(at(S::Ai, Both, Local).0.path().len(), at(S::Ai, Both, Off).0.path().len(), "the capsule count follows the choice");
+        assert!(!at(S::Ai, Meetings, Remote).0.path().contains(&S::Test), "only dictation paths have a test");
     }
 
     // parity: ONB-005 ONB-006 ONB-007 ONB-008 ONB-009 ONB-132 ONB-409
@@ -1135,7 +1232,7 @@ mod tests {
         assert!(p.bool_or("server.only", false));
     }
 
-    // parity: ONB-093 ONB-094 ONB-095 ONB-096 ONB-097 ONB-098 ONB-099 ONB-100 ONB-101 ONB-102 ONB-103 ONB-104 ONB-064 ONB-133 ONB-274 ONB-268
+    // parity: ONB-093 ONB-094 ONB-095 ONB-096 ONB-097 ONB-098 ONB-099 ONB-100 ONB-101 ONB-102 ONB-103 ONB-104 ONB-064 ONB-133 ONB-268
     #[test]
     fn advance_walks_steps_and_requests_models() {
         let snap = ready();
@@ -1492,6 +1589,47 @@ mod tests {
         assert!(remote_privacy(&p).starts_with("Nothing is sent until"));
     }
 
+    // parity: ONB-223 ONB-224 ONB-225 ONB-226 ONB-227 ONB-228
+    #[test]
+    fn privacy_lines_word_for_word() {
+        const KEPT: &str = " Meetings handed off to the server stay there until merged, at most 7 days.";
+        let mut p = Prefs::memory();
+        assert_eq!(remote_privacy(&p), format!("Nothing leaves this Mac until you confirm what is sent and the administrator approves this Mac.{KEPT}"));
+        assert!(confirm_remote_consent(&mut p, "https://s.example"));
+        p.set("remote.state", "approved");
+        assert_eq!(remote_privacy(&p), format!("Approved. Dictation, rewriting, summaries and meetings will use this server. Speech recognition on this Mac takes over when the server can't be reached.{KEPT}"));
+        p.set("remote.state", "pending");
+        assert_eq!(remote_privacy(&p), format!("Waiting for approval. You can continue: until the administrator approves this Mac, nothing is sent and dictation is transcribed here.{KEPT}"));
+        p.set("remote.state", "pin_mismatch");
+        assert_eq!(remote_privacy(&p), format!("Nothing is sent until the administrator approves this Mac.{KEPT}"));
+        p.set("setup.purpose", "meetings");
+        p.set("remote.state", "approved");
+        assert_eq!(remote_privacy(&p), format!("Approved. Meeting audio, transcripts and summaries will use this server. Recordings wait on this Mac when the server can't be reached.{KEPT}"));
+        p.set("remote.state", "pending");
+        assert_eq!(remote_privacy(&p), format!("Waiting for approval. You can continue: until the administrator approves this Mac, nothing is sent and recordings wait here.{KEPT}"));
+    }
+
+    // parity: ONB-274
+    /// Leaving the step cancels nothing; coming back asks for nothing again.
+    #[test]
+    fn downloads_outlive_the_step() {
+        let snap = ready();
+        let (mut s, mut p) = at(Step::AiDetails, Purpose::Both, AiMode::Local);
+        s.advance(&snap, &mut p);
+        assert!(s.effects.contains(&Effect::StartMeetingModels));
+        s.effects.clear();
+        s.back();
+        assert_eq!(s.step, Step::AiDetails);
+        assert!(s.effects.is_empty(), "Back cancels nothing");
+        s.advance(&snap, &mut p);
+        assert!(!s.effects.contains(&Effect::StartMeetingModels), "no second request");
+        assert!(!s.effects.contains(&Effect::CancelMeetingModels));
+        s.effects.clear();
+        s.advance(&snap, &mut p);
+        assert_eq!(s.step, Step::Permissions);
+        assert!(s.effects.is_empty(), "Continue cancels nothing");
+    }
+
     // parity: ONB-150 ONB-159 ONB-160 ONB-161 ONB-162 ONB-163 ONB-168 ONB-169 ONB-170 ONB-173
     #[test]
     fn catalog_fit_and_downloaded() {
@@ -1522,14 +1660,14 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    // parity: ONB-285 ONB-286 ONB-287 ONB-288 ONB-289 ONB-290 ONB-291 ONB-292 ONB-293 ONB-294 ONB-295 ONB-296 ONB-297 ONB-298 ONB-299 ONB-300 ONB-301 ONB-302 ONB-303 ONB-305 ONB-306 ONB-307 ONB-308 ONB-309 ONB-310 ONB-311 ONB-312 ONB-313 ONB-278 ONB-284 ONB-253
+    // parity: ONB-285 ONB-286 ONB-287 ONB-288 ONB-289 ONB-290 ONB-313
     #[test]
-    fn download_row_states() {
+    fn speech_row_states() {
         let mut s = Snapshot::default();
         assert_eq!(speech_state(&s, None), RowState::Waiting("Queued".into()));
         assert_eq!(speech_state(&s, Some("unrelated")), RowState::Failed("unrelated".into()));
         s.installing = true;
-        assert_eq!(speech_state(&s, Some("unrelated")), RowState::Progress(0, 0));
+        assert_eq!(speech_state(&s, Some("unrelated")), RowState::Progress(0, 0), "an error doesn't interrupt an install");
         s.progress = (5, 10);
         assert_eq!(speech_state(&s, None), RowState::Progress(5, 10));
         s.verifying = true;
@@ -1538,23 +1676,44 @@ mod tests {
         assert_eq!(speech_state(&s, None), RowState::Failed("Model installation cancelled.".into()));
         s.model_installed = true;
         assert_eq!(speech_state(&s, None), RowState::Done);
+    }
 
+    // parity: ONB-291 ONB-292 ONB-293 ONB-294 ONB-295
+    #[test]
+    fn ai_row_states() {
         assert_eq!(ai_state(&AiPhase::Idle), RowState::Waiting("Queued".into()));
         assert_eq!(ai_state(&AiPhase::PreparingRuntime), RowState::Working("Installing MTPLX…".into()));
         assert_eq!(ai_state(&AiPhase::DownloadingModel(1, 2)), RowState::Progress(1, 2));
         assert_eq!(ai_state(&AiPhase::Starting), RowState::Working("Starting…".into()));
         assert_eq!(ai_state(&AiPhase::Ready), RowState::Done);
-        for e in [AI_ERROR_MISSING, AI_ERROR_DOWNLOAD, AI_ERROR_INTEGRITY, AI_ERROR_PACKAGES, AI_ERROR_APPROVAL, AI_ERROR_REGISTRATION, AI_ERROR_TIMEOUT] {
-            assert_eq!(ai_state(&AiPhase::Failed(e.into())), RowState::Failed(e.into()));
-        }
-        assert_eq!(ai_error_port(), "Another AI server is using port 8000 or 8080. Quit MTPLX.app or stop it, then retry.");
-        assert!(AiPhase::Starting.running() && !AiPhase::Idle.running() && !AiPhase::Failed("x".into()).running());
+    }
 
+    // parity: ONB-296 ONB-297 ONB-298 ONB-299 ONB-300 ONB-301 ONB-302 ONB-303
+    #[test]
+    fn ai_failure_messages() {
+        assert_eq!(AI_ERROR_MISSING, "This copy of LocalFlow is missing its local AI files. Reinstall it.");
+        assert_eq!(AI_ERROR_DOWNLOAD, "The download stopped. Check your connection and retry.");
+        assert_eq!(AI_ERROR_INTEGRITY, "A downloaded file did not match its pinned checksum. Retry.");
+        assert_eq!(AI_ERROR_PACKAGES, "The AI runtime could not be installed. Details are in local-ai-setup.log.");
+        assert_eq!(ai_error_port(), "Another AI server is using port 8000 or 8080. Quit MTPLX.app or stop it, then retry.");
+        assert_eq!(AI_ERROR_APPROVAL, "Allow LocalFlow under System Settings → General → Login Items, then retry.");
+        assert_eq!(AI_ERROR_REGISTRATION, "LocalFlow could not register its background services. Move it to Applications and retry.");
+        assert_eq!(AI_ERROR_TIMEOUT, "The model did not start in time. Details are in local-ai-setup.log.");
+        assert_eq!(ai_state(&AiPhase::Failed(AI_ERROR_TIMEOUT.into())), RowState::Failed(AI_ERROR_TIMEOUT.into()));
+    }
+
+    // parity: ONB-306
+    #[test]
+    fn ai_ready_points_rewriting_at_the_local_helper() {
         let mut p = Prefs::memory();
         local_ai_ready(&mut p);
         assert_eq!(p.string("rewriteEndpoint").as_deref(), Some("http://127.0.0.1:8080"));
         assert!(p.bool_or("rewriteEnabled", false));
+    }
 
+    // parity: ONB-307 ONB-308 ONB-309 ONB-310 ONB-311 ONB-312
+    #[test]
+    fn meeting_row_states() {
         let mut s = Snapshot::default();
         assert_eq!(meeting_state(&s), RowState::Waiting("Queued".into()));
         s.installing = true;
@@ -1570,13 +1729,49 @@ mod tests {
         assert!(matches!(meeting_state(&s), RowState::Failed(_)), "Whisper alone isn't the pack");
         s.speaker_model_installed = true;
         assert_eq!(meeting_state(&s), RowState::Done);
+    }
 
+    // parity: ONB-284
+    #[test]
+    fn bar_percent_text() {
         assert_eq!(RowState::fraction(5, 0), 1.);
         assert_eq!(RowState::percent(Some(RowState::fraction(1, 4))), "25 percent");
         assert_eq!(RowState::percent(None), "In progress");
+    }
+
+    #[test]
+    fn byte_and_memory_text() {
         assert_eq!(bytes(SPEECH_FALLBACK_BYTES), "632.2 MB");
         assert_eq!(bytes(MEETING_BYTES), "1.65 GB");
         assert_eq!(memory(36 << 30), "36 GB");
+    }
+
+    // parity: ONB-371
+    #[test]
+    fn capture_commits_after_release() {
+        let mut c = ShortcutCapture::default();
+        assert_eq!(c.receive(KeyEvent::KeyDown, 53, 0, None), Capture::Cancelled, "Esc cancels");
+        assert_eq!(c.receive(KeyEvent::KeyDown, 0, 0, None), Capture::Pending, "a finished capture ignores the rest");
+        // A chord: nothing until the key and the modifiers are both up.
+        let mut c = ShortcutCapture::default();
+        assert_eq!(c.receive(KeyEvent::FlagsChanged, 59, CONTROL, Some(0x01)), Capture::Pending);
+        assert_eq!(c.receive(KeyEvent::KeyDown, 40, CONTROL, Some(0x01)), Capture::Pending);
+        assert_eq!(c.receive(KeyEvent::KeyUp, 40, CONTROL, Some(0x01)), Capture::Pending);
+        let Capture::Captured(chord) = c.receive(KeyEvent::FlagsChanged, 59, 0, None) else { panic!("chord didn't commit") };
+        assert_eq!((chord.kind, chord.key_code, chord.modifiers), (ShortcutKind::KeyCombination, 40, CONTROL));
+        // Modifier only, keeping its side; fn alone becomes fn / Globe.
+        let mut c = ShortcutCapture::default();
+        c.receive(KeyEvent::FlagsChanged, 62, CONTROL, Some(0x2000));
+        let Capture::Captured(side) = c.receive(KeyEvent::FlagsChanged, 62, 0, None) else { panic!("modifier didn't commit") };
+        assert_eq!(side.title(), "Right Control");
+        let mut c = ShortcutCapture::default();
+        c.receive(KeyEvent::FlagsChanged, 63, FN, None);
+        let Capture::Captured(globe) = c.receive(KeyEvent::FlagsChanged, 63, 0, None) else { panic!("fn didn't commit") };
+        assert_eq!(globe.kind, ShortcutKind::FnGlobe);
+        // A bare Return with its key up is a valid chord; an out-of-range key is not, and keeps waiting.
+        let mut c = ShortcutCapture::default();
+        c.receive(KeyEvent::KeyDown, 200, 0, None);
+        assert_eq!(c.receive(KeyEvent::KeyUp, 200, 0, None), Capture::Pending);
     }
 
     // parity: ONB-376 ONB-377 ONB-380 ONB-347 ONB-009

@@ -251,7 +251,8 @@ impl OnboardingPage {
             let press = self.click(cx, move |this, cx| this.allow(permission, cx));
             any(prototype_button(SharedString::from(format!("onboarding.allow.{title}")), "Allow…").a11y_label(format!("Allow {title}")).disabled(self.performing).on_click(press))
         };
-        h_flex().w_full().items_start().gap(px(14.)).child(row_icon(symbol, cx)).child(title_detail(title, detail.to_string(), cx)).child(div().flex_none().pl(px(12.)).child(control))
+        // Swift's `HStack(spacing: 14)` puts 14 on both sides of `Spacer(minLength: 12)`: 40 from text to control.
+        h_flex().w_full().items_start().gap(px(14.)).child(row_icon(symbol, cx)).child(title_detail(title, detail.to_string(), cx)).child(div().flex_none().pl(px(26.)).child(control))
     }
 
     fn system_audio_row(&mut self, cx: &mut Context<Self>) -> Div {
@@ -317,6 +318,7 @@ impl OnboardingPage {
     fn set_appearance_click(&mut self, value: &'static str, cx: &mut Context<Self>) -> Click {
         self.click(cx, move |this, cx| {
             cx.global_mut::<crate::core::Core>().prefs.set("appearance", value);
+            super::apply_native_appearance(cx);
             crate::shell::apply_appearance(cx);
             this.after(cx);
         })

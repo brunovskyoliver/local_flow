@@ -189,7 +189,7 @@ pub fn settings_row(title: impl Into<SharedString>, detail: Option<String>, cont
 /// `InputField`: a 38 high box with a leading icon around a Kit input.
 pub fn input_field(symbol: &str, input: Input, cx: &App) -> Div {
     let p = pal(cx);
-    h_flex().w_full().h(px(38.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(9.)).border_1().border_color(p.card_line).child(icon(symbol, 16., p.muted)).child(div().flex_1().min_w_0().child(input.appearance(false)))
+    h_flex().w_full().h(px(38.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(9.)).border_1().border_color(p.card_line).child(icon(symbol, 16., p.muted)).child(div().flex_1().min_w_0().child(input.appearance(false).px(px(0.))))
 }
 
 /// A miniature window in fixed colors, so a card previews its theme whatever the current one is.

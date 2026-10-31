@@ -15,6 +15,8 @@ pub enum ButtonKind {
     Primary,
     /// `.buttonStyle(.plain)` with no chrome.
     Plain,
+    /// SwiftUI's default `Button` on macOS, measured from the Swift reference: 24 high, radius 6.
+    Native,
 }
 
 /// A real button: role, name, Invoke action and keyboard focus come from Kit's `Button`.
@@ -35,6 +37,10 @@ pub struct FlowButton {
     disabled_opacity: f32,
     tooltip: Option<SharedString>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+}
+
+pub fn native_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> FlowButton {
+    FlowButton::new(id, ButtonKind::Native, label)
 }
 
 pub fn prototype_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> FlowButton {
@@ -139,6 +145,11 @@ impl ButtonKind {
             ButtonKind::Prototype => (p.tint, p.button, p.ink, 13., 500., 12., 7.),
             ButtonKind::Primary => (p.primary, p.primary.opacity(0.8), p.on_primary, 14., 500., 16., 9.),
             ButtonKind::Plain => (transparent, transparent, p.ink, 13., 400., 0., 0.),
+            ButtonKind::Native => {
+                let (fill, text): (u32, Hsla) = if p.mode.is_dark() { (0x3E3E3D, p.ink) } else { (0xF3F5F4, gpui_kit::rgb(0x457572).into()) };
+                let fill: Hsla = gpui_kit::rgb(fill).into();
+                (fill, fill.opacity(0.8), text, 13., 400., 12., 5.)
+            }
         }
     }
 }
@@ -170,7 +181,11 @@ impl RenderOnce for FlowButton {
             .h_auto()
             .px(px(px_x))
             .py(px(px_y))
-            .rounded(px(if self.kind == ButtonKind::Plain { 0. } else { 8. }))
+            .rounded(px(match self.kind {
+                ButtonKind::Plain => 0.,
+                ButtonKind::Native => 6.,
+                _ => 8.,
+            }))
             .border_0()
             .when(self.min_width > 0., |b| b.min_w(px(self.min_width)))
             .when(self.full_width, |b| b.w_full());
