@@ -3087,6 +3087,7 @@ mod tests {
         assert!(read_model(&db, SEED_FULL).unwrap().unwrap().stale, "naming an unknown speaker changes the version");
     }
 
+    // parity: MEET-058 MEET-060 MEET-063
     #[test]
     fn notes_editor_saves_and_retries_stale() {
         let db = db();
