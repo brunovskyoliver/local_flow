@@ -35,6 +35,7 @@ impl NotetakerPage {
         self.search.update(cx, |s, cx| s.set_value("", window, cx));
         self.summary.reset();
         self.summary_refresh(cx);
+        self.poll_finalizing(cx);
         cx.notify();
     }
     pub(crate) fn close_note_state(&mut self, _: &mut Window, _: &mut Context<Self>) {
@@ -143,10 +144,38 @@ impl NotetakerPage {
         }
         cx.notify();
     }
+    /// `FooterPlayer` and `seek(to:)`: the queue is real, the player is the Mac's.
     pub(crate) fn play(&mut self, cx: &mut Context<Self>) {
+        let queue = self.lib.detail.as_ref().and_then(|d| d.track("microphone").or(d.track("system")).map(|t| playback_queue(t, &Self::meetings_root(cx)))).unwrap_or_default();
         self.playing = true;
-        self.play_notice = Self::worker("Playback", cx).err();
+        self.play_total = queue.duration_ms;
+        self.play_notice = queue.notice.map(String::from).or_else(|| Self::worker("Playback", cx).err());
         cx.notify();
+    }
+    /// `finalizingPollKey`: reloads every 5 s while the open note's transcript is finalizing.
+    pub(crate) fn poll_finalizing(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()) else { return };
+        if self.pager.as_ref().and_then(|p| p.row.as_ref()).is_none_or(|r| r.state != "finalizing") {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(5)).await;
+                let going = this
+                    .update(cx, |this, cx| {
+                        let same = this.lib.detail.as_ref().is_some_and(|d| d.meeting.id == id);
+                        let (Some(db), Some(p), true) = (db_of(cx), &mut this.pager, same) else { return false };
+                        p.load_first(db);
+                        cx.notify();
+                        p.row.as_ref().is_some_and(|r| r.state == "finalizing")
+                    })
+                    .unwrap_or(false);
+                if !going {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn detail_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -170,7 +199,7 @@ impl NotetakerPage {
             .size_full()
             .items_center()
             .text_size(px(15.))
-            .child(div().w_full().flex().justify_center().px(px(20.)).pt(px(18.)).pb(px(16.)).child(self.toolbar(&d, cx)))
+            .child(div().w_full().flex().justify_center().px(px(20.)).pt(px(17.)).pb(px(17.)).child(self.toolbar(&d, cx)))
             .child(
                 div().w_full().flex().justify_center().px(px(30.)).child(
                     v_flex()
@@ -210,7 +239,7 @@ impl NotetakerPage {
                             .pt(px(20.))
                             .pb(px(24.))
                             .gap(px(16.))
-                            .when_some(produced, |d, text| d.child(t(text).size(12.).color(p.muted)))
+                            .when_some(produced, |d, text| d.child(t(text).size(12.).swift_lines().color(p.muted)))
                             .child(body),
                     ),
             )
@@ -240,7 +269,7 @@ impl NotetakerPage {
                         if let Some((title, id)) = action {
                             let on = cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.menu = None;
-                                this.transcript_notice = Self::worker("Transcription", cx).err();
+                                this.request_transcript(cx);
                                 cx.notify();
                             });
                             items = items.child(menu_row(id, title, Some("arrow.clockwise"), p.ink, Box::new(on)));
@@ -256,6 +285,21 @@ impl NotetakerPage {
             )
             .child(note_icon("meeting.previous", "chevron.left", "Previous note", p.ink).disabled(!previous || leaving).on_click(cx.listener(|this, _, w, cx| this.navigate(-1, w, cx))))
             .child(note_icon("meeting.next", "chevron.right", "Next note", p.ink).disabled(!next || leaving).on_click(cx.listener(|this, _, w, cx| this.navigate(1, w, cx))))
+    }
+
+    /// `requestFinalization`: admission first, then the worker.
+    pub(crate) fn request_transcript(&mut self, cx: &mut Context<Self>) {
+        let id = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()).unwrap_or_default();
+        self.transcript_notice = if admit(&mut self.transcript_queue, &id, false, QUEUE_CAPACITY) {
+            let refused = Self::worker("Transcription", cx).err();
+            if refused.is_some() {
+                self.transcript_queue.retain(|q| q != &id);
+            }
+            refused
+        } else {
+            Some("Too many transcripts waiting".into())
+        };
+        cx.notify();
     }
 
     fn transcript_menu_action(&self, m: &MeetingRow) -> Option<(&'static str, &'static str)> {
@@ -317,14 +361,14 @@ impl NotetakerPage {
         let row = h_flex().w_full().max_w(px(600.)).gap(px(8.)).justify_center();
         if let Some(s) = live {
             return row
-                .when(s.state == "paused", |d| d.child(prototype_button("meeting.resume", "Resume").symbol("play.fill", 13.).on_click(cx.listener(|this, _, _, cx| this.live_action("Resume", cx)))))
-                .when(s.state == "recording", |d| d.child(prototype_button("meeting.pause", "Pause").symbol("pause.fill", 13.).on_click(cx.listener(|this, _, _, cx| this.live_action("Pause", cx)))))
-                .child(prototype_button("meeting.stop", "Stop").content(h_flex().gap(px(6.)).child(icon("stop.fill", 13., green(cx))).child(t("Stop").font(13., 500.).a11y_hidden())).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx))));
+                .when(s.state == "paused", |d| d.child(symbol_button("meeting.resume", "Resume", "play.fill", 13., p.ink).on_click(cx.listener(|this, _, _, cx| this.live_action("Resume", cx)))))
+                .when(s.state == "recording", |d| d.child(symbol_button("meeting.pause", "Pause", "pause.fill", 13., p.ink).on_click(cx.listener(|this, _, _, cx| this.live_action("Pause", cx)))))
+                .child(symbol_button("meeting.stop", "Stop", "stop.fill", 13., green(cx)).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx))));
         }
         let track = d.track("microphone").or(d.track("system")).is_some();
         let playable = is_terminal(&d.meeting.state) && track;
-        row.child(prototype_button("meeting.playback", "Playback").symbol("play.circle", 15.).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
-            w.child(t("0:00").size(12.).mono_digits().color(p.muted))
+        row.child(symbol_button("meeting.playback", "Playback", "play.circle", 15., p.ink).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
+            w.child(t(format!("0:00 / {}", duration_text(self.play_total))).size(12.).mono_digits().color(p.muted))
                 .child(prototype_button("meeting.playback.stop", "Stop").on_click(cx.listener(|this, _, _, cx| {
                     this.playing = false;
                     this.play_notice = None;

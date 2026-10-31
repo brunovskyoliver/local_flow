@@ -54,7 +54,13 @@ pub struct NotetakerPage {
     pub(crate) active_title_notice: Option<String>,
     pub(crate) refusal: Option<String>,
     pub(crate) waiting: HashSet<String>,
-    pub(crate) can_start: bool,
+    pub(crate) busy: bool,
+    pub(crate) start_warning: Option<&'static str>,
+    pub(crate) seen_meeting: Option<(String, Option<String>, crate::shell::MeetingState)>,
+    pub(crate) transcript_queue: Vec<String>,
+    pub(crate) summary_queue: Vec<String>,
+    pub(crate) play_total: i64,
+    pub(crate) polling: bool,
     pub(crate) preview_epoch: u64,
     // Open note.
     pub(crate) tab: Tab,
@@ -79,6 +85,7 @@ pub struct NotetakerPage {
     pub(crate) identify_run: Option<RunLine>,
     pub(crate) past_search: Option<(String, i64)>,
     pub(crate) past_prompt: Option<(String, i64)>,
+    pub(crate) past_queue: Vec<String>,
     pub(crate) enrolling: bool,
     // Sheets and tabs with their own state.
     pub(crate) assign: Option<AssignState>,
@@ -132,6 +139,10 @@ type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 /// `NoteIconButton`: a 13 symbol in a 28 square with a tooltip.
 pub(crate) fn note_icon(id: impl Into<ElementId>, symbol: &'static str, label: &str, color: Hsla) -> FlowButton {
     plain_button(id, sid(label)).tooltip(sid(label)).content(div().size(px(28.)).flex().items_center().justify_center().child(icon(symbol, 15., color)))
+}
+/// `Label` in `PrototypeButtonStyle`: 28 high, as the 13 medium label lays out at 14 in SwiftUI.
+pub(crate) fn symbol_button(id: impl Into<ElementId>, label: &'static str, symbol: &'static str, size: f32, color: Hsla) -> FlowButton {
+    prototype_button(id, label).content(h_flex().h(px(14.)).gap(px(8.)).child(icon(symbol, size, color)).child(t(label).font(13., 500.).a11y_hidden()))
 }
 /// The trigger of a native `Menu`: a borderless symbol in a square.
 pub(crate) fn menu_trigger(id: impl Into<ElementId>, label: &'static str, symbol: &'static str, size: f32, frame: f32, color: Hsla) -> Button {
@@ -204,6 +215,12 @@ impl NotetakerPage {
         let subs = vec![
             // `onDisappear`: leaving the page lets go of the open note and the preview.
             cx.observe_global_in::<crate::shell::Session>(window, |this, window, cx| {
+                // `coordinator.version`: the library re-reads when the active meeting changes.
+                let meeting = cx.global::<crate::shell::Session>().meeting.as_ref().map(|m| (m.id.clone(), m.title.clone(), m.state));
+                if meeting != this.seen_meeting {
+                    this.seen_meeting = meeting;
+                    this.refresh(cx);
+                }
                 if cx.global::<crate::shell::Session>().selection != crate::pages::Page::Meetings && (this.lib.detail.is_some() || this.lib.preview_id.is_some()) {
                     this.preview_epoch += 1;
                     this.lib.release_detail();
@@ -256,7 +273,13 @@ impl NotetakerPage {
             active_title_notice: None,
             refusal: None,
             waiting: HashSet::new(),
-            can_start: true,
+            busy: false,
+            start_warning: None,
+            seen_meeting: None,
+            transcript_queue: vec![],
+            summary_queue: vec![],
+            play_total: 0,
+            polling: false,
             preview_epoch: 0,
             tab: Tab::Thoughts,
             title,
@@ -279,18 +302,57 @@ impl NotetakerPage {
             identify_run: None,
             past_search: None,
             past_prompt: None,
+            past_queue: vec![],
             enrolling: false,
             assign: None,
             summary: SummaryState::new(window, cx),
             _subs: subs,
         };
         page.refresh(cx);
+        for notice in std::mem::take(&mut cx.global_mut::<Core>().meeting_notices) {
+            crate::pill::show_action(notice, false, cx);
+        }
         if let Some(name) = cx.global::<Core>().scenario.clone().and_then(|s| s.strip_prefix("notetaker.").map(String::from)) {
             page.apply_scenario(&name, window, cx);
         }
         page
     }
 
+    /// `MeetingCoordinator.canStart`.
+    pub(crate) fn can_start(&self, cx: &App) -> bool {
+        cx.global::<Core>().reconciled && self.active_id().is_none() && !self.busy
+    }
+    /// Starts the status poll once; it ends when nothing is active.
+    pub(crate) fn poll_status(&mut self, cx: &mut Context<Self>) {
+        if self.polling {
+            return;
+        }
+        self.polling = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+                let going = this.update(cx, |this, cx| this.read_status(cx)).unwrap_or(false);
+                if !going {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+    /// One poll: the stored state stands in for the coordinator's until capture exists.
+    fn read_status(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self.active_id() else {
+            self.polling = false;
+            return false;
+        };
+        if let Some(m) = db_of(cx).and_then(|db| meeting(db, &id).ok().flatten()) {
+            if let Some(s) = self.status.as_mut().filter(|s| s.state != m.state) {
+                s.state = m.state;
+                self.refresh(cx);
+            }
+        }
+        true
+    }
     pub(crate) fn active_id(&self) -> Option<String> {
         self.status.as_ref().filter(|s| !is_terminal(&s.state)).map(|s| s.id.clone())
     }
@@ -348,12 +410,11 @@ impl NotetakerPage {
             }
             "recording" | "paused" | "finalizing" | "preparing" | "interrupted-card" | "failed-card" | "notice-card" => {
                 self.status = Some(LiveStatus::scenario(name));
-                self.can_start = false;
                 self.refresh(cx);
+                self.poll_status(cx);
             }
             "live" | "live-paused" | "live-off" | "live-listening" => {
                 self.status = Some(LiveStatus::scenario(name));
-                self.can_start = false;
                 self.refresh(cx);
                 open(self, SEED_UNTITLED, Tab::Transcript, window, cx);
             }

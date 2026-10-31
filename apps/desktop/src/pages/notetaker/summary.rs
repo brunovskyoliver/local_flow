@@ -61,8 +61,8 @@ impl SummaryState {
         match name {
             "eligible" => self.forced = Some(SummaryHeader::Eligible),
             "pending" => self.forced = Some(SummaryHeader::Pending(2)),
-            "running" => self.forced = Some(SummaryHeader::Running("Summarizing with your server…".into())),
-            "failed" => self.forced = Some(SummaryHeader::Failed("The summary could not be generated.".into())),
+            "running" => self.forced = Some(SummaryHeader::Running("Analyzing".into())),
+            "failed" => self.forced = Some(SummaryHeader::Failed(analysis_failure_text("backend_unavailable").into())),
             "not-finished" => self.forced = Some(SummaryHeader::NotEligible(NOT_FINISHED)),
             "stale" => self.forced_stale = true,
             _ => {}
@@ -126,7 +126,16 @@ impl NotetakerPage {
     }
     fn generate(&mut self, cx: &mut Context<Self>) {
         self.menu = None;
-        self.summary.error = Self::worker("Summary generation", cx).err();
+        let id = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()).unwrap_or_default();
+        self.summary.error = if admit(&mut self.summary_queue, &id, false, QUEUE_CAPACITY) {
+            let refused = Self::worker("Summary generation", cx).err();
+            if refused.is_some() {
+                self.summary_queue.retain(|q| q != &id);
+            }
+            refused
+        } else {
+            Some("Summary queue is full".into())
+        };
         cx.notify();
     }
     fn write(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&Db, &str) -> Res<()>) {
@@ -299,7 +308,7 @@ impl NotetakerPage {
             .gap(px(10.))
             .bg(p.canvas)
             .rounded(px(8.))
-            .child(h_flex().gap(px(6.)).child(icon("lightbulb", 13., p.muted)).child(t(label).font(12., 500.).tracking(1.2).color(p.muted).id("meeting.summary.readingTime")))
+            .child(h_flex().gap(px(6.)).child(icon("lightbulb", 13., p.muted)).child(t(label).font(12., 500.).tracking(1.2).swift_lines().mono_digits().color(p.muted).id("meeting.summary.readingTime")))
             .child(div().flex_1())
             .map(|d| match header {
                 SummaryHeader::NotEligible(_) => d,
@@ -312,7 +321,7 @@ impl NotetakerPage {
                     .child(
                         div()
                             .relative()
-                            .child(menu_trigger("meeting.summary.options", "Summary options", "ellipsis", 15., 28., p.accent).dropdown_menu(move |menu, _, _| {
+                            .child(menu_trigger("meeting.summary.options", "Summary options", "ellipsis", 13., 20., p.accent).dropdown_menu(move |menu, _, _| {
                                 let mut menu = menu
                                     .item(PopupMenuItem::new("Regenerate").on_click(act(&page, |this, _, cx| this.generate(cx))))
                                     .item(PopupMenuItem::new("Previous edits").disabled(!has_previous).on_click(act(&page, |this, _, cx| {
@@ -474,10 +483,10 @@ impl NotetakerPage {
         let due_date = if ai_shown { item.ai_due_date.clone() } else { item.due_date.clone() };
         let mut chips = h_flex().gap(px(8.)).child(self.owner_chip(item, owner, cx));
         if let Some(date) = due_date {
-            chips = chips.child(t(format!("Due {}", due_text(&date))).size(11.).color(p.muted));
+            chips = chips.child(t(format!("Due {}", due_text(&date))).size(11.).swift_lines().color(p.muted));
         } else if item.due_state == "unresolved" {
             let text = item.due_original.as_ref().map_or("Due: unclear".to_string(), |o| format!("Due: unclear (\"{o}\")"));
-            chips = chips.child(t(text).size(11.).color(p.muted));
+            chips = chips.child(t(text).size(11.).swift_lines().color(p.muted));
         }
         h_flex()
             .id(row_id)
@@ -489,7 +498,7 @@ impl NotetakerPage {
             .child(plain_button(sid(format!("meeting.summary.status.{}", item.ordinal)), if done { "Mark open" } else { "Mark completed" }).on_click(cx.listener(move |this, _, _, cx| {
                 let next = if status_item.status == "open" { "completed" } else { "open" };
                 this.set_item(&status_item, "status", next, Some("open".into()), cx);
-            })).content(div().pt(px(3.)).child(if completed {
+            })).content(div().w(px(15.)).pt(px(3.)).child(if completed {
                 // ponytail: the Kit icon set has no filled check, so the fill is drawn here.
                 div().size(px(13.)).rounded_full().bg(p.success).flex().items_center().justify_center().child(icon("checkmark", 9., gpui::white())).into_any_element()
             } else {
@@ -536,7 +545,7 @@ impl NotetakerPage {
         let p = pal(cx);
         let chip = h_flex().id("meeting.summary.owner").px(px(8.)).py(px(3.)).rounded_full();
         match owner {
-            Owner::Participant(name, color, local) => chip.gap(px(6.)).bg(p.button).child(div().size(px(8.)).rounded_full().bg(speaker_dot(color, cx))).child(t(if local { "You".to_string() } else { name }).size(11.)).into_any_element(),
+            Owner::Participant(name, color, local) => chip.gap(px(6.)).bg(p.button).child(div().size(px(8.)).rounded_full().bg(speaker_dot(color, cx))).child(t(if local { "You".to_string() } else { name }).size(11.).swift_lines()).into_any_element(),
             Owner::Mentioned(name, known) => {
                 let it = item.clone();
                 let ai = owner_json(&item.ai_owner);

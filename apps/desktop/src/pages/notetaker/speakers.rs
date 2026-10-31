@@ -69,7 +69,10 @@ impl NotetakerPage {
             return;
         }
         // Voice samples come from the Mac's embedding worker; names and links still save.
-        let closed = a.model.save(db, "The voice sample could not be stored on this Mac.");
+        // Swift's coordinator answers `.disabled` when identification is off.
+        let identify = cx.global::<Core>().prefs.bool_or("speakerIdentificationEnabled", true);
+        let outcome = if identify { EnrollOutcome::Failed("The voice sample could not be stored on this Mac.".into()) } else { EnrollOutcome::Disabled };
+        let closed = a.model.save(db, &outcome.text());
         if let Some(p) = &mut self.pager {
             p.refresh_labels(db);
         }

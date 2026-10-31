@@ -63,7 +63,8 @@ impl Core {
         let root = self.paths.root.join("Meetings");
         if let Some(Ok(recovery)) = self.db.as_ref().map(|db| flow_core::meetings::reconcile_launch(db, &root, flow_core::history::now_ms())) {
             self.meeting_notices = recovery.notices();
-            self.reconciled = true;
         }
+        // Swift completes recovery even when a reconciler throws, so New note unlocks.
+        self.reconciled = true;
     }
 }

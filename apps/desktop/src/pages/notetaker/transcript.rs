@@ -153,7 +153,11 @@ impl NotetakerPage {
                         .rounded(px(6.))
                         .child(t(format!("Look for this voice in past meetings? {count} {noun} would be checked.")).size(12.))
                         .child(plain_button("identity.pastSearch", "Look").on_click(cx.listener(|this, _, _, cx| {
-                            this.past_prompt = None;
+                            let (name, except) = (this.past_prompt.take().map(|p| p.0).unwrap_or_default(), this.lib.detail.as_ref().map(|d| d.meeting.id.clone()));
+                            if let Some(queued) = db_of(cx).and_then(|db| past_search_candidates(db, except.as_deref()).ok()) {
+                                this.past_queue = queued;
+                                this.past_search = (!this.past_queue.is_empty()).then(|| (name, this.past_queue.len() as i64));
+                            }
                             this.transcript_notice = Self::worker("Searching past meetings", cx).err();
                             cx.notify();
                         })).content(t("Look").size(12.).color(p.accent).a11y_hidden()))
@@ -192,8 +196,8 @@ impl NotetakerPage {
             .gap(px(10.))
             .bg(p.canvas)
             .rounded(px(6.))
-            .child(h_flex().gap(px(6.)).child(icon("clock", 11., p.muted)).child(t(duration_text(elapsed)).size(11.).mono_digits().color(p.muted)))
-            .when_some(badge, |w, b| w.child(t(format!("· {b}")).size(11.).color(p.muted)))
+            .child(h_flex().gap(px(8.)).child(div().w(px(14.)).flex().justify_center().child(icon("clock", 11., p.muted))).child(t(duration_text(elapsed)).size(11.).swift_lines().mono_digits().color(p.muted)))
+            .when_some(badge, |w, b| w.child(t(format!("· {b}")).size(11.).swift_lines().color(p.muted)))
             .child(div().flex_1())
             .map(|w| {
                 if open {
@@ -220,7 +224,7 @@ impl NotetakerPage {
                 let selected = self.pager.as_ref().map_or(0, |x| x.selection.len());
                 let title = copy_selected_title(selected);
                 let page = cx.entity().downgrade();
-                w.child(menu_trigger("meeting.transcript.copy", "Copy or export transcript", "doc.on.doc", 13., 28., p.accent).dropdown_menu(move |menu, _, _| {
+                w.child(menu_trigger("meeting.transcript.copy", "Copy or export transcript", "doc.on.doc", 13., 22., p.accent).dropdown_menu(move |menu, _, _| {
                     menu.item(PopupMenuItem::new(title.clone()).disabled(selected == 0).on_click(act(&page, |this, _, cx| {
                         this.transcript_notice = None;
                         if let Some(x) = &this.pager {
@@ -252,7 +256,7 @@ impl NotetakerPage {
                 cx.notify();
             }))
         };
-        h_flex().gap(px(2.)).child(t(text).size(11.).mono_digits().color(p.muted).lines(1).id("meeting.transcript.search.count")).child(chevron("meeting.transcript.search.previous", "chevron.up", "Previous match", false, cx)).child(chevron("meeting.transcript.search.next", "chevron.down", "Next match", true, cx))
+        h_flex().gap(px(2.)).child(t(text).size(11.).swift_lines().mono_digits().color(p.muted).lines(1).id("meeting.transcript.search.count")).child(chevron("meeting.transcript.search.previous", "chevron.up", "Previous match", false, cx)).child(chevron("meeting.transcript.search.next", "chevron.down", "Next match", true, cx))
     }
 
     fn speaker_status_line(&mut self, has_result: bool, cx: &mut Context<Self>) -> impl IntoElement {
@@ -260,18 +264,18 @@ impl NotetakerPage {
         let run = self.speaker_run.clone();
         let line = h_flex().id("meeting.speakers.status").gap(px(8.));
         match run.as_ref().map(|r| r.state.as_str()) {
-            Some("pending") => line.child(t(if has_result { "Updating speaker labels…" } else { "Waiting to label speakers…" }).size(11.).color(p.muted)),
+            Some("pending") => line.child(t(if has_result { "Updating speaker labels…" } else { "Waiting to label speakers…" }).size(11.).swift_lines().color(p.muted)),
             Some("running") => {
                 let text = if has_result { "Updating speaker labels…".to_string() } else { format!("Labeling speakers… {}%", run.as_ref().map_or(0, |r| r.percent)) };
-                line.child(t(text).size(11.).color(p.muted))
+                line.child(t(text).size(11.).swift_lines().color(p.muted))
             }
             Some("failed" | "interrupted") => {
                 let category = run.and_then(|r| r.failure).unwrap_or_else(|| "interrupted".into());
-                line.child(t(diarization_failure_text(&category)).size(11.).color(red(cx))).when(category != "os_unsupported", |d| {
+                line.child(t(diarization_failure_text(&category)).size(11.).swift_lines().color(red(cx))).when(category != "os_unsupported", |d| {
                     d.child(plain_button("meeting.speakers.retry", "Retry").on_click(cx.listener(|this, _, _, cx| {
                         this.transcript_notice = Self::worker("Speaker labeling", cx).err();
                         cx.notify();
-                    })).content(t("Retry").size(11.).color(p.accent).a11y_hidden()))
+                    })).content(t("Retry").size(11.).swift_lines().color(p.accent).a11y_hidden()))
                 })
             }
             _ => line,
@@ -282,25 +286,26 @@ impl NotetakerPage {
         let p = pal(cx);
         let line = h_flex().id("meeting.identification.status").gap(px(8.));
         if let Some((name, left)) = self.past_search.clone() {
-            return line.child(t(format!("Looking for {name} in past meetings ({left} left)")).size(11.).color(p.muted)).child(plain_button("identity.pastSearch.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| {
+            return line.child(t(format!("Looking for {name} in past meetings ({left} left)")).size(11.).swift_lines().color(p.muted)).child(plain_button("identity.pastSearch.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| {
                 this.past_search = None;
+                this.past_queue.clear();
                 cx.notify();
-            })).content(t("Cancel").size(11.).color(p.accent).a11y_hidden()));
+            })).content(t("Cancel").size(11.).swift_lines().color(p.accent).a11y_hidden()));
         }
         let run = self.identify_run.clone();
         match run.as_ref().map(|r| r.state.as_str()) {
-            Some("pending") => line.child(t("Waiting to identify speakers…").size(11.).color(p.muted)),
-            Some("running") => line.child(t(format!("Identifying speakers… {}%", run.as_ref().map_or(0, |r| r.percent))).size(11.).color(p.muted)),
+            Some("pending") => line.child(t("Waiting to identify speakers…").size(11.).swift_lines().color(p.muted)),
+            Some("running") => line.child(t(format!("Identifying speakers… {}%", run.as_ref().map_or(0, |r| r.percent))).size(11.).swift_lines().color(p.muted)),
             Some("failed" | "interrupted") => {
                 let category = run.and_then(|r| r.failure).unwrap_or_else(|| "interrupted".into());
-                line.child(t(format!("Identification failed: {}", identification_failure_text(&category))).size(11.).color(red(cx))).when(category != "os_unsupported", |d| {
+                line.child(t(format!("Identification failed: {}", identification_failure_text(&category))).size(11.).swift_lines().color(red(cx))).when(category != "os_unsupported", |d| {
                     d.child(plain_button("meeting.identification.retry", "Retry").on_click(cx.listener(|this, _, _, cx| {
                         this.transcript_notice = Self::worker("Speaker identification", cx).err();
                         cx.notify();
-                    })).content(t("Retry").size(11.).color(p.accent).a11y_hidden()))
+                    })).content(t("Retry").size(11.).swift_lines().color(p.accent).a11y_hidden()))
                 })
             }
-            _ => line.when(self.enrolling, |d| d.child(t("Storing voice sample…").size(11.).color(p.muted))),
+            _ => line.when(self.enrolling, |d| d.child(t("Storing voice sample…").size(11.).swift_lines().color(p.muted))),
         }
     }
 
@@ -358,7 +363,7 @@ impl NotetakerPage {
                             (LabelKind::Speaker(root), Some((_, known))) if identify => Some((root.clone(), known.clone())),
                             _ => None,
                         };
-                        d.child(h_flex().pt(px(14.)).gap(px(6.)).child(t(label.text.clone()).font(12., 500.).color(text_color)).when_some(confirm, |d, (root, known)| {
+                        d.child(h_flex().pt(px(14.)).gap(px(6.)).child(t(label.text.clone()).font(12., 500.).swift_lines().color(text_color)).when_some(confirm, |d, (root, known)| {
                             d.child(plain_button("speaker.confirm", sid(format!("Confirm speaker {}", label.text))).tooltip("Confirm this speaker").content(icon("checkmark.circle", 11., p.muted)).on_click(cx.listener(move |this, _, _, cx| this.confirm_identity(&root, &known, cx))))
                         }))
                     }
@@ -371,7 +376,7 @@ impl NotetakerPage {
                         d.child(div().pt(px(14.)).id(sid(format!("meeting.transcript.source.{}", row.ordinal))).tooltip({
                             let text = source_explanation(&row.tracks);
                             move |w, cx| Tooltip::new(text).build(w, cx)
-                        }).child(t(source_label(&row.tracks)).font(12., 500.).color(color)))
+                        }).child(t(source_label(&row.tracks)).font(12., 500.).swift_lines().color(color)))
                     }
                 })
             })
@@ -382,7 +387,7 @@ impl NotetakerPage {
                     .flex()
                     .flex_col()
                     .items_start()
-                    .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).test_support().max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).child(t(row.text.clone()).size(13.).line_spacing(4.).color(color).selectable()).context_menu(move |menu, window, cx| {
+                    .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).test_support().max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).child(t(row.text.clone()).size(13.).line_spacing(4.).swift_lines().color(color).selectable()).context_menu(move |menu, window, cx| {
                         let segment = id.clone();
                         let mut menu = menu.item(PopupMenuItem::new(if selected { "Deselect" } else { "Select" }).on_click(act(&page, move |this, _, cx| {
                             if let Some(x) = &mut this.pager {

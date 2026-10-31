@@ -2800,6 +2800,229 @@ const LINES: [&str; 12] = [
     "That works for me, so we can finish here and pick this up on Friday.",
 ];
 
+/// `MeetingCoordinator.start`'s refusals before anything is created, in Swift's order.
+pub fn start_refusal(busy: bool, dictating: bool, microphone_denied: bool, screen_denied: bool, free_bytes: Option<u64>) -> Option<&'static str> {
+    if busy {
+        Some("Meeting is busy")
+    } else if dictating {
+        Some("Dictation in progress")
+    } else if microphone_denied {
+        Some("Microphone access is not allowed. Enable LocalFlow in System Settings > Privacy & Security > Microphone.")
+    } else if screen_denied {
+        Some("System audio needs Screen & System Audio Recording. Enable LocalFlow in System Settings > Privacy & Security > Screen & System Audio Recording.")
+    } else if free_bytes.is_some_and(|f| f < 500_000_000) {
+        Some("Not enough free space to record (needs at least 500 MB)")
+    } else {
+        None
+    }
+}
+/// Recording continues under this warning.
+pub fn low_space_warning(free_bytes: Option<u64>) -> Option<&'static str> {
+    free_bytes.filter(|f| *f < 2_000_000_000).map(|_| "Less than 2 GB free")
+}
+/// A bounded admission queue: the running item counts against the capacity.
+pub fn admit(queue: &mut Vec<String>, id: &str, running: bool, capacity: usize) -> bool {
+    if queue.iter().any(|q| q == id) {
+        return true;
+    }
+    if queue.len() + usize::from(running) >= capacity {
+        return false;
+    }
+    queue.push(id.to_string());
+    true
+}
+pub const QUEUE_CAPACITY: usize = 100;
+
+/// `TrackPlaybackController.load`.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct PlaybackQueue {
+    /// (relative path, offset in the concatenated timeline).
+    pub items: Vec<(String, i64)>,
+    pub skipped: Vec<String>,
+    pub duration_ms: i64,
+    pub notice: Option<&'static str>,
+}
+pub fn playback_queue(track: &Track, root: &Path) -> PlaybackQueue {
+    let mut q = PlaybackQueue::default();
+    let mut segments: Vec<&Segment> = track.segments.iter().collect();
+    segments.sort_by_key(|s| s.sequence);
+    for s in segments {
+        match s.state.as_str() {
+            "finalized" if root.join(&s.relative_path).exists() => {
+                q.items.push((s.relative_path.clone(), q.duration_ms));
+                q.duration_ms += s.duration_ms;
+            }
+            "finalized" => q.skipped.push(format!("Segment {}: Not playable: {}", s.sequence, failure_reason_text("file_missing", None))),
+            "open" => q.skipped.push(format!("Segment {}: Not playable: still open", s.sequence)),
+            _ => q.skipped.push(format!("Segment {}: Not playable: {}", s.sequence, failure_reason_text(s.failure_reason.as_deref().unwrap_or("unrecoverable_media"), None))),
+        }
+    }
+    q.notice = q.items.is_empty().then_some("No playable audio");
+    q
+}
+
+/// `meetingsWithUnknownRemoteSpeakers`: newest first, at most 500.
+pub fn past_search_candidates(db: &Db, except: Option<&str>) -> Res<Vec<String>> {
+    let rows = db.conn.prepare(
+        "SELECT m.id FROM meetings m JOIN meeting_diarization d ON d.meeting_id=m.id AND d.accepted_run_id IS NOT NULL
+         WHERE EXISTS (SELECT 1 FROM meeting_speakers s WHERE s.run_id=d.accepted_run_id AND s.source='remote' AND s.speech_ms>0 AND s.merged_into IS NULL
+           AND NOT EXISTS (SELECT 1 FROM identity_assignments a WHERE a.meeting_speaker_id=s.id AND a.scope='merged' AND a.known_speaker_id IS NOT NULL)
+           AND NOT EXISTS (SELECT 1 FROM identity_assignments a WHERE a.meeting_speaker_id=s.id AND a.scope='self' AND a.state IN ('recognized','possible','confirmed','rejected_unknown')))
+         ORDER BY m.created_at DESC, m.id DESC LIMIT 500",
+    )?
+    .query_map([], |r| r.get::<_, String>(0))?
+    .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows.into_iter().filter(|id| Some(id.as_str()) != except).collect())
+}
+
+/// `AssignSpeakersModel`'s enrollment outcomes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnrollOutcome {
+    Stored(i64),
+    NoUsableSample,
+    Disabled,
+    Failed(String),
+}
+impl EnrollOutcome {
+    pub fn text(&self) -> String {
+        match self {
+            EnrollOutcome::Stored(1) => "1 sample stored".into(),
+            EnrollOutcome::Stored(n) => format!("{n} samples stored"),
+            EnrollOutcome::NoUsableSample => "No usable voice sample was found in this meeting".into(),
+            EnrollOutcome::Disabled => "Speaker identification is turned off.".into(),
+            EnrollOutcome::Failed(text) => text.clone(),
+        }
+    }
+}
+
+/// What launch reconciliation did: `ReconciliationSummary` and `TranscriptReconciler.Summary`.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Recovery {
+    pub meetings_found: i64,
+    pub recovered: i64,
+    pub unrecoverable: i64,
+    pub transcripts_interrupted: i64,
+    pub transcripts_failed: i64,
+    /// `finalizing` rows of finished meetings, which Swift resumes automatically.
+    pub transcripts_to_resume: i64,
+}
+impl Recovery {
+    /// The two notices Swift publishes after reconciling.
+    pub fn notices(&self) -> Vec<String> {
+        let mut out = vec![];
+        if self.meetings_found > 0 {
+            let mut parts = vec![];
+            if self.recovered > 0 {
+                parts.push(format!("{} meeting{} recovered", self.recovered, if self.recovered == 1 { "" } else { "s" }));
+            }
+            if self.unrecoverable > 0 {
+                parts.push(format!("{} with audio that could not be made playable", self.unrecoverable));
+            }
+            let failed = self.meetings_found - self.recovered - self.unrecoverable;
+            if failed > 0 {
+                parts.push(format!("{failed} marked failed"));
+            }
+            out.push(parts.join(", "));
+        }
+        let retryable = self.transcripts_interrupted + self.transcripts_failed;
+        if retryable > 0 {
+            out.push(if retryable == 1 { "1 transcript was interrupted; choose Retry to finish it".to_string() } else { format!("{retryable} transcripts were interrupted; choose Retry to finish them") });
+        }
+        out
+    }
+}
+
+/// Runs once per launch, before Start is enabled: `MeetingReconciler`, then `TranscriptReconciler`,
+/// then the speaker and summary run reconcilers, each bounded to 100 rows. Nothing is deleted.
+// ponytail: open segment files aren't ADTS-validated or truncated; a file that's there stays open for
+// the capture phase, which brings the validator. Only a missing file is decided here.
+pub fn reconcile_launch(db: &Db, root: &Path, now: i64) -> Res<Recovery> {
+    let c = &db.conn;
+    let mut out = Recovery::default();
+    let rows: Vec<(String, String, Option<String>, Option<i64>, i64)> = c
+        .prepare("SELECT id,state,finalization_stage,stopped_at,updated_at FROM meetings WHERE state IN ('created','preparing','recording','paused','finalizing') ORDER BY created_at,id LIMIT 100")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+        .collect::<Result<_, _>>()?;
+    for (id, found, stage, stopped, updated) in rows {
+        out.meetings_found += 1;
+        let segments: Vec<(String, String, String)> = c
+            .prepare("SELECT s.id,s.state,s.relative_path FROM meeting_segments s JOIN meeting_tracks t ON t.id=s.track_id WHERE t.meeting_id=?1")?
+            .query_map([&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<Result<_, _>>()?;
+        let detail = format!("found={found}");
+        if found == "created" || segments.is_empty() {
+            c.execute("UPDATE meetings SET state='failed',failure_reason='not_running_at_last_state',failure_detail=?1,updated_at=?2,revision=revision+1 WHERE id=?3", params![detail, now, id])?;
+            outcome(c, &id, now, &found, stage.as_deref(), 0, 0, false, "no media; marked failed")?;
+            continue;
+        }
+        let (mut recovered, mut missing) = (0, 0);
+        for (segment, state, path) in &segments {
+            if state == "unrecoverable" {
+                continue;
+            }
+            let bare = path.strip_suffix(".part").unwrap_or(path);
+            if root.join(path).exists() || root.join(bare).exists() {
+                recovered += 1;
+            } else {
+                missing += 1;
+                c.execute("UPDATE meeting_segments SET state='unrecoverable',failure_reason='file_missing' WHERE id=?1", [segment])?;
+            }
+        }
+        c.execute("UPDATE meeting_tracks SET health='finalized' WHERE meeting_id=?1 AND health='healthy'", [&id])?;
+        let paused = c.execute("UPDATE meeting_pauses SET ended_at=max(started_at,?1),closed_by='reconciliation' WHERE meeting_id=?2 AND ended_at IS NULL", params![updated, id])? > 0;
+        c.execute(
+            "UPDATE meetings SET state='interrupted',failure_reason='not_running_at_last_state',failure_detail=?1,completed_at=?2,stopped_at=?3,updated_at=?2,revision=revision+1 WHERE id=?4",
+            params![format!("{detail} stage={}", stage.as_deref().unwrap_or("none")), now, stopped.unwrap_or(updated), id],
+        )?;
+        if recovered > 0 {
+            out.recovered += 1;
+        } else {
+            out.unrecoverable += 1;
+        }
+        outcome(c, &id, now, &found, stage.as_deref(), recovered, missing, paused, &format!("recovered={recovered} unrecoverable=0 missing={missing} truncated=0"))?;
+    }
+    let transcripts: Vec<(String, String, i64, i64)> = c
+        .prepare("SELECT meeting_id,state,segment_count,revision FROM meeting_transcriptions WHERE state IN ('pending','live','finalizing') ORDER BY updated_at LIMIT 100")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<Result<_, _>>()?;
+    for (id, state, count, revision) in transcripts {
+        let Some((meeting_state, stage)): Option<(String, Option<String>)> = c.query_row("SELECT state,finalization_stage FROM meetings WHERE id=?1", [&id], |r| Ok((r.get(0)?, r.get(1)?))).optional()? else { continue };
+        if !is_terminal(&meeting_state) {
+            continue;
+        }
+        let failed = meeting_state == "failed";
+        if state == "finalizing" && !failed {
+            out.transcripts_to_resume += 1;
+            continue;
+        }
+        let target = if failed { "failed" } else { "interrupted" };
+        c.execute(
+            "UPDATE meeting_transcriptions SET state=?1,live_state=NULL,failure_category='finalization_interrupted',failure_detail=?2,updated_at=?3,revision=revision+1 WHERE meeting_id=?4 AND revision=?5",
+            params![target, format!("found={state}"), now, id, revision],
+        )?;
+        outcome(c, &id, now, &meeting_state, stage.as_deref(), count, 0, false, &format!("transcript:{state}->{target} finalization_interrupted"))?;
+        if failed {
+            out.transcripts_failed += 1;
+        } else {
+            out.transcripts_interrupted += 1;
+        }
+    }
+    // A pending speaker run waits for the queue; Swift hands it back, so it stays pending here.
+    for table in ["diarization_runs", "identification_runs"] {
+        c.execute(&format!("UPDATE {table} SET state='interrupted',failure_category='interrupted',completed_at=?1 WHERE id IN (SELECT id FROM {table} WHERE state='running' ORDER BY created_at LIMIT 100)"), [now])?;
+    }
+    c.execute("UPDATE analysis_runs SET state='interrupted',completed_at=?1,failure_category='interrupted',duration_ms=max(0,?1-coalesce(started_at,created_at)) WHERE id IN (SELECT id FROM analysis_runs WHERE state IN ('pending','running') ORDER BY created_at LIMIT 100)", [now])?;
+    Ok(out)
+}
+#[allow(clippy::too_many_arguments)]
+fn outcome(c: &Connection, id: &str, now: i64, found: &str, stage: Option<&str>, recovered: i64, missing: i64, paused: bool, summary: &str) -> Res<()> {
+    c.execute(
+        "INSERT INTO meeting_recovery_outcomes (id,meeting_id,ran_at,found_state,found_stage,segments_recovered,segments_missing,pause_closed,summary) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![new_id(), id, now, found, stage, recovered, missing, paused as i64, summary],
+    )?;
+    Ok(())
+}
+
 pub fn seed(db: &Db) {
     let c = &db.conn;
     let now = now_ms();
@@ -3022,6 +3245,40 @@ mod tests {
         assert_eq!(id.len(), 36);
         assert_eq!(&id[14..15], "4");
         assert_ne!(id, new_id());
+    }
+
+    // The seed's phone note has a pending transcript, as Swift's reference shows after launch.
+    // parity: MEET-091
+    #[test]
+    fn launch_reconciliation_ends_what_no_process_owns() {
+        let db = db();
+        let root = std::env::temp_dir().join("lf-reconcile-none");
+        let state = |id: &str| db.conn.query_row("SELECT state,failure_category FROM meeting_transcriptions WHERE meeting_id=?1", [id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))).unwrap();
+        assert_eq!(state(SEED_IPHONE).0, "pending");
+        // An active row with no media, one with a missing file and an open pause, a finalizing transcript.
+        db.conn.execute("UPDATE meetings SET state='recording',failure_reason=NULL,failure_detail=NULL,completed_at=NULL WHERE id=?1", [SEED_FAILED]).unwrap();
+        db.conn.execute("UPDATE meetings SET state='paused' WHERE id=?1", [SEED_UNTITLED]).unwrap();
+        db.conn.execute("INSERT INTO meeting_pauses (id,meeting_id,started_at,reason) VALUES ('p',?1,1,'user')", [SEED_UNTITLED]).unwrap();
+        insert_file_row(&db.conn, &seed_uuid(0x201), SEED_UNTITLED, 1, 0, 1000, "start", None, 1);
+        db.conn.execute("UPDATE meeting_transcriptions SET state='finalizing' WHERE meeting_id=?1", [SEED_FULL]).unwrap();
+        db.conn.execute("UPDATE analysis_runs SET state='running' WHERE meeting_id=?1", [SEED_FULL]).unwrap();
+
+        let r = reconcile_launch(&db, &root, 99).unwrap();
+        assert_eq!((r.meetings_found, r.recovered, r.unrecoverable), (2, 0, 1));
+        assert_eq!(r.transcripts_to_resume, 1);
+        assert_eq!(state(SEED_FULL).0, "finalizing", "a finished meeting's finalization resumes");
+        assert_eq!(state(SEED_IPHONE), ("interrupted".to_string(), Some("finalization_interrupted".to_string())));
+        let m = |id| meeting(&db, id).unwrap().unwrap();
+        assert_eq!((m(SEED_FAILED).state.as_str(), m(SEED_FAILED).failure_reason.as_deref()), ("failed", Some("not_running_at_last_state")));
+        assert_eq!(m(SEED_UNTITLED).state, "interrupted");
+        let closed: Option<String> = db.conn.query_row("SELECT closed_by FROM meeting_pauses WHERE id='p'", [], |r| r.get(0)).unwrap();
+        assert_eq!(closed.as_deref(), Some("reconciliation"));
+        let outcome: String = db.conn.query_row("SELECT summary FROM meeting_recovery_outcomes WHERE meeting_id=?1 ORDER BY ran_at,id", [SEED_IPHONE], |r| r.get(0)).unwrap();
+        assert_eq!(outcome, "transcript:pending->interrupted finalization_interrupted");
+        assert!(r.notices().iter().any(|n| n == "1 transcript was interrupted; choose Retry to finish it" || n.contains("transcripts were interrupted")));
+        let run: String = db.conn.query_row("SELECT state FROM analysis_runs WHERE meeting_id=?1 ORDER BY created_at DESC LIMIT 1", [SEED_FULL], |r| r.get(0)).unwrap();
+        assert_eq!(run, "interrupted");
+        assert_eq!(reconcile_launch(&db, &root, 100).unwrap().meetings_found, 0, "a second run finds nothing active");
     }
 
     // parity: NOTE-032 NOTE-056 NOTE-058 NOTE-060 NOTE-061 NOTE-106

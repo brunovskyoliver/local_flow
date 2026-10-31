@@ -34,7 +34,7 @@ impl NotetakerPage {
             .w_full()
             .gap(px(6.))
             .pb(px(20.))
-            .child(t("Notetaker").font(26., 500.).tracking(-0.4))
+            .child(t("Notetaker").font(26., 500.).swift_lines().tracking(-0.4))
             .child(div().flex_1())
             .when(compact, |d| {
                 d.child(
@@ -53,7 +53,7 @@ impl NotetakerPage {
                     .child(note_icon("notetaker.options", "gearshape", "Recording options", p.ink).on_click(cx.listener(|this, _, _, cx| this.toggle_menu("options", cx))))
                     .when(open.as_deref() == Some("options"), |d| {
                         let on = self.transcribe;
-                        let can = self.can_start;
+                        let can = self.can_start(cx);
                         d.child(popover_panel(
                             260.,
                             32.,
@@ -67,7 +67,7 @@ impl NotetakerPage {
                         ))
                     }),
             )
-            .child(prototype_button("meeting.start", "New note").symbol("plus", 13.).disabled(!self.can_start).on_click(cx.listener(|this, _, w, cx| this.start_note(w, cx))))
+            .child(symbol_button("meeting.start", "New note", "plus", 13., p.ink).disabled(!self.can_start(cx)).on_click(cx.listener(|this, _, w, cx| this.start_note(w, cx))))
     }
 
     pub(crate) fn toggle_menu(&mut self, key: &str, cx: &mut Context<Self>) {
@@ -75,11 +75,19 @@ impl NotetakerPage {
         cx.notify();
     }
 
-    /// `coordinator.start` lives in the Mac app; here it refuses, and the Today card says why.
-    fn start_note(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        if let Err(message) = Self::worker("Meeting recording", cx) {
-            self.refusal = Some(message);
-        }
+    /// `coordinator.start`: the gate runs here; capture itself is the worker's and refuses for now.
+    pub(crate) fn start_note(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        use flow_platform::{Permission, PermissionState};
+        let dictating = cx.has_global::<crate::shell::Session>() && cx.global::<crate::shell::Session>().dictation.as_ref().is_some_and(|d| crate::pill::shows_dictation(d.state));
+        let services = &cx.global::<Core>().services;
+        let denied = |p| services.permission(p) == PermissionState::Denied;
+        let free = services.free_disk_bytes();
+        let refusal = start_refusal(self.busy, dictating, denied(Permission::Microphone), denied(Permission::SystemAudio), free);
+        self.refusal = match refusal {
+            Some(text) => Some(text.to_string()),
+            None => Self::worker("Meeting recording", cx).err(),
+        };
+        self.start_warning = low_space_warning(free).filter(|_| refusal.is_none());
         cx.notify();
     }
 
@@ -189,6 +197,7 @@ impl NotetakerPage {
         }
         h_flex()
             .id(sid(format!("notetaker.rowContainer.{id}")))
+            .test_support()
             .group(group.clone())
             .w_full()
             .rounded(px(10.))
@@ -238,7 +247,7 @@ impl NotetakerPage {
                 div()
                     .px(px(8.))
                     .relative()
-                    .child(hover_revealed(group, open_menu, div()).child(note_icon(sid(format!("notetaker.overflow.{id}")), "ellipsis", "Note options", p.ink).on_click({
+                    .child(hover_revealed(group, open_menu, div()).id(sid(format!("notetaker.overflowReveal.{id}"))).test_support().child(note_icon(sid(format!("notetaker.overflow.{id}")), "ellipsis", "Note options", p.ink).on_click({
                         let key = key.clone();
                         cx.listener(move |this, _, _, cx| this.toggle_menu(&key, cx))
                     })))

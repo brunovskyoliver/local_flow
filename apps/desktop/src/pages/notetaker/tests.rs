@@ -380,12 +380,12 @@ async fn summary_queued(cx: &mut TestAppContext) {
 // parity: SUM-012
 #[flow_ui::gpui::test]
 async fn summary_running(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.summary-running", &["Summarizing with your server…", "Cancel"]);
+    shows(cx, "notetaker.summary-running", &["Analyzing", "Cancel"]);
 }
 // parity: SUM-015
 #[flow_ui::gpui::test]
 async fn summary_failed(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.summary-failed", &["Retry"]);
+    shows(cx, "notetaker.summary-failed", &["The server's language model is not running.", "Retry"]);
 }
 // parity: SUM-005 SUM-006
 #[flow_ui::gpui::test]
@@ -1539,4 +1539,276 @@ async fn speaker_mentions_open_assign_speakers(cx: &mut TestAppContext) {
         x += 12.;
     }
     assert!(read(cx, &window, |p| p.assign.is_some()), "a mention opened the sheet");
+}
+
+// --- Round 3: rows that were false or weak.
+
+fn hover(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, id: impl Into<ElementId>) {
+    let id = id.into();
+    cx.update_window((*window).into(), |_, w, cx| w.hover(id, cx)).unwrap();
+    frame(cx, window);
+}
+
+// parity: NOTE-070
+#[flow_ui::gpui::test]
+async fn hovering_a_row_paints_the_canvas_and_reveals_its_menu(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let row = sid(format!("notetaker.rowContainer.{SEED_UNTITLED}"));
+    let reveal = sid(format!("notetaker.overflowReveal.{SEED_UNTITLED}"));
+    assert!(!find(cx, &window, reveal.clone()).visible(), "opacity 0 until the pointer arrives");
+    hover(cx, &window, row);
+    assert!(find(cx, &window, reveal.clone()).visible(), "opacity 1 under the pointer");
+    hover(cx, &window, sid(format!("notetaker.rowContainer.{SEED_FULL}")));
+    assert!(!find(cx, &window, reveal).visible(), "hidden again when the pointer leaves");
+}
+
+// parity: NOTE-022 NOTE-023
+#[flow_ui::gpui::test]
+async fn start_refuses_while_busy_or_dictating(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    cx.update(crate::shell::ensure_session);
+    window.update(cx, |p, w, cx| { p.busy = true; p.start_note(w, cx) }).unwrap();
+    assert_eq!(read(cx, &window, |p| p.refusal.clone()).as_deref(), Some("Meeting is busy"));
+    cx.update(|cx| crate::shell::update_session(cx, |s| s.dictation = Some(crate::shell::Dictation { state: crate::shell::DictState::Recording, busy: true, status: String::new(), unsaved: None, storage_blocked: false, capacity_blocked: false, cleanup_blocked: false })));
+    window.update(cx, |p, w, cx| { p.busy = false; p.start_note(w, cx) }).unwrap();
+    assert_eq!(read(cx, &window, |p| p.refusal.clone()).as_deref(), Some("Dictation in progress"));
+}
+// parity: NOTE-025
+#[flow_ui::gpui::test]
+async fn start_refuses_without_the_screen_permission(cx: &mut TestAppContext) {
+    use flow_platform::{Fake, Permission, PermissionState};
+    let window = open_page(cx, None);
+    let fake = Fake::default();
+    fake.permissions.borrow_mut().push((Permission::SystemAudio, PermissionState::Denied));
+    cx.update(|cx| cx.global_mut::<Core>().services = Box::new(fake));
+    click(cx, &window, "meeting.start");
+    fresh(cx, &window);
+    assert_saw(&["System audio needs Screen & System Audio Recording."]);
+}
+// parity: NOTE-026 NOTE-027
+#[flow_ui::gpui::test]
+async fn start_checks_free_space(_: &mut TestAppContext) {
+    assert_eq!(start_refusal(false, false, false, false, Some(499_999_999)), Some("Not enough free space to record (needs at least 500 MB)"));
+    assert_eq!(start_refusal(false, false, false, false, Some(500_000_000)), None);
+    assert_eq!(low_space_warning(Some(1_999_999_999)), Some("Less than 2 GB free"));
+    assert_eq!(low_space_warning(Some(2_000_000_000)), None);
+}
+// parity: NOTE-017 NOTE-021 MEET-091
+#[flow_ui::gpui::test]
+async fn start_controls_wait_for_reconciliation_and_the_active_meeting(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    assert_ne!(find(cx, &window, "meeting.start").disabled(), Some(true));
+    cx.update(|cx| cx.global_mut::<Core>().reconciled = false);
+    window.update(cx, |_, _, cx| cx.notify()).unwrap();
+    frame(cx, &window);
+    assert_eq!(find(cx, &window, "meeting.start").disabled(), Some(true), "not reconciled yet");
+    cx.update(|cx| cx.global_mut::<Core>().reconciled = true);
+    window.update(cx, |p, _, cx| { p.status = Some(LiveStatus::scenario("recording")); p.toggle_menu("options", cx) }).unwrap();
+    frame(cx, &window);
+    assert_eq!(find(cx, &window, "meeting.start").disabled(), Some(true), "a meeting is active");
+    assert_eq!(find(cx, &window, "notetaker.transcribeNew").disabled(), Some(true));
+}
+// parity: NOTE-009
+#[flow_ui::gpui::test]
+async fn a_changed_active_meeting_refreshes_the_library(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    cx.update(crate::shell::ensure_session);
+    sql(cx, &format!("DELETE FROM meetings WHERE id='{SEED_UNTITLED}';"));
+    assert!(read(cx, &window, |p| p.lib.rows.iter().any(|r| r.id == SEED_UNTITLED)));
+    cx.update(|cx| crate::shell::update_session(cx, |s| s.meeting = Some(crate::shell::MeetingStatus { id: "m".into(), title: None, state: crate::shell::MeetingState::Recording, elapsed_ms: 0 })));
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| !p.lib.rows.iter().any(|r| r.id == SEED_UNTITLED)));
+}
+// parity: NOTE-079 NOTE-080
+#[flow_ui::gpui::test]
+async fn run_on_this_mac_refusals_come_from_the_store_and_preference(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.waiting"));
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("serverOnly", true));
+    click(cx, &window, sid(format!("notetaker.runOnThisMac.{SEED_IPHONE}")));
+    fresh(cx, &window);
+    assert_saw(&["Server only is on, so this Mac doesn't run models. Change it in Settings › Server."]);
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("serverOnly", false));
+    refuse(cx, "UPDATE", "meetings");
+    click(cx, &window, sid(format!("notetaker.runOnThisMac.{SEED_IPHONE}")));
+    fresh(cx, &window);
+    assert_saw(&["This meeting can't be moved to this Mac right now."]);
+}
+// parity: MEET-015
+#[flow_ui::gpui::test]
+async fn transcript_request_refused_when_the_queue_is_full(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    window.update(cx, |p, _, cx| { p.transcript_queue = (0..100).map(|i| format!("q{i}")).collect(); p.request_transcript(cx) }).unwrap();
+    assert_eq!(read(cx, &window, |p| p.transcript_notice.clone()).as_deref(), Some("Too many transcripts waiting"));
+    assert_eq!(read(cx, &window, |p| p.transcript_queue.len()), 100);
+}
+// parity: SUM-014
+#[flow_ui::gpui::test]
+async fn summary_request_refused_when_the_queue_is_full(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary-eligible"));
+    window.update(cx, |p, _, cx| { p.summary_queue = (0..100).map(|i| format!("q{i}")).collect(); cx.notify() }).unwrap();
+    frame(cx, &window);
+    click(cx, &window, "meeting.summary.generate");
+    fresh(cx, &window);
+    assert_saw(&["Summary queue is full"]);
+}
+// parity: MEET-073
+#[flow_ui::gpui::test]
+async fn playback_needs_a_finished_meeting_with_a_track(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FAILED, Tab::Thoughts);
+    assert_eq!(find(cx, &window, "meeting.playback").disabled(), Some(true), "no track");
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert_ne!(find(cx, &window, "meeting.playback").disabled(), Some(true));
+    sql(cx, &format!("UPDATE meetings SET state='recording' WHERE id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert_eq!(find(cx, &window, "meeting.playback").disabled(), Some(true), "not terminal");
+}
+// parity: MEET-076 MEET-078
+#[flow_ui::gpui::test]
+async fn playback_without_files_says_so_and_stop_clears_it(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    assert!(!has(cx, &window, "meeting.playback.stop"));
+    click(cx, &window, "meeting.playback");
+    fresh(cx, &window);
+    assert_saw(&["No playable audio", "0:00 / 0:00"]);
+    click(cx, &window, "meeting.playback.stop");
+    fresh(cx, &window);
+    assert!(!seen("No playable audio"));
+    assert!(!has(cx, &window, "meeting.playback.stop"));
+}
+// parity: MEET-080 MEET-081
+#[flow_ui::gpui::test]
+async fn playback_queue_skips_what_it_cannot_play(_: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("lf-queue-{}", new_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("c.aac"), b"x").unwrap();
+    let segment = |sequence, path: &str, state: &str, reason: Option<&str>| Segment { sequence, relative_path: path.into(), state: state.into(), start_offset_ms: 0, duration_ms: 1000, open_reason: "start".into(), failure_reason: reason.map(String::from), input_device_name: None };
+    let track = Track { kind: "microphone".into(), health: "finalized".into(), failure_reason: None, dropped_frames: 0, duration_warning: false, segments: vec![segment(4, "c.aac", "finalized", None), segment(1, "a.aac.part", "open", None), segment(2, "b.aac", "finalized", None), segment(3, "d.aac", "unrecoverable", Some("unrecoverable_media"))] };
+    let q = playback_queue(&track, &dir);
+    assert_eq!(q.skipped, vec!["Segment 1: Not playable: still open", "Segment 2: Not playable: The audio file for this segment is missing.", "Segment 3: Not playable: This track could not be made playable. The file was kept."]);
+    assert_eq!((q.items.len(), q.duration_ms, q.notice), (1, 1000, None));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+// parity: MEET-089
+#[flow_ui::gpui::test]
+async fn finalizing_transcript_reloads_every_five_seconds(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    sql(cx, &format!("UPDATE meeting_transcriptions SET state='finalizing' WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    sql(cx, &format!("UPDATE meeting_transcriptions SET state='final' WHERE meeting_id='{SEED_FULL}';"));
+    cx.executor().advance_clock(Duration::from_secs(4));
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.pager.as_ref().unwrap().row.as_ref().unwrap().state.clone()), "finalizing");
+    cx.executor().advance_clock(Duration::from_secs(2));
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.pager.as_ref().unwrap().row.as_ref().unwrap().state.clone()), "final");
+}
+// parity: MEET-093
+#[flow_ui::gpui::test]
+async fn launch_notices_go_to_the_pill(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    cx.update(crate::shell::ensure_session);
+    cx.update(|cx| cx.global_mut::<Core>().meeting_notices = vec!["1 transcript was interrupted; choose Retry to finish it".into()]);
+    let window = cx.add_window(|w, cx| NotetakerPage::new(w, cx));
+    frame(cx, &window);
+    assert_eq!(cx.update(|cx| cx.global::<crate::shell::Session>().pill.action.as_ref().map(|a| a.message.clone())).as_deref(), Some("1 transcript was interrupted; choose Retry to finish it"));
+    assert!(cx.update(|cx| cx.global::<Core>().meeting_notices.is_empty()));
+}
+// parity: LIVE-002 LIVE-003 LIVE-004
+#[flow_ui::gpui::test]
+async fn state_dot_is_ten_points_and_follows_the_state(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    let dot = find(cx, &window, "meeting.dot").bounds();
+    assert_eq!((dot.size.width, dot.size.height), (px(10.), px(10.)));
+    cx.update(|cx| {
+        assert_eq!(active::dot_color("recording", cx), red(cx));
+        assert_eq!(active::dot_color("paused", cx), orange(cx));
+        assert_eq!(active::dot_color("finalizing", cx), pal(cx).muted);
+    });
+}
+// parity: LIVE-006
+#[flow_ui::gpui::test]
+async fn pause_reason_reads_sleep_or_user(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    for (state, reason, text) in [("paused", Some("user"), "(user)"), ("paused", Some("sleep"), "(sleep)")] {
+        window.update(cx, |p, _, cx| { let s = p.status.as_mut().unwrap(); s.state = state.into(); s.pause_reason = reason; cx.notify() }).unwrap();
+        fresh(cx, &window);
+        assert_saw(&[text]);
+    }
+}
+// parity: LIVE-024 LIVE-025
+#[flow_ui::gpui::test]
+async fn panel_says_finalizing_or_starting(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    for (state, text) in [("finalizing", "Finalizing…"), ("preparing", "Starting…")] {
+        window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().state = state.into(); cx.notify() }).unwrap();
+        fresh(cx, &window);
+        assert_saw(&[text]);
+    }
+}
+// parity: LIVE-043
+#[flow_ui::gpui::test]
+async fn status_poll_reads_the_stored_state_every_250ms(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.recording"));
+    sql(cx, &format!("UPDATE meetings SET state='paused' WHERE id='{SEED_UNTITLED}';"));
+    cx.executor().advance_clock(Duration::from_millis(200));
+    assert_eq!(read(cx, &window, |p| p.status.as_ref().unwrap().state.clone()), "recording");
+    cx.executor().advance_clock(Duration::from_millis(100));
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.status.as_ref().unwrap().state.clone()), "paused");
+}
+// parity: LIVE-029 LIVE-030 LIVE-031
+#[flow_ui::gpui::test]
+async fn active_title_is_revision_checked_with_swifts_messages(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    let before = query(cx, |db| meeting(db, SEED_UNTITLED).unwrap().unwrap().revision);
+    type_in!(cx, &window, |p| p.active_title.clone(), "Standup");
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    frame(cx, &window);
+    let after = query(cx, |db| meeting(db, SEED_UNTITLED).unwrap().unwrap());
+    assert_eq!((after.title.as_deref(), after.revision), (Some("Standup"), before + 1));
+    assert!(matches!(query(cx, |db| set_title(db, SEED_UNTITLED, "stale", before, 1)), Err(MeetingError::Stale)), "an old revision is refused");
+    type_in!(cx, &window, |p| p.active_title.clone(), &"t".repeat(257));
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Titles are limited to 256 bytes."]);
+    refuse(cx, "UPDATE", "meetings");
+    type_in!(cx, &window, |p| p.active_title.clone(), "Refused");
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["The title could not be saved."]);
+}
+// parity: SPK-034
+#[flow_ui::gpui::test]
+async fn look_queues_meetings_with_unknown_remote_speakers(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.past-prompt"));
+    sql(cx, &format!("DELETE FROM identity_assignments WHERE meeting_id='{SEED_FULL}';"));
+    assert_eq!(query(cx, |db| past_search_candidates(db, Some(SEED_FULL)).unwrap().len()), 0, "the open meeting is excluded");
+    let open_id = query(cx, |db| past_search_candidates(db, None).unwrap());
+    assert_eq!(open_id, vec![SEED_FULL.to_string()]);
+    window.update(cx, |p, _, _| p.lib.detail.as_mut().unwrap().meeting.id = "another".into()).unwrap();
+    frame(cx, &window);
+    click(cx, &window, "identity.pastSearch");
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.past_queue.clone()), vec![SEED_FULL.to_string()]);
+    assert_eq!(read(cx, &window, |p| p.past_search.clone().map(|s| s.1)), Some(1));
+}
+// parity: SPK-087 SPK-088 SPK-089 SPK-091
+#[flow_ui::gpui::test]
+async fn enroll_outcomes_read_like_swift(_: &mut TestAppContext) {
+    assert_eq!(EnrollOutcome::Stored(1).text(), "1 sample stored");
+    assert_eq!(EnrollOutcome::Stored(3).text(), "3 samples stored");
+    assert_eq!(EnrollOutcome::NoUsableSample.text(), "No usable voice sample was found in this meeting");
+    assert_eq!(EnrollOutcome::Failed("Could not read.".into()).text(), "Could not read.");
+}
+// parity: SPK-090
+#[flow_ui::gpui::test]
+async fn enrolling_with_identification_off_says_so(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("speakerIdentificationEnabled", false));
+    let id = read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.is_you()).unwrap().speaker.id.clone());
+    window.update(cx, |p, _, cx| p.set_identity(&id, IdentityAction::RememberLocal, cx)).unwrap();
+    click(cx, &window, "meeting.speakers.save");
+    fresh(cx, &window);
+    assert_saw(&["Speaker identification is turned off."]);
 }

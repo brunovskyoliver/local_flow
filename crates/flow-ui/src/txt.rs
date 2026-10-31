@@ -96,6 +96,7 @@ pub struct Txt {
     mono_digits: bool,
     mono: bool,
     no_widow: bool,
+    swift_lines: bool,
     selectable: bool,
     selection_hitbox: Option<gpui_kit::Hitbox>,
     on_link: Option<LinkHandler>,
@@ -153,6 +154,7 @@ pub fn rich(spans: Vec<Span>) -> Txt {
         mono_digits: false,
         mono: false,
         no_widow: false,
+        swift_lines: false,
         selectable: false,
         selection_hitbox: None,
         on_link: None,
@@ -248,6 +250,12 @@ impl Txt {
     }
     /// AppKit's standard line break strategy, which SwiftUI text gets: a single word never sits
     /// alone on the last line; the word before it moves down too.
+    /// Whole-point line height, as SwiftUI lays out this font at 11 to 13: 11 is 13, 12 is 14, 13 is 15.
+    /// The default rounds the text's height up, which adds about 1pt per line.
+    pub fn swift_lines(mut self) -> Self {
+        self.swift_lines = true;
+        self
+    }
     pub fn no_widow(mut self) -> Self {
         self.no_widow = true;
         self
@@ -314,6 +322,7 @@ pub struct Resolved {
     align: Align,
     lines: Option<usize>,
     no_widow: bool,
+    swift_lines: bool,
     text: String,
     runs: Vec<TextRun>,
     marks: Vec<(usize, usize, bool)>,
@@ -452,6 +461,9 @@ fn layout(r: &Resolved, max: Option<f32>, window: &mut Window) -> Laid {
         offset = end + 1;
     }
     laid.line_height = laid.ascent + laid.descent;
+    if r.swift_lines {
+        laid.line_height = laid.line_height.floor();
+    }
     if laid.line_height == 0.0 {
         laid.line_height = r.size * 1.2;
     }
@@ -586,6 +598,7 @@ impl Txt {
             align: self.align,
             lines: self.lines,
             no_widow: self.no_widow,
+            swift_lines: self.swift_lines,
             text,
             ellipsis_font: runs[0].font.clone(),
             runs,

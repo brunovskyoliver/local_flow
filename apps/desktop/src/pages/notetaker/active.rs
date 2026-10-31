@@ -55,22 +55,17 @@ impl NotetakerPage {
             Box::new(cx.listener(|this: &mut Self, _: &ClickEvent, _, cx| {
                 this.refusal = None;
                 this.status = None;
-                this.can_start = true;
                 cx.notify();
             }))
         };
         let mut card = v_flex().w_full().gap(px(12.)).p(px(16.)).bg(p.tint).rounded(px(12.));
         if let Some(s) = self.status.clone() {
-            let dot = match s.state.as_str() {
-                "recording" => red(cx),
-                "paused" => orange(cx),
-                _ => p.muted,
-            };
+            let dot = dot_color(&s.state, cx);
             card = card.child(
                 h_flex()
                     .w_full()
                     .gap(px(8.))
-                    .child(div().size(px(10.)).rounded_full().bg(dot))
+                    .child(div().id("meeting.dot").test_support().size(px(10.)).rounded_full().bg(dot))
                     .child(t(state_badge(&s.state)).font(15., 600.).id("meeting.state"))
                     .when_some(s.pause_reason, |d, r| d.child(t(if r == "sleep" { "(sleep)" } else { "(user)" }).color(p.muted)))
                     .child(div().flex_1())
@@ -130,6 +125,9 @@ impl NotetakerPage {
             }
         } else if let Some(refusal) = self.refusal.clone() {
             let permission = refusal.contains("System Settings");
+            if let Some(w) = self.start_warning {
+                card = card.child(sf_label("externaldrive.badge.exclamationmark", w, 13., orange(cx)));
+            }
             card = card.child(
                 h_flex()
                     .w_full()
@@ -173,6 +171,14 @@ impl NotetakerPage {
             }
         }
         cx.notify();
+    }
+}
+
+pub(crate) fn dot_color(state: &str, cx: &App) -> Hsla {
+    match state {
+        "recording" => red(cx),
+        "paused" => orange(cx),
+        _ => pal(cx).muted,
     }
 }
 
