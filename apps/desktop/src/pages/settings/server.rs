@@ -88,7 +88,7 @@ impl SettingsPage {
             }), cx));
             if self.server_advanced {
                 // `DisclosureGroup` content inherits the muted style and the native row spacing.
-                advanced = advanced.child(v_flex().w_full().pt(px(4.)).gap(px(8.)).text_color(pal(cx).muted).children(self.advanced(&r, window, cx)));
+                advanced = advanced.child(v_flex().w_full().gap(px(8.)).text_color(pal(cx).muted).children(self.advanced(&r, window, cx)));
             }
             body = body.child(hairline(cx)).child(div().id("settings.serverAdvancedRow").test_support().w_full().py(px(14.)).child(advanced));
         }
@@ -105,21 +105,21 @@ impl SettingsPage {
         const THREE: [(&str, &str); 3] = [("Your server", "server"), ("This Mac", "thisMac"), ("Custom server", "custom")];
         let disabled = r.server_only;
         let mut out = vec![
-            row("Dictation", Some("Speech recognition; rewriting follows its own row".into()), picker("settings.serverOverride.dictation", "Dictation runs on", 150., dictation, &TWO, disabled, cx), cx).into_any_element(),
+            row("Dictation", Some("Speech recognition; rewriting follows its own row".into()), muted_picker("settings.serverOverride.dictation", "Dictation runs on", 150., dictation, &TWO, disabled, cx), cx).into_any_element(),
             hairline(cx).into_any_element(),
-            row("Rewriting", None, picker("settings.serverOverride.rewriting", "Rewriting runs on", 150., rewriting, &THREE, disabled, cx), cx).into_any_element(),
+            row("Rewriting", None, muted_picker("settings.serverOverride.rewriting", "Rewriting runs on", 150., rewriting, &THREE, disabled, cx), cx).into_any_element(),
         ];
         if switch_applies && rewriting == "custom" {
             out.extend(self.rewrite_fields(window, cx));
         }
         let custom_summaries = switch_applies && summaries == "custom";
         out.push(hairline(cx).into_any_element());
-        out.push(row("Summaries", custom_summaries.then(|| "Your server is used if this server fails".to_string()), picker("settings.serverOverride.summaries", "Summaries runs on", 150., summaries, &THREE, disabled, cx), cx).into_any_element());
+        out.push(row("Summaries", custom_summaries.then(|| "Your server is used if this server fails".to_string()), muted_picker("settings.serverOverride.summaries", "Summaries runs on", 150., summaries, &THREE, disabled, cx), cx).into_any_element());
         if custom_summaries {
             out.push(self.summary_fields(window, cx).into_any_element());
         }
         out.push(hairline(cx).into_any_element());
-        out.push(row("Meetings", Some("Transcripts, speaker labels and voice matching".into()), picker("settings.serverOverride.meetings", "Meetings runs on", 150., meetings, &TWO, disabled, cx), cx).into_any_element());
+        out.push(row("Meetings", Some("Transcripts, speaker labels and voice matching".into()), muted_picker("settings.serverOverride.meetings", "Meetings runs on", 150., meetings, &TWO, disabled, cx), cx).into_any_element());
         out.push(hairline(cx).into_any_element());
         let step = |delta: i64| {
             move |_: &mut Self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>| {

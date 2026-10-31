@@ -126,7 +126,7 @@ SET-125	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
 SET-126	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
 SET-127	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
 SET-128	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
-SET-129	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-129	live	live:audit/mac/settings/advanced-light-ref.png ; live:audit/mac/settings/advanced-light-rust.png ; test:override_menus_offer_swifts_options_and_write_through_a_click ; note: muted title, chevrons and 0.72 fill measured from the reference
 SET-130	auto	test:fallback_stepper_label_and_steps
 SET-131	auto	test:fallback_stepper_label_and_steps
 SET-132	recorded	recorded:swift-note; no remote dictation service reads the threshold yet, so the release guard has nothing to guard

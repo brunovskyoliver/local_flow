@@ -87,8 +87,8 @@ impl SettingsPage {
             .border_1()
             .border_color(pl.ink.opacity(0.1))
             .shadow_lg()
-            .child(div().px(px(6.)).child(t(title).font(13., 600.)))
-            .child(div().px(px(6.)).pt(px(10.)).pb(px(16.)).child(t(message).size(13.)))
+            .child(div().px(px(6.)).child(t(title).font(13., 600.).swift_lines()))
+            .child(div().px(px(6.)).pt(px(11.5)).pb(px(16.)).child(t(message).size(13.).swift_lines().line_spacing(1.)))
             .child(h_flex().w_full().justify_between().child(prompt_button("settings.alert.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.close_modal(cx)))).child(confirm.on_click(cx.listener(|this, _, _, cx| this.confirm_alert(cx)))))
     }
 
@@ -272,7 +272,7 @@ impl SettingsPage {
                     .id("settings.contextField")
                     .flex_1()
                     .min_w_0()
-                    .px(px(10.))
+                    .px(px(if focused { 8. } else { 9. })) // Swift's 10 includes its stroke, which takes no layout.
                     .h(px(30.))
                     .text_size(px(13.))
                     .flex()

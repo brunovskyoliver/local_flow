@@ -995,7 +995,7 @@ impl SettingsPage {
                 .gap(px(8.))
                 .pt(px(18.))
                 .pb(px(14.))
-                .child(t("Server URL").font(12., 500.).color(pl.muted))
+                .child(t("Server URL").font(12., 500.).swift_lines().color(pl.muted))
                 .child(input_surface("link", Some("http://127.0.0.1:8080"), Input::new(&self.endpoint).id("settings.rewriteEndpoint").aria_label("Rewrite server endpoint").accessibility_id("settings.rewriteEndpoint"), &self.endpoint, window, cx))
                 .into_any_element(),
             self.credential_controls(window, cx).into_any_element(),
@@ -1024,7 +1024,7 @@ impl SettingsPage {
     fn credential_controls(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let pl = pal(cx);
         let present = self.rewrite.credential_present;
-        let header = h_flex().id("settings.secretHeader").w_full().justify_between().child(t("Server secret").font(12., 500.).color(pl.muted)).when(present, |d| d.child(sf_label("checkmark.shield", "Saved in Keychain", 11., pl.muted))).test_support();
+        let header = h_flex().id("settings.secretHeader").w_full().justify_between().child(t("Server secret").font(12., 500.).swift_lines().color(pl.muted)).when(present, |d| d.child(sf_label("checkmark.shield", "Saved in Keychain", 11., pl.muted))).test_support();
         let mut out = v_flex().w_full().gap(px(8.)).pb(px(18.)).child(header);
         if present && !self.editing_credential {
             out = out.child(h_flex().w_full().gap(px(8.)).child(div().flex_1().child(saved_secret("Server secret saved", cx))).child(prototype_button("settings.rewriteCredentialEdit", "Edit").a11y_label("Edit rewrite server credential").on_click(cx.listener(|this, _, _, cx| {
@@ -1085,7 +1085,7 @@ impl SettingsPage {
     /// In Summaries, or in Server › Advanced.
     pub(super) fn summary_fields(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let pl = pal(cx);
-        let label = |s: &'static str| t(s).font(12., 500.).color(pl.muted);
+        let label = |s: &'static str| t(s).font(12., 500.).swift_lines().color(pl.muted);
         let mut out = v_flex()
             .id("settings.summaryFields")
             .test_support()
@@ -1256,6 +1256,14 @@ impl RenderOnce for PrototypeLabel {
 }
 
 pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>, width: f32, current: &str, options: &[(&'static str, &'static str)], disabled: bool, cx: &mut Context<SettingsPage>) -> AnyElement {
+    picker_styled(id, label, width, current, options, disabled, false, cx)
+}
+/// A picker inside `DisclosureGroup`: it inherits the muted foreground, which also fades its fill.
+pub(super) fn muted_picker(id: impl Into<SharedString>, label: impl Into<SharedString>, width: f32, current: &str, options: &[(&'static str, &'static str)], disabled: bool, cx: &mut Context<SettingsPage>) -> AnyElement {
+    picker_styled(id, label, width, current, options, disabled, true, cx)
+}
+#[allow(clippy::too_many_arguments)]
+fn picker_styled(id: impl Into<SharedString>, label: impl Into<SharedString>, width: f32, current: &str, options: &[(&'static str, &'static str)], disabled: bool, muted: bool, cx: &mut Context<SettingsPage>) -> AnyElement {
     let id: SharedString = id.into();
     let pl = pal(cx);
     let title = options.iter().find(|o| o.1 == current).map_or(current.to_string(), |o| o.0.to_string());
@@ -1263,8 +1271,10 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
     let current = current.to_string();
     let this = cx.entity().downgrade();
     let key = id.clone();
-    let fill = pl.ink.opacity(if pl.mode.is_dark() { 0.14 } else { 0.2 });
-    let chevrons = icon("chevron.up.chevron.down", 12., pl.ink);
+    let ink = if muted { pl.muted } else { pl.ink };
+    // Measured from the reference: the inherited style leaves 0.72 of the fill.
+    let fill = pl.ink.opacity(if pl.mode.is_dark() { 0.14 } else { 0.2 } * if muted { 0.72 } else { 1. });
+    let chevrons = icon("chevron.up.chevron.down", 12., ink);
     // A native picker hugs its longest option and centres in its frame: a zero-height stack of the
     // options sets the width. Plain strings so the render probe and VoiceOver don't read them.
     let sizer = v_flex().h_0().overflow_hidden().text_size(px(13.5)).pr(px(27.)).children(options.iter().map(|o| div().whitespace_nowrap().child(o.0)));
@@ -1280,7 +1290,7 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
         .pl(px(12.))
         .pr(px(8.))
         .rounded(px(7.))
-        .child(v_flex().child(h_flex().w_full().justify_between().child(t(title).size(13.5).lines(1).a11y_hidden()).child(chevrons)).child(sizer))
+        .child(v_flex().child(h_flex().w_full().justify_between().child(t(title).size(13.5).lines(1).color(ink).a11y_hidden()).child(chevrons)).child(sizer))
         .dropdown_menu(move |mut menu, _, _| {
             for (name, value) in options.clone() {
                 let (this, key) = (this.clone(), key.clone());

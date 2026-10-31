@@ -1093,3 +1093,12 @@ async fn speech_download_label_and_monospaced_diagnostics(cx: &mut TestAppContex
     assert_eq!(style(&line).size, 11.);
     assert!(has(cx, r.win, "settings.rewriteDiagnostics.text"));
 }
+
+#[flow_ui::gpui::test]
+async fn advanced_pickers_inherit_the_muted_style(cx: &mut TestAppContext) {
+    let r = rig(cx, "advanced", |_| {});
+    let pl = palette(cx);
+    assert_type("Your server", 13.5, 400., pl.muted);
+    let (row, picker) = (bounds(cx, r.win, "settings.serverAdvancedRow"), bounds(cx, r.win, "settings.serverOverride.dictation"));
+    assert!(picker.origin.y > row.origin.y, "{row:?} {picker:?}");
+}
