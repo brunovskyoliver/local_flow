@@ -1,0 +1,42 @@
+name: Windows desktop
+on:
+  push:
+    branches: [gpui-desktop-views]
+    paths: ["apps/desktop/**", "crates/**", "Cargo.*", ".github/workflows/windows-desktop.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-desktop-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/rust
+          key: ${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
+      - run: cargo test --workspace
+      - run: cargo build -p localflow
+      - name: Open the app on real Windows
+        shell: pwsh
+        run: pwsh -File scripts/windows-smoke.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-smoke-${{ matrix.os }}
+          path: build/smoke

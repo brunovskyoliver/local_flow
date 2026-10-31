@@ -51,6 +51,9 @@ The last two rows use different weak definitions. Round 6 fixed those findings, 
 - One audit run stalled at `notetaker-summary-pending`; the cause was not found.
 - Windows-only Rust paths (windowing, services, input) have only been run as far as those captures.
 
+### Windows CI
+Owner approved a GitHub Actions run in place of the VM: `.github/workflows/windows-desktop.yml` runs `cargo test --workspace` and `scripts/windows-smoke.ps1` on x64 and arm64.
+
 ### Left
 Reviews still list these rows as weak or different: inventory 01: 37, 03: 8, 04: 19, 05: 17. See `audit/review-0N.tsv`. Inventory 02's file has no `weak` label in that column; it reported 11 weak rows plus ONB-268.
 
@@ -67,4 +70,4 @@ Needs later features, so it doesn't work yet:
 - Shortcut capture, dictation sessions and installer outcomes, so a real onboarding test run can't succeed yet
 - The capture worker behind live meetings
 
-Recorded for the owner to decide: in Swift, Insert from the History detail sheet holds the review until the sheet closes; Rust shows it straight away (HIST-184).
+Owner decision: Rust keeps showing the review straight away from the History detail sheet, where Swift holds it until the sheet closes (HIST-184).
