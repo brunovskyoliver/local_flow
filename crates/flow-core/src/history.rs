@@ -3196,19 +3196,19 @@ mod tests {
         });
         let m = |a: &str, b: &str| Line::Meta(a.into(), b.into());
         let lines = processing_lines(&d);
-        assert_eq!(lines, vec![
-            m("Engine", "E"), m("SDK", "Unavailable"), m("Model", "M"), m("Model revision", "R"), m("Build", "B"), m("Uncommitted build changes", "Yes"), m("Language", "sk"),
-            m("Assembly", "A1"), m("Normalization", "N1"), m("Vocabulary revision", "7"),
-            m("Applied formatting rules", "N1, N2"), m("Applied vocabulary entries", "None"), m("Ambiguous vocabulary entries", "K"),
-            m("Operating system", "OS"), m("Unicode runtime", "U"),
-            m("Audio", "16000 Hz, 1 channel, float32_pcm"), m("Input", "8000 samples; 0.5 seconds"), m("Windows", "10 samples; overlap 2; stride 8"), m("Minimum padded input", "4 samples"),
-            m("Alpha duration", "0.25 seconds"), m("Zeta duration", "1.0 seconds"),
-            m("Window 1 timing evidence", "valid; 2 recorded tokens; 9 padded samples"), m("Window 2 timing evidence", "absent; 0 recorded tokens; 3 padded samples"),
-            m("Join before window 2", "merged; 2 words discarded"),
-            Line::Heading("Processing reasons".into()), Line::Plain("plain".into()), Line::Plain("joined (window 2)".into()),
-            Line::Heading("Unavailable evidence".into()), m("sdk_version", "not_recorded"),
-            m("Attempt 1", "E; failed; Duration unavailable"), m("Attempt 2 (selected)", "E; completed; 2.5 seconds"),
-        ]);
+        assert_eq!(lines.len(), 31);
+        assert_eq!(lines[0..6], [m("Engine", "E"), m("SDK", "Unavailable"), m("Model", "M"), m("Model revision", "R"), m("Build", "B"), m("Uncommitted build changes", "Yes")]);
+        assert_eq!(lines[6..7], [m("Language", "sk")]);
+        assert_eq!(lines[7..10], [m("Assembly", "A1"), m("Normalization", "N1"), m("Vocabulary revision", "7")]);
+        assert_eq!(lines[10..13], [m("Applied formatting rules", "N1, N2"), m("Applied vocabulary entries", "None"), m("Ambiguous vocabulary entries", "K")]);
+        assert_eq!(lines[13..15], [m("Operating system", "OS"), m("Unicode runtime", "U")]);
+        assert_eq!(lines[15..19], [m("Audio", "16000 Hz, 1 channel, float32_pcm"), m("Input", "8000 samples; 0.5 seconds"), m("Windows", "10 samples; overlap 2; stride 8"), m("Minimum padded input", "4 samples")]);
+        assert_eq!(lines[19..21], [m("Alpha duration", "0.25 seconds"), m("Zeta duration", "1.0 seconds")]);
+        assert_eq!(lines[21..23], [m("Window 1 timing evidence", "valid; 2 recorded tokens; 9 padded samples"), m("Window 2 timing evidence", "absent; 0 recorded tokens; 3 padded samples")]);
+        assert_eq!(lines[23..24], [m("Join before window 2", "merged; 2 words discarded")]);
+        assert_eq!(lines[24..27], [Line::Heading("Processing reasons".into()), Line::Plain("plain".into()), Line::Plain("joined (window 2)".into())]);
+        assert_eq!(lines[27..29], [Line::Heading("Unavailable evidence".into()), m("sdk_version", "not_recorded")]);
+        assert_eq!(lines[29..31], [m("Attempt 1", "E; failed; Duration unavailable"), m("Attempt 2 (selected)", "E; completed; 2.5 seconds")]);
         assert_eq!(hash_lines(&d, "ch"), vec![m("Content", "ch"), m("Assembled", "ash"), m("Normalized", "nh"), m("Vocabulary", "vh"), m("Model manifest", "mh"), m("Raw window 1", "w0"), m("Raw window 2", "w1"), m("a.bin", "ah"), m("z.bin", "zh")]);
         // Both empty blocks read the same, and an automatic language has no hint.
         let empty = processing_lines(&serde_json::json!({"provenance": {"automaticLanguage": true, "dirty": false}}));

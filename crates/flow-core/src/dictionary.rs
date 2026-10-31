@@ -1235,6 +1235,26 @@ mod tests {
         }
     }
 
+    // parity: DICT-050
+    #[test]
+    fn suggestion_read_takes_each_context_once_and_skips_empty_and_damaged_snapshots() {
+        let db = empty();
+        for (id, at, json) in [
+            ("old", 1, Some(r#"{"terms":[{"text":"Old"}]}"#)),
+            ("new", 2, Some(r#"{"terms":[{"text":"New"},{"text":"New"},{"text":"Two"}]}"#)),
+            ("none", 3, None),
+            ("bad", 4, Some("not json")),
+        ] {
+            db.conn.execute("INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason) VALUES (?,'x',?,'not_attempted','needs_review','complete','key_release')", rusqlite::params![id, at]).unwrap();
+            db.conn.execute("INSERT INTO dictation_contexts (transcription_id,outcome,capture_ms,snapshot_json,snapshot_hash) VALUES (?,?,?,?,?)", rusqlite::params![id, if json.is_some() { "used" } else { "off" }, json.map(|_| 1), json, json.map(|j| sha256_hex(j.as_bytes()))]).unwrap();
+        }
+        db.conn.execute("INSERT INTO term_suggestions (canonical,alias,sightings,dismissed,last_seen) VALUES ('Seen','',2,0,1),('Gone','g',1,1,1)", []).unwrap();
+        let c = suggestion_contents(&db).unwrap();
+        assert_eq!(c.context_terms, vec![vec!["New".to_string(), "Two".to_string()], vec!["Old".to_string()]]);
+        assert_eq!(c.corrections, vec![("Seen".to_string(), String::new(), 2)]);
+        assert!(c.dismissed.contains(&("Gone".to_string(), "g".to_string())));
+    }
+
     // parity: DICT-050 DICT-051 DICT-052 DICT-053 DICT-054 DICT-055 DICT-056 DICT-150
     #[test]
     fn suggestions_are_mined_like_swift() {
