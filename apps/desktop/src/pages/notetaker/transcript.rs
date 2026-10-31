@@ -238,7 +238,7 @@ impl NotetakerPage {
                                 if e.keystroke.key == "escape" {
                                     this.close_search(w, cx);
                                 }
-                            })).child(Input::new(&self.search).appearance(false).aria_label("Search").accessibility_id("meeting.transcript.search")))
+                            })).child(Input::new(&self.search).appearance(false).text_size(px(11.)).aria_label("Search").accessibility_id("meeting.transcript.search")))
                             .when(live.is_none() && !query.is_empty(), |w| w.child(self.match_navigator(cx))),
                     )
                 } else {

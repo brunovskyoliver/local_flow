@@ -9,7 +9,7 @@ NOTE-008	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_t
 NOTE-009	auto	test:a_changed_active_meeting_refreshes_the_library
 NOTE-010	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_the_summary
 NOTE-011	auto	test:a_new_window_starts_without_the_old_note
-NOTE-012	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-012	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; test:library_title_line_is_thirty_one_high
 NOTE-013	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
 NOTE-014	live	test:options_popover_has_twenty_points_inside ; live:audit/mac/notetaker/options-light-rust.png ; live:audit/mac/notetaker/options-light-ref.png
 NOTE-015	auto	test:recording_options_and_refresh_click
@@ -498,7 +498,7 @@ SUM-056	auto	test:questions_and_risks_have_no_edit_path
 SUM-057	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels ; test:done_items_strike_and_editing_keeps_the_status_circle
 SUM-058	auto	test:attribution_follows_the_item_unless_the_sentence_names_it
 SUM-059	auto	test:item_menus_and_popovers_read_like_swift ; test:item_menu_is_twenty_points_square
-SUM-060	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels
+SUM-060	auto	test:item_editor_and_source_read_like_swift ; test:item_double_click_edits_and_escape_cancels ; note:the hover reveal is exercised by clicking_view_source_opens_transcript_and_scrolls_to_the_segment
 SUM-061	auto	test:clicking_view_source_opens_transcript_and_scrolls_to_the_segment
 SUM-062	live	test:summary_reads_stored_analysis_and_marks_an_item_done ; live:audit/mac/notetaker/summary-light-rust.png ; live:audit/mac/notetaker/summary-light-ref.png ; test:status_toggle_labels_symbols_and_snapshot
 SUM-063	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report ; test:status_toggle_labels_symbols_and_snapshot

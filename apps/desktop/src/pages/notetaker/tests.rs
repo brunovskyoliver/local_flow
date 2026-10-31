@@ -2912,7 +2912,7 @@ async fn note_frames_and_date_read_like_swift(cx: &mut TestAppContext) {
     assert_eq!(thoughts.size.width, px(600.));
     let play = find(cx, &window, "meeting.playback").bounds();
     assert_eq!(play.origin.y - footer.origin.y, px(12.));
-    assert_eq!(footer.origin.y + footer.size.height - play.origin.y - play.size.height, px(20.));
+    assert_eq!(footer.origin.y + footer.size.height - play.origin.y - play.size.height, px(19.));
     let (_, muted, ..) = colors(cx);
     let created = read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.created_at);
     let date = date_time_text(created, cx.update(|cx| offset_at(created, cx)));
@@ -2944,6 +2944,12 @@ async fn title_field_is_one_line(cx: &mut TestAppContext) {
     open(cx, &window, SEED_FULL, Tab::Thoughts);
     assert_eq!(find(cx, &window, "meeting.title.frame").bounds().size.height, px(48.), "one line; the date below lands where the detail pair puts it");
     assert_eq!(read(cx, &window, |p| p.title.clone()).read_with(cx, |s, _| s.value().to_string()), "Lamp prototype review");
+}
+// parity: NOTE-012
+#[flow_ui::gpui::test]
+async fn library_title_line_is_thirty_one_high(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    assert_eq!(find(cx, &window, "notetaker.title").bounds().size.height, px(31.), "the card below starts where the library pair has it");
 }
 // parity: MEET-002
 #[flow_ui::gpui::test]

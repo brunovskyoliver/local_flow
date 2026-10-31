@@ -34,7 +34,8 @@ impl NotetakerPage {
             .w_full()
             .gap(px(6.))
             .pb(px(20.))
-            .child(t("Notetaker").font(26., 500.).swift_lines().tracking(-0.4))
+            // SwiftUI's line for 26 pt Figtree is 31 high: the card below starts at 83.
+            .child(div().id("notetaker.title").test_support().h(px(31.)).flex().items_center().child(t("Notetaker").font(26., 500.).swift_lines().tracking(-0.4)))
             .child(div().flex_1())
             .when(compact, |d| {
                 d.child(

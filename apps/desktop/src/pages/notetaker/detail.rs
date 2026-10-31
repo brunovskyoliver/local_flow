@@ -266,7 +266,8 @@ impl NotetakerPage {
                             .child(body),
                     ),
             )
-            .child(div().id("meeting.footer.frame").test_support().w_full().flex().justify_center().px(px(30.)).pt(px(12.)).pb(px(20.)).child(self.footer(&d, live.as_ref(), cx)))
+            // ponytail: 19, not Swift's 20: the detail pair puts the button 11 above the card edge; the 1 pt is SwiftUI rounding the footer.
+            .child(div().id("meeting.footer.frame").test_support().w_full().flex().justify_center().px(px(30.)).pt(px(12.)).pb(px(19.)).child(self.footer(&d, live.as_ref(), cx)))
     }
 
     fn toolbar(&mut self, d: &Detail, cx: &mut Context<Self>) -> impl IntoElement {
