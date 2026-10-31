@@ -15,5 +15,6 @@ Updated: 2026-10-31
 - 2026-10-31 plan, tasks: plan.md, research.md, data-model.md, contracts/pairing.md, quickstart.md, tasks.md (32 tasks, 8 phases).
 - 2026-10-31 analyze: read-only pass done, gate 2 sent.
 - 2026-10-31 phase 1: `make check` baseline exit 2 (Error 65) after 811 s: every step up to the LocalFlow XCTest passed, then `MeetingCoordinatorTests.testTranscriptionObserverHooksAndStartOption` and `RemoteRewriteTransportTests.testTheTimeoutAppliesInsideTheTransport` failed, so the later steps did not run. Both passed alone, and in the full run below; the baseline shared the machine with `go test -race` runs, so they look load-sensitive, cause not confirmed. Wrote ADR 0037, amended ADRs 0028 and 0032, constitution 5.0.0, added `pair` and `pairing_token_invalid` to the schema, fixtures and channel contract. `TestMessageFixtures` skips valid/pair.json until T007.
+- 2026-10-31 phase 2: schema v3 with the pre-v3 copy, and `accounts/pairing.go`. `go test -race ./...` and `go vet ./...` pass; full `make check` with phases 1 and 2 applied exit 0 after 616 s. No hardware acceptance or resource measurement was run. A v2 fixture device keeps its references and still refreshes.
 
 ## Report

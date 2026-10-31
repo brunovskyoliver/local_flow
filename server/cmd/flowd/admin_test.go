@@ -267,6 +267,36 @@ func TestAdminListFormat(t *testing.T) {
 }
 
 // --state S shows users in state S and users with a device in state S.
+// A token user lists like any other, with its label and provider.
+func TestAdminListShowsTokenUser(t *testing.T) {
+	s := seedAccounts(t)
+	adminEnv(t, time.Now(), s.zone, "oliver")
+	store, err := accounts.Open(s.dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	value, _, err := store.CreatePairingToken(context.Background(), make([]byte, 32), "Anna", 0, time.Hour, accounts.AdminActor("oliver"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := bytes.Repeat([]byte{9}, 65)
+	key[0] = 0x04
+	if _, err := store.RedeemPairingToken(context.Background(), value, "Anna's Phone", key); err != nil {
+		t.Fatal(err)
+	}
+	out, err := admin("--data-dir", s.dir, "list", "--state", "approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`user \d+\s+token\s+Anna\s+approved`).MatchString(out) || !strings.Contains(out, "Anna's Phone") {
+		t.Fatal(out)
+	}
+	if strings.Contains(out, value) || strings.Contains(out, "token:") {
+		t.Fatalf("secrets or subjects printed:\n%s", out)
+	}
+}
+
 func TestAdminListState(t *testing.T) {
 	s := seedAccounts(t)
 	adminEnv(t, time.Now(), s.zone, "oliver")

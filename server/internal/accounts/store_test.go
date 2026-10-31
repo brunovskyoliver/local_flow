@@ -3,10 +3,12 @@ package accounts
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -69,8 +71,11 @@ func TestOpenCreatesPrivateWALDatabase(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
 		t.Fatal(mode, err)
 	}
-	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatal(version, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, PreV3FileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a new database needs no copy: %v", err)
 	}
 	// Reopening an initialized file keeps it; a newer schema is refused.
 	store.Close()
@@ -78,7 +83,7 @@ func TestOpenCreatesPrivateWALDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := again.db.Exec("PRAGMA user_version = 3"); err != nil {
+	if _, err := again.db.Exec("PRAGMA user_version = 4"); err != nil {
 		t.Fatal(err)
 	}
 	again.Close()
@@ -369,6 +374,7 @@ func TestAuditValidation(t *testing.T) {
 		{Actor: AdminActor("oliver"), Action: "approve", Target: "user:1", Outcome: "ok"},
 		{Actor: UserActor(3), Action: "sign_in", Outcome: "busy"},
 		{Actor: DeviceActor(5), Action: "refresh_reuse", Target: DeviceTarget(5), Outcome: "revoked"},
+		{Actor: SystemActor, Action: "pair", Target: TokenTarget(2), Outcome: "pairing_token_invalid"},
 		{Actor: SystemActor, Action: "cross_user_attempt", Target: UserTarget(2), Outcome: "invalid_message"},
 	}
 	for _, entry := range valid {
@@ -380,6 +386,7 @@ func TestAuditValidation(t *testing.T) {
 		{Actor: "root", Action: "approve", Outcome: "ok"},
 		{Actor: "admin:", Action: "approve", Outcome: "ok"},
 		{Actor: "user:x", Action: "approve", Outcome: "ok"},
+		{Actor: "token:1", Action: "approve", Outcome: "ok"},
 		{Actor: SystemActor, Action: "export", Outcome: "ok"},
 		{Actor: SystemActor, Action: "approve", Target: "group:1", Outcome: "ok"},
 		{Actor: SystemActor, Action: "approve", Outcome: "oliver@example.com"},
@@ -450,8 +457,9 @@ func TestMigrateFromVersion1(t *testing.T) {
 	if _, err := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1)); err != nil {
 		t.Fatal(err)
 	}
-	// Rebuild the devices table as version 1 had it.
+	// Back to version 2's tables, then the devices table as version 1 had it.
 	for _, statement := range []string{
+		`DROP TABLE pairing_tokens`,
 		`DROP INDEX devices_revoked_refresh`,
 		`DROP INDEX devices_revoked_previous_refresh`,
 		`ALTER TABLE devices DROP COLUMN revoked_access_hash`,
@@ -470,7 +478,7 @@ func TestMigrateFromVersion1(t *testing.T) {
 	}
 	defer again.Close()
 	var version int
-	if err := again.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+	if err := again.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatal(version, err)
 	}
 	devices, err := again.Devices(ctx, 0)
@@ -479,5 +487,151 @@ func TestMigrateFromVersion1(t *testing.T) {
 	}
 	if _, err := again.db.Exec(`UPDATE devices SET revoked_access_hash = x'00'`); err == nil {
 		t.Fatal("revoked_access_hash must be 32 bytes")
+	}
+}
+
+// openV2 creates a version 2 database from the v2 schema strings.
+func openV2(t *testing.T, dir string, statements ...string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, FileName)+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range append([]string{schema, schemaV2}, statements...) {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(statement, err)
+		}
+	}
+}
+
+// A v2 database keeps its users, devices and audit rows through the rebuild, an
+// enrolled device still refreshes, and the references are still enforced.
+func TestMigrateFromVersion2(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	clock := newClock()
+	now := clock.Now().UnixMilli()
+	refresh, refreshHash, err := NewToken(RefreshPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, tombstone, _ := NewToken(RefreshPrefix)
+	openV2(t, dir,
+		fmt.Sprintf(`INSERT INTO users VALUES (7, 'apple', 'sub-7', 'Oliver', 'approved', %d, %d), (9, 'google', 'sub-9', NULL, 'revoked', %d, %d)`, now, now, now, now),
+		fmt.Sprintf(`INSERT INTO devices (id, user_id, name, public_key, state, refresh_hash, refresh_expires_at, enrolled_at, last_seen_at, changed_at)
+			VALUES (3, 7, 'Mac', x'%x', 'approved', x'%x', %d, %d, 0, %d)`, deviceKey(1), refreshHash[:], now+time.Hour.Milliseconds(), now, now),
+		fmt.Sprintf(`INSERT INTO devices (id, user_id, name, public_key, state, revoked_refresh_hash, enrolled_at, last_seen_at, changed_at)
+			VALUES (4, 9, 'Old', x'%x', 'revoked', x'%x', %d, 0, %d)`, deviceKey(2), tombstone[:], now, now),
+		fmt.Sprintf(`INSERT INTO audit VALUES (11, %d, 'admin:oliver', 'approve', 'user:7', 'ok')`, now),
+	)
+
+	store, err := Open(dir, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var version int
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
+		t.Fatal(version, err)
+	}
+	user, err := store.User(ctx, 7)
+	if err != nil || user.Provider != "apple" || user.Subject != "sub-7" || user.Display != "Oliver" || user.State != UserApproved {
+		t.Fatalf("%+v %v", user, err)
+	}
+	if devices, err := store.Devices(ctx, 0); err != nil || len(devices) != 2 || devices[0].UserID != 7 || devices[1].UserID != 9 {
+		t.Fatalf("%+v %v", devices, err)
+	}
+	if entries, err := store.AuditLog(ctx, 5); err != nil || len(entries) != 1 || entries[0].ID != 11 || entries[0].Target != "user:7" {
+		t.Fatalf("%+v %v", entries, err)
+	}
+	tokens, err := store.Refresh(ctx, refresh, func(Device) error { return nil })
+	if err != nil || tokens.DeviceID != 3 || tokens.UserID != 7 {
+		t.Fatalf("%+v %v", tokens, err)
+	}
+	if _, err := store.Refresh(ctx, "lfr_unknown", func(Device) error { return nil }); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal(err)
+	}
+
+	// foreign_keys is still on and the references still point at users.
+	var violations int
+	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil || violations != 0 {
+		t.Fatal(violations, err)
+	}
+	if _, err := store.db.Exec(`DELETE FROM users WHERE id = 7`); err == nil {
+		t.Fatal("a user with devices must not be deletable")
+	}
+	if _, err := store.db.Exec(fmt.Sprintf(`INSERT INTO devices (user_id, name, public_key, state, enrolled_at, last_seen_at, changed_at)
+		VALUES (99, 'x', x'%x', 'pending', 0, 0, 0)`, deviceKey(3))); err == nil {
+		t.Fatal("a device of no user must be refused")
+	}
+	var sqlText string
+	if err := store.db.QueryRow(`SELECT sql FROM sqlite_schema WHERE name = 'devices'`).Scan(&sqlText); err != nil ||
+		!strings.Contains(sqlText, "REFERENCES users(id)") {
+		t.Fatal(sqlText, err)
+	}
+	// The widened constraints.
+	if _, err := store.db.Exec(`INSERT INTO users (provider, subject, state, created_at, changed_at) VALUES ('token', 'token:1', 'approved', 0, 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Audit(ctx, AuditEntry{Actor: SystemActor, Action: "pair", Target: TokenTarget(1), Outcome: "pairing_token_invalid"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The copy is private, is still version 2, holds the data, and is not
+	// rewritten by a later open.
+	copyPath := filepath.Join(dir, PreV3FileName)
+	info, err := os.Stat(copyPath)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatal(info, err)
+	}
+	db, err := sql.Open("sqlite", "file:"+copyPath+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var users, devices int
+	if err := db.QueryRow(`SELECT (SELECT user_version FROM pragma_user_version), (SELECT count(*) FROM users), (SELECT count(*) FROM devices)`).
+		Scan(&version, &users, &devices); err != nil || version != 2 || users != 2 || devices != 2 {
+		t.Fatal(version, users, devices, err)
+	}
+	store.Close()
+	again, err := Open(dir, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	later, err := os.Stat(copyPath)
+	if err != nil || !later.ModTime().Equal(info.ModTime()) {
+		t.Fatal(later, err)
+	}
+	if entries, _ := filepath.Glob(filepath.Join(dir, PreV3FileName+".*")); len(entries) != 0 {
+		t.Fatalf("temporary copies left: %v", entries)
+	}
+}
+
+// A failed migration leaves version 2 as it was, so the next start can retry.
+func TestMigrateFromVersion2RollsBack(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	openV2(t, dir,
+		`INSERT INTO users VALUES (1, 'apple', 's', NULL, 'approved', 0, 0)`,
+		`CREATE TABLE pairing_tokens (id INTEGER)`,
+	)
+	if _, err := Open(dir, time.Now); err == nil {
+		t.Fatal("the existing table must fail the migration")
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, users int
+	if err := db.QueryRow(`SELECT (SELECT user_version FROM pragma_user_version), (SELECT count(*) FROM users)`).Scan(&version, &users); err != nil || version != 2 || users != 1 {
+		t.Fatal(version, users, err)
+	}
+	if _, err := db.Exec(`INSERT INTO users (provider, subject, state, created_at, changed_at) VALUES ('token', 'x', 'approved', 0, 0)`); err == nil {
+		t.Fatal("the old constraint must still hold")
 	}
 }

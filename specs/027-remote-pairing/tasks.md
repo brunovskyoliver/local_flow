@@ -11,8 +11,8 @@
 
 ## Phase 2: Foundational
 
-- [ ] T005 Add a v2 fixture test and schema v3 with the pre-v3 `VACUUM INTO` copy in server/internal/accounts/store.go and store_test.go (`label` 1–64 bytes, `hash` 32 bytes, states `live`, `redeemed`, `revoked`)
-- [ ] T006 Implement create, list, revoke and redeem with the 100-token cap, 90-day pruning and atomic transition in server/internal/accounts/pairing.go, with pairing_test.go covering double redemption, same-key retry, other-key refusal and expiry
+- [X] T005 Add a v2 fixture test and schema v3 with the pre-v3 `VACUUM INTO` copy in server/internal/accounts/store.go and store_test.go (`label` 1–64 bytes, `hash` 32 bytes, states `live`, `redeemed`, `revoked`)
+- [X] T006 Implement create, list, revoke and redeem with the 100-token cap, 90-day pruning and atomic transition in server/internal/accounts/pairing.go, with pairing_test.go covering double redemption, same-key retry, other-key refusal and expiry
 
 **Checkpoint**: Store tests pass; an enrolled v2 device still refreshes.
 

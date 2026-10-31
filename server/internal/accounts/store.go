@@ -25,7 +25,8 @@ import (
 
 const (
 	FileName         = "flowd-remote.sqlite"
-	schemaVersion    = 2
+	PreV3FileName    = "flowd-remote.pre-v3.sqlite"
+	schemaVersion    = 3
 	MaxPendingUsers  = 100
 	MaxAuditRows     = 10000
 	LastSeenInterval = time.Minute
@@ -183,8 +184,70 @@ CREATE INDEX devices_revoked_previous_refresh ON devices(revoked_previous_refres
 PRAGMA user_version = 2;
 `
 
+// schemaV3 adds pairing tokens (specs/027-remote-pairing/data-model.md). SQLite
+// can't alter a CHECK, so users and audit are rebuilt. foreign_keys stays on
+// because PRAGMA foreign_keys is a no-op in a transaction, so devices' references
+// are deferred instead. Dropping users counts a violation per device, and only
+// inserting the parents into a table already named users clears the count: a
+// rename of a new table would leave it standing and fail the commit.
+// pairing_tokens.id is AUTOINCREMENT because pruning must not free an id that a
+// token user's subject still holds.
+const schemaV3 = `
+PRAGMA defer_foreign_keys = ON;
+CREATE TABLE users_v2 AS SELECT * FROM users;
+DROP TABLE users;
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('apple', 'google', 'token')),
+  subject TEXT NOT NULL CHECK (length(CAST(subject AS BLOB)) BETWEEN 1 AND 255),
+  display TEXT CHECK (display IS NULL OR length(CAST(display AS BLOB)) <= 320),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'approved', 'rejected', 'revoked')),
+  created_at INTEGER NOT NULL,
+  changed_at INTEGER NOT NULL,
+  UNIQUE (provider, subject)
+);
+INSERT INTO users SELECT * FROM users_v2;
+DROP TABLE users_v2;
+CREATE TABLE audit_v2 AS SELECT * FROM audit;
+DROP TABLE audit;
+CREATE TABLE audit (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL,
+  actor TEXT NOT NULL CHECK (
+    actor = 'system'
+    OR (actor GLOB 'admin:?*' AND length(actor) <= 70)
+    OR (actor GLOB 'user:[0-9]*' AND substr(actor, 6) NOT GLOB '*[^0-9]*')
+    OR (actor GLOB 'device:[0-9]*' AND substr(actor, 8) NOT GLOB '*[^0-9]*')),
+  action TEXT NOT NULL CHECK (action IN ('sign_in', 'enroll', 'approve', 'reject', 'revoke', 'refresh',
+    'refresh_reuse', 'cross_user_attempt', 'rate_limited', 'pin_rejected', 'token_create', 'token_revoke', 'pair')),
+  target TEXT CHECK (target IS NULL
+    OR (target GLOB 'user:[0-9]*' AND substr(target, 6) NOT GLOB '*[^0-9]*')
+    OR (target GLOB 'device:[0-9]*' AND substr(target, 8) NOT GLOB '*[^0-9]*')
+    OR (target GLOB 'token:[0-9]*' AND substr(target, 7) NOT GLOB '*[^0-9]*')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'unauthorized', 'token_expired', 'not_approved', 'revoked',
+    'busy', 'invalid_message', 'unsupported_version', 'limit_exceeded', 'worker_unavailable', 'internal',
+    'pairing_token_invalid'))
+);
+INSERT INTO audit SELECT * FROM audit_v2;
+DROP TABLE audit_v2;
+CREATE TABLE pairing_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  label TEXT NOT NULL CHECK (length(CAST(label AS BLOB)) BETWEEN 1 AND 64),
+  hash BLOB NOT NULL UNIQUE CHECK (length(hash) = 32),
+  user_id INTEGER REFERENCES users(id),
+  state TEXT NOT NULL CHECK (state IN ('live', 'redeemed', 'revoked')),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  changed_at INTEGER NOT NULL,
+  device_id INTEGER REFERENCES devices(id),
+  device_key BLOB CHECK (device_key IS NULL OR length(device_key) = 65),
+  created_by TEXT NOT NULL
+);
+PRAGMA user_version = 3;
+`
+
 // migrations[v] brings a version v database to v+1.
-var migrations = []string{schema, schemaV2}
+var migrations = []string{schema, schemaV2, schemaV3}
 
 // revokeDevice is the device revocation update (admin revoke and refresh
 // reuse): the token hashes are cleared and move to the tombstones (a hash
@@ -239,17 +302,53 @@ func (s *Store) migrate() error {
 	case version > schemaVersion:
 		return ErrSchemaTooNew
 	}
+	if version == 2 {
+		if err := s.copyBeforeV3(); err != nil {
+			return fmt.Errorf("accounts: copy database before migrating: %w", err)
+		}
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	// Another process may have migrated while this one waited for the lock.
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("accounts: read schema version: %w", err)
+	}
 	for v := version; v < schemaVersion; v++ {
 		if _, err := tx.Exec(migrations[v]); err != nil {
 			return fmt.Errorf("accounts: migrate schema to version %d: %w", v+1, err)
 		}
 	}
 	return tx.Commit()
+}
+
+// copyBeforeV3 writes a consistent copy of a version 2 database beside it, 0600,
+// because an older flowd refuses version 3 and this is the way back. VACUUM INTO
+// can't run in a transaction. It accepts an empty file, and CreateTemp makes one
+// 0600 with a name no other process is using.
+func (s *Store) copyBeforeV3() error {
+	dir := filepath.Dir(s.path)
+	temp, err := os.CreateTemp(dir, PreV3FileName+".*")
+	if err != nil {
+		return err
+	}
+	temp.Close()
+	defer os.Remove(temp.Name())
+	if _, err := s.db.Exec(`VACUUM INTO ?`, temp.Name()); err != nil {
+		return err
+	}
+	// Still version 2 now means the copy is too. Otherwise another process
+	// migrated meanwhile, and its copy is the one to keep.
+	var version int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return err
+	}
+	if version != 2 {
+		return nil
+	}
+	return os.Rename(temp.Name(), filepath.Join(dir, PreV3FileName))
 }
 
 // Close closes the database.
@@ -529,7 +628,7 @@ type AuditEntry struct {
 	At      time.Time
 	Actor   string // admin:<unix user>, user:<id>, device:<id> or system
 	Action  string
-	Target  string // user:<id>, device:<id> or empty
+	Target  string // user:<id>, device:<id>, token:<id> or empty
 	Outcome string // ok or a channel error code
 }
 
@@ -541,17 +640,21 @@ func UserActor(id int64) string         { return "user:" + strconv.FormatInt(id,
 func DeviceActor(id int64) string       { return "device:" + strconv.FormatInt(id, 10) }
 func UserTarget(id int64) string        { return UserActor(id) }
 func DeviceTarget(id int64) string      { return DeviceActor(id) }
+func TokenTarget(id int64) string       { return "token:" + strconv.FormatInt(id, 10) }
 
 var (
-	adminPattern = regexp.MustCompile(`^admin:[A-Za-z0-9._-]{1,64}$`)
-	idPattern    = regexp.MustCompile(`^(user|device):[0-9]{1,19}$`)
-	auditActions = map[string]bool{
+	adminPattern  = regexp.MustCompile(`^admin:[A-Za-z0-9._-]{1,64}$`)
+	idPattern     = regexp.MustCompile(`^(user|device):[0-9]{1,19}$`)
+	targetPattern = regexp.MustCompile(`^(user|device|token):[0-9]{1,19}$`)
+	auditActions  = map[string]bool{
 		"sign_in": true, "enroll": true, "approve": true, "reject": true, "revoke": true, "refresh": true,
 		"refresh_reuse": true, "cross_user_attempt": true, "rate_limited": true, "pin_rejected": true,
+		"token_create": true, "token_revoke": true, "pair": true,
 	}
 	auditOutcomes = map[string]bool{
 		"ok": true, "unauthorized": true, "token_expired": true, "not_approved": true, "revoked": true, "busy": true,
 		"invalid_message": true, "unsupported_version": true, "limit_exceeded": true, "worker_unavailable": true, "internal": true,
+		"pairing_token_invalid": true,
 	}
 )
 
@@ -575,7 +678,7 @@ func (s *Store) Audit(ctx context.Context, entry AuditEntry) error {
 
 func insertAudit(ctx context.Context, tx *sql.Tx, at int64, entry AuditEntry) error {
 	if !validActor(entry.Actor) || !auditActions[entry.Action] || !auditOutcomes[entry.Outcome] ||
-		(entry.Target != "" && !idPattern.MatchString(entry.Target)) {
+		(entry.Target != "" && !targetPattern.MatchString(entry.Target)) {
 		return ErrInvalidRecord
 	}
 	var target any

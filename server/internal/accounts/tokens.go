@@ -58,12 +58,19 @@ type Tokens struct {
 // IssueRefresh starts a device's refresh lineage (enrollment): a new refresh
 // token, no previous hash.
 func (s *Store) IssueRefresh(ctx context.Context, deviceID int64) (string, time.Time, error) {
+	return s.issueRefresh(ctx, s.db, deviceID)
+}
+
+// issueRefresh runs on the database or, for pairing, inside a transaction.
+func (s *Store) issueRefresh(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, deviceID int64) (string, time.Time, error) {
 	token, hash, err := NewToken(RefreshPrefix)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	expires := s.now().Add(RefreshLifetime)
-	result, err := s.db.ExecContext(ctx, `UPDATE devices SET refresh_hash = ?, previous_refresh_hash = NULL, refresh_expires_at = ? WHERE id = ?`,
+	result, err := db.ExecContext(ctx, `UPDATE devices SET refresh_hash = ?, previous_refresh_hash = NULL, refresh_expires_at = ? WHERE id = ?`,
 		hash[:], expires.UnixMilli(), deviceID)
 	if err != nil {
 		return "", time.Time{}, err
