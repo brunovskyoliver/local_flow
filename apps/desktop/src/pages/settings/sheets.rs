@@ -162,8 +162,8 @@ impl SettingsPage {
             .p(px(24.))
             .gap(px(16.))
             .child(t("Use your LocalFlow server?").font(17., 500.))
-            .child(input_surface("server.rack", Some("https://server.example.com"), Input::new(&self.server_draft).aria_label("Server address").accessibility_id("settings.remoteServerURL"), &self.server_draft, window, cx))
-            .child(div().id("settings.consentBody").w_full().child(t(text).size(13.).line_spacing(3.)).test_support())
+            .child(input_surface("server.rack", Some("https://server.example.com"), Input::new(&self.server_draft).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &self.server_draft, window, cx))
+            .child(div().id("settings.consentBody").w_full().child(t(text).size(13.).line_spacing(3.).swift_lines()).test_support())
             .when_some(origin.as_ref(), |d, o| d.child(t(format!("Server: {}", core::origin_host(o))).font(13., 500.)))
             .when_some(self.remote_error.clone(), |d, e| d.child(t(e).size(12.).color(pl.warning)))
             .child(
@@ -183,7 +183,7 @@ impl SettingsPage {
             .p(px(24.))
             .gap(px(16.))
             .child(t("Send summaries and meetings to your server?").font(17., 500.))
-            .child(t(text).size(13.).line_spacing(3.))
+            .child(t(text).size(13.).line_spacing(3.).swift_lines())
             .child(
                 h_flex()
                     .w_full()
@@ -282,7 +282,7 @@ impl SettingsPage {
                     .border(px(if focused { 2. } else { 1. }))
                     .border_color(if focused { pl.accent } else { pl.line })
                     .test_support()
-                    .child(div().flex_1().min_w_0().text_size(px(13.)).child(Input::new(draft).aria_label("Bundle ID").accessibility_id("settings.contextBundleID").appearance(false).px_0().text_size(px(13.)))),
+                    .child(div().flex_1().min_w_0().text_size(px(13.)).child(Input::new(draft).id("settings.contextBundleID").aria_label("Bundle ID").accessibility_id("settings.contextBundleID").appearance(false).px_0().text_size(px(13.)))),
             )
             .when(!exclusions, |d| d.child(pill_menu("context.addKind", core::kind_title(self.add_category).into(), Self::pick_kinds(), cx)))
             .child(pill_button("settings.contextAdd", "Add", cx).disabled(blank).on_click(cx.listener(|this, _, w, cx| this.add_context_app(w, cx))));

@@ -1,7 +1,7 @@
 SET-001	auto	test:page_rows_and_sections_are_spaced_like_swift
 SET-002	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png
 SET-003	auto	test:sections_stack_in_swifts_order
-SET-004	auto	test:page_rows_and_sections_are_spaced_like_swift
+SET-004	auto	test:section_titles_are_14_medium
 SET-005	auto	test:page_rows_and_sections_are_spaced_like_swift
 SET-006	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png
 SET-007	auto	test:page_rows_and_sections_are_spaced_like_swift
@@ -12,17 +12,17 @@ SET-011	live	live:audit/mac/settings/exclusions-light-ref.png ; live:audit/mac/s
 SET-012	live	live:audit/mac/settings/default+rewriting-light-ref.png ; live:audit/mac/settings/default+rewriting-light-rust.png ; live:audit/mac/settings/default+rewriting-dark-ref.png ; live:audit/mac/settings/default+rewriting-dark-rust.png ; live:audit/mac/settings/consent-light-ref.png ; live:audit/mac/settings/consent-light-rust.png ; live:audit/mac/settings/consent-dark-ref.png ; live:audit/mac/settings/consent-dark-rust.png ; note:link-shaped placeholders are drawn in the sampled link colour over the field; Kit has one placeholder colour
 SET-013	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png ; note:chevron is thinner than the native picker
 SET-014	auto	test:palette_matches_sotto
-SET-015	auto	test:leaving_clears_the_test_and_secret_draft
-SET-016	auto	test:refresh_reads_permissions_and_all_granted_hides_the_section
+SET-015	auto	test:the_page_takes_focus_from_a_field
+SET-016	auto	test:refresh_assigns_only_a_changed_snapshot
 SET-017	auto	test:poll_sees_a_permission_change_within_half_a_second ; service:test uses a stub, real AVFoundation, CGPreflightListenEventAccess, AXIsProcessTrusted not exercised
 SET-018	service	service:CGEvent tap reinstall and input catalog refresh on permission change, flow-platform service phase
 SET-019	auto	test:leaving_clears_the_test_and_secret_draft ; test:rewriting_blocks_until_address_and_secret_are_right
 SET-020	auto	test:microphones_anchor_scrolls_there_once
 SET-021	auto	test:default_page_shows_every_section_in_order
 SET-022	auto	test:permission_buttons
-SET-023	auto	test:failures_read_at_the_page_bottom
-SET-024	auto	test:failures_read_at_the_page_bottom ; test:selectable_text_copies
-SET-025	auto	test:failures_read_at_the_page_bottom
+SET-023	auto	test:recording_error_sits_above_the_general_error
+SET-024	auto	test:selectable_text_copies
+SET-025	auto	test:run_is_ignored_while_performing_and_clears_the_error
 SET-026	auto	test:error_copy_shortcuts
 SET-027	auto	test:error_copy_busy_and_model
 SET-028	auto	test:error_copy_server_only
@@ -45,47 +45,47 @@ SET-044	auto	test:remote_status_answers_and_reset
 SET-045	auto	test:trust_pins_the_key_and_shows_the_pin ; test:real_flowd_through_the_page ; test:remote_status_answers_and_reset ; test:real_flowd_identity_is_validated
 SET-046	auto	test:remote_status_answers_and_reset
 SET-047	auto	test:remote_status_answers_and_reset
-SET-048	auto	test:remote_status_answers_and_reset ; service:test uses a stub, real wss /v1/remote/channel refresh not exercised
+SET-048	service	service:channel answers need the session channel, flow-platform service phase; core mapping tested by remote_status_answers_and_reset, not wired
 SET-049	auto	test:approved_server_shows_routing_and_turns_off ; test:remote_status_answers_and_reset
 SET-050	auto	test:remote_status_answers_and_reset
 SET-051	auto	test:remote_status_answers_and_reset
 SET-052	auto	test:remote_status_answers_and_reset
-SET-053	auto	test:approved_server_shows_routing_and_turns_off
-SET-054	auto	test:trust_pins_the_key_and_shows_the_pin
-SET-055	auto	test:trust_pins_the_key_and_shows_the_pin ; test:real_flowd_through_the_page
-SET-056	auto	test:trust_pins_the_key_and_shows_the_pin
-SET-057	auto	test:trust_pins_the_key_and_shows_the_pin
-SET-058	auto	test:trust_pins_the_key_and_shows_the_pin ; service:test uses a stub, real Keychain `<bundle id>.remote` / `server-key` not exercised
-SET-059	auto	test:trust_pins_the_key_and_shows_the_pin ; test:identity_validation_and_fingerprint ; service:test uses a stub, real Keychain `server-key` not exercised
-SET-060	auto	test:remote_status_lines_and_their_controls
-SET-061	auto	test:remote_status_lines_and_their_controls ; service:test uses a stub, real ASAuthorization not exercised
-SET-062	auto	test:remote_status_lines_and_their_controls ; service:test uses a stub, real ASWebAuthenticationSession not exercised
+SET-053	auto	test:fetched_identity_reads_with_swifts_type
+SET-054	auto	test:fetched_identity_reads_with_swifts_type
+SET-055	auto	test:fetched_identity_reads_with_swifts_type
+SET-056	auto	test:fetched_identity_reads_with_swifts_type
+SET-057	auto	test:fetched_identity_reads_with_swifts_type
+SET-058	auto	test:trust_refuses_a_key_that_does_not_validate
+SET-059	auto	test:pinned_line_is_12_muted_with_two_spaces
+SET-060	auto	test:sign_in_buttons_follow_state_google_and_busy
+SET-061	auto	test:sign_in_buttons_follow_state_google_and_busy
+SET-062	auto	test:sign_in_buttons_follow_state_google_and_busy
 SET-063	not-run	not-run:needs Apple or Google interaction and a wss enroll channel ; service:enroll_device returns Unavailable, button shows SET-066
 SET-064	not-run	not-run:needs interactive Google login ; service:ASWebAuthenticationSession, flow-platform service phase
 SET-065	not-run	not-run:needs interactive Apple login ; service:ASAuthorization, flow-platform service phase
 SET-066	auto	test:remote_status_lines_and_their_controls
 SET-067	auto	test:sign_in_reports_an_unreachable_server
-SET-068	auto	test:remote_status_answers_and_reset ; service:test uses a stub, real wss /v1/remote/channel not exercised
-SET-069	auto	test:remote_status_lines_and_their_controls
+SET-068	service	service:channel answers need the session channel, flow-platform service phase; core mapping tested by remote_status_answers_and_reset, not wired
+SET-069	auto	test:enroll_again_and_the_setup_error
 SET-070	auto	test:real_flowd_through_the_page
 SET-071	auto	test:identity_validation_and_fingerprint ; test:real_flowd_identity_is_validated
 SET-072	auto	test:real_flowd_through_the_page ; test:identity_validation_and_fingerprint
-SET-073	auto	test:remote_status_lines_and_their_controls
+SET-073	auto	test:enroll_again_and_the_setup_error
 SET-074	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-075	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-076	auto	test:meeting_only_variant
 SET-077	auto	test:consent_sheet_stores_nothing_until_turn_on ; test:sheets_have_swifts_geometry
 SET-078	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-079	live	live:audit/mac/settings/consent-light-ref.png ; live:audit/mac/settings/consent-light-rust.png ; live:audit/mac/settings/consent-dark-ref.png ; live:audit/mac/settings/consent-dark-rust.png ; test:consent_sheet_stores_nothing_until_turn_on ; note:accessibility id is set in code, not observed in an AX dump
-SET-080	auto	test:consent_sheet_stores_nothing_until_turn_on ; test:sheets_have_swifts_geometry
+SET-079	auto	test:consent_address_field_has_symbol_hint_and_id
+SET-080	auto	test:consent_body_pitch_is_18
 SET-081	auto	test:remote_status_answers_and_reset
 SET-082	auto	test:meeting_only_variant ; test:remote_status_answers_and_reset
 SET-083	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-084	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-085	auto	test:consent_sheet_stores_nothing_until_turn_on
+SET-085	auto	test:return_follows_the_disabled_turn_on
 SET-086	auto	test:consent_sheet_stores_nothing_until_turn_on
 SET-087	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-088	auto	test:consent_sheet_stores_nothing_until_turn_on
+SET-088	auto	test:return_follows_the_disabled_turn_on
 SET-089	auto	test:consent_sheet_stores_nothing_until_turn_on
 SET-090	auto	test:address_and_credential_validators_match_swift
 SET-091	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
@@ -94,43 +94,43 @@ SET-093	auto	test:approved_server_shows_routing_and_turns_off
 SET-094	auto	test:approved_server_shows_routing_and_turns_off ; service:test uses a stub, real Keychain `<bundle id>.remote` not exercised
 SET-095	auto	test:approved_server_shows_routing_and_turns_off ; test:remote_status_answers_and_reset
 SET-096	auto	test:approved_server_shows_routing_and_turns_off ; test:remote_status_answers_and_reset
-SET-097	auto	test:remote_status_answers_and_reset ; service:test uses a stub, real wss /v1/remote/channel error codes not exercised
-SET-098	auto	test:remote_status_answers_and_reset ; service:test uses a stub, real Secure Enclave not exercised
+SET-097	service	service:channel answers need the session channel, flow-platform service phase; core mapping tested by remote_status_answers_and_reset, not wired
+SET-098	service	service:channel answers need the session channel, flow-platform service phase; core mapping tested by remote_status_answers_and_reset, not wired
 SET-099	service	service:no token refresh in Rust; needs the device key and the enrollment channel, enrollment service phase
-SET-100	auto	test:approved_server_shows_routing_and_turns_off
-SET-101	auto	test:approved_server_shows_routing_and_turns_off
+SET-100	auto	test:routing_switches_clear_the_check_and_force_the_server
+SET-101	auto	test:routing_switches_clear_the_check_and_force_the_server
 SET-102	auto	test:approved_server_shows_routing_and_turns_off ; test:routing_truth_table
 SET-103	auto	test:approved_server_shows_routing_and_turns_off
-SET-104	auto	test:approved_server_shows_routing_and_turns_off
+SET-104	auto	test:routing_switches_clear_the_check_and_force_the_server
 SET-105	auto	test:consent_update_sheet
 SET-106	auto	test:consent_update_sheet
-SET-107	auto	test:consent_update_sheet ; test:sheets_have_swifts_geometry
+SET-107	auto	test:consent_body_pitch_is_18
 SET-108	auto	test:consent_update_sheet
 SET-109	auto	test:consent_update_sheet
 SET-110	auto	test:approved_server_shows_routing_and_turns_off ; test:lower_sections_are_spaced_like_swift
 SET-111	auto	test:approved_server_shows_routing_and_turns_off ; test:routing_truth_table
 SET-112	auto	test:routing_truth_table
 SET-113	auto	test:routing_truth_table
-SET-114	auto	test:approved_server_shows_routing_and_turns_off
+SET-114	auto	test:check_button_and_result
 SET-115	auto	test:check_connection_when_the_server_is_down ; service:test uses a stub, real wss /v1/remote/channel round trip not exercised
-SET-116	auto	test:approved_server_shows_routing_and_turns_off
+SET-116	auto	test:check_button_and_result
 SET-117	auto	test:approved_server_shows_routing_and_turns_off
 SET-118	auto	test:check_connection_when_the_server_is_down ; test:channel_url_and_ping_need_pin_and_token ; test:real_flowd_channel_round_trip ; service:test uses a stub, real wss /v1/remote/channel round trip not exercised
 SET-119	auto	test:real_flowd_through_the_page ; test:real_flowd_channel_round_trip ; service:test uses a stub, real wss /v1/remote/channel round trip not exercised
-SET-120	auto	test:server_advanced_writes_each_override ; test:lower_sections_are_spaced_like_swift
-SET-121	auto	test:server_advanced_writes_each_override
-SET-122	auto	test:server_advanced_writes_each_override
-SET-123	auto	test:server_advanced_writes_each_override
-SET-124	auto	test:server_advanced_writes_each_override
-SET-125	auto	test:server_advanced_writes_each_override
-SET-126	auto	test:server_advanced_writes_each_override
-SET-127	auto	test:server_advanced_writes_each_override
-SET-128	auto	test:server_advanced_writes_each_override
-SET-129	auto	test:server_advanced_writes_each_override ; test:controls_have_swifts_measured_sizes
-SET-130	auto	test:fallback_threshold_stops_at_both_limits ; note:monospaced digits not asserted
-SET-131	auto	test:server_advanced_writes_each_override
+SET-120	auto	test:server_advanced_starts_closed
+SET-121	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-122	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-123	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-124	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-125	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-126	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-127	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-128	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-129	auto	test:override_menus_offer_swifts_options_and_write_through_a_click
+SET-130	auto	test:fallback_stepper_label_and_steps
+SET-131	auto	test:fallback_stepper_label_and_steps
 SET-132	auto	test:server_advanced_writes_each_override
-SET-133	auto	test:trust_pins_the_key_and_shows_the_pin ; service:test uses a stub, real Keychain `server-key` not exercised
+SET-133	auto	test:advanced_fingerprint_row_has_its_id_and_selects
 SET-134	auto	test:default_page_shows_every_section_in_order
 SET-135	auto	test:default_page_shows_every_section_in_order ; service:test uses a stub, real Sparkle not exercised
 SET-136	auto	test:default_page_shows_every_section_in_order ; service:test uses a stub, real Sparkle not exercised

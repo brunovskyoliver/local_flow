@@ -16,11 +16,11 @@ impl SettingsPage {
         let toggle = switch("settings.remoteEnabled", title, on, false, cx.listener(|this, _: &bool, w, cx| this.request_remote_toggle(w, cx)));
         let mut body = group(cx).child(row(title, Some(detail), toggle, cx));
         if on && (state != "approved" || self.identity.is_some() || self.remote_error.is_some()) {
-            let mut details = v_flex().w_full().items_start().gap(px(12.)).py(px(16.));
+            let mut details = v_flex().id("settings.setupDetails").test_support().w_full().items_start().gap(px(12.)).py(px(16.));
             if let Some(identity) = &self.identity {
                 details = details
-                    .child(t("Server fingerprint").font(12., 500.).color(pl.muted))
-                    .child(div().id("settings.remoteFingerprint").w_full().child(selectable("settings.remoteFingerprint.text", identity.fingerprint.clone(), 13., true, pl.ink, 16.)))
+                    .child(div().id("settings.remoteFingerprintLabel").test_support().child(t("Server fingerprint").font(12., 500.).color(pl.muted)))
+                    .child(div().id("settings.remoteFingerprint").test_support().w_full().child(selectable("settings.remoteFingerprint.text", identity.fingerprint.clone(), 13., true, pl.ink, 16.)))
                     .child(rich(vec![span("Compare it with "), span("flowd admin identity").serif(false), span(" on the server before trusting it.")]).size(12.).color(pl.muted))
                     .child(prototype_button("settings.remoteTrust", "Trust This Server").on_click(cx.listener(|this, _, _, cx| this.trust_server(cx))));
             } else if state != "approved"
@@ -90,7 +90,7 @@ impl SettingsPage {
                 // `DisclosureGroup` content inherits the muted style and the native row spacing.
                 advanced = advanced.child(v_flex().w_full().pt(px(4.)).gap(px(8.)).text_color(pal(cx).muted).children(self.advanced(&r, window, cx)));
             }
-            body = body.child(hairline(cx)).child(div().w_full().py(px(14.)).child(advanced));
+            body = body.child(hairline(cx)).child(div().id("settings.serverAdvancedRow").test_support().w_full().py(px(14.)).child(advanced));
         }
         body
     }
@@ -140,7 +140,7 @@ impl SettingsPage {
         if let Some(fp) = &self.pinned {
             out.push(hairline(cx).into_any_element());
             out.push(
-                div().id("settings.serverFingerprint").w_full().py(px(19.)).child(
+                div().id("settings.serverFingerprint").test_support().w_full().py(px(19.)).child(
                     v_flex().gap(px(5.)).child(t("Server fingerprint").size(14.)).child(selectable("settings.serverFingerprint.text", fp.clone(), 12., false, pal(cx).muted, 15.)),
                 )
                 .into_any_element(),
@@ -167,11 +167,8 @@ impl SettingsPage {
         if self.modal != Some(Modal::Consent) {
             return;
         }
-        let Some(origin) = core::remote_origin(&val(&self.server_draft, cx)) else {
-            self.remote_error = Some("Enter the server's https:// address without a path.".into());
-            cx.notify();
-            return;
-        };
+        // Return follows the disabled Turn On, so Swift's "Enter the server's https://…" stays unreachable (SET-091).
+        let Some(origin) = core::remote_origin(&val(&self.server_draft, cx)) else { return };
         let p = prefs_mut(cx);
         p.set("remote.serverURL", origin);
         p.set("remote.consentVersion", core::CONSENT_VERSION);
@@ -205,6 +202,11 @@ impl SettingsPage {
     /// `pin`: credentials go, the key is stored, the state moves to pinned.
     pub(super) fn trust_server(&mut self, cx: &mut Context<Self>) {
         let Some(identity) = self.identity.clone() else { return };
+        if identity.validated_key().is_none() {
+            self.remote_error = Some("The server identity could not be saved.".into());
+            cx.notify();
+            return;
+        }
         let services = &cx.global::<Core>().services;
         for account in ["device-key", "refresh-token", "access-token"] {
             let _ = services.remove_secret(&core::remote_keychain(account));

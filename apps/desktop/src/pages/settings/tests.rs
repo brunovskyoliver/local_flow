@@ -21,6 +21,7 @@ struct Stub {
     permissions: Rc<Cell<PermissionState>>,
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
     install: Rc<Cell<Option<(u64, u64, bool)>>>,
+    google: Rc<Cell<bool>>,
 }
 impl Stub {
     fn call(&self, name: String) -> Result<(), Unavailable> {
@@ -111,7 +112,7 @@ impl flow_platform::Services for Stub {
         vec![("Zed".into(), "dev.zed.Zed".into()), ("Arc".into(), "company.thebrowser.Browser".into())]
     }
     fn google_sign_in_available(&self) -> bool {
-        false
+        self.google.get()
     }
 }
 
@@ -123,6 +124,7 @@ struct Rig {
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
     permissions: Rc<Cell<PermissionState>>,
     install: Rc<Cell<Option<(u64, u64, bool)>>>,
+    google: Rc<Cell<bool>>,
 }
 
 fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core::prefs::Prefs)) -> Rig {
@@ -131,7 +133,8 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let catalog = Rc::new(RefCell::new(None));
     let permissions_handle = permissions.clone();
     let install = Rc::new(Cell::new(None));
-    let stub = Stub { fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone(), install: install.clone() };
+    let google = Rc::new(Cell::new(false));
+    let stub = Stub { google: google.clone(), fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone(), install: install.clone() };
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
         core.services = Box::new(stub);
@@ -142,7 +145,7 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let bounds = Bounds::new(point(px(0.), px(0.)), size(px(1180.), px(6000.)));
     let win = cx.update(|cx| cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |w, cx| cx.new(|cx| SettingsPage::new(w, cx)))).unwrap();
     frame(cx, win);
-    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle, install }
+    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle, install, google }
 }
 fn frame(cx: &mut TestAppContext, win: Win) {
     cx.run_until_parked();
@@ -204,7 +207,7 @@ fn disabled(cx: &mut TestAppContext, win: Win, id: &'static str) -> bool {
     win.update(cx, |_, w, _| w.find(id).disabled().unwrap_or(false)).unwrap()
 }
 fn identity(key: &str, fp: &str) -> Identity {
-    Identity { server_key: key.into(), fingerprint: fp.into(), protocol_versions: vec![], schema_version: 1, server: Default::default(), suite: String::new() }
+    Identity { server_key: key.into(), fingerprint: fp.into(), protocol_versions: vec![1], schema_version: 1, server: Default::default(), suite: "x25519-hkdfsha256-chacha20poly1305".into() }
 }
 fn logged(r: &Rig, s: &str) -> bool {
     r.log.borrow().iter().any(|l| l == s)
@@ -1324,3 +1327,5 @@ async fn selectable_text_copies(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(selected, "Something failed");
 }
+
+mod rows;

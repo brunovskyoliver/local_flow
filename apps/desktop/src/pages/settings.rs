@@ -977,7 +977,7 @@ impl SettingsPage {
                 .pt(px(18.))
                 .pb(px(14.))
                 .child(t("Server URL").font(12., 500.).color(pl.muted))
-                .child(input_surface("link", Some("http://127.0.0.1:8080"), Input::new(&self.endpoint).aria_label("Rewrite server endpoint").accessibility_id("settings.rewriteEndpoint"), &self.endpoint, window, cx))
+                .child(input_surface("link", Some("http://127.0.0.1:8080"), Input::new(&self.endpoint).id("settings.rewriteEndpoint").aria_label("Rewrite server endpoint").accessibility_id("settings.rewriteEndpoint"), &self.endpoint, window, cx))
                 .into_any_element(),
             self.credential_controls(window, cx).into_any_element(),
         ];
@@ -1021,7 +1021,7 @@ impl SettingsPage {
                     .test_support()
                     .w_full()
                     .gap(px(8.))
-                    .child(div().flex_1().child(input_surface("key", None, Input::new(state).aria_label("Rewrite server credential").accessibility_id("settings.rewriteCredential"), state, window, cx)))
+                    .child(div().flex_1().child(input_surface("key", None, Input::new(state).id("settings.rewriteCredential").aria_label("Rewrite server credential").accessibility_id("settings.rewriteCredential"), state, window, cx)))
                     .child(prototype_button("settings.rewriteCredentialSave", "Save").a11y_label("Set rewrite server credential").disabled(draft_empty || !self.rewrite.valid()).on_click(cx.listener(|this, _, w, cx| this.save_credential(w, cx)))),
             );
             if present {
@@ -1072,9 +1072,9 @@ impl SettingsPage {
             .gap(px(14.))
             .py(px(18.))
             .child(label("Server URL"))
-            .child(div().id("settings.summaryURLField").test_support().child(input_surface("link", Some("http://host:8000/v1"), Input::new(&self.summary_url).aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx)))
+            .child(div().id("settings.summaryURLField").test_support().child(input_surface("link", Some("http://host:8000/v1"), Input::new(&self.summary_url).id("settings.summaryServerURL").aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx)))
             .child(div().id("settings.summaryModelLabel").child(label("Model")).test_support())
-            .child(input_surface("cpu", None, Input::new(&self.summary_model).aria_label("Model").accessibility_id("settings.summaryServerModel"), &self.summary_model, window, cx))
+            .child(input_surface("cpu", None, Input::new(&self.summary_model).id("settings.summaryServerModel").aria_label("Model").accessibility_id("settings.summaryServerModel"), &self.summary_model, window, cx))
             .child(label("API key"));
         if self.summary_key_saved && !self.editing_summary_key {
             out = out.child(h_flex().w_full().gap(px(8.)).child(div().flex_1().child(saved_secret("API key saved", cx))).child(prototype_button("settings.summaryServerKeyEdit", "Edit").on_click(cx.listener(|this, _, _, cx| {
@@ -1085,11 +1085,11 @@ impl SettingsPage {
             let empty = val(&self.summary_key, cx).is_empty();
             out = out.child(
                 h_flex()
-                    .id("settings.credentialRow")
+                    .id("settings.summaryKeyRow")
                     .test_support()
                     .w_full()
                     .gap(px(8.))
-                    .child(div().flex_1().child(input_surface("key", None, Input::new(&self.summary_key).aria_label("API key").accessibility_id("settings.summaryServerKey"), &self.summary_key, window, cx)))
+                    .child(div().flex_1().child(input_surface("key", None, Input::new(&self.summary_key).id("settings.summaryServerKey").aria_label("API key").accessibility_id("settings.summaryServerKey"), &self.summary_key, window, cx)))
                     .child(prototype_button("settings.summaryServerKeySave", "Save").disabled(empty).on_click(cx.listener(|this, _, w, cx| this.save_summary_key(w, cx))))
                     .when(self.summary_key_saved, |d| {
                         d.child(prototype_button("settings.summaryServerKeyCancel", "Cancel").on_click(cx.listener(|this, _, w, cx| {
@@ -1156,7 +1156,11 @@ impl Render for SettingsPage {
             column = column.children(self.summaries(window, cx));
         }
         column = column.child(self.permissions_section(cx));
-        for line in [&self.recording_error, &self.error].into_iter().flatten() {
+        // Swift selects only the general error.
+        if let Some(line) = &self.recording_error {
+            column = column.child(div().id("settings.recordingError").pt(px(16.)).child(t(line.clone()).size(14.).color(pl.warning)).test_support());
+        }
+        if let Some(line) = &self.error {
             column = column.child(div().pt(px(16.)).child(selectable("settings.error", line.clone(), 14., false, pl.warning, 17.)));
         }
         let overlay = self.modal_overlay(window, cx);
@@ -1204,7 +1208,7 @@ pub(super) fn row(title: impl Into<SharedString>, detail: Option<String>, contro
         // `HStack(spacing:)` also spaces the `Spacer(minLength: 0)`, so text and control sit two spacings apart.
         .gap(px(if compact { 20. } else { 44. }))
         .py(px(19.))
-        .child(v_flex().id(SharedString::from(format!("{id}.text"))).flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(0.5)).child(t(s).size(12.).color(m).line_spacing(4.)))).test_support())
+        .child(v_flex().id(SharedString::from(format!("{id}.text"))).flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(1.)).child(t(s).size(12.).color(m).line_spacing(4.).swift_lines()))).test_support())
         .child(div().flex_none().child(control))
         .test_support()
 }
@@ -1266,7 +1270,7 @@ pub(super) fn pill_menu(id: impl Into<SharedString>, title: String, options: Vec
         .px(px(12.))
         .py(px(7.))
         .rounded(px(8.))
-        .child(h_flex().gap(px(6.)).child(t(title).size(13.).a11y_hidden()).child(icon("chevron.down", 13., pl.muted)))
+        .child(h_flex().gap(px(6.)).child(t(title).size(13.).a11y_hidden()).child(icon("chevron.down", 9., pl.muted)))
         .dropdown_menu(move |mut menu, _, _| {
             for (name, value) in options.clone() {
                 let (this, key) = (this.clone(), key.clone());
