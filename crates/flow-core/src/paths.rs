@@ -98,6 +98,7 @@ mod tests {
     }
 
     // A second owner is refused until the first lets go, in this process or another (flock is per open file).
+    // parity: SHELL-007
     #[test]
     fn instance_lock_excludes_a_second_owner_until_release() {
         let root = temp("lock");
@@ -111,6 +112,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    // parity: SHELL-008
     #[cfg(unix)]
     #[test]
     fn data_root_and_lock_are_private_and_a_symlink_is_refused() {

@@ -136,6 +136,17 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// Swift's `faint`, `accentInk` and `glassTint`, kept as the aliases they are.
+    pub fn faint(&self) -> Hsla {
+        self.muted
+    }
+    pub fn accent_ink(&self) -> Hsla {
+        self.accent
+    }
+    pub fn glass_tint(&self) -> Hsla {
+        self.canvas
+    }
+
     pub fn new(mode: Mode) -> Self {
         let x = Hex::new(mode);
         Palette {
@@ -225,7 +236,18 @@ pub fn contrast(a: u32, b: u32) -> f32 {
 mod tests {
     use super::*;
 
-    // parity: SHELL-189..SHELL-219 Every Swift token, including high-contrast values and aliases.
+    // parity: SHELL-191 SHELL-199 SHELL-203
+    #[test]
+    fn aliases_follow_their_source_in_both_modes() {
+        for mode in [Mode::Light, Mode::Dark] {
+            let p = Palette::new(mode);
+            assert_eq!(p.faint(), p.muted);
+            assert_eq!(p.accent_ink(), p.accent);
+            assert_eq!(p.glass_tint(), p.canvas);
+        }
+    }
+
+    // parity: SHELL-189 SHELL-190 SHELL-192..SHELL-198 SHELL-200 SHELL-201 SHELL-202 SHELL-204..SHELL-219 Every Swift token, including high-contrast values and aliases.
     // parity: SET-014
     #[test]
     fn palette_matches_sotto() {
@@ -245,7 +267,10 @@ mod tests {
         assert_eq!(row(|x| x.heat_empty), (0xEDEBE4, 0x2A2A29));
         assert_eq!(row(|x| x.data_strong), (0x345A5C, 0x4F8580));
         assert_eq!(row(|x| x.streak_outline), (0x2F5452, 0xB9DDD8));
-        assert_eq!((l.data_scale, d.data_scale), ([0x457672, 0x59918A, 0x9ACAC2, 0xD6ECEA], [0x84BDB5, 0x5A948D, 0x3F6A65, 0x2E4744]));
+        assert_eq!((l.data_scale[0], d.data_scale[0]), (0x457672, 0x84BDB5));
+        assert_eq!((l.data_scale[1], d.data_scale[1]), (0x59918A, 0x5A948D));
+        assert_eq!((l.data_scale[2], d.data_scale[2]), (0x9ACAC2, 0x3F6A65));
+        assert_eq!((l.data_scale[3], d.data_scale[3]), (0xD6ECEA, 0x2E4744));
         assert_eq!(row(|x| x.data_quiet), (0x84BAB1, 0x3F6A65));
         assert_eq!(row(|x| x.on_data_strong), (0xFFFFFF, 0x000000));
         assert_eq!(row(|x| x.on_data), (0x1A1A1A, 0x141414));
@@ -255,12 +280,10 @@ mod tests {
         // Non-contrast tokens fall back to their normal value in high contrast.
         assert_eq!((cl.canvas, cd.canvas), (l.canvas, d.canvas));
         let (pl, pd) = (Palette::new(Mode::Light), Palette::new(Mode::Dark));
-        for p in [pl, pd] {
-            assert_eq!(p.sidebar, p.canvas);
-            assert_eq!(p.primary, p.ink);
-            assert_eq!(p.on_primary, p.surface);
-            assert_eq!(p.on_accent, p.surface);
-        }
+        assert_eq!((pl.sidebar, pd.sidebar), (pl.canvas, pd.canvas));
+        assert_eq!((pl.primary, pd.primary), (pl.ink, pd.ink));
+        assert_eq!((pl.on_primary, pd.on_primary), (pl.surface, pd.surface));
+        assert_eq!((pl.on_accent, pd.on_accent), (pl.surface, pd.surface));
     }
 
     // parity: SHELL-TOKENS Port of AppearanceContrastTests: text keeps 4.5:1 on every page fill.
