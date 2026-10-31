@@ -128,11 +128,13 @@ impl NotetakerPage {
         let notice = self.pager.as_ref().and_then(|x| x.notice.clone());
         let action = self.transcript_notice.clone();
         let mut out = v_flex().id("meeting.transcript").w_full().gap(px(16.)).child(self.transcript_header(d, live, shows_speakers && has_speakers, cx));
-        if shows_speakers {
+        if shows_speakers && self.speaker_run.is_some() {
             out = out.child(self.speaker_status_line(has_speakers, cx));
         }
         if identify {
-            out = out.child(self.identification_status_line(cx));
+            if self.identify_run.is_some() || self.past_search.is_some() || self.enrolling {
+                out = out.child(self.identification_status_line(cx));
+            }
             if let Some((name, count)) = self.past_prompt.clone() {
                 let _ = name;
                 let noun = if count == 1 { "meeting" } else { "meetings" };
@@ -185,7 +187,7 @@ impl NotetakerPage {
             .gap(px(10.))
             .bg(p.canvas)
             .rounded(px(6.))
-            .child(h_flex().gap(px(4.)).child(icon("clock", 11., p.muted)).child(t(duration_text(elapsed)).size(11.).mono_digits().color(p.muted)))
+            .child(h_flex().gap(px(6.)).child(icon("clock", 11., p.muted)).child(t(duration_text(elapsed)).size(11.).mono_digits().color(p.muted)))
             .when_some(badge, |w, b| w.child(t(format!("· {b}")).size(11.).color(p.muted)))
             .child(div().flex_1())
             .map(|w| {
@@ -213,7 +215,7 @@ impl NotetakerPage {
                 w.child(
                     div()
                         .relative()
-                        .child(note_icon("meeting.transcript.copy", "square.on.square", "Copy or export transcript", p.muted).on_click(cx.listener(|this, _, _, cx| this.toggle_menu("copy", cx))))
+                        .child(note_icon("meeting.transcript.copy", "doc.on.doc", "Copy or export transcript", p.accent).on_click(cx.listener(|this, _, _, cx| this.toggle_menu("copy", cx))))
                         .when(copy_open, |w| {
                             let selected = self.pager.as_ref().map_or(0, |x| x.selection.len());
                             let title = if selected == 0 { "Copy Selected Segments".to_string() } else { format!("Copy {selected} Selected Segments") };
@@ -385,7 +387,10 @@ impl NotetakerPage {
                 div()
                     .relative()
                     .w_full()
-                    .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).on_mouse_down(MouseButton::Right, cx.listener(move |this, _, _, cx| this.toggle_menu(&right_key, cx))).child(t(row.text.clone()).size(13.).line_spacing(4.).color(color)))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).on_mouse_down(MouseButton::Right, cx.listener(move |this, _, _, cx| this.toggle_menu(&right_key, cx))).child(t(row.text.clone()).size(13.).line_spacing(4.).color(color)))
                     .when(open, |d| {
                         let toggle_id = id.clone();
                         let mut items = v_flex().p(px(8.)).gap(px(2.)).child(menu_row("meeting.transcript.row.select", if selected { "Deselect segment" } else { "Select segment" }, None, p.ink, Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {

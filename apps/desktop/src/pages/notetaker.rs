@@ -116,6 +116,11 @@ pub(crate) fn speaker_text(i: usize, cx: &App) -> Hsla {
     let (l, d) = SPEAKER_TEXT[i % 8];
     sys(cx, l, d)
 }
+/// A sheet dims the whole window. The page sits 220 + 45 in from its top left and 9 from the rest.
+// ponytail: fixed to the shell's page inset; a window-level overlay if the shell ever gets one.
+pub(crate) fn window_backdrop(id: &'static str) -> Stateful<Div> {
+    div().id(id).absolute().top(px(-45.)).left(px(-217.)).right(px(-9.)).bottom(px(-9.)).rounded(px(12.))
+}
 pub(crate) fn sid(text: impl Into<String>) -> SharedString {
     SharedString::from(text.into())
 }
@@ -395,7 +400,7 @@ impl NotetakerPage {
         };
         let action_id: SharedString = if matches!(self.confirm, Some(Confirm::RemoveEdits)) { "meeting.summary.removeEdits.confirm".into() } else { "notetaker.delete.confirm".into() };
         deferred(
-            div().id("notetaker.confirm").absolute().inset_0().flex().items_center().justify_center().bg(gpui::black().opacity(0.25)).occlude().child(
+            window_backdrop("notetaker.confirm").flex().items_center().justify_center().bg(gpui::black().opacity(0.2)).occlude().child(
                 v_flex()
                     .w(px(280.))
                     .p(px(20.))

@@ -277,7 +277,7 @@ impl NotetakerPage {
             .w_full()
             .gap(px(8.))
             .pb(px(4.))
-            .child(div().w_full().font_family(GARAMOND).text_size(px(38.)).child(Input::new(&self.title).appearance(false).aria_label("Note title").accessibility_id("meeting.title")))
+            .child(div().w_full().ml(px(-10.)).font_family(GARAMOND).child(Input::new(&self.title).appearance(false).text_size(px(38.)).line_height(px(46.)).h(px(46.)).aria_label("Note title").accessibility_id("meeting.title")))
             .child(t(date_time_text(m.created_at, offset)).size(15.).color(p.muted))
             .when(dropped, |w| w.child(div().id("meeting.captureLoss").child(sf_label("exclamationmark.triangle.fill", "Some audio was lost during recording. The transcript may be incomplete.", 13., orange(cx)))))
             .when(!dropped && drift, |w| w.child(div().id("meeting.durationWarning").child(sf_label("exclamationmark.triangle.fill", "A recording track does not match the meeting duration. Some audio may be missing.", 13., orange(cx)))))
@@ -296,10 +296,9 @@ impl NotetakerPage {
                     .relative()
                     .w_full()
                     .h(px(420.))
-                    .text_size(px(14.))
-                    .line_height(px(23.))
-                    .child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().aria_label("My thoughts").accessibility_id("meeting.thoughts"))
-                    .when(empty, |d| d.child(div().absolute().top(px(4.)).left_0().child(t("Capture your thoughts here").size(14.).color(p.muted.opacity(0.7)).a11y_hidden()))),
+                    .ml(px(-10.))
+                    .child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(14.)).line_height(px(23.)).aria_label("My thoughts").accessibility_id("meeting.thoughts"))
+                    .when(empty, |d| d.child(div().absolute().top(px(4.)).left(px(10.)).child(t("Capture your thoughts here").size(14.).color(p.muted.opacity(0.7)).a11y_hidden()))),
             )
             .when_some(notice, |d, n| {
                 d.child(h_flex().gap(px(8.)).child(t(n).size(12.).color(red(cx))).child(prototype_button("meeting.retrySave", "Retry save").on_click(cx.listener(|this, _, _, cx| {
@@ -320,7 +319,7 @@ impl NotetakerPage {
         }
         let track = d.track("microphone").or(d.track("system")).is_some();
         let playable = is_terminal(&d.meeting.state) && track;
-        row.child(prototype_button("meeting.playback", "Playback").symbol("play.circle", 13.).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
+        row.child(prototype_button("meeting.playback", "Playback").symbol("play.circle", 15.).disabled(!playable).on_click(cx.listener(|this, _, _, cx| this.play(cx)))).when(self.playing, |w| {
             w.child(t("0:00").size(12.).mono_digits().color(p.muted))
                 .child(prototype_button("meeting.playback.stop", "Stop").on_click(cx.listener(|this, _, _, cx| {
                     this.playing = false;

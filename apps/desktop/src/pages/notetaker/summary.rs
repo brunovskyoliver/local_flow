@@ -85,6 +85,25 @@ impl NotetakerPage {
         }
         self.summary.roots = speaker_summaries(db, &id).unwrap_or_default();
     }
+    /// `model.highlighted`: speaker names in their palette color.
+    fn spans(&self, text: &str, cx: &App) -> Vec<Span> {
+        let speakers: Vec<(String, String, usize)> = self.summary.roots.iter().map(|r| (r.id.clone(), r.label(), r.color)).collect();
+        let mut out = vec![];
+        let mut at = 0;
+        for (start, end, _, color) in speaker_mentions(text, &speakers) {
+            if start < at {
+                continue;
+            }
+            out.push(span(text[at..start].to_string()));
+            out.push(span(text[start..end].to_string()).color(speaker_text(color, cx)));
+            at = end;
+        }
+        out.push(span(text[at..].to_string()));
+        out
+    }
+    fn highlighted(&self, text: &str, cx: &App) -> Txt {
+        rich(self.spans(text, cx))
+    }
     fn generate(&mut self, cx: &mut Context<Self>) {
         self.menu = None;
         self.summary.error = Self::worker("Summary generation", cx).err();
@@ -178,10 +197,12 @@ impl NotetakerPage {
                     .w_full()
                     .gap(px(8.))
                     .p(px(10.))
+                    .gap(px(10.))
                     .bg(p.warning.opacity(0.12))
                     .rounded(px(6.))
+                    .child(icon("exclamationmark.triangle", 12., p.warning))
                     .child(div().flex_1().child(t("The transcript, speakers or notes changed after this summary.").size(12.)))
-                    .child(plain_button("meeting.summary.stale.regenerate", "Regenerate").on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t("Regenerate").size(12.).color(p.accent).a11y_hidden())),
+                    .child(prototype_button("meeting.summary.stale.regenerate", "Regenerate").on_click(cx.listener(|this, _, _, cx| this.generate(cx)))),
             );
         }
         if let Some(e) = self.summary.error.clone() {
@@ -204,9 +225,9 @@ impl NotetakerPage {
         };
         out = out.child(self.summary_body(&model, cx));
         for topic in &model.topics {
-            let mut column = v_flex().w_full().gap(px(9.)).pt(px(14.)).child(t(topic.title.clone()).font(15., 600.)).child(t(topic.summary.clone()).size(14.).line_spacing(6.));
+            let mut column = v_flex().w_full().gap(px(9.)).pt(px(14.)).child(t(topic.title.clone()).font(15., 600.));
             for bullet in &topic.bullets {
-                column = column.child(h_flex().items_start().gap(px(8.)).pl(px(6.)).child(t("•").size(14.)).child(div().flex_1().child(t(bullet.clone()).size(14.).line_spacing(5.))));
+                column = column.child(h_flex().items_start().gap(px(8.)).pl(px(6.)).child(t("•").size(15.)).child(div().flex_1().child(self.highlighted(bullet, cx).size(15.).line_spacing(5.))));
             }
             out = out.child(column);
         }
@@ -252,10 +273,10 @@ impl NotetakerPage {
                 _ => d,
             })
             .when(model.is_some(), |d| {
-                d.child(note_icon("meeting.summary.copy", if copied { "checkmark" } else { "square.on.square" }, if copied { "Copied" } else { "Copy summary" }, p.muted).on_click(cx.listener(|this, _, _, cx| this.copy_report(cx)))).child(
+                d.child(note_icon("meeting.summary.copy", if copied { "checkmark" } else { "doc.on.doc" }, if copied { "Copied" } else { "Copy summary" }, p.muted).on_click(cx.listener(|this, _, _, cx| this.copy_report(cx)))).child(
                     div()
                         .relative()
-                        .child(note_icon("meeting.summary.options", "ellipsis", "Summary options", p.muted).on_click(cx.listener(|this, _, _, cx| this.toggle_menu("summary.options", cx))))
+                        .child(note_icon("meeting.summary.options", "ellipsis", "Summary options", p.accent).on_click(cx.listener(|this, _, _, cx| this.toggle_menu("summary.options", cx))))
                         .when(open, |w| {
                             let items_base = v_flex().p(px(8.)).gap(px(2.)).child(menu_row("meeting.summary.regenerate", "Regenerate", None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, _, cx| this.generate(cx)))))
                                 .child(menu_row("meeting.summary.showPrevious", "Previous edits", None, p.ink, Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -301,7 +322,7 @@ impl NotetakerPage {
         let open = self.menu.as_deref() == Some("summary.body");
         let mut paragraphs = v_flex().flex_1().gap(px(10.));
         for part in model.summary.split("\n\n") {
-            paragraphs = paragraphs.child(t(part.to_string()).size(14.).line_spacing(6.));
+            paragraphs = paragraphs.child(self.highlighted(part, cx).size(15.).line_spacing(6.));
         }
         let ai_shown = self.summary.shown_ai.as_deref() == Some("summary");
         let overlay = model.summary_overlay.clone();
@@ -348,7 +369,10 @@ impl NotetakerPage {
         let ai_shown = self.summary.shown_ai.as_deref() == Some(&item.id);
         let editing = self.summary.editing.as_ref().filter(|e| e.0 == item.id).map(|e| e.1);
         let attribution = item.attribution.clone().filter(|a| !item.text.contains(a.as_str()));
-        let text = format!("{}{}", item.text, attribution.map_or(String::new(), |a| format!(" \u{2014} {a}")));
+        // Action items carry their owner in a chip.
+        let attribution = attribution.filter(|_| !action);
+        let attribution_text = attribution.map_or(String::new(), |a| format!(" \u{2014} {a}"));
+        let text = item.text.clone();
         let mut body = v_flex().flex_1().min_w_0().gap(px(6.));
         if let Some(field) = editing {
             let (save, placeholder) = (item.clone(), if field == "due_date" { "YYYY-MM-DD" } else if field == "owner" { "Owner name" } else { "Text" });
@@ -368,7 +392,13 @@ impl NotetakerPage {
                     }))),
             );
         } else {
-            body = body.child(if done && action { rich(vec![span(text.clone()).strike()]).size(14.).line_spacing(5.).color(p.muted).into_any_element() } else { t(text.clone()).size(14.).line_spacing(5.).into_any_element() });
+            body = body.child(if done && action { rich(vec![span(text.clone()).strike()]).size(15.).line_spacing(5.).color(p.muted).into_any_element() } else { {
+                let mut spans = self.spans(&text, cx);
+                if !attribution_text.is_empty() {
+                    spans.push(span(attribution_text.clone()).color(p.muted));
+                }
+                rich(spans).size(15.).line_spacing(5.).into_any_element()
+            });
         }
         if ai_shown {
             body = body.child(t(format!("AI: {}", item.ai_text)).size(12.).color(p.muted));
@@ -390,7 +420,7 @@ impl NotetakerPage {
             .w_full()
             .items_start()
             .gap(px(8.))
-            .pl(px(6.))
+            .when(!action, |d| d.pl(px(6.)))
             .map(|d| {
                 if action {
                     d.child(plain_button(sid(format!("meeting.summary.status.{}", item.ordinal)), if done { "Mark open" } else { "Mark completed" }).on_click(cx.listener(move |this, _, _, cx| {
@@ -398,7 +428,7 @@ impl NotetakerPage {
                         this.set_item(&status_item, "status", next, Some("open".into()), cx);
                     })).content(div().pt(px(3.)).child(icon(if done { "checkmark.circle.fill" } else { "circle" }, 13., if done { p.accent } else { p.muted }))))
                 } else {
-                    d.child(t("•").size(14.))
+                    d.child(t("•").size(15.))
                 }
             })
             .child(body)

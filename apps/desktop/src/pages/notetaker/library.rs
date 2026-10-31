@@ -175,6 +175,18 @@ impl NotetakerPage {
         let open_menu = self.menu.as_deref() == Some(key.as_str());
         let (open_id, hover_id, run_id, delete_id, revision) = (id.clone(), id.clone(), id.clone(), id.clone(), row.revision);
         let terminal = is_terminal(&row.state);
+        let mut row_label = format!("{title}, {}", time_text(row.created_at, offset));
+        if row.origin == "iphone" {
+            row_label += ", From iPhone";
+        }
+        if waiting {
+            row_label += ", Waiting for your server";
+        } else if live.is_none() && row.state != "completed" {
+            row_label = format!("{row_label}, {}", state_badge(&row.state));
+        }
+        if row.warning {
+            row_label += ", Recording needs attention";
+        }
         h_flex()
             .id(sid(format!("notetaker.rowContainer.{id}")))
             .group(group.clone())
@@ -188,7 +200,7 @@ impl NotetakerPage {
                 }
             }))
             .child(div().flex_1().min_w_0().child(
-                plain_button(sid(format!("notetaker.note.{id}")), sid(title.clone())).full_width().on_click(cx.listener(move |this, _, w, cx| this.open_note(&open_id, Tab::Thoughts, w, cx))).content(
+                plain_button(sid(format!("notetaker.note.{id}")), sid(title.clone())).a11y_label(sid(row_label)).full_width().on_click(cx.listener(move |this, _, w, cx| this.open_note(&open_id, Tab::Thoughts, w, cx))).content(
                     h_flex()
                         .flex_1()
                         .min_w_0()

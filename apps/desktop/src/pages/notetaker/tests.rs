@@ -53,7 +53,7 @@ async fn library_lists_groups_and_marks_rows(cx: &mut TestAppContext) {
     assert_saw(&["Notetaker", "New note", "TODAY", "Past notes", "Lamp prototype review", "From iPhone", "Load older notes"]);
     let rows = read(cx, &window, |p| p.lib.rows.len());
     assert_eq!(rows, PAGE_SIZE as usize);
-    cx.update_window(window.into(), |_, w, cx| w.scroll("notetaker.library", ScrollDelta::Pixels(point(px(0.), px(-5000.))), cx)).unwrap();
+    cx.update_window(window.into(), |_, w, cx| w.resize(size(px(1180.), px(4000.)))).unwrap();
     frame(cx, &window);
     click(cx, &window, "notetaker.loadOlder");
     frame(cx, &window);

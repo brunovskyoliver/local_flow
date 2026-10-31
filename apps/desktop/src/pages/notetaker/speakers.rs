@@ -29,6 +29,10 @@ impl NotetakerPage {
         if let Some(input) = first.as_ref().and_then(|f| inputs.get(f)) {
             input.read(cx).focus_handle(cx).focus(window, cx);
         }
+        let mut model = model;
+        if let (Some(f), Some(db)) = (&first, db_of(cx)) {
+            model.refresh_suggestions(db, f);
+        }
         self.assign = Some(AssignState { model, inputs, focused: first, picker: None, _subs: subs });
         cx.notify();
     }
@@ -93,7 +97,7 @@ impl NotetakerPage {
         let reviews = a.model.reviews.clone();
         let (notice, can_save, none) = (a.model.notice.clone(), a.model.can_save(), sections.is_empty());
         let done = a.model.enrollment_completed;
-        let mut scroll = v_flex().w_full().gap(px(28.)).px(px(32.)).pt(px(20.)).pb(px(28.));
+        let mut scroll = v_flex().w_full().gap(px(28.)).pl(px(32.)).pr(px(49.)).pt(px(20.)).pb(px(28.));
         if none {
             scroll = scroll.child(t("There are no speakers to name.").size(14.).color(p.muted));
         }
@@ -120,7 +124,7 @@ impl NotetakerPage {
             scroll = scroll.child(self.section_view(position, s, cx));
         }
         deferred(
-            div().id("meeting.speakers.backdrop").absolute().inset_0().flex().items_center().justify_center().bg(gpui::black().opacity(0.25)).occlude().on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+            window_backdrop("meeting.speakers.backdrop").flex().items_center().justify_center().bg(gpui::black().opacity(0.2)).occlude().on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                 if e.keystroke.key == "escape" {
                     this.assign = None;
                     cx.notify();
@@ -137,8 +141,8 @@ impl NotetakerPage {
                     .child(div().absolute().top(px(22.)).right(px(22.)).child(plain_button("meeting.speakers.close", "Close").on_click(cx.listener(|this, _, _, cx| {
                         this.assign = None;
                         cx.notify();
-                    })).content(div().size(px(30.)).flex().items_center().justify_center().child(icon("xmark", 15., p.ink)))))
-                    .child(div().id("meeting.speakers.scroll").w_full().min_h(px(160.)).max_h(px(480.)).overflow_y_scroll().child(scroll))
+                    })).content(div().size(px(30.)).flex().items_center().justify_center().child(icon("xmark", 19., p.ink)))))
+                    .child(div().id("meeting.speakers.scroll").w_full().min_h(px(160.)).max_h(px(480.)).overflow_y_scrollbar().child(scroll))
                     .child(hairline(cx))
                     .child(
                         h_flex()
@@ -180,29 +184,29 @@ impl NotetakerPage {
             })).content(t("Undo merge").font(13., 500.).a11y_hidden())));
         }
         if !s.speaker.quotes.is_empty() {
-            let mut quotes = v_flex().flex_1().gap(px(8.));
+            let mut quotes = v_flex().w_full().gap(px(8.));
             for quote in &s.speaker.quotes {
-                quotes = quotes.child(t(format!("\u{201C}{quote}\u{201D}")).size(14.).line_spacing(4.).color(p.ink.opacity(0.85)).lines(3));
+                quotes = quotes.child(h_flex().w_full().items_stretch().gap(px(12.)).child(div().w(px(2.)).rounded(px(1.)).bg(p.line)).child(div().flex_1().child(t(format!("\u{201C}{quote}\u{201D}")).size(14.).line_spacing(4.).color(p.ink.opacity(0.85)).lines(3))));
             }
-            column = column.child(h_flex().items_stretch().gap(px(12.)).child(div().w(px(2.)).rounded(px(1.)).bg(p.rule)).child(quotes));
+            column = column.child(quotes);
         }
         if let Some(input) = input {
             column = column.child(
                 div()
                     .w_full()
                     .h(px(46.))
-                    .px(px(16.))
+                    .px(px(6.))
                     .flex()
                     .items_center()
                     .rounded(px(12.))
                     .when(focused, |d| d.border_2().border_color(p.ink))
-                    .when(!focused, |d| d.border_1().border_color(p.rule))
+                    .when(!focused, |d| d.border_1().border_color(p.line))
                     .text_size(px(15.))
                     .child(Input::new(&input).appearance(false).aria_label(sid(format!("Name for {label}"))).accessibility_id(sid(format!("meeting.speakers.name.{position}")))),
             );
         }
         if !suggestions.is_empty() {
-            let mut list = v_flex().w_full().p(px(6.)).rounded(px(12.)).border_1().border_color(p.rule);
+            let mut list = v_flex().w_full().p(px(6.)).rounded(px(12.)).border_1().border_color(p.line);
             for (i, name) in suggestions.into_iter().enumerate() {
                 let (speaker, pick) = (id.clone(), name.clone());
                 list = list.child(plain_button(sid(format!("meeting.speakers.suggestion.{i}")), sid(format!("Use name {name}"))).full_width().on_click(cx.listener(move |this, _, w, cx| {
@@ -234,7 +238,7 @@ impl NotetakerPage {
     fn identity_view(&mut self, id: &str, s: &Section, b: IdentityBlock, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let id = id.to_string();
-        let mut out = v_flex().id("identity.block").w_full().gap(px(8.));
+        let mut out = v_flex().id("identity.block").w_full().items_start().gap(px(8.));
         if let Some(remembered) = b.local_remembered {
             if remembered {
                 return out.child(t("Your voice is remembered on this Mac.").size(12.).color(p.muted));
@@ -245,7 +249,9 @@ impl NotetakerPage {
                 move |this, cx| this.set_identity(&id, if on { IdentityAction::None } else { IdentityAction::RememberLocal }, cx)
             })).when(on, |d| d.child(t("Your voice will be remembered from this Mac's microphone.").size(12.).color(p.muted)));
         }
-        out = out.child(t(b.match_state.clone()).size(12.).color(if b.needs_choice { orange(cx) } else { p.muted }).id("identity.matchState"));
+        if b.match_state != "Unknown" {
+            out = out.child(t(b.match_state.clone()).size(12.).color(if b.needs_choice { orange(cx) } else { p.muted }).id("identity.matchState"));
+        }
         if b.needs_choice {
             let picker_key = format!("merged.{id}");
             out = out.child(self.known_picker("identity.mergedPicker", "Choose a known speaker…", &picker_key, &b.picker, &id, true, cx));
@@ -329,12 +335,12 @@ impl NotetakerPage {
         v_flex()
             .w_full()
             .gap(px(4.))
-            .child(prototype_button(accessibility, title).on_click(cx.listener(move |this, _, _, cx| this.toggle_picker(&k, cx))).text_color(p.ink))
+            .child(plain_button(accessibility, title).on_click(cx.listener(move |this, _, _, cx| this.toggle_picker(&k, cx))).content(h_flex().pl(px(3.)).gap(px(4.)).child(t(title).size(13.).color(p.accent).a11y_hidden()).child(icon("chevron.down", 9., p.accent))))
             .when(open, |d| d.child(self.known_rows(known, id, merged, cx)))
     }
     fn known_rows(&mut self, known: &[KnownSpeaker], id: &str, merged: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
-        let mut list = v_flex().w_full().p(px(6.)).rounded(px(12.)).border_1().border_color(p.rule);
+        let mut list = v_flex().w_full().p(px(6.)).rounded(px(12.)).border_1().border_color(p.line);
         for (i, k) in known.iter().enumerate() {
             let noun = if k.samples == 1 { "voice sample" } else { "voice samples" };
             let title = format!("{} \u{2014} {} {noun}", k.name, k.samples);
