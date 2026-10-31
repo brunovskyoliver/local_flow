@@ -51,8 +51,7 @@ impl InstanceLock {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
             // `O_NOFOLLOW`, as Swift opens it.
-            #[cfg(target_os = "macos")]
-            options.custom_flags(0x0100);
+            options.custom_flags(libc::O_NOFOLLOW);
         }
         let file = options.open(directory.join(".instance.lock"))?;
         #[cfg(unix)]
