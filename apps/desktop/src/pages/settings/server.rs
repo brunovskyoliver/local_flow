@@ -221,6 +221,7 @@ impl SettingsPage {
         self.remote_error = None;
         match cx.global::<Core>().services.enroll_device(provider) {
             Ok(state) => prefs_mut(cx).set("remote.state", state),
+            Err(flow_platform::Unavailable(core::SERVER_UNREACHABLE)) => self.remote_error = Some("The server could not be reached. Try again.".into()),
             Err(_) => self.remote_error = Some("Sign-in did not finish.".into()),
         }
         self.refresh(cx);
@@ -240,7 +241,8 @@ impl SettingsPage {
         cx.notify();
     }
 
-    /// ponytail: times the public identity request, not Swift's channel round trip; see `core::ping`.
+    /// `check()`: one fresh sealed channel timed to `ready`, which also refreshes what the server
+    /// offers. Without a pinned key or access token Swift's `sessionInputs` is nil: unreachable.
     pub(super) fn check_connection(&mut self, cx: &mut Context<Self>) {
         if self.checking {
             return;
@@ -251,13 +253,24 @@ impl SettingsPage {
             return;
         }
         let base = self.remote_base.clone().unwrap_or_else(|| core::remote_server_url(prefs(cx)));
+        let services = &cx.global::<Core>().services;
+        let key = services.secret(&core::remote_keychain("server-key")).ok().flatten();
+        let token = services.secret(&core::remote_keychain("access-token")).ok().flatten();
         self.checking = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let ms = cx.background_spawn(async move { core::ping(&base) }).await;
+            let answer = cx.background_spawn(async move { core::ping(&base, key.as_deref(), token.as_deref()) }).await;
             let _ = this.update(cx, |this, cx| {
                 this.checking = false;
-                this.check_result = Some(ms.map_or("Server unreachable".to_string(), |ms| format!("Answered in {ms} ms")));
+                this.check_result = Some(match answer {
+                    Some((ms, offered)) => {
+                        if let Some(offered) = offered {
+                            prefs_mut(cx).set("server.capabilities", offered);
+                        }
+                        format!("Answered in {ms} ms")
+                    }
+                    None => "Server unreachable".to_string(),
+                });
                 cx.notify();
             });
         })

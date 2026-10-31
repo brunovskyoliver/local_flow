@@ -15,6 +15,8 @@ pub fn seed(_db: &Db) {}
 
 pub const BUNDLE_ID: &str = "org.localflow.LocalFlow";
 pub const PORT_BASE: u16 = 8000;
+/// The reason `enroll_device` gives when the channel failed rather than the sign-in (SET-067).
+pub const SERVER_UNREACHABLE: &str = "server unreachable";
 pub const CONSENT_VERSION: i64 = 2;
 pub const DICTATION_CONSENT_VERSION: i64 = 1;
 pub const MAX_CONTEXT_RULES: usize = 200;
@@ -627,6 +629,18 @@ pub fn fingerprint_of(key: &[u8]) -> String {
 fn hex_of(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+pub fn base64url_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().fold(0u32, |acc, b| acc << 8 | u32::from(*b)) << (8 * (3 - chunk.len()));
+        for i in 0..=chunk.len() {
+            out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+        }
+    }
+    out
+}
+
 pub fn base64url_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = vec![];
     let (mut acc, mut bits) = (0u32, 0u32);
@@ -721,12 +735,93 @@ pub fn fetch_identity(origin: &str) -> Result<Identity, ()> {
     identity.validated_key().map(|_| identity).ok_or(())
 }
 
-/// One timed request to the server. ms on an answer.
-/// ponytail: times the public identity request, not Swift's sealed channel round trip, since the
-/// channel needs an enrolled device key. Replace with the channel when Rust gets it.
-pub fn ping(origin: &str) -> Option<u128> {
+/// `wss://<host>/v1/remote/channel` for an origin; `ws://` only for a plain-HTTP local test server.
+pub fn channel_url(origin: &str) -> String {
+    let origin = origin.trim_end_matches('/');
+    let socket = origin.strip_prefix("https://").map(|h| format!("wss://{h}")).or_else(|| origin.strip_prefix("http://").map(|h| format!("ws://{h}"))).unwrap_or_else(|| origin.to_string());
+    format!("{socket}/v1/remote/channel")
+}
+
+/// Why a channel didn't reach `ready`. Swift maps all of these to "Server unreachable".
+#[derive(Debug, PartialEq, Eq)]
+pub enum ChannelError {
+    Unreachable,
+    Protocol,
+    /// The server's `error.code`.
+    Server(String),
+}
+
+/// `RemoteChannel.open` and `RemoteChannelPool.roundTrip`: a fresh channel with the HPKE hello
+/// sealed to the pinned key, timed to `ready`, then closed. Returns the milliseconds and what
+/// `ready` offered. `token` makes it a session hello; `None` is an anonymous enroll hello.
+pub fn channel_round_trip(origin: &str, server_key: &[u8], token: Option<&str>) -> Result<(u128, Option<Capabilities>), ChannelError> {
+    use hpke::{Deserializable, Kem as _, OpModeR, OpModeS, Serializable, aead::ChaCha20Poly1305 as Aead, kdf::HkdfSha256 as Kdf, kem::X25519HkdfSha256 as Kem};
+    use rand_core::{OsRng, TryRngCore};
+    use tungstenite::Message;
+    const MAX_FRAME: usize = 70_000;
+    let bad = |_| ChannelError::Protocol;
+    let key = <Kem as hpke::Kem>::PublicKey::from_bytes(server_key).map_err(bad)?;
+    let mut rng = OsRng.unwrap_err();
+    let (reply_private, reply_public) = Kem::gen_keypair(&mut rng);
+    let (enc, mut sender) = hpke::setup_sender::<Aead, Kdf, Kem, _>(&OpModeS::Base, &key, b"localflow remote v1", &mut rng).map_err(bad)?;
+    let mut s2c_info = [0u8; 32];
+    sender.export(b"localflow v1 s2c info", &mut s2c_info).map_err(bad)?;
+    let mut hello = serde_json::json!({"schema_version": 1, "type": "hello", "reply_key": base64url_encode(&reply_public.to_bytes()), "purpose": if token.is_some() { "session" } else { "enroll" }});
+    if let Some(token) = token {
+        hello["access_token"] = token.into();
+    }
+    let seq = 0u64.to_be_bytes();
+    let aad = [&b"LFR1"[..], &seq].concat();
+    let sealed = sender.seal(hello.to_string().as_bytes(), &aad).map_err(bad)?;
+    let frame = [&b"LFR1"[..], &enc.to_bytes(), &seq, &sealed].concat();
+
+    let url = channel_url(origin);
     let started = std::time::Instant::now();
-    fetch_identity(origin).ok().map(|_| started.elapsed().as_millis())
+    let timeout = Duration::from_secs(10);
+    let authority = url.split_once("://").map_or("", |u| u.1).split('/').next().unwrap_or_default();
+    let port_default = if url.starts_with("wss") { 443 } else { 80 };
+    let target = if authority.rsplit(':').next().is_some_and(|p| p.parse::<u16>().is_ok()) && !authority.ends_with(']') { authority.to_string() } else { format!("{authority}:{port_default}") };
+    let address = std::net::ToSocketAddrs::to_socket_addrs(&target).ok().and_then(|mut a| a.next()).ok_or(ChannelError::Unreachable)?;
+    let stream = std::net::TcpStream::connect_timeout(&address, timeout).map_err(|_| ChannelError::Unreachable)?;
+    stream.set_read_timeout(Some(timeout)).map_err(|_| ChannelError::Unreachable)?;
+    stream.set_write_timeout(Some(timeout)).map_err(|_| ChannelError::Unreachable)?;
+    let (mut socket, _) = tungstenite::client_tls(url.as_str(), stream).map_err(|_| ChannelError::Unreachable)?;
+    socket.send(Message::binary(frame)).map_err(|_| ChannelError::Unreachable)?;
+    let body = loop {
+        match socket.read().map_err(|_| ChannelError::Unreachable)? {
+            Message::Binary(b) => break b,
+            Message::Ping(_) | Message::Pong(_) => continue,
+            _ => return Err(ChannelError::Unreachable),
+        }
+    };
+    if body.len() > MAX_FRAME || body.len() <= 40 {
+        return Err(ChannelError::Protocol);
+    }
+    let enc_s2c = <Kem as hpke::Kem>::EncappedKey::from_bytes(&body[..32]).map_err(bad)?;
+    let mut recipient = hpke::setup_receiver::<Aead, Kdf, Kem>(&OpModeR::Base, &reply_private, &enc_s2c, &s2c_info).map_err(bad)?;
+    let seq = &body[32..40];
+    if seq != 0u64.to_be_bytes() {
+        return Err(ChannelError::Protocol);
+    }
+    let plain = recipient.open(&body[40..], seq).map_err(bad)?;
+    let elapsed = started.elapsed().as_millis();
+    let _ = socket.close(None);
+    let (kind, json) = plain.split_first().ok_or(ChannelError::Protocol)?;
+    if *kind != 0 {
+        return Err(ChannelError::Protocol);
+    }
+    let message: Value = serde_json::from_slice(json).map_err(|_| ChannelError::Protocol)?;
+    match message.get("type").and_then(Value::as_str) {
+        Some("ready") => Ok((elapsed, message.get("capabilities").and_then(|c| serde_json::from_value(c.clone()).ok()))),
+        Some("error") => Err(ChannelError::Server(message.get("code").and_then(Value::as_str).unwrap_or_default().to_string())),
+        _ => Err(ChannelError::Protocol),
+    }
+}
+
+/// Swift's `ping()`: nil when this device has no pinned key or token, or the channel fails.
+pub fn ping(origin: &str, server_key: Option<&str>, token: Option<&str>) -> Option<(u128, Option<Capabilities>)> {
+    let key = base64url_decode(server_key?)?;
+    channel_round_trip(origin, &key, Some(token?)).ok()
 }
 
 /// The eight connection-test outcomes.
@@ -2763,6 +2858,17 @@ mod tests {
     /// `scripts`-free runs against a throwaway flowd; see the audit transcript. Skipped otherwise.
     // parity: SET-045 SET-055 SET-071 SET-326 SET-327 SET-328 SET-332 SET-119 SET-118
     #[test]
+    fn channel_url_and_ping_need_pin_and_token() {
+        assert_eq!(channel_url("https://flow.example.com:8443/"), "wss://flow.example.com:8443/v1/remote/channel");
+        assert_eq!(channel_url("http://127.0.0.1:9"), "ws://127.0.0.1:9/v1/remote/channel");
+        assert_eq!(base64url_decode(&base64url_encode(b"ab")).as_deref(), Some(&b"ab"[..]));
+        assert_eq!(base64url_decode(&base64url_encode(&[255, 0, 3, 9])).as_deref(), Some(&[255, 0, 3, 9][..]));
+        // `sessionInputs` nil: nothing connects, so a closed port would not even be tried.
+        assert_eq!(ping("http://127.0.0.1:9", None, Some("t")), None);
+        assert_eq!(ping("http://127.0.0.1:9", Some("AAAA"), None), None);
+    }
+
+    #[test]
     fn real_flowd_when_configured() {
         let Ok(remote) = std::env::var("FLOWD_REMOTE_URL") else {
             eprintln!("skipped: FLOWD_REMOTE_URL not set");
@@ -2771,11 +2877,17 @@ mod tests {
         let identity = fetch_identity(&remote).expect("identity");
         println!("identity fingerprint {}", identity.fingerprint);
         assert_eq!(Some(identity.fingerprint.as_str()), std::env::var("FLOWD_FINGERPRINT").ok().as_deref());
-        let ms = ping(&remote).expect("answered");
+        // A real sealed channel to the pinned key. A valid session token needs an enrolled device
+        // (interactive sign-in), so session is checked for refusal and enroll for reaching ready.
+        let key = identity.validated_key().expect("key");
+        let (ms, _) = channel_round_trip(&remote, &key, None).expect("enroll channel reaches ready");
         println!("Answered in {ms} ms");
+        assert!(matches!(channel_round_trip(&remote, &key, Some("not-a-token")), Err(ChannelError::Server(_))), "a bad token is refused in the channel");
+        assert_eq!(ping(&remote, Some(&identity.server_key), Some("not-a-token")), None);
+        assert_eq!(channel_round_trip(&remote, &[7u8; 32], None), Err(ChannelError::Unreachable), "a hello sealed to another key is closed");
         let down = std::env::var("FLOWD_DOWN_URL").unwrap();
         assert!(fetch_identity(&down).is_err());
-        assert_eq!(ping(&down), None);
+        assert_eq!(channel_round_trip(&down, &key, None), Err(ChannelError::Unreachable));
         assert!(fetch_identity(&format!("{}/nothing", std::env::var("FLOWD_REWRITE_URL").unwrap())).is_err());
 
         let rewrite = std::env::var("FLOWD_REWRITE_URL").unwrap();
