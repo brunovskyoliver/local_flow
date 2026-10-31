@@ -195,7 +195,7 @@ async fn introduction_purpose_and_location_copy(cx: &mut TestAppContext) {
     assert_eq!(pref(cx, "setup.purpose").as_deref(), Some("meetings"));
 }
 
-// parity: ONB-155 ONB-156 ONB-157 ONB-158 ONB-164 ONB-165 ONB-166 ONB-167 ONB-171 ONB-172 ONB-057 ONB-058 ONB-059 ONB-077 ONB-078 ONB-270 ONB-269 ONB-113
+// parity: ONB-155 ONB-156 ONB-157 ONB-158 ONB-164 ONB-165 ONB-166 ONB-167 ONB-171 ONB-172 ONB-057 ONB-058 ONB-059 ONB-077 ONB-078 ONB-270 ONB-269
 #[flow_ui::gpui::test]
 async fn model_picker_gates_and_starts_downloads(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);
@@ -348,7 +348,7 @@ fn win_allow(cx: &mut TestAppContext, w: Win, p: Permission) {
     frame(cx, w);
 }
 
-// parity: ONB-350 ONB-351 ONB-352 ONB-353 ONB-354 ONB-355 ONB-356 ONB-357 ONB-358 ONB-359 ONB-364 ONB-365 ONB-366 ONB-367 ONB-368 ONB-369 ONB-370 ONB-372 ONB-373 ONB-374 ONB-375 ONB-378 ONB-379 ONB-015 ONB-061 ONB-022
+// parity: ONB-350 ONB-351 ONB-352 ONB-353 ONB-354 ONB-355 ONB-356 ONB-357 ONB-358 ONB-359 ONB-364 ONB-365 ONB-366 ONB-367 ONB-368 ONB-369 ONB-370 ONB-372 ONB-373 ONB-374 ONB-375 ONB-378 ONB-379 ONB-015 ONB-061
 #[flow_ui::gpui::test]
 async fn personalize_theme_and_shortcut(cx: &mut TestAppContext) {
     let r = rig(cx, false, &[]);
@@ -561,6 +561,7 @@ async fn rewrite_only_form_connects_and_reports(cx: &mut TestAppContext) {
     click(cx, w, "onboarding.connect");
     assert!(read(cx, w, |p, _| matches!(p.connection, Some(Err(_)))));
     click(cx, w, "onboarding.allowInsecure");
+    set(cx, w, |p| p.credential_present = true);
     r.ok.set(false);
     click(cx, w, "onboarding.connect");
     assert_saw(&["Could not reach the server."]);
@@ -582,9 +583,10 @@ async fn polling_picks_up_a_new_permission(cx: &mut TestAppContext) {
         *fake.permissions.borrow_mut() = vec![(Permission::Microphone, PermissionState::Granted)];
         cx.global_mut::<Core>().services = Box::new(fake);
     });
-    w.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+    cx.update_window(w.into(), |_, w, _| w.activate_window()).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
     assert_eq!(read(cx, w, |p, _| p.snap.microphone), Perm::Granted);
-    // A failed AI approval resumes once the services are allowed: covered as `refresh` runs it.
     assert_eq!(read(cx, w, |p, _| p.downloaded), CATALOG.map(|m| m.is_downloaded(&models_dir())));
 }
 
@@ -639,7 +641,7 @@ async fn bars_expose_percent_and_honor_reduce_motion(cx: &mut TestAppContext) {
     assert!(indeterminate);
 }
 
-// parity: ONB-247
+// Selects a state the audit captures.
 #[flow_ui::gpui::test]
 async fn scenario_selects_a_state(cx: &mut TestAppContext) {
     boot(cx, Mode::Light);
@@ -648,4 +650,29 @@ async fn scenario_selects_a_state(cx: &mut TestAppContext) {
     frame(cx, w);
     assert_saw(&["Stopped", "Installation failed.", "The download stopped."]);
     assert!(read(cx, w, |p, _| p.frozen));
+}
+
+// parity: ONB-001 ONB-002 ONB-401 ONB-403 ONB-408
+#[flow_ui::gpui::test]
+async fn shell_swaps_to_the_library_and_notetaker_on_a_meetings_finish(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    cx.update(|cx| {
+        crate::menu::init(cx);
+        cx.global_mut::<Core>().scenario = Some("onboarding.personalize-meetings".into());
+    });
+    let win = cx.add_window(|w, cx| crate::shell::Shell::new(w, cx));
+    let render = |cx: &mut TestAppContext| {
+        cx.run_until_parked();
+        flow_ui::probe::clear();
+        cx.update_window(win.into(), |_, w, cx| w.render_frame(cx)).unwrap();
+    };
+    render(cx);
+    assert_saw(&["Make it ", "Finish setup"]);
+    cx.update_window(win.into(), |_, w, _| assert!(w.try_find("navigation.settings").is_none())).unwrap();
+    cx.update_window(win.into(), |_, w, cx| w.click("onboarding.primary", cx)).unwrap();
+    render(cx);
+    assert!(cx.update(|cx| is_complete(&cx.global::<Core>().prefs)));
+    assert!(cx.update(|cx| cx.global::<crate::shell::Session>().selection == Page::Meetings));
+    cx.update_window(win.into(), |_, w, _| assert!(w.try_find("navigation.settings").is_some())).unwrap();
+    cx.update_window(win.into(), |_, w, _| assert!(w.try_find("onboarding.primary").is_none())).unwrap();
 }
