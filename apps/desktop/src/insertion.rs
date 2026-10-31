@@ -680,7 +680,8 @@ mod tests {
         cx.run_until_parked();
         let (id, text, attempt) = cx.update(|cx| {
             let db = cx.global::<Core>().db.as_ref().unwrap();
-            db.conn.execute("INSERT INTO rewrite_attempts (id,transcription_id,ordinal,mode,state,input_text,input_hash,output_text,output_hash,unchanged,started_at,protocol_version,endpoint_origin,delivered) VALUES ('att1',?,1,'clean','succeeded','in','h','Rewritten words','h',0,0,1,'https://rewrite.example.test',0)", [row_id()]).unwrap();
+            let hash = "0".repeat(64);
+            db.conn.execute("INSERT INTO rewrite_attempts (id,transcription_id,ordinal,mode,state,input_text,input_hash,output_text,output_hash,unchanged,started_at,protocol_version,endpoint_origin,delivered) VALUES ('att1',?1,1,'clean','succeeded','in',?2,'Rewritten words',?2,0,0,1,'https://rewrite.example.test',0)", [row_id(), hash]).unwrap();
             (row_id(), "Rewritten words".to_string(), "att1")
         });
         cx.update(|cx| assert!(begin_review(ReviewEntry { id, text, quality: Quality::Complete, delivery: Delivery::None }, cx)));
