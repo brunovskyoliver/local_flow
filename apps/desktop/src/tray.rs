@@ -231,7 +231,7 @@ mod tests {
         }
     }
 
-    // parity: MENU-006 MENU-007 MENU-008 MENU-009 MENU-011 MENU-013 MENU-015 MENU-016 MENU-019 MENU-022 MENU-023 MENU-024 MENU-025 MENU-026 MENU-028 MENU-029
+    // parity: ONB-019 MENU-006 MENU-007 MENU-008 MENU-009 MENU-011 MENU-013 MENU-015 MENU-016 MENU-019 MENU-022 MENU-023 MENU-024 MENU-025 MENU-026 MENU-028 MENU-029
     #[flow_ui::gpui::test]
     async fn items_follow_session_state(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);

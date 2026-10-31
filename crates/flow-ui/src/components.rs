@@ -77,6 +77,9 @@ impl FlowButton {
         self.disabled_opacity = o;
         self
     }
+    pub fn disabled_level(&self) -> f32 {
+        self.disabled_opacity
+    }
     pub fn disabled(mut self, d: bool) -> Self {
         self.disabled = d;
         self
@@ -128,15 +131,22 @@ impl FlowButton {
     }
 }
 
-impl RenderOnce for FlowButton {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let p = pal(cx);
+impl ButtonKind {
+    /// (fill, pressed fill, text, font size, weight, horizontal padding, vertical padding).
+    pub fn style(self, p: &crate::tokens::Palette) -> (Hsla, Hsla, Hsla, f32, f32, f32, f32) {
         let transparent = gpui_kit::transparent_black();
-        let (bg, active, fg, size, weight, px_x, px_y) = match self.kind {
+        match self {
             ButtonKind::Prototype => (p.tint, p.button, p.ink, 13., 500., 12., 7.),
             ButtonKind::Primary => (p.primary, p.primary.opacity(0.8), p.on_primary, 14., 500., 16., 9.),
             ButtonKind::Plain => (transparent, transparent, p.ink, 13., 400., 0., 0.),
-        };
+        }
+    }
+}
+
+impl RenderOnce for FlowButton {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let p = pal(cx);
+        let (bg, active, fg, size, weight, px_x, px_y) = self.kind.style(&p);
         let fg = self.text_color.unwrap_or(fg);
         let (bg, active) = self.fill.map_or((bg, active), |f| (f, f.opacity(0.8)));
         let variant = ButtonCustomVariant::new(cx).color(bg).foreground(fg).hover(bg).active(active).shadow(false);

@@ -990,6 +990,15 @@ pub fn apply_scenario(cx: &mut App) {
         "learned" => show_learned("LocalFlow", LearnedKind::Added, cx),
         "retired" => show_learned("LocalFlow", LearnedKind::Retired { alias: "local flow".into() }, cx),
         "clipboard" => show_clipboard(false, cx),
+        // The microphone notice replaces the clipboard one after 1.5 s: the live check of PILL-019 and PILL-025.
+        "swap" => {
+            show_clipboard(false, cx);
+            cx.spawn(async move |cx| {
+                cx.background_executor().timer(Duration::from_millis(1500)).await;
+                let _ = cx.update(|cx| show_microphone("No microphone available", cx));
+            })
+            .detach();
+        }
         "action" => show_action(REWRITE_NOTICES[0].0, true, cx),
         "action-no-retry" => show_action(REWRITE_NOTICES[12].0, false, cx),
         "background" => set_background(bg(BackgroundKind::Finalizing, Some(0.42)), cx),

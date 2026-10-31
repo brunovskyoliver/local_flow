@@ -1,7 +1,7 @@
 //! The main window: onboarding gate, sidebar, content card and router, and `Session`, the plain
 //! view model standing in for Swift's `AppServices` until capture and models exist.
 use crate::core::Core;
-use crate::insertion::{self, Insertion};
+use crate::insertion::{self, Delivery, Insertion, Phase, Quality, ReviewEntry};
 use crate::pages::{Page, dictionary::DictionaryPage, history::HistoryPage, insights::InsightsPage, notetaker::NotetakerPage, onboarding::OnboardingPage, settings::SettingsPage};
 use crate::pill::Pill;
 use flow_platform::{Permission, PermissionState, SessionCommand};
@@ -146,6 +146,8 @@ pub enum Alert {
 
 /// The state Swift keeps on `AppServices`, `MainWindowRouter` and the coordinators.
 pub struct Session {
+    /// Unfinished setup kept across a closed window, as Swift's coordinator is.
+    pub parked_setup: Option<flow_core::onboarding::Setup>,
     pub selection: Page,
     /// Settings scrolls here once shown, then clears it. The settings page takes it.
     pub microphones_anchor: bool,
@@ -177,6 +179,7 @@ impl Session {
     pub fn new(core: &Core) -> Session {
         let stores_ready = core.db.is_some();
         let mut s = Session {
+            parked_setup: None,
             selection: landing_page(core),
             microphones_anchor: false,
             open_meeting: None,
@@ -232,6 +235,11 @@ impl Session {
                 d.busy = true;
             }
             "shell.failed" => d.state = DictState::Failed,
+            "shell.review" => {
+                d.busy = true;
+                self.insertion.entry = Some(ReviewEntry { id: "scenario".into(), text: "Move the kickoff to Thursday and ask Northwind to send the updated floor plan before noon.".into(), quality: Quality::Complete, delivery: Delivery::None });
+                self.insertion.phase = Phase::Reviewing;
+            }
             "shell.discard-alert" => {
                 d.unsaved = Some("Synthetic unsaved dictation text for the audit.".into());
                 self.alert = Some(Alert::DiscardUnsaved);
@@ -361,6 +369,11 @@ fn refresh_display_options(cx: &mut App) {
     cx.global_mut::<Flow>().reduce_motion = reduce;
     cx.set_reduce_motion(reduce);
     apply_appearance(cx);
+}
+
+/// `observeSettingsWhileVisible`'s condition: an active window on Settings or unfinished setup.
+fn polls(selection: Page, onboarded: bool, active: bool) -> bool {
+    active && (selection == Page::Settings || !onboarded)
 }
 
 /// `MainWindowRouter.open`: select, become a regular app, open or restore the window, activate.
@@ -500,8 +513,7 @@ impl Shell {
             loop {
                 cx.background_executor().timer(Duration::from_millis(500)).await;
                 let alive = cx.update(|w, cx| {
-                    let on_settings = cx.global::<Session>().selection == Page::Settings || !Self::onboarded(cx);
-                    if on_settings && w.is_window_active() {
+                    if polls(cx.global::<Session>().selection, Self::onboarded(cx), w.is_window_active()) {
                         w.refresh();
                     }
                 });
@@ -1050,7 +1062,7 @@ mod tests {
         assert_eq!(get(cx, |s| s.dictation.as_ref().unwrap().status.clone()), "Text saved for review.");
     }
 
-    // parity: SHELL-093 SHELL-094 SHELL-096..SHELL-102 MENU-006
+    // parity: SHELL-093 SHELL-094 SHELL-096..SHELL-102 MENU-006 ONB-020
     #[flow_ui::gpui::test]
     async fn readiness_follows_swift_order(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
@@ -1128,5 +1140,96 @@ mod tests {
         assert_eq!(get(cx, |s| (s.selection, s.microphones_anchor)), (Page::Settings, true));
         cx.update(|cx| window_closed(window.window_id(), cx));
         assert_eq!(get(cx, |s| (s.selection, s.window.is_none())), (Page::Settings, true));
+    }
+
+    // parity: SHELL-038
+    #[test]
+    fn only_an_active_settings_or_setup_window_polls() {
+        assert!(polls(Page::Settings, true, true));
+        assert!(polls(Page::History, false, true));
+        assert!(!polls(Page::History, true, true));
+        assert!(!polls(Page::Settings, true, false));
+        assert!(!polls(Page::History, false, false));
+    }
+
+    struct Frame;
+    impl Render for Frame {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            prototype_page("frame", 800., cx, div().id("frame.child").w_full().h(px(10.)).test_support())
+        }
+    }
+
+    // parity: SHELL-226
+    #[flow_ui::gpui::test]
+    async fn compact_page_padding_is_24_and_32(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let w = cx.add_window(|_, _| Frame);
+        let origin = |cx: &mut TestAppContext| {
+            cx.update_window(w.into(), |_, w, cx| {
+                w.render_frame(cx);
+                let b = w.find("frame.child").bounds();
+                (f32::from(b.origin.y), f32::from(w.viewport_size().width.min(px(800.))) , f32::from(b.size.width))
+            })
+            .unwrap()
+        };
+        let (top, column, width) = origin(cx);
+        assert_eq!((top, column - width), (48., 96.));
+        cx.update(|cx| cx.global_mut::<Flow>().compact = true);
+        let (top, column, width) = origin(cx);
+        assert_eq!((top, column - width), (32., 48.));
+    }
+
+    struct Buttons(bool);
+    impl Render for Buttons {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            v_flex().items_start().child(prototype_button("b.proto", "Label")).child(primary_button("b.primary", "Label").disabled(self.0))
+        }
+    }
+
+    // parity: SHELL-227 SHELL-228 SHELL-230 SHELL-231 SHELL-232 SHELL-222
+    /// Padding shows in the bounds; the state colours come from the style table.
+    #[flow_ui::gpui::test]
+    async fn button_styles_match_swift(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let w = cx.add_window(|_, _| Buttons(false));
+        let (proto, primary) = cx
+            .update_window(w.into(), |_, w, cx| {
+                w.render_frame(cx);
+                (w.find("b.proto").bounds().size.height, w.find("b.primary").bounds().size.height)
+            })
+            .unwrap();
+        // Vertical padding 7 and 9 around one line of 13 and 14 pt Figtree.
+        assert!(f32::from(proto) > 14. + 13. && f32::from(proto) < 14. + 20., "{proto:?}");
+        assert!(f32::from(primary) > 18. + 14. && f32::from(primary) < 18. + 22., "{primary:?}");
+        cx.update(|cx| {
+            let p = pal(cx);
+            let (bg, active, fg, size, weight, x, y) = ButtonKind::Prototype.style(&p);
+            assert_eq!((bg, active, fg, size, weight, x, y), (p.tint, p.button, p.ink, 13., 500., 12., 7.));
+            let (bg, active, fg, size, weight, x, y) = ButtonKind::Primary.style(&p);
+            assert_eq!((bg, active, fg, size, weight, x, y), (p.primary, p.primary.opacity(0.8), p.on_primary, 14., 500., 16., 9.));
+            assert_eq!(primary_button("x", "y").disabled_level(), 0.45);
+            // Swift's serif family name; `fonts.rs` embeds both faces at compile time.
+            assert_eq!(GARAMOND, "EB Garamond");
+        });
+    }
+
+    // parity: SHELL-011 ONB-017 ONB-018
+    /// A closed window goes to the menu bar; reopening shows the same in-memory step.
+    #[flow_ui::gpui::test]
+    async fn reopening_keeps_the_setup_step(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        cx.update(|cx| cx.global_mut::<Core>().prefs.set("setupVersion", 0));
+        let step = flow_core::onboarding::Step::Purpose;
+        window.update(cx, |shell, _, cx| shell.onboarding.update(cx, |p, _| p.setup.step = step)).unwrap();
+        cx.update(|cx| window_closed(window.window_id(), cx));
+        window.update(cx, |_, w, _| w.remove_window()).unwrap();
+        cx.run_until_parked();
+        assert!(get(cx, |s| s.window.is_none() && s.parked_setup.is_some()));
+        // `on_reopen` calls `open`; the test platform opens the window it would.
+        let again = cx.add_window(|w, cx| Shell::new(w, cx));
+        cx.run_until_parked();
+        assert_eq!(again.update(cx, |shell, _, cx| shell.onboarding.read(cx).setup.step).unwrap(), step);
+        assert!(get(cx, |s| s.parked_setup.is_none()));
     }
 }

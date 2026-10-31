@@ -615,7 +615,7 @@ async fn return_advances_and_escape_cancels_dictation(cx: &mut TestAppContext) {
     assert!(r.log.borrow().iter().any(|c| c.contains("Cancel")), "{:?}", r.log.borrow());
 }
 
-// parity: ONB-001 ONB-002 ONB-003 ONB-398 ONB-399 ONB-403 ONB-054 ONB-401 ONB-402 ONB-411
+// parity: SHELL-035 ONB-001 ONB-002 ONB-003 ONB-398 ONB-399 ONB-403 ONB-054 ONB-401 ONB-402 ONB-411
 #[flow_ui::gpui::test]
 async fn finishing_writes_prefs_and_opens_the_library(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);

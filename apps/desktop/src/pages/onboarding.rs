@@ -8,6 +8,7 @@ mod tests;
 
 use crate::core::Core;
 use crate::pages::Page;
+use crate::shell::{Session, update_session};
 use flow_core::onboarding::*;
 use flow_platform::{Permission, PermissionState, SessionCommand, Unavailable};
 use flow_ui::prelude::*;
@@ -89,6 +90,18 @@ impl OnboardingPage {
         };
         // `AppServices.start()`: before any shortcut is configured.
         setup.resume_unfinished(&mut cx.global_mut::<Core>().prefs);
+        // Swift's coordinator outlives the window, so a reopen shows the same step (ONB-017).
+        if let Some(parked) = cx.try_global::<Session>().is_some_and(|s| s.parked_setup.is_some()).then(|| update_session(cx, |s| s.parked_setup.take())).flatten() {
+            setup = parked;
+        }
+        cx.on_release(|this: &mut Self, cx| {
+            if cx.has_global::<Session>() && this.setup.step != Step::Complete {
+                let empty = Setup::new(&cx.global::<Core>().prefs);
+                let setup = std::mem::replace(&mut this.setup, empty);
+                cx.global_mut::<Session>().parked_setup = Some(setup);
+            }
+        })
+        .detach();
         let dir = models_dir();
         let downloaded = CATALOG.map(|m| m.is_downloaded(&dir));
         let endpoint = cx.global::<Core>().prefs.string("rewriteEndpoint").unwrap_or_default();
