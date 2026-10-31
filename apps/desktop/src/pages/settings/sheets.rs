@@ -137,7 +137,7 @@ impl SettingsPage {
         Some(sheet_overlay("settings.modal", window, cx, div().id("settings.sheet").bg(fill).rounded(px(12.)).text_color(pl.ink).child(body).test_support()).into_any_element())
     }
 
-    fn download_copy(&self, alternate: bool) -> (String, String) {
+    pub(super) fn download_copy(&self, alternate: bool) -> (String, String) {
         let s = &self.snapshot;
         let current = core::speech_name(s.speech_model);
         if !alternate {
@@ -368,5 +368,5 @@ fn sheet_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> Flow
 /// `DictionaryPillButtonStyle`: 13 regular on `button`.
 fn pill_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> FlowButton {
     let pl = pal(cx);
-    prototype_button(id, label).fill(pl.button)
+    prototype_button(id, label).fill(pl.button).content(t(label).size(13.).a11y_hidden())
 }

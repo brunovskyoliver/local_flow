@@ -364,6 +364,7 @@ pub enum Service {
     Rewrite,
     Summaries,
     FinalTranscript,
+    Diarization,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Path {
@@ -441,6 +442,7 @@ impl Routing {
             Service::Rewrite => op("rewrite"),
             Service::Summaries => op("analysis"),
             Service::FinalTranscript => op("meeting_job") && self.capabilities.meeting_jobs.contains("transcribe"),
+            Service::Diarization => op("meeting_job") && self.capabilities.meeting_jobs.contains("diarize"),
         }
     }
     pub fn served(&self, s: Service) -> bool {
@@ -457,7 +459,7 @@ impl Routing {
             Service::Dictation => true,
             Service::Rewrite => self.rewrite == "server",
             Service::Summaries => self.summaries == "server" && self.consent_current,
-            Service::FinalTranscript => self.meetings == "server" && self.consent_current,
+            Service::FinalTranscript | Service::Diarization => self.meetings == "server" && self.consent_current,
         }
     }
     pub fn switch_applies(&self) -> bool {
@@ -500,7 +502,7 @@ impl Routing {
             Path::Server => "On your server",
             Path::Custom => "On your custom server",
             Path::ThisMac => {
-                let needs_consent = matches!(s, Service::Summaries | Service::FinalTranscript) && !self.consent_current && self.offered(s);
+                let needs_consent = matches!(s, Service::Summaries | Service::FinalTranscript | Service::Diarization) && !self.consent_current && self.offered(s);
                 if self.server_only {
                     return if self.routes && needs_consent { "Needs consent" } else { "Unavailable" };
                 }

@@ -856,7 +856,6 @@ fn rig_saw_loaded(cx: &mut TestAppContext) -> bool {
 // parity: SET-260
 #[flow_ui::gpui::test]
 async fn alternate_row_detail_and_when_it_shows(cx: &mut TestAppContext) {
-    let r = rig(cx, "", |_| {});
     let r = rig(cx, "alternate", |_| {});
     assert!(has(cx, r.win, "settings.alternateSpeechModel"));
     let a = read(cx, r.win, |p, _| p.snapshot.alternate.clone().unwrap());

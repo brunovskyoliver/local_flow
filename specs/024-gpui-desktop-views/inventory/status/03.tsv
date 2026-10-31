@@ -135,23 +135,23 @@ SET-134	auto	test:default_page_shows_every_section_in_order
 SET-135	auto	test:default_page_shows_every_section_in_order ; service:test uses a stub, real Sparkle not exercised
 SET-136	auto	test:default_page_shows_every_section_in_order ; service:test uses a stub, real Sparkle not exercised
 SET-137	auto	test:updates_variants ; service:test uses a stub, real Sparkle not exercised
-SET-138	auto	test:updates_variants ; service:test uses a stub, real NSWorkspace open URL not exercised
+SET-138	auto	test:update_controls_read_and_gate ; test:updates_variants ; service:test uses a stub, real NSWorkspace open URL not exercised
 SET-139	auto	test:updates_variants
-SET-140	auto	test:updates_variants ; service:test uses a stub, real Sparkle not exercised
+SET-140	auto	test:update_controls_read_and_gate ; test:updates_variants ; service:test uses a stub, real Sparkle not exercised
 SET-141	service	service:Sparkle, updater service phase
-SET-142	auto	test:updates_variants ; service:test uses a stub, real Sparkle not exercised
+SET-142	auto	test:update_controls_read_and_gate ; test:updates_variants ; service:test uses a stub, real Sparkle not exercised
 SET-143	service	service:Sparkle, updater service phase
 SET-144	service	service:Sparkle, updater service phase
 SET-145	service	service:Sparkle, updater service phase
 SET-146	auto	test:default_page_shows_every_section_in_order
 SET-147	auto	test:meeting_only_variant
 SET-148	auto	test:meeting_only_variant
-SET-149	auto	test:meeting_only_variant ; test:controls_have_swifts_measured_sizes
-SET-150	auto	test:meeting_only_variant ; service:test uses a stub, real CGEvent tap not exercised
-SET-151	auto	test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
+SET-149	auto	test:set_up_button_size_and_gate ; test:meeting_only_variant ; test:controls_have_swifts_measured_sizes
+SET-150	auto	test:set_up_button_size_and_gate ; test:meeting_only_variant ; service:test uses a stub, real CGEvent tap not exercised
+SET-151	auto	test:shortcut_button_gates_and_stops_without_a_callback ; test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
 SET-152	auto	test:default_page_shows_every_section_in_order
-SET-153	auto	test:general_controls_persist
-SET-154	auto	test:failures_read_at_the_page_bottom ; test:general_controls_persist ; service:test uses a stub, real CGEvent tap not exercised
+SET-153	auto	test:shortcut_button_gates_and_stops_without_a_callback ; test:general_controls_persist
+SET-154	auto	test:shortcut_button_gates_and_stops_without_a_callback ; test:failures_read_at_the_page_bottom ; test:general_controls_persist ; service:test uses a stub, real CGEvent tap not exercised
 SET-155	service	service:CGEvent tap recorder, flow-platform service phase; recorder completion not wired
 SET-156	service	service:CGEvent tap recorder, flow-platform service phase
 SET-157	auto	test:shortcut_rules_and_capture
@@ -160,25 +160,25 @@ SET-159	auto	test:shortcut_rules_and_capture
 SET-160	auto	test:shortcut_rules_and_capture
 SET-161	auto	test:shortcut_rules_and_capture ; service:test uses a stub, real TISCopyCurrentKeyboardLayoutInputSource, UCKeyTranslate not exercised
 SET-162	auto	test:shortcut_rules_and_capture ; service:test uses a stub, real CGEvent flags not exercised
-SET-163	auto	test:general_controls_persist
+SET-163	service	service:shortcut recorder and CGEvent tap install, flow-platform service phase; recorded() has no production caller yet
 SET-164	service	service:CGEvent tap install, flow-platform service phase
 SET-165	auto	test:shortcut_rules_and_capture
-SET-166	auto	test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
-SET-167	auto	test:general_controls_persist
-SET-168	auto	test:default_page_shows_every_section_in_order
-SET-169	auto	test:general_controls_persist
-SET-170	auto	test:default_page_shows_every_section_in_order
-SET-171	auto	test:general_controls_persist
-SET-172	auto	test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
-SET-173	auto	test:general_controls_persist
+SET-166	auto	test:general_menus_and_switches_through_real_clicks ; test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
+SET-167	auto	test:general_menus_and_switches_through_real_clicks ; test:general_controls_persist
+SET-168	auto	test:general_menus_and_switches_through_real_clicks ; test:default_page_shows_every_section_in_order
+SET-169	auto	test:general_menus_and_switches_through_real_clicks ; test:general_controls_persist
+SET-170	auto	test:general_menus_and_switches_through_real_clicks ; test:default_page_shows_every_section_in_order
+SET-171	auto	test:general_menus_and_switches_through_real_clicks ; test:general_controls_persist
+SET-172	auto	test:general_menus_and_switches_through_real_clicks ; test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
+SET-173	auto	test:general_menus_and_switches_through_real_clicks ; test:general_controls_persist
 SET-174	auto	test:default_page_shows_every_section_in_order ; test:microphones_follow_the_catalog ; service:test uses a stub, real CoreAudio not exercised
 SET-175	auto	test:microphones_list_edits
-SET-176	auto	test:microphones_list_edits ; test:lower_sections_are_spaced_like_swift
-SET-177	service	service:CoreAudio catalog, flow-platform service phase; section stays hidden until then
-SET-178	auto	test:microphones_list_edits
+SET-176	auto	test:microphone_list_and_add_menu ; test:microphones_list_edits ; test:lower_sections_are_spaced_like_swift
+SET-177	auto	test:microphones_follow_the_catalog ; service:test uses a stub CoreAudio catalog; real catalog is the flow-platform service phase
+SET-178	auto	test:microphone_list_and_add_menu ; test:microphones_list_edits
 SET-179	auto	test:microphones_list_edits ; test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real CoreAudio transport type not exercised
 SET-180	auto	test:microphones_list_edits ; test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real CoreAudio not exercised
-SET-181	auto	test:microphones_list_edits ; test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real CoreAudio default input not exercised
+SET-181	auto	test:microphone_list_and_add_menu ; test:microphones_list_edits ; test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real CoreAudio default input not exercised
 SET-182	auto	test:microphones_list_edits ; test:microphone_list_rules
 SET-183	auto	test:microphone_list_rules
 SET-184	auto	test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real IOKit clamshell state not exercised
@@ -188,7 +188,7 @@ SET-187	auto	test:microphones_list_edits ; test:microphone_list_rules
 SET-188	auto	test:microphones_list_edits ; test:microphone_list_rules
 SET-189	auto	test:dragging_over_a_row_shows_the_two_point_bar
 SET-190	auto	test:voice_over_gets_move_buttons_within_the_rank_limits ; test:microphone_list_rules ; note:differs from Swift: Kit has no custom accessibility actions, so VoiceOver users get real Move up and Move down buttons, read when the page opens
-SET-191	auto	test:microphones_list_edits
+SET-191	auto	test:microphone_list_and_add_menu ; test:microphones_list_edits
 SET-192	auto	test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real CoreAudio not exercised
 SET-193	auto	test:microphones_list_edits ; test:microphone_list_rules
 SET-194	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
@@ -207,142 +207,142 @@ SET-206	auto	test:default_page_shows_every_section_in_order
 SET-207	auto	test:app_context_switches
 SET-208	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-209	auto	test:default_page_shows_every_section_in_order
-SET-210	auto	test:default_page_shows_every_section_in_order ; test:exclusions_and_kinds
+SET-210	auto	test:excluded_defaults_are_the_nine_and_localflow ; test:default_page_shows_every_section_in_order ; test:exclusions_and_kinds
 SET-211	auto	test:default_page_shows_every_section_in_order
 SET-212	auto	test:sheets_have_swifts_geometry
-SET-213	auto	test:exclusions_sheet ; test:sheets_have_swifts_geometry
-SET-214	auto	test:kinds_sheet
+SET-213	auto	test:kinds_sheet_type_menus_and_add_row ; test:exclusions_sheet ; test:sheets_have_swifts_geometry
+SET-214	auto	test:kinds_sheet_type_menus_and_add_row ; test:kinds_sheet
 SET-215	auto	test:sheets_have_swifts_geometry
 SET-216	auto	test:exclusions_and_kinds
-SET-217	auto	test:sheets_have_swifts_geometry
-SET-218	service	service:LaunchServices name and icon lookup not in flow_platform yet, rows show the bundle ID, so order differs from Swift; platform service phase
+SET-217	auto	test:app_row_uses_the_lookup_and_falls_back_to_the_id ; test:sheets_have_swifts_geometry
+SET-218	auto	test:app_row_uses_the_lookup_and_falls_back_to_the_id ; service:test uses a stub LaunchServices lookup
 SET-219	auto	test:exclusions_sheet ; test:exclusions_and_kinds
 SET-220	auto	test:context_rows_use_the_app_name_and_show_remove_on_focus ; note:opacity 0 at rest seen in exclusions pair; hover and focus reveal not captured
 SET-221	auto	test:exclusions_sheet ; test:exclusions_and_kinds
 SET-222	auto	test:context_rows_use_the_app_name_and_show_remove_on_focus ; note:opacity not asserted
 SET-223	auto	test:kinds_sheet ; test:exclusions_and_kinds
-SET-224	auto	test:kinds_sheet
+SET-224	auto	test:kinds_sheet_type_menus_and_add_row ; test:kinds_sheet
 SET-225	auto	test:kinds_sheet ; test:exclusions_and_kinds
-SET-226	auto	test:exclusions_sheet ; test:sheets_have_swifts_geometry
+SET-226	auto	test:kinds_sheet_type_menus_and_add_row ; test:exclusions_sheet ; test:sheets_have_swifts_geometry
 SET-227	service	service:Services::running_apps has only the empty default on macOS; NSWorkspace list is the platform service phase
 SET-228	auto	test:exclusions_sheet ; test:kinds_sheet
-SET-229	auto	test:sheets_have_swifts_geometry
-SET-230	auto	test:kinds_sheet
-SET-231	auto	test:exclusions_sheet
+SET-229	auto	test:kinds_sheet_type_menus_and_add_row ; test:sheets_have_swifts_geometry
+SET-230	auto	test:kinds_sheet_type_menus_and_add_row ; test:kinds_sheet
+SET-231	auto	test:kinds_sheet_type_menus_and_add_row ; test:exclusions_sheet
 SET-232	auto	test:exclusions_sheet
 SET-233	auto	test:exclusions_and_kinds
 SET-234	auto	test:exclusions_sheet ; test:rewrite_settings_copy
 SET-235	auto	test:kinds_sheet ; test:rewrite_settings_copy
-SET-236	auto	test:exclusions_sheet
-SET-237	auto	test:exclusions_sheet
+SET-236	auto	test:a_sheet_error_outlives_the_sheet ; test:exclusions_sheet
+SET-237	auto	test:kinds_sheet_type_menus_and_add_row ; test:exclusions_sheet
 SET-238	auto	test:exclusions_and_kinds
 SET-239	auto	test:default_page_shows_every_section_in_order
 SET-240	auto	test:page_rows_and_sections_are_spaced_like_swift
-SET-241	auto	test:installed_model_controls ; test:routing_truth_table
-SET-242	auto	test:installed_model_controls
-SET-243	auto	test:installed_model_controls ; note:Test goes to Services::settings_action and reports success or failure; the full-hash verify and smoke test behind it are not in Rust yet
+SET-241	auto	test:other_model_buttons_hide_when_installed_or_installing ; test:installed_model_controls ; test:routing_truth_table
+SET-242	auto	test:model_buttons_read_and_gate ; test:installed_model_controls
+SET-243	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
 SET-244	auto	test:installed_model_controls
 SET-245	auto	test:installed_model_controls
 SET-246	auto	test:installed_model_controls
 SET-247	auto	test:default_page_shows_every_section_in_order
 SET-248	auto	test:default_page_shows_every_section_in_order ; test:snapshot_readiness_copy
-SET-249	auto	test:installed_model_controls
-SET-250	auto	test:installed_model_controls
-SET-251	auto	test:installed_model_controls
+SET-249	auto	test:model_buttons_read_and_gate ; test:installed_model_controls
+SET-250	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
+SET-251	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
 SET-252	auto	test:default_page_shows_every_section_in_order
-SET-253	auto	test:downloads_and_progress ; test:download_sizes_are_the_manifests
-SET-254	auto	test:downloads_and_progress ; test:snapshot_readiness_copy
-SET-255	auto	test:downloads_and_progress ; note:handoff is tested through Services::speech_install, which no real provisioner implements yet; macOS returns None
+SET-253	auto	test:download_dialogs_read_exactly ; test:downloads_and_progress ; test:download_sizes_are_the_manifests
+SET-254	auto	test:download_dialogs_read_exactly ; test:downloads_and_progress ; test:snapshot_readiness_copy
+SET-255	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
 SET-256	auto	test:default_page_shows_every_section_in_order
-SET-257	auto	test:downloads_and_progress ; service:test uses a stub, real NSOpenPanel not exercised
-SET-258	auto	test:downloads_and_progress ; test:lower_sections_are_spaced_like_swift
-SET-259	auto	test:downloads_and_progress ; service:test uses a stub, real model provisioner not exercised
+SET-257	service	service:NSOpenPanel and model import, flow-platform service phase
+SET-258	auto	test:install_progress_bar_or_spinner ; test:downloads_and_progress ; test:lower_sections_are_spaced_like_swift
+SET-259	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
 SET-260	auto	test:alternate_row_detail_and_when_it_shows
 SET-261	auto	test:downloads_and_progress ; test:snapshot_readiness_copy
 SET-262	auto	test:downloads_and_progress ; test:download_sizes_are_the_manifests ; test:snapshot_readiness_copy ; service:test uses a stub, real model provisioner not exercised
-SET-263	auto	test:downloads_and_progress
-SET-264	auto	test:installed_model_controls
-SET-265	auto	test:installed_model_controls
-SET-266	auto	test:downloads_and_progress
-SET-267	auto	test:downloads_and_progress
-SET-268	auto	test:downloads_and_progress ; service:test uses a stub, real model provisioner not exercised
-SET-269	auto	test:downloads_and_progress
+SET-263	auto	test:model_buttons_read_and_gate ; test:downloads_and_progress
+SET-264	auto	test:model_buttons_read_and_gate ; test:installed_model_controls
+SET-265	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
+SET-266	auto	test:model_buttons_read_and_gate ; test:downloads_and_progress
+SET-267	auto	test:download_dialogs_read_exactly ; test:downloads_and_progress
+SET-268	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
+SET-269	auto	test:model_buttons_read_and_gate ; test:downloads_and_progress
 SET-270	auto	test:default_page_shows_every_section_in_order
 SET-271	auto	test:other_models ; test:snapshot_readiness_copy ; service:test uses a stub, real model provisioner not exercised
-SET-272	auto	test:default_page_shows_every_section_in_order
-SET-273	auto	test:other_models ; service:test uses a stub, real NSOpenPanel not exercised
+SET-272	auto	test:other_model_buttons_hide_when_installed_or_installing ; test:default_page_shows_every_section_in_order
+SET-273	service	service:NSOpenPanel and model import, flow-platform service phase
 SET-274	auto	test:default_page_shows_every_section_in_order
 SET-275	auto	test:other_models ; test:snapshot_readiness_copy ; service:test uses a stub, real model provisioner not exercised
-SET-276	auto	test:default_page_shows_every_section_in_order
-SET-277	auto	test:other_models ; service:test uses a stub, real NSOpenPanel not exercised
+SET-276	auto	test:other_model_buttons_hide_when_installed_or_installing ; test:default_page_shows_every_section_in_order
+SET-277	service	service:NSOpenPanel and model import, flow-platform service phase
 SET-278	auto	test:default_page_shows_every_section_in_order
 SET-279	auto	test:other_models ; test:snapshot_readiness_copy ; service:test uses a stub, real model provisioner not exercised
-SET-280	auto	test:default_page_shows_every_section_in_order
-SET-281	auto	test:other_models ; service:test uses a stub, real model provisioner not exercised
+SET-280	auto	test:other_model_buttons_hide_when_installed_or_installing ; test:default_page_shows_every_section_in_order
+SET-281	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
 SET-282	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-283	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-284	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
-SET-285	auto	test:other_models
-SET-286	auto	test:other_models
-SET-287	auto	test:rewrite_model_rows_need_the_loopback_endpoint
-SET-288	auto	test:rewrite_model_rows_need_the_loopback_endpoint ; test:controls_have_swifts_measured_sizes
-SET-289	auto	test:rewrite_model_rows_need_the_loopback_endpoint
-SET-290	auto	test:rewrite_model_rows_need_the_loopback_endpoint
-SET-291	auto	test:rewrite_model_rows_need_the_loopback_endpoint ; service:test uses a stub, real frontmost-game detection not exercised
+SET-285	auto	test:keep_loaded_and_rewrite_model_rows ; test:other_models
+SET-286	not-run	not-run:model lifecycle is Feature 025/026; the page only asks Services::settings_action
+SET-287	auto	test:keep_loaded_and_rewrite_model_rows ; test:rewrite_model_rows_need_the_loopback_endpoint
+SET-288	auto	test:keep_loaded_and_rewrite_model_rows ; test:rewrite_model_rows_need_the_loopback_endpoint ; test:controls_have_swifts_measured_sizes
+SET-289	auto	test:keep_loaded_and_rewrite_model_rows ; test:rewrite_model_rows_need_the_loopback_endpoint
+SET-290	auto	test:keep_loaded_and_rewrite_model_rows ; test:rewrite_model_rows_need_the_loopback_endpoint
+SET-291	service	service:frontmost-game detection, Feature 025/026; the switch write is tested
 SET-292	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-293	auto	test:default_page_shows_every_section_in_order
-SET-294	auto	test:rewriting_blocks_until_address_and_secret_are_right ; test:rewrite_settings_copy
+SET-294	auto	test:unencrypted_warning_sits_above_the_group ; test:rewriting_blocks_until_address_and_secret_are_right ; test:rewrite_settings_copy
 SET-295	service	service:NSAccessibility announcement, flow-platform service phase
-SET-296	auto	test:default_page_shows_every_section_in_order ; test:rewriting_blocks_until_address_and_secret_are_right
+SET-296	auto	test:rewrite_row_tips_menu_and_definitions ; test:default_page_shows_every_section_in_order ; test:rewriting_blocks_until_address_and_secret_are_right
 SET-297	auto	test:rewriting_blocks_until_address_and_secret_are_right
-SET-298	auto	test:test_connection_preflight_and_advanced ; test:shortcut_rules_and_capture
+SET-298	auto	test:rewrite_row_tips_menu_and_definitions ; test:test_connection_preflight_and_advanced ; test:shortcut_rules_and_capture
 SET-299	auto	test:rewriting_blocks_until_address_and_secret_are_right ; test:rewrite_settings_copy
 SET-300	auto	test:rewriting_blocks_until_address_and_secret_are_right ; test:rewrite_settings_copy ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
 SET-301	auto	test:default_page_shows_every_section_in_order ; test:rewrite_settings_copy
 SET-302	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
-SET-303	auto	test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
+SET-303	auto	test:rewrite_row_tips_menu_and_definitions ; test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
 SET-304	auto	test:rewriting_blocks_until_address_and_secret_are_right
-SET-305	auto	test:test_connection_preflight_and_advanced ; test:rewrite_settings_copy
+SET-305	auto	test:rewrite_row_tips_menu_and_definitions ; test:test_connection_preflight_and_advanced ; test:rewrite_settings_copy
 SET-306	auto	test:server_advanced_writes_each_override
-SET-307	live	live:audit/mac/settings/custom-light-ref.png ; live:audit/mac/settings/custom-light-rust.png ; live:audit/mac/settings/custom-dark-ref.png ; live:audit/mac/settings/custom-dark-rust.png
+SET-307	auto	test:secret_controls_read_exactly
 SET-308	auto	test:rewriting_blocks_until_address_and_secret_are_right
 SET-309	auto	test:rewriting_blocks_until_address_and_secret_are_right
 SET-310	auto	test:address_and_credential_validators_match_swift
-SET-311	auto	test:saved_secret_can_be_revealed_edited_and_removed ; test:lower_sections_are_spaced_like_swift ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
-SET-312	auto	test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
-SET-313	auto	test:saved_secret_can_be_revealed_edited_and_removed
-SET-314	auto	test:saved_secret_can_be_revealed_edited_and_removed
+SET-311	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed ; test:lower_sections_are_spaced_like_swift ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
+SET-312	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
+SET-313	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed
+SET-314	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed
 SET-315	auto	test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
-SET-316	auto	test:saved_secret_can_be_revealed_edited_and_removed ; test:lower_sections_are_spaced_like_swift
+SET-316	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed ; test:lower_sections_are_spaced_like_swift
 SET-317	auto	test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
-SET-318	auto	test:saved_secret_can_be_revealed_edited_and_removed
+SET-318	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed
 SET-319	auto	test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
-SET-320	auto	test:saved_secret_can_be_revealed_edited_and_removed
+SET-320	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed
 SET-321	auto	test:saved_secret_can_be_revealed_edited_and_removed ; test:rewrite_settings_copy ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
 SET-322	auto	test:address_and_credential_validators_match_swift
-SET-323	auto	test:rewriting_blocks_until_address_and_secret_are_right
+SET-323	auto	test:insecure_switch_connection_button_and_timeout ; test:rewriting_blocks_until_address_and_secret_are_right
 SET-324	auto	test:rewriting_blocks_until_address_and_secret_are_right
-SET-325	auto	test:test_connection_preflight_and_advanced
+SET-325	auto	test:insecure_switch_connection_button_and_timeout ; test:test_connection_preflight_and_advanced
 SET-326	auto	test:real_flowd_through_the_page ; test:real_flowd_health_outcomes
 SET-327	auto	test:real_flowd_through_the_page ; test:rewrite_settings_copy ; test:real_flowd_health_outcomes
-SET-328	auto	test:real_flowd_through_the_page ; test:real_flowd_health_outcomes
+SET-328	auto	test:analysis_status_line_reads_small_and_muted ; test:real_flowd_through_the_page ; test:real_flowd_health_outcomes
 SET-329	auto	test:rewrite_advanced_starts_collapsed_with_padding_14 ; note:font and colour compared by eye in default+rewriting pair
-SET-330	auto	test:test_connection_preflight_and_advanced
-SET-331	auto	test:test_connection_preflight_and_advanced
+SET-330	auto	test:insecure_switch_connection_button_and_timeout ; test:test_connection_preflight_and_advanced
+SET-331	auto	test:insecure_switch_connection_button_and_timeout ; test:test_connection_preflight_and_advanced
 SET-332	auto	test:real_flowd_through_the_page ; test:rewrite_settings_copy ; test:real_flowd_health_outcomes
 SET-333	auto	test:test_connection_preflight_and_advanced ; test:rewrite_settings_copy
 SET-334	auto	test:server_advanced_writes_each_override
 SET-335	auto	test:default_page_shows_every_section_in_order
-SET-336	auto	test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
-SET-337	auto	test:summaries_fields_and_key
+SET-336	auto	test:summary_fields_read_and_save ; test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
+SET-337	auto	test:summary_fields_read_and_save ; test:summaries_fields_and_key
 SET-338	auto	test:summaries_fields_and_key ; test:lower_sections_are_spaced_like_swift
-SET-339	auto	test:summaries_fields_and_key
+SET-339	auto	test:summary_fields_read_and_save ; test:summaries_fields_and_key
 SET-340	auto	test:summaries_fields_and_key
-SET-341	live	live:audit/mac/settings/summary-remote-light-ref.png ; live:audit/mac/settings/summary-remote-light-rust.png ; live:audit/mac/settings/summary-remote-dark-ref.png ; live:audit/mac/settings/summary-remote-dark-rust.png ; test:summaries_fields_and_key ; note:accessibility id is set in code, not observed in an AX dump
+SET-341	auto	test:summary_fields_read_and_save
 SET-342	auto	test:summaries_fields_and_key
-SET-343	auto	test:summaries_fields_and_key ; service:test uses a stub, real Keychain `<bundle id>.rewrite` / `summary-server` not exercised
-SET-344	auto	test:summaries_fields_and_key
-SET-345	auto	test:summaries_fields_and_key ; service:test uses a stub, real Keychain `<bundle id>.rewrite` / `summary-server` not exercised
+SET-343	auto	test:summary_fields_read_and_save ; test:summaries_fields_and_key ; service:test uses a stub, real Keychain `<bundle id>.rewrite` / `summary-server` not exercised
+SET-344	auto	test:summary_fields_read_and_save ; test:summaries_fields_and_key
+SET-345	auto	test:summary_fields_read_and_save ; test:summaries_fields_and_key ; service:test uses a stub, real Keychain `<bundle id>.rewrite` / `summary-server` not exercised
 SET-346	auto	test:summaries_fields_and_key
 SET-347	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-348	auto	test:summary_headers_follow_the_routing

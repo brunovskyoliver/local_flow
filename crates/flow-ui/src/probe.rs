@@ -23,6 +23,11 @@ pub fn start() {
     STYLES.with(|s| s.borrow_mut().clear());
 }
 
+/// Records text the Kit draws itself, such as a tooltip, so tests see it too.
+pub fn note(text: &str) {
+    record(text);
+}
+
 pub(crate) fn record(text: &str) {
     SEEN.with(|s| {
         if let Some(v) = s.borrow_mut().as_mut() {

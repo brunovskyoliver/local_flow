@@ -46,7 +46,6 @@ pub(super) fn seed(s: &str, p: &mut Prefs) {
             p.set("rewriteEndpoint", "http://10.0.0.5:8080");
             core::set_insecure_override(p, "http://10.0.0.5:8080", true);
         }
-        "summary-remote" => p.set("summaryServer", "remote"),
         _ => {}
     }
 }

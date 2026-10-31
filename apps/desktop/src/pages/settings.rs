@@ -903,9 +903,12 @@ impl SettingsPage {
             .child(row(
                 "Enable rewriting",
                 blocked.map(String::from),
-                div().id("settings.rewriteEnabled.tip").tooltip({
+                div().id("settings.rewriteEnabled.tip").test_support().tooltip({
                     let note = core::bypass_note(&self.snapshot.shortcut);
-                    move |w, cx| Tooltip::new(note).build(w, cx)
+                    move |w, cx| {
+                        flow_ui::probe::note(note);
+                        Tooltip::new(note).build(w, cx)
+                    }
                 }).child(switch("settings.rewriteEnabled", "Enable rewriting", enabled, blocked.is_some() && !enabled, cx.listener(|this, on: &bool, _, cx| this.set_rewrite_enabled(*on, cx)))),
                 cx,
             ))
@@ -913,7 +916,10 @@ impl SettingsPage {
             .child(row(
                 "Default mode",
                 None,
-                div().id("settings.rewriteDefaultMode.tip").tooltip(move |w, cx| Tooltip::new(core::mode_definition(mode)).build(w, cx)).child(picker(
+                div().id("settings.rewriteDefaultMode.tip").test_support().tooltip(move |w, cx| {
+                    flow_ui::probe::note(core::mode_definition(mode));
+                    Tooltip::new(core::mode_definition(mode)).build(w, cx)
+                }).child(picker(
                     "settings.rewriteDefaultMode",
                     "Default mode",
                     120.,
@@ -960,7 +966,7 @@ impl SettingsPage {
             }
         }
         body = body.child(hairline(cx)).child(div().id("settings.rewriteAdvancedRow").w_full().py(px(14.)).child(advanced).test_support());
-        let warning = self.rewrite.warning().map(|w| div().id("settings.rewriteWarning").pb(px(12.)).child(t(w).size(12.).color(pl.warning)).into_any_element());
+        let warning = self.rewrite.warning().map(|w| div().id("settings.rewriteWarning").test_support().pb(px(12.)).child(t(w).size(12.).color(pl.warning)).into_any_element());
         let mut out = vec![Self::section_title("Rewriting").into_any_element()];
         out.extend(warning);
         out.push(body.into_any_element());
@@ -997,7 +1003,7 @@ impl SettingsPage {
             .into_any_element(),
         );
         if let Some(a) = &self.analysis {
-            out.push(div().id("settings.analysisStatus").w_full().child(t(a.clone()).size(12.).color(pl.muted)).into_any_element());
+            out.push(div().id("settings.analysisStatus").test_support().w_full().child(t(a.clone()).size(12.).color(pl.muted)).into_any_element());
         }
         out
     }
@@ -1030,7 +1036,7 @@ impl SettingsPage {
                     h_flex()
                         .w_full()
                         .gap(px(12.))
-                        .child(plain_button("settings.rewriteCredentialReveal", if revealed { "Hide saved secret" } else { "Reveal saved secret" }).a11y_label(if revealed { "Hide rewrite server credential" } else { "Reveal rewrite server credential" }).on_click(cx.listener(move |this, _, w, cx| {
+                        .child(plain_button("settings.rewriteCredentialReveal", if revealed { "Hide saved secret" } else { "Reveal saved secret" }).content(t(if revealed { "Hide saved secret" } else { "Reveal saved secret" }).size(12.).a11y_hidden()).a11y_label(if revealed { "Hide rewrite server credential" } else { "Reveal rewrite server credential" }).on_click(cx.listener(move |this, _, w, cx| {
                             if revealed {
                                 this.hide_secret(w, cx);
                                 cx.notify();
@@ -1039,8 +1045,8 @@ impl SettingsPage {
                             }
                         })))
                         .child(div().flex_1())
-                        .child(plain_button("settings.rewriteCredentialRemove", "Remove").text_color(pl.warning).a11y_label("Remove rewrite server credential").on_click(cx.listener(|this, _, w, cx| this.remove_secret(w, cx))))
-                        .child(plain_button("settings.rewriteCredentialCancel", "Cancel").on_click(cx.listener(|this, _, w, cx| {
+                        .child(plain_button("settings.rewriteCredentialRemove", "Remove").content(t("Remove").size(12.).color(pl.warning).a11y_hidden()).a11y_label("Remove rewrite server credential").on_click(cx.listener(|this, _, w, cx| this.remove_secret(w, cx))))
+                        .child(plain_button("settings.rewriteCredentialCancel", "Cancel").content(t("Cancel").size(12.).a11y_hidden()).on_click(cx.listener(|this, _, w, cx| {
                             this.hide_secret(w, cx);
                             this.editing_credential = false;
                             cx.notify();
@@ -1369,7 +1375,7 @@ fn saved_secret(label: &'static str, cx: &App) -> Div {
         .border_1()
         .border_color(pl.line)
         .child(div().w(px(16.)).flex().justify_center().child(icon("key", 14., pl.muted)))
-        .child(t("••••••••••••").size(13.).tracking(2.).id(label))
+        .child(div().id(label).test_support().role(flow_ui::gpui::accesskit::Role::Label).aria_label(label).child(t("••••••••••••").size(13.).tracking(2.).a11y_hidden()))
 }
 
 /// Used by the model section: a runtime is `Ready`.

@@ -43,7 +43,6 @@ impl SettingsPage {
     }
 
     pub(super) fn models(&self, cx: &mut Context<Self>) -> Div {
-        let pl = pal(cx);
         let s = self.snapshot.clone();
         let name = core::speech_name(s.speech_model);
         let mut controls = h_flex().gap(px(8.));
@@ -98,7 +97,7 @@ impl SettingsPage {
         if s.meeting_installed {
             whisper = whisper.child(self.test_button("meeting", "Whisper Turbo", cx));
         }
-        let speaker_status = format!("{} · {}", self.role("Who said what", Service::FinalTranscript, cx), self.status("speaker", s.speaker_readiness()));
+        let speaker_status = format!("{} · {}", self.role("Who said what", Service::Diarization, cx), self.status("speaker", s.speaker_readiness()));
         let mut speaker = h_flex().gap(px(8.));
         if !s.speaker_installed && !s.speaker_installing {
             speaker = speaker.child(Self::action("settings.speakerDownload", "Download", "downloadSpeakerModel", false, cx)).child(Self::action("settings.speakerImport", "Import…", "importSpeakerModel", false, cx));
@@ -148,7 +147,6 @@ impl SettingsPage {
                 .child(hairline(cx))
                 .child(row("Unload during games", None, switch("settings.unloadLocalModelDuringGames", "Unload during games", games, false, cx.listener(|this, on: &bool, _, cx| this.set_bool("unloadLocalModelDuringGames", *on, cx))), cx));
         }
-        let _ = pl;
         body
     }
 }
