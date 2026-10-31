@@ -263,23 +263,24 @@ pub fn talk_time(seconds: f64) -> String {
 }
 
 pub fn versus_typing(pace: Option<i64>) -> String {
-    pace.map_or("–".into(), |p| format!("{:.1}×", p as f64 / 40.0))
+    pace.map_or("–".into(), |p| format!("{:.1}×", p as f64 / 40.0).replace('.', ","))
 }
 
-/// Locale grouping.
+/// Grouping for the owner's region as `formatted()` printed it: a no-break space.
+// ponytail: fixed region, read the system locale through `Services` when another one matters.
 pub fn grouped(n: i64) -> String {
     let digits = n.abs().to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push(',');
+            out.push('\u{A0}');
         }
         out.push(c);
     }
     if n < 0 { format!("-{out}") } else { out }
 }
 
-/// "1 word" / "2,000 words".
+/// "1 word" / "2 000 words".
 pub fn counted(n: i64, one: &str, many: &str) -> String {
     format!("{} {}", grouped(n), if n == 1 { one } else { many })
 }
@@ -318,9 +319,9 @@ pub fn long_date(day: i64) -> String {
     format!("{d} {} {y}", crate::history::MONTHS[(m - 1) as usize])
 }
 
-/// Short local time for an hour; 24-hour under the owner's region.
+/// `time: .shortened` as the owner's region printed it: "1:00", "13:00".
 pub fn hour_time(h: i64) -> String {
-    format!("{h:02}:00")
+    format!("{h}:00")
 }
 
 /// The tip's plain sentence, which is also the element's accessibility value.
@@ -390,9 +391,9 @@ mod tests {
         assert_eq!(talk_time(59.4), "59s");
         assert_eq!(talk_time(3599.0), "59m");
         assert_eq!(talk_time(3660.0), "1h 1m");
-        assert_eq!(versus_typing(Some(150)), "3.8×");
+        assert_eq!(versus_typing(Some(150)), "3,8×");
         assert_eq!(versus_typing(None), "–");
-        assert_eq!(grouped(1234567), "1,234,567");
+        assert_eq!(grouped(1234567), "1\u{A0}234\u{A0}567");
         assert_eq!(counted(1, "word", "words"), "1 word");
         assert_eq!(fallback_app_name("com.tinyspeck.slackmacgap"), "Slackmacgap");
         assert_eq!(Category::classify(Some("COM.Apple.MAIL")), Category::Emails);

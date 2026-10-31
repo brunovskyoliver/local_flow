@@ -327,6 +327,11 @@ pub fn page(db: &Db, query: &str, cursor: Option<&Cursor>, direction: Direction,
     Ok(Page { entries: found, has_more, watermark: Some(ceiling) })
 }
 
+/// Changes whenever a row is added, removed or revised, so a page can refresh only then.
+pub fn signature(db: &Db) -> (i64, i64) {
+    db.conn.query_row("SELECT COUNT(*), COALESCE(SUM(revision),0) FROM transcriptions", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap_or((0, 0))
+}
+
 pub fn get(db: &Db, id: &str) -> rusqlite::Result<Option<Entry>> {
     db.conn.query_row(&format!("SELECT {ENTRY_COLUMNS} FROM transcriptions WHERE id=?"), [id], entry_row).optional()
 }
