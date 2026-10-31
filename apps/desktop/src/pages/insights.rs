@@ -8,6 +8,7 @@ use flow_ui::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Tab {
@@ -50,6 +51,8 @@ pub struct InsightsPage {
     /// `StreakCard.page`: how many 19-week pages back.
     page: i64,
     hovered_hour: Option<usize>,
+    /// What the bars animate from.
+    previous_hour: Option<usize>,
     tip: Option<(String, Tip)>,
     anchors: Anchors,
     _session_sub: Subscription,
@@ -58,6 +61,23 @@ pub struct InsightsPage {
 // ponytail: `AppName.display` needs NSWorkspace; the fallback is Swift's for an uninstalled app.
 fn app_name(bundle: &str) -> String {
     fallback_app_name(bundle)
+}
+
+/// `dataScale[1]` at rest; the hovered bar `dataScale[0]`, the others `dataScale[2]`; empty hours stay empty.
+fn hour_fill(p: &Palette, words: i64, h: usize, hovered: Option<usize>) -> Hsla {
+    if words == 0 {
+        return p.heat_empty;
+    }
+    match hovered {
+        None => p.data_scale[1],
+        Some(x) if x == h => p.data_scale[0],
+        Some(_) => p.data_scale[2],
+    }
+}
+
+fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
+    let lerp = |x: f32, y: f32| x + (y - x) * t;
+    Hsla { h: lerp(a.h, b.h), s: lerp(a.s, b.s), l: lerp(a.l, b.l), a: lerp(a.a, b.a) }
 }
 
 impl InsightsPage {
@@ -80,7 +100,7 @@ impl InsightsPage {
             }
             revision = latest;
         });
-        let mut page = InsightsPage { insights: None, error: None, tab: Tab::Usage, page: 0, hovered_hour: None, tip: None, anchors: Default::default(), _session_sub };
+        let mut page = InsightsPage { insights: None, error: None, tab: Tab::Usage, page: 0, hovered_hour: None, previous_hour: None, tip: None, anchors: Default::default(), _session_sub };
         page.refresh(cx);
         let scenario = cx.global::<Core>().scenario.clone().unwrap_or_default();
         match scenario.as_str() {
@@ -160,8 +180,10 @@ impl InsightsPage {
                 }
                 if let Some(h) = hover_key.strip_prefix("insights.hour.").and_then(|h| h.parse().ok()) {
                     if *inside {
+                        this.previous_hour = this.hovered_hour;
                         this.hovered_hour = Some(h);
                     } else if this.hovered_hour == Some(h) {
+                        this.previous_hour = this.hovered_hour;
                         this.hovered_hour = None;
                     }
                 }
@@ -238,7 +260,7 @@ impl InsightsPage {
         let compact = cx.global::<Flow>().compact;
         let mut rows = v_flex().gap(px(16.)).pt(px(25.));
         for (n, (cat, count)) in i.category_rows().into_iter().enumerate() {
-            let share = if i.dictations == 0 { 0. } else { count as f32 / i.dictations as f32 };
+            let share = i.share(count);
             let (fill, label) = if count == 0 {
                 (p.data_quiet, p.on_data_quiet)
             } else if n == 0 {
@@ -347,17 +369,14 @@ impl InsightsPage {
         let peak = i.hours.iter().copied().max().unwrap_or(0).max(1);
         let mut bars = h_flex().w_full().h(px(130.)).items_end().gap(px(6.)).mt(px(26.));
         for h in 0..24usize {
-            let fill = if i.hours[h] == 0 {
-                p.heat_empty
-            } else {
-                match self.hovered_hour {
-                    None => p.data_scale[1],
-                    Some(x) if x == h => p.data_scale[0],
-                    Some(_) => p.data_scale[2],
-                }
-            };
+            let (from, fill) = (hour_fill(&p, i.hours[h], h, self.previous_hour), hour_fill(&p, i.hours[h], h, self.hovered_hour));
             let height = (130. * i.hours[h] as f32 / peak as f32).max(5.);
-            let bar = div().w_full().h(px(height)).rounded(px(3.)).bg(fill);
+            // `.animation(.easeOut(duration: 0.12), value: hovered)`, restarted when the hover changes.
+            let bar = div().w_full().h(px(height)).rounded(px(3.)).bg(fill).with_animation(
+                SharedString::from(format!("insights.hour.fill.{h}.{:?}", self.hovered_hour)),
+                Animation::new(Duration::from_millis(120)).with_easing(|t| 1. - (1. - t) * (1. - t)),
+                move |d, delta| d.bg(mix(from, fill, delta)),
+            );
             let target = self
                 .target(format!("insights.hour.{h}"), Some(hour_tip(i, h)), div().w_full().h(px(130.)).flex().items_end().child(bar), cx).test_support()
                 .flex_1()
@@ -621,6 +640,28 @@ mod tests {
     async fn usage_tab_shows_every_card(cx: &mut TestAppContext) {
         let _w = open(cx);
         assert_saw(&["Insights", "Your usage", "Your voice", "WORDS PER MINUTE", "vs typing", "FIXES MADE BY LOCALFLOW", "words corrected", "dictionary fixes", "TOTAL WORDS DICTATED", "Desktop", "dictations", "Desktop usage", "TOTAL APPS USED | ", "DOCUMENTS", "day streak", "LONGEST STREAK | ", "Mon", "Sun", "More", "Less", "Current streak"]);
+    }
+
+    // parity: INS-100
+    /// The animation's timing is not observable here; this pins the fills and that hovering switches them.
+    #[flow_ui::gpui::test]
+    async fn the_hovered_hour_is_darkest_and_the_others_lightest(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "insights.tab.voice");
+        let hours = w.update(cx, |this, _, _| this.insights.as_ref().unwrap().hours).unwrap();
+        let on = hours.iter().position(|h| *h > 0).unwrap();
+        let id = SharedString::from(format!("insights.hour.{on}"));
+        cx.update_window(w.into(), |_, win, cx| win.hover(id, cx)).unwrap();
+        frame(cx, w);
+        w.update(cx, |this, _, cx| {
+            let p = pal(cx);
+            assert_eq!(this.hovered_hour, Some(on));
+            assert_eq!(hour_fill(&p, 5, on, this.hovered_hour), p.data_scale[0]);
+            assert_eq!(hour_fill(&p, 5, on + 1, this.hovered_hour), p.data_scale[2]);
+            assert_eq!(hour_fill(&p, 0, on + 1, this.hovered_hour), p.heat_empty);
+            assert_eq!(hour_fill(&p, 5, on, None), p.data_scale[1]);
+        })
+        .unwrap();
     }
 
     // parity: INS-008 INS-016 INS-090 INS-092 INS-094 INS-096 INS-100 INS-102 INS-103 INS-104

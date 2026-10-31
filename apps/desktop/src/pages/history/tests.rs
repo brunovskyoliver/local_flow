@@ -1067,3 +1067,135 @@ async fn cancel_rewrite_marks_the_row_and_stops_the_request(cx: &mut TestAppCont
     .unwrap();
     assert!(listener.accept().is_err(), "nothing reached the server");
 }
+
+// parity: HIST-056
+#[flow_ui::gpui::test]
+async fn the_row_menu_lists_its_items_with_their_symbols(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let id = w.update(cx, |t, _, _| t.model.entries[0].id.clone()).unwrap();
+    let target = SharedString::from(format!("history.text.{id}"));
+    cx.update_window(w.into(), |_, win, cx| win.right_click(target, cx)).unwrap();
+    frame(cx, w);
+    assert_saw(&["Copy", "Insert", "Details", "Delete"]);
+    let symbols = flow_ui::probe::symbols();
+    for s in ["doc.on.doc", "text.insert", "info.circle", "trash"] {
+        assert!(symbols.iter().any(|x| x == s), "{s} in {symbols:?}");
+    }
+    assert!(cx.update_window(w.into(), |_, win, _| win.find("history.row.details").bounds().size.height).unwrap() > px(0.));
+    let red = cx.update(|cx| pal(cx).destructive());
+    assert_eq!(flow_ui::probe::style_of("Delete").map(|s| s.color), Some(red));
+    // Item 3 is the divider, so Delete is 4.
+    cx.update_window(w.into(), |_, win, cx| win.click(ElementId::Integer(4), cx)).unwrap();
+    frame(cx, w);
+    w.update(cx, |t, _, _| assert!(t.confirming_delete)).unwrap();
+}
+
+// parity: HIST-014
+#[flow_ui::gpui::test]
+async fn escape_in_search_clears_the_text_and_closes_the_field(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let all = w.update(cx, |t, _, _| t.model.entries.len()).unwrap();
+    click(cx, w, "history.searchToggle".into());
+    cx.update_window(w.into(), |_, win, cx| win.input("kickoff", cx)).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(300));
+    frame(cx, w);
+    assert!(w.update(cx, |t, _, _| t.model.entries.len()).unwrap() < all);
+    cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+    frame(cx, w);
+    w.update(cx, |t, _, _| {
+        assert!(!t.searching);
+        assert_eq!(t.model.search_text, "");
+        assert_eq!(t.model.entries.len(), all);
+    })
+    .unwrap();
+}
+
+// parity: HIST-065
+#[flow_ui::gpui::test]
+async fn escape_dismisses_the_delete_dialog_like_cancel(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let ask = |cx: &mut TestAppContext| {
+        w.update(cx, |t, _, cx| {
+            let e = t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone();
+            t.ask_delete(&e, cx);
+        })
+        .unwrap();
+        frame(cx, w);
+    };
+    ask(cx);
+    assert!(w.update(cx, |t, _, _| t.confirming_delete).unwrap());
+    click(cx, w, "history.deleteDialog.cancel".into());
+    assert!(w.update(cx, |t, _, _| !t.confirming_delete).unwrap());
+    ask(cx);
+    cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+    frame(cx, w);
+    assert!(w.update(cx, |t, _, _| !t.confirming_delete).unwrap());
+    assert!(!saw("Delete this transcription?"));
+}
+
+// parity: HIST-091
+#[flow_ui::gpui::test]
+async fn done_and_escape_clear_the_detail(cx: &mut TestAppContext) {
+    let w = open(cx);
+    for close in [true, false] {
+        w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
+        frame(cx, w);
+        assert!(w.update(cx, |t, _, _| t.model.envelope.is_some()).unwrap());
+        if close {
+            click(cx, w, "history.detail.close".into());
+        } else {
+            cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+            frame(cx, w);
+        }
+        w.update(cx, |t, _, _| assert!(t.model.detail_id.is_none() && t.model.envelope.is_none() && t.model.detail_error.is_none())).unwrap();
+    }
+}
+
+// parity: HIST-045
+#[flow_ui::gpui::test]
+async fn a_local_row_says_local_only_while_remote_dictation_is_on(cx: &mut TestAppContext) {
+    let w = open(cx);
+    frame(cx, w);
+    assert!(!flow_ui::probe::seen().iter().any(|t| t == "Local"));
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("remoteEnabled", true));
+    w.update(cx, |_, _, cx| cx.notify()).unwrap();
+    frame(cx, w);
+    assert!(flow_ui::probe::seen().iter().any(|t| t == "Local"));
+}
+
+// parity: HIST-154
+#[flow_ui::gpui::test]
+async fn cancel_rewrite_is_there_only_while_one_is_pending(cx: &mut TestAppContext) {
+    let w = open(cx);
+    cx.update(|cx| {
+        let db = cx.global::<Core>().db.as_ref().unwrap();
+        db.conn.execute("DELETE FROM rewrite_attempts WHERE transcription_id=?", [seed_id(1)]).unwrap();
+    });
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
+    frame(cx, w);
+    assert!(!saw("Cancel rewrite"));
+    cx.update(|cx| {
+        let db = cx.global::<Core>().db.as_ref().unwrap();
+        let e = flow_core::history::get(db, &seed_id(1)).unwrap().unwrap();
+        flow_core::history::begin_rewrite(db, &e.id, "clean", &e.text, "http://127.0.0.1:9", false, None).unwrap();
+    });
+    w.update(cx, |t, _, cx| t.show_detail(&seed_id(1), cx)).unwrap();
+    frame(cx, w);
+    assert_saw(&["Cancel rewrite"]);
+    assert_eq!(cx.update_window(w.into(), |_, win, _| win.find("history.detail.rewrite.cancel").label().map(str::to_string)).unwrap().as_deref(), Some("Cancel rewrite"));
+}
+
+// parity: HIST-006
+#[flow_ui::gpui::test]
+async fn a_history_change_reloads_the_list(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    session(cx);
+    cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::History));
+    let w = cx.add_window(|w, cx| HistoryPage::new(w, cx));
+    frame(cx, w);
+    delete_all(cx);
+    w.update(cx, |t, _, _| assert!(!t.model.entries.is_empty())).unwrap();
+    cx.update(crate::shell::history_changed);
+    frame(cx, w);
+    w.update(cx, |t, _, _| assert!(t.model.entries.is_empty())).unwrap();
+}

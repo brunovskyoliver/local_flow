@@ -1,7 +1,7 @@
 //! Transcriptions page: search, waiting dictations, the day-grouped list and its row actions.
 mod detail;
 
-use super::dictionary::ui::{confirm_dialog, destructive_item, menu_item, outline, sheet_card, under_card_border};
+use super::dictionary::ui::{confirm_dialog, destructive_item, identified_item, menu_item, outline, sheet_card, under_card_border};
 use crate::core::Core;
 use crate::insertion::{Delivery, Quality, ReviewEntry, begin_review};
 use crate::pages::Page;
@@ -75,6 +75,7 @@ impl HistoryPage {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let mut shown = cx.try_global::<Session>().map(|s| s.selection);
         let mut insertion = cx.try_global::<Session>().map(|s| s.insertion.generation());
+        let mut revision = cx.try_global::<Session>().map_or(0, |s| s.history_revision);
         let subs = vec![
             cx.subscribe_in(&search, window, |this, _, e: &TextInputEvent, window, cx| this.search_event(e, window, cx)),
             cx.observe_global::<Session>(move |this, cx| {
@@ -85,6 +86,12 @@ impl HistoryPage {
                     if !cx.global::<Session>().insertion.is_active() {
                         this.reload(cx);
                     }
+                }
+                // AppServices' history change: a new or changed row shows without leaving the page.
+                let latest = cx.global::<Session>().history_revision;
+                if latest != revision {
+                    revision = latest;
+                    this.reload(cx);
                 }
                 let now = Some(cx.global::<Session>().selection);
                 if now == shown {
@@ -684,7 +691,7 @@ fn row_menu(menu: PopupMenu, page: WeakEntity<HistoryPage>, e: Entry, insert_off
     .item(menu_item(insert, "text.insert").disabled(insert_off).on_click(move |_, _, cx| {
         b.update(cx, |this, cx| this.insert(&eb, eb.text.clone(), cx)).ok();
     }))
-    .item(menu_item("Details", "info.circle").on_click(move |_, _, cx| {
+    .item(identified_item("history.row.details", "Details", "info.circle").on_click(move |_, _, cx| {
         c.update(cx, |this, cx| this.show_detail(&ec.id, cx)).ok();
     }))
     .separator()

@@ -2217,13 +2217,16 @@ mod tests {
         assert_eq!(e(1).path_label(true).as_deref(), Some("Local"));
         assert_eq!(e(3).path_label(false).as_deref(), Some("Server"));
         assert_eq!(e(4).path_label(false).as_deref(), Some("Local after server failure (no answer)"));
+        // HIST-045: a failure with no recorded reason reads unreachable.
+        db.conn.execute("UPDATE transcriptions SET server_failure=NULL WHERE id=?", [seed_id(4)]).unwrap();
+        assert_eq!(e(4).path_label(false).as_deref(), Some("Local after server failure (unreachable)"));
         assert_eq!(failure_label("pin_mismatch"), "identity changed");
         assert_eq!(e(1).microphone_label(), "Microphone: Studio Microphone");
         assert_eq!(e(5).microphone_label(), "Microphone: Not recorded");
         assert_eq!(spaced("permission_revoked"), "permission revoked");
     }
 
-    // parity: HIST-096 HIST-111 HIST-112 HIST-113 HIST-114 HIST-115 HIST-116 HIST-117 HIST-118 HIST-120 HIST-121 HIST-122 HIST-123 HIST-125 HIST-126 HIST-127 HIST-129 HIST-131 HIST-132 HIST-138 HIST-141 HIST-158 HIST-088
+    // parity: HIST-096 HIST-111 HIST-112 HIST-113 HIST-114 HIST-115 HIST-116 HIST-117 HIST-118 HIST-120 HIST-121 HIST-122 HIST-123 HIST-125 HIST-126 HIST-127 HIST-129 HIST-131 HIST-132 HIST-138 HIST-141 HIST-158 HIST-088 HIST-113 HIST-115 HIST-119
     #[test]
     fn detail_decodes_and_lists_every_row() {
         let db = seeded();
@@ -2234,6 +2237,14 @@ mod tests {
         assert!(has("Engine", "seed-engine"));
         assert!(has("Language", "en"));
         assert!(has("Uncommitted build changes", "No"));
+        // HIST-113 HIST-115: each named row is there with what the detail stored.
+        let val = |l: &str| lines.iter().find_map(|x| match x { Line::Meta(a, b) if a == l => Some(b.clone()), _ => None });
+        for (label, key) in [("Assembly", "assemblyVersion"), ("Normalization", "normalizationVersion")] {
+            assert_eq!(val(label), d[key].as_str().map(str::to_string), "{label}");
+        }
+        assert_eq!(val("Vocabulary revision"), Some(d["vocabularyRevision"].as_i64().unwrap_or(0).to_string()));
+        assert_eq!(val("Operating system"), d["provenance"]["operatingSystem"].as_str().map(str::to_string));
+        assert_eq!(val("Unicode runtime"), d["provenance"]["foldingRuntime"].as_str().map(str::to_string));
         assert!(has("Applied formatting rules", "N001, N004"));
         assert!(has("Ambiguous vocabulary entries", "None"));
         assert!(has("Audio", "16000 Hz, 1 channel, float32_pcm"));
@@ -2250,6 +2261,10 @@ mod tests {
         // A sparse detail lists its missing metadata and its reasons.
         let sparse = processing_lines(envelope(&db, &seed_id(2)).unwrap().detail.as_ref().unwrap());
         assert!(sparse.contains(&Line::Plain("capture_failure".into())));
+        // HIST-119, from a detail with one seam.
+        let mut seamed = d.clone();
+        seamed["seams"] = serde_json::json!([{"window": 1, "decision": "merged", "discardedLexicalWords": 3}]);
+        assert!(processing_lines(&seamed).contains(&Line::Meta("Join before window 2".into(), "merged; 3 words discarded".into())));
         assert!(sparse.contains(&Line::Plain("uncertain_join (window 1)".into())));
         assert!(sparse.contains(&Line::Meta("SDK".into(), "Unavailable".into())));
         assert!(sparse.contains(&Line::Meta("sdk_version".into(), "not_recorded".into())));

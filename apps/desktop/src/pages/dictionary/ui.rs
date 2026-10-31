@@ -30,7 +30,12 @@ pub fn help(id: impl Into<ElementId>, text: impl Into<SharedString>, child: impl
 
 /// A menu row with `symbol` before its label: `Label` in a SwiftUI `Menu`.
 pub fn menu_item(label: &'static str, symbol: &'static str) -> PopupMenuItem {
-    PopupMenuItem::element(move |_, cx| h_flex().gap(px(6.)).child(icon(symbol, 13., pal(cx).ink)).child(t(label).size(13.).color(pal(cx).ink)))
+    PopupMenuItem::element(move |_, cx| h_flex().id(SharedString::new_static(symbol)).test_support().gap(px(6.)).child(icon(symbol, 13., pal(cx).ink)).child(t(label).size(13.).color(pal(cx).ink)))
+}
+
+/// The same row with its own accessibility identifier.
+pub fn identified_item(id: &'static str, label: &'static str, symbol: &'static str) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, cx| h_flex().id(SharedString::new_static(id)).test_support().gap(px(6.)).child(icon(symbol, 13., pal(cx).ink)).child(t(label).size(13.).color(pal(cx).ink)))
 }
 
 /// `Button(role: .destructive)` in a menu: the system red, with its symbol when it has one.

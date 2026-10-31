@@ -454,8 +454,10 @@ impl DictionaryPage {
                 pill(format!("dictionary.delete.{i}"), "Delete", false, cx)
                     .a11y_label(format!("Delete {}", e.canonical))
                     .disabled(busy)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, w, cx| {
                         this.confirming_delete = Some(delete.clone());
+                        // Escape reaches the dialog through the page's focus.
+                        this.focus.focus(w, cx);
                         cx.notify();
                     })),
             );
@@ -497,9 +499,10 @@ impl DictionaryPage {
                 .item(PopupMenuItem::new(if menu_entry.enabled { "Disable" } else { "Enable" }).on_click(move |_, _, cx| {
                     b.update(cx, |this, cx| this.toggle(&eb, cx)).ok();
                 }))
-                .item(destructive_item("Delete", None).on_click(move |_, _, cx| {
+                .item(destructive_item("Delete", None).on_click(move |_, w, cx| {
                     c.update(cx, |this, cx| {
                         this.confirming_delete = Some(ec.clone());
+                        this.focus.focus(w, cx);
                         cx.notify();
                     })
                     .ok();
@@ -733,7 +736,7 @@ impl Render for DictionaryPage {
 mod tests {
     use super::*;
     use crate::testing::{assert_saw, boot, saw};
-    use flow_ui::test::{TestAppContext, TestWindowExt};
+    use flow_ui::test::{TestAppContext, TestQueryExt, TestWindowExt};
 
     fn open(cx: &mut TestAppContext) -> WindowHandle<DictionaryPage> {
         boot(cx, Mode::Light);
@@ -787,6 +790,94 @@ mod tests {
         click(cx, w, "vocabulary.filter.learned");
         assert_saw(&["Kubernetes", "Qwen"]);
         assert!(!saw("Brunel"));
+    }
+
+    // parity: DICT-018
+    #[flow_ui::gpui::test]
+    async fn enabled_shows_only_enabled_words(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.filter.enabled");
+        assert_saw(&["Brunel"]);
+        assert!(!saw("Northwind"));
+    }
+
+    // parity: DICT-016
+    #[flow_ui::gpui::test]
+    async fn the_filter_goes_back_to_all_on_returning(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(crate::shell::ensure_session);
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Dictionary));
+        let w = cx.add_window(|w, cx| DictionaryPage::new(w, cx));
+        frame(cx, w);
+        click(cx, w, "vocabulary.filter.disabled");
+        assert!(!saw("Brunel"));
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Insights));
+        cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = Page::Dictionary));
+        frame(cx, w);
+        assert_saw(&["Brunel", "Northwind"]);
+    }
+
+    // parity: DICT-023
+    #[flow_ui::gpui::test]
+    async fn the_search_field_reads_like_swift_and_does_not_take_focus(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.searchToggle");
+        cx.update_window(w.into(), |_, win, _| {
+            let field = win.find_by_label("Search dictionary");
+            assert_eq!(field.placeholder().map(str::to_string).as_deref(), Some("Search"));
+            assert_ne!(field.focused(), Some(true));
+        })
+        .unwrap();
+    }
+
+    // parity: DICT-088
+    #[flow_ui::gpui::test]
+    async fn the_row_menu_reads_edit_toggle_and_a_red_delete(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let enabled = w.update(cx, |t, _, _| t.model.entries[0].enabled).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.right_click("dictionary.edit.0", cx)).unwrap();
+        frame(cx, w);
+        assert_saw(&["Edit", if enabled { "Disable" } else { "Enable" }, "Delete"]);
+        let red = cx.update(|cx| pal(cx).destructive());
+        assert_eq!(flow_ui::probe::style_of("Delete").map(|s| s.color), Some(red));
+    }
+
+    // parity: DICT-091
+    #[flow_ui::gpui::test]
+    async fn cancel_and_escape_both_close_the_delete_dialog(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "dictionary.delete.1");
+        click(cx, w, "vocabulary.deleteDialog.cancel");
+        w.update(cx, |t, _, _| assert!(t.confirming_delete.is_none())).unwrap();
+        click(cx, w, "dictionary.delete.1");
+        w.update(cx, |t, _, _| assert!(t.confirming_delete.is_some())).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+        frame(cx, w);
+        w.update(cx, |t, _, _| assert!(t.confirming_delete.is_none())).unwrap();
+        assert!(stored(cx).iter().any(|e| e.canonical == "Brunel"));
+    }
+
+    // parity: DICT-121
+    #[flow_ui::gpui::test]
+    async fn save_is_off_while_blank_saving_or_after_a_load_error(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        assert_eq!(disabled(cx, w, "vocabulary.save"), Some(true), "blank");
+        let field = w.update(cx, |t, _, _| t.canonical.clone().unwrap()).unwrap();
+        type_into(cx, w, field, "Tatra");
+        let alias = w.update(cx, |t, _, _| t.aliases[0].clone()).unwrap();
+        type_into(cx, w, alias, "   ");
+        assert_eq!(disabled(cx, w, "vocabulary.save"), Some(true), "a blank alias");
+        let alias = w.update(cx, |t, _, _| t.aliases[0].clone()).unwrap();
+        type_into(cx, w, alias, "tatry");
+        assert_ne!(disabled(cx, w, "vocabulary.save"), Some(true), "filled");
+        state(cx, w, |t| t.model.saving = true);
+        assert_eq!(disabled(cx, w, "vocabulary.save"), Some(true), "saving");
+        state(cx, w, |t| {
+            t.model.saving = false;
+            t.model.load_error = Some("x".into());
+        });
+        assert_eq!(disabled(cx, w, "vocabulary.save"), Some(true), "load error");
     }
 
     // parity: DICT-033 DICT-034
@@ -1149,9 +1240,10 @@ mod tests {
     async fn unreadable_suggestions_stay_quiet(cx: &mut TestAppContext) {
         let w = open(cx);
         assert_saw(&["Suggested"]);
-        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("DROP TABLE term_corrections").ok());
+        let dropped = cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("DROP TABLE term_suggestions"));
+        assert!(dropped.is_ok(), "the table must exist for this to be a read failure: {dropped:?}");
         w.update(cx, |t, _, cx| {
-            t.model.suggestions.clear();
+            t.model.refresh(cx.global::<Core>().db.as_ref().unwrap(), |_| false);
             cx.notify();
         })
         .unwrap();

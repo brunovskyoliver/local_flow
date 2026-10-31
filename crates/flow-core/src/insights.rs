@@ -222,6 +222,10 @@ impl Insights {
         rows.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         rows
     }
+    /// A category's part of all dictations (not words); 0 with none.
+    pub fn share(&self, count: i64) -> f32 {
+        if self.dictations == 0 { 0. } else { count as f32 / self.dictations as f32 }
+    }
     pub fn top_app_in(&self, c: Category) -> Option<&str> {
         let in_category: BTreeMap<String, i64> = self.app_words.iter().filter(|(k, _)| Category::classify(Some(k)) == c).map(|(k, v)| (k.clone(), *v)).collect();
         top_of(&in_category).and_then(|t| self.app_words.get_key_value(t)).map(|(k, _)| k.as_str())
@@ -405,6 +409,40 @@ mod tests {
 
     fn seed_id_str(n: &str) -> String {
         format!("00000000-0000-4000-8000-{:0>12}", n)
+    }
+
+    // parity: INS-053 INS-055
+    #[test]
+    fn message_bundles_classify_whatever_their_case() {
+        for b in ["com.apple.MobileSMS", "net.whatsapp.WhatsApp", "desktop.WhatsApp", "ru.keepcoder.Telegram", "org.telegram.desktop", "org.whispersystems.signal-desktop", "com.facebook.archon", "com.hnc.Discord"] {
+            assert_eq!(Category::classify(Some(b)), Category::Personal, "{b}");
+        }
+        for b in ["com.tinyspeck.slackmacgap", "com.microsoft.teams", "com.microsoft.teams2", "us.zoom.xos"] {
+            assert_eq!(Category::classify(Some(b)), Category::Work, "{b}");
+        }
+    }
+
+    // parity: INS-059
+    #[test]
+    fn a_category_share_is_of_dictations_not_words() {
+        let i = Insights { dictations: 4, total_words: 1000, ..Default::default() };
+        assert_eq!(i.share(1), 0.25);
+        assert_eq!(Insights { total_words: 1000, ..Default::default() }.share(0), 0.);
+    }
+
+    // parity: INS-085
+    #[test]
+    fn a_days_top_app_has_most_words_and_ties_go_to_the_smaller_id() {
+        let db = Db::memory();
+        crate::history::seed(&db);
+        db.conn.execute_batch("UPDATE transcriptions SET target_bundle_id='b.app'").unwrap();
+        let i = load(&db).unwrap();
+        let (_, day) = i.days.iter().find(|(_, d)| d.words > 0).unwrap();
+        assert_eq!(day.top_app(), Some("b.app"));
+        let day = |apps: &[(&str, i64)]| Day { apps: apps.iter().map(|(a, w)| (a.to_string(), *w)).collect(), ..Default::default() };
+        assert_eq!(day(&[("a", 2), ("z", 9)]).top_app(), Some("z"));
+        assert_eq!(day(&[("z", 5), ("a", 5)]).top_app(), Some("a"));
+        assert_eq!(day(&[]).top_app(), None);
     }
 
     // parity: INS-025 INS-026 INS-035 INS-036 INS-037 INS-040 INS-041 INS-042 INS-044 INS-057 INS-059 INS-062 INS-066 INS-085 INS-093 INS-095 INS-106

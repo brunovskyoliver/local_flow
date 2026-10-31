@@ -1270,7 +1270,7 @@ mod tests {
         assert_eq!(n, 500);
     }
 
-    // parity: DICT-073 DICT-075 DICT-076 DICT-081
+    // parity: DICT-073 DICT-075 DICT-076
     #[test]
     fn usage_formula_and_trust_policy() {
         let db = empty();
@@ -1286,6 +1286,105 @@ mod tests {
         assert_eq!(next_key_state("established", 4, 2), "retired");
         assert_eq!(next_key_state("established", 5, 2), "established");
         assert!(usage(&db).unwrap().is_empty());
+    }
+
+    // parity: DICT-038
+    /// One damaged store per condition the Swift check names; each loads as `Damaged`.
+    #[test]
+    fn each_kind_of_damage_is_refused_on_load() {
+        let damaged = |hurt: &dyn Fn(&Db)| {
+            let db = empty();
+            save(&db, &entry("Alpha", &["alfa"]), None, "established").unwrap();
+            save(&db, &entry("Beta", &[]), None, "established").unwrap();
+            assert!(load(&db).is_ok());
+            hurt(&db);
+            matches!(load(&db), Err(VocabError::Edit(x)) if x.code == Code::Damaged)
+        };
+        let run = |sql: &str| {
+            let sql = sql.to_string();
+            move |db: &Db| {
+                db.conn.execute_batch(&sql).unwrap();
+            }
+        };
+        assert!(damaged(&run("PRAGMA ignore_check_constraints=ON; UPDATE vocabulary_state SET schema_version=2; PRAGMA ignore_check_constraints=OFF")), "schema version");
+        assert!(damaged(&|db: &Db| {
+            for n in 0..512 {
+                db.conn.execute("INSERT INTO vocabulary_entries (id, canonical_text, aliases_json, enabled) VALUES (?, ?, '[]', 1)", params![format!("x{n}"), format!("Term{n}")]).unwrap();
+            }
+        }), "over 512 rows");
+        assert!(damaged(&run("UPDATE vocabulary_entries SET aliases_json='not json' WHERE canonical_text='Alpha'")), "aliases JSON");
+        assert!(damaged(&run("PRAGMA ignore_check_constraints=ON; UPDATE vocabulary_entries SET learned_at=-1 WHERE canonical_text='Alpha'; PRAGMA ignore_check_constraints=OFF")), "negative learned_at");
+        assert!(damaged(&run("UPDATE vocabulary_state SET payload_bytes=payload_bytes+1")), "payload bytes");
+        assert!(damaged(&run("UPDATE vocabulary_state SET content_hash=printf('%064d', 0)")), "hash");
+        // Bytes and hash agree, but two entries claim one key: the cross-entry check.
+        assert!(damaged(&|db: &Db| {
+            db.conn.execute_batch("UPDATE vocabulary_entries SET canonical_text='Alpha' WHERE canonical_text='Beta'").unwrap();
+            let mut rows: Vec<Entry> = vec![entry("Alpha", &["alfa"]), entry("Alpha", &[])];
+            rows[1].id = "id-Beta".into();
+            let bytes = serialize(&rows);
+            db.conn.execute("UPDATE vocabulary_state SET content_hash=?, payload_bytes=?", params![sha256_hex(&bytes), payload_bytes(&bytes)]).unwrap();
+        }), "cross-entry key");
+    }
+
+    // parity: DICT-142
+    #[test]
+    fn the_513th_entry_is_refused_on_the_entry_field() {
+        let db = empty();
+        for n in 0..MAX_ENTRIES {
+            save(&db, &entry(&format!("Term{n}"), &[]), None, "established").unwrap();
+        }
+        match save(&db, &entry("Oneover", &[]), None, "established") {
+            Err(VocabError::Edit(x)) => {
+                assert_eq!((x.field, x.code), (Field::Entry, Code::TooManyEntries));
+                assert_eq!(x.code.message(), "At most 512 entries.");
+            }
+            o => panic!("{:?}", o.map(|s| s.revision)),
+        }
+    }
+
+    // parity: DICT-144
+    /// Reached the only way a user could: 64 four-byte characters per term fills 1 MiB before 512 entries.
+    #[test]
+    fn a_full_store_is_refused_on_the_entry_field() {
+        let db = empty();
+        let term = |n: u32| -> String { (0..64).map(|i| char::from_u32(0x20000 + n * 64 + i).unwrap()).collect() };
+        // Written directly up to near the cap: one save per entry takes half a minute.
+        let mut rows: Vec<Entry> = (0..400u32).map(|i| Entry { id: format!("id-{i:03}"), canonical: term(i * 9), aliases: (1..=8).map(|a| term(i * 9 + a)).collect(), enabled: true, learned_at: None }).collect();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        for e in &rows {
+            db.conn.execute("INSERT INTO vocabulary_entries (id, canonical_text, aliases_json, enabled) VALUES (?, ?, ?, 1)", params![e.id, e.canonical, encode_aliases(&e.aliases)]).unwrap();
+        }
+        let bytes = serialize(&rows);
+        db.conn.execute("UPDATE vocabulary_state SET content_hash=?, payload_bytes=?", params![sha256_hex(&bytes), payload_bytes(&bytes)]).unwrap();
+        let mut n = 400 * 9;
+        let refused = loop {
+            let mut e = entry("x", &[]);
+            e.id = format!("id-z{n}");
+            e.canonical = term(n);
+            e.aliases = (1..=8).map(|a| term(n + a)).collect();
+            n += 9;
+            match save(&db, &e, None, "established") {
+                Ok(_) => assert!(n < 9 * 512, "the store never filled"),
+                Err(VocabError::Edit(x)) => break x,
+                Err(o) => panic!("{}", describe(&o)),
+            }
+        };
+        assert_eq!((refused.field, refused.code), (Field::Entry, Code::PayloadCapacity));
+        assert_eq!(refused.code.message(), "Vocabulary storage is full.");
+        assert!(load(&db).unwrap().state.payload_bytes as usize <= MAX_PAYLOAD);
+    }
+
+    // parity: DICT-076
+    #[test]
+    fn a_failed_usage_read_reads_unused_without_an_error() {
+        let db = empty();
+        let e = entry("Alpha", &["alfa"]);
+        save(&db, &e, None, "established").unwrap();
+        db.conn.execute_batch("UPDATE dictionary_key_usage SET applied=4; DROP TABLE dictionary_key_usage;").unwrap();
+        let mut m = Model::default();
+        m.refresh(&db, |_| false);
+        assert_eq!(m.usage_summary(&db, &e), "Unused");
+        assert_eq!(m.load_error, None);
     }
 
     // parity: DICT-079 DICT-078 DICT-069
