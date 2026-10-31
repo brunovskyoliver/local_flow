@@ -95,3 +95,46 @@ extension Admin {
     return "flowd admin failed: " + failed.error.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
+
+/// A row of `flowd admin token list --json`: never a hash or a value.
+struct AdminPairingToken: Decodable, Identifiable, Equatable, Sendable {
+  var id: Int
+  var label: String
+  var state: String
+  var deviceID: Int
+  var expiresAt: String
+
+  enum CodingKeys: String, CodingKey {
+    case id, label, state
+    case deviceID = "device_id"
+    case expiresAt = "expires_at"
+  }
+}
+
+/// `flowd admin token create --json`: shown once, held only in the Pairing tab's state.
+struct CreatedPairingToken: Decodable, Equatable, Sendable {
+  var label: String
+  var expiresAt: String
+  var token: String
+  var link: String
+
+  enum CodingKeys: String, CodingKey {
+    case label, token, link
+    case expiresAt = "expires_at"
+  }
+}
+
+extension Admin {
+  static func parseTokens(_ text: String) -> [AdminPairingToken] {
+    (try? JSONDecoder().decode([AdminPairingToken].self, from: Data(text.utf8))) ?? []
+  }
+
+  static func tokenCreateArguments(label: String, user: Int?, ttl: String, address: String)
+    -> [String]
+  {
+    var arguments = ["token", "create", "--label", label, "--ttl", ttl, "--json"]
+    if let user { arguments += ["--user", String(user)] }
+    if !address.isEmpty { arguments += ["--address", address] }
+    return arguments
+  }
+}

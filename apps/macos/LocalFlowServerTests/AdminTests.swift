@@ -50,4 +50,66 @@ final class AdminTests: XCTestCase {
     XCTAssertEqual(status.analysis.model, "smart")
     XCTAssertEqual(status.startedAt, "2026-10-01T21:00:00Z")
   }
+
+  func testParsesATokenUserWithSpacesInItsLabel() {
+    let users = Admin.parseList(
+      "user 7   token   Grace's phone (work)  approved  created 2026-10-31 10:00\n"
+        + "  device 3  Grace's phone  approved  enrolled 2026-10-31 10:01  last seen never\n")
+    XCTAssertEqual(users.map(\.provider), ["token"])
+    XCTAssertEqual(users[0].display, "Grace's phone (work)")
+    XCTAssertEqual(users[0].devices.map(\.id), [3])
+  }
+
+  func testTokenArgumentsAndListHoldNoValue() {
+    XCTAssertEqual(
+      Admin.tokenCreateArguments(label: "Ada", user: nil, ttl: "24h", address: ""),
+      ["token", "create", "--label", "Ada", "--ttl", "24h", "--json"])
+    XCTAssertEqual(
+      Admin.tokenCreateArguments(label: "Ada", user: 4, ttl: "7d", address: "http://10.0.0.2:8090"),
+      [
+        "token", "create", "--label", "Ada", "--ttl", "7d", "--json", "--user", "4", "--address",
+        "http://10.0.0.2:8090",
+      ])
+    let tokens = Admin.parseTokens(
+      #"[{"id":2,"label":"Mini","state":"redeemed","user_id":4,"device_id":9,"created_at":"2026-10-30T10:00:00Z","expires_at":"2026-10-31T10:00:00Z"}]"#
+    )
+    XCTAssertEqual(tokens.map(\.deviceID), [9])
+    XCTAssertTrue(Admin.parseTokens("[]").isEmpty)
+  }
+
+  @MainActor
+  func testPairingModelShowsTheValueOnceAndForgetsIt() async {
+    let value = "lfp_NOT-A-REAL-TOKEN"
+    let model = PairingModel { arguments in
+      if arguments.contains("create") {
+        return ProcessResult(
+          status: 0,
+          output:
+            #"{"id":1,"label":"Ada","expires_at":"2026-11-01T10:00:00Z","token":"\#(value)","link":""}"#,
+          error: "")
+      }
+      if arguments.contains("--json") {
+        return ProcessResult(status: 0, output: "[]", error: "")
+      }
+      return ProcessResult(status: 0, output: "", error: "")
+    }
+    await model.create(label: "Ada", user: nil, ttl: "24h", address: "")
+    XCTAssertEqual(model.created?.token, value)
+    model.clearCreated()
+    await model.reload()
+    XCTAssertNil(model.created)
+  }
+
+  @MainActor
+  func testPairingModelReportsAFlowdFromBeforePairing() async {
+    let model = PairingModel { _ in
+      ProcessResult(status: 1, output: "", error: "usage: flowd admin --data-dir <dir>\n")
+    }
+    await model.reload()
+    XCTAssertEqual(model.message, "This flowd has no pairing tokens. Update the server first.")
+  }
+
+  func testQRCodeEncodesALink() {
+    XCTAssertNotNil(PairingView.qrCode("localflow://pair?address=x#token=y"))
+  }
 }

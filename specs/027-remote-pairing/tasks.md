@@ -48,8 +48,8 @@
 
 ## Phase 6: User Story 4, manage tokens (P2)
 
-- [ ] T023 [US4] Add TokensView.swift with create, one-time display, copy, a note that pasting is safest, QR via `CIQRCodeGenerator`, list and revoke, running `flowd admin` with a fake runner in tests, in the Settings visual language
-- [ ] T024 [US4] Add PairingView.swift and a Pairing tab in apps/macos/LocalFlowServer/MainWindow.swift, extending Admin.swift, with apps/macos/LocalFlowServerTests/AdminTests.swift; check `parseList` handles provider `token`
+- [X] T023 [US4] Add TokensView.swift with create, one-time display, copy, a note that pasting is safest, QR via `CIQRCodeGenerator`, list and revoke, running `flowd admin` with a fake runner in tests, in the Settings visual language
+- [X] T024 [US4] Add PairingView.swift and a Pairing tab in apps/macos/LocalFlowServer/MainWindow.swift, extending Admin.swift, with apps/macos/LocalFlowServerTests/AdminTests.swift; check `parseList` handles provider `token`
 
 ## Phase 7: User Story 3, server mode (P2)
 

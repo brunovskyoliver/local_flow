@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Register Swift source files in apps/macos/LocalFlow.xcodeproj/project.pbxproj.
 
-Usage: scripts/register-xcode-sources.py [--target app|tests|flowd-speech] LocalFlow/Core/Foo.swift ...
+Usage: scripts/register-xcode-sources.py [--target app|tests|flowd-speech|flowd-meeting|server|server-tests] LocalFlow/Core/Foo.swift ...
 
 Paths are relative to apps/macos. Without --target, files under LocalFlowTests/ join the
 test target's sources phase and every other file joins the app target's. With --target, every
@@ -22,6 +22,8 @@ PHASES = {
     # Created by scripts/add-speech-worker-target.py.
     "flowd-speech": "F0145000000000000000000B",
     "flowd-meeting": "F0146000000000000000000B",
+    "server": "F0320000000000000000A006",
+    "server-tests": "F0320000000000000000B006",
 }
 
 

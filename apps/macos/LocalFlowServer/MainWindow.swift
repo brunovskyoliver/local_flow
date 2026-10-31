@@ -5,6 +5,7 @@ struct MainWindow: View {
   let stats: StatsModel
   @State private var devices = DevicesModel()
   @State private var models = ModelsModel()
+  @State private var pairing = PairingModel()
 
   var body: some View {
     TabView {
@@ -12,6 +13,7 @@ struct MainWindow: View {
       LogsView(monitor: monitor).tabItem { Text("Logs") }
       StatsView(stats: stats, monitor: monitor).tabItem { Text("Stats") }
       DevicesView(model: devices).tabItem { Text("Devices") }
+      PairingView(model: pairing).tabItem { Text("Pairing") }
       ModelsView(model: models).tabItem { Text("Models") }
     }
     .padding()
