@@ -20,6 +20,8 @@ final class FakeFlowdAccounts: @unchecked Sendable {
   /// once, as a lost reply looks to the client.
   var pairError: String?
   var pairDrops = 0
+  /// A flowd from before Feature 027: `pair` is an unknown message type.
+  var oldServer = false
   private(set) var pairs: [(token: String, key: Data?, signatureValid: Bool)] = []
   private(set) var enrollSignatureValid = false
   private(set) var refreshSignaturesValid: [Bool] = []
@@ -71,6 +73,9 @@ final class FakeFlowdAccounts: @unchecked Sendable {
         return [.message(["type": "error", "op": op, "code": code])]
       }
     case "pair":
+      if oldServer {
+        return [.message(["type": "error", "code": "invalid_message"]), .close(1008)]
+      }
       let key = Data(base64URL: object["device_key"] as? String ?? "")
       devicePublicKey = key
       pairs.append(
@@ -545,6 +550,30 @@ final class RemoteEnrollmentTests: XCTestCase {
       XCTFail("public http")
     } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .notConfigured) }
     XCTAssertEqual(fetcher.fetches, fetches)
+  }
+
+  // MARK: Existing installs (Feature 027, US5)
+
+  /// The whole old-server answer: an unknown type gets invalid_message with no op, then a close.
+  /// The server has no tokens, so nothing was spent; a working device stays as it was, and
+  /// the same token still goes through after the server is updated.
+  func testANewClientAgainstAnOldServer() async throws {
+    try await approvedDevice()
+    let before = try RemoteCredentialItem.allCases.map { try credentials.read($0) }
+    let token = try pairingToken()
+    flowd.oldServer = true
+    do {
+      try await enrollment.pair(token: token)
+      XCTFail("expected update required")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .updateRequired) }
+    XCTAssertEqual(preferences.remoteState, .approved)
+    XCTAssertEqual(try RemoteCredentialItem.allCases.map { try credentials.read($0) }, before)
+    XCTAssertEqual(
+      pairingFailureMessage(RemoteEnrollmentError.updateRequired),
+      "Update the LocalFlow server to pair with a token. The token was not used.")
+    flowd.oldServer = false
+    try await enrollment.pair(token: token)
+    XCTAssertEqual(flowd.pairs.map(\.token), [token.value])
   }
 
   /// `scripts/test-pairing-e2e.sh` serves real flowd code on loopback and names it here.

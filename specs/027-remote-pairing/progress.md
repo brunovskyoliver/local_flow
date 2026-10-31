@@ -18,5 +18,6 @@ Updated: 2026-10-31
 - 2026-10-31 phase 2: schema v3 with the pre-v3 copy, and `accounts/pairing.go`. `go test -race ./...` and `go vet ./...` pass; full `make check` with phases 1 and 2 applied exit 0 after 616 s. No hardware acceptance or resource measurement was run. A v2 fixture device keeps its references and still refreshes.
 - 2026-10-31 phase 3: `pair` on flowd, `flowd admin token`, PairingToken and PairingLink, RemoteEnrollment.pair, Mac sheet and link handling, iOS section and link handling. `go test -race ./...`, targeted Mac (30) and iOS (22) XCTest, LocalFlowCore tests and full `make check` pass. Mac link delivery was not run live; no hardware acceptance.
 - 2026-10-31 phase 4: `--remote-listen` takes any IP literal, `clientAddress` per R7, proxy test with no token on the wire, FR-012a in `origin` and `channelURL`, `updateAddress`, pasted links, not-TLS notice, iOS ATS keys and T032 (R9), Go-Swift pairing vectors, opt-in `scripts/test-pairing-e2e.sh`. `go test -race ./...`, `swift test`, targeted Mac and iOS tests, the e2e script and `make check` pass.
+- 2026-10-31 phase 5: v2 database migration test, new client against an old server keeps a working device and spends no token, `enroll` refuses an `lfp_` value, `install-remote-server.sh --dry-run --dev` shows loopback binds only. Same test commands pass.
 
 ## Report

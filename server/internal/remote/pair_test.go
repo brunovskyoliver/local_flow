@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -378,6 +380,81 @@ func TestPairAndUseThroughAReverseProxy(t *testing.T) {
 		if bytes.Contains(observed, secret) {
 			t.Errorf("the proxy saw the %s", name)
 		}
+	}
+}
+
+// US5: a device enrolled by sign-in on a v2 store refreshes and opens a session
+// after the store migrates, with its identity and tokens as they were.
+func TestV2DeviceWorksAfterMigration(t *testing.T) {
+	ctx := context.Background()
+	clock := newManualClock()
+	dir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := os.ReadFile("testdata/accounts-v2.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresh, hash, err := accounts.NewToken(accounts.RefreshPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := newDevice(t)
+	now := clock.Now().UnixMilli()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, accounts.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		string(schema),
+		fmt.Sprintf(`INSERT INTO users VALUES (7, 'apple', 'sub-7', 'Oliver', 'approved', %d, %d)`, now, now),
+		fmt.Sprintf(`INSERT INTO devices (id, user_id, name, public_key, state, refresh_hash, refresh_expires_at, enrolled_at, last_seen_at, changed_at)
+			VALUES (3, 7, 'Mac', x'%x', 'approved', x'%x', %d, %d, 0, %d)`, d.public, hash[:], now+time.Hour.Milliseconds(), now, now),
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(statement, err)
+		}
+	}
+	db.Close()
+
+	h := newAccountsHarnessAt(t, nil, dir, clock)
+	if _, err := os.Stat(filepath.Join(dir, accounts.PreV3FileName)); err != nil {
+		t.Fatal("no copy of the v2 database:", err)
+	}
+	c, _ := h.hello(PurposeRefresh, "")
+	c.send(Refresh{Op: 1, RefreshToken: refresh, Signature: d.sign(t, []byte(RefreshSignatureLabel), c.channel.Binding(), sha256Of(refresh))})
+	tokens, ok := c.recv().(Tokens)
+	if !ok {
+		t.Fatal("refresh after migration refused")
+	}
+	if _, first := h.hello(PurposeSession, tokens.AccessToken); first.MessageType() != "ready" {
+		t.Fatalf("session after migration: %#v", first)
+	}
+	users, err := h.store.Users(ctx)
+	if err != nil || len(users) != 1 || users[0].Provider != "apple" || users[0].State != accounts.UserApproved {
+		t.Fatalf("%+v %v", users, err)
+	}
+}
+
+// US5: a pairing token offered as a sign-in ID token is just a bad ID token. The
+// enroll path doesn't know about tokens, and the token stays live.
+func TestEnrollDoesNotAcceptAPairingToken(t *testing.T) {
+	h := newAccountsHarness(t, nil)
+	value, row := h.newToken(0, accounts.DefaultPairingLifetime)
+	d := newDevice(t)
+	c, _ := h.hello(PurposeEnroll, "")
+	// Raw: EncodeMessage refuses this shape too.
+	data, err := json.Marshal(map[string]any{"schema_version": 1, "type": "enroll", "op": 1, "provider": "apple",
+		"id_token": value, "device_name": "Mac", "device_key": base64.RawURLEncoding.EncodeToString(d.public),
+		"signature": base64.RawURLEncoding.EncodeToString(d.sign(t, []byte(EnrollSignatureLabel), c.channel.Binding()))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.sendFrame(Frame{KindControl, data})
+	expectError(t, c.recv(), 0, CodeInvalidMessage)
+	if h.tokenState(row.ID) != accounts.PairingLive {
+		t.Fatal("token spent by enroll")
 	}
 }
 

@@ -41,8 +41,8 @@
 
 ## Phase 5: User Story 5, existing installs (P1, MVP)
 
-- [ ] T021 [US5] Add a test that a v2-enrolled device refreshes and opens a session after migration, and a Swift test for the new client against an old server (rejected `pair`, token unspent), in server/internal/remote/ and apps/macos/LocalFlowTests/RemoteEnrollmentTests.swift
-- [ ] T022 [US5] Confirm that an unknown `lfp_` code path doesn't change the sign-in `enroll` tests and that scripts/install-remote-server.sh keeps its loopback bind
+- [X] T021 [US5] Add a test that a v2-enrolled device refreshes and opens a session after migration, and a Swift test for the new client against an old server (rejected `pair`, token unspent), in server/internal/remote/ and apps/macos/LocalFlowTests/RemoteEnrollmentTests.swift
+- [X] T022 [US5] Confirm that an unknown `lfp_` code path doesn't change the sign-in `enroll` tests and that scripts/install-remote-server.sh keeps its loopback bind
 
 **Checkpoint (MVP)**: `make check` passes.
 
