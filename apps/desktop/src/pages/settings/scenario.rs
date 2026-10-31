@@ -96,6 +96,10 @@ fn demo_input(id: u32, uid: &str, name: &str, kind: &str) -> ConnectedInput {
 }
 
 pub(super) fn apply_view(page: &mut SettingsPage, _window: &mut Window, cx: &mut Context<SettingsPage>) {
+    // The audit window can't be scrolled from outside, so captures of lower sections ask for it.
+    if let Some(y) = std::env::var("LOCALFLOW_SETTINGS_SCROLL").ok().and_then(|y| y.parse::<f32>().ok()) {
+        page.scroll_handle().set_offset(point(px(0.), px(-y)));
+    }
     match page.scenario.as_str() {
         "updates-sparkle" => page.updates = Updates::Sparkle { automatic: true, can_check: true },
         "updates-failed" => page.updates = Updates::Failed,

@@ -264,7 +264,7 @@ impl SettingsPage {
             )
     }
 
-    fn app_row(&self, id: &str, exclusions: bool, kind: &str, last: bool, cx: &mut Context<Self>) -> Div {
+    fn app_row(&self, id: &str, exclusions: bool, kind: &str, last: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let pl = pal(cx);
         let group_name = SharedString::from(format!("context.row.{id}"));
         let own = id == core::BUNDLE_ID;
@@ -291,6 +291,8 @@ impl SettingsPage {
         };
         h_flex()
             .group(group_name)
+            .id(SharedString::from(format!("context.row.{id}")))
+            .test_support()
             .w_full()
             .h(px(56.))
             .px(px(16.))

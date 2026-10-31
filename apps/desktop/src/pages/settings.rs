@@ -316,6 +316,10 @@ impl SettingsPage {
         cx.notify();
     }
 
+    pub(super) fn scroll_handle(&self) -> &ScrollHandle {
+        &self.scroll
+    }
+
     // MARK: Actions
 
     /// `run`: ignored while performing; a failed action reads at the page bottom.
@@ -395,6 +399,8 @@ impl SettingsPage {
     }
 
     /// The recorder's completion: installs first, saves only if that worked.
+    /// ponytail: unused until the Mac recorder (Feature 025) calls back.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn recorded(&mut self, value: Option<Shortcut>, cx: &mut Context<Self>) {
         self.recording = false;
         if let Some(value) = value {
@@ -621,6 +627,8 @@ impl SettingsPage {
         cx.notify();
     }
     /// The Move up and Move down accessibility actions, one step at a time.
+    /// ponytail: Kit exposes no custom accessibility actions yet; called from tests.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn move_mic(&mut self, id: &str, delta: isize, cx: &mut Context<Self>) {
         self.edit_mics(
             |entries| {
@@ -730,6 +738,7 @@ impl SettingsPage {
                 .child(
                     div()
                         .id(SharedString::from(format!("settings.microphones.row.{id}")))
+                        .test_support()
                         .when(!(r.available || r.is_default), |d| d.opacity(0.55))
                         .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
                         .drag_over::<DragMic>(move |s, _, _, _| s.border_t_2().border_color(accent))
@@ -1071,7 +1080,7 @@ impl Render for SettingsPage {
                     .items_center()
                     .text_color(pl.ink)
                     .text_size(px(14.))
-                    .child(div().w_full().max_w(px(960.)).px(px(if compact { 24. } else { 48. })).pt(px(if compact { 32. } else { 48. })).pb(px(64.)).flex_none().child(column)),
+                    .child(div().w_full().max_w(px(960.)).px(px(if compact { 23. } else { 47. })).pt(px(if compact { 31. } else { 47. })).pb(px(64.)).flex_none().child(column)),
             )
             .children(overlay)
     }
@@ -1092,12 +1101,12 @@ pub(super) fn row(title: impl Into<SharedString>, detail: Option<String>, contro
         .w_full()
         .gap(px(if compact { 10. } else { 22. }))
         .py(px(19.))
-        .child(v_flex().flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(1.)).child(t(s).size(12.).color(m).line_spacing(4.)))))
+        .child(v_flex().flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(0.5)).child(t(s).size(12.).color(m).line_spacing(4.)))))
         .child(div().flex_none().child(control))
 }
 
 pub(super) fn switch(id: &'static str, label: &'static str, on: bool, disabled: bool, f: impl Fn(&bool, &mut Window, &mut App) + 'static) -> impl IntoElement {
-    Switch::new(id).checked(on).disabled(disabled).accessibility_label(label).on_click(f)
+    Switch::new(id).checked(on).disabled(disabled).accessibility_label(label).large().on_click(f)
 }
 
 /// A native `Picker`: fixed width, the value and two chevrons on a grey fill. The menu goes through
@@ -1106,23 +1115,28 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
     let id: SharedString = id.into();
     let pl = pal(cx);
     let title = options.iter().find(|o| o.1 == current).map_or(current.to_string(), |o| o.0.to_string());
+    let option_chars = options.iter().map(|o| o.0.chars().count()).max().unwrap_or(0);
     let options: Vec<(&'static str, &'static str)> = options.to_vec();
     let current = current.to_string();
     let this = cx.entity().downgrade();
     let key = id.clone();
     let fill = pl.ink.opacity(if pl.mode.is_dark() { 0.14 } else { 0.2 });
-    let chevrons = v_flex().items_center().child(icon("chevron.up", 8., pl.ink)).child(icon("chevron.down", 8., pl.ink));
-    Button::new(ElementId::Name(id))
+    let chevrons = v_flex().items_center().gap(px(-1.)).child(icon("chevron.up", 9., pl.ink)).child(icon("chevron.down", 9., pl.ink));
+    // A native picker hugs its longest option and centres in its frame.
+    // ponytail: width estimated from character count, measure the text if an option looks wrong.
+    let longest = option_chars;
+    let hug = (longest as f32 * 7. + 50.).min(width);
+    let button = Button::new(ElementId::Name(id))
         .custom(flow_ui::controls::ButtonCustomVariant::new(cx).color(fill).foreground(pl.ink).hover(fill).active(fill).shadow(false))
         .bg(fill)
         .accessibility_label(label.into())
         .disabled(disabled)
         .when(disabled, |b| b.opacity(0.45))
-        .h(px(20.))
-        .w(px(width))
-        .px(px(7.))
-        .rounded(px(5.))
-        .child(h_flex().w_full().justify_between().gap(px(4.)).child(t(title).size(13.).lines(1).a11y_hidden()).child(chevrons))
+        .h(px(24.))
+        .w(px(hug))
+        .px(px(12.))
+        .rounded(px(7.))
+        .child(h_flex().w_full().justify_between().gap(px(4.)).child(t(title).size(13.5).lines(1).a11y_hidden()).child(chevrons))
         .dropdown_menu(move |mut menu, _, _| {
             for (name, value) in options.clone() {
                 let (this, key) = (this.clone(), key.clone());
@@ -1131,8 +1145,8 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
                 }));
             }
             menu
-        })
-    .into_any_element()
+        });
+    h_flex().w(px(width)).justify_center().child(button).into_any_element()
 }
 
 /// `PillMenu`: the title and a chevron, as a menu.
