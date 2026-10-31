@@ -56,7 +56,7 @@ impl HistoryPage {
                 FlowButton::new(SharedString::from(key.to_string()), ButtonKind::Plain, title.clone())
                     .a11y_selected(on)
                     // The native indicator: chevron centered 4 from the leading edge, title at 12.
-                    .content(h_flex().py(px(3.5)).child(div().w(px(8.)).flex().justify_center().child(icon(if on { "chevron.down" } else { "chevron.right" }, 11., if p.ink.l > 0.5 { p.ink } else { p.muted }))).child(div().w(px(4.))).child(t(title).size(size).a11y_hidden()))
+                    .content(h_flex().py(px(3.5)).child(div().w(px(8.)).flex().justify_center().child(disclosure_chevron(on, &p))).child(div().w(px(4.))).child(t(title).size(size).a11y_hidden()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !this.open.remove(&k) {
                             this.open.insert(k.clone());

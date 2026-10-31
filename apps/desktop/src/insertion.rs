@@ -718,6 +718,7 @@ mod tests {
         cx.update(select_target);
         cx.update(cancel);
         assert_eq!(message(cx), "Cancelling selection…");
+        assert!(cx.update(|cx| cx.has_global::<PanelWindow>()), "stays up until the capture returns");
         cx.executor().advance_clock(Duration::from_millis(5));
         cx.run_until_parked();
         assert_eq!(phase(cx), Phase::Idle);
@@ -733,6 +734,7 @@ mod tests {
         cx.update(confirm);
         cx.update(cancel);
         assert_eq!(message(cx), "Finishing delivery status…");
+        assert!(cx.update(|cx| cx.has_global::<PanelWindow>()), "stays up until the outcome is recorded");
         cx.executor().advance_clock(Duration::from_millis(5));
         cx.run_until_parked();
         assert_eq!(finished(cx), "Nothing was inserted. Review the saved text and choose the field again.");

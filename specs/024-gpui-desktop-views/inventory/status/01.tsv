@@ -1,5 +1,5 @@
 SHELL-001	live	live:audit/tiling/tiling-run.txt ; live:audit/tiling/normal-window-light.png ; live:audit/tiling/normal-window-ax.txt
-SHELL-002	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
+SHELL-002	auto	test:fonts_register_before_services ; note:the test reads the call order in main.rs; order has no visible effect
 SHELL-003	auto	test:landing_page_follows_purpose
 SHELL-004	auto	test:start_recovers_meetings_and_checks_the_model
 SHELL-005	live	live:audit/tiling/tiling-run.txt ; live:audit/tiling/normal-window-light.png ; note:window opens and reopens from the menu; activation policy calls read in shell.rs, Dock state not captured
@@ -12,7 +12,7 @@ SHELL-011	auto	test:reopening_keeps_the_setup_step
 SHELL-012	service	service:GPUI has no terminate delegate; the shortcut and menu go through menu::quit; a system logout waits on the platform phase
 SHELL-013	recorded	recorded:SwiftUI wiring detail with no Rust counterpart; main.rs composes services directly
 SHELL-014	service	service:update_busy computes the gate but Sparkle arrives with the updater phase
-SHELL-015	auto	test:activation_rereads_reduce_motion
+SHELL-015	auto	test:activation_rereads_reduce_motion ; note:difference: reread on activation, not on Swift's accessibilityDisplayOptionsDidChangeNotification, so a pill showing while the app is inactive keeps the old value; there is no meter task to restart
 SHELL-016	auto	test:app_menu_has_swifts_groups
 SHELL-017	service	service:Services::check_for_updates returns Unavailable until the updater phase
 SHELL-018	auto	test:app_menu_has_swifts_groups
@@ -32,7 +32,7 @@ SHELL-031	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell
 SHELL-032	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-033	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png ; test:card_rows_and_footer_sit_where_swift_puts_them
 SHELL-034	auto	test:onboarding_owns_the_window_until_setup_finishes
-SHELL-035	auto	test:finishing_writes_prefs_and_opens_the_library
+SHELL-035	auto	test:finishing_setup_ends_the_poll ; note:difference: no wake; the 500 ms tick reads the preference
 SHELL-036	auto	test:closing_the_window_saves_the_notes
 SHELL-037	auto	test:open_selects_keeps_one_window_and_close_keeps_the_selection
 SHELL-038	auto	test:only_an_active_settings_or_setup_window_polls ; test:the_settings_poll_redraws_only_on_settings
@@ -82,7 +82,7 @@ SHELL-081	auto	test:recovery_states_render_and_disable_while_busy ; note:native-
 SHELL-082	auto	test:recovery_actions_retry_copy_and_discard ; note:command path checked through the Fake service; the production dictation session arrives with Feature 025
 SHELL-083	auto	test:recovery_states_render_and_disable_while_busy
 SHELL-084	auto	test:recovery_states_render_and_disable_while_busy
-SHELL-085	auto	test:recovery_states_render_and_disable_while_busy
+SHELL-085	auto	test:recovery_states_render_and_disable_while_busy ; note:selectable set in source, a test can't drag a selection
 SHELL-086	auto	test:recovery_actions_retry_copy_and_discard ; note:command path checked through the Fake service; the production dictation session arrives with Feature 025
 SHELL-087	auto	test:recovery_actions_retry_copy_and_discard
 SHELL-088	auto	test:recovery_actions_retry_copy_and_discard ; note:native-style button in the destructive colour
@@ -180,7 +180,7 @@ PILL-005	auto	test:timing_and_waveform_math
 PILL-006	auto	test:timing_and_waveform_math
 PILL-007	auto	test:dictation_lays_out_swifts_sizes
 PILL-008	auto	test:dictation_lays_out_swifts_sizes
-PILL-009	auto	test:dictation_lays_out_swifts_sizes
+PILL-009	auto	test:dictation_lays_out_swifts_sizes ; note:count, width and spacing asserted; ink colour read in source, bars aren't readable by a test
 PILL-010	recorded	recorded:GPUI redraws per display frame through request_animation_frame; no interval value exists to assert
 PILL-011	auto	test:panel_is_a_borderless_nonactivating_popup ; test:opening_the_pill_pins_its_panel ; note:pin_panel swaps GPUI's panel class for a subclass answering NO to canBecomeKey and canBecomeMain and sets level 3. The class answers are unit-tested in flow-platform; not observed on a running panel, because a real pill would show on the owner's screen
 PILL-012	auto	test:panel_is_a_borderless_nonactivating_popup ; test:opening_the_pill_pins_its_panel ; note:pin_panel swaps GPUI's panel class for a subclass answering NO to canBecomeKey and canBecomeMain and sets level 3. The class answers are unit-tested in flow-platform; not observed on a running panel, because a real pill would show on the owner's screen
@@ -188,7 +188,7 @@ PILL-013	auto	test:panel_position
 PILL-014	auto	test:panel_position
 PILL-015	auto	test:panels_show_on_the_mouses_screen ; note:partial: mouse screen then primary; Swift's first choice, the target AX window's screen, waits for the capture service
 PILL-016	auto	test:panel_width_is_a_whole_point_ceiling ; note:found and fixed: wide symbols overflowed the window by 5 points
-PILL-017	auto	test:show_rises_and_hide_drops_in_the_frame ; note:window alpha and position are drawn inside the panel, since GPUI cannot move or fade a window; the panel is 10 taller for it
+PILL-017	auto	test:show_rises_and_hide_drops_in_the_frame
 PILL-018	auto	test:hide_fades_then_closes ; test:show_rises_and_hide_drops_in_the_frame
 PILL-019	live	live:audit/mac/shell/pill-swap-frames.txt ; test:resize_animates_the_same_panel ; test:unavailable_frames_reopen_the_panel
 PILL-020	auto	test:reduce_motion_resizes_and_hides_at_once
@@ -203,7 +203,7 @@ PILL-028	auto	test:precedence_and_show_decision
 PILL-029	auto	test:dictation_lays_out_swifts_sizes ; test:dictation_labels_and_cancel
 PILL-030	auto	test:connecting_with_reduce_motion_is_static ; test:dictation_labels_and_cancel
 PILL-031	auto	test:connecting_with_reduce_motion_is_static
-PILL-032	auto	test:recording_draws_sixteen_bars_at_the_level_height
+PILL-032	auto	test:recording_draws_sixteen_bars_at_the_level_height ; test:bars_follow_swift_formulas ; note:16 bars, pitch and fade asserted; the 87 window and scroll shift read in source
 PILL-033	auto	test:timing_and_waveform_math
 PILL-034	auto	test:recording_draws_sixteen_bars_at_the_level_height
 PILL-035	auto	test:dictation_lays_out_swifts_sizes
@@ -383,7 +383,7 @@ SHELL-227	auto	test:button_styles_match_swift
 SHELL-228	auto	test:button_styles_match_swift
 SHELL-229	auto	test:button_styles_match_swift ; note:opacity value read, not rendered pixels; unsaved-busy-light-rust.png viewed with no reference pair
 SHELL-230	auto	test:button_styles_match_swift
-SHELL-231	auto	test:button_styles_match_swift
+SHELL-231	auto	test:button_styles_match_swift ; note:pressed-over-disabled not asserted; a disabled button takes no press in either toolkit
 SHELL-232	auto	test:button_styles_match_swift
 SHELL-233	service	service:keep comes from voice_over_on on the pages; VoiceOver state needs the owner to confirm with VoiceOver running
 SHELL-234	recorded	recorded:Swift note or unconstructed view; no reachable behaviour to port

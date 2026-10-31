@@ -3,14 +3,25 @@
 //! smaller; our own `sf-*` drawings elsewhere (`sfw-*` for wide glyphs). Ours are hand-drawn from
 //! primitives by comparing with the rendered symbol, not derived from Apple's glyph data.
 //! Page code asks by SF Symbol name so it reads like the Swift it ports.
-use gpui_kit::{AssetSource, Hsla, Result, SharedString, Styled, Svg, px, svg};
+use crate::tokens::Palette;
+use gpui_kit::{AssetSource, Hsla, Result, SharedString, Styled, Svg, hsla, px, svg};
 use std::borrow::Cow;
 
 /// SF Symbol name to bundled SVG file.
 pub fn lucide(symbol: &str) -> &'static str {
     match symbol {
         "arrow.right" => "arrow-right",
-        "infinity" => "sf-infinity",
+        // `symbol@weight`: an SVG's stroke can't follow a font weight, so the weights Swift asks for are files.
+        // AppKit's disclosure triangle reads as the bold chevron.
+        "arrow.right@semibold" => "arrow-right-semibold",
+        "chevron.down@bold" => "chevron-down-bold",
+        "chevron.down@semibold" => "chevron-down-semibold",
+        "chevron.right@bold" => "chevron-right-bold",
+        "chevron.right@semibold" => "chevron-right-semibold",
+        "xmark@medium" => "x-medium",
+        "xmark@semibold" => "x-semibold",
+        "xmark@bold" => "x-bold",
+        "infinity" => "sfw-infinity",
         "bubble.left" => "sf-bubble-left",
         "envelope" => "sf-envelope",
         "text.bubble" => "sf-text-bubble",
@@ -110,18 +121,29 @@ pub fn advance(symbol: &str) -> f32 {
 
 /// A symbol drawn at `size` points in `color`, hidden from accessibility as SF Symbols with a
 /// neighboring label are.
+/// The native `DisclosureGroup` indicator: one fixed size whatever the title's,
+/// white in dark mode and a pale grey in light, not the title's colour.
+pub fn disclosure_chevron(open: bool, p: &Palette) -> Svg {
+    icon(if open { "chevron.down@bold" } else { "chevron.right@bold" }, 9., disclosure_color(p))
+}
+
+fn disclosure_color(p: &Palette) -> Hsla {
+    if p.ink.l > 0.5 { hsla(0., 0., 1., 1.) } else { hsla(0., 0., 0., 0.25) }
+}
+
 pub fn icon(symbol: &str, size: f32, color: impl Into<Hsla>) -> Svg {
     let color: Hsla = color.into();
+    let file = lucide(symbol);
+    let symbol = symbol.split('@').next().unwrap_or(symbol);
     #[cfg(any(test, feature = "test-support"))]
     crate::probe::record_symbol_color(symbol, color);
     #[cfg(feature = "test-support")]
     crate::probe::record(&format!("symbol:{symbol}"));
-    let path: SharedString = format!("flow-icons/{}.svg", lucide(symbol)).into();
+    let path: SharedString = format!("flow-icons/{file}.svg").into();
     #[cfg(any(test, feature = "test-support"))]
     crate::probe::record_symbol(symbol);
     // An SF glyph overhangs its point size: `sf-` boxes are 1.18 em (fitted on the contact sheet in
     // `audit/icons`), `sfw-` 1.888 em at the same unit scale. Layout takes the symbol's advance.
-    let file = lucide(symbol);
     let glyph = size * if file.starts_with("sfw-") { 1.888 } else if file.starts_with("sf-") { 1.18 } else { 1. };
     let advance = size * advance(symbol);
     svg().path(path).w(px(glyph)).h(px(glyph)).ml(px((advance - glyph) / 2.)).mr(px((advance - glyph) / 2.)).my(px((size - glyph) / 2.)).flex_none().text_color(color)
@@ -147,7 +169,7 @@ embed!(
     "sf-check", "sf-checkmark-circle", "sf-checkmark-circle-fill", "sf-checkmark-shield", "sf-circle-fill",
     "sf-clock", "sf-desktop", "sf-doc-on-clipboard", "sf-doc-on-doc", "sf-envelope",
     "sf-exclamation-circle", "sf-exclamation-triangle", "sf-exclamation-triangle-fill", "sf-externaldrive-badge", "sf-gear",
-    "sf-globe", "sf-infinity", "sf-info-circle", "sf-iphone", "sf-key",
+    "sf-globe", "sfw-infinity", "chevron-right-semibold", "chevron-right-bold", "chevron-down-semibold", "chevron-down-bold", "x-medium", "x-semibold", "x-bold", "arrow-right-semibold", "sf-info-circle", "sf-iphone", "sf-key",
     "sf-keyboard", "sf-largecircle-fill-circle", "sf-lightbulb", "sf-lock-shield", "sf-mic",
     "sf-mic-fill", "sf-mic-slash", "sf-pause-circle-fill", "sf-pause-fill", "sf-person-2",
     "sf-person-badge-plus", "sf-play-circle", "sf-play-fill", "sf-record-circle", "sf-record-circle-fill",
@@ -173,6 +195,13 @@ impl AssetSource for FlowAssets {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disclosure_indicator_is_white_in_dark_and_pale_in_light() {
+        use crate::tokens::Mode;
+        assert_eq!(disclosure_color(&Palette::new(Mode::Dark)), hsla(0., 0., 1., 1.));
+        assert_eq!(disclosure_color(&Palette::new(Mode::Light)), hsla(0., 0., 0., 0.25));
+    }
 
     fn svg_of(symbol: &str) -> &'static str {
         let name = lucide(symbol);

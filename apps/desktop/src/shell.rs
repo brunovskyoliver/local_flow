@@ -405,7 +405,8 @@ pub fn open_main_window(cx: &mut App) {
     let options = if audit {
         let length = |name, default| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
         let bounds = Bounds { origin: point(px(30.), px(60.)), size: size(px(length("LOCALFLOW_AUDIT_WIDTH", 1180.)), px(length("LOCALFLOW_AUDIT_HEIGHT", 780.))) };
-        WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: None, focus: false, kind: WindowKind::PopUp, is_movable: false, ..Default::default() }
+        // The real titlebar, so captures carry the traffic lights Swift's pairs show.
+        WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), titlebar: main_window_options(cx).titlebar, focus: false, kind: WindowKind::PopUp, is_movable: false, ..Default::default() }
     } else {
         main_window_options(cx)
     };
@@ -1541,6 +1542,37 @@ mod tests {
         let _ = window;
     }
 
+    // parity: SHELL-035
+    /// Swift wakes its poll when onboarding finishes; here the 500 ms tick reads the same preference, so it stops.
+    #[flow_ui::gpui::test]
+    async fn finishing_setup_ends_the_poll(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let window = open_shell(cx);
+        cx.update(|cx| cx.global_mut::<Core>().prefs.set("setupVersion", 0));
+        window.update(cx, |_, w, _| w.activate_window()).unwrap();
+        set(cx, |s| s.selection = Page::History);
+        frame(cx, window);
+        flow_ui::probe::clear();
+        cx.executor().advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+        assert!(!flow_ui::probe::seen().is_empty(), "setup polls");
+        cx.update(|cx| cx.global_mut::<Core>().prefs.set("setupVersion", flow_core::onboarding::CURRENT_SETUP_VERSION));
+        frame(cx, window);
+        flow_ui::probe::clear();
+        cx.executor().advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+        assert!(flow_ui::probe::seen().is_empty(), "finished: parked");
+    }
+
+    // parity: SHELL-002
+    /// Fonts register first in `run`, before services exist. Nothing renders before either, so this reads the order.
+    #[test]
+    fn fonts_register_before_services() {
+        let main = include_str!("main.rs");
+        let at = |s: &str| main.find(s).unwrap_or_else(|| panic!("{s} missing from main.rs"));
+        assert!(at("flow_ui::register_fonts(cx)") < at("flow_platform::native()"));
+    }
+
     // parity: SHELL-038
     /// The poll itself: an active window on Settings redraws every 500 ms, on History it parks.
     #[flow_ui::gpui::test]
@@ -1588,6 +1620,7 @@ mod tests {
             cx.update_window(w.into(), |_, w, cx| {
                 w.render_frame(cx);
                 let b = w.find("frame.child").bounds();
+                assert_eq!(w.find("page.column").bounds().bottom() - b.bottom(), px(64.), "bottom 64");
                 (f32::from(b.origin.y), f32::from(w.viewport_size().width.min(px(800.))) , f32::from(b.size.width))
             })
             .unwrap()

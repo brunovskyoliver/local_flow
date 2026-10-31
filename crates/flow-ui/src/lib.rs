@@ -19,7 +19,7 @@ pub mod prelude {
     pub use std::prelude::v1::test;
     pub use crate::components::*;
     pub use crate::controls::*;
-    pub use crate::icons::icon;
+    pub use crate::icons::{disclosure_chevron, icon};
     pub use crate::tokens::{Flow, Mode, Palette, pal};
     pub use crate::txt::{Align, FIGTREE, GARAMOND, Span, Txt, rich, span, t};
     pub use gpui_kit::prelude::*;
@@ -32,10 +32,14 @@ pub mod test {
     pub use gpui_kit::test::*;
 }
 
-/// Boots GPUI Kit, the bundled fonts and the theme. Call once inside `Application::run`.
+/// Swift's `FlowFonts.register()`, first in the app's `init`.
+pub fn register_fonts(cx: &mut gpui_kit::App) {
+    fonts::register(cx);
+}
+
+/// Boots GPUI Kit and the theme after `register_fonts`. Call once inside `Application::run`.
 pub fn init(mode: tokens::Mode, reduce_motion: bool, cx: &mut gpui_kit::App) {
     gpui_kit::init(cx);
-    fonts::register(cx);
     cx.set_global(tokens::Flow { palette: tokens::Palette::new(mode), reduce_motion, compact: false });
     kit_theme::apply(cx);
     cx.set_reduce_motion(reduce_motion);

@@ -91,6 +91,12 @@ pub fn spring(t: f32, (response, damping): (f32, f32)) -> f32 {
 }
 
 /// `cubic-bezier(0.2, 0.9, 0.25, 1)`, the panel's settle.
+/// Alpha and how far below its place the panel sits, `elapsed` seconds into the show.
+fn show_style(elapsed: f32) -> (f32, f32) {
+    let f = settle(elapsed / SHOW);
+    (f, RISE * (1. - f))
+}
+
 pub fn settle(t: f32) -> f32 {
     let bez = |a: f32, b: f32, u: f32| 3. * (1. - u) * (1. - u) * u * a + 3. * (1. - u) * u * u * b + u * u * u;
     let (mut lo, mut hi) = (0f32, 1f32);
@@ -819,7 +825,7 @@ impl PillView {
         // Scale 0.6 to 1 on hover; Reduce Motion keeps scale 1 and only toggles opacity.
         let scale = if reduce { 1. } else { 0.6 + 0.4 * hover };
         let cancel = plain_button("pill.cancel", cancel_label(state))
-            .content(div().id("pill.cancel.face").test_support().size(px(24. * scale)).flex().items_center().justify_center().rounded(px(12.)).bg(p.canvas).child(icon("xmark", 10. * scale, p.ink)))
+            .content(div().id("pill.cancel.face").test_support().size(px(24. * scale)).flex().items_center().justify_center().rounded(px(12.)).bg(p.canvas).child(icon("xmark@semibold", 10. * scale, p.ink)))
             .on_click(|_, _, cx| tap_cancel(cx));
         div()
             .id("pill.dictation")
@@ -897,7 +903,7 @@ impl PillView {
                         div().size(px(22.)).flex().items_center().justify_center().opacity(hover).child(
                             plain_button("background.notice.hide", "Hide progress")
                                 .tooltip("Hide until this meeting is done")
-                                .content(div().id("background.notice.hide.face").test_support().size(px(22. * scale)).flex().items_center().justify_center().rounded(px(11.)).bg(style::fill()).border_1().border_color(style::white(0.13)).child(icon("xmark", 9. * scale, style::ink().opacity(0.85))))
+                                .content(div().id("background.notice.hide.face").test_support().size(px(22. * scale)).flex().items_center().justify_center().rounded(px(11.)).bg(style::fill()).border_1().border_color(style::white(0.13)).child(icon("xmark@bold", 9. * scale, style::ink().opacity(0.85))))
                                 .on_click(|_, _, cx| tap_hide(cx)),
                         ),
                     )
@@ -918,8 +924,7 @@ impl Render for PillView {
                 let f = (h.elapsed().as_secs_f32() / HIDE).clamp(0., 1.);
                 (opacity, drop) = (1. - f * f, RISE * f * f);
             } else {
-                let f = settle(self.shown_at.elapsed().as_secs_f32() / SHOW);
-                (opacity, drop) = (f, RISE * (1. - f));
+                (opacity, drop) = show_style(self.shown_at.elapsed().as_secs_f32());
             }
             if opacity < 1. || self.hide_since.is_some() {
                 window.request_animation_frame();
@@ -1217,6 +1222,7 @@ mod tests {
         assert_eq!(whole.size, size(px(153.), px(38.)));
         let capsule = bounds_of(cx, w, "pill.capsule")[0];
         assert_eq!(capsule.size.width, px(46.));
+        assert_eq!(capsule.origin.x - whole.origin.x, px(36.), "centered in the 118 slot");
         let bars = bar_bounds(cx, w);
         assert_eq!(bars.len(), 15);
         // The 87-wide row is wider than the compact capsule and centered on it, which clips it.
@@ -1250,6 +1256,9 @@ mod tests {
         assert_eq!(bars[15].size.height, px(28.), "a full level draws the tallest bar");
         assert_eq!(bars[0].size.height, px(3.), "silence draws the shortest");
         assert_eq!(bars[1].origin.x - bars[0].origin.x, px(6.));
+        // `3 + 25 * pow(0.2, 0.7)` is 11.1 at level 0.04.
+        assert!((Waveform::height(0.04) - 11.1).abs() < 0.05);
+        assert_eq!((Waveform::height(f32::NAN), Waveform::height(9.)), (3., 28.));
     }
 
     // parity: PILL-047 PILL-048 PILL-049
@@ -1396,7 +1405,12 @@ mod tests {
             cx.notify();
         }).unwrap();
         assert_eq!(y(cx), 0.);
-        assert!((settle(0.5) - 0.5).abs() > 0.2, "the cubic is not linear");
+        // Alpha 0 and 10 low; the values of cubic (0.2, 0.9, 0.25, 1) over 0.3 s; alpha 1 in place at 0.3.
+        assert!(show_style(0.).0 < 0.001 && (show_style(0.).1 - 10.).abs() < 0.01);
+        assert!((show_style(0.03).0 - 0.41824).abs() < 0.001, "{:?}", show_style(0.03));
+        assert!((show_style(0.15).0 - 0.95674).abs() < 0.001, "{:?}", show_style(0.15));
+        assert!((show_style(0.15).1 - 0.4326).abs() < 0.01, "{:?}", show_style(0.15));
+        assert!((show_style(0.3).0 - 1.).abs() < 0.001 && show_style(0.3).1.abs() < 0.01);
         w.update(cx, |v, _, cx| {
             v.hide_since = Some(Instant::now() - Duration::from_millis(90));
             cx.notify();
@@ -1469,7 +1483,7 @@ mod tests {
         assert_eq!(h, px(4.));
     }
 
-    // parity: PILL-036 PILL-037 PILL-038 PILL-039 PILL-040 PILL-042 PILL-043
+    // parity: PILL-032 PILL-036 PILL-037 PILL-038 PILL-039 PILL-040 PILL-042 PILL-043
     #[test]
     fn bars_follow_swift_formulas() {
         // The crest in the states that share it, through what the frame draws.
@@ -1492,6 +1506,9 @@ mod tests {
         assert!(processing_height(0, time) < 4.01);
         let (h, o) = rewriting_wave(0, std::f64::consts::FRAC_PI_2 / 5.5);
         assert!((h - 17.).abs() < 0.001 && (0.45..=1.).contains(&o));
+        // Bar 14 at time 0: `11 + 6 sin(7.7)`, and sweep -4 gives `0.45 + 0.55 exp(-16 / 6)`.
+        let (h, o) = rewriting_wave(14, 0.);
+        assert!((h - 16.929).abs() < 0.01 && (o - 0.4882).abs() < 0.001, "{h} {o}");
         // Right bars first.
         assert!(reveal(14, 0.1) > reveal(0, 0.1));
         assert_eq!((fade(0.), fade(0.28 * 87.)), (0., 1.));
@@ -1684,6 +1701,8 @@ mod tests {
             assert_eq!(s.selection, Page::Settings);
         });
         cx.update(|cx| show_microphone("Studio didn't respond", cx));
+        frame(cx, w);
+        assert_saw(&["Studio didn't respond"]);
         cx.executor().advance_clock(Duration::from_secs(9));
         cx.run_until_parked();
         assert!(pill(cx, |p| p.microphone.is_none()));
@@ -1832,6 +1851,8 @@ mod tests {
         };
         assert_eq!(shown(BackgroundKind::Finalizing, None, cx), ("Finalizing transcript".to_string(), "text.badge.checkmark", "transcript"));
         assert_eq!(shown(BackgroundKind::Finalizing, Some(0.424), cx).0, "Finalizing transcript · 42 %");
+        assert_eq!(n(BackgroundKind::Finalizing, Some(1.4)).unwrap().text(), "Finalizing transcript · 100 %", "clamped");
+        assert_eq!(n(BackgroundKind::Finalizing, Some(-0.2)).unwrap().text(), "Finalizing transcript · 0 %", "clamped");
         assert_eq!(shown(BackgroundKind::Resuming, None, cx), ("Resuming interrupted transcript".to_string(), "text.badge.checkmark", "transcript"));
         assert_eq!(shown(BackgroundKind::Labeling, None, cx), ("Labeling speakers".to_string(), "person.2", "transcript"));
         assert_eq!(shown(BackgroundKind::Summarizing { queued: 0 }, None, cx), ("Summarizing…".to_string(), "text.quote", "summary"));

@@ -35,7 +35,7 @@ impl OnboardingPage {
                 cx.notify();
             });
             body.push(any(plain_button("onboarding.legacyRewriteServer", "Advanced: rewrite-only server").toggled(open).on_click(toggle).content(
-                h_flex().py(px(4.)).gap(px(1.)).child(icon(if open { "chevron.down@bold" } else { "chevron.right@bold" }, 11., p.muted)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
+                h_flex().py(px(4.)).gap(px(1.)).child(disclosure_chevron(open, &p)).child(t("Advanced: rewrite-only server").size(13.).color(p.muted).a11y_hidden()),
             )));
             if open {
                 // The page's spacing is 24; `DisclosureGroup` puts its content 12 below the title.

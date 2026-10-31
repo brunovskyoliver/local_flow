@@ -6,6 +6,7 @@ fn main() {
     // Dock reopen with no window opens one; with a window, restores it.
     app.on_reopen(|cx| shell::open(None, cx));
     app.run(|cx| {
+        flow_ui::register_fonts(cx);
         let services = flow_platform::native();
         flow_core::onboarding::set_decimal_separator(services.decimal_separator());
         let dark = matches!(cx.window_appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark);
