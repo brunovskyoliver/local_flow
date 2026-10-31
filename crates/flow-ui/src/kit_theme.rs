@@ -18,7 +18,9 @@ pub fn apply(cx: &mut App) {
         c.caret = p.accent;
         c.selection = p.accent.opacity(0.25);
         c.muted = p.tint;
-        c.muted_foreground = p.muted;
+        // Kit paints input placeholders in this, with no separate token, so Select and Calendar's
+        // secondary text takes the same value.
+        c.muted_foreground = p.placeholder();
         c.accent = p.tint;
         c.accent_foreground = p.ink;
         c.primary = p.primary;

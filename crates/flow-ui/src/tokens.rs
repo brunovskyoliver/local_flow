@@ -146,6 +146,15 @@ impl Palette {
     pub fn glass_tint(&self) -> Hsla {
         self.canvas
     }
+    /// AppKit's system red, which `role: .destructive` and `.red` draw in.
+    pub fn destructive(&self) -> Hsla {
+        rgb(if self.mode.is_dark() { 0xFF453A } else { 0xFF3B30 }).into()
+    }
+    /// A native text field's placeholder, sampled from `audit/mac/dictionary/add-*-ref.png`: 252 to
+    /// 127 in light, 20 to 149 in dark.
+    pub fn placeholder(&self) -> Hsla {
+        if self.mode.is_dark() { gpui_kit::white().opacity(0.55) } else { gpui_kit::black().opacity(0.5) }
+    }
 
     pub fn new(mode: Mode) -> Self {
         let x = Hex::new(mode);

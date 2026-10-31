@@ -17,6 +17,10 @@ pub enum ButtonKind {
     Plain,
     /// SwiftUI's default `Button` on macOS, measured from the Swift reference: 24 high, radius 6.
     Native,
+    /// A macOS alert's Cancel: an ink-tinted capsule, measured from the Swift reference.
+    Prompt,
+    /// A macOS alert's `role: .destructive` button: red text on a red-tinted capsule.
+    Destructive,
 }
 
 /// A real button: role, name, Invoke action and keyboard focus come from Kit's `Button`.
@@ -49,6 +53,15 @@ pub fn prototype_button(id: impl Into<ElementId>, label: impl Into<SharedString>
 pub fn primary_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> FlowButton {
     FlowButton::new(id, ButtonKind::Primary, label)
 }
+/// `Cancel` or another plain choice in a confirmation. See `destructive_prompt_button`.
+pub fn prompt_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> FlowButton {
+    FlowButton::new(id, ButtonKind::Prompt, label).min_width(PROMPT_BUTTON_WIDTH)
+}
+/// `Button(role: .destructive)` in a confirmation.
+pub fn destructive_prompt_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> FlowButton {
+    FlowButton::new(id, ButtonKind::Destructive, label).min_width(PROMPT_BUTTON_WIDTH)
+}
+pub const PROMPT_BUTTON_WIDTH: f32 = 110.;
 pub fn plain_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> FlowButton {
     FlowButton::new(id, ButtonKind::Plain, label)
 }
@@ -150,6 +163,11 @@ impl ButtonKind {
                 let fill: Hsla = gpui_kit::rgb(fill).into();
                 (fill, fill.opacity(0.8), text, 13., 400., 12., 5.)
             }
+            ButtonKind::Prompt => (p.ink.opacity(0.1), p.ink.opacity(0.18), p.ink, 13., 400., 12., 6.),
+            ButtonKind::Destructive => {
+                let (rest, down) = if p.mode.is_dark() { (0.3, 0.4) } else { (0.25, 0.35) };
+                (p.destructive().opacity(rest), p.destructive().opacity(down), p.destructive(), 13., 400., 12., 6.)
+            }
         }
     }
 }
@@ -184,6 +202,7 @@ impl RenderOnce for FlowButton {
             .rounded(px(match self.kind {
                 ButtonKind::Plain => 0.,
                 ButtonKind::Native => 6.,
+                ButtonKind::Prompt | ButtonKind::Destructive => 14.,
                 _ => 8.,
             }))
             .border_0()
@@ -425,6 +444,18 @@ mod tests {
     use super::*;
     use crate::tokens::{Mode, Palette};
 
+    // Sampled from audit/mac/dictionary/delete-{light,dark}-ref.png.
+    #[::core::prelude::v1::test]
+    fn destructive_prompt_is_system_red_on_a_red_capsule() {
+        let (light, dark) = (Palette::new(Mode::Light), Palette::new(Mode::Dark));
+        let (fill, _, text, ..) = ButtonKind::Destructive.style(&light);
+        assert_eq!(text, Hsla::from(rgb(0xFF3B30)));
+        assert_eq!(fill, Hsla::from(rgb(0xFF3B30)).opacity(0.25));
+        let (fill, _, text, ..) = ButtonKind::Destructive.style(&dark);
+        assert_eq!(text, Hsla::from(rgb(0xFF453A)));
+        assert_eq!(fill, Hsla::from(rgb(0xFF453A)).opacity(0.3));
+    }
+
     // Measured from the Swift reference at 2x.
     #[::core::prelude::v1::test]
     fn switch_matches_nsswitch_geometry_and_colours() {
@@ -435,15 +466,36 @@ mod tests {
         assert_eq!((FlowSwitch::track_color(false, true, &light).a, FlowSwitch::track_color(false, true, &dark).a), (0.11, 0.09));
         assert_eq!(FlowSwitch::track_color(true, false, &dark).a, 0.14);
     }
+
+    /// The reference's sampled pixels, predicted by the wash within one level.
+    #[::core::prelude::v1::test]
+    fn sheet_wash_reproduces_the_reference_pixels() {
+        let wash = |from: f32, dark: bool| from * 0.4 + sheet_scrim_level(dark) * 0.6;
+        for (from, to, dark) in [(252., 203., false), (247., 201., false), (26., 113., false), (20., 20., true), (41., 28., true), (222., 101., true)] {
+            assert!((wash(from, dark) - to).abs() <= 1., "{from} went to {}, reference {to}", wash(from, dark));
+        }
+    }
 }
 
-/// What a native sheet does to its parent, measured from the Swift reference: a 60 percent wash.
+/// What AppKit lays over a window behind a sheet or alert. Fitted to the reference pairs in
+/// `audit/mac/dictionary/{default,add}`: light 252 to 203, 247 to 201, 26 to 113; dark 20 to 20,
+/// 41 to 28, 222 to 101. Both are a 60 percent wash, of 171 in light and 20 in dark.
 pub fn sheet_scrim(cx: &App) -> Hsla {
-    let level = if pal(cx).mode.is_dark() { 21. / 255. } else { 171. / 255. };
-    gpui_kit::hsla(0., 0., level, 0.6)
+    gpui_kit::hsla(0., 0., sheet_scrim_level(pal(cx).mode.is_dark()) / 255., 0.6)
+}
+fn sheet_scrim_level(dark: bool) -> f32 {
+    if dark { 20. } else { 171. }
 }
 
 /// A native sheet's own fill: white, or 0x1E gray in dark, with no border.
 pub fn sheet_fill(cx: &App) -> Hsla {
     gpui_kit::hsla(0., 0., if pal(cx).mode.is_dark() { 30. / 255. } else { 1. }, 1.)
+}
+
+/// The sheet backdrop every sheet and confirmation goes through: the whole window, sidebar included,
+/// washed with `sheet_scrim` and blocking what's under it, with `content` centered on it.
+pub fn sheet_overlay(id: impl Into<ElementId>, window: &Window, cx: &App, content: impl IntoElement) -> Deferred {
+    let viewport = window.viewport_size();
+    let scrim = div().id(id).w(viewport.width).h(viewport.height).occlude().flex().items_center().justify_center().bg(sheet_scrim(cx)).child(content);
+    deferred(anchored().position(point(px(0.), px(0.))).snap_to_window().child(scrim)).with_priority(1)
 }
