@@ -673,6 +673,55 @@ final class RemoteDictationSettingsTests: XCTestCase {
 
   /// A refusal keeps the sheet open, a corrected address can be retried, and Cancel undoes
   /// what the sheet turned on.
+  func testAWholeLinkPastedAsTheTokenFillsBothFields() {
+    let model = model()
+    model.requestPairing()
+    model.serverDraft = "https://typed.example.com"
+    model.pairingToken =
+      " localflow://pair?address=http%3A%2F%2F192.168.1.20%3A8090#token=\(pairingValue)\n"
+    XCTAssertEqual(model.pairingToken, pairingValue)
+    XCTAssertEqual(model.serverDraft, "http://192.168.1.20:8090")
+    XCTAssertTrue(model.canConfirmPairing)
+    XCTAssertEqual(opener.openCount, 0)
+    // A link without an address keeps what was typed; a bare token is left alone.
+    model.serverDraft = "https://typed.example.com"
+    model.pairingToken = "localflow://pair#token=\(pairingValue)"
+    XCTAssertEqual(model.pairingToken, pairingValue)
+    XCTAssertEqual(model.serverDraft, "https://typed.example.com")
+    model.pairingToken = pairingValue
+    XCTAssertEqual(model.pairingToken, pairingValue)
+    model.pairingToken = "localflow://settings"
+    XCTAssertEqual(model.pairingToken, "localflow://settings")
+    XCTAssertFalse(model.canConfirmPairing)
+  }
+
+  func testChangingTheAddressKeepsTheDevice() async throws {
+    let model = model()
+    model.requestTurnOn()
+    model.serverDraft = "https://mini.example.com"
+    await model.confirmConsent()
+    XCTAssertFalse(model.canChangeAddress)
+    model.trustServer()
+    XCTAssertTrue(model.canChangeAddress)
+    model.requestAddressChange()
+    XCTAssertEqual(model.serverDraft, "https://mini.example.com")
+    model.serverDraft = "http://192.168.1.20:8090"
+    await model.confirmAddressChange()
+    XCTAssertFalse(model.showingAddressChange)
+    XCTAssertEqual(preferences.remoteServerURL, "http://192.168.1.20:8090")
+    XCTAssertEqual(model.state, .pinned)
+
+    model.requestAddressChange()
+    model.serverDraft = "https://other.example.com"
+    fetcher.key = Data(repeating: 9, count: 32)
+    await model.confirmAddressChange()
+    XCTAssertTrue(model.showingAddressChange)
+    XCTAssertNotNil(model.error)
+    XCTAssertEqual(preferences.remoteServerURL, "http://192.168.1.20:8090")
+    model.cancelAddressChange()
+    XCTAssertNil(model.error)
+  }
+
   func testAFailedPairCanBeCorrectedOrCancelled() async {
     fetcher.key = Data(repeating: 9, count: 32)
     let model = model()

@@ -28,6 +28,7 @@
      policy itself (FR-016a); NSAllowsLocalNetworking alone is re-checked against the owner's
      overlay-network address in the connection-test walkthrough. -->
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
+<key>NSLocalNetworkUsageDescription</key><string>LocalFlow connects to your own LocalFlow server when its address is on your local network.</string>
 <key>NSMicrophoneUsageDescription</key><string>LocalFlow uses the microphone for local dictation.</string>
 <key>SUEnableAutomaticChecks</key><false/>
 <key>SUAllowsAutomaticUpdates</key><false/>

@@ -35,8 +35,11 @@ type accountsHarness struct {
 
 func newAccountsHarness(t *testing.T, googleClientIDs []string) *accountsHarness {
 	t.Helper()
-	clock := newManualClock()
-	dir := filepath.Join(t.TempDir(), "data")
+	return newAccountsHarnessAt(t, googleClientIDs, filepath.Join(t.TempDir(), "data"), newManualClock())
+}
+
+func newAccountsHarnessAt(t *testing.T, googleClientIDs []string, dir string, clock *manualClock) *accountsHarness {
+	t.Helper()
 	store, err := accounts.Open(dir, clock.Now)
 	if err != nil {
 		t.Fatal(err)

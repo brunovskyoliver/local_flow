@@ -216,7 +216,7 @@ final class AppPreferences {
     didSet { defaults.set(remoteFallbackThresholdMs, forKey: "remote.fallbackThresholdMs") }
   }
 
-  /// False for anything but an `https://` origin without path or credentials.
+  /// False for anything `RemoteDictationSettings.origin` refuses.
   @discardableResult func setRemoteServerURL(_ text: String) -> Bool {
     guard let origin = RemoteDictationSettings.origin(text) else { return false }
     remoteServerURL = origin.absoluteString
@@ -422,6 +422,8 @@ final class AppPreferences {
 }
 
 extension AppPreferences: RemoteEnrollmentSettings {
+  func setRemoteOrigin(_ origin: URL) { setRemoteServerURL(origin.absoluteString) }
+
   /// Enrollment connects only after the dictation consent step and with the switch on.
   var remoteEnrollmentOrigin: URL? {
     guard remoteConsentVersion >= Self.remoteDictationConsentVersion, remoteEnabled else {

@@ -66,11 +66,10 @@ func (r *remoteConfig) validate(mainListen string, appleAudience, googleClientID
 	if r.listen == "" {
 		return nil
 	}
-	host, _, err := net.SplitHostPort(r.listen)
-	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
-		return errors.New("--remote-listen must be a loopback IP literal host:port")
+	if remote.CheckListen(r.listen) != nil {
+		return errors.New("--remote-listen must be an IP literal host:port")
 	}
-	if r.listen == mainListen {
+	if sameSocket(r.listen, mainListen) {
 		return errors.New("--remote-listen must differ from --listen")
 	}
 	if r.dataDir == "" || !filepath.IsAbs(r.dataDir) {
@@ -98,6 +97,21 @@ func (r *remoteConfig) validate(mainListen string, appleAudience, googleClientID
 		*path.value = filepath.Join(filepath.Dir(executable), path.name)
 	}
 	return nil
+}
+
+// sameSocket reports whether two listen addresses would take the same port. A
+// wildcard overlaps every address on its port, and macOS would let both bind.
+func sameSocket(a, b string) bool {
+	hostA, portA, errA := net.SplitHostPort(a)
+	hostB, portB, errB := net.SplitHostPort(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	if portA != portB {
+		return false
+	}
+	ipA, ipB := net.ParseIP(hostA), net.ParseIP(hostB)
+	return hostA == hostB || (ipA != nil && ipA.IsUnspecified()) || (ipB != nil && ipB.IsUnspecified())
 }
 
 func splitList(list string, emptyAllowed bool) ([]string, error) {
@@ -149,7 +163,7 @@ type remoteServer struct {
 
 // startRemote refuses to start unless the data directory is private and the
 // identity key exists, then opens the store, the snapshot watcher and the
-// loopback listener. Admin changes reach live channels through the watcher.
+// remote listener. Admin changes reach live channels through the watcher.
 func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remoteServer, error) {
 	if err := privateDirectory(r.dataDir); err != nil {
 		return nil, err

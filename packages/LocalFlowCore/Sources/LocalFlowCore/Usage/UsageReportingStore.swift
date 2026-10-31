@@ -66,7 +66,9 @@ public actor UsageReportingStore {
 
   /// A disabled binding is a durable tombstone: never reopen it automatically.
   /// A different approved identity must not inherit old totals or pending controls.
-  public func prepareAutomaticEnrollment(origin: String, fingerprint: String) throws -> Bool {
+  /// The fingerprint alone names the identity: a device key is made per enrollment, so another
+  /// server means another key, while a new address for the same server (FR-013) keeps it.
+  public func prepareAutomaticEnrollment(fingerprint: String) throws -> Bool {
     try database.write { db in
       if let raw = try String.fetchOne(
         db, sql: "SELECT binding FROM usage_reporting_state WHERE id=1")
@@ -75,7 +77,7 @@ public actor UsageReportingStore {
         let active =
           try Bool.fetchOne(db, sql: "SELECT enabled FROM usage_reporting_state WHERE id=1") == true
         guard active else { return false }
-        if old.origin == origin && old.credentialFingerprint == fingerprint { return false }
+        if old.credentialFingerprint == fingerprint { return false }
         try db.execute(sql: "DELETE FROM usage_reporting_days")
         try db.execute(sql: "DELETE FROM usage_reporting_completions")
         try db.execute(

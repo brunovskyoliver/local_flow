@@ -19,6 +19,10 @@ struct PairingSheet: View {
       }
       Text(model.currentConsentText).font(.flow(size: 13)).lineSpacing(3)
         .fixedSize(horizontal: false, vertical: true)
+      if let notice = RemoteDictationSettings.addressNotice(model.serverDraft) {
+        Text(notice).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       if let origin = model.draftOrigin {
         Text("Server: \(origin.host() ?? origin.absoluteString)").font(
           .flow(size: 13, weight: .medium))

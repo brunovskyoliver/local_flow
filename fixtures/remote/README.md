@@ -52,3 +52,7 @@ Byte fixtures for the flowd ↔ speech worker framing, shared by `server/interna
 ## `test-jwks.json` and `test-signing-key.pem`
 
 A JWKS with one RS256 key, `kid` `localflow-test-1`, and its 2048-bit RSA private key (PKCS #8 PEM). The debug-build OIDC issuer (`--test-issuer`, `--test-jwks`, `-tags localflow_debug` only) signs ID tokens with the private key so enrollment tests run without Apple or Google. The key was generated once for this repository and is public by design.
+
+## `pairing-vectors.json`
+
+The bytes a `pair` message signs (`label` ‖ `binding`, in `signature_input`), one device signature over them, and the token encoding (`lfp_` and base64url of the server key and 32 random bytes). `server/internal/remote/pair_test.go` and `PairingTokenTests` in LocalFlowCore check it. `go test ./internal/remote -run TestPairingVectors -update` (from `server/`) rewrites it. Every byte string is hex, and every key is test-only.

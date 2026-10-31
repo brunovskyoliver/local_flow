@@ -21,7 +21,7 @@ final class PhoneServerSettings: RemoteEnrollmentSettings {
 
   @ObservationIgnored private let defaults: UserDefaults
 
-  /// The server origin as `https://host[:port]`; empty before the owner enters one.
+  /// The server origin as `scheme://host[:port]`; empty before the owner enters one.
   private(set) var serverAddress: String {
     didSet { defaults.set(serverAddress, forKey: "server.address") }
   }
@@ -61,6 +61,8 @@ final class PhoneServerSettings: RemoteEnrollmentSettings {
   /// Entering an address is the owner's request to talk to that server; nothing connects
   /// before it.
   var remoteEnrollmentOrigin: URL? { origin }
+
+  func setRemoteOrigin(_ origin: URL) { setServerAddress(origin.absoluteString) }
 
   @discardableResult func setServerAddress(_ text: String) -> Bool {
     guard let origin = RemoteDictationSettings.origin(text) else { return false }
@@ -149,7 +151,13 @@ final class PhoneServerConnection {
   private(set) var error: String?
   /// Feature 027: the pairing sheet and its token (memory only, until redeemed).
   private(set) var showingPairing = false
-  var pairingToken = ""
+  var pairingToken = "" {
+    didSet {
+      guard let link = PairingLink(pasted: pairingToken) else { return }
+      if let address = link.address { addressDraft = address }
+      pairingToken = link.token.value
+    }
+  }
   /// This sheet stored the address, so Cancel removes it again.
   @ObservationIgnored private var pairingSetAddress = false
   /// False after the last channel could not reach the server; true again on the next
@@ -246,7 +254,7 @@ final class PhoneServerConnection {
   func checkIdentity() async {
     error = nil
     guard let origin = draftOrigin else {
-      error = "Enter the server's https:// address without a path."
+      error = "Enter the server's address without a path."
       return
     }
     if settings.origin != origin {
@@ -348,6 +356,29 @@ final class PhoneServerConnection {
       reachable = true
       await pool.closeAll()
       cancelPairing()
+    } catch {
+      self.error = pairingFailureMessage(error)
+    }
+  }
+
+  // MARK: Changing the address (Feature 027, FR-013)
+
+  /// A different valid address while a key is pinned. Check identity stays what it was:
+  /// a different address there signs out and starts again.
+  var canUpdateAddress: Bool {
+    !busy && enrollment.pinnedKey != nil && draftOrigin != nil && draftOrigin != settings.origin
+  }
+
+  func updateAddress() async {
+    guard let origin = draftOrigin else { return }
+    busy = true
+    defer { busy = false }
+    error = nil
+    do {
+      try await enrollment.updateAddress(to: origin)
+      addressDraft = settings.serverAddress
+      await pool.closeAll()
+      onChange?()
     } catch {
       self.error = pairingFailureMessage(error)
     }

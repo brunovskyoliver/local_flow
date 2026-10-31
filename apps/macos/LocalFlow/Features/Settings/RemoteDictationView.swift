@@ -20,9 +20,16 @@ final class RemoteDictationModel {
   /// Feature 027: the pairing sheet, its token (memory only, until redeemed) and whether
   /// this sheet turned the feature on, so Cancel can leave everything off again.
   private(set) var showingPairing = false
-  var pairingToken = ""
+  var pairingToken = "" {
+    didSet {
+      guard let link = PairingLink(pasted: pairingToken) else { return }
+      if let address = link.address { serverDraft = address }
+      pairingToken = link.token.value
+    }
+  }
   @ObservationIgnored private var pairingTurnedOn = false
   private(set) var confirmingTurnOff = false
+  private(set) var showingAddressChange = false
   var serverDraft = ""
   /// The identity fetched for the user to compare with `flowd admin identity`.
   private(set) var identity: RemoteServerIdentity?
@@ -32,16 +39,19 @@ final class RemoteDictationModel {
   @ObservationIgnored private let preferences: AppPreferences
   @ObservationIgnored private let enrollment: @MainActor () -> RemoteEnrollment?
   @ObservationIgnored private let turnOffAction: @MainActor () -> Void
+  @ObservationIgnored private let addressChanged: @MainActor () async -> Void
   @ObservationIgnored private let signInAvailable: @MainActor (IdentityProvider) -> Bool
 
   init(
     preferences: AppPreferences, enrollment: @escaping @MainActor () -> RemoteEnrollment?,
     turnOff: @escaping @MainActor () -> Void,
+    addressChanged: @escaping @MainActor () async -> Void = {},
     signInAvailable: @escaping @MainActor (IdentityProvider) -> Bool = { _ in true }
   ) {
     self.preferences = preferences
     self.enrollment = enrollment
     turnOffAction = turnOff
+    self.addressChanged = addressChanged
     self.signInAvailable = signInAvailable
   }
 
@@ -98,7 +108,7 @@ final class RemoteDictationModel {
   /// The consent step: only now are the address and the switch stored.
   func confirmConsent() async {
     guard preferences.setRemoteServerURL(serverDraft) else {
-      error = "Enter the server's https:// address without a path."
+      error = "Enter the server's address without a path."
       return
     }
     preferences.confirmRemoteConsent()
@@ -200,6 +210,38 @@ final class RemoteDictationModel {
     }
   }
 
+  // MARK: Changing the address (Feature 027, FR-013)
+
+  /// Needs a pinned key to compare with.
+  var canChangeAddress: Bool { isOn && pinnedFingerprint != nil }
+
+  func requestAddressChange() {
+    error = nil
+    serverDraft = preferences.remoteServerURL
+    showingAddressChange = true
+  }
+
+  func cancelAddressChange() {
+    showingAddressChange = false
+    serverDraft = ""
+    error = nil
+  }
+
+  func confirmAddressChange() async {
+    guard let origin = draftOrigin, let enrollment = enrollment() else { return }
+    busy = true
+    defer { busy = false }
+    error = nil
+    do {
+      try await enrollment.updateAddress(to: origin)
+      cancelAddressChange()
+      // Idle channels still reach the same server by the old route; new ones use the new.
+      await addressChanged()
+    } catch {
+      self.error = pairingFailureMessage(error)
+    }
+  }
+
   /// Approved under the first consent text: summaries and meetings stay on this Mac
   /// until the current text is confirmed once.
   var needsConsentUpdate: Bool { isOn && !preferences.remoteConsentCurrent }
@@ -244,6 +286,16 @@ struct RemoteDictationView: View {
             .accessibilityIdentifier("settings.remotePairWithToken")
         }
       }
+      if model.canChangeAddress {
+        SottoPalette.line.frame(height: 1)
+        SettingsRow(
+          "Server address",
+          detail: RemoteDictationSettings.addressNotice(model.serverURL) ?? model.serverURL
+        ) {
+          Button("Change Address") { model.requestAddressChange() }
+            .accessibilityIdentifier("settings.remoteAddressEdit")
+        }
+      }
       if model.showsSetupDetails {
         SottoPalette.line.frame(height: 1)
         VStack(alignment: .leading, spacing: 12) {
@@ -282,6 +334,7 @@ struct RemoteDictationView: View {
     }
     .sheet(isPresented: .constant(model.showingConsent)) { consent }
     .sheet(isPresented: .constant(model.showingPairing)) { PairingSheet(model: model) }
+    .sheet(isPresented: .constant(model.showingAddressChange)) { addressChange }
     .confirmationDialog(
       "Turn off remote dictation?", isPresented: .constant(model.confirmingTurnOff)
     ) {
@@ -316,6 +369,10 @@ struct RemoteDictationView: View {
       }
       Text(model.currentConsentText).font(.flow(size: 13)).lineSpacing(3)
         .fixedSize(horizontal: false, vertical: true)
+      if let notice = RemoteDictationSettings.addressNotice(model.serverDraft) {
+        Text(notice).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       if let origin = model.draftOrigin {
         Text("Server: \(origin.host() ?? origin.absoluteString)").font(
           .flow(size: 13, weight: .medium))
@@ -329,6 +386,32 @@ struct RemoteDictationView: View {
         Button("Turn On") { Task { await model.confirmConsent() } }
           .keyboardShortcut(.defaultAction).disabled(model.draftOrigin == nil)
           .accessibilityIdentifier("settings.remoteConsentConfirm")
+      }
+    }
+    .padding(24).frame(width: 460)
+  }
+
+  private var addressChange: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Change the server address").font(.flow(size: 17, weight: .medium))
+      RewriteInputSurface(symbol: "server.rack") {
+        TextField("https://server.example.com", text: $model.serverDraft)
+          .accessibilityIdentifier("settings.remoteServerURL")
+      }
+      Text("The server at the new address must have the identity this Mac already trusts.")
+        .font(.flow(size: 13)).fixedSize(horizontal: false, vertical: true)
+      if let notice = RemoteDictationSettings.addressNotice(model.serverDraft) {
+        Text(notice).font(.flow(size: 12)).foregroundStyle(SottoPalette.muted)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if let error = model.error {
+        Text(error).font(.flow(size: 12)).foregroundStyle(SottoPalette.warning)
+      }
+      HStack {
+        Spacer()
+        Button("Cancel") { model.cancelAddressChange() }.keyboardShortcut(.cancelAction)
+        Button("Change") { Task { await model.confirmAddressChange() } }
+          .keyboardShortcut(.defaultAction).disabled(model.busy || model.draftOrigin == nil)
       }
     }
     .padding(24).frame(width: 460)

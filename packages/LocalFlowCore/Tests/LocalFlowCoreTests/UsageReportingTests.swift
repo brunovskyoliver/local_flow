@@ -156,7 +156,7 @@ final class UsageReportingTests: XCTestCase {
     let erased = try await reporting.binding()
     XCTAssertEqual(erased, binding)
     let autoEnroll = try await reporting.prepareAutomaticEnrollment(
-      origin: binding.origin, fingerprint: binding.credentialFingerprint)
+      fingerprint: binding.credentialFingerprint)
     XCTAssertFalse(autoEnroll)
   }
 
@@ -169,8 +169,12 @@ final class UsageReportingTests: XCTestCase {
     _ = try await history.commit(reservation: history.reserve(), envelope: item)
     let before = try await reporting.days()
     XCTAssertEqual(before.first?.localCount, 1)
-    let canEnroll = try await reporting.prepareAutomaticEnrollment(
-      origin: "https://new-server.invalid", fingerprint: "new-device")
+    let keeps = try await reporting.prepareAutomaticEnrollment(
+      fingerprint: old.credentialFingerprint)
+    XCTAssertFalse(keeps)
+    let kept = try await reporting.days()
+    XCTAssertEqual(kept.first?.localCount, 1)
+    let canEnroll = try await reporting.prepareAutomaticEnrollment(fingerprint: "new-device")
     XCTAssertTrue(canEnroll)
     let after = try await reporting.days()
     XCTAssertTrue(after.isEmpty)

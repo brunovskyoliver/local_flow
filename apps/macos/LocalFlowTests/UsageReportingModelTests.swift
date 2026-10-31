@@ -168,6 +168,21 @@ final class UsageReportingModelTests: XCTestCase {
     XCTAssertEqual(actions, [.enable, .deleteDevice])
   }
 
+  /// Feature 027: a new address for the same server is not a new identity.
+  func testANewAddressKeepsTheGrantAndCounts() async throws {
+    nonisolated(unsafe) var origin = "https://example.invalid"
+    let script = Script([try reply()])
+    let (model, _, path) = try fixture(
+      script, automatic: true, identity: { (origin, "test-device") })
+    defer { remove(path) }
+    await model.synchronize()
+    let first = try XCTUnwrap(model.attribution)
+    origin = "http://192.168.1.20:8090"
+    XCTAssertEqual(model.attribution, first)
+    let actions = await script.actions
+    XCTAssertEqual(actions, [.enable])
+  }
+
   func testAutomaticEnrollmentSeparatesNewIdentity() async throws {
     var fingerprint = "first-device"
     let script = Script([try reply(), try reply(epoch: 2)])

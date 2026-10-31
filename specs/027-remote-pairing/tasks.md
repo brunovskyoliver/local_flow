@@ -31,13 +31,13 @@
 
 ## Phase 4: User Story 2, any route (P1, MVP)
 
-- [ ] T015 [US2] Let `--remote-listen` and `remote.Listen` accept any IP literal in server/cmd/flowd/remote.go and server/internal/remote/listener.go, updating tests; bind tests stay on loopback addresses and validation, so no firewall prompt appears on the owner's screen
-- [ ] T016 [US2] Fix `clientAddress` per research R7 in server/internal/remote/listener.go with spoofing tests
-- [ ] T017 [US2] Add a Go test with an in-process reverse proxy in server/internal/remote/pair_test.go showing the same paired device works directly and through it, and that the proxy sees no token bytes
-- [ ] T018 [US2] Implement FR-012a in `RemoteDictationSettings.origin` and `channelURL` in RemoteEnrollment.swift, with a table test; check every use with grep; update "https://" wording only where it's now wrong
-- [ ] T019 [US2] Add `updateAddress` to RemoteEnrollment: fetch identity, keep credentials on a match, refuse on mismatch. Audit origin-keyed state (usage enrollment `prepareAutomaticEnrollment`, handoff, retries) so an address change doesn't re-enroll; add an edit control in RemoteDictationView.swift and the iOS view, with tests
-- [ ] T020 [US2] Add the not-TLS notice for `http://` to the Mac and iOS views
-- [ ] T032 [US2] Add `NSAllowsLocalNetworking`, a `ts.net` exception and `NSLocalNetworkUsageDescription` to apps/ios/Config/App-Info.plist, and `NSLocalNetworkUsageDescription` to apps/macos/LocalFlow/Info.plist; test `ws://` on the existing Simulator and record the result per research R9
+- [X] T015 [US2] Let `--remote-listen` and `remote.Listen` accept any IP literal in server/cmd/flowd/remote.go and server/internal/remote/listener.go, updating tests; bind tests stay on loopback addresses and validation, so no firewall prompt appears on the owner's screen
+- [X] T016 [US2] Fix `clientAddress` per research R7 in server/internal/remote/listener.go with spoofing tests
+- [X] T017 [US2] Add a Go test with an in-process reverse proxy in server/internal/remote/pair_test.go showing the same paired device works directly and through it, and that the proxy sees no token bytes
+- [X] T018 [US2] Implement FR-012a in `RemoteDictationSettings.origin` and `channelURL` in RemoteEnrollment.swift, with a table test; check every use with grep; update "https://" wording only where it's now wrong
+- [X] T019 [US2] Add `updateAddress` to RemoteEnrollment: fetch identity, keep credentials on a match, refuse on mismatch. Audit origin-keyed state (usage enrollment `prepareAutomaticEnrollment`, handoff, retries) so an address change doesn't re-enroll; add an edit control in RemoteDictationView.swift and the iOS view, with tests
+- [X] T020 [US2] Add the not-TLS notice for `http://` to the Mac and iOS views
+- [X] T032 [US2] Add `NSAllowsLocalNetworking`, a `ts.net` exception and `NSLocalNetworkUsageDescription` to apps/ios/Config/App-Info.plist, and `NSLocalNetworkUsageDescription` to apps/macos/LocalFlow/Info.plist; test `ws://` on the existing Simulator and record the result per research R9
 
 ## Phase 5: User Story 5, existing installs (P1, MVP)
 

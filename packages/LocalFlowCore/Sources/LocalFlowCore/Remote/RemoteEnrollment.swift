@@ -39,19 +39,77 @@ public struct RemoteDictationSettings: Sendable, Equatable {
   /// Dictation audio streams to the server.
   public var streamsDictation: Bool { routesToServer && !dictationOnThisMac }
 
-  /// An `https://` origin with no path, query, fragment or credentials; nil otherwise.
+  /// An origin with no path, query, fragment or credentials; nil otherwise. `https://` on
+  /// any host, `http://` only where `allowsPlainHTTP` says (FR-012a).
   public static func origin(_ text: String) -> URL? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let components = URLComponents(string: trimmed), components.scheme == "https",
+    guard let components = URLComponents(string: trimmed),
+      let scheme = components.scheme, scheme == "https" || scheme == "http",
       let host = components.host, !host.isEmpty, components.user == nil,
       components.password == nil, components.query == nil, components.fragment == nil,
-      components.path.isEmpty || components.path == "/"
+      components.path.isEmpty || components.path == "/",
+      scheme == "https" || allowsPlainHTTP(host: host)
     else { return nil }
     var origin = URLComponents()
-    origin.scheme = "https"
+    origin.scheme = scheme
     origin.host = host.lowercased()
     origin.port = components.port
     return origin.url
+  }
+
+  /// FR-012a: loopback, RFC 1918, link-local, IPv6 unique-local and Tailscale literals, and
+  /// `.local`, `*.ts.net` and single-label names. `host` is `URLComponents.host`: IPv6 keeps
+  /// its brackets, and Foundation has already applied IDNA mapping and percent-decoding.
+  static func allowsPlainHTTP(host: String) -> Bool {
+    let name = host.lowercased()
+    if name.hasPrefix("["), name.hasSuffix("]") {
+      let literal = name.dropFirst().dropLast().prefix { $0 != "%" }
+      var address = in6_addr()
+      guard inet_pton(AF_INET6, String(literal), &address) == 1 else { return false }
+      let bytes = withUnsafeBytes(of: &address) { Array($0) }
+      if bytes[..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff {
+        return isPrivate(ipv4: Array(bytes[12...]))
+      }
+      return bytes == [UInt8](repeating: 0, count: 15) + [1]  // ::1
+        || bytes[0] & 0xfe == 0xfc  // fc00::/7, which holds Tailscale's fd7a:115c:a1e0::/48
+        || (bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80)  // fe80::/10
+    }
+    var address = in_addr()
+    if inet_pton(AF_INET, name, &address) == 1 {
+      return isPrivate(ipv4: withUnsafeBytes(of: &address) { Array($0) })
+    }
+    // `2130706433`, `0x7f.1` and `127.1` aren't dotted quads but do reach an address, so
+    // the name rules below must not see them: `134744072` is 8.8.8.8 as a "single label".
+    if inet_aton(name, &address) != 0 { return false }
+    let labels = name.split(separator: ".", omittingEmptySubsequences: false)
+    guard
+      labels.allSatisfy({ label in
+        !label.isEmpty && label.utf8.allSatisfy { $0 == 0x2d || isASCIIAlphanumeric($0) }
+      })
+    else { return false }
+    return labels.count == 1 || (labels.count > 1 && labels.last == "local")
+      || (labels.count > 2 && labels.suffix(2) == ["ts", "net"])
+  }
+
+  private static func isPrivate(ipv4 b: [UInt8]) -> Bool {
+    b[0] == 127 || b[0] == 10 || (b[0] == 172 && b[1] & 0xf0 == 16)
+      || (b[0] == 192 && b[1] == 168) || (b[0] == 169 && b[1] == 254)
+      || (b[0] == 100 && b[1] & 0xc0 == 64)
+  }
+
+  private static func isASCIIAlphanumeric(_ c: UInt8) -> Bool {
+    (0x30...0x39).contains(c) || (0x61...0x7a).contains(c)
+  }
+
+  /// What a server form says under the address, FR-012a's statement included: why an
+  /// `http://` address is refused, or that an accepted one is not TLS. Nil for anything else.
+  public static func addressNotice(_ text: String) -> String? {
+    guard text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("http://") else {
+      return nil
+    }
+    return origin(text) == nil
+      ? "http:// works only for private and Tailscale addresses. Use https:// for this one."
+      : "This connection is not TLS. Content stays encrypted between this device and the server."
   }
 
   public init(
@@ -75,6 +133,8 @@ public protocol RemoteEnrollmentSettings: AnyObject {
   /// The server origin once the consent step is confirmed and the feature is on; nil
   /// before that, so nothing connects.
   var remoteEnrollmentOrigin: URL? { get }
+  /// Stores an origin `updateAddress` verified; nothing else changes.
+  func setRemoteOrigin(_ origin: URL)
   var remoteState: RemoteDictationState { get set }
   var remoteNotice: RemoteDictationNotice? { get set }
   /// Turning the feature off: every `remote.*` setting goes except the switch.
@@ -140,12 +200,13 @@ public final class RemoteEnrollment {
 
   public var state: RemoteDictationState { preferences.remoteState }
 
-  /// `wss://<host>/v1/remote/channel` for the configured origin.
+  /// `wss://<host>/v1/remote/channel`, or `ws://` for an `http://` origin; nil for anything
+  /// `RemoteDictationSettings.origin` refuses, so a refused address never gets a socket.
   public static func channelURL(origin: URL) -> URL? {
-    guard var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
-      return nil
-    }
-    components.scheme = "wss"
+    guard let checked = RemoteDictationSettings.origin(origin.absoluteString),
+      var components = URLComponents(url: checked, resolvingAgainstBaseURL: false)
+    else { return nil }
+    components.scheme = checked.scheme == "http" ? "ws" : "wss"
     components.path = "/v1/remote/channel"
     return components.url
   }
@@ -175,6 +236,19 @@ public final class RemoteEnrollment {
   }
 
   public var pinnedKey: Data? { try? credentials.read(.serverKey) }
+
+  /// Moves to a new address for the same server (FR-013). The identity there must be the
+  /// pinned key exactly; on a match only the stored address changes, and on a mismatch
+  /// nothing does. The channel still proves the key, as for every connection.
+  public func updateAddress(to address: URL) async throws {
+    guard origin != nil, let pinned = pinnedKey,
+      let checked = RemoteDictationSettings.origin(address.absoluteString)
+    else { throw RemoteEnrollmentError.notConfigured }
+    let identity = try await identityFetcher.fetch(origin: checked)
+    guard let key = identity.validatedKey() else { throw RemoteEnrollmentError.invalidIdentity }
+    guard key == pinned else { throw RemoteEnrollmentError.wrongServer }
+    preferences.setRemoteOrigin(checked)
+  }
 
   // MARK: Enrollment
 
@@ -233,6 +307,11 @@ public final class RemoteEnrollment {
 
   // MARK: Pairing
 
+  /// What a `pair` message signs; `fixtures/remote/pairing-vectors.json` holds it for flowd.
+  static func pairSignatureInput(binding: Data) -> Data {
+    Data("localflow-v1-pair".utf8) + binding
+  }
+
   /// Redeems a pairing token (Feature 027). The caller has shown consent. The token goes
   /// only into a channel sealed to the key it names, and only if the address serves that
   /// key. The pin, which clears existing credentials, comes after the server's answer, so
@@ -258,7 +337,7 @@ public final class RemoteEnrollment {
     do {
       try await channel.open(purpose: .enroll)
       let signature = try keys.sign(
-        Data("localflow-v1-pair".utf8) + (await channel.binding), handle: device.handle)
+        Self.pairSignatureInput(binding: await channel.binding), handle: device.handle)
       try await channel.send(
         .pair(
           op: 1, token: token.value, deviceName: deviceName, deviceKey: device.publicKey,

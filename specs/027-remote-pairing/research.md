@@ -60,6 +60,24 @@ Default for new server mode: `0.0.0.0:8090`. `--remote-listen` accepts any IP li
 
 The Mac app already sets `NSAllowsArbitraryLoads`. iOS has no ATS exception or Local Network text, so it gets `NSAllowsLocalNetworking`, a `ts.net` exception domain and `NSLocalNetworkUsageDescription`. **Not verified yet**: whether `ws://` to a private IP literal works under those keys on iOS. Task T032 tests this in the Simulator and records the result. If it is blocked, iOS stays `https://`-only for that address class and the spec records the exception.
 
+**Result (T032, 2026-10-31).** `apps/ios/LocalFlowPhoneTests/TransportSecurityTests.swift`, run as an XCTest hosted by the app on the "iPhone 18 Pro" Simulator (iOS Simulator networking is the Mac's own stack).
+
+Shown, with the ATS keys above in the test host's Info.plist:
+
+- A `ws://` round trip of real binary frames through `URLSessionRemoteTransport` to a WebSocket listener in the test process, on `127.0.0.1` and on `localhost`.
+- ATS verdicts from `http://` and `ws://` probes to port 9, where nothing listens. Control `ats-control.invalid`: -1022 for both, so ATS was on and blocking.
+- Not blocked by ATS: `127.0.0.1` and `[::1]` (-1004 cannot connect), the Mac's own RFC 1918 address, 172.20.10.2 on this run (-1004), a `.local` name (-1001 timeout), a single-label name (-1003 host not found). The test skips the address row when the machine has no private IPv4 address.
+
+These errors show that ATS let the request out. They don't show a server answering. The private-address probe never reached a listener, because binding one would raise a firewall prompt, so no WebSocket has completed on an RFC 1918 address. A loopback result doesn't prove RFC 1918 behaviour.
+
+Not shown:
+
+- Any real iPhone. The Simulator doesn't enforce Local Network privacy, so neither the prompt for `NSLocalNetworkUsageDescription` nor a device's behaviour after a refusal has been seen.
+- `*.ts.net`: only the plist key is asserted. A live probe needs an external DNS lookup.
+- `100.64.0.0/10`, `fd7a:115c:a1e0::/48`, other `fc00::/7` and `fe80::/10` literals, and the `10/8` and `192.168/16` ranges: no probe, because dialling them could send packets off this machine. Whether `NSAllowsLocalNetworking` covers Tailscale literals on iOS is open; a `ts.net` name is the covered route until a device test says otherwise.
+
+Nothing above blocked a class, so the spec has no iOS exception so far. If a device test blocks one, iOS stays https-only for that class and the spec records it.
+
 ## R10. What T3 Code does differently on purpose
 
 Kept from T3 Code: one-time code, fragment-carrying link, QR, confirmation before spending, device list, 0700/0600 secrets. Not copied: plaintext pairing codes, no pairing rate limit in the files read, identity check by unauthenticated environment ID, scopes, relay, route lists (owner chose one address).

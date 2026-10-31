@@ -277,7 +277,7 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertFalse(preferences.remoteSettings().routesToServer)
   }
 
-  @MainActor func testRemoteServerURLAcceptsOnlyHTTPSOrigins() {
+  @MainActor func testRemoteServerURLAcceptsOnlyPermittedOrigins() {
     let suite = "LocalFlow-remote-url-\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -295,6 +295,12 @@ final class AppPreferencesTests: XCTestCase {
     XCTAssertTrue(preferences.setRemoteServerURL("https://mini.example.com:8443"))
     XCTAssertEqual(
       AppPreferences(defaults: defaults).remoteServerURL, "https://mini.example.com:8443")
+    // FR-012a: a private http:// address is saved and reads back the same.
+    XCTAssertTrue(preferences.setRemoteServerURL("http://192.168.1.20:8090/"))
+    XCTAssertEqual(AppPreferences(defaults: defaults).remoteServerURL, "http://192.168.1.20:8090")
+    XCTAssertTrue(preferences.setRemoteServerURL("http://[FD7A:115C:A1E0::1]:8090"))
+    XCTAssertEqual(
+      AppPreferences(defaults: defaults).remoteServerURL, "http://[fd7a:115c:a1e0::1]:8090")
     // A value written by something else that is not an origin reads as empty.
     defaults.set("https://mini.example.com/path", forKey: "remote.serverURL")
     XCTAssertEqual(AppPreferences(defaults: defaults).remoteServerURL, "")

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -168,19 +169,30 @@ const (
 	revokeGrace = 300 * time.Millisecond
 )
 
-// clientAddress names the client for per-client limits. flowd listens on
-// loopback only and cloudflared sets Cf-Connecting-Ip from the Cloudflare
-// edge, which overwrites any value the client sent; without the tunnel (a
-// direct loopback connection) the peer address is used.
+// clientAddress names the client for per-client limits. Forwarding headers
+// count only from a loopback peer, where the proxy runs on this machine
+// (cloudflared, Tailscale Serve): Cf-Connecting-Ip, then the rightmost
+// X-Forwarded-For entry, the one that proxy added. Otherwise the socket peer is
+// the client, so nobody on the network can choose their bucket (research R7).
+// ponytail: a proxy on another host shares one bucket; add --trusted-proxy if that bites.
 func clientAddress(r *http.Request) string {
-	if ip := r.Header.Get("Cf-Connecting-Ip"); ip != "" {
-		return ip
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
-	return host
+	if ip := net.ParseIP(peer); ip == nil || !ip.IsLoopback() {
+		return peer
+	}
+	if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip"))); ip != nil {
+		return ip.String()
+	}
+	if values := r.Header.Values("X-Forwarded-For"); len(values) > 0 {
+		last := values[len(values)-1]
+		if ip := net.ParseIP(strings.TrimSpace(last[strings.LastIndex(last, ",")+1:])); ip != nil {
+			return ip.String()
+		}
+	}
+	return peer
 }
 
 // admitChannel takes an anonymous slot for a new channel from client.
@@ -275,15 +287,24 @@ type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
 
-// Listen opens a TCP listener on a loopback IP literal only: cloudflared
-// connects locally, and nothing else may reach the remote routes.
-func Listen(addr string) (net.Listener, error) {
+// CheckListen requires an IP literal host:port: the choice of interface stays
+// explicit, and a name can't resolve to something unexpected.
+func CheckListen(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return nil, errors.New("remote listen must be host:port")
+		return errors.New("remote listen must be host:port")
 	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return nil, errors.New("remote listen host must be a loopback IP literal")
+	if net.ParseIP(host) == nil {
+		return errors.New("remote listen host must be an IP literal")
+	}
+	return nil
+}
+
+// Listen opens a TCP listener on an IP literal. Only the identity and channel
+// routes are served on it, whichever interface it is.
+func Listen(addr string) (net.Listener, error) {
+	if err := CheckListen(addr); err != nil {
+		return nil, err
 	}
 	return net.Listen("tcp", addr)
 }

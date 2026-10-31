@@ -21,13 +21,19 @@ struct ServerSettingsView: View {
           .onSubmit(checkIdentity)
         Button("Check identity", action: checkIdentity)
           .disabled(connection.busy || connection.draftOrigin == nil)
+        if connection.canUpdateAddress {
+          Button("Update address") { Task { await connection.updateAddress() } }
+            .accessibilityIdentifier("server.addressEdit")
+        }
       } header: {
         Text("Server address")
       } footer: {
         if let error = connection.error {
           Text(error).foregroundStyle(SottoPalette.warning)
+        } else if let notice = RemoteDictationSettings.addressNotice(connection.addressDraft) {
+          Text(notice)
         } else {
-          Text("Your LocalFlow server's https:// address, for example its Tailscale name.")
+          Text("Your LocalFlow server's address, for example its Tailscale name.")
         }
       }
       .sottoRow()
@@ -155,12 +161,18 @@ struct PhonePairingSheet: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section("Server address") {
+        Section {
           TextField("https://server.example", text: $connection.addressDraft)
             .keyboardType(.URL)
             .textContentType(.URL)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
+        } header: {
+          Text("Server address")
+        } footer: {
+          if let notice = RemoteDictationSettings.addressNotice(connection.addressDraft) {
+            Text(notice)
+          }
         }
         .sottoRow()
         Section {

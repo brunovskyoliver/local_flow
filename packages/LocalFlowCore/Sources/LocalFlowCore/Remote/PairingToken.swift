@@ -42,6 +42,14 @@ public struct PairingLink: Sendable, Equatable {
     self.token = token
     address = components.queryItems?.first { $0.name == "address" }?.value
   }
+
+  /// A whole link pasted into the token field.
+  public init?(pasted text: String) {
+    guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+      return nil
+    }
+    self.init(url)
+  }
 }
 
 /// What the pairing form says about a failed `RemoteEnrollment.pair`.

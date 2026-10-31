@@ -1,0 +1,11 @@
+{
+  "description": "Test-only. The bytes a pair message signs and the pairing token encoding, checked from Go (pair_test.go) and Swift (PairingTokenTests).",
+  "label": "localflow-v1-pair",
+  "binding": "e3537b881cd9da8b97c6f580d47d05456efca8389cbf94df0351fec63caf3a7c",
+  "signature_input": "6c6f63616c666c6f772d76312d70616972e3537b881cd9da8b97c6f580d47d05456efca8389cbf94df0351fec63caf3a7c",
+  "device_public_key": "04b7f45fc9b6e1621fad757bd28915141274cf38256774fb3c99cea28b75b68da8b3f86fc5c89200129a768d69974e71c07f92e2c894d8e41f5c257fb49ae8d989",
+  "signature": "3045022100ba386fc54287a20e5f437ad91237dece461d440f143917e3346c106c88234ea10220366d440b49942d48a30aa1dd4fe47fbe2fa6dd6369a87d789a26d53d6888cf09",
+  "server_public_key": "1906cab425526e28a4c8418671e58bdacd2084668ba46c06be2d396e20064a64",
+  "token_random": "1f3fc1044189c2996d1988906719df784aa25de435503a566a2e2d5de84a7170",
+  "token": "lfp_GQbKtCVSbiikyEGGceWL2s0ghGaLpGwGvi05biAGSmQfP8EEQYnCmW0ZiJBnGd94SqJd5DVQOlZqLi1d6EpxcA"
+}

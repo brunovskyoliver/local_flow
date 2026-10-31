@@ -1,11 +1,23 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -259,6 +271,201 @@ func TestPairHelloLimit(t *testing.T) {
 	expectError(t, first, 0, CodeBusy)
 	if h.tokenState(row.ID) != accounts.PairingLive || value == "" {
 		t.Fatal("token spent")
+	}
+}
+
+// recordingConn keeps every byte a reverse proxy passes to the listener and back.
+type recordingConn struct {
+	net.Conn
+	seen *lockedBytes
+}
+
+type lockedBytes struct {
+	sync.Mutex
+	bytes.Buffer
+}
+
+func (b *lockedBytes) add(p []byte) {
+	b.Lock()
+	defer b.Unlock()
+	b.Write(p)
+}
+
+func (b *lockedBytes) snapshot() []byte {
+	b.Lock()
+	defer b.Unlock()
+	return bytes.Clone(b.Bytes())
+}
+
+func (c recordingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.seen.add(p[:n])
+	return n, err
+}
+
+func (c recordingConn) Write(p []byte) (int, error) {
+	c.seen.add(p)
+	return c.Conn.Write(p)
+}
+
+// US2: one paired device works through a reverse proxy and directly, with the
+// same credentials, and the proxy sees only sealed frames: neither the token,
+// nor its parts, nor what it was exchanged for.
+func TestPairAndUseThroughAReverseProxy(t *testing.T) {
+	h := newAccountsHarness(t, nil)
+	direct := h.url
+	target, err := url.Parse(direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := &lockedBytes{}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return recordingConn{conn, seen}, nil
+	}}
+	front := httptest.NewServer(proxy)
+	defer front.Close()
+
+	// Each round names its own client: the earlier channels are still open and count.
+	round := 0
+	refreshOver := func(address, token string, d *device) Tokens {
+		t.Helper()
+		h.url = address
+		h.clock.Advance(AccountHelloWindow)
+		round++
+		client := fmt.Sprintf("203.0.113.%d", round)
+		c, _ := h.helloFrom(client, PurposeRefresh, "")
+		c.send(Refresh{Op: 1, RefreshToken: token, Signature: d.sign(t, []byte(RefreshSignatureLabel), c.channel.Binding(), sha256Of(token))})
+		tokens, ok := c.recv().(Tokens)
+		if !ok {
+			t.Fatalf("refresh over %s refused", address)
+		}
+		if _, first := h.helloFrom(client, PurposeSession, tokens.AccessToken); first.MessageType() != "ready" {
+			t.Fatalf("session over %s: %#v", address, first)
+		}
+		return tokens
+	}
+
+	value, _ := h.newToken(0, accounts.DefaultPairingLifetime)
+	d := newDevice(t)
+	h.url = front.URL
+	_, reply := h.sendPair(value, d)
+	first := enrolled(t, reply, "approved")
+	second := refreshOver(front.URL, first.RefreshToken, d)
+	third := refreshOver(direct, second.RefreshToken, d)
+	fourth := refreshOver(front.URL, third.RefreshToken, d)
+
+	observed := seen.snapshot()
+	if !bytes.Contains(observed, []byte("GET /v1/remote/channel")) || len(observed) < 4096 {
+		t.Fatalf("the recorder saw too little to prove anything: %d bytes", len(observed))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, accounts.PairingPrefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets := map[string][]byte{
+		"token": []byte(value), "prefix": []byte(accounts.PairingPrefix),
+		"encoded secret": []byte(base64.RawURLEncoding.EncodeToString(raw[32:])), "raw secret": raw[32:],
+		"hex secret":    []byte(hex.EncodeToString(raw[32:])),
+		"first refresh": []byte(first.RefreshToken), "refresh": []byte(fourth.RefreshToken),
+		"access": []byte(fourth.AccessToken),
+	}
+	for name, secret := range secrets {
+		if bytes.Contains(observed, secret) {
+			t.Errorf("the proxy saw the %s", name)
+		}
+	}
+}
+
+// pairingVectors is fixtures/remote/pairing-vectors.json; the Swift side is
+// PairingTokenTests. Every byte string is hex.
+type pairingVectors struct {
+	Description     string `json:"description"`
+	Label           string `json:"label"`
+	Binding         string `json:"binding"`
+	SignatureInput  string `json:"signature_input"`
+	DevicePublicKey string `json:"device_public_key"`
+	Signature       string `json:"signature"`
+	ServerPublicKey string `json:"server_public_key"`
+	TokenRandom     string `json:"token_random"`
+	Token           string `json:"token"`
+}
+
+const pairingVectorsPath = "../../../fixtures/remote/pairing-vectors.json"
+
+// generatePairingVectors signs with a throwaway key; ECDSA signatures aren't
+// repeatable, so -update rewrites the file and the checks below verify it.
+func generatePairingVectors(t *testing.T) {
+	d := newDevice(t)
+	binding := sha256.Sum256([]byte("localflow pairing vector binding"))
+	serverKey := sha256.Sum256([]byte("localflow pairing vector server key"))
+	random := sha256.Sum256([]byte("localflow pairing vector token"))
+	v := pairingVectors{
+		Description:     "Test-only. The bytes a pair message signs and the pairing token encoding, checked from Go (pair_test.go) and Swift (PairingTokenTests).",
+		Label:           PairSignatureLabel,
+		Binding:         hex.EncodeToString(binding[:]),
+		SignatureInput:  hex.EncodeToString(append([]byte(PairSignatureLabel), binding[:]...)),
+		DevicePublicKey: hex.EncodeToString(d.public),
+		Signature:       hex.EncodeToString(d.sign(t, []byte(PairSignatureLabel), binding[:])),
+		ServerPublicKey: hex.EncodeToString(serverKey[:]),
+		TokenRandom:     hex.EncodeToString(random[:]),
+		Token:           accounts.PairingPrefix + base64.RawURLEncoding.EncodeToString(append(serverKey[:], random[:]...)),
+	}
+	encoded, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pairingVectorsPath, append(encoded, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPairingVectors(t *testing.T) {
+	if *update {
+		generatePairingVectors(t)
+	}
+	data, err := os.ReadFile(pairingVectorsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v pairingVectors
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(s string) []byte {
+		t.Helper()
+		b, err := hex.DecodeString(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	binding, key, signature := decode(v.Binding), decode(v.DevicePublicKey), decode(v.Signature)
+	if v.Label != PairSignatureLabel || !bytes.Equal(decode(v.SignatureInput), append([]byte(PairSignatureLabel), binding...)) {
+		t.Fatal("label or signature input changed")
+	}
+	if !verifyDeviceSignature(key, signature, []byte(PairSignatureLabel), binding) {
+		t.Fatal("the server refuses the vector signature")
+	}
+	if verifyDeviceSignature(key, signature, binding, []byte(PairSignatureLabel)) {
+		t.Fatal("binding and label are interchangeable")
+	}
+	want := accounts.PairingPrefix + base64.RawURLEncoding.EncodeToString(append(decode(v.ServerPublicKey), decode(v.TokenRandom)...))
+	if v.Token != want {
+		t.Fatalf("token encoding: %q, want %q", v.Token, want)
+	}
+	// NewPairingToken makes the same shape: the server's key, then 32 random bytes.
+	made, _, err := accounts.NewPairingToken(decode(v.ServerPublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(made, accounts.PairingPrefix))
+	if err != nil || len(raw) != 64 || !bytes.Equal(raw[:32], decode(v.ServerPublicKey)) {
+		t.Fatalf("%x %v", raw, err)
 	}
 }
 

@@ -253,10 +253,17 @@ func TestRemoteFlags(t *testing.T) {
 		c.remote.meetingModels != c.remote.speechModels || c.remote.meetingHelper != filepath.Join(filepath.Dir(executable), "localflow-whisper-engine") {
 		t.Fatalf("defaults %+v %v", c.remote, err)
 	}
+	// Any IP literal parses; these only validate, nothing binds to them.
+	for _, listen := range []string{"0.0.0.0:8090", "[::]:8090", "192.168.1.4:8090", "100.64.0.1:8090", "[fd7a:115c:a1e0::1]:8090"} {
+		if c, err := parse([]string{"--remote-listen=" + listen, "--data-dir=" + dir}, none, io.Discard); err != nil || c.remote.listen != listen {
+			t.Errorf("%s: %v", listen, err)
+		}
+	}
 	for _, args := range [][]string{
-		{"--remote-listen=0.0.0.0:8090", "--data-dir=" + dir},
-		{"--remote-listen=192.168.1.4:8090", "--data-dir=" + dir},
 		{"--remote-listen=localhost:8090", "--data-dir=" + dir},
+		{"--remote-listen=:8090", "--data-dir=" + dir},
+		{"--remote-listen=0.0.0.0:8080", "--data-dir=" + dir},
+		{"--remote-listen=[::]:8080", "--data-dir=" + dir},
 		{"--remote-listen=8090", "--data-dir=" + dir},
 		{"--remote-listen=127.0.0.1:8090"},
 		{"--remote-listen=127.0.0.1:8090", "--data-dir=relative/dir"},

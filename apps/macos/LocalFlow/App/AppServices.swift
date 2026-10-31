@@ -605,6 +605,7 @@ final class AppServices {
       let remoteModel = RemoteDictationModel(
         preferences: preferences, enrollment: { [weak self] in self?.remoteEnrollment() },
         turnOff: { [weak self] in self?.turnOffRemoteDictation() },
+        addressChanged: { await remoteRouter.channels.closeAll() },
         signInAvailable: { provider in
           provider == .apple
             || !((Bundle.main.object(forInfoDictionaryKey: "LocalFlowGoogleClientID") as? String)?

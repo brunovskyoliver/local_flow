@@ -12,6 +12,23 @@
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>LocalFlow listens only while a dictation session is open or a meeting you started is recording. Dictations are transcribed on this iPhone; meetings are kept here and processed only on your own LocalFlow server if you turn that on.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>LocalFlow connects to your own LocalFlow server when its address is on your local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>ts.net</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>

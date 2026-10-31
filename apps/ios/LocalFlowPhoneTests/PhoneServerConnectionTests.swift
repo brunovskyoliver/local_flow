@@ -406,6 +406,45 @@ final class PhoneServerConnectionTests: XCTestCase {
     XCTAssertNil(defaults.string(forKey: "server.address"))
   }
 
+  func testAWholeLinkPastedAsTheTokenFillsBothFields() {
+    let value =
+      "lfp_"
+      + (FakeRemoteServer.serverKey.publicKey.rawRepresentation
+      + Data(repeating: 7, count: 32)).base64URL
+    connection.requestPairing()
+    connection.pairingToken =
+      "localflow://pair?address=http%3A%2F%2F192.168.1.20%3A8090#token=\(value)"
+    XCTAssertEqual(connection.pairingToken, value)
+    XCTAssertEqual(connection.addressDraft, "http://192.168.1.20:8090")
+    XCTAssertTrue(connection.canConfirmPairing)
+    XCTAssertEqual(opener.openCount, 0)
+  }
+
+  /// FR-013: same key, new address, nothing else moves. Another key: nothing at all.
+  func testUpdatingTheAddressKeepsTheDevice() async throws {
+    await approvedWithSwitchOn()
+    let refresh = credentials.string(.refreshToken)
+    let device = try credentials.read(.deviceKey)
+    XCTAssertFalse(connection.canUpdateAddress)
+    connection.addressDraft = "http://192.168.1.20:8090"
+    XCTAssertTrue(connection.canUpdateAddress)
+    await connection.updateAddress()
+    XCTAssertEqual(settings.serverAddress, "http://192.168.1.20:8090")
+    XCTAssertEqual(connection.addressDraft, "http://192.168.1.20:8090")
+    XCTAssertEqual(settings.remoteState, .approved)
+    XCTAssertTrue(settings.processMeetings)
+    XCTAssertEqual(credentials.string(.refreshToken), refresh)
+    XCTAssertEqual(try credentials.read(.deviceKey), device)
+
+    connection.addressDraft = "https://other.example"
+    fetcher.key = Data(repeating: 9, count: 32)
+    await connection.updateAddress()
+    XCTAssertNotNil(connection.error)
+    XCTAssertEqual(settings.serverAddress, "http://192.168.1.20:8090")
+    XCTAssertEqual(settings.remoteState, .approved)
+    XCTAssertEqual(credentials.string(.refreshToken), refresh)
+  }
+
   func testPairApprovesAndLeavesMeetingsOff() async {
     connection.requestPairing()
     connection.addressDraft = "https://server.example"

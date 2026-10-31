@@ -370,11 +370,21 @@ func expectError(t *testing.T, m Message, op int64, code ErrorCode) {
 	}
 }
 
-func TestListenRefusesNonLoopback(t *testing.T) {
-	for _, addr := range []string{"0.0.0.0:0", "192.168.1.10:0", "localhost:0", ":0", "[::]:0", "nonsense"} {
+// Any IP literal is accepted by validation; only loopback is actually bound here,
+// so no firewall prompt appears on a developer's machine.
+func TestListenAcceptsIPLiteralsOnly(t *testing.T) {
+	for _, addr := range []string{"localhost:0", ":0", "nonsense", "mini.local:8090", "192.168.1.10"} {
+		if err := CheckListen(addr); err == nil {
+			t.Errorf("%s accepted", addr)
+		}
 		if l, err := Listen(addr); err == nil {
 			l.Close()
-			t.Errorf("%s accepted", addr)
+			t.Errorf("%s bound", addr)
+		}
+	}
+	for _, addr := range []string{"0.0.0.0:8090", "[::]:8090", "192.168.1.10:0", "100.64.0.1:8090", "[fd7a:115c:a1e0::1]:0"} {
+		if err := CheckListen(addr); err != nil {
+			t.Errorf("%s: %v", addr, err)
 		}
 	}
 	for _, addr := range []string{"127.0.0.1:0", "[::1]:0"} {
@@ -384,6 +394,44 @@ func TestListenRefusesNonLoopback(t *testing.T) {
 			continue
 		}
 		l.Close()
+	}
+}
+
+// Forwarding headers name the client only from a loopback peer; a peer on the
+// network can't choose its bucket with them (research R7).
+func TestClientAddress(t *testing.T) {
+	for _, test := range []struct {
+		name, peer, cf string
+		forwarded      []string
+		want           string
+	}{
+		{"loopback, no headers", "127.0.0.1:5", "", nil, "127.0.0.1"},
+		{"loopback, cloudflared", "127.0.0.1:5", "203.0.113.1", nil, "203.0.113.1"},
+		{"loopback v6, cloudflared", "[::1]:5", "2001:db8::1", nil, "2001:db8::1"},
+		{"mapped loopback", "[::ffff:127.0.0.1]:5", "203.0.113.1", nil, "203.0.113.1"},
+		{"cf wins over xff", "127.0.0.1:5", "203.0.113.1", []string{"198.51.100.1"}, "203.0.113.1"},
+		{"rightmost xff", "127.0.0.1:5", "", []string{"198.51.100.9, 203.0.113.2"}, "203.0.113.2"},
+		{"last xff header", "127.0.0.1:5", "", []string{"198.51.100.9", "203.0.113.3"}, "203.0.113.3"},
+		{"garbage cf falls to xff", "127.0.0.1:5", "nonsense", []string{"203.0.113.2"}, "203.0.113.2"},
+		{"garbage rightmost is the peer", "127.0.0.1:5", "", []string{"203.0.113.2, nonsense"}, "127.0.0.1"},
+		{"empty rightmost is the peer", "127.0.0.1:5", "", []string{"203.0.113.2,"}, "127.0.0.1"},
+		{"spoofed cf from the LAN", "192.168.1.9:5", "203.0.113.1", nil, "192.168.1.9"},
+		{"spoofed xff from the LAN", "192.168.1.9:5", "", []string{"203.0.113.1"}, "192.168.1.9"},
+		{"spoofed from Tailscale", "100.64.0.9:5", "127.0.0.1", []string{"127.0.0.1"}, "100.64.0.9"},
+		{"spoofed from v6", "[fd7a:115c:a1e0::9]:5", "203.0.113.1", nil, "fd7a:115c:a1e0::9"},
+		{"unparseable peer", "pipe", "203.0.113.1", nil, "pipe"},
+	} {
+		r := httptest.NewRequest("GET", "/v1/remote/channel", nil)
+		r.RemoteAddr = test.peer
+		if test.cf != "" {
+			r.Header.Set("Cf-Connecting-Ip", test.cf)
+		}
+		for _, value := range test.forwarded {
+			r.Header.Add("X-Forwarded-For", value)
+		}
+		if got := clientAddress(r); got != test.want {
+			t.Errorf("%s: %q, want %q", test.name, got, test.want)
+		}
 	}
 }
 

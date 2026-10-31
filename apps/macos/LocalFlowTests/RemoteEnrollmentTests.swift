@@ -489,6 +489,97 @@ final class RemoteEnrollmentTests: XCTestCase {
     XCTAssertEqual(preferences.remoteState, .approved)
   }
 
+  // MARK: Changing the address (Feature 027, FR-013)
+
+  private func approvedDevice() async throws {
+    try await pinned()
+    flowd.enrollAnswer = .enrolled(.approved)
+    try await enrollment.enroll(provider: .apple)
+  }
+
+  func testANewAddressWithThePinnedKeyChangesOnlyTheAddress() async throws {
+    try await approvedDevice()
+    let before = try RemoteCredentialItem.allCases.map { try credentials.read($0) }
+    let refreshes = flowd.refreshCount
+    let opened = opener.openCount
+    let created = keys.created
+    try await enrollment.updateAddress(to: try XCTUnwrap(URL(string: "http://192.168.1.20:8090")))
+    XCTAssertEqual(preferences.remoteServerURL, "http://192.168.1.20:8090")
+    XCTAssertEqual(try RemoteCredentialItem.allCases.map { try credentials.read($0) }, before)
+    XCTAssertEqual(preferences.remoteState, .approved)
+    XCTAssertEqual(flowd.refreshCount, refreshes)
+    XCTAssertEqual(opener.openCount, opened)
+    XCTAssertEqual(keys.created, created)
+    XCTAssertTrue(signIn.nonces.count == 1)
+    // The access token still works, and the next refresh goes to the new address.
+    let token = await enrollment.accessToken()
+    XCTAssertEqual(token, "lfa_1")
+    _ = await enrollment.accessTokenExpired()
+    XCTAssertEqual(opener.urls.last?.absoluteString, "ws://192.168.1.20:8090/v1/remote/channel")
+  }
+
+  func testANewAddressWithAnotherKeyIsRefusedAndChangesNothing() async throws {
+    try await approvedDevice()
+    let before = try RemoteCredentialItem.allCases.map { try credentials.read($0) }
+    fetcher.key = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+    do {
+      try await enrollment.updateAddress(to: try XCTUnwrap(URL(string: "https://other.example")))
+      XCTFail("expected a refusal")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .wrongServer) }
+    XCTAssertEqual(preferences.remoteServerURL, "https://mini.example.com")
+    XCTAssertEqual(try RemoteCredentialItem.allCases.map { try credentials.read($0) }, before)
+    XCTAssertEqual(preferences.remoteState, .approved)
+  }
+
+  func testAnAddressChangeNeedsAPinAndAPermittedAddress() async throws {
+    configure()
+    let url = try XCTUnwrap(URL(string: "https://other.example"))
+    do {
+      try await enrollment.updateAddress(to: url)
+      XCTFail("no pin")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .notConfigured) }
+    try await pinned()
+    let fetches = fetcher.fetches
+    do {
+      try await enrollment.updateAddress(to: try XCTUnwrap(URL(string: "http://8.8.8.8")))
+      XCTFail("public http")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .notConfigured) }
+    XCTAssertEqual(fetcher.fetches, fetches)
+  }
+
+  /// `scripts/test-pairing-e2e.sh` serves real flowd code on loopback and names it here.
+  /// The client is the real one down to `URLSession`; only the device key and Keychain are
+  /// test doubles.
+  func testPairAgainstARealServer() async throws {
+    let info = ProcessInfo.processInfo.environment["LOCALFLOW_E2E_INFO"] ?? ""
+    try XCTSkipIf(info.isEmpty, "LOCALFLOW_E2E_INFO not set")
+    let served = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: info)))
+        as? [String: String])
+    configure()
+    XCTAssertTrue(preferences.setRemoteServerURL(try XCTUnwrap(served["origin"])))
+    let enrollment = RemoteEnrollment(
+      preferences: preferences, credentials: credentials, keys: keys, signIn: signIn,
+      identityFetcher: URLSessionIdentityFetcher(), transports: URLSessionRemoteTransportOpener(),
+      deviceName: "E2E Mac")
+    let token = try XCTUnwrap(PairingToken(try XCTUnwrap(served["token"])))
+    try await enrollment.pair(token: token)
+    XCTAssertEqual(preferences.remoteState, .approved)
+    XCTAssertEqual(try credentials.read(.serverKey), token.serverKey)
+    let access = credentials.string(.accessToken)
+    XCTAssertTrue(access?.hasPrefix("lfa_") == true, "the refresh after pairing failed")
+    // A session hello with that token gets `ready`.
+    let channel = try RemoteChannel(
+      transport: URLSessionRemoteTransport(
+        url: try XCTUnwrap(
+          RemoteEnrollment.channelURL(origin: try XCTUnwrap(URL(string: served["origin"]!))))),
+      serverKey: token.serverKey)
+    try await channel.open(purpose: .session, accessToken: try XCTUnwrap(access))
+    await channel.close()
+    // The same origin is a legal address change to itself: the identity matches the pin.
+    try await enrollment.updateAddress(to: try XCTUnwrap(URL(string: served["origin"]!)))
+  }
+
   func testChannelURLIsTheWebSocketPath() {
     XCTAssertEqual(
       RemoteEnrollment.channelURL(origin: URL(string: "https://mini.example.com")!)?.absoluteString,
@@ -496,5 +587,15 @@ final class RemoteEnrollmentTests: XCTestCase {
     XCTAssertEqual(
       RemoteEnrollment.channelURL(origin: URL(string: "https://mini.example.com:8443")!)?
         .absoluteString, "wss://mini.example.com:8443/v1/remote/channel")
+    XCTAssertEqual(
+      RemoteEnrollment.channelURL(origin: URL(string: "http://[fd7a:115c:a1e0::1]:8090")!)?
+        .absoluteString, "ws://[fd7a:115c:a1e0::1]:8090/v1/remote/channel")
+    XCTAssertEqual(
+      RemoteEnrollment.channelURL(origin: URL(string: "http://mini.local:8090")!)?.absoluteString,
+      "ws://mini.local:8090/v1/remote/channel")
+    // A refused origin never gets a socket, however it got here.
+    XCTAssertNil(RemoteEnrollment.channelURL(origin: URL(string: "http://example.com")!))
+    XCTAssertNil(RemoteEnrollment.channelURL(origin: URL(string: "http://8.8.8.8:8090")!))
+    XCTAssertNil(RemoteEnrollment.channelURL(origin: URL(string: "https://a.example/x")!))
   }
 }

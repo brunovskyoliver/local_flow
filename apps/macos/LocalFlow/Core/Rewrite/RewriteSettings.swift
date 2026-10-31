@@ -62,7 +62,8 @@ struct RewriteSettings: Sendable, Equatable {
   var host: String { Self.host(of: endpointOrigin) }
   var isLoopback: Bool { Self.isLoopbackHost(host) }
   var requiresCredential: Bool { !isLoopback && !viaRemoteChannel }
-  var isUnencryptedRemote: Bool { scheme == "http" && !isLoopback }
+  /// Not for the remote channel: an `http://` server origin (FR-012a) carries sealed frames.
+  var isUnencryptedRemote: Bool { scheme == "http" && !isLoopback && !viaRemoteChannel }
 
   var canSend: Bool {
     enabled && isEndpointValid && (!requiresCredential || credentialPresent)

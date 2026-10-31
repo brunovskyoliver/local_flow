@@ -89,6 +89,14 @@ final class RewriteSettingsTests: XCTestCase {
     }
   }
 
+  /// Feature 027: the channel is sealed whatever the origin's scheme, so no override applies.
+  func testAChannelOverAnHTTPOriginIsNotBlocked() throws {
+    let routed = snapshot(endpoint: "https://elsewhere.example").routedToRemote(
+      origin: try XCTUnwrap(URL(string: "http://192.168.1.20:8090")))
+    XCTAssertFalse(routed.isUnencryptedRemote)
+    XCTAssertNil(routed.refusalCategory)
+  }
+
   func testUnencryptedRemoteNeedsOverrideThenCredential() {
     let blocked = snapshot(endpoint: "http://192.168.1.20:8080", credential: "abc")
     XCTAssertTrue(blocked.isUnencryptedRemote)

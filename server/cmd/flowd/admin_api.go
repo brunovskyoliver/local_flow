@@ -285,7 +285,7 @@ func validateAdminListen(admin, main, remote, dataDir string) error {
 	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
 		return errors.New("--admin-listen must be a loopback IP literal host:port")
 	}
-	if admin == main || admin == remote {
+	if sameSocket(admin, main) || (remote != "" && sameSocket(admin, remote)) {
 		return errors.New("--admin-listen must differ from --listen and --remote-listen")
 	}
 	if dataDir == "" || !filepath.IsAbs(dataDir) {

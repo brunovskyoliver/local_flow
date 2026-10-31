@@ -33,7 +33,7 @@ final class UsageReportingModel {
   var available: Bool { identity() != nil }
   var canEnable: Bool { available && pending == nil }
   var attribution: UsageAttribution? {
-    guard enabled, let binding, let current = identity(), current.origin == binding.origin,
+    guard enabled, let binding, let current = identity(),
       current.fingerprint == binding.credentialFingerprint
     else { return nil }
     return binding
@@ -115,7 +115,7 @@ final class UsageReportingModel {
     if automaticEnrollment && attribution == nil {
       do {
         let shouldEnroll = try await store.prepareAutomaticEnrollment(
-          origin: current.origin, fingerprint: current.fingerprint)
+          fingerprint: current.fingerprint)
         await reload()
         guard let after = identity(), after == current else { return }
         if shouldEnroll {
@@ -129,7 +129,7 @@ final class UsageReportingModel {
       }
     }
     guard let binding,
-      current.origin == binding.origin, current.fingerprint == binding.credentialFingerprint
+      current.fingerprint == binding.credentialFingerprint
     else {
       reportFailed = true
       return
