@@ -157,6 +157,11 @@ pub trait Services: 'static {
     fn background_services_enabled(&self) -> bool {
         false
     }
+    /// What the recorder started by `record_shortcut` finished with: `None` while it runs,
+    /// `Some(None)` when it ended with nothing, otherwise the shortcut as JSON.
+    fn take_recorded_shortcut(&self) -> Option<Option<String>> {
+        None
+    }
     /// Installs the global shortcut tap; saved only if this succeeds (Feature 025).
     fn install_shortcut(&self, _shortcut_json: &str) -> Result<(), Unavailable> {
         Err(Unavailable("the dictation shortcut"))
@@ -181,9 +186,37 @@ pub trait Services: 'static {
     fn rewrite_health(&self, _endpoint: &str) -> Result<(Option<String>, Option<String>, String), Unavailable> {
         Err(Unavailable("rewrite health"))
     }
+    /// `NSApp.appearance`: `None` follows the system. Native sheets and alerts read it.
+    fn set_app_appearance(&self, _dark: Option<bool>) -> Result<(), Unavailable> {
+        Ok(())
+    }
+    /// Shows the app in the file manager, for adding it to a permission list by hand.
+    fn reveal_app(&self) -> Result<(), Unavailable> {
+        Err(Unavailable("revealing the app"))
+    }
+    /// The term booster, installed silently after the speech model (`installBoostModel`).
+    fn install_term_booster(&self) -> Result<(), Unavailable> {
+        Err(Unavailable("term booster install"))
+    }
     /// Info.plist `LocalFlowGoogleClientID` is set.
     fn google_sign_in_available(&self) -> bool {
         false
+    }
+    /// The launch model check. No model code until Feature 025, so nothing is verified yet.
+    fn speech_model_verified(&self) -> bool {
+        false
+    }
+    /// `NSWindow.identifier`.
+    fn set_window_identifier(&self, _window: &dyn HasWindowHandle, _identifier: &str) -> Result<(), Unavailable> {
+        Err(Unavailable("window identifiers"))
+    }
+    /// `lifecycle.shutdownIfIdle`: false refuses the quit.
+    fn shutdown_models_if_idle(&self) -> bool {
+        true
+    }
+    /// `recorder.close`: false means the measurement export lost data.
+    fn close_recorder(&self) -> bool {
+        true
     }
     /// VoiceOver announcement that survives the pill hiding (Swift's `announcementRequested`).
     fn announce(&self, _message: &str) -> Result<(), Unavailable> {
@@ -258,17 +291,44 @@ pub struct Fake {
     pub session_ok: std::cell::Cell<bool>,
     pub commands: std::rc::Rc<std::cell::RefCell<Vec<SessionCommand>>>,
     pub announced: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    pub model_verified: std::cell::Cell<bool>,
+    pub models_busy: std::cell::Cell<bool>,
+    pub export_incomplete: std::cell::Cell<bool>,
+    pub identifiers: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    pub appearances: std::rc::Rc<std::cell::RefCell<Vec<Option<bool>>>>,
+    pub save_prompts: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 }
 
 impl Default for Fake {
     fn default() -> Self {
-        Fake { device: "Mac", panel_frames: None, permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default() }
+        Fake { device: "Mac", panel_frames: None, permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
     }
 }
 
 impl Services for Fake {
     fn name(&self) -> &'static str {
         "fake"
+    }
+    fn speech_model_verified(&self) -> bool {
+        self.model_verified.get()
+    }
+    fn set_window_identifier(&self, _: &dyn HasWindowHandle, identifier: &str) -> Result<(), Unavailable> {
+        self.identifiers.borrow_mut().push(identifier.into());
+        Ok(())
+    }
+    fn shutdown_models_if_idle(&self) -> bool {
+        !self.models_busy.get()
+    }
+    fn close_recorder(&self) -> bool {
+        !self.export_incomplete.get()
+    }
+    fn set_app_appearance(&self, dark: Option<bool>) -> Result<(), Unavailable> {
+        self.appearances.borrow_mut().push(dark);
+        Ok(())
+    }
+    fn choose_save_path(&self, default_name: &str) -> Result<Option<PathBuf>, Unavailable> {
+        self.save_prompts.borrow_mut().push(default_name.into());
+        Ok(None)
     }
     fn animate_panel_frame(&self, _: &dyn HasWindowHandle, _: f32, width: f32, duration: f32, curve: [f32; 4]) -> Result<(), Unavailable> {
         let frames = self.panel_frames.as_ref().ok_or(Unavailable("animated window frames"))?;

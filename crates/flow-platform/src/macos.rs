@@ -47,7 +47,12 @@ unsafe extern "C" {
     fn sel_registerName(name: *const std::ffi::c_char) -> Id;
 }
 #[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {}
+unsafe extern "C" {
+    static NSAccessibilityAnnouncementKey: Id;
+    static NSAccessibilityPriorityKey: Id;
+    static NSAccessibilityAnnouncementRequestedNotification: Id;
+    fn NSAccessibilityPostNotificationWithUserInfo(element: Id, notification: Id, info: Id);
+}
 #[link(name = "QuartzCore", kind = "framework")]
 unsafe extern "C" {}
 
@@ -57,6 +62,15 @@ unsafe fn send(receiver: Id, selector: &std::ffi::CStr) -> Id {
     unsafe {
         let f: unsafe extern "C" fn(Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
         f(receiver, sel_registerName(selector.as_ptr()))
+    }
+}
+
+/// A new autoreleased NSString.
+unsafe fn ns_string(text: &std::ffi::CStr) -> Id {
+    // SAFETY: `stringWithUTF8String:` copies a valid C string.
+    unsafe {
+        let f: unsafe extern "C" fn(Id, Id, *const std::ffi::c_char) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        f(objc_getClass(c"NSString".as_ptr()), sel_registerName(c"stringWithUTF8String:".as_ptr()), text.as_ptr())
     }
 }
 
@@ -89,6 +103,59 @@ impl Services for Mac {
     }
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
         std::process::Command::new("/usr/bin/open").arg(url).spawn().map(|_| ()).map_err(|_| Unavailable("opening a link"))
+    }
+    fn set_app_appearance(&self, dark: Option<bool>) -> Result<(), Unavailable> {
+        // SAFETY: NSApplication and NSAppearance exist with AppKit linked; a nil appearance means follow the system.
+        unsafe {
+            let app = send(objc_getClass(c"NSApplication".as_ptr()), c"sharedApplication");
+            let appearance = match dark {
+                None => std::ptr::null_mut(),
+                Some(dark) => {
+                    let name = send(objc_getClass(c"NSString".as_ptr()), c"alloc");
+                    let init: unsafe extern "C" fn(Id, Id, *const std::ffi::c_char) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+                    let text = if dark { c"NSAppearanceNameDarkAqua" } else { c"NSAppearanceNameAqua" };
+                    let name = init(name, sel_registerName(c"initWithUTF8String:".as_ptr()), text.as_ptr());
+                    let named: unsafe extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+                    named(objc_getClass(c"NSAppearance".as_ptr()), sel_registerName(c"appearanceNamed:".as_ptr()), name)
+                }
+            };
+            let set: unsafe extern "C" fn(Id, Id, Id) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            set(app, sel_registerName(c"setAppearance:".as_ptr()), appearance);
+        }
+        Ok(())
+    }
+    fn set_window_identifier(&self, window: &dyn raw_window_handle::HasWindowHandle, identifier: &str) -> Result<(), Unavailable> {
+        let unavailable = || Unavailable("window identifiers");
+        let raw_window_handle::RawWindowHandle::AppKit(handle) = window.window_handle().map_err(|_| unavailable())?.as_raw() else { return Err(unavailable()) };
+        let text = std::ffi::CString::new(identifier).map_err(|_| unavailable())?;
+        // SAFETY: the handle's NSView is alive on the main thread; `window` and `setIdentifier:` exist on it.
+        unsafe {
+            let ns_window = send(handle.ns_view.as_ptr(), c"window");
+            let set: unsafe extern "C" fn(Id, Id, Id) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            set(ns_window, sel_registerName(c"setIdentifier:".as_ptr()), ns_string(&text));
+        }
+        Ok(())
+    }
+    fn announce(&self, message: &str) -> Result<(), Unavailable> {
+        let text = std::ffi::CString::new(message).map_err(|_| Unavailable("accessibility announcements"))?;
+        // SAFETY: AppKit is linked; the keys and values are live NSStrings and a NSNumber on the main thread.
+        unsafe {
+            let app = send(objc_getClass(c"NSApplication".as_ptr()), c"sharedApplication");
+            let number: unsafe extern "C" fn(Id, Id, isize) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let medium = number(objc_getClass(c"NSNumber".as_ptr()), sel_registerName(c"numberWithInteger:".as_ptr()), 50);
+            let keys = [NSAccessibilityAnnouncementKey, NSAccessibilityPriorityKey];
+            let values = [ns_string(&text), medium];
+            let dict: unsafe extern "C" fn(Id, Id, *const Id, *const Id, usize) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let info = dict(objc_getClass(c"NSDictionary".as_ptr()), sel_registerName(c"dictionaryWithObjects:forKeys:count:".as_ptr()), values.as_ptr(), keys.as_ptr(), 2);
+            NSAccessibilityPostNotificationWithUserInfo(app, NSAccessibilityAnnouncementRequestedNotification, info);
+        }
+        Ok(())
+    }
+    fn reveal_app(&self) -> Result<(), Unavailable> {
+        let exe = std::env::current_exe().map_err(|_| Unavailable("revealing the app"))?;
+        // The enclosing `.app`, or the bare binary in a development build.
+        let target = exe.ancestors().find(|a| a.extension().is_some_and(|e| e == "app")).unwrap_or(&exe).to_path_buf();
+        std::process::Command::new("open").arg("-R").arg(target).spawn().map(|_| ()).map_err(|_| Unavailable("revealing the app"))
     }
     fn open_permission_settings(&self, p: Permission) -> Result<(), Unavailable> {
         let pane = match p {
