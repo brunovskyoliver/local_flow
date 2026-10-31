@@ -366,7 +366,8 @@ impl NotetakerPage {
 
 impl Render for NotetakerPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if cx.has_global::<crate::shell::Session>() {
+        // Only take when set: `update_session` notifies observers, which re-render this page.
+        if cx.has_global::<crate::shell::Session>() && cx.global::<crate::shell::Session>().open_meeting.is_some() {
             if let Some((id, tab)) = crate::shell::update_session(cx, |s| s.open_meeting.take()) {
                 let tab = match tab {
                     Some("transcript") => Tab::Transcript,
