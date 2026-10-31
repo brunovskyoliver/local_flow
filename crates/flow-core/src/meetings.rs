@@ -1336,6 +1336,7 @@ pub fn microphone_dividers(switches: &[&Segment], rows: &[&TranscriptRow]) -> (H
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Identity {
     pub state: String,
+    pub origin: String,
     pub known_id: Option<String>,
     pub known_name: Option<String>,
     pub second: Option<(String, String)>,
@@ -1436,11 +1437,12 @@ pub fn identities(db: &Db, meeting_id: &str) -> Res<HashMap<String, Identity>> {
             }
         };
         let mut identity = Identity { state: "unknown".into(), needs_choice, ..Default::default() };
-        if let Some((state, _, known, name)) = row {
+        if let Some((state, origin, known, name)) = row {
             if state == "possible" {
                 identity.second = own.get(root).and_then(|o| o.1.clone());
             }
             identity.state = state;
+            identity.origin = origin;
             identity.known_id = known;
             identity.known_name = name;
         }
@@ -2317,6 +2319,97 @@ fn sources_of(db: &Db, run: &str) -> Res<HashMap<(String, String), Vec<SourceRef
     }
     Ok(out)
 }
+/// `MeetingAnalyzer.currentEvidenceVersion`: the `EvidenceVersion` hash of the evidence as it stands
+/// now. None without a final transcript.
+pub fn current_evidence_version(db: &Db, meeting: &str) -> Res<Option<String>> {
+    let Some(pass) = transcription(db, meeting)?.filter(|t| t.state == "final").and_then(|t| t.pass_id) else { return Ok(None) };
+    let mut out: Vec<u8> = vec![];
+    let mut line = |fields: &[&str]| {
+        for f in fields {
+            out.extend_from_slice(format!("{}:", f.len()).as_bytes());
+            out.extend_from_slice(f.as_bytes());
+            out.push(0x1f);
+        }
+        out.push(0x0a);
+    };
+    let upper = |id: &str| id.to_uppercase();
+    line(&["evidence_v1"]);
+    line(&["meeting", &upper(meeting)]);
+    line(&["pass", &upper(&pass)]);
+    let mut s = db.conn.prepare_cached("SELECT id, end_ms FROM transcript_segments WHERE meeting_id=?1 AND finality='final' AND pass_id=?2")?;
+    let ends: HashMap<String, i64> = s.query_map(params![meeting, pass], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+    let mut after = None;
+    loop {
+        let rows = labeled_page(db, meeting, "final", after, TRANSCRIPT_PAGE)?;
+        for row in &rows {
+            let Some(end) = ends.get(&row.id) else { continue };
+            let speaker = match row.label.as_ref().map(|l| &l.kind) {
+                Some(LabelKind::Speaker(root)) => upper(root),
+                Some(LabelKind::Overlapping) => "ambiguous".into(),
+                _ => "unknown".into(),
+            };
+            line(&["segment", &upper(&row.id), &row.ordinal.to_string(), &row.start_ms.to_string(), &end.to_string(), &speaker, &row.text]);
+        }
+        match rows.last() {
+            Some(last) if rows.len() >= TRANSCRIPT_PAGE => after = Some(last.ordinal),
+            _ => break,
+        }
+    }
+    // The research R9 table. Names stay out; only whether one was typed matters.
+    let local_profile: Option<String> = db.conn.query_row("SELECT id FROM known_speakers WHERE is_local_user=1", [], |r| r.get(0)).optional()?;
+    let ids = identities(db, meeting)?;
+    let mut roots: Vec<(String, String, String, Option<String>)> = vec![];
+    if let Some((_, speakers)) = accepted_speakers(db, meeting)? {
+        for root in speakers.iter().filter(|r| r.merged_into.is_none()) {
+            let (source, name) = db.conn.query_row("SELECT source, display_name FROM meeting_speakers WHERE id=?1", [&root.id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?;
+            roots.push((upper(&root.id), root.id.clone(), source, name));
+        }
+    }
+    roots.sort();
+    for (id, stored, source, name) in &roots {
+        if source == "local" {
+            line(&["local", id, if local_profile.is_some() { "1" } else { "0" }]);
+            continue;
+        }
+        let identity = ids.get(stored);
+        let origin = identity.map(|i| i.origin.as_str()).filter(|o| !o.is_empty()).unwrap_or("none");
+        match identity.map(|i| i.state.as_str()) {
+            Some(state @ ("confirmed" | "recognized")) => line(&["root", id, state, origin, &identity.and_then(|i| i.known_id.as_deref()).map(upper).unwrap_or_else(|| "none".into())]),
+            _ if name.is_some() => line(&["root", id, "local_name", "none", "none"]),
+            Some("possible") => line(&["root", id, "possible", origin, "none"]),
+            _ => line(&["root", id, "unknown", origin, "none"]),
+        }
+    }
+    let text: Option<String> = db.conn.query_row("SELECT text FROM meeting_notes WHERE meeting_id=?1", [meeting], |r| r.get(0)).optional()?;
+    for (ordinal, paragraph, ..) in note_paragraphs(&text.unwrap_or_default()) {
+        line(&["note", &ordinal.to_string(), &paragraph]);
+    }
+    line(&["language", &evidence_language(db, meeting)?, "1"]);
+    line(&["versions", "1", "chunking_v2", "16384", "caps_v1"]);
+    Ok(Some(crate::history::sha256_hex(&out)))
+}
+/// `LanguagePolicy.resolve`: the language the pass decoded in, then the meeting's choice.
+// ponytail: Swift's last step is NLLanguageRecognizer, which only Apple has. A final pass's text does
+// not change, so the accepted summary's recorded language stands in for it until Feature 025.
+fn evidence_language(db: &Db, meeting: &str) -> Res<String> {
+    let pipeline: Option<String> = db.conn.query_row("SELECT pipeline_version FROM meeting_transcriptions WHERE meeting_id=?1", [meeting], |r| r.get(0))?;
+    let pipeline = pipeline.unwrap_or_default();
+    let tags: Vec<&str> = pipeline.split('+').filter(|t| t.starts_with("lang_")).collect();
+    if let [tag] = tags[..] {
+        let parts: Vec<&str> = tag.split('_').collect();
+        if let ["lang", lang @ ("sk" | "en"), "prompt", "v1" | "v2"] = parts[..] {
+            return Ok(lang.into());
+        }
+    }
+    let chosen: Option<String> = db.conn.query_row("SELECT language FROM meetings WHERE id=?1", [meeting], |r| r.get(0))?;
+    match chosen.as_deref() {
+        Some("slovak") => return Ok("sk".into()),
+        Some("english") => return Ok("en".into()),
+        _ => {}
+    }
+    let stored: Option<String> = db.conn.query_row("SELECT s.language FROM analysis_summaries s JOIN meeting_analysis a ON a.accepted_run_id=s.run_id WHERE a.meeting_id=?1", [meeting], |r| r.get(0)).optional()?;
+    Ok(stored.unwrap_or_else(|| "mixed".into()))
+}
 /// `AnalysisStore.readModel` with overlays and live owner names applied. None without an accepted run.
 pub fn read_model(db: &Db, meeting: &str) -> Res<Option<ReadModel>> {
     let accepted: Option<(String, String, Option<String>, Option<i64>, i64)> = db
@@ -2337,9 +2430,8 @@ pub fn read_model(db: &Db, meeting: &str) -> Res<Option<ReadModel>> {
         summary: ai_summary.clone(),
         ai_summary,
         summary_sources: sources.get(&("summary".to_string(), run.clone())).cloned().unwrap_or_default(),
-        // ponytail: Swift also re-derives the evidence hash from the live transcript and notes; the
-        // Rust client compares the pointer's stored version until analysis comes over (Feature 025).
-        stale: accepted_evidence.is_some_and(|a| a != evidence),
+        // `SummaryModel`: the live evidence hash against the run's, or the pointer's own flag.
+        stale: accepted_evidence.as_ref().is_some_and(|a| *a != evidence) || current_evidence_version(db, meeting).ok().flatten().is_some_and(|c| c != evidence),
         generated_at: completed.unwrap_or(created),
         ..Default::default()
     };
@@ -2729,6 +2821,8 @@ pub fn seed(db: &Db) {
     let (you, s1, s2, s3) = (seed_uuid(0xC0), seed_uuid(0xC1), seed_uuid(0xC2), seed_uuid(0xC3));
     let bytes: i64 = LINES.iter().map(|l| l.len() as i64).sum();
     insert_transcription(c, m, "final", Some(&pass), None, LINES.len() as i64, bytes, now, "local");
+    // Records the decoded language, so Swift and Rust resolve the same one without detection.
+    c.execute("UPDATE meeting_transcriptions SET pipeline_version='fixture+lang_en_prompt_v1' WHERE meeting_id=?1", [m]).unwrap();
     c.execute("UPDATE transcript_usage SET text_bytes=text_bytes+?1, segment_rows=segment_rows+?2 WHERE id=1", params![bytes, LINES.len() as i64]).unwrap();
     c.execute(
         "INSERT INTO diarization_runs (id, meeting_id, transcript_pass_id, state, \"trigger\", in_room, engine, model_id, model_revision, model_manifest_hash, pipeline_version, created_at, completed_at, inferred_speaker_count, inference_path)
@@ -2834,6 +2928,10 @@ pub fn seed(db: &Db) {
     item(7, "risk", 0, "Stiff hinges could delay the release date", none, no_due, Some(1));
     let notes_hash = sha256_hex(SEED_NOTES.split("\n\n").next().unwrap_or_default());
     source(c, &arun, m, "item", &seed_uuid(0xF15), 1, None, Some((1, &notes_hash)));
+    // The summary was made from this exact evidence, so it starts out current.
+    let current = current_evidence_version(db, m).unwrap().unwrap();
+    c.execute("UPDATE analysis_runs SET evidence_version=?1 WHERE id=?2", params![current, arun]).unwrap();
+    c.execute("UPDATE meeting_analysis SET accepted_evidence_version=?1 WHERE meeting_id=?2", params![current, m]).unwrap();
 
     // Yesterday: untitled, notes only, transcription off, with a track warning.
     let m = SEED_UNTITLED;
@@ -2956,6 +3054,38 @@ mod tests {
     }
 
     // parity: MEET-058 MEET-060 MEET-063
+    #[test]
+    fn evidence_hash_matches_the_swift_stream_and_tracks_changes() {
+        let db = Db::memory();
+        seed(&db);
+        let original = current_evidence_version(&db, SEED_FULL).unwrap().unwrap();
+        assert!(!read_model(&db, SEED_FULL).unwrap().unwrap().stale, "a seeded summary starts current");
+        // The stream by hand for a one-segment meeting, framed as `EvidenceVersion.compute` does.
+        let m = "bbbbbbbb-0000-4000-8000-000000000001";
+        let pass = "bbbbbbbb-0000-4000-8000-000000000002";
+        insert_meeting(&db.conn, m, "completed", None, 1, 1, None, "local");
+        insert_transcription(&db.conn, m, "final", Some(pass), None, 1, 2, 1, "local");
+        db.conn.execute("UPDATE meeting_transcriptions SET pipeline_version='x+lang_sk_prompt_v2' WHERE meeting_id=?1", [m]).unwrap();
+        db.conn.execute("UPDATE meeting_notes SET text=' one \n\ntwo' WHERE meeting_id=?1", [m]).unwrap();
+        db.conn.execute(
+            "INSERT INTO transcript_segments (id, meeting_id, pass_id, finality, ordinal, stretch_sequence, start_ms, end_ms, window_index, timing_basis, raw_text, assembled_text, normalized_text, engine, model_id, model_revision, pipeline_version, analysis_tracks, created_at)
+             VALUES ('bbbbbbbb-0000-4000-8000-000000000003',?1,?2,'final',0,1,5,9,0,'word','hé','hé','hé','e','m','1','1','mic',1)",
+            params![m, pass],
+        )
+        .unwrap();
+        let expected = "11:evidence_v1\x1f\n7:meeting\x1f36:BBBBBBBB-0000-4000-8000-000000000001\x1f\n4:pass\x1f36:BBBBBBBB-0000-4000-8000-000000000002\x1f\n7:segment\x1f36:BBBBBBBB-0000-4000-8000-000000000003\x1f1:0\x1f1:5\x1f1:9\x1f7:unknown\x1f3:hé\x1f\n4:note\x1f1:1\x1f3:one\x1f\n4:note\x1f1:2\x1f3:two\x1f\n8:language\x1f2:sk\x1f1:1\x1f\n8:versions\x1f1:1\x1f11:chunking_v2\x1f5:16384\x1f7:caps_v1\x1f\n";
+        assert_eq!(current_evidence_version(&db, m).unwrap().unwrap(), sha256_hex(expected));
+        // Renaming a speaker keeps a typed name's certainty out of the text, but a first name changes it.
+        db.conn.execute("UPDATE meeting_notes SET text=text||'\n\nmore' WHERE meeting_id=?1", [SEED_FULL]).unwrap();
+        assert!(read_model(&db, SEED_FULL).unwrap().unwrap().stale, "a changed note marks the summary stale");
+        db.conn.execute("UPDATE meeting_notes SET text=?1 WHERE meeting_id=?2", params![SEED_NOTES, SEED_FULL]).unwrap();
+        assert_eq!(current_evidence_version(&db, SEED_FULL).unwrap().unwrap(), original);
+        db.conn.execute("UPDATE meeting_speakers SET display_name='Someone Else' WHERE display_name='Marta Kováčová'", []).unwrap();
+        assert_eq!(current_evidence_version(&db, SEED_FULL).unwrap().unwrap(), original, "a rename of a named speaker keeps the version");
+        db.conn.execute("UPDATE meeting_speakers SET display_name='New Name' WHERE id=?1", [seed_uuid(0xC2)]).unwrap();
+        assert!(read_model(&db, SEED_FULL).unwrap().unwrap().stale, "naming an unknown speaker changes the version");
+    }
+
     #[test]
     fn notes_editor_saves_and_retries_stale() {
         let db = db();
