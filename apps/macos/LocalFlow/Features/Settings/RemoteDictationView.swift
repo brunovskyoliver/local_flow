@@ -17,6 +17,11 @@ final class RemoteDictationModel {
     "Meeting audio, meeting transcripts and the text summaries are made from will leave this Mac for the server below. The server's administrator can see audio while it is being processed. Meetings handed off to the server stay there until they are merged back, at most 7 days. Nothing is sent until the administrator approves this device; recordings wait on this Mac while the server can't be reached. If you set up dictation later, dictation audio, transcripts, Dictionary terms and rewrite text go to this server too."
 
   private(set) var showingConsent = false
+  /// Feature 027: the pairing sheet, its token (memory only, until redeemed) and whether
+  /// this sheet turned the feature on, so Cancel can leave everything off again.
+  private(set) var showingPairing = false
+  var pairingToken = ""
+  @ObservationIgnored private var pairingTurnedOn = false
   private(set) var confirmingTurnOff = false
   var serverDraft = ""
   /// The identity fetched for the user to compare with `flowd admin identity`.
@@ -142,6 +147,59 @@ final class RemoteDictationModel {
     }
   }
 
+  // MARK: Pairing with a token (Feature 027)
+
+  /// Offered until this device is approved; a link can still open the sheet after that.
+  var offersPairing: Bool { !isOn || state != .approved }
+  var canConfirmPairing: Bool {
+    !busy && draftOrigin != nil && PairingToken(pairingToken) != nil
+  }
+
+  /// Opens the sheet, from the button or a link. Nothing connects until the user confirms.
+  func requestPairing(_ link: PairingLink? = nil) {
+    error = nil
+    showingConsent = false
+    serverDraft = link?.address ?? preferences.remoteServerURL
+    pairingToken = link?.token.value ?? ""
+    showingPairing = true
+  }
+
+  func cancelPairing() {
+    showingPairing = false
+    pairingToken = ""
+    serverDraft = ""
+    error = nil
+    if pairingTurnedOn {
+      pairingTurnedOn = false
+      turnOffAction()
+    }
+  }
+
+  /// Pair is the consent step for this sheet, which shows the consent text and the host.
+  /// One server at a time: another server's credentials stay until the user turns off.
+  func confirmPairing() async {
+    guard let origin = draftOrigin, let token = PairingToken(pairingToken) else { return }
+    error = nil
+    if isOn, !pairingTurnedOn, RemoteDictationSettings.origin(serverURL) != origin {
+      error = "This Mac already uses another server. Turn off remote dictation first."
+      return
+    }
+    if !isOn { pairingTurnedOn = true }
+    preferences.setRemoteServerURL(origin.absoluteString)
+    preferences.confirmRemoteConsent()
+    preferences.remoteEnabled = true
+    guard let enrollment = enrollment() else { return }
+    busy = true
+    defer { busy = false }
+    do {
+      try await enrollment.pair(token: token)
+      pairingTurnedOn = false
+      cancelPairing()
+    } catch {
+      self.error = pairingFailureMessage(error)
+    }
+  }
+
   /// Approved under the first consent text: summaries and meetings stay on this Mac
   /// until the current text is confirmed once.
   var needsConsentUpdate: Bool { isOn && !preferences.remoteConsentCurrent }
@@ -178,6 +236,13 @@ struct RemoteDictationView: View {
         )
         .labelsHidden().toggleStyle(.switch)
         .accessibilityIdentifier("settings.remoteEnabled")
+      }
+      if model.offersPairing {
+        SottoPalette.line.frame(height: 1)
+        SettingsRow("Pair with a token", detail: "Use a token from your server's owner.") {
+          Button("Pair with Token") { model.requestPairing() }
+            .accessibilityIdentifier("settings.remotePairWithToken")
+        }
       }
       if model.showsSetupDetails {
         SottoPalette.line.frame(height: 1)
@@ -216,6 +281,7 @@ struct RemoteDictationView: View {
       }
     }
     .sheet(isPresented: .constant(model.showingConsent)) { consent }
+    .sheet(isPresented: .constant(model.showingPairing)) { PairingSheet(model: model) }
     .confirmationDialog(
       "Turn off remote dictation?", isPresented: .constant(model.confirmingTurnOff)
     ) {

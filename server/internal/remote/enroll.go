@@ -44,7 +44,7 @@ func AccountOperations(cfg AccountsConfig) Operations {
 	}
 	a := &accountOps{cfg}
 	return Operations{
-		PurposeEnroll:  {"enroll": a.enroll},
+		PurposeEnroll:  {"enroll": a.enroll, "pair": a.pair},
 		PurposeRefresh: {"refresh": a.refresh},
 	}
 }

@@ -215,12 +215,21 @@ final class PhoneApp {
   /// `localflow://session/start?request=<uuid>` opens or keeps a session. The request
   /// never starts a dictation. `localflow://settings` shows Settings and starts nothing
   /// (contract "Opening the app"). `localflow://meetings` shows Meetings.
+  /// `localflow://pair` opens the pairing form and spends nothing (Feature 027). A URL can
+  /// hold a token, so none is ever logged here.
   func open(_ url: URL) {
     guard url.scheme == "localflow" else { return }
     if url.host() == "settings" || url.host() == "meetings" {
       showSetup = false
       showSession = false
       tab = url.host() == "settings" ? .settings : .meetings
+      return
+    }
+    if let link = PairingLink(url) {
+      showSetup = false
+      showSession = false
+      tab = .settings
+      serverConnection?.requestPairing(link)
       return
     }
     guard url.host() == "session", url.path() == "/start", let controller else { return }

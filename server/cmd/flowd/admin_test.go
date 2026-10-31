@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -494,5 +495,133 @@ func TestAdminUnixUser(t *testing.T) {
 	}
 	if user := currentUnixUser(); !regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`).MatchString(user) {
 		t.Fatal(user)
+	}
+}
+
+// Create prints the value once; list and the database never hold it; revoke
+// and the exit codes follow flowd admin (contracts/pairing.md).
+func TestAdminToken(t *testing.T) {
+	useKeychain(t)
+	dir := t.TempDir()
+	if _, err := admin("--data-dir", dir, "--dev", "init"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := admin("--data-dir", dir, "--dev", "token", "create", "--label", "Anna", "--ttl", "7d",
+		"--address", "https://mini.example.com:8443", "--json")
+	if err != nil {
+		t.Fatal(out, err)
+	}
+	var created struct {
+		ID        int64  `json:"id"`
+		Label     string `json:"label"`
+		ExpiresAt string `json:"expires_at"`
+		Token     string `json:"token"`
+		Link      string `json:"link"`
+	}
+	if err := json.Unmarshal([]byte(out), &created); err != nil {
+		t.Fatal(out, err)
+	}
+	wantLink := "localflow-dev://pair?address=https%3A%2F%2Fmini.example.com%3A8443#token=" + created.Token
+	if created.ID != 1 || created.Label != "Anna" || !strings.HasPrefix(created.Token, "lfp_") || created.Link != wantLink {
+		t.Fatalf("%+v", created)
+	}
+	expires, err := time.Parse(time.RFC3339, created.ExpiresAt)
+	if err != nil || time.Until(expires) < 6*24*time.Hour {
+		t.Fatal(created.ExpiresAt, err)
+	}
+
+	// The token names this server's key.
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(created.Token, "lfp_"))
+	identity, _ := accounts.Keychain{Runner: keychainRunner, Service: accounts.ServiceDevelopment}.Load(context.Background(), dir)
+	if err != nil || !bytes.Equal(raw[:32], identity.PublicKey()) {
+		t.Fatal("token does not carry the server key", err)
+	}
+
+	for _, args := range [][]string{{"token", "list"}, {"token", "list", "--json"}, {"audit"}} {
+		out, err := admin(append([]string{"--data-dir", dir, "--dev"}, args...)...)
+		if err != nil || strings.Contains(out, "lfp_") || strings.Contains(out, "hash") {
+			t.Fatal(args, out, err)
+		}
+		if !strings.Contains(out, "live") && args[len(args)-1] != "audit" {
+			t.Fatal(args, out)
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*"))
+	for _, file := range files {
+		if data, err := os.ReadFile(file); err == nil && bytes.Contains(data, []byte(created.Token)) {
+			t.Fatalf("%s holds the token", file)
+		}
+	}
+
+	out, err = admin("--data-dir", dir, "--dev", "token", "revoke", "1")
+	if err != nil || out != "token 1 revoked\n" {
+		t.Fatal(out, err)
+	}
+	if _, err = admin("--data-dir", dir, "--dev", "token", "revoke", "1"); exitCode(err) != exitTransition {
+		t.Fatal(err)
+	}
+	if _, err = admin("--data-dir", dir, "--dev", "token", "revoke", "99"); exitCode(err) != exitNotFound {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"token"}, {"token", "rename"}, {"token", "create"}, {"token", "revoke", "x"},
+		{"token", "create", "--label", "A", "--ttl", "2h"},
+		{"token", "create", "--label", "A", "--address", "https://a.example/path"},
+		{"token", "create", "--label", "A", "--address", "ftp://a.example"},
+	} {
+		if _, err := admin(append([]string{"--data-dir", dir, "--dev"}, args...)...); exitCode(err) != exitUsage {
+			t.Fatal(args, err)
+		}
+	}
+	if _, err = admin("--data-dir", dir, "--dev", "token", "create", "--label", "A", "--user", "99"); exitCode(err) != exitNotFound {
+		t.Fatal(err)
+	}
+}
+
+type lockedKeychain struct{}
+
+func (lockedKeychain) Run(context.Context, []byte, ...string) ([]byte, error) {
+	return nil, statusError(36)
+}
+
+// Create without the key fails clearly; list and revoke need no key.
+func TestAdminTokenWithoutTheKey(t *testing.T) {
+	useKeychain(t)
+	dir := t.TempDir()
+	if _, err := admin("--data-dir", dir, "token", "create", "--label", "A"); err == nil || !strings.Contains(err.Error(), "admin init") {
+		t.Fatal(err)
+	}
+	if out, err := admin("--data-dir", dir, "token", "list", "--json"); err != nil || strings.TrimSpace(out) != "[]" {
+		t.Fatal(out, err)
+	}
+	// A locked Keychain, as over SSH.
+	previous := keychainRunner
+	keychainRunner = lockedKeychain{}
+	defer func() { keychainRunner = previous }()
+	if _, err := admin("--data-dir", dir, "token", "create", "--label", "A"); err == nil || !strings.Contains(err.Error(), "unlock the login Keychain") {
+		t.Fatal(err)
+	}
+	if _, err := admin("--data-dir", dir, "token", "list"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The default output has the id, the value and the link only when asked.
+func TestAdminTokenText(t *testing.T) {
+	useKeychain(t)
+	dir := t.TempDir()
+	if _, err := admin("--data-dir", dir, "init"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := admin("--data-dir", dir, "token", "create", "--label", "Anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Split(strings.TrimSpace(out), "\n"); len(lines) != 2 || !strings.HasPrefix(lines[1], "lfp_") {
+		t.Fatal(out)
+	}
+	out, err = admin("--data-dir", dir, "token", "create", "--label", "Ben", "--address", "https://m.example")
+	if err != nil || !strings.Contains(out, "localflow://pair?address=https%3A%2F%2Fm.example#token=lfp_") {
+		t.Fatal(out, err)
 	}
 }

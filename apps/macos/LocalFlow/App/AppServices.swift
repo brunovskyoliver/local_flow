@@ -83,6 +83,7 @@ final class AppServices {
     service: RemoteCredentialStore.defaultService,
     accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
   @ObservationIgnored private var remoteEnrollmentInstance: RemoteEnrollment?
+  @ObservationIgnored private var pendingPairing: PairingLink?
   @ObservationIgnored private(set) var remoteRouter: RemoteDictationRouter?
   @ObservationIgnored private(set) var pendingRemoteStore: PendingRemoteDictationStore?
   @ObservationIgnored private(set) var pendingRetrier: PendingRemoteRetrier?
@@ -228,6 +229,18 @@ final class AppServices {
       deviceName: Host.current().localizedName ?? "Mac")
     remoteEnrollmentInstance = enrollment
     return enrollment
+  }
+
+  /// Feature 027: a pairing link shows the sheet in Settings › Server. The model appears
+  /// during `start`, so a link that launched the app waits for it.
+  func openPairing(_ link: PairingLink) {
+    guard let server = settings.server else {
+      pendingPairing = link
+      return
+    }
+    pendingPairing = nil
+    server.remote.requestPairing(link)
+    router.show(.settings)
   }
 
   /// Turning remote dictation off (FR-003): Keychain items and settings go; history stays.
@@ -614,6 +627,7 @@ final class AppServices {
       await usageModel.start()
       settings.server = ServerSettingsModel(
         remote: remoteModel, preferences: preferences, ping: { await remoteRouter.ping() })
+      if let pendingPairing { openPairing(pendingPairing) }
       // Always wired: whether a dictation is rewritten is read from the per-attempt
       // settings snapshot, so the Settings toggle applies without relaunch. With remote
       // dictation on and this device approved, rewrites use the remote channel (FR-020).

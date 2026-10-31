@@ -93,27 +93,30 @@ const (
 	CodeWorkerUnavailable  ErrorCode = "worker_unavailable"
 	CodeInternal           ErrorCode = "internal"
 	CodeNotOffered         ErrorCode = "not_offered"
+	// CodePairingTokenInvalid answers the pair operation only (Feature 027).
+	CodePairingTokenInvalid ErrorCode = "pairing_token_invalid"
 )
 
 // ErrorCodes lists every code in contract order.
 var ErrorCodes = []ErrorCode{
 	CodeUnauthorized, CodeTokenExpired, CodeNotApproved, CodeRevoked, CodeBusy,
 	CodeInvalidMessage, CodeUnsupportedVersion, CodeLimitExceeded, CodeWorkerUnavailable, CodeInternal,
-	CodeNotOffered,
+	CodeNotOffered, CodePairingTokenInvalid,
 }
 
 var errorMessages = map[ErrorCode]string{
-	CodeUnauthorized:       "The credentials were not accepted.",
-	CodeTokenExpired:       "The access token has expired.",
-	CodeNotApproved:        "The account or device is not approved yet.",
-	CodeRevoked:            "The account or device was removed from the server.",
-	CodeBusy:               "The server is busy.",
-	CodeInvalidMessage:     "The message was not valid.",
-	CodeUnsupportedVersion: "The protocol version is not supported.",
-	CodeLimitExceeded:      "A size or length limit was exceeded.",
-	CodeWorkerUnavailable:  "Speech recognition is unavailable on the server.",
-	CodeInternal:           "The server could not complete the request.",
-	CodeNotOffered:         "The server does not offer this operation.",
+	CodeUnauthorized:        "The credentials were not accepted.",
+	CodeTokenExpired:        "The access token has expired.",
+	CodeNotApproved:         "The account or device is not approved yet.",
+	CodeRevoked:             "The account or device was removed from the server.",
+	CodeBusy:                "The server is busy.",
+	CodeInvalidMessage:      "The message was not valid.",
+	CodeUnsupportedVersion:  "The protocol version is not supported.",
+	CodeLimitExceeded:       "A size or length limit was exceeded.",
+	CodeWorkerUnavailable:   "Speech recognition is unavailable on the server.",
+	CodeInternal:            "The server could not complete the request.",
+	CodeNotOffered:          "The server does not offer this operation.",
+	CodePairingTokenInvalid: "The pairing token was not accepted.",
 }
 
 // Message is the fixed sentence sent with the code; it is never derived from
@@ -209,7 +212,7 @@ type opMessage interface {
 
 // MessageTypes lists every control message type in contract order.
 var MessageTypes = []string{
-	"ready", "enroll", "enrolled", "refresh", "tokens", "dictation_start", "dictation_accepted",
+	"ready", "enroll", "pair", "enrolled", "refresh", "tokens", "dictation_start", "dictation_accepted",
 	"window_result", "progress", "dictation_end", "dictation_cancel", "dictation_complete",
 	"cancelled", "rewrite", "rewrite_event", "analysis_part", "analysis", "analysis_event_part",
 	"analysis_event", "live_window", "live_result", "meeting_job", "meeting_progress", "meeting_result",
@@ -253,6 +256,16 @@ type Enroll struct {
 	DeviceName string `json:"device_name"` // control characters removed by DecodeMessage
 	DeviceKey  Base64 `json:"device_key"`
 	Signature  Base64 `json:"signature"`
+}
+
+// Pair redeems a one-time pairing token (Feature 027,
+// specs/027-remote-pairing/contracts/pairing.md).
+type Pair struct {
+	Op           int64  `json:"op"`
+	PairingToken string `json:"pairing_token"`
+	DeviceName   string `json:"device_name"` // control characters removed by DecodeMessage
+	DeviceKey    Base64 `json:"device_key"`
+	Signature    Base64 `json:"signature"`
 }
 
 type Enrolled struct {
@@ -567,6 +580,7 @@ func NewError(op int64, code ErrorCode) ErrorMessage {
 
 func (Ready) MessageType() string             { return "ready" }
 func (Enroll) MessageType() string            { return "enroll" }
+func (Pair) MessageType() string              { return "pair" }
 func (Enrolled) MessageType() string          { return "enrolled" }
 func (Refresh) MessageType() string           { return "refresh" }
 func (Tokens) MessageType() string            { return "tokens" }
@@ -595,6 +609,7 @@ func (HandoffReply) MessageType() string      { return "handoff_reply" }
 func (ErrorMessage) MessageType() string      { return "error" }
 
 func (m Enroll) OpNumber() int64            { return m.Op }
+func (m Pair) OpNumber() int64              { return m.Op }
 func (m Enrolled) OpNumber() int64          { return m.Op }
 func (m Refresh) OpNumber() int64           { return m.Op }
 func (m Tokens) OpNumber() int64            { return m.Op }
@@ -629,6 +644,7 @@ var decoders = map[string]func([]byte) (Message, error){
 	"usage_reply":         decodeAs[UsageReply],
 	"ready":               decodeAs[Ready],
 	"enroll":              decodeAs[Enroll],
+	"pair":                decodeAs[Pair],
 	"enrolled":            decodeAs[Enrolled],
 	"refresh":             decodeAs[Refresh],
 	"tokens":              decodeAs[Tokens],
@@ -1001,19 +1017,49 @@ func (m Enroll) validate() (Message, error) {
 		return nil, invalid("id_token malformed")
 	}
 	m.DeviceName = SanitizeDeviceName(m.DeviceName)
-	if !textWithin(m.DeviceName, 1, MaxDeviceNameBytes) {
-		return nil, invalid("device_name length")
-	}
-	if len(m.DeviceKey) != DeviceKeyBytes || m.DeviceKey[0] != 0x04 {
-		return nil, invalid("device_key not X9.63 uncompressed")
-	}
-	if _, err := ecdh.P256().NewPublicKey(m.DeviceKey); err != nil {
-		return nil, invalid("device_key not a P-256 point")
-	}
-	if len(m.Signature) < 8 || len(m.Signature) > 72 {
-		return nil, invalid("signature length")
+	if err := validDevice(m.DeviceName, m.DeviceKey, m.Signature); err != nil {
+		return nil, err
 	}
 	return m, nil
+}
+
+func (m Pair) validate() (Message, error) {
+	if !validPairingToken(m.PairingToken) {
+		return nil, invalid("pairing_token malformed")
+	}
+	m.DeviceName = SanitizeDeviceName(m.DeviceName)
+	if err := validDevice(m.DeviceName, m.DeviceKey, m.Signature); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// validDevice checks the fields enroll and pair share.
+func validDevice(name string, key, signature []byte) error {
+	if !textWithin(name, 1, MaxDeviceNameBytes) {
+		return invalid("device_name length")
+	}
+	if len(key) != DeviceKeyBytes || key[0] != 0x04 {
+		return invalid("device_key not X9.63 uncompressed")
+	}
+	if _, err := ecdh.P256().NewPublicKey(key); err != nil {
+		return invalid("device_key not a P-256 point")
+	}
+	if len(signature) < 8 || len(signature) > 72 {
+		return invalid("signature length")
+	}
+	return nil
+}
+
+// validPairingToken accepts lfp_ plus the 32-byte server key and 32 random
+// bytes in base64url without padding.
+func validPairingToken(token string) bool {
+	rest, ok := strings.CutPrefix(token, "lfp_")
+	if !ok || len(rest) != 86 {
+		return false
+	}
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(rest)
+	return err == nil && len(decoded) == 64
 }
 
 func validJWTShape(token string) bool {

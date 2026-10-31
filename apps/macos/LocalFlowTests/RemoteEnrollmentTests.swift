@@ -16,6 +16,11 @@ final class FakeFlowdAccounts: @unchecked Sendable {
   /// nil answers `tokens`; otherwise the error code.
   var refreshError: String?
   var devicePublicKey: Data?
+  /// nil answers `enrolled`; otherwise the error code. `pairDrops` closes without a reply
+  /// once, as a lost reply looks to the client.
+  var pairError: String?
+  var pairDrops = 0
+  private(set) var pairs: [(token: String, key: Data?, signatureValid: Bool)] = []
   private(set) var enrollSignatureValid = false
   private(set) var refreshSignaturesValid: [Bool] = []
   private(set) var nonces: [String] = []
@@ -65,6 +70,26 @@ final class FakeFlowdAccounts: @unchecked Sendable {
       case .error(let code):
         return [.message(["type": "error", "op": op, "code": code])]
       }
+    case "pair":
+      let key = Data(base64URL: object["device_key"] as? String ?? "")
+      devicePublicKey = key
+      pairs.append(
+        (
+          object["pairing_token"] as? String ?? "", key,
+          verify(
+            object["signature"] as? String, message: Data("localflow-v1-pair".utf8) + binding,
+            key: key)
+        ))
+      if pairDrops > 0 {
+        pairDrops -= 1
+        return [.close(1006)]
+      }
+      if let pairError { return [.message(["type": "error", "op": op, "code": pairError])] }
+      return [
+        .message([
+          "type": "enrolled", "op": op, "state": "approved", "refresh_token": currentRefresh,
+        ])
+      ]
     case "refresh":
       refreshCount += 1
       let presented = object["refresh_token"] as? String ?? ""
@@ -341,6 +366,127 @@ final class RemoteEnrollmentTests: XCTestCase {
     XCTAssertEqual(entries.count, 1)
     let none = await enrollment.accessToken()
     XCTAssertNil(none)
+  }
+
+  // MARK: Pairing (Feature 027)
+
+  private func pairingToken(key: Data = FakeRemoteServer.serverKey.publicKey.rawRepresentation)
+    throws -> PairingToken
+  {
+    let random = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+    return try XCTUnwrap(PairingToken("lfp_" + (key + random).base64URL))
+  }
+
+  func testPairPinsStoresCredentialsAndRefreshes() async throws {
+    configure()
+    let token = try pairingToken()
+    try await enrollment.pair(token: token)
+    XCTAssertEqual(flowd.pairs.map(\.token), [token.value])
+    XCTAssertEqual(flowd.pairs.first?.signatureValid, true)
+    XCTAssertEqual(try credentials.read(.serverKey), token.serverKey)
+    XCTAssertNotNil(try credentials.read(.deviceKey))
+    XCTAssertEqual(preferences.remoteState, .approved)
+    // The enrolled refresh token was swapped straight away.
+    XCTAssertEqual(flowd.refreshSignaturesValid, [true])
+    XCTAssertEqual(credentials.string(.accessToken), "lfa_1")
+    XCTAssertTrue(signIn.nonces.isEmpty)
+  }
+
+  func testNothingConnectsBeforeConsent() async throws {
+    preferences.setRemoteServerURL("https://mini.example.com")
+    do {
+      try await enrollment.pair(token: try pairingToken())
+      XCTFail("expected refusal without consent")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .notConfigured) }
+    XCTAssertEqual(fetcher.fetches, 0)
+    XCTAssertEqual(opener.openCount, 0)
+  }
+
+  /// SC-003: the identity endpoint names another key, so no socket opens at all.
+  func testAWrongKeyAtTheAddressNeverReceivesTheToken() async throws {
+    configure()
+    let token = try pairingToken(
+      key: Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation)
+    do {
+      try await enrollment.pair(token: token)
+      XCTFail("expected a wrong-server refusal")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .wrongServer) }
+    XCTAssertEqual(opener.openCount, 0)
+    XCTAssertTrue(flowd.pairs.isEmpty)
+    XCTAssertTrue(credentials.isEmpty)
+    XCTAssertEqual(preferences.remoteState, .off)
+  }
+
+  /// An impostor repeats the token's key at the identity endpoint but can't hold the private
+  /// key: the hello doesn't open, and the token is never sent.
+  func testAnImpostorRepeatingTheKeyNeverReceivesTheToken() async throws {
+    configure()
+    let impostor = FakeRemoteServer(privateKey: Curve25519.KeyAgreement.PrivateKey())
+    let transport = flowd.transport(server: impostor)
+    let enrollment = RemoteEnrollment(
+      preferences: preferences, credentials: credentials, keys: keys, signIn: signIn,
+      identityFetcher: fetcher, transports: FakeRemoteTransportOpener { _ in transport },
+      clock: clock, deviceName: "Test Mac")
+    do {
+      try await enrollment.pair(token: try pairingToken())
+      XCTFail("expected a wrong-server refusal")
+    } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .wrongServer) }
+    XCTAssertTrue(transport.receivedEvents.isEmpty)
+    XCTAssertTrue(credentials.isEmpty)
+  }
+
+  /// flowd's decoder refuses an unknown type with invalid_message; a newer schema is
+  /// unsupported_version. Both mean: update, and the token is unspent.
+  func testAnOldServerMapsToUpdateRequired() async throws {
+    for code in ["invalid_message", "unsupported_version"] {
+      configure()
+      flowd.pairError = code
+      do {
+        try await enrollment.pair(token: try pairingToken())
+        XCTFail("expected update required")
+      } catch { XCTAssertEqual(error as? RemoteEnrollmentError, .updateRequired) }
+      XCTAssertEqual(preferences.remoteNotice, .updateRequired)
+      XCTAssertEqual(preferences.remoteState, .off)
+      XCTAssertTrue(credentials.isEmpty)
+    }
+  }
+
+  func testARefusedTokenLeavesAWorkingDeviceAlone() async throws {
+    try await pinned()
+    flowd.enrollAnswer = .enrolled(.approved)
+    try await enrollment.enroll(provider: .apple)
+    let refresh = credentials.string(.refreshToken)
+    let device = try credentials.read(.deviceKey)
+    for code in ["pairing_token_invalid", "unauthorized", "revoked", "busy"] {
+      flowd.pairError = code
+      do {
+        try await enrollment.pair(token: try pairingToken())
+        XCTFail("expected a refusal")
+      } catch {
+        XCTAssertEqual(error as? RemoteChannelError, .server(RemoteErrorCode(rawValue: code)!))
+      }
+      XCTAssertEqual(preferences.remoteState, .approved)
+      XCTAssertEqual(credentials.string(.refreshToken), refresh)
+      XCTAssertEqual(try credentials.read(.deviceKey), device)
+    }
+  }
+
+  /// The server may have spent the token before the reply was lost; only the same key may
+  /// retry, so a retry must not make a new one.
+  func testALostReplyRetriesWithTheSameDeviceKey() async throws {
+    configure()
+    flowd.pairDrops = 1
+    let token = try pairingToken()
+    do {
+      try await enrollment.pair(token: token)
+      XCTFail("expected the channel to fail")
+    } catch { XCTAssertEqual(error as? RemoteChannelError, .unreachable) }
+    XCTAssertTrue(credentials.isEmpty)
+    try await enrollment.pair(token: token)
+    XCTAssertEqual(keys.created, 1)
+    XCTAssertEqual(flowd.pairs.count, 2)
+    XCTAssertEqual(flowd.pairs[0].key, flowd.pairs[1].key)
+    XCTAssertEqual(preferences.remoteState, .approved)
   }
 
   func testChannelURLIsTheWebSocketPath() {

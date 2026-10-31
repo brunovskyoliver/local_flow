@@ -47,6 +47,17 @@ struct ServerSettingsView: View {
         .sottoRow()
       }
 
+      if connection.offersPairing {
+        Section {
+          Button("Pair with token") { connection.requestPairing() }
+            .disabled(connection.busy)
+            .accessibilityIdentifier("server.pairWithToken")
+        } footer: {
+          Text("Use a token from your server's owner instead of signing in.")
+        }
+        .sottoRow()
+      }
+
       if connection.settings.origin != nil {
         Section {
           LabeledContent("State") {
@@ -132,6 +143,55 @@ struct ServerSettingsView: View {
       "The server's identity no longer matches. Nothing is sent until you check and confirm it again."
     case .unreachable: "Meetings wait here until the server can be reached."
     default: nil
+    }
+  }
+}
+
+/// Feature 027: the address, the token and the consent text. Pair connects; opening a
+/// link only fills this in.
+struct PhonePairingSheet: View {
+  @Bindable var connection: PhoneServerConnection
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section("Server address") {
+          TextField("https://server.example", text: $connection.addressDraft)
+            .keyboardType(.URL)
+            .textContentType(.URL)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+        }
+        .sottoRow()
+        Section {
+          SecureField("lfp_…", text: $connection.pairingToken)
+            .accessibilityIdentifier("server.pairToken")
+        } header: {
+          Text("Token")
+        } footer: {
+          if let error = connection.error {
+            Text(error).foregroundStyle(SottoPalette.warning)
+          } else {
+            Text(PhoneServerConnection.consentText)
+          }
+        }
+        .sottoRow()
+        if let host = connection.draftOrigin?.host() {
+          Section { LabeledContent("Server", value: host) }.sottoRow()
+        }
+      }
+      .sottoList()
+      .navigationTitle("Pair with token")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") { connection.cancelPairing() }
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Pair") { Task { await connection.pair() } }
+            .disabled(!connection.canConfirmPairing)
+        }
+      }
     }
   }
 }

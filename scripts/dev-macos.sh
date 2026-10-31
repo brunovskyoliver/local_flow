@@ -21,11 +21,13 @@ if [[ "$variant" == dev ]]; then
   bundle_id=org.localflow.LocalFlow.dev
   product="LocalFlow Dev"
   port_base=18000
+  url_scheme=localflow-dev
   derived=build/SignedDevelopment-dev
 else
   bundle_id=$production_id
   product=LocalFlow
   port_base=8000
+  url_scheme=localflow
   derived=build/SignedDevelopment
 fi
 app="/Applications/$product.app"
@@ -52,6 +54,7 @@ xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -scheme LocalFlow \
   -derivedDataPath "$derived" "${signing[@]}" \
   LOCALFLOW_BUNDLE_IDENTIFIER="$bundle_id" LOCALFLOW_PRODUCT_NAME="$product" \
   LOCALFLOW_VARIANT="$variant" LOCALFLOW_PORT_BASE="$port_base" \
+  LOCALFLOW_URL_SCHEME="$url_scheme" \
   LOCALFLOW_GOOGLE_CLIENT_ID="${LOCALFLOW_GOOGLE_CLIENT_ID:-}" build
 source_app="$derived/Build/Products/$configuration/$product.app"
 codesign --verify --deep --strict "$source_app"

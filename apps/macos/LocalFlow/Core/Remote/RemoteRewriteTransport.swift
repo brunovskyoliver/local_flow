@@ -112,7 +112,8 @@ final class RemoteRewriteTransport: RewriteTransporting, @unchecked Sendable {
     case .protocolError: .malformedResponse
     case .server(let code):
       switch code {
-      case .unauthorized, .tokenExpired, .notApproved, .revoked: .authenticationFailed
+      case .unauthorized, .tokenExpired, .notApproved, .revoked, .pairingTokenInvalid:
+        .authenticationFailed
       case .busy, .workerUnavailable, .notOffered: .backendUnavailable
       case .unsupportedVersion: .unsupportedSchemaVersion
       case .invalidMessage, .limitExceeded: .serverValidationFailed

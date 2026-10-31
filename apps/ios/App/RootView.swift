@@ -62,6 +62,13 @@ struct RootView: View {
       }
       .onChange(of: controller.lastResultID) { Task { await app.refreshSetup() } }
       .onChange(of: services.model.state) { Task { await app.refreshSetup() } }
+      .sheet(
+        isPresented: Binding(
+          get: { app.serverConnection?.showingPairing ?? false },
+          set: { if !$0 { app.serverConnection?.cancelPairing() } })
+      ) {
+        if let connection = app.serverConnection { PhonePairingSheet(connection: connection) }
+      }
       .fullScreenCover(isPresented: $app.showSession) {
         SessionView(controller: controller) { app.showSession = false }
       }

@@ -15,6 +15,13 @@
      data, Keychain services, launch agents and ports (AppIdentity). -->
 <key>LocalFlowVariant</key><string>$(LOCALFLOW_VARIANT)</string>
 <key>LocalFlowPortBase</key><string>$(LOCALFLOW_PORT_BASE)</string>
+<key>CFBundleURLTypes</key>
+<array>
+<dict>
+<key>CFBundleURLName</key><string>$(LOCALFLOW_BUNDLE_IDENTIFIER)</string>
+<key>CFBundleURLSchemes</key><array><string>$(LOCALFLOW_URL_SCHEME)</string></array>
+</dict>
+</array>
 <key>LocalFlowGoogleClientID</key><string>$(LOCALFLOW_GOOGLE_CLIENT_ID)</string>
 <!-- The rewrite endpoint is a single user-chosen self-hosted origin. Plain HTTP is allowed at the
      transport layer because the client enforces the credential and per-origin insecure-override

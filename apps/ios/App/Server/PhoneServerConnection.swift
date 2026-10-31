@@ -147,6 +147,11 @@ final class PhoneServerConnection {
   private(set) var identity: RemoteServerIdentity?
   private(set) var busy = false
   private(set) var error: String?
+  /// Feature 027: the pairing sheet and its token (memory only, until redeemed).
+  private(set) var showingPairing = false
+  var pairingToken = ""
+  /// This sheet stored the address, so Cancel removes it again.
+  @ObservationIgnored private var pairingSetAddress = false
   /// False after the last channel could not reach the server; true again on the next
   /// channel that opens.
   private(set) var reachable = true
@@ -291,6 +296,60 @@ final class PhoneServerConnection {
       error = nil
     } catch {
       self.error = "The server could not be reached. Try again."
+    }
+  }
+
+  // MARK: Pairing with a token (Feature 027)
+
+  var offersPairing: Bool { state != .approved }
+  var canConfirmPairing: Bool {
+    !busy && draftOrigin != nil && PairingToken(pairingToken) != nil
+  }
+
+  /// Opens the sheet, from the button or a link. Nothing connects until the owner confirms.
+  func requestPairing(_ link: PairingLink? = nil) {
+    error = nil
+    if let address = link?.address { addressDraft = address }
+    pairingToken = link?.token.value ?? ""
+    showingPairing = true
+  }
+
+  func cancelPairing() {
+    guard showingPairing else { return }
+    showingPairing = false
+    pairingToken = ""
+    error = nil
+    if pairingSetAddress {
+      pairingSetAddress = false
+      enrollment.turnOff()
+    }
+    addressDraft = settings.serverAddress
+  }
+
+  /// Pair confirms the host and the consent text the sheet shows. Meetings still wait for
+  /// "Process meetings on this server". One server at a time: another server's credentials
+  /// stay until the owner signs out.
+  func pair() async {
+    guard let origin = draftOrigin, let token = PairingToken(pairingToken) else { return }
+    error = nil
+    if !pairingSetAddress, let current = settings.origin, current != origin {
+      error = "This iPhone already uses another server. Sign out first."
+      return
+    }
+    if settings.origin == nil { pairingSetAddress = true }
+    settings.setServerAddress(origin.absoluteString)
+    busy = true
+    defer { busy = false }
+    defer { onChange?() }
+    do {
+      try await enrollment.pair(token: token)
+      pairingSetAddress = false
+      identity = nil
+      reachable = true
+      await pool.closeAll()
+      cancelPairing()
+    } catch {
+      self.error = pairingFailureMessage(error)
     }
   }
 

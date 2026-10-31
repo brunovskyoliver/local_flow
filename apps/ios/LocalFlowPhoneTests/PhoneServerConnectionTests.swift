@@ -10,6 +10,9 @@ private final class FakePhoneFlowd: @unchecked Sendable {
   var enrollState = "pending"
   /// nil answers `tokens`; otherwise the error code.
   var refreshError: String?
+  /// nil answers `enrolled`; otherwise the error code.
+  var pairError: String?
+  private(set) var pairTokens: [String] = []
   /// nil answers `ready` to a session hello; otherwise the error code.
   var sessionError: String?
   private(set) var refreshCount = 0
@@ -32,6 +35,16 @@ private final class FakePhoneFlowd: @unchecked Sendable {
             var message: [String: Any] = ["type": "enrolled", "op": op, "state": enrollState]
             if enrollState != "rejected" { message["refresh_token"] = "lfr_initial" }
             return [.message(message)]
+          case "pair":
+            pairTokens.append(object["pairing_token"] as? String ?? "")
+            if let pairError {
+              return [.message(["type": "error", "op": op, "code": pairError])]
+            }
+            return [
+              .message([
+                "type": "enrolled", "op": op, "state": "approved", "refresh_token": "lfr_initial",
+              ])
+            ]
           case "refresh":
             refreshCount += 1
             if let refreshError {
@@ -368,5 +381,99 @@ final class PhoneServerConnectionTests: XCTestCase {
     XCTAssertEqual(settings.serverAddress, "https://other.example")
     XCTAssertFalse(settings.processMeetings)
     XCTAssertEqual(connection.status, .compareFingerprint)
+  }
+
+  // MARK: Pairing (Feature 027)
+
+  private var tokenValue: String {
+    "lfp_"
+      + (FakeRemoteServer.serverKey.publicKey.rawRepresentation + Data(repeating: 7, count: 32))
+      .base64URL
+  }
+
+  /// Opening a link fills in the form and spends nothing.
+  func testALinkOnlyFillsInTheForm() async throws {
+    let address = "https%3A%2F%2Fserver.example"
+    let url = try XCTUnwrap(URL(string: "localflow://pair?address=\(address)#token=\(tokenValue)"))
+    connection.requestPairing(try XCTUnwrap(PairingLink(url)))
+    XCTAssertTrue(connection.showingPairing)
+    XCTAssertEqual(connection.addressDraft, "https://server.example")
+    XCTAssertEqual(connection.pairingToken, tokenValue)
+    XCTAssertTrue(connection.canConfirmPairing)
+    XCTAssertEqual(fetcher.fetches, 0)
+    XCTAssertEqual(opener.openCount, 0)
+    XCTAssertEqual(settings.serverAddress, "")
+    XCTAssertNil(defaults.string(forKey: "server.address"))
+  }
+
+  func testPairApprovesAndLeavesMeetingsOff() async {
+    connection.requestPairing()
+    connection.addressDraft = "https://server.example"
+    connection.pairingToken = tokenValue
+    await connection.pair()
+    XCTAssertNil(connection.error)
+    XCTAssertEqual(flowd.pairTokens, [tokenValue])
+    XCTAssertEqual(connection.status, .approved)
+    XCTAssertFalse(connection.showingPairing)
+    XCTAssertEqual(connection.pairingToken, "")
+    XCTAssertEqual(settings.serverAddress, "https://server.example")
+    XCTAssertFalse(settings.sendsMeetings)
+    for key in PhoneServerSettings.keys {
+      XCTAssertFalse("\(defaults.object(forKey: key) ?? "")".contains("lfp_"))
+    }
+  }
+
+  func testARefusedTokenSaysSoAndCancelLeavesNothing() async {
+    flowd.pairError = "pairing_token_invalid"
+    connection.requestPairing()
+    connection.addressDraft = "https://server.example"
+    connection.pairingToken = tokenValue
+    await connection.pair()
+    XCTAssertEqual(
+      connection.error, "This token has expired, been used or been revoked. Ask for a new one.")
+    XCTAssertTrue(connection.showingPairing)
+    XCTAssertEqual(connection.state, .off)
+    connection.cancelPairing()
+    XCTAssertEqual(settings.serverAddress, "")
+    XCTAssertEqual(connection.addressDraft, "")
+    XCTAssertEqual(connection.pairingToken, "")
+    XCTAssertNil(connection.error)
+  }
+
+  func testAWrongServerNeverReceivesTheToken() async throws {
+    fetcher.key = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+    connection.requestPairing()
+    connection.addressDraft = "https://server.example"
+    connection.pairingToken = tokenValue
+    await connection.pair()
+    XCTAssertEqual(
+      connection.error,
+      "This address reaches a different server. Check the address or ask for a new token.")
+    XCTAssertEqual(opener.openCount, 0)
+    XCTAssertTrue(flowd.pairTokens.isEmpty)
+  }
+
+  func testAnOldServerAsksForAnUpdate() async {
+    flowd.pairError = "invalid_message"
+    connection.requestPairing()
+    connection.addressDraft = "https://server.example"
+    connection.pairingToken = tokenValue
+    await connection.pair()
+    XCTAssertEqual(connection.status, .updateRequired)
+    XCTAssertEqual(
+      connection.error, "Update the LocalFlow server to pair with a token. The token was not used.")
+  }
+
+  /// Pairing never replaces another server's credentials: the owner signs out first.
+  func testPairingAnotherServerIsRefusedUntilSignOut() async {
+    await enroll(as: "approved")
+    connection.requestPairing()
+    connection.addressDraft = "https://other.example"
+    connection.pairingToken = tokenValue
+    await connection.pair()
+    XCTAssertEqual(connection.error, "This iPhone already uses another server. Sign out first.")
+    XCTAssertEqual(settings.serverAddress, "https://server.example")
+    XCTAssertEqual(connection.state, .approved)
+    XCTAssertTrue(flowd.pairTokens.isEmpty)
   }
 }

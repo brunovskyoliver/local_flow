@@ -3,7 +3,7 @@
 # or content. Scans the given log files (flowd logs, captured worker stderr, test
 # output) and, with --unified-log MINUTES, the app's unified log for that many recent
 # minutes, for:
-#   access and refresh tokens (lfa_, lfr_), JWTs (eyJ…), transcript text (the
+#   access, refresh and pairing tokens (lfa_, lfr_, lfp_), JWTs (eyJ…), transcript text (the
 #   reference phrases of the audio fixtures), analysis text (the meeting segments,
 #   notes and responses of fixtures/intelligence), the Dictionary terms of the
 #   Feature 013 boost corpora, embedding vectors (four or more decimals in brackets)
@@ -31,7 +31,7 @@ import json, re, sys
 from pathlib import Path
 
 patterns = [
-    ("token", re.compile(r"\blf[ar]_[A-Za-z0-9_-]{8,}")),
+    ("token", re.compile(r"\blf[arp]_[A-Za-z0-9_-]{8,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}")),
     ("embedding vector", re.compile(r"\[\s*-?\d*\.\d+(?:[eE][-+]?\d+)?(?:[\s,]+-?\d*\.?\d+(?:[eE][-+]?\d+)?){3,}\s*\]")),
     # Go's %v of a []byte, and base64 with both cases (hex digests are lower case).

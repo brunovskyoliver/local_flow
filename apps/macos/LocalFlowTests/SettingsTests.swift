@@ -647,6 +647,73 @@ final class RemoteDictationSettingsTests: XCTestCase {
       signInAvailable: { $0 == .apple || googleAvailable })
   }
 
+  // MARK: Pairing with a token (Feature 027)
+
+  private var pairingValue: String {
+    "lfp_"
+      + (FakeRemoteServer.serverKey.publicKey.rawRepresentation + Data(repeating: 7, count: 32))
+      .base64URL
+  }
+
+  func testAPairingLinkFillsTheSheetAndConnectsToNothing() throws {
+    let model = model()
+    let address = "https%3A%2F%2Fmini.example.com"
+    let url = try XCTUnwrap(
+      URL(string: "localflow://pair?address=\(address)#token=\(pairingValue)"))
+    model.requestPairing(try XCTUnwrap(PairingLink(url)))
+    XCTAssertTrue(model.showingPairing)
+    XCTAssertEqual(model.serverDraft, "https://mini.example.com")
+    XCTAssertEqual(model.pairingToken, pairingValue)
+    XCTAssertTrue(model.canConfirmPairing)
+    XCTAssertFalse(preferences.remoteEnabled)
+    XCTAssertEqual(preferences.remoteServerURL, "")
+    XCTAssertEqual(fetcher.fetches, 0)
+    XCTAssertEqual(opener.openCount, 0)
+  }
+
+  /// A refusal keeps the sheet open, a corrected address can be retried, and Cancel undoes
+  /// what the sheet turned on.
+  func testAFailedPairCanBeCorrectedOrCancelled() async {
+    fetcher.key = Data(repeating: 9, count: 32)
+    let model = model()
+    model.requestPairing()
+    model.serverDraft = "https://wrong.example.com"
+    model.pairingToken = pairingValue
+    await model.confirmPairing()
+    XCTAssertTrue(model.showingPairing)
+    XCTAssertEqual(
+      model.error,
+      "This address reaches a different server. Check the address or ask for a new token.")
+    XCTAssertEqual(opener.openCount, 0)
+    model.serverDraft = "https://mini.example.com"
+    await model.confirmPairing()
+    XCTAssertEqual(preferences.remoteServerURL, "https://mini.example.com")
+    model.cancelPairing()
+    XCTAssertFalse(preferences.remoteEnabled)
+    XCTAssertEqual(preferences.remoteServerURL, "")
+    XCTAssertEqual(preferences.remoteConsentVersion, 0)
+    XCTAssertEqual(model.pairingToken, "")
+    XCTAssertEqual(turnedOff, 1)
+  }
+
+  func testPairingAnotherServerIsRefusedWhileOneIsConfigured() async {
+    preferences.setRemoteServerURL("https://mini.example.com")
+    preferences.confirmRemoteConsent()
+    preferences.remoteEnabled = true
+    let model = model()
+    model.requestPairing()
+    model.serverDraft = "https://other.example.com"
+    model.pairingToken = pairingValue
+    await model.confirmPairing()
+    XCTAssertEqual(
+      model.error, "This Mac already uses another server. Turn off remote dictation first.")
+    XCTAssertEqual(preferences.remoteServerURL, "https://mini.example.com")
+    XCTAssertEqual(fetcher.fetches, 0)
+    model.cancelPairing()
+    XCTAssertTrue(preferences.remoteEnabled)
+    XCTAssertEqual(turnedOff, 0)
+  }
+
   func testTurningOnShowsConsentAndCancelLeavesEverythingOff() async throws {
     let model = model()
     XCTAssertFalse(model.isOn)

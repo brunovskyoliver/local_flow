@@ -18,14 +18,14 @@
 
 ## Phase 3: User Story 1, pair a device (P1, MVP)
 
-- [ ] T007 [US1] Add the `pair` message and error code to server/internal/remote/protocol.go with protocol_test.go
-- [ ] T008 [US1] Implement the `pair` operation with audit and immediate snapshot reload in server/internal/remote/pair.go and register it in enroll.go, with pair_test.go covering every row of the contract's table
-- [ ] T009 [US1] Add `flowd admin token create|list|revoke` in server/cmd/flowd/admin_token.go with admin_test.go; token value only in create output
-- [ ] T010 [P] [US1] Make scripts/check-remote-logs.sh reject `lfp_`
-- [ ] T011 [P] [US1] Add token and app-link parsing in packages/LocalFlowCore/Sources/LocalFlowCore/Remote/PairingToken.swift with tests
-- [ ] T012 [US1] Add `pair(token:deviceName:)` to RemoteEnrollment.swift and the message to RemoteProtocol.swift: compare identity, pin, sign, store credentials, map old-server errors to update-required; fake-server tests in apps/macos/LocalFlowTests/RemoteEnrollmentTests.swift, including a wrong key that never receives the token
-- [ ] T013 [US1] Add PairingSheet.swift and a "Pair with Token" entry in RemoteDictationView.swift using the existing consent flow, and add URL handling to the Mac app, which has none today: a `CFBundleURLTypes` entry in apps/macos/LocalFlow/Info.plist (`localflow`, `localflow-dev` in development) and a handler for `localflow://pair`; host and consent confirmed before spending; opened URLs are never logged
-- [ ] T014 [US1] Add the pairing section and link handling to apps/ios/App/Features/Settings/ServerSettingsView.swift and apps/ios/App/Server/PhoneServerConnection.swift, extending the existing `localflow` scheme handled by `app.open`, never logging opened URLs, with tests in PhoneServerConnectionTests.swift
+- [X] T007 [US1] Add the `pair` message and error code to server/internal/remote/protocol.go with protocol_test.go
+- [X] T008 [US1] Implement the `pair` operation with audit and immediate snapshot reload in server/internal/remote/pair.go and register it in enroll.go, with pair_test.go covering every row of the contract's table
+- [X] T009 [US1] Add `flowd admin token create|list|revoke` in server/cmd/flowd/admin_token.go with admin_test.go; token value only in create output
+- [X] T010 [P] [US1] Make scripts/check-remote-logs.sh reject `lfp_`
+- [X] T011 [P] [US1] Add token and app-link parsing in packages/LocalFlowCore/Sources/LocalFlowCore/Remote/PairingToken.swift with tests
+- [X] T012 [US1] Add `pair(token:deviceName:)` to RemoteEnrollment.swift and the message to RemoteProtocol.swift: compare identity, pin, sign, store credentials, map old-server errors to update-required; fake-server tests in apps/macos/LocalFlowTests/RemoteEnrollmentTests.swift, including a wrong key that never receives the token
+- [X] T013 [US1] Add PairingSheet.swift and a "Pair with Token" entry in RemoteDictationView.swift using the existing consent flow, and add URL handling to the Mac app, which has none today: a `CFBundleURLTypes` entry in apps/macos/LocalFlow/Info.plist (`localflow`, `localflow-dev` in development) and a handler for `localflow://pair`; host and consent confirmed before spending; opened URLs are never logged
+- [X] T014 [US1] Add the pairing section and link handling to apps/ios/App/Features/Settings/ServerSettingsView.swift and apps/ios/App/Server/PhoneServerConnection.swift, extending the existing `localflow` scheme handled by `app.open`, never logging opened URLs, with tests in PhoneServerConnectionTests.swift
 
 **Checkpoint**: A token from the CLI pairs a client against a development flowd.
 

@@ -705,7 +705,7 @@ actor MeetingUploader {
       case .notOffered, .unsupportedVersion: return Detail.outdated
       case .notApproved: return Detail.pending
       case .revoked: return Detail.revoked
-      case .unauthorized, .tokenExpired: return Detail.notSignedIn
+      case .unauthorized, .tokenExpired, .pairingTokenInvalid: return Detail.notSignedIn
       case .busy, .workerUnavailable: return Detail.busy
       case .invalidMessage, .internal: return Detail.serverError
       }

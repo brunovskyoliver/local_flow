@@ -68,7 +68,25 @@ private struct MenuBarLabel: View {
 /// Keep Dock actions on the same routes as the menu bar and application menu.
 @MainActor
 final class LocalFlowAppDelegate: NSObject, NSApplicationDelegate {
-  weak var services: AppServices?
+  weak var services: AppServices? {
+    didSet {
+      if let pendingPairing { services?.openPairing(pendingPairing) }
+      pendingPairing = nil
+    }
+  }
+  /// A link that launched the app arrives before the menu bar label installs `services`.
+  private var pendingPairing: PairingLink?
+
+  /// `localflow://pair` opens the pairing sheet and spends nothing. The URL holds a token,
+  /// so it is never logged.
+  func application(_ application: NSApplication, open urls: [URL]) {
+    guard let link = urls.lazy.compactMap(PairingLink.init).first else { return }
+    if let services {
+      services.openPairing(link)
+    } else {
+      pendingPairing = link
+    }
+  }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
   {

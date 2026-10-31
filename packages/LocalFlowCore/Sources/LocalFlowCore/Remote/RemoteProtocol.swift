@@ -35,12 +35,14 @@ public enum RemoteErrorCode: String, Codable, Sendable, CaseIterable {
   case workerUnavailable = "worker_unavailable"
   /// Feature 018: the server does not serve this op or meeting job kind.
   case notOffered = "not_offered"
+  /// Feature 027: only the `pair` operation answers with it.
+  case pairingTokenInvalid = "pairing_token_invalid"
   case `internal`
 
   /// The code a dictation records when the server answered with this error.
   public var failureReason: RemoteFailureReason {
     switch self {
-    case .unauthorized, .tokenExpired: .unauthorized
+    case .unauthorized, .tokenExpired, .pairingTokenInvalid: .unauthorized
     case .notApproved: .notApproved
     case .revoked: .revoked
     case .busy: .busy
@@ -174,6 +176,8 @@ public enum RemoteClientMessage: Sendable, Equatable {
   case enroll(
     op: Int, provider: IdentityProvider, idToken: String, deviceName: String, deviceKey: Data,
     signature: Data)
+  /// Feature 027: redeems a pairing token; `signature` is over `localflow-v1-pair` ‖ binding.
+  case pair(op: Int, token: String, deviceName: String, deviceKey: Data, signature: Data)
   case refresh(op: Int, refreshToken: String, signature: Data)
   case dictationStart(op: Int, boost: RemoteBoost?)
   case dictationEnd(op: Int, totalSamples: Int)
@@ -198,6 +202,12 @@ public enum RemoteClientMessage: Sendable, Equatable {
     case .enroll(let op, let provider, let idToken, let deviceName, let deviceKey, let signature):
       object.merge([
         "type": "enroll", "op": op, "provider": provider.rawValue, "id_token": idToken,
+        "device_name": Self.deviceName(deviceName), "device_key": deviceKey.base64URL,
+        "signature": signature.base64URL,
+      ]) { $1 }
+    case .pair(let op, let token, let deviceName, let deviceKey, let signature):
+      object.merge([
+        "type": "pair", "op": op, "pairing_token": token,
         "device_name": Self.deviceName(deviceName), "device_key": deviceKey.base64URL,
         "signature": signature.base64URL,
       ]) { $1 }

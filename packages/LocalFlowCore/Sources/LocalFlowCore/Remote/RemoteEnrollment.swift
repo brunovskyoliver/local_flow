@@ -91,6 +91,10 @@ public enum RemoteEnrollmentError: Error, Equatable, Sendable {
   case signInFailed
   /// The server answered with an unexpected message.
   case protocolError
+  /// Feature 027: the address reaches a server other than the one that issued the token.
+  case wrongServer
+  /// Feature 027: the server doesn't know `pair`. The token was not spent.
+  case updateRequired
 }
 
 /// Enrollment and credentials for remote dictation (User Story 2): server identity and
@@ -113,6 +117,9 @@ public final class RemoteEnrollment {
   private var accessIssuedAt: Duration?
   private var refreshing: Task<String?, Never>?
   private var scheduledRefresh: Task<Void, Never>?
+  /// The token being redeemed and its device key, kept until a definite answer: a lost
+  /// reply can only be retried with the same key (contracts/pairing.md).
+  private var pairAttempt: (token: PairingToken, handle: Data, publicKey: Data)?
   private let log = Logger(subsystem: "org.localflow.LocalFlow", category: "remote")
 
   public init(
@@ -221,6 +228,67 @@ public final class RemoteEnrollment {
       if error == .pinMismatch { handlePinMismatch() }
       if case .server(let code) = error { apply(code) }
       throw error
+    }
+  }
+
+  // MARK: Pairing
+
+  /// Redeems a pairing token (Feature 027). The caller has shown consent. The token goes
+  /// only into a channel sealed to the key it names, and only if the address serves that
+  /// key. The pin, which clears existing credentials, comes after the server's answer, so
+  /// a refused token leaves a working device as it was.
+  public func pair(token: PairingToken) async throws {
+    guard let origin, let url = Self.channelURL(origin: origin) else {
+      throw RemoteEnrollmentError.notConfigured
+    }
+    let identity = try await fetchServerIdentity()
+    guard identity.validatedKey() == token.serverKey else {
+      throw RemoteEnrollmentError.wrongServer
+    }
+    let device: (handle: Data, publicKey: Data)
+    if let pairAttempt, pairAttempt.token == token {
+      device = (pairAttempt.handle, pairAttempt.publicKey)
+    } else {
+      device = try keys.create()
+      pairAttempt = (token, device.handle, device.publicKey)
+    }
+    let channel = try RemoteChannel(
+      transport: try await transports.open(url), serverKey: token.serverKey)
+    defer { Task { await channel.close() } }
+    do {
+      try await channel.open(purpose: .enroll)
+      let signature = try keys.sign(
+        Data("localflow-v1-pair".utf8) + (await channel.binding), handle: device.handle)
+      try await channel.send(
+        .pair(
+          op: 1, token: token.value, deviceName: deviceName, deviceKey: device.publicKey,
+          signature: signature))
+      switch try await channel.receive() {
+      case .enrolled(1, .approved, let refresh?):
+        try pin(identity)
+        try credentials.write(.deviceKey, device.handle)
+        try credentials.write(.refreshToken, Data(refresh.utf8))
+        pairAttempt = nil
+        preferences.remoteState = .approved
+        log.notice("Pairing finished")
+        _ = await refreshNow()
+      case .error(_, let code):
+        throw RemoteChannelError.server(code)
+      default:
+        throw RemoteEnrollmentError.protocolError
+      }
+    } catch RemoteChannelError.pinMismatch {
+      // The channel, unlike the identity endpoint, proves who holds the key.
+      pairAttempt = nil
+      throw RemoteEnrollmentError.wrongServer
+    } catch RemoteChannelError.server(let code) {
+      pairAttempt = nil
+      // A flowd without `pair` refuses the unknown type with invalid_message, then closes.
+      guard code == .invalidMessage || code == .unsupportedVersion else {
+        throw RemoteChannelError.server(code)
+      }
+      apply(.unsupportedVersion)
+      throw RemoteEnrollmentError.updateRequired
     }
   }
 
@@ -396,6 +464,7 @@ public final class RemoteEnrollment {
     scheduledRefresh?.cancel()
     scheduledRefresh = nil
     accessIssuedAt = nil
+    pairAttempt = nil
     try? credentials.removeAll()
     preferences.resetRemote()
   }

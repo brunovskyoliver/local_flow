@@ -131,10 +131,11 @@ var adminCommands = map[string]adminCommand{
 	"reject":   adminTransition("rejected"),
 	"revoke":   adminTransition("revoked"),
 	"audit":    adminAudit,
+	"token":    adminPairingToken,
 }
 
 const adminUsage = "usage: flowd admin --data-dir <dir> [--dev] <command>; commands: init, identity, " +
-	"list [--state S], approve user|device <id>, reject user <id>, revoke user|device <id>, audit [--limit N]"
+	"list [--state S], approve user|device <id>, reject user <id>, revoke user|device <id>, audit [--limit N], token create|list|revoke"
 
 func runAdmin(ctx context.Context, args []string, output io.Writer) error {
 	fs := flag.NewFlagSet("flowd admin", flag.ContinueOnError)

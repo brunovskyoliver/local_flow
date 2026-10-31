@@ -198,7 +198,7 @@ public final class RemoteAnalysisTransport: AnalysisTransporting, @unchecked Sen
       case .busy, .workerUnavailable:
         return AnalysisFailure(.serverUnreachable, detail: waitingDetail)
       case .notOffered: return AnalysisFailure(.serverUnavailable, detail: "not_offered")
-      case .unauthorized, .tokenExpired, .notApproved, .revoked:
+      case .unauthorized, .tokenExpired, .notApproved, .revoked, .pairingTokenInvalid:
         return AnalysisFailure(.authenticationFailed)
       case .limitExceeded: return AnalysisFailure(.tooLong)
       case .unsupportedVersion: return AnalysisFailure(.unsupportedVersion)

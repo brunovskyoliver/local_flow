@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -38,10 +39,6 @@ func TestMessageFixtures(t *testing.T) {
 		}
 		for _, path := range paths {
 			name := strings.TrimSuffix(filepath.Base(path), ".json")
-			// T007 adds the pair message to DecodeMessage; drop this skip then.
-			if name == "pair" && kind == "valid" {
-				continue
-			}
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -90,8 +87,37 @@ func TestEveryMessageTypeHasFixtures(t *testing.T) {
 			}
 		}
 	}
-	if len(MessageTypes) != 30 {
+	if len(MessageTypes) != 31 {
 		t.Fatalf("%d message types", len(MessageTypes))
+	}
+}
+
+// A pairing token is lfp_ plus exactly 64 bytes, and pair removes control
+// characters from the device name as enroll does.
+func TestPairValidation(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(messagesDir, "valid", "pair.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture map[string]any
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(field string, value any) (Message, error) {
+		object := maps.Clone(fixture)
+		object[field] = value
+		encoded, _ := json.Marshal(object)
+		return DecodeMessage(encoded)
+	}
+	message, err := decode("device_name", "Anna\u0007's iPhone\u202e")
+	if err != nil || message.(Pair).DeviceName != "Anna's iPhone" {
+		t.Fatal(message, err)
+	}
+	token := fixture["pairing_token"].(string)
+	for _, bad := range []string{"", "lfp_", token[:len(token)-1], token + "A", "lfa_" + token[4:], token[:10] + "!" + token[11:]} {
+		if _, err := decode("pairing_token", bad); CodeOf(err) != CodeInvalidMessage {
+			t.Errorf("token %d chars: %v", len(bad), err)
+		}
 	}
 }
 
@@ -323,7 +349,7 @@ func TestEncodeMessage(t *testing.T) {
 }
 
 func TestErrorCodes(t *testing.T) {
-	if len(ErrorCodes) != 11 {
+	if len(ErrorCodes) != 12 {
 		t.Fatal(len(ErrorCodes))
 	}
 	seen := map[string]bool{}
