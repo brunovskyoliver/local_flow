@@ -1436,7 +1436,7 @@ pub fn identities(db: &Db, meeting_id: &str) -> Res<HashMap<String, Identity>> {
                 (Some(root_row.clone().filter(is_linked).unwrap_or_else(|| linked[0].clone())), false)
             }
         };
-        let mut identity = Identity { state: "unknown".into(), needs_choice, ..Default::default() };
+        let mut identity = Identity { state: "unknown".into(), origin: "automatic_match".into(), needs_choice, ..Default::default() };
         if let Some((state, origin, known, name)) = row {
             if state == "possible" {
                 identity.second = own.get(root).and_then(|o| o.1.clone());
@@ -2372,7 +2372,7 @@ pub fn current_evidence_version(db: &Db, meeting: &str) -> Res<Option<String>> {
             continue;
         }
         let identity = ids.get(stored);
-        let origin = identity.map(|i| i.origin.as_str()).filter(|o| !o.is_empty()).unwrap_or("none");
+        let origin = identity.map_or("none", |i| i.origin.as_str());
         match identity.map(|i| i.state.as_str()) {
             Some(state @ ("confirmed" | "recognized")) => line(&["root", id, state, origin, &identity.and_then(|i| i.known_id.as_deref()).map(upper).unwrap_or_else(|| "none".into())]),
             _ if name.is_some() => line(&["root", id, "local_name", "none", "none"]),
