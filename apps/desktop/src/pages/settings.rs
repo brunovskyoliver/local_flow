@@ -1143,17 +1143,15 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
     let id: SharedString = id.into();
     let pl = pal(cx);
     let title = options.iter().find(|o| o.1 == current).map_or(current.to_string(), |o| o.0.to_string());
-    let option_chars = options.iter().map(|o| o.0.chars().count()).max().unwrap_or(0);
     let options: Vec<(&'static str, &'static str)> = options.to_vec();
     let current = current.to_string();
     let this = cx.entity().downgrade();
     let key = id.clone();
     let fill = pl.ink.opacity(if pl.mode.is_dark() { 0.14 } else { 0.2 });
-    let chevrons = icon("chevron.up.chevron.down", 14., pl.ink);
-    // A native picker hugs its longest option and centres in its frame.
-    // ponytail: width estimated from character count, measure the text if an option looks wrong.
-    let longest = option_chars;
-    let hug = (longest as f32 * 7. + 50.).min(width);
+    let chevrons = icon("chevron.up.chevron.down", 12., pl.ink);
+    // A native picker hugs its longest option and centres in its frame: a zero-height stack of the
+    // options sets the width. Plain strings so the render probe and VoiceOver don't read them.
+    let sizer = v_flex().h_0().overflow_hidden().text_size(px(13.5)).pr(px(23.)).children(options.iter().map(|o| div().whitespace_nowrap().child(o.0)));
     let frame = format!("{id}.frame");
     let button = Button::new(ElementId::Name(id))
         .custom(flow_ui::controls::ButtonCustomVariant::new(cx).color(fill).foreground(pl.ink).hover(fill).active(fill).shadow(false))
@@ -1162,10 +1160,10 @@ pub(super) fn picker(id: impl Into<SharedString>, label: impl Into<SharedString>
         .disabled(disabled)
         .when(disabled, |b| b.opacity(0.45))
         .h(px(24.))
-        .w(px(hug))
+        .max_w(px(width))
         .px(px(12.))
         .rounded(px(7.))
-        .child(h_flex().w_full().justify_between().gap(px(4.)).child(t(title).size(13.5).lines(1).a11y_hidden()).child(chevrons))
+        .child(v_flex().child(h_flex().w_full().justify_between().child(t(title).size(13.5).lines(1).a11y_hidden()).child(chevrons)).child(sizer))
         .dropdown_menu(move |mut menu, _, _| {
             for (name, value) in options.clone() {
                 let (this, key) = (this.clone(), key.clone());

@@ -2884,6 +2884,11 @@ mod tests {
         println!("Answered in {ms} ms");
         assert!(matches!(channel_round_trip(&remote, &key, Some("not-a-token")), Err(ChannelError::Server(_))), "a bad token is refused in the channel");
         assert_eq!(ping(&remote, Some(&identity.server_key), Some("not-a-token")), None);
+        // A session with an approved device's token, seeded into the throwaway server's database.
+        if let Ok(token) = std::env::var("FLOWD_ACCESS_TOKEN") {
+            let (_, offered) = ping(&remote, Some(&identity.server_key), Some(&token)).expect("session reaches ready");
+            assert!(offered.is_some(), "ready carries the capabilities");
+        }
         assert_eq!(channel_round_trip(&remote, &[7u8; 32], None), Err(ChannelError::Unreachable), "a hello sealed to another key is closed");
         let down = std::env::var("FLOWD_DOWN_URL").unwrap();
         assert!(fetch_identity(&down).is_err());

@@ -846,13 +846,23 @@ async fn flowd_end_to_end_when_configured(cx: &mut TestAppContext) {
     assert_saw(&["Compare the fingerprint", &expected_fp]);
     click(cx, r.win, "settings.remoteTrust");
     assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("pinned"));
-    // Check connection times a real answer.
+    // Check connection runs the sealed channel: nothing pinned is unreachable, as Swift's nil
+    // `sessionInputs`; with the pin and an approved device's token it times `ready`.
     let r = rig(cx, "approved", |_| {});
     set(cx, r.win, |p, _, _| p.remote_base = Some(identity_url.clone()));
     click(cx, r.win, "settings.serverCheckConnection");
     wait(cx, r.win, &|p| !p.checking);
     frame(cx, r.win);
-    assert_saw(&["Answered in "]);
+    assert_saw(&["Server unreachable"]);
+    if let Ok(token) = std::env::var("FLOWD_ACCESS_TOKEN") {
+        let identity = core::fetch_identity(&identity_url).unwrap();
+        r.secrets.borrow_mut().insert(core::remote_keychain("server-key"), identity.server_key);
+        r.secrets.borrow_mut().insert(core::remote_keychain("access-token"), token);
+        click(cx, r.win, "settings.serverCheckConnection");
+        wait(cx, r.win, &|p| !p.checking);
+        frame(cx, r.win);
+        assert_saw(&["Answered in "]);
+    }
     // A wrong identity base is reported, not trusted.
     let r = rig(cx, "checking", |_| {});
     set(cx, r.win, |p, _, _| p.remote_base = Some("http://127.0.0.1:9".into()));
