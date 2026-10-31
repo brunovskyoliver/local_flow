@@ -1,7 +1,7 @@
 //! Transcriptions page: search, waiting dictations, the day-grouped list and its row actions.
 mod detail;
 
-use super::dictionary::ui::{confirm_dialog, outline, overlay, sheet_card, under_card_border};
+use super::dictionary::ui::{confirm_dialog, destructive_item, menu_item, outline, sheet_card, under_card_border};
 use crate::core::Core;
 use crate::insertion::{Delivery, Quality, ReviewEntry, begin_review};
 use crate::pages::Page;
@@ -12,6 +12,8 @@ use flow_ui::prelude::Context;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub(super) const CAPACITY_FREED: &str = "History has space for another recording.";
@@ -44,6 +46,8 @@ pub struct HistoryPage {
     settled: bool,
     /// The row under the pointer, whose fill is `canvas`.
     hovered_row: Option<String>,
+    /// Stops the running request for an attempt: `pending.task`.
+    rewrite_cancels: HashMap<String, Arc<AtomicBool>>,
     /// `regroup`'s `now`: day headings keep this until the next rollover seen while shown.
     now: i64,
     /// The local day of the last rollover check.
@@ -117,6 +121,7 @@ impl HistoryPage {
             seen: Default::default(),
             settled: false,
             hovered_row: None,
+            rewrite_cancels: HashMap::new(),
             now: now_ms(),
             clock_day: 0,
             _subs: subs,
@@ -181,7 +186,9 @@ impl HistoryPage {
                 self.reload(cx);
             }
             "processing" | "lower" => {
-                if let (Some(id), Some(db)) = (first, cx.global::<Core>().db.as_ref()) {
+                // The second row, the incomplete one the reference capture opens.
+                let second = self.model.entries.get(1).map(|e| e.id.clone());
+                if let (Some(id), Some(db)) = (second, cx.global::<Core>().db.as_ref()) {
                     self.model.show_detail(db, &id);
                 }
                 if scenario.ends_with("lower") {
@@ -308,21 +315,48 @@ impl HistoryPage {
         cx.notify();
     }
 
-    /// `HistoryViewModel.requestRewrite`: admission now, the request off the UI thread.
+    /// `HistoryViewModel.requestRewrite`. Admission waits for the version probe when the row has
+    /// context to send; otherwise it happens now. The request runs off the UI thread.
     fn request_rewrite(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<Core>();
         let settings = flow_core::settings::RewriteSettings::capture(&core.prefs, |origin| matches!(core.services.secret(&flow_core::settings::rewrite_keychain(origin)), Ok(Some(_))));
-        let timeout = Duration::from_secs(flow_core::settings::rewrite_timeout(&core.prefs) as u64);
         let enabled = core.prefs.bool_or("rewriteEnabled", false);
+        let sends_context = core.prefs.bool_or("contextEnabled", false) && core.prefs.bool_or("contextRewriteEnabled", false);
         let secret = core.services.secret(&flow_core::settings::rewrite_keychain(&settings.origin)).ok().flatten();
-        let request = core.db.as_ref().and_then(|db| self.model.request_rewrite(db, enabled, &settings));
+        let Some(db) = core.db.as_ref() else { return };
+        let probe = self.model.wants_context_probe(db, enabled, &settings, sends_context);
+        let Some(dictation) = self.model.begin_rewriting() else { return };
         cx.notify();
-        let Some(request) = request else { return };
+        if !probe {
+            self.admit_and_send(dictation, enabled, settings, sends_context, None, secret, cx);
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let (origin, key) = (settings.origin.clone(), secret.clone());
+            let versions = cx.background_spawn(async move { rewrite_protocol_versions(&origin, key.as_deref()) }).await;
+            let _ = this.update(cx, |this, cx| this.admit_and_send(dictation, enabled, settings, sends_context, versions, secret, cx));
+        })
+        .detach();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn admit_and_send(&mut self, dictation: String, enabled: bool, settings: flow_core::settings::RewriteSettings, sends_context: bool, versions: Option<Vec<i64>>, secret: Option<String>, cx: &mut Context<Self>) {
+        let core = cx.global::<Core>();
+        let timeout = Duration::from_secs(flow_core::settings::rewrite_timeout(&core.prefs) as u64);
+        let request = core.db.as_ref().and_then(|db| self.model.request_rewrite(db, &dictation, enabled, &settings, sends_context, versions.as_deref()));
+        cx.notify();
+        let Some(request) = request else {
+            self.model.end_rewriting(&dictation);
+            return;
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.rewrite_cancels.insert(request.attempt.clone(), cancel.clone());
         cx.spawn(async move |this, cx| {
             let started = Instant::now();
             let sent = request.clone();
-            let answer = cx.background_spawn(async move { flow_core::history::send_rewrite(&sent, secret.as_deref(), timeout) }).await;
+            let answer = cx.background_spawn(async move { send_rewrite(&sent, secret.as_deref(), timeout, cancel) }).await;
             let _ = this.update(cx, |this, cx| {
+                this.rewrite_cancels.remove(&request.attempt);
                 if let Some(db) = cx.global::<Core>().db.as_ref() {
                     this.model.finish_rewrite(db, &request, answer, started.elapsed().as_millis() as i64);
                 }
@@ -330,6 +364,17 @@ impl HistoryPage {
             });
         })
         .detach();
+    }
+
+    /// `cancelRewrite`: persist first, then stop the network task.
+    pub(super) fn cancel_rewrite(&mut self, cx: &mut Context<Self>) {
+        if let Some(db) = cx.global::<Core>().db.as_ref()
+            && let Some(id) = self.model.cancel_rewrite(db)
+            && let Some(cancel) = self.rewrite_cancels.get(&id)
+        {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        cx.notify();
     }
 
     /// `NSCalendarDayChanged`: observed only while the page is shown, so a day that turns while
@@ -491,7 +536,7 @@ impl HistoryPage {
         let compact = cx.global::<Flow>().compact;
         let core = cx.global::<Core>();
         let time = core.db.as_ref().map(|db| time_of(db, e.created_at)).unwrap_or_default();
-        let path = e.path_label(self.model.local_speech);
+        let path = e.path_label(core.prefs.bool_or("remoteEnabled", false));
         let group: SharedString = format!("history.row.{}", e.id).into();
         let insert_off = busy || e.is_attempting();
         let insert_label = if e.is_confirmed() { "Insert again" } else { "Insert" };
@@ -633,17 +678,17 @@ fn row_menu(menu: PopupMenu, page: WeakEntity<HistoryPage>, e: Entry, insert_off
     let (a, b, c, d) = (page.clone(), page.clone(), page.clone(), page);
     let (ea, eb, ec, ed) = (e.clone(), e.clone(), e.clone(), e.clone());
     let (insert, insert_off, delete_off) = row_menu_state(&e, insert_off, busy);
-    menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
+    menu.item(menu_item("Copy", "doc.on.doc").on_click(move |_, _, cx| {
         a.update(cx, |this, cx| this.copy(ea.text.clone(), cx)).ok();
     }))
-    .item(PopupMenuItem::new(insert).disabled(insert_off).on_click(move |_, _, cx| {
+    .item(menu_item(insert, "text.insert").disabled(insert_off).on_click(move |_, _, cx| {
         b.update(cx, |this, cx| this.insert(&eb, eb.text.clone(), cx)).ok();
     }))
-    .item(PopupMenuItem::new("Details").on_click(move |_, _, cx| {
+    .item(menu_item("Details", "info.circle").on_click(move |_, _, cx| {
         c.update(cx, |this, cx| this.show_detail(&ec.id, cx)).ok();
     }))
     .separator()
-    .item(PopupMenuItem::new("Delete").disabled(delete_off).on_click(move |_, _, cx| {
+    .item(destructive_item("Delete", Some("trash")).disabled(delete_off).on_click(move |_, _, cx| {
         d.update(cx, |this, cx| this.ask_delete(&ed, cx)).ok();
     }))
 }
@@ -756,19 +801,27 @@ impl Render for HistoryPage {
                     // ponytail: no Kit `Root` in this shell, so no window-wide Tab; each page with row actions binds it.
                     if k.modifiers.shift { w.focus_prev(cx) } else { w.focus_next(cx) }
                 } else if k.key == "escape" {
-                    if this.model.detail_id.is_some() {
+                    if this.confirming_delete {
+                        // The alert's other way out, as Cancel: `selectedEntry` clears.
+                        this.confirming_delete = false;
+                        this.model.selected = None;
+                    } else if this.discarding.take().is_some() {
+                    } else if this.model.detail_id.is_some() {
                         this.model.clear_detail();
                     } else if this.searching {
+                        // `set_value` sends no change event, so the query clears here.
                         this.search.update(cx, |s, cx| s.set_value("", w, cx));
+                        this.model.set_search("");
                         this.searching = false;
+                        this.reload(cx);
                     }
                     cx.notify();
                 }
             }))
             .child(under_card_border(page))
-            .when_some(detail, |d, s| d.child(overlay("history.detailOverlay", window, cx, s)))
-            .when_some(confirm, |d, c| d.child(overlay("history.deleteOverlay", window, cx, c)))
-            .when_some(discard, |d, c| d.child(overlay("history.discardOverlay", window, cx, c)))
+            .when_some(detail, |d, s| d.child(sheet_overlay("history.detailOverlay", window, cx, s)))
+            .when_some(confirm, |d, c| d.child(sheet_overlay("history.deleteOverlay", window, cx, c)))
+            .when_some(discard, |d, c| d.child(sheet_overlay("history.discardOverlay", window, cx, c)))
     }
 }
 

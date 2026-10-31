@@ -642,6 +642,9 @@ impl Element for Txt {
     ) -> (LayoutId, Resolved) {
         let r = self.resolve(window);
         crate::probe::record(&r.text);
+        if let Some(run) = r.runs.first() {
+            crate::probe::record_style(&r.text, crate::probe::TextStyle { size: r.size, weight: run.font.weight.0, color: run.color });
+        }
         let mut style = Style::default();
         if self.lines.is_some() {
             style.min_size.width = px(0.).into();

@@ -172,6 +172,15 @@ pub fn nfc(s: &str) -> String {
     out
 }
 
+/// NFD with the combining marks removed. // ponytail: Latin only, from the same table as `nfc`; a
+/// non-Latin base keeps its mark, so `ContextCopyGuard` treats й and и as different. Same fix as `nfc`.
+pub fn strip_marks(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(*c as u32, 0x300..=0x36F))
+        .map(|c| COMPOSE.iter().find_map(|(_, pairs)| pairs.chars().collect::<Vec<_>>().chunks(2).find(|p| p[1] == c).map(|p| p[0])).unwrap_or(c))
+        .collect()
+}
+
 /// `TermFolding.fold`: NFC plus lowercase mapping per scalar, no other folding.
 pub fn fold(term: &str) -> String {
     nfc(term).chars().flat_map(char::to_lowercase).collect()
@@ -1076,6 +1085,19 @@ pub fn seed(db: &Db) {
 
 #[cfg(test)]
 mod tests {
+    // parity: DICT-036
+    /// Every branch of `DictationErrorMessage.describe`, through the same call the page's load error makes.
+    #[test]
+    fn describe_has_a_copy_for_each_kind_of_failure() {
+        let edit = |code| VocabError::Edit(super::edit(Field::Entry, code));
+        assert_eq!(describe(&edit(Code::Damaged)), "Preferred spellings could not be loaded. Repair or delete entries in Settings.");
+        assert_eq!(describe(&edit(Code::StaleRevision)), Code::StaleRevision.message());
+        assert!(!Code::StaleRevision.message().starts_with("Preferred spelling rejected"));
+        assert_eq!(describe(&edit(Code::Empty)), format!("Preferred spelling rejected: {}", Code::Empty.message()));
+        let sql = rusqlite::Connection::open_in_memory().unwrap().execute("nonsense", []).unwrap_err();
+        assert_eq!(describe(&VocabError::Sql(sql)), "Error type DatabaseError, code 1.");
+    }
+
     use super::*;
 
     fn entry(c: &str, a: &[&str]) -> Entry {

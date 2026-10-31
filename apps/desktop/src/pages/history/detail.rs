@@ -19,7 +19,7 @@ const SEGMENT_RULE: f32 = 0.33;
 fn native_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> FlowButton {
     let p = pal(cx);
     // `Plain` has no padding and no fill of its own: a native button is 24 high with a tighter corner.
-    FlowButton::new(id, ButtonKind::Plain, label).disabled_opacity(0.45).content(div().h(px(24.)).px(px(12.)).rounded(px(6.)).bg(p.ink.opacity(SEGMENT_ON)).flex().items_center().child(t(label).size(13.).color(p.ink).a11y_hidden()))
+    FlowButton::new(id, ButtonKind::Plain, label).disabled_opacity(0.45).content(div().h(px(24.)).px(px(12.)).rounded(px(6.)).bg(p.ink.opacity(SEGMENT_ON)).flex().items_center().child(t(label).size(13.5).color(p.ink).a11y_hidden()))
 }
 
 fn stage_text(text: &str) -> Txt {
@@ -27,11 +27,12 @@ fn stage_text(text: &str) -> Txt {
 }
 
 fn meta(label: String, value: String, cx: &App) -> impl IntoElement {
-    v_flex().id(SharedString::from(format!("history.meta.{label}"))).test_support().gap(px(2.)).child(t(label).size(13.).color(pal(cx).muted).selectable()).child(t(value).size(13.).selectable())
+    v_flex().id(SharedString::from(format!("history.meta.{label}"))).test_support().gap(px(1.)).child(t(label).size(13.).color(pal(cx).muted).selectable()).child(t(value).size(13.).selectable())
 }
 
 fn lines(items: Vec<Line>, cx: &App) -> Div {
-    let mut col = v_flex().gap(px(8.));
+    // Swift's 15 pt lines with spacing 2 and 8; `Txt` rounds a line to 16, so 1 and 7 keep the 40 pitch.
+    let mut col = v_flex().gap(px(7.));
     for l in items {
         col = col.child(match l {
             Line::Meta(a, b) => meta(a, b, cx).into_any_element(),
@@ -91,7 +92,8 @@ impl HistoryPage {
             .gap(px(16.))
             .text_size(px(14.))
             .child(
-                h_flex().w_full().justify_between().child(t("Details").font(20., 500.)).child(prototype_button("history.detail.close", "Done").on_click(cx.listener(|this, _, _, cx| {
+                // 29 high as in Swift: 7 + 15 + 7. The shared button is 30 because `Txt` rounds its line.
+                h_flex().w_full().h(px(29.)).justify_between().child(t("Details").font(20., 500.)).child(prototype_button("history.detail.close", "Done").on_click(cx.listener(|this, _, _, cx| {
                     this.model.clear_detail();
                     cx.notify();
                 }))),
@@ -159,7 +161,7 @@ impl HistoryPage {
     }
 
     /// `.pickerStyle(.segmented)`, drawn: GPUI Kit has no native segmented control. Measured on the
-    /// reference: label, gap 9, three equal 121 by 24 segments, radius 6, a 1 pt rule between two
+    /// reference: label, gap 8, three equal 121 by 24 segments, radius 6, a 1 pt rule between two
     /// segments when neither is selected.
     fn stage_picker(&self, cx: &mut Context<Self>) -> Div {
         let p = pal(cx);
@@ -170,7 +172,7 @@ impl HistoryPage {
             row = row.child(
                 FlowButton::new(id, ButtonKind::Plain, label)
                     .a11y_selected(on)
-                    .content(div().w(px(121.)).h(px(24.)).flex().items_center().justify_center().rounded(px(6.)).when(on, |d| d.bg(p.ink.opacity(SEGMENT_ON))).child(t(label).size(14.).color(p.ink).a11y_hidden()))
+                    .content(div().w(px(121.)).h(px(24.)).flex().items_center().justify_center().rounded(px(6.)).when(on, |d| d.bg(p.ink.opacity(SEGMENT_ON))).child(t(label).size(13.5).color(p.ink).a11y_hidden()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.stage = s;
                         cx.notify();
@@ -180,7 +182,7 @@ impl HistoryPage {
                 row = row.child(div().absolute().left(px(121. * (n as f32 + 1.))).top(px(5.)).w(px(1.)).h(px(14.)).bg(p.ink.opacity(SEGMENT_RULE)));
             }
         }
-        h_flex().gap(px(9.)).child(t("Transcript stage").size(14.)).child(row)
+        h_flex().gap(px(8.)).child(t("Transcript stage").size(14.)).child(row)
     }
 
     fn context_section(&self, env: &Envelope, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -277,12 +279,7 @@ impl HistoryPage {
                     .child(picker)
                     .child(native_button("history.detail.rewrite.retry", if m.attempts.is_empty() { "Rewrite" } else { "Retry" }, cx).disabled(!m.can_request_rewrite()).on_click(cx.listener(|this, _, _, cx| this.request_rewrite(cx))))
                     .when(m.pending_rewrite().is_some(), |d| {
-                        d.child(native_button("history.detail.rewrite.cancel", "Cancel rewrite", cx).on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(db) = cx.global::<crate::core::Core>().db.as_ref() {
-                                this.model.cancel_rewrite(db);
-                            }
-                            cx.notify();
-                        })))
+                        d.child(native_button("history.detail.rewrite.cancel", "Cancel rewrite", cx).on_click(cx.listener(|this, _, _, cx| this.cancel_rewrite(cx))))
                     }),
             );
         if m.attempts.is_empty() {

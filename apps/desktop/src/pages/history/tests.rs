@@ -275,9 +275,12 @@ async fn blur_with_empty_text_closes_search(cx: &mut TestAppContext) {
 }
 
 // parity: HIST-023
+/// Typing again before the wait ends: the first timer fires and is discarded by the generation
+/// check, so the list only changes when the latest wait ends.
 #[flow_ui::gpui::test]
 async fn only_the_latest_search_counts(cx: &mut TestAppContext) {
     let w = open(cx);
+    let all = w.update(cx, |t, _, _| t.model.entries.len()).unwrap();
     click(cx, w, "history.searchToggle".into());
     cx.update_window(w.into(), |_, win, cx| win.input("zzz", cx)).unwrap();
     cx.executor().advance_clock(Duration::from_millis(100));
@@ -285,10 +288,18 @@ async fn only_the_latest_search_counts(cx: &mut TestAppContext) {
     cx.update_window(w.into(), |_, win, cx| win.press("backspace", cx)).unwrap();
     cx.update_window(w.into(), |_, win, cx| win.press("backspace", cx)).unwrap();
     cx.update_window(w.into(), |_, win, cx| win.input("kickoff", cx)).unwrap();
-    cx.executor().advance_clock(Duration::from_millis(300));
+    // 300 in all: the first wait has ended, the latest hasn't.
+    cx.executor().advance_clock(Duration::from_millis(200));
     frame(cx, w);
     w.update(cx, |t, _, _| {
         assert_eq!(t.model.search_text, "kickoff");
+        assert_eq!(t.model.entries.len(), all, "the older request did not run");
+    })
+    .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(100));
+    frame(cx, w);
+    w.update(cx, |t, _, _| {
+        assert!(t.model.entries.len() < all);
         assert!(!t.model.entries.is_empty() && t.model.entries.iter().all(|e| e.text.to_lowercase().contains("kickoff")));
     })
     .unwrap();
@@ -609,16 +620,45 @@ async fn segments_are_121_by_24(cx: &mut TestAppContext) {
 }
 
 // parity: HIST-165
+/// Each thing the guard names, through the page's own Insert, then busy until the review ends.
 #[flow_ui::gpui::test]
-async fn insert_opens_the_review_through_the_session(cx: &mut TestAppContext) {
+async fn insert_opens_the_review_only_when_nothing_blocks_it(cx: &mut TestAppContext) {
+    use crate::shell::update_session;
     boot(cx, Mode::Light);
     session(cx);
     let w = cx.add_window(|w, cx| HistoryPage::new(w, cx));
     frame(cx, w);
     let e = w.update(cx, |t, _, _| t.model.entries.iter().find(|e| !e.is_attempting()).unwrap().clone()).unwrap();
+    let opened = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Session>().insertion.entry.as_ref().map(|r| r.id.clone()));
+    for block in [
+        (|s: &mut Session| s.dictation.as_mut().unwrap().busy = true) as fn(&mut Session),
+        |s| s.dictation.as_mut().unwrap().unsaved = Some("x".into()),
+        |s| s.dictation.as_mut().unwrap().storage_blocked = true,
+        |s| s.dictation.as_mut().unwrap().cleanup_blocked = true,
+        |s| s.installing = true,
+    ] {
+        cx.update(|cx| update_session(cx, block));
+        w.update(cx, |t, _, cx| t.insert(&e, e.text.clone(), cx)).unwrap();
+        assert_eq!(opened(cx), None);
+        cx.update(|cx| {
+            update_session(cx, |s| {
+                s.installing = false;
+                s.dictation = Some(Default::default());
+            })
+        });
+    }
+    frame(cx, w);
     click(cx, w, format!("history.insert.{}", e.id));
-    let id = cx.update(|cx| cx.global::<Session>().insertion.entry.as_ref().map(|r| r.id.clone()));
-    assert_eq!(id, Some(e.id));
+    assert_eq!(opened(cx), Some(e.id.clone()));
+    let busy = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Session>().dictation.as_ref().unwrap().busy);
+    assert!(busy(cx), "busy from the start of the review");
+    // Not idle any more: a second review is refused, the open one stays.
+    let other = w.update(cx, |t, _, _| t.model.entries.iter().find(|x| x.id != e.id).unwrap().clone()).unwrap();
+    w.update(cx, |t, _, cx| t.insert(&other, other.text.clone(), cx)).unwrap();
+    assert_eq!(opened(cx), Some(e.id));
+    cx.update(crate::insertion::cancel);
+    cx.run_until_parked();
+    assert!(!busy(cx), "and until it finishes");
 }
 
 fn shell(cx: &mut TestAppContext) -> WindowHandle<crate::shell::Shell> {
@@ -893,9 +933,9 @@ async fn processing_lines_and_hashes_keep_their_spacing(cx: &mut TestAppContext)
         _ => None,
     }).unwrap();
     let (first, second) = (bounds(cx, w, &format!("history.meta.{a}")), bounds(cx, w, &format!("history.meta.{b}")));
-    assert_eq!(second.origin.y - first.bottom(), px(8.));
-    // Two headless Figtree 13 lines, spacing 2.
-    assert_eq!(first.size.height, px(14. + 2. + 14.));
+    assert_eq!(second.origin.y - first.bottom(), px(7.));
+    // Two headless Figtree 13 lines, spacing 1: `Txt` rounds a line up, Swift spacing is 2 and 8 over 15.
+    assert_eq!(first.size.height, px(14. + 1. + 14.));
 }
 
 // parity: HIST-129
@@ -967,4 +1007,63 @@ async fn the_review_sheet_is_520_wide_with_a_300_text_limit(cx: &mut TestAppCont
     assert_eq!(text.size.width, px(520. - 52.));
     assert_eq!(text.size.height, px(300.));
     assert_saw(&["Review before inserting"]);
+}
+
+// parity: HIST-191
+/// Swift's sentinels share the first and last rows' IDs; the row says not to copy that. Here each has its own.
+#[flow_ui::gpui::test]
+async fn sentinels_have_their_own_identity_apart_from_the_rows(cx: &mut TestAppContext) {
+    let w = open(cx);
+    w.update(cx, |t, _, cx| {
+        t.model.has_older = true;
+        t.model.has_newer = true;
+        t.model.is_loading = true;
+        cx.notify();
+    })
+    .unwrap();
+    frame(cx, w);
+    let (first, last) = w.update(cx, |t, _, _| (t.model.entries[0].id.clone(), t.model.entries.last().unwrap().id.clone())).unwrap();
+    let row = |id: &str| format!("history.text.{id}");
+    let (newer, older) = (bounds(cx, w, "history.sentinel.newer"), bounds(cx, w, "history.sentinel.older"));
+    let (top, bottom) = (bounds(cx, w, &row(&first)), bounds(cx, w, &row(&last)));
+    assert!(newer.bottom() <= top.top(), "newer is its own element above the first row");
+    assert!(older.top() >= bottom.bottom(), "older is its own element below the last row");
+}
+
+// parity: HIST-155
+/// The real page path: Cancel marks the row at once and the flag stops the request before it connects.
+#[flow_ui::gpui::test]
+async fn cancel_rewrite_marks_the_row_and_stops_the_request(cx: &mut TestAppContext) {
+    let w = open(cx);
+    let id = seed_id(40);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    cx.update(|cx| {
+        let core = cx.global_mut::<Core>();
+        core.prefs.set("rewriteEnabled", true);
+        core.prefs.set("rewriteEndpoint", format!("http://127.0.0.1:{port}"));
+        let db = core.db.as_ref().unwrap();
+        db.conn.execute("DELETE FROM rewrite_attempts WHERE transcription_id=?", [&id]).unwrap();
+        db.conn.execute("UPDATE transcriptions SET quality='complete' WHERE id=?", [&id]).unwrap();
+    });
+    w.update(cx, |t, _, cx| t.show_detail(&id, cx)).unwrap();
+    frame(cx, w);
+    cx.update_window(w.into(), |_, win, cx| win.click("history.detail.rewrite.retry", cx)).unwrap();
+    // Admitted, its request not yet running.
+    w.update(cx, |t, _, cx| {
+        assert_eq!(t.model.pending_rewrite().map(|a| a.state.clone()).as_deref(), Some("pending"));
+        assert!(!t.model.can_request_rewrite(), "busy while it runs");
+        t.cancel_rewrite(cx);
+        assert_eq!(t.model.rewrite_notice.as_deref(), Some("Rewrite cancelled."));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    w.update(cx, |t, _, _| {
+        assert_eq!(t.model.attempts.iter().map(|a| a.state.as_str()).collect::<Vec<_>>(), ["cancelled"]);
+        assert_eq!(t.model.rewrite_notice.as_deref(), Some("Rewrite cancelled."), "the stopped request adds no failure");
+        assert!(t.model.can_request_rewrite(), "busy ends");
+    })
+    .unwrap();
+    assert!(listener.accept().is_err(), "nothing reached the server");
 }

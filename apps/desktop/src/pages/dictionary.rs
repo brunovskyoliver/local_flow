@@ -6,7 +6,7 @@ use crate::pages::Page;
 use crate::shell::Session;
 use flow_core::dictionary::{Entry, Field, Filter, MAX_ENTRIES, Model, RetiredTerm, Source, Suggestion};
 use flow_ui::prelude::*;
-use ui::{confirm_dialog, help, outline, overlay, pill, sheet_card, under_card_border};
+use ui::{confirm_dialog, destructive_item, help, outline, pill, sheet_card, under_card_border};
 
 // ponytail: no spell checker service yet, so no common word is held back from suggestions
 // (`NSSpellChecker`); the filter takes effect when Feature 025 adds it to `Services`.
@@ -40,6 +40,8 @@ impl DictionaryPage {
         let _session_sub = cx.observe_global::<Session>(move |this, cx| {
             let now = Some(cx.global::<Session>().selection);
             if now != shown && now == Some(Page::Dictionary) {
+                // A SwiftUI view rebuilt on appearing: `filter` is local state and starts at All again.
+                this.filter = Filter::All;
                 // `.task`: refreshes every time the page appears.
                 this.voice_over = cx.global::<Core>().services.voice_over_on();
                 this.refresh(cx);
@@ -273,9 +275,8 @@ impl DictionaryPage {
                             .content(icon("magnifyingglass", 15.5, p.muted))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.searching = !this.searching;
-                                if this.searching {
-                                    this.search.update(cx, |s, cx| s.focus(window, cx));
-                                } else {
+                                // Swift doesn't focus the field when it opens (DICT-023).
+                                if !this.searching {
                                     this.search.update(cx, |s, cx| s.set_value("", window, cx));
                                 }
                                 cx.notify();
@@ -496,7 +497,7 @@ impl DictionaryPage {
                 .item(PopupMenuItem::new(if menu_entry.enabled { "Disable" } else { "Enable" }).on_click(move |_, _, cx| {
                     b.update(cx, |this, cx| this.toggle(&eb, cx)).ok();
                 }))
-                .item(PopupMenuItem::new("Delete").on_click(move |_, _, cx| {
+                .item(destructive_item("Delete", None).on_click(move |_, _, cx| {
                     c.update(cx, |this, cx| {
                         this.confirming_delete = Some(ec.clone());
                         cx.notify();
@@ -543,7 +544,7 @@ impl DictionaryPage {
                 cx.notify();
             })))
             .child(self.fields(cx))
-            .when_some(error, |d, e| d.child(error_text(e, cx)))
+            .when_some(error, |d, e| d.child(div().id("vocabulary.sheetError").test_support().w_full().child(error_text(e, cx))))
             .child(
                 h_flex()
                     .w_full()
@@ -712,16 +713,19 @@ impl Render for DictionaryPage {
             .id("dictionary.root")
             .track_focus(&self.focus)
             // ponytail: no Kit `Root` in this shell, so no window-wide Tab; each page with row actions binds it.
-            .on_key_down(cx.listener(|_, e: &KeyDownEvent, w, cx| {
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| {
                 if e.keystroke.key == "tab" {
                     if e.keystroke.modifiers.shift { w.focus_prev(cx) } else { w.focus_next(cx) }
+                } else if e.keystroke.key == "escape" && this.confirming_delete.take().is_some() {
+                    // An alert's other way out: `confirmingDelete` clears as Cancel clears it.
+                    cx.notify();
                 }
             }))
             .relative()
             .size_full()
             .child(under_card_border(prototype_page("dictionary.page", 960., cx, content)))
-            .when_some(sheet, |d, s| d.child(overlay("vocabulary.sheetOverlay", window, cx, s)))
-            .when_some(confirm, |d, c| d.child(overlay("vocabulary.deleteOverlay", window, cx, c)))
+            .when_some(sheet, |d, s| d.child(sheet_overlay("vocabulary.sheetOverlay", window, cx, s)))
+            .when_some(confirm, |d, c| d.child(sheet_overlay("vocabulary.deleteOverlay", window, cx, c)))
     }
 }
 
@@ -955,7 +959,58 @@ mod tests {
         assert_saw(&["The dictionary could not be read.", "No words yet"]);
     }
 
-    // parity: DICT-099 DICT-107 DICT-110 DICT-118 DICT-119
+    // parity: DICT-119
+    /// Both ways out: the draft and its field errors go, the store is untouched.
+    #[flow_ui::gpui::test]
+    async fn cancel_clears_the_draft_and_errors_and_saves_nothing(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let before = stored(cx);
+        for leave in ["vocabulary.cancel", "escape"] {
+            click(cx, w, "vocabulary.add");
+            let (canonical, alias) = w.update(cx, |this, _, _| (this.canonical.clone().unwrap(), this.aliases[0].clone())).unwrap();
+            type_into(cx, w, canonical, "two  spaces");
+            type_into(cx, w, alias, "tatry");
+            cx.update_window(w.into(), |_, win, cx| win.press("enter", cx)).unwrap();
+            frame(cx, w);
+            w.update(cx, |t, _, _| assert!(!t.model.field_errors.is_empty(), "a field error to clear")).unwrap();
+            if leave == "escape" {
+                cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+            } else {
+                cx.update_window(w.into(), |_, win, cx| win.click(leave, cx)).unwrap();
+            }
+            frame(cx, w);
+            w.update(cx, |t, _, _| {
+                assert!(t.model.draft.is_none(), "{leave}");
+                assert!(t.model.field_errors.is_empty(), "{leave}");
+                assert!(t.canonical.is_none() && t.aliases.is_empty(), "{leave}");
+            })
+            .unwrap();
+            assert_eq!(stored(cx), before, "{leave}");
+            assert!(!saw("Add to vocabulary"));
+        }
+    }
+
+    // parity: DICT-115
+    /// Figtree 12 in `warning`, and a long message wraps instead of being cut.
+    #[flow_ui::gpui::test]
+    async fn the_sheet_error_is_small_warning_text_that_wraps(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        let message = "Vocabulary storage is full. ".repeat(12);
+        w.update(cx, |t, _, cx| {
+            t.model.field_errors.insert(Field::Entry, message.clone());
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        let style = flow_ui::probe::style_of(&message).expect("the error is drawn");
+        let warning = cx.update(|cx| pal(cx).warning);
+        assert_eq!((style.size, style.color), (12., warning));
+        assert_eq!(style.weight, 400.);
+        assert!(bounds(cx, w, "vocabulary.sheetError").size.height > px(20.), "more than one line");
+    }
+
+    // parity: DICT-099 DICT-107 DICT-110 DICT-118
     #[flow_ui::gpui::test]
     async fn sheet_modes_alias_limit_and_cancel(cx: &mut TestAppContext) {
         let w = open(cx);
@@ -982,7 +1037,7 @@ mod tests {
         assert!(!stored(cx).iter().any(|e| e.canonical.is_empty()));
     }
 
-    // parity: DICT-115 DICT-117 DICT-127
+    // parity: DICT-117 DICT-127
     #[flow_ui::gpui::test]
     async fn sheet_shows_a_validation_error_and_stays_open(cx: &mut TestAppContext) {
         let w = open(cx);

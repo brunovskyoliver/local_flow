@@ -28,18 +28,17 @@ pub fn help(id: impl Into<ElementId>, text: impl Into<SharedString>, child: impl
     div().id(id).child(child).tooltip(move |w, cx| Tooltip::new(text.clone()).build(w, cx))
 }
 
-/// A sheet or confirmation. The shell has no Kit `Root`, so Kit dialogs can't open; this dims the
-/// whole window, sidebar included, and blocks what's under it, as an AppKit sheet does. See `sheet_scrim`.
-pub fn overlay(id: impl Into<ElementId>, window: &Window, cx: &App, content: impl IntoElement) -> Deferred {
-    let viewport = window.viewport_size();
-    let scrim = div().id(id).w(viewport.width).h(viewport.height).occlude().flex().items_center().justify_center().bg(sheet_scrim(cx)).child(content);
-    deferred(anchored().position(point(px(0.), px(0.))).snap_to_window().child(scrim)).with_priority(1)
+/// A menu row with `symbol` before its label: `Label` in a SwiftUI `Menu`.
+pub fn menu_item(label: &'static str, symbol: &'static str) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, cx| h_flex().gap(px(6.)).child(icon(symbol, 13., pal(cx).ink)).child(t(label).size(13.).color(pal(cx).ink)))
 }
 
-/// What AppKit lays over a window behind a sheet. Fitted from reference pixels: in light, ink
-/// 21 to 113 and surface 252 to 203; in dark, ink 236 to 101 and surface 20 to 20.
-pub fn sheet_scrim(cx: &App) -> Hsla {
-    if pal(cx).ink.l > 0.5 { hsla(0., 0., 20. / 255., 0.625) } else { hsla(0., 0., 172. / 255., 0.611) }
+/// `Button(role: .destructive)` in a menu: the system red, with its symbol when it has one.
+pub fn destructive_item(label: &'static str, symbol: Option<&'static str>) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, cx| {
+        let red = pal(cx).destructive();
+        h_flex().gap(px(6.)).when_some(symbol, |d, s| d.child(icon(s, 13., red))).child(t(label).size(13.).color(red))
+    })
 }
 
 /// The shell's card border takes a point of layout where Swift's is an overlay; this gives it back
@@ -68,11 +67,6 @@ pub fn confirm_dialog(
     let p = pal(cx);
     let dark = p.ink.l > 0.5;
     let fill = if dark { hsla(0., 0., 0.164, 0.92) } else { hsla(0., 0., 0.862, 0.96) };
-    // AppKit's system red.
-    let red = if dark { rgb(0xFF453A) } else { rgb(0xFF3B30) };
-    let button = |id: String, label: String, bg: Hsla, fg: Hsla| {
-        FlowButton::new(id, ButtonKind::Plain, label.clone()).content(div().w(px(110.)).h(px(28.)).rounded_full().bg(bg).flex().items_center().justify_center().child(t(label).size(13.).color(fg).a11y_hidden()))
-    };
     // A native alert centers a short message and left-aligns one that wraps, at about 180 wide.
     let centered = !message.is_empty() && message.len() <= 24;
     v_flex()
@@ -95,7 +89,7 @@ pub fn confirm_dialog(
                 .justify_between()
                 .pt(px(9.))
                 .pb(px(8.))
-                .child(button(format!("{prefix}.cancel"), "Cancel".into(), p.ink.opacity(0.1), p.ink).on_click(on_cancel))
-                .child(button(format!("{prefix}.confirm"), action.to_string(), Hsla::from(red).opacity(0.25), Hsla::from(red)).on_click(on_action)),
+                .child(prompt_button(format!("{prefix}.cancel"), "Cancel").on_click(on_cancel))
+                .child(destructive_prompt_button(format!("{prefix}.confirm"), action.to_string()).on_click(on_action)),
         )
 }
