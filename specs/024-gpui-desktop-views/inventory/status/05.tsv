@@ -1,5 +1,5 @@
 NOTE-001	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-002	auto	test:library_load_copies_the_transcription_preference
+NOTE-002	auto	test:library_load_copies_the_transcription_preference ; test:each_appearance_copies_the_preference_again_and_a_toggle_persists_nothing
 NOTE-003	live	test:compact_width_trades_the_preview_for_an_overview_popover ; live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
 NOTE-004	auto	test:compact_width_trades_the_preview_for_an_overview_popover
 NOTE-005	auto	test:library_icon_buttons_name_their_symbol_and_label ; test:compact_width_trades_the_preview_for_an_overview_popover
@@ -9,14 +9,14 @@ NOTE-008	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_t
 NOTE-009	auto	test:a_changed_active_meeting_refreshes_the_library
 NOTE-010	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_the_summary
 NOTE-011	auto	test:a_new_window_starts_without_the_old_note
-NOTE-012	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
-NOTE-013	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-014	live	test:recording_options_and_refresh_click ; live:audit/mac/notetaker/options-light-rust.png ; live:audit/mac/notetaker/options-light-ref.png
+NOTE-012	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-013	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-014	live	test:options_popover_has_twenty_points_inside ; live:audit/mac/notetaker/options-light-rust.png ; live:audit/mac/notetaker/options-light-ref.png
 NOTE-015	auto	test:recording_options_and_refresh_click
-NOTE-016	auto	test:recording_options_and_refresh_click
+NOTE-016	auto	test:each_appearance_copies_the_preference_again_and_a_toggle_persists_nothing
 NOTE-017	auto	test:start_controls_wait_for_reconciliation_and_the_active_meeting
-NOTE-018	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-NOTE-019	live	test:new_note_is_twenty_eight_points_high ; test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
+NOTE-018	auto	test:each_appearance_copies_the_preference_again_and_a_toggle_persists_nothing
+NOTE-019	live	test:new_note_is_twenty_eight_points_high ; test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
 NOTE-020	service	service:mac-service: ScreenCaptureKit system audio, AVCapture microphone, AAC encoder; desktop plan phase adds it, view surfaces Unavailable
 NOTE-021	auto	test:start_controls_wait_for_reconciliation_and_the_active_meeting
 NOTE-022	auto	test:start_refuses_while_busy_or_dictating
@@ -27,81 +27,81 @@ NOTE-026	service	test:start_checks_free_space ; service:mac-service: volume free
 NOTE-027	service	test:start_checks_free_space ; service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
 NOTE-028	auto	test:failure_reasons_read_like_swift
 NOTE-029	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-030	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
-NOTE-031	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-032	auto	test:library_pages_and_evicts
+NOTE-030	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-031	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-032	auto	test:library_pages_and_evicts ; test:refresh_button_reads_the_rows_again_and_clears_the_notice
 NOTE-033	auto	test:recording_row_is_pinned ; test:today_summary_reads_like_swift
 NOTE-034	auto	test:paused_row_says_paused ; test:today_summary_reads_like_swift
 NOTE-035	auto	test:finalizing_row_says_finishing ; test:today_summary_reads_like_swift
 NOTE-036	auto	test:library_states ; test:today_summary_reads_like_swift
 NOTE-037	auto	test:today_summary_reads_like_swift
 NOTE-038	auto	test:today_summary_reads_like_swift
-NOTE-039	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
+NOTE-039	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
 NOTE-040	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-NOTE-041	auto	test:active_card_states
-NOTE-042	live	test:notice_shows_the_page_error ; live:audit/mac/notetaker/notice-light-rust.png ; live:audit/mac/notetaker/notice-light-ref.png
+NOTE-041	auto	test:attention_replaces_the_summary_line
+NOTE-042	live	test:notice_shows_the_page_error ; live:audit/mac/notetaker/notice-light-rust.png ; live:audit/mac/notetaker/notice-light-ref.png ; test:library_notice_is_red
 NOTE-043	auto	test:notice_shows_the_page_error
 NOTE-044	auto	test:older_page_failure_and_the_loading_guard
-NOTE-045	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
+NOTE-045	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
 NOTE-046	auto	test:past_notes_tab_does_nothing
 NOTE-047	auto	test:library_icon_buttons_name_their_symbol_and_label ; test:search_toggle_hides_the_field_and_keeps_the_query
 NOTE-048	auto	test:search_toggle_hides_the_field_and_keeps_the_query
-NOTE-049	live	test:search_field_sits_twelve_under_the_tabs_on_the_canvas ; live:audit/mac/notetaker/search-open-light-rust.png ; live:audit/mac/notetaker/search-open-light-ref.png
+NOTE-049	live	test:search_field_is_twelve_under_the_tab_row_at_thirty_seven_high ; live:audit/mac/notetaker/search-open-light-rust.png ; live:audit/mac/notetaker/search-open-light-ref.png
 NOTE-050	auto	test:search_filters_the_loaded_rows_by_title
-NOTE-051	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-NOTE-052	live	test:library_states ; live:audit/mac/notetaker/empty-light-rust.png ; live:audit/mac/notetaker/empty-light-ref.png
-NOTE-053	auto	test:search_filters_the_loaded_rows_by_title
+NOTE-051	auto	test:a_hidden_query_keeps_filtering
+NOTE-052	live	test:library_states ; live:audit/mac/notetaker/empty-light-rust.png ; live:audit/mac/notetaker/empty-light-ref.png ; test:empty_lines_are_muted_with_sixty_points_around
+NOTE-053	auto	test:search_filters_the_loaded_rows_by_title ; test:empty_lines_are_muted_with_sixty_points_around
 NOTE-054	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-055	live	test:evicted_offers_show_newest ; live:audit/mac/notetaker/evicted-light-rust.png ; live:audit/mac/notetaker/evicted-dark-rust.png ; rust-only:Load older notes is below the fold and scroll events do not reach the reference's hidden window, so the eviction can't be triggered
-NOTE-056	auto	test:library_pages_and_evicts
-NOTE-057	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
+NOTE-055	live	test:evicted_offers_show_newest ; live:audit/mac/notetaker/evicted-light-rust.png ; live:audit/mac/notetaker/evicted-dark-rust.png ; rust-only:Load older notes is below the fold and scroll events do not reach the reference's hidden window, so the eviction can't be triggered ; test:show_newest_appears_only_after_eviction_and_refreshes
+NOTE-056	auto	test:library_pages_and_evicts ; test:show_newest_appears_only_after_eviction_and_refreshes
+NOTE-057	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:load_older_sits_twenty_under_the_list
 NOTE-058	auto	test:library_pages_and_evicts
 NOTE-059	auto	test:older_page_failure_and_the_loading_guard
 NOTE-060	auto	test:library_pages_and_evicts
 NOTE-061	auto	test:library_pages_and_evicts
-NOTE-062	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
+NOTE-062	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
 NOTE-063	auto	test:dates_format_like_swift
 NOTE-064	auto	test:dates_format_like_swift
 NOTE-065	auto	test:dates_format_like_swift
-NOTE-066	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-067	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
-NOTE-068	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
-NOTE-069	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
-NOTE-070	auto	test:keyboard_focus_on_a_row_reveals_its_menu_and_previews ; test:hovering_a_row_reveals_its_menu ; note:hover uses the pointer test; the focus test moves focus through the row focus handle, a real Tab key press is not exercised
-NOTE-071	auto	test:opening_a_note_renames_it_and_navigates
-NOTE-072	live	test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-NOTE-073	live	test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-NOTE-074	live	test:waveform_layers_light_one_after_another ; test:recording_badge_pulses_and_paused_does_not ; test:recording_row_is_pinned ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from live MeetingCoordinator status and needs real capture. Bars light one after another at 1.2 s by eye; Swift timing not measured
-NOTE-075	live	test:paused_row_says_paused ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-NOTE-076	auto	test:waiting_row_runs_on_this_mac
-NOTE-077	auto	test:waiting_row_runs_on_this_mac
-NOTE-078	service	service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
+NOTE-066	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:row_glyph_is_a_muted_document
+NOTE-067	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-068	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-069	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels
+NOTE-070	auto	test:a_real_tab_press_reaches_a_row_reveals_its_menu_and_previews ; test:keyboard_focus_on_a_row_reveals_its_menu_and_previews ; test:hovering_a_row_reveals_its_menu
+NOTE-071	auto	test:opening_a_note_renames_it_and_navigates ; test:row_click_opens_the_thoughts_tab_even_after_another_tab
+NOTE-072	live	test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+NOTE-073	live	test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+NOTE-074	live	test:waveform_layers_light_one_after_another ; test:recording_badge_pulses_and_paused_does_not ; test:recording_row_carries_a_green_thirteen_point_badge ; live:audit/mac/notetaker/recording-light-rust.png ; live:audit/mac/notetaker/recording-dark-rust.png ; rust-only:Swift reads this from live MeetingCoordinator status and needs real capture
+NOTE-075	live	test:paused_badge_is_muted_and_still ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+NOTE-076	auto	test:waiting_row_runs_on_this_mac ; test:waiting_row_is_muted_labelled_and_moves_to_this_mac
+NOTE-077	auto	test:waiting_row_is_muted_labelled_and_moves_to_this_mac
+NOTE-078	service	test:waiting_row_is_muted_labelled_and_moves_to_this_mac ; service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
 NOTE-079	auto	test:run_on_this_mac_refusals_come_from_the_store_and_preference
 NOTE-080	auto	test:run_on_this_mac_refusals_come_from_the_store_and_preference
-NOTE-081	auto	test:row_shows_state_badge
-NOTE-082	live	test:row_shows_state_badge ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
+NOTE-081	auto	test:row_shows_state_badge ; test:state_badge_shows_for_unfinished_rows_unless_waiting
+NOTE-082	live	test:warning_triangle_is_orange_labelled_and_follows_a_pending_deletion ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
 NOTE-083	auto	test:overflow_button_popover_and_disabled_delete
-NOTE-084	auto	test:overflow_button_popover_and_disabled_delete
-NOTE-085	auto	test:deleting_a_row_removes_the_meeting_after_confirming
+NOTE-084	auto	test:overflow_button_popover_and_disabled_delete ; test:overflow_delete_is_red_inset_eight_and_closes_into_the_dialog
+NOTE-085	auto	test:overflow_delete_is_red_inset_eight_and_closes_into_the_dialog
 NOTE-086	auto	test:overflow_button_popover_and_disabled_delete
-NOTE-087	auto	test:deleting_a_row_removes_the_meeting_after_confirming
+NOTE-087	auto	test:overflow_delete_is_red_inset_eight_and_closes_into_the_dialog
 NOTE-088	auto	test:delete_dialog_has_swifts_geometry_and_a_translucent_fill ; test:deleting_a_row_removes_the_meeting_after_confirming ; note:not counted live. GPUI Window::prompt can't set a destructive role, so this is a custom panel at the dialog's geometry and wording; differences kept: no real backdrop blur, a trace of the page shows through at 4 percent, red text slightly more orange
 NOTE-089	auto	test:deleting_a_row_removes_the_meeting_after_confirming ; test:delete_keeps_row_while_files_remain_then_removes
-NOTE-090	auto	test:delete_cancel_writes_nothing
+NOTE-090	auto	test:delete_cancel_writes_nothing ; test:delete_cancel_closes_and_keeps_the_row
 NOTE-091	auto	test:files_left_behind_keep_the_row_and_offer_retry
 NOTE-092	auto	test:delete_refusals_read_like_swift
 NOTE-093	auto	test:stale_title_and_delete_reload_and_say_the_meeting_changed ; test:delete_keeps_row_while_files_remain_then_removes
 NOTE-094	auto	test:delete_refusals_read_like_swift
 NOTE-095	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 NOTE-096	auto	test:preview_waits_before_loading_and_is_empty_until_then
-NOTE-097	auto	test:preview_keeps_twenty_point_padding_around_header_and_notes ; test:preview_states
-NOTE-098	auto	test:preview_heads_the_notes_my_thoughts ; test:preview_keeps_twenty_point_padding_around_header_and_notes
+NOTE-097	auto	test:preview_keeps_twenty_point_padding_around_header_and_notes ; test:preview_states ; test:preview_type_limit_and_trimming
+NOTE-098	auto	test:preview_heads_the_notes_my_thoughts ; test:preview_keeps_twenty_point_padding_around_header_and_notes ; test:preview_type_limit_and_trimming
 NOTE-099	auto	test:preview_states
 NOTE-100	auto	test:preview_states
 NOTE-101	auto	test:preview_states
-NOTE-102	auto	test:preview_states
+NOTE-102	auto	test:preview_states ; test:preview_type_limit_and_trimming
 NOTE-103	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png
-NOTE-104	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png
+NOTE-104	live	test:icon_button_is_a_labelled_twenty_eight_square ; live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:the tooltip itself is passed to Kit and no test can read it
 NOTE-105	service	service:mac-service: NSScroller.preferredScrollerStyle; desktop plan phase adds it, view surfaces Unavailable
 NOTE-106	auto	test:library_pages_and_evicts
 NOTE-107	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
@@ -200,7 +200,7 @@ MEET-092	auto	test:detail_read_orders_tracks_and_segments
 MEET-093	auto	test:launch_notices_go_to_the_pill
 LIVE-001	live	live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-002	live	test:state_dot_is_ten_points_and_follows_the_state ; test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-003	auto	test:active_title_saves_on_enter_and_reports_failures ; test:state_dot_is_ten_points_and_follows_the_state
+LIVE-003	live	test:panel_shows_the_title_field_and_dot ; live:audit/mac/notetaker/panel-light-rust.png
 LIVE-004	auto	test:active_title_saves_on_enter_and_reports_failures ; test:state_dot_is_ten_points_and_follows_the_state
 LIVE-005	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
 LIVE-006	auto	test:pause_reason_reads_sleep_or_user

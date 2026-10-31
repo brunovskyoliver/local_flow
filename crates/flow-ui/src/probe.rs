@@ -5,6 +5,7 @@ thread_local! {
     static SEEN: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
     static SYMBOLS: RefCell<Vec<String>> = const { RefCell::new(vec![]) };
     static STYLES: RefCell<Vec<(String, TextStyle)>> = const { RefCell::new(vec![]) };
+    static SYMBOL_COLORS: RefCell<Vec<(String, gpui_kit::Hsla)>> = const { RefCell::new(vec![]) };
 }
 
 /// What `Txt` resolved for a text: its first run's weight and colour, its size.
@@ -43,6 +44,16 @@ pub fn clear() {
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn record_symbol(symbol: &str) {
     SYMBOLS.with(|s| s.borrow_mut().push(symbol.to_string()));
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn record_symbol_color(symbol: &str, color: gpui_kit::Hsla) {
+    SYMBOL_COLORS.with(|s| s.borrow_mut().push((symbol.to_string(), color)));
+}
+
+/// The colour `icon` last drew this symbol in, so a test can assert a red trash or an orange warning.
+pub fn symbol_color(symbol: &str) -> Option<gpui_kit::Hsla> {
+    SYMBOL_COLORS.with(|s| s.borrow().iter().rev().find(|(n, _)| n == symbol).map(|(_, c)| *c))
 }
 
 /// SF Symbol names `icon` drew since the last `start`, so a test can assert a row's symbol.

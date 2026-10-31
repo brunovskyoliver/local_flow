@@ -584,6 +584,8 @@ impl Library {
         match detail(db, id) {
             Ok(Some(mut d)) => {
                 d.tracks.clear();
+                d.pause_count = 0;
+                d.outcome_count = 0;
                 self.preview = Some(d);
             }
             Ok(None) => {

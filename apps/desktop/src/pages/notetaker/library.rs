@@ -58,7 +58,7 @@ impl NotetakerPage {
                             260.,
                             32.,
                             cx,
-                            div().p(px(20.)).child(
+                            div().p(px(19.)).child(
                                 plain_button("notetaker.transcribeNew", "Transcribe new recordings").disabled(!can).toggled(on).on_click(cx.listener(|this, _, _, cx| {
                                     this.transcribe = !this.transcribe;
                                     cx.notify();
@@ -67,7 +67,7 @@ impl NotetakerPage {
                         ))
                     }),
             )
-            .child(symbol_button("meeting.start", "New note", "plus", 13., p.ink).disabled(!self.can_start(cx)).on_click(cx.listener(|this, _, w, cx| this.start_note(w, cx))))
+            .child(symbol_button("meeting.start", "New note", "plus", 14., p.ink).disabled(!self.can_start(cx)).on_click(cx.listener(|this, _, w, cx| this.start_note(w, cx))))
     }
 
     pub(crate) fn toggle_menu(&mut self, key: &str, cx: &mut Context<Self>) {
@@ -111,7 +111,7 @@ impl NotetakerPage {
                 if attention {
                     d.child(self.active_card(window, cx).into_any_element())
                 } else {
-                    d.child(div().w_full().pb(px(14.)).child(t(today_summary(active.as_deref(), count)).size(15.).center().id("meeting.today.summary")))
+                    d.child(div().id("meeting.today.summary").test_support().w_full().pb(px(14.)).child(t(today_summary(active.as_deref(), count)).size(15.).center()))
                 }
             })
     }
@@ -201,7 +201,7 @@ impl NotetakerPage {
         } else if live.is_none() && row.state != "completed" {
             row_label = format!("{row_label}, {}", state_badge(&row.state));
         }
-        if row.warning {
+        if row.warning || pending {
             row_label += ", Recording needs attention";
         }
         h_flex()
@@ -232,7 +232,7 @@ impl NotetakerPage {
                                 .min_w_0()
                                 .gap(px(4.))
                                 .child(t(title.clone()).size(15.).lines(1).a11y_hidden())
-                                .child(h_flex().gap(px(6.)).child(t(time_text(row.created_at, offset)).size(12.).color(p.muted).a11y_hidden()).when(row.origin == "iphone", |d| d.child(div().id(sid(format!("notetaker.fromIPhone.{id}"))).child(sf_label("iphone", "From iPhone", 12., p.muted))))),
+                                .child(h_flex().gap(px(6.)).child(t(time_text(row.created_at, offset)).size(12.).color(p.muted).a11y_hidden()).when(row.origin == "iphone", |d| d.child(div().id(sid(format!("notetaker.fromIPhone.{id}"))).child(h_flex().gap(px(8.)).child(icon("iphone", 12., p.muted)).child(t("From iPhone").size(12.).color(p.muted)))))),
                         )
                         .child(div().flex_1())
                         .map(|d| {
@@ -267,7 +267,7 @@ impl NotetakerPage {
                             cx.notify();
                         });
                         let color = red(cx);
-                        d.child(popover_panel(190., 32., cx, v_flex().p(px(8.)).gap(px(2.)).child(menu_row("notetaker.overflow.delete", "Delete", Some("trash"), color, Box::new(on)).disabled(!terminal))))
+                        d.child(popover_panel(190., 32., cx, v_flex().p(px(7.)).gap(px(2.)).child(menu_row("notetaker.overflow.delete", "Delete", Some("trash"), color, Box::new(on)).disabled(!terminal))))
                     }),
             )
     }
@@ -329,7 +329,7 @@ impl NotetakerPage {
 }
 
 pub(crate) fn empty_line(title: &'static str, cx: &App) -> impl IntoElement {
-    div().w_full().py(px(60.)).child(t(title).size(15.).color(pal(cx).muted).center())
+    div().id("notetaker.emptyLine").test_support().w_full().py(px(60.)).child(t(title).size(15.).color(pal(cx).muted).center())
 }
 /// `.toggleStyle(.checkbox)` as content for a real button.
 pub(crate) fn checkbox_row(title: &'static str, on: bool, cx: &App) -> impl IntoElement {
@@ -346,7 +346,7 @@ pub(crate) fn live_badge(state: &str, elapsed: i64, size: f32, cx: &App) -> impl
     let paused = state == "paused";
     let glyph = div().child(icon(if paused { "pause.fill" } else { "waveform" }, size - 1., color));
     let glyph = if paused || cx.global::<flow_ui::tokens::Flow>().reduce_motion { glyph.into_any_element() } else { waveform_iterating(size - 1., color).into_any_element() };
-    h_flex().id("meeting.elapsed").gap(px(8.)).child(glyph).child(t(text).size(size).mono_digits().color(color))
+    h_flex().id("meeting.elapsed").test_support().gap(px(8.)).child(glyph).child(t(text).size(size).mono_digits().color(color))
 }
 /// x and half height of each bar of `sf-waveform.svg`, in its 24 unit box.
 const WAVEFORM_BARS: [(f32, f32); 8] = [(2., 2.6), (5., 5.5), (8., 3.8), (11., 8.6), (14., 5.), (17., 7.), (20., 3.4), (22.6, 1.6)];

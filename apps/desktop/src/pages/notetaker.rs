@@ -62,6 +62,8 @@ pub struct NotetakerPage {
     pub(crate) play_total: i64,
     pub(crate) polling: bool,
     pub(crate) preview_epoch: u64,
+    pub(crate) focus: FocusHandle,
+    pub(crate) shown: bool,
     pub(crate) row_focus: std::collections::HashMap<String, FocusHandle>,
     pub(crate) focused_row: Option<String>,
     // Open note.
@@ -140,7 +142,7 @@ type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 /// `NoteIconButton`: a 13 symbol in a 28 square with a tooltip.
 pub(crate) fn note_icon(id: impl Into<ElementId>, symbol: &'static str, label: &str, color: Hsla) -> FlowButton {
-    plain_button(id, sid(label)).tooltip(sid(label)).content(div().size(px(28.)).flex().items_center().justify_center().child(icon(symbol, 15., color)))
+    plain_button(id, sid(label)).tooltip(sid(label)).content(div().size(px(28.)).flex().items_center().justify_center().child(icon(symbol, 13., color)))
 }
 /// `Label` in `PrototypeButtonStyle`: 28 high, as the 13 medium label lays out at 14 in SwiftUI.
 pub(crate) fn symbol_button(id: impl Into<ElementId>, label: &'static str, symbol: &'static str, size: f32, color: Hsla) -> FlowButton {
@@ -238,7 +240,15 @@ impl NotetakerPage {
                     this.seen_meeting = meeting;
                     this.refresh(cx);
                 }
-                if cx.global::<crate::shell::Session>().selection != crate::pages::Page::Meetings && (this.lib.detail.is_some() || this.lib.preview_id.is_some()) {
+                // `.task`: each appearance copies the preference again and re-reads the rows. The page
+                // outlives its appearances here, so a toggle in the options popover resets the same way.
+                let shown = cx.global::<crate::shell::Session>().selection == crate::pages::Page::Meetings;
+                if shown && !this.shown {
+                    this.transcribe = cx.global::<Core>().prefs.bool_or("meetingTranscriptionEnabled", true);
+                    this.refresh(cx);
+                }
+                this.shown = shown;
+                if !shown && (this.lib.detail.is_some() || this.lib.preview_id.is_some()) {
                     this.preview_epoch += 1;
                     this.lib.release_detail();
                     this.close_note_state(window, cx);
@@ -298,6 +308,8 @@ impl NotetakerPage {
             play_total: 0,
             polling: false,
             preview_epoch: 0,
+            focus: cx.focus_handle(),
+            shown: true,
             row_focus: Default::default(),
             focused_row: None,
             tab: Tab::Thoughts,
@@ -504,12 +516,23 @@ impl Render for NotetakerPage {
             }
         }
         let p = pal(cx);
+        let library = self.lib.detail.is_none() && self.confirm.is_none() && self.assign.is_none();
+        if library && window.focused(cx).is_none() {
+            self.focus.focus(window, cx);
+        }
         let body = if self.lib.detail.is_some() { self.detail_view(window, cx).into_any_element() } else { self.library_view(window, cx).into_any_element() };
         div()
             .relative()
             .size_full()
             .text_color(p.ink)
             .text_size(px(13.))
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| {
+                // ponytail: no Kit `Root` in this shell, so no window-wide Tab; the library binds it for its rows. The note's text editors keep their own Tab.
+                if e.keystroke.key == "tab" && this.lib.detail.is_none() && this.confirm.is_none() && this.assign.is_none() {
+                    if e.keystroke.modifiers.shift { w.focus_prev(cx) } else { w.focus_next(cx) }
+                }
+            }))
             .child(body)
             .when(self.assign.is_some(), |d| d.child(self.assign_sheet(window, cx)))
             .when(self.confirm.is_some(), |d| d.child(self.confirm_dialog(window, cx)))
