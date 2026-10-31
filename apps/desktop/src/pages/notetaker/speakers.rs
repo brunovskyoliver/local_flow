@@ -256,7 +256,7 @@ impl NotetakerPage {
             let picker_key = format!("merged.{id}");
             out = out.child(self.known_picker("identity.mergedPicker", "Choose a known speaker…", &picker_key, &b.picker, &id, true, cx));
             let speaker = id.clone();
-            out = out.child(identity_toggle("identity.mergedKeepUnknown", "Keep unknown", s.action == IdentityAction::ResolveMerged(None), cx, move |this, cx| this.set_identity(&speaker, IdentityAction::ResolveMerged(None), cx)));
+            out = out.child(identity_toggle("identity.mergedKeepUnknown", "Keep Unknown", s.action == IdentityAction::ResolveMerged(None), cx, move |this, cx| this.set_identity(&speaker, IdentityAction::ResolveMerged(None), cx)));
             return out;
         }
         if b.shows_suggestion_actions {
@@ -275,7 +275,7 @@ impl NotetakerPage {
                         Some(k) => this.set_identity(&a2, IdentityAction::ChooseAnother(k.clone()), cx),
                         None => this.toggle_picker(&key2, cx),
                     }))
-                    .child(identity_toggle("identity.keepUnknown", "Keep unknown", s.action == IdentityAction::KeepUnknown, cx, move |this, cx| this.set_identity(&a3, IdentityAction::KeepUnknown, cx))),
+                    .child(identity_toggle("identity.keepUnknown", "Keep Unknown", s.action == IdentityAction::KeepUnknown, cx, move |this, cx| this.set_identity(&a3, IdentityAction::KeepUnknown, cx))),
             );
             if self.assign.as_ref().is_some_and(|a| a.picker.as_deref() == Some(&key)) {
                 out = out.child(self.known_rows(&b.picker, &id, true, cx));
@@ -334,6 +334,7 @@ impl NotetakerPage {
         let k = key.to_string();
         v_flex()
             .w_full()
+            .items_start()
             .gap(px(4.))
             .child(plain_button(accessibility, title).on_click(cx.listener(move |this, _, _, cx| this.toggle_picker(&k, cx))).content(h_flex().pl(px(3.)).gap(px(4.)).child(t(title).size(13.).color(p.accent).a11y_hidden()).child(icon("chevron.down", 9., p.accent))))
             .when(open, |d| d.child(self.known_rows(known, id, merged, cx)))

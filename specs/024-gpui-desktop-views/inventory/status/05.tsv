@@ -1,0 +1,527 @@
+NOTE-001	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-002	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-003	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-004	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-005	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-006	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-007	auto	test:search_filters_loaded_rows_and_preview_follows_hover
+NOTE-008	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-009	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+NOTE-010	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-011	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-012	auto	test:library_lists_groups_and_marks_rows
+NOTE-013	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-014	auto	test:recording_options_and_refresh_click
+NOTE-015	auto	test:recording_options_and_refresh_click
+NOTE-016	auto	test:recording_options_and_refresh_click
+NOTE-017	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+NOTE-018	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+NOTE-019	auto	test:library_lists_groups_and_marks_rows
+NOTE-020	service	service:mac-service: ScreenCaptureKit system audio, AVCapture microphone, AAC encoder; desktop plan phase adds it, view surfaces Unavailable
+NOTE-021	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+NOTE-022	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+NOTE-023	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+NOTE-024	auto	test:refusal_shows_the_message_and_settings ; service:mac-service: TCC, AVCaptureDevice authorization; desktop plan phase adds it, view surfaces Unavailable
+NOTE-025	service	service:mac-service: TCC, CGPreflightScreenCaptureAccess; desktop plan phase adds it, view surfaces Unavailable
+NOTE-026	service	service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
+NOTE-027	service	service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
+NOTE-028	auto	test:failure_reasons_read_like_swift
+NOTE-029	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-030	auto	test:library_lists_groups_and_marks_rows
+NOTE-031	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-032	auto	test:library_pages_and_evicts
+NOTE-033	auto	test:recording_row_is_pinned ; test:today_summary_reads_like_swift
+NOTE-034	auto	test:paused_row_says_paused ; test:today_summary_reads_like_swift
+NOTE-035	auto	test:finalizing_row_says_finishing ; test:today_summary_reads_like_swift
+NOTE-036	auto	test:library_states ; test:today_summary_reads_like_swift
+NOTE-037	auto	test:today_summary_reads_like_swift
+NOTE-038	auto	test:today_summary_reads_like_swift
+NOTE-039	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-040	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+NOTE-041	auto	test:active_card_states
+NOTE-042	auto	test:notice_shows_the_page_error
+NOTE-043	auto	test:notice_shows_the_page_error
+NOTE-044	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+NOTE-045	auto	test:library_lists_groups_and_marks_rows
+NOTE-046	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-047	auto	test:search_filters_loaded_rows_and_preview_follows_hover
+NOTE-048	auto	test:search_filters_loaded_rows_and_preview_follows_hover
+NOTE-049	auto	test:search_filters_loaded_rows_and_preview_follows_hover
+NOTE-050	auto	test:search_filters_loaded_rows_and_preview_follows_hover
+NOTE-051	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+NOTE-052	auto	test:library_states
+NOTE-053	auto	test:search_filters_loaded_rows_and_preview_follows_hover
+NOTE-054	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-055	auto	test:evicted_offers_show_newest
+NOTE-056	auto	test:library_pages_and_evicts
+NOTE-057	auto	test:library_lists_groups_and_marks_rows
+NOTE-058	auto	test:library_pages_and_evicts
+NOTE-059	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-060	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-061	auto	test:recording_row_is_pinned ; test:library_pages_and_evicts
+NOTE-062	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-063	auto	test:dates_format_like_swift
+NOTE-064	auto	test:dates_format_like_swift
+NOTE-065	auto	test:dates_format_like_swift
+NOTE-066	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-067	auto	test:dates_format_like_swift
+NOTE-068	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-069	auto	test:library_lists_groups_and_marks_rows
+NOTE-070	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-071	auto	test:opening_a_note_renames_it_and_navigates
+NOTE-072	auto	test:recording_row_is_pinned
+NOTE-073	auto	test:recording_row_is_pinned
+NOTE-074	auto	test:recording_row_is_pinned
+NOTE-075	auto	test:paused_row_says_paused
+NOTE-076	auto	test:waiting_row_runs_on_this_mac
+NOTE-077	auto	test:waiting_row_runs_on_this_mac
+NOTE-078	service	service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
+NOTE-079	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+NOTE-080	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+NOTE-081	auto	test:row_shows_state_badge
+NOTE-082	auto	test:row_shows_state_badge ; live:audit/mac/notetaker/library-dark-rust.png
+NOTE-083	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-084	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-085	auto	test:deleting_a_row_removes_the_meeting_after_confirming
+NOTE-086	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-087	auto	test:deleting_a_row_removes_the_meeting_after_confirming
+NOTE-088	auto	test:deleting_a_row_removes_the_meeting_after_confirming
+NOTE-089	auto	test:deleting_a_row_removes_the_meeting_after_confirming ; test:delete_keeps_row_while_files_remain_then_removes
+NOTE-090	auto	test:delete_cancel_writes_nothing
+NOTE-091	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+NOTE-092	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+NOTE-093	auto	test:delete_keeps_row_while_files_remain_then_removes
+NOTE-094	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+NOTE-095	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+NOTE-096	auto	test:search_filters_loaded_rows_and_preview_follows_hover
+NOTE-097	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-098	auto	test:search_filters_loaded_rows_and_preview_follows_hover
+NOTE-099	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-100	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+NOTE-101	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+NOTE-102	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+NOTE-103	auto	test:dates_format_like_swift
+NOTE-104	live	live:audit/mac/notetaker/library-dark-rust.png
+NOTE-105	service	service:mac-service: NSScroller.preferredScrollerStyle; desktop plan phase adds it, view surfaces Unavailable
+NOTE-106	auto	test:library_pages_and_evicts
+NOTE-107	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+MEET-001	live	live:audit/mac/notetaker/transcript-dark-rust.png
+MEET-002	auto	test:opening_a_note_renames_it_and_navigates
+MEET-003	auto	test:opening_a_note_renames_it_and_navigates
+MEET-004	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+MEET-005	auto	test:previous_disabled_on_first_note_then_goes_back
+MEET-006	auto	test:opening_a_note_renames_it_and_navigates
+MEET-007	auto	test:opening_a_note_renames_it_and_navigates
+MEET-008	auto	test:previous_disabled_on_first_note_then_goes_back
+MEET-009	auto	test:final_transcript_offers_retranscribe_and_tabs_switch
+MEET-010	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-011	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-012	auto	test:final_transcript_offers_retranscribe_and_tabs_switch
+MEET-013	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-014	service	service:worker: flowd-speech; desktop plan phase adds it, view surfaces Unavailable
+MEET-015	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+MEET-016	auto	test:deleting_the_open_note_returns_to_the_library
+MEET-017	auto	test:deleting_the_open_note_returns_to_the_library ; test:delete_keeps_row_while_files_remain_then_removes
+MEET-018	live	live:audit/mac/notetaker/transcript-dark-rust.png
+MEET-019	auto	test:opening_a_note_renames_it_and_navigates ; test:title_revision_rules
+MEET-020	auto	test:title_too_long_shows_the_limit ; test:title_revision_rules
+MEET-021	auto	test:title_revision_rules
+MEET-022	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+MEET-023	auto	test:detail_shows_provenance
+MEET-024	auto	test:warnings_show_on_the_untitled_note
+MEET-025	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-026	auto	test:interrupted_note_shows_its_reason
+MEET-027	auto	test:failure_reasons_read_like_swift
+MEET-028	auto	test:failure_reasons_read_like_swift
+MEET-029	auto	test:failure_reasons_read_like_swift
+MEET-030	auto	test:failure_reasons_read_like_swift
+MEET-031	auto	test:failure_reasons_read_like_swift
+MEET-032	auto	test:failure_reasons_read_like_swift
+MEET-033	auto	test:failure_reasons_read_like_swift
+MEET-034	auto	test:failure_reasons_read_like_swift
+MEET-035	auto	test:failure_reasons_read_like_swift
+MEET-036	auto	test:failure_reasons_read_like_swift
+MEET-037	auto	test:failure_reasons_read_like_swift
+MEET-038	auto	test:opening_a_note_renames_it_and_navigates
+MEET-039	auto	test:final_transcript_offers_retranscribe_and_tabs_switch
+MEET-040	live	live:audit/mac/notetaker/transcript-dark-rust.png
+MEET-041	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-042	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+MEET-043	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+MEET-044	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-045	auto	test:delete_keeps_row_while_files_remain_then_removes
+MEET-046	auto	test:waiting_detail_offers_this_mac
+MEET-047	auto	test:waiting_detail_offers_this_mac
+MEET-048	service	service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
+MEET-049	auto	test:detail_shows_provenance ; test:provenance_reads_stored_paths
+MEET-050	auto	test:provenance_reads_stored_paths
+MEET-051	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-052	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-053	auto	test:provenance_reads_stored_paths
+MEET-054	auto	test:provenance_reads_stored_paths
+MEET-055	auto	test:thoughts_autosave_after_two_seconds ; service:mac-service: NSTextView equivalent editor; desktop plan phase adds it, view surfaces Unavailable
+MEET-056	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-057	auto	test:thoughts_autosave_after_two_seconds
+MEET-058	auto	test:notes_editor_saves_and_retries_stale
+MEET-059	auto	test:paragraphs_and_reveal
+MEET-060	auto	test:notes_editor_saves_and_retries_stale
+MEET-061	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+MEET-062	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-063	auto	test:notes_editor_saves_and_retries_stale
+MEET-064	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
+MEET-065	auto	test:detail_shows_provenance
+MEET-066	auto	test:live_transcript_lists_provisional_rows
+MEET-067	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-068	auto	test:live_transcript_lists_provisional_rows
+MEET-069	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+MEET-070	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+MEET-071	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+MEET-072	auto	test:opening_a_note_renames_it_and_navigates
+MEET-073	service	service:playback needs AVQueuePlayer through flow_platform; the media phase provides it, the button surfaces Unavailable
+MEET-074	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
+MEET-075	service	service:mac-service: AVQueuePlayer time observer; desktop plan phase adds it, view surfaces Unavailable
+MEET-076	service	service:playback needs AVQueuePlayer through flow_platform; the media phase provides it, the button surfaces Unavailable
+MEET-077	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
+MEET-078	service	service:playback needs AVQueuePlayer through flow_platform; the media phase provides it, the button surfaces Unavailable
+MEET-079	service	service:mac-service: AVURLAsset; desktop plan phase adds it, view surfaces Unavailable
+MEET-080	service	service:playback needs AVQueuePlayer through flow_platform; the media phase provides it, the button surfaces Unavailable
+MEET-081	service	service:playback needs AVQueuePlayer through flow_platform; the media phase provides it, the button surfaces Unavailable
+MEET-082	service	service:mac-service: AVPlayerItemDidPlayToEndTime; desktop plan phase adds it, view surfaces Unavailable
+MEET-083	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
+MEET-084	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+MEET-085	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+MEET-086	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+MEET-087	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+MEET-088	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+MEET-089	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+MEET-090	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-091	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+MEET-092	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+MEET-093	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-001	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+LIVE-002	auto	test:panel_shows_controls_title_and_notes
+LIVE-003	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-004	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-005	auto	test:panel_shows_controls_title_and_notes
+LIVE-006	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-007	auto	test:panel_shows_controls_title_and_notes
+LIVE-008	auto	test:active_card_states
+LIVE-009	auto	test:failed_card_says_it_could_not_start
+LIVE-010	auto	test:notice_card_shows_storage_and_notice ; service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
+LIVE-011	auto	test:active_card_states
+LIVE-012	auto	test:panel_shows_controls_title_and_notes ; service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+LIVE-013	auto	test:active_card_states
+LIVE-014	auto	test:failed_card_says_it_could_not_start
+LIVE-015	auto	test:failed_card_says_it_could_not_start
+LIVE-016	auto	test:notice_card_shows_storage_and_notice
+LIVE-017	auto	test:refusal_shows_the_message_and_settings ; service:mac-service: TCC poll at 1 Hz; desktop plan phase adds it, view surfaces Unavailable
+LIVE-018	auto	test:refusal_shows_the_message_and_settings
+LIVE-019	service	service:mac-service: NSWorkspace; desktop plan phase adds it, view surfaces Unavailable
+LIVE-020	auto	test:active_card_states ; test:panel_shows_controls_title_and_notes
+LIVE-021	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+LIVE-022	auto	test:panel_shows_controls_title_and_notes
+LIVE-023	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+LIVE-024	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-025	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-026	auto	test:new_note_surfaces_the_missing_recorder ; test:active_card_states
+LIVE-027	auto	test:new_note_surfaces_the_missing_recorder
+LIVE-028	auto	test:panel_shows_controls_title_and_notes
+LIVE-029	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-030	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-031	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-032	auto	test:refusal_shows_the_message_and_settings
+LIVE-033	auto	test:panel_shows_controls_title_and_notes
+LIVE-034	auto	test:panel_notes_state_follows_the_editor
+LIVE-035	auto	test:panel_notes_state_follows_the_editor
+LIVE-036	auto	test:panel_notes_state_follows_the_editor
+LIVE-037	auto	test:panel_notes_state_follows_the_editor
+LIVE-038	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+LIVE-039	service	service:mac-service: capture, TCC; desktop plan phase adds it, view surfaces Unavailable
+LIVE-040	auto	test:failure_reasons_read_like_swift
+LIVE-041	service	service:mac-service: NSWorkspace sleep notifications; desktop plan phase adds it, view surfaces Unavailable
+LIVE-042	service	service:mac-service: AVCapture device notifications; desktop plan phase adds it, view surfaces Unavailable
+LIVE-043	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+LIVE-044	service	service:mac-service: TCC; desktop plan phase adds it, view surfaces Unavailable
+LIVE-045	auto	test:section_interrupted
+TRANS-001	live	live:audit/mac/notetaker/transcript-dark-rust.png
+TRANS-002	live	live:audit/mac/notetaker/transcript-dark-rust.png
+TRANS-003	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-004	auto	test:badges_read_like_swift
+TRANS-005	auto	test:badges_read_like_swift
+TRANS-006	auto	test:badges_read_like_swift
+TRANS-007	auto	test:badges_read_like_swift
+TRANS-008	auto	test:badges_read_like_swift
+TRANS-009	auto	test:badges_read_like_swift
+TRANS-010	auto	test:badges_read_like_swift
+TRANS-011	auto	test:transcript_reads_labels_search_and_selection
+TRANS-012	auto	test:transcript_reads_labels_search_and_selection
+TRANS-013	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-014	auto	test:transcript_reads_labels_search_and_selection ; test:pager_labels_search_and_copy
+TRANS-015	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-016	auto	test:view_source_jumps_to_transcript ; test:pager_labels_search_and_copy
+TRANS-017	auto	test:match_counts_and_empty_texts
+TRANS-018	auto	test:pager_labels_search_and_copy
+TRANS-019	auto	test:pager_labels_search_and_copy
+TRANS-020	auto	test:pager_labels_search_and_copy
+TRANS-021	auto	test:pager_labels_search_and_copy
+TRANS-022	auto	test:match_counts_and_empty_texts
+TRANS-023	auto	test:match_counts_and_empty_texts
+TRANS-024	auto	test:match_counts_and_empty_texts
+TRANS-025	auto	test:match_counts_and_empty_texts
+TRANS-026	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+TRANS-027	auto	test:export_and_status_lines_surface_failures
+TRANS-028	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-029	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-030	service	service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
+TRANS-031	auto	test:export_and_status_lines_surface_failures
+TRANS-032	auto	test:pager_labels_search_and_copy ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
+TRANS-033	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+TRANS-034	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+TRANS-035	auto	test:export_and_status_lines_surface_failures
+TRANS-036	auto	test:pager_labels_search_and_copy ; service:mac-service: NSSavePanel; desktop plan phase adds it, view surfaces Unavailable
+TRANS-037	auto	test:export_and_status_lines_surface_failures
+TRANS-038	auto	test:pager_labels_search_and_copy
+TRANS-039	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-040	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+TRANS-041	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-042	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-043	live	live:audit/mac/notetaker/transcript-dark-rust.png
+TRANS-044	live	live:audit/mac/notetaker/transcript-dark-rust.png
+TRANS-045	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-046	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-047	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-048	auto	test:pager_labels_search_and_copy
+TRANS-049	auto	test:transcript_reads_labels_search_and_selection
+TRANS-050	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-051	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-052	auto	test:transcript_reads_labels_search_and_selection
+TRANS-053	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-054	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
+TRANS-055	auto	test:transcript_reads_labels_search_and_selection
+TRANS-056	auto	test:live_off_says_transcription_is_off
+TRANS-057	auto	test:live_empty_says_listening_or_off
+TRANS-058	auto	test:live_transcript_lists_provisional_rows ; service:worker: flowd-speech; desktop plan phase adds it, view surfaces Unavailable
+TRANS-059	auto	test:transcript_failures_read_like_swift
+TRANS-060	auto	test:transcript_failures_read_like_swift
+TRANS-061	auto	test:transcript_failures_read_like_swift
+TRANS-062	auto	test:transcript_failures_read_like_swift
+TRANS-063	auto	test:transcript_failures_read_like_swift
+TRANS-064	auto	test:transcript_failures_read_like_swift
+TRANS-065	auto	test:transcript_failures_read_like_swift
+TRANS-066	auto	test:transcript_failures_read_like_swift
+TRANS-067	auto	test:transcript_failures_read_like_swift
+TRANS-068	auto	test:transcript_failures_read_like_swift
+TRANS-069	auto	test:transcript_failures_read_like_swift
+TRANS-070	auto	test:transcript_failures_read_like_swift
+TRANS-071	auto	test:transcript_failures_read_like_swift
+TRANS-072	auto	test:waiting_detail_offers_this_mac ; service:flowd: `meeting_job` on `/v1/remote/channel`; desktop plan phase adds it, view surfaces Unavailable
+TRANS-073	auto	test:section_interrupted
+TRANS-074	auto	test:section_status_reads_like_swift
+TRANS-075	auto	test:section_status_reads_like_swift
+TRANS-076	auto	test:section_status_reads_like_swift
+TRANS-077	auto	test:section_status_reads_like_swift
+TRANS-078	auto	test:section_status_reads_like_swift
+TRANS-079	auto	test:section_interrupted ; test:section_status_reads_like_swift
+TRANS-080	auto	test:section_status_reads_like_swift
+TRANS-081	auto	test:section_degraded ; test:section_status_reads_like_swift
+TRANS-082	auto	test:section_status_reads_like_swift
+TRANS-083	auto	test:section_status_reads_like_swift
+TRANS-084	auto	test:section_status_reads_like_swift
+TRANS-085	auto	test:section_interrupted
+TRANS-086	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+TRANS-087	auto	test:section_interrupted
+TRANS-088	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+TRANS-089	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SPK-001	auto	test:assign_opens_shows_sections_and_closes
+SPK-002	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-003	auto	test:assign_opens_shows_sections_and_closes
+SPK-004	auto	test:labels_updating
+SPK-005	auto	test:labels_waiting
+SPK-006	auto	test:labels_running ; service:worker: flowd-speech diarization; desktop plan phase adds it, view surfaces Unavailable
+SPK-007	auto	test:labels_failed
+SPK-008	service	service:worker: diarization; desktop plan phase adds it, view surfaces Unavailable
+SPK-009	auto	test:diarization_failures_read_like_swift
+SPK-010	auto	test:diarization_failures_read_like_swift
+SPK-011	auto	test:diarization_failures_read_like_swift
+SPK-012	auto	test:diarization_failures_read_like_swift
+SPK-013	auto	test:diarization_failures_read_like_swift
+SPK-014	auto	test:diarization_failures_read_like_swift
+SPK-015	auto	test:diarization_failures_read_like_swift
+SPK-016	auto	test:diarization_failures_read_like_swift
+SPK-017	auto	test:diarization_failures_read_like_swift
+SPK-018	auto	test:diarization_failures_read_like_swift
+SPK-019	auto	test:past_search_running
+SPK-020	auto	test:past_search_cancel_clears
+SPK-021	auto	test:identify_waiting
+SPK-022	auto	test:identify_running ; service:worker: voice embedding; desktop plan phase adds it, view surfaces Unavailable
+SPK-023	auto	test:identify_failed ; service:worker: voice embedding; desktop plan phase adds it, view surfaces Unavailable
+SPK-024	auto	test:identify_enrolling ; service:worker: voice embedding; desktop plan phase adds it, view surfaces Unavailable
+SPK-025	auto	test:identification_failures_read_like_swift
+SPK-026	auto	test:identification_failures_read_like_swift
+SPK-027	auto	test:identification_failures_read_like_swift
+SPK-028	auto	test:identification_failures_read_like_swift
+SPK-029	auto	test:identification_failures_read_like_swift
+SPK-030	auto	test:identification_failures_read_like_swift
+SPK-031	auto	test:identification_failures_read_like_swift
+SPK-032	auto	test:identification_failures_read_like_swift
+SPK-033	auto	test:past_search_prompt
+SPK-034	service	service:past search and rerun carry-over run in identification and diarization workers; the worker phase provides them
+SPK-035	auto	test:past_prompt_not_now_hides
+SPK-036	live	live:audit/mac/notetaker/transcript-dark-rust.png
+SPK-037	live	live:audit/mac/notetaker/transcript-dark-rust.png
+SPK-038	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-039	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-040	auto	test:change_speaker_writes_the_correction
+SPK-041	auto	test:corrections_and_merges_persist
+SPK-042	auto	test:change_speaker_writes_the_correction ; test:corrections_and_merges_persist
+SPK-043	auto	test:corrections_and_merges_persist
+SPK-044	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-045	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-046	auto	test:assign_speakers_saves_a_name
+SPK-047	auto	test:assign_speakers_saves_a_name
+SPK-048	auto	test:assign_opens_shows_sections_and_closes
+SPK-049	auto	test:assign_opens_shows_sections_and_closes
+SPK-050	live	live:audit/mac/notetaker/assign-dark-rust.png
+SPK-051	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-052	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-053	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-054	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-055	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-056	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-057	auto	test:assign_opens_shows_sections_and_closes
+SPK-058	auto	test:corrections_and_merges_persist
+SPK-059	auto	test:corrections_and_merges_persist
+SPK-060	auto	test:corrections_and_merges_persist
+SPK-061	auto	test:assign_opens_shows_sections_and_closes
+SPK-062	auto	test:assign_speakers_saves_a_name
+SPK-063	live	live:audit/mac/notetaker/assign-dark-rust.png
+SPK-064	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-065	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-066	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-067	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SPK-068	auto	test:long_name_blocks_saving
+SPK-069	auto	test:assign_model_saves_names_and_identities
+SPK-070	auto	test:assign_model_saves_names_and_identities
+SPK-071	auto	test:corrections_and_merges_persist
+SPK-072	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-073	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-074	auto	test:assign_shows_identity_choices
+SPK-075	auto	test:assign_opens_shows_sections_and_closes
+SPK-076	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-077	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SPK-078	auto	test:assign_opens_shows_sections_and_closes ; not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-079	not-run	not-run:built, but below the fold of the sheet in the headless test and not in a looked-at shot
+SPK-080	not-run	not-run:built, but below the fold of the sheet in the headless test and not in a looked-at shot
+SPK-081	not-run	not-run:built, but below the fold of the sheet in the headless test and not in a looked-at shot
+SPK-082	not-run	not-run:built, but below the fold of the sheet in the headless test and not in a looked-at shot
+SPK-083	not-run	not-run:built, but below the fold of the sheet in the headless test and not in a looked-at shot
+SPK-084	not-run	not-run:built, but below the fold of the sheet in the headless test and not in a looked-at shot
+SPK-085	not-run	not-run:built, but below the fold of the sheet in the headless test and not in a looked-at shot
+SPK-086	service	service:worker: voice embedding; desktop plan phase adds it, view surfaces Unavailable
+SPK-087	service	service:enrollment needs the voice embedding worker; the worker phase provides it, the view surfaces Unavailable
+SPK-088	service	service:enrollment needs the voice embedding worker; the worker phase provides it, the view surfaces Unavailable
+SPK-089	service	service:enrollment needs the voice embedding worker; the worker phase provides it, the view surfaces Unavailable
+SPK-090	service	service:enrollment needs the voice embedding worker; the worker phase provides it, the view surfaces Unavailable
+SPK-091	service	service:enrollment needs the voice embedding worker; the worker phase provides it, the view surfaces Unavailable
+SPK-092	live	live:audit/mac/notetaker/assign-dark-rust.png
+SPK-093	auto	test:assign_escape_style_cancel_writes_nothing
+SPK-094	auto	test:assign_escape_style_cancel_writes_nothing
+SPK-095	auto	test:assign_speakers_saves_a_name
+SPK-096	auto	test:long_name_blocks_saving
+SPK-097	auto	test:assign_speakers_saves_a_name ; test:assign_model_saves_names_and_identities
+SPK-098	auto	test:assign_model_saves_names_and_identities
+SPK-099	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-100	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SPK-101	service	service:worker: voice embedding; desktop plan phase adds it, view surfaces Unavailable
+SPK-102	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-103	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-104	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SPK-105	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SPK-106	service	service:past search and rerun carry-over run in identification and diarization workers; the worker phase provides them
+SPK-107	live	live:audit/mac/notetaker/assign-dark-rust.png
+SUM-001	live	live:audit/mac/notetaker/summary-stale-dark-rust.png
+SUM-002	live	live:audit/mac/notetaker/summary-stale-dark-rust.png
+SUM-003	auto	test:summary_reads_stored_analysis_and_marks_an_item_done
+SUM-004	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-005	auto	test:summary_not_finished ; test:summary_overlays_and_report
+SUM-006	auto	test:summary_not_finished ; test:summary_overlays_and_report
+SUM-007	auto	test:summary_off ; test:summary_overlays_and_report
+SUM-008	auto	test:generate_reports_the_missing_worker
+SUM-009	auto	test:generate_reports_the_missing_worker
+SUM-010	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
+SUM-011	auto	test:summary_queued
+SUM-012	auto	test:summary_running
+SUM-013	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-014	service	service:needs the Mac MeetingCoordinator or background coordinators; the capture and worker phase of the plan provides live status, gates and queues here
+SUM-015	auto	test:summary_failed
+SUM-016	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
+SUM-017	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-018	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-019	auto	test:summary_overlays_and_report
+SUM-020	auto	test:summary_failures_read_like_swift
+SUM-021	auto	test:summary_failures_read_like_swift
+SUM-022	auto	test:summary_failures_read_like_swift
+SUM-023	auto	test:summary_failures_read_like_swift
+SUM-024	auto	test:summary_failures_read_like_swift
+SUM-025	auto	test:summary_failures_read_like_swift
+SUM-026	auto	test:summary_failures_read_like_swift
+SUM-027	auto	test:summary_failures_read_like_swift
+SUM-028	auto	test:summary_failures_read_like_swift
+SUM-029	auto	test:summary_failures_read_like_swift
+SUM-030	auto	test:summary_failures_read_like_swift
+SUM-031	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-032	live	live:audit/mac/notetaker/summary-stale-dark-rust.png
+SUM-033	auto	test:summary_overlays_and_report ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable
+SUM-034	auto	test:dates_format_like_swift
+SUM-035	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
+SUM-036	auto	test:summary_reads_stored_analysis_and_marks_an_item_done
+SUM-037	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
+SUM-038	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SUM-039	auto	test:summary_states
+SUM-040	not-run	not-run:failure text is in code, but no test injects this storage failure or limit
+SUM-041	auto	test:summary_shows_sections_chips_and_attribution
+SUM-042	auto	test:summary_edit_saves_an_overlay
+SUM-043	auto	test:summary_edit_saves_an_overlay
+SUM-044	auto	test:summary_edit_saves_an_overlay ; test:summary_overlays_and_report
+SUM-045	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-046	auto	test:removing_one_overlay_restores_the_generated_value
+SUM-047	auto	test:summary_shows_sections_chips_and_attribution
+SUM-048	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SUM-049	auto	test:summary_shows_sections_chips_and_attribution
+SUM-050	auto	test:summary_reads_stored_analysis_and_marks_an_item_done
+SUM-051	auto	test:summary_shows_sections_chips_and_attribution
+SUM-052	auto	test:summary_reads_stored_analysis_and_marks_an_item_done
+SUM-053	auto	test:summary_shows_sections_chips_and_attribution
+SUM-054	auto	test:summary_overlays_and_report
+SUM-055	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SUM-056	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SUM-057	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-058	auto	test:summary_shows_sections_chips_and_attribution
+SUM-059	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-060	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-061	auto	test:view_source_jumps_to_transcript
+SUM-062	auto	test:summary_reads_stored_analysis_and_marks_an_item_done
+SUM-063	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
+SUM-064	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-065	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-066	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-067	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-068	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-069	service	service:mac-service: date picker equivalent; desktop plan phase adds it, view surfaces Unavailable
+SUM-070	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-071	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-072	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-073	auto	test:summary_shows_sections_chips_and_attribution ; test:summary_overlays_and_report
+SUM-074	auto	test:summary_shows_sections_chips_and_attribution ; test:summary_overlays_and_report
+SUM-075	auto	test:summary_shows_sections_chips_and_attribution
+SUM-076	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-077	auto	test:summary_shows_sections_chips_and_attribution ; test:summary_overlays_and_report
+SUM-078	auto	test:summary_shows_sections_chips_and_attribution ; test:dates_format_like_swift
+SUM-079	auto	test:summary_shows_sections_chips_and_attribution
+SUM-080	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-081	not-run	not-run:implemented, but no specific test or compared shot exercised this row in this pass
+SUM-082	auto	test:removing_one_overlay_restores_the_generated_value
+SUM-083	not-run	not-run:Txt has no inline links, so speaker names are coloured but not clickable; differs from Swift until flow_ui adds links
+SUM-084	auto	test:mentions_prefer_full_names_and_endings
+SUM-085	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
+SUM-086	auto	test:summary_overlays_and_report

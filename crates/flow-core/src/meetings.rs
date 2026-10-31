@@ -197,6 +197,28 @@ pub fn badge_text(state: &str, progress: f64) -> String {
         _ => "Interrupted".into(),
     }
 }
+/// `TranscriptSectionView.stateText`. `live` is the live preview's health while transcribing.
+pub fn section_status_text(state: &str, live: &str, failure: Option<&str>, progress: f64) -> String {
+    if let Some(f) = failure {
+        return format!("Transcription failed: {f}");
+    }
+    if state == "finalizing" {
+        return badge_text(state, progress);
+    }
+    match (state, live) {
+        ("not_requested", _) => "Transcription off",
+        ("pending", _) => "Pending",
+        ("final", _) => "Final",
+        ("failed", _) => "Transcription failed",
+        ("interrupted", _) => "Interrupted",
+        (_, "catching_up") => "Catching up",
+        (_, "degraded") => "Degraded — some live text skipped; the full transcript is produced when the meeting stops",
+        (_, "suspended") => "Live transcription suspended — catching up",
+        (_, "stopped") => "Live preview stopped",
+        _ => "Transcribing",
+    }
+    .into()
+}
 pub fn diarization_failure_text(c: &str) -> &'static str {
     match c {
         "model_unavailable" => "Speaker labeling model isn't installed. Install it in Settings → Models.",
@@ -2871,6 +2893,7 @@ mod tests {
         db
     }
 
+    // parity: NOTE-063..NOTE-065 NOTE-067 NOTE-103 SUM-034 SUM-078
     #[test]
     fn dates_format_like_swift() {
         // 2026-09-24 14:05:00 UTC
@@ -2902,6 +2925,7 @@ mod tests {
         assert_ne!(id, new_id());
     }
 
+    // parity: NOTE-032 NOTE-056 NOTE-058 NOTE-061 NOTE-106
     #[test]
     fn library_pages_and_evicts() {
         let db = db();
@@ -2919,6 +2943,7 @@ mod tests {
         assert_eq!(l.rows[0].id, SEED_FAILED);
     }
 
+    // parity: MEET-019 MEET-020 MEET-021
     #[test]
     fn title_revision_rules() {
         let db = db();
@@ -2930,6 +2955,7 @@ mod tests {
         assert_eq!(meeting(&db, SEED_FULL).unwrap().unwrap().title, None);
     }
 
+    // parity: MEET-058 MEET-060 MEET-063
     #[test]
     fn notes_editor_saves_and_retries_stale() {
         let db = db();
@@ -2945,6 +2971,7 @@ mod tests {
         assert_eq!(e.text, "changed");
     }
 
+    // parity: NOTE-089 NOTE-093 MEET-017 MEET-045
     #[test]
     fn delete_keeps_row_while_files_remain_then_removes() {
         let db = db();
@@ -2966,6 +2993,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    // parity: MEET-049 MEET-050 MEET-053 MEET-054
     #[test]
     fn provenance_reads_stored_paths() {
         let db = db();
@@ -2973,6 +3001,7 @@ mod tests {
         assert_eq!(provenance(&db, SEED_UNTITLED).unwrap(), None);
     }
 
+    // parity: TRANS-014 TRANS-016 TRANS-018 TRANS-019 TRANS-020 TRANS-021 TRANS-032 TRANS-036 TRANS-038 TRANS-048
     #[test]
     fn pager_labels_search_and_copy() {
         let db = db();
@@ -3006,6 +3035,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    // parity: SPK-041 SPK-042 SPK-043 SPK-058 SPK-059 SPK-060 SPK-071
     #[test]
     fn corrections_and_merges_persist() {
         let db = db();
@@ -3029,6 +3059,7 @@ mod tests {
         assert_eq!(undone, 1);
     }
 
+    // parity: SPK-069 SPK-070 SPK-097 SPK-098
     #[test]
     fn assign_model_saves_names_and_identities() {
         let db = db();
@@ -3059,6 +3090,7 @@ mod tests {
         assert_eq!(m.sections[0].enrollment_result.as_deref(), Some("failed text"));
     }
 
+    // parity: SUM-005 SUM-006 SUM-007 SUM-019 SUM-033 SUM-037 SUM-044 SUM-054 SUM-063 SUM-073 SUM-074 SUM-077 SUM-086
     #[test]
     fn summary_overlays_and_report() {
         let db = db();
@@ -3087,6 +3119,7 @@ mod tests {
         assert_eq!(read_model(&db, SEED_FULL).unwrap().unwrap().summary, edited.ai_summary);
     }
 
+    // parity: SUM-084
     #[test]
     fn mentions_prefer_full_names_and_endings() {
         let speakers = vec![("a".to_string(), "Marta Kováčová".to_string(), 1), ("b".to_string(), "Speaker 2".to_string(), 2), ("c".to_string(), "You".to_string(), 0)];
@@ -3096,6 +3129,7 @@ mod tests {
         assert_eq!(renamed("Speaker 1 and Speaker 10", &[("Speaker 1".into(), "Ada".into())]), "Ada and Speaker 10");
     }
 
+    // parity: MEET-059
     #[test]
     fn paragraphs_and_reveal() {
         let db = db();
@@ -3107,5 +3141,175 @@ mod tests {
         assert_eq!(e.reveal, Some((ps[0].2, ps[0].3)));
         e.reveal(1, "bad");
         assert_eq!(e.notice.as_deref(), Some("This note has changed"));
+    }
+
+    // parity: MEET-027..MEET-037 NOTE-028 LIVE-040
+    #[test]
+    fn failure_reasons_read_like_swift() {
+        for (reason, track, text) in [
+            ("storage_write_failed", None, "Recording stopped: audio could not be written to disk. What was recorded so far was kept."),
+            ("storage_unavailable", None, "Recording stopped: the meeting folder is unavailable."),
+            ("encoder_failed", None, "Recording stopped: the audio encoder failed. What was recorded so far was kept."),
+            ("not_running_at_last_state", None, "LocalFlow did not exit cleanly during this meeting. Recorded audio was recovered where possible."),
+            ("device_lost", None, "The microphone disconnected. The meeting continued with system audio."),
+            ("stream_stopped", None, "System audio stopped. The meeting continued with the microphone."),
+            ("permission_revoked", Some("microphone"), "Microphone permission was revoked during the meeting."),
+            ("permission_revoked", Some("system"), "System audio permission was revoked during the meeting."),
+            ("permission_revoked", None, "Audio permission was revoked during the meeting."),
+            ("both_sources_failed", None, "Recording stopped because both audio sources failed."),
+            ("record_missing", None, "Files were found without a meeting record. They were kept and listed here."),
+            ("file_missing", None, "The audio file for this segment is missing."),
+            ("segment_open_failed", None, "The meeting could not start because an audio file could not be created."),
+            ("media_unrecoverable", None, "This track could not be made playable. The file was kept."),
+        ] {
+            assert_eq!(failure_reason_text(reason, track), text);
+        }
+    }
+
+    // parity: TRANS-060..TRANS-071 TRANS-059
+    #[test]
+    fn transcript_failures_read_like_swift() {
+        for (c, resumes, meeting, text) in [
+            ("model_unavailable", false, true, "Whisper Turbo is not installed. Install the meeting model in Settings to transcribe."),
+            ("model_unavailable", false, false, "The speech model is not installed. Install it in Settings to transcribe."),
+            ("model_provisioning", false, false, "The speech model could not be verified. Reinstall it in Settings."),
+            ("model_load_failure", false, false, "The speech model failed to load. The recording was not affected."),
+            ("audio_decode_failure", false, false, "A recorded track could not be decoded. The recording was kept."),
+            ("analysis_stream_failure", false, false, "Audio could not be prepared for transcription. The recording was kept."),
+            ("runtime_failure", false, true, "Meeting transcription failed. The recording was kept; choose Retry to try again."),
+            ("runtime_failure", false, false, "Transcription stopped because the speech model failed. The recording continues."),
+            ("finalization_interrupted", true, false, "Finalization was interrupted. It will resume automatically."),
+            ("finalization_interrupted", false, false, "Finalization was interrupted. Choose Retry to finish it."),
+            ("persistence_failure", false, false, "Transcript could not be saved. The recording continues; retry later."),
+            ("storage_limit", false, false, "Transcript storage limit reached (7 segments kept). Delete old meetings to free space."),
+        ] {
+            assert_eq!(transcript_failure_text(c, 7, resumes, meeting), text);
+        }
+    }
+
+    // parity: TRANS-004..TRANS-010
+    #[test]
+    fn badges_read_like_swift() {
+        for (state, text) in [("not_requested", "Not requested"), ("pending", "Pending"), ("live", "Live"), ("finalizing", "Finalizing 42 %"), ("final", "Final"), ("failed", "Failed"), ("interrupted", "Interrupted")] {
+            assert_eq!(badge_text(state, 0.42), text);
+        }
+    }
+
+    // parity: TRANS-074..TRANS-084
+    #[test]
+    fn section_status_reads_like_swift() {
+        for (state, live, failure, text) in [
+            ("pending", "", None, "Pending"),
+            ("live", "", Some("x"), "Transcription failed: x"),
+            ("not_requested", "", None, "Transcription off"),
+            ("final", "", None, "Final"),
+            ("failed", "", None, "Transcription failed"),
+            ("interrupted", "", None, "Interrupted"),
+            ("live", "catching_up", None, "Catching up"),
+            ("live", "degraded", None, "Degraded — some live text skipped; the full transcript is produced when the meeting stops"),
+            ("live", "suspended", None, "Live transcription suspended — catching up"),
+            ("live", "stopped", None, "Live preview stopped"),
+            ("live", "healthy", None, "Transcribing"),
+        ] {
+            assert_eq!(section_status_text(state, live, failure, 0.0), text);
+        }
+    }
+
+    // parity: SPK-009..SPK-018
+    #[test]
+    fn diarization_failures_read_like_swift() {
+        for (c, text) in [
+            ("model_unavailable", "Speaker labeling model isn't installed. Install it in Settings → Models."),
+            ("os_unsupported", "Speaker labeling needs macOS 15 or later."),
+            ("model_load_failure", "The speaker labeling model couldn't be loaded."),
+            ("audio_missing", "This meeting's audio isn't available, so speakers can't be labeled."),
+            ("audio_decode_failure", "This meeting's audio couldn't be read."),
+            ("runtime_failure", "Speaker labeling stopped unexpectedly."),
+            ("transcript_changed", "The transcript changed while speakers were being labeled."),
+            ("persistence_failure", "Speaker labels couldn't be saved."),
+            ("persistence_capacity", "Speaker labels couldn't be saved. Meeting storage is full."),
+            ("interrupted", "Speaker labeling was interrupted."),
+        ] {
+            assert_eq!(diarization_failure_text(c), text);
+        }
+    }
+
+    // parity: SPK-025..SPK-032
+    #[test]
+    fn identification_failures_read_like_swift() {
+        for (c, text) in [
+            ("os_unsupported", "Speaker identification needs macOS 15 or later."),
+            ("model_load_failure", "The voice model couldn't be loaded."),
+            ("audio_missing", "This meeting's audio isn't available, so speakers can't be identified."),
+            ("runtime_failure", "Speaker identification stopped unexpectedly."),
+            ("diarization_changed", "Speaker labels changed while speakers were being identified."),
+            ("persistence_failure", "Speaker identities couldn't be saved."),
+            ("persistence_capacity", "Speaker identities couldn't be saved. Meeting storage is full."),
+            ("interrupted", "Speaker identification was interrupted."),
+        ] {
+            assert_eq!(identification_failure_text(c), text);
+        }
+    }
+
+    // parity: SUM-020..SUM-030
+    #[test]
+    fn summary_failures_read_like_swift() {
+        for (c, text) in [
+            ("server_unreachable", "Your server could not be reached."),
+            ("authentication_failed", "The server rejected the credential."),
+            ("backend_unavailable", "The server's language model is not running."),
+            ("backend_busy", "The server is busy with dictation. Try again in a moment."),
+            ("timeout", "The summary took too long and was stopped."),
+            ("malformed_response", "The server sent a summary LocalFlow could not read."),
+            ("source_validation", "The summary did not pass LocalFlow's checks and was not saved."),
+            ("too_long", "This meeting is too long to summarize with the current limits."),
+            ("persistence_failure", "The summary couldn't be saved."),
+            ("persistence_capacity", "The summary couldn't be saved. Meeting storage is full."),
+            ("interrupted", "The summary was interrupted."),
+        ] {
+            assert_eq!(analysis_failure_text(c), text);
+        }
+    }
+
+    // parity: NOTE-033..NOTE-038
+    #[test]
+    fn today_summary_reads_like_swift() {
+        for s in ["created", "preparing", "recording"] {
+            assert_eq!(today_summary(Some(s), 3), "Recording now");
+        }
+        assert_eq!(today_summary(Some("paused"), 3), "Recording paused");
+        assert_eq!(today_summary(Some("finalizing"), 3), "Finishing the recording");
+        assert_eq!(today_summary(None, 0), "No meetings today");
+        assert_eq!(today_summary(None, 1), "1 meeting today");
+        assert_eq!(today_summary(None, 4), "4 meetings today");
+    }
+
+    // parity: TRANS-022 TRANS-017 TRANS-023 TRANS-024 TRANS-025
+    #[test]
+    fn match_counts_and_empty_texts() {
+        let db = db();
+        let mut p = Pager::new(SEED_FULL);
+        p.load_first(&db);
+        p.is_searching = true;
+        assert_eq!(p.match_count_text(), "Searching…");
+        assert_eq!(p.no_resident_match_text(), "Searching the whole transcript…");
+        p.is_searching = false;
+        p.search(&db, "zebra");
+        assert_eq!(p.no_resident_match_text(), "No matches.");
+        p.search(&db, "the");
+        assert_eq!(p.no_resident_match_text(), "No matches in this part of the transcript. Use the arrows to go to the others.");
+        p.search_hits.as_mut().unwrap().1 = true;
+        assert_eq!(p.match_count_text(), "11+ matches");
+    }
+
+    // parity: SUM-046 SUM-082
+    #[test]
+    fn removing_one_overlay_restores_the_generated_value() {
+        let db = db();
+        let model = read_model(&db, SEED_FULL).unwrap().unwrap();
+        set_overlay(&db, SEED_FULL, OverlayTarget::Summary, "summary_text", "Edited.", Some("x"), Some("x"), "", 5).unwrap();
+        let id: String = db.conn.query_row("SELECT id FROM analysis_overlays WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap();
+        remove_overlay(&db, &id).unwrap();
+        assert_eq!(read_model(&db, SEED_FULL).unwrap().unwrap().summary, model.ai_summary);
     }
 }

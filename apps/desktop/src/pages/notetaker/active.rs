@@ -94,12 +94,28 @@ impl NotetakerPage {
             if let Some(n) = s.notice.clone() {
                 card = card.child(t(n).size(13.).color(p.muted).id("meeting.notice"));
             }
+            if let Some(line) = self.live_section.clone() {
+                card = card.child(section_view(&line, &s, cx));
+            }
             card = card.child(match s.state.as_str() {
                 "recording" => h_flex().gap(px(8.)).child(prototype_button("meeting.pause", "Pause").on_click(cx.listener(|this, _, _, cx| this.live_action("Pause", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
                 "paused" => h_flex().gap(px(8.)).child(prototype_button("meeting.resume", "Resume").on_click(cx.listener(|this, _, _, cx| this.live_action("Resume", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
                 "finalizing" | "preparing" | "created" => h_flex().gap(px(8.)).child(Spinner::new().small()).child(t(if s.state == "finalizing" { "Finalizing…" } else { "Starting…" }).color(p.muted)),
                 _ => h_flex().child(prototype_button("meeting.dismiss", "Dismiss").on_click(dismiss(cx))),
             });
+            if !is_terminal(&s.state) {
+                let (text, color) = match self.editor.as_ref() {
+                    Some(e) if e.state == SaveState::NotSaved => ("Not saved", red(cx)),
+                    Some(e) if e.state == SaveState::Saving => ("Saving…", p.muted),
+                    Some(e) if e.is_dirty => ("Unsaved", p.muted),
+                    Some(e) if e.state == SaveState::Saved => ("Saved", p.muted),
+                    _ => ("", p.muted),
+                };
+                card = card
+                    .child(div().w_full().max_w(px(360.)).child(Input::new(&self.active_title).aria_label("Title (optional)").accessibility_id("meeting.title.active")))
+                    .child(h_flex().gap(px(8.)).child(t("Notes").font(13., 600.)).child(t(text).size(12.).color(color).id("meeting.notes.state")))
+                    .child(div().w_full().h(px(90.)).bg(p.surface).rounded(px(8.)).child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(13.)).aria_label("Notes").accessibility_id("meeting.notes")));
+            }
         } else if let Some(refusal) = self.refusal.clone() {
             let permission = refusal.contains("System Settings");
             card = card.child(
@@ -128,6 +144,16 @@ impl NotetakerPage {
         }
         cx.notify();
     }
+}
+
+/// `TranscriptSectionView`: (status line, in-flight mini progress).
+fn section_view(line: &str, s: &LiveStatus, cx: &App) -> impl IntoElement {
+    let p = pal(cx);
+    let mut list = v_flex().id("meeting.section.list").w_full().h(px(180.)).overflow_y_scroll().gap(px(10.)).p(px(8.)).bg(p.surface).rounded(px(8.));
+    for (i, (text, _)) in s.segments.iter().enumerate() {
+        list = list.child(h_flex().items_start().gap(px(8.)).child(t(duration_text(i as i64 * 4000)).size(11.).mono_digits().color(p.muted)).child(div().flex_1().child(t(text.clone()).size(13.).italic())).child(h_flex().gap(px(4.)).child(div().size(px(3.)).rounded_full().bg(p.muted)).child(t("provisional").size(11.).italic().color(p.muted))));
+    }
+    v_flex().w_full().gap(px(8.)).child(h_flex().gap(px(8.)).child(t("Transcript").font(13., 600.)).child(t(line.to_string()).size(12.).color(p.muted).id("meeting.section.status"))).child(list)
 }
 
 fn track_indicator(kind: &str, name: &'static str, text: &str, cx: &App) -> impl IntoElement {

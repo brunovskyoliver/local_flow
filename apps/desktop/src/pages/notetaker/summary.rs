@@ -268,7 +268,7 @@ impl NotetakerPage {
             .map(|d| match header {
                 SummaryHeader::Eligible => d.child(prototype_button("meeting.summary.generate", "Generate summary").on_click(cx.listener(|this, _, _, cx| this.generate(cx)))),
                 SummaryHeader::Pending(_) => d.child(t("Queued").size(13.).color(p.muted)).child(plain_button("meeting.summary.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t("Cancel").size(13.).color(p.accent).a11y_hidden())),
-                SummaryHeader::Running(text) => d.child(Spinner::new().small()).child(t(text.clone()).size(13.).color(p.muted).lines(1)),
+                SummaryHeader::Running(text) => d.child(Spinner::new().small()).child(t(text.clone()).size(13.).color(p.muted).lines(1)).child(plain_button("meeting.summary.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t("Cancel").size(13.).color(p.accent).a11y_hidden())),
                 SummaryHeader::Failed(text) => d.child(t(text.clone()).size(13.).color(red(cx)).lines(1)).child(plain_button("meeting.summary.retry", "Retry").on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t("Retry").size(13.).color(p.accent).a11y_hidden())),
                 _ => d,
             })
@@ -297,6 +297,11 @@ impl NotetakerPage {
                         .when(edits_open, |w| {
                             let mut list = v_flex().id("meeting.summary.previousEdits").p(px(14.)).gap(px(10.)).child(t("Previous edits").font(13., 600.));
                             for e in edits.clone() {
+                                let overlay = e.id.clone();
+                                list = list.child(plain_button(sid(format!("meeting.summary.previous.delete.{}", e.id)), "Delete").on_click(cx.listener(move |this, _, _, cx| {
+                                    let overlay = overlay.clone();
+                                    this.write(cx, move |db, _| remove_overlay(db, &overlay));
+                                })).content(t("Delete").size(11.).color(p.accent).a11y_hidden()));
                                 list = list.child(v_flex().gap(px(2.)).when_some(e.item_text.clone(), |d, x| d.child(t(x).size(11.).color(p.muted))).child(t(e.user_value.clone()).size(13.)).when_some(e.ai_value.clone(), |d, x| d.child(t(format!("AI: {x}")).size(11.).color(p.muted))));
                             }
                             w.child(popover_panel(280., 32., cx, list))

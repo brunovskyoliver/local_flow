@@ -49,11 +49,12 @@ pub struct NotetakerPage {
     pub(crate) menu: Option<String>,
     pub(crate) confirm: Option<Confirm>,
     pub(crate) status: Option<LiveStatus>,
+    pub(crate) live_section: Option<String>,
+    pub(crate) active_title: Entity<InputState>,
     pub(crate) refusal: Option<String>,
     pub(crate) waiting: HashSet<String>,
     pub(crate) can_start: bool,
     pub(crate) preview_epoch: u64,
-    pub(crate) focused_row: Option<String>,
     // Open note.
     pub(crate) tab: Tab,
     pub(crate) title: Entity<InputState>,
@@ -77,7 +78,6 @@ pub struct NotetakerPage {
     pub(crate) past_search: Option<(String, i64)>,
     pub(crate) past_prompt: Option<(String, i64)>,
     pub(crate) enrolling: bool,
-    pub(crate) copied_notice: bool,
     // Sheets and tabs with their own state.
     pub(crate) assign: Option<AssignState>,
     pub(crate) summary: SummaryState,
@@ -185,6 +185,7 @@ impl NotetakerPage {
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let title = cx.new(|cx| InputState::new(window, cx).placeholder("Untitled"));
+        let active_title = cx.new(|cx| InputState::new(window, cx).placeholder("Title (optional)"));
         let thoughts = cx.new(|cx| TextareaState::new(window, cx));
         let subs = vec![
             cx.subscribe_in(&query, window, |_, _, e: &TextInputEvent, _, cx| {
@@ -222,11 +223,12 @@ impl NotetakerPage {
             menu: None,
             confirm: None,
             status: None,
+            live_section: None,
+            active_title,
             refusal: None,
             waiting: HashSet::new(),
             can_start: true,
             preview_epoch: 0,
-            focused_row: None,
             tab: Tab::Thoughts,
             title,
             thoughts,
@@ -248,7 +250,6 @@ impl NotetakerPage {
             past_search: None,
             past_prompt: None,
             enrolling: false,
-            copied_notice: false,
             assign: None,
             summary: SummaryState::new(window, cx),
             _subs: subs,
@@ -299,7 +300,22 @@ impl NotetakerPage {
                 self.waiting.insert(SEED_IPHONE.into());
                 open(self, SEED_IPHONE, Tab::Thoughts, window, cx);
             }
-            "refusal" => self.refusal = Some("Microphone access is off. Turn it on in System Settings.".into()),
+            "refusal" => self.refusal = Some("Microphone access is not allowed. Enable LocalFlow in System Settings > Privacy & Security > Microphone.".into()),
+            // `section:<transcript state>[:<live health>[:<failure>]]`, or `panel` for the recording panel beside a refusal.
+            s if s.starts_with("section:") => {
+                let mut parts = s["section:".len()..].splitn(3, ':');
+                let (state, live, failure) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next());
+                self.status = Some(LiveStatus::scenario("live"));
+                self.status.as_mut().unwrap().state = "interrupted".into();
+                self.live_section = Some(section_status_text(state, live, failure, 0.0));
+                self.refresh(cx);
+            }
+            "panel" => {
+                self.status = Some(LiveStatus::scenario("recording"));
+                self.refusal = Some("Meeting is busy".into());
+                self.editor = Some(NotesEditor::new(SEED_UNTITLED, "", 0));
+                self.refresh(cx);
+            }
             "recording" | "paused" | "finalizing" | "preparing" | "interrupted-card" | "failed-card" | "notice-card" => {
                 self.status = Some(LiveStatus::scenario(name));
                 self.can_start = false;
