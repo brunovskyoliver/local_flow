@@ -198,43 +198,43 @@ MEET-090	auto	test:leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_t
 MEET-091	auto	test:notice_counts_orphans_and_deferred_in_swifts_order ; test:orphan_folder_becomes_an_interrupted_meeting_and_a_notice ; test:launch_reconciliation_ends_what_no_process_owns ; test:active_rows_recover_as_swift_does_and_lose_no_frames ; test:recovery_refuses_symlinks_and_paths_outside_the_root ; test:start_controls_wait_for_reconciliation_and_the_active_meeting ; note:active rows now follow MeetingReconciler: ADTS scan, cut only the torn tail, rename, zero-frame files kept as .part. Guarded by .instance.lock, the flock Swift holds, so it never runs while Swift records
 MEET-092	auto	test:detail_read_orders_tracks_and_segments
 MEET-093	auto	test:launch_notices_go_to_the_pill
-LIVE-001	live	live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-002	live	test:state_dot_is_ten_points_and_follows_the_state ; test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-003	live	test:panel_shows_the_title_field_and_dot ; live:audit/mac/notetaker/panel-light-rust.png
-LIVE-004	auto	test:active_title_saves_on_enter_and_reports_failures ; test:state_dot_is_ten_points_and_follows_the_state
-LIVE-005	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-006	auto	test:pause_reason_reads_sleep_or_user
-LIVE-007	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-008	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-009	auto	test:failed_card_says_it_could_not_start
-LIVE-010	live	test:notice_card_shows_storage_and_notice ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-011	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-012	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-013	live	test:active_card_states ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-014	live	test:failed_card_says_it_could_not_start ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-015	live	test:failed_card_says_it_could_not_start ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-016	live	test:dropped_frames_warn_that_audio_was_lost ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-017	live	test:refusal_shows_the_message_and_settings ; live:audit/mac/notetaker/refusal-light-rust.png ; live:audit/mac/notetaker/refusal-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-001	live	live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; test:panel_type_colours_and_frames
+LIVE-002	live	test:state_dot_is_ten_points_and_follows_the_state ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-003	auto	test:state_dot_is_ten_points_and_follows_the_state ; test:dot_paints_the_states_colour
+LIVE-004	auto	test:state_dot_is_ten_points_and_follows_the_state ; test:dot_paints_the_states_colour
+LIVE-005	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-006	auto	test:pause_reason_reads_sleep_or_user ; test:pause_reason_only_shows_while_paused
+LIVE-007	auto	test:panel_type_colours_and_frames ; note:SF Rounded isn't drawn, Txt has flow and mono only; size, weight and digits match
+LIVE-008	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-009	auto	test:failed_card_says_it_could_not_start ; test:banners_and_tracks_of_an_ended_card
+LIVE-010	live	test:storage_warning_and_lost_audio_are_orange ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-011	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-012	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-013	live	test:banners_and_tracks_of_an_ended_card ; live:audit/mac/notetaker/interrupted-card-light-rust.png ; live:audit/mac/notetaker/interrupted-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-014	live	test:failed_and_not_started_tracks_have_their_own_colours ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-015	live	test:failed_and_not_started_tracks_have_their_own_colours ; live:audit/mac/notetaker/failed-card-light-rust.png ; live:audit/mac/notetaker/failed-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-016	live	test:dropped_frames_warn_that_audio_was_lost ; test:storage_warning_and_lost_audio_are_orange ; live:audit/mac/notetaker/notice-card-light-rust.png ; live:audit/mac/notetaker/notice-card-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-017	live	test:refusal_shows_the_message_and_settings ; test:notice_card_shows_storage_and_notice ; test:settings_button_opens_the_pane_the_refusal_names ; live:audit/mac/notetaker/refusal-light-rust.png ; live:audit/mac/notetaker/refusal-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
 LIVE-018	auto	test:refusal_shows_the_message_and_settings
-LIVE-019	service	service:mac-service: NSWorkspace; desktop plan phase adds it, view surfaces Unavailable
-LIVE-020	auto	test:paused_controls_read_resume ; test:active_card_states ; test:panel_shows_controls_title_and_notes
+LIVE-019	service	test:settings_button_opens_the_pane_the_refusal_names ; service:mac-service: NSWorkspace; the Mac opens the pane; refusal_permission picks which
+LIVE-020	auto	test:paused_controls_read_resume ; test:panel_shows_controls_title_and_notes
 LIVE-021	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
-LIVE-022	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-022	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
 LIVE-023	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
-LIVE-024	auto	test:panel_says_finalizing_or_starting
-LIVE-025	auto	test:panel_says_finalizing_or_starting
+LIVE-024	auto	test:panel_says_finalizing_or_starting ; test:progress_states_are_muted_and_hide_the_buttons
+LIVE-025	auto	test:panel_says_finalizing_or_starting ; test:progress_states_are_muted_and_hide_the_buttons
 LIVE-026	auto	test:new_note_surfaces_the_missing_recorder ; test:active_card_states
 LIVE-027	auto	test:new_note_surfaces_the_missing_recorder
-LIVE-028	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-029	auto	test:active_title_is_revision_checked_with_swifts_messages
+LIVE-028	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture
+LIVE-029	auto	test:active_title_is_revision_checked_with_swifts_messages ; test:title_field_starts_from_the_stored_title
 LIVE-030	auto	test:active_title_is_revision_checked_with_swifts_messages
 LIVE-031	auto	test:active_title_is_revision_checked_with_swifts_messages
 LIVE-032	auto	test:refusal_row_carries_the_warning_triangle ; test:refusal_shows_the_message_and_settings
-LIVE-033	live	test:panel_shows_controls_title_and_notes ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
-LIVE-034	auto	test:panel_notes_state_follows_the_editor
-LIVE-035	auto	test:panel_notes_state_follows_the_editor
-LIVE-036	auto	test:panel_notes_state_follows_the_editor
-LIVE-037	live	test:panel_notes_state_follows_the_editor ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do
+LIVE-033	auto	test:panel_type_colours_and_frames ; note:fixed 90 high; Swift grows 90 to 200 with text, Kit's Textarea has a fixed height here
+LIVE-034	auto	test:panel_notes_state_follows_the_editor ; test:notes_state_reads_twelve_points_and_red_when_failed
+LIVE-035	auto	test:panel_notes_state_follows_the_editor ; test:notes_state_reads_twelve_points_and_red_when_failed
+LIVE-036	auto	test:panel_notes_state_follows_the_editor ; test:notes_state_reads_twelve_points_and_red_when_failed
+LIVE-037	auto	test:panel_notes_state_follows_the_editor ; test:notes_state_reads_twelve_points_and_red_when_failed
 LIVE-038	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 LIVE-039	service	service:mac-service: capture, TCC; desktop plan phase adds it, view surfaces Unavailable
 LIVE-040	auto	test:failure_reasons_read_like_swift

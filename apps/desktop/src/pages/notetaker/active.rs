@@ -40,7 +40,7 @@ impl LiveStatus {
             microphone: if state == "failed" { "failed: device lost".into() } else if state == "interrupted" { "finalized".into() } else { "capturing".into() },
             system: if state == "failed" { "not started".into() } else if state == "interrupted" { "finalized".into() } else { "capturing".into() },
             dropped_frames: i64::from(state == "interrupted"),
-            storage_warning: (name == "notice-card").then(|| "The meeting folder is running out of space.".to_string()),
+            storage_warning: (name == "notice-card").then(|| "Less than 2 GB free".to_string()),
             notice: (name == "notice-card").then(|| "Recorded audio was recovered where possible.".to_string()),
             transcription_requested: name != "live-off",
             segments,
@@ -49,8 +49,15 @@ impl LiveStatus {
 }
 
 impl NotetakerPage {
-    pub(crate) fn active_card(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn active_card(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
+        // `titleField.onAppear`: the draft starts from the stored title, once per meeting.
+        let current = self.status.as_ref().filter(|s| !is_terminal(&s.state)).map(|s| s.id.clone());
+        if current != self.title_seeded {
+            let stored = current.as_ref().and_then(|id| db_of(cx).and_then(|db| meeting(db, id).ok().flatten())).and_then(|m| m.title).unwrap_or_default();
+            self.active_title.update(cx, |input, cx| input.set_value(stored, window, cx));
+            self.title_seeded = current;
+        }
         let dismiss = |cx: &mut Context<Self>| -> Click {
             Box::new(cx.listener(|this: &mut Self, _: &ClickEvent, _, cx| {
                 this.refusal = None;
@@ -58,7 +65,7 @@ impl NotetakerPage {
                 cx.notify();
             }))
         };
-        let mut card = v_flex().w_full().gap(px(12.)).p(px(16.)).bg(p.tint).rounded(px(12.));
+        let mut card = v_flex().id("meeting.card").test_support().w_full().gap(px(12.)).p(px(16.)).bg(p.tint).rounded(px(12.));
         if let Some(s) = self.status.clone() {
             let dot = dot_color(&s.state, cx);
             card = card.child(
@@ -67,7 +74,7 @@ impl NotetakerPage {
                     .gap(px(8.))
                     .child(div().id("meeting.dot").test_support().size(px(10.)).rounded_full().bg(dot))
                     .child(t(state_badge(&s.state)).font(15., 600.).id("meeting.state"))
-                    .when_some(s.pause_reason, |d, r| d.child(t(if r == "sleep" { "(sleep)" } else { "(user)" }).color(p.muted)))
+                    .when_some(s.pause_reason.filter(|_| s.state == "paused"), |d, r| d.child(t(if r == "sleep" { "(sleep)" } else { "(user)" }).color(p.muted)))
                     .child(div().flex_1())
                     .child(t(duration_text(s.elapsed_ms)).font(22., 500.).mono_digits().id("meeting.elapsed")),
             );
@@ -89,19 +96,17 @@ impl NotetakerPage {
             if let Some(n) = s.notice.clone() {
                 let permission = self.refusal.as_ref().is_some_and(|r| r.contains("System Settings"));
                 card = card.child(h_flex().gap(px(8.)).child(t(n).size(13.).color(p.muted).id("meeting.notice")).when(permission, |d| {
-                    d.child(prototype_button("meeting.openSettings", "Open System Settings").on_click(|_, _, cx| {
-                        let _ = cx.global::<Core>().services.open_permission_settings(flow_platform::Permission::Microphone);
-                    }))
+                    d.child(settings_button(self.refusal.as_deref().unwrap_or_default()))
                 }));
             }
             if let Some(line) = self.live_section.clone() {
                 card = card.child(section_view(&line, &s, &self.section_scroll, cx));
             }
             card = card.child(match s.state.as_str() {
-                "recording" => h_flex().gap(px(8.)).child(prototype_button("meeting.pause", "Pause").on_click(cx.listener(|this, _, _, cx| this.live_action("Pause", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
-                "paused" => h_flex().gap(px(8.)).child(prototype_button("meeting.resume", "Resume").on_click(cx.listener(|this, _, _, cx| this.live_action("Resume", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
+                "recording" => h_flex().gap(px(8.)).child(native_button("meeting.pause", "Pause").on_click(cx.listener(|this, _, _, cx| this.live_action("Pause", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
+                "paused" => h_flex().gap(px(8.)).child(native_button("meeting.resume", "Resume").on_click(cx.listener(|this, _, _, cx| this.live_action("Resume", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
                 "finalizing" | "preparing" | "created" => h_flex().gap(px(8.)).child(Spinner::new().small()).child(t(if s.state == "finalizing" { "Finalizing…" } else { "Starting…" }).color(p.muted)),
-                _ => h_flex().child(prototype_button("meeting.dismiss", "Dismiss").on_click(dismiss(cx))),
+                _ => h_flex().child(native_button("meeting.dismiss", "Dismiss").on_click(dismiss(cx))),
             });
             if !is_terminal(&s.state) {
                 let (text, color) = match self.editor.as_ref() {
@@ -113,13 +118,13 @@ impl NotetakerPage {
                 };
                 let notice = self.editor.as_ref().and_then(|e| e.notice.clone());
                 card = card
-                    .child(h_flex().w_full().gap(px(8.)).child(div().flex_1().max_w(px(360.)).child(Input::new(&self.active_title).aria_label("Title (optional)").accessibility_id("meeting.title.active"))).when_some(self.active_title_notice.clone(), |d, n| d.child(t(n).size(12.).color(red(cx)).id("meeting.title.notice"))))
+                    .child(h_flex().w_full().gap(px(8.)).child(div().id("meeting.title.frame").test_support().flex_1().max_w(px(360.)).child(Input::new(&self.active_title).aria_label("Title (optional)").accessibility_id("meeting.title.active"))).when_some(self.active_title_notice.clone(), |d, n| d.child(t(n).size(12.).color(red(cx)).id("meeting.title.notice"))))
                     .child(
                         v_flex()
                             .w_full()
                             .gap(px(6.))
                             .child(h_flex().w_full().child(t("Notes").font(13., 600.)).child(div().flex_1()).child(t(text).size(12.).color(color).id("meeting.notes.state")))
-                            .child(div().w_full().h(px(90.)).bg(p.surface).rounded(px(8.)).child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(13.)).aria_label("Notes").accessibility_id("meeting.notes")))
+                            .child(div().id("meeting.notes.frame").test_support().w_full().h(px(90.)).bg(p.surface).rounded(px(8.)).child(Textarea::new(&self.thoughts).appearance(false).bordered(false).h_full().text_size(px(13.)).aria_label("Notes").accessibility_id("meeting.notes")))
                             .when_some(notice, |d, n| d.child(t(n).size(12.).color(red(cx)))),
                     );
             }
@@ -132,14 +137,12 @@ impl NotetakerPage {
                 h_flex()
                     .w_full()
                     .gap(px(8.))
-                    .child(div().id("meeting.notice").child(sf_label("exclamationmark.triangle", refusal, 13., p.ink)))
+                    .child(div().id("meeting.notice").child(sf_label("exclamationmark.triangle", refusal.clone(), 13., p.ink)))
                     .when(permission, |d| {
-                        d.child(prototype_button("meeting.openSettings", "Open System Settings").on_click(|_, _, cx| {
-                            let _ = cx.global::<Core>().services.open_permission_settings(flow_platform::Permission::Microphone);
-                        }))
+                        d.child(settings_button(&refusal))
                     })
                     .child(div().flex_1())
-                    .child(prototype_button("meeting.dismiss", "Dismiss").on_click(dismiss(cx))),
+                    .child(native_button("meeting.dismiss", "Dismiss").on_click(dismiss(cx))),
             );
         }
         card
@@ -174,6 +177,17 @@ impl NotetakerPage {
     }
 }
 
+/// `refusalPermission`: which privacy pane a refusal's message points at.
+pub(crate) fn refusal_permission(refusal: &str) -> flow_platform::Permission {
+    if refusal.contains("Screen & System Audio") { flow_platform::Permission::SystemAudio } else { flow_platform::Permission::Microphone }
+}
+fn settings_button(refusal: &str) -> FlowButton {
+    let kind = refusal_permission(refusal);
+    native_button("meeting.openSettings", "Open System Settings").on_click(move |_, _, cx| {
+        let _ = cx.global::<Core>().services.open_permission_settings(kind);
+    })
+}
+
 pub(crate) fn dot_color(state: &str, cx: &App) -> Hsla {
     match state {
         "recording" => red(cx),
@@ -199,6 +213,14 @@ fn section_view(line: &str, s: &LiveStatus, scroll: &ScrollHandle, cx: &App) -> 
 
 fn track_indicator(kind: &str, name: &'static str, text: &str, cx: &App) -> impl IntoElement {
     let p = pal(cx);
-    let color = if text == "capturing" { green(cx) } else if text.starts_with("failed") { red(cx) } else { p.muted };
-    h_flex().id(sid(format!("meeting.track.{kind}"))).gap(px(6.)).child(icon(if kind == "microphone" { "mic.fill" } else { "speaker.wave.2.fill" }, 12., color)).child(t(name).size(12.)).child(t(text.to_string()).size(12.).color(p.muted))
+    let color = if text == "capturing" {
+        green(cx)
+    } else if text.starts_with("failed") {
+        red(cx)
+    } else if text == "not started" {
+        sys(cx, 0x8E8E93, 0x8E8E93) // `.gray`
+    } else {
+        p.muted
+    };
+    h_flex().id(sid(format!("meeting.track.{kind}"))).test_support().gap(px(6.)).child(icon(if kind == "microphone" { "mic.fill" } else { "speaker.wave.2.fill" }, 12., color)).child(t(name).size(12.)).child(t(text.to_string()).size(12.).color(p.muted))
 }

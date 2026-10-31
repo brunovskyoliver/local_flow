@@ -165,13 +165,13 @@ async fn waiting_row_runs_on_this_mac(cx: &mut TestAppContext) {
     assert!(query(cx, |db| db.conn.query_row("SELECT 1 FROM meetings WHERE id=?1", [SEED_IPHONE], |r| r.get::<_, i64>(0)).unwrap_or(0)) == 1);
 }
 
-// parity: LIVE-008 LIVE-011 LIVE-013 LIVE-020 LIVE-026 NOTE-041
+// parity: LIVE-026
 #[flow_ui::gpui::test]
 async fn active_card_states(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.interrupted-card"));
     assert_saw(&["Recording stopped", "Dismiss", "Microphone", "System audio"]);
 }
-// parity: LIVE-009 LIVE-014 LIVE-015
+// parity: LIVE-009
 #[flow_ui::gpui::test]
 async fn failed_card_says_it_could_not_start(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.failed-card"));
@@ -405,17 +405,17 @@ async fn refusal_shows_the_message_and_settings(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.refusal"));
     assert_saw(&["Microphone access is not allowed. Enable LocalFlow in System Settings > Privacy & Security > Microphone.", "Open System Settings", "Dismiss"]);
 }
-// parity: LIVE-002 LIVE-005 LIVE-007 LIVE-012 LIVE-020 LIVE-022 LIVE-028 LIVE-033
+// parity: LIVE-020
 #[flow_ui::gpui::test]
 async fn panel_shows_controls_title_and_notes(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.panel"));
     assert_saw(&["Recording", "Pause", "Stop Meeting", "Notes", "Microphone", "capturing"]);
 }
-// parity: LIVE-010
+// parity: LIVE-017
 #[flow_ui::gpui::test]
 async fn notice_card_shows_storage_and_notice(cx: &mut TestAppContext) {
     let _window = open_page(cx, Some("notetaker.notice-card"));
-    assert_saw(&["The meeting folder is running out of space.", "Recorded audio was recovered where possible."]);
+    assert_saw(&["Less than 2 GB free", "Recorded audio was recovered where possible."]);
 }
 // parity: MEET-046 MEET-047 TRANS-072
 #[flow_ui::gpui::test]
@@ -2703,4 +2703,143 @@ async fn icon_button_is_a_labelled_twenty_eight_square(cx: &mut TestAppContext) 
     frame(cx, &window);
     assert_saw(&["symbol:arrow.clockwise"]);
     assert_eq!(flow_ui::probe::symbols().iter().filter(|s| *s == "arrow.clockwise").count(), 1);
+}
+
+// --- Round 4 row review: the active card.
+
+// parity: LIVE-001 LIVE-005 LIVE-007 LIVE-012 LIVE-022 LIVE-028 LIVE-033
+#[flow_ui::gpui::test]
+async fn panel_type_colours_and_frames(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    // Off the rows, so only the card lays out this elapsed text.
+    window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().id = "not-on-the-page".into(); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    let (ink, muted, _, _, green) = colors(cx);
+    let (card, notes) = (find(cx, &window, "meeting.card").bounds(), find(cx, &window, "meeting.notes.frame").bounds());
+    assert_eq!(notes.origin.x - card.origin.x, px(16.));
+    assert_eq!(card.bottom() - notes.bottom(), px(16.));
+    assert_eq!(notes.size.height, px(90.));
+    assert_eq!(sized("Recording"), (15., 600., ink));
+    let elapsed = read(cx, &window, |p| p.status.as_ref().unwrap().elapsed_ms);
+    assert_eq!((sized(&duration_text(elapsed)).0, sized(&duration_text(elapsed)).1), (22., 500.));
+    assert_eq!(flow_ui::probe::symbol_color("mic.fill"), Some(green));
+    assert_eq!(flow_ui::probe::symbol_color("speaker.wave.2.fill"), Some(green));
+    assert_eq!((sized("capturing").0, sized("capturing").2), (12., muted));
+    assert_eq!(sized("Stop Meeting").2, gpui::white().into());
+    assert_labelled(cx, &window, "meeting.stopCard", "Stop Meeting");
+    assert_eq!(find(cx, &window, "meeting.title.frame").bounds().size.width, px(360.));
+    assert_eq!((sized("Notes").0, sized("Notes").1), (13., 600.));
+}
+
+// parity: LIVE-003 LIVE-004
+#[flow_ui::gpui::test]
+async fn dot_paints_the_states_colour(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    let dot = find(cx, &window, "meeting.dot").bounds();
+    assert_eq!(dot.size.width, px(10.));
+    cx.update(|cx| {
+        assert_eq!(active::dot_color("paused", cx), orange(cx));
+        assert_eq!(active::dot_color("finalizing", cx), pal(cx).muted);
+    });
+}
+
+// parity: LIVE-006
+#[flow_ui::gpui::test]
+async fn pause_reason_only_shows_while_paused(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    window.update(cx, |p, _, cx| { let s = p.status.as_mut().unwrap(); s.pause_reason = Some("user"); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert!(!seen("(user)"));
+}
+
+// parity: LIVE-029
+#[flow_ui::gpui::test]
+async fn title_field_starts_from_the_stored_title(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    let window = cx.add_window(|w, cx| NotetakerPage::new(w, cx));
+    sql(cx, &format!("UPDATE meetings SET title='Kept title' WHERE id='{SEED_UNTITLED}';"));
+    window.update(cx, |p, _, cx| { p.status = Some(LiveStatus::scenario("recording")); p.refusal = Some("x".into()); cx.notify() }).unwrap();
+    frame(cx, &window);
+    let draft = window.read_with(cx, |p, cx| p.active_title.read(cx).value().to_string()).unwrap();
+    assert_eq!(draft, "Kept title");
+}
+
+// parity: LIVE-008 LIVE-009 LIVE-011 LIVE-013
+#[flow_ui::gpui::test]
+async fn banners_and_tracks_of_an_ended_card(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.interrupted-card"));
+    fresh(cx, &window);
+    let (_, muted, red, ..) = colors(cx);
+    assert_eq!(sized("Recording stopped"), (13., 600., red));
+    assert!(has(cx, &window, "meeting.captureLoss"));
+    let (mic, system) = (find(cx, &window, "meeting.track.microphone").bounds(), find(cx, &window, "meeting.track.system").bounds());
+    assert_eq!(system.origin.x - mic.right(), px(14.), "14 between");
+    assert_eq!(flow_ui::probe::symbol_color("mic.fill"), Some(muted), "finalized is secondary");
+    assert_eq!((sized("finalized").0, sized("finalized").2), (12., muted));
+    let window = open_page(cx, Some("notetaker.failed-card"));
+    fresh(cx, &window);
+    assert_eq!(sized("The meeting could not start"), (13., 600., red));
+    assert_eq!(flow_ui::probe::symbol_color("exclamationmark.triangle.fill"), Some(red));
+}
+
+// parity: LIVE-014 LIVE-015
+#[flow_ui::gpui::test]
+async fn failed_and_not_started_tracks_have_their_own_colours(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.failed-card"));
+    fresh(cx, &window);
+    let (_, muted, red, ..) = colors(cx);
+    assert_eq!(flow_ui::probe::symbol_color("mic.fill"), Some(red));
+    assert_eq!(sized("failed: device lost").2, muted);
+    assert_eq!(flow_ui::probe::symbol_color("speaker.wave.2.fill"), Some(rgb(0x8E8E93).into()), ".gray, not secondary");
+    assert_saw(&["not started"]);
+    let _ = window;
+}
+
+// parity: LIVE-010 LIVE-016
+#[flow_ui::gpui::test]
+async fn storage_warning_and_lost_audio_are_orange(cx: &mut TestAppContext) {
+    let _window = open_page(cx, Some("notetaker.notice-card"));
+    let (.., orange, _) = colors(cx);
+    assert_eq!(sized("Less than 2 GB free").2, orange);
+    assert_eq!(flow_ui::probe::symbol_color("externaldrive.badge.exclamationmark"), Some(orange));
+    let lost = "Some audio was lost during recording. The transcript may be incomplete.";
+    assert_eq!((sized(lost).0, sized(lost).2), (12., orange));
+}
+
+// parity: LIVE-017 LIVE-019
+#[flow_ui::gpui::test]
+async fn settings_button_opens_the_pane_the_refusal_names(cx: &mut TestAppContext) {
+    use flow_platform::Permission;
+    let window = open_page(cx, Some("notetaker.refusal"));
+    assert_labelled(cx, &window, "meeting.openSettings", "Open System Settings");
+    assert_eq!(active::refusal_permission("Microphone access is not allowed. Enable LocalFlow in System Settings > Privacy & Security > Microphone."), Permission::Microphone);
+    assert_eq!(active::refusal_permission("System audio needs Screen & System Audio Recording. Enable LocalFlow in System Settings > Privacy & Security > Screen & System Audio Recording, then try again."), Permission::SystemAudio);
+    window.update(cx, |p, _, cx| { p.refusal = Some("Meeting is busy".into()); cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert!(!has(cx, &window, "meeting.openSettings"), "only a permission refusal offers it");
+}
+
+// parity: LIVE-034 LIVE-035 LIVE-036 LIVE-037
+#[flow_ui::gpui::test]
+async fn notes_state_reads_twelve_points_and_red_when_failed(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    let (_, muted, red, ..) = colors(cx);
+    for (dirty, state, text, color) in [(true, SaveState::Idle, "Unsaved", muted), (true, SaveState::Saving, "Saving…", muted), (false, SaveState::Saved, "Saved", muted), (true, SaveState::NotSaved, "Not saved", red)] {
+        window.update(cx, |p, _, cx| { let e = p.editor.as_mut().unwrap(); e.is_dirty = dirty; e.state = state; cx.notify() }).unwrap();
+        fresh(cx, &window);
+        assert_eq!((sized(text).0, sized(text).2), (12., color), "{text}");
+    }
+}
+
+// parity: LIVE-024 LIVE-025
+#[flow_ui::gpui::test]
+async fn progress_states_are_muted_and_hide_the_buttons(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    let (_, muted, ..) = colors(cx);
+    for (state, text) in [("finalizing", "Finalizing…"), ("preparing", "Starting…")] {
+        window.update(cx, |p, _, cx| { p.status.as_mut().unwrap().state = state.into(); cx.notify() }).unwrap();
+        fresh(cx, &window);
+        assert_eq!(sized(text).2, muted);
+        assert!(!has(cx, &window, "meeting.stopCard") && !has(cx, &window, "meeting.pause"));
+    }
 }
