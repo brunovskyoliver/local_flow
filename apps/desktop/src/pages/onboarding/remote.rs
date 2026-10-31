@@ -117,8 +117,8 @@ impl OnboardingPage {
                     .when_some(self.credential_error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning))),
             );
         if insecure {
-            let toggle = Switch::new("onboarding.allowInsecure").checked(allowed).label("Allow unencrypted HTTP to this server").accessibility_label("Allow unencrypted HTTP to this server").on_click(cx.listener(|this, on: &bool, _, cx| this.set_insecure(*on, cx)));
-            form = form.child(toggle);
+            let toggle = Switch::new("onboarding.allowInsecure").checked(allowed).accessibility_label("Allow unencrypted HTTP to this server").on_click(cx.listener(|this, on: &bool, _, cx| this.set_insecure(*on, cx)));
+            form = form.child(h_flex().gap(px(8.)).child(toggle).child(t("Allow unencrypted HTTP to this server").size(13.).a11y_hidden()));
         }
         let mut result = h_flex().w_full().gap(px(12.)).child(prototype_button("onboarding.connect", if self.connection_testing { "Connecting…" } else { "Connect" }).disabled(self.connection_testing || origin.is_none()).on_click(connect));
         match &self.connection {
@@ -170,7 +170,7 @@ impl OnboardingPage {
                 .gap(px(16.))
                 .child(t("Use your LocalFlow server?").font(17., 500.))
                 .child(
-                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.surface).rounded(px(8.)).border_1().border_color(line).child(icon("server.rack", 16., p.muted)).child(div().flex_1().min_w_0().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL"))),
+                    h_flex().w_full().min_h(px(40.)).px(px(12.)).gap(px(10.)).bg(p.canvas).rounded(px(8.)).border_1().border_color(line).child(icon("server.rack", 16., p.muted)).child(div().flex_1().min_w_0().child(Input::new(&self.server_draft).appearance(false).aria_label("Server address").accessibility_id("settings.remoteServerURL"))),
                 )
                 .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.))
                 .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
@@ -192,7 +192,7 @@ impl OnboardingPage {
         };
         // Stops clicks reaching the page behind, as a sheet does.
         Some(any(deferred(
-            h_flex().id("onboarding.modal").occlude().absolute().inset_0().justify_center().bg(gpui_black(0.25)).child(div().bg(p.canvas).rounded(px(12.)).border_1().border_color(p.line).child(body)),
+            h_flex().id("onboarding.modal").occlude().absolute().inset_0().justify_center().bg(gpui_black(0.25)).child(div().bg(p.surface).rounded(px(12.)).border_1().border_color(p.line).child(body)),
         )))
     }
 }

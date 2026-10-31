@@ -113,6 +113,10 @@ impl OnboardingPage {
                 p.model_installed = true;
                 p.storage_available = true;
                 p.controls_available = true;
+                p.microphone = Perm::Unknown;
+                p.input_monitoring = Perm::Unknown;
+                p.accessibility = Perm::Unknown;
+                p.system_audio = Perm::Unknown;
                 self.ai_phase = AiPhase::Starting;
             }
             "allowed" => {

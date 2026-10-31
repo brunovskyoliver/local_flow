@@ -58,7 +58,8 @@ impl OnboardingPage {
             cx.notify();
         });
         let label = choice_label(symbol, title, badge_text, detail.to_string(), cx);
-        selectable_card(SharedString::from(format!("onboarding.purpose.{}", purpose.raw())), title.to_string(), self.setup.purpose == purpose, true, choose, label, cx)
+        let name = [Some(title), badge_text, Some(detail)].into_iter().flatten().collect::<Vec<_>>().join(", ");
+        selectable_card(SharedString::from(format!("onboarding.purpose.{}", purpose.raw())), name, self.setup.purpose == purpose, true, choose, label, cx)
     }
 
     fn purpose_choice(&mut self, cx: &mut Context<Self>) -> Body {
@@ -115,8 +116,8 @@ impl OnboardingPage {
         body.push(any(v_flex()
             .w_full()
             .gap(px(10.))
-            .child(selectable_card("onboarding.ai.local", local_title.to_string(), mode == AiMode::Local, true, local, choice_label("laptopcomputer", local_title, Some("Recommended"), local_detail, cx), cx))
-            .child(selectable_card("onboarding.ai.remote", remote_title.to_string(), mode == AiMode::Remote, true, remote, choice_label("server.rack", remote_title, None, remote_detail, cx), cx))));
+            .child(selectable_card("onboarding.ai.local", format!("{local_title}, Recommended, {local_detail}"), mode == AiMode::Local, true, local, choice_label("laptopcomputer", local_title, Some("Recommended"), local_detail.clone(), cx), cx))
+            .child(selectable_card("onboarding.ai.remote", format!("{remote_title}, {remote_detail}"), mode == AiMode::Remote, true, remote, choice_label("server.rack", remote_title, None, remote_detail.clone(), cx), cx))));
         if mode == AiMode::Remote {
             body.push(any(note("info.circle", mac(if meeting {
                 "Once the server approves this Mac, meeting recordings and their text go to it. Until then, and whenever it can't be reached, recordings wait on this Mac."

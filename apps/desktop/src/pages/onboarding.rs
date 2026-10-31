@@ -61,6 +61,9 @@ pub struct OnboardingPage {
 
 /// `~/.mtplx/models`, or inside the data root when one is set, so an audit never reads the owner's.
 fn models_dir() -> PathBuf {
+    if cfg!(test) {
+        return std::env::temp_dir().join("localflow-test-no-models");
+    }
     let base = std::env::var_os("LOCALFLOW_DATA_ROOT").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_default();
     base.join(".mtplx/models")
 }
@@ -230,7 +233,8 @@ impl OnboardingPage {
                 }
                 Effect::CancelMeetingModels => self.snap.meeting_models_error = None,
                 Effect::AbandonServer => self.turn_off_remote(cx),
-                Effect::OpenNotetaker => crate::shell::update_session(cx, |s| s.selection = Page::Meetings),
+                Effect::OpenNotetaker if cx.has_global::<crate::shell::Session>() => crate::shell::update_session(cx, |s| s.selection = Page::Meetings),
+                Effect::OpenNotetaker => {}
             }
         }
     }
@@ -570,6 +574,7 @@ impl OnboardingPage {
             .role(flow_ui::gpui::accesskit::Role::Group)
             .aria_label(format!("Step {} of {}", current + 1, path.len()))
             .children((0..path.len()).map(|i| div().h(px(5.)).w(px(if i == current { 22. } else { 8. })).rounded_full().bg(if i <= current { p.accent } else { p.line })))
+            .test_support()
     }
 
     fn footer(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -664,10 +669,11 @@ impl Render for OnboardingPage {
                     .w_full()
                     .flex_none()
                     .gap(px(6.))
+                    .h(px(84.))
                     .px(px(40.))
                     .pt(px(52.))
                     .pb(px(12.))
-                    .child(icon("chart.bar.xaxis", 17., p.ink))
+                    .child(icon("chart.bar.xaxis", 19., p.ink))
                     .child(t("LocalFlow").font(17., 700.).tracking(-0.4))
                     .child(div().flex_1())
                     .when(step != Step::Complete, |d| d.child(self.progress(cx))),

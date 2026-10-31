@@ -23,7 +23,8 @@ pub fn eyebrow(text: &str, cx: &App) -> Txt {
 
 pub fn setup_card(cx: &App) -> Div {
     let p = pal(cx);
-    v_flex().w_full().gap(px(18.)).p(px(20.)).bg(p.surface).rounded(px(14.)).border_1().border_color(p.card_line)
+    // SwiftUI strokes inside the padding, GPUI adds the border to it.
+    v_flex().w_full().gap(px(18.)).p(px(19.)).bg(p.surface).rounded(px(14.)).border_1().border_color(p.card_line)
 }
 
 pub fn row_icon(symbol: &str, cx: &App) -> Div {
@@ -50,6 +51,13 @@ pub fn badge(text: &'static str, cx: &App) -> Div {
     div().flex_none().px(px(7.)).py(px(2.)).bg(a.opacity(0.12)).rounded_full().child(t(text).font(11., 600.).color(a))
 }
 
+/// `largecircle.fill.circle` and `circle`: drawn, since Lucide's dot is much smaller than the SF one.
+fn radio(selected: bool, cx: &App) -> Div {
+    let p = pal(cx);
+    let ring = h_flex().flex_none().justify_center().size(px(17.)).mt(px(1.)).rounded_full().border(px(1.2));
+    if selected { ring.border_color(p.accent).child(div().size(px(10.5)).rounded_full().bg(p.accent)) } else { ring.border_color(p.rule) }
+}
+
 /// A radio-style card; the whole card is the button.
 pub fn selectable_card(id: impl Into<ElementId>, label: String, selected: bool, available: bool, choose: Click, content: Div, cx: &App) -> FlowButton {
     let p = pal(cx);
@@ -64,12 +72,12 @@ pub fn selectable_card(id: impl Into<ElementId>, label: String, selected: bool, 
                 .w_full()
                 .items_start()
                 .gap(px(14.))
-                .p(px(16.))
+                .p(px(if selected { 14.5 } else { 15. }))
                 .bg(if selected { p.accent.opacity(0.07) } else { p.surface })
                 .rounded(px(12.))
                 .border(px(if selected { 1.5 } else { 1. }))
                 .border_color(if selected { p.accent } else { p.card_line })
-                .child(icon(if selected { "largecircle.fill.circle" } else { "circle" }, 19., if selected { p.accent } else { p.rule }))
+                .child(radio(selected, cx))
                 .child(content),
         )
 }
@@ -98,12 +106,13 @@ pub fn bar(fraction: Option<f64>, cx: &App) -> impl IntoElement {
     let reduce = cx.global::<Flow>().reduce_motion;
     let track = div().id("onboarding.bar").relative().w_full().h(px(5.)).flex_none().bg(p.line).rounded_full().overflow_hidden().role(flow_ui::gpui::accesskit::Role::ProgressIndicator).aria_label("Progress").aria_value(RowState::percent(fraction));
     match fraction {
-        Some(f) => track.child(div().h_full().min_w(px(6.)).w(relative(f as f32)).bg(p.accent).rounded_full()).into_any_element(),
-        None if reduce => track.child(div().size_full().bg(p.accent.opacity(0.45)).rounded_full()).into_any_element(),
+        Some(f) => track.child(div().h_full().min_w(px(6.)).w(relative(f as f32)).bg(p.accent).rounded_full()).test_support().into_any_element(),
+        None if reduce => track.child(div().size_full().bg(p.accent.opacity(0.45)).rounded_full()).test_support().into_any_element(),
         None => track
             .child(
                 div().absolute().top_0().bottom_0().w(relative(0.28)).bg(p.accent).rounded_full().with_animation("onboarding.sweep", Animation::new(Duration::from_millis(1600)).repeat(), |d, phase| d.left(relative(1.28 * phase - 0.28))),
             )
+            .test_support()
             .into_any_element(),
     }
 }
