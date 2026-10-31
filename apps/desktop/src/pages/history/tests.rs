@@ -1939,7 +1939,9 @@ async fn the_rewrite_section_reads_and_drives_its_columns_and_attempts(cx: &mut 
     assert_eq!(review_text(cx), Some(out));
     end_review(cx);
     // A CHECK ties output to success, so only a damaged row can show this; the model is set by hand.
+    // The end of the review refreshed the open detail, which closes its disclosures (HIST-183).
     w.update(cx, |t, _, cx| {
+        t.open.insert("history.detail.rewrite.attempt.2".into());
         t.model.attempts[1].state = "failed".into();
         cx.notify();
     })
@@ -1950,7 +1952,7 @@ async fn the_rewrite_section_reads_and_drives_its_columns_and_attempts(cx: &mut 
     cx.update(|cx| {
         let db = cx.global::<Core>().db.as_ref().unwrap();
         for n in 3..=10 {
-            db.conn.execute_batch(&format!("INSERT INTO rewrite_attempts (id,transcription_id,ordinal,mode,state,input_text,input_hash,started_at,protocol_version,endpoint_origin) SELECT 'extra-{n}',transcription_id,{n},mode,'failed',input_text,input_hash,started_at,protocol_version,endpoint_origin FROM rewrite_attempts WHERE id='{}'", seed_id(9102))).unwrap();
+            db.conn.execute_batch(&format!("INSERT INTO rewrite_attempts (id,transcription_id,ordinal,mode,state,input_text,input_hash,started_at,protocol_version,endpoint_origin) SELECT 'extra-{n}',transcription_id,{n},mode,'cancelled',input_text,input_hash,started_at,1,endpoint_origin FROM rewrite_attempts WHERE id='{}'", seed_id(9102))).unwrap();
         }
     });
     w.update(cx, |t, _, cx| {
