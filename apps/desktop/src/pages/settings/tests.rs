@@ -1,7 +1,7 @@
 use super::*;
 use crate::testing::{assert_saw, boot, saw};
 use flow_platform::{Fake, PermissionState, Unavailable};
-use flow_ui::test::{TestAppContext, TestWindowExt};
+use flow_ui::test::{TestAppContext, TestQueryExt, TestWindowExt};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,6 +20,7 @@ struct Stub {
     secrets: Rc<RefCell<HashMap<String, String>>>,
     permissions: Rc<Cell<PermissionState>>,
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
+    install: Rc<Cell<Option<(u64, u64, bool)>>>,
 }
 impl Stub {
     fn call(&self, name: String) -> Result<(), Unavailable> {
@@ -52,6 +53,12 @@ impl flow_platform::Services for Stub {
     }
     fn high_contrast(&self) -> bool {
         false
+    }
+    fn app_name(&self, id: &str) -> Option<String> {
+        (id == "com.apple.Passwords").then(|| "Alpha Keys".to_string())
+    }
+    fn speech_install(&self) -> Option<(u64, u64, bool)> {
+        self.install.get()
     }
     fn reduce_motion(&self) -> bool {
         false
@@ -115,6 +122,7 @@ struct Rig {
     secrets: Rc<RefCell<HashMap<String, String>>>,
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
     permissions: Rc<Cell<PermissionState>>,
+    install: Rc<Cell<Option<(u64, u64, bool)>>>,
 }
 
 fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core::prefs::Prefs)) -> Rig {
@@ -122,7 +130,8 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let (ok, log, secrets, permissions) = (Rc::new(Cell::new(true)), Log::default(), Rc::new(RefCell::new(HashMap::new())), Rc::new(Cell::new(PermissionState::NotAsked)));
     let catalog = Rc::new(RefCell::new(None));
     let permissions_handle = permissions.clone();
-    let stub = Stub { fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone() };
+    let install = Rc::new(Cell::new(None));
+    let stub = Stub { fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone(), install: install.clone() };
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
         core.services = Box::new(stub);
@@ -133,7 +142,7 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let bounds = Bounds::new(point(px(0.), px(0.)), size(px(1180.), px(6000.)));
     let win = cx.update(|cx| cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |w, cx| cx.new(|cx| SettingsPage::new(w, cx)))).unwrap();
     frame(cx, win);
-    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle }
+    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle, install }
 }
 fn frame(cx: &mut TestAppContext, win: Win) {
     cx.run_until_parked();
@@ -201,7 +210,7 @@ fn logged(r: &Rig, s: &str) -> bool {
     r.log.borrow().iter().any(|l| l == s)
 }
 
-// parity: SET-034 SET-036 SET-037 SET-134 SET-135 SET-136 SET-146 SET-151 SET-152 SET-166 SET-168 SET-170 SET-172 SET-174 SET-199 SET-200 SET-202 SET-204 SET-206 SET-209 SET-210 SET-211 SET-239 SET-247 SET-248 SET-252 SET-256 SET-270 SET-272 SET-274 SET-276 SET-278 SET-280 SET-285 SET-293 SET-296 SET-301 SET-303 SET-335 SET-336 SET-351 SET-352 SET-021
+// parity: SET-034 SET-036 SET-037 SET-134 SET-135 SET-136 SET-146 SET-151 SET-152 SET-166 SET-168 SET-170 SET-172 SET-174 SET-199 SET-200 SET-202 SET-206 SET-209 SET-210 SET-211 SET-239 SET-247 SET-248 SET-252 SET-256 SET-270 SET-272 SET-274 SET-276 SET-278 SET-280 SET-293 SET-296 SET-301 SET-303 SET-335 SET-336 SET-021
 #[flow_ui::gpui::test]
 async fn default_page_shows_every_section_in_order(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -212,6 +221,29 @@ async fn default_page_shows_every_section_in_order(cx: &mut TestAppContext) {
     }
     assert!(disabled(cx, r.win, "settings.contextRewriteEnabled"));
     assert!(disabled(cx, r.win, "settings.contextStyleEnabled"));
+}
+
+// parity: SET-204
+#[flow_ui::gpui::test]
+async fn context_rewrite_says_turn_on_rewriting_when_only_that_is_off(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |p| p.set("contextEnabled", true));
+    assert_saw(&["Turn on rewriting first."]);
+    assert!(disabled(cx, r.win, "settings.contextRewriteEnabled"));
+    assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find("settings.contextRewriteEnabled").checked()).unwrap(), Some(false));
+}
+
+// parity: SET-351 SET-352
+#[flow_ui::gpui::test]
+async fn permissions_list_only_what_is_missing_in_order(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let top = |cx: &mut TestAppContext, id: &'static str| bounds(cx, r.win, id).top();
+    let (mic, input, access) = (top(cx, "settings.allow.Microphone"), top(cx, "settings.allow.Input Monitoring"), top(cx, "settings.allow.Accessibility"));
+    assert!(mic < input && input < access);
+    assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find("settings.allow.Microphone").label().map(|l| l.to_string())).unwrap().as_deref(), Some("Allow Microphone"));
+    assert_eq!(bounds(cx, r.win, "settings.allow.Accessibility").size.width.max(px(99.)), bounds(cx, r.win, "settings.allow.Accessibility").size.width, "min width 99");
+    r.permissions.set(PermissionState::Granted);
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    assert!(!has(cx, r.win, "settings.allow.Microphone"), "granted rows leave");
 }
 
 // parity: SET-003
@@ -298,6 +330,8 @@ async fn failures_read_at_the_page_bottom(cx: &mut TestAppContext) {
 async fn consent_sheet_stores_nothing_until_turn_on(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     click(cx, r.win, "settings.remoteEnabled");
+    assert_saw(&["https://server.example.com"]);
+    assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find_by_label("Server address").label().map(|l| l.to_string())).unwrap().as_deref(), Some("Server address"));
     assert_saw(&["Use your LocalFlow server?", "Dictation audio, transcripts, Dictionary terms"]);
     assert_eq!(pref_b(cx, "remote.enabled"), None, "nothing persists on opening");
     assert!(disabled(cx, r.win, "settings.remoteConsentConfirm"));
@@ -347,14 +381,15 @@ async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     assert_eq!(pref_b(cx, "server.only"), Some(true));
     assert!(disabled(cx, r.win, "settings.serverUseForEverything"));
     click(cx, r.win, "settings.remoteEnabled");
-    assert_eq!(cx.pending_prompt(), Some(("Turn off remote dictation?".to_string(), "This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.".to_string())));
+    assert_saw(&["Turn off remote dictation?", "This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.", "Turn Off"]);
     assert_eq!(pref_b(cx, "remote.enabled"), Some(true), "stays on until confirmed");
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
+    assert!(bounds(cx, r.win, "settings.alert.cancel").right() < bounds(cx, r.win, "settings.alert.confirm").left(), "Cancel on the left");
+    assert_eq!(bounds(cx, r.win, "settings.alert").size.width, px(260.));
+    click(cx, r.win, "settings.alert.cancel");
     assert_eq!(pref_b(cx, "remote.enabled"), Some(true));
+    assert!(!has(cx, r.win, "settings.alert"));
     click(cx, r.win, "settings.remoteEnabled");
-    cx.simulate_prompt_answer("Turn Off");
-    frame(cx, r.win);
+    click(cx, r.win, "settings.alert.confirm");
     assert_eq!(pref_b(cx, "remote.enabled"), Some(false));
     assert_eq!(pref_s(cx, "remote.serverURL"), None);
     assert!(logged(&r, &format!("remove {}", core::remote_keychain("device-key"))));
@@ -439,7 +474,45 @@ async fn consent_update_sheet(cx: &mut TestAppContext) {
     assert!(!saw("Confirm the updated consent"));
 }
 
-// parity: SET-120 SET-121 SET-122 SET-123 SET-124 SET-125 SET-126 SET-127 SET-128 SET-129 SET-130 SET-131 SET-132 SET-306 SET-334
+// parity: SET-130
+#[flow_ui::gpui::test]
+async fn fallback_threshold_stops_at_both_limits(cx: &mut TestAppContext) {
+    let r = rig(cx, "approved", |p| p.set("remote.fallbackThresholdMs", 500));
+    click(cx, r.win, "settings.serverAdvanced");
+    assert_saw(&["Fallback threshold", "Dictation uses this Mac after this wait"]);
+    assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find("settings.serverFallbackThreshold.up").label().map(|l| l.to_string())).unwrap().as_deref(), Some("Remote dictation fallback threshold in milliseconds, increase"));
+    for want in [250, 250] {
+        click(cx, r.win, "settings.serverFallbackThreshold.down");
+        assert_eq!(pref_i(cx, "remote.fallbackThresholdMs", 0), want);
+    }
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("remote.fallbackThresholdMs", 9750));
+    for want in [10_000, 10_000] {
+        click(cx, r.win, "settings.serverFallbackThreshold.up");
+        assert_eq!(pref_i(cx, "remote.fallbackThresholdMs", 0), want);
+    }
+    assert_saw(&[&format!("{} ms", flow_core::insights::grouped(10_000))]);
+}
+
+// parity: SET-374
+#[flow_ui::gpui::test]
+async fn usage_enrollment_runs_when_approved_with_a_device_key(cx: &mut TestAppContext) {
+    let r = rig(cx, "approved", |_| {});
+    let count = |cx: &mut TestAppContext, sql: &str| cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap());
+    cx.update(|cx| {
+        let conn = &cx.global::<Core>().db.as_ref().unwrap().conn;
+        conn.execute("INSERT OR REPLACE INTO usage_reporting_state(id,binding,enabled) VALUES(1,'{\"origin\":\"https://old\",\"credentialFingerprint\":\"f\"}',1)", []).unwrap();
+        conn.execute("INSERT INTO usage_reporting_completions(id,day) VALUES('00000000-0000-0000-0000-000000000000','2026-10-31')", []).unwrap();
+    });
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    assert_eq!(count(cx, "SELECT count(*) FROM usage_reporting_completions"), 1, "no device key, no identity");
+    r.secrets.borrow_mut().insert(core::remote_keychain("device-key"), "key".into());
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    assert_eq!(count(cx, "SELECT count(*) FROM usage_reporting_completions"), 0, "a changed binding wipes");
+    assert_eq!(count(cx, "SELECT count(*) FROM usage_reporting_state WHERE binding IS NULL"), 1);
+    assert_eq!(core::usage_fingerprint(b"key").len(), 64, "the whole digest, as Swift keeps it");
+}
+
+// parity: SET-120 SET-121 SET-122 SET-123 SET-124 SET-125 SET-126 SET-127 SET-128 SET-129 SET-131 SET-132 SET-306 SET-334
 #[flow_ui::gpui::test]
 async fn server_advanced_writes_each_override(cx: &mut TestAppContext) {
     let r = rig(cx, "approved", |_| {});
@@ -578,6 +651,41 @@ async fn microphones_list_edits(cx: &mut TestAppContext) {
     assert_eq!(ids(cx).len(), n);
 }
 
+// parity: SET-186
+#[flow_ui::gpui::test]
+async fn remove_is_always_shown_except_on_system_default(cx: &mut TestAppContext) {
+    let r = rig(cx, "microphones", |_| {});
+    let entries = read(cx, r.win, |p, _| p.mics.as_ref().unwrap().entries.iter().map(|e| e.id.clone()).collect::<Vec<_>>());
+    let default_id = core::InputEntry::system_default().id;
+    assert!(entries.contains(&default_id));
+    for id in entries {
+        let row = SharedString::from(format!("settings.microphones.row.{id}"));
+        let found = cx.update_window(r.win.into(), |_, w, _| w.within(row).find_all("settings.microphones.remove").iter().map(|b| b.visible()).collect::<Vec<_>>()).unwrap();
+        // With no hover anywhere.
+        assert_eq!(found, if id == default_id { vec![] } else { vec![true] }, "{id}");
+    }
+}
+
+// parity: SET-190
+#[flow_ui::gpui::test]
+async fn voice_over_gets_move_buttons_within_the_rank_limits(cx: &mut TestAppContext) {
+    let r = rig(cx, "voice-over", |_| {});
+    let ids = |cx: &mut TestAppContext| read(cx, r.win, |p, _| p.mics.as_ref().unwrap().entries.iter().map(|e| e.id.clone()).collect::<Vec<_>>());
+    let start = ids(cx);
+    assert!(!has(cx, r.win, format!("settings.microphones.moveUp.{}", start[0]).leak()), "rank 1 has no Move up");
+    assert!(!has(cx, r.win, format!("settings.microphones.moveDown.{}", start[2]).leak()), "the last has no Move down");
+    let down: &'static str = format!("settings.microphones.moveDown.{}", start[0]).leak();
+    let label = cx.update_window(r.win.into(), |_, w, _| w.find(down).label().map(|l| l.to_string())).unwrap().unwrap();
+    assert!(label.starts_with("Move down: Blue Yeti"), "{label}");
+    click(cx, r.win, down);
+    assert_eq!(ids(cx)[1], start[0]);
+    click(cx, r.win, format!("settings.microphones.moveUp.{}", start[0]).leak());
+    assert_eq!(ids(cx)[0], start[0]);
+    let r = rig(cx, "microphones", |_| {});
+    let first = read(cx, r.win, |p, _| p.mics.as_ref().unwrap().entries[0].id.clone());
+    assert!(!has(cx, r.win, format!("settings.microphones.moveDown.{first}").leak()), "only under VoiceOver");
+}
+
 // parity: SET-189
 #[flow_ui::gpui::test]
 async fn dragging_over_a_row_shows_the_two_point_bar(cx: &mut TestAppContext) {
@@ -618,7 +726,30 @@ async fn app_context_switches(cx: &mut TestAppContext) {
     assert_eq!(pref_b(cx, "contextRewriteEnabled"), Some(true));
 }
 
-// parity: SET-213 SET-219 SET-220 SET-221 SET-226 SET-228 SET-231 SET-232 SET-234 SET-236 SET-237
+// parity: SET-220 SET-222
+#[flow_ui::gpui::test]
+async fn context_rows_use_the_app_name_and_show_remove_on_focus(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    click(cx, r.win, "settings.contextExclusions");
+    assert_saw(&["Alpha Keys"]);
+    let top = |cx: &mut TestAppContext, id: &str| bounds(cx, r.win, format!("context.row.{id}").leak()).top();
+    assert!(top(cx, "com.apple.Passwords") < top(cx, "com.1password.1password"), "sorted by name, not bundle ID");
+    let remove = SharedString::from("context.remove.com.apple.Passwords");
+    assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find(remove.clone()).label().map(|l| l.to_string())).unwrap().as_deref(), Some("Stop excluding Alpha Keys"));
+    let focus = read(cx, r.win, |p, _| p.remove_focus.borrow()["com.apple.Passwords"].clone());
+    set(cx, r.win, |p, w, cx| p.focus.focus(w, cx));
+    assert!(!cx.update_window(r.win.into(), |_, w, cx| focus.contains_focused(w, cx)).unwrap(), "page focus doesn't reveal it");
+    set(cx, r.win, |_, w, cx| focus.focus(w, cx));
+    assert!(cx.update_window(r.win.into(), |_, w, cx| focus.contains_focused(w, cx)).unwrap(), "`focus_revealed` shows the button on exactly this condition");
+    click(cx, r.win, "settings.contextDone");
+    click(cx, r.win, "settings.contextKinds");
+    pick(cx, r.win, "context.running", "dev.zed.Zed");
+    pick(cx, r.win, "context.addKind", "email");
+    click(cx, r.win, "settings.contextAdd");
+    assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find("context.remove.dev.zed.Zed").label().map(|l| l.to_string())).unwrap().as_deref(), Some("Use the built-in kind for dev.zed.Zed"));
+}
+
+// parity: SET-213 SET-219 SET-221 SET-226 SET-228 SET-231 SET-232 SET-234 SET-236 SET-237
 #[flow_ui::gpui::test]
 async fn exclusions_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -648,7 +779,7 @@ async fn exclusions_sheet(cx: &mut TestAppContext) {
     assert_saw(&["11 apps"]);
 }
 
-// parity: SET-214 SET-222 SET-223 SET-224 SET-225 SET-228 SET-230 SET-235
+// parity: SET-214 SET-223 SET-224 SET-225 SET-228 SET-230 SET-235
 #[flow_ui::gpui::test]
 async fn kinds_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -705,20 +836,38 @@ fn rig_saw_loaded(cx: &mut TestAppContext) -> bool {
     unload
 }
 
-// parity: SET-253 SET-254 SET-255 SET-257 SET-258 SET-259 SET-260 SET-261 SET-262 SET-263 SET-266 SET-267 SET-268 SET-269
+// parity: SET-260
+#[flow_ui::gpui::test]
+async fn alternate_row_detail_and_when_it_shows(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let r = rig(cx, "alternate", |_| {});
+    assert!(has(cx, r.win, "settings.alternateSpeechModel"));
+    let a = read(cx, r.win, |p, _| p.snapshot.alternate.clone().unwrap());
+    let place = cx.update(|cx| core::routing(&cx.global::<Core>().prefs).model_place(flow_core::settings::Service::Dictation).map_or(a.role().to_string(), |x| format!("{} · {x}", a.role())));
+    assert_saw(&[&format!("{place} · CC BY 4.0 · {}", a.readiness())]);
+    set(cx, r.win, |p, _, _| p.snapshot.alternate = None);
+    assert!(!has(cx, r.win, "settings.alternateSpeechModel"), "no other manifest, no row");
+}
+
+// parity: SET-253 SET-254 SET-255 SET-257 SET-258 SET-259 SET-261 SET-262 SET-263 SET-266 SET-267 SET-268 SET-269
 #[flow_ui::gpui::test]
 async fn downloads_and_progress(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     click(cx, r.win, "settings.speechDownload");
-    let (title, message) = cx.pending_prompt().expect("native alert");
-    assert!(title.starts_with("Download Parakeet") && message.starts_with(&format!("{}\n", core::byte_count(core::speech_download_bytes(read(cx, r.win, |p, _| p.snapshot.speech_model))))) && message.contains("License: CC BY 4.0"), "{title} {message}");
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
+    let size = core::byte_count(core::speech_download_bytes(read(cx, r.win, |p, _| p.snapshot.speech_model)));
+    assert_saw(&["Download Parakeet", &format!("{size}\n"), "License: CC BY 4.0"]);
+    click(cx, r.win, "settings.alert.cancel");
     assert!(!logged(&r, "action download"));
     click(cx, r.win, "settings.speechDownload");
-    cx.simulate_prompt_answer("Download");
-    cx.run_until_parked();
+    click(cx, r.win, "settings.alert.confirm");
     assert!(logged(&r, "action download"));
+    assert!(!has(cx, r.win, "settings.installProgress"), "the action returned; nothing is installing yet");
+    r.install.set(Some((10, 100, false)));
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    assert!(has(cx, r.win, "settings.installProgress"), "installing takes over from performing");
+    assert!(!has(cx, r.win, "settings.speechDownload"));
+    r.install.set(None);
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
     click(cx, r.win, "settings.speechImport");
     assert!(logged(&r, "action importModel"));
     let r = rig(cx, "installing", |_| {});
@@ -731,10 +880,8 @@ async fn downloads_and_progress(cx: &mut TestAppContext) {
     let r = rig(cx, "alternate", |_| {});
     assert_saw(&["CC BY 4.0", "Not installed · "]);
     click(cx, r.win, "settings.alternateDownload");
-    let (_, message) = cx.pending_prompt().expect("native alert");
-    assert!(message.contains("from Hugging Face, verified against pinned hashes.") && message.contains("Dictation keeps using"), "{message}");
-    cx.simulate_prompt_answer("Download");
-    cx.run_until_parked();
+    assert_saw(&["from Hugging Face, verified against pinned hashes.", "Dictation keeps using"]);
+    click(cx, r.win, "settings.alert.confirm");
     assert!(logged(&r, "action downloadAlternateSpeechModel"));
     let r = rig(cx, "alt-downloading", |_| {});
     assert_saw(&["Downloading…"]);
@@ -836,7 +983,17 @@ async fn saved_secret_can_be_revealed_edited_and_removed(cx: &mut TestAppContext
     assert_saw(&["Set a credential for this server first."]);
 }
 
-// parity: SET-325 SET-329 SET-330 SET-331 SET-333 SET-298 SET-305
+// parity: SET-329
+#[flow_ui::gpui::test]
+async fn rewrite_advanced_starts_collapsed_with_padding_14(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |p| p.set("rewriteEndpoint", "https://rw.example.com"));
+    assert!(!saw("Timeout"), "collapsed");
+    assert_saw(&["Advanced"]);
+    let (row, button) = (bounds(cx, r.win, "settings.rewriteAdvancedRow"), bounds(cx, r.win, "settings.rewriteAdvanced"));
+    assert_eq!((button.top() - row.top(), row.bottom() - button.bottom()), (px(14.), px(14.)));
+}
+
+// parity: SET-325 SET-330 SET-331 SET-333 SET-298 SET-305
 #[flow_ui::gpui::test]
 async fn test_connection_preflight_and_advanced(cx: &mut TestAppContext) {
     let r = rig(cx, "", |p| p.set("rewriteEndpoint", "https://rw.example.com"));
@@ -860,7 +1017,8 @@ async fn summaries_fields_and_key(cx: &mut TestAppContext) {
     assert!(!has(cx, r.win, "settings.summaryServerKeySave"));
     pick(cx, r.win, "settings.summaryServer", "remote");
     assert_eq!(pref_s(cx, "summaryServer").as_deref(), Some("remote"));
-    assert_saw(&["Server URL", "Model", "API key"]);
+    assert_saw(&["Server URL", "Model", "API key", "http://host:8000/v1"]);
+    assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find_by_label("Model").placeholder().map(|l| l.to_string())).unwrap().as_deref(), Some("Model"));
     type_into(cx, r.win, |p| p.summary_url.clone(), "http://host:8000/v1");
     assert_eq!(pref_s(cx, "summaryServerURL").as_deref(), Some("http://host:8000/v1"));
     type_into(cx, r.win, |p| p.summary_model.clone(), "qwen");
@@ -981,7 +1139,7 @@ fn gap(a: Bounds<Pixels>, b: Bounds<Pixels>) -> f32 {
     f32::from(b.left() - a.right())
 }
 
-// parity: SET-092 SET-130 SET-129 SET-149 SET-151 SET-166 SET-172 SET-288 SET-303 SET-336 SET-352
+// parity: SET-129 SET-149 SET-151 SET-166 SET-172 SET-288 SET-303 SET-336 SET-352 SET-352
 #[flow_ui::gpui::test]
 async fn controls_have_swifts_measured_sizes(cx: &mut TestAppContext) {
     let r = rig(cx, "advanced", |_| {});
@@ -1045,7 +1203,7 @@ async fn sheets_have_swifts_geometry(cx: &mut TestAppContext) {
     assert!(done.height >= px(36.) && done.height <= px(40.), "prominent pill: {done:?}");
 }
 
-// parity: SET-110 SET-120 SET-329 SET-176 SET-258 SET-311 SET-316 SET-338
+// parity: SET-110 SET-120 SET-176 SET-258 SET-311 SET-316 SET-338
 #[flow_ui::gpui::test]
 async fn lower_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
