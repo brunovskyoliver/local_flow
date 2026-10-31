@@ -1193,6 +1193,10 @@ impl Default for Shortcut {
 }
 
 impl Shortcut {
+    /// The shape `Services::install_shortcut` takes.
+    pub fn json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
     pub fn right_control() -> Self {
         Shortcut { kind: "modifier_only".into(), modifiers: CONTROL, device_modifiers: Some(0x2000), ..Default::default() }
     }

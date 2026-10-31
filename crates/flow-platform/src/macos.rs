@@ -13,6 +13,10 @@ unsafe extern "C" {
     fn IOHIDCheckAccess(request: u32) -> u32;
 }
 
+unsafe extern "C" {
+    fn sysctlbyname(name: *const std::ffi::c_char, old: *mut std::ffi::c_void, oldlen: *mut usize, new: *mut std::ffi::c_void, newlen: usize) -> i32;
+}
+
 pub struct Mac;
 
 impl Services for Mac {
@@ -40,6 +44,9 @@ impl Services for Mac {
         };
         if granted { PermissionState::Granted } else { PermissionState::NotAsked }
     }
+    fn open_url(&self, url: &str) -> Result<(), Unavailable> {
+        std::process::Command::new("/usr/bin/open").arg(url).spawn().map(|_| ()).map_err(|_| Unavailable("opening a link"))
+    }
     fn open_permission_settings(&self, p: Permission) -> Result<(), Unavailable> {
         let pane = match p {
             Permission::Microphone => "Privacy_Microphone",
@@ -52,6 +59,13 @@ impl Services for Mac {
             .spawn()
             .map(|_| ())
             .map_err(|_| Unavailable("System Settings"))
+    }
+    fn physical_memory(&self) -> u64 {
+        let mut value = 0u64;
+        let mut size = std::mem::size_of::<u64>();
+        // SAFETY: the name is NUL-terminated and value and size describe a live u64.
+        let ok = unsafe { sysctlbyname(c"hw.memsize".as_ptr(), (&raw mut value).cast(), &raw mut size, std::ptr::null_mut(), 0) };
+        if ok == 0 { value } else { 0 }
     }
     fn high_contrast(&self) -> bool {
         read_universal_access("increaseContrast")
