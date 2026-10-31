@@ -553,6 +553,7 @@ mod tests {
             cx.run_until_parked();
             cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
             assert_saw(&[expect]);
+            assert!(flow_ui::probe::symbols().iter().any(|s| s == "exclamationmark.triangle"));
         }
         cx.update_window(window.into(), |_, w, cx| w.click("insertion.cancel", cx)).unwrap();
         cx.run_until_parked();

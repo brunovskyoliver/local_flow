@@ -47,7 +47,7 @@ SHELL-046	auto	test:sidebar_rows_carry_swifts_labels_symbols_and_ids
 SHELL-047	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png ; test:sidebar_rows_carry_swifts_labels_symbols_and_ids
 SHELL-048	auto	test:sidebar_geometry_follows_the_breakpoint
 SHELL-049	auto	test:only_the_selected_row_is_marked
-SHELL-050	auto	test:only_the_selected_row_is_marked
+SHELL-050	auto	test:unselected_nav_row_has_no_fill_hover_or_press ; live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png
 SHELL-051	auto	test:sidebar_rows_open_their_pages
 SHELL-052	live	live:audit/mac/shell/sidebar-light-ref.png ; live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-dark-ref.png ; live:audit/mac/shell/sidebar-dark-rust.png
 SHELL-053	live	live:audit/mac/shell/sidebar-light-rust.png ; live:audit/mac/shell/sidebar-light-ref.png ; test:active_note_card_opens_its_meeting
@@ -67,7 +67,7 @@ SHELL-066	auto	test:open_selects_keeps_one_window_and_close_keeps_the_selection
 SHELL-067	service	service:no zero-size NSView attach in GPUI; open_main_window sets policy and handle directly; window identifier waits on the platform phase
 SHELL-068	auto	test:sidebar_rows_open_their_pages
 SHELL-069	auto	test:pages_show_unavailable_until_stores_exist
-SHELL-070	auto	test:sidebar_rows_open_their_pages
+SHELL-070	auto	test:transcriptions_destination_wires_copy_insert_and_busy ; note:delete itself is exercised on the page by history test delete_asks_then_removes_the_row, not through the shell
 SHELL-071	auto	test:pages_show_unavailable_until_stores_exist
 SHELL-072	auto	test:sidebar_rows_open_their_pages
 SHELL-073	auto	test:pages_show_unavailable_until_stores_exist
@@ -202,7 +202,7 @@ PILL-027	auto	test:meter_updates_skip_layout
 PILL-028	auto	test:precedence_and_show_decision
 PILL-029	auto	test:dictation_lays_out_swifts_sizes
 PILL-030	auto	test:bars_follow_swift_formulas
-PILL-031	auto	test:bars_follow_swift_formulas
+PILL-031	auto	test:connecting_with_reduce_motion_is_static
 PILL-032	auto	test:recording_draws_sixteen_bars_at_the_level_height
 PILL-033	auto	test:timing_and_waveform_math
 PILL-034	auto	test:recording_draws_sixteen_bars_at_the_level_height
@@ -222,7 +222,7 @@ PILL-047	live	live:audit/mac/shell/pill-recording-dark-rust.png ; rust-only:the 
 PILL-048	auto	test:cancel_scales_with_hover_unless_reduce_motion
 PILL-049	auto	test:cancel_scales_with_hover_unless_reduce_motion
 PILL-050	auto	test:dictation_labels_and_cancel
-PILL-051	auto	test:dictation_labels_and_cancel
+PILL-051	recorded	recorded:difference. Swift puts a named action on the pill group; GPUI's a11y actions are a fixed set with no named custom action, so the same name and result come from the group's real pill.cancel button instead. See test dictation_labels_and_cancel
 PILL-052	not-run	not-run:needs VoiceOver; NSAccessibilityPostNotificationWithUserInfo at priority 50 is implemented, the spoken result was not heard
 PILL-053	auto	test:state_changes_announce_swifts_words
 PILL-054	auto	test:state_changes_announce_swifts_words
@@ -259,28 +259,28 @@ PILL-084	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the 
 PILL-085	auto	test:action_notice_retry_chip_and_timer
 PILL-086	auto	test:action_notice_retry_chip_and_timer
 PILL-087	auto	test:action_notice_retry_chip_and_timer
-PILL-088	service	service:flowd returns this rewrite error, Feature 026; the notice renders any string, see action_notice_retry_chip_and_timer
-PILL-089	service	service:flowd returns this rewrite error, Feature 026; the notice renders any string, see action_notice_retry_chip_and_timer
-PILL-090	service	service:flowd returns this rewrite error, Feature 026; the notice renders any string, see action_notice_retry_chip_and_timer
-PILL-091	service	service:flowd returns this rewrite error, Feature 026; the notice renders any string, see action_notice_retry_chip_and_timer
-PILL-092	service	service:flowd returns this rewrite error, Feature 026; the notice renders any string, see action_notice_retry_chip_and_timer
-PILL-093	service	service:flowd returns this rewrite error, Feature 026; the notice renders any string, see action_notice_retry_chip_and_timer
-PILL-094	service	service:flowd returns this rewrite error, Feature 026; the notice renders any string, see action_notice_retry_chip_and_timer
-PILL-095	service	service:flowd returns this rewrite error, Feature 026; the notice renders any string, see action_notice_retry_chip_and_timer
-PILL-096	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-097	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-098	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-099	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-100	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-101	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-102	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-103	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-104	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-105	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-106	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-107	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-108	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
-PILL-109	auto	test:rewrite_and_meeting_notices_keep_swifts_words ; note:copy only, no production caller until the feature that posts it
+PILL-088	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
+PILL-089	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
+PILL-090	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
+PILL-091	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
+PILL-092	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
+PILL-093	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
+PILL-094	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
+PILL-095	service	service:Keychain and the rewrite client that post this arrive with Feature 026; the wording is local ; test:rewrite_failure_categories_map_to_the_live_words
+PILL-096	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-097	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-098	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-099	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-100	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-101	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-102	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-103	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-104	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-105	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-106	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-107	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-108	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-109	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
 PILL-110	auto	test:launch_recovery_notices_reach_the_pill
 PILL-111	recorded	recorded:debug-only Swift strings, out of scope
 PILL-112	live	live:audit/mac/shell/pill-clipboard-dark-rust.png ; rust-only:the reference notices need a live dictation
@@ -299,7 +299,7 @@ PILL-124	auto	test:background_notice
 PILL-125	auto	test:background_notice
 SHELL-145	auto	test:a_rewrite_marks_its_attempt_delivered ; test:begin_review_refuses_silently
 SHELL-146	auto	test:begin_review_refuses_silently
-SHELL-147	live	live:audit/mac/shell/review-light-rust.png ; rust-only:the reference rows reveal Insert only on pointer hover, and AeroSpace returns its window off screen; checked against Swift source ; test:review_sheet_geometry
+SHELL-147	auto	test:review_sheet_geometry ; note:title weight 600 read from source only; no reference capture, rows reveal Insert only on hover, which does not reach the off-screen reference window
 SHELL-148	live	live:audit/mac/shell/review-light-rust.png ; rust-only:the reference rows reveal Insert only on pointer hover, and AeroSpace returns its window off screen; checked against Swift source ; test:review_sheet_geometry
 SHELL-149	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-150	auto	test:review_sheet_shows_warnings_and_buttons_work

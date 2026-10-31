@@ -1369,6 +1369,7 @@ mod tests {
         cx.update(|cx| show_microphone("No microphone available", cx));
         frame(cx, w);
         assert_saw(&["No microphone available", "Microphones…"]);
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "mic.slash"));
         assert_eq!(announced.borrow().last().unwrap(), "No microphone available");
         cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("dictation.notice.microphones").label().as_deref(), Some("Open Microphones settings"))).unwrap();
         cx.update(|cx| update_session(cx, |s| s.window = Some(w.into())));
@@ -1431,14 +1432,14 @@ mod tests {
         assert!(pill(cx, |p| p.action.is_none()));
     }
 
-    // parity: PILL-088..PILL-094
+    // parity: PILL-088..PILL-095
     /// `RewriteNotice.text`'s live words: the bounded category text plus Swift's suffix. Whatever
     /// posts them (Feature 026) gets the wording from here; flowd only supplies the category.
     #[test]
     fn rewrite_failure_categories_map_to_the_live_words() {
         use flow_core::history::rewrite_notice;
         let suffix = " Original text inserted.";
-        for (category, tail) in [("server_unreachable", suffix), ("transport_error", suffix), ("timeout", suffix), ("authentication_failed", ""), ("backend_unavailable", ""), ("malformed_response", ""), ("empty_response", "")] {
+        for (category, tail) in [("server_unreachable", suffix), ("transport_error", suffix), ("timeout", suffix), ("authentication_failed", ""), ("backend_unavailable", ""), ("malformed_response", ""), ("empty_response", ""), ("missing_credential", suffix)] {
             let live = format!("{}{tail}", rewrite_notice(category));
             assert!(REWRITE_NOTICES.iter().any(|(m, retry)| *m == live && *retry), "{live}");
         }
@@ -1476,6 +1477,7 @@ mod tests {
             frame(cx, w);
             let b = n(kind, progress).unwrap();
             assert_saw(&[&b.text()]);
+            assert!(flow_ui::probe::symbols().iter().any(|s| s == b.symbol()), "{} not drawn", b.symbol());
             (b.text(), b.symbol(), b.tab())
         };
         assert_eq!(shown(BackgroundKind::Finalizing, None, cx), ("Finalizing transcript".to_string(), "text.badge.checkmark", "transcript"));

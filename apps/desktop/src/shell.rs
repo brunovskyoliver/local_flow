@@ -907,6 +907,12 @@ mod tests {
         window
     }
 
+    #[track_caller]
+    fn assert_drew(symbol: &str) {
+        let drawn = flow_ui::probe::symbols();
+        assert!(drawn.iter().any(|s| s == symbol), "{symbol} not drawn; drew {drawn:?}");
+    }
+
     fn frame(cx: &mut TestAppContext, window: WindowHandle<Shell>) {
         flow_ui::probe::clear();
         cx.run_until_parked();
@@ -1057,6 +1063,9 @@ mod tests {
         assert_eq!((label(cx, "navigation.insights").as_deref(), NAV[2].2), (Some("Insights"), "chart.bar"));
         assert_eq!((label(cx, "navigation.dictionary").as_deref(), NAV[3].2), (Some("Dictionary"), "text.book.closed"));
         assert_eq!((label(cx, "navigation.settings").as_deref(), NAV[4].2), (Some("Settings"), "gearshape"));
+        for symbol in ["record.circle", "mic", "chart.bar", "text.book.closed", "gearshape"] {
+            assert_drew(symbol);
+        }
     }
 
     // parity: SHELL-029 SHELL-030 SHELL-040 SHELL-042 SHELL-048 SHELL-224
@@ -1105,7 +1114,7 @@ mod tests {
         let shows = |cx: &mut TestAppContext, page: Page, title: &str| {
             set(cx, |s| s.selection = page);
             frame(cx, window);
-            crate::testing::saw(title) && crate::testing::saw("Starting…")
+            crate::testing::saw(title) && crate::testing::saw("Starting…") && flow_ui::probe::symbols().iter().any(|s| s == "externaldrive.badge.exclamationmark")
         };
         assert!(shows(cx, Page::Meetings, "Meetings unavailable"));
         assert!(shows(cx, Page::History, "Transcriptions unavailable"));
@@ -1185,8 +1194,10 @@ mod tests {
         };
         assert_eq!(label(cx, MeetingState::Recording), (Some("Recording".to_string()), Some("12:34".to_string())));
         assert_eq!(badge_style(MeetingState::Recording, &p), ("waveform", p.success));
+        assert_drew("waveform");
         assert_eq!(label(cx, MeetingState::Paused).0.as_deref(), Some("Paused"));
         assert_eq!(badge_style(MeetingState::Paused, &p), ("pause.fill", p.muted));
+        assert_drew("pause.fill");
         assert_eq!(label(cx, MeetingState::Preparing).0.as_deref(), Some("Preparing"));
         assert_eq!(label(cx, MeetingState::Created).0.as_deref(), Some("Created"));
         assert_eq!(label(cx, MeetingState::Finalizing).0.as_deref(), Some("Finalizing"));
@@ -1215,6 +1226,8 @@ mod tests {
         set(cx, |s| s.dictation.as_mut().unwrap().storage_blocked = true);
         frame(cx, window);
         assert_saw(&["Review needed", "Storage needs attention. Your saved text is retained.", "Retry storage"]);
+        assert_drew("exclamationmark.circle");
+        assert_drew("externaldrive.badge.exclamationmark");
         set(cx, |s| {
             let d = s.dictation.as_mut().unwrap();
             d.storage_blocked = false;
@@ -1222,6 +1235,7 @@ mod tests {
         });
         frame(cx, window);
         assert_saw(&["Review needed", "History is full. Open Transcriptions and delete saved text before recording again."]);
+        assert_drew("externaldrive.badge.exclamationmark");
         cx.update_window(window.into(), |_, w, _| assert!(w.try_find("recovery.retryStorage").is_none())).unwrap();
         set(cx, |s| {
             let d = s.dictation.as_mut().unwrap();
@@ -1230,6 +1244,7 @@ mod tests {
         });
         frame(cx, window);
         assert_saw(&["Unsaved text", "This text will be lost if you quit. Copy does not save it.", "Keep this", "Retry save", "Copy", "Discard…"]);
+        assert_drew("exclamationmark.triangle");
         set(cx, |s| {
             let d = s.dictation.as_mut().unwrap();
             d.unsaved = None;
