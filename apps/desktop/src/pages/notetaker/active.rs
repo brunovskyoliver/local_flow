@@ -100,7 +100,7 @@ impl NotetakerPage {
                 }));
             }
             if let Some(line) = self.live_section.clone() {
-                card = card.child(section_view(&line, &s, cx));
+                card = card.child(section_view(&line, &s, &self.section_scroll, cx));
             }
             card = card.child(match s.state.as_str() {
                 "recording" => h_flex().gap(px(8.)).child(prototype_button("meeting.pause", "Pause").on_click(cx.listener(|this, _, _, cx| this.live_action("Pause", cx)))).child(prototype_button("meeting.stopCard", "Stop Meeting").fill(red(cx)).text_color(gpui::white()).on_click(cx.listener(|this, _, _, cx| this.live_action("Stop", cx)))),
@@ -177,9 +177,14 @@ impl NotetakerPage {
 }
 
 /// `TranscriptSectionView`: (status line, in-flight mini progress).
-fn section_view(line: &str, s: &LiveStatus, cx: &App) -> impl IntoElement {
+fn section_view(line: &str, s: &LiveStatus, scroll: &ScrollHandle, cx: &App) -> impl IntoElement {
     let p = pal(cx);
-    let mut list = v_flex().id("meeting.section.list").w_full().h(px(180.)).overflow_y_scroll().gap(px(10.)).p(px(8.)).bg(p.surface).rounded(px(8.));
+    // Follows while within 190 of the bottom, as `TranscriptSectionView` does.
+    let (y, max) = (-scroll.offset().y.as_f32(), scroll.max_offset().y.as_f32());
+    if max - y <= 190. {
+        scroll.scroll_to_bottom();
+    }
+    let mut list = v_flex().id("meeting.section.list").w_full().h(px(180.)).overflow_y_scroll().track_scroll(scroll).gap(px(10.)).p(px(8.)).bg(p.surface).rounded(px(8.));
     for (i, (text, _)) in s.segments.iter().enumerate() {
         list = list.child(h_flex().items_start().gap(px(8.)).child(t(duration_text(i as i64 * 4000)).size(11.).mono_digits().color(p.muted)).child(div().flex_1().child(t(text.clone()).size(13.).italic())).child(h_flex().gap(px(4.)).child(div().size(px(3.)).rounded_full().bg(p.muted)).child(t("provisional").size(11.).italic().color(p.muted))));
     }

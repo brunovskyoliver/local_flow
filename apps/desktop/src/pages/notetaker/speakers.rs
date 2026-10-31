@@ -79,18 +79,18 @@ impl NotetakerPage {
         cx.notify();
     }
     /// `close`: the summary re-reads the speaker names when the sheet goes away (MEET-090).
-    fn close_assign(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_assign(&mut self, cx: &mut Context<Self>) {
         self.assign = None;
         self.summary_refresh(cx);
         cx.notify();
     }
-    fn set_identity(&mut self, speaker: &str, action: IdentityAction, cx: &mut Context<Self>) {
+    pub(crate) fn set_identity(&mut self, speaker: &str, action: IdentityAction, cx: &mut Context<Self>) {
         if let Some(a) = &mut self.assign {
             a.model.set_action(speaker, action);
         }
         cx.notify();
     }
-    fn merge_into(&mut self, id: &str, target: &str, cx: &mut Context<Self>) {
+    pub(crate) fn merge_into(&mut self, id: &str, target: &str, cx: &mut Context<Self>) {
         let Some(db) = db_of(cx) else { return };
         if let Some(a) = &mut self.assign {
             a.model.merge(db, id, target);
@@ -107,13 +107,16 @@ impl NotetakerPage {
         let done = a.model.enrollment_completed;
         let handle = a.scroll.clone();
         let mut scroll = v_flex().w_full().gap(px(28.)).px(px(32.)).pt(px(20.)).pb(px(28.));
-        if none {
+        if none && a.model.is_loading {
+            scroll = scroll.child(div().id("meeting.speakers.loading").test_support().w_full().p(px(20.)).flex().justify_center().child(Spinner::new()));
+        } else if none {
             scroll = scroll.child(t("There are no speakers to name.").size(14.).color(p.muted));
         }
         for (id, text) in reviews {
             scroll = scroll.child(
                 h_flex()
                     .id("meeting.speakers.review")
+                    .test_support()
                     .w_full()
                     .gap(px(8.))
                     .p(px(12.))
@@ -140,6 +143,7 @@ impl NotetakerPage {
             })).child(
                 v_flex()
                     .id("meeting.speakers.assign")
+                    .test_support()
                     .relative()
                     .w(px(560.))
                     .bg(p.surface)
@@ -149,7 +153,7 @@ impl NotetakerPage {
                     .child(div().absolute().top(px(22.)).right(px(22.)).child(plain_button("meeting.speakers.close", "Close").on_click(cx.listener(|this, _, _, cx| this.close_assign(cx))).content(div().size(px(30.)).flex().items_center().justify_center().child(icon("xmark", 15., p.ink)))))
                     .child(
                         // The scroller shows that more voices follow below the fold (UI-14).
-                        div().relative().w_full().flex().flex_col().child(div().id("meeting.speakers.scroll").w_full().min_h(px(160.)).max_h(px(480.)).overflow_y_scroll().track_scroll(&handle).child(scroll)).child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Always).styles(move |styles| styles.track(|x| x.bg(p.canvas)).thumb(|x| x.bg(p.muted.opacity(0.6)).width(px(7.)).radius(px(4.))).thumb_hover(|x| x.bg(p.muted.opacity(0.8)).width(px(7.)).radius(px(4.))).thumb_active(|x| x.bg(p.muted).width(px(7.)).radius(px(4.))))),
+                        div().relative().w_full().flex().flex_col().child(div().id("meeting.speakers.scroll").test_support().w_full().min_h(px(160.)).max_h(px(480.)).overflow_y_scroll().track_scroll(&handle).child(scroll)).child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Always).styles(move |styles| styles.track(|x| x.bg(p.canvas)).thumb(|x| x.bg(p.muted.opacity(0.6)).width(px(7.)).radius(px(4.))).thumb_hover(|x| x.bg(p.muted.opacity(0.8)).width(px(7.)).radius(px(4.))).thumb_active(|x| x.bg(p.muted).width(px(7.)).radius(px(4.))))),
                     )
                     .child(hairline(cx))
                     .child(
@@ -291,8 +295,9 @@ impl NotetakerPage {
                 let (a1, a2) = (id.clone(), id.clone());
                 out = out.child(
                     h_flex()
+                        .w_full()
                         .gap(px(10.))
-                        .child(t(format!("Is this {} you already remember?", k.name)).font(13., 500.))
+                        .child(div().flex_1().min_w_0().child(t(format!("Is this {} you already remember?", k.name)).font(13., 500.)))
                         .child(identity_button("identity.samePerson", "Same person", true, cx, move |this, cx| this.set_identity(&a1, IdentityAction::SamePerson(k.id.clone()), cx)))
                         .child(identity_button("identity.someoneNew", "Someone new", false, cx, move |this, cx| this.set_identity(&a2, IdentityAction::RememberNew, cx))),
                 );
@@ -301,11 +306,13 @@ impl NotetakerPage {
                 let not_now = s.action == IdentityAction::NotNow;
                 out = out.child(
                     v_flex()
+                        .w_full()
                         .gap(px(6.))
                         .child(
                             h_flex()
+                                .w_full()
                                 .gap(px(10.))
-                                .child(t(REMEMBER_QUESTION).font(13., 500.))
+                                .child(div().flex_1().min_w_0().child(t(REMEMBER_QUESTION).font(13., 500.)))
                                 .child(identity_button("identity.remember", "Remember", s.action == IdentityAction::Remember, cx, move |this, cx| this.set_identity(&a1, IdentityAction::Remember, cx)))
                                 .child(div().opacity(if not_now { 1. } else { 0.7 }).child(identity_button("identity.notNow", "Not now", false, cx, move |this, cx| this.set_identity(&a2, IdentityAction::NotNow, cx)))),
                         )

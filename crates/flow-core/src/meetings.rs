@@ -526,6 +526,7 @@ pub fn delete_confirmed(db: &Db, root: &Path, id: &str, revision: i64) -> Res<De
 /// `MeetingLibraryViewModel`'s data rules, free of views.
 #[derive(Default)]
 pub struct Library {
+    pub is_loading: bool,
     pub rows: Vec<MeetingRow>,
     pub has_older: bool,
     pub evicted_newest: bool,

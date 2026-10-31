@@ -64,7 +64,7 @@ impl NotetakerPage {
         }
         cx.notify();
     }
-    fn correct(&mut self, segment: &str, to: Correction, cx: &mut Context<Self>) {
+    pub(crate) fn correct(&mut self, segment: &str, to: Correction, cx: &mut Context<Self>) {
         self.menu = None;
         let Some(m) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()) else { return };
         let Some(db) = db_of(cx) else { return };
@@ -218,7 +218,7 @@ impl NotetakerPage {
             })
             .when(copy, |w| {
                 let selected = self.pager.as_ref().map_or(0, |x| x.selection.len());
-                let title = if selected == 0 { "Copy Selected Segments".to_string() } else { format!("Copy {selected} Selected Segments") };
+                let title = copy_selected_title(selected);
                 let page = cx.entity().downgrade();
                 w.child(menu_trigger("meeting.transcript.copy", "Copy or export transcript", "doc.on.doc", 13., 28., p.accent).dropdown_menu(move |menu, _, _| {
                     menu.item(PopupMenuItem::new(title.clone()).disabled(selected == 0).on_click(act(&page, |this, _, cx| {
@@ -343,8 +343,7 @@ impl NotetakerPage {
     fn bubble(&mut self, row: &TranscriptRow, show_source: bool, highlighted: bool, selected: bool, seek: bool, correctable: bool, choices: &[(String, String)], cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let id = row.id.clone();
-        let fill = if highlighted { p.accent.opacity(0.2) } else if selected { p.tint } else { p.canvas };
-        let color = if row.finality == "provisional" { p.muted } else { p.ink };
+        let (fill, color) = bubble_colors(highlighted, selected, &row.finality, cx);
         let identify = cx.global::<Core>().prefs.bool_or("speakerIdentificationEnabled", true);
         let (page, choices) = (cx.entity().downgrade(), choices.to_vec());
         v_flex()
@@ -383,7 +382,7 @@ impl NotetakerPage {
                     .flex()
                     .flex_col()
                     .items_start()
-                    .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).child(t(row.text.clone()).size(13.).line_spacing(4.).color(color).selectable()).context_menu(move |menu, window, cx| {
+                    .child(div().id(sid(format!("meeting.transcript.bubble.{}", row.ordinal))).test_support().max_w_full().px(px(10.)).py(px(7.)).bg(fill).rounded(px(8.)).child(t(row.text.clone()).size(13.).line_spacing(4.).color(color).selectable()).context_menu(move |menu, window, cx| {
                         let segment = id.clone();
                         let mut menu = menu.item(PopupMenuItem::new(if selected { "Deselect" } else { "Select" }).on_click(act(&page, move |this, _, cx| {
                             if let Some(x) = &mut this.pager {
@@ -436,6 +435,15 @@ impl NotetakerPage {
         }
         list.into_any_element()
     }
+}
+
+/// `(fill, text)` of a transcript bubble.
+pub(crate) fn bubble_colors(highlighted: bool, selected: bool, finality: &str, cx: &App) -> (Hsla, Hsla) {
+    let p = pal(cx);
+    (if highlighted { p.accent.opacity(0.2) } else if selected { p.tint } else { p.canvas }, if finality == "provisional" { p.muted } else { p.ink })
+}
+pub(crate) fn copy_selected_title(selected: usize) -> String {
+    if selected == 0 { "Copy Selected Segments".to_string() } else { format!("Copy {selected} Selected Segments") }
 }
 
 fn mic_divider(name: Option<&str>, cx: &App) -> impl IntoElement {

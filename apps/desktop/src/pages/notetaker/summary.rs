@@ -239,7 +239,7 @@ impl NotetakerPage {
             );
         }
         if let Some(e) = self.summary.error.clone() {
-            out = out.child(t(e).size(11.).color(red(cx)).id("meeting.summary.editError"));
+            out = out.child(div().id("meeting.summary.editError").test_support().child(t(e).size(11.).color(red(cx))));
         }
         let Some(model) = model else {
             let (text, read_transcript) = if self.summary.load_error {
@@ -376,6 +376,7 @@ impl NotetakerPage {
         let page = cx.entity().downgrade();
         div()
             .id("meeting.summary.text")
+            .test_support()
             .w_full()
             .on_click(cx.listener(|this, e: &ClickEvent, w, cx| {
                 if e.click_count() == 2 {
@@ -435,7 +436,7 @@ impl NotetakerPage {
             }
             Self::linked(spans, cx).size(15.).line_spacing(5.)
         };
-        let body = div().id(text_id).w_full().on_click(cx.listener(move |this, e: &ClickEvent, w, cx| {
+        let body = div().id(text_id).test_support().w_full().on_click(cx.listener(move |this, e: &ClickEvent, w, cx| {
             if let (2, Some(f)) = (e.click_count(), edit_field) {
                 this.begin_item_edit(&open_edit, f, open_edit.text.clone(), w, cx);
             }
@@ -506,6 +507,7 @@ impl NotetakerPage {
         let (clear, save) = (item.clone(), item.clone());
         v_flex()
             .id("meeting.summary.due")
+            .test_support()
             .p(px(12.))
             .gap(px(8.))
             .child(Calendar::new(&self.summary.due))

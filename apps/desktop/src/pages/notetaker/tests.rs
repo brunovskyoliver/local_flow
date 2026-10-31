@@ -9,6 +9,8 @@ fn open_page(cx: &mut TestAppContext, scenario: Option<&str>) -> WindowHandle<No
     cx.update(|cx| cx.global_mut::<Core>().scenario = scenario);
     flow_ui::probe::clear();
     let window = cx.add_window(|w, cx| NotetakerPage::new(w, cx));
+    // Tall, so what the tests click is in view; `resize` narrows it where layout matters.
+    cx.simulate_window_resize(window.into(), size(px(1180.), px(3000.)));
     frame(cx, &window);
     window
 }
@@ -213,24 +215,10 @@ async fn transcript_reads_labels_search_and_selection(cx: &mut TestAppContext) {
     frame(cx, &window);
     assert_eq!(read(cx, &window, |p| p.pager.as_ref().unwrap().search_hits.as_ref().map(|h| h.0.len())), Some(11));
     let first = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().id.clone());
-    window.update(cx, |p, _, cx| p.toggle_menu(&format!("seg.{first}"), cx)).unwrap();
-    frame(cx, &window);
-    click(cx, &window, "meeting.transcript.row.select");
-    frame(cx, &window);
+    let ordinal = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().ordinal);
+    right_click(cx, &window, sid(format!("meeting.transcript.bubble.{ordinal}")));
+    menu_item(cx, &window, 0);
     assert!(read(cx, &window, |p| p.pager.as_ref().unwrap().selection.contains(&first)));
-}
-
-// parity: SPK-040 SPK-042
-#[flow_ui::gpui::test]
-async fn change_speaker_writes_the_correction(cx: &mut TestAppContext) {
-    let window = open_page(cx, Some("notetaker.transcript"));
-    let first = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().id.clone());
-    window.update(cx, |p, _, cx| p.toggle_menu(&format!("seg.{first}"), cx)).unwrap();
-    frame(cx, &window);
-    click(cx, &window, "meeting.transcript.row.unknown");
-    frame(cx, &window);
-    let manual: Option<String> = query(cx, |db| db.conn.query_row("SELECT manual_kind FROM speaker_assignments WHERE segment_id=?1", [&first], |r| r.get(0)).unwrap());
-    assert_eq!(manual.as_deref(), Some("unknown"));
 }
 
 // parity: TRANS-027 TRANS-031 TRANS-035 TRANS-037
@@ -238,10 +226,8 @@ async fn change_speaker_writes_the_correction(cx: &mut TestAppContext) {
 async fn export_and_status_lines_surface_failures(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.label-failed"));
     click(cx, &window, "meeting.transcript.copy");
-    frame(cx, &window);
-    assert_saw(&["Copy Full Transcript", "Export Transcript…"]);
-    click(cx, &window, "meeting.transcript.export");
-    frame(cx, &window);
+    menu_item(cx, &window, 2);
+    fresh(cx, &window);
     assert_saw(&["The transcript could not be exported."]);
 }
 
@@ -284,9 +270,7 @@ async fn summary_reads_stored_analysis_and_marks_an_item_done(cx: &mut TestAppCo
     let stored: i64 = query(cx, |db| db.conn.query_row("SELECT COUNT(*) FROM analysis_overlays WHERE meeting_id=?1 AND field='status'", [SEED_FULL], |r| r.get(0)).unwrap());
     assert_eq!(stored, 1);
     click(cx, &window, "meeting.summary.options");
-    frame(cx, &window);
-    click(cx, &window, "meeting.summary.removeEdits");
-    frame(cx, &window);
+    menu_item(cx, &window, 2);
     assert_saw(&["Remove all edits?"]);
     click(cx, &window, "meeting.summary.removeEdits.confirm");
     frame(cx, &window);
@@ -296,10 +280,12 @@ async fn summary_reads_stored_analysis_and_marks_an_item_done(cx: &mut TestAppCo
 #[flow_ui::gpui::test]
 async fn generate_reports_the_missing_worker(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.summary-eligible"));
-    assert_saw(&["No summary yet.", "Read transcript"]);
+    assert_saw(&["No summary yet."]);
+    assert!(!has(cx, &window, "meeting.summary.readTranscript"), "only a meeting that can't be summarized offers it");
     click(cx, &window, "meeting.summary.generate");
     frame(cx, &window);
     assert_saw(&["isn't available"]);
+    let window = open_page(cx, Some("notetaker.summary-not-finished"));
     click(cx, &window, "meeting.summary.readTranscript");
     frame(cx, &window);
     assert!(read(cx, &window, |p| p.tab == Tab::Transcript));
@@ -404,7 +390,9 @@ async fn summary_failed(cx: &mut TestAppContext) {
 // parity: SUM-005 SUM-006
 #[flow_ui::gpui::test]
 async fn summary_not_finished(cx: &mut TestAppContext) {
-    shows(cx, "notetaker.summary-not-finished", &["The transcript is not finished yet.", "Read transcript"]);
+    let window = open_page(cx, Some("notetaker.summary-not-finished"));
+    assert_saw(&["The transcript is not finished yet."]);
+    assert!(has(cx, &window, "meeting.summary.readTranscript"));
 }
 // parity: SUM-007
 #[flow_ui::gpui::test]
@@ -525,21 +513,6 @@ async fn title_too_long_shows_the_limit(cx: &mut TestAppContext) {
 async fn summary_shows_sections_chips_and_attribution(cx: &mut TestAppContext) {
     shows(cx, "notetaker.summary", &["The order waits until both quotes are in", "Hinges and supplier", "•", "Next steps", "Open questions", "Risks", "Pick the review up again on Friday — You", "Due: unclear (\"soon\")", "might be Tomas Novak?", "Accept", "mentioned", "Owner unresolved", "Due 6 Nov"]);
 }
-// parity: SUM-042 SUM-043 SUM-044
-#[flow_ui::gpui::test]
-async fn summary_edit_saves_an_overlay(cx: &mut TestAppContext) {
-    let window = open_page(cx, Some("notetaker.summary"));
-    click(cx, &window, "meeting.summary.editMenu");
-    frame(cx, &window);
-    click(cx, &window, "meeting.summary.edit");
-    frame(cx, &window);
-    assert_saw(&["Save", "Cancel"]);
-    type_in!(cx, &window, |p| p.summary.summary_input.clone(), "Rewritten.");
-    frame(cx, &window);
-    click(cx, &window, "meeting.summary.edit.save");
-    frame(cx, &window);
-    assert_eq!(read(cx, &window, |p| p.summary.model.as_ref().unwrap().summary.clone()), "Rewritten.");
-}
 // parity: SPK-001 SPK-003 SPK-048 SPK-049 SPK-057 SPK-061 SPK-075 SPK-078
 #[flow_ui::gpui::test]
 async fn assign_opens_shows_sections_and_closes(cx: &mut TestAppContext) {
@@ -621,4 +594,949 @@ async fn row_shows_state_badge(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn interrupted_note_shows_its_reason(cx: &mut TestAppContext) {
     shows(cx, "notetaker.interrupted", &["LocalFlow did not exit cleanly during this meeting."]);
+}
+
+// --- Round 2: rows that had no real test.
+
+fn sql(cx: &mut TestAppContext, text: &str) {
+    // Test rows go past schema checks that the Mac workers' writes satisfy by other columns.
+    query(cx, |db| db.conn.execute_batch(&format!("PRAGMA ignore_check_constraints=ON; {text}")).unwrap());
+}
+/// A trigger that refuses a write, the way a full or locked store would.
+fn refuse(cx: &mut TestAppContext, event: &str, table: &str) {
+    sql(cx, &format!("CREATE TEMP TRIGGER refuse_{event}_{table} BEFORE {event} ON {table} BEGIN SELECT RAISE(ABORT,'refused'); END;"));
+}
+fn allow(cx: &mut TestAppContext, event: &str, table: &str) {
+    sql(cx, &format!("DROP TRIGGER temp.refuse_{event}_{table};"));
+}
+/// Clicks the open popup menu's item; separators count, as Kit numbers them.
+fn menu_item(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, ix: usize) {
+    frame(cx, window);
+    cx.update_window((*window).into(), |_, w, cx| w.within("popup-menu").click(ix, cx)).unwrap();
+    frame(cx, window);
+}
+/// Hovers a submenu item open and clicks the submenu's item.
+fn submenu_item(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, item: usize, ix: usize) {
+    frame(cx, window);
+    cx.update_window((*window).into(), |_, w, cx| w.within("popup-menu").hover(item, cx)).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(400));
+    frame(cx, window);
+    cx.update_window((*window).into(), |_, w, cx| w.within("submenu").click(ix, cx)).unwrap();
+    frame(cx, window);
+}
+fn right_click(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, id: impl Into<ElementId>) {
+    let id = id.into();
+    cx.update_window((*window).into(), |_, w, cx| w.right_click(id, cx)).unwrap();
+    frame(cx, window);
+}
+fn find(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, id: impl Into<ElementId>) -> flow_ui::test::ElementSnapshot {
+    let id = id.into();
+    cx.update_window((*window).into(), |_, w, _| w.find(id)).unwrap()
+}
+fn has(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, id: impl Into<ElementId>) -> bool {
+    let id = id.into();
+    cx.update_window((*window).into(), |_, w, _| w.try_find(id).is_some()).unwrap()
+}
+fn resize(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, width: f32, height: f32) {
+    cx.simulate_window_resize((*window).into(), size(px(width), px(height)));
+    frame(cx, window);
+}
+fn seen(needle: &str) -> bool {
+    flow_ui::probe::seen().iter().any(|s| s.contains(needle))
+}
+/// Renders afresh so `seen` only reports the current frame.
+fn fresh(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>) {
+    flow_ui::probe::clear();
+    frame(cx, window);
+}
+fn open(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, id: &str, tab: Tab) {
+    window.update(cx, |p, w, cx| p.open_note(id, tab, w, cx)).unwrap();
+    fresh(cx, window);
+}
+
+// parity: NOTE-002
+#[flow_ui::gpui::test]
+async fn library_load_copies_the_transcription_preference(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("meetingTranscriptionEnabled", false));
+    let window = cx.add_window(|w, cx| NotetakerPage::new(w, cx));
+    frame(cx, &window);
+    assert!(!read(cx, &window, |p| p.transcribe));
+    assert!(read(cx, &window, |p| !p.lib.rows.is_empty()), "the load task also refreshes the rows");
+}
+
+// parity: NOTE-003 NOTE-004 NOTE-005 NOTE-006
+#[flow_ui::gpui::test]
+async fn compact_width_trades_the_preview_for_an_overview_popover(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    resize(cx, &window, 1180., 780.);
+    assert!(has(cx, &window, "notetaker.preview"));
+    assert!(!has(cx, &window, "notetaker.overview"));
+    assert_eq!(find(cx, &window, "notetaker.preview").bounds().size.width, px(230.));
+    resize(cx, &window, 780., 780.);
+    assert!(!has(cx, &window, "notetaker.preview"));
+    let icon = find(cx, &window, "notetaker.overview").bounds();
+    assert_eq!((icon.size.width, icon.size.height), (px(28.), px(28.)));
+    click(cx, &window, "notetaker.overview");
+    frame(cx, &window);
+    assert_eq!(find(cx, &window, "notetaker.popover").bounds().size.width, px(250.));
+    assert_eq!(find(cx, &window, "notetaker.preview").bounds().size.height, px(380.));
+}
+
+// parity: NOTE-008 NOTE-010 MEET-090
+#[flow_ui::gpui::test]
+async fn leaving_lets_go_of_the_note_and_closing_the_sheet_refreshes_the_summary(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    cx.update(crate::shell::ensure_session);
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    window.update(cx, |p, w, cx| p.open_assign(None, w, cx)).unwrap();
+    window.update(cx, |p, _, _| p.summary.model = None).unwrap();
+    click(cx, &window, "meeting.speakers.close");
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.summary.model.is_some()), "MEET-090: dismissing re-reads the summary");
+    click(cx, &window, "meeting.back");
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.editor.is_none() && p.pager.is_none()), "NOTE-010");
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    window.update(cx, |p, _, cx| { if let Some(db) = db_of(cx) { p.lib.preview(db, SEED_FULL) } }).unwrap();
+    cx.update(|cx| crate::shell::update_session(cx, |s| s.selection = crate::pages::Page::History));
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.lib.detail.is_none() && p.lib.preview_id.is_none() && p.editor.is_none()), "NOTE-008");
+}
+// parity: NOTE-011
+#[flow_ui::gpui::test]
+async fn a_new_window_starts_without_the_old_note(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    cx.update_window(window.into(), |_, w, _| w.remove_window()).unwrap();
+    cx.run_until_parked();
+    let again = cx.add_window(|w, cx| NotetakerPage::new(w, cx));
+    frame(cx, &again);
+    assert!(read(cx, &again, |p| p.lib.detail.is_none() && p.editor.is_none()));
+}
+// parity: NOTE-044 NOTE-059
+#[flow_ui::gpui::test]
+async fn older_page_failure_and_the_loading_guard(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    window.update(cx, |p, _, cx| { p.lib.is_loading = true; cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert_eq!(find(cx, &window, "notetaker.loadOlder").disabled(), Some(true));
+    window.update(cx, |p, _, cx| { p.lib.is_loading = false; cx.notify() }).unwrap();
+    frame(cx, &window);
+    sql(cx, "ALTER TABLE meetings RENAME TO meetings_gone;");
+    click(cx, &window, "notetaker.loadOlder");
+    fresh(cx, &window);
+    assert_saw(&["Older meetings could not be loaded."]);
+}
+// parity: NOTE-046
+#[flow_ui::gpui::test]
+async fn past_notes_tab_does_nothing(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let before = read(cx, &window, |p| (p.lib.rows.len(), p.show_search, p.menu.clone()));
+    click(cx, &window, "notetaker.pastNotes");
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| (p.lib.rows.len(), p.show_search, p.menu.clone())), before);
+}
+// parity: NOTE-083 NOTE-084 NOTE-086
+#[flow_ui::gpui::test]
+async fn overflow_button_popover_and_disabled_delete(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.recording"));
+    resize(cx, &window, 1180., 780.);
+    let button = find(cx, &window, sid(format!("notetaker.overflow.{SEED_FULL}"))).bounds();
+    assert_eq!(button.size.width, px(28.));
+    window.update(cx, |p, _, cx| p.toggle_menu(&format!("row.{SEED_FULL}"), cx)).unwrap();
+    frame(cx, &window);
+    assert_eq!(find(cx, &window, "notetaker.popover").bounds().size.width, px(190.));
+    assert_ne!(find(cx, &window, "notetaker.overflow.delete").disabled(), Some(true));
+    window.update(cx, |p, _, cx| p.toggle_menu(&format!("row.{SEED_UNTITLED}"), cx)).unwrap();
+    frame(cx, &window);
+    sql(cx, &format!("UPDATE meetings SET state='recording' WHERE id='{SEED_UNTITLED}';"));
+    window.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+    frame(cx, &window);
+    assert_eq!(find(cx, &window, "notetaker.overflow.delete").disabled(), Some(true));
+}
+// parity: NOTE-091 MEET-044
+#[flow_ui::gpui::test]
+async fn files_left_behind_keep_the_row_and_offer_retry(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    let moved: usize = query(cx, |db| db.conn.execute("UPDATE meeting_segments SET relative_path='elsewhere/a.wav' WHERE track_id IN (SELECT id FROM meeting_tracks WHERE meeting_id=?1)", [SEED_FULL]).unwrap());
+    assert!(moved > 0);
+    let revision = read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.revision);
+    window.update(cx, |p, w, cx| p.delete(SEED_FULL, revision, w, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Deletion incomplete:", "file(s) remain. Retry after checking the folder.", "Retry deletion"]);
+    assert!(query(cx, |db| meeting(db, SEED_FULL).unwrap().is_some()));
+    assert!(read(cx, &window, |p| p.lib.deletion_pending.contains(SEED_FULL)));
+    assert!(has(cx, &window, "meeting.retryDeletion"));
+    sql(cx, &format!("UPDATE meeting_segments SET relative_path='{SEED_FULL}/a.wav' WHERE track_id IN (SELECT id FROM meeting_tracks WHERE meeting_id='{SEED_FULL}');"));
+    click(cx, &window, "meeting.retryDeletion");
+    frame(cx, &window);
+    assert!(query(cx, |db| meeting(db, SEED_FULL).unwrap().is_none()));
+}
+// parity: NOTE-092 NOTE-094
+#[flow_ui::gpui::test]
+async fn delete_refusals_read_like_swift(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    let revision = read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.revision);
+    refuse(cx, "DELETE", "meetings");
+    window.update(cx, |p, w, cx| p.delete(SEED_FULL, revision, w, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["The meeting could not be deleted."]);
+    allow(cx, "DELETE", "meetings");
+    sql(cx, &format!("UPDATE meetings SET state='recording' WHERE id='{SEED_FULL}';"));
+    window.update(cx, |p, w, cx| p.delete(SEED_FULL, revision, w, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Stop the meeting before deleting it."]);
+    assert!(query(cx, |db| meeting(db, SEED_FULL).unwrap().is_some()));
+}
+// parity: NOTE-097 NOTE-099 NOTE-100 NOTE-101 NOTE-102
+#[flow_ui::gpui::test]
+async fn preview_states(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    resize(cx, &window, 1180., 780.);
+    window.update(cx, |p, _, cx| p.request_preview(SEED_UNTITLED, cx)).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(50));
+    window.update(cx, |p, _, cx| p.request_preview(SEED_FULL, cx)).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    fresh(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.lib.preview_id.clone()).as_deref(), Some(SEED_FULL), "the earlier request is ignored");
+    assert!(read(cx, &window, |p| p.lib.preview.as_ref().unwrap().tracks.is_empty()), "the preview drops tracks");
+    assert_saw(&["Lamp prototype review", " · ", "MY THOUGHTS"]);
+    sql(cx, &format!("UPDATE meeting_notes SET text='' WHERE meeting_id='{SEED_UNTITLED}';"));
+    window.update(cx, |p, _, cx| p.request_preview(SEED_UNTITLED, cx)).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    fresh(cx, &window);
+    assert!(!seen("MY THOUGHTS"), "no notes, no heading");
+    window.update(cx, |p, _, cx| p.lib.preview(db_of(cx).unwrap(), SEED_FULL)).unwrap();
+    sql(cx, &format!("DELETE FROM meetings WHERE id='{SEED_FULL}';"));
+    window.update(cx, |p, _, cx| { p.lib.preview(db_of(cx).unwrap(), SEED_FULL); cx.notify() }).unwrap();
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.lib.preview_notice.clone()).as_deref(), Some("This note no longer exists."));
+    sql(cx, "ALTER TABLE meeting_notes RENAME TO notes_gone;");
+    window.update(cx, |p, _, cx| { p.lib.preview(db_of(cx).unwrap(), SEED_UNTITLED); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["The overview could not be loaded."]);
+}
+
+// parity: MEET-004 MEET-061 MEET-062
+#[flow_ui::gpui::test]
+async fn a_failed_save_keeps_the_note_open_until_retry_works(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    refuse(cx, "UPDATE", "meeting_notes");
+    type_in!(cx, &window, |p| p.thoughts.clone(), "Keep me.");
+    click(cx, &window, "meeting.back");
+    fresh(cx, &window);
+    assert!(read(cx, &window, |p| p.lib.detail.is_some()), "stays on the note");
+    assert_saw(&["Notes not saved", "Retry save"]);
+    allow(cx, "UPDATE", "meeting_notes");
+    click(cx, &window, "meeting.retrySave");
+    fresh(cx, &window);
+    assert!(!seen("Notes not saved"));
+    assert_eq!(query(cx, |db| notes(db, SEED_FULL).unwrap().unwrap().0), "Keep me.");
+}
+// parity: MEET-009 MEET-010 MEET-011 MEET-013
+#[flow_ui::gpui::test]
+async fn overflow_title_follows_the_transcription_state(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    for (state, id) in [("not_requested", Some("meeting.transcript.transcribe")), ("failed", Some("meeting.transcript.retry")), ("interrupted", Some("meeting.transcript.retry")), ("final", Some("meeting.transcript.retranscribe")), ("pending", None), ("live", None), ("finalizing", None)] {
+        window.update(cx, |p, _, cx| { p.lib.detail = None; p.pager = None; cx.notify() }).unwrap();
+        sql(cx, &format!("UPDATE meeting_transcriptions SET state='{state}' WHERE meeting_id='{SEED_FULL}';"));
+        open(cx, &window, SEED_FULL, Tab::Thoughts);
+        click(cx, &window, "meeting.options");
+        frame(cx, &window);
+        for known in ["meeting.transcript.transcribe", "meeting.transcript.retry", "meeting.transcript.retranscribe"] {
+            assert_eq!(has(cx, &window, known), id == Some(known), "{state}: {known}");
+        }
+    }
+}
+// parity: MEET-021 MEET-022
+#[flow_ui::gpui::test]
+async fn title_write_failure_reports(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    refuse(cx, "UPDATE", "meetings");
+    type_in!(cx, &window, |p| p.title.clone(), "Will fail");
+    window.update(cx, |p, w, cx| p.save_title(w, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["The title could not be saved."]);
+}
+// parity: MEET-025
+#[flow_ui::gpui::test]
+async fn duration_warning_shows_for_a_drifting_track(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    sql(cx, &format!("UPDATE meeting_tracks SET dropped_frames=0, duration_warning=1 WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert_saw(&["A recording track does not match the meeting duration. Some audio may be missing."]);
+    assert!(has(cx, &window, "meeting.durationWarning"));
+}
+// parity: MEET-041 MEET-042 MEET-043
+#[flow_ui::gpui::test]
+async fn detail_read_failures(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    sql(cx, "ALTER TABLE meeting_notes RENAME TO notes_gone;");
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert_saw(&["Meeting details could not be loaded."]);
+    assert!(read(cx, &window, |p| p.lib.detail.is_some()), "the open note stays");
+    sql(cx, "ALTER TABLE notes_gone RENAME TO meeting_notes;");
+    window.update(cx, |p, w, cx| p.open_note("no-such-note", Tab::Thoughts, w, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["This meeting no longer exists."]);
+    assert!(read(cx, &window, |p| p.lib.detail.is_none()));
+}
+// parity: MEET-050 MEET-051 MEET-052
+#[flow_ui::gpui::test]
+async fn provenance_names_the_place(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    for (path, text) in [("custom", "Transcript: your custom server"), ("local_after_server_failure", "Transcript: this Mac (server unavailable)"), ("server", "Transcript: your server")] {
+        sql(cx, &format!("UPDATE meeting_transcriptions SET inference_path='{path}' WHERE meeting_id='{SEED_FULL}';"));
+        open(cx, &window, SEED_FULL, Tab::Thoughts);
+        assert_saw(&[text]);
+    }
+}
+// parity: MEET-056
+#[flow_ui::gpui::test]
+async fn thoughts_placeholder_only_while_empty(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    sql(cx, &format!("UPDATE meeting_notes SET text='' WHERE meeting_id='{SEED_UNTITLED}';"));
+    open(cx, &window, SEED_UNTITLED, Tab::Thoughts);
+    assert!(has(cx, &window, "meeting.thoughts.placeholder"));
+    open(cx, &window, SEED_FULL, Tab::Thoughts);
+    assert!(!has(cx, &window, "meeting.thoughts.placeholder"));
+}
+// parity: MEET-067
+#[flow_ui::gpui::test]
+async fn paused_footer_offers_resume_which_reports_the_missing_worker(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.live-paused"));
+    assert!(!has(cx, &window, "meeting.pause"));
+    click(cx, &window, "meeting.resume");
+    fresh(cx, &window);
+    assert_saw(&["isn't available"]);
+}
+// parity: MEET-092
+#[flow_ui::gpui::test]
+async fn detail_read_orders_tracks_and_segments(cx: &mut TestAppContext) {
+    let (kinds, offsets) = {
+        open_page(cx, None);
+        query(cx, |db| {
+            let d = detail(db, SEED_FULL).unwrap().unwrap();
+            (d.tracks.iter().map(|t| t.kind.clone()).collect::<Vec<_>>(), d.tracks[0].segments.iter().map(|s| s.start_offset_ms).collect::<Vec<_>>())
+        })
+    };
+    assert_eq!(kinds.first().map(String::as_str), Some("microphone"));
+    assert!(offsets.windows(2).all(|w| w[0] <= w[1]), "{offsets:?}");
+}
+
+// parity: LIVE-003 LIVE-004
+#[flow_ui::gpui::test]
+async fn active_title_saves_on_enter_and_reports_failures(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.panel"));
+    type_in!(cx, &window, |p| p.active_title.clone(), "Standup");
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    frame(cx, &window);
+    assert_eq!(query(cx, |db| meeting(db, SEED_UNTITLED).unwrap().unwrap().title).as_deref(), Some("Standup"));
+    let long = "t".repeat(257);
+    type_in!(cx, &window, |p| p.active_title.clone(), &long);
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Titles are limited to 256 bytes."]);
+    refuse(cx, "UPDATE", "meetings");
+    type_in!(cx, &window, |p| p.active_title.clone(), "Refused");
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["The title could not be saved."]);
+    assert_eq!(query(cx, |db| meeting(db, SEED_UNTITLED).unwrap().unwrap().title).as_deref(), Some("Standup"));
+}
+
+// parity: TRANS-003
+#[flow_ui::gpui::test]
+async fn header_badge_shows_only_when_not_final(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert!(!flow_ui::probe::seen().iter().any(|s| s.starts_with("· ")));
+    sql(cx, &format!("UPDATE meeting_transcriptions SET state='interrupted' WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert!(flow_ui::probe::seen().iter().any(|s| s.starts_with("· ")));
+}
+// parity: TRANS-013 TRANS-015
+#[flow_ui::gpui::test]
+async fn search_keys_close_and_the_navigator_is_twenty_points(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    click(cx, &window, "meeting.transcript.search.open");
+    window.update(cx, |_, w, _| w.activate_window()).unwrap();
+    frame(cx, &window);
+    window.update(cx, |p, w, cx| p.title.read(cx).focus_handle(cx).focus(w, cx)).unwrap();
+    frame(cx, &window);
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| !p.search_open), "blur with an empty query closes");
+    click(cx, &window, "meeting.transcript.search.open");
+    frame(cx, &window);
+    type_in!(cx, &window, |p| p.search.clone(), "the");
+    cx.executor().advance_clock(Duration::from_millis(300));
+    frame(cx, &window);
+    for id in ["meeting.transcript.search.previous", "meeting.transcript.search.next"] {
+        let b = find(cx, &window, id).bounds();
+        assert_eq!((b.size.width, b.size.height), (px(20.), px(20.)));
+    }
+    cx.update_window(window.into(), |_, w, cx| w.press("escape", cx)).unwrap();
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| !p.search_open), "Esc closes");
+}
+// parity: TRANS-026 TRANS-040
+#[flow_ui::gpui::test]
+async fn transcript_read_failures(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    sql(cx, "ALTER TABLE transcript_segments RENAME TO segments_gone;");
+    window.update(cx, |p, _, cx| { p.pager.as_mut().unwrap().search(db_of(cx).unwrap(), "hinge"); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["The transcript could not be searched."]);
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert_saw(&["The transcript could not be loaded."]);
+}
+// parity: TRANS-028 TRANS-029 TRANS-030
+#[flow_ui::gpui::test]
+async fn copy_menu_selected_item(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    assert_eq!(transcript::copy_selected_title(0), "Copy Selected Segments");
+    assert_eq!(transcript::copy_selected_title(2), "Copy 2 Selected Segments");
+    click(cx, &window, "meeting.transcript.copy");
+    frame(cx, &window);
+    menu_item(cx, &window, 0);
+    assert!(cx.read_from_clipboard().is_none(), "nothing selected: the item is disabled");
+    let first = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().clone());
+    window.update(cx, |p, _, cx| { p.pager.as_mut().unwrap().toggle_selection(&first.id); cx.notify() }).unwrap();
+    frame(cx, &window);
+    cx.update_window(window.into(), |_, w, cx| w.press("escape", cx)).unwrap();
+    frame(cx, &window);
+    click(cx, &window, "meeting.transcript.copy");
+    menu_item(cx, &window, 0);
+    assert!(cx.read_from_clipboard().and_then(|c| c.text()).is_some_and(|t| t.contains(&first.text)));
+}
+// parity: TRANS-031 TRANS-034
+#[flow_ui::gpui::test]
+async fn copy_full_writes_or_says_why_not(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    click(cx, &window, "meeting.transcript.copy");
+    menu_item(cx, &window, 1);
+    assert!(cx.read_from_clipboard().and_then(|c| c.text()).is_some_and(|t| t.contains("hinge samples")));
+    sql(cx, "ALTER TABLE transcript_segments RENAME TO segments_gone;");
+    click(cx, &window, "meeting.transcript.copy");
+    menu_item(cx, &window, 1);
+    fresh(cx, &window);
+    assert_saw(&["The transcript could not be copied."]);
+}
+// parity: TRANS-033
+#[flow_ui::gpui::test]
+async fn copy_too_long_points_to_export(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    sql(cx, "SELECT 1;");
+    let huge: String = "x".repeat(FULL_TEXT_LIMIT + 1);
+    query(cx, |db| db.conn.execute("UPDATE transcript_segments SET assembled_text=?1, normalized_text=?1, raw_text=?1 WHERE id=(SELECT id FROM transcript_segments WHERE meeting_id=?2 LIMIT 1)", [huge.as_str(), SEED_FULL]).unwrap());
+    click(cx, &window, "meeting.transcript.copy");
+    menu_item(cx, &window, 1);
+    fresh(cx, &window);
+    assert_saw(&["The transcript is too long to copy. Export it to a file instead."]);
+}
+// parity: TRANS-041
+#[flow_ui::gpui::test]
+async fn finality_rule(_: &mut TestAppContext) {
+    let row = |state: &str, segments: i64| Transcription { state: state.into(), segment_count: segments, ..Transcription::default() };
+    assert_eq!(finality_for(Some(&row("final", 3))), "final");
+    for state in ["finalizing", "live", "pending", "not_requested"] {
+        assert_eq!(finality_for(Some(&row(state, 3))), "provisional", "{state}");
+    }
+    assert_eq!(finality_for(None), "final");
+    let failed = |pass: &str| Transcription { state: "failed".into(), pass_kind: Some(pass.into()), ..Transcription::default() };
+    assert_eq!(finality_for(Some(&failed("final"))), "final");
+    assert_eq!(finality_for(Some(&failed("live"))), "provisional");
+}
+// parity: TRANS-045 TRANS-046 TRANS-047
+#[flow_ui::gpui::test]
+async fn bubble_colors_follow_state(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    cx.update(|cx| {
+        let p = pal(cx);
+        assert_eq!(transcript::bubble_colors(false, false, "final", cx), (p.canvas, p.ink));
+        assert_eq!(transcript::bubble_colors(false, true, "final", cx).0, p.tint);
+        assert_eq!(transcript::bubble_colors(true, true, "final", cx).0, p.accent.opacity(0.2));
+        assert_eq!(transcript::bubble_colors(false, false, "provisional", cx).1, p.muted);
+    });
+}
+// parity: TRANS-050 TRANS-051
+#[flow_ui::gpui::test]
+async fn source_labels_for_rows_without_speakers(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    sql(cx, &format!("UPDATE meeting_diarization SET accepted_run_id=NULL WHERE meeting_id='{SEED_FULL}'; UPDATE transcript_segments SET analysis_tracks='system' WHERE id=(SELECT id FROM transcript_segments WHERE meeting_id='{SEED_FULL}' ORDER BY ordinal LIMIT 1); UPDATE transcript_segments SET analysis_tracks='both' WHERE meeting_id='{SEED_FULL}' AND id<>(SELECT id FROM transcript_segments WHERE meeting_id='{SEED_FULL}' ORDER BY ordinal LIMIT 1);"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert_saw(&["Others", "Unassigned"]);
+    assert_eq!(source_explanation("system"), "System audio; may include multiple people");
+    assert_eq!(source_explanation("both"), "Mixed microphone and system audio; speaker unknown");
+}
+// parity: TRANS-052 TRANS-053 TRANS-055
+#[flow_ui::gpui::test]
+async fn bubble_context_menu_selects_and_plays(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    let row = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().clone());
+    let bubble = sid(format!("meeting.transcript.bubble.{}", row.ordinal));
+    right_click(cx, &window, bubble.clone());
+    menu_item(cx, &window, 0);
+    assert!(read(cx, &window, |p| p.pager.as_ref().unwrap().selection.contains(&row.id)));
+    right_click(cx, &window, bubble.clone());
+    menu_item(cx, &window, 0);
+    assert!(read(cx, &window, |p| !p.pager.as_ref().unwrap().selection.contains(&row.id)), "Deselect");
+    query(cx, |db| db.conn.execute("UPDATE meeting_segments SET state='finalized' WHERE track_id IN (SELECT id FROM meeting_tracks WHERE meeting_id=?1)", [SEED_FULL]).unwrap());
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    right_click(cx, &window, bubble);
+    menu_item(cx, &window, 1);
+    assert!(read(cx, &window, |p| p.playing), "Play from here");
+}
+// parity: TRANS-086
+#[flow_ui::gpui::test]
+async fn section_list_follows_near_the_bottom_only(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.section:interrupted"));
+    window.update(cx, |p, _, cx| {
+        let s = p.status.as_mut().unwrap();
+        s.segments = (0..60).map(|i| (format!("Row {i}"), "mic".to_string())).collect();
+        cx.notify();
+    }).unwrap();
+    frame(cx, &window);
+    frame(cx, &window);
+    let at_end = read(cx, &window, |p| (-p.section_scroll.offset().y.as_f32(), p.section_scroll.max_offset().y.as_f32()));
+    assert!(at_end.1 > 190., "{at_end:?}");
+    assert!((at_end.1 - at_end.0).abs() < 1., "follows: {at_end:?}");
+    window.update(cx, |p, _, _| p.section_scroll.set_offset(point(px(0.), px(0.)))).unwrap();
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.section_scroll.offset().y), px(0.), "scrolled away, it stays");
+}
+
+// parity: SPK-002
+#[flow_ui::gpui::test]
+async fn assign_control_needs_a_final_finished_meeting_with_labels(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert!(has(cx, &window, "meeting.speakers.assign.open"));
+    sql(cx, &format!("UPDATE meeting_transcriptions SET state='interrupted' WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert!(!has(cx, &window, "meeting.speakers.assign.open"), "row not final");
+    sql(cx, &format!("UPDATE meeting_transcriptions SET state='final' WHERE meeting_id='{SEED_FULL}'; UPDATE meeting_diarization SET accepted_run_id=NULL WHERE meeting_id='{SEED_FULL}';"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    assert!(!has(cx, &window, "meeting.speakers.assign.open"), "no diarization");
+}
+// parity: SPK-037 SPK-038 SPK-039
+#[flow_ui::gpui::test]
+async fn confirming_a_suggested_speaker(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    assert_saw(&["Tomas Novak?"]);
+    refuse(cx, "UPDATE", "identity_assignments");
+    refuse(cx, "INSERT", "identity_assignments");
+    let confirm = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().find(|r| r.label.as_ref().is_some_and(|l| l.suggested.is_some())).unwrap().ordinal);
+    let confirm_in = |cx: &mut TestAppContext| cx.update_window(window.into(), |_, w, cx| w.within(sid(format!("meeting.transcript.row.{confirm}"))).click("speaker.confirm", cx)).unwrap();
+    confirm_in(cx);
+    fresh(cx, &window);
+    assert_saw(&["The speaker could not be confirmed."]);
+    allow(cx, "UPDATE", "identity_assignments");
+    allow(cx, "INSERT", "identity_assignments");
+    confirm_in(cx);
+    fresh(cx, &window);
+    assert!(!seen("Tomas Novak?"), "the label is no longer a question");
+    assert_saw(&["Tomas Novak"]);
+}
+// parity: SPK-040 SPK-041 SPK-042 SPK-043
+#[flow_ui::gpui::test]
+async fn change_speaker_submenu_writes_the_correction(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.transcript"));
+    let row = read(cx, &window, |p| p.pager.as_ref().unwrap().rows().next().unwrap().clone());
+    let choices = read(cx, &window, |p| p.pager.as_ref().unwrap().speakers.as_ref().unwrap().1.iter().filter(|x| x.merged_into.is_none()).count());
+    right_click(cx, &window, sid(format!("meeting.transcript.bubble.{}", row.ordinal)));
+    submenu_item(cx, &window, 2, choices + 1);
+    let manual: Option<String> = query(cx, |db| db.conn.query_row("SELECT manual_kind FROM speaker_assignments WHERE segment_id=?1", [&row.id], |r| r.get(0)).unwrap());
+    assert_eq!(manual.as_deref(), Some("unknown"));
+}
+// parity: SPK-044 SPK-045 SPK-072 SPK-073
+#[flow_ui::gpui::test]
+async fn correction_and_merge_failures_surface(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let (first, a, b) = read(cx, &window, |p| {
+        let rows = p.pager.as_ref().unwrap();
+        let roots: Vec<_> = rows.speakers.as_ref().unwrap().1.iter().filter(|x| x.merged_into.is_none()).map(|x| x.id.clone()).collect();
+        (rows.rows().next().unwrap().id.clone(), roots[0].clone(), roots[1].clone())
+    });
+    refuse(cx, "INSERT", "speaker_corrections");
+    window.update(cx, |p, _, cx| p.correct(&first, Correction::Unknown, cx)).unwrap();
+    assert_eq!(read(cx, &window, |p| p.transcript_notice.clone()).as_deref(), Some("The speaker change could not be saved."));
+    window.update(cx, |p, _, cx| p.merge_into(&a, &b, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["The change could not be saved."]);
+    allow(cx, "INSERT", "speaker_corrections");
+    let run: String = query(cx, |db| db.conn.query_row("SELECT accepted_run_id FROM meeting_diarization WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap());
+    sql(cx, &format!("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<{CORRECTIONS_PER_MEETING}) INSERT INTO speaker_corrections (id, meeting_id, run_id, kind, created_at) SELECT 'fill'||i, '{SEED_FULL}', '{run}', 'rename', 1 FROM n;"));
+    let capacity = "This meeting has too many speaker changes to save more.";
+    window.update(cx, |p, _, cx| p.correct(&first, Correction::Unknown, cx)).unwrap();
+    assert_eq!(read(cx, &window, |p| p.transcript_notice.clone()).as_deref(), Some(capacity));
+    window.update(cx, |p, _, cx| p.merge_into(&a, &b, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&[capacity]);
+}
+// parity: SPK-051 SPK-052 SPK-053
+#[flow_ui::gpui::test]
+async fn sheet_loading_empty_and_failed(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    window.update(cx, |p, _, cx| {
+        let a = p.assign.as_mut().unwrap();
+        a.model.sections.clear();
+        a.model.is_loading = true;
+        cx.notify();
+    }).unwrap();
+    frame(cx, &window);
+    assert!(has(cx, &window, "meeting.speakers.loading"), "SPK-051");
+    window.update(cx, |p, _, cx| { p.assign.as_mut().unwrap().model.is_loading = false; cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["There are no speakers to name."]);
+    click(cx, &window, "meeting.speakers.close");
+    sql(cx, "ALTER TABLE meeting_speakers RENAME TO speakers_gone;");
+    window.update(cx, |p, w, cx| p.open_assign(None, w, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Speakers could not be loaded."]);
+}
+// parity: SPK-054 SPK-055 SPK-056
+#[flow_ui::gpui::test]
+async fn review_notice_dismisses_or_says_it_could_not(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    let run: String = query(cx, |db| db.conn.query_row("SELECT accepted_run_id FROM meeting_diarization WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap());
+    sql(cx, &format!("INSERT INTO speaker_corrections (id, meeting_id, run_id, kind, new_value, needs_review, created_at) VALUES ('review-1','{SEED_FULL}','{run}','rename','Marta moved to another voice',1,1);"));
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    window.update(cx, |p, w, cx| p.open_assign(None, w, cx)).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Marta moved to another voice", "Dismiss"]);
+    assert!(has(cx, &window, "meeting.speakers.review"));
+    refuse(cx, "UPDATE", "speaker_corrections");
+    click(cx, &window, "meeting.speakers.review.dismiss");
+    fresh(cx, &window);
+    assert_saw(&["The notice could not be dismissed."]);
+    allow(cx, "UPDATE", "speaker_corrections");
+    click(cx, &window, "meeting.speakers.review.dismiss");
+    frame(cx, &window);
+    assert!(!has(cx, &window, "meeting.speakers.review"));
+    let flag: i64 = query(cx, |db| db.conn.query_row("SELECT needs_review FROM speaker_corrections WHERE id='review-1'", [], |r| r.get(0)).unwrap());
+    assert_eq!(flag, 0);
+}
+/// Scrolls the sheet until the element is in view, then clicks it.
+fn sheet_click(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, id: &str) {
+    let area = find(cx, window, "meeting.speakers.scroll").bounds();
+    let target = find(cx, window, sid(id)).bounds();
+    let offset = read(cx, window, |p| p.assign.as_ref().unwrap().scroll.offset().y);
+    window.update(cx, |p, _, _| p.assign.as_ref().unwrap().scroll.set_offset(point(px(0.), offset - (target.origin.y - area.origin.y) + px(20.)))).unwrap();
+    frame(cx, window);
+    click(cx, window, sid(id));
+}
+fn unnamed(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>) -> String {
+    read(cx, window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.name.is_none() && !s.speaker.is_you()).unwrap().speaker.id.clone())
+}
+// parity: SPK-064
+#[flow_ui::gpui::test]
+async fn enter_in_a_name_field_saves(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let id = unnamed(cx, &window);
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), "Jana Horvat");
+    cx.update_window(window.into(), |_, w, cx| w.press("enter", cx)).unwrap();
+    frame(cx, &window);
+    let saved: Option<String> = query(cx, |db| db.conn.query_row("SELECT display_name FROM meeting_speakers WHERE id=?1", [&id], |r| r.get(0)).unwrap());
+    assert_eq!(saved.as_deref(), Some("Jana Horvat"));
+    assert!(read(cx, &window, |p| p.assign.is_none()));
+}
+// parity: SPK-065 SPK-066 SPK-067
+#[flow_ui::gpui::test]
+async fn suggestions_filter_by_prefix_and_pick(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let id = unnamed(cx, &window);
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), "Mar");
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.assign.as_ref().unwrap().model.suggestions.iter().all(|s| s.starts_with("Mar"))));
+    assert_eq!(query(cx, |db| name_suggestions(db, "%", 8).unwrap().len()), 0, "LIKE characters are escaped");
+    assert!(query(cx, |db| name_suggestions(db, "", 8).unwrap().len()) <= 8);
+    sheet_click(cx, &window, "meeting.speakers.suggestion.0");
+    frame(cx, &window);
+    let name = window.read_with(cx, |p, cx| p.assign.as_ref().unwrap().inputs[&id].read(cx).value().to_string()).unwrap();
+    assert!(name.starts_with("Mar"));
+}
+fn with_identity(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, id: &str, state: &str, known: Option<(&str, &str)>, needs_choice: bool) {
+    let (id, state, known) = (id.to_string(), state.to_string(), known.map(|k| (k.0.to_string(), k.1.to_string())));
+    window.update(cx, |p, _, cx| {
+        let s = p.assign.as_mut().unwrap().model.sections.iter_mut().find(|s| s.speaker.id == id).unwrap();
+        let i = s.speaker.identity.get_or_insert_with(Default::default);
+        i.state = state;
+        i.known_id = known.as_ref().map(|k| k.0.clone());
+        i.known_name = known.map(|k| k.1);
+        i.needs_choice = needs_choice;
+        i.sample_offer = true;
+        cx.notify();
+    }).unwrap();
+    fresh(cx, window);
+}
+// parity: SPK-076 SPK-082 SPK-100
+#[flow_ui::gpui::test]
+async fn merged_speaker_must_choose_an_identity(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let id = unnamed(cx, &window);
+    with_identity(cx, &window, &id, "unknown", None, true);
+    assert_saw(&["Choose an identity", "Choose a known speaker…", "Keep Unknown"]);
+    assert!(read(cx, &window, |p| !p.assign.as_ref().unwrap().model.can_save()));
+    sheet_click(cx, &window, "identity.mergedKeepUnknown");
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.id == id).unwrap().action.clone()), IdentityAction::ResolveMerged(None));
+    assert!(read(cx, &window, |p| p.assign.as_ref().unwrap().model.can_save()));
+}
+// parity: SPK-079 SPK-080 SPK-081 SPK-085 SPK-099
+#[flow_ui::gpui::test]
+async fn possible_match_offers_confirm_another_and_keep_unknown(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let id = unnamed(cx, &window);
+    let known = query(cx, |db| known_speakers(db).unwrap().into_iter().find(|k| !k.is_local).unwrap());
+    with_identity(cx, &window, &id, "possible", Some((&known.id, &known.name)), false);
+    assert_saw(&["Confirm", "Choose another…", "Keep Unknown"]);
+    assert!(has(cx, &window, "identity.chooseAnother"));
+    sheet_click(cx, &window, "identity.confirm");
+    fresh(cx, &window);
+    assert_saw(&["Also remember this voice sample"]);
+    sheet_click(cx, &window, "identity.keepUnknown");
+    fresh(cx, &window);
+    assert!(!seen("Also remember this voice sample"));
+    click(cx, &window, "meeting.speakers.save");
+    frame(cx, &window);
+    let rejected: i64 = query(cx, |db| db.conn.query_row("SELECT count(*) FROM rejected_candidates WHERE meeting_speaker_id=?1 AND known_speaker_id=?2", [id.as_str(), known.id.as_str()], |r| r.get(0)).unwrap());
+    assert_eq!(rejected, 1);
+}
+// parity: SPK-083 SPK-084
+#[flow_ui::gpui::test]
+async fn typed_name_asks_to_remember_then_about_the_duplicate(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    // The first section with a Remember row: the identity ids repeat per section, as in Swift.
+    let id = read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| !s.speaker.is_you()).unwrap().speaker.id.clone());
+    let known = query(cx, |db| known_speakers(db).unwrap().into_iter().find(|k| !k.is_local).unwrap());
+    let name = known.name.clone();
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), &name);
+    fresh(cx, &window);
+    assert_saw(&[REMEMBER_QUESTION, "Not now", REMEMBER_SENTENCE]);
+    sheet_click(cx, &window, "identity.remember");
+    fresh(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.id == id).unwrap().action.clone()), IdentityAction::Remember);
+    assert_saw(&[&format!("Is this {name} you already remember?"), "Same person", "Someone new"]);
+    assert!(read(cx, &window, |p| !p.assign.as_ref().unwrap().model.can_save()), "unresolved duplicate blocks Save");
+    sheet_click(cx, &window, "identity.someoneNew");
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.assign.as_ref().unwrap().model.sections.iter().find(|s| s.speaker.id == id).unwrap().action.clone()), IdentityAction::RememberNew);
+}
+// parity: SPK-102 SPK-103 SPK-104
+#[flow_ui::gpui::test]
+async fn sheet_save_failures_keep_it_open(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let id = unnamed(cx, &window);
+    type_in!(cx, &window, |p| p.assign.as_ref().unwrap().inputs[&id].clone(), "Jana Horvat");
+    refuse(cx, "UPDATE", "meeting_speakers");
+    click(cx, &window, "meeting.speakers.save");
+    fresh(cx, &window);
+    assert_saw(&["Names could not be saved."]);
+    assert!(read(cx, &window, |p| p.assign.is_some()));
+    allow(cx, "UPDATE", "meeting_speakers");
+    let known = query(cx, |db| known_speakers(db).unwrap().into_iter().find(|k| !k.is_local).unwrap());
+    window.update(cx, |p, _, cx| p.set_identity(&id, IdentityAction::Pick(known.id.clone()), cx)).unwrap();
+    refuse(cx, "INSERT", "identity_assignments");
+    refuse(cx, "UPDATE", "identity_assignments");
+    click(cx, &window, "meeting.speakers.save");
+    fresh(cx, &window);
+    assert_saw(&["Speaker identities could not be saved."]);
+    allow(cx, "INSERT", "identity_assignments");
+    allow(cx, "UPDATE", "identity_assignments");
+    sql(cx, &format!("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<{REJECTED_PER_MEETING}) INSERT INTO meeting_speakers (id, meeting_id, run_id, cluster_key, source, origin, label_ordinal) SELECT 'fill'||i, '{SEED_FULL}', (SELECT accepted_run_id FROM meeting_diarization WHERE meeting_id='{SEED_FULL}'), 1000+i, 'remote', 'engine', 1000+i FROM n; INSERT INTO rejected_candidates (meeting_speaker_id, known_speaker_id, rejected_at) SELECT id, '{}', 1 FROM meeting_speakers WHERE id LIKE 'fill%';", known.id));
+    with_identity(cx, &window, &id, "possible", Some((&known.id, &known.name)), false);
+    sheet_click(cx, &window, "identity.keepUnknown");
+    click(cx, &window, "meeting.speakers.save");
+    fresh(cx, &window);
+    assert_saw(&["This meeting has too many rejected matches to save more."]);
+}
+// parity: SPK-050
+#[flow_ui::gpui::test]
+async fn sheet_scroller_shows_more_voices_below(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.assign"));
+    let scroll = find(cx, &window, "meeting.speakers.scroll").bounds();
+    assert_eq!(scroll.size.height, px(480.));
+    let handle = read(cx, &window, |p| p.assign.as_ref().unwrap().scroll.max_offset().y);
+    assert!(handle > px(0.), "more follows below the fold");
+    assert_eq!(find(cx, &window, "meeting.speakers.assign").bounds().size.width, px(560.));
+}
+
+// parity: SUM-013 SUM-017 SUM-018
+#[flow_ui::gpui::test]
+async fn pending_cancel_reports_and_empty_states(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary-pending"));
+    click(cx, &window, "meeting.summary.cancel");
+    fresh(cx, &window);
+    assert_saw(&["isn't available"]);
+    window.update(cx, |p, _, cx| { p.summary.model = None; p.summary.forced = Some(SummaryHeader::Running("x".into())); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Summarizing…"]);
+    window.update(cx, |p, _, cx| { p.summary.forced = Some(SummaryHeader::Eligible); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["No summary yet."]);
+}
+// parity: SUM-031
+#[flow_ui::gpui::test]
+async fn cancelled_run_with_an_accepted_summary_reads_succeeded(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    sql(cx, &format!("UPDATE analysis_runs SET state='cancelled' WHERE meeting_id='{SEED_FULL}' AND id<>(SELECT accepted_run_id FROM meeting_analysis WHERE meeting_id='{SEED_FULL}');"));
+    assert_eq!(query(cx, |db| summary_header(db, SEED_FULL).unwrap()), SummaryHeader::Succeeded);
+    let _ = window;
+}
+// parity: SUM-040
+#[flow_ui::gpui::test]
+async fn edit_failure_shows_under_the_header(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    refuse(cx, "INSERT", "analysis_overlays");
+    click(cx, &window, "meeting.summary.status.0");
+    fresh(cx, &window);
+    assert_saw(&["The edit could not be saved."]);
+    assert!(has(cx, &window, "meeting.summary.editError"));
+}
+// parity: SUM-042 SUM-043 SUM-044 SUM-045
+#[flow_ui::gpui::test]
+async fn summary_text_edits_through_its_context_menu(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let original = read(cx, &window, |p| p.summary.model.as_ref().unwrap().summary.clone());
+    cx.update_window(window.into(), |_, w, cx| w.double_click("meeting.summary.text", cx)).unwrap();
+    frame(cx, &window);
+    type_in!(cx, &window, |p| p.summary.summary_input.clone(), "Rewritten.");
+    click(cx, &window, "meeting.summary.edit.save");
+    frame(cx, &window);
+    assert_eq!(read(cx, &window, |p| p.summary.model.as_ref().unwrap().summary.clone()), "Rewritten.");
+    right_click(cx, &window, "meeting.summary.text");
+    menu_item(cx, &window, 1);
+    assert!(read(cx, &window, |p| p.summary.shown_ai.contains("summary")), "Show AI value");
+    fresh(cx, &window);
+    assert_saw(&[original.split('\n').next().unwrap()]);
+    right_click(cx, &window, "meeting.summary.text");
+    menu_item(cx, &window, 1);
+    assert!(read(cx, &window, |p| !p.summary.shown_ai.contains("summary")), "Hide AI value");
+    right_click(cx, &window, "meeting.summary.text");
+    menu_item(cx, &window, 2);
+    assert_eq!(read(cx, &window, |p| p.summary.model.as_ref().unwrap().summary.clone()), original, "Remove text edit");
+}
+fn action_item(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, ordinal: usize) -> Item {
+    read(cx, window, |p| p.summary.model.as_ref().unwrap().action_items[ordinal].clone())
+}
+fn open_item_menu(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, item: &Item) {
+    click(cx, window, sid(format!("meeting.summary.editMenu.{}.{}", item.kind, item.ordinal)));
+    frame(cx, window);
+}
+// parity: SUM-057 SUM-059 SUM-060
+#[flow_ui::gpui::test]
+async fn item_double_click_edits_and_escape_cancels(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = action_item(cx, &window, 0);
+    let menu = find(cx, &window, sid(format!("meeting.summary.editMenu.{}.{}", item.kind, item.ordinal))).bounds();
+    assert_eq!((menu.size.width, menu.size.height), (px(20.), px(20.)));
+    assert!(has(cx, &window, sid(format!("meeting.summary.source.{}.{}", item.kind, item.ordinal))));
+    cx.update_window(window.into(), |_, w, cx| w.double_click(sid(format!("meeting.summary.text.{}.{}", item.kind, item.ordinal)), cx)).unwrap();
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.summary.editing.is_some()));
+    cx.update_window(window.into(), |_, w, cx| w.press("escape", cx)).unwrap();
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| p.summary.editing.is_none()), "Esc cancels");
+    assert_eq!(action_item(cx, &window, 0).text, item.text);
+    cx.update_window(window.into(), |_, w, cx| w.double_click(sid(format!("meeting.summary.text.{}.{}", item.kind, item.ordinal)), cx)).unwrap();
+    frame(cx, &window);
+    type_in!(cx, &window, |p| p.summary.item_input.clone(), "Changed item");
+    click(cx, &window, "meeting.summary.edit.save");
+    frame(cx, &window);
+    assert_eq!(action_item(cx, &window, 0).text, "Changed item");
+}
+// parity: SUM-065 SUM-066 SUM-067
+#[flow_ui::gpui::test]
+async fn owner_submenu_picks_someone_else_or_no_owner(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = action_item(cx, &window, 0);
+    let roots = read(cx, &window, |p| owner_choices(&p.summary.roots).len());
+    open_item_menu(cx, &window, &item);
+    submenu_item(cx, &window, 1, roots + 1);
+    let popover = find(cx, &window, "notetaker.popover").bounds();
+    assert_eq!(popover.size.width, px(220.));
+    assert_eq!(find(cx, &window, "meeting.summary.owner.save").disabled(), Some(true), "a blank name can't save");
+    type_in!(cx, &window, |p| p.summary.item_input.clone(), "Petra");
+    frame(cx, &window);
+    click(cx, &window, "meeting.summary.owner.save");
+    frame(cx, &window);
+    assert_eq!(action_item(cx, &window, 0).owner.text(), "Petra");
+    open_item_menu(cx, &window, &item);
+    submenu_item(cx, &window, 1, roots + 2);
+    assert_eq!(query(cx, |db| db.conn.query_row::<String, _, _>("SELECT user_value FROM analysis_overlays WHERE field='owner' AND item_id=?1", [&item.id], |r| r.get(0)).unwrap()), OWNER_VALUE_NONE);
+}
+// parity: SUM-068 SUM-069 SUM-070 SUM-080
+#[flow_ui::gpui::test]
+async fn due_date_picks_from_the_calendar_and_clears(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = action_item(cx, &window, 0);
+    open_item_menu(cx, &window, &item);
+    submenu_item(cx, &window, 2, 0);
+    assert!(has(cx, &window, "meeting.summary.due"));
+    window.update(cx, |p, w, cx| p.summary.due.update(cx, |s, cx| s.set_date(calendar_date("2027-03-09"), w, cx))).unwrap();
+    frame(cx, &window);
+    click(cx, &window, "meeting.summary.due.save");
+    frame(cx, &window);
+    assert_eq!(action_item(cx, &window, 0).due_date.as_deref(), Some("2027-03-09"));
+    fresh(cx, &window);
+    assert_saw(&["Due 9 Mar"]);
+    open_item_menu(cx, &window, &item);
+    submenu_item(cx, &window, 2, 1);
+    assert_eq!(action_item(cx, &window, 0).due_date, None);
+    fresh(cx, &window);
+    assert!(!seen("Due 9 Mar"), "no date, no chip");
+}
+// parity: SUM-071 SUM-072
+#[flow_ui::gpui::test]
+async fn dismiss_then_reopen(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let item = action_item(cx, &window, 0);
+    open_item_menu(cx, &window, &item);
+    menu_item(cx, &window, 3);
+    assert_eq!(action_item(cx, &window, 0).status, "dismissed");
+    open_item_menu(cx, &window, &item);
+    menu_item(cx, &window, 3);
+    assert_eq!(action_item(cx, &window, 0).status, "open");
+}
+// parity: SUM-076
+#[flow_ui::gpui::test]
+async fn accept_writes_the_suggested_owner(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let before = query(cx, |db| db.conn.query_row::<i64, _, _>("SELECT count(*) FROM analysis_overlays WHERE field='owner'", [], |r| r.get(0)).unwrap());
+    click(cx, &window, "meeting.summary.owner.accept");
+    frame(cx, &window);
+    assert_eq!(query(cx, |db| db.conn.query_row::<i64, _, _>("SELECT count(*) FROM analysis_overlays WHERE field='owner'", [], |r| r.get(0)).unwrap()), before + 1);
+}
+// parity: SUM-081
+#[flow_ui::gpui::test]
+async fn previous_edits_list_and_delete(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let run: String = query(cx, |db| db.conn.query_row("SELECT accepted_run_id FROM meeting_analysis WHERE meeting_id=?1", [SEED_FULL], |r| r.get(0)).unwrap());
+    let _ = run;
+    click(cx, &window, "meeting.summary.status.0");
+    sql(cx, &format!("UPDATE analysis_overlays SET orphaned_at=1 WHERE meeting_id='{SEED_FULL}';"));
+    window.update(cx, |p, _, cx| { p.summary_refresh(cx); p.menu = Some("summary.edits".into()); cx.notify() }).unwrap();
+    fresh(cx, &window);
+    assert_saw(&["Previous edits"]);
+    assert_eq!(find(cx, &window, "notetaker.popover").bounds().size.width, px(280.));
+}
+// parity: SUM-083
+#[flow_ui::gpui::test]
+async fn speaker_mentions_open_assign_speakers(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.summary"));
+    let bounds = find(cx, &window, "meeting.summary.text").bounds();
+    let mut x = 2.;
+    while x < bounds.size.width.as_f32() && read(cx, &window, |p| p.assign.is_none()) {
+        for y in [8., 30., 52., 74.] {
+            cx.update_window(window.into(), |_, w, cx| w.click_at("meeting.summary.text", point(px(x), px(y)), cx)).unwrap();
+        }
+        frame(cx, &window);
+        x += 12.;
+    }
+    assert!(read(cx, &window, |p| p.assign.is_some()), "a mention opened the sheet");
 }

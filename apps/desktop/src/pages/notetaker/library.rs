@@ -153,7 +153,7 @@ impl NotetakerPage {
             list = list.child(empty_line("No matches", cx));
         }
         if self.lib.has_older {
-            list = list.child(div().pt(px(20.)).child(prototype_button("notetaker.loadOlder", "Load older notes").on_click(cx.listener(|this, _, _, cx| {
+            list = list.child(div().pt(px(20.)).child(prototype_button("notetaker.loadOlder", "Load older notes").disabled(self.lib.is_loading).on_click(cx.listener(|this, _, _, cx| {
                 if let Some(db) = db_of(cx) {
                     this.lib.load_older(db);
                 }
@@ -291,7 +291,7 @@ impl NotetakerPage {
         let row = self.lib.rows.iter().find(|r| Some(&r.id) == self.lib.preview_id.as_ref()).cloned();
         let notes = self.lib.preview.as_ref().map(|d| d.notes.chars().take(PREVIEW_CHARS).collect::<String>()).filter(|n| !n.is_empty());
         let notice = self.lib.preview_notice.clone();
-        v_flex().id("notetaker.preview").size_full().when_some(row, |d, row| {
+        v_flex().id("notetaker.preview").test_support().size_full().when_some(row, |d, row| {
             let offset = offset_at(row.created_at, cx);
             d.child(v_flex().p(px(20.)).gap(px(8.)).child(t(row.display_title(offset)).font(18., 500.)).child(t(format!("{} · {}", date_time_text(row.created_at, offset), duration_text(row.recorded_ms))).size(14.).color(p.muted).mono_digits()))
                 .child(hairline(cx))

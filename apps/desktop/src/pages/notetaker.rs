@@ -74,6 +74,7 @@ pub struct NotetakerPage {
     pub(crate) search_epoch: u64,
     pub(crate) transcript_notice: Option<String>,
     pub(crate) scroll: ScrollHandle,
+    pub(crate) section_scroll: ScrollHandle,
     pub(crate) speaker_run: Option<RunLine>,
     pub(crate) identify_run: Option<RunLine>,
     pub(crate) past_search: Option<(String, i64)>,
@@ -160,6 +161,7 @@ pub(crate) fn popover_panel(width: f32, top: f32, cx: &Context<NotetakerPage>, c
     deferred(
         div()
             .id("notetaker.popover")
+            .test_support()
             .absolute()
             .top(px(top))
             .right_0()
@@ -200,6 +202,15 @@ impl NotetakerPage {
         let active_title = cx.new(|cx| InputState::new(window, cx).placeholder("Title (optional)"));
         let thoughts = cx.new(|cx| TextareaState::new(window, cx));
         let subs = vec![
+            // `onDisappear`: leaving the page lets go of the open note and the preview.
+            cx.observe_global_in::<crate::shell::Session>(window, |this, window, cx| {
+                if cx.global::<crate::shell::Session>().selection != crate::pages::Page::Meetings && (this.lib.detail.is_some() || this.lib.preview_id.is_some()) {
+                    this.preview_epoch += 1;
+                    this.lib.release_detail();
+                    this.close_note_state(window, cx);
+                    cx.notify();
+                }
+            }),
             cx.subscribe_in(&active_title, window, |this, _, e: &TextInputEvent, _, cx| {
                 if matches!(e, TextInputEvent::PressEnter { .. }) {
                     this.save_active_title(cx);
@@ -263,6 +274,7 @@ impl NotetakerPage {
             search_epoch: 0,
             transcript_notice: None,
             scroll: ScrollHandle::new(),
+            section_scroll: ScrollHandle::new(),
             speaker_run: None,
             identify_run: None,
             past_search: None,
