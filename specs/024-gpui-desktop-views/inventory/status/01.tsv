@@ -155,20 +155,20 @@ MENU-010	auto	test:open_keeps_the_selection_and_settings_selects
 MENU-011	auto	test:idle_menu_lists_swifts_items
 MENU-012	auto	test:open_keeps_the_selection_and_settings_selects
 MENU-013	auto	test:attention_and_busy_add_their_items
-MENU-014	auto	test:meeting_and_cancel_items_send_their_commands
+MENU-014	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
 MENU-015	auto	test:idle_menu_lists_swifts_items
 MENU-016	auto	test:meeting_items_follow_its_state
-MENU-017	auto	test:meeting_and_cancel_items_send_their_commands
-MENU-018	auto	test:meeting_and_cancel_items_send_their_commands
+MENU-017	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
+MENU-018	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
 MENU-019	auto	test:meeting_items_follow_its_state
-MENU-020	auto	test:meeting_and_cancel_items_send_their_commands
-MENU-021	auto	test:meeting_and_cancel_items_send_their_commands
+MENU-020	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
+MENU-021	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
 MENU-022	auto	test:meeting_items_follow_its_state
 MENU-023	auto	test:meeting_items_follow_its_state
 MENU-024	auto	test:meeting_items_follow_its_state
 MENU-025	auto	test:idle_menu_lists_swifts_items
 MENU-026	auto	test:idle_menu_lists_swifts_items
-MENU-027	auto	test:start_opens_notetaker_and_starts_only_when_allowed
+MENU-027	auto	test:start_opens_notetaker_and_starts_only_when_allowed ; note:command path checked through the Fake service; the production session arrives with Feature 025
 MENU-028	auto	test:idle_menu_lists_swifts_items
 MENU-029	auto	test:idle_menu_lists_swifts_items
 MENU-030	auto	test:quit_item_runs_the_quit_sequence
@@ -311,7 +311,7 @@ SHELL-155	auto	test:review_sheet_shows_warnings_and_buttons_work
 SHELL-156	auto	test:sheet_dismissed_another_way_cancels
 SHELL-157	auto	test:panel_sits_near_the_bottom_center ; note:difference: GPUI's popup kind sits at level 101, not floating (3), and accepts key status; no reference pair, ax press on the reference row found no Insert control
 SHELL-158	auto	test:panel_layout_matches_swift
-SHELL-159	auto	test:panel_sits_near_the_bottom_center
+SHELL-159	auto	test:panel_sits_near_the_bottom_center ; note:difference: Rust always uses the primary display's visible frame; Swift picks the target window's or the mouse's screen. Appearance follows the app palette
 SHELL-160	auto	test:panel_runs_select_confirm_insert
 SHELL-161	auto	test:panel_runs_select_confirm_insert
 SHELL-162	auto	test:panel_runs_select_confirm_insert
