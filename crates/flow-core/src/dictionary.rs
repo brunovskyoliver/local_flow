@@ -1433,4 +1433,204 @@ mod tests {
         assert!(m.retired_terms(t)[0].is_boost());
         assert!(!m.is_provisional(t));
     }
+
+    // parity: DICT-069
+    /// The boost row doesn't count; with no key rows the entry's `learned_at` decides.
+    #[test]
+    fn learning_ignores_boost_and_falls_back_to_learned() {
+        let db = empty();
+        let mut e = entry("Alpha", &["alfa"]);
+        e.learned_at = Some(5);
+        save(&db, &e, None, "established").unwrap();
+        let mut m = Model::default();
+        let set = |state: &str, key: &str| db.conn.execute("UPDATE dictionary_key_usage SET state=? WHERE key_id=?", params![state, key]).unwrap();
+        m.refresh(&db, |_| false);
+        assert!(!m.is_provisional(&e), "rows exist and none is provisional");
+        set("provisional", BOOST);
+        m.refresh(&db, |_| false);
+        assert!(!m.is_provisional(&e), "boost ignored");
+        set("provisional", &key_id("alfa"));
+        m.refresh(&db, |_| false);
+        assert!(m.is_provisional(&e));
+        db.conn.execute("DELETE FROM dictionary_key_usage WHERE key_id<>?", [BOOST]).unwrap();
+        m.refresh(&db, |_| false);
+        assert!(m.is_provisional(&e), "no key rows, learned");
+        e.learned_at = None;
+        assert!(!m.is_provisional(&e), "no key rows, not learned");
+    }
+
+    // parity: DICT-073 DICT-074 DICT-075
+    /// Summed across every key including boost; the date is the latest, with a year when it isn't this one.
+    #[test]
+    fn the_usage_summary_sums_all_rows_and_dates_the_latest() {
+        let db = empty();
+        let e = entry("Alpha", &["alfa"]);
+        save(&db, &e, None, "established").unwrap();
+        let set = |key: &str, a: i64, k: i64, r: i64, last: i64| db.conn.execute("UPDATE dictionary_key_usage SET applied=?, kept=?, reverted=?, last_used_at=? WHERE key_id=?", params![a, k, r, last, key]).unwrap();
+        // 2001-02-03 12:00 UTC, in milliseconds; a local day either side stays in that month.
+        let old = 981_201_600_000;
+        set(BOOST, 2, 1, 0, old);
+        set(&key_id("alfa"), 3, 1, 1, old - 86_400_000);
+        let mut m = Model::default();
+        m.refresh(&db, |_| false);
+        // `SELECT *` grouped by entry: this entry has all three of its rows.
+        assert_eq!(m.usage[&e.id].len(), 3);
+        let text = m.usage_summary(&db, &e);
+        assert!(text.starts_with("Used 5 · kept 2 · undone 1 · "), "{text}");
+        assert!(text.ends_with(" Feb 2001") || text.ends_with(" Feb, 2001") || text.contains("Feb") && text.ends_with("2001"), "{text}");
+        assert!(text.contains('3'), "the latest day: {text}");
+        // This year's date drops the year.
+        let now = now_ms();
+        let this_year: String = db.conn.query_row("SELECT strftime('%Y','now','localtime')", [], |r| r.get(0)).unwrap();
+        let t = usage_text(&db, 1, 1, 0, Some(now));
+        assert!(!t.contains(&this_year), "{t}");
+    }
+
+    // parity: DICT-078
+    #[test]
+    fn retired_terms_run_canonical_aliases_then_boost() {
+        let db = empty();
+        let e = entry("Alpha", &["alfa", "alpa", "alpah"]);
+        save(&db, &e, None, "established").unwrap();
+        let retire = |key: &str| db.conn.execute("UPDATE dictionary_key_usage SET state='retired', retired_at=1, retired_from='established' WHERE key_id=?", [key]).unwrap();
+        for k in [BOOST.to_string(), key_id("alpah"), key_id("alfa"), key_id("Alpha")] {
+            retire(&k);
+        }
+        let mut m = Model::default();
+        m.refresh(&db, |_| false);
+        let got: Vec<(String, bool)> = m.retired_terms(&e).into_iter().map(|t| (t.term.clone(), t.is_boost())).collect();
+        assert_eq!(got, [("Alpha".to_string(), false), ("alfa".to_string(), false), ("alpah".to_string(), false), ("Alpha".to_string(), true)], "`alpa` isn't retired, and boost's term is the canonical");
+    }
+
+    // parity: DICT-079
+    /// Every column of Swift's UPDATE, the revision bump, and no bump when nothing changed.
+    #[test]
+    fn restore_resets_each_column_and_bumps_the_usage_revision() {
+        let db = empty();
+        let e = entry("Alpha", &["alfa"]);
+        save(&db, &e, None, "established").unwrap();
+        let k = key_id("alfa");
+        db.conn.execute("UPDATE dictionary_key_usage SET state='retired', reverted=4, retired_at=9, retired_from='established', notice_shown=1 WHERE key_id=?", [&k]).unwrap();
+        let revision = || db.conn.query_row("SELECT revision FROM dictionary_usage_state WHERE id=1", [], |r| r.get::<_, i64>(0)).unwrap();
+        let before = revision();
+        restore_key(&db, &e.id, &k).unwrap();
+        let row: (String, i64, Option<i64>, Option<String>, i64) = db.conn.query_row("SELECT state, reverted, retired_at, retired_from, notice_shown FROM dictionary_key_usage WHERE key_id=?", [&k], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).unwrap();
+        assert_eq!(row, ("established".to_string(), 0, None, None, 0));
+        assert_eq!(revision(), before + 1);
+        restore_key(&db, &e.id, &k).unwrap();
+        assert_eq!(revision(), before + 1, "no row changed, no bump");
+    }
+
+    // parity: DICT-055 DICT-056
+    /// Upsert counts and last_seen, invalid terms skipped; 500 kept by `last_seen`, dismissed rows too.
+    #[test]
+    fn corrections_upsert_and_the_table_prunes_to_500_by_last_seen() {
+        let db = empty();
+        record_correction(&db, "Figtree", "fig tree", 10).unwrap();
+        record_correction(&db, "Figtree", "fig tree", 20).unwrap();
+        let row: (i64, i64, i64) = db.conn.query_row("SELECT sightings, dismissed, last_seen FROM term_suggestions WHERE canonical='Figtree'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert_eq!(row, (2, 0, 20));
+        record_correction(&db, "  ", "x", 30).unwrap();
+        dismiss_suggestion(&db, "", "x", 30).unwrap();
+        let count = || db.conn.query_row("SELECT count(*) FROM term_suggestions", [], |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!(count(), 1, "invalid terms skipped");
+        // A dismissed row, the oldest of all, then 500 newer ones.
+        dismiss_suggestion(&db, "Oldest", "", 1).unwrap();
+        for i in 0..500 {
+            record_correction(&db, &format!("Term{i}"), "", 100 + i).unwrap();
+        }
+        assert_eq!(count(), 500);
+        let gone = |c: &str| db.conn.query_row("SELECT count(*) FROM term_suggestions WHERE canonical=?", [c], |r| r.get::<_, i64>(0)).unwrap() == 0;
+        assert!(gone("Oldest"), "a dismissed row can be pruned");
+        assert!(gone("Figtree"), "the next oldest");
+        assert!(!gone("Term0"));
+    }
+
+    // parity: DICT-050 DICT-051 DICT-052 DICT-054
+    /// Mining on exact fixtures: thresholds at their boundary, governed by disabled entries, tie order, the cap.
+    #[test]
+    fn mining_keeps_its_thresholds_order_and_cap() {
+        let term = |n: usize, t: &str| vec![vec![t.to_string()]; n];
+        let context = |rows: Vec<Vec<Vec<String>>>| SuggestionContents { context_terms: rows.into_iter().flatten().collect(), ..Default::default() };
+        let names = |s: Vec<Suggestion>| s.into_iter().map(|x| x.canonical).collect::<Vec<_>>();
+        // 3 dictations pass, 2 don't; a repeat inside one dictation counts once.
+        let c = context(vec![term(3, "Tatra"), term(2, "Fatra"), vec![vec!["Twice".into(), "Twice".into()]; 2]]);
+        assert_eq!(names(mine_suggestions(&c, &[], |_| false)), ["Tatra"]);
+        // Every word an English word: out. One non-English word: in.
+        let c = context(vec![term(3, "Big Tatra")]);
+        assert!(mine_suggestions(&c, &[], |_| true).is_empty());
+        assert_eq!(names(mine_suggestions(&c, &[], |w| w == "Big")), ["Big Tatra"]);
+        // A disabled entry governs both its canonical and alias, folded.
+        let mut off = entry("Tatra", &["tatry"]);
+        off.enabled = false;
+        let c = SuggestionContents { corrections: vec![("TATRA".into(), "".into(), 1), ("Other".into(), "TATRY".into(), 1), ("Kept".into(), "".into(), 1)], ..Default::default() };
+        assert_eq!(names(mine_suggestions(&c, std::slice::from_ref(&off), |_| false)), ["Kept"]);
+        // Changed by normalizing: not savable.
+        let c = SuggestionContents { corrections: vec![("two  spaces".into(), "".into(), 9)], ..Default::default() };
+        assert!(mine_suggestions(&c, &[], |_| false).is_empty());
+        // Corrections before context; each by count then name; 12 overall.
+        let mut c = context(vec![term(5, "Zed9"), term(5, "Alp9"), term(7, "Mid9")]);
+        c.corrections = vec![("Bee".into(), "".into(), 1), ("Ant".into(), "".into(), 1), ("Cat".into(), "".into(), 2)];
+        assert_eq!(names(mine_suggestions(&c, &[], |_| false)), ["Cat", "Ant", "Bee", "Mid9", "Alp9", "Zed9"]);
+        c.corrections = (0..20).map(|i| (format!("Word{i:02}"), "".to_string(), 1)).collect();
+        assert_eq!(mine_suggestions(&c, &[], |_| false).len(), 12);
+    }
+
+    // parity: DICT-053
+    #[test]
+    fn term_shape_rules_each_refuse_on_their_own() {
+        for ok in ["GitHub", "gpt4", "Big Tatra", "Wi-Fi"] {
+            assert!(is_term_shaped(ok), "{ok}");
+        }
+        for no in ["lowercase", "1234", "a.B", "a/B", "a\\B", "a:B", "a@B", "a~B", "a_B", "a#B", "ABC123", "A1-B2-C3"] {
+            assert!(!is_term_shaped(no), "{no}");
+        }
+    }
+
+    // parity: DICT-148 DICT-149 DICT-150 DICT-151 DICT-152
+    /// Each table's columns and the limits its CHECKs enforce, against the real migrations.
+    #[test]
+    fn vocabulary_tables_have_swifts_columns_and_checks() {
+        let db = empty();
+        let cols = |t: &str| {
+            let mut st = db.conn.prepare(&format!("SELECT name FROM pragma_table_info('{t}')")).unwrap();
+            let v: Vec<String> = st.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+            v
+        };
+        let refused = |sql: &str| assert!(db.conn.execute(sql, []).is_err(), "{sql}");
+        assert_eq!(cols("vocabulary_entries"), ["id", "canonical_text", "aliases_json", "enabled", "learned_at"]);
+        refused("INSERT INTO vocabulary_entries VALUES ('e1', '', '[]', 1, NULL)");
+        refused(&format!("INSERT INTO vocabulary_entries VALUES ('e2', '{}', '[]', 1, NULL)", "x".repeat(257)));
+        refused("INSERT INTO vocabulary_entries VALUES ('e3', 'ok', '[]', 1, -1)");
+        assert_eq!(cols("vocabulary_state"), ["id", "schema_version", "revision", "content_hash", "payload_bytes"]);
+        let seeded: (i64, i64, String, i64) = db.conn.query_row("SELECT id, revision, content_hash, payload_bytes FROM vocabulary_state", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+        assert_eq!((seeded.0, seeded.1, seeded.3), (1, 0, 0));
+        assert_eq!(seeded.2.len(), 64);
+        refused("UPDATE vocabulary_state SET schema_version=2");
+        refused("UPDATE vocabulary_state SET revision=-1");
+        refused("UPDATE vocabulary_state SET payload_bytes=1048577");
+        refused("INSERT INTO vocabulary_state (id, schema_version, revision, content_hash, payload_bytes) VALUES (2, 1, 0, 'x', 0)");
+        assert_eq!(cols("term_suggestions"), ["canonical", "alias", "sightings", "dismissed", "last_seen"]);
+        refused("INSERT INTO term_suggestions VALUES ('', '', 0, 0, 1)");
+        refused(&format!("INSERT INTO term_suggestions VALUES ('a', '{}', 0, 0, 1)", "x".repeat(257)));
+        refused("INSERT INTO term_suggestions VALUES ('a', '', -1, 0, 1)");
+        refused("INSERT INTO term_suggestions VALUES ('a', '', 0, 2, 1)");
+        let without_rowid: i64 = db.conn.query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('term_suggestions', 'dictionary_key_usage') AND sql LIKE '%WITHOUT ROWID%'", [], |r| r.get(0)).unwrap();
+        assert_eq!(without_rowid, 2);
+        let e = entry("Alpha", &[]);
+        save(&db, &e, None, "established").unwrap();
+        for bad in ["state", "key_id"] {
+            let (key, state) = if bad == "state" { ("k1", "other") } else { ("", "established") };
+            assert!(db.conn.execute("INSERT INTO dictionary_key_usage (entry_id, key_id, state) VALUES (?, ?, ?)", params![e.id, key, state]).is_err(), "{bad}");
+        }
+        let usage = cols("dictionary_key_usage");
+        for c in ["entry_id", "key_id", "state", "applied", "kept", "reverted", "last_used_at", "retired_at", "retired_from", "notice_shown"] {
+            assert!(usage.iter().any(|u| u == c), "{c}");
+        }
+        assert_eq!(cols("dictionary_usage_events"), ["id", "dictation_id", "entry_id", "key_id", "outcome", "at"]);
+        db.conn.execute("INSERT INTO dictionary_usage_events (dictation_id, entry_id, key_id, outcome, at) VALUES ('d', ?, 'boost', 'kept', 1)", [&e.id]).unwrap();
+        assert!(db.conn.execute("INSERT INTO dictionary_usage_events (dictation_id, entry_id, key_id, outcome, at) VALUES ('d', ?, 'boost', 'kept', 2)", [&e.id]).is_err(), "UNIQUE");
+        assert_eq!(cols("dictionary_usage_state").len(), 2);
+        refused("INSERT INTO dictionary_usage_state (id, revision) VALUES (2, 0)");
+    }
 }

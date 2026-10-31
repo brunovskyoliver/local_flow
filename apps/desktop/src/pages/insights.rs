@@ -55,6 +55,7 @@ pub struct InsightsPage {
     previous_hour: Option<usize>,
     tip: Option<(String, Tip)>,
     anchors: Anchors,
+    focus: FocusHandle,
     _session_sub: Subscription,
 }
 
@@ -100,7 +101,7 @@ impl InsightsPage {
             }
             revision = latest;
         });
-        let mut page = InsightsPage { insights: None, error: None, tab: Tab::Usage, page: 0, hovered_hour: None, previous_hour: None, tip: None, anchors: Default::default(), _session_sub };
+        let mut page = InsightsPage { insights: None, error: None, tab: Tab::Usage, page: 0, hovered_hour: None, previous_hour: None, tip: None, anchors: Default::default(), focus: cx.focus_handle(), _session_sub };
         page.refresh(cx);
         let scenario = cx.global::<Core>().scenario.clone().unwrap_or_default();
         match scenario.as_str() {
@@ -208,6 +209,7 @@ impl InsightsPage {
     fn usage(&self, i: &Insights, cx: &mut Context<Self>) -> Div {
         let pace = insight_card(cx)
             .id("insights.pace")
+            .test_support()
             .child(self.stat(i.words_per_minute().map_or("–".to_string(), |w| w.to_string()), "Words per minute", Some(("pace", "Your dictation pace, against typing at 40 words per minute")), cx))
             .child(dial(i.words_per_minute().unwrap_or(0) as f32 / 200., versus_typing(i.words_per_minute()), cx));
         let row = |value: i64, label: &str, id: &str, help: &str, this: &Self, cx: &mut Context<Self>| {
@@ -215,6 +217,7 @@ impl InsightsPage {
         };
         let fixes = insight_card(cx)
             .id("insights.fixes")
+            .test_support()
             .child(self.stat(grouped(i.words_corrected + i.dictionary_fixes), "Fixes made by LocalFlow", None, cx))
             .child(rule(cx))
             .child(
@@ -227,6 +230,7 @@ impl InsightsPage {
         let p = pal(cx);
         let volume = insight_card(cx)
             .id("insights.volume")
+            .test_support()
             .child(self.stat(grouped(i.total_words), "Total words dictated", None, cx))
             .child(rule(cx))
             .child(
@@ -255,7 +259,7 @@ impl InsightsPage {
         v_flex().w_full().gap(px(24.)).child(card_row(cx).child(a).child(b).child(c)).child(hours)
     }
 
-    fn apps(&self, i: &Insights, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn apps(&self, i: &Insights, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = pal(cx);
         let compact = cx.global::<Flow>().compact;
         let mut rows = v_flex().gap(px(16.)).pt(px(25.));
@@ -285,17 +289,18 @@ impl InsightsPage {
                 h_flex()
                     .gap(px(14.))
                     .child(div().w(px(24.)).flex().justify_center().child(icon(cat.symbol(), 18., p.ink)))
-                    .child(self.target(format!("insights.bar.{}", cat.label()), tip, bar, cx))
+                    .child(self.target(format!("insights.bar.{}", cat.label()), tip, bar, cx).test_support())
                     .child(caps(&format!("{} {}", grouped(count), cat.label()), p.ink, 12.5)),
             );
         }
         insight_card(cx)
             .id("insights.apps")
+            .test_support()
             .child(h_flex().w_full().justify_between().items_start().gap(px(8.)).child(t("Desktop usage").font(29., 500.).tracking(-0.6).lines(1)).child(div().pt(px(CAPS_ON_HEADING)).child(caps(&format!("Total apps used | {}", i.apps_used), p.ink, 11.5))))
             .child(rows)
     }
 
-    fn streak(&self, i: &Insights, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn streak(&self, i: &Insights, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = pal(cx);
         let today = cx.global::<Core>().db.as_ref().map_or(0, |db| local(db, now_ms()).day_number());
         let streaks = streaks(&i.days, today);
@@ -351,6 +356,7 @@ impl InsightsPage {
             .child(t("Current streak").size(13.).color(p.muted));
         insight_card(cx)
             .id("insights.streak")
+            .test_support()
             .child(
                 h_flex()
                     .w_full()
@@ -364,7 +370,7 @@ impl InsightsPage {
             .child(legend)
     }
 
-    fn hours(&self, i: &Insights, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn hours(&self, i: &Insights, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = pal(cx);
         let peak = i.hours.iter().copied().max().unwrap_or(0).max(1);
         let mut bars = h_flex().w_full().h(px(130.)).items_end().gap(px(6.)).mt(px(26.));
@@ -387,7 +393,7 @@ impl InsightsPage {
         for h in [0, 6, 12, 18] {
             labels = labels.child(div().flex_1().child(t(hour_label(h)).size(12.).color(p.muted)));
         }
-        insight_card(cx).id("insights.hours").child(t("When you dictate").font(29., 500.).tracking(-0.6)).child(bars).child(labels)
+        insight_card(cx).id("insights.hours").test_support().child(t("When you dictate").font(29., 500.).tracking(-0.6)).child(bars).child(labels)
     }
 
     /// The tip layer: drawn over the cards, positioned from the target's bounds, ignores the mouse.
@@ -426,7 +432,7 @@ impl InsightsPage {
                         .rounded(px(10.))
                         .border_1()
                         .border_color(p.card_line)
-                        .shadow(vec![flow_ui::gpui::BoxShadow { color: flow_ui::gpui::black().opacity(0.12), offset: point(px(0.), px(5.)), blur_radius: px(14.), spread_radius: px(0.), inset: false }])
+                        .shadow(vec![day_tip_shadow()])
                         .child(div().pb(px(14.)).child(t(long_date(*day)).font(13., 500.).color(p.ink)))
                         .child(v_flex().gap(px(10.)).child(row("Total words", grouped(*words))).child(row("Total apps used", grouped(*apps))).when_some(top.clone(), |d, a| d.child(row("Top app", a))))
                         .into_any_element(),
@@ -481,6 +487,10 @@ fn hour_tip(i: &Insights, h: usize) -> Tip {
         detail.push_str(&format!("\nMost in {}", app_name(top)));
     }
     Tip::Note { title: counted(words, "word", "words"), detail: Some(detail) }
+}
+
+fn day_tip_shadow() -> flow_ui::gpui::BoxShadow {
+    flow_ui::gpui::BoxShadow { color: flow_ui::gpui::black().opacity(0.12), offset: point(px(0.), px(5.)), blur_radius: px(14.), spread_radius: px(0.), inset: false }
 }
 
 fn caps(text: &str, color: Hsla, size: f32) -> Txt {
@@ -577,7 +587,7 @@ impl Render for InsightsPage {
         let p = pal(cx);
         let mut col = v_flex().w_full().child(t("Insights").font(26., 500.).tracking(-0.4)).child(self.tabs(cx));
         if let Some(e) = self.error.clone() {
-            col = col.child(div().pt(px(24.)).child(t(e).size(13.).color(p.warning)));
+            col = col.child(div().id("insights.errorLine").test_support().pt(px(24.)).child(t(e).size(13.).color(p.warning)));
         }
         if let Some(i) = self.insights.clone() {
             let body = match self.tab {
@@ -608,6 +618,14 @@ impl Render for InsightsPage {
             );
         }
         super::dictionary::ui::under_card_border(prototype_page("insights.page", 1142., cx, col))
+            .id("insights.root")
+            .track_focus(&self.focus)
+            // No Kit `Root` in this shell, so Tab is bound per page (DICT row actions do the same).
+            .on_key_down(cx.listener(|_, e: &KeyDownEvent, w, cx| {
+                if e.keystroke.key == "tab" {
+                    if e.keystroke.modifiers.shift { w.focus_prev(cx) } else { w.focus_next(cx) }
+                }
+            }))
     }
 }
 
@@ -894,5 +912,277 @@ mod tests {
         assert!(shown < before, "appearing re-reads");
         remove(cx, 21);
         assert!(count(cx) < shown, "selected re-reads");
+    }
+
+    fn tip_state(cx: &mut TestAppContext, w: WindowHandle<InsightsPage>) -> Option<Tip> {
+        w.update(cx, |t, _, _| t.tip.as_ref().map(|x| x.1.clone())).unwrap()
+    }
+
+    fn has(cx: &mut TestAppContext, w: WindowHandle<InsightsPage>, id: &str) -> bool {
+        let id = SharedString::from(id.to_string());
+        cx.update_window(w.into(), |_, win, _| win.try_find(id).is_some()).unwrap()
+    }
+
+    fn label_of(cx: &mut TestAppContext, w: WindowHandle<InsightsPage>, id: &str) -> Option<String> {
+        let id = SharedString::from(id.to_string());
+        cx.update_window(w.into(), |_, win, _| win.find(id).label().map(str::to_string)).unwrap()
+    }
+
+    // parity: INS-105
+    /// Tab reaches both tabs and both chevrons, with no shortcut of its own.
+    #[flow_ui::gpui::test]
+    async fn tab_reaches_the_tabs_and_chevrons(cx: &mut TestAppContext) {
+        let w = open(cx);
+        w.update(cx, |t, win, cx| {
+            t.page = 1;
+            t.insights.as_mut().unwrap().days.insert(1, Default::default());
+            t.focus.focus(win, cx);
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        let mut reached = std::collections::HashSet::new();
+        for _ in 0..12 {
+            cx.update_window(w.into(), |_, win, cx| win.press("tab", cx)).unwrap();
+            frame(cx, w);
+            for id in ["insights.tab.usage", "insights.tab.voice", "insights.earlierWeeks", "insights.laterWeeks"] {
+                if cx.update_window(w.into(), |_, win, _| win.find(id).focused()).unwrap() == Some(true) {
+                    reached.insert(id);
+                }
+            }
+        }
+        assert_eq!(reached.len(), 4, "{reached:?}");
+    }
+
+    // parity: INS-011
+    /// A real first load that fails: load is synchronous, so this is the only way to have no result.
+    #[flow_ui::gpui::test]
+    async fn with_no_result_only_title_tabs_and_the_error_show(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let db = cx.update(|cx| cx.global_mut::<Core>().db.take());
+        let w = cx.add_window(|w, cx| InsightsPage::new(w, cx));
+        frame(cx, w);
+        assert_saw(&["Insights", "Your usage", "Your voice"]);
+        for card in ["insights.pace", "insights.fixes", "insights.volume", "insights.apps", "insights.streak"] {
+            assert!(!has(cx, w, card), "{card}");
+        }
+        assert!(!saw("WORDS PER MINUTE"));
+        cx.update(|cx| cx.global_mut::<Core>().db = db);
+        w.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+        frame(cx, w);
+        assert!(has(cx, w, "insights.pace"), "the check above can fail");
+    }
+
+    // parity: INS-012
+    /// 13 warning, top padding 24, and the previous cards stay under it.
+    #[flow_ui::gpui::test]
+    async fn a_failed_refresh_keeps_the_cards_under_the_error(cx: &mut TestAppContext) {
+        let w = open(cx);
+        assert!(!saw(ERROR));
+        let db = cx.update(|cx| cx.global_mut::<Core>().db.take());
+        w.update(cx, |p, _, cx| {
+            p.refresh(cx);
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        let (s, warning) = (flow_ui::probe::style_of(ERROR).unwrap(), cx.update(|cx| pal(cx).warning));
+        assert_eq!((s.size, s.color), (13., warning));
+        assert_eq!(bounds(cx, w, "insights.errorLine").size.height, px(24. + 14.));
+        assert!(has(cx, w, "insights.pace"));
+        assert_saw(&["WORDS PER MINUTE"]);
+        cx.update(|cx| cx.global_mut::<Core>().db = db);
+    }
+
+    // parity: INS-008
+    #[flow_ui::gpui::test]
+    async fn the_tab_starts_on_usage_and_is_not_remembered(cx: &mut TestAppContext) {
+        let w = open(cx);
+        assert_saw(&["WORDS PER MINUTE"]);
+        assert!(!saw("TIME SPOKEN"));
+        click(cx, w, "insights.tab.voice");
+        assert_saw(&["TIME SPOKEN"]);
+        let again = cx.add_window(|w, cx| InsightsPage::new(w, cx));
+        frame(cx, again);
+        assert_saw(&["WORDS PER MINUTE"]);
+        assert!(!saw("TIME SPOKEN"));
+    }
+
+    // parity: INS-013
+    /// Every zero the row names, drawn from a really empty store.
+    #[flow_ui::gpui::test]
+    async fn a_store_with_no_rows_shows_every_zero(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute("DELETE FROM transcriptions", []).unwrap());
+        let w = cx.add_window(|w, cx| InsightsPage::new(w, cx));
+        frame(cx, w);
+        assert_saw(&["0 day streak", "\u{2013}", "0 words corrected", "0 dictionary fixes", "0 words", "0 dictations", "TOTAL APPS USED | 0", "0 OTHER TASKS", "0 DOCUMENTS"]);
+        assert!(flow_ui::probe::seen().iter().filter(|t| t.as_str() == "0%").count() >= 6, "six 0% bars");
+        click(cx, w, "insights.tab.voice");
+        assert_saw(&["0s"]);
+    }
+
+    // parity: INS-046 INS-047 INS-048 INS-049 INS-050 INS-051
+    /// All six rows through the page: the caps label and its symbol, in the drawn tree.
+    #[flow_ui::gpui::test]
+    async fn every_category_row_draws_its_label_and_symbol(cx: &mut TestAppContext) {
+        let _w = open(cx);
+        let symbols = flow_ui::probe::symbols();
+        for (label, symbol) in [("OTHER TASKS", "infinity"), ("AI PROMPTS", "cpu"), ("PERSONAL MESSAGES", "bubble.left"), ("EMAILS", "envelope"), ("WORK MESSAGES", "text.bubble"), ("DOCUMENTS", "doc.text")] {
+            assert_saw(&[label]);
+            assert!(symbols.iter().any(|s| s == symbol), "{symbol}");
+        }
+    }
+
+    // parity: INS-061 INS-084 INS-104 INS-103
+    /// The tips' copy from the page's real hover, with the fallback app name.
+    #[flow_ui::gpui::test]
+    async fn tips_read_their_counts_and_top_app(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let i = w.update(cx, |t, _, _| t.insights.clone().unwrap()).unwrap();
+        // A category with dictations: its words, and "Most in".
+        let (cat, _) = *i.category_rows().iter().find(|(c, n)| *n > 0 && i.top_app_in(*c).is_some()).unwrap();
+        hover(cx, w, &format!("insights.bar.{}", cat.label()));
+        let words = i.category_words[Category::ALL.iter().position(|c| *c == cat).unwrap()];
+        assert_saw(&[&counted(words, "word", "words"), &format!("Most in {}", fallback_app_name(i.top_app_in(cat).unwrap()))]);
+        // None at count 0.
+        w.update(cx, |t, _, cx| {
+            t.insights.as_mut().unwrap().categories[Category::ALL.iter().position(|c| *c == Category::Work).unwrap()] = 0;
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        hover(cx, w, &format!("insights.bar.{}", Category::Work.label()));
+        assert_eq!(tip_state(cx, w), None);
+        // A day with a top app, and one without. Only the first two weekday rows have area to hover.
+        let day = monday(cx);
+        let mut usage = Day::default();
+        usage.words = 7;
+        usage.apps.insert("md.obsidian".into(), 7);
+        let held = usage.clone();
+        w.update(cx, |t, _, cx| {
+            t.insights.as_mut().unwrap().days.insert(day, held);
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        hover(cx, w, &format!("insights.day.{day}"));
+        assert_saw(&["Total words", "7", "Total apps used", "Top app", &fallback_app_name("md.obsidian")]);
+        let empty_day = w.update(cx, |t, _, cx| columns(local(cx.global::<Core>().db.as_ref().unwrap(), now_ms()).day_number(), t.page)[0]).unwrap();
+        assert!(!i.days.contains_key(&empty_day));
+        hover(cx, w, &format!("insights.day.{empty_day}"));
+        assert_saw(&["Total words"]);
+        assert!(!saw("Top app"));
+        // Hours: active with "Most in", then the empty hour's range.
+        click(cx, w, "insights.tab.voice");
+        let h = (0..24).find(|h| i.hours[*h] > 0 && !i.hour_apps[*h].is_empty()).unwrap();
+        hover(cx, w, &format!("insights.hour.{h}"));
+        let range = format!("{} – {}", hour_time(h as i64), hour_time((h as i64 + 1) % 24));
+        assert_saw(&[&counted(i.hours[h], "word", "words"), &range, &counted(i.hour_dictations[h], "dictation", "dictations"), &format!("Most in {}", fallback_app_name(top_of(&i.hour_apps[h]).unwrap()))]);
+        let quiet = (0..24).find(|h| i.hours[*h] == 0).unwrap();
+        hover(cx, w, &format!("insights.hour.{quiet}"));
+        let range = format!("{} – {}", hour_time(quiet as i64), hour_time((quiet as i64 + 1) % 24));
+        assert_saw(&["No dictation", &range]);
+    }
+
+    // parity: INS-083
+    /// Width, the styles of date, label and value, and the shadow the view paints.
+    #[flow_ui::gpui::test]
+    async fn the_day_tip_has_swifts_type_and_shadow(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let m = monday(cx);
+        hover(cx, w, &format!("insights.day.{m}"));
+        let ink = cx.update(|cx| pal(cx).ink);
+        let date = flow_ui::probe::style_of(&long_date(m)).unwrap();
+        assert_eq!((date.size, date.weight, date.color), (13., 500., ink));
+        let name = flow_ui::probe::style_of("Total words").unwrap();
+        assert_eq!((name.size, name.weight, name.color), (12.5, 400., ink));
+        assert_eq!(bounds(cx, w, "insights.tip").size.width, px(250.));
+        let s = day_tip_shadow();
+        assert_eq!((s.color, s.offset, s.blur_radius), (flow_ui::gpui::black().opacity(0.12), point(px(0.), px(5.)), px(14.)));
+    }
+
+    // parity: INS-086 INS-087
+    /// 13 medium over 11.5, `surface` on `ink`; clamped at either edge, last anchor wins.
+    #[flow_ui::gpui::test]
+    async fn a_note_tip_has_its_type_and_clamps_at_both_edges(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "insights.tab.voice");
+        let surface = cx.update(|cx| pal(cx).surface);
+        let i = w.update(cx, |t, _, _| t.insights.clone().unwrap()).unwrap();
+        let h = (0..24).find(|h| i.hours[*h] == 0).unwrap();
+        hover(cx, w, &format!("insights.hour.{h}"));
+        let title = flow_ui::probe::style_of("No dictation").unwrap();
+        assert_eq!((title.size, title.weight, title.color), (13., 500., surface));
+        let range = format!("{} – {}", hour_time(h as i64), hour_time((h as i64 + 1) % 24));
+        let detail = flow_ui::probe::style_of(&range).unwrap();
+        assert_eq!(detail.size, 11.5);
+        // Last anchor wins: the tip replaces the one before.
+        hover(cx, w, "insights.hour.23");
+        let tip = bounds(cx, w, "insights.tip");
+        let layer = w.update(cx, |t, _, _| t.anchors.borrow()[LAYER]).unwrap();
+        assert_eq!(tip.right(), layer.right(), "clamped at the right");
+        assert_eq!(tip.bottom() + px(8.), bounds(cx, w, "insights.hour.23").top().max(tip.bottom() + px(8.)));
+        hover(cx, w, "insights.hour.0");
+        assert_eq!(bounds(cx, w, "insights.tip").left(), layer.left(), "clamped at the left");
+    }
+
+    // parity: INS-088
+    /// The tip's text is the target's accessibility value.
+    #[flow_ui::gpui::test]
+    async fn targets_expose_their_tip_as_a_value(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let value = |cx: &mut TestAppContext, id: String| cx.update_window(w.into(), |_, win, _| win.find(SharedString::from(id)).value().map(str::to_string)).unwrap();
+        assert_eq!(value(cx, "insights.info.pace".into()).as_deref(), Some("Your dictation pace, against typing at 40 words per minute"));
+        let m = monday(cx);
+        let i = w.update(cx, |t, _, _| t.insights.clone().unwrap()).unwrap();
+        let (words, apps, top) = i.days.get(&m).map_or((0, 0, None), |u| (u.words, u.apps.len() as i64, u.top_app().map(fallback_app_name)));
+        assert_eq!(value(cx, format!("insights.day.{m}")), Some(day_spoken(m, words, apps, top.as_deref())));
+    }
+
+    // parity: INS-071 INS-073 INS-074 INS-076 INS-070
+    /// Labels, symbols, disabled state, and which weeks a page shows.
+    #[flow_ui::gpui::test]
+    async fn chevrons_read_their_label_and_disable_at_the_ends(cx: &mut TestAppContext) {
+        let w = open(cx);
+        assert_eq!(label_of(cx, w, "insights.earlierWeeks").as_deref(), Some("Earlier weeks"));
+        assert_eq!(label_of(cx, w, "insights.laterWeeks").as_deref(), Some("Later weeks"));
+        let symbols = flow_ui::probe::symbols();
+        assert!(symbols.iter().any(|s| s == "chevron.left") && symbols.iter().any(|s| s == "chevron.right"));
+        let off = |cx: &mut TestAppContext, id: &'static str| cx.update_window(w.into(), |_, win, _| win.find(id).disabled()).unwrap();
+        assert_eq!(off(cx, "insights.laterWeeks"), Some(true), "page 0");
+        assert_eq!(off(cx, "insights.earlierWeeks"), Some(true), "no older day");
+        let m = monday(cx);
+        let older = m - 18 * 7 - 1;
+        w.update(cx, |t, _, cx| {
+            t.insights.as_mut().unwrap().days.insert(older, Default::default());
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        assert_ne!(off(cx, "insights.earlierWeeks"), Some(true));
+        // The newest column holds this week; a page back holds the week 19 before it.
+        assert!(has(cx, w, &format!("insights.day.{m}")));
+        click(cx, w, "insights.earlierWeeks");
+        assert!(!has(cx, w, &format!("insights.day.{m}")));
+        assert!(has(cx, w, &format!("insights.day.{}", m - 19 * 7)));
+        assert!(has(cx, w, &format!("insights.day.{}", m - 37 * 7)));
+        assert_ne!(off(cx, "insights.laterWeeks"), Some(true));
+        assert_eq!(off(cx, "insights.earlierWeeks"), Some(true), "nothing older now");
+    }
+
+    // parity: INS-007 INS-006
+    #[flow_ui::gpui::test]
+    async fn tab_items_read_selected_or_not(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let (ink, muted) = cx.update(|cx| (pal(cx).ink, pal(cx).muted));
+        let on = flow_ui::probe::style_of("Your usage").unwrap();
+        let off = flow_ui::probe::style_of("Your voice").unwrap();
+        assert_eq!((on.size, on.weight, on.color), (15., 500., ink));
+        assert_eq!((off.size, off.weight, off.color), (15., 400., muted));
+        assert_eq!(label_of(cx, w, "insights.tab.usage").as_deref(), Some("Your usage"));
+        click(cx, w, "insights.tab.voice");
+        assert_eq!(flow_ui::probe::style_of("Your voice").unwrap().color, ink);
+        assert_eq!(flow_ui::probe::style_of("Your usage").unwrap().color, muted);
     }
 }

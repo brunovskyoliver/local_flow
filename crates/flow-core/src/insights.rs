@@ -534,4 +534,135 @@ mod tests {
         let db = Db::memory();
         assert_eq!(local(&db, now_ms()).year >= 2026, true);
     }
+
+    /// One dictation with a quality row when `seconds` or `applied` is given.
+    fn dictation(db: &Db, n: &str, text: &str, bundle: Option<&str>, at: i64, quality: Option<(f64, usize)>) {
+        let id = seed_id_str(n);
+        db.conn.execute("INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id) VALUES (?,?,?,'not_attempted','needs_review','complete','key_release',?)", rusqlite::params![id, text, at, bundle]).unwrap();
+        if let Some((seconds, applied)) = quality {
+            let ids: Vec<String> = (0..applied).map(|i| format!("e{i}")).collect();
+            let detail = serde_json::json!({"content": {"provenance": {"inputDurationSeconds": seconds}, "appliedEntryIDs": ids}}).to_string();
+            db.conn.execute("INSERT INTO transcription_quality (transcription_id, schema_version, detail_json, content_hash) VALUES (?, 1, ?, ?)", rusqlite::params![id, detail, "0".repeat(64)]).unwrap();
+        }
+    }
+
+    // parity: INS-025 INS-026
+    /// `spokenSeconds >= 1` and `timedWords > 0`; a zero-second or legacy row adds nothing.
+    #[test]
+    fn pace_counts_only_timed_rows_and_needs_a_second() {
+        let db = Db::memory();
+        let at = now_ms();
+        dictation(&db, "1", "one two three", None, at, Some((90., 0)));
+        dictation(&db, "2", "four five", None, at, Some((0., 0)));
+        dictation(&db, "3", "six seven eight", None, at, None);
+        let i = load(&db).unwrap();
+        assert_eq!((i.timed_words, i.spoken_seconds), (3, 90.));
+        assert_eq!(i.total_words, 8);
+        assert_eq!(i.words_per_minute(), Some(2), "round(3 / 1.5)");
+        let db = Db::memory();
+        dictation(&db, "1", "one two", None, at, Some((0.5, 0)));
+        assert_eq!(load(&db).unwrap().words_per_minute(), None, "under a second");
+        let db = Db::memory();
+        dictation(&db, "1", "   ", None, at, Some((60., 0)));
+        assert_eq!(load(&db).unwrap().words_per_minute(), None, "no timed words");
+    }
+
+    // parity: INS-041 INS-042 INS-093 INS-095 INS-044 INS-037 INS-040
+    /// One exact fixture, every total named.
+    #[test]
+    fn totals_on_an_exact_fixture() {
+        let db = Db::memory();
+        let at = now_ms();
+        assert_eq!(word_count("  a\tb\nc\u{00A0}d\u{2003}e  "), 5, "Swift `isWhitespace` splits on all of these");
+        dictation(&db, "1", "one two three", Some("com.apple.mail"), at, Some((10., 2)));
+        dictation(&db, "2", "four five", Some("com.apple.mail"), at, Some((10., 1)));
+        dictation(&db, "3", "six seven eight nine ten", Some("md.obsidian"), at, None);
+        dictation(&db, "4", "eleven", Some(""), at, Some((10., 0)));
+        dictation(&db, "5", "twelve twelve", None, at, None);
+        let i = load(&db).unwrap();
+        assert_eq!(i.dictations, 5);
+        assert_eq!(i.total_words, 13);
+        assert_eq!(i.average_words(), 3, "round(13 / 5)");
+        assert_eq!(i.longest_words, 5);
+        assert_eq!(i.apps_used, 2, "distinct and non-empty");
+        assert_eq!(i.dictionary_fixes, 3, "entries, summed per dictation");
+    }
+
+    // parity: INS-036 INS-035
+    /// Each clause of the WHERE on its own; punctuation trimmed, equal lists 0, a sum across rows.
+    #[test]
+    fn words_corrected_needs_delivered_succeeded_and_changed() {
+        assert_eq!(corrected_words("hello, world", "hello world!"), 0, "punctuation trimmed");
+        assert_eq!(corrected_words("one two", "one three four"), 1, "removals, not insertions");
+        assert_eq!(corrected_words("one two three", "four"), 3);
+        assert_eq!(corrected_words("one two three", "one three"), 1, "only a removal");
+        assert_eq!(corrected_words("  -- ", "--"), 0, "empties dropped");
+        let db = Db::memory();
+        crate::history::seed(&db);
+        let base = load(&db).unwrap().words_corrected;
+        assert!(base > 0);
+        let good: String = db.conn.query_row("SELECT id FROM rewrite_attempts WHERE delivered=1 AND state='succeeded' AND unchanged=0 LIMIT 1", [], |r| r.get(0)).unwrap();
+        let after = |sql: &str| {
+            db.conn.execute(&format!("UPDATE rewrite_attempts SET {sql} WHERE id=?"), [&good]).unwrap();
+            let v = load(&db).unwrap().words_corrected;
+            db.conn.execute("UPDATE rewrite_attempts SET delivered=1, unchanged=0 WHERE id=?", [&good]).unwrap();
+            v
+        };
+        assert_eq!(after("delivered=0"), 0);
+        assert_eq!(after("unchanged=1"), 0);
+    }
+
+    // parity: INS-057 INS-062
+    #[test]
+    fn category_order_and_top_app_break_ties_as_swift() {
+        let db = Db::memory();
+        let at = now_ms();
+        assert_eq!(Insights::default().category_rows().into_iter().map(|r| r.0).collect::<Vec<_>>(), Category::ALL, "ties keep enum order, all six shown");
+        for (n, b) in [("1", "com.apple.mail"), ("2", "com.apple.mail"), ("3", "md.obsidian"), ("4", "com.openai.chat")] {
+            dictation(&db, n, "two words", Some(b), at, None);
+        }
+        let i = load(&db).unwrap();
+        let order: Vec<Category> = i.category_rows().into_iter().map(|r| r.0).collect();
+        assert_eq!(order, [Category::Emails, Category::Ai, Category::Documents, Category::Other, Category::Personal, Category::Work]);
+        // Most words in the category; a tie goes to the smaller id.
+        let db = Db::memory();
+        dictation(&db, "1", "a b", Some("com.apple.Notes"), at, None);
+        dictation(&db, "2", "a b", Some("com.apple.TextEdit"), at, None);
+        dictation(&db, "3", "a", Some("md.obsidian"), at, None);
+        assert_eq!(load(&db).unwrap().top_app_in(Category::Documents), Some("com.apple.Notes"));
+        assert_eq!(load(&db).unwrap().top_app_in(Category::Emails), None);
+    }
+
+    // parity: INS-066
+    #[test]
+    fn days_bucket_locally_with_words_and_bundles() {
+        let db = Db::memory();
+        let at = now_ms();
+        let today = local(&db, at).day_number();
+        dictation(&db, "1", "a b", Some("x.y"), at, None);
+        dictation(&db, "2", "c", Some("x.y"), at, None);
+        dictation(&db, "3", "d", None, at - 86_400_000, None);
+        let i = load(&db).unwrap();
+        let d = &i.days[&today];
+        assert_eq!((d.dictations, d.words, d.apps.get("x.y").copied()), (2, 3, Some(3)));
+        let y = &i.days[&local(&db, at - 86_400_000).day_number()];
+        assert_eq!((y.dictations, y.words), (1, 1));
+        assert!(y.apps.is_empty());
+    }
+
+    // parity: INS-106
+    #[test]
+    fn the_quality_table_keeps_its_limits() {
+        let db = Db::memory();
+        dictation(&db, "1", "a", None, now_ms(), Some((1., 0)));
+        let cols: Vec<String> = db.conn.prepare("SELECT name FROM pragma_table_info('transcription_quality')").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(cols, ["transcription_id", "schema_version", "detail_json", "content_hash"]);
+        let id = seed_id_str("1");
+        assert!(db.conn.execute("UPDATE transcription_quality SET schema_version=2 WHERE transcription_id=?", [&id]).is_err());
+        assert!(db.conn.execute("UPDATE transcription_quality SET content_hash='x' WHERE transcription_id=?", [&id]).is_err());
+        assert!(db.conn.execute("UPDATE transcription_quality SET detail_json=? WHERE transcription_id=?", [&"x".repeat(262_145), &id]).is_err());
+        db.conn.execute("DELETE FROM transcriptions WHERE id=?", [&id]).unwrap();
+        let n: i64 = db.conn.query_row("SELECT count(*) FROM transcription_quality", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "cascades");
+    }
 }

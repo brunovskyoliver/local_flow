@@ -378,7 +378,7 @@ impl DictionaryPage {
         v_flex().id("vocabulary.suggestions").w_full().mt(px(24.)).gap(px(10.)).child(t("Suggested").font(13., 500.).color(p.muted)).child(rows.child(outline(cx)))
     }
 
-    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn list(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = pal(cx);
         let search = self.search.read(cx).value().to_string();
         let entries = self.model.visible(self.filter, &search);
@@ -390,17 +390,17 @@ impl DictionaryPage {
             } else {
                 "No matches"
             };
-            return div().w_full().mt(px(24.)).py(px(60.)).flex().justify_center().child(t(text).size(15.).color(p.muted)).into_any_element();
+            return div().id("vocabulary.empty").test_support().w_full().mt(px(24.)).py(px(60.)).flex().justify_center().child(t(text).size(15.).color(p.muted)).into_any_element();
         }
         let count = entries.len();
         let mut list = v_flex().id("vocabulary.list").relative().w_full().mt(px(24.));
         for (i, e) in entries.into_iter().enumerate() {
-            list = list.child(self.row(i, e, cx)).when(i + 1 < count, |d| d.child(hairline(cx)));
+            list = list.child(self.row(i, e, window, cx)).when(i + 1 < count, |d| d.child(hairline(cx)));
         }
         list.child(outline(cx)).into_any_element()
     }
 
-    fn row(&self, i: usize, e: Entry, cx: &mut Context<Self>) -> AnyElement {
+    fn row(&self, i: usize, e: Entry, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = pal(cx);
         let busy = self.model.saving;
         let fg = if e.enabled { p.ink } else { p.muted };
@@ -488,7 +488,7 @@ impl DictionaryPage {
             .py(px(10.))
             .gap(px(4.))
             .text_color(fg)
-            .child(h_flex().w_full().gap(px(10.)).child(title).child(hover_or_focus_revealed(group, busy || self.voice_over, &action_focus, actions)))
+            .child(h_flex().w_full().gap(px(10.)).child(title).child(focus_revealed(group, busy || self.voice_over, &action_focus, window, cx, actions)))
             .child(meta)
             .context_menu(move |menu, _, _| {
                 let (a, b, c) = (page.clone(), page.clone(), page.clone());
@@ -526,6 +526,7 @@ impl DictionaryPage {
         };
         sheet_card(360., cx)
             .id("vocabulary.sheet")
+            .test_support()
             .track_focus(&self.focus)
             .p(px(18.))
             .gap(px(14.))
@@ -686,14 +687,14 @@ impl Render for DictionaryPage {
             content = content.child(self.banner(cx));
         }
         if let Some(e) = self.model.load_error.clone() {
-            content = content.child(div().pt(px(24.)).child(t(e).id("vocabulary.loadError").size(13.).color(p.warning).selectable()));
+            content = content.child(div().id("vocabulary.loadErrorLine").test_support().pt(px(24.)).child(t(e).id("vocabulary.loadError").size(13.).color(p.warning).selectable()));
         }
         if self.filter == Filter::All && search_empty && !self.model.suggestions.is_empty() {
             content = content.child(self.suggestions(cx));
         }
-        content = content.child(self.list(cx));
+        content = content.child(self.list(window, cx));
         if let Some(s) = self.model.status.clone() {
-            content = content.child(div().pt(px(14.)).child(t(s).id("vocabulary.status").size(12.).color(p.muted)));
+            content = content.child(div().id("vocabulary.statusLine").test_support().pt(px(14.)).child(t(s).id("vocabulary.status").size(12.).color(p.muted)));
         }
         let sheet = if self.model.draft.is_some() { Some(self.sheet(cx)) } else { None };
         let confirm = if self.confirming_delete.is_some() {
@@ -1335,7 +1336,7 @@ mod tests {
         .unwrap();
         click(cx, w, "vocabulary.correctMisspelling");
         click(cx, w, "vocabulary.addAlias");
-        w.update(cx, |t, win, cx| assert!(!t.aliases.is_empty() && t.aliases[0].read(cx).focus_handle(cx).is_focused(win) || t.aliases.len() == 2)).unwrap();
+        w.update(cx, |t, _, _| assert_eq!(t.aliases.len(), 2)).unwrap();
         assert_saw(&["Add another misspelling"]);
         assert!(cx.update_window(w.into(), |_, win, _| win.try_find("vocabulary.removeAlias.1").is_some()).unwrap());
     }
@@ -1506,5 +1507,740 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(w.update(cx, |t, _, _| t.model.entries.len()).unwrap() < before);
+    }
+
+    // Round 4: what the page actually draws, read back through the row buttons' labels.
+    fn shown(cx: &mut TestAppContext, w: WindowHandle<DictionaryPage>) -> Vec<String> {
+        cx.update_window(w.into(), |_, win, _| {
+            (0..)
+                .map_while(|i| win.try_find(SharedString::from(format!("dictionary.edit.{i}"))))
+                .map(|s| s.label().unwrap().trim_start_matches("Edit ").to_string())
+                .collect()
+        })
+        .unwrap()
+    }
+
+    fn label(cx: &mut TestAppContext, w: WindowHandle<DictionaryPage>, id: &str) -> Option<String> {
+        let id = SharedString::from(id.to_string());
+        cx.update_window(w.into(), |_, win, _| win.find(id).label().map(str::to_string)).unwrap()
+    }
+
+    // parity: DICT-017 DICT-018 DICT-019 DICT-020
+    /// Each filter shows exactly the store's matching rows, not just one example.
+    #[flow_ui::gpui::test]
+    async fn each_filter_shows_exactly_its_entries(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let all = stored(cx);
+        let names = |keep: &dyn Fn(&Entry) -> bool| {
+            let mut v: Vec<String> = all.iter().filter(|e| keep(e)).map(|e| e.canonical.clone()).collect();
+            v.sort();
+            v
+        };
+        let sorted = |mut v: Vec<String>| {
+            v.sort();
+            v
+        };
+        let got = shown(cx, w);
+        assert_eq!(sorted(got), names(&|_| true), "All");
+        assert!(names(&|_| true).len() == 7);
+        click(cx, w, "vocabulary.filter.enabled");
+        assert_eq!(sorted(shown(cx, w)), names(&|e| e.enabled), "Enabled");
+        click(cx, w, "vocabulary.filter.disabled");
+        assert_eq!(sorted(shown(cx, w)), names(&|e| !e.enabled), "Disabled");
+        assert_eq!(shown(cx, w), ["Northwind"]);
+        click(cx, w, "vocabulary.filter.learned");
+        assert_eq!(sorted(shown(cx, w)), names(&|e| e.learned_at.is_some()), "Learned");
+        assert_eq!(shown(cx, w), ["Kubernetes", "Qwen"]);
+    }
+
+    // parity: DICT-015
+    /// Selected: medium, ink, selected trait. Unselected: regular, muted.
+    #[flow_ui::gpui::test]
+    async fn a_filter_tab_reads_selected_or_not(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let (ink, muted) = cx.update(|cx| (pal(cx).ink, pal(cx).muted));
+        let all = flow_ui::probe::style_of("All").unwrap();
+        assert_eq!((all.size, all.weight, all.color), (15., 500., ink));
+        let learned = flow_ui::probe::style_of("Learned").unwrap();
+        assert_eq!((learned.size, learned.weight, learned.color), (15., 400., muted));
+        click(cx, w, "vocabulary.filter.learned");
+        let learned = flow_ui::probe::style_of("Learned").unwrap();
+        assert_eq!((learned.weight, learned.color), (500., ink));
+        let all = flow_ui::probe::style_of("All").unwrap();
+        assert_eq!((all.weight, all.color), (400., muted));
+    }
+
+    // parity: DICT-021 DICT-022
+    #[flow_ui::gpui::test]
+    async fn the_search_toggle_is_a_muted_magnifier_and_closing_clears_the_query(cx: &mut TestAppContext) {
+        let w = open(cx);
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "magnifyingglass"));
+        assert_eq!(label(cx, w, "vocabulary.searchToggle").as_deref(), Some("Search"));
+        assert!(cx.update_window(w.into(), |_, win, _| win.try_find("vocabulary.searchField").is_none()).unwrap(), "closed at first");
+        click(cx, w, "vocabulary.searchToggle");
+        let field = w.update(cx, |t, _, _| t.search.clone()).unwrap();
+        type_into(cx, w, field, "kube");
+        assert_eq!(shown(cx, w), ["Kubernetes"]);
+        click(cx, w, "vocabulary.searchToggle");
+        assert!(cx.update_window(w.into(), |_, win, _| win.try_find("vocabulary.searchField").is_none()).unwrap());
+        w.update(cx, |t, _, cx| assert_eq!(t.search.read(cx).value().to_string(), "")).unwrap();
+        assert_eq!(shown(cx, w).len(), 7);
+        click(cx, w, "vocabulary.searchToggle");
+        w.update(cx, |t, _, cx| assert_eq!(t.search.read(cx).value().to_string(), "", "reopens blank")).unwrap();
+    }
+
+    // parity: DICT-023
+    /// Accessibility label and placeholder; the identifier itself is checked from the AX dump.
+    #[flow_ui::gpui::test]
+    async fn the_search_field_is_not_focused_and_ignores_escape(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.searchToggle");
+        cx.update_window(w.into(), |_, win, _| {
+            let f = win.find_by_label("Search dictionary");
+            assert_eq!(f.placeholder(), Some("Search"));
+            assert_ne!(f.focused(), Some(true), "no autofocus");
+        })
+        .unwrap();
+        // No Esc handler: Escape leaves the field open.
+        let field = w.update(cx, |t, _, _| t.search.clone()).unwrap();
+        type_into(cx, w, field, "qw");
+        cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+        frame(cx, w);
+        w.update(cx, |t, _, cx| {
+            assert!(t.searching);
+            assert_eq!(t.search.read(cx).value().to_string(), "qw");
+        })
+        .unwrap();
+    }
+
+    // parity: DICT-024
+    /// Trimmed, folded, contiguous, against canonical and every alias, together with the filter.
+    #[flow_ui::gpui::test]
+    async fn search_matches_folded_terms_and_aliases_with_the_filter(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.searchToggle");
+        let query = |cx: &mut TestAppContext, q: &str| {
+            let field = w.update(cx, |t, _, _| t.search.clone()).unwrap();
+            let text = q.to_string();
+            w.update(cx, |_, win, cx| field.update(cx, |s, cx| s.set_value(text, win, cx))).unwrap();
+            frame(cx, w);
+            shown(cx, w)
+        };
+        assert_eq!(query(cx, "BRUNEL"), ["Brunel"], "case folded");
+        assert_eq!(query(cx, "  brunel  "), ["Brunel"], "trimmed");
+        assert_eq!(query(cx, "cube ne"), ["Kubernetes"], "an alias, not the canonical");
+        assert_eq!(query(cx, "kwen"), ["Qwen"], "the second alias");
+        assert!(query(cx, "brnl").is_empty(), "contiguous, not a subsequence");
+        assert!(query(cx, "zurich").is_empty(), "no diacritic folding");
+        assert_eq!(query(cx, "ZÜR"), ["Zürich"]);
+        assert_eq!(query(cx, "n"), ["Brunel", "Kubernetes", "Northwind", "Qwen", "Tallinn"]);
+        click(cx, w, "vocabulary.filter.disabled");
+        assert_eq!(query(cx, "n"), ["Northwind"], "with the filter");
+    }
+
+    // parity: DICT-030 DICT-010
+    #[flow_ui::gpui::test]
+    async fn the_banner_button_begins_an_add_like_add_new(cx: &mut TestAppContext) {
+        let w = open(cx);
+        assert_ne!(disabled(cx, w, "vocabulary.bannerAdd"), Some(true));
+        click(cx, w, "vocabulary.bannerAdd");
+        assert_saw(&["Add to vocabulary"]);
+        w.update(cx, |t, _, _| assert_eq!(t.model.draft.as_ref().unwrap().id, None)).unwrap();
+        click(cx, w, "vocabulary.cancel");
+        state(cx, w, |t| t.model.saving = true);
+        assert_eq!(disabled(cx, w, "vocabulary.bannerAdd"), Some(true), "saving");
+        assert_eq!(disabled(cx, w, "vocabulary.add"), Some(true), "saving");
+        state(cx, w, |t| t.model.saving = false);
+        assert_ne!(disabled(cx, w, "vocabulary.add"), Some(true));
+    }
+
+    // parity: DICT-031
+    #[flow_ui::gpui::test]
+    async fn the_full_notice_is_12_white_at_85(cx: &mut TestAppContext) {
+        let _w = open(cx);
+        assert!(!saw("Dictionary is full"), "not below the limit");
+        let w = open_scenario(cx, "dictionary.full");
+        let s = flow_ui::probe::style_of("Dictionary is full (512 words).").unwrap();
+        assert_eq!((s.size, s.color), (12., white().opacity(0.85)));
+        assert_eq!(disabled(cx, w, "vocabulary.bannerAdd"), Some(true));
+    }
+
+    // parity: DICT-033 DICT-034
+    /// Stays hidden on a page built afterwards, and no control offers it back.
+    #[flow_ui::gpui::test]
+    async fn a_dismissed_banner_stays_hidden_on_the_next_page(cx: &mut TestAppContext) {
+        let w = open(cx);
+        assert_eq!(label(cx, w, "vocabulary.bannerDismiss").as_deref(), Some("Dismiss introduction"));
+        click(cx, w, "vocabulary.bannerDismiss");
+        cx.update(|cx| assert!(cx.global::<Core>().prefs.bool_or("dictionary.bannerDismissed", false)));
+        let again = cx.add_window(|w, cx| DictionaryPage::new(w, cx));
+        frame(cx, again);
+        assert!(!saw("LocalFlow spells"));
+        assert!(cx.update_window(again.into(), |_, win, _| win.try_find("vocabulary.bannerAdd").is_none()).unwrap());
+        assert_saw(&["Dictionary", "All"]);
+    }
+
+    // parity: DICT-035 DICT-036
+    /// A real failed reload: the error is 13 warning under its identifier, the rows already loaded stay.
+    #[flow_ui::gpui::test]
+    async fn a_failed_reload_shows_the_error_and_keeps_the_rows(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let before = shown(cx, w);
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute("UPDATE vocabulary_entries SET canonical_text='Omega' WHERE canonical_text='Brunel'", []).unwrap());
+        w.update(cx, |t, _, cx| {
+            t.refresh(cx);
+            cx.notify();
+        })
+        .unwrap();
+        frame(cx, w);
+        let copy = "Preferred spellings could not be loaded. Repair or delete entries in Settings.";
+        let s = flow_ui::probe::style_of(copy).unwrap();
+        let warning = cx.update(|cx| pal(cx).warning);
+        assert_eq!((s.size, s.color), (13., warning));
+        // Top padding 24 over a 13 text's headless 14 line.
+        assert_eq!(bounds(cx, w, "vocabulary.loadErrorLine").size.height, px(24. + 14.));
+        assert_eq!(shown(cx, w), before, "earlier entries stay");
+        assert_eq!(disabled(cx, w, "vocabulary.add"), Some(true));
+        assert!(!saw("Suggested"), "DICT-057: no suggestions on a load error");
+    }
+
+    // parity: DICT-042
+    /// Only with All, an empty search and suggestions to show.
+    #[flow_ui::gpui::test]
+    async fn suggested_needs_all_an_empty_search_and_suggestions(cx: &mut TestAppContext) {
+        let w = open(cx);
+        assert_saw(&["Suggested"]);
+        click(cx, w, "vocabulary.filter.enabled");
+        assert!(!saw("Suggested"), "another filter");
+        click(cx, w, "vocabulary.filter.all");
+        assert_saw(&["Suggested"]);
+        click(cx, w, "vocabulary.searchToggle");
+        assert_saw(&["Suggested"]);
+        let field = w.update(cx, |t, _, _| t.search.clone()).unwrap();
+        type_into(cx, w, field, "b");
+        assert!(!saw("Suggested"), "a search");
+        click(cx, w, "vocabulary.searchToggle");
+        assert_saw(&["Suggested"]);
+        state(cx, w, |t| t.model.suggestions.clear());
+        assert!(!saw("Suggested"), "none");
+    }
+
+    // parity: DICT-044 DICT-045 DICT-048
+    #[flow_ui::gpui::test]
+    async fn suggestion_rows_read_their_source_and_their_buttons(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let (s, muted) = (flow_ui::probe::style_of("You corrected this").unwrap(), cx.update(|cx| pal(cx).muted));
+        assert_eq!((s.size, s.color), (12., muted));
+        let first = w.update(cx, |t, _, _| t.model.suggestions[0].canonical.clone()).unwrap();
+        assert_eq!(first, "Figtree", "most sightings first");
+        assert_eq!(label(cx, w, "vocabulary.suggestion.add.0"), Some("Add Figtree".to_string()));
+        assert_eq!(label(cx, w, "vocabulary.suggestion.dismiss.0"), Some("Dismiss Figtree".to_string()));
+        assert_saw(&["fig tree", "Add", "Dismiss"]);
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "arrow.right"));
+        state(cx, w, |t| {
+            t.model.suggestions[0].source = Source::Context;
+            t.model.suggestions[0].sightings = 4;
+        });
+        assert_saw(&["Seen in 4 dictations"]);
+        state(cx, w, |t| t.model.saving = true);
+        assert_eq!(disabled(cx, w, "vocabulary.suggestion.add.0"), Some(true));
+        assert_ne!(disabled(cx, w, "vocabulary.suggestion.dismiss.0"), Some(true), "Dismiss stays enabled while saving");
+    }
+
+    // parity: DICT-046 DICT-047
+    #[flow_ui::gpui::test]
+    async fn adding_a_suggestion_opens_the_sheet_and_saving_governs_the_term(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let count = stored(cx).len();
+        click(cx, w, "vocabulary.suggestion.add.0");
+        w.update(cx, |t, _, _| {
+            let d = t.model.draft.as_ref().unwrap();
+            assert_eq!((d.canonical.as_str(), d.aliases.as_slice()), ("Figtree", &["fig tree".to_string()][..]));
+            assert!(t.model.is_correcting());
+        })
+        .unwrap();
+        assert_eq!(stored(cx).len(), count, "nothing persists until save");
+        click(cx, w, "vocabulary.save");
+        assert!(stored(cx).iter().any(|e| e.canonical == "Figtree" && e.aliases == ["fig tree"]));
+        w.update(cx, |t, _, _| assert!(t.model.suggestions.iter().all(|s| s.canonical != "Figtree"), "now governed")).unwrap();
+        // The one with no alias opens with misspelling mode off.
+        click(cx, w, "vocabulary.suggestion.add.0");
+        w.update(cx, |t, _, _| {
+            assert_eq!(t.model.draft.as_ref().unwrap().canonical, "Garamond");
+            assert!(!t.model.is_correcting() && t.aliases.is_empty());
+        })
+        .unwrap();
+        click(cx, w, "vocabulary.cancel");
+        // `!canAdd`: a full store turns it off too.
+        let w = open_scenario(cx, "dictionary.full");
+        assert_eq!(disabled(cx, w, "vocabulary.suggestion.add.0"), Some(true));
+    }
+
+    // parity: DICT-049
+    #[flow_ui::gpui::test]
+    async fn dismissing_a_suggestion_writes_it_and_it_stays_gone(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.suggestion.dismiss.0");
+        assert!(!saw("Figtree"), "the row goes at once");
+        let row: (i64, i64, i64) = cx.update(|cx| {
+            cx.global::<Core>().db.as_ref().unwrap().conn.query_row("SELECT dismissed, sightings, last_seen FROM term_suggestions WHERE canonical='Figtree'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap()
+        });
+        assert_eq!((row.0, row.1), (1, 2), "dismissed, sightings kept on conflict");
+        assert!(row.2 > 0);
+        w.update(cx, |t, _, cx| t.refresh(cx)).unwrap();
+        frame(cx, w);
+        assert!(!saw("Figtree"));
+    }
+
+    // parity: DICT-059 DICT-060 DICT-061
+    /// Three empty copies: 15 muted, 60 above and below, each on its own condition.
+    #[flow_ui::gpui::test]
+    async fn the_empty_texts_share_a_style_and_keep_60_around_them(cx: &mut TestAppContext) {
+        let muted_of = |cx: &mut TestAppContext| cx.update(|cx| pal(cx).muted);
+        let w = open_scenario(cx, "dictionary.empty");
+        let muted = muted_of(cx);
+        let s = flow_ui::probe::style_of("No words yet").unwrap();
+        assert_eq!((s.size, s.color), (15., muted));
+        // Headless Figtree 15 is a 16 line.
+        assert_eq!(bounds(cx, w, "vocabulary.empty").size.height, px(60. + 16. + 60.));
+        let w = open(cx);
+        click(cx, w, "vocabulary.filter.learned");
+        state(cx, w, |t| t.model.entries.retain(|e| e.learned_at.is_none()));
+        let s = flow_ui::probe::style_of("Nothing here").unwrap();
+        assert_eq!((s.size, s.color), (15., muted));
+        click(cx, w, "vocabulary.filter.all");
+        click(cx, w, "vocabulary.searchToggle");
+        let field = w.update(cx, |t, _, _| t.search.clone()).unwrap();
+        type_into(cx, w, field, "zzz");
+        let s = flow_ui::probe::style_of("No matches").unwrap();
+        assert_eq!((s.size, s.color), (15., muted));
+        assert!(!saw("Nothing here"));
+    }
+
+    // parity: DICT-077
+    /// Both labels, 11 medium, disabled while saving. The tooltip is a literal the test can't read.
+    #[flow_ui::gpui::test]
+    async fn restore_buttons_read_their_term_or_boost(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let s = flow_ui::probe::style_of("Restore \u{2018}akme robotics\u{2019}").unwrap();
+        assert_eq!((s.size, s.weight), (11., 500.));
+        assert_saw(&["Boost off · Restore"]);
+        let i = w.update(cx, |t, _, _| t.model.entries.iter().position(|e| e.canonical == "Tallinn").unwrap()).unwrap();
+        assert_eq!(label(cx, w, &format!("dictionary.alias.restore.{i}.0")).as_deref(), Some("Boost off · Restore"));
+        assert_ne!(disabled(cx, w, "dictionary.alias.restore.0.0"), Some(true));
+        state(cx, w, |t| t.model.saving = true);
+        assert_eq!(disabled(cx, w, "dictionary.alias.restore.0.0"), Some(true));
+    }
+
+    // parity: DICT-080
+    /// All three copies through the button: a term, boost, and a failed write.
+    #[flow_ui::gpui::test]
+    async fn restore_reports_the_term_the_boost_or_a_failure(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "dictionary.alias.restore.0.0");
+        assert_saw(&["Restored akme robotics."]);
+        let i = w.update(cx, |t, _, _| t.model.entries.iter().position(|e| e.canonical == "Tallinn").unwrap()).unwrap();
+        click(cx, w, &format!("dictionary.alias.restore.{i}.0"));
+        assert_saw(&["Listening for Tallinn again."]);
+        let z = w.update(cx, |t, _, _| t.model.entries.iter().position(|e| e.canonical == "Zürich").unwrap()).unwrap();
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("CREATE TRIGGER no_usage BEFORE UPDATE ON dictionary_key_usage BEGIN SELECT RAISE(ABORT, 'no'); END").unwrap());
+        click(cx, w, &format!("dictionary.alias.restore.{z}.0"));
+        assert_saw(&["Could not restore Zürich. Try again."]);
+    }
+
+    // parity: DICT-082 DICT-084 DICT-085 DICT-086 DICT-087
+    /// The row's three pills: labels, accessibility names, disabled while saving, what each does.
+    #[flow_ui::gpui::test]
+    async fn row_pills_name_their_entry_and_do_what_they_say(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let entries = w.update(cx, |t, _, _| t.model.entries.clone()).unwrap();
+        let on = entries.iter().position(|e| e.enabled).unwrap();
+        let off = entries.iter().position(|e| !e.enabled).unwrap();
+        assert_eq!(label(cx, w, &format!("dictionary.toggle.{on}")), Some(format!("Disable {}", entries[on].canonical)));
+        assert_eq!(label(cx, w, &format!("dictionary.toggle.{off}")), Some(format!("Enable {}", entries[off].canonical)));
+        assert_eq!(label(cx, w, &format!("dictionary.delete.{on}")), Some(format!("Delete {}", entries[on].canonical)));
+        assert_saw(&["Edit", "Disable", "Enable", "Delete"]);
+        // Enable: the write, its revision, its copy.
+        let revision = |cx: &mut TestAppContext| w.update(cx, |t, _, _| t.model.revision).unwrap();
+        let hash = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.query_row("SELECT content_hash FROM vocabulary_state WHERE id=1", [], |r| r.get::<_, String>(0)).unwrap());
+        let (r0, h0) = (revision(cx), hash(cx));
+        click(cx, w, &format!("dictionary.toggle.{off}"));
+        assert_saw(&["Entry enabled."]);
+        assert!(stored(cx).iter().find(|e| e.id == entries[off].id).unwrap().enabled);
+        assert_eq!(revision(cx), r0 + 1);
+        assert_ne!(hash(cx), h0);
+        click(cx, w, &format!("dictionary.toggle.{off}"));
+        assert_saw(&["Entry disabled."]);
+        // Delete only asks.
+        let count = stored(cx).len();
+        click(cx, w, &format!("dictionary.delete.{on}"));
+        w.update(cx, |t, _, _| assert_eq!(t.confirming_delete.as_ref().unwrap().id, entries[on].id)).unwrap();
+        assert_eq!(stored(cx).len(), count, "no write");
+        cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+        frame(cx, w);
+        // While saving the pills are off, and the model ignores an edit anyway.
+        state(cx, w, |t| t.model.saving = true);
+        for part in ["edit", "toggle", "delete"] {
+            assert_eq!(disabled(cx, w, &format!("dictionary.{part}.{on}")), Some(true), "{part}");
+        }
+        w.update(cx, |t, _, _| {
+            let e = t.model.entries[on].clone();
+            t.model.begin_edit(&e);
+            assert!(t.model.draft.is_none(), "Ignored while saving");
+        })
+        .unwrap();
+    }
+
+    // parity: DICT-084
+    /// Id, canonical, aliases, enabled, `learnedAt` carried; errors and status cleared.
+    #[flow_ui::gpui::test]
+    async fn edit_carries_the_whole_entry(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let (i, e) = w.update(cx, |t, _, _| t.model.entries.iter().enumerate().find(|(_, e)| e.canonical == "Qwen").map(|(i, e)| (i, e.clone())).unwrap()).unwrap();
+        state(cx, w, |t| {
+            t.model.status = Some("old".into());
+            t.model.field_errors.insert(Field::Store, "old".into());
+        });
+        click(cx, w, &format!("dictionary.edit.{i}"));
+        w.update(cx, |t, _, _| {
+            let d = t.model.draft.as_ref().unwrap();
+            assert_eq!((d.id.as_ref(), &d.canonical, &d.aliases, d.enabled, d.learned_at), (Some(&e.id), &e.canonical, &e.aliases, e.enabled, e.learned_at));
+            assert!(e.learned_at.is_some());
+            assert!(t.model.field_errors.is_empty() && t.model.status.is_none());
+        })
+        .unwrap();
+        assert_saw(&["Edit vocabulary", "Save"]);
+    }
+
+    // parity: DICT-083
+    /// Actions stay in the tree without a hover, and `voice_over` comes from Services. The opacity
+    /// itself can't be read headless: it lives in `hover_or_focus_revealed`.
+    #[flow_ui::gpui::test]
+    async fn row_actions_stay_tabbable_while_hidden(cx: &mut TestAppContext) {
+        let w = open(cx);
+        for id in ["dictionary.edit.0", "dictionary.toggle.0", "dictionary.delete.0"] {
+            assert!(cx.update_window(w.into(), |_, win, _| win.try_find(id).is_some()).unwrap(), "{id}");
+        }
+        w.update(cx, |t, _, _| assert!(!t.voice_over)).unwrap();
+        // Focus on the page itself is not focus on any row's actions, so no row reveals.
+        w.update(cx, |t, win, cx| {
+            t.focus.focus(win, cx);
+            assert!(t.action_focus.borrow().values().all(|f| !f.contains_focused(win, cx)));
+        })
+        .unwrap();
+    }
+
+    // parity: DICT-089 DICT-090
+    #[flow_ui::gpui::test]
+    async fn deleting_reads_the_dialog_removes_the_rows_and_closes_the_draft(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let i = w.update(cx, |t, _, _| t.model.entries.iter().position(|e| e.canonical == "Brunel").unwrap()).unwrap();
+        let id = stored(cx).into_iter().find(|e| e.canonical == "Brunel").unwrap().id;
+        click(cx, w, &format!("dictionary.delete.{i}"));
+        assert_saw(&["Delete this word?", "Past transcriptions keep their spelling.", "Delete word", "Cancel"]);
+        // An open draft of that entry closes with it.
+        state(cx, w, |t| {
+            let e = t.model.entries[i].clone();
+            t.model.begin_edit(&e);
+        });
+        let usage_rev = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.query_row("SELECT revision FROM dictionary_usage_state WHERE id=1", [], |r| r.get::<_, i64>(0)).unwrap());
+        let before = usage_rev(cx);
+        click(cx, w, "vocabulary.deleteDialog.confirm");
+        assert_saw(&["Entry deleted."]);
+        w.update(cx, |t, _, _| assert!(t.model.draft.is_none())).unwrap();
+        assert!(usage_rev(cx) > before, "usage revision bumped");
+        let rows: i64 = cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.query_row("SELECT count(*) FROM dictionary_key_usage WHERE entry_id=?", [&id], |r| r.get(0)).unwrap());
+        assert_eq!(rows, 0, "usage cascades");
+    }
+
+    // parity: DICT-092
+    #[flow_ui::gpui::test]
+    async fn the_status_line_is_12_muted_and_ends_on_the_next_begin(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "dictionary.toggle.0");
+        let muted = cx.update(|cx| pal(cx).muted);
+        let status = w.update(cx, |t, _, _| t.model.status.clone().unwrap()).unwrap();
+        let s = flow_ui::probe::style_of(&status).unwrap();
+        assert_eq!((s.size, s.color), (12., muted));
+        let line = bounds(cx, w, "vocabulary.statusLine");
+        assert_eq!(line.size.height, px(14. + 13.), "top padding 14 over the 12 text");
+        assert!(line.origin.y > bounds(cx, w, "dictionary.delete.6").bottom(), "below the list");
+        click(cx, w, "vocabulary.add");
+        assert!(cx.update_window(w.into(), |_, win, _| win.try_find("vocabulary.statusLine").is_none()).unwrap());
+    }
+
+    // parity: DICT-093 DICT-094 DICT-118
+    /// Width 360; Escape and Cancel are refused while a save runs, and Cancel reads off.
+    #[flow_ui::gpui::test]
+    async fn the_sheet_is_360_wide_and_cannot_be_left_while_saving(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        assert_eq!(bounds(cx, w, "vocabulary.sheet").size.width, px(360.));
+        let s = flow_ui::probe::style_of("Add to vocabulary").unwrap();
+        assert_eq!((s.size, s.weight), (15., 600.));
+        assert_saw(&["Cancel"]);
+        state(cx, w, |t| t.model.saving = true);
+        assert_eq!(disabled(cx, w, "vocabulary.cancel"), Some(true));
+        cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+        frame(cx, w);
+        w.update(cx, |t, _, _| assert!(t.model.draft.is_some(), "Escape ignored while saving")).unwrap();
+        state(cx, w, |t| t.model.saving = false);
+        assert_ne!(disabled(cx, w, "vocabulary.cancel"), Some(true));
+        cx.update_window(w.into(), |_, win, cx| win.press("escape", cx)).unwrap();
+        frame(cx, w);
+        w.update(cx, |t, _, _| assert!(t.model.draft.is_none())).unwrap();
+    }
+
+    // parity: DICT-096
+    /// On focuses the first alias, off focuses the word. Replaces an `||` that always held.
+    #[flow_ui::gpui::test]
+    async fn the_mode_switch_moves_focus_each_way(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        click(cx, w, "vocabulary.correctMisspelling");
+        w.update(cx, |t, win, cx| assert!(t.canonical.as_ref().unwrap().read(cx).focus_handle(cx).is_focused(win), "off: the word")).unwrap();
+        click(cx, w, "vocabulary.correctMisspelling");
+        w.update(cx, |t, win, cx| assert!(t.aliases[0].read(cx).focus_handle(cx).is_focused(win), "on: the first alias")).unwrap();
+    }
+
+    // parity: DICT-098 DICT-099 DICT-100 DICT-103 DICT-104
+    /// The switch, by click: identifiers, labels, placeholders, and aliases gone for good when off.
+    #[flow_ui::gpui::test]
+    async fn the_misspelling_switch_discards_aliases_and_returns_one_blank(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        assert_saw(&["Correct a misspelling", "Enabled"]);
+        assert_eq!(cx.update_window(w.into(), |_, win, _| win.find("vocabulary.enabled").checked()).unwrap(), Some(true), "default on");
+        assert_eq!(label(cx, w, "vocabulary.correctMisspelling").as_deref(), Some("Correct a misspelling"));
+        assert_eq!(label(cx, w, "vocabulary.enabled").as_deref(), Some("Enabled"));
+        // First row: Misspelling, arrow, Correct spelling, with both identifiers.
+        cx.update_window(w.into(), |_, win, _| {
+            assert_eq!(win.find_by_label("Misspelling").placeholder(), Some("Misspelling"));
+            assert_eq!(win.find_by_label("Correct spelling").placeholder(), Some("Correct spelling"));
+        })
+        .unwrap();
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "arrow.right"));
+        assert!(flow_ui::probe::symbols().iter().filter(|s| *s == "info.circle").count() >= 2);
+        let alias = w.update(cx, |t, _, _| t.aliases[0].clone()).unwrap();
+        type_into(cx, w, alias, "tatry");
+        state(cx, w, |t| {
+            t.model.field_errors.insert(Field::Alias(0), "x".into());
+            t.model.field_errors.insert(Field::Aliases, "y".into());
+        });
+        let before = stored(cx);
+        click(cx, w, "vocabulary.correctMisspelling");
+        w.update(cx, |t, _, _| {
+            assert!(t.model.draft.as_ref().unwrap().aliases.is_empty());
+            assert!(t.model.field_errors.is_empty());
+        })
+        .unwrap();
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find_by_label("Word").placeholder(), Some("Word"))).unwrap();
+        click(cx, w, "vocabulary.correctMisspelling");
+        w.update(cx, |t, _, _| assert_eq!(t.model.draft.as_ref().unwrap().aliases, [""])).unwrap();
+        assert_eq!(stored(cx), before, "persists nothing");
+    }
+
+    // parity: DICT-105 DICT-107 DICT-109
+    #[flow_ui::gpui::test]
+    async fn extra_misspelling_rows_show_the_word_and_a_named_remove(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        let canonical = w.update(cx, |t, _, _| t.canonical.clone().unwrap()).unwrap();
+        type_into(cx, w, canonical, "Tatra");
+        state(cx, w, |t| {
+            t.model.field_errors.insert(Field::Aliases, "too many".into());
+        });
+        click(cx, w, "vocabulary.addAlias");
+        w.update(cx, |t, _, _| {
+            assert_eq!(t.model.draft.as_ref().unwrap().aliases, ["", ""], "a blank alias appended");
+            assert!(!t.model.field_errors.contains_key(&Field::Aliases), "add clears the aliases error");
+        })
+        .unwrap();
+        assert_eq!(label(cx, w, "vocabulary.removeAlias.1").as_deref(), Some("Remove misspelling 2"));
+        assert!(cx.update_window(w.into(), |_, win, _| win.try_find("vocabulary.alias.1.box").is_some()).unwrap());
+        let muted = cx.update(|cx| pal(cx).muted);
+        let s = flow_ui::probe::style_of("Tatra").unwrap();
+        assert_eq!((s.size, s.color), (13., muted), "the read only canonical");
+        assert!(flow_ui::probe::symbols().iter().any(|s| s == "xmark"));
+        state(cx, w, |t| {
+            t.model.field_errors.insert(Field::Alias(0), "a".into());
+            t.model.field_errors.insert(Field::Alias(1), "b".into());
+            t.model.field_errors.insert(Field::Canonical, "keep".into());
+        });
+        click(cx, w, "vocabulary.removeAlias.1");
+        w.update(cx, |t, _, _| {
+            assert_eq!(t.aliases.len(), 1);
+            assert!(!t.model.field_errors.keys().any(|k| matches!(k, Field::Alias(_))), "every alias field error");
+            assert!(t.model.field_errors.contains_key(&Field::Canonical));
+        })
+        .unwrap();
+    }
+
+    // parity: DICT-106
+    /// Through real keystrokes, not direct model calls.
+    #[flow_ui::gpui::test]
+    async fn typing_clears_that_fields_error(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        state(cx, w, |t| {
+            t.model.field_errors.insert(Field::Canonical, "bad word".into());
+            t.model.field_errors.insert(Field::Alias(0), "bad alias".into());
+            t.model.field_errors.insert(Field::Aliases, "aliases".into());
+        });
+        let alias = w.update(cx, |t, _, _| t.aliases[0].clone()).unwrap();
+        type_into(cx, w, alias, "x");
+        w.update(cx, |t, _, _| {
+            assert!(!t.model.field_errors.contains_key(&Field::Alias(0)));
+            assert!(!t.model.field_errors.contains_key(&Field::Aliases));
+            assert!(t.model.field_errors.contains_key(&Field::Canonical));
+        })
+        .unwrap();
+        let canonical = w.update(cx, |t, _, _| t.canonical.clone().unwrap()).unwrap();
+        type_into(cx, w, canonical, "y");
+        w.update(cx, |t, _, _| assert!(t.model.field_errors.is_empty())).unwrap();
+    }
+
+    // parity: DICT-108 DICT-111 DICT-112 DICT-113 DICT-114
+    #[flow_ui::gpui::test]
+    async fn duplicates_are_flagged_styled_and_removed_with_a_count(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        let canonical = w.update(cx, |t, _, _| t.canonical.clone().unwrap()).unwrap();
+        type_into(cx, w, canonical, "Tatra");
+        let (accent, warning) = cx.update(|cx| (pal(cx).accent, pal(cx).warning));
+        let s = flow_ui::probe::style_of("Add another misspelling").unwrap();
+        assert_eq!((s.size, s.color), (12., accent));
+        // An alias equal to its own canonical is a duplicate, folded.
+        let a = w.update(cx, |t, _, _| t.aliases[0].clone()).unwrap();
+        type_into(cx, w, a, "TATRA");
+        let s = flow_ui::probe::style_of("Repeats another misspelling.").unwrap();
+        assert_eq!((s.size, s.color), (12., warning));
+        let s = flow_ui::probe::style_of("Remove duplicates").unwrap();
+        assert_eq!((s.size, s.color), (12., accent));
+        // A stored error on that index wins.
+        state(cx, w, |t| {
+            t.model.field_errors.insert(Field::Alias(0), "stored".into());
+        });
+        assert_saw(&["stored"]);
+        assert!(!saw("Repeats another misspelling."));
+        let before = stored(cx);
+        click(cx, w, "vocabulary.deduplicate");
+        assert_saw(&["Removed 1 duplicate alias."]);
+        w.update(cx, |t, _, _| assert!(t.model.field_errors.is_empty(), "clears field errors")).unwrap();
+        assert_eq!(stored(cx), before, "persists nothing");
+        assert!(cx.update_window(w.into(), |_, win, _| win.try_find("vocabulary.deduplicate").is_none()).unwrap(), "gone with no duplicates");
+        // Two at once reads plural.
+        state(cx, w, |t| {
+            let d = t.model.draft.as_mut().unwrap();
+            d.aliases = vec!["a b".into(), "A B".into(), "a b".into()];
+        });
+        state(cx, w, |t| t.model.deduplicate());
+        assert_saw(&["Removed 2 duplicate aliases."]);
+    }
+
+    // parity: DICT-116
+    /// A real store error reaches the sheet's single line under `Field::Store`.
+    #[flow_ui::gpui::test]
+    async fn a_real_stale_write_reaches_the_sheet_and_the_status(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        let (canonical, alias) = w.update(cx, |t, _, _| (t.canonical.clone().unwrap(), t.aliases[0].clone())).unwrap();
+        type_into(cx, w, canonical, "Tatra");
+        type_into(cx, w, alias, "tatry");
+        state(cx, w, |t| t.model.revision -= 1);
+        let before = stored(cx).len();
+        click(cx, w, "vocabulary.save");
+        let copy = "The vocabulary changed. Review and save again.";
+        assert_saw(&[copy, "Add to vocabulary"]);
+        assert!(cx.update_window(w.into(), |_, win, _| win.try_find("vocabulary.sheetError").is_some()).unwrap());
+        w.update(cx, |t, _, _| {
+            assert_eq!(t.model.status.as_deref(), Some(copy), "DICT-126: in status too");
+            assert!(t.model.draft.is_some(), "DICT-126: draft stays");
+        })
+        .unwrap();
+        assert_eq!(stored(cx).len(), before);
+    }
+
+    // parity: DICT-126 DICT-127
+    /// Conflict suffix, missing entry, an SQL failure; the list refreshes each time.
+    #[flow_ui::gpui::test]
+    async fn write_errors_go_to_their_field_with_the_right_copy(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        let (canonical, alias) = w.update(cx, |t, _, _| (t.canonical.clone().unwrap(), t.aliases[0].clone())).unwrap();
+        type_into(cx, w, canonical, "Tatra");
+        type_into(cx, w, alias, "Brunel");
+        click(cx, w, "vocabulary.save");
+        assert!(saw("Conflicts with “Brunel”."), "{:?}", flow_ui::probe::seen());
+        click(cx, w, "vocabulary.cancel");
+        // A row gone behind the page's back: status set, and the stale row refreshed away.
+        let gone = w.update(cx, |t, _, _| t.model.entries.iter().find(|e| e.canonical == "Northwind").unwrap().clone()).unwrap();
+        cx.update(|cx| {
+            let db = cx.global::<Core>().db.as_ref().unwrap();
+            flow_core::dictionary::delete(db, &gone.id, None).unwrap();
+        });
+        // The page holds an old revision, so the staleness copy wins, and the list refreshes.
+        w.update(cx, |t, _, cx| t.toggle(&gone, cx)).unwrap();
+        frame(cx, w);
+        assert_saw(&["The vocabulary changed. Review and save again."]);
+        assert!(!shown(cx, w).contains(&"Northwind".to_string()), "the list refreshed");
+        // With the revision current, a row that's gone reads as missing.
+        w.update(cx, |t, _, cx| t.toggle(&gone, cx)).unwrap();
+        frame(cx, w);
+        let missing = flow_core::dictionary::Code::MissingEntry.message();
+        w.update(cx, |t, _, _| assert_eq!(t.model.status.as_deref(), Some(missing))).unwrap();
+        // Anything else: "Could not save. …".
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute_batch("CREATE TRIGGER no_write BEFORE UPDATE ON vocabulary_entries BEGIN SELECT RAISE(ABORT, 'no'); END").unwrap());
+        let e = w.update(cx, |t, _, _| t.model.entries[0].clone()).unwrap();
+        w.update(cx, |t, _, cx| t.toggle(&e, cx)).unwrap();
+        frame(cx, w);
+        w.update(cx, |t, _, _| assert!(t.model.status.as_deref().unwrap_or("").starts_with("Could not save. "), "{:?}", t.model.status)).unwrap();
+    }
+
+    // parity: DICT-120 DICT-121 DICT-122
+    #[flow_ui::gpui::test]
+    async fn the_save_button_names_its_state_and_edit_saves(cx: &mut TestAppContext) {
+        let w = open(cx);
+        click(cx, w, "vocabulary.add");
+        assert_eq!(label(cx, w, "vocabulary.save").as_deref(), Some("Add word"));
+        state(cx, w, |t| t.model.saving = true);
+        assert_eq!(label(cx, w, "vocabulary.save").as_deref(), Some("Saving…"));
+        assert_saw(&["Saving…"]);
+        state(cx, w, |t| t.model.saving = false);
+        click(cx, w, "vocabulary.cancel");
+        let i = w.update(cx, |t, _, _| t.model.entries.iter().position(|e| e.canonical == "Brunel").unwrap()).unwrap();
+        click(cx, w, &format!("dictionary.edit.{i}"));
+        assert_eq!(label(cx, w, "vocabulary.save").as_deref(), Some("Save"));
+        let (canonical, save) = (bounds(cx, w, "vocabulary.canonical.box"), bounds(cx, w, "vocabulary.save"));
+        assert!(save.origin.y >= canonical.bottom() + px(4.), "top padding 4");
+        let field = w.update(cx, |t, _, _| t.canonical.clone().unwrap()).unwrap();
+        type_into(cx, w, field, "x");
+        cx.update_window(w.into(), |_, win, cx| win.press("enter", cx)).unwrap();
+        frame(cx, w);
+        assert_saw(&["Entry saved."]);
+        assert!(!stored(cx).iter().any(|e| e.canonical == "Brunel"), "the edit was written");
+    }
+
+    // parity: DICT-128
+    /// Toggle and delete do nothing while a write runs, not just their pills.
+    #[flow_ui::gpui::test]
+    async fn writes_are_ignored_while_one_runs(cx: &mut TestAppContext) {
+        let w = open(cx);
+        let before = stored(cx);
+        let e = w.update(cx, |t, _, _| t.model.entries[0].clone()).unwrap();
+        state(cx, w, |t| t.model.saving = true);
+        w.update(cx, |t, _, cx| {
+            t.toggle(&e, cx);
+            t.confirming_delete = Some(e.clone());
+            t.delete_confirmed(cx);
+        })
+        .unwrap();
+        assert_eq!(stored(cx), before);
+        w.update(cx, |t, _, cx| {
+            t.model.draft = Some(flow_core::dictionary::Draft { id: None, canonical: "New".into(), aliases: vec![], enabled: true, learned_at: None });
+            t.model.save_draft(cx.global::<Core>().db.as_ref().unwrap(), is_english);
+        })
+        .unwrap();
+        assert_eq!(stored(cx), before);
     }
 }
