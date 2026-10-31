@@ -53,11 +53,11 @@
 
 ## Phase 7: User Story 3, server mode (P2)
 
-- [ ] T025 [US3] Bundle `flowd-speech` and its FluidAudio resource bundle in `Contents/Helpers` through the Xcode project and build scripts; record the size change in ADR 0037
-- [ ] T026 [US3] Implement ServerModeController.swift (helpers to data dir, resync on app update, `flowd admin init`, plist with `0.0.0.0:8090` for new installs, bootstrap and bootout, `.dev` isolation) behind a process-runner protocol. An existing agent is adopted: its plist and binaries are not rewritten or resynced. A separate explicit "Open to the network" action changes only `--remote-listen`, keeps the previous plist and restores it if the server is not healthy within 60 s. Tests assert exact labels, never production labels in development builds, and that adoption preserves `--google-client-id`
-- [ ] T027 [US3] Add address detection through `getifaddrs` with classification (LAN, Tailscale) and a custom address, with tests
-- [ ] T028 [US3] Add ServerModeView.swift to ServerSettingsView.swift: toggle with network-open warning, status, addresses, fingerprint, missing requirements, confirmed model download, and turn off that deletes nothing
-- [ ] T029 [US3] Add tests with the fake process runner and a temp data dir that server mode on and off leaves local dictation preferences unchanged and addresses no production agent in development builds. Real launchd runs stay on the hardware list
+- [X] T025 [US3] Bundle `flowd-speech` and its FluidAudio resource bundle in `Contents/Helpers` through the Xcode project and build scripts; record the size change in ADR 0037
+- [X] T026 [US3] Implement ServerModeController.swift (helpers to data dir, resync on app update, `flowd admin init`, plist with `0.0.0.0:8090` for new installs, bootstrap and bootout, `.dev` isolation) behind a process-runner protocol. An existing agent is adopted: its plist and binaries are not rewritten or resynced. A separate explicit "Open to the network" action changes only `--remote-listen`, keeps the previous plist and restores it if the server is not healthy within 60 s. Tests assert exact labels, never production labels in development builds, and that adoption preserves `--google-client-id`
+- [X] T027 [US3] Add address detection through `getifaddrs` with classification (LAN, Tailscale) and a custom address, with tests
+- [X] T028 [US3] Add ServerModeView.swift to ServerSettingsView.swift: toggle with network-open warning, status, addresses, fingerprint, missing requirements, confirmed model download, and turn off that deletes nothing
+- [X] T029 [US3] Add tests with the fake process runner and a temp data dir that server mode on and off leaves local dictation preferences unchanged and addresses no production agent in development builds. Real launchd runs stay on the hardware list
 
 ## Phase 8: Polish
 

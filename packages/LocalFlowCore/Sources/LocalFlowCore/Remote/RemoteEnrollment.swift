@@ -18,6 +18,11 @@ public enum RemoteDictationNotice: String, CaseIterable, Sendable {
   case updateRequired = "update_required"
 }
 
+/// Feature 027: which kind of network an address found on the server Mac belongs to.
+public enum ServerAddressKind: Sendable, Equatable {
+  case lan, tailscale
+}
+
 /// The press-time snapshot of the remote settings (FR-017: one decision per dictation).
 public struct RemoteDictationSettings: Sendable, Equatable {
   public static let defaultFallbackThreshold = Duration.milliseconds(1_500)
@@ -89,6 +94,22 @@ public struct RemoteDictationSettings: Sendable, Equatable {
     else { return false }
     return labels.count == 1 || (labels.count > 1 && labels.last == "local")
       || (labels.count > 2 && labels.suffix(2) == ["ts", "net"])
+  }
+
+  /// Where an address found on this machine leads, by FR-012a's own rule, for listing the
+  /// server's addresses. nil for anything else: loopback, link-local, public or not an IP.
+  public static func serverAddressKind(ip: String) -> ServerAddressKind? {
+    var v4 = in_addr()
+    if inet_pton(AF_INET, ip, &v4) == 1 {
+      let b = withUnsafeBytes(of: &v4) { Array($0) }
+      guard isPrivate(ipv4: b), b[0] != 127, !(b[0] == 169 && b[1] == 254) else { return nil }
+      return b[0] == 100 ? .tailscale : .lan
+    }
+    var v6 = in6_addr()
+    guard inet_pton(AF_INET6, ip, &v6) == 1, allowsPlainHTTP(host: "[\(ip)]") else { return nil }
+    let b = withUnsafeBytes(of: &v6) { Array($0) }
+    guard b[0] & 0xfe == 0xfc else { return nil }  // only fc00::/7 stays stable and reachable
+    return Array(b[..<6]) == [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0] ? .tailscale : .lan
   }
 
   private static func isPrivate(ipv4 b: [UInt8]) -> Bool {

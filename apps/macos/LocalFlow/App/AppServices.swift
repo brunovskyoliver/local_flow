@@ -628,6 +628,19 @@ final class AppServices {
       await usageModel.start()
       settings.server = ServerSettingsModel(
         remote: remoteModel, preferences: preferences, ping: { await remoteRouter.ping() })
+      let serverMode = ServerModeController(
+        identity: .current, defaults: .standard, runner: SystemServerProcessRunner(),
+        contents: Bundle.main.bundleURL.appending(path: "Contents"),
+        probe: { origin in
+          (try? await URLSessionIdentityFetcher().fetch(origin: origin)).map {
+            .init(fingerprint: $0.fingerprint)
+          }
+        })
+      settings.server?.serverMode = ServerModeModel(
+        controller: serverMode, interfaces: ServerAddresses.interfaceIPs)
+      if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+        Task { await serverMode.resyncIfUpdated() }
+      }
       if let pendingPairing { openPairing(pendingPairing) }
       // Always wired: whether a dictation is rewritten is read from the per-attempt
       // settings snapshot, so the Settings toggle applies without relaunch. With remote

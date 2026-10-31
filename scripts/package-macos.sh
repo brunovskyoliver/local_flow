@@ -61,7 +61,7 @@ while IFS= read -r -d '' binary; do
   if file -b "$binary" | grep -q 'Mach-O'; then codesign "${signing[@]}" "$binary"; fi
 done < <(find "$app/Contents" -type f -print0)
 while IFS= read -r -d '' bundle; do codesign "${signing[@]}" "$bundle"; done \
-  < <(find "$app/Contents" -depth -type d \( -name '*.framework' -o -name '*.xpc' -o -name '*.app' \) -print0)
+  < <(find "$app/Contents" -depth -type d \( -name '*.framework' -o -name '*.xpc' -o -name '*.app' -o -path '*/Contents/Helpers/*.bundle' \) -print0)
 codesign "${signing[@]}" --entitlements apps/macos/LocalFlow/LocalFlow.entitlements "$app"
 codesign --verify --deep --strict "$app"
 archive="LocalFlow-$version-arm64.zip"

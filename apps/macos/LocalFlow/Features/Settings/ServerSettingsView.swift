@@ -27,6 +27,8 @@ final class ServerSettingsModel {
   @ObservationIgnored private let ping: @MainActor () async -> Duration?
   private(set) var checking = false
   private(set) var checkResult: String?
+  /// Making this Mac a server (Feature 027); set by the app, nil in tests that don't need it.
+  var serverMode: ServerModeModel?
 
   init(
     remote: RemoteDictationModel, preferences: AppPreferences,
@@ -243,6 +245,10 @@ struct ServerSettingsView<RewriteFields: View, SummaryFields: View>: View {
         DisclosureGroup("Advanced", isExpanded: $showingAdvanced) { advanced }
           .font(.flow(size: 12)).foregroundStyle(SottoPalette.muted).padding(.vertical, 14)
           .accessibilityIdentifier("settings.serverAdvanced")
+      }
+      if let serverMode = model.serverMode {
+        SottoPalette.line.frame(height: 1)
+        ServerModeView(model: serverMode)
       }
     }
     .sheet(isPresented: .constant(model.remote.showingConsentUpdate)) { consentUpdate }

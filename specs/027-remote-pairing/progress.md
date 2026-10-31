@@ -20,5 +20,6 @@ Updated: 2026-10-31
 - 2026-10-31 phase 4: `--remote-listen` takes any IP literal, `clientAddress` per R7, proxy test with no token on the wire, FR-012a in `origin` and `channelURL`, `updateAddress`, pasted links, not-TLS notice, iOS ATS keys and T032 (R9), Go-Swift pairing vectors, opt-in `scripts/test-pairing-e2e.sh`. `go test -race ./...`, `swift test`, targeted Mac and iOS tests, the e2e script and `make check` pass.
 - 2026-10-31 phase 5: v2 database migration test, new client against an old server keeps a working device and spends no token, `enroll` refuses an `lfp_` value, `install-remote-server.sh --dry-run --dev` shows loopback binds only. Same test commands pass.
 - 2026-10-31 phase 6: LocalFlow Server Pairing tab (PairingView, Admin), client TokensView and TokensModel with a fake runner, `flowd admin` runs the data directory's own flowd. Targeted AdminTests (9) and TokensModelTests (7) pass. The client view gets its entry point in T028. No app was opened and no real admin command run.
+- 2026-10-31 phase 7: flowd-speech and its FluidAudio bundle go to Contents/Helpers (11.8 MB Release, unsigned); ServerModeController with hash-based ownership, adoption, open-to-network rollback and dev isolation; address classification; ServerModeView with the tokens entry. Tested with a fake launchd only; no agent started, no app opened.
 
 ## Report

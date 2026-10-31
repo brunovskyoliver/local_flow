@@ -49,7 +49,7 @@ A major amendment (5.0.0), applied on 2026-10-31, before implementation started:
 - **4 Local-first operation:** existing fallback; server mode doesn't touch local dictation.
 - **5 Privacy:** consent stays and content stays in the channel. Token values stay out of logs, audit rows and database columns.
 - **7, 9 Persistence, recoverability:** schema version 3 rebuilds `users` and `audit` in one transaction, after a `VACUUM INTO` copy that gives a way back from a newer schema.
-- **14 Scope:** no relay, roles, discovery or new dependency. Bundling `flowd-speech` and its FluidAudio resources in the client app is the one addition; its size is recorded here when that work lands.
+- **14 Scope:** no relay, roles, discovery or new dependency. Bundling `flowd-speech` and its FluidAudio resources in the client app is the one addition; measured on a local unsigned build it adds 11.8 MB in Release (flowd-speech 10.8 MB for arm64, FluidAudio bundle 1.0 MB, measured before compression), 18.7 MB in Debug.
 
 ## Consequences
 
