@@ -450,7 +450,7 @@ mod tests {
             cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
             assert_saw(&[expect]);
         }
-        window.update(cx, |_, w, cx| w.click("insertion.cancel", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("insertion.cancel", cx)).unwrap();
         cx.run_until_parked();
         assert_eq!(phase(cx), Phase::Idle);
         cx.update(|cx| {
@@ -462,7 +462,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
-        window.update(cx, |_, w, cx| w.click("insertion.choose", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("insertion.choose", cx)).unwrap();
         assert_eq!(phase(cx), Phase::Selecting);
         cx.update(cancel);
     }
@@ -475,7 +475,7 @@ mod tests {
         let panel = cx.add_window(|_, cx| ConfirmationPanel::new(cx));
         cx.update_window(panel.into(), |_, w, cx| w.render_frame(cx)).unwrap();
         assert_saw(&["Focus the destination field, then click Use focused field here.", "Use focused field", "Cancel"]);
-        panel.update(cx, |_, w, cx| w.click("insertion.panel.confirm", cx)).unwrap();
+        cx.update_window(panel.into(), |_, w, cx| w.click("insertion.panel.confirm", cx)).unwrap();
         assert_eq!(message(cx), "Checking the focused field…");
         cx.executor().advance_clock(Duration::from_millis(5));
         cx.run_until_parked();
@@ -484,7 +484,7 @@ mod tests {
         flow_ui::probe::clear();
         cx.update_window(panel.into(), |_, w, cx| w.render_frame(cx)).unwrap();
         assert_saw(&["Confirm insertion"]);
-        panel.update(cx, |_, w, cx| w.click("insertion.panel.confirm", cx)).unwrap();
+        cx.update_window(panel.into(), |_, w, cx| w.click("insertion.panel.confirm", cx)).unwrap();
         assert_eq!((phase(cx), message(cx).as_str()), (Phase::Inserting, "Inserting…"));
         cx.executor().advance_clock(Duration::from_millis(5));
         cx.run_until_parked();

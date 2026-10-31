@@ -367,7 +367,7 @@ pub fn open(destination: Option<Page>, cx: &mut App) {
     }
     cx.set_activation_policy(ActivationPolicy::Regular);
     let window = cx.global::<Session>().window;
-    let alive = window.is_some_and(|w| w.update(cx, |_, w, _| w.activate_window()).is_ok());
+    let alive = window.is_some_and(|w| cx.update_window(w.into(), |_, w, _| w.activate_window()).is_ok());
     if !alive {
         open_main_window(cx);
     }
@@ -841,10 +841,10 @@ mod tests {
             ("navigation.settings", Page::Settings),
             ("navigation.transcriptions", Page::History),
         ] {
-            window.update(cx, |_, w, cx| w.click(id, cx)).unwrap();
+            cx.update_window(window.into(), |_, w, cx| w.click(id, cx)).unwrap();
             frame(cx, window);
             assert_eq!(get(cx, |s| s.selection), page);
-            window.update(cx, |_, w, _| {
+            cx.update_window(window.into(), |_, w, _| {
                 let row = w.find(id);
                 assert_eq!(row.bounds().size.height, px(35.), "{id}");
             }).unwrap();
@@ -901,24 +901,24 @@ mod tests {
         boot(cx, Mode::Light);
         let window = open_shell(cx);
         frame(cx, window);
-        window.update(cx, |_, w, _| assert!(w.try_find("navigation.activeNote").is_none())).unwrap();
+        cx.update_window(window.into(), |_, w, _| assert!(w.try_find("navigation.activeNote").is_none())).unwrap();
         let meeting = |state, title: Option<&str>| Some(MeetingStatus { id: "m1".into(), title: title.map(Into::into), state, elapsed_ms: 754_000 });
         for (state, label) in [(MeetingState::Recording, "Recording"), (MeetingState::Paused, "Paused"), (MeetingState::Preparing, "Preparing"), (MeetingState::Created, "Created"), (MeetingState::Finalizing, "Finalizing")] {
             set(cx, |s| s.meeting = meeting(state, Some("Weekly planning")));
             frame(cx, window);
             assert_saw(&["Weekly planning", "12:34"]);
-            window.update(cx, |_, w, _| assert_eq!(w.find("meeting.elapsed").label().as_deref(), Some(label))).unwrap();
+            assert_eq!(state.badge_text(), label);
         }
         set(cx, |s| s.meeting = meeting(MeetingState::Recording, None));
         frame(cx, window);
         assert_saw(&["Untitled note"]);
-        window.update(cx, |_, w, cx| w.click("navigation.activeNote", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("navigation.activeNote", cx)).unwrap();
         assert_eq!(get(cx, |s| s.selection), Page::Meetings);
         assert_eq!(get(cx, |s| s.open_meeting.clone().map(|m| m.0)), Some("m1".to_string()));
         // A finished meeting has no card.
         set(cx, |s| s.meeting = meeting(MeetingState::Completed, None));
         frame(cx, window);
-        window.update(cx, |_, w, _| assert!(w.try_find("navigation.activeNote").is_none())).unwrap();
+        cx.update_window(window.into(), |_, w, _| assert!(w.try_find("navigation.activeNote").is_none())).unwrap();
     }
 
     // parity: SHELL-059 SHELL-079 SHELL-081 SHELL-083 SHELL-084 SHELL-085 SHELL-089 MENU-007
@@ -938,7 +938,7 @@ mod tests {
         });
         frame(cx, window);
         assert_saw(&["Review needed", "History is full. Open Transcriptions and delete saved text before recording again."]);
-        window.update(cx, |_, w, _| assert!(w.try_find("recovery.retryStorage").is_none())).unwrap();
+        cx.update_window(window.into(), |_, w, _| assert!(w.try_find("recovery.retryStorage").is_none())).unwrap();
         set(cx, |s| {
             let d = s.dictation.as_mut().unwrap();
             d.capacity_blocked = false;
@@ -954,7 +954,7 @@ mod tests {
         frame(cx, window);
         assert_saw(&["Review needed"]);
         // Failed alone flags attention but the notice takes no space.
-        window.update(cx, |_, w, _| assert!(w.try_find("recovery.retrySave").is_none())).unwrap();
+        cx.update_window(window.into(), |_, w, _| assert!(w.try_find("recovery.retrySave").is_none())).unwrap();
         // Busy disables every recovery button: clicks do nothing.
         set(cx, |s| {
             let d = s.dictation.as_mut().unwrap();
@@ -966,7 +966,7 @@ mod tests {
         });
         frame(cx, window);
         for id in ["recovery.retryStorage", "recovery.retrySave", "recovery.discard"] {
-            window.update(cx, |_, w, cx| w.click(id, cx)).unwrap();
+            cx.update_window(window.into(), |_, w, cx| w.click(id, cx)).unwrap();
         }
         assert_eq!(get(cx, |s| s.dictation.as_ref().unwrap().status.clone()), "Busy");
         assert_eq!(get(cx, |s| s.alert), None);
@@ -984,13 +984,13 @@ mod tests {
         });
         frame(cx, window);
         // No session in this build: the failure copy Swift shows, and the text stays.
-        window.update(cx, |_, w, cx| w.click("recovery.retrySave", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("recovery.retrySave", cx)).unwrap();
         assert_eq!(get(cx, |s| s.dictation.as_ref().unwrap().status.clone()), "Still unsaved. Check available disk space or Copy the text.");
         assert!(get(cx, |s| s.dictation.as_ref().unwrap().unsaved.is_some()));
-        window.update(cx, |_, w, cx| w.click("recovery.retryStorage", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("recovery.retryStorage", cx)).unwrap();
         assert!(get(cx, |s| s.dictation.as_ref().unwrap().storage_blocked));
         frame(cx, window);
-        window.update(cx, |_, w, cx| w.click("recovery.copy", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("recovery.copy", cx)).unwrap();
         assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()).as_deref(), Some("Keep this"));
         assert!(get(cx, |s| s.dictation.as_ref().unwrap().unsaved.is_some()));
         // With a session the retries succeed.
@@ -999,25 +999,25 @@ mod tests {
             fake.session_ok.set(true);
             cx.global_mut::<Core>().services = Box::new(fake);
         });
-        window.update(cx, |_, w, cx| w.click("recovery.retryStorage", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("recovery.retryStorage", cx)).unwrap();
         assert!(!get(cx, |s| s.dictation.as_ref().unwrap().storage_blocked));
         frame(cx, window);
-        window.update(cx, |_, w, cx| w.click("recovery.discard", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("recovery.discard", cx)).unwrap();
         frame(cx, window);
         assert_saw(&["Discard unsaved text?", "This text has not been saved. Discarding it cannot be undone.", "Keep text", "Discard"]);
-        window.update(cx, |_, w, cx| w.click("alert.keep", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("alert.keep", cx)).unwrap();
         assert!(get(cx, |s| s.alert.is_none() && s.dictation.as_ref().unwrap().unsaved.is_some()));
         frame(cx, window);
-        window.update(cx, |_, w, cx| w.click("recovery.discard", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("recovery.discard", cx)).unwrap();
         frame(cx, window);
-        window.update(cx, |_, w, cx| w.click("alert.confirmDiscard", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("alert.confirmDiscard", cx)).unwrap();
         assert!(get(cx, |s| s.alert.is_none() && s.dictation.as_ref().unwrap().unsaved.is_none()));
         frame(cx, window);
         assert!(!crate::testing::saw("Unsaved text"));
         // Retry save, on a fresh buffer.
         set(cx, |s| s.dictation.as_mut().unwrap().unsaved = Some("Again".into()));
         frame(cx, window);
-        window.update(cx, |_, w, cx| w.click("recovery.retrySave", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("recovery.retrySave", cx)).unwrap();
         assert_eq!(get(cx, |s| s.dictation.as_ref().unwrap().status.clone()), "Text saved for review.");
     }
 

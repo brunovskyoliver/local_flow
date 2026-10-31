@@ -130,7 +130,7 @@ mod tests {
     async fn command_comma_opens_settings(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
         let window = open_shell(cx);
-        window.update(cx, |_, w, cx| w.press("cmd-,", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.press("cmd-,", cx)).unwrap();
         cx.run_until_parked();
         cx.update(|cx| assert_eq!(cx.global::<Session>().selection, Page::Settings));
         // Persists nothing.
@@ -162,12 +162,12 @@ mod tests {
         flow_ui::probe::clear();
         cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
         crate::testing::assert_saw(&["Quit with unsaved text?", "This text will be lost. Copy it or retry saving before quitting.", "Keep Open", "Quit and Lose Text"]);
-        window.update(cx, |_, w, cx| w.click("alert.keepOpen", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("alert.keepOpen", cx)).unwrap();
         cx.update(|cx| assert!(!cx.global::<Session>().ready_to_terminate));
         cx.update(quit);
         cx.run_until_parked();
         cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
-        window.update(cx, |_, w, cx| w.click("alert.quitLose", cx)).unwrap();
+        cx.update_window(window.into(), |_, w, cx| w.click("alert.quitLose", cx)).unwrap();
         cx.update(|cx| assert!(cx.global::<Session>().ready_to_terminate));
         // A second request after teardown started is a no-op.
         cx.update(quit);

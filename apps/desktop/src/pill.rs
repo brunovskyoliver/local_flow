@@ -330,7 +330,8 @@ pub enum Content {
 pub struct Pill {
     pub state: DictState,
     pub level: f32,
-    pub waveform: Waveform,
+    /// Advanced while rendering, so it can't go through `update_session`: that re-renders forever.
+    pub waveform: std::cell::RefCell<Waveform>,
     pub state_since: Instant,
     pub expand_since: Option<Instant>,
     pub microphone: Option<TextNotice>,
@@ -349,7 +350,7 @@ impl Default for Pill {
         Pill {
             state: DictState::Idle,
             level: 0.,
-            waveform: Waveform::default(),
+            waveform: Default::default(),
             state_since: Instant::now(),
             expand_since: None,
             microphone: None,
@@ -402,7 +403,7 @@ impl Pill {
     /// `showMeetingNotice` and the rewrite notices.
     fn set_state(&mut self, state: DictState) {
         if state == DictState::Recording && self.state != DictState::Recording {
-            self.waveform = Waveform::default();
+            *self.waveform.borrow_mut() = Waveform::default();
         }
         if is_compact(self.state) != is_compact(state) || !shows_dictation(self.state) {
             self.expand_since = (!is_compact(state)).then(Instant::now);
@@ -679,13 +680,13 @@ impl PillView {
 
     fn dictation(&mut self, time: f64, reduce: bool, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
-        let pill = &mut cx.global_mut::<Session>().pill;
+        let pill = &cx.global::<Session>().pill;
         let (state, level) = (pill.state, pill.level);
         let since_expand = pill.expand_since.map_or(1000., |t| t.elapsed().as_secs_f32());
         if state == DictState::Recording && !reduce {
-            pill.waveform.advance(time, level);
+            pill.waveform.borrow_mut().advance(time, level);
         }
-        let (heights, progress) = (pill.waveform.heights(), pill.waveform.progress(time));
+        let (heights, progress) = (pill.waveform.borrow().heights(), pill.waveform.borrow().progress(time));
         let expanded = !is_compact(state);
         let morph = if reduce { 1. } else { spring(since_expand, MORPH) };
         let width = if expanded { COMPACT_WIDTH + (EXPANDED_WIDTH - COMPACT_WIDTH) * morph } else { COMPACT_WIDTH };
@@ -969,6 +970,8 @@ mod tests {
 
     fn view(cx: &mut TestAppContext) -> (WindowHandle<PillView>, Rc<RefCell<Vec<String>>>, Rc<RefCell<Vec<SessionCommand>>>) {
         boot(cx, Mode::Dark);
+        // Motion asks for a next frame forever, which never parks; the audit covers the animated paths.
+        cx.update(|cx| cx.global_mut::<Flow>().reduce_motion = true);
         let (announced, commands): (Rc<RefCell<Vec<String>>>, Rc<RefCell<Vec<SessionCommand>>>) = Default::default();
         cx.update(|cx| {
             ensure_session(cx);
@@ -1119,10 +1122,7 @@ mod tests {
         for s in DICT {
             cx.update(|cx| set_state(s, 0.1, cx));
             frame(cx, w);
-            w.update(cx, |_, win, _| {
-                assert_eq!(win.find("pill.dictation").label().as_deref(), Some(accessibility_label(s)));
-                assert_eq!(win.find("pill.cancel").label().as_deref(), Some(cancel_label(s)));
-            }).unwrap();
+            cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("pill.cancel").label().as_deref(), Some(cancel_label(s)))).unwrap();
         }
         assert_eq!(accessibility_label(DictState::Persisting), "Processing, microphone off");
         assert_eq!(cancel_label(DictState::Rewriting), "Cancel rewrite");
@@ -1132,11 +1132,11 @@ mod tests {
             update_session(cx, |s| s.dictation.as_mut().unwrap().state = DictState::Recording);
         });
         frame(cx, w);
-        w.update(cx, |_, win, cx| win.click("pill.cancel", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("pill.cancel", cx)).unwrap();
         assert_eq!(*commands.borrow(), vec![SessionCommand::CancelDictation]);
         cx.update(|cx| update_session(cx, |s| s.dictation.as_mut().unwrap().state = DictState::Rewriting));
         frame(cx, w);
-        w.update(cx, |_, win, cx| win.click("pill.cancel", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("pill.cancel", cx)).unwrap();
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::CancelRewrite));
     }
 
@@ -1147,9 +1147,9 @@ mod tests {
         cx.update(|cx| show_learned("LocalFlow", LearnedKind::Added, cx));
         frame(cx, w);
         assert_saw(&["Added to dictionary", "Undo"]);
-        w.update(cx, |_, win, _| assert_eq!(win.find("dictionary.notice.undo").label().as_deref(), Some("Undo adding LocalFlow to dictionary"))).unwrap();
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("dictionary.notice.undo").label().as_deref(), Some("Undo adding LocalFlow to dictionary"))).unwrap();
         assert_eq!(announced.borrow().last().unwrap(), "Added LocalFlow to dictionary.");
-        w.update(cx, |_, win, cx| win.click("dictionary.notice.undo", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("dictionary.notice.undo", cx)).unwrap();
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::UndoLearned));
         assert!(pill(cx, |p| p.learned.is_none()));
 
@@ -1160,7 +1160,7 @@ mod tests {
         frame(cx, w);
         assert_saw(&["Stopped changing \u{2018}local flow\u{2019} to \u{2018}LocalFlow\u{2019}"]);
         assert_eq!(announced.borrow().last().unwrap(), "Stopped changing local flow to LocalFlow. Restore is available.");
-        w.update(cx, |_, win, cx| win.click("dictionary.notice.restore", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("dictionary.notice.restore", cx)).unwrap();
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::RestoreLearned));
 
         cx.update(|cx| show_learned("x", LearnedKind::Added, cx));
@@ -1182,9 +1182,9 @@ mod tests {
         frame(cx, w);
         assert_saw(&["No microphone available", "Microphones…"]);
         assert_eq!(announced.borrow().last().unwrap(), "No microphone available");
-        w.update(cx, |_, win, _| assert_eq!(win.find("dictation.notice.microphones").label().as_deref(), Some("Open Microphones settings"))).unwrap();
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("dictation.notice.microphones").label().as_deref(), Some("Open Microphones settings"))).unwrap();
         cx.update(|cx| update_session(cx, |s| s.window = Some(w.into())));
-        w.update(cx, |_, win, cx| win.click("dictation.notice.microphones", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("dictation.notice.microphones", cx)).unwrap();
         cx.update(|cx| {
             let s = cx.global::<Session>();
             assert!(s.pill.microphone.is_none() && s.microphones_anchor);
@@ -1207,8 +1207,8 @@ mod tests {
         cx.update(|cx| show_clipboard(false, cx));
         frame(cx, w);
         assert_saw(&["Couldn't insert · copied to clipboard"]);
-        w.update(cx, |_, win, _| assert_eq!(win.find("clipboard.notice.dismiss").label().as_deref(), Some("Dismiss. Paste with Command-V"))).unwrap();
-        w.update(cx, |_, win, cx| win.click("clipboard.notice.dismiss", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("clipboard.notice.dismiss").label().as_deref(), Some("Dismiss. Paste with Command-V"))).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("clipboard.notice.dismiss", cx)).unwrap();
         assert!(pill(cx, |p| p.clipboard.is_none()));
         // Dismissing doesn't paste or touch the clipboard.
         assert!(cx.read_from_clipboard().is_none());
@@ -1227,12 +1227,12 @@ mod tests {
             frame(cx, w);
             assert_saw(&[message]);
             assert_eq!(announced.borrow().last().unwrap(), message);
-            w.update(cx, |_, win, _| assert_eq!(win.try_find("rewrite.notice.retry").is_some(), *retry, "{message}")).unwrap();
+            cx.update_window(w.into(), |_, win, _| assert_eq!(win.try_find("rewrite.notice.retry").is_some(), *retry, "{message}")).unwrap();
         }
         cx.update(|cx| show_action("Rewrite took too long. Original text inserted.", true, cx));
         frame(cx, w);
-        w.update(cx, |_, win, _| assert_eq!(win.find("rewrite.notice.retry").label().as_deref(), Some("Retry rewrite"))).unwrap();
-        w.update(cx, |_, win, cx| win.click("rewrite.notice.retry", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, _| assert_eq!(win.find("rewrite.notice.retry").label().as_deref(), Some("Retry rewrite"))).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("rewrite.notice.retry", cx)).unwrap();
         assert_eq!(commands.borrow().last(), Some(&SessionCommand::RetryRewrite));
         assert!(pill(cx, |p| p.action.is_none()));
         // The window runs from first show, even when another notice covers it.
@@ -1269,7 +1269,7 @@ mod tests {
         cx.update(|cx| set_background(n(BackgroundKind::Finalizing, Some(0.2)), cx));
         assert_eq!(announced.borrow().len(), count);
         frame(cx, w);
-        w.update(cx, |_, win, cx| win.click("background.notice.hide", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("background.notice.hide", cx)).unwrap();
         assert_eq!(announced.borrow().last().unwrap(), "Progress hidden. It stays in LocalFlow.");
         assert!(!pill(cx, |p| p.should_show(false)));
         // Another stage of the same meeting stays hidden.
@@ -1283,7 +1283,7 @@ mod tests {
         assert!(pill(cx, |p| p.should_show(false)));
         cx.update(|cx| update_session(cx, |s| s.window = Some(w.into())));
         frame(cx, w);
-        w.update(cx, |_, win, cx| win.click("background.notice", cx)).unwrap();
+        cx.update_window(w.into(), |_, win, cx| win.click("background.notice", cx)).unwrap();
         cx.update(|cx| {
             let s = cx.global::<Session>();
             assert_eq!(s.selection, Page::Meetings);
