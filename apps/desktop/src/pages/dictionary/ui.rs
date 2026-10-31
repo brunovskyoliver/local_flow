@@ -54,7 +54,8 @@ pub fn sheet_card(width: f32, cx: &App) -> Div {
     div().w(px(width)).bg(p.surface).rounded(px(16.)).shadow_lg().flex().flex_col()
 }
 
-/// macOS `confirmationDialog`: title, message, destructive action, Cancel.
+/// macOS `confirmationDialog`: an AppKit alert on the window. Its glass can't be drawn here, so the
+/// fill is what it averages to over the dimmed window; the type is Figtree where AppKit's is SF.
 pub fn confirm_dialog(
     prefix: &str,
     title: &str,
@@ -65,18 +66,33 @@ pub fn confirm_dialog(
     on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
     let p = pal(cx);
-    sheet_card(300., cx)
-        .p(px(18.))
-        .gap(px(10.))
-        .child(t(title.to_string()).font(15., 600.))
-        .when(!message.is_empty(), |d| d.child(t(message.to_string()).size(13.).color(p.muted).line_spacing(2.)))
+    let dark = p.ink.l > 0.5;
+    let fill = if dark { hsla(0., 0., 0.2, 0.92) } else { hsla(40. / 360., 0.08, 0.74, 0.96) };
+    // AppKit's system red.
+    let red = if dark { rgb(0xFF453A) } else { rgb(0xFF3B30) };
+    let button = |id: String, label: String, bg: Hsla, fg: Hsla| {
+        FlowButton::new(id, ButtonKind::Plain, label.clone()).content(div().w(px(110.)).h(px(28.)).rounded_full().bg(bg).flex().items_center().justify_center().child(t(label).size(13.).color(fg).a11y_hidden()))
+    };
+    v_flex()
+        .w(px(260.))
+        .px(px(22.))
+        .pt(px(21.))
+        .pb(px(8.))
+        .gap(px(7.))
+        .bg(fill)
+        .rounded(px(26.))
+        .border_1()
+        .border_color(p.ink.opacity(0.25))
+        .shadow_lg()
+        .child(t(title.to_string()).font(13., 600.).color(p.ink))
+        .when(!message.is_empty(), |d| d.child(t(message.to_string()).size(13.).color(p.ink)))
         .child(
             h_flex()
                 .w_full()
-                .justify_end()
-                .gap(px(8.))
-                .pt(px(4.))
-                .child(pill(format!("{prefix}.cancel"), "Cancel", false, cx).on_click(on_cancel))
-                .child(pill(format!("{prefix}.confirm"), action.to_string(), false, cx).text_color(p.warning).content(t(action.to_string()).font(13., 500.).color(p.warning).a11y_hidden()).on_click(on_action)),
+                .justify_between()
+                .pt(px(9.))
+                .pb(px(8.))
+                .child(button(format!("{prefix}.cancel"), "Cancel".into(), p.ink.opacity(0.1), p.ink).on_click(on_cancel))
+                .child(button(format!("{prefix}.confirm"), action.to_string(), Hsla::from(red).opacity(0.25), Hsla::from(red)).on_click(on_action)),
         )
 }

@@ -242,7 +242,8 @@ impl DictionaryPage {
                     .gap(px(8.))
                     .pb(px(8.))
                     .when(self.searching, |d| {
-                        d.child(div().id("vocabulary.searchField").test_support().w(px(if compact { 90. } else { 150. })).child(Input::new(&self.search).appearance(false).aria_label("Search dictionary").accessibility_id("vocabulary.search")))
+                        // Swift's plain field is no taller than the tabs.
+                        d.child(div().id("vocabulary.searchField").test_support().h(px(18.)).flex().items_center().w(px(if compact { 90. } else { 150. })).child(Input::new(&self.search).appearance(false).aria_label("Search dictionary").accessibility_id("vocabulary.search")))
                     })
                     .child(
                         FlowButton::new("vocabulary.searchToggle", ButtonKind::Plain, "Search")
@@ -396,7 +397,8 @@ impl DictionaryPage {
                 let word = if is_retired_alias(a) { span(a.clone()).strike().color(fg.opacity(0.55)) } else { span(a.clone()) };
                 aliases = aliases.child(div().min_w_0().child(rich(vec![word]).size(15.).color(fg)));
                 if n + 1 < e.aliases.len() {
-                    aliases = aliases.child(div().flex_none().child(t(", ").size(15.).color(fg)));
+                    // `Txt` measures no trailing space, so it is a margin here.
+                    aliases = aliases.child(div().flex_none().mr(px(4.)).child(t(",").size(15.).color(fg)));
                 }
             }
             title = title.child(aliases).child(div().flex_none().child(icon("arrow.right", 12., fg))).child(div().flex_none().child(t(e.canonical.clone()).size(15.).color(fg)));
@@ -838,6 +840,16 @@ mod tests {
         let window = cx.add_window(|w, cx| DictionaryPage::new(w, cx));
         frame(cx, window);
         window
+    }
+
+    // parity: DICT-036
+    #[flow_ui::gpui::test]
+    async fn a_damaged_store_shows_the_swift_copy(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| cx.global::<Core>().db.as_ref().unwrap().conn.execute("UPDATE vocabulary_entries SET canonical_text='Omega'", []).unwrap());
+        let window = cx.add_window(|w, cx| DictionaryPage::new(w, cx));
+        frame(cx, window);
+        assert_saw(&["Preferred spellings could not be loaded. Repair or delete entries in Settings."]);
     }
 
     // parity: DICT-011 DICT-030 DICT-031 DICT-060

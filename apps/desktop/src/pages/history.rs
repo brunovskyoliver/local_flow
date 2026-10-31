@@ -111,7 +111,7 @@ impl HistoryPage {
         };
         page.signature = cx.global::<Core>().db.as_ref().map(signature);
         page.reload(cx);
-        page.apply_scenario(cx);
+        page.apply_scenario(window, cx);
         page
     }
 
@@ -130,7 +130,7 @@ impl HistoryPage {
         self.reload(cx);
     }
 
-    fn apply_scenario(&mut self, cx: &mut Context<Self>) {
+    fn apply_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let scenario = cx.global::<Core>().scenario.clone().unwrap_or_default();
         let first = self.model.entries.first().map(|e| e.id.clone());
         match scenario.strip_prefix("history.").unwrap_or("") {
@@ -154,6 +154,12 @@ impl HistoryPage {
                 if let (Some(id), Some(db)) = (first, cx.global::<Core>().db.as_ref()) {
                     self.model.show_detail(db, &id);
                 }
+            }
+            "search" => {
+                self.searching = true;
+                self.search.update(cx, |s, cx| s.set_value("kickoff", window, cx));
+                self.model.set_search("kickoff");
+                self.reload(cx);
             }
             "processing" | "lower" => {
                 if let (Some(id), Some(db)) = (first, cx.global::<Core>().db.as_ref()) {

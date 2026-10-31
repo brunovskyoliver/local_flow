@@ -82,6 +82,10 @@ impl InsightsPage {
                 page.error = Some(ERROR.into());
             }
             "insights.empty" => page.insights = Some(Insights::default()),
+            "insights.voice-empty" => {
+                page.insights = Some(Insights::default());
+                page.tab = Tab::Voice;
+            }
             _ => {}
         }
         page
@@ -166,7 +170,7 @@ impl InsightsPage {
     fn stat(&self, value: String, label: &str, help: Option<(&str, &str)>, cx: &mut Context<Self>) -> Div {
         let info = help.map(|(id, h)| self.info(id, h, cx));
         v_flex()
-            .gap(px(9.))
+            .gap(px(8.))
             .child(t(value).font(28., 500.).mono_digits().tracking(-0.5).lines(1))
             .child(h_flex().gap(px(6.)).child(caps(label, pal(cx).muted, if label.len() > 20 { 9.8 } else { 11.5 })).when_some(info, |d, i| d.child(i)))
     }

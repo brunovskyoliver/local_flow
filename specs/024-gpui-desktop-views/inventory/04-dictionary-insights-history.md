@@ -284,6 +284,7 @@
 | INS-111 | swift-note | Thresholds use all time | InsightsView.swift:472-476 | Heat levels use every active day, so a visible page can sit mostly in one level. | ui-only |
 | INS-112 | swift-note | Paging can cross no-data ranges | InsightsView.swift:410 | Earlier chevron stays enabled while any older day exists, so pages with no data can appear. | ui-only |
 | INS-113 | swift-note | Tip can overflow upward | InsightTips.swift:88 | Y position is not clamped, so a tall tip on a top row can extend above the layer; day tips on the first heat map rows are the likely case. Verify live. | ui-only |
+| INS-114 | swift-note | Heat cells collapse to dots | InsightsView.swift:456-463 | `.aspectRatio(1, .fit)` in rows of unconstrained height collapses: at 1180 wide the first row renders 3 pt, the second 2 pt, the rest 0. Rust matches what Swift renders, not INS-077's square. | ui-only |
 
 ## Transcriptions
 

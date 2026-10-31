@@ -564,3 +564,72 @@ async fn insert_opens_the_review_through_the_session(cx: &mut TestAppContext) {
     let id = cx.update(|cx| cx.global::<Session>().insertion.entry.as_ref().map(|r| r.id.clone()));
     assert_eq!(id, Some(e.id));
 }
+
+fn shell(cx: &mut TestAppContext) -> WindowHandle<crate::shell::Shell> {
+    cx.update(|cx| {
+        crate::menu::init(cx);
+        cx.global_mut::<Core>().prefs.set("setupVersion", 1);
+    });
+    let window = cx.add_window(|w, cx| crate::shell::Shell::new(w, cx));
+    cx.run_until_parked();
+    window
+}
+
+fn shell_frame(cx: &mut TestAppContext, window: WindowHandle<crate::shell::Shell>) {
+    cx.run_until_parked();
+    flow_ui::probe::clear();
+    cx.update_window(window.into(), |_, w, cx| w.render_frame(cx)).unwrap();
+}
+
+// parity: DICT-005 INS-002 HIST-003
+#[flow_ui::gpui::test]
+async fn the_three_pages_are_unavailable_until_the_stores_exist(cx: &mut TestAppContext) {
+    use crate::pages::Page;
+    use crate::shell::{SETUP_STARTING, update_session};
+    boot(cx, Mode::Light);
+    let window = shell(cx);
+    cx.update(|cx| {
+        update_session(cx, |s| {
+            s.stores_ready = false;
+            s.dictation = None;
+        })
+    });
+    for (page, title) in [(Page::History, "Transcriptions unavailable"), (Page::Insights, "Insights unavailable"), (Page::Dictionary, "Dictionary unavailable")] {
+        cx.update(|cx| update_session(cx, |s| s.selection = page));
+        shell_frame(cx, window);
+        assert_saw(&[title, SETUP_STARTING]);
+    }
+}
+
+// parity: HIST-163 HIST-164 HIST-166 HIST-173
+#[flow_ui::gpui::test]
+async fn review_warns_and_cancel_or_timeout_keep_the_text(cx: &mut TestAppContext) {
+    use crate::insertion::{ReviewEntry, arm_selection, begin_review};
+    use crate::shell::{Session, ensure_session, update_session};
+    boot(cx, Mode::Light);
+    let entry = |quality| ReviewEntry { id: seed_id(20), text: "Saved words".into(), quality, delivery: Delivery::None };
+    cx.update(|cx| {
+        ensure_session(cx);
+        cx.global_mut::<Core>().services = Box::new(flow_platform::Fake::default());
+        assert!(begin_review(entry(Quality::Incomplete), cx));
+    });
+    let window = shell(cx);
+    shell_frame(cx, window);
+    assert_saw(&["Review before inserting", "Saved words", "This transcription is incomplete. Review the text before inserting."]);
+    cx.update(|cx| update_session(cx, |s| s.insertion.entry.as_mut().unwrap().quality = Quality::DurationLimited));
+    shell_frame(cx, window);
+    assert_saw(&["Recording stopped at 180 seconds. The ending may be missing."]);
+
+    cx.update_window(window.into(), |_, w, cx| w.click("insertion.cancel", cx)).unwrap();
+    cx.run_until_parked();
+    let status = |cx: &mut TestAppContext| cx.update(|cx| cx.global::<Session>().dictation.as_ref().unwrap().status.clone());
+    assert_eq!(status(cx), "Insertion cancelled. The text remains saved.");
+
+    cx.update(|cx| {
+        assert!(begin_review(entry(Quality::Complete), cx));
+        arm_selection(cx);
+    });
+    cx.executor().advance_clock(std::time::Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(status(cx), "Selection expired. Your text remains saved.");
+}

@@ -95,6 +95,7 @@ pub struct Txt {
     opacity: f32,
     mono_digits: bool,
     mono: bool,
+    no_widow: bool,
     selectable: bool,
     selection_hitbox: Option<gpui_kit::Hitbox>,
     on_link: Option<LinkHandler>,
@@ -132,6 +133,7 @@ pub fn rich(spans: Vec<Span>) -> Txt {
         opacity: 1.0,
         mono_digits: false,
         mono: false,
+        no_widow: false,
         selectable: false,
         selection_hitbox: None,
         on_link: None,
@@ -225,6 +227,12 @@ impl Txt {
         self.on_link = Some(std::rc::Rc::new(f));
         self
     }
+    /// AppKit's standard line break strategy, which SwiftUI text gets: a single word never sits
+    /// alone on the last line; the word before it moves down too.
+    pub fn no_widow(mut self) -> Self {
+        self.no_widow = true;
+        self
+    }
     /// `.textSelection(.enabled)`: drag to select, double click for a word, triple for the text,
     /// Cmd-C to copy. Stays a Label to accessibility.
     pub fn selectable(mut self) -> Self {
@@ -269,6 +277,8 @@ struct Selection {
     anchor: usize,
     head: usize,
     dragging: bool,
+    /// Key events only reach elements on the focus path, so a selected text takes focus to hear Cmd-C.
+    focus: Option<gpui_kit::FocusHandle>,
 }
 
 impl Selection {
@@ -284,6 +294,7 @@ pub struct Resolved {
     spacing: f32,
     align: Align,
     lines: Option<usize>,
+    no_widow: bool,
     text: String,
     runs: Vec<TextRun>,
     marks: Vec<(usize, usize, bool)>,
@@ -334,6 +345,16 @@ pub(crate) fn wrap_points(xs: &[(f32, bool)], end: f32, max: f32) -> Vec<usize> 
     breaks
 }
 
+/// Moves the last line's start back one word when that line is a single word.
+fn pull_down_widow(starts: &mut [usize], xs: &[(f32, bool)]) {
+    let n = starts.len() - 1;
+    let last = starts[n];
+    let one_word = !xs[last..].iter().enumerate().any(|(i, g)| g.1 && xs[last + i + 1..].iter().any(|g| !g.1));
+    if one_word && let Some(space) = xs[starts[n - 1]..last.saturating_sub(1)].iter().rposition(|g| g.1) {
+        starts[n] = starts[n - 1] + space + 1;
+    }
+}
+
 fn layout(r: &Resolved, max: Option<f32>, window: &mut Window) -> Laid {
     let sys = window.text_system().clone();
     let size_px = px(r.size);
@@ -373,6 +394,9 @@ fn layout(r: &Resolved, max: Option<f32>, window: &mut Window) -> Laid {
         };
         let mut starts = vec![0];
         starts.extend(breaks);
+        if r.no_widow && starts.len() > 1 {
+            pull_down_widow(&mut starts, &xs);
+        }
         for (n, &from) in starts.iter().enumerate() {
             let to = starts.get(n + 1).copied().unwrap_or(flat.len());
             let base = flat.get(from).map(|g| g.2).unwrap_or(0.0);
@@ -542,6 +566,7 @@ impl Txt {
             spacing: self.line_spacing,
             align: self.align,
             lines: self.lines,
+            no_widow: self.no_widow,
             text,
             ellipsis_font: runs[0].font.clone(),
             runs,
@@ -604,14 +629,22 @@ impl Element for Txt {
 
     fn prepaint(
         &mut self,
-        _: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         r: &mut Resolved,
         window: &mut Window,
-        _: &mut App,
+        cx: &mut App,
     ) -> Self::PrepaintState {
         self.selection_hitbox = self.selectable.then(|| window.insert_hitbox(bounds, gpui_kit::HitboxBehavior::Normal));
+        if let (true, Some(id)) = (self.selectable, id) {
+            let focus = window.with_element_state(id, |s: Option<Rc<RefCell<Selection>>>, _| {
+                let s = s.unwrap_or_default();
+                let focus = s.borrow_mut().focus.get_or_insert_with(|| cx.focus_handle()).clone();
+                (focus, s)
+            });
+            window.set_focus_handle(&focus, cx);
+        }
         if self.on_link.is_none() || r.links.is_empty() {
             return vec![];
         }
@@ -719,7 +752,7 @@ fn paint_selection(id: &GlobalElementId, hitbox: &gpui_kit::Hitbox, bounds: Boun
     let hit = hitbox.clone();
     {
         let (state, text, at) = (state.clone(), text.clone(), at.clone());
-        window.on_mouse_event(move |e: &MouseDownEvent, phase, window, _| {
+        window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
             if !phase.bubble() {
                 return;
             }
@@ -732,6 +765,11 @@ fn paint_selection(id: &GlobalElementId, hitbox: &gpui_kit::Hitbox, bounds: Boun
                     _ => (0, text.len()),
                 };
                 s.dragging = e.click_count == 1;
+                if let Some(f) = &s.focus {
+                    f.focus(window, cx);
+                    // Or the page's own focus handle takes it back as the event bubbles.
+                    window.prevent_default();
+                }
                 window.refresh();
             } else if s.anchor != s.head {
                 // Clicking elsewhere clears it, as an NSTextView losing the selection does.
@@ -766,6 +804,19 @@ fn paint_selection(id: &GlobalElementId, hitbox: &gpui_kit::Hitbox, bounds: Boun
 #[cfg(test)]
 mod tests {
     use super::{word_at, wrap_points};
+
+    #[test]
+    fn a_lone_last_word_takes_the_word_before_it() {
+        // "aa bb cc" broken before "cc", then before "bb cc".
+        let xs: Vec<(f32, bool)> = "aa bb cc".chars().enumerate().map(|(i, c)| (i as f32, c == ' ')).collect();
+        let mut starts = vec![0, 6];
+        super::pull_down_widow(&mut starts, &xs);
+        assert_eq!(starts, vec![0, 3]);
+        // Two words on the last line stay.
+        let mut two = vec![0, 3];
+        super::pull_down_widow(&mut two, &xs);
+        assert_eq!(two, vec![0, 3]);
+    }
 
     #[test]
     fn a_word_stops_at_spaces_and_punctuation() {
