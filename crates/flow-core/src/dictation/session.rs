@@ -1464,6 +1464,8 @@ mod tests {
         scripts: Vec<Result<Option<Script>, Failure>>,
         started: AtomicUsize,
         control: Arc<Control>,
+        /// `then` waits for this: what ends the script can be made to follow something else.
+        then_gate: Arc<AtomicBool>,
     }
     impl Mic for FakeMic {
         fn authorize(&self) -> bool {
@@ -1477,11 +1479,16 @@ mod tests {
             let rate = script.as_ref().map_or(16_000, |s| s.rate);
             let ring = Arc::new(Ring::new(rate, 1).unwrap());
             let (stopping, running, authorized) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(true)));
-            let control = self.control.clone();
+            let (control, gate) = (self.control.clone(), self.then_gate.clone());
             let (feed, stop, run, auth) = (ring.clone(), stopping.clone(), running.clone(), authorized.clone());
+            // The first audio is there before `connect` looks, however late the feeder is scheduled.
+            let first = script.as_ref().map_or(0, |s| s.samples.min(4096));
+            if let Some(script) = &script {
+                ring.push(&vec![0.25; first], 1, script.delay_ns);
+            }
             let feeder = thread::spawn(move || {
                 if let Some(script) = script {
-                    let mut left = script.samples;
+                    let mut left = script.samples - first;
                     while left > 0 && !stop.load(SeqCst) {
                         let n = left.min(4096);
                         if room(&feed) >= n {
@@ -1495,6 +1502,9 @@ mod tests {
                         thread::sleep(Duration::from_millis(1));
                     }
                     thread::sleep(Duration::from_millis(5));
+                    while !gate.load(SeqCst) && !stop.load(SeqCst) {
+                        thread::sleep(Duration::from_millis(1));
+                    }
                     match script.then {
                         Then::Idle => {}
                         Then::Release => control.release(false),
@@ -1525,8 +1535,10 @@ mod tests {
         /// Answers in order; past the end, "words".
         answers: Vec<Result<&'static str, RecognizeFailure>>,
         calls: Arc<Mutex<Vec<usize>>>,
-        /// Set for `on_job`'s cancel.
-        on_job: Option<Arc<Control>>,
+        /// Holds the first job until capture has ended, then cancels.
+        cancel_after_capture: Option<(Arc<Control>, Arc<Mutex<Vec<Event>>>)>,
+        /// Opened as the first job starts, so that job is a prefetch.
+        first_job_opens: Option<Arc<AtomicBool>>,
         finished: Arc<AtomicI32>,
     }
     impl Recognizer for FakeRecognizer {
@@ -1539,12 +1551,14 @@ mod tests {
                 calls.push(samples.len());
                 calls.len() - 1
             };
-            // Holds the first job past the end of capture, then cancels.
-            if let Some(control) = self.on_job.take() {
-                while !control.released() {
+            if let Some(gate) = self.first_job_opens.take() {
+                gate.store(true, SeqCst);
+            }
+            if let Some((control, events)) = self.cancel_after_capture.take() {
+                // Transcribing is published after capture has ended.
+                while !events.lock().unwrap().iter().any(|e| matches!(e, Event::Changed(s) if s.state == State::Transcribing)) {
                     thread::sleep(Duration::from_millis(1));
                 }
-                thread::sleep(Duration::from_millis(50));
                 control.cancel();
             }
             match self.answers.get(n).cloned().unwrap_or(Ok("words")) {
@@ -1611,7 +1625,7 @@ mod tests {
         coordinator.timing = QUICK;
         Rig {
             history: store(&root),
-            mic: FakeMic { authorized: true, candidates: names, scripts, started: AtomicUsize::new(0), control: control.clone() },
+            mic: FakeMic { authorized: true, candidates: names, scripts, started: AtomicUsize::new(0), control: control.clone(), then_gate: Arc::new(AtomicBool::new(true)) },
             recognizer: FakeRecognizer::default(),
             inserter: FakeInserter { target: Some(field()), outcome: InsertOutcome::Confirmed, inserted: Mutex::default(), copied: Mutex::default() },
             rewriter: None,
@@ -1728,7 +1742,7 @@ mod tests {
     #[test]
     fn cancel_after_stop_keeps_the_windows_done_for_review() {
         let mut r = rig(vec![Ok(Some(speak(WINDOW * 2 + 16_000, Then::Release)))]);
-        r.recognizer.on_job = Some(r.control.clone());
+        r.recognizer.cancel_after_capture = Some((r.control.clone(), r.events.clone()));
         let end = r.run();
         assert_eq!(end.state, State::Idle);
         assert_eq!(end.status, "Text saved and copied. Paste it with Command-V.");
@@ -1858,6 +1872,10 @@ mod tests {
     fn a_failed_prefetch_gets_one_more_try_then_is_reported() {
         let mut r = rig(vec![Ok(Some(speak(WINDOW + 16_000, Then::Release)))]);
         r.recognizer.answers = vec![Err(RecognizeFailure::Job("failed".into()))];
+        // The release follows the job's start, so it is a prefetch. Starting after capture would
+        // make it the final pass, whose failure is final, as `no_text_from_a_failing_recognizer...`.
+        r.mic.then_gate.store(false, SeqCst);
+        r.recognizer.first_job_opens = Some(r.mic.then_gate.clone());
         r.run();
         let row = r.row();
         assert_eq!((row.quality.as_str(), row.delivery_state.as_str(), row.text.as_str()), ("complete", "confirmed", "words words"));
@@ -2126,7 +2144,8 @@ mod tests {
             Server { flowd: Some(flowd), enrollment, pool }
         }
 
-        /// flowd listens before its supervisor has the worker's `ready`, and refuses dictations until then.
+        /// flowd listens before its supervisor has the worker's `ready`, and refuses dictations until
+        /// then. Also `busy`, until a cancelled dictation's job has ended there.
         fn wait_for_worker(enrollment: &Enrollment) {
             use crate::remote::channel::ServerMessage;
             let began = Instant::now();
@@ -2140,7 +2159,7 @@ mod tests {
                         let _ = channel.receive().unwrap();
                         return;
                     }
-                    ServerMessage::Error { code } if code == "worker_unavailable" && began.elapsed() < SETTLE => std::thread::sleep(Duration::from_millis(20)),
+                    ServerMessage::Error { code } if matches!(code.as_str(), "worker_unavailable" | "busy") && began.elapsed() < SETTLE => std::thread::sleep(Duration::from_millis(20)),
                     other => panic!("{other:?}"),
                 }
             }
@@ -2261,7 +2280,7 @@ mod tests {
             }
             run(&mut r, &s, SETTLE, false);
             assert_eq!(waiting(&r).len(), 20);
-            let offered = r.events.lock().unwrap().iter().find_map(|e| if let Event::AudioOffered { audio } = e { Some(audio.clone()) } else { None }).expect("offered");
+            let offered = r.events.lock().unwrap().iter().find_map(|e| if let Event::AudioOffered { audio } = e { Some(audio.clone()) } else { None }).unwrap_or_else(|| panic!("nothing offered: {:?}", statuses(&r)));
             assert_eq!(std::fs::metadata(offered).unwrap().len(), 80_000, "the recording survives the full queue");
             assert_eq!(statuses(&r).last().unwrap(), "This recording could not be kept for your server. Its audio was offered to you.");
         }
@@ -2276,6 +2295,8 @@ mod tests {
             assert!(r.spool_clean());
 
             s.flowd().worker_delay(0);
+            // Otherwise the next dictation can be refused `busy` before it sees the sleep.
+            wait_for_worker(&s.enrollment);
             let mut r = rig(vec![Ok(Some(speak(20_000, Then::Stop(Failure::Sleep))))]);
             run(&mut r, &s, SETTLE, false);
             let items = waiting(&r);

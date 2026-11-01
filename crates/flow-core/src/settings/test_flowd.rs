@@ -169,6 +169,15 @@ func init() {
 	if os.Getenv("FLOWD_TEST_IDENTITY") == "" {
 		panic("test overlay without FLOWD_TEST_IDENTITY")
 	}
+	// A test process that exits with a detached thread still holding its Flowd never drops it.
+	if parent := os.Getppid(); len(os.Args) > 1 && os.Args[1] == "serve" {
+		go func() {
+			for os.Getppid() == parent {
+				time.Sleep(time.Second)
+			}
+			os.Exit(0)
+		}()
+	}
 	keychainRunner = fileKey{}
 	if len(os.Args) == 2 && os.Args[1] == "test-keygen" {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -234,6 +243,8 @@ func init() {
 "#;
 
 pub struct Flowd {
+    /// Held for as long as the ports are in use.
+    _claims: Vec<std::fs::File>,
     /// `--remote-listen`: identity and the sealed channel.
     pub remote: String,
     /// `--listen`: rewrite and analysis health. Its backend answers and offers `MODEL`.
@@ -256,8 +267,26 @@ pub struct Flowd {
     data: PathBuf,
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+/// A port nothing else takes before flowd binds it. A closed `bind(0)` port can't promise that: any
+/// outgoing connection or other test binary on the machine can get it next. So it comes from below
+/// the ephemeral range, under a lock file that test binaries honor and that ends with the process.
+fn claim_port(claims: &mut Vec<std::fs::File>) -> u16 {
+    let dir = std::env::temp_dir().join("flowd-test-ports");
+    std::fs::create_dir_all(&dir).unwrap();
+    const FIRST: u32 = 20_000;
+    const COUNT: u32 = 12_000;
+    let start = std::process::id().wrapping_mul(97) % COUNT;
+    (0..COUNT)
+        .map(|i| (FIRST + (start + i) % COUNT) as u16)
+        .find(|port| {
+            let Ok(file) = std::fs::File::create(dir.join(port.to_string())) else { return false };
+            if file.try_lock().is_err() || TcpListener::bind(("127.0.0.1", *port)).is_err() {
+                return false;
+            }
+            claims.push(file);
+            true
+        })
+        .expect("a free port below the ephemeral range")
 }
 
 fn output(command: &mut Command, what: &str) -> String {
@@ -300,12 +329,16 @@ impl Flowd {
         let tags = if test_issuer { "localflow_debug" } else { "" };
         output(Command::new("go").current_dir(&server).arg("build").arg("-tags").arg(tags).arg("-overlay").arg(&overlay_json).arg("-o").arg(&bin).arg("./cmd/flowd"), "go build flowd");
 
+        let mut claims = Vec::new();
+        let mut url = || format!("http://127.0.0.1:{}", claim_port(&mut claims));
+        let (remote, rewrite, no_backend, wrong_version, down) = (url(), url(), url(), url(), url());
         let mut flowd = Flowd {
-            remote: format!("http://127.0.0.1:{}", free_port()),
-            rewrite: format!("http://127.0.0.1:{}", free_port()),
-            no_backend: format!("http://127.0.0.1:{}", free_port()),
-            wrong_version: format!("http://127.0.0.1:{}", free_port()),
-            down: format!("http://127.0.0.1:{}", free_port()),
+            remote,
+            rewrite,
+            no_backend,
+            wrong_version,
+            down,
+            _claims: claims,
             token: TOKEN.into(),
             fingerprint: String::new(),
             access_token: String::new(),
