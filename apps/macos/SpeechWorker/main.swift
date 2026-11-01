@@ -145,7 +145,10 @@ final class FrameReader: @unchecked Sendable {
     let stream = AsyncThrowingStream<Box, any Error>(
       bufferingPolicy: .bufferingOldest(Self.capacity)
     ) { continuation = $0 }
-    let slots = DispatchSemaphore(value: Self.capacity)
+    // Starts at zero and is raised: libdispatch aborts if a semaphore is freed below its
+    // initial value, which a read failing at stdin's end would otherwise do.
+    let slots = DispatchSemaphore(value: 0)
+    for _ in 0..<Self.capacity { slots.signal() }
     frames = Frames(stream: stream, slots: slots)
     let output = continuation!
     let thread = Thread {
