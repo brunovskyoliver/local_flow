@@ -21,12 +21,22 @@ impl SettingsPage {
         self.error = None;
         self.testing = Some(name);
         let started = std::time::Instant::now();
-        let result = match cx.global::<Core>().services.settings_action(&format!("test.{name}")) {
-            Ok(()) => format!("Working · {} ms", started.elapsed().as_millis()),
-            Err(_) => core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)),
+        let answer = crate::dictation::test_model(name, cx);
+        let done = move |ok: bool, this: &mut Self, cx: &mut Context<Self>| {
+            let result = if ok { format!("Working · {} ms", started.elapsed().as_millis()) } else { core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)) };
+            this.testing = None;
+            this.test_results.insert(name, result);
+            cx.notify();
         };
-        self.testing = None;
-        self.test_results.insert(name, result);
+        // The platform answers at once; the session thread when it has run the model.
+        if let Ok(ok) = answer.try_recv() {
+            return done(ok, self, cx);
+        }
+        cx.spawn(async move |this, cx| {
+            let ok = cx.background_spawn(async move { answer.recv().unwrap_or(false) }).await;
+            let _ = this.update(cx, |this, cx| done(ok, this, cx));
+        })
+        .detach();
         cx.notify();
     }
 

@@ -112,6 +112,56 @@ fn shortcut_error(e: Unavailable) -> String {
     flow_platform::shortcut_failure(&e).map(String::from).unwrap_or_else(|| missing(e))
 }
 
+/// What the worker's installs have reached. `Idle` leaves the page's own state alone.
+pub fn apply_install_states(next: &mut Snapshot, s: &dyn flow_platform::Services) {
+    use flow_platform::{InstallState::*, ModelPack};
+    match s.install_state(ModelPack::Speech) {
+        Running(completed, total, verifying) => {
+            next.installing = true;
+            next.progress = (completed as i64, total as i64);
+            next.verifying = verifying;
+            next.model_install_error = None;
+        }
+        Verified => {
+            next.installing = false;
+            next.model_installed = true;
+        }
+        Failed(reason) => {
+            next.installing = false;
+            next.model_install_error = Some(install_failure(&reason));
+        }
+        Idle => {}
+    }
+    match s.install_state(ModelPack::Meeting) {
+        Running(completed, total, _) => {
+            next.meeting_model_installing = true;
+            next.speaker_model_installing = true;
+            next.meeting_progress = (completed as i64, total as i64);
+            next.meeting_models_error = None;
+        }
+        Verified => {
+            next.meeting_model_installing = false;
+            next.speaker_model_installing = false;
+            next.meeting_model_installed = true;
+            next.speaker_model_installed = true;
+        }
+        Failed(reason) => {
+            next.meeting_model_installing = false;
+            next.speaker_model_installing = false;
+            next.meeting_models_error = Some(install_failure(&reason));
+        }
+        Idle => {}
+    }
+}
+
+/// `DictationFailure.modelUnavailable`'s kind of line; the worker's reason goes to its log.
+pub(crate) fn install_failure(reason: &str) -> String {
+    match reason {
+        "hash_mismatch" | "size_mismatch" => "A downloaded file did not match its pinned checksum. Retry.".into(),
+        _ => "The download stopped. Check your connection and retry.".into(),
+    }
+}
+
 fn missing(e: Unavailable) -> String {
     format!("This build can't use {} yet.", e.0)
 }
@@ -275,6 +325,8 @@ impl OnboardingPage {
         // `LocalAISetup.downloaded`/installed models count as done on return.
         self.snap.model_installed |= s.speech_model_verified();
         let mut next = self.snap.clone();
+        apply_install_states(&mut next, &**s);
+        let ai_report = s.local_ai_phase().filter(|phase| self.ai_phase.running() && *phase != self.ai_phase);
         next.microphone = perm(s.permission(Permission::Microphone));
         next.input_monitoring = preflight(s.permission(Permission::InputMonitoring));
         next.accessibility = preflight(s.permission(Permission::Accessibility));
@@ -283,6 +335,10 @@ impl OnboardingPage {
         next.storage_available = core.db.is_some();
         next.speech_model = speech_model_name(&speech_model_raw(&core.prefs)).to_string();
         let resume = self.ai_phase == AiPhase::Failed(AI_ERROR_APPROVAL.into()) && s.background_services_enabled();
+        if let Some(phase) = ai_report {
+            self.local_ai_finished(phase, cx);
+        }
+        let s = &cx.global::<Core>().services;
         // `shortcutRecovery`: permission changes reach the tap while setup shows.
         let allowed = next.input_monitoring == Perm::Granted && next.shortcut.enabled;
         let busy = next.busy || next.installing;

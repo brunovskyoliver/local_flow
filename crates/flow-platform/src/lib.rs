@@ -218,6 +218,21 @@ pub trait Services: 'static {
     /// The speech model install in progress as (completed, total, verifying), once the model
     /// provisioner has one. `settings_action("download")` returns at once and this takes over.
     fn speech_install(&self) -> Option<(u64, u64, bool)> {
+        match self.install_state(ModelPack::Speech) {
+            InstallState::Running(completed, total, verifying) => Some((completed, total, verifying)),
+            _ => None,
+        }
+    }
+    /// A pack's install: running, finished, or what stopped it.
+    fn install_state(&self, _pack: ModelPack) -> InstallState {
+        InstallState::Idle
+    }
+    /// SET-243's full-hash check. Blocks; call it off the UI thread.
+    fn verify_speech_model(&self) -> Result<(), String> {
+        Err("unavailable".into())
+    }
+    /// What the on-device AI installer reports after `install_local_ai` said `Ok`.
+    fn local_ai_phase(&self) -> Option<flow_core::onboarding::AiPhase> {
         None
     }
     /// The dictation microphone. None here means no dictation; a test double never opens one.
@@ -399,6 +414,24 @@ pub trait Services: 'static {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ModelPack {
+    Speech,
+    Meeting,
+    Booster,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum InstallState {
+    #[default]
+    Idle,
+    /// completed, total, verifying.
+    Running(u64, u64, bool),
+    Verified,
+    /// The worker's reason.
+    Failed(String),
+}
+
 pub mod speech;
 #[cfg(target_os = "macos")]
 mod hotkey_mac;
@@ -528,6 +561,8 @@ pub struct Fake {
     pub commands: std::rc::Rc<std::cell::RefCell<Vec<SessionCommand>>>,
     pub announced: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub model_verified: std::cell::Cell<bool>,
+    pub install_states: std::cell::RefCell<std::collections::BTreeMap<ModelPack, InstallState>>,
+    pub ai_phase: std::cell::RefCell<Option<flow_core::onboarding::AiPhase>>,
     pub models_busy: std::cell::Cell<bool>,
     pub export_incomplete: std::cell::Cell<bool>,
     pub identifiers: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
@@ -538,7 +573,7 @@ pub struct Fake {
 impl Default for Fake {
     fn default() -> Self {
         Fake {
-            audio: None, secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
+            audio: None, secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), install_states: Default::default(), ai_phase: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
     }
 }
 
@@ -554,6 +589,12 @@ impl Services for Fake {
     }
     fn speech_model_verified(&self) -> bool {
         self.model_verified.get()
+    }
+    fn install_state(&self, pack: ModelPack) -> InstallState {
+        self.install_states.borrow().get(&pack).cloned().unwrap_or_default()
+    }
+    fn local_ai_phase(&self) -> Option<flow_core::onboarding::AiPhase> {
+        self.ai_phase.borrow().clone()
     }
     fn pin_panel(&self, _: &dyn HasWindowHandle) -> Result<(), Unavailable> {
         self.pinned_panels.set(self.pinned_panels.get() + 1);

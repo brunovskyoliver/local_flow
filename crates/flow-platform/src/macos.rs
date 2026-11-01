@@ -276,6 +276,41 @@ fn request_microphone() -> Result<PermissionState, Unavailable> {
 pub struct Mac;
 
 impl Services for Mac {
+    fn settings_action(&self, action: &str) -> Result<(), Unavailable> {
+        match action {
+            "download" => self.install_speech_model(),
+            "downloadBoostModel" => self.install_term_booster(),
+            "downloadMeetingModel" | "downloadSpeakerModel" => self.install_meeting_models(),
+            _ => Err(Unavailable("this model action")),
+        }
+    }
+    fn install_speech_model(&self) -> Result<(), Unavailable> {
+        crate::speech::install(crate::ModelPack::Speech)
+    }
+    fn install_term_booster(&self) -> Result<(), Unavailable> {
+        crate::speech::install(crate::ModelPack::Booster)
+    }
+    fn install_state(&self, pack: crate::ModelPack) -> crate::InstallState {
+        crate::speech::install_state(pack)
+    }
+    fn speech_model_verified(&self) -> bool {
+        crate::speech::install_state(crate::ModelPack::Speech) == crate::InstallState::Verified
+    }
+    fn verify_speech_model(&self) -> Result<(), String> {
+        crate::speech::verify_speech_model()
+    }
+    fn install_meeting_models(&self) -> Result<(), Unavailable> {
+        crate::speech::install(crate::ModelPack::Meeting)
+    }
+    /// The installer's first check, `LocalAIRuntime.install`: this app's bundle carries no MTPLX
+    /// requirements or service plists until packaging adds them, so setup ends there, as Swift does.
+    /// Nothing is downloaded and no service is registered. Left: tasks.md T019.
+    fn install_local_ai(&self, _model_id: &str) -> Result<(), Unavailable> {
+        Ok(())
+    }
+    fn local_ai_phase(&self) -> Option<flow_core::onboarding::AiPhase> {
+        Some(flow_core::onboarding::AiPhase::Failed(flow_core::onboarding::AI_ERROR_MISSING.into()))
+    }
     fn name(&self) -> &'static str {
         "macos"
     }

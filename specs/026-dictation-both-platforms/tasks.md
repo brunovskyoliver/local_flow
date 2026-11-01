@@ -31,7 +31,7 @@ Same check rules as Feature 025. Swift references are under `apps/macos/LocalFlo
 - [X] T018 `PendingRemoteRetrier` (HIST-075, HIST-077, HIST-078, HIST-080). Usage report loop not done (SET-375 stays open: it needs a usage store port, not small). The "Dictation ready" system notification after a recovery is not ported (it needs a notification permission path); History refreshes.
 
 ## Phase 6: Install outcomes (US5)
-- [ ] T019 `install_speech_model`, `install_meeting_models`, `install_term_booster` through worker `provision` with progress; `speech_model_verified`; `install_local_ai` per Swift (Mac only; unavailable with reason on Windows). ONB-301, ONB-302, ONB-304, SET-243.. rows.
+- [X] T019 `install_speech_model`, `install_meeting_models`, `install_term_booster` through worker `provision` with progress; `speech_model_verified`; Settings actions download, load, unload, test (SET-243, SET-250, SET-251, SET-255). Local AI is partial: outcomes reach the page (ONB-301, ONB-302, ONB-304 through `Services::local_ai_phase`), Windows refuses with a reason, the Mac reports its first check, "missing local AI files". Not ported from `LocalAIRuntime.install`: bundling `Resources/LocalAI` and the service plists, port checks, pinned Python, venv and `pip --require-hashes`, `mtplx pull`, API key file, `SMAppService` register, `launchctl kickstart`, `waitUntilServing`. Meeting models on Windows refuse (`flow-speech-win` has no `--meeting`).
 
 ## Phase 7: Settle and finish
 - [ ] T020 Inventory rows; `acceptance/hardware.md`; review of insertion and hook paths for content leakage; converge; `make check`; report.

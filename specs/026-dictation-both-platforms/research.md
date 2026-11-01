@@ -30,3 +30,10 @@ The shortcut format stays the Mac's: Windows virtual keys map to Mac key codes a
 - `rewrite_timeout` on the channel path excludes connect time.
 - Fake speech worker: the Go test overlay of flowd runs itself as `--speech-worker`, so loopback tests go through flowd's real supervisor without building `flow-speech-win`.
 - A press during a retrier run cancels the retry. flowd may still hold that dictation for a moment, so the live press can see `busy` and fall back; the row stays due.
+
+## Phase 6 decisions
+
+- Installs run the worker's `provision` and read its stderr lines; the exit status decides. A failure line beats exit 0.
+- `speech_model_verified` at launch reads a marker file the install leaves in the models folder, not Swift's size-and-date fingerprint. A model installed only by the Swift app downloads or rehashes once on first install. Test rehashes.
+- Meeting pack progress shows the current model's numbers, not the total of the pack.
+- `speech::set_models_dir` holds the folder process-wide, so `Services` signatures and `settings_action` stay as the pages call them.

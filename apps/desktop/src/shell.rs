@@ -329,6 +329,7 @@ const MIN_SIZE: Size<Pixels> = size(px(720.), px(560.));
 pub fn start(cx: &mut App) {
     apply_appearance(cx);
     cx.global_mut::<Core>().reconcile_meetings();
+    flow_platform::speech::set_models_dir(cx.global::<Core>().paths.models());
     let verified = cx.global::<Core>().services.speech_model_verified();
     let (reconciled, stores) = (cx.global::<Core>().reconciled, cx.global::<Core>().db.is_some());
     update_session(cx, |s| {

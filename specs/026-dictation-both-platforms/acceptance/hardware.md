@@ -36,3 +36,5 @@ Items that need real hardware, a signed install or the owner's screen and microp
 | 30 | Dictation on a real server over the LAN, windows and fallback at threshold with a real worker and microphone | T016 | Text matches, falls back at the threshold, no audio lost | not run |
 | 31 | Live rewrite against a real backend, HTTP and channel, with a real key in the Keychain | T017 | Rewritten text inserted; a stopped backend inserts the original with the notice | not run |
 | 32 | Sleep during a remote dictation on a real Mac, then wake and retry | T016, T018 | The audio waits in History and recovers for review | not run |
+| 33 | Speech, meeting and booster install from the real manifest over HTTPS with the real `flowd-speech` next to the app; Downloads rows and Settings progress | T019 | Progress, Verifying, Done; launch after that shows the model verified | not run |
+| 34 | On-device AI install on a packaged, signed Mac app once its bundle carries the MTPLX resources | T019 | Not yet implementable: today the Mac reports missing local AI files | not run |

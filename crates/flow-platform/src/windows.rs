@@ -5,6 +5,36 @@ use std::path::PathBuf;
 pub struct Win;
 
 impl Services for Win {
+    fn settings_action(&self, action: &str) -> Result<(), Unavailable> {
+        match action {
+            "download" => self.install_speech_model(),
+            "downloadBoostModel" => self.install_term_booster(),
+            "downloadMeetingModel" | "downloadSpeakerModel" => self.install_meeting_models(),
+            _ => Err(Unavailable("this model action")),
+        }
+    }
+    fn install_speech_model(&self) -> Result<(), Unavailable> {
+        crate::speech::install(crate::ModelPack::Speech)
+    }
+    fn install_term_booster(&self) -> Result<(), Unavailable> {
+        crate::speech::install(crate::ModelPack::Booster)
+    }
+    fn install_state(&self, pack: crate::ModelPack) -> crate::InstallState {
+        crate::speech::install_state(pack)
+    }
+    fn speech_model_verified(&self) -> bool {
+        crate::speech::install_state(crate::ModelPack::Speech) == crate::InstallState::Verified
+    }
+    fn verify_speech_model(&self) -> Result<(), String> {
+        crate::speech::verify_speech_model()
+    }
+    fn install_meeting_models(&self) -> Result<(), Unavailable> {
+        // `flow-speech-win` refuses `--meeting`: meetings need a server or a Mac here.
+        Err(Unavailable("meeting models on Windows"))
+    }
+    fn install_local_ai(&self, _model_id: &str) -> Result<(), Unavailable> {
+        Err(Unavailable("on-device AI on Windows"))
+    }
     fn name(&self) -> &'static str {
         "windows"
     }

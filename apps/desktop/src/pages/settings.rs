@@ -331,6 +331,28 @@ impl SettingsPage {
             next.total = total;
             next.verifying = verifying;
         }
+        use flow_platform::{InstallState, ModelPack};
+        match core_state.services.install_state(ModelPack::Speech) {
+            InstallState::Verified => next.model_installed = true,
+            InstallState::Failed(reason) => next.model_install_error = Some(crate::pages::onboarding::install_failure(&reason)),
+            _ => {}
+        }
+        match core_state.services.install_state(ModelPack::Meeting) {
+            InstallState::Running(..) => {
+                next.meeting_installing = true;
+                next.speaker_installing = true;
+            }
+            InstallState::Verified => {
+                next.meeting_installed = true;
+                next.speaker_installed = true;
+            }
+            _ => {}
+        }
+        match core_state.services.install_state(ModelPack::Booster) {
+            InstallState::Running(..) => next.boost_installing = true,
+            InstallState::Verified => next.boost_installed = true,
+            _ => {}
+        }
         scenario::apply_snapshot(&self.scenario, &mut next);
         // The pin changes with the state, except through `refresh`.
         let state = core::remote_state(p).to_string();
@@ -460,7 +482,7 @@ impl SettingsPage {
         }
         self.performing = true;
         self.error = None;
-        if cx.global::<Core>().services.settings_action(action).is_err() {
+        if crate::dictation::model_action(action, cx).is_err() {
             self.error = Some(core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)));
         }
         self.performing = false;

@@ -2203,3 +2203,55 @@ async fn cancelling_a_pairing_that_turned_the_feature_on_turns_it_off(cx: &mut T
     assert!(!flag(cx, "remote.enabled"));
     assert_eq!(pref(cx, "remote.serverURL"), None);
 }
+
+// parity: ONB-301 ONB-302
+#[flow_ui::gpui::test]
+async fn the_installers_outcomes_reach_the_page(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    cx.update(|cx| cx.global_mut::<Core>().services = Box::new(Fake::default()));
+    let win = cx.add_window(|w, cx| OnboardingPage::new(w, cx));
+    frame(cx, win);
+    let outcome = |cx: &mut TestAppContext, phase: AiPhase| {
+        let fake = Fake::default();
+        *fake.ai_phase.borrow_mut() = Some(phase);
+        cx.update(|cx| cx.global_mut::<Core>().services = Box::new(fake));
+        win.update(cx, |p, _, cx| {
+            p.ai_phase = AiPhase::PreparingRuntime;
+            p.refresh(cx);
+            p.ai_phase.clone()
+        })
+        .unwrap()
+    };
+    assert_eq!(outcome(cx, AiPhase::Failed(AI_ERROR_APPROVAL.into())), AiPhase::Failed("Allow LocalFlow under System Settings → General → Login Items, then retry.".into()));
+    assert_eq!(outcome(cx, AiPhase::Failed(AI_ERROR_REGISTRATION.into())), AiPhase::Failed("LocalFlow could not register its background services. Move it to Applications and retry.".into()));
+    assert_eq!(outcome(cx, AiPhase::DownloadingModel(1, 2)), AiPhase::DownloadingModel(1, 2));
+    assert_eq!(outcome(cx, AiPhase::Ready), AiPhase::Ready);
+    assert!(win.update(cx, |p, _, _| p.local_helpers_ready).unwrap());
+}
+
+#[flow_ui::gpui::test]
+async fn the_workers_installs_drive_the_downloads_rows(cx: &mut TestAppContext) {
+    use flow_platform::{InstallState::*, ModelPack::*};
+    let (fake, mut s) = (Fake::default(), Snapshot::default());
+    let set = |pack, state| drop(fake.install_states.borrow_mut().insert(pack, state));
+    apply_install_states(&mut s, &fake);
+    assert!(!s.installing, "nothing started: the page's own state stands");
+    set(Speech, Running(4, 9, false));
+    set(Meeting, Running(1, 2, false));
+    apply_install_states(&mut s, &fake);
+    assert_eq!((s.installing, s.progress, s.verifying, s.meeting_model_installing, s.meeting_progress), (true, (4, 9), false, true, (1, 2)));
+    set(Speech, Running(9, 9, true));
+    apply_install_states(&mut s, &fake);
+    assert_eq!(speech_state(&s, None), RowState::Working("Verifying…".into()));
+    set(Speech, Failed("hash_mismatch".into()));
+    set(Meeting, Failed("network".into()));
+    apply_install_states(&mut s, &fake);
+    assert_eq!(speech_state(&s, None), RowState::Failed("A downloaded file did not match its pinned checksum. Retry.".into()));
+    assert_eq!(meeting_state(&s), RowState::Failed("The download stopped. Check your connection and retry.".into()));
+    set(Speech, Verified);
+    set(Meeting, Verified);
+    s.model_install_error = None;
+    s.meeting_models_error = None;
+    apply_install_states(&mut s, &fake);
+    assert_eq!((speech_state(&s, None), meeting_state(&s)), (RowState::Done, RowState::Done));
+}

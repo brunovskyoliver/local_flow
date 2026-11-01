@@ -29,6 +29,8 @@ const MODEL_LOAD: Duration = Duration::from_secs(30);
 enum Command {
     Begin { control: Arc<Control>, entries: Vec<InputEntry>, route: Route },
     RecognizeLocally(String, Sender<bool>),
+    TestSpeech(Sender<bool>),
+    Unload(Sender<bool>),
     RetrySave(Sender<bool>),
     RetryStorage(Sender<bool>),
     RecheckCapacity,
@@ -77,6 +79,8 @@ pub struct Parts {
     pub spool_root: PathBuf,
     pub pending_dir: PathBuf,
     pub free_bytes: Box<dyn Fn() -> Option<u64> + Send>,
+    /// SET-243's full-hash check.
+    pub verify_model: Box<dyn Fn() -> Result<(), String> + Send>,
 }
 
 pub struct Driver {
@@ -115,7 +119,7 @@ impl Driver {
 }
 
 fn serve(parts: Parts, keep_loaded: bool, inbox: Receiver<Command>, publish: Sender<Event>, running: Arc<AtomicBool>) {
-    let Parts { mic, inserter, launcher, db, database, credentials, spool_root, pending_dir, free_bytes } = parts;
+    let Parts { mic, inserter, launcher, db, database, credentials, spool_root, pending_dir, free_bytes, verify_model } = parts;
     let history_changed = publish.clone();
     let mut lifecycle = Lifecycle::new(launcher, Box::new(Instant::now));
     lifecycle.set_keep_loaded(keep_loaded);
@@ -146,6 +150,17 @@ fn serve(parts: Parts, keep_loaded: bool, inbox: Receiver<Command>, publish: Sen
                 let _ = history_changed.send(Event::HistoryChanged);
                 let _ = reply.send(done.is_ok());
             }
+            Ok(Command::TestSpeech(reply)) => {
+                let works = verify_model().is_ok() && {
+                    let mut local = Local::new(&mut lifecycle);
+                    let works = local.prepare(&Default::default()).is_ok() && local.recognize(&[0.; 4_800]).is_ok();
+                    local.finish();
+                    works
+                };
+                lifecycle.shutdown_if_idle();
+                let _ = reply.send(works);
+            }
+            Ok(Command::Unload(reply)) => drop(reply.send(lifecycle.shutdown_if_idle())),
             Ok(Command::RetrySave(reply)) => drop(reply.send(coordinator.retry_save(&mut history))),
             Ok(Command::RetryStorage(reply)) => drop(reply.send(coordinator.retry_storage(&mut history))),
             Ok(Command::RecheckCapacity) => coordinator.recheck_capacity(&mut history),
@@ -187,6 +202,7 @@ pub fn start(cx: &mut App) {
             spool_root: core.paths.temporary_audio(),
             pending_dir: core.paths.pending_audio(),
             free_bytes: services.free_bytes_probe(),
+            verify_model: Box::new(flow_platform::speech::verify_speech_model),
         })
     })();
     let Some(parts) = parts else { return };
@@ -236,6 +252,12 @@ fn poll(cx: &mut App) {
     let events: Vec<Event> = cx.global::<Driver>().events.lock().unwrap().try_iter().collect();
     for event in events {
         apply(event, cx);
+    }
+    if !cx.global::<Session>().model_installed && cx.global::<Core>().services.install_state(flow_platform::ModelPack::Speech) == flow_platform::InstallState::Verified {
+        update_session(cx, |s| {
+            s.model_installed = true;
+            s.setup_status = "Verified local model available.".into();
+        });
     }
     // SET and install paths change these without knowing about this thread.
     let (installed, keep) = (cx.global::<Session>().model_installed, keeps_loaded(cx));
@@ -466,6 +488,27 @@ pub fn recognize_locally(id: String, cx: &App) -> Option<Receiver<bool>> {
     Some(answer)
 }
 
+/// Settings › Models: what needs the session thread goes there; the rest is the platform's.
+pub fn model_action(action: &str, cx: &App) -> Result<(), Unavailable> {
+    let services = &cx.global::<Core>().services;
+    match (action, cx.try_global::<Driver>()) {
+        ("load", Some(_)) => load_speech_model(cx),
+        ("unload", Some(driver)) => if !driver.running.load(SeqCst) && driver.ask(Command::Unload, REPLY) { Ok(()) } else { Err(Unavailable("speech model unloading")) },
+        _ => services.settings_action(action),
+    }
+}
+
+/// SET-243: verify, load, one silent window, release. The answer comes when it's done.
+pub fn test_model(name: &str, cx: &App) -> Receiver<bool> {
+    let (reply, answer) = mpsc::channel();
+    let services = &cx.global::<Core>().services;
+    match cx.try_global::<Driver>().filter(|d| name == "speech" && !d.running.load(SeqCst)) {
+        Some(driver) => drop(driver.commands.send(Command::TestSpeech(reply))),
+        None => drop(reply.send(services.settings_action(&format!("test.{name}")).is_ok())),
+    }
+    answer
+}
+
 /// Swift's `prepareModel` before the first test dictation.
 // ponytail: blocks the caller up to 30 s as the page's arming step is synchronous; an async arming step would free the UI.
 pub fn load_speech_model(cx: &App) -> Result<(), Unavailable> {
@@ -548,7 +591,7 @@ mod tests {
 
     fn doubles(root: &std::path::Path) -> Parts {
         std::fs::create_dir_all(root).unwrap();
-        Parts { mic: Arc::new(NoMic(vec![])), inserter: Arc::new(NoField), launcher: Box::new(NoLauncher), db: Db::open_or_create(&root.join("t.sqlite")).unwrap(), database: root.join("t.sqlite"), credentials: Arc::new(flow_platform::NoCredentials), spool_root: root.join("spool"), pending_dir: root.join("pending"), free_bytes: Box::new(|| Some(u64::MAX)) }
+        Parts { mic: Arc::new(NoMic(vec![])), inserter: Arc::new(NoField), launcher: Box::new(NoLauncher), db: Db::open_or_create(&root.join("t.sqlite")).unwrap(), database: root.join("t.sqlite"), credentials: Arc::new(flow_platform::NoCredentials), spool_root: root.join("spool"), pending_dir: root.join("pending"), free_bytes: Box::new(|| Some(u64::MAX)), verify_model: Box::new(|| Ok(())) }
     }
 
     // parity: SHELL-143 SHELL-144
@@ -633,6 +676,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // parity: SET-250 SET-251
+    #[flow_ui::gpui::test]
+    async fn load_and_unload_go_to_the_session_thread_and_a_failed_test_says_so(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let root = std::env::temp_dir().join(format!("flow-driver-models-{}", std::process::id()));
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.set_global(Driver::spawn(doubles(&root), false));
+            assert!(model_action("load", cx).is_err(), "no worker to load");
+            assert!(model_action("unload", cx).is_ok());
+            assert!(!test_model("speech", cx).recv_timeout(REPLY).unwrap(), "verified, but nothing can run it");
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+        #[flow_ui::gpui::test]
+    async fn an_install_that_verifies_turns_dictation_on_and_tells_the_session_thread(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let root = std::env::temp_dir().join(format!("flow-driver-install-{}", std::process::id()));
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.set_global(Driver::spawn(doubles(&root), false));
+            update_session(cx, |s| s.model_installed = false);
+            poll(cx);
+            assert!(!cx.global::<Session>().model_installed);
+            let fake = flow_platform::Fake::default();
+            fake.install_states.borrow_mut().insert(flow_platform::ModelPack::Speech, flow_platform::InstallState::Verified);
+            cx.global_mut::<Core>().services = Box::new(fake);
+            poll(cx);
+            assert!(cx.global::<Session>().model_installed);
+            assert_eq!(cx.global::<Session>().setup_status, "Verified local model available.");
+            assert!(cx.global::<Driver>().model_installed, "ModelChanged went to the lifecycle");
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // parity: SHELL-114
     #[flow_ui::gpui::test]
     async fn configuring_the_shortcut_posts_the_setup_status(cx: &mut TestAppContext) {
@@ -692,6 +771,8 @@ mod tests {
         assert!(events.contains(&Event::Microphone("No microphone available".into())), "{events:?}");
         assert!(driver.ask(Command::Shutdown, REPLY));
         assert!(!driver.ask(Command::Load, REPLY), "the launcher refuses");
+        assert!(!driver.ask(Command::TestSpeech, REPLY), "no worker: the test reports it");
+        assert!(driver.ask(Command::Unload, REPLY));
         drop(driver);
         let _ = std::fs::remove_dir_all(&root);
     }
