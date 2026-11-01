@@ -35,7 +35,7 @@ The existing `settings::channel_round_trip` code is moved into `remote::channel`
 | 15 | Device binding, refresh rotation and revocation behave as on Swift. |
 
 ## Bounds and overload
-- Capture ring: 2 s per source; overflow drops the oldest whole buffer, counts it and surfaces the same warning as Swift's ring.
+- Capture ring: 2 s per source; overflow drops the incoming whole buffer, as Swift's `dropOnOverflow` does, counts it, plays silence in its place so the track keeps its timeline, and surfaces the same warning as Swift's ring.
 - Channel frames at most 70,000 bytes as today; pool at most one parked channel per purpose (Swift's `RemoteChannelPool`).
 - Handoff chunk size as Swift's; retries back off; loopback callback: one connection at a time, 8 KB request cap, 5-minute deadline.
 

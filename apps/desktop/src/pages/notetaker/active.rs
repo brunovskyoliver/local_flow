@@ -25,6 +25,10 @@ fn notes_height(text: &str) -> f32 {
     (text.split('\n').count() as f32 * 18. + 16.).clamp(90., 200.)
 }
 impl LiveStatus {
+    /// What the Rust recorder publishes. Live transcription isn't part of it.
+    pub fn from_snapshot(s: flow_core::capture::Snapshot) -> Self {
+        LiveStatus { id: s.id, state: s.state, elapsed_ms: s.elapsed_ms, pause_reason: s.pause_reason, microphone: s.microphone, system: s.system, dropped_frames: s.dropped_frames, storage_warning: None, notice: s.notice, transcription_requested: false, segments: vec![], window_in_flight: false }
+    }
     /// `LiveTranscriptModel.capacity`: the 200 newest rows.
     pub fn live_rows(&self) -> &[(String, String)] {
         &self.segments[self.segments.len().saturating_sub(200)..]
@@ -106,7 +110,7 @@ impl NotetakerPage {
                 card = card.child(div().id("meeting.captureLoss").test_support().child(sf_label("exclamationmark.triangle.fill", "Some audio was lost during recording. The transcript may be incomplete.", 12., orange(cx))));
             }
             if let Some(n) = s.notice.clone() {
-                let permission = self.refusal.as_ref().is_some_and(|r| r.contains("System Settings"));
+                let permission = self.refusal.as_ref().is_some_and(|r| r.contains("Settings >"));
                 card = card.child(h_flex().gap(px(8.)).child(t(n).size(13.).color(p.muted).id("meeting.notice")).when(permission, |d| {
                     d.child(settings_button(self.refusal.as_deref().unwrap_or_default()))
                 }));
@@ -141,7 +145,7 @@ impl NotetakerPage {
                     );
             }
         } else if let Some(refusal) = self.refusal.clone() {
-            let permission = refusal.contains("System Settings");
+            let permission = refusal.contains("Settings >");
             if let Some(w) = self.start_warning {
                 card = card.child(sf_label("externaldrive.badge.exclamationmark", w, 13., orange(cx)));
             }
@@ -179,6 +183,17 @@ impl NotetakerPage {
     }
     /// Pause, Resume and Stop go to the Mac coordinator.
     pub(crate) fn live_action(&mut self, what: &'static str, cx: &mut Context<Self>) {
+        use flow_platform::SessionCommand::{PauseMeeting, ResumeMeeting, StopMeeting};
+        let command = match what {
+            "Pause" => Some(PauseMeeting),
+            "Resume" => Some(ResumeMeeting),
+            "Stop" => Some(StopMeeting),
+            _ => None,
+        };
+        if command.is_some_and(|command| crate::capture::command(command, cx)) {
+            self.poll_status(cx);
+            return;
+        }
         if let Err(message) = Self::worker(what, cx) {
             self.transcript_notice = Some(message.clone());
             if let Some(s) = &mut self.status {
@@ -195,7 +210,8 @@ pub(crate) fn refusal_permission(refusal: &str) -> flow_platform::Permission {
 }
 fn settings_button(refusal: &str) -> FlowButton {
     let kind = refusal_permission(refusal);
-    native_button("meeting.openSettings", "Open System Settings").on_click(move |_, _, cx| {
+    let title = if refusal.contains("System Settings") { "Open System Settings" } else { "Open Settings" };
+    native_button("meeting.openSettings", title).on_click(move |_, _, cx| {
         let _ = cx.global::<Core>().services.open_permission_settings(kind);
     })
 }

@@ -12,3 +12,16 @@ Items that need real hardware or a signed install. None of them has been run.
 | 6 | Windows: TPM missing or disabled | T005, spec edge case | `device_key_create` reports unavailable; no software fallback | not run |
 | 7 | Mac and Windows: pair a real device key with a token against a real flowd, through the Settings sheet of a signed build | T010, T013 | Approved; the admin list shows the device's name; refresh works after 12 minutes and after sleep | not run |
 | 8 | Opening a `localflow://pair` link in a browser, once the Rust app registers the scheme at the cutover | T013 | The sheet opens filled in, nothing spent. Pasting a link works today | not run |
+| 9 | Google sign-in in a real browser with a registered Desktop client, built with `LOCALFLOW_GOOGLE_CLIENT_ID`, against a real flowd | T014, T015 | Browser opens, the page closes the loop, the account enrolls; closing the tab frees the buttons within 5 minutes | not run |
+| 10 | Windows: Run key, disk space, high contrast, animation setting, microphone consent read and `ms-settings:` opening | T016 | Each follows the Windows setting; a Deny refuses Start and offers Settings | not run |
+| 11 | Windows: input catalog with built-in, USB and Bluetooth microphones | T016 | Names and kinds correct; the default is marked | not run |
+| 12 | Windows: record microphone and process loopback for 10 minutes on real hardware | T018, T019 | Two valid ADTS tracks play back; `dropped_frames` 0 on an idle machine | not run |
+| 13 | Windows: this app's own sound stays out of the system track | T018, spike gate 6 | An own tone is absent from `system-0001.aac`, present in a control | not run |
+| 14 | Windows: microphone and system alignment over a 2 hour capture, including a quiet system track | T018, R8 | Tracks stay within 100 ms, as the host clock sets; the spike's VM saw 4.65 s of drift without this. `duration_warning` stays 0 | not run |
+| 15 | Windows: change the default microphone and unplug a Bluetooth headset mid-meeting | T018, T020 | A new segment with `device_changed` within about a second; no device left fails the track only | not run |
+| 16 | Windows: turn off microphone access mid-meeting | T018 | Track ends `permission_revoked`, the system track goes on | not run |
+| 17 | Windows: Microsoft AAC encoder on x64, arm64 and an N edition | T019 | Encoder runs at 96 kbit/s and output plays in another player. N edition without Media Feature Pack: Start ends `failed` with both tracks `encoder_failed`, nothing crashes | not run |
+| 18 | Windows: quit during a recording; kill the process during one and reopen | T020 | Quit finalizes within 10 s; after a kill the next launch recovers the `.part` and marks the meeting interrupted | not run |
+| 19 | Windows: Pause, Resume, Stop from the tray and from the note | T020 | State, sidebar and tray agree | not run |
+| 20 | Windows: Windows build under 20348 | T018 | Start refuses with the reason; nothing is created | not run |
+| 21 | Windows: system sleep during a recording | LIVE-041 | Not built: no sleep notice exists yet. Today the sources fail or resume on their own; expected behaviour is a pause with reason `system_sleep` | not run |

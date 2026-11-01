@@ -77,7 +77,9 @@ pub fn entries(s: &Session, readiness: String) -> Vec<Entry> {
 /// Runs a menu item. Meeting commands go through `Services`, unavailable until capture exists.
 pub fn run(command: Command, cx: &mut App) {
     let session = |command, cx: &mut App| {
-        let _ = cx.global::<Core>().services.session_command(command);
+        if !crate::capture::command(command, cx) {
+            let _ = cx.global::<Core>().services.session_command(command);
+        }
     };
     match command {
         Command::Open => shell::open(None, cx),

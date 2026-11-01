@@ -21,6 +21,9 @@ Inno Setup, modified BSD-style licence, is a build-time tool that doesn't ship i
 ## R6 Google client
 Google's desktop client type uses a loopback redirect and a non-secret `client_secret`. The Mac's iOS-type client with a reverse-DNS scheme doesn't apply to Windows. Registering a client needs the owner. Without one the Google row is hidden, and pairing still works.
 
+## R8 Capture format and alignment
+Both WASAPI sources are asked for 48 kHz, 16-bit stereo, with `AUTOCONVERTPCM` for the microphone as in the spike, so there is no resampler of ours. `Feed` downmixes the microphone in Rust. Microsoft's AAC encoder takes only 96, 128, 160 and 192 kbit/s, so both tracks record at 96 kbit/s and `meeting_tracks.bitrate` stores that; FR-009's 64 kbit/s for the microphone can't be met with this encoder, and adding one would need a new dependency. Long-capture alignment uses the packet's QPC time: when a track falls more than 100 ms behind the host clock, silence fills the difference. Only a packet flagged `DATA_DISCONTINUITY` counts that as dropped, because a quiet loopback sends nothing and lost nothing. The device position isn't used, since its units on an auto-converted stream aren't verified. The `windows-core` crate became a direct dependency for `#[implement]`; it was already in the lockfile through `windows` (MIT or Apache-2.0, R1), so nothing new ships.
+
 ## R7 Licence review
 | Item | Licence | Use |
 |---|---|---|

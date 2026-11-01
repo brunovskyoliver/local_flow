@@ -129,6 +129,8 @@ pub struct Session {
     pub meeting: Option<MeetingStatus>,
     /// `MeetingCoordinator.canStart`: reconciliation complete, no active meeting, not busy.
     pub can_start_meeting: bool,
+    /// The tray asked for a recording; the Notetaker page runs its start gate.
+    pub start_requested: bool,
     pub installing: bool,
     pub model_command: bool,
     pub model_installed: bool,
@@ -159,6 +161,7 @@ impl Session {
             meetings_available: stores_ready,
             meeting: None,
             can_start_meeting: false,
+            start_requested: false,
             installing: false,
             model_command: false,
             model_installed: false,

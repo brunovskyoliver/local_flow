@@ -18,6 +18,8 @@ pub struct Core {
     pub reconciled: bool,
     /// Launch recovery's notices, until the Notetaker page publishes them to the pill.
     pub meeting_notices: Vec<String>,
+    /// The Rust recorder's current or last meeting, on platforms with `Services::meeting_audio`.
+    pub recorder: Option<flow_core::capture::Handle>,
     /// Enrollment and channels, built on first use.
     pub remote: Option<std::sync::Arc<crate::remote::Remote>>,
 }
@@ -39,7 +41,7 @@ impl Core {
             Err(e) => (None, Some(e)),
         };
         let scenario = std::env::var("LOCALFLOW_SCENARIO").ok();
-        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], remote: None }
+        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None }
     }
 
     pub fn remote(&mut self) -> std::sync::Arc<crate::remote::Remote> {
@@ -79,6 +81,7 @@ impl Core {
             scenario: None,
             reconciled: true,
             meeting_notices: vec![],
+            recorder: None,
             remote: None,
         }
     }

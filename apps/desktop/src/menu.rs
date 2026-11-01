@@ -127,7 +127,9 @@ pub fn finish_quit(cx: &mut App) {
     cx.defer(|cx| {
         shell::flush_notes(cx);
         if cx.global::<shell::Session>().meeting.as_ref().is_some_and(|m| m.state.is_active()) {
-            let _ = cx.global::<Core>().services.session_command(flow_platform::SessionCommand::StopMeeting);
+            if !crate::capture::stop_for_quit(cx) {
+                let _ = cx.global::<Core>().services.session_command(flow_platform::SessionCommand::StopMeeting);
+            }
         }
         if !cx.global::<Core>().services.shutdown_models_if_idle() {
             update_session(cx, |s| {

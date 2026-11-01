@@ -4184,3 +4184,136 @@ async fn saving_notes_outdates_the_summary(cx: &mut TestAppContext) {
     frame(cx, &window);
     assert!(read(cx, &window, |p| p.summary.model.as_ref().unwrap().stale), "evidenceDidChange after the save");
 }
+
+/// The whole Windows path with the OS parts faked: page and tray to recorder to files and rows.
+mod recorder {
+    use super::*;
+    use flow_platform::{AudioEncoder, AudioEvent, AudioFailure, AudioPacket, AudioStream, MeetingAudio, Permission, PermissionState};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Audio {
+        refusal: Option<&'static str>,
+        running: Arc<AtomicUsize>,
+        packets: Arc<Mutex<Vec<Box<dyn FnMut(AudioPacket) + Send>>>>,
+    }
+    struct Stream(Arc<AtomicUsize>);
+    impl AudioStream for Stream {
+        fn device_name(&self) -> Option<String> {
+            Some("Test mic".into())
+        }
+        fn stop(self: Box<Self>) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    struct Encoder;
+    impl AudioEncoder for Encoder {
+        fn encode(&mut self, _: &[i16], out: &mut dyn FnMut(&[u8]) -> Result<(), AudioFailure>) -> Result<(), AudioFailure> {
+            out(&[0x21; 16])
+        }
+        fn drain(&mut self, _: &mut dyn FnMut(&[u8]) -> Result<(), AudioFailure>) -> Result<(), AudioFailure> {
+            Ok(())
+        }
+    }
+    impl MeetingAudio for Audio {
+        fn unavailable(&self) -> Option<&'static str> {
+            self.refusal
+        }
+        fn start(&self, _: bool, on_packet: Box<dyn FnMut(AudioPacket) + Send>, _: Box<dyn Fn(AudioEvent) + Send>) -> Result<Box<dyn AudioStream>, AudioFailure> {
+            self.packets.lock().unwrap().push(on_packet);
+            self.running.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Stream(self.running.clone())))
+        }
+        fn encoder(&self, _: usize, _: i64) -> Result<Box<dyn AudioEncoder>, AudioFailure> {
+            Ok(Box::new(Encoder))
+        }
+        fn bitrate(&self, _: bool) -> i64 {
+            96_000
+        }
+    }
+
+    fn rig(cx: &mut TestAppContext, audio: Arc<Audio>) -> (WindowHandle<NotetakerPage>, std::path::PathBuf) {
+        let window = open_page(cx, None);
+        let root = std::env::temp_dir().join(format!("flow-recorder-{}-{}", std::process::id(), audio.as_ref() as *const Audio as usize));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        cx.update(|cx| {
+            let core = cx.global_mut::<Core>();
+            core.paths = flow_core::paths::Paths::new(root.clone());
+            core.db = Some(Db::open_or_create(&core.paths.database()).unwrap());
+            core.services = Box::new(flow_platform::Fake { audio: Some(audio), ..Default::default() });
+            crate::shell::ensure_session(cx);
+            crate::shell::update_session(cx, |s| {
+                s.can_start_meeting = true;
+                s.selection = crate::pages::Page::Meetings;
+            });
+        });
+        (window, root)
+    }
+    fn wait(cx: &mut TestAppContext, window: &WindowHandle<NotetakerPage>, state: &str) {
+        let by = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            window.update(cx, |p, _, cx| { p.read_status(cx); }).unwrap();
+            cx.update(crate::capture::sync);
+            if read(cx, window, |p| p.status.as_ref().map(|s| s.state.clone())).as_deref() == Some(state) || std::time::Instant::now() > by {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(read(cx, window, |p| p.status.as_ref().map(|s| s.state.clone())).as_deref(), Some(state));
+        frame(cx, window);
+    }
+
+    #[flow_ui::gpui::test]
+    async fn new_note_records_pauses_from_the_tray_and_stops(cx: &mut TestAppContext) {
+        let audio = Arc::new(Audio::default());
+        let (window, root) = rig(cx, audio.clone());
+        click(cx, &window, "meeting.start");
+        wait(cx, &window, "recording");
+        assert_eq!(audio.running.load(Ordering::SeqCst), 2);
+        assert!(cx.update(|cx| cx.global::<crate::shell::Session>().meeting.is_some() && !cx.global::<crate::shell::Session>().can_start_meeting));
+
+        cx.update(|cx| crate::tray::run(crate::tray::Command::Pause, cx));
+        wait(cx, &window, "paused");
+        assert_eq!(audio.running.load(Ordering::SeqCst), 0, "a pause stops the sources");
+        click(cx, &window, "meeting.resume");
+        wait(cx, &window, "recording");
+        for feed in audio.packets.lock().unwrap().iter_mut() {
+            feed(AudioPacket { stereo: &[9; 4096], qpc_ns: None, silent: false, discontinuity: false });
+        }
+        cx.update(|cx| crate::tray::run(crate::tray::Command::Stop, cx));
+        wait(cx, &window, "completed");
+        assert!(cx.update(|cx| cx.global::<crate::shell::Session>().meeting.is_none() && cx.global::<crate::shell::Session>().can_start_meeting));
+        let id = read(cx, &window, |p| p.status.as_ref().unwrap().id.clone());
+        assert!(root.join("Meetings").join(&id).join("mic-0002.aac").exists(), "the second segment, after the resume");
+        assert_eq!(query(cx, |db| meeting(db, &id).unwrap().unwrap().state), "completed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[flow_ui::gpui::test]
+    async fn the_tray_start_goes_through_the_page_gate_and_a_machine_without_loopback_refuses(cx: &mut TestAppContext) {
+        let audio = Arc::new(Audio { refusal: Some("Meeting notes need Windows 11."), ..Default::default() });
+        let (window, root) = rig(cx, audio.clone());
+        window.update(cx, |_, w, cx| { crate::capture::command(flow_platform::SessionCommand::StartMeeting, cx); w.refresh(); }).unwrap();
+        frame(cx, &window);
+        assert_eq!(read(cx, &window, |p| p.refusal.clone()).as_deref(), Some("Meeting notes need Windows 11."));
+        assert_eq!(audio.running.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[flow_ui::gpui::test]
+    async fn windows_refusals_name_windows_settings_and_offer_them(cx: &mut TestAppContext) {
+        let (window, root) = rig(cx, Arc::new(Audio::default()));
+        cx.update(|cx| {
+            let fake = flow_platform::Fake { audio: Some(Arc::new(Audio::default())), device: "PC", ..Default::default() };
+            fake.permissions.borrow_mut().push((Permission::Microphone, PermissionState::Denied));
+            cx.global_mut::<Core>().services = Box::new(fake);
+        });
+        click(cx, &window, "meeting.start");
+        frame(cx, &window);
+        assert_saw(&["Enable LocalFlow in Settings > Privacy & security > Microphone."]);
+        assert_labelled(cx, &window, "meeting.openSettings", "Open Settings");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

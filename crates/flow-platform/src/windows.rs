@@ -16,8 +16,8 @@ impl Services for Win {
     }
     fn permission(&self, p: Permission) -> PermissionState {
         match p {
-            // ponytail: reading the microphone consent store comes with WASAPI capture in Feature 025.
-            Permission::Microphone => PermissionState::NotAsked,
+            Permission::Microphone if crate::win::system::microphone_consent_denied() => PermissionState::Denied,
+            Permission::Microphone => PermissionState::Granted,
             _ => PermissionState::NotRequired,
         }
     }
@@ -25,11 +25,7 @@ impl Services for Win {
         if p != Permission::Microphone {
             return Err(Unavailable("no such setting on Windows"));
         }
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "ms-settings:privacy-microphone"])
-            .spawn()
-            .map(|_| ())
-            .map_err(|_| Unavailable("Windows Settings"))
+        crate::win::system::shell_open("ms-settings:privacy-microphone").map_err(|_| Unavailable("Windows Settings"))
     }
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
         crate::win::system::open_url(url)
@@ -41,19 +37,25 @@ impl Services for Win {
         false
     }
     fn high_contrast(&self) -> bool {
-        false
+        crate::win::system::high_contrast()
     }
     fn reduce_motion(&self) -> bool {
-        false
+        crate::win::system::reduce_motion()
     }
     fn launch_at_login(&self) -> Result<bool, Unavailable> {
-        Err(Unavailable("Run registry key"))
+        crate::win::system::launch_at_login()
     }
-    fn set_launch_at_login(&self, _: bool) -> Result<(), Unavailable> {
-        Err(Unavailable("Run registry key"))
+    fn set_launch_at_login(&self, on: bool) -> Result<(), Unavailable> {
+        crate::win::system::set_launch_at_login(on)
     }
     fn free_disk_bytes(&self) -> Option<u64> {
-        None
+        crate::win::system::free_disk_bytes(&self.app_data_dir())
+    }
+    fn input_catalog(&self) -> Option<crate::InputCatalog> {
+        crate::win::system::input_catalog()
+    }
+    fn meeting_audio(&self) -> Option<std::sync::Arc<dyn crate::MeetingAudio>> {
+        Some(std::sync::Arc::new(crate::win::wasapi::Wasapi))
     }
     fn secret(&self, name: &str) -> Result<Option<String>, Unavailable> {
         crate::win::secrets::read(name)?.map(|v| String::from_utf8(v).map_err(|_| Unavailable("Credential Manager"))).transpose()

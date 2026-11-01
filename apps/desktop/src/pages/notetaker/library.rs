@@ -76,16 +76,30 @@ impl NotetakerPage {
         cx.notify();
     }
 
-    /// `coordinator.start`: the gate runs here; capture itself is the worker's and refuses for now.
-    pub(crate) fn start_note(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    /// `coordinator.start`: the gate runs here. Capture is the Rust recorder where the platform has one,
+    /// otherwise the worker's, which refuses.
+    pub(crate) fn start_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use flow_platform::{Permission, PermissionState};
         let dictating = cx.has_global::<crate::shell::Session>() && cx.global::<crate::shell::Session>().dictation.as_ref().is_some_and(|d| crate::pill::shows_dictation(d.state));
         let services = &cx.global::<Core>().services;
         let denied = |p| services.permission(p) == PermissionState::Denied;
         let free = services.free_disk_bytes();
-        let refusal = start_refusal(self.busy, dictating, denied(Permission::Microphone), denied(Permission::SystemAudio), free);
+        let refusal = start_refusal(self.busy || self.active_id().is_some(), dictating, denied(Permission::Microphone), denied(Permission::SystemAudio), free);
+        let windows = services.device_word() == "PC";
         self.refusal = match refusal {
+            Some(text) if windows => Some(text.replace("System Settings > Privacy & Security", "Settings > Privacy & security")),
             Some(text) => Some(text.to_string()),
+            None if crate::capture::available(cx) => match crate::capture::start(cx) {
+                Ok(snapshot) => {
+                    let id = snapshot.id.clone();
+                    self.status = Some(LiveStatus::from_snapshot(snapshot));
+                    self.poll_status(cx);
+                    self.refresh(cx);
+                    self.open_note(&id, Tab::Transcript, window, cx);
+                    None
+                }
+                Err(message) => Some(message),
+            },
             None => Self::worker("Meeting recording", cx).err(),
         };
         self.start_warning = low_space_warning(free).filter(|_| refusal.is_none());

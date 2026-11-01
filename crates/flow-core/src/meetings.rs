@@ -3237,7 +3237,7 @@ fn finalize_segment(c: &Connection, track: &str, s: &ActiveSegment, duration: i6
     track_totals(c, track)
 }
 /// `MeetingStore.recomputeTrackTotals`.
-fn track_totals(c: &Connection, track: &str) -> Res<()> {
+pub(crate) fn track_totals(c: &Connection, track: &str) -> Res<()> {
     c.execute(
         "UPDATE meeting_tracks SET total_duration_ms=(SELECT COALESCE(SUM(duration_ms),0) FROM meeting_segments WHERE track_id=?1 AND state='finalized'),
          total_bytes=(SELECT COALESCE(SUM(byte_size),0) FROM meeting_segments WHERE track_id=?1),
@@ -3247,7 +3247,7 @@ fn track_totals(c: &Connection, track: &str) -> Res<()> {
     Ok(())
 }
 /// `MeetingStore.recomputeDurations`: every pause clamped to the wall-clock window, an open one included.
-fn recompute_durations(c: &Connection, id: &str, now: i64) -> Res<()> {
+pub(crate) fn recompute_durations(c: &Connection, id: &str, now: i64) -> Res<()> {
     let (started, stopped): (Option<i64>, Option<i64>) = c.query_row("SELECT started_at,stopped_at FROM meetings WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))?;
     let Some(started) = started else { return Ok(()) };
     let end = started.max(stopped.unwrap_or(now));
@@ -3261,12 +3261,12 @@ fn recompute_durations(c: &Connection, id: &str, now: i64) -> Res<()> {
 }
 /// `ADTSValidator.scan`: complete frames, their length in bytes, the sample rate and channels.
 #[derive(Debug, Default, PartialEq, Eq)]
-struct AdtsScan {
-    frames: i64,
-    bytes: u64,
-    trailing: u64,
-    sample_rate: i64,
-    channels: i64,
+pub(crate) struct AdtsScan {
+    pub frames: i64,
+    pub bytes: u64,
+    pub trailing: u64,
+    pub sample_rate: i64,
+    pub channels: i64,
 }
 impl AdtsScan {
     fn duration_ms(&self) -> i64 {
@@ -3274,7 +3274,7 @@ impl AdtsScan {
     }
 }
 /// Sync word, MPEG-4, layer 0, AAC-LC and a frame longer than its header: (length, rate, channels).
-fn adts_header(b: &[u8; 7]) -> Option<(u64, i64, i64)> {
+pub(crate) fn adts_header(b: &[u8; 7]) -> Option<(u64, i64, i64)> {
     const RATES: [i64; 16] = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350, 0, 0, 0];
     if b[0] != 0xFF || b[1] & 0xF6 != 0xF0 || b[2] >> 6 != 1 {
         return None;
@@ -3285,7 +3285,7 @@ fn adts_header(b: &[u8; 7]) -> Option<(u64, i64, i64)> {
     (rate > 0 && channels > 0 && length > 7).then_some((length, rate, channels))
 }
 /// Stops at the first inconsistent header or at the end. Reads headers only and refuses a symlink.
-fn adts_scan(path: &Path) -> std::io::Result<AdtsScan> {
+pub(crate) fn adts_scan(path: &Path) -> std::io::Result<AdtsScan> {
     use std::io::{Read, Seek, SeekFrom};
     let meta = std::fs::symlink_metadata(path)?;
     if !meta.is_file() {
@@ -3331,7 +3331,7 @@ fn parse_uuid(name: &str) -> Option<String> {
     shape.then(|| name.to_uppercase())
 }
 /// `FileSegmentWriter.truncateAndRename`: refuses a symlink and fsyncs the file and its folder.
-fn truncate_and_rename(from: &Path, to: &Path, length: u64) -> std::io::Result<()> {
+pub(crate) fn truncate_and_rename(from: &Path, to: &Path, length: u64) -> std::io::Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true);
     #[cfg(unix)]

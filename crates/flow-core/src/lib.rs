@@ -1,4 +1,5 @@
 //! Stores and logic with no GPUI and no OS APIs (`scripts/check-rust-boundaries.sh`).
+pub mod capture;
 pub mod db;
 pub mod dictionary;
 pub mod history;

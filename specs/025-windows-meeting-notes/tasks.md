@@ -24,11 +24,11 @@ Every phase ends with `cargo test --workspace`, `./scripts/check-rust-boundaries
 - [X] T015 Wire provider into enrollment. `google_sign_in_available` from a build-time value. Hidden otherwise.
 
 ## Phase 4: Windows system services and capture (US3)
-- [ ] T016 Windows `launch_at_login`, `free_disk_bytes`, `high_contrast`, `reduce_motion`, microphone consent, `open_url`, input catalog.
-- [ ] T017 `flow-core::capture`: `Source`, `Encoder` traits; bounded ring; ADTS framing and validation against files from Swift's fixtures if any; segment writer with `.part`, fsync every 5 s, rename, per ADR 0015; rows through existing meeting store. Tests with fake source and encoder including overload, device change, crash-recovery with existing reconcile.
-- [ ] T018 Windows WASAPI microphone and process-loopback sources. Cross-check only.
-- [ ] T019 Windows Media Foundation AAC encoder. Cross-check only.
-- [ ] T020 Wire `meeting_worker`, Start, Pause, Resume and Stop on Windows to the recorder through `apps/desktop`; `SessionCommand`s work; other platforms keep Unavailable with reason.
+- [X] T016 Windows `launch_at_login`, `free_disk_bytes`, `high_contrast`, `reduce_motion`, microphone consent, `open_url`, input catalog.
+- [X] T017 `flow-core::capture`: `Source`, `Encoder` traits; bounded ring; ADTS framing and validation against files from Swift's fixtures if any; segment writer with `.part`, fsync every 5 s, rename, per ADR 0015; rows through existing meeting store. Tests with fake source and encoder including overload, device change, crash-recovery with existing reconcile.
+- [X] T018 Windows WASAPI microphone and process-loopback sources. Cross-check only.
+- [X] T019 Windows Media Foundation AAC encoder. Cross-check only.
+- [X] T020 Wire `meeting_worker`, Start, Pause, Resume and Stop on Windows to the recorder through `apps/desktop`; `SessionCommand`s work; other platforms keep Unavailable with reason.
 
 ## Phase 5: Handoff (US4)
 - [ ] T021 `remote/transfer.rs` per `HandoffFileTransfer.swift`: bounded chunks, resume, hash.

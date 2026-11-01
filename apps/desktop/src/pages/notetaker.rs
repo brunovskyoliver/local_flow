@@ -244,6 +244,10 @@ impl NotetakerPage {
                     this.seen_meeting = meeting;
                     this.refresh(cx);
                 }
+                if cx.global::<crate::shell::Session>().start_requested {
+                    crate::shell::update_session(cx, |s| s.start_requested = false);
+                    this.start_note(window, cx);
+                }
                 // `.task`: each appearance copies the preference again and re-reads the rows. The page
                 // outlives its appearances here, so a toggle in the options popover resets the same way.
                 let shown = cx.global::<crate::shell::Session>().selection == crate::pages::Page::Meetings;
@@ -388,6 +392,15 @@ impl NotetakerPage {
             self.polling = false;
             return false;
         };
+        if let Some(snapshot) = crate::capture::snapshot(cx).filter(|s| s.id == id) {
+            let changed = self.status.as_ref().is_some_and(|s| s.state != snapshot.state);
+            self.status = Some(LiveStatus::from_snapshot(snapshot));
+            if changed {
+                self.refresh(cx);
+            }
+            cx.notify();
+            return true;
+        }
         if let Some(m) = db_of(cx).and_then(|db| meeting(db, &id).ok().flatten()) {
             if let Some(s) = self.status.as_mut().filter(|s| s.state != m.state) {
                 s.state = m.state;

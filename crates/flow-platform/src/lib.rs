@@ -24,6 +24,47 @@ pub struct Unavailable(pub &'static str);
 
 pub use raw_window_handle::HasWindowHandle;
 
+/// A schema `failure_reason`.
+pub type AudioFailure = &'static str;
+
+/// One capture packet: 48 kHz, 16-bit, interleaved stereo.
+pub struct AudioPacket<'a> {
+    pub stereo: &'a [i16],
+    /// When the first sample was captured, on the host clock.
+    pub qpc_ns: Option<u64>,
+    pub silent: bool,
+    /// The device says it lost audio before this packet.
+    pub discontinuity: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AudioEvent {
+    Failed(AudioFailure),
+    DeviceChanged,
+}
+
+pub trait AudioStream: Send {
+    fn device_name(&self) -> Option<String>;
+    /// Returns once no callback can run.
+    fn stop(self: Box<Self>);
+}
+
+/// Raw AAC-LC out. Not `Send`: it stays on the thread that asked for it.
+pub trait AudioEncoder {
+    fn encode(&mut self, pcm: &[i16], out: &mut dyn FnMut(&[u8]) -> Result<(), AudioFailure>) -> Result<(), AudioFailure>;
+    fn drain(&mut self, out: &mut dyn FnMut(&[u8]) -> Result<(), AudioFailure>) -> Result<(), AudioFailure>;
+}
+
+/// Meeting capture and encoding on platforms that have the Rust recorder.
+pub trait MeetingAudio: Send + Sync {
+    /// Why recording can't start on this machine.
+    fn unavailable(&self) -> Option<&'static str>;
+    /// `system` picks what the computer plays; otherwise the default microphone.
+    fn start(&self, system: bool, on_packet: Box<dyn FnMut(AudioPacket) + Send>, on_event: Box<dyn Fn(AudioEvent) + Send>) -> Result<Box<dyn AudioStream>, AudioFailure>;
+    fn encoder(&self, channels: usize, bitrate: i64) -> Result<Box<dyn AudioEncoder>, AudioFailure>;
+    fn bitrate(&self, system: bool) -> i64;
+}
+
 /// The Desktop-type Google client from the build: its ID and non-confidential secret. Empty is unset.
 pub fn google_client() -> Option<(&'static str, Option<&'static str>)> {
     let id = option_env!("LOCALFLOW_GOOGLE_CLIENT_ID").filter(|v| !v.trim().is_empty())?;
@@ -195,6 +236,11 @@ pub trait Services: 'static {
     fn meeting_worker(&self, what: &'static str) -> Result<(), Unavailable> {
         Err(Unavailable(what))
     }
+    /// The Rust recorder's sources. None means the page keeps using `meeting_worker`, as on the Mac,
+    /// where the Swift app records until the cutover.
+    fn meeting_audio(&self) -> Option<std::sync::Arc<dyn MeetingAudio>> {
+        None
+    }
     fn request_permission(&self, _p: Permission) -> Result<PermissionState, Unavailable> {
         Err(Unavailable("the permission prompt"))
     }
@@ -332,12 +378,16 @@ mod macos;
 mod region_mac;
 #[cfg(target_os = "windows")]
 mod win {
+    pub mod aac;
     pub mod secrets;
     pub mod system;
     pub mod tpm;
+    pub mod wasapi;
 }
 #[cfg(target_os = "windows")]
 mod windows;
+#[cfg(any(target_os = "windows", test))]
+mod win_rules;
 
 pub fn native() -> Box<dyn Services> {
     #[cfg(target_os = "macos")]
@@ -407,6 +457,8 @@ impl Credentials for NoCredentials {
 
 /// A scriptable double for tests and the audit's scenarios.
 pub struct Fake {
+    /// What `meeting_audio` hands out.
+    pub audio: Option<std::sync::Arc<dyn MeetingAudio>>,
     /// Secrets by full name. Any call fails while `secrets_fail` is true.
     pub secrets: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Vec<u8>>>>,
     pub secrets_fail: std::cell::Cell<bool>,
@@ -438,7 +490,8 @@ pub struct Fake {
 
 impl Default for Fake {
     fn default() -> Self {
-        Fake { secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
+        Fake {
+            audio: None, secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
     }
 }
 
@@ -558,6 +611,9 @@ impl Services for Fake {
     }
     fn insert_once(&self, _: &CapturedTarget, _: &str) -> Result<InsertOutcome, Unavailable> {
         self.insert_outcome.get().ok_or(Unavailable("text insertion"))
+    }
+    fn meeting_audio(&self) -> Option<std::sync::Arc<dyn MeetingAudio>> {
+        self.audio.clone()
     }
     fn session_command(&self, command: SessionCommand) -> Result<(), Unavailable> {
         if !self.session_ok.get() {
