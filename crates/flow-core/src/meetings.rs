@@ -1,6 +1,6 @@
 //! Store and logic behind the meetings views: the library, notes, transcript paging, speaker
-//! assignment and the summary read model, on the Swift-migrated schema. Capture, ASR, diarization
-//! and summary generation stay in Mac-only workers; here their stored results are read.
+//! assignment and the summary read model, on the Swift-migrated schema. Capture, ASR and diarization
+//! stay in Mac-only workers; here their stored results are read. `analysis` generates the summaries.
 use crate::db::Db;
 pub use crate::history::now_ms;
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -69,7 +69,7 @@ const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Au
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /// Days since 1970 to (year, month 1-12, day 1-31).
-fn civil(days: i64) -> (i64, usize, i64) {
+pub(crate) fn civil(days: i64) -> (i64, usize, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
@@ -2164,10 +2164,10 @@ pub enum SourceRef {
     Note(i64, String),
 }
 impl SourceRef {
-    fn sort_key(&self) -> String {
+    pub(crate) fn sort_key(&self) -> String {
         match self {
             SourceRef::Segment(id) => format!("s:{id}"),
-            SourceRef::Note(o, h) => format!("n:{o}:{h}"),
+            SourceRef::Note(o, _) => format!("n:{o}"),
         }
     }
 }
@@ -2325,93 +2325,7 @@ fn sources_of(db: &Db, run: &str) -> Res<HashMap<(String, String), Vec<SourceRef
 /// `MeetingAnalyzer.currentEvidenceVersion`: the `EvidenceVersion` hash of the evidence as it stands
 /// now. None without a final transcript.
 pub fn current_evidence_version(db: &Db, meeting: &str) -> Res<Option<String>> {
-    let Some(pass) = transcription(db, meeting)?.filter(|t| t.state == "final").and_then(|t| t.pass_id) else { return Ok(None) };
-    let mut out: Vec<u8> = vec![];
-    let mut line = |fields: &[&str]| {
-        for f in fields {
-            out.extend_from_slice(format!("{}:", f.len()).as_bytes());
-            out.extend_from_slice(f.as_bytes());
-            out.push(0x1f);
-        }
-        out.push(0x0a);
-    };
-    let upper = |id: &str| id.to_uppercase();
-    line(&["evidence_v1"]);
-    line(&["meeting", &upper(meeting)]);
-    line(&["pass", &upper(&pass)]);
-    let mut s = db.conn.prepare_cached("SELECT id, end_ms FROM transcript_segments WHERE meeting_id=?1 AND finality='final' AND pass_id=?2")?;
-    let ends: HashMap<String, i64> = s.query_map(params![meeting, pass], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
-    let mut after = None;
-    loop {
-        let rows = labeled_page(db, meeting, "final", after, TRANSCRIPT_PAGE)?;
-        for row in &rows {
-            let Some(end) = ends.get(&row.id) else { continue };
-            let speaker = match row.label.as_ref().map(|l| &l.kind) {
-                Some(LabelKind::Speaker(root)) => upper(root),
-                Some(LabelKind::Overlapping) => "ambiguous".into(),
-                _ => "unknown".into(),
-            };
-            line(&["segment", &upper(&row.id), &row.ordinal.to_string(), &row.start_ms.to_string(), &end.to_string(), &speaker, &row.text]);
-        }
-        match rows.last() {
-            Some(last) if rows.len() >= TRANSCRIPT_PAGE => after = Some(last.ordinal),
-            _ => break,
-        }
-    }
-    // The research R9 table. Names stay out; only whether one was typed matters.
-    let local_profile: Option<String> = db.conn.query_row("SELECT id FROM known_speakers WHERE is_local_user=1", [], |r| r.get(0)).optional()?;
-    let ids = identities(db, meeting)?;
-    let mut roots: Vec<(String, String, String, Option<String>)> = vec![];
-    if let Some((_, speakers)) = accepted_speakers(db, meeting)? {
-        for root in speakers.iter().filter(|r| r.merged_into.is_none()) {
-            let (source, name) = db.conn.query_row("SELECT source, display_name FROM meeting_speakers WHERE id=?1", [&root.id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?;
-            roots.push((upper(&root.id), root.id.clone(), source, name));
-        }
-    }
-    roots.sort();
-    for (id, stored, source, name) in &roots {
-        if source == "local" {
-            line(&["local", id, if local_profile.is_some() { "1" } else { "0" }]);
-            continue;
-        }
-        let identity = ids.get(stored);
-        let origin = identity.map_or("none", |i| i.origin.as_str());
-        match identity.map(|i| i.state.as_str()) {
-            Some(state @ ("confirmed" | "recognized")) => line(&["root", id, state, origin, &identity.and_then(|i| i.known_id.as_deref()).map(upper).unwrap_or_else(|| "none".into())]),
-            _ if name.is_some() => line(&["root", id, "local_name", "none", "none"]),
-            Some("possible") => line(&["root", id, "possible", origin, "none"]),
-            _ => line(&["root", id, "unknown", origin, "none"]),
-        }
-    }
-    let text: Option<String> = db.conn.query_row("SELECT text FROM meeting_notes WHERE meeting_id=?1", [meeting], |r| r.get(0)).optional()?;
-    for (ordinal, paragraph, ..) in note_paragraphs(&text.unwrap_or_default()) {
-        line(&["note", &ordinal.to_string(), &paragraph]);
-    }
-    line(&["language", &evidence_language(db, meeting)?, "1"]);
-    line(&["versions", "1", "chunking_v2", "16384", "caps_v1"]);
-    Ok(Some(crate::history::sha256_hex(&out)))
-}
-/// `LanguagePolicy.resolve`: the language the pass decoded in, then the meeting's choice.
-// ponytail: Swift's last step is NLLanguageRecognizer, which only Apple has. A final pass's text does
-// not change, so the accepted summary's recorded language stands in for it until Feature 025.
-fn evidence_language(db: &Db, meeting: &str) -> Res<String> {
-    let pipeline: Option<String> = db.conn.query_row("SELECT pipeline_version FROM meeting_transcriptions WHERE meeting_id=?1", [meeting], |r| r.get(0))?;
-    let pipeline = pipeline.unwrap_or_default();
-    let tags: Vec<&str> = pipeline.split('+').filter(|t| t.starts_with("lang_")).collect();
-    if let [tag] = tags[..] {
-        let parts: Vec<&str> = tag.split('_').collect();
-        if let ["lang", lang @ ("sk" | "en"), "prompt", "v1" | "v2"] = parts[..] {
-            return Ok(lang.into());
-        }
-    }
-    let chosen: Option<String> = db.conn.query_row("SELECT language FROM meetings WHERE id=?1", [meeting], |r| r.get(0))?;
-    match chosen.as_deref() {
-        Some("slovak") => return Ok("sk".into()),
-        Some("english") => return Ok("en".into()),
-        _ => {}
-    }
-    let stored: Option<String> = db.conn.query_row("SELECT s.language FROM analysis_summaries s JOIN meeting_analysis a ON a.accepted_run_id=s.run_id WHERE a.meeting_id=?1", [meeting], |r| r.get(0)).optional()?;
-    Ok(stored.unwrap_or_else(|| "mixed".into()))
+    crate::analysis::current_version(db, meeting)
 }
 /// `AnalysisStore.readModel` with overlays and live owner names applied. None without an accepted run.
 pub fn read_model(db: &Db, meeting: &str) -> Res<Option<ReadModel>> {
@@ -2910,6 +2824,8 @@ pub struct Recovery {
     pub orphans_reconstructed: i64,
     /// Rows and directory entries past the per-launch bound.
     pub deferred: i64,
+    /// `IntelligenceReconciler.restarts`: interrupted automatic runs without an accepted analysis.
+    pub analysis_restarts: Vec<String>,
 }
 impl Recovery {
     /// The two notices Swift publishes after reconciling.
@@ -3103,7 +3019,15 @@ pub fn reconcile_launch(db: &Db, root: &Path, now: i64) -> Res<Recovery> {
     for table in ["diarization_runs", "identification_runs"] {
         c.execute(&format!("UPDATE {table} SET state='interrupted',failure_category='interrupted',completed_at=?1 WHERE id IN (SELECT id FROM {table} WHERE state='running' ORDER BY created_at LIMIT 100)"), [now])?;
     }
-    c.execute("UPDATE analysis_runs SET state='interrupted',completed_at=?1,failure_category='interrupted',duration_ms=max(0,?1-coalesce(started_at,created_at)) WHERE id IN (SELECT id FROM analysis_runs WHERE state IN ('pending','running') ORDER BY created_at LIMIT 100)", [now])?;
+    let mut s = c.prepare("SELECT meeting_id FROM analysis_runs WHERE id IN (SELECT id FROM analysis_runs WHERE state IN ('pending','running') ORDER BY created_at, id LIMIT 100) AND \"trigger\"='automatic' ORDER BY created_at, id")?;
+    let automatic: Vec<String> = s.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    drop(s);
+    c.execute("UPDATE analysis_runs SET state='interrupted',completed_at=?1,failure_category='interrupted',duration_ms=max(0,?1-coalesce(started_at,created_at)) WHERE id IN (SELECT id FROM analysis_runs WHERE state IN ('pending','running') ORDER BY created_at, id LIMIT 100)", [now])?;
+    for meeting in automatic {
+        if !out.analysis_restarts.contains(&meeting) && c.execute("UPDATE meeting_analysis SET auto_restarted_at=?1, updated_at=?1 WHERE meeting_id=?2 AND accepted_run_id IS NULL", params![now, meeting])? > 0 {
+            out.analysis_restarts.push(meeting);
+        }
+    }
     Ok(out)
 }
 type ActiveRow = (String, String, Option<String>, Option<i64>, i64);

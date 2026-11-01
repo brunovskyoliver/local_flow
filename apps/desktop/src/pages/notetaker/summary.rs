@@ -1,5 +1,6 @@
-//! `SummaryTabView`. Generation is a worker; everything here reads and edits stored rows.
+//! `SummaryTabView`. `flow_core::analysis` generates; everything here reads and edits stored rows.
 use super::*;
+use flow_core::analysis::queue::{QUEUE_FULL, Status};
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -92,6 +93,18 @@ impl NotetakerPage {
         let Some(id) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()) else { return };
         let Some(db) = db_of(cx) else { return };
         self.summary.header = summary_header(db, &id).unwrap_or(SummaryHeader::Failed("The summary could not be loaded.".into()));
+        // `refresh`: the queue knows the position and the progress, the row only that it's unfinished.
+        if let Some(analysis) = &cx.global::<Core>().analysis {
+            self.summary.progress = None;
+            match analysis.status(&id) {
+                Some(Status::Queued(position)) => self.summary.header = SummaryHeader::Pending(position as i64),
+                Some(Status::Running(progress)) => {
+                    self.summary.header = SummaryHeader::Running("Analyzing".into());
+                    self.summary.progress = progress;
+                }
+                None => {}
+            }
+        }
         match read_model(db, &id) {
             Ok(m) => {
                 self.summary.model = m;
@@ -131,18 +144,27 @@ impl NotetakerPage {
     fn highlighted(&self, text: &str, cx: &Context<Self>) -> Txt {
         Self::linked(self.spans(text, cx), cx)
     }
-    fn generate(&mut self, cx: &mut Context<Self>) {
+    /// `requestRun`. A scenario's fixture rows never reach a server.
+    pub(super) fn generate(&mut self, trigger: &str, cx: &mut Context<Self>) {
         self.menu = None;
         let id = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()).unwrap_or_default();
-        self.summary.error = if admit(&mut self.summary_queue, &id, false, QUEUE_CAPACITY) {
-            let refused = Self::worker("Summary generation", cx).err();
-            if refused.is_some() {
-                self.summary_queue.retain(|q| q != &id);
-            }
-            refused
-        } else {
-            Some("Summary queue is full".into())
-        };
+        self.summary.error = None;
+        if !admit(&mut self.summary_queue, &id, false, QUEUE_CAPACITY) {
+            self.summary.error = Some(QUEUE_FULL.into());
+        } else if cx.global::<Core>().scenario.is_none() {
+            let core = cx.global_mut::<Core>();
+            core.analysis().request(&id, trigger, &core.analysis_route());
+        }
+        cx.notify();
+    }
+    fn cancel_summary(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()) else { return };
+        let analysis = cx.global_mut::<Core>().analysis();
+        if let Some(db) = db_of(cx) {
+            analysis.cancel(db, &id);
+        }
+        self.summary_queue.retain(|q| q != &id);
+        self.summary_refresh(cx);
         cx.notify();
     }
     fn write(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&Db, &str) -> Res<()>) {
@@ -265,7 +287,7 @@ impl NotetakerPage {
                     .rounded(px(6.))
                     .child(icon("exclamationmark.triangle", 12., p.warning))
                     .child(div().flex_1().child(t(STALE_TEXT).size(12.).swift_lines().color(p.ink)))
-                    .child(prototype_button("meeting.summary.stale.regenerate", "Regenerate").on_click(cx.listener(|this, _, _, cx| this.generate(cx)))),
+                    .child(prototype_button("meeting.summary.stale.regenerate", "Regenerate").on_click(cx.listener(|this, _, _, cx| this.generate("regenerate", cx)))),
             );
         }
         if let Some(e) = self.summary.error.clone() {
@@ -320,7 +342,7 @@ impl NotetakerPage {
         let edits_open = self.menu.as_deref() == Some("summary.edits");
         let generated = model.map(|x| generated_text(x.generated_at, offset));
         let edits = model.map(|x| x.previous_edits.clone()).unwrap_or_default();
-        let plain_ink = |id: &'static str, title: &'static str, cx: &mut Context<Self>| plain_button(id, title).on_click(cx.listener(|this, _, _, cx| this.generate(cx))).content(t(title).size(13.).color(p.ink).a11y_hidden());
+        let plain_ink = |id: &'static str, title: &'static str, action: fn(&mut Self, &mut Context<Self>), cx: &mut Context<Self>| plain_button(id, title).on_click(cx.listener(move |this, _, _, cx| action(this, cx))).content(t(title).size(13.).color(p.ink).a11y_hidden());
         h_flex()
             .id("meeting.summary.header")
             .test_support()
@@ -335,13 +357,12 @@ impl NotetakerPage {
             .child(div().flex_1())
             .map(|d| match header {
                 SummaryHeader::NotEligible(_) => d,
-                SummaryHeader::Eligible => d.child(plain_ink("meeting.summary.generate", "Generate", cx)),
-                SummaryHeader::Pending(_) => d.child(t("Queued").size(13.).color(p.muted)).child(plain_ink("meeting.summary.cancel", "Cancel", cx)),
+                SummaryHeader::Eligible => d.child(plain_ink("meeting.summary.generate", "Generate", |this, cx| this.generate("manual", cx), cx)),
+                SummaryHeader::Pending(_) => d.child(t("Queued").size(13.).color(p.muted)).child(plain_ink("meeting.summary.cancel", "Cancel", |this, cx| this.cancel_summary(cx), cx)),
                 SummaryHeader::Running(text) => d
-                    // ponytail: nothing reports progress until the desktop runs analysis (ADR 0036); only a scenario sets it.
                     .when_some(self.summary.progress.as_ref().map(|x| x.1), |d, value| d.child(div().id("meeting.summary.progress").test_support().w(px(70.)).child(Progress::new("meeting.summary.progressBar").value(value))))
-                    .child(t(self.summary.progress.as_ref().map_or(text.clone(), |x| x.0.clone())).size(13.).color(p.muted).lines(1)).child(plain_ink("meeting.summary.cancel", "Cancel", cx)),
-                SummaryHeader::Failed(text) => d.child(t(text.clone()).size(13.).color(red(cx)).lines(1)).child(plain_ink("meeting.summary.retry", "Retry", cx)),
+                    .child(t(self.summary.progress.as_ref().map_or(text.clone(), |x| x.0.clone())).size(13.).color(p.muted).lines(1)).child(plain_ink("meeting.summary.cancel", "Cancel", |this, cx| this.cancel_summary(cx), cx)),
+                SummaryHeader::Failed(text) => d.child(t(text.clone()).size(13.).color(red(cx)).lines(1)).child(plain_ink("meeting.summary.retry", "Retry", |this, cx| this.generate("retry", cx), cx)),
                 SummaryHeader::Succeeded => d
                     .child(note_icon("meeting.summary.copy", if copied { "checkmark" } else { "square.on.square" }, if copied { "Copied" } else { "Copy summary" }, p.muted).on_click(cx.listener(|this, _, _, cx| this.copy_report(cx))))
                     .child(
@@ -349,7 +370,7 @@ impl NotetakerPage {
                             .relative()
                             .child(menu_trigger("meeting.summary.options", "Summary options", "ellipsis", 13., 20., p.accent).dropdown_menu(move |menu, _, _| {
                                 let mut menu = menu
-                                    .item(menu_entry("Regenerate").on_click(act(&page, |this, _, cx| this.generate(cx))))
+                                    .item(menu_entry("Regenerate").on_click(act(&page, |this, _, cx| this.generate("regenerate", cx))))
                                     .item(menu_entry("Previous edits").disabled(!has_previous).on_click(act(&page, |this, _, cx| {
                                         this.menu = Some("summary.edits".into());
                                         cx.notify();

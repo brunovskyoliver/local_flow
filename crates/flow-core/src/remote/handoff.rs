@@ -555,6 +555,8 @@ pub struct Tick {
     pub changed: bool,
     /// A meeting's step ran and the server answered.
     pub answered: bool,
+    /// Meetings whose transcript and speakers just merged: their evidence settled.
+    pub merged: Vec<String>,
 }
 
 /// The automatic retries: at most one meeting's step per tick, so uploads run one at a time on the
@@ -613,6 +615,7 @@ impl Queue {
                     tick.waiting.remove(&id);
                     tick.changed = true;
                     tick.answered = true;
+                    tick.merged.push(id);
                 }
             }
         }

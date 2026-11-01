@@ -321,7 +321,7 @@ impl RewriteSettings {
         if self.is_unencrypted_remote() && !self.insecure_override {
             return Some(Connection::InsecureBlocked);
         }
-        (!self.is_loopback() && !self.credential_present).then_some(Connection::MissingCredential)
+        (self.requires_credential() && !self.credential_present).then_some(Connection::MissingCredential)
     }
 }
 

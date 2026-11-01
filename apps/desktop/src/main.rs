@@ -26,6 +26,7 @@ fn main() {
         shell::start(cx);
         localflow::dictation::start(cx);
         localflow::remote::start_handoffs(cx);
+        localflow::remote::start_analysis(cx);
         cx.on_window_closed(|cx, id| shell::window_closed(id, cx)).detach();
         cx.observe_global::<shell::Session>(|cx| pill::sync_window(cx)).detach();
         pill::apply_scenario(cx);

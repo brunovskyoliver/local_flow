@@ -961,9 +961,9 @@ pub struct RewriteAnswer {
 /// A transport that gives up when `cancel` is set, which is what closes the socket and stops the
 /// server's work: `pending.task.cancel()` in Swift. Reads wait in short slices so the flag is seen.
 #[derive(Debug)]
-struct CancellableTransport {
+pub(crate) struct CancellableTransport {
     inner: Box<dyn ureq::unversioned::transport::Transport>,
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl CancellableTransport {
@@ -1002,9 +1002,9 @@ impl ureq::unversioned::transport::Transport for CancellableTransport {
 }
 
 #[derive(Debug)]
-struct CancellableConnector {
-    inner: ureq::unversioned::transport::DefaultConnector,
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+pub(crate) struct CancellableConnector {
+    pub(crate) inner: ureq::unversioned::transport::DefaultConnector,
+    pub(crate) cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ureq::unversioned::transport::Connector for CancellableConnector {

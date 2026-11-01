@@ -259,7 +259,7 @@ pub trait Services: 'static {
         0
     }
     /// The system prompt for a permission. Without it the view opens Settings or reports this.
-    /// Recording, transcription, diarization, identification, enrollment, summary generation,
+    /// Recording, transcription, diarization, identification, enrollment,
     /// playback and the save panel run in the Mac app's workers. `what` names the action.
     fn meeting_worker(&self, what: &'static str) -> Result<(), Unavailable> {
         Err(Unavailable(what))

@@ -146,6 +146,8 @@ pub struct Session {
     pub handoff_waiting: std::collections::BTreeSet<String>,
     /// Bumped when the handoff changed rows.
     pub handoff_revision: u64,
+    /// Moves when the summary queue has something to show.
+    pub analysis_revision: u64,
 }
 impl Global for Session {}
 
@@ -178,6 +180,7 @@ impl Session {
             history_revision: 0,
             handoff_waiting: Default::default(),
             handoff_revision: 0,
+            analysis_revision: 0,
         };
         if let Some(scenario) = core.scenario.as_deref() {
             s.apply_scenario(scenario);

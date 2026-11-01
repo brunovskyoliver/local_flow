@@ -286,7 +286,7 @@ fn follow_local_model(cx: &mut App) {
         idle,
         game: core.services.frontmost_game().filter(|_| server::bool_pref(&core.prefs, "unloadLocalModelDuringGames")),
         pressure: core.services.take_memory_pressure(),
-        busy: cx.global::<Driver>().running.load(SeqCst),
+        busy: cx.global::<Driver>().running.load(SeqCst) || core.analysis.as_ref().is_some_and(|a| a.busy()),
     };
     let now = std::time::Instant::now();
     let woken = take_wake();

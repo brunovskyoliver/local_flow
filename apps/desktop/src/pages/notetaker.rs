@@ -1,6 +1,6 @@
-//! The Notetaker page: `MeetingLibraryView` and everything it opens. Capture, ASR, diarization,
-//! identification and summary generation stay in the Mac workers (`Services::meeting_worker`); the
-//! views read what those workers stored and write what the user changes.
+//! The Notetaker page: `MeetingLibraryView` and everything it opens. Capture, ASR, diarization and
+//! identification stay in the Mac workers (`Services::meeting_worker`); the views read what those
+//! workers stored and write what the user changes. `flow_core::analysis` generates summaries.
 mod active;
 mod detail;
 mod library;
@@ -57,6 +57,7 @@ pub struct NotetakerPage {
     pub(crate) waiting: HashSet<String>,
     /// What the handoff last published, so a scenario's own `waiting` stays until it changes.
     pub(crate) seen_handoff: (std::collections::BTreeSet<String>, u64),
+    pub(crate) seen_analysis: u64,
     pub(crate) busy: bool,
     pub(crate) start_warning: Option<&'static str>,
     pub(crate) seen_meeting: Option<(String, Option<String>, crate::shell::MeetingState)>,
@@ -247,6 +248,7 @@ impl NotetakerPage {
                     this.refresh(cx);
                 }
                 this.handoff_changed(window, cx);
+                this.analysis_changed(cx);
                 if cx.global::<crate::shell::Session>().start_requested {
                     crate::shell::update_session(cx, |s| s.start_requested = false);
                     this.start_note(window, cx);
@@ -321,6 +323,7 @@ impl NotetakerPage {
             start_warning: None,
             seen_meeting: None,
             seen_handoff: Default::default(),
+            seen_analysis: 0,
             transcript_queue: vec![],
             summary_queue: vec![],
             play_total: 0,
@@ -425,14 +428,35 @@ impl NotetakerPage {
             return;
         }
         let left = self.seen_handoff.0.difference(&current.0).cloned().collect::<HashSet<_>>();
-        self.waiting = current.0.iter().cloned().collect();
         self.seen_handoff = current;
+        self.waiting = self.waiting_rows(cx);
         self.refresh(cx);
         if let Some(id) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()).filter(|id| left.contains(id)) {
             let tab = self.tab;
             self.close_note_state(window, cx);
             self.open_note(&id, tab, window, cx);
         }
+    }
+    /// A row waits for the server when its handoff does or its summary does.
+    fn waiting_rows(&self, cx: &App) -> HashSet<String> {
+        let analysis = cx.global::<Core>().analysis.as_ref().map(|a| a.waiting()).unwrap_or_default();
+        self.seen_handoff.0.iter().cloned().chain(analysis).collect()
+    }
+    /// The summary queue moved: notices, the queue's size and the open note's header.
+    pub(crate) fn analysis_changed(&mut self, cx: &mut Context<Self>) {
+        let revision = cx.global::<crate::shell::Session>().analysis_revision;
+        if revision == self.seen_analysis {
+            return;
+        }
+        self.seen_analysis = revision;
+        let Some(analysis) = cx.global::<Core>().analysis.clone() else { return };
+        if let Some(notice) = analysis.drain_notices().pop() {
+            self.summary.error = Some(notice);
+        }
+        self.summary_queue = analysis.queued();
+        self.waiting = self.waiting_rows(cx);
+        self.summary_refresh(cx);
+        cx.notify();
     }
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
         let active = self.active_id();
@@ -644,6 +668,9 @@ impl NotetakerPage {
     pub(crate) fn delete(&mut self, id: &str, revision: i64, window: &mut Window, cx: &mut Context<Self>) {
         let active = self.active_id();
         let root = Self::meetings_root(cx);
+        if let (Some(analysis), Some(db)) = (cx.global::<Core>().analysis.clone(), db_of(cx)) {
+            analysis.will_delete(db, id);
+        }
         if let Some(db) = db_of(cx) {
             self.lib.delete(db, &root, id, revision, active.as_deref());
             if matches!(flow_core::meetings::meeting(db, id), Ok(None)) && cx.global::<Core>().scenario.is_none() {

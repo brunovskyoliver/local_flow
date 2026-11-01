@@ -294,6 +294,10 @@ impl NotetakerPage {
             // The queue moves it over once the Mac worker exists; until then the row keeps waiting.
             if !server_only && self.lib.detail_notice.is_none() {
                 self.waiting.remove(id);
+                let core = cx.global::<Core>();
+                if let Some(analysis) = core.analysis.clone().filter(|a| a.waiting().contains(id)) {
+                    analysis.run_locally(id, &core.analysis_route());
+                }
             }
         }
         cx.notify();

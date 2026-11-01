@@ -326,13 +326,14 @@ async fn summary_reads_stored_analysis_and_marks_an_item_done(cx: &mut TestAppCo
 }
 // parity: SUM-008 SUM-009
 #[flow_ui::gpui::test]
-async fn generate_reports_the_missing_worker(cx: &mut TestAppContext) {
+async fn generate_queues_the_meeting(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.summary-eligible"));
     assert_saw(&["No summary yet."]);
     assert!(!has(cx, &window, "meeting.summary.readTranscript"), "only a meeting that can't be summarized offers it");
     click(cx, &window, "meeting.summary.generate");
     frame(cx, &window);
-    assert_saw(&["isn't available"]);
+    assert_eq!(read(cx, &window, |p| p.summary_queue.len()), 1);
+    assert!(cx.update(|cx| cx.global::<Core>().analysis.is_none()), "a scenario's fixture rows never reach a server");
     let window = open_page(cx, Some("notetaker.summary-not-finished"));
     click(cx, &window, "meeting.summary.readTranscript");
     frame(cx, &window);
@@ -1537,7 +1538,7 @@ async fn pending_cancel_reports_and_empty_states(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.summary-pending"));
     click(cx, &window, "meeting.summary.cancel");
     fresh(cx, &window);
-    assert_saw(&["isn't available"]);
+    assert!(!crate::testing::saw("isn't available"));
     window.update(cx, |p, _, cx| { p.summary.model = None; p.summary.forced = Some(SummaryHeader::Running("x".into())); cx.notify() }).unwrap();
     fresh(cx, &window);
     assert_saw(&["Summarizing…"]);
@@ -4353,4 +4354,101 @@ async fn transcribe_on_a_server_route_queues_the_handoff(cx: &mut TestAppContext
     window.update(cx, |p, _, cx| p.request_transcript(cx)).unwrap();
     assert_eq!(query(cx, |db| db.conn.query_row("SELECT state FROM meeting_transcriptions WHERE meeting_id=?1", [&id], |r| r.get::<_, String>(0)).unwrap()), "pending");
     assert!(read(cx, &window, |p| p.waiting.contains(&id) && p.transcript_notice.is_none()));
+}
+
+/// Answers health and the one analysis request, with a result built from what was asked.
+fn fake_analysis_server() -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let (mut raw, mut chunk) = (vec![], [0; 4096]);
+            let split = loop {
+                let n = stream.read(&mut chunk).unwrap();
+                raw.extend_from_slice(&chunk[..n]);
+                if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break at + 4;
+                }
+            };
+            let head = String::from_utf8_lossy(&raw[..split]).to_lowercase();
+            let length = head.lines().find_map(|l| l.strip_prefix("content-length: ")?.parse::<usize>().ok()).unwrap_or(0);
+            while raw.len() < split + length {
+                let n = stream.read(&mut chunk).unwrap();
+                raw.extend_from_slice(&chunk[..n]);
+            }
+            let body = if head.starts_with("get") {
+                serde_json::json!({"service": "localflow-analysis", "backend": {"state": "ready", "kind": "fake", "model": "fake"}, "prompt_versions": {"full": 1}, "result_schema_version": 1}).to_string()
+            } else {
+                let r: serde_json::Value = serde_json::from_slice(&raw[split..]).unwrap();
+                let source = serde_json::json!({"kind": "segment", "id": r["segments"][0]["id"]});
+                serde_json::json!({"schema_version": 1, "type": "result", "stage": "full", "run_id": r["run_id"], "analysis": {
+                    "schema_version": 1, "meeting_id": r["meeting"]["id"], "partial": false, "language": r["meeting"]["language_policy"]["output"],
+                    "summary": {"text": "The team reviewed the prototype.", "sources": [source], "whole_meeting": true},
+                    "topics": [], "decisions": [], "action_items": [], "next_steps": [], "open_questions": [], "risks": [],
+                }})
+                .to_string()
+            };
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{body}\n");
+        }
+    });
+    origin
+}
+// A real run: the Generate button, the queue's thread, a fake server, a file database, and the page's
+// header and body after it lands.
+// parity: SUM-010 SUM-016 SUM-035
+#[flow_ui::gpui::test]
+async fn generate_runs_against_a_server_and_shows_the_summary(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("localflow-page-analysis-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("history.sqlite");
+    let _ = std::fs::remove_file(&path);
+    let db = Db::open_or_create(&path).unwrap();
+    flow_core::seed::seed(&db);
+    db.conn.execute("DELETE FROM meeting_analysis WHERE meeting_id=?1", [SEED_FULL]).unwrap();
+    db.conn.execute("DELETE FROM analysis_runs WHERE meeting_id=?1", [SEED_FULL]).unwrap();
+    let origin = fake_analysis_server();
+    boot(cx, Mode::Light);
+    cx.update(|cx| {
+        let core = cx.global_mut::<Core>();
+        core.paths = flow_core::paths::Paths::new(root.clone());
+        core.db = Some(db);
+        core.prefs.set("rewriteEndpoint", origin);
+        crate::shell::ensure_session(cx);
+        crate::shell::update_session(cx, |s| s.selection = crate::pages::Page::Meetings);
+    });
+    flow_ui::probe::clear();
+    let window = cx.add_window(|w, cx| NotetakerPage::new(w, cx));
+    cx.simulate_window_resize(window.into(), size(px(1180.), px(3000.)));
+    frame(cx, &window);
+    open(cx, &window, SEED_FULL, Tab::Summary);
+    assert_saw(&["No summary yet."]);
+    let finished = |cx: &mut TestAppContext, run: &str| query(cx, |db| flow_core::analysis::store::latest_run(db, SEED_FULL).unwrap()).is_some_and(|r| r.state == "succeeded" && r.trigger == run);
+    let mut settle = |cx: &mut TestAppContext, run: &str| {
+        let end = std::time::Instant::now() + Duration::from_secs(20);
+        while !finished(cx, run) || cx.update(|cx| cx.global::<Core>().analysis.as_ref().unwrap().busy()) {
+            assert!(std::time::Instant::now() < end, "the {run} run never finished");
+            std::thread::sleep(Duration::from_millis(5));
+            cx.update(crate::remote::poll_analysis);
+            frame(cx, &window);
+        }
+        cx.update(crate::remote::poll_analysis);
+        frame(cx, &window);
+    };
+    click(cx, &window, "meeting.summary.generate");
+    settle(cx, "manual");
+    flow_ui::probe::clear();
+    fresh(cx, &window);
+    assert_saw(&["The team reviewed the prototype."]);
+    assert_eq!(read(cx, &window, |p| p.summary_queue.len()), 0);
+    assert_eq!(read(cx, &window, |p| p.summary.header.clone()), SummaryHeader::Succeeded);
+    window.update(cx, |p, _, cx| p.generate("regenerate", cx)).unwrap();
+    settle(cx, "regenerate");
+    assert_eq!(query(cx, |db| db.conn.query_row("SELECT count(*) FROM analysis_runs WHERE meeting_id=?1 AND state='superseded'", [SEED_FULL], |r| r.get::<_, i64>(0)).unwrap()), 1);
+    window.update(cx, |p, _, cx| p.generate("retry", cx)).unwrap();
+    settle(cx, "retry");
+    assert_eq!(read(cx, &window, |p| p.summary.header.clone()), SummaryHeader::Succeeded);
+    cx.update(|cx| cx.global_mut::<Core>().db = None);
+    let _ = std::fs::remove_dir_all(&root);
 }

@@ -107,6 +107,7 @@ pub fn start_handoffs(cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut queue: Option<Arc<Mutex<Queue>>> = None;
         let mut last_probe: Option<Instant> = None;
+        let mut answered = false;
         loop {
             cx.background_executor().timer(TICK).await;
             let work = cx.update(|cx| {
@@ -149,6 +150,22 @@ pub fn start_handoffs(cx: &mut App) {
                     handoff::forget_staged(&cx.global::<Core>().paths.root.join("Meetings"));
                 }
                 let Ok(tick) = tick else { return };
+                // The only point this client learns a transcript is final: `meetingSpeakersDidSettle`.
+                let reached = tick.answered && !answered;
+                answered = tick.answered;
+                if !tick.merged.is_empty() || reached {
+                    let core = cx.global_mut::<Core>();
+                    let analysis = core.analysis();
+                    if !tick.merged.is_empty() || !analysis.waiting().is_empty() {
+                        let route = core.analysis_route();
+                        for id in &tick.merged {
+                            analysis.settled(id, &route);
+                        }
+                        if reached {
+                            analysis.server_may_be_reachable(&route);
+                        }
+                    }
+                }
                 crate::shell::ensure_session(cx);
                 if cx.global::<crate::shell::Session>().handoff_waiting != tick.waiting || tick.changed {
                     crate::shell::update_session(cx, |s| {
@@ -160,6 +177,44 @@ pub fn start_handoffs(cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// The summary queue's clock and its way to the page: launch restarts, due re-queues, and a revision
+/// on `Session` when something changed. A scenario or a missing database means no work at all.
+pub fn start_analysis(cx: &mut App) {
+    if cx.global::<Core>().db.is_none() || cx.global::<Core>().scenario.is_some() {
+        return;
+    }
+    let restarts = std::mem::take(&mut cx.global_mut::<Core>().analysis_restarts);
+    if !restarts.is_empty() {
+        let core = cx.global_mut::<Core>();
+        core.analysis().resume(&restarts, &core.analysis_route());
+    }
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(Duration::from_millis(250)).await;
+            cx.update(poll_analysis);
+        }
+    })
+    .detach();
+}
+
+pub fn poll_analysis(cx: &mut App) {
+    let core = cx.global_mut::<Core>();
+    let Some(analysis) = core.analysis.clone() else { return };
+    if analysis.due() {
+        analysis.tick(&core.analysis_route());
+    }
+    if analysis.take_not_offered() {
+        let mut capabilities = settings::capabilities(&core.prefs);
+        capabilities.ops.remove("analysis");
+        core.prefs.set("server.capabilities", capabilities);
+    }
+    let revision = analysis.revision();
+    crate::shell::ensure_session(cx);
+    if cx.global::<crate::shell::Session>().analysis_revision != revision {
+        crate::shell::update_session(cx, |s| s.analysis_revision = revision);
+    }
 }
 
 fn remote_handoff(cx: &App, remote: &Arc<Remote>) -> Arc<Handoff> {

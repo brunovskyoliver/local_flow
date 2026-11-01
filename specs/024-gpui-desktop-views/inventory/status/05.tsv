@@ -446,15 +446,15 @@ SUM-004	auto	test:reading_time_rounds_up_with_a_minimum_of_one
 SUM-005	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:summary_not_finished ; test:summary_overlays_and_report ; test:summary_header_states_read_thirteen_point
 SUM-006	auto	test:summary_not_finished ; test:summary_overlays_and_report
 SUM-007	auto	test:summary_off ; test:summary_overlays_and_report
-SUM-008	auto	test:generate_reports_the_missing_worker
-SUM-009	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:generate_reports_the_missing_worker ; test:summary_header_states_read_thirteen_point
-SUM-010	service	service:the analysis op on the channel isn't ported (about 4,500 lines of Swift, tasks T023); a summary arrives only through a merged handoff. Mac parity, Feature 028
+SUM-008	auto	test:generate_queues_the_meeting
+SUM-009	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:generate_queues_the_meeting ; test:summary_header_states_read_thirteen_point
+SUM-010	auto	test:generate_runs_against_a_server_and_shows_the_summary
 SUM-011	auto	test:summary_queued ; test:summary_header_states_read_thirteen_point
 SUM-012	auto	test:summary_header_states_read_thirteen_point ; test:running_header_draws_a_seventy_point_bar_when_a_run_reports_progress
 SUM-013	auto	test:pending_cancel_reports_and_empty_states
 SUM-014	auto	test:summary_request_refused_when_the_queue_is_full
 SUM-015	live	test:summary_failed ; live:audit/mac/notetaker/summary-failed-light-rust.png ; live:audit/mac/notetaker/summary-failed-light-ref.png ; test:summary_header_states_read_thirteen_point ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
-SUM-016	service	service:the analysis op on the channel isn't ported (about 4,500 lines of Swift, tasks T023); a summary arrives only through a merged handoff. Mac parity, Feature 028
+SUM-016	auto	test:generate_runs_against_a_server_and_shows_the_summary
 SUM-017	auto	test:pending_cancel_reports_and_empty_states
 SUM-018	auto	test:pending_cancel_reports_and_empty_states ; test:summary_header_states_read_thirteen_point
 SUM-019	auto	test:summary_overlays_and_report
@@ -473,7 +473,7 @@ SUM-031	auto	test:cancelled_run_with_an_accepted_summary_reads_succeeded
 SUM-032	auto	test:copy_writes_the_report_and_says_copied_for_two_seconds
 SUM-033	auto	test:summary_overlays_and_report ; service:mac-service: NSPasteboard; Feature 028 adds it, view surfaces Unavailable ; test:copy_writes_the_report_and_says_copied_for_two_seconds ; test:report_lists_title_date_and_blockers_without_dismissed_items
 SUM-034	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:dates_format_like_swift
-SUM-035	service	service:the analysis op on the channel isn't ported (about 4,500 lines of Swift, tasks T023); a summary arrives only through a merged handoff. Mac parity, Feature 028
+SUM-035	auto	test:generate_runs_against_a_server_and_shows_the_summary
 SUM-036	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:summary_reads_stored_analysis_and_marks_an_item_done
 SUM-037	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
 SUM-038	auto	test:removing_edits_fails_silently_as_swift_does

@@ -24,6 +24,9 @@ pub struct Core {
     pub recorder: Option<flow_core::capture::Handle>,
     /// Enrollment and channels, built on first use.
     pub remote: Option<std::sync::Arc<crate::remote::Remote>>,
+    pub analysis: Option<std::sync::Arc<flow_core::analysis::queue::Coordinator>>,
+    /// Meetings the launch reconciler picked; `start_analysis` queues them.
+    pub analysis_restarts: Vec<String>,
 }
 impl Global for Core {}
 
@@ -53,7 +56,32 @@ impl Core {
             Err(e) => (None, Some(e)),
         };
         let scenario = std::env::var("LOCALFLOW_SCENARIO").ok();
-        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None, swift_import }
+        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None, swift_import, analysis: None, analysis_restarts: vec![] }
+    }
+
+    /// The summary queue, made on first use: its paths and channel come from here.
+    pub fn analysis(&mut self) -> std::sync::Arc<flow_core::analysis::queue::Coordinator> {
+        if let Some(analysis) = &self.analysis {
+            return analysis.clone();
+        }
+        let credentials = self.services.credentials();
+        let deps = flow_core::analysis::run::Deps {
+            database: self.paths.database(),
+            secret: std::sync::Arc::new(move |origin| credentials.secret_data(&flow_core::settings::rewrite_keychain(origin)).ok().flatten().and_then(|v| String::from_utf8(v).ok())),
+            pool: Some(self.remote().pool.clone()),
+            wait_unit: std::time::Duration::from_secs(1),
+            deadline_unit: std::time::Duration::from_secs(1),
+            partials: Default::default(),
+        };
+        self.analysis.insert(flow_core::analysis::queue::Coordinator::new(deps)).clone()
+    }
+
+    /// Where a summary goes right now. Reads the Keychain, so it's built only when something is due.
+    pub fn analysis_route(&self) -> flow_core::analysis::run::Route {
+        let credentials = self.services.credentials();
+        let credential = |origin: &str| credentials.secret_data(&flow_core::settings::rewrite_keychain(origin)).ok().flatten().is_some();
+        let key = credentials.secret_data(&flow_core::settings::rewrite_keychain(flow_core::settings::SUMMARY_ACCOUNT)).ok().flatten().and_then(|v| String::from_utf8(v).ok());
+        flow_core::analysis::run::route(&self.prefs, credential, key.as_deref())
     }
 
     pub fn remote(&mut self) -> std::sync::Arc<crate::remote::Remote> {
@@ -97,6 +125,8 @@ impl Core {
             swift_import: None,
             recorder: None,
             remote: None,
+            analysis: None,
+            analysis_restarts: vec![],
         }
     }
 
@@ -106,6 +136,7 @@ impl Core {
         let root = self.paths.root.join("Meetings");
         if let Some(Ok(recovery)) = self.db.as_ref().map(|db| flow_core::meetings::reconcile_launch(db, &root, flow_core::history::now_ms())) {
             self.meeting_notices = recovery.notices();
+            self.analysis_restarts = recovery.analysis_restarts;
         }
         // Swift completes recovery even when a reconciler throws, so New note unlocks.
         self.reconciled = true;

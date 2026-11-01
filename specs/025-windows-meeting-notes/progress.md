@@ -52,7 +52,7 @@ All made by the agent under the owner's standing instruction: no gates, nothing 
 - **Exit gate open:** no full meeting on real Windows hardware. `acceptance/hardware.md` lists everything, all not run, including WASAPI, TPM, AAC encoder, installer, and Secure Enclave in a signed build.
 - The owner must register a Google Desktop-app client and allow it on the server; unsigned Windows builds until signing is approved.
 - `localflow://` isn't registered with the OS; pasting a link works.
-- Regenerating a summary (SUM-010, 016, 035) isn't ported; summaries arrive only through a merged handoff. Windows sleep pause (T034) isn't built. Mac meeting capture stays Swift until Feature 028.
+- Summary generation (SUM-010, 016, 035) is ported to `crates/flow-core/src/analysis`; the page runs it, tested against a fake server, not yet against a real flowd. Automatic runs fire at handoff merge and launch restart; phone imports don't start one. Language detection is a function-word heuristic rather than NLLanguageRecognizer. Windows sleep pause (T034) isn't built. Mac meeting capture stays Swift until Feature 028.
 - Windows CI job added, not pushed or run.
 
 ## Update 2026-11-01: owner changes after the report

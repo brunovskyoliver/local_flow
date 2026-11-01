@@ -33,7 +33,7 @@ Every phase ends with `cargo test --workspace`, `./scripts/check-rust-boundaries
 ## Phase 5: Handoff (US4)
 - [X] T021 `remote/transfer.rs` per `HandoffFileTransfer.swift`: bounded chunks, resume, hash.
 - [X] T022 `remote/handoff.rs` per `MeetingHandoff.swift` and `+Import`: export, step machine, merge. Same `bundle.sqlite` shape.
-- [ ] T023 Wire waiting state and retries into the Notetaker page; `SUM-*` server analysis if it's on the same channel. Waiting rows, retries, Retry and delete are wired. Not done: `SUM-010/016/035`. The `analysis` op is on the same channel, but Swift's request, validation and persistence are about 4,500 lines (Intelligence plus coordinator); a summary reaches this client only through a merged handoff until they are ported.
+- [x] T023 Wire waiting state and retries into the Notetaker page; `SUM-*` server analysis on the same channel. Generate, Retry, Regenerate and Cancel run through `flow_core::analysis` (request, validation, persistence, queue), over HTTP or the channel's `analysis` op. Automatic runs fire when a handoff merges and at launch for interrupted automatic runs; no other point in the Rust client finalizes a transcript yet.
 - [X] T024 Throwaway flowd end-to-end test: fixture segments to merged meeting; offline and refused paths keep audio. Swift cross-check where a Swift-made bundle fixture is available.
 
 ## Phase 6: Installer (US5)
