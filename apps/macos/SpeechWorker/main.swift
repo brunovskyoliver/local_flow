@@ -9,7 +9,7 @@ import LocalFlowSpeech
 //
 //   flowd-speech serve --models <dir> [--descriptors <dir>]
 //   flowd-speech meeting --models <dir> --helper <path> [--descriptors <dir>]
-//   flowd-speech provision --models <dir> [--booster] [--meeting] [--descriptors <dir>]
+//   flowd-speech provision --models <dir> [--speech-model <id>] [--no-speech] [--booster] [--meeting] [--descriptors <dir>]
 //
 // Descriptors default to the pinned parakeet-v3.json, parakeet-ctc-110m.json,
 // whisper-large-v3-turbo.json and speaker-diarization-offline.json next to the
@@ -47,8 +47,9 @@ struct Descriptors {
   let speechHash: String
   let booster: ModelDescriptor?
 
-  init(directory: URL) throws {
-    let speechData = try Data(contentsOf: directory.appendingPathComponent("parakeet-v3.json"))
+  /// `speechModel` is a pinned descriptor's name and its install folder: `parakeet-v3` or `parakeet-ultra`.
+  init(directory: URL, speechModel: String) throws {
+    let speechData = try Data(contentsOf: directory.appendingPathComponent(speechModel + ".json"))
     speech = try JSONDecoder().decode(ModelDescriptor.self, from: speechData)
     speechHash = SHA256.hash(data: speechData).map { String(format: "%02x", $0) }.joined()
     booster = (try? Data(contentsOf: directory.appendingPathComponent("parakeet-ctc-110m.json")))
@@ -220,10 +221,10 @@ func boost(_ header: [String: Any]) -> VocabularyBoostTerms? {
   return parsed.isEmpty ? nil : VocabularyBoostTerms(terms: parsed, key: key, governed: governed)
 }
 
-func serve(models: URL, descriptors: Descriptors) async -> Int32 {
+func serve(models: URL, descriptors: Descriptors, speechModel: String) async -> Int32 {
   let writer = FrameWriter()
   let speech = ModelProvisioner(
-    descriptor: descriptors.speech, rootURL: models.appendingPathComponent("parakeet-v3"))
+    descriptor: descriptors.speech, rootURL: models.appendingPathComponent(speechModel))
   let local: LocalModelDescriptor
   do { local = try await speech.verifiedLocalDescriptor() } catch {
     // The case name only; provisioner errors carry no paths or content.
@@ -547,9 +548,11 @@ func meetingErrorCode(_ error: any Error) -> String {
 }
 
 func provision(
-  models: URL, descriptors: Descriptors, booster: Bool, meeting: MeetingDescriptors?
+  models: URL, descriptors: Descriptors, speechModel: String, withSpeech: Bool, booster: Bool,
+  meeting: MeetingDescriptors?
 ) async -> Int32 {
-  var targets = [(models.appendingPathComponent("parakeet-v3"), "parakeet-v3", descriptors.speech)]
+  var targets: [(URL, String, ModelDescriptor)] =
+    withSpeech ? [(models.appendingPathComponent(speechModel), speechModel, descriptors.speech)] : []
   if booster {
     guard let descriptor = descriptors.booster else {
       log("provision booster_descriptor_missing")
@@ -576,7 +579,9 @@ func provision(
       _ = try await provisioner.verifiedLocalDescriptor(fullHash: true)
       log("provision model=\(name) state=verified")
     } catch {
-      log("provision model=\(name) state=failed")
+      // The case name only; provisioner errors carry no paths or content.
+      let reason = String(describing: error).prefix { $0 != "(" }
+      log("provision model=\(name) state=failed reason=\(reason)")
       return 1
     }
   }
@@ -592,7 +597,7 @@ extension Duration {
 _ = workerLog
 let arguments = CommandLine.arguments
 let usage =
-  "usage: flowd-speech serve|meeting|provision --models <dir> [--helper <path>] [--booster] [--meeting] [--descriptors <dir>]"
+  "usage: flowd-speech serve|meeting|provision --models <dir> [--helper <path>] [--speech-model <id>] [--no-speech] [--booster] [--meeting] [--descriptors <dir>]"
 guard arguments.count >= 2, ["serve", "meeting", "provision"].contains(arguments[1]),
   let modelsPath = option("--models", in: arguments),
   arguments[1] != "meeting" || option("--helper", in: arguments) != nil
@@ -622,15 +627,23 @@ if arguments[1] == "meeting", let meetingDescriptors,
     models: models, helper: URL(fileURLWithPath: helper), descriptors: meetingDescriptors)
 } else {
   let descriptors: Descriptors
-  do { descriptors = try Descriptors(directory: descriptorDirectory) } catch {
+  let speechModel = option("--speech-model", in: arguments) ?? "parakeet-v3"
+  guard SpeechModelChoice(rawValue: speechModel) != nil else {
+    log(usage)
+    exit(64)
+  }
+  do {
+    descriptors = try Descriptors(directory: descriptorDirectory, speechModel: speechModel)
+  } catch {
     log("descriptor_missing")
     exit(1)
   }
   status =
     arguments[1] == "serve"
-    ? await serve(models: models, descriptors: descriptors)
+    ? await serve(models: models, descriptors: descriptors, speechModel: speechModel)
     : await provision(
-      models: models, descriptors: descriptors, booster: arguments.contains("--booster"),
+      models: models, descriptors: descriptors, speechModel: speechModel,
+      withSpeech: !arguments.contains("--no-speech"), booster: arguments.contains("--booster"),
       meeting: meetingDescriptors)
 }
 exit(status)

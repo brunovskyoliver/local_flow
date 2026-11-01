@@ -19,7 +19,7 @@ install -m 755 build/SpeechWorker/Release/flowd-speech "$staging/Contents/Helper
 ditto build/SpeechWorker/Release/FluidAudio_FluidAudio.bundle "$staging/Contents/Helpers/FluidAudio_FluidAudio.bundle"
 # The pinned descriptors the worker is pointed at. Code signing refuses them in Helpers.
 mkdir -p "$staging/Contents/Resources/Models"
-install -m 644 apps/macos/LocalFlow/Resources/Models/parakeet-v3.json apps/macos/LocalFlow/Resources/Models/parakeet-ctc-110m.json \
+install -m 644 apps/macos/LocalFlow/Resources/Models/parakeet-v3.json apps/macos/LocalFlow/Resources/Models/parakeet-ultra.json apps/macos/LocalFlow/Resources/Models/parakeet-ctc-110m.json \
   apps/macos/LocalFlow/Resources/Models/whisper-large-v3-turbo.json apps/macos/LocalFlow/Resources/Models/speaker-diarization-offline.json "$staging/Contents/Resources/Models/"
 # The on-device AI services, under the labels, folder and ports the Swift app uses: where Swift has set
 # them up the app reuses them, and otherwise it registers these.

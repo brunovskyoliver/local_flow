@@ -77,7 +77,9 @@ pub struct WorkerLauncher {
 /// files in `Helpers`. Elsewhere the worker finds them beside itself.
 fn descriptor_args(worker: &Path) -> Vec<String> {
     let bundled = worker.parent().map(|d| d.join("../Resources/Models")).filter(|d| d.is_dir());
-    bundled.map_or(vec![], |d| vec!["--descriptors".into(), d.to_string_lossy().into_owned()])
+    let mut args = vec!["--speech-model".to_string(), flow_core::onboarding::SPEECH_MODEL.to_string()];
+    args.extend(bundled.into_iter().flat_map(|d| ["--descriptors".into(), d.to_string_lossy().into_owned()]));
+    args
 }
 
 impl WorkerLauncher {
@@ -194,8 +196,8 @@ pub fn set_models_dir(models: PathBuf) {
 fn pack(which: ModelPack) -> (&'static Job, &'static [&'static str], &'static str) {
     match which {
         ModelPack::Speech => (&JOBS.speech, &[], ".speech-verified"),
-        ModelPack::Meeting => (&JOBS.meeting, &["--meeting", "--booster"], ".meeting-verified"),
-        ModelPack::Booster => (&JOBS.booster, &["--booster"], ".booster-verified"),
+        ModelPack::Meeting => (&JOBS.meeting, &["--no-speech", "--meeting", "--booster"], ".meeting-verified"),
+        ModelPack::Booster => (&JOBS.booster, &["--no-speech", "--booster"], ".booster-verified"),
     }
 }
 

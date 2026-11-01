@@ -1101,6 +1101,8 @@ fn panel_options(bounds: Bounds<Pixels>) -> WindowOptions {
         is_movable: false,
         is_resizable: false,
         window_background: WindowBackgroundAppearance::Transparent,
+        // The pill is never the key window, and GPUI otherwise caps such windows at about 30 fps.
+        inactive_frame_interval: None,
         ..Default::default()
     }
 }

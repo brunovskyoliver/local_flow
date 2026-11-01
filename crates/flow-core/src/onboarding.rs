@@ -12,6 +12,8 @@ pub fn seed(_db: &Db) {}
 pub const CURRENT_SETUP_VERSION: i64 = 1;
 pub const REMOTE_CONSENT_VERSION: i64 = 2;
 /// flowd's production port (`AppIdentity`).
+/// What dictation runs. The Rust client offers no alternative.
+pub const SPEECH_MODEL: &str = "parakeet-ultra";
 pub const FLOWD_PORT: u16 = 8080;
 pub const MTPLX_PORT: u16 = 8000;
 /// whisper-large-v3-turbo.json plus speaker-diarization-offline.json.
@@ -695,9 +697,9 @@ pub fn is_complete(prefs: &Prefs) -> bool {
     prefs.int_or("setupVersion", 0) >= CURRENT_SETUP_VERSION
 }
 
-/// The stored raw value, else `parakeet-ultra` on a first run and `parakeet-v3` otherwise.
-pub fn speech_model_raw(prefs: &Prefs) -> String {
-    prefs.string("speechModel").unwrap_or_else(|| if prefs.int_or("setupVersion", 0) == 0 { "parakeet-ultra" } else { "parakeet-v3" }.into())
+/// Always `SPEECH_MODEL`: a `parakeet-v3` copied from the Swift app doesn't carry over.
+pub fn speech_model_raw(_prefs: &Prefs) -> String {
+    SPEECH_MODEL.into()
 }
 
 pub fn speech_model_name(raw: &str) -> &'static str {
@@ -1414,16 +1416,15 @@ mod tests {
         assert!(is_complete(&p));
 
         let (mut s, mut p) = at(Step::Test, Purpose::Both, AiMode::Local);
-        p.set("speechModel", "parakeet-v3");
         s.test_armed = true;
         s.skip_test(&snap, &mut p);
         assert_eq!(s.step, Step::Complete);
         assert!(s.effects.is_empty() && !s.test_armed);
-        assert_eq!(p.string("speechModel").as_deref(), Some("parakeet-v3"));
+        assert_eq!(p.string("speechModel").as_deref(), Some("parakeet-ultra"));
 
         let mut p = Prefs::memory();
-        p.set("setupVersion", 1);
-        assert_eq!(speech_model_raw(&p), "parakeet-v3");
+        p.set("speechModel", "parakeet-v3");
+        assert_eq!(speech_model_raw(&p), "parakeet-ultra", "a copied v3 doesn't carry over");
     }
 
     // parity: ONB-390 ONB-392
