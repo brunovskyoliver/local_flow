@@ -42,6 +42,7 @@ pub struct OnboardingPage {
     pub status: Option<String>,
     pub recording: bool,
     pub recording_error: Option<String>,
+    shortcut_recovery: flow_core::dictation::hotkey::PermissionRecovery,
     pub memory: u64,
     pub downloaded: [bool; 5],
     pub selection: usize,
@@ -107,6 +108,10 @@ fn perm(s: PermissionState) -> Perm {
 }
 
 /// How a missing service reads in the row or line Swift uses for that failure.
+fn shortcut_error(e: Unavailable) -> String {
+    flow_platform::shortcut_failure(&e).map(String::from).unwrap_or_else(|| missing(e))
+}
+
 fn missing(e: Unavailable) -> String {
     format!("This build can't use {} yet.", e.0)
 }
@@ -124,6 +129,10 @@ impl OnboardingPage {
             setup = parked;
         }
         cx.on_release(|this: &mut Self, cx| {
+            // `.onDisappear { recorder?.stop() }`
+            if this.recording {
+                cx.global::<Core>().services.stop_shortcut_recording();
+            }
             if cx.has_global::<Session>() && this.setup.step != Step::Complete {
                 let empty = Setup::new(&cx.global::<Core>().prefs);
                 let setup = std::mem::replace(&mut this.setup, empty);
@@ -179,6 +188,7 @@ impl OnboardingPage {
             status: None,
             recording: false,
             recording_error: None,
+            shortcut_recovery: Default::default(),
             memory,
             selection: default_model(&downloaded, memory),
             downloaded,
@@ -269,10 +279,17 @@ impl OnboardingPage {
         next.input_monitoring = preflight(s.permission(Permission::InputMonitoring));
         next.accessibility = preflight(s.permission(Permission::Accessibility));
         next.system_audio = preflight(s.permission(Permission::SystemAudio));
-        next.shortcut = Shortcut::load(&core.prefs);
+        next.shortcut = Shortcut::load(&core.prefs).for_platform(s.has_globe_key());
         next.storage_available = core.db.is_some();
         next.speech_model = speech_model_name(&speech_model_raw(&core.prefs)).to_string();
         let resume = self.ai_phase == AiPhase::Failed(AI_ERROR_APPROVAL.into()) && s.background_services_enabled();
+        // `shortcutRecovery`: permission changes reach the tap while setup shows.
+        let allowed = next.input_monitoring == Perm::Granted && next.shortcut.enabled;
+        let busy = next.busy || next.installing;
+        if self.shortcut_recovery.refresh(allowed, next.accessibility == Perm::Granted, s.shortcut_available(), busy) && !self.meeting_only() {
+            let installed = cx.global::<Core>().services.install_shortcut(&next.shortcut.json());
+            next.shortcut_ready = installed.is_ok();
+        }
         if next != self.snap {
             self.snap = next;
             cx.notify();
@@ -457,7 +474,7 @@ impl OnboardingPage {
             // `requestShortcutPermission`: asks, reinstalls the saved shortcut, then the pane if still refused.
             Permission::InputMonitoring => {
                 let asked = services.request_permission(p);
-                let installed = services.install_shortcut(&Shortcut::load(&cx.global::<Core>().prefs).json()).is_ok();
+                let installed = services.install_shortcut(&Shortcut::load(&cx.global::<Core>().prefs).for_platform(services.has_globe_key()).json()).is_ok();
                 self.snap.shortcut_ready = installed;
                 if granted(&asked) { None } else { settings(services) }
             }
@@ -489,13 +506,14 @@ impl OnboardingPage {
                 self.snap.shortcut_ready = true;
                 self.set_status(if self.snap.shortcut.enabled { "Shortcut updated." } else { "Shortcut disabled." }, cx);
             }
-            Err(e) => self.error = Some(missing(e)),
+            Err(e) => self.error = Some(shortcut_error(e)),
         }
         cx.notify();
     }
 
     pub fn toggle_recording(&mut self, cx: &mut Context<Self>) {
         if self.recording {
+            cx.global::<Core>().services.stop_shortcut_recording();
             self.recording = false;
             cx.notify();
             return;
@@ -506,7 +524,7 @@ impl OnboardingPage {
         } else {
             match cx.global::<Core>().services.record_shortcut() {
                 Ok(()) => self.recording = true,
-                Err(e) => self.recording_error = Some(missing(e)),
+                Err(e) => self.recording_error = Some(shortcut_error(e)),
             }
         }
         cx.notify();

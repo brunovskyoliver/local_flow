@@ -5,8 +5,16 @@ use std::path::PathBuf;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
+    static kAXTrustedCheckOptionPrompt: Id;
+    static kCFBooleanTrue: Id;
     fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: Id) -> bool;
     fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestListenEventAccess() -> bool;
+}
+#[link(name = "AVFoundation", kind = "framework")]
+unsafe extern "C" {
+    static AVMediaTypeAudio: Id;
 }
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
@@ -137,6 +145,95 @@ unsafe fn ns_string(text: &std::ffi::CStr) -> Id {
     }
 }
 
+/// `NSApp.isActive`. Read off the main thread by the recorder's tap, for a getter with no side effect.
+pub(crate) fn app_is_active() -> bool {
+    // SAFETY: `isActive` takes no arguments and returns a BOOL.
+    unsafe {
+        let is_active: unsafe extern "C" fn(Id, Id) -> bool = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        is_active(send(objc_getClass(c"NSApplication".as_ptr()), c"sharedApplication"), sel_registerName(c"isActive".as_ptr()))
+    }
+}
+
+fn microphone_state() -> PermissionState {
+    // SAFETY: `authorizationStatusForMediaType:` only reads the status; it never prompts.
+    let status = unsafe {
+        let status: unsafe extern "C" fn(Id, Id, Id) -> isize = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        status(objc_getClass(c"AVCaptureDevice".as_ptr()), sel_registerName(c"authorizationStatusForMediaType:".as_ptr()), AVMediaTypeAudio)
+    };
+    match status {
+        0 => PermissionState::NotAsked,
+        3 => PermissionState::Granted,
+        _ => PermissionState::Denied,
+    }
+}
+
+/// TCC kills a process that asks for the microphone with no usage string, so an unbundled binary
+/// has to refuse first.
+fn microphone_usage_declared() -> bool {
+    // SAFETY: `objectForInfoDictionaryKey:` reads the main bundle's Info.plist.
+    unsafe {
+        let object: unsafe extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        !object(send(objc_getClass(c"NSBundle".as_ptr()), c"mainBundle"), sel_registerName(c"objectForInfoDictionaryKey:".as_ptr()), ns_string(c"NSMicrophoneUsageDescription")).is_null()
+    }
+}
+
+static MICROPHONE_ANSWER: std::sync::Mutex<Option<std::sync::mpsc::SyncSender<bool>>> = std::sync::Mutex::new(None);
+
+/// A global block, as the compiler lays it out for a capture-free `^(BOOL granted)`.
+#[repr(C)]
+struct Block {
+    isa: *const std::ffi::c_void,
+    flags: i32,
+    reserved: i32,
+    invoke: unsafe extern "C" fn(*const Block, bool),
+    descriptor: *const BlockDescriptor,
+}
+#[repr(C)]
+struct BlockDescriptor {
+    reserved: usize,
+    size: usize,
+}
+struct SharedBlock(Block);
+// SAFETY: the block holds only constants and is never written to.
+unsafe impl Sync for SharedBlock {}
+const BLOCK_IS_GLOBAL: i32 = 1 << 28;
+static BLOCK_DESCRIPTOR: SyncDescriptor = SyncDescriptor(BlockDescriptor { reserved: 0, size: std::mem::size_of::<Block>() });
+struct SyncDescriptor(BlockDescriptor);
+// SAFETY: constants only.
+unsafe impl Sync for SyncDescriptor {}
+unsafe extern "C" {
+    static _NSConcreteGlobalBlock: [*const std::ffi::c_void; 32];
+}
+
+unsafe extern "C" fn microphone_answered(_block: *const Block, granted: bool) {
+    if let Some(answer) = MICROPHONE_ANSWER.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        let _ = answer.try_send(granted);
+    }
+}
+
+/// `requestMicrophone`. ponytail: waits for the answer on the caller's (UI) thread, up to a minute.
+/// The prompt belongs to another process, so it stays usable; a page that must not stall can make this async.
+fn request_microphone() -> Result<PermissionState, Unavailable> {
+    let state = microphone_state();
+    if state != PermissionState::NotAsked {
+        return Ok(state);
+    }
+    if !microphone_usage_declared() {
+        return Err(Unavailable("the microphone prompt outside the app bundle"));
+    }
+    let (answer, answered) = std::sync::mpsc::sync_channel(1);
+    *MICROPHONE_ANSWER.lock().unwrap_or_else(|e| e.into_inner()) = Some(answer);
+    // SAFETY: the block is immortal and matches `void (^)(BOOL)`.
+    unsafe {
+        let block = SharedBlock(Block { isa: (&raw const _NSConcreteGlobalBlock).cast(), flags: BLOCK_IS_GLOBAL, reserved: 0, invoke: microphone_answered, descriptor: &BLOCK_DESCRIPTOR.0 });
+        let block: &'static SharedBlock = Box::leak(Box::new(block));
+        let request: unsafe extern "C" fn(Id, Id, Id, *const Block) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        request(objc_getClass(c"AVCaptureDevice".as_ptr()), sel_registerName(c"requestAccessForMediaType:completionHandler:".as_ptr()), AVMediaTypeAudio, &block.0);
+    }
+    let _ = answered.recv_timeout(std::time::Duration::from_secs(60));
+    Ok(microphone_state())
+}
+
 pub struct Mac;
 
 impl Services for Mac {
@@ -151,7 +248,6 @@ impl Services for Mac {
         home.join("Library/Application Support")
     }
     fn permission(&self, p: Permission) -> PermissionState {
-        // ponytail: microphone status needs AVFoundation, added with capture in Feature 025.
         let granted = match p {
             Permission::Accessibility => unsafe { AXIsProcessTrusted() },
             Permission::SystemAudio => unsafe { CGPreflightScreenCaptureAccess() },
@@ -160,9 +256,46 @@ impl Services for Mac {
                 1 => return PermissionState::Denied,
                 _ => return PermissionState::NotAsked,
             },
-            Permission::Microphone => return PermissionState::NotAsked,
+            Permission::Microphone => return microphone_state(),
         };
         if granted { PermissionState::Granted } else { PermissionState::NotAsked }
+    }
+    fn install_shortcut(&self, shortcut_json: &str) -> Result<(), Unavailable> {
+        crate::hotkey_mac::install(shortcut_json)
+    }
+    fn record_shortcut(&self) -> Result<(), Unavailable> {
+        crate::hotkey_mac::record()
+    }
+    fn stop_shortcut_recording(&self) {
+        crate::hotkey_mac::stop_recording()
+    }
+    fn take_recorded_shortcut(&self) -> Option<Option<String>> {
+        crate::hotkey_mac::take_recorded()
+    }
+    fn shortcut_available(&self) -> bool {
+        crate::hotkey_mac::available()
+    }
+    fn take_shortcut_events(&self) -> Vec<flow_core::dictation::hotkey::Event> {
+        crate::hotkey_mac::take_events()
+    }
+    fn set_shortcut_session_active(&self, active: bool) {
+        crate::hotkey_mac::set_session_active(active)
+    }
+    /// Each of these brings up a system dialog at most once. Called only from a button press.
+    fn request_permission(&self, p: Permission) -> Result<PermissionState, Unavailable> {
+        match p {
+            Permission::InputMonitoring => unsafe {
+                CGRequestListenEventAccess();
+            },
+            Permission::Accessibility => unsafe {
+                let prompt: unsafe extern "C" fn(Id, Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+                let options = prompt(objc_getClass(c"NSDictionary".as_ptr()), sel_registerName(c"dictionaryWithObject:forKey:".as_ptr()), kCFBooleanTrue, kAXTrustedCheckOptionPrompt);
+                AXIsProcessTrustedWithOptions(options);
+            },
+            Permission::Microphone => return request_microphone(),
+            Permission::SystemAudio => return Err(Unavailable("the permission prompt")),
+        }
+        Ok(self.permission(p))
     }
     fn speech_launcher(&self, models: &std::path::Path) -> Option<Box<dyn flow_core::dictation::lifecycle::Launcher>> {
         Some(Box::new(crate::speech::WorkerLauncher::serve(crate::speech::find_worker()?, models)))
@@ -626,6 +759,14 @@ mod core_audio {
 
     #[cfg(test)]
     mod tests {
+        use super::super::microphone_usage_declared;
+
+        /// An unbundled binary has no usage string, so the prompt path refuses instead of being killed.
+        #[test]
+        fn a_test_binary_declares_no_microphone_use() {
+            assert!(!microphone_usage_declared());
+        }
+
         use super::*;
         #[test]
         fn transport_maps_to_kind_and_catalog_reads() {

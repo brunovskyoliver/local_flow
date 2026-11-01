@@ -10,10 +10,10 @@ Same check rules as Feature 025. Swift references are under `apps/macos/LocalFlo
 - [X] T005 `flow-platform`: spawn workers, find binaries (Mac: `flowd-speech` next to the app or by env; Windows: next to the exe); installer script includes the worker.
 
 ## Phase 2: Shortcut (US2)
-- [ ] T006 `flow-core::dictation::hotkey`: pure press and release machine for modifier-only and chord shortcuts, recorder state with 30 s timeout and stop.
-- [ ] T007 Mac event tap (`record_shortcut`, `install_shortcut`, stop, take_recorded). Never installed in tests.
-- [ ] T008 Windows `WH_KEYBOARD_LL` on its own thread; hook loss recovery; virtual key mapping pure and tested; Right Control default, no Globe.
-- [ ] T009 Permissions: Mac Input Monitoring, Accessibility, and Microphone requests; refresh on change; onboarding and Settings wiring (ONB-013, ONB-022, ONB-369, ONB-370, SET-018, SET-155..164, SHELL-114..118, SHELL-141..144).
+- [X] T006 `flow-core::dictation::hotkey`: pure press and release machine for modifier-only and chord shortcuts, recorder state with 30 s timeout and stop.
+- [X] T007 Mac event tap (`record_shortcut`, `install_shortcut`, stop, take_recorded). Never installed in tests.
+- [X] T008 Windows `WH_KEYBOARD_LL` on its own thread; hook loss recovery; virtual key mapping pure and tested; Right Control default, no Globe.
+- [X] T009 Permissions: Mac Input Monitoring, Accessibility, and Microphone requests; refresh on change; onboarding and Settings wiring (ONB-013, ONB-022, ONB-369, ONB-370, SET-018, SET-155..164, SHELL-114..118, SHELL-141..144).
 
 ## Phase 3: Session (US1)
 - [ ] T010 `flow-core::dictation::session`: states and stop reasons per `DictationCoordinator`; traits Mic, Recognizer, Rewriter, Inserter, History; bounded spool; assembly; Dictionary; waiting dictations; cleanup on restart. Tests for each stop reason.

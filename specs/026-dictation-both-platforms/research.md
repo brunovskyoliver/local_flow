@@ -15,3 +15,8 @@ The C struct layouts were measured by compiling v2.0.1's own `c-api.h` and are a
 `flow-platform` now depends on `flow-core`, for the lifecycle's `Launcher` trait and the shortcut logic. The boundary script only forbids the opposite direction.
 ## R5 serde_json key order
 A workspace dependency enables serde_json's `preserve_order`, so the frame encoder sorts keys itself instead of relying on the default map.
+## R6 Shortcut sources
+Mac: a session tap per job on its own thread and run loop, not the main one as in Swift, so a stalled UI can't time it out. The same `Engine` holds the binding and recorder under a short lock. A jump in the wall clock stands in for `NSWorkspace.willSleepNotification`, so a hold is cancelled on wake.
+Windows: the hook callback only queues into a channel of 256, then a second thread does the rest. It therefore can't consume keys, so a chord still reaches the focused app; Windows differs from Swift here. A new hook replaces the old every 30 s, because Windows drops a slow hook silently, and `GetAsyncKeyState` backs up a lost key-up during a hold. `fn_globe` and fn modifiers are refused and Right Control is the default.
+The shortcut format stays the Mac's: Windows virtual keys map to Mac key codes and device bits in `win_rules`, with the Windows key in Command's place. `Shortcut::title` therefore names it "Command" and a letter "Key <code>"; nothing on a PC has checked that copy.
+`request_permission(Microphone)` blocks its caller for up to a minute waiting for the answer, since the prompt is in another process. It refuses without `NSMicrophoneUsageDescription`, because TCC kills a process that asks without one.

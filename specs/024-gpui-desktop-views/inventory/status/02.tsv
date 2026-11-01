@@ -10,7 +10,7 @@ ONB-009	auto	test:resume_rules ; test:shortcut_values_titles_and_json
 ONB-010	auto	test:resume_counts_a_verified_model_as_installed
 ONB-011	auto	test:polling_picks_up_a_new_permission
 ONB-012	auto	test:first_frame_reads_the_permissions
-ONB-013	service	service:mac-service: shortcut recovery and input catalog have no Rust service yet; the AI resume half is tested by polling_picks_up_a_new_permission
+ONB-013	auto	test:recovery_reinstalls_on_change_only ; test:a_new_grant_reinstalls_the_saved_shortcut
 ONB-014	recorded	recorded:the Rust poll runs every 500 ms while the window is active and skips while inactive; page and setup changes need no separate wake because the first active tick picks them up
 ONB-015	auto	test:theme_cards_write_and_apply
 ONB-016	auto	test:return_advances_and_escape_cancels_dictation
@@ -19,7 +19,7 @@ ONB-018	auto	test:reopening_keeps_the_setup_step
 ONB-019	auto	test:idle_menu_lists_swifts_items
 ONB-020	auto	test:readiness_follows_swift_order
 ONB-021	auto	test:step_change_animates_a_quarter_second_unless_reduce_motion
-ONB-022	service	service:recorder cleanup needs the global shortcut recorder, Feature 026
+ONB-022	auto	test:closing_the_page_stops_the_recorder
 ONB-023	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
 ONB-024	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
 ONB-025	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
@@ -366,8 +366,8 @@ ONB-365	live	live:audit/mac/onboarding/personalize-light-rust.png ; live:audit/m
 ONB-366	live	live:audit/mac/onboarding/personalize-light-rust.png ; live:audit/mac/onboarding/personalize-meetings-light-rust.png ; live:audit/mac/onboarding/personalize-dark-rust.png ; live:audit/mac/onboarding/personalize-meetings-dark-rust.png ; rust-only:needs a real microphone TCC grant in the reference ; rust-only:needs a real microphone TCC grant in the reference
 ONB-367	auto	test:personalize_copy_and_first_shortcut ; test:personalize_labels_record_gate_and_errors
 ONB-368	auto	test:recording_gates_and_results
-ONB-369	service	service:the 30 s timeout and head-insert tap live in Services.record_shortcut on macOS; a headless test only reaches the Fake ; test:record_button_toggles_without_saving
-ONB-370	service	service:no recorder exists yet: Services.record_shortcut is Unavailable on macOS and has no stop; the feature adding the recorder must add stop ; test:record_button_toggles_without_saving
+ONB-369	auto	test:recorder_is_single_captures_and_times_out ; test:record_button_toggles_without_saving ; not-run:the head-insert tap itself, acceptance/hardware.md row 5
+ONB-370	auto	test:recorder_escape_ends_empty_and_stop_reports_nothing ; test:record_button_toggles_without_saving
 ONB-371	auto	test:capture_commits_after_release
 ONB-372	auto	test:recording_gates_and_results
 ONB-373	auto	test:recording_gates_and_results ; test:personalize_labels_record_gate_and_errors

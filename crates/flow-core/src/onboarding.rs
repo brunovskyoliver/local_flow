@@ -135,6 +135,10 @@ impl Shortcut {
     pub fn right_option() -> Self {
         Shortcut { kind: ShortcutKind::ModifierOnly, modifiers: OPTION, device_modifiers: Some(0x40), ..Default::default() }
     }
+    /// A device with no Globe key shows and installs Right Control where a Mac defaults to Globe.
+    pub fn for_platform(self, has_globe: bool) -> Self {
+        if !has_globe && self.kind == ShortcutKind::FnGlobe { Self::right_control() } else { self }
+    }
     pub fn fn_globe() -> Self {
         Shortcut::default()
     }

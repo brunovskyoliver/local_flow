@@ -54,6 +54,7 @@ pub struct SettingsPage {
     pub(super) error: Option<String>,
     pub(super) recording_error: Option<String>,
     pub(super) recording: bool,
+    shortcut_recovery: flow_core::dictation::hotkey::PermissionRecovery,
     pub(super) testing: Option<&'static str>,
     pub(super) test_results: BTreeMap<&'static str, String>,
     pub(super) updates: Updates,
@@ -118,6 +119,11 @@ fn prefs(cx: &App) -> &flow_core::prefs::Prefs {
 pub(super) fn prefs_mut(cx: &mut App) -> &mut flow_core::prefs::Prefs {
     &mut cx.global_mut::<Core>().prefs
 }
+/// `DictationErrorMessage` for a shortcut failure.
+fn shortcut_error(e: &flow_platform::Unavailable) -> String {
+    flow_platform::shortcut_failure(e).map(String::from).unwrap_or_else(|| core::describe(&Failure::ShortcutUnavailable))
+}
+
 fn map_perm(s: flow_platform::PermissionState) -> Perm {
     match s {
         flow_platform::PermissionState::NotAsked => Perm::Unknown,
@@ -128,6 +134,12 @@ fn map_perm(s: flow_platform::PermissionState) -> Perm {
 
 impl SettingsPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.on_release(|this: &mut Self, cx| {
+            if this.recording {
+                cx.global::<Core>().services.stop_shortcut_recording();
+            }
+        })
+        .detach();
         let scenario = cx.global::<Core>().scenario.clone().and_then(|s| s.strip_prefix("settings.").map(String::from)).unwrap_or_default();
         scenario::seed(&scenario, prefs_mut(cx));
         core::migrate(prefs_mut(cx));
@@ -223,6 +235,7 @@ impl SettingsPage {
             error: None,
             recording_error: None,
             recording: false,
+            shortcut_recovery: Default::default(),
             testing: None,
             test_results: BTreeMap::new(),
             updates: if cx.global::<Core>().services.can_check_for_updates() { Updates::Sparkle { automatic: false, can_check: true } } else { Updates::Manual },
@@ -290,6 +303,11 @@ impl SettingsPage {
 
     /// `refresh` with what the store last said: assigned only if it changed.
     fn poll(&mut self, cx: &mut Context<Self>) {
+        if self.recording
+            && let Some(result) = cx.global::<Core>().services.take_recorded_shortcut()
+        {
+            self.recorded(result.as_deref().and_then(Shortcut::from_json), cx);
+        }
         let core_state = cx.global::<Core>();
         let permission = |p| map_perm(core_state.services.permission(p));
         let p = &core_state.prefs;
@@ -303,7 +321,7 @@ impl SettingsPage {
             input_monitoring: permission(Permission::InputMonitoring),
             accessibility: permission(Permission::Accessibility),
             system_audio: permission(Permission::SystemAudio),
-            shortcut: Shortcut::load(p),
+            shortcut: Shortcut::load(p).for_platform(core_state.services.has_globe_key()),
             storage_available: core_state.db.is_some(),
             ..Snapshot::default()
         };
@@ -323,6 +341,13 @@ impl SettingsPage {
         self.pin_seen = Some((state, pinned.clone()));
         let rewrite = RewriteSettings::capture(p, |origin| self.secret_present(cx, &core::rewrite_keychain(origin)));
         let saved = self.secret_present(cx, &core::rewrite_keychain(core::SUMMARY_ACCOUNT));
+        // `shortcutRecovery`: permission changes reach the tap while Settings shows.
+        let allowed = next.input_monitoring == Perm::Granted && next.shortcut.enabled;
+        let reinstall = self.shortcut_recovery.refresh(allowed, next.accessibility == Perm::Granted, core_state.services.shortcut_available(), next.busy || next.installing) && !core::meeting_only(p);
+        if reinstall {
+            // A failure goes to `setupStatus` in Swift, which this page doesn't show.
+            let _ = core_state.services.install_shortcut(&next.shortcut.json());
+        }
         let changed = next != self.snapshot || pinned != self.pinned || rewrite != self.rewrite || saved != self.summary_key_saved;
         if changed {
             self.snapshot = next;
@@ -492,6 +517,7 @@ impl SettingsPage {
 
     pub(super) fn toggle_recording(&mut self, cx: &mut Context<Self>) {
         if self.recording {
+            cx.global::<Core>().services.stop_shortcut_recording();
             self.recording = false;
             cx.notify();
             return;
@@ -499,14 +525,12 @@ impl SettingsPage {
         self.recording_error = None;
         match cx.global::<Core>().services.record_shortcut() {
             Ok(()) => self.recording = true,
-            Err(_) => self.recording_error = Some(core::describe(&Failure::ShortcutUnavailable)),
+            Err(e) => self.recording_error = Some(shortcut_error(&e)),
         }
         cx.notify();
     }
 
     /// The recorder's completion: installs first, saves only if that worked.
-    /// ponytail: unused until the Mac recorder (Feature 025) calls back.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn recorded(&mut self, value: Option<Shortcut>, cx: &mut Context<Self>) {
         self.recording = false;
         if let Some(value) = value {
@@ -514,7 +538,7 @@ impl SettingsPage {
             let json = value.json();
             match cx.global::<Core>().services.install_shortcut(&json) {
                 Ok(()) => value.save(prefs_mut(cx)),
-                Err(_) => self.error = Some(core::describe(&Failure::ShortcutUnavailable)),
+                Err(e) => self.error = Some(shortcut_error(&e)),
             }
         }
         self.refresh(cx);
@@ -529,7 +553,7 @@ impl SettingsPage {
         if !Shortcut::is_saved(p) {
             Shortcut::right_control().save(p);
         }
-        let json = Shortcut::load(prefs(cx)).json();
+        let json = Shortcut::load(prefs(cx)).for_platform(cx.global::<Core>().services.has_globe_key()).json();
         let _ = cx.global::<Core>().services.install_shortcut(&json);
         self.refresh(cx);
         cx.notify();
@@ -724,7 +748,7 @@ impl SettingsPage {
             self.error = Some(core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)));
         }
         if permission == Permission::InputMonitoring && !core::meeting_only(prefs(cx)) {
-            let json = Shortcut::load(prefs(cx)).json();
+            let json = Shortcut::load(prefs(cx)).for_platform(cx.global::<Core>().services.has_globe_key()).json();
             let _ = cx.global::<Core>().services.install_shortcut(&json);
         }
         self.refresh(cx);

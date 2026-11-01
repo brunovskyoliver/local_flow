@@ -22,6 +22,22 @@ pub enum PermissionState {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Unavailable(pub &'static str);
 
+pub const INPUT_MONITORING_REQUIRED: Unavailable = Unavailable("Input Monitoring for the shortcut");
+pub const ACCESSIBILITY_REQUIRED: Unavailable = Unavailable("Accessibility for the shortcut");
+pub const INVALID_SHORTCUT: Unavailable = Unavailable("that shortcut");
+pub const SHORTCUT_NOT_STARTED: Unavailable = Unavailable("the shortcut tap");
+
+/// `DictationErrorMessage` for `ShortcutController.Failure`. `None` for anything else.
+pub fn shortcut_failure(e: &Unavailable) -> Option<&'static str> {
+    Some(match e {
+        e if *e == INPUT_MONITORING_REQUIRED => "Allow Input Monitoring to use the dictation shortcut.",
+        e if *e == ACCESSIBILITY_REQUIRED => "Allow Accessibility to record and prioritize shortcuts.",
+        e if *e == INVALID_SHORTCUT => "That shortcut is unavailable. Try another key combination.",
+        e if *e == SHORTCUT_NOT_STARTED => "The keyboard shortcut could not start. Check permissions and try again.",
+        _ => return None,
+    })
+}
+
 pub use raw_window_handle::HasWindowHandle;
 
 /// A schema `failure_reason`.
@@ -280,6 +296,22 @@ pub trait Services: 'static {
     fn record_shortcut(&self) -> Result<(), Unavailable> {
         Err(Unavailable("shortcut recording"))
     }
+    /// The record button's second press, or the page going away: drops the recorder, nothing is reported.
+    fn stop_shortcut_recording(&self) {}
+    /// Whether the installed shortcut can fire now (`ShortcutController.isAvailable`).
+    fn shortcut_available(&self) -> bool {
+        false
+    }
+    /// Presses, releases and cancels since the last call. Bounded when nobody reads them.
+    fn take_shortcut_events(&self) -> Vec<flow_core::dictation::hotkey::Event> {
+        Vec::new()
+    }
+    /// Escape stays armed from a press until the dictation session ends.
+    fn set_shortcut_session_active(&self, _active: bool) {}
+    /// False on a device with no Globe key: no preset, and Right Control is the default.
+    fn has_globe_key(&self) -> bool {
+        true
+    }
     /// `performSetting(.load)` before the first test dictation (Feature 025).
     fn load_speech_model(&self) -> Result<(), Unavailable> {
         Err(Unavailable("speech model loading"))
@@ -378,6 +410,8 @@ pub trait Services: 'static {
 
 pub mod speech;
 #[cfg(target_os = "macos")]
+mod hotkey_mac;
+#[cfg(target_os = "macos")]
 mod keychain_mac;
 #[cfg(target_os = "macos")]
 mod keys_mac;
@@ -388,6 +422,7 @@ mod region_mac;
 #[cfg(target_os = "windows")]
 mod win {
     pub mod aac;
+    pub mod hotkey;
     pub mod secrets;
     pub mod system;
     pub mod tpm;

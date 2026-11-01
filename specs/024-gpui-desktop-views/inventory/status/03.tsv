@@ -15,7 +15,7 @@ SET-014	auto	test:palette_matches_sotto
 SET-015	auto	test:the_page_takes_focus_from_a_field
 SET-016	auto	test:refresh_assigns_only_a_changed_snapshot
 SET-017	auto	test:polling_stops_while_the_window_is_inactive ; test:poll_sees_a_permission_change_within_half_a_second ; service:test uses a stub, real AVFoundation, CGPreflightListenEventAccess, AXIsProcessTrusted not exercised
-SET-018	service	service:CGEvent tap reinstall and input catalog refresh on permission change, flow-platform service phase
+SET-018	auto	test:a_new_grant_reinstalls_the_shortcut_once ; test:recovery_reinstalls_on_change_only
 SET-019	auto	test:leaving_clears_the_test_and_secret_draft ; test:rewriting_blocks_until_address_and_secret_are_right
 SET-020	auto	test:microphones_anchor_scrolls_there_once
 SET-021	auto	test:default_page_shows_every_section_in_order
@@ -152,16 +152,16 @@ SET-151	auto	test:shortcut_button_gates_and_stops_without_a_callback ; test:defa
 SET-152	auto	test:default_page_shows_every_section_in_order
 SET-153	auto	test:shortcut_button_gates_and_stops_without_a_callback ; test:general_controls_persist
 SET-154	auto	test:shortcut_button_gates_and_stops_without_a_callback ; test:failures_read_at_the_page_bottom ; test:general_controls_persist ; service:test uses a stub, real CGEvent tap not exercised
-SET-155	service	service:CGEvent tap recorder, flow-platform service phase; recorder completion not wired
-SET-156	service	service:CGEvent tap recorder, flow-platform service phase
+SET-155	auto	test:recorder_is_single_captures_and_times_out ; not-run:the tap itself, acceptance/hardware.md row 5
+SET-156	auto	test:recorder_is_single_captures_and_times_out ; not-run:resign active and tap disabled, acceptance/hardware.md row 5
 SET-157	auto	test:shortcut_rules_and_capture
 SET-158	auto	test:shortcut_rules_and_capture
 SET-159	auto	test:shortcut_rules_and_capture
 SET-160	auto	test:shortcut_rules_and_capture
 SET-161	auto	test:shortcut_rules_and_capture ; service:test uses a stub, real TISCopyCurrentKeyboardLayoutInputSource, UCKeyTranslate not exercised
 SET-162	auto	test:shortcut_rules_and_capture ; service:test uses a stub, real CGEvent flags not exercised
-SET-163	service	service:shortcut recorder and CGEvent tap install, flow-platform service phase; recorded() has no production caller yet
-SET-164	service	service:CGEvent tap install, flow-platform service phase
+SET-163	auto	test:recorded_shortcut_arrives_through_the_poll_and_installs_before_saving
+SET-164	not-run	not-run:rules live in hotkey_mac::install, which no test may run (it can create a tap), acceptance/hardware.md row 6
 SET-165	auto	test:shortcut_rules_and_capture
 SET-166	auto	test:general_menus_and_switches_through_real_clicks ; test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
 SET-167	auto	test:general_menus_and_switches_through_real_clicks ; test:general_controls_persist

@@ -1256,6 +1256,13 @@ impl Shortcut {
     pub fn json(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
+    /// A device with no Globe key shows and installs Right Control where a Mac defaults to Globe.
+    pub fn for_platform(self, has_globe: bool) -> Self {
+        if !has_globe && self.kind == "fn_globe" { Self::right_control() } else { self }
+    }
+    pub fn from_json(json: &str) -> Option<Self> {
+        serde_json::from_str(json).ok()
+    }
     pub fn right_control() -> Self {
         Shortcut { kind: "modifier_only".into(), modifiers: CONTROL, device_modifiers: Some(0x2000), ..Default::default() }
     }
@@ -1286,6 +1293,12 @@ impl Shortcut {
             "key_combination" => self.key_code < 128 && !(54..=63).contains(&self.key_code) && !(self.key_code == 53 && self.modifiers == 0),
             _ => false,
         }
+    }
+    /// `matchesSides`: the device bits in `flags` against a shortcut's chosen sides, if any.
+    pub fn matches_sides(&self, flags: u64, allowing_extra: bool) -> bool {
+        let Some(wanted) = self.device_modifiers else { return true };
+        let actual = flags & DEVICE_MASK;
+        if allowing_extra { actual & wanted == wanted } else { actual == wanted }
     }
     pub fn includes_shift(&self) -> bool {
         self.modifiers & SHIFT != 0 || self.device_modifiers.unwrap_or(0) & 0x6 != 0

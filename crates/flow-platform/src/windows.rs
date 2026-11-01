@@ -30,6 +30,30 @@ impl Services for Win {
         }
         crate::win::system::shell_open("ms-settings:privacy-microphone").map_err(|_| Unavailable("Windows Settings"))
     }
+    fn install_shortcut(&self, shortcut_json: &str) -> Result<(), Unavailable> {
+        crate::win::hotkey::install(shortcut_json)
+    }
+    fn record_shortcut(&self) -> Result<(), Unavailable> {
+        crate::win::hotkey::record()
+    }
+    fn stop_shortcut_recording(&self) {
+        crate::win::hotkey::stop_recording()
+    }
+    fn take_recorded_shortcut(&self) -> Option<Option<String>> {
+        crate::win::hotkey::take_recorded()
+    }
+    fn shortcut_available(&self) -> bool {
+        crate::win::hotkey::available()
+    }
+    fn take_shortcut_events(&self) -> Vec<flow_core::dictation::hotkey::Event> {
+        crate::win::hotkey::take_events()
+    }
+    fn set_shortcut_session_active(&self, active: bool) {
+        crate::win::hotkey::set_session_active(active)
+    }
+    fn has_globe_key(&self) -> bool {
+        false
+    }
     fn speech_launcher(&self, models: &std::path::Path) -> Option<Box<dyn flow_core::dictation::lifecycle::Launcher>> {
         Some(Box::new(crate::speech::WorkerLauncher::serve(crate::speech::find_worker()?, models)))
     }

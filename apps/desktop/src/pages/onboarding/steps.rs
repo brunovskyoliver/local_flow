@@ -352,8 +352,9 @@ impl OnboardingPage {
     fn shortcut_choice(&mut self, cx: &mut Context<Self>) -> Div {
         let p = pal(cx);
         let record = self.click(cx, |this, cx| this.toggle_recording(cx));
+        let has_globe = cx.global::<crate::core::Core>().services.has_globe_key();
         let mut chips = h_flex().gap(px(8.));
-        for (i, (preset, name)) in [(Shortcut::right_control(), "Right Control"), (Shortcut::right_option(), "Right Option"), (Shortcut::fn_globe(), "fn / Globe")].into_iter().enumerate() {
+        for (i, (preset, name)) in [(Shortcut::right_control(), "Right Control"), (Shortcut::right_option(), "Right Option"), (Shortcut::fn_globe(), "fn / Globe")].into_iter().filter(|(preset, _)| has_globe || *preset != Shortcut::fn_globe()).enumerate() {
             let selected = self.snap.shortcut == preset;
             let value = preset.clone();
             let press = self.click(cx, move |this, cx| this.configure_shortcut(value.clone(), cx));

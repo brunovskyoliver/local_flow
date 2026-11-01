@@ -25,6 +25,7 @@ struct Stub {
     install: Rc<Cell<Option<(u64, u64, bool)>>>,
     google: Rc<Cell<bool>>,
     windows: Rc<Cell<bool>>,
+    recorded: Rc<RefCell<Option<Option<String>>>>,
 }
 impl Stub {
     fn call(&self, name: String) -> Result<(), Unavailable> {
@@ -111,6 +112,15 @@ impl flow_platform::Services for Stub {
     fn record_shortcut(&self) -> Result<(), Unavailable> {
         self.call("record".into())
     }
+    fn stop_shortcut_recording(&self) {
+        self.log.borrow_mut().push("stop recording".into());
+    }
+    fn take_recorded_shortcut(&self) -> Option<Option<String>> {
+        self.recorded.borrow_mut().take()
+    }
+    fn shortcut_available(&self) -> bool {
+        self.log.borrow().iter().any(|l| l == "install")
+    }
     fn install_shortcut(&self, _: &str) -> Result<(), Unavailable> {
         self.call("install".into())
     }
@@ -135,6 +145,7 @@ struct Rig {
     install: Rc<Cell<Option<(u64, u64, bool)>>>,
     google: Rc<Cell<bool>>,
     windows: Rc<Cell<bool>>,
+    recorded: Rc<RefCell<Option<Option<String>>>>,
 }
 
 fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core::prefs::Prefs)) -> Rig {
@@ -145,7 +156,8 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let install = Rc::new(Cell::new(None));
     let google = Rc::new(Cell::new(false));
     let windows = Rc::new(Cell::new(false));
-    let stub = Stub { google: google.clone(), windows: windows.clone(), fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone(), install: install.clone() };
+    let recorded: Rc<RefCell<Option<Option<String>>>> = Default::default();
+    let stub = Stub { recorded: recorded.clone(), google: google.clone(), windows: windows.clone(), fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone(), install: install.clone() };
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
         core.services = Box::new(stub);
@@ -156,7 +168,7 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let bounds = Bounds::new(point(px(0.), px(0.)), size(px(1180.), px(6000.)));
     let win = cx.update(|cx| cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |w, cx| cx.new(|cx| SettingsPage::new(w, cx)))).unwrap();
     frame(cx, win);
-    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle, install, google, windows }
+    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle, install, google, windows, recorded }
 }
 fn frame(cx: &mut TestAppContext, win: Win) {
     cx.run_until_parked();
@@ -281,6 +293,65 @@ async fn refresh_reads_permissions_and_all_granted_hides_the_section(cx: &mut Te
     let r = rig(cx, "permissions-granted", |_| {});
     assert!(!saw("Permissions needed"), "all granted hides the section");
     assert_eq!(read(cx, r.win, |p, _| p.snapshot.microphone), Perm::Granted);
+}
+
+// parity: SET-163
+#[flow_ui::gpui::test]
+async fn recorded_shortcut_arrives_through_the_poll_and_installs_before_saving(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    flow_ui::gpui::VisualTestContext::from_window(r.win.into(), cx).update(|w, _| w.activate_window());
+    click(cx, r.win, "settings.shortcut");
+    assert!(read(cx, r.win, |p, _| p.recording));
+    *r.recorded.borrow_mut() = Some(Some(Shortcut::right_control().json()));
+    cx.executor().advance_clock(Duration::from_millis(600));
+    frame(cx, r.win);
+    assert!(!read(cx, r.win, |p, _| p.recording));
+    assert!(r.log.borrow().iter().any(|l| l == "install"));
+    assert_eq!(cx.update(|cx| Shortcut::load(&cx.global::<Core>().prefs)), Shortcut::right_control());
+    // A refused install saves nothing and says why.
+    r.ok.set(false);
+    click(cx, r.win, "settings.shortcut");
+    r.ok.set(true);
+    set(cx, r.win, |p, _, cx| {
+        p.recording = true;
+        cx.notify();
+    });
+    r.ok.set(false);
+    *r.recorded.borrow_mut() = Some(Some(Shortcut { kind: "modifier_only".into(), modifiers: 1 << 11, ..Default::default() }.json()));
+    cx.executor().advance_clock(Duration::from_millis(600));
+    frame(cx, r.win);
+    assert_eq!(cx.update(|cx| Shortcut::load(&cx.global::<Core>().prefs)), Shortcut::right_control(), "kept");
+    assert!(read(cx, r.win, |p, _| p.error.is_some()));
+}
+
+// parity: SET-018
+#[flow_ui::gpui::test]
+async fn a_new_grant_reinstalls_the_shortcut_once(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    flow_ui::gpui::VisualTestContext::from_window(r.win.into(), cx).update(|w, _| w.activate_window());
+    let installs = |r: &Rig| r.log.borrow().iter().filter(|l| *l == "install").count();
+    assert_eq!(installs(&r), 0, "nothing granted");
+    r.permissions.set(PermissionState::Granted);
+    cx.executor().advance_clock(Duration::from_millis(600));
+    frame(cx, r.win);
+    assert_eq!(installs(&r), 1);
+    cx.executor().advance_clock(Duration::from_millis(1200));
+    frame(cx, r.win);
+    assert_eq!(installs(&r), 1, "steady");
+}
+
+#[flow_ui::gpui::test]
+async fn second_press_and_closing_both_stop_the_recorder(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    click(cx, r.win, "settings.shortcut");
+    click(cx, r.win, "settings.shortcut");
+    let stops = |r: &Rig| r.log.borrow().iter().filter(|l| *l == "stop recording").count();
+    assert_eq!(stops(&r), 1);
+    click(cx, r.win, "settings.shortcut");
+    cx.update_window(r.win.into(), |_, w, _| w.remove_window()).unwrap();
+    cx.run_until_parked();
+    cx.update(|_| {});
+    assert_eq!(stops(&r), 2, "closing the page drops it");
 }
 
 // parity: SET-017

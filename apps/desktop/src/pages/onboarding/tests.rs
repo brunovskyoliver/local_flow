@@ -20,6 +20,7 @@ struct Stub {
     answer: Rc<Cell<PermissionState>>,
     /// The sign-in's outcome: a state, or the service's failure.
     recorded: Rc<RefCell<Option<Option<String>>>>,
+    globe: Rc<Cell<bool>>,
     background: Rc<Cell<bool>>,
     verified: Rc<Cell<bool>>,
 }
@@ -115,6 +116,12 @@ impl flow_platform::Services for Stub {
     fn take_recorded_shortcut(&self) -> Option<Option<String>> {
         self.recorded.borrow_mut().take()
     }
+    fn has_globe_key(&self) -> bool {
+        self.globe.get()
+    }
+    fn stop_shortcut_recording(&self) {
+        self.log.borrow_mut().push("stop recording".into());
+    }
     fn background_services_enabled(&self) -> bool {
         self.background.get()
     }
@@ -132,6 +139,7 @@ struct Rig {
     log: Log,
     answer: Rc<Cell<PermissionState>>,
     recorded: Rc<RefCell<Option<Option<String>>>>,
+    globe: Rc<Cell<bool>>,
     background: Rc<Cell<bool>>,
     verified: Rc<Cell<bool>>,
 }
@@ -187,12 +195,13 @@ fn rig(cx: &mut TestAppContext, ok: bool, perms: &[(Permission, PermissionState)
     let verified = Rc::new(Cell::new(false));
     let fake = Fake::default();
     *fake.permissions.borrow_mut() = perms.to_vec();
-    let services = Stub { fake, ok: ok.clone(), log: log.clone(), answer: answer.clone(), recorded: recorded.clone(), background: background.clone(), verified: verified.clone() };
+    let globe = Rc::new(Cell::new(true));
+    let services = Stub { globe: globe.clone(), fake, ok: ok.clone(), log: log.clone(), answer: answer.clone(), recorded: recorded.clone(), background: background.clone(), verified: verified.clone() };
     cx.update(|cx| cx.global_mut::<Core>().services = Box::new(services));
     let win = cx.add_window(|w, cx| OnboardingPage::new(w, cx));
     frame(cx, win);
     log.borrow_mut().clear();
-    Rig { win, ok, log, answer, recorded, background, verified }
+    Rig { globe, win, ok, log, answer, recorded, background, verified }
 }
 
 fn frame(cx: &mut TestAppContext, win: Win) {
@@ -947,6 +956,59 @@ async fn meeting_personalize_gate(cx: &mut TestAppContext) {
     assert!(r.log.borrow().iter().all(|c| c != "shortcut"));
 }
 
+// parity: ONB-013
+#[flow_ui::gpui::test]
+async fn a_new_grant_reinstalls_the_saved_shortcut(cx: &mut TestAppContext) {
+    let r = rig(cx, true, &[(Permission::InputMonitoring, PermissionState::Denied)]);
+    r.win.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+    assert!(!r.log.borrow().contains(&"shortcut".to_string()), "not allowed yet");
+    cx.update(|cx| {
+        let fake = Fake::default();
+        *fake.permissions.borrow_mut() = vec![(Permission::InputMonitoring, PermissionState::Granted)];
+        let stub = Stub { globe: r.globe.clone(), fake, ok: r.ok.clone(), log: r.log.clone(), answer: r.answer.clone(), recorded: r.recorded.clone(), background: r.background.clone(), verified: r.verified.clone() };
+        cx.global_mut::<Core>().services = Box::new(stub);
+    });
+    r.win.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+    assert!(r.log.borrow().contains(&"shortcut".to_string()));
+}
+
+fn has(cx: &mut TestAppContext, w: Win, id: &'static str) -> bool {
+    w.update(cx, |_, window, _| window.try_find(id).is_some()).unwrap()
+}
+
+#[flow_ui::gpui::test]
+async fn a_pc_has_no_globe_preset_and_defaults_to_right_control(cx: &mut TestAppContext) {
+    let r = rig(cx, true, &[]);
+    let w = r.win;
+    set(cx, w, |p| {
+        ready(&mut p.snap);
+        p.setup.step = Step::Personalize;
+    });
+    assert!(has(cx, w, "onboarding.preset.2"), "the Mac's Globe chip");
+    r.globe.set(false);
+    w.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+    frame(cx, w);
+    assert!(!has(cx, w, "onboarding.preset.2"), "no Globe key");
+    assert_eq!(read(cx, w, |p, _| p.snap.shortcut.clone()), Shortcut::right_control());
+}
+
+// parity: ONB-022
+#[flow_ui::gpui::test]
+async fn closing_the_page_stops_the_recorder(cx: &mut TestAppContext) {
+    let r = rig(cx, true, &[]);
+    let w = r.win;
+    set(cx, w, |p| {
+        ready(&mut p.snap);
+        p.setup.step = Step::Personalize;
+    });
+    click(cx, w, "onboarding.recordShortcut");
+    assert!(!r.log.borrow().contains(&"stop recording".to_string()));
+    cx.update_window(w.into(), |_, window, _| window.remove_window()).unwrap();
+    cx.run_until_parked();
+    cx.update(|_| {});
+    assert!(r.log.borrow().contains(&"stop recording".to_string()));
+}
+
 // parity: ONB-369 ONB-370
 #[flow_ui::gpui::test]
 async fn record_button_toggles_without_saving(cx: &mut TestAppContext) {
@@ -961,6 +1023,7 @@ async fn record_button_toggles_without_saving(cx: &mut TestAppContext) {
     click(cx, w, "onboarding.recordShortcut");
     assert!(!read(cx, w, |p, _| p.recording));
     assert!(pref(cx, "shortcut").is_none(), "stopping saves nothing");
+    assert!(r.log.borrow().contains(&"stop recording".to_string()), "the second press drops the recorder");
 }
 
 // parity: ONB-381 ONB-382 ONB-383 ONB-384 ONB-385 ONB-386 ONB-387 ONB-388 ONB-389 ONB-396 ONB-060 ONB-053 ONB-087 ONB-088 ONB-404 ONB-405 ONB-406 ONB-407 ONB-033
@@ -1166,7 +1229,7 @@ async fn polling_picks_up_a_new_permission(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let fake = Fake::default();
         *fake.permissions.borrow_mut() = vec![(Permission::Microphone, PermissionState::Granted)];
-        let stub = Stub { fake, ok: r.ok.clone(), log: r.log.clone(), answer: r.answer.clone(), recorded: r.recorded.clone(), background: r.background.clone(), verified: r.verified.clone() };
+        let stub = Stub { globe: Rc::new(Cell::new(true)), fake, ok: r.ok.clone(), log: r.log.clone(), answer: r.answer.clone(), recorded: r.recorded.clone(), background: r.background.clone(), verified: r.verified.clone() };
         cx.global_mut::<Core>().services = Box::new(stub);
     });
     cx.executor().advance_clock(Duration::from_millis(600));
