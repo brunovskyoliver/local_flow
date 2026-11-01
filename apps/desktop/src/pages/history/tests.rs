@@ -1501,6 +1501,8 @@ async fn empty_texts_and_the_error_row_have_their_style_and_retry_refreshes(cx: 
     w.update(cx, |t, _, cx| {
         t.model.set_search("");
         t.model.error = Some(READ_ERROR.into());
+        // Render's once-a-second check would see the DELETE and reload away the error on a slow run.
+        t.signature = cx.global::<Core>().db.as_ref().map(signature);
         cx.notify();
     })
     .unwrap();

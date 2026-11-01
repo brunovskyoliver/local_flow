@@ -385,11 +385,14 @@ fn stub_backend() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
+        // A thread each: a connection left open by something probing loopback can't hold up flowd's.
         for mut stream in listener.incoming().flatten() {
-            let mut buf = [0u8; 2048];
-            let _ = stream.read(&mut buf);
-            let body = format!("{{\"data\":[{{\"id\":\"{MODEL}\",\"capabilities\":{{\"json_schema\":true}}}}]}}");
-            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let body = format!("{{\"data\":[{{\"id\":\"{MODEL}\",\"capabilities\":{{\"json_schema\":true}}}}]}}");
+                let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            });
         }
     });
     port

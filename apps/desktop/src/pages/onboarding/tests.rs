@@ -141,17 +141,23 @@ fn http(routes: Vec<(&'static str, u16, String)>) -> String {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
+    let routes = std::sync::Arc::new(routes);
     std::thread::spawn(move || {
+        // A thread each: T3 Code probes new loopback listeners and leaves a connection open, which
+        // would hold a serial loop until the real request's 10 s timeout.
         for mut stream in listener.incoming().flatten() {
-            let mut request = vec![];
-            let mut byte = [0u8; 1];
-            while !request.ends_with(b"\r\n\r\n") && stream.read_exact(&mut byte).is_ok() {
-                request.push(byte[0]);
-            }
-            let line = String::from_utf8_lossy(&request).lines().next().unwrap_or_default().to_string();
-            let path = line.split(' ').nth(1).unwrap_or_default().to_string();
-            let (status, body) = routes.iter().find(|r| r.0 == path).map_or((404, String::new()), |r| (r.1, r.2.clone()));
-            let _ = write!(stream, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            let routes = routes.clone();
+            std::thread::spawn(move || {
+                let mut request = vec![];
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") && stream.read_exact(&mut byte).is_ok() {
+                    request.push(byte[0]);
+                }
+                let line = String::from_utf8_lossy(&request).lines().next().unwrap_or_default().to_string();
+                let path = line.split(' ').nth(1).unwrap_or_default().to_string();
+                let (status, body) = routes.iter().find(|r| r.0 == path).map_or((404, String::new()), |r| (r.1, r.2.clone()));
+                let _ = write!(stream, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            });
         }
     });
     base
@@ -237,6 +243,15 @@ fn ready(s: &mut Snapshot) {
 
 fn disabled(cx: &mut TestAppContext, win: Win, id: &'static str) -> bool {
     win.update(cx, |_, w, _| w.find(id).disabled().unwrap_or(false)).unwrap()
+}
+
+/// T3 Code probes every new loopback listener and leaves connections open; the stub must still answer.
+#[test]
+fn a_silent_connection_does_not_hold_up_the_stub() {
+    let (body, _) = identity();
+    let base = http(vec![("/v1/remote/identity", 200, body)]);
+    let _silent = std::net::TcpStream::connect(base.trim_start_matches("http://")).unwrap();
+    assert!(server::fetch_identity(&base).is_ok());
 }
 
 // parity: ONB-036 ONB-042 ONB-056 ONB-076 ONB-119 ONB-120 ONB-122 ONB-123 ONB-124 ONB-125
@@ -1896,15 +1911,6 @@ async fn server_type_keys_prefill_and_trust_failure(cx: &mut TestAppContext) {
     cx.update_window(w.into(), |_, w, cx| w.press("enter", cx)).unwrap();
     frame(cx, w);
     assert!(flag(cx, "remote.enabled"), "Return confirms a valid address");
-    // The identity arrives from a real socket, so under load it can land after the first frame.
-    for _ in 0..500 {
-        if read(cx, w, |p, _| p.remote.identity.is_some()) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        frame(cx, w);
-    }
-    frame(cx, w);
     assert_style("Server fingerprint", 12., Some(500.), muted);
     assert_eq!(flow_ui::probe::style_of(&fingerprint).map(|s| s.size), Some(13.));
     w.update(cx, |_, w, _| assert!(w.try_find("settings.remoteFingerprint").is_some())).unwrap();
