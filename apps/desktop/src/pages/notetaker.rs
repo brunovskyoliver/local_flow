@@ -55,6 +55,8 @@ pub struct NotetakerPage {
     pub(crate) title_seeded: Option<String>,
     pub(crate) refusal: Option<String>,
     pub(crate) waiting: HashSet<String>,
+    /// What the handoff last published, so a scenario's own `waiting` stays until it changes.
+    pub(crate) seen_handoff: (std::collections::BTreeSet<String>, u64),
     pub(crate) busy: bool,
     pub(crate) start_warning: Option<&'static str>,
     pub(crate) seen_meeting: Option<(String, Option<String>, crate::shell::MeetingState)>,
@@ -244,6 +246,7 @@ impl NotetakerPage {
                     this.seen_meeting = meeting;
                     this.refresh(cx);
                 }
+                this.handoff_changed(window, cx);
                 if cx.global::<crate::shell::Session>().start_requested {
                     crate::shell::update_session(cx, |s| s.start_requested = false);
                     this.start_note(window, cx);
@@ -317,6 +320,7 @@ impl NotetakerPage {
             busy: false,
             start_warning: None,
             seen_meeting: None,
+            seen_handoff: Default::default(),
             transcript_queue: vec![],
             summary_queue: vec![],
             play_total: 0,
@@ -411,6 +415,24 @@ impl NotetakerPage {
     }
     pub(crate) fn active_id(&self) -> Option<String> {
         self.status.as_ref().filter(|s| !is_terminal(&s.state)).map(|s| s.id.clone())
+    }
+    /// The handoff moved: the rows read "Waiting for your server" from its set, and a note that just
+    /// stopped waiting reloads with its transcript.
+    fn handoff_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let session = cx.global::<crate::shell::Session>();
+        let current = (session.handoff_waiting.clone(), session.handoff_revision);
+        if current == self.seen_handoff {
+            return;
+        }
+        let left = self.seen_handoff.0.difference(&current.0).cloned().collect::<HashSet<_>>();
+        self.waiting = current.0.iter().cloned().collect();
+        self.seen_handoff = current;
+        self.refresh(cx);
+        if let Some(id) = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()).filter(|id| left.contains(id)) {
+            let tab = self.tab;
+            self.close_note_state(window, cx);
+            self.open_note(&id, tab, window, cx);
+        }
     }
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
         let active = self.active_id();
@@ -624,6 +646,9 @@ impl NotetakerPage {
         let root = Self::meetings_root(cx);
         if let Some(db) = db_of(cx) {
             self.lib.delete(db, &root, id, revision, active.as_deref());
+            if matches!(flow_core::meetings::meeting(db, id), Ok(None)) && cx.global::<Core>().scenario.is_none() {
+                crate::remote::meeting_deleted(id.to_string(), cx);
+            }
         }
         if self.lib.detail.is_none() {
             self.close_note_state(window, cx);

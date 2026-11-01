@@ -12,6 +12,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const TOKEN: &str = "throwaway-rewrite-token";
+/// A processor's output, the same SQL the Swift cross-check applies. No backticks: it's a Go raw string.
+pub const PROCESSED: &str = include_str!("../../../../fixtures/handoff/processed.sql");
 pub const MODEL: &str = "stub-model";
 
 /// Added to `package main` at build time only. `test-seed` goes through the real account store.
@@ -27,6 +29,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/hex"
@@ -34,8 +37,11 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"localflow/server/internal/accounts"
 )
@@ -66,7 +72,50 @@ func must(err error) {
 	}
 }
 
+// The fake meeting processor: flowd's `--meeting-processor` runs this same binary. It checks the
+// uploaded audio against the bundle, reports progress, then writes the shared fixture's results.
+func fakeProcessor() {
+	var dir, meeting string
+	for i := 1; i+1 < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--bundle":
+			dir = os.Args[i+1]
+		case "--meeting":
+			meeting = os.Args[i+1]
+		}
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "bundle.sqlite"))
+	must(err)
+	rows, err := db.Query("SELECT s.relative_path, s.byte_size FROM meeting_segments s JOIN meeting_tracks t ON t.id=s.track_id WHERE t.meeting_id=? AND s.state='finalized'", meeting)
+	must(err)
+	for rows.Next() {
+		var path string
+		var size int64
+		must(rows.Scan(&path, &size))
+		info, err := os.Stat(filepath.Join(dir, meeting, filepath.Base(path)))
+		must(err)
+		if info.Size() != size {
+			must(fmt.Errorf("%s has %d bytes, the bundle says %d", path, info.Size(), size))
+		}
+	}
+	must(rows.Err())
+	var title string
+	must(db.QueryRow("SELECT title FROM meetings WHERE id=?", meeting).Scan(&title))
+	if title == "worker fails" {
+		os.Exit(9)
+	}
+	must(os.WriteFile(filepath.Join(dir, "progress"), []byte("40"), 0o600))
+	time.Sleep(700 * time.Millisecond)
+	_, err = db.Exec(strings.ReplaceAll(`__PROCESSED__`, "{ID}", meeting))
+	must(err)
+	must(db.Close())
+	os.Exit(0)
+}
+
 func init() {
+	if len(os.Args) > 1 && os.Args[1] == "--bundle" {
+		fakeProcessor()
+	}
 	if os.Getenv("FLOWD_TEST_IDENTITY") == "" {
 		panic("test overlay without FLOWD_TEST_IDENTITY")
 	}
@@ -188,12 +237,14 @@ impl Flowd {
 
     fn launch(test_issuer: bool) -> Flowd {
         let server = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(|a| a.join("server")).find(|s| s.join("go.mod").exists()).expect("server/go.mod");
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("flowd-test-{}-{unique}", std::process::id()));
+        // The clock alone collides: parallel tests start within its microsecond resolution.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let dir = std::env::temp_dir().join(format!("flowd-test-{}-{}-{}", std::process::id(), unique.0, unique.1));
         let data = dir.join("data");
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&data).unwrap();
         let (overlay_go, overlay_json, bin, identity) = (dir.join("overlay.go"), dir.join("overlay.json"), dir.join("flowd"), dir.join("identity"));
-        std::fs::write(&overlay_go, OVERLAY).unwrap();
+        std::fs::write(&overlay_go, OVERLAY.replace("__PROCESSED__", PROCESSED)).unwrap();
         let replace = serde_json_escape(&server.join("cmd/flowd/zz_test_overlay.go"), &overlay_go);
         std::fs::write(&overlay_json, replace).unwrap();
         let tags = if test_issuer { "localflow_debug" } else { "" };
@@ -233,6 +284,7 @@ impl Flowd {
         let dead = addr(&flowd.down);
         let mut main_args: Vec<String> = ["--listen", &addr(&flowd.rewrite), "--backend", &format!("http://127.0.0.1:{backend}/v1"), "--remote-listen", &addr(&flowd.remote), "--dev", "--data-dir"].map(String::from).to_vec();
         main_args.push(data.display().to_string());
+        main_args.extend(["--meeting-processor".to_string(), bin.display().to_string()]);
         if test_issuer {
             let (key, jwks) = (flowd.dir.join("issuer.der"), flowd.dir.join("jwks.json"));
             output(&mut tool(&["test-issuer-keys".as_ref(), key.as_ref(), jwks.as_ref()]), "issuer keys");
@@ -261,6 +313,15 @@ impl Flowd {
     pub fn pair_token(&self, label: &str) -> String {
         let json = self.admin(&["token", "create", "--label", label, "--json"]);
         json_text(&json, "token").unwrap_or_else(|| panic!("no token field in the admin tool's answer"))
+    }
+
+    /// Makes a handoff meeting another device's. Each token redeems as a new user, so a test can't
+    /// have two devices of one user without a sign-in; `<meeting dir>/device` is all `mine` reads.
+    pub fn hand_to_another_device(&self, meeting: &str) {
+        fn find(dir: &Path, meeting: &str) -> Option<PathBuf> {
+            std::fs::read_dir(dir).ok()?.flatten().find_map(|e| if e.file_name() == meeting && e.path().join("device").exists() { Some(e.path().join("device")) } else if e.path().is_dir() { find(&e.path(), meeting) } else { None })
+        }
+        std::fs::write(find(&self.data, meeting).expect("the meeting's handoff directory"), "999999").unwrap();
     }
 
     /// Revokes the device that redeemed the most recent token.

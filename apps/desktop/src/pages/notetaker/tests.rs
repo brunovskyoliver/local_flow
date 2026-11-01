@@ -1834,11 +1834,11 @@ async fn a_changed_active_meeting_refreshes_the_library(cx: &mut TestAppContext)
 #[flow_ui::gpui::test]
 async fn run_on_this_mac_refusals_come_from_the_store_and_preference(cx: &mut TestAppContext) {
     let window = open_page(cx, Some("notetaker.waiting"));
-    cx.update(|cx| cx.global_mut::<Core>().prefs.set("serverOnly", true));
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("server.only", true));
     click(cx, &window, sid(format!("notetaker.runOnThisMac.{SEED_IPHONE}")));
     fresh(cx, &window);
     assert_saw(&["Server only is on, so this Mac doesn't run models. Change it in Settings › Server."]);
-    cx.update(|cx| cx.global_mut::<Core>().prefs.set("serverOnly", false));
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("server.only", false));
     refuse(cx, "UPDATE", "meetings");
     click(cx, &window, sid(format!("notetaker.runOnThisMac.{SEED_IPHONE}")));
     fresh(cx, &window);
@@ -2273,9 +2273,13 @@ async fn summary_options_menu_and_remove_all_dialog_read_like_swift(cx: &mut Tes
     click(cx, &window, "meeting.summary.options");
     frame(cx, &window);
     assert_menu_saw(&["Regenerate", "Previous edits", "Remove all edits\u{2026}"]);
-    let generated = read(cx, &window, |p| generated_text(p.summary.model.as_ref().unwrap().generated_at, 0));
+    // In the page's time zone: at offset 0 the seed's date-relative time can be another day.
+    let generated = window.read_with(cx, |p, cx| {
+        let created = p.lib.detail.as_ref().unwrap().meeting.created_at;
+        generated_text(p.summary.model.as_ref().unwrap().generated_at, offset_at(created, cx))
+    }).unwrap();
     let shown = crate::pages::notetaker::MENU_TITLES.with(|m| m.borrow().clone());
-    assert!(shown.iter().any(|s| s.starts_with("Generated ") && s.ends_with(" · AI-generated") && s.len() == generated.len()), "{shown:?}");
+    assert!(shown.contains(&generated), "{shown:?}");
     menu_item(cx, &window, 2);
     fresh(cx, &window);
     assert_saw(&["Remove all edits?", "Remove All Edits", "Cancel", "Your changes to the summary, owners, due dates and items are deleted, and the generated text comes back. This can't be undone."]);
@@ -4316,4 +4320,37 @@ mod recorder {
         assert_labelled(cx, &window, "meeting.openSettings", "Open Settings");
         let _ = std::fs::remove_dir_all(&root);
     }
+}
+#[flow_ui::gpui::test]
+async fn the_handoffs_waiting_set_drives_the_rows_and_a_merged_note_reloads(cx: &mut TestAppContext) {
+    let window = open_page(cx, None);
+    cx.update(|cx| {
+        crate::shell::ensure_session(cx);
+        crate::shell::update_session(cx, |s| s.selection = crate::pages::Page::Meetings);
+    });
+    frame(cx, &window);
+    let label = sid(format!("notetaker.runOnThisMac.{SEED_FULL}"));
+    assert!(!has(cx, &window, label.clone()));
+    cx.update(|cx| crate::shell::update_session(cx, |s| s.handoff_waiting = [SEED_FULL.to_string()].into()));
+    frame(cx, &window);
+    assert!(has(cx, &window, label.clone()), "the published set makes the row wait");
+    open(cx, &window, SEED_FULL, Tab::Transcript);
+    query(cx, |db| db.conn.execute("UPDATE transcript_segments SET normalized_text='merged by the handoff' WHERE meeting_id=?1 AND ordinal=0", [SEED_FULL]).unwrap());
+    cx.update(|cx| crate::shell::update_session(cx, |s| {
+        s.handoff_waiting.clear();
+        s.handoff_revision += 1;
+    }));
+    frame(cx, &window);
+    assert!(read(cx, &window, |p| !p.waiting.contains(SEED_FULL)));
+    assert!(read(cx, &window, |p| p.pager.as_ref().unwrap().pages.iter().flatten().any(|s| s.text == "merged by the handoff")), "the open note re-read its transcript");
+}
+#[flow_ui::gpui::test]
+async fn transcribe_on_a_server_route_queues_the_handoff(cx: &mut TestAppContext) {
+    let window = open_page(cx, Some("notetaker.detail"));
+    let id = read(cx, &window, |p| p.lib.detail.as_ref().unwrap().meeting.id.clone());
+    query(cx, |db| db.conn.execute("UPDATE meeting_transcriptions SET state='not_requested', segment_count=0, text_bytes=0 WHERE meeting_id=?1", [&id]).unwrap());
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("server.only", true));
+    window.update(cx, |p, _, cx| p.request_transcript(cx)).unwrap();
+    assert_eq!(query(cx, |db| db.conn.query_row("SELECT state FROM meeting_transcriptions WHERE meeting_id=?1", [&id], |r| r.get::<_, String>(0)).unwrap()), "pending");
+    assert!(read(cx, &window, |p| p.waiting.contains(&id) && p.transcript_notice.is_none()));
 }

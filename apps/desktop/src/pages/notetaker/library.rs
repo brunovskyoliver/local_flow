@@ -288,7 +288,7 @@ impl NotetakerPage {
     }
 
     pub(crate) fn run_on_this_mac(&mut self, id: &str, cx: &mut Context<Self>) {
-        let server_only = cx.global::<Core>().prefs.bool_or("serverOnly", false);
+        let server_only = cx.global::<Core>().prefs.bool_or("server.only", false);
         if let Some(db) = db_of(cx) {
             self.lib.run_locally(db, id, server_only);
             // The queue moves it over once the Mac worker exists; until then the row keeps waiting.

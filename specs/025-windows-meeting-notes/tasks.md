@@ -31,10 +31,10 @@ Every phase ends with `cargo test --workspace`, `./scripts/check-rust-boundaries
 - [X] T020 Wire `meeting_worker`, Start, Pause, Resume and Stop on Windows to the recorder through `apps/desktop`; `SessionCommand`s work; other platforms keep Unavailable with reason.
 
 ## Phase 5: Handoff (US4)
-- [ ] T021 `remote/transfer.rs` per `HandoffFileTransfer.swift`: bounded chunks, resume, hash.
-- [ ] T022 `remote/handoff.rs` per `MeetingHandoff.swift` and `+Import`: export, step machine, merge. Same `bundle.sqlite` shape.
-- [ ] T023 Wire waiting state and retries into the Notetaker page; `SUM-*` server analysis if it's on the same channel.
-- [ ] T024 Throwaway flowd end-to-end test: fixture segments to merged meeting; offline and refused paths keep audio. Swift cross-check where a Swift-made bundle fixture is available.
+- [X] T021 `remote/transfer.rs` per `HandoffFileTransfer.swift`: bounded chunks, resume, hash.
+- [X] T022 `remote/handoff.rs` per `MeetingHandoff.swift` and `+Import`: export, step machine, merge. Same `bundle.sqlite` shape.
+- [ ] T023 Wire waiting state and retries into the Notetaker page; `SUM-*` server analysis if it's on the same channel. Waiting rows, retries, Retry and delete are wired. Not done: `SUM-010/016/035`. The `analysis` op is on the same channel, but Swift's request, validation and persistence are about 4,500 lines (Intelligence plus coordinator); a summary reaches this client only through a merged handoff until they are ported.
+- [X] T024 Throwaway flowd end-to-end test: fixture segments to merged meeting; offline and refused paths keep audio. Swift cross-check where a Swift-made bundle fixture is available.
 
 ## Phase 6: Installer (US5)
 - [ ] T025 `packaging/windows/localflow.iss`, README: per-user, Start menu, optional Run key, keeps data on uninstall. Static check script added to `make check`, no ISCC needed.

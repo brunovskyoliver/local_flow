@@ -78,7 +78,10 @@ pub fn start(cx: &mut App) -> Result<Snapshot, String> {
         return Err(reason.into());
     }
     let (database, root) = (core.paths.database(), core.paths.root.join("Meetings"));
-    let handle = Handle::start(&database, &root, Arc::new(Adapter(audio)))?;
+    // `serverOnly` routing queues the handoff; without a server route this client makes no transcript.
+    let prefs = &core.prefs;
+    let transcribe = prefs.bool_or("meetingTranscriptionEnabled", true) && flow_core::remote::handoff::route(prefs) != flow_core::remote::handoff::Route::Off;
+    let handle = Handle::start(&database, &root, Arc::new(Adapter(audio)), transcribe)?;
     let first = handle.snapshot();
     cx.global_mut::<Core>().recorder = Some(handle);
     sync(cx);

@@ -336,6 +336,8 @@ type Sql<T = ()> = Result<T, rusqlite::Error>;
 type Events = (Kind, i64, SourceEvent);
 
 pub struct Recorder {
+    /// The meeting's transcript is wanted, so its row starts `pending`.
+    transcribe: bool,
     db: Db,
     root: PathBuf,
     backend: Arc<dyn Backend>,
@@ -354,14 +356,14 @@ impl Recorder {
     /// `MeetingCoordinator.start`. A source that won't start fails its track only; with neither
     /// source, or nowhere to record, the meeting ends `failed` and `state` says so.
     pub fn start(db: Db, root: &Path, backend: Arc<dyn Backend>, id: &str) -> Result<Recorder, String> {
-        let mut recorder = Recorder::created(db, root, backend, id)?;
+        let mut recorder = Recorder::created(db, root, backend, id, false)?;
         recorder.begin();
         Ok(recorder)
     }
 
     /// The meeting's rows, so a view can open it while the sources start.
-    fn created(db: Db, root: &Path, backend: Arc<dyn Backend>, id: &str) -> Result<Recorder, String> {
-        let mut recorder = Recorder { db, root: root.into(), backend, id: id.into(), state: "created".into(), tracks: vec![], events: channel(), started_at: 0, paused_ms: 0, pause: None, notice: None, heartbeat: Instant::now() };
+    fn created(db: Db, root: &Path, backend: Arc<dyn Backend>, id: &str, transcribe: bool) -> Result<Recorder, String> {
+        let mut recorder = Recorder { transcribe, db, root: root.into(), backend, id: id.into(), state: "created".into(), tracks: vec![], events: channel(), started_at: 0, paused_ms: 0, pause: None, notice: None, heartbeat: Instant::now() };
         recorder.create().map_err(|_| "Meeting is busy".to_string())?;
         Ok(recorder)
     }
@@ -385,8 +387,8 @@ impl Recorder {
         tx.execute("INSERT INTO meeting_diarization (meeting_id,in_room,updated_at,revision) VALUES (?1,0,?2,0)", params![id, now])?;
         tx.execute("INSERT INTO meeting_identification (meeting_id,updated_at) VALUES (?1,?2)", params![id, now])?;
         tx.execute("INSERT INTO meeting_analysis (meeting_id,updated_at,revision) VALUES (?1,?2,0)", params![id, now])?;
-        // ponytail: transcription isn't wired on Windows; a row says so, and the views show it off.
-        tx.execute("INSERT INTO meeting_transcriptions (meeting_id,state,live_requested,updated_at) VALUES (?1,'not_requested',0,?2)", params![id, now])?;
+        // `pending`: the handoff takes it when recording ends. There is no live pass on this path.
+        tx.execute("INSERT INTO meeting_transcriptions (meeting_id,state,live_requested,updated_at) VALUES (?1,?2,0,?3)", params![id, if self.transcribe { "pending" } else { "not_requested" }, now])?;
         for kind in Kind::ALL {
             let track = crate::meetings::new_id();
             tx.execute(
@@ -749,14 +751,14 @@ pub struct Handle {
 impl Handle {
     /// Returns once the meeting's rows exist, with the sources still starting on the thread, which
     /// opens its own connection to `database`.
-    pub fn start(database: &Path, root: &Path, backend: Arc<dyn Backend>) -> Result<Handle, String> {
+    pub fn start(database: &Path, root: &Path, backend: Arc<dyn Backend>, transcribe: bool) -> Result<Handle, String> {
         let id = crate::meetings::new_id();
         let snapshot = Arc::new(Mutex::new(Snapshot { id: id.clone(), state: "preparing".into(), ..Default::default() }));
         let (commands, inbox) = channel();
         let (created, is_created) = sync_channel(1);
         let (published, database, root) = (snapshot.clone(), database.to_path_buf(), root.to_path_buf());
         std::thread::spawn(move || {
-            let mut recorder = match Db::open(&database).map_err(|_| "Meeting is busy".to_string()).and_then(|db| Recorder::created(db, &root, backend, &id)) {
+            let mut recorder = match Db::open(&database).map_err(|_| "Meeting is busy".to_string()).and_then(|db| Recorder::created(db, &root, backend, &id, transcribe)) {
                 Ok(recorder) => {
                     let _ = created.send(Ok(()));
                     recorder

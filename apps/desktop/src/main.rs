@@ -24,6 +24,7 @@ fn main() {
         localflow::remote::start_refreshing(cx);
         menu::init(cx);
         shell::start(cx);
+        localflow::remote::start_handoffs(cx);
         cx.on_window_closed(|cx, id| shell::window_closed(id, cx)).detach();
         cx.observe_global::<shell::Session>(|cx| pill::sync_window(cx)).detach();
         pill::apply_scenario(cx);

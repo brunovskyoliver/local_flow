@@ -403,9 +403,10 @@ fn a_crash_leaves_a_part_the_launch_reconciler_recovers() {
 #[test]
 fn the_handle_runs_a_meeting_on_its_thread_and_stops_for_quit() {
     let rig = rig();
-    let handle = Handle::start(&rig.db_path, &rig.root, Arc::new(Shared(rig.fake.clone()))).unwrap();
+    let handle = Handle::start(&rig.db_path, &rig.root, Arc::new(Shared(rig.fake.clone())), true).unwrap();
     assert_eq!(rig.one("SELECT count(*) FROM meetings"), "Integer(1)", "the rows exist on return");
-    let second = Handle::start(&rig.db_path, &rig.root, Arc::new(Shared(rig.fake.clone())));
+    assert_eq!(rig.one("SELECT count(*) FROM meeting_transcriptions WHERE state='pending'"), "Integer(1)", "the handoff owes it a transcript");
+    let second = Handle::start(&rig.db_path, &rig.root, Arc::new(Shared(rig.fake.clone())), true);
     assert_eq!(second.err().as_deref(), Some("Meeting is busy"));
     assert!(!handle.snapshot().id.is_empty());
     let wait = |state: &str| {

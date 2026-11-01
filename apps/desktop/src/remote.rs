@@ -2,6 +2,8 @@
 //! the pairing and address sheets Settings and onboarding share.
 use crate::core::Core;
 use flow_core::remote::channel::WebSockets;
+use flow_core::remote::handoff::{self, Handoff, Plan, Queue};
+use flow_core::remote::transfer::{self, Request};
 use flow_core::remote::enrollment::{EnrollError, Enrollment, HttpIdentity, IdentityProvider, Parts, RemoteSettings, SignIn, system_now};
 use flow_core::remote::google::GoogleClient;
 use flow_core::remote::pairing::{PairingLink, PairingToken, failure_message};
@@ -11,8 +13,11 @@ use flow_core::settings::{self, remote_keychain};
 use flow_platform::Credentials;
 use flow_ui::gpui::base::TestSupportExt;
 use flow_ui::prelude::*;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+/// How often a paired device asks whether its server now offers the handoff.
+const PROBE_EVERY: Duration = Duration::from_secs(60);
 
 struct Platform(Arc<dyn Credentials>);
 
@@ -58,14 +63,16 @@ impl SignIn for Platform {
 
 pub struct Remote {
     pub enrollment: Arc<Enrollment>,
-    pub pool: Pool,
+    pub pool: Arc<Pool>,
+    /// Made on first use: its paths come from `Core`.
+    handoff: OnceLock<Arc<Handoff>>,
 }
 
 impl Remote {
     pub fn new(enrollment: Enrollment) -> Arc<Remote> {
         let enrollment = Arc::new(enrollment);
-        let pool = Enrollment::pool(&enrollment);
-        Arc::new(Remote { enrollment, pool })
+        let pool = Arc::new(Enrollment::pool(&enrollment));
+        Arc::new(Remote { enrollment, pool, handoff: OnceLock::new() })
     }
 
     pub fn native(credentials: Arc<dyn Credentials>) -> Arc<Remote> {
@@ -104,6 +111,84 @@ pub fn run<V: 'static, T: Send + 'static>(cx: &mut Context<V>, op: impl FnOnce(&
 /// Keeps an approved device's access token fresh: once at launch, then 12 minutes after each issue.
 // ponytail: a 60 s poll instead of a timer per token; a pending device checks at launch only until
 // dictation start (Feature 026) calls `refresh_now` as Swift's `refreshIfPending` does.
+/// The handoff's automatic retries: one tick at a time on a background thread, the waiting rows
+/// published on `Session`. A scenario or a missing database means no work at all.
+pub fn start_handoffs(cx: &mut App) {
+    const TICK: Duration = Duration::from_secs(2);
+    cx.spawn(async move |cx| {
+        let mut queue: Option<Arc<Mutex<Queue>>> = None;
+        let mut last_probe: Option<Instant> = None;
+        loop {
+            cx.background_executor().timer(TICK).await;
+            let work = cx.update(|cx| {
+                let core = cx.global::<Core>();
+                if core.db.is_none() || core.scenario.is_some() {
+                    return None;
+                }
+                let settings = RemoteSettings::from_prefs(&core.prefs);
+                let approved = settings.state == "approved";
+                let offers = approved && settings::capabilities(&core.prefs).ops.contains("handoff");
+                let plan = Plan { route: handoff::route(&core.prefs), offers, language: settings::meeting_language(&core.prefs).to_string() };
+                let remote = cx.global_mut::<Core>().remote();
+                remote.enrollment.load(settings);
+                Some((remote.clone(), remote_handoff(cx, &remote), plan, approved))
+            });
+            let Some((remote, shared, plan, approved)) = work else { continue };
+            let queue = queue.get_or_insert_with(|| Arc::new(Mutex::new(Queue::new(shared)))).clone();
+            let now = Instant::now();
+            let probe = approved && !plan.offers && last_probe.is_none_or(|at| now.duration_since(at) >= PROBE_EVERY);
+            if probe {
+                last_probe = Some(now);
+            }
+            let generation = remote.enrollment.generation();
+            let client = remote.clone();
+            let (tick, offered, after) = cx
+                .background_spawn(async move {
+                    let offered = if probe { client.enrollment.capabilities() } else { None };
+                    let tick = queue.lock().unwrap_or_else(|e| e.into_inner()).tick(&plan, now);
+                    (tick, offered, client.enrollment.settings())
+                })
+                .await;
+            cx.update(|cx| {
+                if let Some(offered) = offered {
+                    cx.global_mut::<Core>().prefs.set("server.capabilities", offered);
+                }
+                if remote.enrollment.generation() == generation {
+                    after.store(&mut cx.global_mut::<Core>().prefs);
+                }
+                let Ok(tick) = tick else { return };
+                crate::shell::ensure_session(cx);
+                if cx.global::<crate::shell::Session>().handoff_waiting != tick.waiting || tick.changed {
+                    crate::shell::update_session(cx, |s| {
+                        s.handoff_waiting = tick.waiting;
+                        s.handoff_revision += u64::from(tick.changed);
+                    });
+                }
+            });
+        }
+    })
+    .detach();
+}
+
+fn remote_handoff(cx: &App, remote: &Arc<Remote>) -> Arc<Handoff> {
+    let paths = &cx.global::<Core>().paths;
+    let (database, root) = (paths.database(), paths.root.join("Meetings"));
+    remote
+        .handoff
+        .get_or_init(|| {
+            let pool = remote.pool.clone();
+            Arc::new(Handoff::new(move |request: &Request| transfer::exchange(&pool, request), &database, &root))
+        })
+        .clone()
+}
+
+/// `meetingWillDelete`: the row is gone, so nothing of the meeting stays on the server either.
+pub fn meeting_deleted(id: String, cx: &mut App) {
+    let remote = cx.global_mut::<Core>().remote();
+    let shared = remote_handoff(cx, &remote);
+    cx.background_spawn(async move { shared.meeting_will_delete(&id) }).detach();
+}
+
 pub fn start_refreshing(cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut launch = true;

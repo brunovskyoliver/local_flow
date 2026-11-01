@@ -316,6 +316,20 @@ impl NotetakerPage {
     /// `requestFinalization`: admission first, then the worker.
     pub(crate) fn request_transcript(&mut self, cx: &mut Context<Self>) {
         let id = self.lib.detail.as_ref().map(|d| d.meeting.id.clone()).unwrap_or_default();
+        // The server runs it: back in the handoff's queue, which retries on its own.
+        if flow_core::remote::handoff::route(&cx.global::<Core>().prefs) != flow_core::remote::handoff::Route::Off {
+            if let Some(db) = db_of(cx) {
+                if flow_core::remote::handoff::request_again(db, &id).is_ok_and(|n| n == 1) {
+                    self.waiting.insert(id);
+                    self.transcript_notice = None;
+                    if let Some(pager) = &mut self.pager {
+                        pager.load_first(db);
+                    }
+                    self.refresh(cx);
+                    return;
+                }
+            }
+        }
         self.transcript_notice = if admit(&mut self.transcript_queue, &id, false, QUEUE_CAPACITY) {
             let refused = Self::worker("Transcription", cx).err();
             if refused.is_some() {

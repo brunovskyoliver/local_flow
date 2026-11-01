@@ -142,6 +142,10 @@ pub struct Session {
     pub pill: Pill,
     /// Bumped whenever saved dictations change; Insights watches it while selected.
     pub history_revision: u64,
+    /// Finished meetings the server still owes a transcript: the "Waiting for your server" rows.
+    pub handoff_waiting: std::collections::BTreeSet<String>,
+    /// Bumped when the handoff changed rows.
+    pub handoff_revision: u64,
 }
 impl Global for Session {}
 
@@ -172,6 +176,8 @@ impl Session {
             insertion: Insertion::default(),
             pill: Pill::default(),
             history_revision: 0,
+            handoff_waiting: Default::default(),
+            handoff_revision: 0,
         };
         if let Some(scenario) = core.scenario.as_deref() {
             s.apply_scenario(scenario);

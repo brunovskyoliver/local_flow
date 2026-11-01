@@ -524,6 +524,12 @@ impl Enrollment {
     }
 
     /// A session channel, with one retry after `token_expired`. Used by `Pool`.
+    /// What the server offers now, for `server.capabilities`. None when it can't be reached.
+    pub fn capabilities(&self) -> Option<settings::Capabilities> {
+        let (origin, key, token) = (self.origin()?, self.pinned_key()?, self.access_token()?);
+        settings::ping(&origin, Some(&key), Some(&token))?.1
+    }
+
     pub fn session_channel(&self) -> Result<Channel, ChannelError> {
         let origin = self.origin().ok_or(ChannelError::Closed)?;
         let key = self.pinned_key().ok_or(ChannelError::Closed)?;
@@ -984,7 +990,7 @@ mod tests {
 
 /// T012: the real server. Each test gets its own flowd, on loopback, with temp data.
 #[cfg(all(test, unix))]
-mod flowd_tests {
+pub(crate) mod flowd_tests {
     use super::super::MemorySecrets;
     use super::*;
     use crate::settings::test_flowd::Flowd;
@@ -1024,7 +1030,7 @@ mod flowd_tests {
         }
     }
 
-    fn client(flowd: &Arc<Flowd>, origin: &str) -> (Enrollment, Arc<MemorySecrets>) {
+    pub(crate) fn client(flowd: &Arc<Flowd>, origin: &str) -> (Enrollment, Arc<MemorySecrets>) {
         let secrets = Arc::new(MemorySecrets::default());
         let e = Enrollment::new(Parts {
             secrets: secrets.clone(),
@@ -1039,7 +1045,7 @@ mod flowd_tests {
         (e, secrets)
     }
 
-    fn token(f: &Flowd) -> PairingToken {
+    pub(crate) fn token(f: &Flowd) -> PairingToken {
         PairingToken::parse(&f.pair_token("conformance")).unwrap()
     }
 

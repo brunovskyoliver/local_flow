@@ -393,6 +393,9 @@ mod flowd_tests {
                 let _ = stream.read(&mut request).unwrap();
                 let body = format!("{{\"id_token\":\"{token}\"}}");
                 write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                // Closing with the request's body unread resets the connection under the client's read.
+                stream.shutdown(std::net::Shutdown::Write).unwrap();
+                let _ = std::io::copy(&mut stream, &mut std::io::sink());
             });
             let google = GoogleClient { token_endpoint: endpoint, wait: Duration::from_secs(30), ..GoogleClient::new(Flowd::GOOGLE_CLIENT_ID, None) };
             google.sign_in(nonce, &|url| {

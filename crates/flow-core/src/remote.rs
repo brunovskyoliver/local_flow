@@ -8,10 +8,12 @@ pub mod address;
 pub mod channel;
 pub mod enrollment;
 pub mod google;
+pub mod handoff;
 pub mod pairing;
 pub mod pool;
 #[cfg(any(test, feature = "test-support"))]
 pub mod scripted;
+pub mod transfer;
 
 /// Swift's `RemoteCredentialItem`.
 pub const CREDENTIAL_ACCOUNTS: [&str; 4] = ["device-key", "server-key", "refresh-token", "access-token"];
