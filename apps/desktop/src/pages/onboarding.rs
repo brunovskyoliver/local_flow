@@ -314,7 +314,7 @@ impl OnboardingPage {
         next.system_audio = preflight(s.permission(Permission::SystemAudio));
         next.shortcut = Shortcut::load(&core.prefs).for_platform(s.has_globe_key());
         next.storage_available = core.db.is_some();
-        next.speech_model = speech_model_name(&speech_model_raw(&core.prefs)).to_string();
+        next.speech_model = speech_model_name().to_string();
         let resume = self.ai_phase == AiPhase::Failed(AI_ERROR_APPROVAL.into()) && s.background_services_enabled();
         if let Some(phase) = ai_report {
             self.local_ai_finished(phase, cx);

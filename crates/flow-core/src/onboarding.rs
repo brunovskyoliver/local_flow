@@ -702,8 +702,8 @@ pub fn speech_model_raw(_prefs: &Prefs) -> String {
     SPEECH_MODEL.into()
 }
 
-pub fn speech_model_name(raw: &str) -> &'static str {
-    if raw == "parakeet-ultra" { "Parakeet Ultra" } else { "Parakeet v3" }
+pub fn speech_model_name() -> &'static str {
+    "Parakeet Ultra"
 }
 
 /// `completeOnboarding()`: the speech model first, then the gate that swaps the window.

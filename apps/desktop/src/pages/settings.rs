@@ -302,8 +302,7 @@ impl SettingsPage {
         let speech_model = core::speech_model(p);
         let mut next = Snapshot {
             speech_model,
-            download_bytes: Some(core::speech_download_bytes(speech_model)),
-            alternate: Some(core::Alternate::not_installed(core::other_speech_model(speech_model))),
+            download_bytes: Some(core::SPEECH_DOWNLOAD_BYTES),
             keep_model_ready: core::bool_pref(p, "keepModelReady"),
             microphone: permission(Permission::Microphone),
             input_monitoring: permission(Permission::InputMonitoring),
@@ -334,11 +333,16 @@ impl SettingsPage {
                 next.meeting_installed = true;
                 next.speaker_installed = true;
             }
+            InstallState::Failed(_) => {
+                next.meeting_failed = true;
+                next.speaker_failed = true;
+            }
             _ => {}
         }
         match core_state.services.install_state(ModelPack::Booster) {
             InstallState::Running(..) => next.boost_installing = true,
             InstallState::Verified => next.boost_installed = true,
+            InstallState::Failed(_) => next.boost_failed = true,
             _ => {}
         }
         scenario::apply_snapshot(&self.scenario, &mut next);
@@ -807,7 +811,7 @@ impl SettingsPage {
     // MARK: Sections
 
     fn section_title(title: &'static str) -> impl IntoElement {
-        div().id(SharedString::from(format!("settings.section.{title}"))).test_support().pt(px(29.)).pb(px(13.)).child(div().id(SharedString::from(format!("settings.section.{title}.text"))).child(t(title).font(14., 500.)).test_support()).test_support()
+        div().id(SharedString::from(format!("settings.section.{title}"))).test_support().pt(px(24.)).pb(px(8.)).child(div().id(SharedString::from(format!("settings.section.{title}.text"))).child(t(title).font(14., 500.)).test_support()).test_support()
     }
 
     fn general(&self, cx: &mut Context<Self>) -> Div {
@@ -815,7 +819,7 @@ impl SettingsPage {
         let first = if meeting_only {
             row(
                 "Set up dictation",
-                Some("Hold a key in any app to talk. Meetings stay as they are.".into()),
+                None,
                 prototype_button("settings.setUpDictation", "Set Up").min_width(99.).disabled(self.performing).on_click(cx.listener(|this, _, _, cx| this.set_up_dictation(cx))),
                 cx,
             )
@@ -823,7 +827,7 @@ impl SettingsPage {
             let title = if self.recording { "Listening…".to_string() } else { self.snapshot.shortcut.title() };
             row(
                 "Shortcut",
-                self.recording.then(|| "Press a shortcut, then release. Esc to cancel.".to_string()),
+                self.recording.then(|| "Press a shortcut. Esc cancels.".to_string()),
                 prototype_button("settings.shortcut", title).min_width(99.).disabled(self.snapshot.busy || self.performing).on_click(cx.listener(|this, _, _, cx| this.toggle_recording(cx))),
                 cx,
             )
@@ -845,19 +849,19 @@ impl SettingsPage {
     fn updates_section(&self, cx: &mut Context<Self>) -> Div {
         match self.updates {
             Updates::Manual | Updates::Failed => {
-                let reason = if self.updates == Updates::Manual { "This build uses manual updates. Download the latest version from GitHub." } else { "The updater could not start. Reopen LocalFlow to retry." };
+                let reason = (self.updates == Updates::Failed).then(|| "The updater could not start. Reopen LocalFlow to retry.".to_string());
                 let link = prototype_button("settings.updateDownloads", "View Downloads").on_click(cx.listener(|this, _, _, cx| {
                     if cx.global::<Core>().services.open_url(core::RELEASES_URL).is_err() {
                         this.error = Some(core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)));
                         cx.notify();
                     }
                 }));
-                group(cx).child(row("Software updates", Some(reason.into()), link, cx))
+                group(cx).child(row("Software updates", reason, link, cx))
             }
             Updates::Sparkle { automatic, can_check } => group(cx)
                 .child(row(
                     "Latest version",
-                    Some("You choose when to install.".into()),
+                    None,
                     prototype_button("settings.checkForUpdates", "Check for Updates…").disabled(!can_check).on_click(cx.listener(|this, _, _, cx| {
                         if cx.global::<Core>().services.check_for_updates().is_err() {
                             this.error = Some(core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)));
@@ -869,7 +873,7 @@ impl SettingsPage {
                 .child(hairline(cx))
                 .child(row(
                     "Check automatically",
-                    Some("Installation waits until active work finishes.".into()),
+                    None,
                     switch(
                         "settings.automaticUpdates",
                         "Check for updates automatically",
@@ -943,7 +947,7 @@ impl SettingsPage {
         let top = self.mic_top.clone();
         vec![
             div().child(canvas(move |b, _, _| top.set(b.top()), |_, _, _, _| {}).w_full().h(px(0.))).child(Self::section_title("Microphones")).into_any_element(),
-            div().id("settings.microphones.description").pb(px(12.)).child(t("LocalFlow records from the first microphone on this list that is connected.").size(12.).swift_lines().color(muted)).test_support().into_any_element(),
+            div().id("settings.microphones.description").pb(px(8.)).child(t("Uses the first connected microphone.").size(12.).swift_lines().color(muted)).test_support().into_any_element(),
             body.child(row("Add microphone", list.add_disabled.map(String::from), add, cx)).test_support().into_any_element(),
         ]
     }
@@ -1052,7 +1056,7 @@ impl SettingsPage {
                 }
             }
         }
-        body = body.child(hairline(cx)).child(div().id("settings.rewriteAdvancedRow").w_full().py(px(14.)).child(advanced).test_support());
+        body = body.child(hairline(cx)).child(div().id("settings.rewriteAdvancedRow").w_full().py(px(10.)).child(advanced).test_support());
         // `SettingsView`: announced on first show and on change.
         let spoken = self.rewrite.warning();
         if *self.announced_warning.borrow() != spoken {
@@ -1061,7 +1065,7 @@ impl SettingsPage {
             }
             *self.announced_warning.borrow_mut() = spoken;
         }
-        let warning = self.rewrite.warning().map(|w| div().id("settings.rewriteWarning").test_support().pb(px(12.)).child(t(w).size(12.).color(pl.warning)).into_any_element());
+        let warning = self.rewrite.warning().map(|w| div().id("settings.rewriteWarning").test_support().pb(px(8.)).child(t(w).size(12.).color(pl.warning)).into_any_element());
         let mut out = vec![Self::section_title("Rewriting").into_any_element()];
         out.extend(warning);
         out.push(body.into_any_element());
@@ -1074,9 +1078,9 @@ impl SettingsPage {
         let mut out = vec![
             v_flex()
                 .w_full()
-                .gap(px(8.))
-                .pt(px(18.))
-                .pb(px(14.))
+                .gap(px(6.))
+                .pt(px(12.))
+                .pb(px(10.))
                 .child(t("Server URL").font(12., 500.).swift_lines().color(pl.muted))
                 .child(input_surface("link", Some("http://127.0.0.1:8080"), Input::new(&self.endpoint).id("settings.rewriteEndpoint").aria_label("Rewrite server endpoint").accessibility_id("settings.rewriteEndpoint"), &self.endpoint, window, cx))
                 .into_any_element(),
@@ -1107,7 +1111,7 @@ impl SettingsPage {
         let pl = pal(cx);
         let present = self.rewrite.credential_present;
         let header = h_flex().id("settings.secretHeader").w_full().justify_between().child(t("Server secret").font(12., 500.).swift_lines().color(pl.muted)).when(present, |d| d.child(sf_label("checkmark.shield", "Saved in Keychain", 11., pl.muted))).test_support();
-        let mut out = v_flex().w_full().gap(px(8.)).pb(px(18.)).child(header);
+        let mut out = v_flex().w_full().gap(px(6.)).pb(px(12.)).child(header);
         if present && !self.editing_credential {
             out = out.child(h_flex().w_full().gap(px(8.)).child(div().flex_1().child(saved_secret("Server secret saved", cx))).child(prototype_button("settings.rewriteCredentialEdit", "Edit").a11y_label("Edit rewrite server credential").on_click(cx.listener(|this, _, _, cx| {
                 this.editing_credential = true;
@@ -1172,8 +1176,8 @@ impl SettingsPage {
             .id("settings.summaryFields")
             .test_support()
             .w_full()
-            .gap(px(14.))
-            .py(px(18.))
+            .gap(px(6.))
+            .py(px(12.))
             .child(div().id("settings.summaryURLLabel").test_support().child(label("Server URL")))
             .child(div().id("settings.summaryURLField").test_support().child(input_surface("link", Some("http://host:8000/v1"), Input::new(&self.summary_url).id("settings.summaryServerURL").aria_label("Server URL").accessibility_id("settings.summaryServerURL"), &self.summary_url, window, cx)))
             .child(div().id("settings.summaryModelLabel").child(label("Model")).test_support())
@@ -1311,8 +1315,8 @@ pub(super) fn row(title: impl Into<SharedString>, detail: Option<String>, contro
         .w_full()
         // `HStack(spacing:)` also spaces the `Spacer(minLength: 0)`, so text and control sit two spacings apart.
         .gap(px(if compact { 20. } else { 44. }))
-        .py(px(19.))
-        .child(v_flex().id(SharedString::from(format!("{id}.text"))).flex_1().min_w_0().gap(px(5.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(1.)).child(t(s).size(12.).color(m).line_spacing(4.).no_widow().swift_lines()))).test_support())
+        .py(px(12.))
+        .child(v_flex().id(SharedString::from(format!("{id}.text"))).flex_1().min_w_0().gap(px(2.)).child(t(title).size(14.)).when_some(detail, |d, s| d.child(div().py(px(1.)).child(t(s).size(12.).color(m).line_spacing(4.).no_widow().swift_lines()))).test_support())
         .child(div().flex_none().child(control))
         .test_support()
 }

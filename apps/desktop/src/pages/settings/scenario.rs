@@ -2,7 +2,7 @@
 //! Tests and the audit use them; production never sets the variable.
 use super::*;
 use flow_core::prefs::Prefs;
-use flow_core::settings::{Alternate, ConnectedInput, InputEntry};
+use flow_core::settings::{ConnectedInput, InputEntry};
 
 pub(super) fn seed(s: &str, p: &mut Prefs) {
     let approved = |p: &mut Prefs, consent: i64| {
@@ -82,9 +82,11 @@ pub(super) fn apply_snapshot(s: &str, n: &mut Snapshot) {
             n.speaker_installing = true;
             n.boost_installing = true;
         }
-        "alternate" | "alt-download" => n.alternate = Some(Alternate { choice: "parakeet-ultra", installed: false, installing: false, completed: 0, total: 0, bytes: 2_500_000_000 }),
-        "alt-downloading" => n.alternate = Some(Alternate { choice: "parakeet-ultra", installed: false, installing: true, completed: 30, total: 100, bytes: 2_500_000_000 }),
-        "alt-installed" => n.alternate = Some(Alternate { choice: "parakeet-ultra", installed: true, installing: false, completed: 0, total: 0, bytes: 2_500_000_000 }),
+        "models-failed" => {
+            n.meeting_failed = true;
+            n.speaker_failed = true;
+            n.boost_failed = true;
+        }
         "permissions-granted" => all(n, Perm::Granted),
         "permissions-refused" => all(n, Perm::Denied),
         _ => {}
@@ -110,8 +112,8 @@ pub(super) fn apply_view(page: &mut SettingsPage, window: &mut Window, cx: &mut 
         }
         "turn-off" => page.prompt_turn_off(window, cx),
         "consent-update-sheet" => page.modal = Some(Modal::ConsentUpdate),
-        "download" => page.prompt_download(false, window, cx),
-        "alt-download" => page.prompt_download(true, window, cx),
+        "download" => page.prompt_download(window, cx),
+        "pair-sheet" => crate::remote::open_pair(page, None, window, cx),
         "exclusions" => page.modal = Some(Modal::Context(ContextKind::Exclusions)),
         "kinds" => page.modal = Some(Modal::Context(ContextKind::Kinds)),
         "microphones" | "voice-over" => {

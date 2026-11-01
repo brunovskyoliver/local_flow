@@ -205,7 +205,7 @@ ONB-204	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 ONB-205	auto	live:audit/mac/onboarding/server-light-ref.png ; live:audit/mac/onboarding/server-light-rust.png ; live:audit/mac/onboarding/server-dark-ref.png ; live:audit/mac/onboarding/server-dark-rust.png ; live:audit/mac/onboarding/fingerprint-light-rust.png ; live:audit/mac/onboarding/signin-light-rust.png ; live:audit/mac/onboarding/signin-light-ref.png ; live:audit/mac/onboarding/mismatch-light-rust.png ; live:audit/mac/onboarding/mismatch-light-ref.png ; live:audit/mac/onboarding/fingerprint-dark-rust.png ; live:audit/mac/onboarding/signin-dark-rust.png ; live:audit/mac/onboarding/signin-dark-ref.png ; live:audit/mac/onboarding/mismatch-dark-rust.png ; live:audit/mac/onboarding/mismatch-dark-ref.png ; rust-only:needs an https identity with a trusted certificate in the reference ; rust-only:needs an https identity with a trusted certificate in the reference ; test:server_step_pairing_and_turn_off
 ONB-206	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 ONB-207	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
-ONB-208	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+ONB-208	recorded	recorded:removed: owner dropped sign-in, 2026-11-01 ; note:copy shortened at the owner's request, 2026-11-01; Rust differs from Swift
 ONB-209	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 ONB-210	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 ONB-211	auto	test:origins_and_overrides

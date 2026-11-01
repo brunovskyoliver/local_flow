@@ -11,8 +11,7 @@ pub(crate) enum Modal {
     ConsentUpdate,
     Context(ContextKind),
     TurnOff,
-    /// `true` for the second speech model.
-    Download(bool),
+    Download,
 }
 
 /// An installed app's name and icon, or the bundle ID and no icon.
@@ -51,16 +50,15 @@ impl SettingsPage {
         self.open_modal(Modal::TurnOff, cx);
     }
 
-    /// `alternate` picks the second speech model's copy and action.
-    pub(super) fn prompt_download(&mut self, alternate: bool, _window: &mut Window, cx: &mut Context<Self>) {
-        self.open_modal(Modal::Download(alternate), cx);
+    pub(super) fn prompt_download(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open_modal(Modal::Download, cx);
     }
 
     fn confirm_alert(&mut self, cx: &mut Context<Self>) {
         let modal = self.modal.take();
         match modal {
             Some(Modal::TurnOff) => self.confirm_turn_off(cx),
-            Some(Modal::Download(alternate)) => self.run(if alternate { "downloadAlternateSpeechModel" } else { "download" }, cx),
+            Some(Modal::Download) => self.run("download", cx),
             _ => {}
         }
         cx.notify();
@@ -111,7 +109,7 @@ impl SettingsPage {
             ("escape", Some(_)) => self.close_modal(cx),
             ("enter", Some(Modal::ConsentUpdate)) => self.confirm_consent_update(cx),
             ("enter", Some(Modal::Context(_))) => self.close_modal(cx),
-            ("enter", Some(Modal::Download(_))) => self.confirm_alert(cx),
+            ("enter", Some(Modal::Download)) => self.confirm_alert(cx),
             _ => {}
         }
     }
@@ -125,13 +123,13 @@ impl SettingsPage {
         let body: AnyElement = match modal {
             Modal::ConsentUpdate => self.consent_update(cx).into_any_element(),
             Modal::Context(kind) => self.context_sheet(kind, window, cx).into_any_element(),
-            Modal::TurnOff => self.alert("Turn off remote dictation?".into(), "This Mac's credentials, device key and server pin are deleted. Your history stays. You will need a new pairing token to turn it back on.".into(), true, "Turn Off", cx).into_any_element(),
-            Modal::Download(alternate) => {
-                let (title, message) = self.download_copy(alternate);
+            Modal::TurnOff => self.alert("Turn off remote dictation?".into(), "Deletes this Mac's pairing. History stays. Turning it back on needs a new token.".into(), true, "Turn Off", cx).into_any_element(),
+            Modal::Download => {
+                let (title, message) = self.download_copy();
                 self.alert(title, message, false, "Download", cx).into_any_element()
             }
         };
-        if matches!(modal, Modal::TurnOff | Modal::Download(_)) {
+        if matches!(modal, Modal::TurnOff | Modal::Download) {
             return Some(sheet_overlay("settings.modal", window, cx, body).into_any_element());
         }
         // The context sheet sets its own surface; the consent sheet stays on the native sheet's fill.
@@ -139,30 +137,18 @@ impl SettingsPage {
         Some(sheet_overlay("settings.modal", window, cx, div().id("settings.sheet").bg(fill).rounded(px(12.)).text_color(pl.ink).child(body).test_support()).into_any_element())
     }
 
-    pub(super) fn download_copy(&self, alternate: bool) -> (String, String) {
-        let s = &self.snapshot;
-        let current = core::speech_name(s.speech_model);
-        if !alternate {
-            let size = s.download_bytes.map_or("Download size unavailable.".to_string(), core::byte_count);
-            return (format!("Download {current}?"), format!("{size}\n{}", core::speech_attribution(s.speech_model)));
-        }
-        match &s.alternate {
-            Some(a) => (
-                format!("Download {}?", a.name()),
-                format!("{} from Hugging Face, verified against pinned hashes.\n{}\nDictation keeps using {current} until you switch.", core::byte_count(a.bytes), core::speech_attribution(a.choice)),
-            ),
-            None => ("Download speech model?".into(), String::new()),
-        }
+    pub(super) fn download_copy(&self) -> (String, String) {
+        let size = self.snapshot.download_bytes.map_or("Download size unavailable.".to_string(), core::byte_count);
+        (format!("Download {}?", flow_core::onboarding::speech_model_name()), format!("{size}\n{}", core::SPEECH_ATTRIBUTION))
     }
 
     fn consent_update(&self, cx: &mut Context<Self>) -> Div {
-        let text = core::consent_text(prefs(cx));
         v_flex()
             .w(px(460.))
             .p(px(24.))
             .gap(px(16.))
             .child(t("Send summaries and meetings to your server?").font(17., 500.))
-            .child(t(text).size(13.).line_spacing(3.).swift_lines())
+            .child(t(core::CONSENT_UPDATE_TEXT).size(13.).line_spacing(3.).swift_lines())
             .child(
                 h_flex()
                     .w_full()
@@ -274,7 +260,6 @@ impl SettingsPage {
                     .id("settings.contextHeader")
                     .gap(px(4.))
                     .child(t(if exclusions { "Excluded apps" } else { "App kinds" }).font(17., 500.))
-                    .child(t(if exclusions { "App context is never read in these apps." } else { "Sets the kind of app used for writing style." }).size(13.).color(pl.muted))
                     .test_support(),
             )
             .child(list)

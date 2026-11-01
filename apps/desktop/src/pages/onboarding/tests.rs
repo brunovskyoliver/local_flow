@@ -1072,11 +1072,11 @@ async fn server_step_pairing_and_turn_off(cx: &mut TestAppContext) {
         p.setup.step = Step::AiDetails;
         p.setup.ai_mode = AiMode::Remote;
     });
-    assert_saw(&["Connect ", "your server", "Turn on Remote dictation with the address and token from your server. You can change this later in Settings.", "Remote dictation", "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run.", "Nothing leaves this Mac until", "Pair to continue", "Use this server"]);
+    assert_saw(&["Connect ", "your server", "Turn on Remote dictation with the address and token from your server. You can change this later in Settings.", "Remote dictation", "Nothing leaves this Mac until", "Pair to continue", "Use this server"]);
     assert!(disabled(cx, w, "onboarding.primary"));
     // The switch opens the pairing sheet; Cancel and Esc leave it off and store nothing.
     click(cx, w, "settings.remoteEnabled");
-    assert_saw(&["Pair with a token", "Dictation audio, transcripts, Dictionary terms"]);
+    assert_saw(&["Pair with a token", "Once approved, dictation and meeting audio"]);
     assert!(disabled(cx, w, "settings.remotePairConfirm"));
     click(cx, w, "settings.remotePairCancel");
     assert!(read(cx, w, |p, _| p.pair.sheet.is_none()) && !flag(cx, "remote.enabled"));
@@ -2000,7 +2000,7 @@ async fn pairing_from_the_server_step(cx: &mut TestAppContext) {
     assert_saw(&["Pair with a token", "Use a token from your server's owner."]);
     let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::error("pairing_token_invalid"), Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")], false));
     click(cx, w, "settings.remotePairWithToken");
-    assert_saw(&["Pair with a token", "Dictation audio, transcripts"]);
+    assert_saw(&["Pair with a token", "Once approved, dictation and meeting audio"]);
     assert!(disabled(cx, w, "settings.remotePairConfirm"));
     // A pasted link fills both fields and the sheet says where it goes.
     let link = server.link();

@@ -24,9 +24,10 @@ pub const RETIRED_KEYS: [&str; 4] =
     ["meetingTranscriptionEnabled", "meetingDiarizationEnabled", "settings.meetingSummariesAutomatic", "settings.speakerIdentificationEnabled"];
 pub const RELEASES_URL: &str = "https://github.com/brunovskyoliver/local_flow/releases/latest";
 
-pub const CONSENT_TEXT: &str = "Dictation audio, transcripts, Dictionary terms and rewrite text will leave this Mac for the server below while remote dictation is on. With Use this server for everything, so will meeting audio, meeting transcripts and the text summaries are made from. The server's administrator can see audio while it is being processed. Nothing is sent until the administrator approves this device; dictation stays local whenever the server can't be reached.";
-pub const MEETING_CONSENT_TEXT: &str = "Meeting audio, meeting transcripts and the text summaries are made from will leave this Mac for the server below. The server's administrator can see audio while it is being processed. Meetings handed off to the server stay there until they are merged back, at most 7 days. Nothing is sent until the administrator approves this device; recordings wait on this Mac while the server can't be reached. If you set up dictation later, dictation audio, transcripts, Dictionary terms and rewrite text go to this server too.";
-pub const CONTEXT_DISCLOSURE: &str = "Reads the app name, window title and text around the cursor to spell names as they appear on screen. Never reads passwords, the clipboard or excluded apps.";
+pub const CONSENT_TEXT: &str = "Once approved, dictation and meeting audio and text go to this server.";
+pub const MEETING_CONSENT_TEXT: &str = "Once approved, meeting audio and text go to this server.";
+pub const CONSENT_UPDATE_TEXT: &str = "Meeting audio, meeting transcripts and summary text go to your server.";
+pub const CONTEXT_DISCLOSURE: &str = "Reads the app name, window title and nearby text. Never passwords or the clipboard.";
 
 /// `http://127.0.0.1:<flowd port>`: port base plus 80.
 pub fn loopback_endpoint() -> String {
@@ -71,13 +72,8 @@ pub fn whisper_language(language: &str) -> &'static str {
         _ => "auto",
     }
 }
-pub fn speech_model(p: &Prefs) -> &'static str {
-    match p.string("speechModel").as_deref() {
-        Some("parakeet-ultra") => "parakeet-ultra",
-        Some(_) => "parakeet-v3",
-        None if p.int_or("setupVersion", 0) == 0 => "parakeet-ultra",
-        None => "parakeet-v3",
-    }
+pub fn speech_model(_: &Prefs) -> &'static str {
+    super::onboarding::SPEECH_MODEL
 }
 pub fn summary_server(p: &Prefs) -> &'static str {
     one_of(p, "summaryServer", &["remote", "local"], "local")
@@ -310,7 +306,7 @@ impl RewriteSettings {
     }
     pub fn warning(&self) -> Option<String> {
         (self.is_unencrypted_remote() && self.insecure_override).then(|| {
-            format!("Transcripts and the credential travel unencrypted to {}. Authentication does not encrypt them. Use this only on a network you trust.", self.host())
+            format!("Transcripts and the credential travel unencrypted to {}. Use only on a network you trust.", self.host())
         })
     }
     /// The two checks that send nothing.
@@ -350,10 +346,10 @@ pub fn bypass_note(shortcut: &Shortcut) -> &'static str {
 }
 pub fn mode_definition(mode: &str) -> &'static str {
     match mode {
-        "exact" => "Insert the saved transcript unchanged. No request is sent.",
-        "polished" => "Restructure sentences into natural professional writing while keeping every fact and action.",
-        "concise" => "Remove repetition and clutter while keeping every fact and action.",
-        _ => "Keep wording and meaning; fix punctuation, grammar and capitalization, and remove fillers, stutters and self-corrections.",
+        "exact" => "Insert the transcript unchanged.",
+        "polished" => "Rewrite as professional sentences, keeping every fact.",
+        "concise" => "Remove repetition, keeping every fact.",
+        _ => "Fix punctuation and grammar, remove fillers.",
     }
 }
 
@@ -555,7 +551,7 @@ impl Routing {
         if !self.served(s) {
             return Some(if self.server_only { "Unavailable" } else { "On this Mac" });
         }
-        Some(if s == Service::Dictation && !self.server_only { "On this Mac (used if the server is unreachable)" } else { "On your server" })
+        Some(if s == Service::Dictation && !self.server_only { "Fallback on this Mac" } else { "On your server" })
     }
 }
 
@@ -580,12 +576,12 @@ pub fn remote_status(p: &Prefs) -> Option<&'static str> {
 /// The detail of the main remote row.
 pub fn remote_detail(p: &Prefs) -> String {
     if !p.bool_or("remote.enabled", false) {
-        return if meeting_only(p) { "Run meeting transcripts and notes on a LocalFlow server you run." } else { "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run." }.into();
+        return String::new();
     }
     [Some(remote_server_url(p).as_str()), remote_status(p)].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
 }
 pub fn consent_text(p: &Prefs) -> &'static str {
-    if meeting_only(p) || p.bool_or("server.only", false) { MEETING_CONSENT_TEXT } else { CONSENT_TEXT }
+    if meeting_only(p) { MEETING_CONSENT_TEXT } else { CONSENT_TEXT }
 }
 /// What a server answer does: the state and notice to store, the Keychain accounts to remove.
 pub struct ServerAnswer {
@@ -1030,55 +1026,9 @@ pub enum Runtime {
     Ready,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Alternate {
-    pub choice: &'static str,
-    pub installed: bool,
-    pub installing: bool,
-    pub completed: u64,
-    pub total: u64,
-    pub bytes: u64,
-}
-impl Alternate {
-    pub fn name(&self) -> &'static str {
-        speech_name(self.choice)
-    }
-    pub fn role(&self) -> &'static str {
-        if self.choice == "parakeet-ultra" { "Default for new setups" } else { "Alternative dictation model" }
-    }
-    pub fn readiness(&self) -> String {
-        if self.installing {
-            "Downloading…".into()
-        } else if self.installed {
-            "Installed".into()
-        } else {
-            format!("Not installed · {}", byte_count(self.bytes))
-        }
-    }
-}
-
-/// `SpeechModelChoice.downloadBytes`: the sum of the file sizes in `Resources/Models/<choice>.json`.
-pub fn speech_download_bytes(choice: &str) -> u64 {
-    if choice == "parakeet-ultra" { 632_162_964 } else { 483_105_645 }
-}
-pub fn other_speech_model(choice: &str) -> &'static str {
-    if choice == "parakeet-ultra" { "parakeet-v3" } else { "parakeet-ultra" }
-}
-impl Alternate {
-    pub fn not_installed(choice: &'static str) -> Self {
-        Alternate { choice, installed: false, installing: false, completed: 0, total: 0, bytes: speech_download_bytes(choice) }
-    }
-}
-pub fn speech_name(choice: &str) -> &'static str {
-    if choice == "parakeet-ultra" { "Parakeet Ultra" } else { "Parakeet v3" }
-}
-pub fn speech_attribution(choice: &str) -> &'static str {
-    if choice == "parakeet-ultra" {
-        "Moondream parakeet-ultra (post-trained from NVIDIA parakeet-tdt-0.6b-v3), Core ML conversion by FluidInference. License: CC BY 4.0."
-    } else {
-        "NVIDIA parakeet-tdt-0.6b-v3, Core ML conversion by FluidInference. License: CC BY 4.0."
-    }
-}
+/// The sum of the file sizes in `Resources/Models/parakeet-ultra.json`.
+pub const SPEECH_DOWNLOAD_BYTES: u64 = 632_162_964;
+pub const SPEECH_ATTRIBUTION: &str = "Moondream parakeet-ultra (post-trained from NVIDIA parakeet-tdt-0.6b-v3), Core ML conversion by FluidInference. License: CC BY 4.0.";
 /// `ByteCountFormatter` with `.file`: decimal units, up to two fractional digits for GB.
 pub fn byte_count(bytes: u64) -> String {
     super::onboarding::bytes(bytes as i64)
@@ -1091,14 +1041,16 @@ pub struct Snapshot {
     pub model_installed: bool,
     pub speech_model: &'static str,
     pub model_install_error: Option<String>,
-    pub alternate: Option<Alternate>,
     pub keep_model_ready: bool,
     pub meeting_installed: bool,
     pub meeting_installing: bool,
+    pub meeting_failed: bool,
     pub speaker_installed: bool,
     pub speaker_installing: bool,
+    pub speaker_failed: bool,
     pub boost_installed: bool,
     pub boost_installing: bool,
+    pub boost_failed: bool,
     pub runtime: Runtime,
     pub controls_available: bool,
     pub leased: bool,
@@ -1123,14 +1075,16 @@ impl Default for Snapshot {
             model_installed: false,
             speech_model: "parakeet-ultra",
             model_install_error: None,
-            alternate: None,
             keep_model_ready: false,
             meeting_installed: false,
             meeting_installing: false,
+            meeting_failed: false,
             speaker_installed: false,
             speaker_installing: false,
+            speaker_failed: false,
             boost_installed: false,
             boost_installing: false,
+            boost_failed: false,
             runtime: Runtime::Unloaded,
             controls_available: true,
             leased: false,
@@ -1151,6 +1105,8 @@ impl Default for Snapshot {
         }
     }
 }
+const DOWNLOAD_FAILED: &str = "Download failed";
+
 impl Snapshot {
     pub fn loaded(&self) -> bool {
         self.runtime == Runtime::Ready
@@ -1171,6 +1127,8 @@ impl Snapshot {
             "Installing…"
         } else if self.meeting_installed {
             "Ready"
+        } else if self.meeting_failed {
+            DOWNLOAD_FAILED
         } else {
             "Not installed · 1.63 GB"
         }
@@ -1180,6 +1138,8 @@ impl Snapshot {
             "Installing…"
         } else if self.speaker_installed {
             "Ready"
+        } else if self.speaker_failed {
+            DOWNLOAD_FAILED
         } else {
             "Not installed"
         }
@@ -1189,6 +1149,8 @@ impl Snapshot {
             "Installing…"
         } else if self.boost_installed {
             "Ready"
+        } else if self.boost_failed {
+            DOWNLOAD_FAILED
         } else {
             "Not installed · 103 MB"
         }
@@ -2307,9 +2269,9 @@ mod tests {
         assert_eq!(speech_model(&p), "parakeet-ultra");
         p.set("setupVersion", 1);
         assert_eq!(p.int_or("setupVersion", 0), 1);
-        assert_eq!(speech_model(&p), "parakeet-v3");
-        p.set("speechModel", "gone");
-        assert_eq!(speech_model(&p), "parakeet-v3");
+        assert_eq!(speech_model(&p), "parakeet-ultra");
+        p.set("speechModel", "parakeet-v3");
+        assert_eq!(speech_model(&p), "parakeet-ultra", "a copied v3 doesn't carry over");
         assert_eq!(local_model_idle_unload(&p), 0);
         p.set("localModelIdleUnload", 900);
         assert_eq!(local_model_idle_unload(&p), 900);
@@ -2402,7 +2364,7 @@ mod tests {
         p.set("remote.consentVersion", 2);
         let r = routing(&p);
         assert_eq!(r.placement(), "Everything on your server");
-        assert_eq!(r.model_place(Service::Dictation), Some("On this Mac (used if the server is unreachable)"));
+        assert_eq!(r.model_place(Service::Dictation), Some("Fallback on this Mac"));
         assert_eq!(r.model_place(Service::Rewrite), Some("On your server"));
         assert!(r.local_rewrite_model_unneeded());
         p.set("server.override.rewrite", "thisMac");
@@ -2470,7 +2432,7 @@ mod tests {
 
         assert_eq!(consent_text(&p), CONSENT_TEXT);
         p.set("server.only", true);
-        assert_eq!(consent_text(&p), MEETING_CONSENT_TEXT);
+        assert_eq!(consent_text(&p), CONSENT_TEXT);
         p.set("server.useForEverything", true);
         p.set("server.override.rewrite", "custom");
         for (k, v) in [("remote.consentVersion", 2), ("remote.fallbackThresholdMs", 2000)] {
@@ -2492,14 +2454,11 @@ mod tests {
     // parity: SET-253 SET-262
     #[test]
     fn download_sizes_are_the_manifests() {
-        for choice in ["parakeet-v3", "parakeet-ultra"] {
-            let path = format!("{}/../../apps/macos/LocalFlow/Resources/Models/{choice}.json", env!("CARGO_MANIFEST_DIR"));
-            let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-            let files = manifest["files"].as_array().unwrap();
-            let sum: u64 = files.iter().map(|f| f["size"].as_u64().or(f["bytes"].as_u64()).unwrap()).sum();
-            assert_eq!(speech_download_bytes(choice), sum, "{choice}");
-        }
-        assert_eq!(Alternate::not_installed(other_speech_model("parakeet-v3")).name(), "Parakeet Ultra");
+        let path = format!("{}/../../apps/macos/LocalFlow/Resources/Models/parakeet-ultra.json", env!("CARGO_MANIFEST_DIR"));
+        let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let files = manifest["files"].as_array().unwrap();
+        let sum: u64 = files.iter().map(|f| f["size"].as_u64().or(f["bytes"].as_u64()).unwrap()).sum();
+        assert_eq!(SPEECH_DOWNLOAD_BYTES, sum);
     }
 
     // parity: SET-026
@@ -2561,16 +2520,11 @@ mod tests {
         s.speaker_installed = true;
         s.boost_installed = true;
         assert_eq!((s.meeting_readiness(), s.speaker_readiness(), s.boost_readiness()), ("Ready", "Ready", "Ready"));
-        assert!(speech_attribution("parakeet-v3").starts_with("NVIDIA parakeet-tdt-0.6b-v3"));
-        assert!(speech_attribution("parakeet-ultra").starts_with("Moondream"));
-        let mut a = Alternate { choice: "parakeet-ultra", installed: false, installing: false, completed: 0, total: 0, bytes: 2_500_000_000 };
-        assert_eq!((a.role(), a.readiness().as_str()), ("Default for new setups", "Not installed · 2.5 GB"));
-        a.installing = true;
-        assert_eq!(a.readiness(), "Downloading…");
-        a.installing = false;
-        a.installed = true;
-        a.choice = "parakeet-v3";
-        assert_eq!((a.role(), a.readiness().as_str()), ("Alternative dictation model", "Installed"));
+        assert!(SPEECH_ATTRIBUTION.starts_with("Moondream"));
+        let mut failed = Snapshot { boost_failed: true, meeting_failed: true, speaker_failed: true, ..Snapshot::default() };
+        assert_eq!((failed.meeting_readiness(), failed.speaker_readiness(), failed.boost_readiness()), ("Download failed", "Download failed", "Download failed"));
+        failed.boost_installing = true;
+        assert_eq!(failed.boost_readiness(), "Installing…", "a retry replaces the failure");
 
         let mut s = Snapshot::default();
         assert_eq!(s.meeting_blocked_reason(), Some("Allow Microphone access to record."));
@@ -2794,7 +2748,7 @@ mod tests {
         set_insecure_override(&mut p, "http://10.0.0.5:8080", true);
         let s = RewriteSettings::capture(&p, |_| false);
         assert_eq!(s.blocked_reason(), Some("Set a credential for this server first."));
-        assert_eq!(s.warning().unwrap(), "Transcripts and the credential travel unencrypted to 10.0.0.5. Authentication does not encrypt them. Use this only on a network you trust.");
+        assert_eq!(s.warning().unwrap(), "Transcripts and the credential travel unencrypted to 10.0.0.5. Use only on a network you trust.");
         assert_eq!(s.preflight(), Some(Connection::MissingCredential));
         let s = RewriteSettings::capture(&p, |_| true);
         assert_eq!(s.blocked_reason(), None);

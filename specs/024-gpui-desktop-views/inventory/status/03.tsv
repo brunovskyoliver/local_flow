@@ -1,10 +1,11 @@
+# 2026-11-01: the owner asked for a concise Settings page. Rust's descriptions, consent wording and row and section spacing now differ from the Swift reference on purpose; tests assert the Rust values.
 SET-001	auto	test:page_padding_at_both_widths ; note:Rust uses 47, 23 and 31 where the row says 48, 24 and 32; measured on the light default and compact pairs, the title ink starts within 1 device pixel (0.5 pt) of the reference at these values; why Swift lands there was not established
 SET-002	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png
 SET-003	auto	test:sections_stack_in_swifts_order
 SET-004	auto	test:section_titles_are_14_medium
-SET-005	auto	test:page_rows_and_sections_are_spaced_like_swift
+SET-005	auto	test:page_rows_and_sections_are_spaced_compactly
 SET-006	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png
-SET-007	auto	test:page_rows_and_sections_are_spaced_like_swift
+SET-007	auto	test:page_rows_and_sections_are_spaced_compactly
 SET-008	recorded	recorded:no Settings row passes info (SET-009), so nothing renders it
 SET-009	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-010	live	live:audit/mac/settings/default-light-ref.png ; live:audit/mac/settings/default-light-rust.png ; live:audit/mac/settings/default-dark-ref.png ; live:audit/mac/settings/default-dark-rust.png ; note:pressed fill not captured
@@ -78,8 +79,8 @@ SET-077	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-078	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-079	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-080	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
-SET-081	auto	test:remote_status_answers_and_reset
-SET-082	auto	test:meeting_only_variant ; test:remote_status_answers_and_reset
+SET-081	auto	test:remote_status_answers_and_reset ; note:copy shortened at the owner's request, 2026-11-01; Rust differs from Swift
+SET-082	auto	test:meeting_only_variant ; test:remote_status_answers_and_reset ; note:copy shortened at the owner's request, 2026-11-01; Rust differs from Swift
 SET-083	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
 SET-084	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-085	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
@@ -107,7 +108,7 @@ SET-106	auto	test:consent_update_sheet
 SET-107	auto	test:consent_update_sheet_type
 SET-108	auto	test:consent_update_sheet
 SET-109	auto	test:consent_update_sheet
-SET-110	auto	test:approved_server_shows_routing_and_turns_off ; test:lower_sections_are_spaced_like_swift
+SET-110	auto	test:approved_server_shows_routing_and_turns_off ; test:lower_sections_are_spaced_compactly
 SET-111	auto	test:approved_server_shows_routing_and_turns_off ; test:routing_truth_table
 SET-112	auto	test:routing_truth_table
 SET-113	auto	test:routing_truth_table
@@ -173,7 +174,7 @@ SET-172	auto	test:general_menus_and_switches_through_real_clicks ; test:default_
 SET-173	auto	test:general_menus_and_switches_through_real_clicks ; test:general_controls_persist
 SET-174	auto	test:default_page_shows_every_section_in_order ; test:microphones_follow_the_catalog ; service:test uses a stub, real CoreAudio not exercised
 SET-175	auto	test:microphones_list_edits
-SET-176	auto	test:microphone_list_and_add_menu ; test:microphones_list_edits ; test:lower_sections_are_spaced_like_swift
+SET-176	auto	test:microphone_list_and_add_menu ; test:microphones_list_edits ; test:lower_sections_are_spaced_compactly
 SET-177	auto	test:microphones_follow_the_catalog ; service:test uses a stub CoreAudio catalog; real catalog is the flow-platform service phase
 SET-178	auto	test:microphone_list_and_add_menu ; test:microphones_list_edits
 SET-179	auto	test:microphones_list_edits ; test:microphones_follow_the_catalog ; test:microphone_list_rules ; service:test uses a stub, real CoreAudio transport type not exercised
@@ -237,36 +238,36 @@ SET-236	auto	test:a_sheet_error_outlives_the_sheet ; test:exclusions_sheet
 SET-237	auto	test:kinds_sheet_type_menus_and_add_row ; test:exclusions_sheet
 SET-238	auto	test:exclusions_and_kinds
 SET-239	auto	test:default_page_shows_every_section_in_order
-SET-240	auto	test:page_rows_and_sections_are_spaced_like_swift
+SET-240	auto	test:page_rows_and_sections_are_spaced_compactly
 SET-241	auto	test:other_model_buttons_hide_when_installed_or_installing ; test:installed_model_controls ; test:routing_truth_table
 SET-242	auto	test:model_buttons_read_and_gate ; test:installed_model_controls
 SET-243	auto	test:the_thread_runs_a_session_and_answers_commands ; note:a real model test is hardware.md 33
 SET-244	auto	test:installed_model_controls
 SET-245	auto	test:installed_model_controls
 SET-246	auto	test:installed_model_controls
-SET-247	auto	test:default_page_shows_every_section_in_order
+SET-247	auto	test:default_page_shows_every_section_in_order ; note:Parakeet v3 removed from Rust at the owner's request, 2026-11-01; always Parakeet Ultra
 SET-248	auto	test:default_page_shows_every_section_in_order ; test:snapshot_readiness_copy
 SET-249	auto	test:model_buttons_read_and_gate ; test:installed_model_controls
 SET-250	auto	test:load_and_unload_go_to_the_session_thread_and_a_failed_test_says_so
 SET-251	auto	test:load_and_unload_go_to_the_session_thread_and_a_failed_test_says_so
 SET-252	auto	test:speech_download_label_and_monospaced_diagnostics ; test:default_page_shows_every_section_in_order
 SET-253	auto	test:download_dialogs_read_exactly ; test:downloads_and_progress ; test:download_sizes_are_the_manifests
-SET-254	auto	test:download_dialogs_read_exactly ; test:downloads_and_progress ; test:snapshot_readiness_copy
+SET-254	auto	test:download_dialogs_read_exactly ; test:downloads_and_progress ; test:snapshot_readiness_copy ; note:v3 attribution removed from Rust at the owner's request, 2026-11-01
 SET-255	auto	test:a_scripted_install_reaches_each_outcome ; test:downloads_and_progress ; note:the real manifest is hardware.md 33
 SET-256	auto	test:default_page_shows_every_section_in_order
 SET-257	service	service:NSOpenPanel and model import not built, 026 tasks T024, Feature 028
-SET-258	auto	test:install_progress_bar_or_spinner ; test:downloads_and_progress ; test:lower_sections_are_spaced_like_swift
+SET-258	auto	test:install_progress_bar_or_spinner ; test:downloads_and_progress ; test:lower_sections_are_spaced_compactly
 SET-259	auto	test:cancel_ends_the_worker_and_leaves_nothing_installed ; test:downloads_and_progress
-SET-260	auto	test:alternate_row_detail_and_when_it_shows
-SET-261	auto	test:downloads_and_progress ; test:snapshot_readiness_copy
-SET-262	auto	test:downloads_and_progress ; test:download_sizes_are_the_manifests ; test:snapshot_readiness_copy ; service:test uses a stub, real model provisioner not exercised
-SET-263	auto	test:model_buttons_read_and_gate ; test:downloads_and_progress
-SET-264	auto	test:model_buttons_read_and_gate ; test:installed_model_controls
-SET-265	not-run	not-run:not built: settings_action refuses, no alternate speech model in Rust, 026 tasks T024, Feature 028
-SET-266	auto	test:model_buttons_read_and_gate ; test:downloads_and_progress
-SET-267	auto	test:download_dialogs_read_exactly ; test:downloads_and_progress
-SET-268	not-run	not-run:not built: settings_action refuses, no alternate speech model in Rust, 026 tasks T024, Feature 028
-SET-269	auto	test:model_buttons_read_and_gate ; test:downloads_and_progress
+SET-260	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-261	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-262	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-263	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-264	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-265	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-266	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-267	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-268	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
+SET-269	recorded	recorded:alternate speech model removed from the Rust client at the owner's request, 2026-11-01
 SET-270	auto	test:default_page_shows_every_section_in_order
 SET-271	auto	test:other_models ; test:snapshot_readiness_copy ; service:test uses a stub, real model provisioner not exercised
 SET-272	auto	test:other_model_buttons_hide_when_installed_or_installing ; test:default_page_shows_every_section_in_order
@@ -308,12 +309,12 @@ SET-307	auto	test:secret_controls_read_exactly
 SET-308	auto	test:rewriting_blocks_until_address_and_secret_are_right
 SET-309	auto	test:rewriting_blocks_until_address_and_secret_are_right
 SET-310	auto	test:address_and_credential_validators_match_swift
-SET-311	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed ; test:lower_sections_are_spaced_like_swift ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
+SET-311	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed ; test:lower_sections_are_spaced_compactly ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
 SET-312	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
 SET-313	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed
 SET-314	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed
 SET-315	auto	test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
-SET-316	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed ; test:lower_sections_are_spaced_like_swift
+SET-316	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed ; test:lower_sections_are_spaced_compactly
 SET-317	auto	test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
 SET-318	auto	test:secret_controls_read_exactly ; test:saved_secret_can_be_revealed_edited_and_removed
 SET-319	auto	test:saved_secret_can_be_revealed_edited_and_removed ; service:test uses a stub, real Keychain `<bundle id>.rewrite` not exercised
@@ -326,7 +327,7 @@ SET-325	auto	test:insecure_switch_connection_button_and_timeout ; test:test_conn
 SET-326	auto	test:real_flowd_through_the_page ; test:real_flowd_health_outcomes
 SET-327	auto	test:real_flowd_through_the_page ; test:rewrite_settings_copy ; test:real_flowd_health_outcomes
 SET-328	auto	test:analysis_status_line_reads_small_and_muted ; test:real_flowd_through_the_page ; test:real_flowd_health_outcomes
-SET-329	auto	test:rewrite_advanced_starts_collapsed_with_padding_14 ; note:font and colour compared by eye in default+rewriting pair
+SET-329	auto	test:rewrite_advanced_starts_collapsed_with_padding_10 ; note:font and colour compared by eye in default+rewriting pair
 SET-330	auto	test:insecure_switch_connection_button_and_timeout ; test:test_connection_preflight_and_advanced
 SET-331	auto	test:insecure_switch_connection_button_and_timeout ; test:test_connection_preflight_and_advanced
 SET-332	auto	test:real_flowd_through_the_page ; test:rewrite_settings_copy ; test:real_flowd_health_outcomes
@@ -335,7 +336,7 @@ SET-334	auto	test:server_advanced_writes_each_override
 SET-335	auto	test:default_page_shows_every_section_in_order
 SET-336	auto	test:summary_fields_read_and_save ; test:default_page_shows_every_section_in_order ; test:controls_have_swifts_measured_sizes
 SET-337	auto	test:summary_fields_read_and_save ; test:summaries_fields_and_key
-SET-338	auto	test:summary_fields_padding_and_labels ; test:summaries_fields_and_key ; test:lower_sections_are_spaced_like_swift
+SET-338	auto	test:summary_fields_padding_and_labels ; test:summaries_fields_and_key ; test:lower_sections_are_spaced_compactly
 SET-339	auto	test:summary_fields_read_and_save ; test:summaries_fields_and_key
 SET-340	auto	test:summaries_fields_and_key
 SET-341	auto	test:summary_fields_read_and_save
@@ -376,7 +377,7 @@ SET-375	service	service:usage report loop and its store not ported, 026 tasks T0
 SET-376	recorded	recorded:Swift has no view for these either; copy kept in USAGE_NOTICES for the screen that will show them
 SET-377	auto	test:preference_defaults_and_keys_match_swift
 SET-378	auto	test:preference_defaults_and_keys_match_swift
-SET-379	auto	test:preference_defaults_and_keys_match_swift
+SET-379	auto	test:preference_defaults_and_keys_match_swift ; note:Parakeet v3 removed from Rust at the owner's request, 2026-11-01; always parakeet-ultra
 SET-380	auto	test:keep_loaded_and_rewrite_model_rows ; test:preference_defaults_and_keys_match_swift
 SET-381	auto	test:preference_defaults_and_keys_match_swift
 SET-382	auto	test:preference_defaults_and_keys_match_swift

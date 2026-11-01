@@ -60,7 +60,7 @@ async fn section_titles_are_14_medium(cx: &mut TestAppContext) {
     let s = style("Updates");
     assert_eq!((s.size, s.weight), (14., 500.));
     let (outer, text) = (bounds(cx, _r.win, "settings.section.General"), bounds(cx, _r.win, "settings.section.General.text"));
-    assert_eq!((text.top() - outer.top(), outer.bottom() - text.bottom()), (px(29.), px(13.)), "padding");
+    assert_eq!((text.top() - outer.top(), outer.bottom() - text.bottom()), (px(24.), px(8.)), "padding");
 }
 
 // parity: SET-015
@@ -166,9 +166,8 @@ async fn pinned_line_is_12_muted_with_two_spaces(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn consent_update_sheet_type(cx: &mut TestAppContext) {
     let r = rig(cx, "consent-update-sheet", |_| {});
-    let text = cx.update(|cx| core::consent_text(&cx.global::<Core>().prefs));
     assert_type("Send summaries and meetings to your server?", 17., 500., palette(cx).ink);
-    assert_eq!(style(&text).size, 13.);
+    assert_eq!(style(core::CONSENT_UPDATE_TEXT).size, 13.);
     assert_eq!(bounds(cx, r.win, "settings.sheet").size.width, px(460.));
 }
 
@@ -223,7 +222,7 @@ async fn server_advanced_starts_closed(cx: &mut TestAppContext) {
     assert_type("Advanced", 12., 400., muted);
     assert_symbols(&["chevron.right"]);
     let (outer, inner) = (bounds(cx, r.win, "settings.serverAdvancedRow"), bounds(cx, r.win, "settings.serverAdvanced"));
-    assert_eq!((inner.top() - outer.top(), outer.bottom() - inner.bottom()), (px(14.), px(14.)), "vertical padding 14");
+    assert_eq!((inner.top() - outer.top(), outer.bottom() - inner.bottom()), (px(10.), px(10.)), "vertical padding 10");
     click(cx, r.win, "settings.serverAdvanced");
     assert!(has(cx, r.win, "settings.serverOverride.dictation"));
     assert_symbols(&["chevron.down"]);
@@ -244,8 +243,7 @@ async fn override_menus_offer_swifts_options_and_write_through_a_click(cx: &mut 
         let frame_id: &'static str = format!("{id}.frame").leak();
         assert_eq!(bounds(cx, r.win, frame_id).size.width, px(150.), "{id}");
     }
-    assert_saw(&["Speech recognition; rewriting follows its own row", "Transcripts, speaker labels and voice matching"]);
-    assert!(!saw("Your server is used if this server fails"), "only with the custom fields");
+    assert!(!saw("Falls back to your server"), "only with the custom fields");
 
     set(cx, r.win, |p, _, _| p.check_result = Some("x".into()));
     choose(cx, r.win, "settings.serverOverride.dictation", "This Mac");
@@ -267,7 +265,7 @@ async fn override_menus_offer_swifts_options_and_write_through_a_click(cx: &mut 
     choose(cx, r.win, "settings.serverOverride.summaries", "Custom server");
     assert_eq!(pref_s(cx, "server.override.summaries").as_deref(), Some("custom"));
     assert_eq!(pref_s(cx, "summaryServer").as_deref(), Some("remote"), "custom also writes it");
-    assert_saw(&["Your server is used if this server fails", "API key"]);
+    assert_saw(&["Falls back to your server", "API key"]);
     choose(cx, r.win, "settings.serverOverride.summaries", "This Mac");
     assert_eq!(pref_s(cx, "server.override.summaries").as_deref(), Some("thisMac"));
     assert_eq!(pref_s(cx, "summaryServer").as_deref(), Some("remote"), "another option doesn't revert it");
@@ -278,7 +276,7 @@ async fn override_menus_offer_swifts_options_and_write_through_a_click(cx: &mut 
 async fn fallback_stepper_label_and_steps(cx: &mut TestAppContext) {
     let r = rig(cx, "advanced", |_| {});
     let ms = |n: i64| format!("{} ms", flow_core::insights::grouped(n));
-    assert_saw(&["Fallback threshold", "Dictation uses this Mac after this wait", &ms(1500)]);
+    assert_saw(&["Fallback threshold", "Then dictation uses this Mac", &ms(1500)]);
     assert_eq!(label(cx, r.win, "settings.serverFallbackThreshold.up"), "Remote dictation fallback threshold in milliseconds, increase");
     assert_eq!(label(cx, r.win, "settings.serverFallbackThreshold.down"), "Remote dictation fallback threshold in milliseconds, decrease");
     click(cx, r.win, "settings.serverFallbackThreshold.up");
@@ -370,13 +368,13 @@ async fn shortcut_button_gates_and_stops_without_a_callback(cx: &mut TestAppCont
     });
     click(cx, r.win, "settings.shortcut");
     assert_eq!(label(cx, r.win, "settings.shortcut"), "Listening…");
-    assert_saw(&["Press a shortcut, then release. Esc to cancel."]);
+    assert_saw(&["Press a shortcut. Esc cancels."]);
     assert_eq!(read(cx, r.win, |p, _| p.recording_error.clone()), None, "cleared on start");
     assert_eq!(r.log.borrow().iter().filter(|l| *l == "record").count(), 1);
     click(cx, r.win, "settings.shortcut");
     assert_eq!(r.log.borrow().iter().filter(|l| *l == "record").count(), 1, "stops with no callback");
     assert!(!logged(&r, "install"));
-    assert!(!saw("Press a shortcut, then release. Esc to cancel."));
+    assert!(!saw("Press a shortcut. Esc cancels."));
     r.ok.set(false);
     click(cx, r.win, "settings.shortcut");
     assert!(has(cx, r.win, "settings.recordingError"), "start failure");
@@ -424,7 +422,7 @@ async fn general_menus_and_switches_through_real_clicks(cx: &mut TestAppContext)
 async fn microphone_list_and_add_menu(cx: &mut TestAppContext) {
     let r = rig(cx, "microphones", |_| {});
     let muted = palette(cx).muted;
-    let copy = "LocalFlow records from the first microphone on this list that is connected.";
+    let copy = "Uses the first connected microphone.";
     assert_type(copy, 12., 400., muted);
     let (description, list) = (bounds(cx, r.win, "settings.microphones.description"), bounds(cx, r.win, "settings.microphones.list"));
     assert_eq!(list.top() - description.bottom(), px(0.), "the padding is inside the description");
@@ -469,7 +467,6 @@ async fn kinds_sheet_type_menus_and_add_row(cx: &mut TestAppContext) {
     let r = rig(cx, "kinds", |_| {});
     let pl = palette(cx);
     assert_type("App kinds", 17., 500., pl.ink);
-    assert_type("Sets the kind of app used for writing style.", 13., 400., pl.muted);
     assert_type("No apps yet", 14., 400., pl.muted);
     assert_eq!(label(cx, r.win, "settings.contextBundleID"), "Bundle ID");
     let placeholder = r.win.update(cx, |_, w, _| w.find("settings.contextBundleID").placeholder().map(String::from)).unwrap();
@@ -558,39 +555,22 @@ async fn model_buttons_read_and_gate(cx: &mut TestAppContext) {
     assert_eq!(label(cx, r.win, "settings.speechLoad"), "Unload");
     click(cx, r.win, "settings.speechLoad");
     assert!(logged(&r, "action unload"));
-    let r = rig(cx, "alt-installed", |_| {});
-    assert_eq!(label(cx, r.win, "settings.alternateUse"), "Use Parakeet Ultra for dictation");
-    set(cx, r.win, |p, _, _| p.performing = true);
-    assert!(disabled(cx, r.win, "settings.alternateUse"));
-    let r = rig(cx, "alternate", |_| {});
-    assert_eq!(label(cx, r.win, "settings.alternateDownload"), "Download…");
-    set(cx, r.win, |p, _, _| p.snapshot.installing = true);
-    assert!(disabled(cx, r.win, "settings.alternateDownload"), "while the main install runs");
-    let r = rig(cx, "alt-downloading", |_| {});
-    assert_eq!(label(cx, r.win, "settings.alternateCancel"), "Cancel");
-    assert!(has(cx, r.win, "settings.alternateProgress"));
-    set(cx, r.win, |p, _, _| p.snapshot.alternate.as_mut().unwrap().total = 0);
-    assert!(!has(cx, r.win, "settings.alternateProgress"), "only when total is above 0");
 }
 
 // parity: SET-253 SET-254 SET-267
 #[flow_ui::gpui::test]
 async fn download_dialogs_read_exactly(cx: &mut TestAppContext) {
-    let v3 = "NVIDIA parakeet-tdt-0.6b-v3, Core ML conversion by FluidInference. License: CC BY 4.0.";
     let ultra = "Moondream parakeet-ultra (post-trained from NVIDIA parakeet-tdt-0.6b-v3), Core ML conversion by FluidInference. License: CC BY 4.0.";
-    assert_eq!(core::speech_attribution("parakeet-v3"), v3);
-    assert_eq!(core::speech_attribution("parakeet-ultra"), ultra);
+    assert_eq!(core::SPEECH_ATTRIBUTION, ultra);
     let r = rig(cx, "download", |_| {});
-    let (title, message) = read(cx, r.win, |p, _| p.download_copy(false));
+    let (title, message) = read(cx, r.win, |p, _| p.download_copy());
     assert_eq!(title, "Download Parakeet Ultra?");
     let size = read(cx, r.win, |p, _| core::byte_count(p.snapshot.download_bytes.unwrap()));
     assert_eq!(message, format!("{size}\n{ultra}"));
     assert_eq!(label(cx, r.win, "settings.alert.confirm"), "Download");
     assert_eq!(label(cx, r.win, "settings.alert.cancel"), "Cancel");
     set(cx, r.win, |p, _, _| p.snapshot.download_bytes = None);
-    assert_eq!(read(cx, r.win, |p, _| p.download_copy(false)).1, format!("Download size unavailable.\n{ultra}"));
-    set(cx, r.win, |p, _, _| p.snapshot.alternate = None);
-    assert_eq!(read(cx, r.win, |p, _| p.download_copy(true)).0, "Download speech model?");
+    assert_eq!(read(cx, r.win, |p, _| p.download_copy()).1, format!("Download size unavailable.\n{ultra}"));
 }
 
 // parity: SET-258
@@ -603,7 +583,7 @@ async fn install_progress_bar_or_spinner(cx: &mut TestAppContext) {
     assert_eq!(label(cx, r.win, "settings.installCancel"), "Cancel");
     let (bar, cancel) = (bounds(cx, r.win, "settings.installProgress"), bounds(cx, r.win, "settings.installCancel"));
     assert_eq!(cancel.right(), bar.right(), "Cancel at the right");
-    assert_eq!(cancel.top() - bar.bottom(), px(10.), "spacing 10");
+    assert_eq!(cancel.top() - bar.bottom(), px(8.), "spacing 8");
     set(cx, r.win, |p, _, _| p.snapshot.total = 0);
     assert!(!has(cx, r.win, "settings.installProgressBar"), "spinner when it isn't");
     let r = rig(cx, "verifying", |_| {});
@@ -632,19 +612,19 @@ async fn other_model_buttons_hide_when_installed_or_installing(cx: &mut TestAppC
     let _r = rig(cx, "approved", |p| {
         p.set("server.capabilities", core::Capabilities { ops: ["dictation_start".into(), "rewrite".into(), "analysis".into(), "meeting_job".into()].into(), meeting_jobs: ["transcribe".into()].into() });
     });
-    assert_saw(&["Meeting transcripts · On your server · Not installed · 1.63 GB", "Who said what · On this Mac · Not installed"]);
+    assert_saw(&["Meetings · On your server · Not installed · 1.63 GB", "On this Mac · Not installed"]);
 }
 
 // parity: SET-285 SET-286 SET-287 SET-288 SET-289 SET-290 SET-380
 #[flow_ui::gpui::test]
 async fn keep_loaded_and_rewrite_model_rows(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
-    assert!(!saw("Applies when dictating on this Mac"));
+    assert!(!saw("Local dictation only"));
     assert_eq!(label(cx, r.win, "settings.keepModelReady"), "Keep Parakeet loaded");
     set(cx, r.win, |p, _, _| p.snapshot.controls_available = false);
     assert!(disabled(cx, r.win, "settings.keepModelReady"));
     let r = rig(cx, "approved", |_| {});
-    assert_saw(&["Applies when dictating on this Mac"]);
+    assert_saw(&["Local dictation only"]);
     let endpoint = core::loopback_endpoint();
     let e = endpoint.clone();
     let r2 = rig(cx, "", move |p| p.set("rewriteEndpoint", e.as_str()));
@@ -671,7 +651,7 @@ async fn keep_loaded_and_rewrite_model_rows(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn unencrypted_warning_sits_above_the_group(cx: &mut TestAppContext) {
     let r = rig(cx, "rewrite-insecure", |_| {});
-    let copy = "Transcripts and the credential travel unencrypted to 10.0.0.5. Authentication does not encrypt them. Use this only on a network you trust.";
+    let copy = "Transcripts and the credential travel unencrypted to 10.0.0.5. Use only on a network you trust.";
     assert_type(copy, 12., 400., palette(cx).warning);
     let warning = bounds(cx, r.win, "settings.rewriteWarning");
     assert_eq!(bounds(cx, r.win, "settings.row.Enable rewriting").top() - warning.bottom(), px(0.), "padding 12 inside it");
@@ -704,11 +684,11 @@ async fn rewrite_row_tips_menu_and_definitions(cx: &mut TestAppContext) {
     assert_eq!(bounds(cx, r.win, "settings.rewriteDefaultMode.frame").size.width, px(120.));
     choose(cx, r.win, "settings.rewriteDefaultMode", "Concise");
     assert_eq!(pref_s(cx, "rewriteDefaultMode").as_deref(), Some("concise"));
-    let definition = "Remove repetition and clutter while keeping every fact and action.";
+    let definition = "Remove repetition, keeping every fact.";
     assert_eq!(core::mode_definition("concise"), definition);
-    assert_eq!(core::mode_definition("exact"), "Insert the saved transcript unchanged. No request is sent.");
-    assert_eq!(core::mode_definition("clean"), "Keep wording and meaning; fix punctuation, grammar and capitalization, and remove fillers, stutters and self-corrections.");
-    assert_eq!(core::mode_definition("polished"), "Restructure sentences into natural professional writing while keeping every fact and action.");
+    assert_eq!(core::mode_definition("exact"), "Insert the transcript unchanged.");
+    assert_eq!(core::mode_definition("clean"), "Fix punctuation and grammar, remove fillers.");
+    assert_eq!(core::mode_definition("polished"), "Rewrite as professional sentences, keeping every fact.");
     cx.update_window(r.win.into(), |_, w, cx| w.hover("settings.rewriteDefaultMode.tip", cx)).unwrap();
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.run_until_parked();
@@ -948,9 +928,9 @@ async fn summary_fields_padding_and_labels(cx: &mut TestAppContext) {
     assert_type("Model", 12., 500., muted);
     assert_type("API key", 12., 500., muted);
     let (box_, url) = (bounds(cx, r.win, "settings.summaryFields"), bounds(cx, r.win, "settings.summaryURLLabel"));
-    assert_eq!(url.top() - box_.top(), px(18.), "padding 18");
+    assert_eq!(url.top() - box_.top(), px(12.), "padding 12");
     let key = bounds(cx, r.win, "settings.summaryKeyRow");
-    assert_eq!(box_.bottom() - key.bottom(), px(18.));
+    assert_eq!(box_.bottom() - key.bottom(), px(12.));
 }
 
 // parity: SET-252 SET-333

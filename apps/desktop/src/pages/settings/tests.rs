@@ -23,6 +23,7 @@ struct Stub {
     permissions: Rc<Cell<PermissionState>>,
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
     install: Rc<Cell<Option<(u64, u64, bool)>>>,
+    packs: Rc<RefCell<Vec<(flow_platform::ModelPack, flow_platform::InstallState)>>>,
     recorded: Rc<RefCell<Option<Option<String>>>>,
 }
 impl Stub {
@@ -56,6 +57,9 @@ impl flow_platform::Services for Stub {
     }
     fn high_contrast(&self) -> bool {
         false
+    }
+    fn install_state(&self, pack: flow_platform::ModelPack) -> flow_platform::InstallState {
+        self.packs.borrow().iter().find(|p| p.0 == pack).map_or_else(Default::default, |p| p.1.clone())
     }
     fn app_name(&self, id: &str) -> Option<String> {
         (id == "com.apple.Passwords").then(|| "Alpha Keys".to_string())
@@ -138,6 +142,7 @@ struct Rig {
     catalog: Rc<RefCell<Option<flow_platform::InputCatalog>>>,
     permissions: Rc<Cell<PermissionState>>,
     install: Rc<Cell<Option<(u64, u64, bool)>>>,
+    packs: Rc<RefCell<Vec<(flow_platform::ModelPack, flow_platform::InstallState)>>>,
     recorded: Rc<RefCell<Option<Option<String>>>>,
 }
 
@@ -148,7 +153,8 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let permissions_handle = permissions.clone();
     let install = Rc::new(Cell::new(None));
     let recorded: Rc<RefCell<Option<Option<String>>>> = Default::default();
-    let stub = Stub { recorded: recorded.clone(), fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone(), install: install.clone() };
+    let packs: Rc<RefCell<Vec<_>>> = Default::default();
+    let stub = Stub { recorded: recorded.clone(), fake: Fake::default(), ok: ok.clone(), log: log.clone(), secrets: secrets.clone(), permissions, catalog: catalog.clone(), install: install.clone(), packs: packs.clone() };
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
         core.services = Box::new(stub);
@@ -159,7 +165,7 @@ fn rig(cx: &mut TestAppContext, scenario: &str, prep: impl FnOnce(&mut flow_core
     let bounds = Bounds::new(point(px(0.), px(0.)), size(px(1180.), px(6000.)));
     let win = cx.update(|cx| cx.open_window(WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() }, |w, cx| cx.new(|cx| SettingsPage::new(w, cx)))).unwrap();
     frame(cx, win);
-    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle, install, recorded }
+    Rig { win, ok, log, secrets, catalog, permissions: permissions_handle, install, packs, recorded }
 }
 fn frame(cx: &mut TestAppContext, win: Win) {
     cx.run_until_parked();
@@ -228,7 +234,7 @@ fn logged(r: &Rig, s: &str) -> bool {
 #[flow_ui::gpui::test]
 async fn default_page_shows_every_section_in_order(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
-    assert_saw(&["Settings", "Server", "Remote dictation", "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run.", "Updates", "Software updates", "This build uses manual updates", "General", "Shortcut", "fn / Globe", "Appearance", "Learn corrections", "Show meeting progress", "Meeting language", "App context", "Use app context", "Send context to rewrite server", "Turn on Use app context first.", "Match style to the app", "Experimental", "Excluded apps", "10 apps", "App kinds", "Built in", "Models", "Parakeet", "Dictation · Not installed", "Whisper Turbo", "Meeting transcripts · Not installed · 1.63 GB", "Speaker labels", "Who said what · Not installed", "Term booster", "Dictionary terms in dictation · Not installed · 103 MB", "Keep Parakeet loaded", "Rewriting", "Enable rewriting", "Enter a valid http:// or https:// endpoint first.", "Default mode", "Server URL", "Server secret", "Connection", "Advanced", "Summaries", "Permissions needed", "Microphone", "Input Monitoring", "Accessibility"]);
+    assert_saw(&["Settings", "Server", "Remote dictation", "Updates", "Software updates", "General", "Shortcut", "fn / Globe", "Appearance", "Learn corrections", "Show meeting progress", "Meeting language", "App context", "Use app context", "Send context to rewrite server", "Turn on Use app context first.", "Match style to the app", "Experimental", "Excluded apps", "10 apps", "App kinds", "Built in", "Models", "Parakeet", "Dictation · Not installed", "Whisper Turbo", "Meetings · Not installed · 1.63 GB", "Speaker labels", "Not installed", "Term booster", "Not installed · 103 MB", "Keep Parakeet loaded", "Rewriting", "Enable rewriting", "Enter a valid http:// or https:// endpoint first.", "Default mode", "Server URL", "Server secret", "Connection", "Advanced", "Summaries", "Permissions needed", "Microphone", "Input Monitoring", "Accessibility"]);
     assert!(!saw("Microphones"), "the catalog isn't wired, so the section is absent");
     for id in ["settings.remoteEnabled", "settings.updateDownloads", "settings.shortcut", "settings.appearance", "settings.learnCorrections", "settings.showsBackgroundProgress", "settings.meetingLanguage", "settings.contextEnabled", "settings.contextRewriteEnabled", "settings.contextStyleEnabled", "settings.contextExclusions", "settings.contextKinds", "settings.speechDownload", "settings.speechImport", "settings.rewriteEnabled", "settings.rewriteDefaultMode", "settings.rewriteTestConnection", "settings.summaryServer", "settings.keepModelReady"] {
         assert!(has(cx, r.win, id), "{id}");
@@ -407,7 +413,7 @@ async fn the_switch_opens_the_pairing_sheet_and_nothing_is_stored_until_pair(cx:
     assert_eq!(shown(cx), Some(false), "the switch shows remote.enabled");
     click(cx, r.win, "settings.remoteEnabled");
     assert_eq!(read(cx, r.win, |p, _| p.pair.sheet), Some(crate::remote::Sheet::Pair));
-    assert_saw(&["Pair with a token", "https://server.example.com, http://100.64.0.1:8090", "Add every address that reaches this server, separated by commas. LocalFlow uses whichever one answers.", "Dictation audio, transcripts, Dictionary terms"]);
+    assert_saw(&["Pair with a token", "https://a.example, https://b.example", "Once approved, dictation and meeting audio and text go to this server."]);
     assert_eq!(pref_b(cx, "remote.enabled"), None, "nothing persists on opening");
     assert!(disabled(cx, r.win, "settings.remotePairConfirm"));
     click(cx, r.win, "settings.remotePairCancel");
@@ -471,7 +477,7 @@ async fn set_up_dictation_keeps_the_server_choice(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn meeting_only_variant(cx: &mut TestAppContext) {
     let r = rig(cx, "meeting-only", |_| {});
-    assert_saw(&["Your server", "Run meeting transcripts and notes on a LocalFlow server you run.", "Set up dictation", "Hold a key in any app to talk. Meetings stay as they are.", "Permissions needed", "Microphone"]);
+    assert_saw(&["Your server", "Set up dictation", "Permissions needed", "Microphone"]);
     assert!(!saw("Input Monitoring"));
     assert!(!has(cx, r.win, "settings.shortcut"));
     click(cx, r.win, "settings.setUpDictation");
@@ -485,7 +491,7 @@ async fn meeting_only_variant(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     let r = rig(cx, "approved", |_| {});
-    assert_saw(&["flow.example.com · Approved", "Use this server for everything", "Server only", "Never load models on this Mac", "Services", "On your server: Dictation, Rewriting", "Check connection", "Advanced"]);
+    assert_saw(&["flow.example.com · Approved", "Use this server for everything", "Server only", "No models on this Mac", "Services", "On your server: Dictation, Rewriting", "Check connection", "Advanced"]);
     assert!(!has(cx, r.win, "settings.remoteFingerprint"));
         click(cx, r.win, "settings.serverUseForEverything");
     assert_eq!(pref_b(cx, "server.useForEverything"), Some(false));
@@ -494,7 +500,7 @@ async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     assert_eq!(pref_b(cx, "server.only"), Some(true));
     assert!(disabled(cx, r.win, "settings.serverUseForEverything"));
     click(cx, r.win, "settings.remoteEnabled");
-    assert_saw(&["Turn off remote dictation?", "This Mac's credentials, device key and server pin are deleted. Your history stays. You will need a new pairing token to turn it back on.", "Turn Off"]);
+    assert_saw(&["Turn off remote dictation?", "Deletes this Mac's pairing. History stays. Turning it back on needs a new token.", "Turn Off"]);
     assert_eq!(pref_b(cx, "remote.enabled"), Some(true), "stays on until confirmed");
     assert!(bounds(cx, r.win, "settings.alert.cancel").right() < bounds(cx, r.win, "settings.alert.confirm").left(), "Cancel on the left");
     assert_eq!(bounds(cx, r.win, "settings.alert").size.width, px(260.));
@@ -541,7 +547,7 @@ async fn advanced_shows_the_pin(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn consent_update_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "consent-update", |_| {});
-    assert_saw(&["Summaries and meetings", "Confirm the updated consent to send them to your server."]);
+    assert_saw(&["Summaries and meetings", "Consent needed"]);
     click(cx, r.win, "settings.serverConsentUpdate");
     assert_saw(&["Send summaries and meetings to your server?"]);
     click(cx, r.win, "settings.serverConsentCancel");
@@ -566,7 +572,7 @@ async fn consent_update_sheet(cx: &mut TestAppContext) {
 async fn fallback_threshold_stops_at_both_limits(cx: &mut TestAppContext) {
     let r = rig(cx, "approved", |p| p.set("remote.fallbackThresholdMs", 500));
     click(cx, r.win, "settings.serverAdvanced");
-    assert_saw(&["Fallback threshold", "Dictation uses this Mac after this wait"]);
+    assert_saw(&["Fallback threshold", "Then dictation uses this Mac"]);
     assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find("settings.serverFallbackThreshold.up").label().map(|l| l.to_string())).unwrap().as_deref(), Some("Remote dictation fallback threshold in milliseconds, increase"));
     for want in [250, 250] {
         click(cx, r.win, "settings.serverFallbackThreshold.down");
@@ -607,7 +613,7 @@ async fn server_advanced_writes_each_override(cx: &mut TestAppContext) {
     assert!(!has(cx, r.win, "settings.rewriteTestConnection"), "served: fields move to Advanced");
     assert!(!has(cx, r.win, "settings.summaryServer"), "Summaries hides while the switch applies");
     click(cx, r.win, "settings.serverAdvanced");
-    assert_saw(&["Dictation", "Speech recognition; rewriting follows its own row", "Rewriting", "Summaries", "Meetings", "Transcripts, speaker labels and voice matching", "Fallback threshold", "Dictation uses this Mac after this wait", &format!("{} ms", flow_core::insights::grouped(1500))]);
+    assert_saw(&["Dictation", "Rewriting", "Summaries", "Meetings", "Fallback threshold", "Then dictation uses this Mac", &format!("{} ms", flow_core::insights::grouped(1500))]);
     set(cx, r.win, |p, _, _| p.check_result = Some("Answered in 3 ms".into()));
     pick(cx, r.win, "settings.serverOverride.dictation", "thisMac");
     assert_eq!(pref_s(cx, "server.override.dictation").as_deref(), Some("thisMac"));
@@ -619,7 +625,7 @@ async fn server_advanced_writes_each_override(cx: &mut TestAppContext) {
     assert!(has(cx, r.win, "settings.rewriteTestConnection"), "custom shows the fields");
     pick(cx, r.win, "settings.serverOverride.summaries", "custom");
     assert_eq!(pref_s(cx, "summaryServer").as_deref(), Some("remote"));
-    assert_saw(&["Your server is used if this server fails"]);
+    assert_saw(&["Falls back to your server"]);
     assert_saw(&["Model", "API key"]);
     click(cx, r.win, "settings.serverFallbackThreshold.up");
     assert_eq!(pref_i(cx, "remote.fallbackThresholdMs", 0), 1750);
@@ -667,7 +673,7 @@ async fn updates_variants(cx: &mut TestAppContext) {
     let r = rig(cx, "updates-failed", |_| {});
     assert_saw(&["The updater could not start. Reopen LocalFlow to retry."]);
     let r2 = rig(cx, "updates-sparkle", |_| {});
-    assert_saw(&["Latest version", "You choose when to install.", "Check for Updates…", "Check automatically", "Installation waits until active work finishes."]);
+    assert_saw(&["Latest version", "Check for Updates…", "Check automatically"]);
     drop(r);
     click(cx, r2.win, "settings.checkForUpdates");
     assert_saw(&["Error type flow_platform.Unavailable, code 0."]);
@@ -681,7 +687,7 @@ async fn general_controls_persist(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     click(cx, r.win, "settings.shortcut");
     assert!(logged(&r, "record"));
-    assert_saw(&["Listening…", "Press a shortcut, then release. Esc to cancel."]);
+    assert_saw(&["Listening…", "Press a shortcut. Esc cancels."]);
     click(cx, r.win, "settings.shortcut");
     assert!(!saw("Listening…"), "a second press stops the recorder");
     // Installs first and saves only if that worked.
@@ -712,7 +718,7 @@ async fn general_controls_persist(cx: &mut TestAppContext) {
 #[flow_ui::gpui::test]
 async fn microphones_list_edits(cx: &mut TestAppContext) {
     let r = rig(cx, "microphones", |_| {});
-    assert_saw(&["Microphones", "LocalFlow records from the first microphone", "Blue Yeti", "USB", "Studio Mic", "USB · Not connected", "System default", "Currently: MacBook Pro Microphone", "Add microphone"]);
+    assert_saw(&["Microphones", "Uses the first connected microphone", "Blue Yeti", "USB", "Studio Mic", "USB · Not connected", "System default", "Currently: MacBook Pro Microphone", "Add microphone"]);
     assert!(has(cx, r.win, "settings.microphones.add"));
     let ids = |cx: &mut TestAppContext| read(cx, r.win, |p, _| p.mics.as_ref().unwrap().entries.iter().map(|e| e.id.clone()).collect::<Vec<_>>());
     let start = ids(cx);
@@ -841,7 +847,7 @@ async fn context_rows_use_the_app_name_and_show_remove_on_focus(cx: &mut TestApp
 async fn exclusions_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     click(cx, r.win, "settings.contextExclusions");
-    assert_saw(&["Excluded apps", "App context is never read in these apps.", "com.apple.Passwords", "Always", "Running app"]);
+    assert_saw(&["Excluded apps", "com.apple.Passwords", "Always", "Running app"]);
     assert!(disabled(cx, r.win, "settings.contextAdd"));
     let count = |cx: &mut TestAppContext| cx.update(|cx| core::exclusions(&cx.global::<Core>().prefs).len());
     let before = count(cx);
@@ -871,7 +877,7 @@ async fn exclusions_sheet(cx: &mut TestAppContext) {
 async fn kinds_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     click(cx, r.win, "settings.contextKinds");
-    assert_saw(&["App kinds", "Sets the kind of app used for writing style.", "No apps yet", "Work chat"]);
+    assert_saw(&["App kinds", "No apps yet", "Work chat"]);
     pick(cx, r.win, "context.running", "dev.zed.Zed");
     assert_eq!(read(cx, r.win, |p, cx| val(&p.bundle_draft, cx)), "dev.zed.Zed", "only fills the draft");
     pick(cx, r.win, "context.addKind", "email");
@@ -909,11 +915,8 @@ async fn installed_model_controls(cx: &mut TestAppContext) {
     set(cx, r.win, |p, _, _| p.testing = Some("speech"));
     assert_saw(&["Testing…"]);
     assert!(rig_saw_loaded(cx));
-    let r = rig(cx, "alt-installed", |_| {});
-    click(cx, r.win, "settings.alternateUse");
-    assert!(r.log.borrow().iter().any(|l| l.starts_with("action useSpeechModel.")));
     let r = rig(cx, "approved", |_| {});
-    assert_saw(&["Dictation · On this Mac (used if the server is unreachable)"]);
+    assert_saw(&["Dictation · Fallback on this Mac"]);
     drop(r);
 }
 fn rig_saw_loaded(cx: &mut TestAppContext) -> bool {
@@ -923,24 +926,12 @@ fn rig_saw_loaded(cx: &mut TestAppContext) -> bool {
     unload
 }
 
-// parity: SET-260
-#[flow_ui::gpui::test]
-async fn alternate_row_detail_and_when_it_shows(cx: &mut TestAppContext) {
-    let r = rig(cx, "alternate", |_| {});
-    assert!(has(cx, r.win, "settings.alternateSpeechModel"));
-    let a = read(cx, r.win, |p, _| p.snapshot.alternate.clone().unwrap());
-    let place = cx.update(|cx| core::routing(&cx.global::<Core>().prefs).model_place(flow_core::settings::Service::Dictation).map_or(a.role().to_string(), |x| format!("{} · {x}", a.role())));
-    assert_saw(&[&format!("{place} · CC BY 4.0 · {}", a.readiness())]);
-    set(cx, r.win, |p, _, _| p.snapshot.alternate = None);
-    assert!(!has(cx, r.win, "settings.alternateSpeechModel"), "no other manifest, no row");
-}
-
-// parity: SET-253 SET-254 SET-255 SET-257 SET-258 SET-259 SET-261 SET-262 SET-263 SET-266 SET-267 SET-268 SET-269
+// parity: SET-253 SET-254 SET-255 SET-257 SET-258 SET-259
 #[flow_ui::gpui::test]
 async fn downloads_and_progress(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     click(cx, r.win, "settings.speechDownload");
-    let size = core::byte_count(core::speech_download_bytes(read(cx, r.win, |p, _| p.snapshot.speech_model)));
+    let size = core::byte_count(core::SPEECH_DOWNLOAD_BYTES);
     assert_saw(&["Download Parakeet", &format!("{size}\n"), "License: CC BY 4.0"]);
     click(cx, r.win, "settings.alert.cancel");
     assert!(!logged(&r, "action download"));
@@ -963,17 +954,6 @@ async fn downloads_and_progress(cx: &mut TestAppContext) {
     assert!(logged(&r, "action cancelInstall"));
     rig(cx, "verifying", |_| {});
     assert_saw(&["Verifying…"]);
-    let r = rig(cx, "alternate", |_| {});
-    assert_saw(&["CC BY 4.0", "Not installed · "]);
-    click(cx, r.win, "settings.alternateDownload");
-    assert_saw(&["from Hugging Face, verified against pinned hashes.", "Dictation keeps using"]);
-    click(cx, r.win, "settings.alert.confirm");
-    assert!(logged(&r, "action downloadAlternateSpeechModel"));
-    let r = rig(cx, "alt-downloading", |_| {});
-    assert_saw(&["Downloading…"]);
-    assert!(has(cx, r.win, "settings.alternateProgress"));
-    click(cx, r.win, "settings.alternateCancel");
-    assert!(logged(&r, "action cancelAlternateSpeechModel"));
 }
 
 // parity: SET-271 SET-273 SET-275 SET-277 SET-279 SET-281 SET-285 SET-286
@@ -988,10 +968,10 @@ async fn other_models(cx: &mut TestAppContext) {
     assert_eq!(pref_b(cx, "keepModelReady"), Some(true));
     assert!(!logged(&r, "action load"), "not installed: nothing to load");
     let r = rig(cx, "others-installing", |_| {});
-    assert_saw(&["Meeting transcripts · Installing…", "Who said what · Installing…", "Dictionary terms in dictation · Installing…"]);
+    assert_saw(&["Meetings · Installing…", "Installing…", "Installing…"]);
     assert!(!has(cx, r.win, "settings.meetingDownload"));
     let r = rig(cx, "all-installed", |_| {});
-    assert_saw(&["Meeting transcripts · Ready", "Who said what · Ready", "Dictionary terms in dictation · Ready"]);
+    assert_saw(&["Meetings · Ready", "Ready", "Ready"]);
     assert!(has(cx, r.win, "settings.test.meeting") && has(cx, r.win, "settings.test.speaker"));
     assert!(!has(cx, r.win, "settings.boostDownload"));
     click(cx, r.win, "settings.keepModelReady");
@@ -1071,12 +1051,12 @@ async fn saved_secret_can_be_revealed_edited_and_removed(cx: &mut TestAppContext
 
 // parity: SET-329
 #[flow_ui::gpui::test]
-async fn rewrite_advanced_starts_collapsed_with_padding_14(cx: &mut TestAppContext) {
+async fn rewrite_advanced_starts_collapsed_with_padding_10(cx: &mut TestAppContext) {
     let r = rig(cx, "", |p| p.set("rewriteEndpoint", "https://rw.example.com"));
     assert!(!saw("Timeout"), "collapsed");
     assert_saw(&["Advanced"]);
     let (row, button) = (bounds(cx, r.win, "settings.rewriteAdvancedRow"), bounds(cx, r.win, "settings.rewriteAdvanced"));
-    assert_eq!((button.top() - row.top(), row.bottom() - button.bottom()), (px(14.), px(14.)));
+    assert_eq!((button.top() - row.top(), row.bottom() - button.bottom()), (px(10.), px(10.)));
 }
 
 // parity: SET-325 SET-330 SET-331 SET-333 SET-298 SET-305
@@ -1236,16 +1216,16 @@ async fn controls_have_swifts_measured_sizes(cx: &mut TestAppContext) {
 
 // parity: SET-004 SET-005 SET-007 SET-240
 #[flow_ui::gpui::test]
-async fn page_rows_and_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
+async fn page_rows_and_sections_are_spaced_compactly(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     let content = bounds(cx, r.win, "settings.content");
     let (section, text) = (bounds(cx, r.win, "settings.section.General"), bounds(cx, r.win, "settings.section.General.text"));
     assert_eq!((content.size.width, bounds(cx, r.win, "settings.pageTitle").top() - content.top()), (px(960.), px(47.)), "max width and top padding");
-    assert_eq!((text.top() - section.top(), section.bottom() - text.bottom()), (px(29.), px(13.)));
+    assert_eq!((text.top() - section.top(), section.bottom() - text.bottom()), (px(24.), px(8.)));
     let row = bounds(cx, r.win, "settings.row.Learn corrections");
     assert_eq!(row.left() - content.left(), px(47. + 19.), "page padding, then the group's horizontal padding");
     let (left, switch) = (bounds(cx, r.win, "settings.row.Learn corrections.text"), bounds(cx, r.win, "settings.learnCorrections"));
-    assert_eq!((gap(left, switch), row.size.height), (44., switch.size.height + px(38.)), "spacing 22 on each side of the Spacer, vertical padding 19");
+    assert_eq!((gap(left, switch), row.size.height), (44., switch.size.height + px(24.)), "spacing 22 on each side of the Spacer, vertical padding 12");
     let r = rig(cx, "installed", |_| {});
     assert_eq!(gap(bounds(cx, r.win, "settings.speechLoad"), bounds(cx, r.win, "settings.test.speech")), 8., "model controls");
 }
@@ -1277,7 +1257,7 @@ async fn sheets_have_swifts_geometry(cx: &mut TestAppContext) {
     let sheet = bounds(cx, r.win, "settings.sheet");
     let (header, list) = (bounds(cx, r.win, "settings.contextHeader"), bounds(cx, r.win, "settings.contextList"));
     assert_eq!((sheet.size.width, header.left() - sheet.left(), list.top() - header.bottom()), (px(480.), px(22.), px(18.)));
-    assert!(header.size.height > px(30.), "title and description stacked: {header:?}");
+    assert!(header.size.height > px(0.), "the title alone: {header:?}");
     assert_eq!(list.size.height, px(308.), "min(10 x 57, 308)");
     assert_eq!(bounds(cx, r.win, "context.row.com.1password.1password").size.height, px(56.));
     let (menu, field, done) = (bounds(cx, r.win, "context.running"), bounds(cx, r.win, "settings.contextField"), bounds(cx, r.win, "settings.contextDone").size);
@@ -1288,7 +1268,7 @@ async fn sheets_have_swifts_geometry(cx: &mut TestAppContext) {
 
 // parity: SET-110 SET-120 SET-176 SET-258 SET-311 SET-316 SET-338
 #[flow_ui::gpui::test]
-async fn lower_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
+async fn lower_sections_are_spaced_compactly(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     assert!(!has(cx, r.win, "settings.serverServices"), "only when approved");
     let r = rig(cx, "approved", |_| {});
@@ -1302,17 +1282,17 @@ async fn lower_sections_are_spaced_like_swift(cx: &mut TestAppContext) {
     assert_eq!(list.top(), d.bottom(), "the 12 below the text is inside");
     let r = rig(cx, "installing", |_| {});
     let (bar, cancel) = (bounds(cx, r.win, "settings.installProgress"), bounds(cx, r.win, "settings.installCancel"));
-    assert_eq!(cancel.top() - bar.bottom(), px(10.), "VStack spacing 10");
+    assert_eq!(cancel.top() - bar.bottom(), px(8.), "spacing 8");
     let r = rig(cx, "", |p| p.set("rewriteEndpoint", "https://rw.example.com"));
     type_into(cx, r.win, |p| p.credential.clone(), "abc");
     click(cx, r.win, "settings.rewriteCredentialSave");
     click(cx, r.win, "settings.rewriteCredentialEdit");
     assert_eq!(gap(bounds(cx, r.win, "settings.rewriteCredentialRemove"), bounds(cx, r.win, "settings.rewriteCredentialCancel")), 12.);
     let header = bounds(cx, r.win, "settings.secretHeader");
-    assert_eq!(bounds(cx, r.win, "settings.credentialRow").top() - header.bottom(), px(8.), "section spacing 8");
+    assert_eq!(bounds(cx, r.win, "settings.credentialRow").top() - header.bottom(), px(6.), "section spacing 6");
     let r = rig(cx, "summary-remote", |_| {});
     let (url, label) = (bounds(cx, r.win, "settings.summaryURLField"), bounds(cx, r.win, "settings.summaryModelLabel"));
-    assert_eq!(label.top() - url.bottom(), px(14.), "spacing 14");
+    assert_eq!(label.top() - url.bottom(), px(6.), "spacing 6");
 }
 
 // parity: SET-020
@@ -1401,7 +1381,7 @@ fn fill_pair(cx: &mut TestAppContext, win: Win, address: &str, token: &str) {
 async fn the_pairing_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     let w = r.win;
-    assert_saw(&["Pair with a token", "Use a token from your server's owner."]);
+    assert_saw(&["Pair with Token"]);
     let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")], false));
     click(cx, w, "settings.remotePairWithToken");
     assert!(disabled(cx, w, "settings.remotePairConfirm"), "nothing filled");
@@ -1460,7 +1440,7 @@ async fn the_address_sheet(cx: &mut TestAppContext) {
     assert_saw(&["Server address"]);
     cx.update(|cx| install(cx, vec![Reply::Close(4001)], true));
     click(cx, w, "settings.remoteAddressEdit");
-    assert_saw(&["Change the server addresses", "The server at the new address must have the identity this Mac already trusts."]);
+    assert_saw(&["Change the server addresses", "It must be the same server."]);
     let before = pref_s(cx, "remote.serverURL");
     w.update(cx, |p, w, cx| p.pair.address.update(cx, |s, cx| s.set_value("https://new.example.com", w, cx))).unwrap();
     frame(cx, w);
@@ -1522,4 +1502,18 @@ async fn turn_off_closes_parked_channels_and_removes_credentials(cx: &mut TestAp
     assert!(server.secrets.items.lock().unwrap().is_empty());
     assert_eq!(pref_b(cx, "remote.enabled"), Some(false));
     assert_eq!(remote.enrollment.access_token(), None, "nothing goes out after turning off");
+}
+
+#[flow_ui::gpui::test]
+async fn a_failed_booster_download_says_so_and_can_be_retried(cx: &mut TestAppContext) {
+    use flow_platform::{InstallState, ModelPack};
+    let r = rig(cx, "", |_| {});
+    assert!(!saw("Download failed"));
+    r.packs.borrow_mut().push((ModelPack::Booster, InstallState::Failed("hash_mismatch".into())));
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    frame(cx, r.win);
+    assert_saw(&["Download failed"]);
+    assert!(read(cx, r.win, |p, _| p.snapshot.boost_failed));
+    click(cx, r.win, "settings.boostDownload");
+    assert!(logged(&r, "action downloadBoostModel"), "Download stays as the retry");
 }

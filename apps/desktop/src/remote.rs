@@ -476,29 +476,25 @@ pub fn sheet_view<V: RemotePage>(this: &V, window: &Window, cx: &mut Context<V>)
     let draft = text(&form.address, cx);
     let origins = address::origins(&draft);
     let surface = |symbol, hint, input, state: &Entity<InputState>, cx: &App| crate::pages::settings::input_surface(symbol, Some(hint), input, state, window, cx);
-    let address_input = surface("server.rack", "https://server.example.com, http://100.64.0.1:8090", Input::new(&form.address).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &form.address, cx);
+    let address_input = surface("server.rack", "https://a.example, https://b.example", Input::new(&form.address).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &form.address, cx);
     let notice = address::list_notice(&draft);
-    const EVERY: &str = "Add every address that reaches this server, separated by commas. LocalFlow uses whichever one answers.";
-    let mut body = v_flex().w(px(460.)).p(px(24.)).gap(px(16.));
+    let mut body = v_flex().w(px(460.)).p(px(24.)).gap(px(12.));
     match sheet {
         Sheet::Pair => {
-            let consent = settings::consent_text(&cx.global::<Core>().prefs).replace("Mac", cx.global::<Core>().services.device_word());
+            let consent = settings::consent_text(&cx.global::<Core>().prefs);
             body = body
                 .child(t("Pair with a token").font(17., 500.))
                 .child(address_input)
-                .child(t(EVERY).size(12.).line_spacing(3.).color(p.muted).swift_lines())
                 .child(surface("key", "lfp_…", Input::new(&form.token).id("settings.remotePairToken").aria_label("Pairing token").accessibility_id("settings.remotePairToken"), &form.token, cx))
                 .child(t(consent).size(13.).line_spacing(3.).swift_lines())
                 .when_some(notice, |d, n| d.child(t(n).size(12.).color(p.muted)))
                 .when_some(origins.as_ref(), |d, o| d.child(t(format!("Server: {}", o.iter().map(|o| settings::origin_host(o)).collect::<Vec<_>>().join(", "))).font(13., 500.)));
         }
         Sheet::Address => {
-            let word = cx.global::<Core>().services.device_word();
             body = body
                 .child(t("Change the server addresses").font(17., 500.))
                 .child(address_input)
-                .child(t(EVERY).size(12.).line_spacing(3.).color(p.muted).swift_lines())
-                .child(t(format!("The server at the new address must have the identity this {word} already trusts.")).size(13.).line_spacing(3.).swift_lines())
+                .child(t("It must be the same server.").size(13.).line_spacing(3.).swift_lines())
                 .when_some(notice, |d, n| d.child(t(n).size(12.).color(p.muted)));
         }
     }
