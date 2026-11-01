@@ -792,8 +792,7 @@ fn alert_answered(alert: Alert, answer: usize, cx: &mut App) {
             d.status = "Unsaved text discarded.".into();
         }),
         (Alert::QuitUnsaved, 1) => crate::menu::finish_quit(cx),
-        // Read and write errors are silent in Swift too (SHELL-248).
-        (Alert::RecordingCantWait, 0) => drop(cx.global::<Core>().services.choose_save_path("LocalFlow dictation.wav")),
+        (Alert::RecordingCantWait, answer) => crate::dictation::offered_answered(answer == 0, cx),
         _ => {}
     }
 }
@@ -1532,25 +1531,36 @@ mod tests {
         assert_eq!(get(cx, |s| s.history_revision), before + 1);
     }
 
-    // parity: SHELL-133
+    // parity: SHELL-131 SHELL-132 SHELL-133
     #[flow_ui::gpui::test]
-    async fn recording_alert_discard_writes_nothing(cx: &mut TestAppContext) {
+    async fn an_offered_recording_is_saved_as_wav_or_discarded_only_when_asked(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
-        let saves = std::rc::Rc::default();
-        cx.update(|cx| cx.global_mut::<Core>().services = Box::new(Fake { save_prompts: std::rc::Rc::clone(&saves), ..Default::default() }));
         let window = open_shell(cx);
-        cx.update(|cx| show_alert(Alert::RecordingCantWait, cx));
+        let root = std::env::temp_dir().join(format!("flow-offered-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let (audio, wav) = (root.join("offered-a.f32"), root.join("kept.wav"));
+
+        std::fs::write(&audio, [0u8; 8]).unwrap();
+        cx.update(|cx| crate::dictation::tests::offer(audio.clone(), cx));
         cx.run_until_parked();
+        assert_eq!(get(cx, |s| s.alert), Some(Alert::RecordingCantWait));
+        assert!(audio.exists(), "nothing goes before the answer");
         cx.simulate_prompt_answer("Discard");
         cx.run_until_parked();
-        assert!(saves.borrow().is_empty());
         assert_eq!(get(cx, |s| s.alert), None);
-        cx.update(|cx| show_alert(Alert::RecordingCantWait, cx));
+        assert!(!audio.exists() && !cx.did_prompt_for_new_path());
+
+        std::fs::write(&audio, [0u8; 8]).unwrap();
+        cx.update(|cx| crate::dictation::tests::offer(audio.clone(), cx));
         cx.run_until_parked();
         cx.simulate_prompt_answer("Save Audio…");
         cx.run_until_parked();
-        assert_eq!(*saves.borrow(), vec!["LocalFlow dictation.wav".to_string()]);
-        let _ = window;
+        assert!(cx.did_prompt_for_new_path());
+        cx.simulate_new_path_selection(|_| Some(wav.clone()));
+        cx.run_until_parked();
+        assert_eq!(std::fs::read(&wav).unwrap().len(), 44 + 8, "a WAV of those samples");
+        assert!(!audio.exists());
+        let _ = (window, std::fs::remove_dir_all(&root));
     }
 
     // parity: SHELL-035

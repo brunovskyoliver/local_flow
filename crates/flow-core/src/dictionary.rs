@@ -1305,6 +1305,21 @@ mod tests {
         assert!(save(&db, &longest, None, "established").is_ok(), "128 bytes is allowed");
     }
 
+    // parity: DICT-152
+    #[test]
+    fn usage_events_are_pruned_to_5000() {
+        let db = empty();
+        let e = entry("Alpha", &[]);
+        save(&db, &e, Some(0), "established").unwrap();
+        let add = |id: i64, d: &str| db.conn.execute("INSERT INTO dictionary_usage_events (id, dictation_id, entry_id, key_id, outcome, at) VALUES (?, ?, ?, 'k', 'applied', 0)", rusqlite::params![id, d, e.id]).unwrap();
+        add(1, "old");
+        add(6000, "recent");
+        let key_id: String = db.conn.query_row("SELECT key_id FROM dictionary_key_usage WHERE entry_id=? LIMIT 1", [&e.id], |r| r.get(0)).unwrap();
+        record_applied(&db, "new", &[crate::dictation::normalize::Change { entry_id: e.id.clone(), key_id, canonical: "Alpha".into() }]).unwrap();
+        let kept = |d: &str| db.conn.query_row("SELECT count(*) FROM dictionary_usage_events WHERE dictation_id=?", [d], |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!((kept("old"), kept("recent"), kept("new")), (0, 1, 1));
+    }
+
     // parity: DICT-037 DICT-038 DICT-123 DICT-124 DICT-125 DICT-126 DICT-148 DICT-151 DICT-152 DICT-154
     #[test]
     fn write_transaction_revisions_usage_and_staleness() {

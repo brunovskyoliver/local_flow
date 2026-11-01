@@ -61,9 +61,15 @@ pub struct InsightsPage {
     _session_sub: Subscription,
 }
 
-// ponytail: `AppName.display` needs NSWorkspace; the fallback is Swift's for an uninstalled app.
-fn app_name(bundle: &str) -> String {
-    fallback_app_name(bundle)
+thread_local! {
+    /// `AppName.display` caches per process; a lookup hits NSWorkspace and the disk.
+    static APP_NAMES: RefCell<std::collections::HashMap<String, String>> = RefCell::default();
+}
+
+fn app_name(bundle: &str, cx: &App) -> String {
+    APP_NAMES.with_borrow_mut(|names| {
+        names.entry(bundle.to_string()).or_insert_with(|| cx.global::<Core>().services.app_name(bundle).unwrap_or_else(|| fallback_app_name(bundle))).clone()
+    })
 }
 
 /// `dataScale[1]` at rest; the hovered bar `dataScale[0]`, the others `dataScale[2]`; empty hours stay empty.
@@ -277,7 +283,7 @@ impl InsightsPage {
             };
             let tip = (count > 0).then(|| {
                 let words = i.category_words[Category::ALL.iter().position(|c| *c == cat).unwrap_or(0)];
-                Tip::Note { title: counted(words, "word", "words"), detail: i.top_app_in(cat).map(|a| format!("Most in {}", app_name(a))) }
+                Tip::Note { title: counted(words, "word", "words"), detail: i.top_app_in(cat).map(|a| format!("Most in {}", app_name(a, cx))) }
             });
             let bar = div()
                 .w(px((share * if compact { 150. } else { 300. }).max(35.)))
@@ -341,7 +347,7 @@ impl InsightsPage {
                 } else {
                     p.data_scale[level(count, &limits)]
                 };
-                let tip = (day <= today).then(|| Tip::Day { day, words: count, apps: usage.map_or(0, |u| u.apps.len() as i64), top: usage.and_then(|u| u.top_app()).map(app_name) });
+                let tip = (day <= today).then(|| Tip::Day { day, words: count, apps: usage.map_or(0, |u| u.apps.len() as i64), top: usage.and_then(|u| u.top_app()).map(|a| app_name(a, cx)) });
                 let cell = div().size(px(HEAT_DOT[wd as usize])).rounded(px(3.)).bg(fill).when(HEAT_DOT[wd as usize] > 0. && streaks.current_days.contains(&day), |d| d.border(px(1.5_f32.min(HEAT_DOT[wd as usize] / 2.))).border_color(p.streak_outline));
                 r = r.child(div().flex_1().min_w_0().flex().justify_center().child(self.target(format!("insights.day.{day}"), tip, cell, cx).test_support()));
             }
@@ -388,7 +394,7 @@ impl InsightsPage {
                 move |d, delta| d.bg(mix(from, fill, delta)),
             );
             let target = self
-                .target(format!("insights.hour.{h}"), Some(hour_tip(i, h)), div().w_full().h(px(130.)).flex().items_end().child(bar), cx).test_support()
+                .target(format!("insights.hour.{h}"), Some(hour_tip(i, h, cx)), div().w_full().h(px(130.)).flex().items_end().child(bar), cx).test_support()
                 .flex_1()
                 .min_w_0();
             bars = bars.child(target);
@@ -482,7 +488,7 @@ fn note_bubble(title: String, detail: Option<String>, cx: &App) -> Div {
         .when_some(detail, |d, x| d.child(t(x).size(11.5).color(p.surface).opacity(0.75)))
 }
 
-fn hour_tip(i: &Insights, h: usize) -> Tip {
+fn hour_tip(i: &Insights, h: usize, cx: &App) -> Tip {
     let range = format!("{} – {}", hour_time(h as i64), hour_time((h as i64 + 1) % 24));
     let words = i.hours[h];
     if words == 0 {
@@ -490,7 +496,7 @@ fn hour_tip(i: &Insights, h: usize) -> Tip {
     }
     let mut detail = format!("{range} · {}", counted(i.hour_dictations[h], "dictation", "dictations"));
     if let Some(top) = top_of(&i.hour_apps[h]) {
-        detail.push_str(&format!("\nMost in {}", app_name(top)));
+        detail.push_str(&format!("\nMost in {}", app_name(top, cx)));
     }
     Tip::Note { title: counted(words, "word", "words"), detail: Some(detail) }
 }
@@ -922,6 +928,21 @@ mod tests {
         assert!(shown < before, "appearing re-reads");
         remove(cx, 21);
         assert!(count(cx) < shown, "selected re-reads");
+    }
+
+    // parity: INS-063
+    #[flow_ui::gpui::test]
+    async fn an_installed_name_wins_over_the_fallback_and_is_kept(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| {
+            let fake = flow_platform::Fake::default();
+            fake.app_names.borrow_mut().insert("com.example.named".into(), "Named App".into());
+            cx.global_mut::<Core>().services = Box::new(fake);
+            assert_eq!(app_name("com.example.named", cx), "Named App");
+            assert_eq!(app_name("com.example.other", cx), "Other");
+            cx.global_mut::<Core>().services = Box::new(flow_platform::Fake::default());
+            assert_eq!(app_name("com.example.named", cx), "Named App", "cached per process");
+        });
     }
 
     fn tip_state(cx: &mut TestAppContext, w: WindowHandle<InsightsPage>) -> Option<Tip> {

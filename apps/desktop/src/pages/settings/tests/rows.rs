@@ -796,6 +796,15 @@ async fn unencrypted_warning_sits_above_the_group(cx: &mut TestAppContext) {
     assert_eq!(bounds(cx, r.win, "settings.row.Enable rewriting").top() - warning.bottom(), px(0.), "padding 12 inside it");
 }
 
+// parity: SET-295
+#[flow_ui::gpui::test]
+async fn the_warning_is_announced_once_when_shown(cx: &mut TestAppContext) {
+    let r = rig(cx, "rewrite-insecure", |_| {});
+    frame(cx, r.win);
+    let said = r.log.borrow().iter().filter(|l| l.starts_with("announce Transcripts and the credential travel unencrypted to 10.0.0.5.")).count();
+    assert_eq!(said, 1);
+}
+
 // parity: SET-296 SET-298 SET-303 SET-304 SET-305
 #[flow_ui::gpui::test]
 async fn rewrite_row_tips_menu_and_definitions(cx: &mut TestAppContext) {

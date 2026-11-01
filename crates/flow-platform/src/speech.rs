@@ -119,7 +119,7 @@ pub fn spawn_provision(path: &Path, models: &Path, args: &[&str]) -> io::Result<
 
 /// One pack's install: its progress comes from the worker's stderr, its result from the exit status.
 #[derive(Clone, Default)]
-pub struct Job(Arc<Mutex<Option<InstallState>>>);
+pub struct Job(Arc<Mutex<Option<InstallState>>>, Arc<Mutex<Option<Child>>>);
 
 impl Job {
     pub fn state(&self) -> Option<InstallState> {
@@ -139,6 +139,8 @@ impl Job {
         let mut child = spawn_provision(worker, models, args)?;
         *state = Some(InstallState::Running(0, 0, false));
         let (job, stderr) = (self.0.clone(), child.stderr.take());
+        let running = self.1.clone();
+        *running.lock().unwrap() = Some(child);
         std::thread::spawn(move || {
             let mut failure = None;
             for line in stderr.into_iter().flat_map(|e| BufReader::new(e).lines()).map_while(Result::ok) {
@@ -148,6 +150,8 @@ impl Job {
                     _ => {}
                 }
             }
+            // `cancel` took it: the state is already what it should be.
+            let Some(mut child) = running.lock().unwrap().take() else { return };
             let succeeded = child.wait().is_ok_and(|status| status.success());
             let end = match failure {
                 None if succeeded && std::fs::write(&path, "").is_ok() => InstallState::Verified,
@@ -156,6 +160,15 @@ impl Job {
             *job.lock().unwrap() = Some(end);
         });
         Ok(())
+    }
+
+    /// SET-259: ends the worker; nothing was verified, so the pack reads as not installed.
+    pub fn cancel(&self) {
+        if let Some(mut child) = self.1.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+            *self.0.lock().unwrap() = None;
+        }
     }
 }
 
@@ -186,6 +199,10 @@ pub fn install(which: ModelPack) -> Result<(), Unavailable> {
     let worker = find_worker().ok_or(Unavailable("the speech worker"))?;
     let models = MODELS.get().ok_or(Unavailable("the models folder"))?;
     job.start(&worker, models, args, marker).map_err(|_| Unavailable("the speech worker"))
+}
+
+pub fn cancel(which: ModelPack) {
+    pack(which).0.cancel();
 }
 
 /// `Services::install_state` on the real platforms: this run's job, or the marker of an earlier one.
@@ -256,6 +273,30 @@ mod tests {
         let (_, end, models) = outcome("said_fail_exit_0", r#"echo "provision state=failed reason=x" >&2"#);
         assert_eq!(end, InstallState::Failed("x".into()));
         assert!(!models.join(".m").exists());
+    }
+
+    // parity: SET-259
+    #[cfg(unix)]
+    #[test]
+    fn cancel_ends_the_worker_and_leaves_nothing_installed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("flow-provision-{}-cancel", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let worker = dir.join("worker");
+        std::fs::write(&worker, "#!/bin/sh\nexec sleep 60\n").unwrap();
+        std::fs::set_permissions(&worker, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (job, models) = (Job::default(), dir.join("models"));
+        job.start(&worker, &models, &[], ".m").unwrap();
+        assert!(matches!(job.state(), Some(InstallState::Running(..))));
+        let began = Instant::now();
+        job.cancel();
+        assert!(began.elapsed() < Duration::from_secs(10));
+        assert_eq!(job.state(), None);
+        assert!(!models.join(".m").exists());
+        job.start(&worker, &models, &[], ".m").unwrap();
+        assert!(matches!(job.state(), Some(InstallState::Running(..))), "a new install can start");
+        job.cancel();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

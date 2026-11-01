@@ -34,4 +34,13 @@ Same check rules as Feature 025. Swift references are under `apps/macos/LocalFlo
 - [X] T019 `install_speech_model`, `install_meeting_models`, `install_term_booster` through worker `provision` with progress; `speech_model_verified`; Settings actions download, load, unload, test (SET-243, SET-250, SET-251, SET-255). Local AI is partial: outcomes reach the page (ONB-301, ONB-302, ONB-304 through `Services::local_ai_phase`), Windows refuses with a reason, the Mac reports its first check, "missing local AI files". Not ported from `LocalAIRuntime.install`: bundling `Resources/LocalAI` and the service plists, port checks, pinned Python, venv and `pip --require-hashes`, `mtplx pull`, API key file, `SMAppService` register, `launchctl kickstart`, `waitUntilServing`. Meeting models on Windows refuse (`flow-speech-win` has no `--meeting`).
 
 ## Phase 7: Settle and finish
-- [ ] T020 Inventory rows; `acceptance/hardware.md`; review of insertion and hook paths for content leakage; converge; `make check`; report.
+- [ ] T020 Inventory rows; `acceptance/hardware.md`; review of insertion and hook paths for content leakage; converge; `make check`; report. Partly done: inventory rows settled, hardware rows 36-41 added, no logging or printing found on the insertion, hook and dictation paths, converge done. `make check` and the report are the lead's.
+
+## Left open by the converge, with reasons
+- [ ] T021 A press during another dictation's rewrite: Swift starts the new dictation and the old one posts "Previous dictation saved to history, not inserted." (PILL-105). Rust ignores the press until the first one ends. Two sessions at once changes the single-session Driver, so not small. Feature 028.
+- [ ] T022 Mac pill follows a Space change and wake (PILL-021). Needs NSWorkspace and NSApplication observers beside the screen check. Feature 028.
+- [ ] T023 On-device AI install beyond the first check (ONB-296..ONB-304, ONB-306): the bundle carries no MTPLX resources yet, and `LocalAIRuntime.install` isn't ported. Feature 028.
+- [ ] T024 Mac rows without a Rust service yet: usage report loop and store (SET-375), game detection (SET-291), spell-check filter (DICT-052), `launchctl` helper (SHELL-104), UserNotifications (SHELL-134, SHELL-135), model import panels and reveal (SHELL-136..SHELL-139, SET-257, SET-273, SET-277), alternate speech models (SET-265, SET-268). Feature 028.
+- [ ] T025 Rust Mac bundle carries `flowd-speech`; until then a packaged Rust app has only server dictation. Feature 028.
+- [ ] T026 The Windows workflow's push filter names only `gpui-desktop-views`, so it doesn't run on this branch without a manual dispatch. Left alone: changing CI triggers is the owner's call.
+

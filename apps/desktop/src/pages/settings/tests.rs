@@ -124,6 +124,9 @@ impl flow_platform::Services for Stub {
     fn install_shortcut(&self, _: &str) -> Result<(), Unavailable> {
         self.call("install".into())
     }
+    fn announce(&self, message: &str) -> Result<(), Unavailable> {
+        self.call(format!("announce {message}"))
+    }
     fn running_apps(&self) -> Vec<(String, String)> {
         vec![("Zed".into(), "dev.zed.Zed".into()), ("Arc".into(), "company.thebrowser.Browser".into())]
     }
@@ -854,7 +857,7 @@ async fn context_rows_use_the_app_name_and_show_remove_on_focus(cx: &mut TestApp
     assert_eq!(cx.update_window(r.win.into(), |_, w, _| w.find("context.remove.dev.zed.Zed").label().map(|l| l.to_string())).unwrap().as_deref(), Some("Use the built-in kind for dev.zed.Zed"));
 }
 
-// parity: SET-213 SET-219 SET-221 SET-226 SET-228 SET-231 SET-232 SET-234 SET-236 SET-237
+// parity: SET-227 SET-213 SET-219 SET-221 SET-226 SET-228 SET-231 SET-232 SET-234 SET-236 SET-237
 #[flow_ui::gpui::test]
 async fn exclusions_sheet(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});

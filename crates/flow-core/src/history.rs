@@ -1665,7 +1665,12 @@ pub fn export_pending(item: &PendingItem, dir: &Path, destination: &Path) -> std
     if !plain_file_name(&item.audio_file) {
         return Err(std::io::ErrorKind::InvalidInput.into());
     }
-    let data = wav(&std::fs::read(dir.join(&item.audio_file))?);
+    write_wav(&dir.join(&item.audio_file), destination)
+}
+
+/// 16 kHz f32 samples at `audio` to a WAV at `destination`, atomically.
+pub fn write_wav(audio: &Path, destination: &Path) -> std::io::Result<()> {
+    let data = wav(&std::fs::read(audio)?);
     let tmp = destination.with_extension(format!("tmp-{}", now_ms()));
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, destination)

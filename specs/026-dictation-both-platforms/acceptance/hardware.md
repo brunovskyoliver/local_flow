@@ -39,3 +39,9 @@ Items that need real hardware, a signed install or the owner's screen and microp
 | 33 | Speech, meeting and booster install from the real manifest over HTTPS with the real `flowd-speech` next to the app; Downloads rows and Settings progress | T019 | Progress, Verifying, Done; launch after that shows the model verified | not run |
 | 34 | On-device AI install on a packaged, signed Mac app once its bundle carries the MTPLX resources | T019 | Not yet implementable: today the Mac reports missing local AI files | not run |
 | 35 | Mac: learn corrections on; fix a word in TextEdit and a browser field after dictating, twice; Undo and Restore bubbles | Learner | Suggestion first, then "Added to dictionary"; Undo removes it; a reverted learned word retires with Restore | not run |
+| 36 | Mac and Windows: History "Save Audio…" and the "can't wait" alert's Save Audio open the system save panel | T018, T020 | Default name "LocalFlow dictation.wav"; the file plays as 16 kHz mono; the row or spool follows the answer | not run |
+| 37 | Mac: plug in or remove a display while the pill shows | T020 | The pill moves to the current screen unanimated. Space changes and wake don't move it yet (Feature 028) | not run |
+| 38 | Mac: cancel a real speech install in Settings, and quit during one | T020 | The worker ends, nothing is left installed, a second quit works | not run |
+| 39 | Mac: run the Rust app with no `flowd-speech` beside it, shortcut configured, local and then server dictation | T020 | Local press: "The speech model is unavailable. Verify the local model in Settings."; server dictation works | not run |
+| 40 | Windows: press the shortcut during a meeting recording | T020 | "Meeting in progress" in the pill; the recording goes on | not run |
+| 41 | VoiceOver: Settings with an unencrypted rewrite endpoint and the override on | T020 | The warning is spoken once on show and once per change | not run |

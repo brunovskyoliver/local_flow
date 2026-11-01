@@ -720,6 +720,9 @@ struct Captured {
 
 // ---- The coordinator ----
 
+/// A recording no waiting row could take, in `pending_dir` until the user answers.
+const OFFERED_PREFIX: &str = "offered-";
+
 pub struct Coordinator {
     pub spool_root: PathBuf,
     pub pending_dir: PathBuf,
@@ -744,6 +747,12 @@ impl Coordinator {
             c.cleanup_blocked = true;
             c.status = "Temporary audio cleanup failed. Restart after checking storage.".into();
             c.state = State::Failed;
+        }
+        // An offered recording the user never answered: no row points at it.
+        for entry in std::fs::read_dir(&c.pending_dir).into_iter().flatten().flatten() {
+            if entry.file_name().to_string_lossy().starts_with(OFFERED_PREFIX) {
+                let _ = std::fs::remove_file(entry.path());
+            }
         }
         c
     }
@@ -1117,7 +1126,7 @@ impl Coordinator {
             (_, true, false) => "The speech engine stopped. The dictation is waiting in History.",
             (_, false, server) => {
                 // Full or unwritable: the user saves the audio or discards it.
-                let offered = self.pending_dir.join(format!("offered-{id}.f32"));
+                let offered = self.pending_dir.join(format!("{OFFERED_PREFIX}{id}.f32"));
                 let moved = std::fs::create_dir_all(&self.pending_dir).and_then(|()| std::fs::rename(spool.path(), &offered));
                 if moved.is_ok() {
                     (self.publish)(Event::AudioOffered { audio: offered });
@@ -1407,6 +1416,22 @@ mod tests {
     use std::thread;
 
     const QUICK: Timing = Timing { poll: Duration::from_millis(1), connect_limit: Duration::from_millis(40), budget: Duration::from_secs(180) };
+
+    #[test]
+    fn a_restart_removes_a_crashed_spool_and_an_unanswered_offer_and_keeps_waiting_audio() {
+        let root = std::env::temp_dir().join(format!("flow-session-restart-{}", std::process::id()));
+        let (spool, pending) = (root.join("TemporaryAudio"), root.join("PendingAudio"));
+        drop(Spool::create(&spool, "crashed").unwrap());
+        std::fs::create_dir_all(&pending).unwrap();
+        std::fs::write(pending.join("offered-a.f32"), [0u8; 4]).unwrap();
+        std::fs::write(pending.join("waiting.f32"), [0u8; 4]).unwrap();
+        let c = Coordinator::new(spool.clone(), pending.clone(), Box::new(|_| {}));
+        assert!(!spool.exists());
+        assert!(!pending.join("offered-a.f32").exists());
+        assert!(pending.join("waiting.f32").exists());
+        assert!(c.can_begin());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[derive(Clone, Copy, PartialEq)]
     enum Then {
@@ -2335,7 +2360,7 @@ mod tests {
             r
         }
 
-        // parity: HIST-080
+        // parity: HIST-075
         #[test]
         fn the_retrier_backs_off_recovers_for_review_and_yields_to_a_live_dictation() {
             let s = server();

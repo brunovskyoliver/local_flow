@@ -575,20 +575,26 @@ impl HistoryPage {
         .detach();
     }
 
-    /// `NSSavePanel`, through `Services`; without one, the failure Swift would show.
+    /// HIST-080: the save panel; a panel that can't open is the failure Swift would show.
     fn save_audio(&mut self, id: String, cx: &mut Context<Self>) {
-        let core = cx.global::<Core>();
-        let dir = core.paths.pending_audio();
-        match core.services.choose_save_path("LocalFlow dictation.wav") {
-            Ok(Some(path)) => {
-                if let Some(db) = core.db.as_ref() {
-                    self.model.export_pending(db, &dir, &id, &path);
+        let panel = crate::dictation::save_panel(cx);
+        cx.spawn(async move |this, cx| {
+            let answer = panel.await;
+            let _ = this.update(cx, |this, cx| {
+                let core = cx.global::<Core>();
+                match answer {
+                    Ok(Some(path)) => {
+                        if let Some(db) = core.db.as_ref() {
+                            this.model.export_pending(db, &core.paths.pending_audio(), &id, &path);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(()) => this.model.report_pending_failure(),
                 }
-            }
-            Ok(None) => {}
-            Err(_) => self.model.report_pending_failure(),
-        }
-        cx.notify();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn row(&self, e: &Entry, first: bool, last: bool, busy: bool, window: &Window, cx: &mut Context<Self>) -> AnyElement {

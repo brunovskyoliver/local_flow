@@ -227,10 +227,6 @@ pub trait Services: 'static {
     fn install_state(&self, _pack: ModelPack) -> InstallState {
         InstallState::Idle
     }
-    /// SET-243's full-hash check. Blocks; call it off the UI thread.
-    fn verify_speech_model(&self) -> Result<(), String> {
-        Err("unavailable".into())
-    }
     /// What the on-device AI installer reports after `install_local_ai` said `Ok`.
     fn local_ai_phase(&self) -> Option<flow_core::onboarding::AiPhase> {
         None
@@ -322,10 +318,6 @@ pub trait Services: 'static {
     fn load_speech_model(&self) -> Result<(), Unavailable> {
         Err(Unavailable("speech model loading"))
     }
-    /// Rewrite and analysis health. Ok is (server name, backend model, analysis status).
-    fn rewrite_health(&self, _endpoint: &str) -> Result<(Option<String>, Option<String>, String), Unavailable> {
-        Err(Unavailable("rewrite health"))
-    }
     /// `NSApp.appearance`: `None` follows the system. Native sheets and alerts read it.
     fn set_app_appearance(&self, _dark: Option<bool>) -> Result<(), Unavailable> {
         Ok(())
@@ -347,7 +339,7 @@ pub trait Services: 'static {
     fn apple_sign_in_available(&self) -> bool {
         true
     }
-    /// The launch model check. No model code until Feature 025, so nothing is verified yet.
+    /// The launch model check: a verified install's marker.
     fn speech_model_verified(&self) -> bool {
         false
     }
@@ -362,10 +354,6 @@ pub trait Services: 'static {
     /// `NSEvent.mouseLocation` in global coordinates from the primary display's top left, as GPUI's displays are.
     fn pointer_location(&self) -> Option<(f32, f32)> {
         None
-    }
-    /// `lifecycle.shutdownIfIdle`: false refuses the quit.
-    fn shutdown_models_if_idle(&self) -> bool {
-        true
     }
     /// `recorder.close`: false means the measurement export lost data.
     fn close_recorder(&self) -> bool {
@@ -407,10 +395,6 @@ pub trait Services: 'static {
     /// `NSWorkspace.isVoiceOverEnabled`: rows keep their actions in the accessibility tree.
     fn voice_over_on(&self) -> bool {
         false
-    }
-    /// Save panel for a kept recording; `Ok(None)` when the user cancels.
-    fn choose_save_path(&self, _default_name: &str) -> Result<Option<PathBuf>, Unavailable> {
-        Err(Unavailable("save panel"))
     }
 }
 
@@ -560,20 +544,19 @@ pub struct Fake {
     pub session_ok: std::cell::Cell<bool>,
     pub commands: std::rc::Rc<std::cell::RefCell<Vec<SessionCommand>>>,
     pub announced: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    pub app_names: std::cell::RefCell<std::collections::BTreeMap<String, String>>,
     pub model_verified: std::cell::Cell<bool>,
     pub install_states: std::cell::RefCell<std::collections::BTreeMap<ModelPack, InstallState>>,
     pub ai_phase: std::cell::RefCell<Option<flow_core::onboarding::AiPhase>>,
-    pub models_busy: std::cell::Cell<bool>,
     pub export_incomplete: std::cell::Cell<bool>,
     pub identifiers: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub appearances: std::rc::Rc<std::cell::RefCell<Vec<Option<bool>>>>,
-    pub save_prompts: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 }
 
 impl Default for Fake {
     fn default() -> Self {
         Fake {
-            audio: None, secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), install_states: Default::default(), ai_phase: Default::default(), models_busy: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), save_prompts: Default::default() }
+            audio: None, app_names: Default::default(), secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), install_states: Default::default(), ai_phase: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default() }
     }
 }
 
@@ -607,19 +590,12 @@ impl Services for Fake {
         self.identifiers.borrow_mut().push(identifier.into());
         Ok(())
     }
-    fn shutdown_models_if_idle(&self) -> bool {
-        !self.models_busy.get()
-    }
     fn close_recorder(&self) -> bool {
         !self.export_incomplete.get()
     }
     fn set_app_appearance(&self, dark: Option<bool>) -> Result<(), Unavailable> {
         self.appearances.borrow_mut().push(dark);
         Ok(())
-    }
-    fn choose_save_path(&self, default_name: &str) -> Result<Option<PathBuf>, Unavailable> {
-        self.save_prompts.borrow_mut().push(default_name.into());
-        Ok(None)
     }
     fn animate_panel_frame(&self, _: &dyn HasWindowHandle, _: f32, width: f32, duration: f32, curve: [f32; 4]) -> Result<(), Unavailable> {
         let frames = self.panel_frames.as_ref().ok_or(Unavailable("animated window frames"))?;
@@ -689,6 +665,9 @@ impl Services for Fake {
     }
     fn physical_memory(&self) -> u64 {
         16 << 30
+    }
+    fn app_name(&self, bundle_id: &str) -> Option<String> {
+        self.app_names.borrow().get(bundle_id).cloned()
     }
     fn announce(&self, message: &str) -> Result<(), Unavailable> {
         self.announced.borrow_mut().push(message.into());

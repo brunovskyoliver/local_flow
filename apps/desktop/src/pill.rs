@@ -956,8 +956,28 @@ struct PillWindow {
     handle: AnyWindowHandle,
     view: Entity<PillView>,
     key: (Content, i32),
+    /// The display frames it was placed against.
+    screens: Vec<Bounds<Pixels>>,
 }
 impl Global for PillWindow {}
+
+fn screen_frames(cx: &App) -> Vec<Bounds<Pixels>> {
+    cx.displays().iter().map(|d| d.visible_bounds()).collect()
+}
+
+/// PILL-021's screen-parameter change: GPUI moves no existing window, so a new panel takes the new
+/// frame at once. Nonactivating, so focus stays where it is.
+// ponytail: Space changes and wake aren't observed; the panel joins all Spaces, so it only stays on its old screen until the next change.
+pub fn follow_screens(cx: &mut App) {
+    let Some(pill) = cx.try_global::<PillWindow>() else { return };
+    if pill.screens == screen_frames(cx) {
+        return;
+    }
+    let handle = pill.handle;
+    cx.remove_global::<PillWindow>();
+    let _ = handle.update(cx, |_, w, _| w.remove_window());
+    sync_window(cx);
+}
 
 /// x centers the 118 waveform for dictation and the whole width for notices; y is 20 up.
 pub fn panel_origin(visible: Bounds<Pixels>, width: f32, dictating: bool) -> Point<Pixels> {
@@ -1048,7 +1068,8 @@ pub fn sync_window(cx: &mut App) {
     let bounds = Bounds { origin, size: size(px(width), px(HEIGHT + RISE)) };
     if let Ok((handle, view)) = flow_ui::open_bare_window(panel_options(bounds), cx, |_, cx| cx.new(PillView::new)) {
         let _ = handle.update(cx, |_, w, cx| cx.global::<Core>().services.pin_panel(w));
-        cx.set_global(PillWindow { handle, view, key });
+        let screens = screen_frames(cx);
+        cx.set_global(PillWindow { handle, view, key, screens });
     }
 }
 
@@ -1154,6 +1175,25 @@ mod tests {
 
     fn pill<R>(cx: &mut TestAppContext, f: impl FnOnce(&Pill) -> R) -> R {
         cx.update(|cx| f(&cx.global::<Session>().pill))
+    }
+
+    // parity: PILL-021
+    #[flow_ui::gpui::test]
+    async fn a_changed_screen_gives_the_visible_pill_a_new_panel(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        cx.update(|cx| {
+            ensure_session(cx);
+            update_session(cx, |s| s.pill.state = DictState::Recording);
+            sync_window(cx);
+            let first = cx.global::<PillWindow>().handle;
+            follow_screens(cx);
+            assert_eq!(cx.global::<PillWindow>().handle, first, "same screens: the panel stays");
+            cx.global_mut::<PillWindow>().screens.clear();
+            follow_screens(cx);
+            let pill = cx.global::<PillWindow>();
+            assert_ne!(pill.handle, first, "placed again");
+            assert_eq!(pill.screens, screen_frames(cx));
+        });
     }
 
     // parity: PILL-011 PILL-012
@@ -1771,36 +1811,38 @@ mod tests {
     }
 
     // parity: PILL-088..PILL-095
-    /// `RewriteNotice.text`'s live words: the bounded category text plus Swift's suffix. Whatever
-    /// posts them (Feature 026) gets the wording from here; flowd only supplies the category.
+    /// `RewriteNotice.text`'s live words: the bounded category text plus Swift's suffix. The session
+    /// posts them through the same function; flowd only supplies the category.
     #[test]
     fn rewrite_failure_categories_map_to_the_live_words() {
-        use flow_core::history::rewrite_notice;
-        let suffix = " Original text inserted.";
-        let unusable = "Rewrite server sent an unusable reply.";
-        for (category, tail, words) in [
-            ("server_unreachable", suffix, "Rewrite server unreachable. Original text inserted."),
-            ("transport_error", suffix, "Rewrite connection failed. Original text inserted."),
-            ("timeout", suffix, "Rewrite took too long. Original text inserted."),
-            ("authentication_failed", "", "Rewrite server rejected the credential. Check Settings."),
-            ("backend_unavailable", "", "Rewrite model is not available on the server."),
-            ("malformed_response", "", unusable),
-            ("unsupported_schema_version", "", unusable),
-            ("request_mismatch", "", unusable),
-            ("empty_response", "", "Rewrite result was rejected."),
-            ("missing_credential", suffix, "Rewriting skipped: no credential for this server. Original text inserted."),
-        ] {
-            let live = format!("{}{tail}", rewrite_notice(category));
-            assert_eq!(live, words, "{category}");
-            assert!(REWRITE_NOTICES.iter().any(|(m, retry)| *m == live && *retry), "{live}");
+        use flow_core::history::live_rewrite_notice as live;
+        let offered = |words: &str| REWRITE_NOTICES.iter().any(|(m, retry)| *m == words && *retry);
+        assert_eq!(live("server_unreachable"), "Rewrite server unreachable. Original text inserted.");
+        assert_eq!(live("transport_error"), "Rewrite connection failed. Original text inserted.");
+        assert_eq!(live("timeout"), "Rewrite took too long. Original text inserted.");
+        assert_eq!(live("authentication_failed"), "Rewrite server rejected the credential. Check Settings.");
+        assert_eq!(live("backend_unavailable"), "Rewrite model is not available on the server.");
+        assert_eq!(live("malformed_response"), "Rewrite server sent an unusable reply.");
+        assert_eq!(live("unsupported_schema_version"), live("request_mismatch"));
+        assert_eq!(live("empty_response"), "Rewrite result was rejected.");
+        assert_eq!(live("missing_credential"), "Rewriting skipped: no credential for this server. Original text inserted.");
+        for category in ["server_unreachable", "transport_error", "timeout", "authentication_failed", "backend_unavailable", "malformed_response", "empty_response", "missing_credential"] {
+            assert!(offered(&live(category)), "{category}");
         }
-        assert!(REWRITE_NOTICES.iter().any(|(m, _)| *m == "Rewrite connection failed. Original text inserted."));
     }
 
-    // Copy only: nothing posts these until Features 025 and 026, so the rows stay `recorded`.
-    /// The words and whether Retry is offered. No production caller yet.
+    // The words the notice table holds, and what the session really posts for each category.
+    // parity: PILL-096..PILL-099 PILL-101..PILL-103
     #[test]
     fn rewrite_and_meeting_notices_keep_swifts_words() {
+        use flow_core::history::live_rewrite_notice as live;
+        assert_eq!(live("insecure_endpoint_blocked"), "Rewriting skipped: unencrypted connection blocked. Original text inserted.");
+        assert_eq!(live("invalid_settings"), "Rewriting skipped: the endpoint is invalid. Original text inserted.");
+        assert_eq!(live("input_too_large"), "Rewriting skipped: the text is too long. Original text inserted.");
+        assert_eq!(live("capacity_exceeded"), "Rewriting skipped: history is full. Original text inserted.");
+        assert_eq!(live("concurrency_limit"), "Two rewrites are still running. Original text inserted.");
+        assert_eq!(live("interrupted"), "Rewrite was interrupted by a restart.");
+        assert_eq!(live("context_copied"), "Rewrite used on-screen text you did not say; inserted your transcript.");
         let offers = |message: &str| REWRITE_NOTICES.iter().find(|(m, _)| *m == message).map(|(_, retry)| *retry);
         assert_eq!(offers("Rewriting skipped: unencrypted connection blocked. Original text inserted."), Some(true));
         assert_eq!(offers("Rewriting skipped: the endpoint is invalid. Original text inserted."), Some(true));

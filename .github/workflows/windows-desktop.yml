@@ -27,7 +27,7 @@ jobs:
             build/rust
           key: ${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo test --workspace
-      - run: cargo build -p localflow
+      - run: cargo build -p localflow -p flow-speech-win
       - name: Open the app on real Windows
         shell: pwsh
         run: pwsh -File scripts/windows-smoke.ps1

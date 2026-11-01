@@ -101,6 +101,9 @@ pub struct Driver {
     /// The dictation the last rewrite notice is about, for its Retry.
     action: Option<String>,
     retrier_started: bool,
+    /// The recording the "can't wait" alert is about.
+    offered: Option<PathBuf>,
+    installing: bool,
     mic: Arc<dyn Mic>,
     running: Arc<AtomicBool>,
     control: Option<Arc<Control>>,
@@ -117,7 +120,7 @@ impl Driver {
         let (mic, flag, sender) = (parts.mic.clone(), running.clone(), publish.clone());
         let (database, pending_dir, credentials, inserter) = (parts.database.clone(), parts.pending_dir.clone(), parts.credentials.clone(), parts.inserter.clone());
         std::thread::Builder::new().name("dictation".into()).spawn(move || serve(parts, keep_loaded, inbox, publish, flag)).expect("the dictation thread starts");
-        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, inserter, observing: None, learn_corrections: Arc::default(), note: None, notes: Default::default(), action: None, retrier_started: false, mic, running, control: None, model_installed: false, keep_loaded }
+        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, inserter, observing: None, learn_corrections: Arc::default(), note: None, notes: Default::default(), action: None, retrier_started: false, offered: None, installing: false, mic, running, control: None, model_installed: false, keep_loaded }
     }
 
     fn ask(&self, command: impl FnOnce(Sender<bool>) -> Command, limit: Duration) -> bool {
@@ -193,8 +196,18 @@ fn keeps_loaded(cx: &App) -> bool {
     prefs.bool_or("keepModelReady", false) && !server::routing(prefs).served(server::Service::Dictation)
 }
 
-/// `AppServices.start`: composes the session where this platform has every part, and installs the
-/// saved shortcut. A build without them keeps the unavailable answers of `Services`.
+/// What a Mac build runs on with no `flowd-speech` next to it, as the Rust app is until its bundle
+/// carries one (Feature 028). Installs say so, a local press fails with the unavailable model's
+/// words, and a device served by its server still dictates.
+struct NoWorker;
+impl Launcher for NoWorker {
+    fn launch(&mut self) -> std::io::Result<flow_core::dictation::lifecycle::Spawned> {
+        Err(std::io::ErrorKind::NotFound.into())
+    }
+}
+
+/// `AppServices.start`: composes the session where this platform has a microphone and a field to
+/// type in, and installs the saved shortcut. A build without them keeps `Services`' answers.
 pub fn start(cx: &mut App) {
     install_saved_shortcut(cx);
     let core = cx.global::<Core>();
@@ -203,7 +216,7 @@ pub fn start(cx: &mut App) {
         Some(Parts {
             mic: services.microphone()?,
             inserter: services.inserter()?,
-            launcher: services.speech_launcher(&core.paths.models())?,
+            launcher: services.speech_launcher(&core.paths.models()).unwrap_or_else(|| Box::new(NoWorker)),
             db: Db::open_or_create(&core.paths.database()).ok()?,
             database: core.paths.database(),
             credentials: services.credentials(),
@@ -267,6 +280,8 @@ fn poll(cx: &mut App) {
             s.setup_status = "Verified local model available.".into();
         });
     }
+    pill::follow_screens(cx);
+    release_for_install(cx);
     // SET and install paths change these without knowing about this thread.
     let (installed, keep) = (cx.global::<Session>().model_installed, keeps_loaded(cx));
     let available = cx.global::<Core>().services.shortcut_available();
@@ -286,6 +301,22 @@ fn poll(cx: &mut App) {
         driver.keep_loaded = keep;
         let _ = driver.commands.send(Command::KeepLoaded(keep));
     }
+}
+
+/// Installs replace what the worker has loaded, and SHELL-143's gate refuses a press during one.
+fn release_for_install(cx: &mut App) {
+    use flow_platform::{InstallState::Running, ModelPack::*};
+    let services = &cx.global::<Core>().services;
+    let speech = matches!(services.install_state(Speech), Running(..));
+    let any = speech || matches!(services.install_state(Meeting), Running(..)) || matches!(services.install_state(Booster), Running(..));
+    if cx.global::<Session>().installing != speech {
+        update_session(cx, |s| s.installing = speech);
+    }
+    let driver = cx.global_mut::<Driver>();
+    if any && !driver.installing {
+        let _ = driver.commands.send(Command::Unload(mpsc::channel().0));
+    }
+    driver.installing = any;
 }
 
 /// `PendingRemoteRetrier`, from the first time this device is approved. A live dictation goes first.
@@ -330,6 +361,11 @@ fn shortcut(event: flow_core::dictation::hotkey::Event, cx: &mut App) {
 }
 
 fn press(cx: &mut App) {
+    // `dictationAdmissionReason`. The finalizing half has no case here: Rust runs no local finalization.
+    if cx.global::<Session>().meeting.as_ref().is_some_and(|m| m.state.is_active()) {
+        pill::show_action("Meeting in progress", false, cx);
+        return;
+    }
     let (session, core, driver) = (cx.global::<Session>(), cx.global::<Core>(), cx.global::<Driver>());
     let server_only = server::routing(&core.prefs).served(server::Service::Dictation);
     if driver.running.load(SeqCst) || !may_begin(session.installing, session.model_command, session.model_installed, server_only, driver.mic.authorize()) {
@@ -437,20 +473,44 @@ fn route(cx: &mut App) -> Route {
     Route { server: remote.filter(|_| dictation).map(|r| (r.enrollment.clone(), r.pool.clone(), threshold)), local_allowed: installed && !routing.server_only, rewrite }
 }
 
-/// Discard in Swift's alert is Cancel here. A save that fails keeps the file where it is.
-// ponytail: quitting with the panel open leaves `offered-*.f32` in PendingAudio with no row; a sweep at launch if that's ever seen.
+/// The save panel for a kept recording, GPUI's native one. `Ok(None)` when the user cancels.
+pub fn save_panel(cx: &App) -> impl Future<Output = Result<Option<PathBuf>, ()>> + use<> {
+    let home = std::env::home_dir().unwrap_or_default();
+    let answer = cx.prompt_for_new_path(&home, Some("LocalFlow dictation.wav"));
+    async move { answer.await.map_err(drop).and_then(|r| r.map_err(drop)) }
+}
+
+/// `askAboutUnkeptAudio`: nothing goes without asking.
+// ponytail: a second offer while the alert is up replaces the first, whose file goes at the next launch; a queue if that's ever seen.
 fn offer_audio(audio: PathBuf, cx: &mut App) {
-    match cx.global::<Core>().services.choose_save_path("LocalFlow dictation.wav") {
-        Ok(Some(path)) => {
-            if let Ok(samples) = std::fs::read(&audio)
-                && std::fs::write(path, flow_core::history::wav(&samples)).is_ok()
-            {
-                let _ = std::fs::remove_file(audio);
-            }
-        }
-        Ok(None) => drop(std::fs::remove_file(audio)),
-        Err(_) => {}
+    if let Some(driver) = cx.try_global::<Driver>().is_some().then(|| cx.global_mut::<Driver>()) {
+        driver.offered = Some(audio);
     }
+    cx.activate(true);
+    if cx.global::<Session>().window.is_none() {
+        shell::open_main_window(cx);
+    }
+    shell::show_alert(shell::Alert::RecordingCantWait, cx);
+}
+
+/// SHELL-132, SHELL-133. A cancelled panel or a failed write keeps the file until the next launch,
+/// and read and write errors are silent, as in Swift.
+pub fn offered_answered(save: bool, cx: &mut App) {
+    let audio = cx.try_global::<Driver>().is_some().then(|| cx.global_mut::<Driver>().offered.take()).flatten();
+    let Some(audio) = audio else { return };
+    if !save {
+        let _ = std::fs::remove_file(audio);
+        return;
+    }
+    let panel = save_panel(cx);
+    cx.spawn(async move |_| {
+        if let Ok(Some(path)) = panel.await
+            && flow_core::history::write_wav(&audio, &path).is_ok()
+        {
+            let _ = std::fs::remove_file(audio);
+        }
+    })
+    .detach();
 }
 
 fn state_of(state: State) -> DictState {
@@ -618,7 +678,7 @@ pub fn recheck_capacity(cx: &App) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::shell::ensure_session;
     use crate::testing::boot;
@@ -703,9 +763,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // parity: PILL-094
+    /// A session on the worker's thread, for quit.
+    pub(crate) fn hold_the_worker(cx: &mut App) {
+        let root = std::env::temp_dir().join(format!("flow-driver-hold-{}", std::process::id()));
+        let driver = Driver::spawn(doubles(&root), false);
+        driver.running.store(true, SeqCst);
+        cx.set_global(driver);
+    }
+
+    pub(crate) fn offer(audio: PathBuf, cx: &mut App) {
+        let root = audio.parent().unwrap().join("driver");
+        cx.set_global(Driver::spawn(doubles(&root), false));
+        apply(Event::AudioOffered { audio }, cx);
+    }
+
+    // parity: SHELL-143
     #[flow_ui::gpui::test]
-    async fn a_notice_arms_retry_and_offered_audio_is_dropped_only_on_cancel(cx: &mut TestAppContext) {
+    async fn an_install_refuses_a_press_until_it_ends(cx: &mut TestAppContext) {
+        use flow_platform::{InstallState, ModelPack};
+        boot(cx, Mode::Light);
+        let root = std::env::temp_dir().join(format!("flow-driver-installing-{}", std::process::id()));
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.set_global(Driver::spawn(doubles(&root), false));
+            update_session(cx, |s| s.model_installed = true);
+            let fake = flow_platform::Fake::default();
+            fake.install_states.borrow_mut().insert(ModelPack::Speech, InstallState::Running(1, 2, false));
+            cx.global_mut::<Core>().services = Box::new(fake);
+            poll(cx);
+            assert!(cx.global::<Session>().installing && cx.global::<Driver>().installing);
+            shortcut(flow_core::dictation::hotkey::Event::Pressed, cx);
+            assert!(cx.global::<Driver>().control.is_none(), "refused during the install");
+            cx.global_mut::<Core>().services = Box::new(flow_platform::Fake::default());
+            poll(cx);
+            assert!(!cx.global::<Session>().installing);
+            shortcut(flow_core::dictation::hotkey::Event::Pressed, cx);
+            assert!(cx.global::<Driver>().control.is_some(), "allowed again");
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // parity: PILL-106
+    #[flow_ui::gpui::test]
+    async fn an_active_meeting_refuses_a_press_with_its_notice(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let root = std::env::temp_dir().join(format!("flow-driver-meeting-{}", std::process::id()));
+        cx.update(|cx| {
+            use crate::shell::MeetingStatus;
+            use flow_core::dictation::hotkey::Event::Pressed;
+            ensure_session(cx);
+            cx.set_global(Driver::spawn(doubles(&root), false));
+            update_session(cx, |s| {
+                s.model_installed = true;
+                s.meeting = Some(MeetingStatus { id: "m".into(), title: None, state: crate::shell::MeetingState::Recording, elapsed_ms: 0 });
+            });
+            shortcut(Pressed, cx);
+            assert!(cx.global::<Driver>().control.is_none(), "the meeting keeps the microphone");
+            assert_eq!(cx.global::<Session>().pill.action.as_ref().map(|a| a.message.as_str()), Some("Meeting in progress"));
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // parity: PILL-086
+    #[flow_ui::gpui::test]
+    async fn a_notice_arms_retry(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
         let root = std::env::temp_dir().join(format!("flow-driver-notice-{}", std::process::id()));
         cx.update(|cx| {
@@ -716,11 +837,6 @@ mod tests {
             assert_eq!(cx.global::<Driver>().action.as_deref(), Some("d1"));
             assert!(cx.global::<Session>().pill.action.is_some());
             assert!(session_command(SessionCommand::RetryRewrite, cx).is_ok());
-
-            let audio = root.join("offered-x.f32");
-            std::fs::write(&audio, [0u8; 8]).unwrap();
-            apply(Event::AudioOffered { audio: audio.clone() }, cx);
-            assert!(!audio.exists(), "the test panel answers Cancel, which is Discard");
         });
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -881,6 +997,7 @@ mod tests {
 
     /// The whole thread with doubles: a press with no microphone, its events, and the commands.
     #[test]
+    // parity: SET-243
     fn the_thread_runs_a_session_and_answers_commands() {
         let root = std::env::temp_dir().join(format!("flow-driver-{}", std::process::id()));
         let driver = Driver::spawn(doubles(&root), false);

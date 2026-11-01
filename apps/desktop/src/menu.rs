@@ -103,6 +103,7 @@ pub fn quit(cx: &mut App) {
     if model_command {
         update_session(cx, |s| s.setup_status = "Wait for the model operation to finish, then quit again.".into());
     } else if installing {
+        let _ = cx.global::<Core>().services.settings_action("cancelInstall");
         update_session(cx, |s| {
             s.installing = false;
             s.setup_status = "Cancelling installation. Quit again after cleanup finishes.".into();
@@ -131,7 +132,7 @@ pub fn finish_quit(cx: &mut App) {
                 let _ = cx.global::<Core>().services.session_command(flow_platform::SessionCommand::StopMeeting);
             }
         }
-        if !crate::dictation::shutdown_if_idle(cx) || !cx.global::<Core>().services.shutdown_models_if_idle() {
+        if !crate::dictation::shutdown_if_idle(cx) {
             update_session(cx, |s| {
                 s.quitting = false;
                 s.setup_status = "Model shutdown is still busy. Wait for it to finish before quitting.".into();
@@ -261,9 +262,7 @@ mod tests {
     async fn busy_model_shutdown_refuses_the_quit(cx: &mut TestAppContext) {
         boot(cx, Mode::Light);
         cx.update(|cx| {
-            let fake = flow_platform::Fake::default();
-            fake.models_busy.set(true);
-            cx.global_mut::<Core>().services = Box::new(fake);
+            crate::dictation::tests::hold_the_worker(cx);
         });
         let _window = open_shell(cx);
         cx.update(quit);

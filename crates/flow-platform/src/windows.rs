@@ -10,6 +10,10 @@ impl Services for Win {
             "download" => self.install_speech_model(),
             "downloadBoostModel" => self.install_term_booster(),
             "downloadMeetingModel" | "downloadSpeakerModel" => self.install_meeting_models(),
+            "cancelInstall" => {
+                crate::speech::cancel(crate::ModelPack::Speech);
+                Ok(())
+            }
             _ => Err(Unavailable("this model action")),
         }
     }
@@ -24,9 +28,6 @@ impl Services for Win {
     }
     fn speech_model_verified(&self) -> bool {
         crate::speech::install_state(crate::ModelPack::Speech) == crate::InstallState::Verified
-    }
-    fn verify_speech_model(&self) -> Result<(), String> {
-        crate::speech::verify_speech_model()
     }
     fn install_meeting_models(&self) -> Result<(), Unavailable> {
         // `flow-speech-win` refuses `--meeting`: meetings need a server or a Mac here.

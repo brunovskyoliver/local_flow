@@ -20,7 +20,7 @@ pub struct Plan {
     pub secret: Option<String>,
 }
 
-/// What one attempt ended with. `Cancelled` keeps the original text without a notice.
+/// What one attempt ended with.
 pub enum Done {
     NotEligible,
     Text { text: String, attempt: String },
@@ -77,11 +77,17 @@ pub struct Live {
 
 impl Rewriter for Live {
     fn rewrite(&mut self, id: &str, text: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten {
-        match run(&self.db, &self.plan, id, text, started, cancel) {
-            Done::NotEligible | Done::Cancelled => Rewritten::NotEligible,
-            Done::Text { text, attempt } => Rewritten::Text { text, attempt },
-            Done::Failed(category) => Rewritten::Notice { message: live_rewrite_notice(category), can_retry: can_retry(category) },
-        }
+        outcome(run(&self.db, &self.plan, id, text, started, cancel))
+    }
+}
+
+fn outcome(done: Done) -> Rewritten {
+    match done {
+        Done::NotEligible => Rewritten::NotEligible,
+        // `RewriteNotice.cancelled(.live)`.
+        Done::Cancelled => Rewritten::Notice { message: "Rewrite cancelled. Original text inserted.".into(), can_retry: true },
+        Done::Text { text, attempt } => Rewritten::Text { text, attempt },
+        Done::Failed(category) => Rewritten::Notice { message: live_rewrite_notice(category), can_retry: can_retry(category) },
     }
 }
 
@@ -93,5 +99,17 @@ pub fn retry(db: &Db, plan: &Plan, dictation: &str) -> Option<(String, bool)> {
     match run(db, plan, dictation, &text, &mut || {}, &Arc::new(AtomicBool::new(false))) {
         Done::Failed(category) => Some((crate::history::rewrite_notice(category).into(), can_retry(category))),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // parity: PILL-100 PILL-104
+    #[test]
+    fn a_cancelled_rewrite_says_so_and_the_attempt_limit_offers_no_retry() {
+        assert!(matches!(outcome(Done::Cancelled), Rewritten::Notice { ref message, can_retry: true } if message == "Rewrite cancelled. Original text inserted."));
+        assert!(matches!(outcome(Done::Failed("attempt_limit")), Rewritten::Notice { ref message, can_retry: false } if message == "This dictation already has ten rewrite attempts."));
     }
 }

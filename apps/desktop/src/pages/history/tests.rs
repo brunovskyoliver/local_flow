@@ -22,8 +22,8 @@ fn click(cx: &mut TestAppContext, w: WindowHandle<HistoryPage>, id: String) {
 }
 
 /// What the Mac build has today: the save panel keeps `Services`' default, `Unavailable`.
-struct NoSavePanel;
-impl flow_platform::Services for NoSavePanel {
+struct NoServices;
+impl flow_platform::Services for NoServices {
     fn name(&self) -> &'static str {
         "test"
     }
@@ -184,12 +184,14 @@ async fn pending_rows_save_failure_and_discard(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
         core.paths = flow_core::paths::Paths::new(dir.clone());
-        core.services = Box::new(NoSavePanel);
+        core.services = Box::new(NoServices);
     });
     frame(cx, w);
     assert_saw(&["WAITING FOR SERVER", "Recognize Locally", "Save Audio…", "Discard"]);
     let id = seed_id(9201);
     click(cx, w, format!("history.pending.save.{id}"));
+    cx.simulate_new_path_selection(|_| Some("/nonexistent/folder/kept.wav".into()));
+    frame(cx, w);
     assert_saw(&[PENDING_ERROR]);
     click(cx, w, format!("history.pending.discard.{id}"));
     assert_saw(&["Discard this recording?", "Its audio is deleted and it will not be recognized."]);
@@ -1767,7 +1769,7 @@ fn pending_page(cx: &mut TestAppContext) -> (WindowHandle<HistoryPage>, std::pat
     cx.update(|cx| {
         let core = cx.global_mut::<Core>();
         core.paths = flow_core::paths::Paths::new(dir.clone());
-        core.services = Box::new(NoSavePanel);
+        core.services = Box::new(NoServices);
     });
     frame(cx, w);
     (w, dir)
@@ -1801,7 +1803,12 @@ async fn the_waiting_section_reads_its_rows_and_discards_through_the_dialog(cx: 
     frame(cx, w);
     assert!(!disabled(cx, w, format!("history.pending.recognize.{new}")));
     // A failure shows the warning, 12, then the next action clears it.
-    click(cx, w, format!("history.pending.save.{new}"));
+    w.update(cx, |t, _, cx| {
+        t.model.report_pending_failure();
+        cx.notify();
+    })
+    .unwrap();
+    frame(cx, w);
     assert_eq!(style(PENDING_ERROR), (12., 400., p.warning));
     click(cx, w, format!("history.pending.discard.{new}"));
     assert_eq!(label_of(cx, w, "history.discardDialog.confirm".into()).as_deref(), Some("Discard"));
@@ -1822,6 +1829,22 @@ async fn the_waiting_section_reads_its_rows_and_discards_through_the_dialog(cx: 
     click(cx, w, "history.discardDialog.confirm".into());
     assert!(!saw("WAITING FOR SERVER"));
     assert_saw(&["TODAY"]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// parity: HIST-080
+#[flow_ui::gpui::test]
+async fn save_audio_writes_a_wav_through_the_panel_and_keeps_the_row(cx: &mut TestAppContext) {
+    let (w, dir) = pending_page(cx);
+    let new = seed_id(9202);
+    let wav = dir.join("kept.wav");
+    click(cx, w, format!("history.pending.save.{new}"));
+    assert!(cx.did_prompt_for_new_path());
+    cx.simulate_new_path_selection(|_| Some(wav.clone()));
+    cx.run_until_parked();
+    let audio = std::fs::metadata(dir.join("PendingAudio").join(format!("{new}.f32"))).unwrap().len();
+    assert_eq!(std::fs::metadata(&wav).unwrap().len(), 44 + audio);
+    w.update(cx, |t, _, _| assert!(t.model.pending_items.iter().any(|i| i.id == new), "the row stays")).unwrap();
     let _ = std::fs::remove_dir_all(dir);
 }
 

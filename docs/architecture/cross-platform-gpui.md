@@ -1,6 +1,6 @@
 # Cross-platform desktop client: GPUI plan
 
-Status: accepted, 2026-10-31. Phase 1 is built; Phase 3 is Feature 024. The decision and the constitution amendment are in [ADR 0036](../adr/0036-rust-gpui-desktop-client.md). Each phase below gets its own Spec Kit cycle.
+Status: accepted, 2026-10-31. Phase 1 is built; Phase 3 is Feature 024, Phase 4 Feature 025 and Phase 5 Feature 026. Dictation runs on the Mac and cross-compiles for Windows, where nothing has been run; hardware acceptance is open in each feature's `acceptance/hardware.md`. Features 028 and 029 are not started. The decision and the constitution amendment are in [ADR 0036](../adr/0036-rust-gpui-desktop-client.md). Each phase below gets its own Spec Kit cycle.
 
 ## Goal
 
@@ -104,6 +104,10 @@ Two risks go to Phase 0:
 | Launch at login | `SMAppService` | Run registry key | |
 | Updates | Sparkle | Velopack (to be confirmed in Feature 028) | Mac keeps its appcast and keys |
 | Permissions UI | TCC panes | Mic privacy check only | No Input Monitoring or Screen Recording step on Windows |
+| Local speech worker | `flowd-speech serve` and `provision` | `flow-speech-win`, same messages | `flow-core`'s lifecycle owns it: lazy start, idle release, one job at a time. Missing worker: a local press fails with the verify-model message, server dictation still works. The Rust Mac bundle carries `flowd-speech` at Feature 028 |
+| Save panel | GPUI `prompt_for_new_path` | same | History and the "can't wait" alert write the WAV atomically; no service method |
+
+Feature 026 status of this table: the microphone, hold-to-talk key, insertion and pill are used by dictation on both systems. On the Mac, Rust meeting capture, system audio and AAC stay with the Swift app until Feature 028. The pill reopens on a display change; Space changes and wake aren't observed. The Windows local meeting workers are Feature 029.
 
 **Sign-in on Windows.** `flowd` accepts Apple and Google tokens. Google's desktop flow already opens a browser, so it ports directly. Sign in with Apple on Windows needs Apple's web flow, a Services ID and a hosted HTTPS return URL, and `flowd` has no redirect endpoint for it. Windows v1 ships with Google only, and servers that need Windows clients must set `GoogleClientIDs`. I haven't checked Apple's current web-flow rules.
 

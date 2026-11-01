@@ -63,6 +63,7 @@ pub struct SettingsPage {
     apps: std::cell::RefCell<std::collections::HashMap<String, sheets::AppInfo>>,
     remove_focus: std::cell::RefCell<std::collections::HashMap<String, FocusHandle>>,
     voice_over: bool,
+    announced_warning: std::cell::RefCell<Option<String>>,
     /// The origin usage enrollment last looked at, so the Keychain isn't read on every refresh.
     usage_origin: Option<String>,
     // Server
@@ -244,6 +245,7 @@ impl SettingsPage {
             apps: Default::default(),
             remove_focus: Default::default(),
             voice_over: cx.global::<Core>().services.voice_over_on(),
+            announced_warning: Default::default(),
             usage_origin: None,
             remote_base: None,
             identity: None,
@@ -1065,6 +1067,14 @@ impl SettingsPage {
             }
         }
         body = body.child(hairline(cx)).child(div().id("settings.rewriteAdvancedRow").w_full().py(px(14.)).child(advanced).test_support());
+        // `SettingsView`: announced on first show and on change.
+        let spoken = self.rewrite.warning();
+        if *self.announced_warning.borrow() != spoken {
+            if let Some(words) = &spoken {
+                let _ = cx.global::<Core>().services.announce(words);
+            }
+            *self.announced_warning.borrow_mut() = spoken;
+        }
         let warning = self.rewrite.warning().map(|w| div().id("settings.rewriteWarning").test_support().pb(px(12.)).child(t(w).size(12.).color(pl.warning)).into_any_element());
         let mut out = vec![Self::section_title("Rewriting").into_any_element()];
         out.extend(warning);
