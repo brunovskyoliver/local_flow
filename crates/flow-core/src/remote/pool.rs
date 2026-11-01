@@ -97,6 +97,16 @@ impl Pool {
         self.hand_off(role);
     }
 
+    /// Keeps a channel an op outside the pool finished on, as dictation hands its channel to the
+    /// rewrite after it. One the role doesn't need right now closes.
+    pub fn park(&self, role: Role, channel: Channel, next_op: i64) {
+        let at = (self.now)();
+        let mut state = self.state();
+        if !state.leased.contains(&role) {
+            state.parked.insert(role, Parked { channel, next_op, at });
+        }
+    }
+
     /// A fresh channel for `role`, timed to `ready` and closed. A parked one closes first: reusing it
     /// proves nothing about the server.
     pub fn round_trip(&self, role: Role) -> Result<Duration, ChannelError> {

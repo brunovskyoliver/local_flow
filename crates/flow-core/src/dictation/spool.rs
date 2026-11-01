@@ -25,9 +25,16 @@ fn private_dir(path: &Path) -> io::Result<()> {
 }
 
 /// Reads what the writer has flushed, from any thread.
-pub struct Reader(File);
+pub struct Reader(File, PathBuf);
 
 impl Reader {
+    pub fn open(path: &Path) -> io::Result<Reader> {
+        Ok(Reader(File::open(path)?, path.to_path_buf()))
+    }
+    /// A second handle with its own file position, for a thread that may outlive this one.
+    pub fn reopen(&self) -> io::Result<Reader> {
+        Reader::open(&self.1)
+    }
     pub fn read(&mut self, start: usize, count: usize) -> io::Result<Vec<f32>> {
         self.0.seek(SeekFrom::Start(start as u64 * 4))?;
         let mut bytes = vec![0; count * 4];
@@ -52,7 +59,7 @@ impl Spool {
         Ok(Spool { file: options.open(&path)?, dir, path, samples: 0 })
     }
     pub fn reader(&self) -> io::Result<Reader> {
-        File::open(&self.path).map(Reader)
+        Reader::open(&self.path)
     }
     pub fn samples(&self) -> usize {
         self.samples

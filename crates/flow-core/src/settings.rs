@@ -255,6 +255,7 @@ pub struct RewriteSettings {
     pub origin: String,
     pub insecure_override: bool,
     pub credential_present: bool,
+    pub via_channel: bool,
 }
 
 impl RewriteSettings {
@@ -264,7 +265,7 @@ impl RewriteSettings {
         let origin = normalized_origin(&raw).unwrap_or_default();
         let insecure_override = !origin.is_empty() && insecure_override(p, &origin);
         let credential_present = !origin.is_empty() && credential(&origin);
-        RewriteSettings { origin, insecure_override, credential_present }
+        RewriteSettings { origin, insecure_override, credential_present, via_channel: false }
     }
     pub fn valid(&self) -> bool {
         !self.origin.is_empty()
@@ -276,7 +277,14 @@ impl RewriteSettings {
         is_loopback_host(&self.host())
     }
     pub fn is_unencrypted_remote(&self) -> bool {
-        self.origin.starts_with("http://") && !self.is_loopback()
+        self.origin.starts_with("http://") && !self.is_loopback() && !self.via_channel
+    }
+    /// `routedToRemote`: the server's sealed channel, so neither plain HTTP nor a stored key matters.
+    pub fn routed_to_remote(origin: String) -> Self {
+        RewriteSettings { origin, via_channel: true, ..Default::default() }
+    }
+    pub fn requires_credential(&self) -> bool {
+        !self.is_loopback() && !self.via_channel
     }
     pub fn blocked_reason(&self) -> Option<&'static str> {
         if self.valid() && self.is_unencrypted_remote() && !self.insecure_override {

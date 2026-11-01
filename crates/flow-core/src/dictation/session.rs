@@ -138,14 +138,60 @@ pub enum RecognizeFailure {
     Lost,
 }
 
-/// Local speech under a lease. // seam (T016): remote dictation implements this by streaming the
-/// windows; `path` and `server_failure` then say where the text came from.
+/// What `Recognizer::stream` came back with.
+pub enum Streamed {
+    /// Recognize the recording here, from sample 0, with `prepare` and `recognize`.
+    Here,
+    /// The whole recording's windows, in order: start, count, text. And the recognition seconds.
+    Windows(Vec<(usize, usize, String)>, f64),
+    /// Cancelled or discarded: nothing to deliver.
+    Nothing,
+}
+
+/// The recording as it grows, for a recognizer that streams it elsewhere.
+pub struct Feed<'a> {
+    reader: &'a Reader,
+    shared: &'a Shared,
+    control: &'a Control,
+    pub poll: Duration,
+}
+
+impl Feed<'_> {
+    pub fn reader(&self) -> std::io::Result<Reader> {
+        self.reader.reopen()
+    }
+    pub fn recorded(&self) -> usize {
+        self.shared.recorded.load(SeqCst)
+    }
+    /// The final count, once capture has ended.
+    pub fn total(&self) -> Option<usize> {
+        self.shared.ended.load(SeqCst).then(|| self.shared.total.load(SeqCst))
+    }
+    pub fn stopped(&self) -> bool {
+        self.shared.discard.load(SeqCst) || self.control.cancelled()
+    }
+    /// The Mac is going to sleep: nothing more goes out.
+    pub fn asleep(&self) -> bool {
+        self.shared.asleep.load(SeqCst)
+    }
+    /// Says where the words are coming from, for the status once capture ends.
+    pub fn set_streaming(&self, streaming: bool) {
+        self.shared.streaming.store(streaming, SeqCst);
+    }
+}
+
+/// Speech under a lease, or (`stream`) on the server: `path` and `server_failure` say where the
+/// text came from.
 pub trait Recognizer: Send {
     /// Lease and model load. Runs beside capture, so recording never waits for it. `Err` is the message.
     fn prepare(&mut self, vocabulary: &Vocabulary) -> Result<(), String>;
     fn recognize(&mut self, samples: &[f32]) -> Result<Value, RecognizeFailure>;
     fn model(&self) -> Option<ModelIdentity>;
     fn finish(&mut self);
+    /// Runs first, beside capture. The default recognizes here.
+    fn stream(&mut self, _vocabulary: &Vocabulary, _feed: &Feed) -> Streamed {
+        Streamed::Here
+    }
     fn path(&self) -> &'static str {
         "local"
     }
@@ -160,15 +206,19 @@ pub enum Rewritten {
     Notice { message: String, can_retry: bool },
 }
 
-/// Admits and runs one rewrite of saved text, blocking. Cancelling reads `cancel`. T017 supplies it.
+/// Admits and runs one rewrite of saved text, blocking. Cancelling sets `cancel`.
 pub trait Rewriter: Send {
-    fn rewrite(&mut self, id: &str, text: &str, started: &mut dyn FnMut(), cancel: &AtomicBool) -> Rewritten;
+    fn rewrite(&mut self, id: &str, text: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten;
 }
 
 pub trait Inserter: Send + Sync {
     fn capture_target(&self) -> Option<CapturedTarget>;
     fn insert_once(&self, target: &CapturedTarget, text: &str) -> InsertOutcome;
     fn copy(&self, text: &str);
+    /// The field's text in a UTF-16 range, for the correction learner. `Err` is a failed read.
+    fn read_text(&self, _target: &CapturedTarget, _location: usize, _length: usize) -> Result<String, ()> {
+        Err(())
+    }
 }
 
 /// A dictation about to be saved.
@@ -185,6 +235,8 @@ pub struct NewDictation {
     pub device_kind: Option<String>,
     pub detail_json: String,
     pub content_hash: String,
+    /// When it was spoken, for one saved later. `None` is now.
+    pub created_at: Option<i64>,
 }
 
 /// Audio that lost its recognizer.
@@ -238,10 +290,23 @@ pub enum Event {
     Level(f32),
     /// Saved text that didn't land is on the clipboard.
     Clipboard { uncertain: bool },
-    /// A rewrite notice for the pill.
-    Action { message: String, can_retry: bool },
+    /// A rewrite notice for the pill, about this dictation.
+    Action { message: String, can_retry: bool, dictation: String },
     Microphone(String),
     HistoryChanged,
+    /// A recording no waiting row could take, moved here for the user to save or discard.
+    AudioOffered { audio: PathBuf },
+    /// Confirmed in this field, for the correction learner.
+    Inserted(Inserted),
+}
+
+/// Text that landed and where.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Inserted {
+    pub dictation: String,
+    pub text: String,
+    pub target: CapturedTarget,
+    pub changes: Vec<Change>,
 }
 
 /// Bounded flags, not a queue: the press's own, so a release can't be lost to the session starting.
@@ -250,7 +315,8 @@ pub struct Control {
     release: AtomicBool,
     bypass: AtomicBool,
     cancel: AtomicBool,
-    cancel_rewrite: AtomicBool,
+    cancel_rewrite: Arc<AtomicBool>,
+    rewriting: AtomicBool,
 }
 
 impl Control {
@@ -260,8 +326,13 @@ impl Control {
         }
         self.release.store(true, SeqCst);
     }
+    /// Escape: during a rewrite it stops the rewrite only, and the original text goes in.
     pub fn cancel(&self) {
-        self.cancel.store(true, SeqCst);
+        if self.rewriting.load(SeqCst) {
+            self.cancel_rewrite.store(true, SeqCst);
+        } else {
+            self.cancel.store(true, SeqCst);
+        }
     }
     pub fn cancel_rewrite(&self) {
         self.cancel_rewrite.store(true, SeqCst);
@@ -392,6 +463,10 @@ struct Shared {
     discard: AtomicBool,
     /// Stop after the job in flight and keep what's done.
     failed_prepare: Mutex<Option<String>>,
+    /// Capture ended because the Mac is going to sleep.
+    asleep: AtomicBool,
+    /// The recording is going to the server right now.
+    streaming: AtomicBool,
 }
 
 fn pad(mut samples: Vec<f32>) -> Vec<f32> {
@@ -407,7 +482,21 @@ fn pad(mut samples: Vec<f32>) -> Vec<f32> {
 // switch on the worker client would cut it short.
 fn recognize_loop(recognizer: &mut dyn Recognizer, vocabulary: &Vocabulary, mut reader: Reader, shared: &Shared, control: &Control, poll: Duration) -> Recognition {
     let mut out = Recognition::default();
+    match recognizer.stream(vocabulary, &Feed { reader: &reader, shared, control, poll }) {
+        Streamed::Here => {}
+        Streamed::Windows(windows, recognition_seconds) => {
+            out.windows = windows.into_iter().map(|(start, count, text)| Done { start, count, text }).collect();
+            out.recognition_seconds = recognition_seconds;
+            return out;
+        }
+        Streamed::Nothing => return out,
+    }
     if let Err(message) = recognizer.prepare(vocabulary) {
+        // The server failed and there's no model here either: the audio waits for the server.
+        if recognizer.server_failure().is_some() {
+            out.lost = true;
+            return out;
+        }
         *shared.failed_prepare.lock().unwrap() = Some(message.clone());
         out.prepare_failed = Some(message);
         return out;
@@ -861,16 +950,24 @@ impl Coordinator {
             let captured = self.capture(c, mic, &candidates, spool_ref, shared_ref, stage);
             match &captured {
                 Ok(captured) if !c.cancelled() => {
+                    shared_ref.asleep.store(captured.reason == StopReason::Sleep, SeqCst);
                     shared_ref.total.store(captured.samples, SeqCst);
                 }
                 _ => shared_ref.discard.store(true, SeqCst),
             }
             shared_ref.ended.store(true, SeqCst);
+            let on_server = |shared: &Shared| shared.streaming.load(SeqCst);
+            let transcribing = |shared: &Shared| if on_server(shared) { "Transcribing on your server…" } else { "Transcribing locally…" };
             if captured.is_ok() {
-                self.set(if c.cancelled() { State::Cancelling } else { State::Transcribing }, if c.cancelled() { "Cancelling…" } else { "Transcribing locally…" });
+                self.set(if c.cancelled() { State::Cancelling } else { State::Transcribing }, if c.cancelled() { "Cancelling…" } else { transcribing(shared_ref) });
             }
             // A cancel from here on keeps the windows done so far: the loop reads it between jobs.
+            let mut was_on_server = on_server(shared_ref);
             while !helper.is_finished() {
+                if captured.is_ok() && !c.cancelled() && was_on_server != on_server(shared_ref) {
+                    was_on_server = on_server(shared_ref);
+                    self.set(State::Transcribing, transcribing(shared_ref));
+                }
                 std::thread::sleep(poll);
             }
             (captured, helper.join().expect("the recognition loop doesn't panic"))
@@ -1009,14 +1106,22 @@ impl Coordinator {
     fn keep_waiting(&mut self, d: &mut Deps, id: &str, spool: &Spool, captured: &Captured, target: Option<&CapturedTarget>) {
         self.set_state(State::Persisting);
         let device = captured.device.as_ref();
-        let waiting = Waiting { id, audio: spool.path(), samples: captured.samples, failure: "worker_unavailable", target_bundle_id: target.map(|t| t.bundle_id.as_str()), device_name: device.map(|x| x.0.as_str()), device_kind: device.map(|x| x.1.as_str()) };
+        let server_failure = d.recognizer.server_failure();
+        let waiting = Waiting { id, audio: spool.path(), samples: captured.samples, failure: server_failure.unwrap_or("worker_unavailable"), target_bundle_id: target.map(|t| t.bundle_id.as_str()), device_name: device.map(|x| x.0.as_str()), device_kind: device.map(|x| x.1.as_str()) };
         let kept = captured.samples > 0 && d.history.keep_waiting(&waiting).is_ok();
-        let status = if captured.samples == 0 {
-            "No speech detected."
-        } else if kept {
-            "The speech engine stopped. The dictation is waiting in History."
-        } else {
-            "The speech engine stopped and this recording could not be kept."
+        let status = match (captured.samples == 0, kept, server_failure.is_some()) {
+            (true, ..) => "No speech detected.",
+            (_, true, true) => "Your server is unavailable. The dictation is waiting in History and will be retried.",
+            (_, true, false) => "The speech engine stopped. The dictation is waiting in History.",
+            (_, false, server) => {
+                // Full or unwritable: the user saves the audio or discards it.
+                let offered = self.pending_dir.join(format!("offered-{id}.f32"));
+                let moved = std::fs::create_dir_all(&self.pending_dir).and_then(|()| std::fs::rename(spool.path(), &offered));
+                if moved.is_ok() {
+                    (self.publish)(Event::AudioOffered { audio: offered });
+                }
+                if server { "This recording could not be kept for your server. Its audio was offered to you." } else { "The speech engine stopped and this recording could not be kept. Its audio was offered to you." }
+            }
         };
         self.set(State::Idle, status);
     }
@@ -1084,6 +1189,7 @@ impl Coordinator {
             device_kind: device.map(|x| x.1),
             detail_json,
             content_hash,
+            created_at: None,
         };
         let revision = match d.history.commit(&dictation) {
             Ok(revision) => revision,
@@ -1109,6 +1215,7 @@ impl Coordinator {
         {
             *stage = "rewriting saved text";
             let mut started = false;
+            c.rewriting.store(true, SeqCst);
             let publish = &mut self.publish;
             let result = {
                 let (state, status, busy, unsaved, storage, capacity, cleanup, offers) = (&mut self.state, &mut self.status, self.busy, self.unsaved.as_ref().map(|u| u.text.clone()), self.storage_blocked, self.capacity_blocked, self.cleanup_blocked, self.offers_microphones);
@@ -1120,6 +1227,7 @@ impl Coordinator {
                 };
                 rewriter.rewrite(id, &text, &mut on_start, &c.cancel_rewrite)
             };
+            c.rewriting.store(false, SeqCst);
             match result {
                 Rewritten::NotEligible => {}
                 Rewritten::Text { text: new, attempt } => {
@@ -1146,9 +1254,10 @@ impl Coordinator {
         }
         self.storage_blocked = false;
         if let Some((message, can_retry)) = notice {
-            (self.publish)(Event::Action { message, can_retry });
+            (self.publish)(Event::Action { message, can_retry, dictation: id.into() });
         }
         if outcome == InsertOutcome::Confirmed {
+            (self.publish)(Event::Inserted(Inserted { dictation: id.into(), text: text.clone(), target, changes: normalized.changes.clone() }));
             self.set(State::Idle, "Ready");
         } else {
             self.offer_clipboard(d, &text, outcome == InsertOutcome::Uncertain);
@@ -1163,6 +1272,34 @@ impl Coordinator {
             (self.publish)(Event::Clipboard { uncertain });
         }
     }
+}
+
+/// A finished recognition for one saved after its moment: `save` in `PendingRemoteRetrier`. Same
+/// evidence as a live one. `None` when nothing was said, or the evidence doesn't fit.
+pub struct Recovered<'a> {
+    pub id: &'a str,
+    pub created_at: i64,
+    pub samples: usize,
+    pub path: &'static str,
+    pub server_failure: &'static str,
+    pub target_bundle_id: Option<String>,
+    pub device_name: Option<String>,
+    pub device_kind: Option<String>,
+}
+
+pub fn recovered_dictation(r: Recovered, windows: Vec<(usize, usize, String)>, vocabulary: &Vocabulary, model: Option<ModelIdentity>, recognition_seconds: f64) -> Option<NewDictation> {
+    let windows: Vec<Done> = windows.into_iter().map(|(start, count, text)| Done { start, count, text }).collect();
+    let assembled = assemble(&windows);
+    let normalized = normalize::normalize(&assembled.text, vocabulary);
+    if normalized.text.trim().is_empty() {
+        return None;
+    }
+    let mut reasons: Vec<Value> = assembled.empty.iter().map(|w| reason("empty_recognition", Some(*w))).collect();
+    reasons.extend(normalized.reasons.iter().map(|x| reason(x, None)));
+    let quality = if reasons.is_empty() { "complete" } else { "incomplete" };
+    let evidence = Evidence { windows: &windows, assembled: &assembled, normalized: &normalized, vocabulary, model, samples: r.samples, reasons, cancelled: false, recognition_seconds, normalization_seconds: 0. };
+    let (detail_json, content_hash) = seal(&evidence)?;
+    Some(NewDictation { id: r.id.into(), text: normalized.text.clone(), quality, stop_reason: StopReason::KeyRelease.raw(), target_bundle_id: r.target_bundle_id, recognition_path: r.path, server_failure: Some(r.server_failure), device_name: r.device_name, device_kind: r.device_kind, detail_json, content_hash, created_at: Some(r.created_at) })
 }
 
 // ---- Real recognizer and store ----
@@ -1787,7 +1924,7 @@ mod tests {
 
     struct FakeRewriter(Arc<AtomicUsize>);
     impl Rewriter for FakeRewriter {
-        fn rewrite(&mut self, _: &str, text: &str, started: &mut dyn FnMut(), _: &AtomicBool) -> Rewritten {
+        fn rewrite(&mut self, _: &str, text: &str, started: &mut dyn FnMut(), _: &Arc<AtomicBool>) -> Rewritten {
             self.0.fetch_add(1, SeqCst);
             started();
             Rewritten::Notice { message: format!("kept {} bytes", text.len()), can_retry: true }
@@ -1808,7 +1945,7 @@ mod tests {
         assert_eq!(calls.load(SeqCst), 1);
         assert!(r.states().contains(&State::Rewriting));
         assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"]);
-        assert!(r.events.lock().unwrap().contains(&Event::Action { message: "kept 5 bytes".into(), can_retry: true }));
+        assert!(r.events.lock().unwrap().contains(&Event::Action { message: "kept 5 bytes".into(), can_retry: true, dictation: r.row().id }));
     }
 
     #[test]
@@ -1948,5 +2085,482 @@ mod tests {
         let all = [StopReason::KeyRelease, StopReason::DurationLimit, StopReason::Cancel, StopReason::Overflow, StopReason::DeviceLoss, StopReason::PermissionRevoked, StopReason::Sleep, StopReason::Failure];
         let raw: Vec<_> = all.iter().map(|r| r.raw()).collect();
         assert_eq!(raw, ["key_release", "duration_limit", "cancel", "overflow", "device_loss", "permission_revoked", "sleep", "failure"]);
+    }
+
+    /// Against a real flowd on loopback with a fake speech worker: `dictation::remote` end to end.
+    #[cfg(unix)]
+    mod remote_dictation {
+        use super::super::super::remote::Served;
+        use super::super::super::rewrite::{Done, Live, Plan, can_retry, retry};
+        use super::super::super::retrier::{Retrier, next_delay_ms, recognize_locally};
+        use super::*;
+        use crate::remote::enrollment::Enrollment;
+        use crate::remote::enrollment::flowd_tests::{client, token};
+        use crate::remote::pool::Pool;
+        use crate::settings::test_flowd::Flowd;
+        use crate::settings::RewriteSettings;
+
+        const SETTLE: Duration = Duration::from_secs(30);
+
+        struct Server {
+            flowd: Option<Arc<Flowd>>,
+            enrollment: Arc<Enrollment>,
+            pool: Arc<Pool>,
+        }
+
+        impl Server {
+            fn flowd(&self) -> &Arc<Flowd> {
+                self.flowd.as_ref().unwrap()
+            }
+        }
+
+        fn server() -> Server {
+            let flowd = Arc::new(Flowd::start());
+            let (e, _) = client(&flowd, &flowd.remote);
+            e.pair(&token(&flowd)).expect("pairs");
+            let enrollment = Arc::new(e);
+            let pool = Arc::new(Enrollment::pool(&enrollment));
+            Server { flowd: Some(flowd), enrollment, pool }
+        }
+
+        fn run(r: &mut Rig, s: &Server, threshold: Duration, local_allowed: bool) -> Snapshot {
+            let control = r.control.clone();
+            let mut rewriter = r.rewriter.take();
+            let mut served = Served::new(s.enrollment.clone(), s.pool.clone(), threshold, &mut r.recognizer, local_allowed);
+            let mut deps = Deps { mic: &r.mic, inputs: &[], recognizer: &mut served, rewriter: rewriter.as_mut().map(|x| &mut **x as &mut dyn Rewriter), inserter: &r.inserter, history: &mut r.history };
+            r.coordinator.run(&mut deps, &control);
+            r.coordinator.snapshot()
+        }
+
+        /// A store a second connection can open, as the rewriter and the retrier do.
+        fn on_disk(mut r: Rig) -> Rig {
+            std::fs::create_dir_all(&r.root).unwrap();
+            r.history.db = Db::open_or_create(&r.root.join("h.sqlite")).unwrap();
+            r
+        }
+
+        fn waiting(r: &Rig) -> Vec<history::PendingItem> {
+            history::pending_items(&r.history.db)
+        }
+
+        fn statuses(r: &Rig) -> Vec<String> {
+            r.events.lock().unwrap().iter().filter_map(|e| if let Event::Changed(s) = e { Some(s.status.clone()) } else { None }).collect()
+        }
+
+        fn local_calls(r: &Rig) -> usize {
+            r.recognizer.calls.lock().unwrap().len()
+        }
+
+        /// A second channel holding this user's one dictation open, so the next is refused `busy`.
+        fn hold_the_dictation(s: &Server) -> crate::remote::channel::Channel {
+            let mut channel = s.enrollment.session_channel().unwrap();
+            channel.send(json!({"type": "dictation_start", "op": 1, "format": "f32le", "sample_rate": 16_000})).unwrap();
+            match channel.receive().unwrap() {
+                crate::remote::channel::ServerMessage::Other(m) => assert_eq!(m["type"], "dictation_accepted"),
+                other => panic!("{other:?}"),
+            }
+            channel
+        }
+
+        // parity: HIST-075
+        #[test]
+        fn windows_stream_to_completion_and_the_channel_is_parked_for_the_rewrite() {
+            let s = server();
+            // Two whole windows and a tail.
+            let mut r = rig(vec![Ok(Some(speak(2 * WINDOW + 5_000, Then::Release)))]);
+            let end = run(&mut r, &s, SETTLE, true);
+            assert_eq!(end.state, State::Idle, "{}", end.status);
+            let row = r.row();
+            assert_eq!(row.text, "hello world hello world hello world");
+            assert_eq!((row.recognition_path.as_str(), row.server_failure.as_deref()), ("server", None));
+            assert_eq!(*r.inserter.inserted.lock().unwrap(), [row.text.clone()]);
+            assert_eq!(local_calls(&r), 0, "the local model never ran");
+            assert!(statuses(&r).iter().any(|x| x == "Transcribing on your server…"));
+            let detail: String = r.history.db.conn.query_row("SELECT detail_json FROM transcription_quality", [], |x| x.get(0)).unwrap();
+            assert!(detail.contains("fake-model"), "the server's model is the evidence");
+            assert!(r.spool_clean());
+            let (_channel, op) = s.pool.lease(crate::remote::pool::Role::Interactive).unwrap();
+            assert_eq!(op, 2, "the dictation's channel, next op");
+        }
+
+        #[test]
+        fn server_busy_falls_back_to_local_from_sample_zero() {
+            let s = server();
+            let _held = hold_the_dictation(&s);
+            let mut r = rig(vec![Ok(Some(speak(WINDOW + 100, Then::Release)))]);
+            let end = run(&mut r, &s, SETTLE, true);
+            assert_eq!(end.state, State::Idle, "{}", end.status);
+            let row = r.row();
+            assert_eq!((row.recognition_path.as_str(), row.server_failure.as_deref()), ("local_after_server_failure", Some("busy")));
+            assert_eq!(*r.recognizer.calls.lock().unwrap(), [WINDOW, 4_800], "every window, recognized here");
+        }
+
+        #[test]
+        fn past_the_threshold_it_falls_back_and_the_slow_answer_is_ignored() {
+            let s = server();
+            s.flowd().worker_delay(3_000);
+            let mut r = rig(vec![Ok(Some(speak(20_000, Then::Release)))]);
+            let began = Instant::now();
+            let end = run(&mut r, &s, Duration::from_millis(400), true);
+            assert_eq!(end.state, State::Idle, "{}", end.status);
+            assert!(began.elapsed() < Duration::from_millis(2_900), "didn't wait for the worker: {:?}", began.elapsed());
+            let row = r.row();
+            assert_eq!((row.recognition_path.as_str(), row.server_failure.as_deref()), ("local_after_server_failure", Some("timeout")));
+            assert_eq!(local_calls(&r), 1);
+        }
+
+        // parity: HIST-075
+        #[test]
+        fn revoked_with_no_local_model_keeps_the_audio_and_marks_the_device() {
+            let s = server();
+            s.flowd().revoke_newest_device();
+            // The token still in hand is refused only when refresh runs, so spend it first.
+            let _ = s.enrollment.access_token_expired();
+            let mut r = rig(vec![Ok(Some(speak(20_000, Then::Release)))]);
+            run(&mut r, &s, SETTLE, false);
+            assert_eq!(r.rows(), 0, "nothing inserted or saved as text");
+            let items = waiting(&r);
+            assert_eq!(items.len(), 1, "{:?}", statuses(&r));
+            assert!(matches!(items[0].last_failure.as_deref(), Some("revoked" | "unauthorized")), "{:?}", items[0].last_failure);
+            assert_eq!(s.enrollment.settings().state, "revoked");
+            let bytes = std::fs::metadata(r.root.join("PendingAudio").join(&items[0].audio_file)).unwrap().len();
+            assert_eq!(bytes, 80_000, "every sample kept");
+            assert_eq!(statuses(&r).last().unwrap(), "Your server is unavailable. The dictation is waiting in History and will be retried.");
+        }
+
+        #[test]
+        fn a_worker_failure_is_a_server_failure_and_a_full_queue_offers_the_audio() {
+            let s = server();
+            s.flowd().worker_fails(true);
+            let mut r = rig(vec![Ok(Some(speak(20_000, Then::Release)))]);
+            for i in 0..20 {
+                r.history.db.conn.execute("INSERT INTO pending_remote_dictations (id,audio_file,sample_count,created_at,attempts,next_attempt_at) VALUES (?,?,1,1,0,9)", rusqlite::params![format!("x{i}"), format!("x{i}.f32")]).unwrap();
+            }
+            run(&mut r, &s, SETTLE, false);
+            assert_eq!(waiting(&r).len(), 20);
+            let offered = r.events.lock().unwrap().iter().find_map(|e| if let Event::AudioOffered { audio } = e { Some(audio.clone()) } else { None }).expect("offered");
+            assert_eq!(std::fs::metadata(offered).unwrap().len(), 80_000, "the recording survives the full queue");
+            assert_eq!(statuses(&r).last().unwrap(), "This recording could not be kept for your server. Its audio was offered to you.");
+        }
+
+        #[test]
+        fn a_cancel_while_the_server_works_saves_nothing_and_a_sleep_abandons() {
+            let s = server();
+            s.flowd().worker_delay(1_500);
+            let mut r = rig(vec![Ok(Some(speak(20_000, Then::Cancel)))]);
+            run(&mut r, &s, SETTLE, true);
+            assert_eq!((r.rows(), waiting(&r).len()), (0, 0));
+            assert!(r.spool_clean());
+
+            s.flowd().worker_delay(0);
+            let mut r = rig(vec![Ok(Some(speak(20_000, Then::Stop(Failure::Sleep))))]);
+            run(&mut r, &s, SETTLE, false);
+            let items = waiting(&r);
+            assert_eq!(items.len(), 1, "the audio already captured waits");
+            assert_eq!(items[0].last_failure.as_deref(), Some("unreachable"));
+        }
+
+        #[test]
+        fn switched_off_during_the_recording_finishes_locally() {
+            let s = server();
+            s.enrollment.turn_off();
+            let mut r = rig(vec![Ok(Some(speak(20_000, Then::Release)))]);
+            run(&mut r, &s, SETTLE, true);
+            let row = r.row();
+            assert_eq!(row.recognition_path, "local");
+            assert_eq!(local_calls(&r), 1);
+        }
+
+        // ---- The retrier ----
+
+        fn retrier(r: &Rig, s: &Server, clock: Arc<std::sync::atomic::AtomicI64>) -> Retrier {
+            let db = Db::open_or_create(&r.root.join("h.sqlite")).unwrap();
+            let mut retrier = Retrier::new(db, r.root.join("PendingAudio"), s.enrollment.clone(), Arc::new(AtomicBool::new(false)));
+            retrier.now = Box::new(move || clock.load(SeqCst));
+            retrier.threshold = SETTLE;
+            retrier
+        }
+
+        /// One kept recording, due now on `clock`.
+        fn kept(s: &Server, clock: &Arc<std::sync::atomic::AtomicI64>) -> Rig {
+            s.flowd().worker_fails(true);
+            let mut r = on_disk(rig(vec![Ok(Some(speak(20_000, Then::Release)))]));
+            run(&mut r, s, SETTLE, false);
+            s.flowd().worker_fails(false);
+            clock.store(waiting(&r)[0].next_attempt_at, SeqCst);
+            r
+        }
+
+        // parity: HIST-080
+        #[test]
+        fn the_retrier_backs_off_recovers_for_review_and_yields_to_a_live_dictation() {
+            let s = server();
+            let clock = Arc::new(std::sync::atomic::AtomicI64::new(0));
+            let r = kept(&s, &clock);
+            let id = waiting(&r)[0].id.clone();
+            let created = waiting(&r)[0].created_at;
+            let mut retry = retrier(&r, &s, clock.clone());
+
+            // A live dictation: the row stays due, uncounted.
+            retry.live.store(true, SeqCst);
+            assert_eq!(retry.run_due(), 0);
+            assert_eq!(waiting(&r)[0].attempts, 0);
+            retry.live.store(false, SeqCst);
+
+            // A failed try counts, and backs off.
+            s.flowd().worker_fails(true);
+            let at = clock.load(SeqCst);
+            assert_eq!(retry.run_due(), 0);
+            assert_eq!(waiting(&r)[0].attempts, 1);
+            assert_eq!(waiting(&r)[0].next_attempt_at, at + 30_000);
+            assert_eq!(retry.run_due(), 0, "not due");
+            assert_eq!(waiting(&r)[0].attempts, 1);
+            s.flowd().worker_fails(false);
+
+            clock.fetch_add(30_000, SeqCst);
+            assert_eq!(retry.run_due(), 1);
+            assert!(waiting(&r).is_empty());
+            let row = r.row();
+            assert_eq!((row.id.as_str(), row.created_at), (id.as_str(), created));
+            assert_eq!((row.recognition_path.as_str(), row.server_failure.as_deref(), row.recovery_state.as_str()), ("server", Some("pending_retry"), "needs_review"));
+            assert!(r.inserter.inserted.lock().unwrap().is_empty(), "a retry never inserts");
+            assert_eq!(std::fs::read_dir(r.root.join("PendingAudio")).unwrap().count(), 0, "audio removed with its row");
+            assert_eq!([next_delay_ms(1), next_delay_ms(2), next_delay_ms(3), next_delay_ms(9)], [30_000, 120_000, 600_000, 600_000]);
+        }
+
+        // parity: HIST-078
+        #[test]
+        fn past_a_day_or_unreadable_a_row_waits_for_the_user_and_recognizes_locally() {
+            let s = server();
+            let clock = Arc::new(std::sync::atomic::AtomicI64::new(0));
+            let mut r = kept(&s, &clock);
+            let item = waiting(&r)[0].clone();
+            let mut retry = retrier(&r, &s, clock.clone());
+            let needed = Arc::new(Mutex::new(vec![]));
+            let sink = needed.clone();
+            retry.decision_needed = Box::new(move |id| sink.lock().unwrap().push(id.to_string()));
+            clock.store(item.created_at + history::PENDING_MAX_AGE_MS, SeqCst);
+            assert_eq!(retry.run_due(), 0);
+            assert_eq!(waiting(&r)[0].next_attempt_at, i64::MAX);
+            assert_eq!(retry.run_due(), 0);
+            assert_eq!(*needed.lock().unwrap(), [item.id.clone()], "asked once");
+
+            let dir = r.root.join("PendingAudio");
+            assert_eq!(recognize_locally(&r.history.db, &dir, &item.id, &mut r.recognizer), Ok(true));
+            assert!(waiting(&r).is_empty());
+            let row = r.row();
+            assert_eq!(row.recognition_path, "local_after_server_failure");
+            assert_eq!(row.created_at, item.created_at);
+            assert_eq!(recognize_locally(&r.history.db, &dir, &item.id, &mut r.recognizer), Ok(false), "gone");
+        }
+
+        // ---- Rewrites ----
+
+        fn plan(origin: &str, channel: Option<Arc<Pool>>, secret: Option<&str>) -> Plan {
+            let settings = if channel.is_some() { RewriteSettings::routed_to_remote(origin.into()) } else { RewriteSettings { origin: origin.into(), credential_present: secret.is_some(), ..Default::default() } };
+            Plan { enabled: true, mode: "clean", settings, timeout: Duration::from_secs(10), channel, secret: secret.map(String::from) }
+        }
+
+        fn saved_dictation(r: &mut Rig) -> String {
+            let mut recognizer = FakeRecognizer::default();
+            std::mem::swap(&mut recognizer, &mut r.recognizer);
+            r.run();
+            r.row().id
+        }
+
+        // parity: PILL-088..PILL-091
+        #[test]
+        fn a_rewrite_answers_over_http_and_over_the_channel_and_each_failure_has_its_words() {
+            let s = server();
+            let f = s.flowd().clone();
+            let run_plan = |plan: Plan| {
+                let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+                let id = saved_dictation(&mut r);
+                let done = super::super::super::rewrite::run(&r.history.db, &plan, &id, "hello world", &mut || {}, &Arc::new(AtomicBool::new(false)));
+                let attempt: Option<(String, Option<String>)> = r.history.db.conn.query_row("SELECT state,failure_category FROM rewrite_attempts", [], |x| Ok((x.get(0)?, x.get(1)?))).ok();
+                (done, attempt)
+            };
+            let (done, attempt) = run_plan(plan(&f.rewrite, None, Some(&f.token)));
+            assert!(matches!(done, Done::Text { ref text, .. } if text == "Hello world."));
+            assert_eq!(attempt.unwrap().0, "succeeded");
+            let (done, attempt) = run_plan(plan(&f.remote, Some(s.pool.clone()), None));
+            assert!(matches!(done, Done::Text { ref text, .. } if text == "Hello world."), "over the channel");
+            assert_eq!(attempt.unwrap().0, "succeeded");
+
+            let category = |p: Plan| match run_plan(p) {
+                (Done::Failed(c), _) => c,
+                _ => panic!("expected a failure"),
+            };
+            assert_eq!(category(plan(&f.down, None, Some(&f.token))), "server_unreachable");
+            assert_eq!(category(plan(&f.rewrite, None, Some("wrong"))), "authentication_failed");
+            assert_eq!(category(plan(&f.no_backend, None, Some(&f.token))), "backend_unavailable");
+            let mut short = plan(&f.remote, Some(s.pool.clone()), None);
+            short.timeout = Duration::ZERO;
+            assert_eq!(category(short), "timeout");
+            assert_eq!(history::live_rewrite_notice("timeout"), "Rewrite took too long. Original text inserted.");
+            assert!(!can_retry("attempt_limit") && can_retry("timeout"));
+        }
+
+        /// A scripted server for what flowd won't say: each reply maps to its category.
+        #[test]
+        fn channel_replies_map_to_rewrite_categories() {
+            use crate::remote::scripted::{Reply, Script};
+            use crate::remote::channel::{Channel, Purpose, Transports};
+            use crate::remote::pool::Role;
+            // A plain-HTTP server with no stored key is fine over the sealed channel, and not over HTTP.
+            let db = Db::memory();
+            let routed = RewriteSettings::routed_to_remote("http://10.0.0.1:8080".into());
+            let plain = RewriteSettings { via_channel: false, ..routed.clone() };
+            assert!(matches!(history::admit_rewrite(&db, "d", "hi", "clean", true, &plain, None), history::Admission::Refused("insecure_endpoint_blocked")));
+            assert!(!matches!(history::admit_rewrite(&db, "d", "hi", "clean", true, &routed, None), history::Admission::Refused("insecure_endpoint_blocked" | "missing_credential")));
+            let attempt = "a1";
+            let request = history::RewriteRequest { dictation: "d".into(), attempt: attempt.into(), mode: "clean", text: "hello".into(), origin: "http://x".into(), context: None };
+            let reply = |replies: Vec<Reply>| {
+                let script = Arc::new(Script::new([vec![Reply::ready()], replies].concat()));
+                let key = script.public_key();
+                let opener = script.clone();
+                let pool = Pool::new(Box::new(move || {
+                    let mut channel = Channel::new(opener.open("ws://x").map_err(|_| crate::remote::channel::ChannelError::Closed)?, &key).map_err(|_| crate::remote::channel::ChannelError::Protocol)?;
+                    channel.open(Purpose::Session, None)?;
+                    Ok(channel)
+                }), Box::new(|| Duration::ZERO));
+                let _ = Role::Interactive;
+                history::send_rewrite_over_channel(&pool, &request, Duration::from_secs(2), &AtomicBool::new(false))
+            };
+            let event = |event: Value| Reply::Json(json!({"schema_version": 1, "type": "rewrite_event", "op": 1, "event": event}));
+            let result = |text: &str, id: &str| json!({"event": "result", "schema_version": 1, "request_id": id, "mode": "clean", "text": text, "server": {"name": "f", "version": "1"}, "backend": {"kind": "k", "model": "m"}, "prompt_version": 1, "shield": {"version": 1, "placeholders": 0, "restored": 0}, "timing": {}});
+            assert_eq!(reply(vec![event(result("Hello.", attempt))]).unwrap().text, "Hello.");
+            assert_eq!(reply(vec![event(result("Hello.", "other"))]), Err("request_mismatch"));
+            assert_eq!(reply(vec![event(result("  ", attempt))]), Err("empty_response"));
+            assert_eq!(reply(vec![event(json!({"event": 1}))]), Err("malformed_response"));
+            assert_eq!(reply(vec![Reply::error("busy")]), Err("backend_unavailable"));
+            assert_eq!(reply(vec![Reply::error("revoked")]), Err("authentication_failed"));
+            assert_eq!(reply(vec![Reply::error("unsupported_version")]), Err("unsupported_schema_version"));
+            assert_eq!(reply(vec![Reply::error("invalid_message")]), Err("server_validation_failed"));
+            assert_eq!(reply(vec![Reply::Close(1006)]), Err("server_unreachable"));
+            assert_eq!(reply(vec![Reply::Garbage]), Err("malformed_response"));
+            assert_eq!(reply(vec![Reply::Silent]), Err("timeout"));
+        }
+
+        // parity: PILL-092 PILL-093
+        #[test]
+        fn a_live_rewrite_inserts_its_text_a_failure_inserts_the_original_and_retry_only_stores() {
+            let s = server();
+            let f = s.flowd().clone();
+            let mut r = on_disk(rig(vec![Ok(Some(speak(16_000, Then::Release)))]));
+            let db = Db::open_or_create(&r.root.join("h.sqlite")).unwrap();
+            r.rewriter = Some(Box::new(Live { db, plan: plan(&f.remote, Some(s.pool.clone()), None) }));
+            run(&mut r, &s, SETTLE, false);
+            assert_eq!(*r.inserter.inserted.lock().unwrap(), ["Hello world."]);
+            assert!(r.states().contains(&State::Rewriting));
+
+            let mut r = on_disk(rig(vec![Ok(Some(speak(16_000, Then::Release)))]));
+            let db = Db::open_or_create(&r.root.join("h.sqlite")).unwrap();
+            r.rewriter = Some(Box::new(Live { db, plan: plan(&f.down, None, Some(&f.token)) }));
+            r.run();
+            assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"], "the original goes in");
+            let id = r.row().id;
+            assert!(r.events.lock().unwrap().contains(&Event::Action { message: "Rewrite server unreachable. Original text inserted.".into(), can_retry: true, dictation: id.clone() }));
+
+            assert_eq!(retry(&r.history.db, &plan(&f.rewrite, None, Some(&f.token)), &id), None);
+            let (state, input): (String, String) = r.history.db.conn.query_row("SELECT state,input_text FROM rewrite_attempts ORDER BY ordinal DESC LIMIT 1", [], |x| Ok((x.get(0)?, x.get(1)?))).unwrap();
+            assert_eq!((state.as_str(), input.as_str()), ("succeeded", "words"), "stored from the first attempt's input");
+            assert_eq!(r.inserter.inserted.lock().unwrap().len(), 1, "a retry inserts nothing");
+            assert_eq!(retry(&r.history.db, &plan(&f.down, None, Some(&f.token)), &id), Some(("Rewrite server unreachable.".into(), true)));
+        }
+
+        /// Escape during the rewrite stops the rewrite only.
+        #[test]
+        fn escape_during_a_rewrite_keeps_the_dictation() {
+            struct Waits;
+            impl Rewriter for Waits {
+                fn rewrite(&mut self, _: &str, _: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten {
+                    started();
+                    while !cancel.load(SeqCst) {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Rewritten::NotEligible
+                }
+            }
+            let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+            r.rewriter = Some(Box::new(Waits));
+            let control = r.control.clone();
+            let canceller = thread::spawn({
+                let events = r.events.clone();
+                move || loop {
+                    if events.lock().unwrap().iter().any(|e| matches!(e, Event::Changed(s) if s.state == State::Rewriting)) {
+                        control.cancel();
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+            });
+            r.run();
+            canceller.join().unwrap();
+            assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"]);
+            assert!(!r.control.cancelled());
+        }
+
+        /// What a scripted server does around the restart rules.
+        #[test]
+        fn a_lost_channel_restarts_once_from_sample_zero_and_a_stall_times_out() {
+            use crate::remote::enrollment::{IdentityProvider, Parts, SignIn, system_now};
+            use crate::remote::scripted::{Reply, Script};
+            use crate::remote::{MemoryDeviceKeys, MemorySecrets, Secrets, Unavailable};
+            struct NoSignIn;
+            impl SignIn for NoSignIn {
+                fn sign_in(&self, _: IdentityProvider, _: &str) -> Result<String, Unavailable> {
+                    Err(Unavailable("no"))
+                }
+            }
+            let accepted = Reply::Json(json!({"schema_version": 1, "type": "dictation_accepted", "op": 1, "window_samples": WINDOW, "model": {"engine": "e", "model_id": "m", "model_revision": "1", "manifest_hash": "h", "sdk": "s", "worker_build": "b"}}));
+            let window = Reply::Json(json!({"schema_version": 1, "type": "window_result", "op": 1, "index": 0, "sample_start": 0, "sample_count": 20_000, "text": "from the second try", "tokens": [], "boost_hints": [], "recognition_ms": 1}));
+            let complete = Reply::Json(json!({"schema_version": 1, "type": "dictation_complete", "op": 1, "windows": 1}));
+            let enrolled = |replies: Vec<Reply>| {
+                let script = Script::new(replies);
+                let (counters, key) = (script.counters(), script.public_key());
+                let secrets = Arc::new(MemorySecrets::default());
+                secrets.write("server-key", &key).unwrap();
+                secrets.write("refresh-token", b"refresh").unwrap();
+                let keys = Arc::new(MemoryDeviceKeys::default());
+                let (handle, _) = crate::remote::DeviceKeys::create(&*keys).unwrap();
+                secrets.write("device-key", &handle).unwrap();
+                let e = Enrollment::new(Parts { secrets, keys, sign_in: Arc::new(NoSignIn), identity: Arc::new(crate::remote::enrollment::HttpIdentity), transports: Arc::new(script), now: Box::new(system_now), device_name: "T".into() });
+                e.load(crate::remote::enrollment::RemoteSettings { origin: Some("http://127.0.0.1:9".into()), state: "approved".into(), notice: None });
+                let e = Arc::new(e);
+                (Server { flowd: None, pool: Arc::new(Enrollment::pool(&e)), enrollment: e }, counters)
+            };
+            // Lost before key release: it reconnects once and sends everything again from sample 0.
+            let (s, counters) = enrolled(vec![Reply::ready(), Reply::tokens("a", "r"), Reply::ready(), Reply::Close(1006), Reply::ready(), accepted.clone(), Reply::After("dictation_end"), window, complete]);
+            let spool = std::env::temp_dir().join(format!("flow-stream-{}.f32", std::process::id()));
+            std::fs::write(&spool, vec![0u8; 80_000]).unwrap();
+            let stream = crate::dictation::remote::Stream::start(s.enrollment.clone(), crate::dictation::spool::Reader::open(&spool).unwrap(), None, SETTLE);
+            stream.recorded(20_000);
+            let began = Instant::now();
+            while counters.opened() < 3 || counters.messages().iter().filter_map(|m| m["audio_samples"].as_u64()).sum::<u64>() < 20_000 {
+                assert!(began.elapsed() < SETTLE, "{} opened, {:?}", counters.opened(), counters.messages());
+                thread::sleep(Duration::from_millis(2));
+            }
+            stream.release(20_000);
+            let completed = loop {
+                if let Some(result) = stream.poll(Duration::from_millis(20)) {
+                    break result.ok().expect("completes");
+                }
+            };
+            assert_eq!(completed.windows[0].2, "from the second try");
+            assert_eq!(counters.messages().iter().filter(|m| m["type"] == "dictation_end").count(), 1);
+            std::fs::remove_file(spool).unwrap();
+
+            let (s, _) = enrolled(vec![Reply::ready(), Reply::tokens("a", "r"), Reply::ready(), accepted.clone(), Reply::Silent]);
+            let mut r = rig(vec![Ok(Some(speak(20_000, Then::Release)))]);
+            run(&mut r, &s, Duration::from_millis(100), false);
+            assert_eq!(waiting(&r)[0].last_failure.as_deref(), Some("timeout"));
+
+            let bad = Reply::Json(json!({"schema_version": 1, "type": "dictation_complete", "op": 1, "windows": 7}));
+            let (s, _) = enrolled(vec![Reply::ready(), Reply::tokens("a", "r"), Reply::ready(), accepted, Reply::After("dictation_end"), bad]);
+            let mut r = rig(vec![Ok(Some(speak(20_000, Then::Release)))]);
+            run(&mut r, &s, SETTLE, false);
+            assert_eq!(waiting(&r)[0].last_failure.as_deref(), Some("protocol_error"));
+        }
     }
 }

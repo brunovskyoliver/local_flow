@@ -46,6 +46,10 @@ pub enum Received {
 pub trait Transport: Send {
     fn send(&mut self, frame: &[u8]) -> Result<(), TransportError>;
     fn receive(&mut self) -> Result<Received, TransportError>;
+    /// `receive` that answers at once with `None` when nothing has come.
+    fn try_receive(&mut self) -> Result<Option<Received>, TransportError> {
+        self.receive().map(Some)
+    }
     fn close(&mut self);
 }
 
@@ -234,15 +238,29 @@ impl Channel {
 
     /// A control message. Adds `schema_version`.
     pub fn send(&mut self, mut message: Value) -> Result<(), ChannelError> {
+        message["schema_version"] = 1.into();
+        self.send_json(&message.to_string())
+    }
+
+    /// A control message whose JSON is already written, for a body that must keep its exact bytes.
+    pub fn send_json(&mut self, json: &str) -> Result<(), ChannelError> {
         if let Some(failure) = &self.failure {
             return Err(failure.clone());
         }
-        message["schema_version"] = 1.into();
-        let json = message.to_string();
         if json.len() > MAX_CONTROL {
             return Err(ChannelError::Protocol);
         }
         let frame = self.crypto.seal(Kind::Control, json.as_bytes()).map_err(|e| self.fail(e))?;
+        self.send_frame(&frame)
+    }
+
+    /// One frame of f32le samples.
+    pub fn send_audio(&mut self, samples: &[f32]) -> Result<(), ChannelError> {
+        if let Some(failure) = &self.failure {
+            return Err(failure.clone());
+        }
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let frame = self.crypto.seal(Kind::Audio, &bytes).map_err(|e| self.fail(e))?;
         self.send_frame(&frame)
     }
 
@@ -251,7 +269,24 @@ impl Channel {
         if let Some(failure) = &self.failure {
             return Err(failure.clone());
         }
-        let frame = match self.transport.receive() {
+        let received = self.transport.receive();
+        self.opened(received)
+    }
+
+    /// `receive` for a loop that also sends: `None` when no message has come yet.
+    pub fn poll(&mut self) -> Result<Option<ServerMessage>, ChannelError> {
+        if let Some(failure) = &self.failure {
+            return Err(failure.clone());
+        }
+        match self.transport.try_receive() {
+            Ok(None) => Ok(None),
+            Ok(Some(received)) => self.opened(Ok(received)).map(Some),
+            Err(e) => self.opened(Err(e)).map(Some),
+        }
+    }
+
+    fn opened(&mut self, received: Result<Received, TransportError>) -> Result<ServerMessage, ChannelError> {
+        let frame = match received {
             Ok(Received::Binary(frame)) => frame,
             Ok(Received::Text) => return Err(self.fail(ChannelError::Protocol)),
             // A close code is unauthenticated: anyone on the path can send one.
@@ -308,7 +343,19 @@ pub fn channel_url(origin: &str) -> Option<String> {
     Some(format!("{socket}/v1/remote/channel"))
 }
 
-struct WebSocket(tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>);
+struct WebSocket(tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>, Duration);
+
+impl WebSocket {
+    fn set_read_timeout(&mut self, timeout: Duration) -> Result<(), TransportError> {
+        use tungstenite::stream::MaybeTlsStream;
+        let tcp = match self.0.get_mut() {
+            MaybeTlsStream::Plain(s) => s,
+            MaybeTlsStream::Rustls(s) => &mut s.sock,
+            _ => return Err(TransportError::Unreachable),
+        };
+        tcp.set_read_timeout(Some(timeout)).map_err(|_| TransportError::Unreachable)
+    }
+}
 
 fn timed_out(e: &std::io::Error) -> bool {
     matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
@@ -334,6 +381,16 @@ impl Transport for WebSocket {
                 Message::Close(frame) => return Err(TransportError::Closed(frame.map_or(1005, |f| f.code.into()))),
                 Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
             }
+        }
+    }
+    /// A very short read timeout: tungstenite and rustls keep a partial frame for the next read.
+    fn try_receive(&mut self) -> Result<Option<Received>, TransportError> {
+        self.set_read_timeout(Duration::from_millis(1))?;
+        let received = self.receive();
+        self.set_read_timeout(self.1)?;
+        match received {
+            Err(TransportError::Timeout) => Ok(None),
+            other => other.map(Some),
         }
     }
     fn close(&mut self) {
@@ -388,7 +445,7 @@ impl Transports for WebSockets {
         stream.set_write_timeout(Some(Duration::from_secs(15))).map_err(|_| TransportError::Unreachable)?;
         let config = tungstenite::protocol::WebSocketConfig::default().max_message_size(Some(MAX_FRAME)).max_frame_size(Some(MAX_FRAME));
         let (socket, _) = tungstenite::client_tls_with_config(url, stream, Some(config), None).map_err(|_| TransportError::Unreachable)?;
-        Ok(Box::new(WebSocket(socket)))
+        Ok(Box::new(WebSocket(socket, self.read_timeout)))
     }
 }
 

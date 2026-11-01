@@ -32,9 +32,11 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -112,9 +114,57 @@ func fakeProcessor() {
 	os.Exit(0)
 }
 
+// The fake speech worker: flowd's `--speech-worker` runs this same binary as
+// `serve --models <dir>`. Files in that directory steer it from the test.
+func fakeWorker(dir string) {
+	send := func(header map[string]any) {
+		body, err := json.Marshal(header)
+		must(err)
+		frame := binary.BigEndian.AppendUint32(nil, uint32(len(body)))
+		frame = append(append(frame, body...), 0, 0, 0, 0)
+		_, err = os.Stdout.Write(frame)
+		must(err)
+	}
+	send(map[string]any{"type": "ready", "protocol": 1, "model": map[string]any{"engine": "fake", "model_id": "fake-model", "model_revision": "1", "manifest_hash": "fake", "sdk": "0", "worker_build": "test"}})
+	for {
+		var length uint32
+		if binary.Read(os.Stdin, binary.BigEndian, &length) != nil {
+			os.Exit(0)
+		}
+		body := make([]byte, length)
+		_, err := io.ReadFull(os.Stdin, body)
+		must(err)
+		must(binary.Read(os.Stdin, binary.BigEndian, &length))
+		_, err = io.CopyN(io.Discard, os.Stdin, int64(length))
+		must(err)
+		var header struct {
+			Type        string
+			Job         uint64
+			SampleCount int `json:"sample_count"`
+		}
+		must(json.Unmarshal(body, &header))
+		if header.Type != "recognize" {
+			os.Exit(0)
+		}
+		if delay, err := os.ReadFile(filepath.Join(dir, "delay_ms")); err == nil {
+			var ms int
+			fmt.Sscan(string(delay), &ms)
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "fail")); err == nil {
+			send(map[string]any{"type": "error", "job": header.Job, "code": "model_unavailable"})
+			continue
+		}
+		send(map[string]any{"type": "result", "job": header.Job, "recognition_ms": 3, "window": map[string]any{"sample_count": header.SampleCount, "text": "hello world", "tokens": []any{}, "boost_hints": []any{}}})
+	}
+}
+
 func init() {
 	if len(os.Args) > 1 && os.Args[1] == "--bundle" {
 		fakeProcessor()
+	}
+	if len(os.Args) == 4 && os.Args[1] == "serve" && os.Args[2] == "--models" {
+		fakeWorker(os.Args[3])
 	}
 	if os.Getenv("FLOWD_TEST_IDENTITY") == "" {
 		panic("test overlay without FLOWD_TEST_IDENTITY")
@@ -285,6 +335,8 @@ impl Flowd {
         let mut main_args: Vec<String> = ["--listen", &addr(&flowd.rewrite), "--backend", &format!("http://127.0.0.1:{backend}/v1"), "--remote-listen", &addr(&flowd.remote), "--dev", "--data-dir"].map(String::from).to_vec();
         main_args.push(data.display().to_string());
         main_args.extend(["--meeting-processor".to_string(), bin.display().to_string()]);
+        std::fs::create_dir_all(flowd.dir.join("models")).unwrap();
+        main_args.extend(["--speech-worker".to_string(), bin.display().to_string(), "--speech-models".to_string(), flowd.dir.join("models").display().to_string()]);
         if test_issuer {
             let (key, jwks) = (flowd.dir.join("issuer.der"), flowd.dir.join("jwks.json"));
             output(&mut tool(&["test-issuer-keys".as_ref(), key.as_ref(), jwks.as_ref()]), "issuer keys");
@@ -310,6 +362,21 @@ impl Flowd {
     }
 
     /// A new pairing token from the admin tool.
+    /// Steers the fake speech worker: each window takes this long.
+    pub fn worker_delay(&self, ms: u64) {
+        std::fs::write(self.dir.join("models/delay_ms"), ms.to_string()).unwrap();
+    }
+
+    /// Steers the fake speech worker: every window answers `model_unavailable`.
+    pub fn worker_fails(&self, fails: bool) {
+        let path = self.dir.join("models/fail");
+        if fails {
+            std::fs::write(path, "").unwrap();
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
     pub fn pair_token(&self, label: &str) -> String {
         let json = self.admin(&["token", "create", "--label", label, "--json"]);
         json_text(&json, "token").unwrap_or_else(|| panic!("no token field in the admin tool's answer"))
@@ -388,8 +455,26 @@ fn stub_backend() -> u16 {
         // A thread each: a connection left open by something probing loopback can't hold up flowd's.
         for mut stream in listener.incoming().flatten() {
             std::thread::spawn(move || {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf);
+                let mut request = Vec::new();
+                let mut buf = [0u8; 8192];
+                let complete = |r: &[u8]| {
+                    let text = String::from_utf8_lossy(r);
+                    let Some(end) = text.find("\r\n\r\n") else { return false };
+                    let length = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|n| n.trim().parse::<usize>().ok())).unwrap_or(0);
+                    r.len() >= end + 4 + length
+                };
+                while !complete(&request) {
+                    match stream.read(&mut buf) {
+                        Ok(n) if n > 0 => request.extend_from_slice(&buf[..n]),
+                        _ => break,
+                    }
+                }
+                // A completion: the schema-guided answer is one JSON string.
+                if request.starts_with(b"POST") {
+                    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"\\\"Hello world.\\\"\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+                    let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    return;
+                }
                 let body = format!("{{\"data\":[{{\"id\":\"{MODEL}\",\"capabilities\":{{\"json_schema\":true}}}}]}}");
                 let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
             });

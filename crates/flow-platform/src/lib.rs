@@ -477,7 +477,7 @@ pub trait Credentials: Send + Sync {
     }
 }
 
-struct NoCredentials;
+pub struct NoCredentials;
 impl Credentials for NoCredentials {
     fn secret_data(&self, _: &str) -> Result<Option<Vec<u8>>, Unavailable> {
         Err(Unavailable("Keychain"))

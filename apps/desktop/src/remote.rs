@@ -192,6 +192,34 @@ pub fn meeting_deleted(id: String, cx: &mut App) {
     cx.background_spawn(async move { shared.meeting_will_delete(&id) }).detach();
 }
 
+/// A turn-off meanwhile bumps the generation, and the answer stores nothing.
+async fn refresh_and_store(remote: Arc<Remote>, cx: &mut AsyncApp) {
+    let generation = remote.enrollment.generation();
+    let enrollment = remote.enrollment.clone();
+    let after = cx
+        .background_spawn(async move {
+            enrollment.refresh_now();
+            enrollment.settings()
+        })
+        .await;
+    cx.update(|cx| {
+        if remote.enrollment.generation() == generation {
+            after.store(&mut cx.global_mut::<Core>().prefs);
+        }
+    });
+}
+
+/// SET-048: a pending device asks again when a dictation starts. That dictation doesn't wait for it.
+pub fn refresh_if_pending(cx: &mut App) {
+    let settings = RemoteSettings::from_prefs(&cx.global::<Core>().prefs);
+    if settings.origin.is_none() || settings.state != "pending" {
+        return;
+    }
+    let remote = cx.global_mut::<Core>().remote();
+    remote.enrollment.load(settings);
+    cx.spawn(async move |cx| refresh_and_store(remote, cx).await).detach();
+}
+
 pub fn start_refreshing(cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut launch = true;
@@ -208,19 +236,7 @@ pub fn start_refreshing(cx: &mut App) {
             });
             launch = false;
             if let Some(remote) = work {
-                let generation = remote.enrollment.generation();
-                let enrollment = remote.enrollment.clone();
-                let after = cx
-                    .background_spawn(async move {
-                        enrollment.refresh_now();
-                        enrollment.settings()
-                    })
-                    .await;
-                cx.update(|cx| {
-                    if remote.enrollment.generation() == generation {
-                        after.store(&mut cx.global_mut::<Core>().prefs);
-                    }
-                });
+                refresh_and_store(remote, cx).await;
             }
             cx.background_executor().timer(Duration::from_secs(60)).await;
         }

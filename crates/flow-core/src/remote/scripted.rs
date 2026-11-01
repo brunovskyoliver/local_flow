@@ -16,6 +16,10 @@ pub enum Reply {
     Text,
     /// A binary frame that won't open.
     Garbage,
+    /// Nothing, in `try_receive`, until the client has sent a message of this type; then the next reply.
+    After(&'static str),
+    /// Nothing, in `try_receive`, ever.
+    Silent,
 }
 impl Reply {
     pub fn ready() -> Reply {
@@ -121,7 +125,10 @@ impl Transport for End {
             plain
         } else {
             let mut plain = self.receiver.as_mut().unwrap().open(&frame[8..], &frame[..8]).unwrap();
-            plain.remove(0);
+            if plain.remove(0) == 1 {
+                self.seen.lock().unwrap().messages.push(json!({"audio_samples": plain.len() / 4}));
+                return Ok(());
+            }
             plain
         };
         self.seen.lock().unwrap().messages.push(serde_json::from_slice(&plain).unwrap());
@@ -140,7 +147,24 @@ impl Transport for End {
             Reply::Fail(e) => Err(e),
             Reply::Text => Ok(Received::Text),
             Reply::Garbage => Ok(Received::Binary(vec![9; 64])),
+            Reply::After(_) | Reply::Silent => Err(TransportError::Timeout),
         }
+    }
+    fn try_receive(&mut self) -> Result<Option<Received>, TransportError> {
+        {
+            let mut replies = self.replies.lock().unwrap();
+            match replies.front() {
+                Some(Reply::Silent) => return Ok(None),
+                Some(Reply::After(kind)) => {
+                    if !self.seen.lock().unwrap().messages.iter().any(|m| m["type"] == *kind) {
+                        return Ok(None);
+                    }
+                    replies.pop_front();
+                }
+                _ => {}
+            }
+        }
+        self.receive().map(Some)
     }
     fn close(&mut self) {
         self.seen.lock().unwrap().closed += 1;

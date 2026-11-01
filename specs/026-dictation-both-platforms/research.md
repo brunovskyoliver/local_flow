@@ -20,3 +20,13 @@ Mac: a session tap per job on its own thread and run loop, not the main one as i
 Windows: the hook callback only queues into a channel of 256, then a second thread does the rest. It therefore can't consume keys, so a chord still reaches the focused app; Windows differs from Swift here. A new hook replaces the old every 30 s, because Windows drops a slow hook silently, and `GetAsyncKeyState` backs up a lost key-up during a hold. `fn_globe` and fn modifiers are refused and Right Control is the default.
 The shortcut format stays the Mac's: Windows virtual keys map to Mac key codes and device bits in `win_rules`, with the Windows key in Command's place. `Shortcut::title` therefore names it "Command" and a letter "Key <code>"; nothing on a PC has checked that copy.
 `request_permission(Microphone)` blocks its caller for up to a minute waiting for the answer, since the prompt is in another process. It refuses without `NSMicrophoneUsageDescription`, because TCC kills a process that asks without one.
+
+## Phase 5 decisions
+
+- A detached thread owns the blocking channel and `Stream::poll` watches the threshold from outside, so a stalled socket or connect can't hold up the fallback. An abandoned thread ends at its next socket timeout.
+- The socket read uses a 1 ms timeout to poll, because the same thread also sends audio.
+- Swift's 3 s hotspot threshold isn't ported: there is no path monitor. The setting's threshold applies.
+- Live rewrites send v1 only until context capture is ported. Over the channel, History rewrites also stay v1, since the version probe is HTTP.
+- `rewrite_timeout` on the channel path excludes connect time.
+- Fake speech worker: the Go test overlay of flowd runs itself as `--speech-worker`, so loopback tests go through flowd's real supervisor without building `flow-speech-win`.
+- A press during a retrier run cancels the retry. flowd may still hold that dictation for a moment, so the live press can see `busy` and fall back; the row stays due.

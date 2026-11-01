@@ -574,12 +574,12 @@ fn tap_learned(cx: &mut App) {
     let Some(n) = cx.global::<Session>().pill.learned.clone() else { return };
     let command = if n.kind == LearnedKind::Added { SessionCommand::UndoLearned } else { SessionCommand::RestoreLearned };
     // Swift dismisses first, then writes; a refused store shows nothing more in Swift either.
-    let _ = cx.global::<Core>().services.session_command(command);
+    let _ = crate::dictation::session_command(command, cx);
     update_session(cx, |s| s.pill.learned = None);
 }
 
 fn tap_retry(cx: &mut App) {
-    let _ = cx.global::<Core>().services.session_command(SessionCommand::RetryRewrite);
+    let _ = crate::dictation::session_command(SessionCommand::RetryRewrite, cx);
     update_session(cx, |s| s.pill.action = None);
 }
 

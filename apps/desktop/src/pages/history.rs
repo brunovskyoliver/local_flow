@@ -337,9 +337,15 @@ impl HistoryPage {
     /// context to send; otherwise it happens now. The request runs off the UI thread.
     fn request_rewrite(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<Core>();
-        let settings = flow_core::settings::RewriteSettings::capture(&core.prefs, |origin| matches!(core.services.secret_exists(&flow_core::settings::rewrite_keychain(origin)), Ok(true)));
+        // Routed to the server: its sealed channel, no key. Context stays home on that path for now,
+        // as it would without a version probe saying 2.
+        let routed = flow_core::settings::routing(&core.prefs).path(flow_core::settings::Service::Rewrite) == flow_core::settings::Path::Server;
+        let settings = match flow_core::settings::remote_enrollment_origin(&core.prefs).filter(|_| routed) {
+            Some(origin) => flow_core::settings::RewriteSettings::routed_to_remote(origin),
+            None => flow_core::settings::RewriteSettings::capture(&core.prefs, |origin| matches!(core.services.secret_exists(&flow_core::settings::rewrite_keychain(origin)), Ok(true))),
+        };
         let enabled = core.prefs.bool_or("rewriteEnabled", false);
-        let sends_context = core.prefs.bool_or("contextEnabled", false) && core.prefs.bool_or("contextRewriteEnabled", false);
+        let sends_context = !settings.via_channel && core.prefs.bool_or("contextEnabled", false) && core.prefs.bool_or("contextRewriteEnabled", false);
         let secret = core.services.secret(&flow_core::settings::rewrite_keychain(&settings.origin)).ok().flatten();
         let Some(db) = core.db.as_ref() else { return };
         let probe = self.model.wants_context_probe(db, enabled, &settings, sends_context);
@@ -369,10 +375,18 @@ impl HistoryPage {
         };
         let cancel = Arc::new(AtomicBool::new(false));
         self.rewrite_cancels.insert(request.attempt.clone(), cancel.clone());
+        let channel = settings.via_channel.then(|| cx.global_mut::<Core>().remote().pool.clone());
         cx.spawn(async move |this, cx| {
             let started = Instant::now();
             let sent = request.clone();
-            let answer = cx.background_spawn(async move { send_rewrite(&sent, secret.as_deref(), timeout, cancel) }).await;
+            let answer = cx
+                .background_spawn(async move {
+                    match channel {
+                        Some(pool) => flow_core::history::send_rewrite_over_channel(&pool, &sent, timeout, &cancel),
+                        None => send_rewrite(&sent, secret.as_deref(), timeout, cancel),
+                    }
+                })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.rewrite_cancels.remove(&request.attempt);
                 if let Some(db) = cx.global::<Core>().db.as_ref() {
@@ -508,7 +522,8 @@ impl HistoryPage {
         for item in &self.model.pending_items {
             let (id, id2) = (item.id.clone(), item.id.clone());
             let when = core.db.as_ref().map(|db| day_time(db, item.created_at)).unwrap_or_default();
-            let local_ok = self.model.local_speech;
+            let local_ok = self.model.local_speech || cx.try_global::<Session>().is_some_and(|s| s.model_installed);
+            let local_id = id.clone();
             rows = rows.child(
                 h_flex()
                     .id(SharedString::from(format!("history.pendingRemote.{id}")))
@@ -521,7 +536,8 @@ impl HistoryPage {
                     .child(
                         prototype_button(format!("history.pending.recognize.{id}"), "Recognize Locally")
                             .disabled(!local_ok)
-                            .tooltip(if local_ok { "Recognize with the speech model on this Mac" } else { "Install the local speech model first" }),
+                            .tooltip(if local_ok { "Recognize with the speech model on this Mac" } else { "Install the local speech model first" })
+                            .on_click(cx.listener(move |this, _, _, cx| this.recognize_locally(local_id.clone(), cx))),
                     )
                     .child(prototype_button(format!("history.pending.save.{id}"), "Save Audio…").on_click(cx.listener(move |this, _, _, cx| this.save_audio(id.clone(), cx))))
                     .child(prototype_button(format!("history.pending.discard.{id2}"), "Discard").on_click(cx.listener(move |this, _, _, cx| {
@@ -535,6 +551,28 @@ impl HistoryPage {
             .child(div().pt(px(28.)).pb(px(12.)).child(t("WAITING FOR SERVER").font(12., 500.).tracking(1.2).color(p.muted)))
             .child(rows.child(outline(cx)))
             .when_some(self.model.pending_error.clone(), |d, e| d.child(div().pt(px(8.)).child(t(e).size(12.).color(p.warning))))
+    }
+
+    /// HIST-077. The row goes when History reloads; a failure keeps the row and says so.
+    fn recognize_locally(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(answer) = crate::dictation::recognize_locally(id, cx) else {
+            self.model.report_pending_failure();
+            cx.notify();
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let done = cx.background_spawn(async move { answer.recv().unwrap_or(false) }).await;
+            let _ = this.update(cx, |this, cx| {
+                if !done {
+                    this.model.report_pending_failure();
+                }
+                if let Some(db) = cx.global::<Core>().db.as_ref() {
+                    this.model.reload_list(db);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// `NSSavePanel`, through `Services`; without one, the failure Swift would show.

@@ -542,6 +542,18 @@ pub fn rewrite_notice(category: &str) -> &'static str {
     }
 }
 
+/// `RewriteNotice.text` with `.live`: what the pill says, since the original text went in.
+pub fn live_rewrite_notice(category: &str) -> String {
+    let tail = match category {
+        "server_unreachable" | "transport_error" | "timeout" | "missing_credential" | "insecure_endpoint_blocked" | "invalid_settings" | "input_too_large" | "capacity_exceeded" | "concurrency_limit" => " Original text inserted.",
+        _ => "",
+    };
+    if category == "context_copied" {
+        return "Rewrite used on-screen text you did not say; inserted your transcript.".into();
+    }
+    format!("{}{tail}", rewrite_notice(category))
+}
+
 /// A line of the "Processing details" block.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
@@ -904,7 +916,7 @@ pub fn admit_rewrite(db: &Db, dictation: &str, text: &str, mode: &str, enabled: 
     if settings.valid() && settings.is_unencrypted_remote() && !settings.insecure_override {
         return Admission::Refused("insecure_endpoint_blocked");
     }
-    if settings.valid() && !settings.is_loopback() && !settings.credential_present {
+    if settings.valid() && settings.requires_credential() && !settings.credential_present {
         return Admission::Refused("missing_credential");
     }
     if !settings.valid() {
@@ -1212,6 +1224,89 @@ fn rewrite_line(line: &[u8], request: &RewriteRequest) -> Result<Option<RewriteA
     }
 }
 
+fn rewrite_body(request: &RewriteRequest) -> String {
+    let fields = serde_json::json!({"schema_version": if request.context.is_some() { 2 } else { 1 }, "request_id": request.attempt, "mode": request.mode, "text": request.text, "language_hints": [], "stream_deltas": false}).to_string();
+    // The context is spliced in verbatim, so the sent object is byte-identical to its stored hash.
+    match &request.context {
+        Some(plan) => format!("{},\"context\":{}}}", &fields[..fields.len() - 1], plan.data),
+        None => fields,
+    }
+}
+
+/// `RemoteRewriteTransport.category`: a channel failure in the same words as an HTTP one.
+pub fn channel_rewrite_category(e: &crate::remote::channel::ChannelError) -> &'static str {
+    use crate::remote::channel::ChannelError::*;
+    match e {
+        Unreachable | Closed => "server_unreachable",
+        Timeout => "timeout",
+        PinMismatch => "authentication_failed",
+        Protocol => "malformed_response",
+        Server(code) => match code.as_str() {
+            "unauthorized" | "token_expired" | "not_approved" | "revoked" | "pairing_token_invalid" => "authentication_failed",
+            "busy" | "worker_unavailable" | "not_offered" => "backend_unavailable",
+            "unsupported_version" => "unsupported_schema_version",
+            "invalid_message" | "limit_exceeded" => "server_validation_failed",
+            _ => "transport_error",
+        },
+    }
+}
+
+/// `RemoteRewriteTransport.rewrite`: the same request JSON in a `rewrite` op on the role's channel,
+/// which closes afterwards. Blocking. Setting `cancel` closes it and returns `"cancelled"`.
+// ponytail: `timeout` starts after the channel is open; a connect that hangs adds up to 10 s (WebSockets::connect_timeout).
+pub fn send_rewrite_over_channel(pool: &crate::remote::pool::Pool, request: &RewriteRequest, timeout: std::time::Duration, cancel: &std::sync::atomic::AtomicBool) -> Result<RewriteAnswer, &'static str> {
+    use crate::remote::channel::ServerMessage;
+    use std::sync::atomic::Ordering;
+    let role = crate::remote::pool::Role::Interactive;
+    let (mut channel, op) = pool.lease(role).map_err(|e| channel_rewrite_category(&e))?;
+    let body = rewrite_body(request);
+    let request_bytes = body.len() as i64;
+    let started = std::time::Instant::now();
+    let answer = (|| {
+        channel.send_json(&format!("{{\"schema_version\":1,\"type\":\"rewrite\",\"op\":{op},\"request\":{body}}}")).map_err(|e| channel_rewrite_category(&e))?;
+        let cap = (4 * request.text.len() + MAX_REWRITE_LINE).min(73_728);
+        let (mut total, mut first_byte_ms) = (0, None);
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("cancelled");
+            }
+            if started.elapsed() >= timeout {
+                return Err("timeout");
+            }
+            let Some(message) = channel.poll().map_err(|e| channel_rewrite_category(&e))? else {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                continue;
+            };
+            first_byte_ms.get_or_insert(started.elapsed().as_millis() as i64);
+            match message {
+                ServerMessage::Error { code } => return Err(channel_rewrite_category(&crate::remote::channel::ChannelError::Server(code))),
+                ServerMessage::Other(m) if m["op"] == op && m["type"] == "progress" => {}
+                ServerMessage::Other(m) if m["op"] == op && m["type"] == "rewrite_event" => {
+                    let line = serde_json::to_vec(&m["event"]).map_err(|_| "malformed_response")?;
+                    total += line.len() + 1;
+                    if total > cap + 1 {
+                        return Err("oversized_response");
+                    }
+                    if let Some(mut answer) = rewrite_line(&line, request)? {
+                        if let Some(plan) = &request.context
+                            && context_copied(&answer.text, &request.text, &serde_json::from_str(&plan.data).unwrap_or(Value::Null), &plan.spelled)
+                        {
+                            return Err("context_copied");
+                        }
+                        answer.first_byte_ms = first_byte_ms;
+                        answer.request_bytes = Some(request_bytes);
+                        answer.response_bytes = Some(total as i64);
+                        return Ok(answer);
+                    }
+                }
+                _ => return Err("malformed_response"),
+            }
+        }
+    })();
+    pool.release(role, channel, None);
+    answer
+}
+
 /// `RewriteClient.rewrite`: v1, or v2 when the request carries a context plan. Blocking; run it off
 /// the UI thread. Setting `cancel` closes the connection and returns `"cancelled"`.
 // ponytail: `cancel` is seen once connected; a connect that hangs runs to the timeout, its answer dropped by `finish_rewrite`.
@@ -1225,12 +1320,7 @@ pub fn send_rewrite(request: &RewriteRequest, secret: Option<&str>, timeout: std
     let config = ureq::Agent::config_builder().timeout_global(Some(timeout)).max_redirects(0).http_status_as_error(false).proxy(None).build();
     let connector = CancellableConnector { inner: Default::default(), cancel: cancel.clone() };
     let agent = ureq::Agent::with_parts(config, connector, ureq::unversioned::resolver::DefaultResolver::default());
-    let fields = serde_json::json!({"schema_version": if request.context.is_some() { 2 } else { 1 }, "request_id": request.attempt, "mode": request.mode, "text": request.text, "language_hints": [], "stream_deltas": false}).to_string();
-    // The context is spliced in verbatim, so the sent object is byte-identical to its stored hash.
-    let body = match &request.context {
-        Some(plan) => format!("{},\"context\":{}}}", &fields[..fields.len() - 1], plan.data),
-        None => fields,
-    };
+    let body = rewrite_body(request);
     let request_bytes = body.len() as i64;
     let mut post = agent.post(format!("{}/v1/rewrite", request.origin.trim_end_matches('/'))).header("Content-Type", "application/json").header("Accept", "application/x-ndjson");
     if let Some(secret) = secret {
@@ -1455,7 +1545,7 @@ pub fn commit_dictation(db: &Db, d: &crate::dictation::session::NewDictation) ->
     let tx = db.conn.unchecked_transaction()?;
     tx.execute(
         "INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id,revision,recognition_path,server_failure,input_device_name,input_device_kind) VALUES (?,?,?,'not_attempted','needs_review',?,?,?,1,?,?,?,?)",
-        params![d.id, d.text, now_ms(), d.quality, d.stop_reason, d.target_bundle_id, d.recognition_path, d.server_failure, d.device_name, d.device_kind],
+        params![d.id, d.text, d.created_at.unwrap_or_else(now_ms), d.quality, d.stop_reason, d.target_bundle_id, d.recognition_path, d.server_failure, d.device_name, d.device_kind],
     )?;
     tx.execute("INSERT INTO transcription_quality (transcription_id,schema_version,detail_json,content_hash) VALUES (?,1,?,?)", params![d.id, d.detail_json, d.content_hash])?;
     tx.execute("UPDATE history_usage SET row_count=row_count+1,payload_bytes=payload_bytes+? WHERE id=1", [added])?;
@@ -1498,6 +1588,11 @@ pub struct PendingItem {
     pub sample_count: i64,
     pub created_at: i64,
     pub last_failure: Option<String>,
+    pub attempts: i64,
+    pub next_attempt_at: i64,
+    pub target_bundle_id: Option<String>,
+    pub device_name: Option<String>,
+    pub device_kind: Option<String>,
 }
 
 impl PendingItem {
@@ -1513,10 +1608,21 @@ impl PendingItem {
 /// Read errors give an empty list.
 pub fn pending_items(db: &Db) -> Vec<PendingItem> {
     let read = || -> rusqlite::Result<Vec<PendingItem>> {
-        let mut s = db.conn.prepare_cached("SELECT id,audio_file,sample_count,created_at,last_failure FROM pending_remote_dictations ORDER BY created_at, id")?;
-        s.query_map([], |r| Ok(PendingItem { id: r.get(0)?, audio_file: r.get(1)?, sample_count: r.get(2)?, created_at: r.get(3)?, last_failure: r.get(4)? }))?.collect()
+        let mut s = db.conn.prepare_cached("SELECT id,audio_file,sample_count,created_at,last_failure,attempts,next_attempt_at,target_bundle_id,input_device_name,input_device_kind FROM pending_remote_dictations ORDER BY created_at, id")?;
+        s.query_map([], |r| Ok(PendingItem { id: r.get(0)?, audio_file: r.get(1)?, sample_count: r.get(2)?, created_at: r.get(3)?, last_failure: r.get(4)?, attempts: r.get(5)?, next_attempt_at: r.get(6)?, target_bundle_id: r.get(7)?, device_name: r.get(8)?, device_kind: r.get(9)? }))?.collect()
     };
     read().unwrap_or_default()
+}
+
+/// `PendingRemoteDictationStore.recordAttempt`. `next` is `i64::MAX` for a row that only the user can settle now.
+pub fn record_pending_attempt(db: &Db, id: &str, failure: &str, counted: bool, next: i64) -> Result<(), StoreError> {
+    db.conn.execute("UPDATE pending_remote_dictations SET attempts=attempts+?,last_failure=?,next_attempt_at=? WHERE id=?", params![counted as i64, failure, next, id])?;
+    Ok(())
+}
+
+/// The waiting file's path, when its name is one this store could have written.
+pub fn pending_audio_path(dir: &Path, item: &PendingItem) -> Option<std::path::PathBuf> {
+    plain_file_name(&item.audio_file).then(|| dir.join(&item.audio_file))
 }
 
 fn plain_file_name(name: &str) -> bool {
@@ -2569,7 +2675,7 @@ mod tests {
     }
 
     fn remote(origin: &str, insecure: bool, credential: bool) -> crate::settings::RewriteSettings {
-        crate::settings::RewriteSettings { origin: origin.into(), insecure_override: insecure, credential_present: credential }
+        crate::settings::RewriteSettings { origin: origin.into(), insecure_override: insecure, credential_present: credential, via_channel: false }
     }
 
     // parity: HIST-149
@@ -2727,7 +2833,7 @@ mod tests {
     const SNAPSHOT: &str = r#"{"app_category":"email","field_kind":"multi_line","schema_version":1,"style_hints":false,"terms":[],"truncated":[],"window_title":"Budget review"}"#;
 
     fn loopback(origin: &str) -> crate::settings::RewriteSettings {
-        crate::settings::RewriteSettings { origin: origin.into(), insecure_override: false, credential_present: false }
+        crate::settings::RewriteSettings { origin: origin.into(), ..Default::default() }
     }
 
     // parity: HIST-148

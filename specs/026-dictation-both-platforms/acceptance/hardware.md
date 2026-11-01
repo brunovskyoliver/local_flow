@@ -33,3 +33,6 @@ Items that need real hardware, a signed install or the owner's screen and microp
 | 27 | Windows: a browser password field | T014 | `CurrentIsPassword` refuses; text copied, nothing pasted | not run |
 | 28 | Windows: a target run as administrator from a non-elevated `localflow.exe` (UIPI) | T014 | No target; text saved and copied, the pill says so; `SendInput` never runs | not run |
 | 29 | Windows: clipboard history (Win+V) stays free of the dictated text after a paste | T014 | `ExcludeClipboardContentFromMonitorProcessing` honored | not run |
+| 30 | Dictation on a real server over the LAN, windows and fallback at threshold with a real worker and microphone | T016 | Text matches, falls back at the threshold, no audio lost | not run |
+| 31 | Live rewrite against a real backend, HTTP and channel, with a real key in the Keychain | T017 | Rewritten text inserted; a stopped backend inserts the original with the notice | not run |
+| 32 | Sleep during a remote dictation on a real Mac, then wake and retry | T016, T018 | The audio waits in History and recovers for review | not run |

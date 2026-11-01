@@ -5,9 +5,14 @@ use crate::pill;
 use crate::shell::{self, DictState, Session, update_session};
 use flow_core::db::Db;
 use flow_core::dictation::lifecycle::{Launcher, Lifecycle};
-use flow_core::dictation::session::{Control, Coordinator, DbHistory, Deps, Event, Inserter, Local, Mic, Snapshot, State};
+use flow_core::dictation::remote::{NoServer, Served};
+use flow_core::dictation::retrier::{self, Retrier};
+use flow_core::dictation::rewrite::{self, Live, Plan};
+use flow_core::dictation::session::{Control, Coordinator, DbHistory, Deps, Event, Inserter, Local, Mic, Recognizer, Rewriter, Rewritten, Snapshot, State};
+use flow_core::remote::enrollment::Enrollment;
+use flow_core::remote::pool::Pool;
 use flow_core::settings::{self as server, InputEntry, Shortcut};
-use flow_platform::{SessionCommand, Unavailable};
+use flow_platform::{Credentials, SessionCommand, Unavailable};
 use flow_ui::prelude::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
@@ -22,7 +27,8 @@ const REPLY: Duration = Duration::from_secs(2);
 const MODEL_LOAD: Duration = Duration::from_secs(30);
 
 enum Command {
-    Begin { control: Arc<Control>, entries: Vec<InputEntry> },
+    Begin { control: Arc<Control>, entries: Vec<InputEntry>, route: Route },
+    RecognizeLocally(String, Sender<bool>),
     RetrySave(Sender<bool>),
     RetryStorage(Sender<bool>),
     RecheckCapacity,
@@ -32,11 +38,42 @@ enum Command {
     Shutdown(Sender<bool>),
 }
 
+/// Where one press goes; a settings change affects the next.
+#[derive(Clone)]
+struct Route {
+    server: Option<(Arc<Enrollment>, Arc<Pool>, Duration)>,
+    local_allowed: bool,
+    rewrite: Plan,
+}
+
+/// A rewrite reads its key when it runs, on this thread, so the Keychain never delays the recording.
+struct KeyedRewrite {
+    live: Live,
+    credentials: Arc<dyn Credentials>,
+}
+
+fn with_key(plan: &mut Plan, credentials: &dyn Credentials) {
+    if plan.channel.is_none() {
+        plan.secret = credentials.secret_data(&server::rewrite_keychain(&plan.settings.origin)).ok().flatten().and_then(|v| String::from_utf8(v).ok());
+        plan.settings.credential_present = plan.secret.is_some();
+    }
+}
+
+impl Rewriter for KeyedRewrite {
+    fn rewrite(&mut self, id: &str, text: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten {
+        with_key(&mut self.live.plan, &*self.credentials);
+        self.live.rewrite(id, text, started, cancel)
+    }
+}
+
 pub struct Parts {
     pub mic: Arc<dyn Mic>,
     pub inserter: Arc<dyn Inserter>,
     pub launcher: Box<dyn Launcher>,
     pub db: Db,
+    /// For connections of its own: the live rewrite, its retry and the retrier.
+    pub database: PathBuf,
+    pub credentials: Arc<dyn Credentials>,
     pub spool_root: PathBuf,
     pub pending_dir: PathBuf,
     pub free_bytes: Box<dyn Fn() -> Option<u64> + Send>,
@@ -44,7 +81,14 @@ pub struct Parts {
 
 pub struct Driver {
     commands: Sender<Command>,
+    publish: Sender<Event>,
     events: Mutex<Receiver<Event>>,
+    database: PathBuf,
+    pending_dir: PathBuf,
+    credentials: Arc<dyn Credentials>,
+    /// The dictation the last rewrite notice is about, for its Retry.
+    action: Option<String>,
+    retrier_started: bool,
     mic: Arc<dyn Mic>,
     running: Arc<AtomicBool>,
     control: Option<Arc<Control>>,
@@ -58,9 +102,10 @@ impl Driver {
         let (commands, inbox) = channel();
         let (publish, events) = channel();
         let running = Arc::new(AtomicBool::new(false));
-        let (mic, flag) = (parts.mic.clone(), running.clone());
+        let (mic, flag, sender) = (parts.mic.clone(), running.clone(), publish.clone());
+        let (database, pending_dir, credentials) = (parts.database.clone(), parts.pending_dir.clone(), parts.credentials.clone());
         std::thread::Builder::new().name("dictation".into()).spawn(move || serve(parts, keep_loaded, inbox, publish, flag)).expect("the dictation thread starts");
-        Driver { commands, events: Mutex::new(events), mic, running, control: None, model_installed: false, keep_loaded }
+        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, action: None, retrier_started: false, mic, running, control: None, model_installed: false, keep_loaded }
     }
 
     fn ask(&self, command: impl FnOnce(Sender<bool>) -> Command, limit: Duration) -> bool {
@@ -70,7 +115,8 @@ impl Driver {
 }
 
 fn serve(parts: Parts, keep_loaded: bool, inbox: Receiver<Command>, publish: Sender<Event>, running: Arc<AtomicBool>) {
-    let Parts { mic, inserter, launcher, db, spool_root, pending_dir, free_bytes } = parts;
+    let Parts { mic, inserter, launcher, db, database, credentials, spool_root, pending_dir, free_bytes } = parts;
+    let history_changed = publish.clone();
     let mut lifecycle = Lifecycle::new(launcher, Box::new(Instant::now));
     lifecycle.set_keep_loaded(keep_loaded);
     let mut coordinator = Coordinator::new(spool_root, pending_dir.clone(), Box::new(move |event| drop(publish.send(event))));
@@ -78,12 +124,27 @@ fn serve(parts: Parts, keep_loaded: bool, inbox: Receiver<Command>, publish: Sen
     coordinator.verify_admission(&mut history);
     loop {
         match inbox.recv_timeout(TICK) {
-            Ok(Command::Begin { control, entries }) => {
-                let mut recognizer = Local::new(&mut lifecycle);
-                // seam (T017): the rewriter goes here. Without one a session saves and inserts the original.
-                let mut deps = Deps { mic: mic.as_ref(), inputs: &entries, recognizer: &mut recognizer, rewriter: None, inserter: inserter.as_ref(), history: &mut history };
+            Ok(Command::Begin { control, entries, route }) => {
+                let mut local = Local::new(&mut lifecycle);
+                let mut no_server = NoServer;
+                let mut served;
+                let recognizer: &mut dyn Recognizer = match route.server {
+                    Some((enrollment, pool, threshold)) => {
+                        served = Served::new(enrollment, pool, threshold, &mut local, route.local_allowed);
+                        &mut served
+                    }
+                    None if route.local_allowed => &mut local,
+                    None => &mut no_server,
+                };
+                let mut rewriter = Db::open_or_create(&database).ok().map(|db| KeyedRewrite { live: Live { db, plan: route.rewrite }, credentials: credentials.clone() });
+                let mut deps = Deps { mic: mic.as_ref(), inputs: &entries, recognizer, rewriter: rewriter.as_mut().map(|r| r as &mut dyn Rewriter), inserter: inserter.as_ref(), history: &mut history };
                 coordinator.run(&mut deps, &control);
                 running.store(false, SeqCst);
+            }
+            Ok(Command::RecognizeLocally(id, reply)) => {
+                let done = retrier::recognize_locally(&history.db, &history.pending_dir, &id, &mut Local::new(&mut lifecycle));
+                let _ = history_changed.send(Event::HistoryChanged);
+                let _ = reply.send(done.is_ok());
             }
             Ok(Command::RetrySave(reply)) => drop(reply.send(coordinator.retry_save(&mut history))),
             Ok(Command::RetryStorage(reply)) => drop(reply.send(coordinator.retry_storage(&mut history))),
@@ -121,6 +182,8 @@ pub fn start(cx: &mut App) {
             inserter: services.inserter()?,
             launcher: services.speech_launcher(&core.paths.models())?,
             db: Db::open_or_create(&core.paths.database()).ok()?,
+            database: core.paths.database(),
+            credentials: services.credentials(),
             spool_root: core.paths.temporary_audio(),
             pending_dir: core.paths.pending_audio(),
             free_bytes: services.free_bytes_probe(),
@@ -180,6 +243,7 @@ fn poll(cx: &mut App) {
     if cx.global::<Session>().shortcut_available != available {
         update_session(cx, |s| s.shortcut_available = available);
     }
+    start_retrier(cx);
     let driver = cx.global_mut::<Driver>();
     if installed && !driver.model_installed {
         let _ = driver.commands.send(Command::ModelChanged);
@@ -189,6 +253,29 @@ fn poll(cx: &mut App) {
         driver.keep_loaded = keep;
         let _ = driver.commands.send(Command::KeepLoaded(keep));
     }
+}
+
+/// `PendingRemoteRetrier`, from the first time this device is approved. A live dictation goes first.
+fn start_retrier(cx: &mut App) {
+    if cx.global::<Driver>().retrier_started || server::remote_state(&cx.global::<Core>().prefs) != "approved" {
+        return;
+    }
+    let enrollment = cx.global_mut::<Core>().remote().enrollment.clone();
+    let driver = cx.global_mut::<Driver>();
+    driver.retrier_started = true;
+    let Ok(db) = Db::open_or_create(&driver.database) else { return };
+    let mut retrier = Retrier::new(db, driver.pending_dir.clone(), enrollment.clone(), driver.running.clone());
+    let (recovered, needed) = (driver.publish.clone(), driver.publish.clone());
+    retrier.recovered = Box::new(move |_| drop(recovered.send(Event::HistoryChanged)));
+    retrier.decision_needed = Box::new(move |_| drop(needed.send(Event::HistoryChanged)));
+    let _ = std::thread::Builder::new().name("pending-retrier".into()).spawn(move || {
+        loop {
+            if enrollment.settings().state == "approved" {
+                retrier.run_due();
+            }
+            std::thread::sleep(retrier.wait());
+        }
+    });
 }
 
 /// SHELL-143, SHELL-144.
@@ -216,13 +303,58 @@ fn press(cx: &mut App) {
         return;
     }
     let entries = server::load_inputs(&core.prefs);
+    crate::remote::refresh_if_pending(cx);
+    let route = route(cx);
     let control = Arc::new(Control::default());
     let driver = cx.global_mut::<Driver>();
     driver.running.store(true, SeqCst);
     driver.control = Some(control.clone());
-    let _ = driver.commands.send(Command::Begin { control, entries });
+    let _ = driver.commands.send(Command::Begin { control, entries, route });
     // Escape must work from the press, before the thread's first state arrives.
     cx.global::<Core>().services.set_shortcut_session_active(true);
+}
+
+/// `RemoteDictationRouter` and `RewriteCoordinator.routed`, at the press.
+fn route(cx: &mut App) -> Route {
+    let installed = cx.global::<Session>().model_installed;
+    let core = cx.global_mut::<Core>();
+    let routing = server::routing(&core.prefs);
+    let settings = flow_core::remote::enrollment::RemoteSettings::from_prefs(&core.prefs);
+    let dictation = routing.served(server::Service::Dictation);
+    let rewrite_routed = routing.path(server::Service::Rewrite) == server::Path::Server;
+    let remote = (dictation || rewrite_routed).then(|| {
+        let remote = core.remote();
+        remote.enrollment.load(settings.clone());
+        remote
+    });
+    let prefs = &core.prefs;
+    let threshold = Duration::from_millis(server::fallback_threshold(prefs).max(0) as u64);
+    let channel = remote.as_ref().filter(|_| rewrite_routed).map(|r| r.pool.clone());
+    let rewrite = Plan {
+        enabled: prefs.bool_or("rewriteEnabled", false),
+        mode: server::rewrite_mode(prefs),
+        settings: if channel.is_some() { server::RewriteSettings::routed_to_remote(settings.origin.unwrap_or_default()) } else { server::RewriteSettings::capture(prefs, |_| false) },
+        timeout: Duration::from_secs(server::rewrite_timeout(prefs) as u64),
+        channel,
+        secret: None,
+    };
+    Route { server: remote.filter(|_| dictation).map(|r| (r.enrollment.clone(), r.pool.clone(), threshold)), local_allowed: installed && !routing.server_only, rewrite }
+}
+
+/// Discard in Swift's alert is Cancel here. A save that fails keeps the file where it is.
+// ponytail: quitting with the panel open leaves `offered-*.f32` in PendingAudio with no row; a sweep at launch if that's ever seen.
+fn offer_audio(audio: PathBuf, cx: &mut App) {
+    match cx.global::<Core>().services.choose_save_path("LocalFlow dictation.wav") {
+        Ok(Some(path)) => {
+            if let Ok(samples) = std::fs::read(&audio)
+                && std::fs::write(path, flow_core::history::wav(&samples)).is_ok()
+            {
+                let _ = std::fs::remove_file(audio);
+            }
+        }
+        Ok(None) => drop(std::fs::remove_file(audio)),
+        Err(_) => {}
+    }
 }
 
 fn state_of(state: State) -> DictState {
@@ -254,7 +386,14 @@ pub fn apply(event: Event, cx: &mut App) {
             pill::update_level(state, level, cx);
         }
         Event::Clipboard { uncertain } => pill::show_clipboard(uncertain, cx),
-        Event::Action { message, can_retry } => pill::show_action(message, can_retry, cx),
+        Event::Action { message, can_retry, dictation } => {
+            if let Some(driver) = cx.try_global::<Driver>().is_some().then(|| cx.global_mut::<Driver>()) {
+                driver.action = Some(dictation);
+            }
+            pill::show_action(message, can_retry, cx);
+        }
+        Event::AudioOffered { audio } => offer_audio(audio, cx),
+        Event::Inserted(_) => {}
         Event::Microphone(message) => pill::show_microphone(message, cx),
         Event::HistoryChanged => shell::history_changed(cx),
     }
@@ -299,9 +438,32 @@ pub fn session_command(command: SessionCommand, cx: &mut App) -> Result<(), Unav
         }
         SessionCommand::RetrySave => if driver.ask(Command::RetrySave, REPLY) { Ok(()) } else { refused },
         SessionCommand::RetryStorage => if driver.ask(Command::RetryStorage, REPLY) { Ok(()) } else { refused },
-        // The rewrite retry and the correction learner's Undo and Restore have no owner here yet.
+        SessionCommand::RetryRewrite => {
+            let Some(dictation) = driver.action.clone() else { return refused };
+            let (database, credentials, publish) = (driver.database.clone(), driver.credentials.clone(), driver.publish.clone());
+            let mut plan = route(cx).rewrite;
+            // `retry` stores the result and inserts nothing; a failure comes back as a new notice.
+            std::thread::spawn(move || {
+                let Ok(db) = Db::open_or_create(&database) else { return };
+                with_key(&mut plan, &*credentials);
+                if let Some((message, can_retry)) = rewrite::retry(&db, &plan, &dictation) {
+                    let _ = publish.send(Event::Action { message, can_retry, dictation });
+                }
+                let _ = publish.send(Event::HistoryChanged);
+            });
+            Ok(())
+        }
+        // The correction learner's Undo and Restore have no owner here yet.
         other => cx.global::<Core>().services.session_command(other),
     }
+}
+
+/// HIST-077: on the thread that owns the speech lifecycle, after any running session. `None` without one.
+pub fn recognize_locally(id: String, cx: &App) -> Option<Receiver<bool>> {
+    let driver = cx.try_global::<Driver>()?;
+    let (reply, answer) = mpsc::channel();
+    driver.commands.send(Command::RecognizeLocally(id, reply)).ok()?;
+    Some(answer)
 }
 
 /// Swift's `prepareModel` before the first test dictation.
@@ -333,6 +495,7 @@ mod tests {
     use crate::testing::boot;
     use flow_core::dictation::lifecycle::Spawned;
     use flow_core::dictation::ring::Failure;
+    use flow_core::remote::scripted::Reply;
     use flow_core::dictation::session::{CapturedTarget, Candidate, InsertOutcome, Input};
     use flow_ui::test::TestAppContext;
 
@@ -385,7 +548,7 @@ mod tests {
 
     fn doubles(root: &std::path::Path) -> Parts {
         std::fs::create_dir_all(root).unwrap();
-        Parts { mic: Arc::new(NoMic(vec![])), inserter: Arc::new(NoField), launcher: Box::new(NoLauncher), db: Db::open_or_create(&root.join("t.sqlite")).unwrap(), spool_root: root.join("spool"), pending_dir: root.join("pending"), free_bytes: Box::new(|| Some(u64::MAX)) }
+        Parts { mic: Arc::new(NoMic(vec![])), inserter: Arc::new(NoField), launcher: Box::new(NoLauncher), db: Db::open_or_create(&root.join("t.sqlite")).unwrap(), database: root.join("t.sqlite"), credentials: Arc::new(flow_platform::NoCredentials), spool_root: root.join("spool"), pending_dir: root.join("pending"), free_bytes: Box::new(|| Some(u64::MAX)) }
     }
 
     // parity: SHELL-143 SHELL-144
@@ -407,6 +570,65 @@ mod tests {
             assert!(control.released() && control.bypassed());
             shortcut(Cancelled, cx);
             assert!(control.cancelled());
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // parity: PILL-094
+    #[flow_ui::gpui::test]
+    async fn a_notice_arms_retry_and_offered_audio_is_dropped_only_on_cancel(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let root = std::env::temp_dir().join(format!("flow-driver-notice-{}", std::process::id()));
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.set_global(Driver::spawn(doubles(&root), false));
+            assert!(session_command(SessionCommand::RetryRewrite, cx).is_err(), "no notice to retry");
+            apply(Event::Action { message: "Rewrite took too long. Original text inserted.".into(), can_retry: true, dictation: "d1".into() }, cx);
+            assert_eq!(cx.global::<Driver>().action.as_deref(), Some("d1"));
+            assert!(cx.global::<Session>().pill.action.is_some());
+            assert!(session_command(SessionCommand::RetryRewrite, cx).is_ok());
+
+            let audio = root.join("offered-x.f32");
+            std::fs::write(&audio, [0u8; 8]).unwrap();
+            apply(Event::AudioOffered { audio: audio.clone() }, cx);
+            assert!(!audio.exists(), "the test panel answers Cancel, which is Discard");
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // parity: SET-048
+    #[flow_ui::gpui::test]
+    async fn a_press_refreshes_a_pending_device_and_routes_by_the_settings_at_that_moment(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let root = std::env::temp_dir().join(format!("flow-driver-route-{}", std::process::id()));
+        cx.update(|cx| {
+            ensure_session(cx);
+            update_session(cx, |s| s.model_installed = true);
+            cx.set_global(Driver::spawn(doubles(&root), false));
+            let plain = route(cx);
+            assert!(plain.server.is_none() && plain.local_allowed && !plain.rewrite.enabled, "off: this Mac");
+            let installed = crate::remote::testing::install(cx, vec![Reply::ready(), Reply::enrolled("pending", Some("lfr_1")), Reply::ready(), Reply::tokens("a", "r")], true, true);
+            let core = cx.global_mut::<Core>();
+            core.prefs.set("remote.enabled", true);
+            core.prefs.set("remote.consentVersion", 99_i64);
+            core.prefs.set("remote.serverURL", "https://flow.example.com");
+            core.prefs.set("server.only", true);
+            let remote = core.remote();
+            remote.enrollment.load(flow_core::remote::enrollment::RemoteSettings { origin: Some("https://flow.example.com".into()), state: "pinned".into(), notice: None });
+            
+            remote.enrollment.enroll(crate::remote::provider("apple")).unwrap();
+            remote.enrollment.settings().store(&mut cx.global_mut::<Core>().prefs);
+            assert!(route(cx).server.is_none(), "pending doesn't stream yet");
+            assert!(!route(cx).local_allowed, "server only");
+            shortcut(flow_core::dictation::hotkey::Event::Pressed, cx);
+            assert_eq!(installed.counters.opened(), 1, "the press doesn't wait for the refresh");
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(flow_core::settings::remote_state(&cx.global::<Core>().prefs), "approved");
+            let served = route(cx);
+            assert!(served.server.is_some() && served.rewrite.channel.is_some(), "approved now: dictation and rewrite both go to the server");
+            assert!(served.rewrite.settings.via_channel);
         });
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -459,7 +681,8 @@ mod tests {
         let root = std::env::temp_dir().join(format!("flow-driver-{}", std::process::id()));
         let driver = Driver::spawn(doubles(&root), false);
         driver.running.store(true, SeqCst);
-        driver.commands.send(Command::Begin { control: Arc::new(Control::default()), entries: vec![] }).unwrap();
+        let rewrite = Plan { enabled: false, mode: "clean", settings: Default::default(), timeout: REPLY, channel: None, secret: None };
+        driver.commands.send(Command::Begin { control: Arc::new(Control::default()), entries: vec![], route: Route { server: None, local_allowed: true, rewrite } }).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         while driver.running.load(SeqCst) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));

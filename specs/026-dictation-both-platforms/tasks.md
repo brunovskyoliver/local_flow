@@ -26,9 +26,9 @@ Same check rules as Feature 025. Swift references are under `apps/macos/LocalFlo
 - [X] T015 Insertion panel and HIST-167..174 wired.
 
 ## Phase 5: Remote dictation and rewrite (US3)
-- [ ] T016 `dictation::remote` per `RemoteDictationSession.swift`: windows, progress, fallback threshold, cancel, sleep. Refresh at start (SET-048). Loopback flowd test.
-- [ ] T017 Rewrite client per `RemoteRewriteTransport` and `RewriteClient`, categories to pill wording (PILL-088..095); keychain credentials.
-- [ ] T018 `PendingRemoteRetrier` (HIST-075, HIST-077, HIST-078, HIST-080); usage report loop if small (SET-375).
+- [X] T016 `dictation::remote` per `RemoteDictationSession.swift`: windows, progress, fallback threshold, cancel, sleep. Refresh at start (SET-048). Loopback flowd test.
+- [X] T017 Rewrite client per `RemoteRewriteTransport` and `RewriteClient`, categories to pill wording (PILL-088..095); keychain credentials.
+- [X] T018 `PendingRemoteRetrier` (HIST-075, HIST-077, HIST-078, HIST-080). Usage report loop not done (SET-375 stays open: it needs a usage store port, not small). The "Dictation ready" system notification after a recovery is not ported (it needs a notification permission path); History refreshes.
 
 ## Phase 6: Install outcomes (US5)
 - [ ] T019 `install_speech_model`, `install_meeting_models`, `install_term_booster` through worker `provision` with progress; `speech_model_verified`; `install_local_ai` per Swift (Mac only; unavailable with reason on Windows). ONB-301, ONB-302, ONB-304, SET-243.. rows.
