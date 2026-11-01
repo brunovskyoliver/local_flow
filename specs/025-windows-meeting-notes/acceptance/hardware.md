@@ -25,3 +25,6 @@ Items that need real hardware or a signed install. None of them has been run.
 | 19 | Windows: Pause, Resume, Stop from the tray and from the note | T020 | State, sidebar and tray agree | not run |
 | 20 | Windows: Windows build under 20348 | T018 | Start refuses with the reason; nothing is created | not run |
 | 21 | Windows: system sleep during a recording | LIVE-041 | Not built: no sleep notice exists yet. Today the sources fail or resume on their own; expected behaviour is a pause with reason `system_sleep` | not run |
+| 22 | Windows: run the CI installer on a clean x64 PC with no Visual C++ runtime, under a standard user | T025, T026 | No administrator prompt; the welcome page says the build is unsigned; the app opens from the Start menu | not run |
+| 23 | Windows: Run-at-login task, upgrade with the app open, uninstall | T025 | The task and Settings use the same `LocalFlow` Run value; the upgrade closes the app; uninstall removes the Run value and keeps `%LOCALAPPDATA%\LocalFlow` | not run |
+| 24 | Windows arm64: the same x64 installer under emulation | T025 | Installs and opens | not run |

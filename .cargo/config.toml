@@ -1,2 +1,6 @@
 [build]
 target-dir = "build/rust"
+
+# A clean Windows has no Visual C++ runtime; link it in rather than have the installer add it.
+[target.'cfg(all(windows,target_env="msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

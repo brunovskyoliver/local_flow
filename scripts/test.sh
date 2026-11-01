@@ -18,6 +18,8 @@ python3 scripts/check-sotto-tokens.py
 # Feature 024: the Rust desktop client keeps its boundaries and tests, and every parity row is settled.
 ./scripts/check-rust-boundaries.sh
 python3 scripts/check-parity-inventory.py
+# Feature 025: the installer script agrees with the Rust code it installs.
+python3 scripts/check-windows-installer.py
 cargo test --workspace
 ./scripts/check-keyboard-imports.sh
 python3 scripts/validate-foundation.py

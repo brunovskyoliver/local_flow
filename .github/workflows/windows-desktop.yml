@@ -2,7 +2,7 @@ name: Windows desktop
 on:
   push:
     branches: [gpui-desktop-views]
-    paths: ["apps/desktop/**", "crates/**", "Cargo.*", ".github/workflows/windows-desktop.yml"]
+    paths: ["apps/desktop/**", "crates/**", "packaging/windows/**", ".cargo/**", "Cargo.*", ".github/workflows/windows-desktop.yml"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,3 +36,29 @@ jobs:
         with:
           name: windows-smoke-${{ matrix.os }}
           path: build/smoke
+  # Release shaders need fxc.exe, which the runner's Windows SDK has. Nothing here is signed.
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/rust
+          key: installer-${{ hashFiles('Cargo.lock') }}
+      - run: cargo build --release -p localflow
+      - run: choco install innosetup --no-progress -y
+      - name: Build the unsigned installer
+        shell: pwsh
+        run: |
+          $version = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq localflow).version
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\windows\localflow.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: localflow-windows-x64-unsigned
+          path: build/installer/*.exe
+          if-no-files-found: error

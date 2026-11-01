@@ -37,9 +37,9 @@ Every phase ends with `cargo test --workspace`, `./scripts/check-rust-boundaries
 - [X] T024 Throwaway flowd end-to-end test: fixture segments to merged meeting; offline and refused paths keep audio. Swift cross-check where a Swift-made bundle fixture is available.
 
 ## Phase 6: Installer (US5)
-- [ ] T025 `packaging/windows/localflow.iss`, README: per-user, Start menu, optional Run key, keeps data on uninstall. Static check script added to `make check`, no ISCC needed.
-- [ ] T026 `.github/workflows/windows-desktop.yml` builds x64 release plus installer artifact unsigned. Not pushed or run here.
-- [ ] T027 Cross-build script `scripts/check-windows-cross.sh`: x64 and arm64 `cargo xwin check`. Optional, skipped when cargo-xwin is missing.
+- [X] T025 `packaging/windows/localflow.iss`, README: per-user, Start menu, optional Run key, keeps data on uninstall. Static check script added to `make check`, no ISCC needed.
+- [X] T026 `.github/workflows/windows-desktop.yml` builds x64 release plus installer artifact unsigned. Not pushed or run here.
+- [X] T027 Cross-build script `scripts/check-windows-cross.sh`: x64 and arm64 `cargo xwin check`. Optional, skipped when cargo-xwin is missing.
 
 ## Phase 7: Settle, review, report
 - [ ] T028 Update `specs/024-gpui-desktop-views/inventory/status/*` for each row truly settled; keep the others open with a precise reason.
