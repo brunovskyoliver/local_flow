@@ -152,7 +152,8 @@ fn keep_prefs(values: Map<String, Value>) -> Map<String, Value> {
         .filter(|(key, _)| {
             let system = ["NS", "Apple", "SU", "com.apple", "WebKit", "AK"].iter().any(|p| key.starts_with(p));
             let server_state = (key.starts_with("remote.") && key != "remote.serverURL" && key != "remote.fallbackThresholdMs") || key == "server.capabilities" || key.starts_with("serverMode.");
-            !system && !server_state
+            // Setup asks for this app's own permissions, which macOS tracks per app, so it runs here too.
+            !system && !server_state && key != "setupVersion"
         })
         .collect()
 }
@@ -236,6 +237,16 @@ mod tests {
         assert_eq!(clone_models(&from, &to).unwrap(), 0);
         assert!(to.join("m/own").exists());
         assert!(from.join("m/Inner.mlmodelc/weights").exists());
+    }
+
+    #[test]
+    fn setup_runs_again_and_the_right_option_shortcut_survives() {
+        let shortcut: Value = serde_json::from_str(r#"{"kind":"modifier_only","enabled":true,"deviceModifiers":64,"version":1,"keyCode":49,"modifiers":2048}"#).unwrap();
+        let kept = keep_prefs(serde_json::json!({"setupVersion": 1, "shortcut": shortcut}).as_object().unwrap().clone());
+        assert!(!kept.contains_key("setupVersion"));
+        let loaded: crate::onboarding::Shortcut = serde_json::from_value(kept["shortcut"].clone()).unwrap();
+        assert!(loaded.is_valid() && loaded.enabled);
+        assert_eq!(loaded.device_modifiers, Some(64));
     }
 
     #[test]

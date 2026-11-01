@@ -13,7 +13,7 @@ The owner dropped provider sign-in: a client needs a pairing token and a URL it 
 - The Rust client has no Google or Apple sign-in. Turning the server on opens the pairing form.
 - A device keeps several addresses for one server. It tries the last one that worked, then the others, moving on only when an address can't be reached. Every address is still checked against the pinned key.
 - `scripts/install-remote-server.sh` binds the remote listener to `0.0.0.0`. `--listen` and `--admin-listen` stay on loopback. The remote listener serves only the identity route and sealed channels.
-- On first launch the Rust client copies the Swift app's rows, meeting files and settings into its own folder, reading the source only. Settings can repeat the copy, which adds what's new. Keychain items and waiting dictations don't move.
+- On first launch the Rust client copies the Swift app's rows, meeting files and settings into its own folder, reading the source only. Settings can repeat the copy, which adds what's new. Keychain items and waiting dictations don't move. Setup still runs, because macOS grants permissions per app.
 - Beside the Swift app, the Rust client keeps its own `Models` folder and fills it at launch with APFS clones of the models Swift has. A clone shares its blocks with the original until one is rewritten. The two apps can't share the folder itself: the running Swift app holds an exclusive lock per model there for its whole life, so a second app reads the model as missing.
 
 ## Consequences
