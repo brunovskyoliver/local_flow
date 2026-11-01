@@ -9,13 +9,14 @@ import (
 	"io"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"localflow/server/internal/accounts"
 )
 
 const adminTokenUsage = "usage: flowd admin --data-dir <dir> [--dev] token create --label L [--user ID] " +
-	"[--ttl 1h|24h|7d] [--address ORIGIN] [--json] | token list [--json] | token revoke ID"
+	"[--ttl 1h|24h|7d] [--address ORIGIN]... [--json] | token list [--json] | token revoke ID"
 
 // adminPairingToken manages pairing tokens (specs/027-remote-pairing/contracts/pairing.md).
 func adminPairingToken(ctx context.Context, a *adminContext, args []string) error {
@@ -36,7 +37,8 @@ func adminPairingToken(ctx context.Context, a *adminContext, args []string) erro
 // adminTokenCreate needs the identity key, because the token carries the public
 // key. It prints the value once; nothing can print it again.
 func adminTokenCreate(ctx context.Context, a *adminContext, args []string) error {
-	var label, ttl, address string
+	var label, ttl string
+	var addresses []string
 	var userID int64
 	var asJSON bool
 	fs := flag.NewFlagSet("flowd admin token create", flag.ContinueOnError)
@@ -44,7 +46,7 @@ func adminTokenCreate(ctx context.Context, a *adminContext, args []string) error
 	fs.StringVar(&label, "label", "", "")
 	fs.Int64Var(&userID, "user", 0, "")
 	fs.StringVar(&ttl, "ttl", "24h", "")
-	fs.StringVar(&address, "address", "", "")
+	fs.Func("address", "", func(v string) error { addresses = append(addresses, v); return nil })
 	fs.BoolVar(&asJSON, "json", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || label == "" || userID < 0 {
 		return usageError("%s", adminTokenUsage)
@@ -54,8 +56,10 @@ func adminTokenCreate(ctx context.Context, a *adminContext, args []string) error
 	if !ok {
 		return usageError("--ttl must be 1h, 24h or 7d")
 	}
-	if address != "" && !validOrigin(address) {
-		return usageError("--address must be an http:// or https:// origin with no path")
+	for _, address := range addresses {
+		if !validOrigin(address) {
+			return usageError("--address must be an http:// or https:// origin with no path")
+		}
 	}
 	identity, err := a.keychain.Load(ctx, a.dataDir)
 	if errors.Is(err, accounts.ErrIdentityMissing) {
@@ -74,8 +78,8 @@ func adminTokenCreate(ctx context.Context, a *adminContext, args []string) error
 		return err
 	}
 	link := ""
-	if address != "" {
-		link = a.pairingLink(address, value)
+	if len(addresses) > 0 {
+		link = a.pairingLink(addresses, value)
 	}
 	if asJSON {
 		return json.NewEncoder(a.out).Encode(struct {
@@ -103,12 +107,16 @@ func validOrigin(text string) bool {
 
 // pairingLink is the app link: the token stays in the fragment. Development
 // data directories get the development app's scheme.
-func (a *adminContext) pairingLink(address, token string) string {
+func (a *adminContext) pairingLink(addresses []string, token string) string {
 	scheme := "localflow"
 	if a.keychain.Service == accounts.ServiceDevelopment {
 		scheme = "localflow-dev"
 	}
-	return scheme + "://pair?address=" + url.QueryEscape(address) + "#token=" + token
+	query := make([]string, len(addresses))
+	for i, address := range addresses {
+		query[i] = "address=" + url.QueryEscape(address)
+	}
+	return scheme + "://pair?" + strings.Join(query, "&") + "#token=" + token
 }
 
 // adminTokenList prints no value or hash; the store doesn't return them. User

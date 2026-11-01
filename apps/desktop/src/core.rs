@@ -18,6 +18,8 @@ pub struct Core {
     pub reconciled: bool,
     /// Launch recovery's notices, until the Notetaker page publishes them to the pill.
     pub meeting_notices: Vec<String>,
+    /// What the last copy from the Swift app did.
+    pub swift_import: Option<Result<String, String>>,
     /// The Rust recorder's current or last meeting, on platforms with `Services::meeting_audio`.
     pub recorder: Option<flow_core::capture::Handle>,
     /// Enrollment and channels, built on first use.
@@ -30,18 +32,24 @@ impl Core {
         if let Some(f) = services.formats() {
             flow_core::history::set_region(flow_core::history::Region { date: f.date, number: f.number, first_weekday: f.first_weekday });
         }
-        let paths = Paths::resolve(services.app_data_dir(), services.data_folder());
+        let mut paths = Paths::resolve(services.app_data_dir(), services.data_folder());
+        let redirected = std::env::var_os("LOCALFLOW_DATA_ROOT").is_some_and(|r| !r.is_empty());
+        paths.adopt_swift(&services.app_data_dir(), services.swift_data_folder(), redirected);
         let (instance_lock, stores) = match paths.prepare() {
             Ok(lock) => (Some(lock), Db::open_or_create(&paths.database()).map_err(|e| e.to_string())),
             Err(e) => (None, Err(e.to_string())),
         };
-        let prefs = Prefs::open(paths.preferences());
+        let mut prefs = Prefs::open(paths.preferences());
+        let swift_import = match (&stores, &paths.swift_root) {
+            (Ok(db), Some(swift)) => flow_core::migration::first_launch(db, &mut prefs, swift, &paths.root, services.swift_prefs()).map(|r| r.map(|i| i.summary())),
+            _ => None,
+        };
         let (db, db_error) = match stores {
             Ok(db) => (Some(db), None),
             Err(e) => (None, Some(e)),
         };
         let scenario = std::env::var("LOCALFLOW_SCENARIO").ok();
-        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None }
+        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None, swift_import }
     }
 
     pub fn remote(&mut self) -> std::sync::Arc<crate::remote::Remote> {
@@ -82,6 +90,7 @@ impl Core {
             scenario: None,
             reconciled: true,
             meeting_notices: vec![],
+            swift_import: None,
             recorder: None,
             remote: None,
         }

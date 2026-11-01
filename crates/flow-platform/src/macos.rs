@@ -322,6 +322,13 @@ impl Services for Mac {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
         home.join("Library/Application Support")
     }
+    fn swift_data_folder(&self) -> Option<&'static str> {
+        Some("LocalFlow")
+    }
+    fn swift_prefs(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
+        let out = std::process::Command::new("/usr/bin/defaults").args(["export", "org.localflow.LocalFlow", "-"]).output().ok().filter(|o| o.status.success())?;
+        crate::swift_prefs::from_plist(&out.stdout)
+    }
     fn permission(&self, p: Permission) -> PermissionState {
         let granted = match p {
             Permission::Accessibility => unsafe { AXIsProcessTrusted() },

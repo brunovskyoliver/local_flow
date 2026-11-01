@@ -146,6 +146,14 @@ pub trait Services: 'static {
     fn data_folder(&self) -> &'static str {
         "LocalFlow GPUI Dev"
     }
+    /// The Swift app's folder there, on the one platform that has it.
+    fn swift_data_folder(&self) -> Option<&'static str> {
+        None
+    }
+    /// The Swift app's settings, as JSON values.
+    fn swift_prefs(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
+        None
+    }
     fn permission(&self, p: Permission) -> PermissionState;
     fn open_permission_settings(&self, p: Permission) -> Result<(), Unavailable>;
     fn high_contrast(&self) -> bool;
@@ -417,6 +425,8 @@ pub enum InstallState {
 }
 
 pub mod speech;
+#[cfg(target_os = "macos")]
+mod swift_prefs;
 #[cfg(target_os = "macos")]
 mod hotkey_mac;
 #[cfg(target_os = "macos")]

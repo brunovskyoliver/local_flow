@@ -159,6 +159,26 @@ impl SettingsPage {
         out
     }
 
+    /// Only beside the Swift app. Adds what changed there since the last copy; nothing there changes.
+    pub(super) fn swift_import_section(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let core = cx.global::<Core>();
+        core.paths.swift_root.as_ref()?;
+        let detail = match &core.swift_import {
+            Some(Ok(summary)) => format!("Copied. {summary}"),
+            Some(Err(e)) => format!("The copy didn't finish: {e}"),
+            None => "Copy dictations, meetings and settings from the LocalFlow Swift app. That app stays as it is.".to_string(),
+        };
+        let button = prototype_button("settings.swiftImport", "Copy Again").on_click(cx.listener(|_, _, _, cx| {
+            let core = cx.global_mut::<Core>();
+            core.swift_import = match (&core.db, &core.paths.swift_root) {
+                (Some(db), Some(swift)) => Some(flow_core::migration::import(db, swift, &core.paths.root).map(|i| i.summary())),
+                _ => None,
+            };
+            cx.notify();
+        }));
+        Some(group(cx).child(row("Data from the Swift app", Some(detail), button, cx)))
+    }
+
     fn request_remote_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if prefs(cx).bool_or("remote.enabled", false) {
             self.prompt_turn_off(window, cx);

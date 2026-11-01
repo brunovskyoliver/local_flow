@@ -9,8 +9,8 @@
 # <data-dir>/Models, and flowd starts the meeting worker next to the speech worker.
 #
 #   variant      label                               remote listener   local listener   MTPLX            data directory
-#   production   org.localflow.LocalFlow.remote      127.0.0.1:8090    127.0.0.1:8091   127.0.0.1:8092   ~/Library/Application Support/LocalFlow Server
-#   development  org.localflow.LocalFlow.dev.remote  127.0.0.1:18090   127.0.0.1:18091  127.0.0.1:18092  ~/Library/Application Support/LocalFlow Server Dev
+#   production   org.localflow.LocalFlow.remote      0.0.0.0:8090      127.0.0.1:8091   127.0.0.1:8092   ~/Library/Application Support/LocalFlow Server
+#   development  org.localflow.LocalFlow.dev.remote  0.0.0.0:18090    127.0.0.1:18091  127.0.0.1:18092  ~/Library/Application Support/LocalFlow Server Dev
 #
 # flowd serve always opens its normal listener too; the remote agent uses
 # 8091/18091 so it never collides with the app's flowd on 8080/18080. Rewrite
@@ -131,7 +131,7 @@ repository="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [ "$dev" -eq 1 ]; then
   label="org.localflow.LocalFlow.dev.remote"
-  remote_listen="127.0.0.1:18090"
+  remote_listen="0.0.0.0:18090"
   listen="127.0.0.1:18091"
   mtplx_port=18092
   admin_listen="127.0.0.1:18093"
@@ -140,7 +140,7 @@ if [ "$dev" -eq 1 ]; then
   dev_flag=("--dev")
 else
   label="org.localflow.LocalFlow.remote"
-  remote_listen="127.0.0.1:8090"
+  remote_listen="0.0.0.0:8090"
   listen="127.0.0.1:8091"
   mtplx_port=8092
   admin_listen="127.0.0.1:8093"
@@ -467,4 +467,4 @@ install_agent "$mtplx_label" "$mtplx_plist" render_mtplx_plist
 install_agent "$label" "$plist" render_plist
 
 echo "Done. $label serves the remote channel on $remote_listen; $mtplx_label serves rewrites on 127.0.0.1:$mtplx_port."
-echo "Point the cloudflared tunnel hostname at http://$remote_listen."
+echo "Clients reach it by any route to this Mac: LAN, Tailscale, or a proxy pointed at http://127.0.0.1:${remote_listen##*:}."

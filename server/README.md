@@ -122,7 +122,7 @@ FluidAudio and term-boosting code; flowd loads no weights. Contracts:
 
 | Flag | Meaning |
 | --- | --- |
-| `--remote-listen 127.0.0.1:8090` | IP literal address for the remote listener (development 18090). The install script binds loopback; server mode in the app binds 0.0.0.0:8090 |
+| `--remote-listen 127.0.0.1:8090` | IP literal address for the remote listener (development 18090). The install script and server mode in the app bind 0.0.0.0:8090, so LAN, Tailscale and a local proxy all reach it. Only this listener leaves loopback; `--listen` and `--admin-listen` stay on 127.0.0.1 |
 | `--data-dir <dir>` | holds `flowd-remote.sqlite`; must be owned by this user, mode 0700 |
 | `--speech-worker <path>` | worker executable, default `flowd-speech` next to flowd |
 | `--speech-models <dir>` | models the worker verifies, default `<data-dir>/Models` |
@@ -155,7 +155,7 @@ Step-by-step setup, tunnel, administration and uninstall: [docs/distribution/rem
 `scripts/install-remote-server.sh [--dev] [--dry-run] [--google-client-id IDS]
 [--apple-audience IDS] [--mtplx PATH] [--model DIR]` builds flowd and `flowd-speech`,
 installs them under `<data-dir>/bin` with the pinned model descriptors, and loads two
-launch agents: `org.localflow.LocalFlow.remote` (remote listener 127.0.0.1:8090, normal
+launch agents: `org.localflow.LocalFlow.remote` (remote listener 0.0.0.0:8090, normal
 listener 127.0.0.1:8091) and the server's own MTPLX, `org.localflow.LocalFlow.remote.mtplx`
 on 127.0.0.1:8092. With `--dev` the labels gain `.dev` and the ports are 18090, 18091 and
 18092. The server's MTPLX stays loaded while its agent runs and needs no LocalFlow app;

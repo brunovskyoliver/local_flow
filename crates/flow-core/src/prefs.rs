@@ -45,6 +45,13 @@ impl Prefs {
         self.values.insert(key.into(), serde_json::to_value(value).expect("preference serializes"));
         self.save();
     }
+    /// Adds the keys this file doesn't have, in one write.
+    pub fn merge_missing(&mut self, values: Map<String, Value>) {
+        for (key, value) in values {
+            self.values.entry(key).or_insert(value);
+        }
+        self.save();
+    }
     pub fn remove(&mut self, key: &str) {
         self.values.remove(key);
         self.save();

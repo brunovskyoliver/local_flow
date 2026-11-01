@@ -1257,6 +1257,7 @@ impl Render for SettingsPage {
             .child(Self::section_title("Server"))
             .child(self.server_section(window, cx))
             .child(Self::section_title("Updates"))
+            .children(self.swift_import_section(cx))
             .child(self.updates_section(cx))
             .child(Self::section_title("General"))
             .child(self.general(cx));

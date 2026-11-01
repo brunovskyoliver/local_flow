@@ -7,11 +7,13 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct Paths {
     pub root: PathBuf,
+    /// The Swift app's data folder when it's on this machine and data isn't redirected.
+    pub swift_root: Option<PathBuf>,
 }
 
 impl Paths {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Paths { root: root.into() }
+        Paths { root: root.into(), swift_root: None }
     }
     /// `LOCALFLOW_DATA_ROOT`, otherwise `folder` in the platform's app data folder.
     pub fn resolve(platform_app_data: PathBuf, folder: &str) -> Self {
@@ -19,6 +21,10 @@ impl Paths {
             Some(root) if !root.is_empty() => Paths::new(root),
             _ => Paths::new(platform_app_data.join(folder)),
         }
+    }
+    /// Finds the Swift app's folder. A redirected data root (tests, scenarios) never touches it.
+    pub fn adopt_swift(&mut self, platform_app_data: &Path, folder: Option<&str>, redirected: bool) {
+        self.swift_root = folder.filter(|_| !redirected).map(|f| platform_app_data.join(f)).filter(|d| d.is_dir());
     }
     pub fn database(&self) -> PathBuf {
         self.root.join("history.sqlite")
@@ -32,8 +38,10 @@ impl Paths {
     pub fn temporary_audio(&self) -> PathBuf {
         self.root.join("TemporaryAudio")
     }
+    /// One copy per machine: beside the Swift app, its folder serves both. Same layout, same pinned
+    /// hashes, and whatever either app downloads the other finds.
     pub fn models(&self) -> PathBuf {
-        self.root.join("Models")
+        self.swift_root.as_ref().unwrap_or(&self.root).join("Models")
     }
 }
 
@@ -132,6 +140,21 @@ mod tests {
         std::fs::write(&root, b"").unwrap();
         assert!(Paths::new(&root).prepare().is_err());
         std::fs::remove_file(&root).unwrap();
+    }
+
+    #[test]
+    fn models_are_shared_only_with_a_swift_folder() {
+        let app_data = temp("share");
+        std::fs::create_dir_all(app_data.join("LocalFlow")).unwrap();
+        let mut p = Paths::new("/r");
+        p.adopt_swift(&app_data, Some("LocalFlow"), false);
+        assert_eq!(p.models(), app_data.join("LocalFlow/Models"));
+        for (folder, redirected) in [(Some("Missing"), false), (None, false), (Some("LocalFlow"), true)] {
+            let mut p = Paths::new("/r");
+            p.adopt_swift(&app_data, folder, redirected);
+            assert_eq!(p.models(), PathBuf::from("/r/Models"));
+        }
+        std::fs::remove_dir_all(app_data).unwrap();
     }
 
     #[test]

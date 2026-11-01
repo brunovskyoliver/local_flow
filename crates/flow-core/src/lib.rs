@@ -6,6 +6,7 @@ pub mod dictionary;
 pub mod history;
 pub mod insights;
 pub mod meetings;
+pub mod migration;
 pub mod onboarding;
 pub mod paths;
 pub mod prefs;

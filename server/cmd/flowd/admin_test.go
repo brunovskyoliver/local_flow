@@ -625,3 +625,12 @@ func TestAdminTokenText(t *testing.T) {
 		t.Fatal(out, err)
 	}
 }
+
+func TestTokenLinkCarriesEveryAddress(t *testing.T) {
+	a := &adminContext{}
+	got := a.pairingLink([]string{"http://100.64.0.1:8090", "https://flow.example.com"}, "lfp_x")
+	want := "localflow://pair?address=http%3A%2F%2F100.64.0.1%3A8090&address=https%3A%2F%2Fflow.example.com#token=lfp_x"
+	if got != want {
+		t.Fatalf("got %s", got)
+	}
+}
