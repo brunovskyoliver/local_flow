@@ -212,4 +212,4 @@ The Rust client's `flow-platform` crate links Microsoft's `windows` crate 0.62 (
 
 ## Windows speech worker (Feature 026)
 
-The Windows installer carries `sherpa-onnx-c-api.dll` from [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) v2.0.1 (Apache-2.0) and `onnxruntime.dll` from [ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT), unmodified and loaded at run time. Provisioning downloads NVIDIA's Parakeet TDT 0.6b v3 (CC-BY-4.0), as converted to ONNX by the sherpa-onnx project; the weights aren't bundled. `flow-speech-win` uses the `sha2` crate (MIT or Apache-2.0).
+The Windows installer carries `sherpa-onnx-c-api.dll` from [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) v2.0.1 (Apache-2.0) and `onnxruntime.dll` from [ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT), unmodified and loaded at run time. Provisioning downloads NVIDIA's Parakeet TDT 0.6b v3 (CC-BY-4.0), as converted to ONNX by the sherpa-onnx project; the weights aren't bundled. `flow-speech-win` uses the `sha2` crate (MIT or Apache-2.0). On the Mac, the desktop client reads the Swift app's settings export with the `plist` crate (MIT).

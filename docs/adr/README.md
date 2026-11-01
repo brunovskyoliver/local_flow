@@ -54,3 +54,5 @@ Record significant decisions and constitution exceptions here. Use sequential nu
 - [0036: One Rust and GPUI desktop client for macOS and Windows](0036-rust-gpui-desktop-client.md)
 
 - [0037: Token pairing, any route, and server mode in the client app](0037-token-pairing-and-server-mode.md)
+
+- [0038: Pairing only, several addresses, and living beside the Swift app](0038-pairing-only-addresses-and-swift-coexistence.md)

@@ -280,7 +280,7 @@ pub fn failure_label(raw: &str) -> &'static str {
     match raw {
         "timeout" => "no answer",
         "busy" => "busy",
-        "unauthorized" => "sign-in needed",
+        "unauthorized" => "pairing needed",
         "not_approved" => "not approved",
         "revoked" => "removed",
         "pin_mismatch" => "identity changed",
@@ -3180,7 +3180,7 @@ mod tests {
     // parity: HIST-046
     #[test]
     fn every_server_failure_reads_its_reason() {
-        for (raw, label) in [("unreachable", "unreachable"), ("timeout", "no answer"), ("busy", "busy"), ("unauthorized", "sign-in needed"), ("not_approved", "not approved"), ("revoked", "removed"), ("pin_mismatch", "identity changed"), ("worker_unavailable", "recognizer unavailable"), ("protocol_error", "invalid reply"), ("limit_exceeded", "too long"), ("pending_retry", "retried")] {
+        for (raw, label) in [("unreachable", "unreachable"), ("timeout", "no answer"), ("busy", "busy"), ("unauthorized", "pairing needed"), ("not_approved", "not approved"), ("revoked", "removed"), ("pin_mismatch", "identity changed"), ("worker_unavailable", "recognizer unavailable"), ("protocol_error", "invalid reply"), ("limit_exceeded", "too long"), ("pending_retry", "retried")] {
             assert_eq!(failure_label(raw), label);
         }
         assert_eq!(failure_label("anything else"), "unreachable");

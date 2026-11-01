@@ -51,3 +51,10 @@ All made by the agent under the owner's standing instruction: no gates, nothing 
 - Rust's Mac bundle has no `flowd-speech` yet (T025), so a packaged Rust Mac app does server dictation only.
 - Open tasks T021 to T026: second press during a dictation, pill on Space change and wake, on-device AI install, usage loop, game detection, spell-check filter and other Mac rows, Windows CI trigger. Windows meeting model install is refused until Feature 029.
 - Inventory: 67 `service` and 12 `not-run` rows remain, each naming its owner.
+
+## Update 2026-11-01: owner changes after the report
+- **Sign-in removed** from the Rust client (ADR 0038, constitution 6.0.0). A device joins with a pairing token and one or more URLs. Inventory rows for the removed UI are `recorded` with a `removed:` note.
+- **Several addresses:** tried last-working first; failover only when an address can't be reached.
+- **Listener:** the install script binds `0.0.0.0:8090`. No running server was changed.
+- **Swift coexistence:** first-launch copy from the Swift app, `Copy Again` in Settings, shared `Models`. Tested on fixture databases and temporary folders, never on the owner's data. `scripts/run-rust-desktop.sh` builds and runs; T025 is met only for that script, not for a packaged bundle.
+- Implementation: committed locally. Merge and deployment: not done.

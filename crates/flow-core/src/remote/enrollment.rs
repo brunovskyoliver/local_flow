@@ -1285,6 +1285,24 @@ pub(crate) mod flowd_tests {
         s.read(account).unwrap()
     }
 
+    // A real flowd behind a dead address: pairing and the session both reach it, and it stays first.
+    #[test]
+    fn a_dead_first_address_falls_through_to_the_real_server() {
+        let f = Arc::new(Flowd::start());
+        let dead = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port())
+        };
+        let (e, _) = client(&f, &dead);
+        let mut s = e.settings();
+        s.alternates = vec![f.remote.clone()];
+        e.load(s);
+        e.pair(&token(&f)).expect("pairs through the second address");
+        assert_eq!(e.settings().origin.as_deref(), Some(f.remote.as_str()));
+        assert_eq!(e.settings().alternates, [dead]);
+        e.session_channel().expect("a session opens");
+    }
+
     // parity: SET-099
     #[test]
     fn pair_refresh_rotation_and_a_spent_token() {
