@@ -640,11 +640,15 @@ enum LocalModelIdleUnload: Int, CaseIterable, Identifiable {
       setRunning(true)
     }
     scheduleIdle()
+    var polls = 0
     while starting, !Task.isCancelled {
       if await backendReady() {
         starting = false
         return
       }
+      // launchd ignores a start while the job is still stopping (up to 5 s after SIGTERM).
+      polls += 1
+      if polls % 4 == 0 { setRunning(true) }
       try? await clock.sleep(for: Self.pollInterval)
     }
   }

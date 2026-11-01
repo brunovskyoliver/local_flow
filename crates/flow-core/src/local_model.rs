@@ -26,9 +26,14 @@ pub fn wait_until_ready(origin: &str, secret: Option<&str>, limit: Duration, can
     if origin != loopback_endpoint() {
         return;
     }
-    wake();
     let end = Instant::now() + limit;
+    let mut polls = 0u32;
     while Instant::now() < end && !cancel.load(SeqCst) {
+        // launchd ignores a start while the job is still stopping (up to 5 s after SIGTERM), so keep asking.
+        if polls % 4 == 0 {
+            wake();
+        }
+        polls += 1;
         if rewrite_health(origin, secret).is_ok_and(|h| h.backend.is_some_and(|b| b.state == "ready")) {
             return;
         }

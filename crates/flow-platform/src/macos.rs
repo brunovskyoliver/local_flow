@@ -46,6 +46,12 @@ struct Rect {
 
 type Id = *mut std::ffi::c_void;
 
+/// The model is shared with the Swift app; whichever app last started it records its PID in `app-pid`.
+/// Stopping it from any other app would leave the owner without rewriting. An unreadable file stops it.
+fn owns_model(state: &std::path::Path, pid: u32) -> bool {
+    std::fs::read_to_string(state.join("app-pid")).map_or(true, |owner| owner.trim() == pid.to_string())
+}
+
 fn launchctl(args: &[&str]) -> bool {
     std::process::Command::new("/bin/launchctl").args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
 }
@@ -433,7 +439,7 @@ impl Services for Mac {
                 if std::fs::write(state.join("app-pid"), std::process::id().to_string()).is_ok() {
                     launchctl(&["kickstart", &target]);
                 }
-            } else {
+            } else if owns_model(&state, std::process::id()) {
                 launchctl(&["kill", "SIGTERM", &target]);
             }
         });
@@ -1075,5 +1081,19 @@ impl crate::Credentials for MacCredentials {
         // ponytail: the host name, where Swift shows the Mac's localized name; SCDynamicStore if the owner minds in the admin list.
         let name = String::from_utf8_lossy(&buffer[..end]);
         if status == 0 && !name.is_empty() { name.trim_end_matches(".local").to_string() } else { "Mac".into() }
+    }
+}
+
+#[cfg(test)]
+mod owns_model_tests {
+    #[test]
+    fn only_the_recorded_app_stops_the_model() {
+        let dir = std::env::temp_dir().join(format!("owns-model-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(super::owns_model(&dir, 7), "no record");
+        std::fs::write(dir.join("app-pid"), "7").unwrap();
+        assert!(super::owns_model(&dir, 7));
+        assert!(!super::owns_model(&dir, 8));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
