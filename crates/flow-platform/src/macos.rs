@@ -444,6 +444,10 @@ impl Services for Mac {
             let set: unsafe extern "C" fn(Id, Id, isize) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
             // NSFloatingWindowLevel; GPUI's popup kind sets NSPopUpWindowLevel.
             set(panel, sel_registerName(c"setLevel:".as_ptr()), 3);
+            // AppKit computes a transparent window's shadow from its first frame and GPUI never asks
+            // again, so once the pill grows the old outline stays around it as a pale bubble.
+            let set_flag: unsafe extern "C" fn(Id, Id, bool) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            set_flag(panel, sel_registerName(c"setHasShadow:".as_ptr()), false);
         }
         Ok(())
     }

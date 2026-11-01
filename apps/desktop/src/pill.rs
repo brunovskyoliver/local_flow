@@ -355,7 +355,9 @@ pub enum Content {
 
 pub struct Pill {
     pub state: DictState,
-    pub level: f32,
+    /// In a `Cell`: it changes many times a second, and writing it through `update_session` would
+    /// rebuild the main window each time, on the thread that also draws the pill.
+    pub level: std::cell::Cell<f32>,
     /// Advanced while rendering, so it can't go through `update_session`: that re-renders forever.
     pub waveform: std::cell::RefCell<Waveform>,
     pub state_since: Instant,
@@ -375,7 +377,7 @@ impl Default for Pill {
     fn default() -> Self {
         Pill {
             state: DictState::Idle,
-            level: 0.,
+            level: std::cell::Cell::new(0.),
             waveform: Default::default(),
             state_since: Instant::now(),
             expand_since: None,
@@ -454,7 +456,7 @@ pub fn set_state(state: DictState, level: f32, cx: &mut App) {
     let previous = cx.global::<Session>().pill.state;
     update_session(cx, |s| {
         s.pill.set_state(state);
-        s.pill.level = clamp_level(level);
+        s.pill.level.set(clamp_level(level));
     });
     if let Some(message) = announcement(previous, state) {
         announce(message, cx);
@@ -467,7 +469,7 @@ pub fn update_level(state: DictState, level: f32, cx: &mut App) {
         set_state(state, level, cx);
         return;
     }
-    update_session(cx, |s| s.pill.level = clamp_level(level));
+    cx.global::<Session>().pill.level.set(clamp_level(level));
 }
 
 /// Microphone notice, self-dismissed after 8 s; `message` is "No microphone available" or
@@ -792,7 +794,7 @@ impl PillView {
     fn dictation(&mut self, time: f64, reduce: bool, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = pal(cx);
         let pill = &cx.global::<Session>().pill;
-        let (state, level) = (pill.state, pill.level);
+        let (state, level) = (pill.state, pill.level.get());
         let since_expand = pill.expand_since.map_or(1000., |t| t.elapsed().as_secs_f32());
         if state == DictState::Recording && !reduce {
             pill.waveform.borrow_mut().advance(time, level);
@@ -1643,9 +1645,16 @@ mod tests {
         cx.update(|cx| set_state(DictState::Recording, 0.5, cx));
         let layouts = pill(cx, |p| p.layouts);
         cx.update(|cx| update_level(DictState::Recording, f32::NAN, cx));
-        assert_eq!(pill(cx, |p| (p.layouts, p.level)), (layouts, 0.));
+        assert_eq!(pill(cx, |p| (p.layouts, p.level.get())), (layouts, 0.));
         cx.update(|cx| update_level(DictState::Recording, 9., cx));
-        assert_eq!(pill(cx, |p| p.level), 1.);
+        assert_eq!(pill(cx, |p| p.level.get()), 1.);
+        // The main window watches `Session`; a meter update must not rebuild it.
+        let notified = Rc::new(std::cell::Cell::new(0));
+        let seen = notified.clone();
+        let _watch = cx.update(|cx| cx.observe_global::<Session>(move |_| seen.set(seen.get() + 1)));
+        cx.update(|cx| update_level(DictState::Recording, 0.5, cx));
+        cx.run_until_parked();
+        assert_eq!(notified.get(), 0);
         cx.update(|cx| update_level(DictState::Transcribing, 0., cx));
         assert_eq!(pill(cx, |p| p.layouts), layouts + 1);
     }

@@ -588,7 +588,7 @@ fn changed(snapshot: Snapshot, cx: &mut App) {
         d.capacity_blocked = snapshot.capacity_blocked;
         d.cleanup_blocked = snapshot.cleanup_blocked;
     });
-    let level = cx.global::<Session>().pill.level;
+    let level = cx.global::<Session>().pill.level.get();
     pill::set_state(state, level, cx);
     cx.global::<Core>().services.set_shortcut_session_active(active);
 }
