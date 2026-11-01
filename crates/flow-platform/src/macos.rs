@@ -53,11 +53,7 @@ unsafe extern "C" {
     fn objc_msgSend_stret();
     fn objc_getClass(name: *const std::ffi::c_char) -> Id;
     fn sel_registerName(name: *const std::ffi::c_char) -> Id;
-    fn objc_allocateClassPair(superclass: Id, name: *const std::ffi::c_char, extra: usize) -> Id;
-    fn objc_registerClassPair(class: Id);
-    fn class_addMethod(class: Id, selector: Id, imp: extern "C" fn(Id, Id) -> bool, types: *const std::ffi::c_char) -> bool;
-    fn object_getClass(object: Id) -> Id;
-    fn object_setClass(object: Id, class: Id) -> Id;
+    fn class_replaceMethod(class: Id, selector: Id, imp: extern "C" fn(Id, Id) -> bool, types: *const std::ffi::c_char) -> *const std::ffi::c_void;
 }
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -74,24 +70,14 @@ extern "C" fn answers_no(_: Id, _: Id) -> bool {
     false
 }
 
-/// The subclass of GPUI's panel class that refuses key and main, which GPUI's own class accepts.
-/// The name is registered once, so every panel shares it.
-unsafe fn non_key_class(panel: Id) -> Id {
-    let name = c"LocalFlowPanel";
+/// GPUI's panel class accepts key and main; every panel this app opens must refuse them. Changes the
+/// class rather than the live panel: `object_setClass` on a panel loses its key-value observers, and
+/// `NSWindow dealloc` then throws when it removes them, which aborts the app when a panel closes.
+unsafe fn refuse_key_and_main(class: Id) {
     // SAFETY: called on the main thread with a live class; both selectors take no arguments and return BOOL.
     unsafe {
-        let existing = objc_getClass(name.as_ptr());
-        if !existing.is_null() {
-            return existing;
-        }
-        let class = objc_allocateClassPair(panel, name.as_ptr(), 0);
-        if class.is_null() {
-            return class;
-        }
-        class_addMethod(class, sel_registerName(c"canBecomeKeyWindow".as_ptr()), answers_no, c"c@:".as_ptr());
-        class_addMethod(class, sel_registerName(c"canBecomeMainWindow".as_ptr()), answers_no, c"c@:".as_ptr());
-        objc_registerClassPair(class);
-        class
+        class_replaceMethod(class, sel_registerName(c"canBecomeKeyWindow".as_ptr()), answers_no, c"c@:".as_ptr());
+        class_replaceMethod(class, sel_registerName(c"canBecomeMainWindow".as_ptr()), answers_no, c"c@:".as_ptr());
     }
 }
 
@@ -102,14 +88,14 @@ mod panel_tests {
     fn pinned_panels_refuse_key_and_main() {
         unsafe extern "C" {
             fn class_getMethodImplementation(class: Id, selector: Id) -> *const std::ffi::c_void;
-            fn class_getSuperclass(class: Id) -> Id;
+            fn objc_allocateClassPair(superclass: Id, name: *const std::ffi::c_char, extra: usize) -> Id;
+            fn objc_registerClassPair(class: Id);
         }
         // SAFETY: NSPanel is linked through AppKit; nothing is instantiated, so no main thread is needed.
         unsafe {
-            let panel = objc_getClass(c"NSPanel".as_ptr());
-            let class = non_key_class(panel);
-            assert_eq!(class_getSuperclass(class), panel);
-            assert_eq!(non_key_class(panel), class, "registered once");
+            let class = objc_allocateClassPair(objc_getClass(c"NSPanel".as_ptr()), c"LocalFlowPanelTest".as_ptr(), 0);
+            objc_registerClassPair(class);
+            refuse_key_and_main(class);
             for name in [c"canBecomeKeyWindow", c"canBecomeMainWindow"] {
                 let imp = class_getMethodImplementation(class, sel_registerName(name.as_ptr()));
                 assert_eq!(imp, answers_no as *const std::ffi::c_void);
@@ -447,18 +433,14 @@ impl Services for Mac {
         let raw_window_handle::RawWindowHandle::AppKit(handle) = window.window_handle().map_err(|_| unavailable())?.as_raw() else {
             return Err(unavailable());
         };
-        // SAFETY: the handle's NSView is alive on the main thread. The subclass adds no ivars, so swapping
-        // the class of GPUI's panel keeps its layout and its inherited dealloc.
+        // SAFETY: the handle's NSView is alive on the main thread.
         unsafe {
             let panel = send(handle.ns_view.as_ptr(), c"window");
             if panel.is_null() {
                 return Err(unavailable());
             }
-            let class = non_key_class(object_getClass(panel));
-            if class.is_null() {
-                return Err(unavailable());
-            }
-            object_setClass(panel, class);
+            // `class` sees through the subclass key-value observing installs.
+            refuse_key_and_main(send(panel, c"class"));
             let set: unsafe extern "C" fn(Id, Id, isize) = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
             // NSFloatingWindowLevel; GPUI's popup kind sets NSPopUpWindowLevel.
             set(panel, sel_registerName(c"setLevel:".as_ptr()), 3);
