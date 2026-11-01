@@ -4359,6 +4359,7 @@ dependencies = [
  "flow-core",
  "flow-platform",
  "flow-ui",
+ "futures",
  "serde_json",
  "tray-icon",
 ]

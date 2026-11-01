@@ -104,12 +104,15 @@ pub fn run<V: 'static, T: Send + 'static>(cx: &mut Context<V>, op: impl FnOnce(&
 /// published on `Session`. A scenario or a missing database means no work at all.
 pub fn start_handoffs(cx: &mut App) {
     const TICK: Duration = Duration::from_secs(2);
+    // ponytail: a finished meeting may wait this long to start its handoff; signal the end of capture if that shows.
+    const IDLE_TICK: Duration = Duration::from_secs(30);
     cx.spawn(async move |cx| {
         let mut queue: Option<Arc<Mutex<Queue>>> = None;
         let mut last_probe: Option<Instant> = None;
         let mut answered = false;
+        let mut wait = TICK;
         loop {
-            cx.background_executor().timer(TICK).await;
+            cx.background_executor().timer(wait).await;
             let work = cx.update(|cx| {
                 let core = cx.global::<Core>();
                 if core.db.is_none() || core.scenario.is_some() {
@@ -139,6 +142,7 @@ pub fn start_handoffs(cx: &mut App) {
                     (tick, offered, client.enrollment.settings())
                 })
                 .await;
+            wait = if tick.as_ref().is_ok_and(|t| t.waiting.is_empty()) { IDLE_TICK } else { TICK };
             cx.update(|cx| {
                 if let Some(offered) = offered {
                     cx.global_mut::<Core>().prefs.set("server.capabilities", offered);
@@ -192,8 +196,12 @@ pub fn start_analysis(cx: &mut App) {
     }
     cx.spawn(async move |cx| {
         loop {
-            cx.background_executor().timer(Duration::from_millis(250)).await;
-            cx.update(poll_analysis);
+            // Fast only while a run can publish; retries and health probes tolerate two seconds.
+            let busy = cx.update(|cx| {
+                poll_analysis(cx);
+                cx.global::<Core>().analysis.as_ref().is_some_and(|a| a.busy())
+            });
+            cx.background_executor().timer(Duration::from_millis(if busy { 250 } else { 2000 })).await;
         }
     })
     .detach();

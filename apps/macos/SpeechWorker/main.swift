@@ -282,6 +282,8 @@ func serve(models: URL, descriptors: Descriptors, speechModel: String) async -> 
     } catch { await lifecycle.cancelAndJoin(lease) }
   }
   log("state=warm warmup_ms=\((ContinuousClock.now - warmupStarted).milliseconds)")
+  // Loading and the warm-up leave freed pages behind; idle footprint counts them.
+  malloc_zone_pressure_relief(nil, 0)
 
   do {
     for try await box in FrameReader().frames {
@@ -311,6 +313,7 @@ func serve(models: URL, descriptors: Descriptors, speechModel: String) async -> 
               "window": window(recognized, sampleCount: samples.count),
             ])
             log("job=\(job) samples=\(samples.count) ms=\(elapsed)")
+            malloc_zone_pressure_relief(nil, 0)
           } catch {
             await lifecycle.cancelAndJoin(lease)
             throw error

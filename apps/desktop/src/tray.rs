@@ -106,7 +106,6 @@ pub fn current(cx: &App) -> (Vec<Entry>, (&'static str, &'static str)) {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod native {
     use super::*;
-    use std::time::Duration;
     use tray_icon::menu::{Icon as MenuIcon, IconMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, accelerator::Accelerator};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
@@ -164,18 +163,16 @@ mod native {
         let Ok(tray) = TrayIconBuilder::new().with_menu(Box::new(m)).with_icon(i).with_icon_as_template(true).with_tooltip(shown.1.1).build() else { return };
         cx.set_global(Tray { icon: tray, shown, ids });
         cx.observe_global::<Session>(sync).detach();
-        // ponytail: 100 ms poll; `MenuEvent::set_event_handler` plus a channel if a wakeup ever shows in the idle measurements.
+        let (sender, mut events) = futures::channel::mpsc::unbounded();
+        MenuEvent::set_event_handler(Some(move |event| drop(sender.unbounded_send(event))));
         cx.spawn(async move |cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(100)).await;
-                while let Ok(event) = MenuEvent::receiver().try_recv() {
-                    let _ = cx.update(|cx| {
-                        let found = cx.global::<Tray>().ids.iter().find(|(id, _)| *id == event.id).map(|(_, c)| *c);
-                        if let Some(command) = found {
-                            run(command, cx);
-                        }
-                    });
-                }
+            while let Some(event) = futures::StreamExt::next(&mut events).await {
+                let _ = cx.update(|cx| {
+                    let found = cx.global::<Tray>().ids.iter().find(|(id, _)| *id == event.id).map(|(_, c)| *c);
+                    if let Some(command) = found {
+                        run(command, cx);
+                    }
+                });
             }
         })
         .detach();

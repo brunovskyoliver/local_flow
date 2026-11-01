@@ -101,7 +101,13 @@ unsafe extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, info: *mut c_v
             };
             // SAFETY: the tap hands a valid event for the duration of the call.
             let (key, repeat, flags) = unsafe { (CGEventGetIntegerValueField(event, FIELD_KEYCODE) as u32, CGEventGetIntegerValueField(event, FIELD_AUTOREPEAT) != 0, CGEventGetFlags(event)) };
-            if engine.receive(key_event, key, flags, repeat) {
+            let consumed = engine.receive(key_event, key, flags, repeat);
+            if engine.has_events() {
+                if let Some(wake) = WAKER.get() {
+                    wake();
+                }
+            }
+            if consumed {
                 return std::ptr::null_mut();
             }
         }
@@ -307,6 +313,12 @@ pub fn take_recorded() -> Option<Option<String>> {
     let result = lock(&state.engine).recorder.take()?;
     state.recorder = None;
     Some(result.map(|shortcut| shortcut.json()))
+}
+
+static WAKER: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+pub fn set_waker(wake: Box<dyn Fn() + Send + Sync>) {
+    let _ = WAKER.set(wake);
 }
 
 pub fn take_events() -> Vec<Event> {

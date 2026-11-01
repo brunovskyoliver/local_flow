@@ -22,6 +22,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const POLL: Duration = Duration::from_millis(40);
+const IDLE_POLL: Duration = Duration::from_secs(1);
+/// A dictation's last events arrive just after `running` clears.
+const AFTER_ACTIVITY: Duration = Duration::from_secs(3);
 const TICK: Duration = Duration::from_secs(5);
 /// Past this the thread is in a session, and the command's answer is that it can't run now.
 const REPLY: Duration = Duration::from_secs(2);
@@ -263,11 +266,46 @@ pub fn shortcut_configured(enabled: bool, cx: &mut App) {
     }
 }
 
+static POLL_WAKE: std::sync::OnceLock<futures::channel::mpsc::UnboundedSender<()>> = std::sync::OnceLock::new();
+
+fn wake_poll() {
+    if let Some(wake) = POLL_WAKE.get() {
+        let _ = wake.unbounded_send(());
+    }
+}
+
+/// 25 Hz around a dictation; otherwise once a second, or at once when the shortcut fires. Anything
+/// else this loop picks up (installs, settings, retrier events) can wait that second.
 fn poll_forever(cx: &mut App) {
+    use futures::{StreamExt, future::select};
+    let (wake, mut woken) = futures::channel::mpsc::unbounded();
+    let _ = POLL_WAKE.set(wake);
+    let event_driven = cx.global::<Core>().services.set_shortcut_waker(Box::new(wake_poll));
     cx.spawn(async move |cx| {
+        let mut active_until = Instant::now() + AFTER_ACTIVITY;
+        let mut idle = false;
         loop {
-            cx.background_executor().timer(POLL).await;
-            cx.update(poll);
+            let running = cx.update(|cx| {
+                poll(cx);
+                cx.global::<Driver>().running.load(SeqCst)
+            });
+            let now = Instant::now();
+            if running {
+                active_until = now + AFTER_ACTIVITY;
+            }
+            if !event_driven || now < active_until {
+                idle = false;
+                cx.background_executor().timer(POLL).await;
+            } else {
+                if !idle {
+                    idle = true;
+                    cx.update(|cx| cx.global::<Core>().services.release_unused_memory());
+                }
+                let timer = cx.background_executor().timer(IDLE_POLL);
+                if matches!(select(woken.next(), timer).await, futures::future::Either::Left(_)) {
+                    active_until = Instant::now() + AFTER_ACTIVITY;
+                }
+            }
         }
     })
     .detach();
@@ -445,6 +483,7 @@ fn press(cx: &mut App) {
     driver.running.store(true, SeqCst);
     driver.control = Some(control.clone());
     let _ = driver.commands.send(Command::Begin { control, entries, route });
+    wake_poll();
     // Escape must work from the press, before the thread's first state arrives.
     cx.global::<Core>().services.set_shortcut_session_active(true);
 }

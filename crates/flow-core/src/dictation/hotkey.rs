@@ -336,6 +336,9 @@ impl Engine {
             machine.set_session_active(active);
         }
     }
+    pub fn has_events(&self) -> bool {
+        !self.events.is_empty()
+    }
     pub fn take_events(&mut self) -> Vec<Event> {
         self.events.drain(..).collect()
     }

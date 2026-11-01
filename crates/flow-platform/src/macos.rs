@@ -509,6 +509,17 @@ impl Services for Mac {
     fn take_shortcut_events(&self) -> Vec<flow_core::dictation::hotkey::Event> {
         crate::hotkey_mac::take_events()
     }
+    fn set_shortcut_waker(&self, wake: Box<dyn Fn() + Send + Sync>) -> bool {
+        crate::hotkey_mac::set_waker(wake);
+        true
+    }
+    fn release_unused_memory(&self) {
+        unsafe extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        // SAFETY: a null zone means every zone, and a goal of 0 means as much as possible.
+        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+    }
     fn set_shortcut_session_active(&self, active: bool) {
         crate::hotkey_mac::set_session_active(active)
     }

@@ -42,7 +42,11 @@ impl Prefs {
         self.values.contains_key(key)
     }
     pub fn set<T: Serialize>(&mut self, key: &str, value: T) {
-        self.values.insert(key.into(), serde_json::to_value(value).expect("preference serializes"));
+        let value = serde_json::to_value(value).expect("preference serializes");
+        if self.values.get(key) == Some(&value) {
+            return; // Callers re-store unchanged values on timers; don't touch the disk for those.
+        }
+        self.values.insert(key.into(), value);
         self.save();
     }
     /// Adds the keys this file doesn't have, in one write.
@@ -53,8 +57,9 @@ impl Prefs {
         self.save();
     }
     pub fn remove(&mut self, key: &str) {
-        self.values.remove(key);
-        self.save();
+        if self.values.remove(key).is_some() {
+            self.save();
+        }
     }
     fn save(&self) {
         let Some(path) = &self.path else { return };

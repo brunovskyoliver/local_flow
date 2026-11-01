@@ -310,6 +310,12 @@ pub trait Services: 'static {
     fn take_shortcut_events(&self) -> Vec<flow_core::dictation::hotkey::Event> {
         Vec::new()
     }
+    /// Calls `wake` when `take_shortcut_events` has something. False: the caller must keep polling.
+    fn set_shortcut_waker(&self, _wake: Box<dyn Fn() + Send + Sync>) -> bool {
+        false
+    }
+    /// Hands freed heap pages back to the system; for moments the app goes idle.
+    fn release_unused_memory(&self) {}
     /// Escape stays armed from a press until the dictation session ends.
     fn set_shortcut_session_active(&self, _active: bool) {}
     /// False on a device with no Globe key: no preset, and Right Control is the default.
