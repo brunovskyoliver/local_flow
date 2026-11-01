@@ -49,7 +49,7 @@ DICT-048	live	test:suggestion_rows_read_their_source_and_their_buttons ; live:au
 DICT-049	auto	test:dismissing_a_suggestion_writes_it_and_it_stays_gone ; test:suggestion_add_fills_the_sheet_and_dismiss_persists
 DICT-050	auto	test:mining_keeps_its_thresholds_order_and_cap ; test:suggestion_read_takes_each_context_once_and_skips_empty_and_damaged_snapshots ; test:suggestions_are_mined_like_swift
 DICT-051	auto	test:mining_keeps_its_thresholds_order_and_cap ; test:suggestions_are_mined_like_swift
-DICT-052	service	test:mining_keeps_its_thresholds_order_and_cap ; test:suggestions_are_mined_like_swift ; service:NSSpellChecker language filter off, no Services method; Mac services work for Feature 024 after the view port
+DICT-052	service	test:mining_keeps_its_thresholds_order_and_cap ; test:suggestions_are_mined_like_swift ; service:NSSpellChecker language filter not built, 026 tasks T024, Feature 028
 DICT-053	auto	test:suggestions_are_mined_like_swift ; test:term_shape_rules_each_refuse_on_their_own
 DICT-054	auto	test:mining_keeps_its_thresholds_order_and_cap ; test:suggestions_are_mined_like_swift
 DICT-055	auto	test:corrections_upsert_and_the_table_prunes_to_500_by_last_seen ; test:suggestions_are_mined_like_swift
@@ -149,7 +149,7 @@ DICT-148	auto	test:vocabulary_tables_have_swifts_columns_and_checks ; test:write
 DICT-149	auto	test:hash_serialization_matches_swift_bytes ; test:vocabulary_tables_have_swifts_columns_and_checks
 DICT-150	auto	test:suggestions_are_mined_like_swift ; test:vocabulary_tables_have_swifts_columns_and_checks
 DICT-151	auto	test:vocabulary_tables_have_swifts_columns_and_checks ; test:write_transaction_revisions_usage_and_staleness
-DICT-152	recorded	test:vocabulary_tables_have_swifts_columns_and_checks ; test:write_transaction_revisions_usage_and_staleness ; recorded:the 5000 row prune of usage events belongs to the learner, Feature 026, not in Rust
+DICT-152	auto	test:vocabulary_tables_have_swifts_columns_and_checks ; test:write_transaction_revisions_usage_and_staleness ; test:usage_events_are_pruned_to_5000
 DICT-153	recorded	recorded:Swift defect or note, kept as Swift behaves
 DICT-154	recorded	test:write_transaction_revisions_usage_and_staleness ; recorded:Swift defect or note, kept as Swift behaves
 DICT-155	recorded	recorded:Swift defect or note, kept as Swift behaves
@@ -222,7 +222,7 @@ INS-059	auto	test:a_category_share_is_of_dictations_not_words ; test:aggregates_
 INS-060	live	live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-light-ref.png
 INS-061	auto	test:tips_read_their_counts_and_top_app
 INS-062	auto	test:aggregates_over_the_seed ; test:category_order_and_top_app_break_ties_as_swift
-INS-063	service	test:formulas ; service:AppName.display needs NSWorkspace, fallback name shown; Mac services work for Feature 024 after the view port
+INS-063	auto	test:formulas ; test:an_installed_name_wins_over_the_fallback_and_is_kept
 INS-064	live	test:usage_tab_shows_every_card ; live:audit/mac/insights/usage-light-rust.png ; live:audit/mac/insights/usage-dark-rust.png ; live:audit/mac/insights/usage-light-ref.png ; live:audit/mac/insights/usage-dark-ref.png
 INS-065	auto	test:formulas
 INS-066	auto	test:aggregates_over_the_seed ; test:days_bucket_locally_with_words_and_bundles
@@ -348,12 +348,12 @@ HIST-071	live	test:the_waiting_section_reads_its_rows_and_discards_through_the_d
 HIST-072	live	live:audit/mac/history/pending-dark-rust.png ; live:audit/mac/history/pending-dark-ref.png ; live:audit/mac/history/pending-light-rust.png ; live:audit/mac/history/pending-light-ref.png
 HIST-073	auto	test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; test:the_waiting_table_keeps_its_rules_and_reads_oldest_first ; test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png ; live:audit/mac/history/pending-dark-ref.png ; live:audit/mac/history/pending-light-rust.png ; live:audit/mac/history/pending-light-ref.png
 HIST-074	auto	test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png ; live:audit/mac/history/pending-dark-ref.png ; live:audit/mac/history/pending-light-rust.png ; live:audit/mac/history/pending-light-ref.png
-HIST-075	service	service:the channel and pool exist now, but PendingRemoteRetrier isn't ported; it belongs with remote dictation, Feature 026
+HIST-075	auto	test:the_retrier_backs_off_recovers_for_review_and_yields_to_a_live_dictation
 HIST-076	live	test:pending_rows_save_failure_and_discard ; test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
-HIST-077	service	test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; service:local speech model not reachable, button disabled; Mac services work for Feature 024 after the view port
-HIST-078	service	service:local speech model not reachable, button disabled; Mac services work for Feature 024 after the view port
+HIST-077	auto	test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog
+HIST-078	auto	test:past_a_day_or_unreadable_a_row_waits_for_the_user_and_recognizes_locally
 HIST-079	live	test:pending_rows_save_failure_and_discard ; test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
-HIST-080	service	test:waiting_dictations ; service:Services choose_save_path returns Unavailable and the pending error shows; WAV writer tested in flow-core; Mac services work for Feature 024 after the view port
+HIST-080	auto	test:waiting_dictations ; test:save_audio_writes_a_wav_through_the_panel_and_keeps_the_row ; note:the real system panel is hardware.md 36
 HIST-081	live	test:pending_rows_save_failure_and_discard ; test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
 HIST-082	auto	test:pending_rows_save_failure_and_discard ; test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog
 HIST-083	auto	test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; test:waiting_dictations

@@ -293,17 +293,17 @@ ONB-292	auto	test:ai_row_states
 ONB-293	auto	test:ai_row_states
 ONB-294	auto	test:ai_row_states
 ONB-295	auto	test:ai_row_states
-ONB-296	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
-ONB-297	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
-ONB-298	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
-ONB-299	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
-ONB-300	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
-ONB-301	service	service:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
-ONB-302	service	service:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
-ONB-303	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-296	recorded	recorded:the Mac installer reports this for real today, since the bundle has no local AI files; the page path goes through the fake; hardware.md 34, Feature 028
+ONB-297	recorded	recorded:no installer reports this: LocalAIRuntime.install is not ported, the real Mac installer stops at missing resources and Windows refuses with a reason. 026 tasks T023, Feature 028. Only the constant is tested
+ONB-298	recorded	recorded:no installer reports this: LocalAIRuntime.install is not ported, the real Mac installer stops at missing resources and Windows refuses with a reason. 026 tasks T023, Feature 028. Only the constant is tested
+ONB-299	recorded	recorded:no installer reports this: LocalAIRuntime.install is not ported, the real Mac installer stops at missing resources and Windows refuses with a reason. 026 tasks T023, Feature 028. Only the constant is tested
+ONB-300	recorded	recorded:no installer reports this: LocalAIRuntime.install is not ported, the real Mac installer stops at missing resources and Windows refuses with a reason. 026 tasks T023, Feature 028. Only the constant is tested
+ONB-301	service	service:the page shows it, but only local_ai_phase reaches it: the real Mac installer stops at missing resources, 026 tasks T023, Feature 028 ; test:the_installers_outcomes_reach_the_page
+ONB-302	service	service:the page shows it, but only local_ai_phase reaches it: the real Mac installer stops at missing resources, 026 tasks T023, Feature 028 ; test:the_installers_outcomes_reach_the_page
+ONB-303	recorded	recorded:no installer reports this: LocalAIRuntime.install is not ported, the real Mac installer stops at missing resources and Windows refuses with a reason. 026 tasks T023, Feature 028. Only the constant is tested
 ONB-304	service	service:resume runs in refresh, but needs real background-service approval, Feature 028 ; test:polling_picks_up_a_new_permission
 ONB-305	recorded	recorded:swift-note: LocalAISetup.cancel() has no caller in the app, so nothing can reach this outcome
-ONB-306	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-306	recorded	recorded:no installer reports this: LocalAIRuntime.install is not ported, the real Mac installer stops at missing resources and Windows refuses with a reason. 026 tasks T023, Feature 028. Only the constant is tested
 ONB-307	auto	test:meeting_row_states
 ONB-308	auto	test:meeting_row_states
 ONB-309	auto	test:meeting_row_states
