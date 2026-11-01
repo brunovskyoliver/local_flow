@@ -37,7 +37,8 @@ final class HandoffBundleCrossCheckTests: XCTestCase {
     }
     let tables = try String.fetchAll(
       db,
-      sql: "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+      sql:
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
     )
     for table in tables {
       let columns = try db.columns(in: table).map(\.name)
