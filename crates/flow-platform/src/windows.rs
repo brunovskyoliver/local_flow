@@ -30,6 +30,9 @@ impl Services for Win {
         }
         crate::win::system::shell_open("ms-settings:privacy-microphone").map_err(|_| Unavailable("Windows Settings"))
     }
+    fn speech_launcher(&self, models: &std::path::Path) -> Option<Box<dyn flow_core::dictation::lifecycle::Launcher>> {
+        Some(Box::new(crate::speech::WorkerLauncher::serve(crate::speech::find_worker()?, models)))
+    }
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
         crate::win::system::open_url(url)
     }

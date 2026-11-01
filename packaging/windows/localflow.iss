@@ -8,6 +8,10 @@
   #error Pass the version: iscc /DAppVersion=x.y.z
 #endif
 #define ExeName "localflow.exe"
+#define WorkerName "flow-speech-win.exe"
+; A build input, not compiled here: the pinned sherpa-onnx libraries, which the worker checks against
+; crates/flow-speech-win/manifest.json before loading. The CI job fetches them.
+#define SherpaDir "..\..\build\sherpa-runtime"
 #define RunKey "Software\Microsoft\Windows\CurrentVersion\Run"
 #define RunValue "LocalFlow"
 
@@ -43,6 +47,9 @@ Name: runatlogin; Description: "Run LocalFlow at login"; Flags: unchecked
 
 [Files]
 Source: "..\..\build\rust\release\{#ExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\build\rust\release\{#WorkerName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SherpaDir}\sherpa-onnx-c-api.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SherpaDir}\onnxruntime.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\LocalFlow"; Filename: "{app}\{#ExeName}"

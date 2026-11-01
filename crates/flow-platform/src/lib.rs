@@ -216,6 +216,10 @@ pub trait Services: 'static {
     fn app_icon_png(&self, _bundle_id: &str) -> Option<Vec<u8>> {
         None
     }
+    /// What starts the speech worker for `flow_core::dictation::lifecycle`; `None` when it isn't installed.
+    fn speech_launcher(&self, _models: &std::path::Path) -> Option<Box<dyn flow_core::dictation::lifecycle::Launcher>> {
+        None
+    }
     /// The speech model install in progress as (completed, total, verifying), once the model
     /// provisioner has one. `settings_action("download")` returns at once and this takes over.
     fn speech_install(&self) -> Option<(u64, u64, bool)> {
@@ -372,6 +376,7 @@ pub trait Services: 'static {
     }
 }
 
+pub mod speech;
 #[cfg(target_os = "macos")]
 mod keychain_mac;
 #[cfg(target_os = "macos")]

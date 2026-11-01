@@ -12,5 +12,5 @@ if ! command -v cargo-xwin >/dev/null; then
   echo "check-windows-cross: cargo-xwin is not installed, skipped"
   exit 0
 fi
-cargo xwin check -p localflow --target x86_64-pc-windows-msvc
+cargo xwin check -p localflow -p flow-speech-win --target x86_64-pc-windows-msvc
 cargo xwin check -p flow-platform --target aarch64-pc-windows-msvc

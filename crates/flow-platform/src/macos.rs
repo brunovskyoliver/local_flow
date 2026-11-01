@@ -164,6 +164,9 @@ impl Services for Mac {
         };
         if granted { PermissionState::Granted } else { PermissionState::NotAsked }
     }
+    fn speech_launcher(&self, models: &std::path::Path) -> Option<Box<dyn flow_core::dictation::lifecycle::Launcher>> {
+        Some(Box::new(crate::speech::WorkerLauncher::serve(crate::speech::find_worker()?, models)))
+    }
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
         open_with_system(url)
     }

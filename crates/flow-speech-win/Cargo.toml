@@ -1,0 +1,21 @@
+[package]
+name = "flow-speech-win"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+flow-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+ureq.workspace = true
+
+[features]
+# A scripted engine for the conformance test. `cargo test` turns it on through the dev-dependency
+# below; `cargo build -p flow-speech-win` leaves it out of what ships.
+fake-engine = []
+
+[dev-dependencies]
+flow-speech-win = { path = ".", features = ["fake-engine"] }
+flow-platform.workspace = true

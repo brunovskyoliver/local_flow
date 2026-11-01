@@ -3,11 +3,11 @@
 Same check rules as Feature 025. Swift references are under `apps/macos/LocalFlow/Features/Dictation`, `Core/Insertion`, `Core/Audio`, `Core/Remote`, `Core/Rewrite`, and `apps/macos/SpeechWorker`.
 
 ## Phase 1: Worker contract (US4, FR-001..003, 008)
-- [ ] T001 `flow-core::dictation::worker`: framing and client over Read/Write, malformed frame fatal, job order, deadline, backoff. Golden frames from `fixtures/remote/worker-frames`.
-- [ ] T002 `flow-core::dictation::lifecycle`: lazy start, keep or release, exclusive use, restart.
-- [ ] T003 `crates/flow-speech-win`: `serve`, `provision`, `ready` and `unavailable`, Engine trait, fake engine, pipe conformance test running the real binary.
-- [ ] T004 Sherpa C API by dynamic loading with Windows and other loaders; try a real run on the Mac with macOS build plus model in `$TMPDIR`; compute and pin hashes; record what really ran.
-- [ ] T005 `flow-platform`: spawn workers, find binaries (Mac: `flowd-speech` next to the app or by env; Windows: next to the exe); installer script includes the worker.
+- [X] T001 `flow-core::dictation::worker`: framing and client over Read/Write, malformed frame fatal, job order, deadline, backoff. Golden frames from `fixtures/remote/worker-frames`.
+- [X] T002 `flow-core::dictation::lifecycle`: lazy start, keep or release, exclusive use, restart.
+- [X] T003 `crates/flow-speech-win`: `serve`, `provision`, `ready` and `unavailable`, Engine trait, fake engine, pipe conformance test running the real binary.
+- [X] T004 Sherpa C API by dynamic loading with Windows and other loaders; try a real run on the Mac with macOS build plus model in `$TMPDIR`; compute and pin hashes; record what really ran. Ran on the Mac over loopback; HTTPS download and Windows not run (research R3, hardware 1, 2).
+- [X] T005 `flow-platform`: spawn workers, find binaries (Mac: `flowd-speech` next to the app or by env; Windows: next to the exe); installer script includes the worker.
 
 ## Phase 2: Shortcut (US2)
 - [ ] T006 `flow-core::dictation::hotkey`: pure press and release machine for modifier-only and chord shortcuts, recorder state with 30 s timeout and stop.

@@ -1,0 +1,29 @@
+{
+  "engine": "sherpa-onnx",
+  "sdk": "2.0.1",
+  "model_id": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+  "model_revision": "2bda32ec70b097a55adaa07d9a7173915b43cc78",
+  "source": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78",
+  "files": [
+    { "name": "tokens.txt", "size": 93939, "sha256": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+    { "name": "joiner.int8.onnx", "size": 6355277, "sha256": "3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3" },
+    { "name": "decoder.int8.onnx", "size": 11845275, "sha256": "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e" },
+    { "name": "encoder.int8.onnx", "size": 652184281, "sha256": "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247" }
+  ],
+  "runtime": {
+    "windows-x86_64": {
+      "library": "sherpa-onnx-c-api.dll",
+      "files": [
+        { "name": "sherpa-onnx-c-api.dll", "size": 3667968, "sha256": "ee2af9f49b8fc5dae135ad20c0b955cbab90d17b79cc1ad0db91e03b24962f68" },
+        { "name": "onnxruntime.dll", "size": 17799168, "sha256": "7f66f939a881baf4f46a2216496798edf4a1429878b646d12674aa62f27d8a25" }
+      ]
+    },
+    "macos-aarch64": {
+      "library": "libsherpa-onnx-c-api.dylib",
+      "files": [
+        { "name": "libsherpa-onnx-c-api.dylib", "size": 3437024, "sha256": "2a169fe29c7e75168cc308b0d5b7f9085efebbb3a7f812d46c3a983d6788759f" },
+        { "name": "libonnxruntime.dylib", "size": 28775120, "sha256": "3567d114f7299d559993e536d605a6f46d7bc9d2542004accc80ee9bf5457f0b" }
+      ]
+    }
+  }
+}

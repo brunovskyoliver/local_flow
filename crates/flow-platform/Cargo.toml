@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+flow-core.workspace = true
 raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]

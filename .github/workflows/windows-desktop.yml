@@ -49,7 +49,16 @@ jobs:
             ~/.cargo/git
             build/rust
           key: installer-${{ hashFiles('Cargo.lock') }}
-      - run: cargo build --release -p localflow
+      - run: cargo build --release -p localflow -p flow-speech-win
+      - name: Fetch the pinned sherpa-onnx libraries
+        shell: pwsh
+        run: |
+          $name = 'sherpa-onnx-v2.0.1-win-x64-shared-MT-Release-no-tts'
+          curl.exe -sSfL -o sherpa.tar.bz2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/$name.tar.bz2"
+          if ((Get-FileHash sherpa.tar.bz2 -Algorithm SHA256).Hash -ne 'a644dfe2f7944afec9a356d2557c0452380f20ffcf2f8c704653cfce37558596') { throw 'sherpa-onnx archive hash' }
+          tar -xf sherpa.tar.bz2
+          New-Item -ItemType Directory -Force build/sherpa-runtime | Out-Null
+          Copy-Item "$name/lib/sherpa-onnx-c-api.dll", "$name/lib/onnxruntime.dll" build/sherpa-runtime
       - run: choco install innosetup --no-progress -y
       - name: Build the unsigned installer
         shell: pwsh

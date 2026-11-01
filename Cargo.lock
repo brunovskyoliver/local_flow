@@ -1873,9 +1873,23 @@ dependencies = [
 name = "flow-platform"
 version = "0.1.0"
 dependencies = [
+ "flow-core",
  "raw-window-handle",
  "windows 0.62.2",
  "windows-core 0.62.2",
+]
+
+[[package]]
+name = "flow-speech-win"
+version = "0.1.0"
+dependencies = [
+ "flow-core",
+ "flow-platform",
+ "flow-speech-win",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "ureq",
 ]
 
 [[package]]

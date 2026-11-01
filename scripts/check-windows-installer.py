@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Feature 025: the installer script agrees with the Rust code it installs. Needs no ISCC."""
+import json
 import re
 import sys
 from pathlib import Path
@@ -35,6 +36,18 @@ if not re.search(r'fn data_folder\(&self\) -> &\'static str \{\s*"LocalFlow"\s*\
     problems.append(r"Windows data must live in %LOCALAPPDATA%\LocalFlow, as the installer says")
 if not re.search(r"^PrivilegesRequired=lowest$", iss, re.M):
     problems.append("the installer must set PrivilegesRequired=lowest")
+
+# Feature 026: the worker and exactly the libraries it verifies before loading.
+worker = re.search(r'^name = "([^"]+)"', (root / "crates/flow-speech-win/Cargo.toml").read_text(), re.M).group(1)
+if define("WorkerName") != f"{worker}.exe":
+    problems.append(f'WorkerName is {define("WorkerName")}, the Cargo bin builds {worker}.exe')
+if not re.search(r'^Source: "[^"]*\\{#WorkerName}"; DestDir: "\{app\}"', iss, re.M):
+    problems.append("the installer doesn't install the speech worker next to the exe")
+manifest = json.loads((root / "crates/flow-speech-win/manifest.json").read_text())
+wanted = {f["name"] for f in manifest["runtime"]["windows-x86_64"]["files"]}
+listed = set(re.findall(r'^Source: "\{#SherpaDir\}\\([^"]+)"; DestDir: "\{app\}"', iss, re.M))
+if wanted != listed:
+    problems.append(f"the installer lists {sorted(listed)}, the worker's manifest pins {sorted(wanted)}")
 
 for problem in problems:
     print(f"check-windows-installer: {problem}", file=sys.stderr)
