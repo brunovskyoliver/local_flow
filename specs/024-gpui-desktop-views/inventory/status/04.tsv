@@ -149,7 +149,7 @@ DICT-148	auto	test:vocabulary_tables_have_swifts_columns_and_checks ; test:write
 DICT-149	auto	test:hash_serialization_matches_swift_bytes ; test:vocabulary_tables_have_swifts_columns_and_checks
 DICT-150	auto	test:suggestions_are_mined_like_swift ; test:vocabulary_tables_have_swifts_columns_and_checks
 DICT-151	auto	test:vocabulary_tables_have_swifts_columns_and_checks ; test:write_transaction_revisions_usage_and_staleness
-DICT-152	recorded	test:vocabulary_tables_have_swifts_columns_and_checks ; test:write_transaction_revisions_usage_and_staleness ; recorded:the 5000 row prune of usage events belongs to the learner, Feature 025, not in Rust
+DICT-152	recorded	test:vocabulary_tables_have_swifts_columns_and_checks ; test:write_transaction_revisions_usage_and_staleness ; recorded:the 5000 row prune of usage events belongs to the learner, Feature 026, not in Rust
 DICT-153	recorded	recorded:Swift defect or note, kept as Swift behaves
 DICT-154	recorded	test:write_transaction_revisions_usage_and_staleness ; recorded:Swift defect or note, kept as Swift behaves
 DICT-155	recorded	recorded:Swift defect or note, kept as Swift behaves
@@ -348,7 +348,7 @@ HIST-071	live	test:the_waiting_section_reads_its_rows_and_discards_through_the_d
 HIST-072	live	live:audit/mac/history/pending-dark-rust.png ; live:audit/mac/history/pending-dark-ref.png ; live:audit/mac/history/pending-light-rust.png ; live:audit/mac/history/pending-light-ref.png
 HIST-073	auto	test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; test:the_waiting_table_keeps_its_rules_and_reads_oldest_first ; test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png ; live:audit/mac/history/pending-dark-ref.png ; live:audit/mac/history/pending-light-rust.png ; live:audit/mac/history/pending-light-ref.png
 HIST-074	auto	test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; test:waiting_dictations ; live:audit/mac/history/pending-dark-rust.png ; live:audit/mac/history/pending-dark-ref.png ; live:audit/mac/history/pending-light-rust.png ; live:audit/mac/history/pending-light-ref.png
-HIST-075	service	service:flowd remote channel retrier not in Rust; Mac services work for Feature 024 after the view port
+HIST-075	service	service:the channel and pool exist now, but PendingRemoteRetrier isn't ported; it belongs with remote dictation, Feature 026
 HIST-076	live	test:pending_rows_save_failure_and_discard ; test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; live:audit/mac/history/default-light-rust.png ; live:audit/mac/history/default-dark-rust.png ; live:audit/mac/history/default-light-ref.png ; live:audit/mac/history/default-dark-ref.png
 HIST-077	service	test:the_waiting_section_reads_its_rows_and_discards_through_the_dialog ; service:local speech model not reachable, button disabled; Mac services work for Feature 024 after the view port
 HIST-078	service	service:local speech model not reachable, button disabled; Mac services work for Feature 024 after the view port

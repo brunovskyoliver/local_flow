@@ -1013,7 +1013,7 @@ async fn test_step_arms_and_done_copy(cx: &mut TestAppContext) {
     assert_saw(&["Start a meeting in Notetaker."]);
 }
 
-// parity: ONB-057 ONB-174 ONB-175 ONB-176 ONB-177 ONB-178 ONB-179 ONB-180 ONB-192 ONB-193 ONB-194 ONB-195 ONB-196 ONB-197 ONB-198 ONB-199 ONB-202 ONB-203 ONB-204 ONB-205 ONB-206 ONB-207 ONB-208 ONB-209 ONB-210 ONB-212 ONB-213 ONB-214 ONB-215 ONB-217 ONB-218 ONB-219 ONB-222 ONB-045
+// parity: ONB-200 ONB-057 ONB-174 ONB-175 ONB-176 ONB-177 ONB-178 ONB-179 ONB-180 ONB-192 ONB-193 ONB-194 ONB-195 ONB-196 ONB-197 ONB-198 ONB-199 ONB-202 ONB-203 ONB-204 ONB-205 ONB-206 ONB-207 ONB-208 ONB-209 ONB-210 ONB-212 ONB-213 ONB-214 ONB-215 ONB-217 ONB-218 ONB-219 ONB-222 ONB-045
 #[flow_ui::gpui::test]
 async fn server_step_consent_trust_sign_in_and_turn_off(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);
@@ -1572,6 +1572,17 @@ async fn turning_off_removes_every_credential_and_closes_the_parked_channel(cx: 
     let calls: Vec<String> = r.log.borrow().iter().filter(|c| c.starts_with("remove")).cloned().collect();
     assert_eq!(calls, expected);
     assert!(!flag(cx, "remote.enabled"));
+    // Parked rewrite channels close with it.
+    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2"), Reply::ready()], true, true));
+    let remote = cx.update(|cx| cx.global_mut::<Core>().remote());
+    remote.enrollment.load(flow_core::remote::enrollment::RemoteSettings { origin: Some("https://box.example.com".into()), state: "pinned".into(), notice: None });
+    remote.enrollment.enroll(flow_core::remote::enrollment::IdentityProvider::Apple).unwrap();
+    use flow_core::remote::pool::Role;
+    let (channel, op) = remote.pool.lease(Role::Interactive).unwrap();
+    remote.pool.release(Role::Interactive, channel, Some(op + 1));
+    let before = server.counters.closed();
+    cx.update(|cx| cx.global_mut::<Core>().turn_off_remote());
+    assert_eq!(server.counters.closed(), before + 1);
 }
 
 // parity: ONB-232 ONB-234

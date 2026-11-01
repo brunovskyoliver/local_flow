@@ -17,14 +17,14 @@ NOTE-016	auto	test:each_appearance_copies_the_preference_again_and_a_toggle_pers
 NOTE-017	auto	test:start_controls_wait_for_reconciliation_and_the_active_meeting
 NOTE-018	auto	test:each_appearance_copies_the_preference_again_and_a_toggle_persists_nothing
 NOTE-019	live	test:new_note_is_twenty_nine_points_high ; test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
-NOTE-020	service	service:mac-service: ScreenCaptureKit system audio, AVCapture microphone, AAC encoder; desktop plan phase adds it, view surfaces Unavailable
+NOTE-020	service	service:the Windows recorder is wired through flow_core::capture (cross-compiled only, acceptance/hardware.md), which leaves this Mac row open: Services::meeting_audio is None on macOS until microphone capture in Feature 026 and system audio in Feature 028
 NOTE-021	auto	test:start_controls_wait_for_reconciliation_and_the_active_meeting
 NOTE-022	auto	test:start_refuses_while_busy_or_dictating
 NOTE-023	auto	test:start_refuses_while_busy_or_dictating
 NOTE-024	auto	test:refusal_shows_the_message_and_settings ; service:mac-service: TCC, AVCaptureDevice authorization; desktop plan phase adds it, view surfaces Unavailable
 NOTE-025	service	test:start_refuses_without_the_screen_permission ; service:mac-service: TCC, CGPreflightScreenCaptureAccess; desktop plan phase adds it, view surfaces Unavailable
-NOTE-026	service	test:start_checks_free_space ; service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
-NOTE-027	service	test:start_checks_free_space ; service:mac-service: volume free-space query; desktop plan phase adds it, view surfaces Unavailable
+NOTE-026	service	test:start_checks_free_space ; service:the gate is wired and Windows reads real free space (cross-compiled only), but macOS free_disk_bytes still returns None, so the Mac never refuses; the query comes with Mac capture, Feature 026
+NOTE-027	service	test:start_checks_free_space ; service:the gate is wired and Windows reads real free space (cross-compiled only), but macOS free_disk_bytes still returns None, so the Mac never warns; the query comes with Mac capture, Feature 026
 NOTE-028	auto	test:failure_reasons_read_like_swift
 NOTE-029	live	live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-030	live	test:library_lists_groups_and_marks_rows ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; test:library_header_and_rows_have_swifts_type_symbols_and_labels ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
@@ -75,7 +75,7 @@ NOTE-074	live	test:waveform_layers_light_one_after_another ; test:recording_badg
 NOTE-075	live	test:paused_badge_is_muted_and_still ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-076	auto	test:waiting_row_runs_on_this_mac ; test:waiting_row_is_muted_labelled_and_moves_to_this_mac
 NOTE-077	auto	test:waiting_row_is_muted_labelled_and_moves_to_this_mac
-NOTE-078	service	test:waiting_row_is_muted_labelled_and_moves_to_this_mac ; service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
+NOTE-078	service	test:waiting_row_is_muted_labelled_and_moves_to_this_mac ; service:meetings.run_locally is written; running locally needs the workers flowd-meeting and flowd-speech, Feature 028 on the Mac and Feature 029 on Windows
 NOTE-079	auto	test:run_on_this_mac_refusals_come_from_the_store_and_preference
 NOTE-080	auto	test:run_on_this_mac_refusals_come_from_the_store_and_preference
 NOTE-081	auto	test:row_shows_state_badge ; test:state_badge_shows_for_unfinished_rows_unless_waiting
@@ -102,7 +102,7 @@ NOTE-101	auto	test:preview_states
 NOTE-102	auto	test:preview_states ; test:preview_type_limit_and_trimming
 NOTE-103	live	test:dates_format_like_swift ; live:audit/mac/notetaker/library-light-rust.png ; live:audit/mac/notetaker/library-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 NOTE-104	live	test:icon_button_is_a_labelled_twenty_eight_square ; live:audit/mac/notetaker/library-dark-rust.png ; live:audit/mac/notetaker/library-dark-ref.png ; note:the tooltip itself is passed to Kit and no test can read it ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
-NOTE-105	service	service:mac-service: NSScroller.preferredScrollerStyle; desktop plan phase adds it, view surfaces Unavailable
+NOTE-105	service	service:NSScroller.preferredScrollerStyle isn't read in Rust; Mac-only parity, Feature 028
 NOTE-106	auto	test:library_pages_and_evicts
 NOTE-107	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
 MEET-001	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
@@ -152,7 +152,7 @@ MEET-044	auto	test:detail_notice_is_red_twelve_with_a_native_retry ; test:files_
 MEET-045	auto	test:detail_notice_is_red_twelve_with_a_native_retry ; test:delete_keeps_row_while_files_remain_then_removes
 MEET-046	live	test:waiting_row_is_muted_twelve_with_a_twelve_point_gap ; test:waiting_detail_offers_this_mac ; live:audit/mac/notetaker/waiting-detail-light-rust.png ; live:audit/mac/notetaker/waiting-detail-dark-rust.png ; rust-only:Swift fills the waiting sets in coordinator memory while a server job is pending, which the seeded reference has none of ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-047	auto	test:waiting_row_is_muted_twelve_with_a_twelve_point_gap ; test:run_on_this_mac_has_swifts_label ; test:waiting_detail_offers_this_mac
-MEET-048	service	service:worker: flowd-meeting, flowd-speech; desktop plan phase adds it, view surfaces Unavailable
+MEET-048	service	service:meetings.run_locally is written; running locally needs the workers flowd-meeting and flowd-speech, Feature 028 on the Mac and Feature 029 on Windows
 MEET-049	live	test:provenance_is_muted_twelve_spoken_and_follows_the_transcript_state ; test:provenance_reads_stored_paths ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-050	auto	test:provenance_names_the_place
 MEET-051	auto	test:provenance_names_the_place
@@ -173,9 +173,9 @@ MEET-065	live	test:note_frames_and_date_read_like_swift ; live:audit/mac/notetak
 MEET-066	live	test:live_footer_has_pause_and_a_green_stop ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-067	auto	test:paused_controls_read_resume ; test:paused_footer_offers_resume_which_reports_the_missing_worker
 MEET-068	live	test:live_footer_has_pause_and_a_green_stop ; live:audit/mac/notetaker/live-paused-light-rust.png ; live:audit/mac/notetaker/live-paused-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status, not the database, and reaching it takes real microphone capture, which this run may not do ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
-MEET-069	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
-MEET-070	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
-MEET-071	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+MEET-069	service	service:the Windows recorder is wired through flow_core::capture (cross-compiled only, acceptance/hardware.md), which leaves this Mac row open: Services::meeting_audio is None on macOS until microphone capture in Feature 026 and system audio in Feature 028
+MEET-070	service	service:the Windows recorder is wired through flow_core::capture (cross-compiled only, acceptance/hardware.md), which leaves this Mac row open: Services::meeting_audio is None on macOS until microphone capture in Feature 026 and system audio in Feature 028
+MEET-071	service	service:the Windows recorder is wired through flow_core::capture (cross-compiled only, acceptance/hardware.md), which leaves this Mac row open: Services::meeting_audio is None on macOS until microphone capture in Feature 026 and system audio in Feature 028
 MEET-072	live	test:playback_button_has_its_symbol_and_label ; live:audit/mac/notetaker/detail-light-rust.png ; live:audit/mac/notetaker/detail-light-ref.png ; note:the playing "Pause" state needs the Mac player and is not reachable yet ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 MEET-073	auto	test:playback_needs_a_finished_meeting_with_a_track ; test:disabled_playback_fades_glyph_and_label_alike
 MEET-074	service	service:mac-service: AVQueuePlayer; desktop plan phase adds it, view surfaces Unavailable
@@ -218,9 +218,9 @@ LIVE-017	live	test:refusal_shows_the_message_and_settings ; test:notice_card_sho
 LIVE-018	auto	test:refusal_shows_the_message_and_settings
 LIVE-019	service	test:settings_button_opens_the_pane_the_refusal_names ; service:mac-service: NSWorkspace; the Mac opens the pane; refusal_permission picks which
 LIVE-020	auto	test:paused_controls_read_resume ; test:panel_shows_controls_title_and_notes
-LIVE-021	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+LIVE-021	service	service:the Windows recorder is wired through flow_core::capture (cross-compiled only, acceptance/hardware.md), which leaves this Mac row open: Services::meeting_audio is None on macOS until microphone capture in Feature 026 and system audio in Feature 028
 LIVE-022	live	test:panel_type_colours_and_frames ; live:audit/mac/notetaker/panel-light-rust.png ; live:audit/mac/notetaker/panel-dark-rust.png ; rust-only:Swift reads this from MeetingCoordinator's live status and needs real capture ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
-LIVE-023	service	service:mac-service: audio capture; desktop plan phase adds it, view surfaces Unavailable
+LIVE-023	service	service:the Windows recorder is wired through flow_core::capture (cross-compiled only, acceptance/hardware.md), which leaves this Mac row open: Services::meeting_audio is None on macOS until microphone capture in Feature 026 and system audio in Feature 028
 LIVE-024	auto	test:panel_says_finalizing_or_starting ; test:progress_states_are_muted_and_hide_the_buttons ; test:finalizing_and_starting_show_the_small_progress
 LIVE-025	auto	test:panel_says_finalizing_or_starting ; test:progress_states_are_muted_and_hide_the_buttons ; test:finalizing_and_starting_show_the_small_progress
 LIVE-026	auto	test:new_note_surfaces_the_missing_recorder ; test:active_card_states
@@ -236,12 +236,12 @@ LIVE-035	auto	test:panel_notes_state_follows_the_editor ; test:notes_state_reads
 LIVE-036	auto	test:panel_notes_state_follows_the_editor ; test:notes_state_reads_twelve_points_and_red_when_failed
 LIVE-037	auto	test:panel_notes_state_follows_the_editor ; test:notes_state_reads_twelve_points_and_red_when_failed
 LIVE-038	recorded	recorded:swift-note kept as Swift behaves; no separate behavior to verify
-LIVE-039	service	service:mac-service: capture, TCC; desktop plan phase adds it, view surfaces Unavailable
+LIVE-039	service	service:the Windows recorder is wired through flow_core::capture (cross-compiled only, acceptance/hardware.md), which leaves this Mac row open: Services::meeting_audio is None on macOS until microphone capture in Feature 026 and system audio in Feature 028
 LIVE-040	auto	test:failure_reasons_read_like_swift
-LIVE-041	service	service:mac-service: NSWorkspace sleep notifications; desktop plan phase adds it, view surfaces Unavailable
-LIVE-042	service	service:mac-service: AVCapture device notifications; desktop plan phase adds it, view surfaces Unavailable
+LIVE-041	service	service:not built on either platform: no NSWorkspace sleep notice on the Mac, Feature 028, and no WM_POWERBROADCAST window on Windows (tasks T034, hardware.md 21)
+LIVE-042	service	service:Windows polls devices once a second and rolls the segment (logic tested in flow_core::capture, Windows cross-compiled only); Mac AVCapture device notices come with Mac capture, Feature 026
 LIVE-043	auto	test:status_poll_reads_the_stored_state_every_250ms
-LIVE-044	service	service:mac-service: TCC; desktop plan phase adds it, view surfaces Unavailable
+LIVE-044	service	service:the once-a-second poll needs a recording; the Windows recorder is wired through flow_core::capture (cross-compiled only, acceptance/hardware.md), which leaves this Mac row open: Services::meeting_audio is None on macOS until microphone capture in Feature 026 and system audio in Feature 028
 LIVE-045	auto	test:section_interrupted
 TRANS-001	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
 TRANS-002	live	test:transcript_header_and_bubble_read_like_swift ; live:audit/mac/notetaker/transcript-dark-rust.png ; live:audit/mac/notetaker/transcript-dark-ref.png ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
@@ -448,13 +448,13 @@ SUM-006	auto	test:summary_not_finished ; test:summary_overlays_and_report
 SUM-007	auto	test:summary_off ; test:summary_overlays_and_report
 SUM-008	auto	test:generate_reports_the_missing_worker
 SUM-009	auto	test:summary_empty_states_read_generate_and_read_transcript ; test:generate_reports_the_missing_worker ; test:summary_header_states_read_thirteen_point
-SUM-010	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
+SUM-010	service	service:the analysis op on the channel isn't ported (about 4,500 lines of Swift, tasks T023); a summary arrives only through a merged handoff. Mac parity, Feature 028
 SUM-011	auto	test:summary_queued ; test:summary_header_states_read_thirteen_point
 SUM-012	auto	test:summary_header_states_read_thirteen_point ; test:running_header_draws_a_seventy_point_bar_when_a_run_reports_progress
 SUM-013	auto	test:pending_cancel_reports_and_empty_states
 SUM-014	auto	test:summary_request_refused_when_the_queue_is_full
 SUM-015	live	test:summary_failed ; live:audit/mac/notetaker/summary-failed-light-rust.png ; live:audit/mac/notetaker/summary-failed-light-ref.png ; test:summary_header_states_read_thirteen_point ; note:this pair may use fixture dates shifted to match the reference (regen5, shift.sqlite), so it cannot reveal a date offset; only dates_format_like_swift guards that
-SUM-016	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
+SUM-016	service	service:the analysis op on the channel isn't ported (about 4,500 lines of Swift, tasks T023); a summary arrives only through a merged handoff. Mac parity, Feature 028
 SUM-017	auto	test:pending_cancel_reports_and_empty_states
 SUM-018	auto	test:pending_cancel_reports_and_empty_states ; test:summary_header_states_read_thirteen_point
 SUM-019	auto	test:summary_overlays_and_report
@@ -473,7 +473,7 @@ SUM-031	auto	test:cancelled_run_with_an_accepted_summary_reads_succeeded
 SUM-032	auto	test:copy_writes_the_report_and_says_copied_for_two_seconds
 SUM-033	auto	test:summary_overlays_and_report ; service:mac-service: NSPasteboard; desktop plan phase adds it, view surfaces Unavailable ; test:copy_writes_the_report_and_says_copied_for_two_seconds ; test:report_lists_title_date_and_blockers_without_dismissed_items
 SUM-034	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:dates_format_like_swift
-SUM-035	service	service:flowd: POST `/v1/analysis/meeting`; desktop plan phase adds it, view surfaces Unavailable
+SUM-035	service	service:the analysis op on the channel isn't ported (about 4,500 lines of Swift, tasks T023); a summary arrives only through a merged handoff. Mac parity, Feature 028
 SUM-036	auto	test:summary_options_menu_and_remove_all_dialog_read_like_swift ; test:summary_reads_stored_analysis_and_marks_an_item_done
 SUM-037	auto	test:summary_reads_stored_analysis_and_marks_an_item_done ; test:summary_overlays_and_report
 SUM-038	auto	test:removing_edits_fails_silently_as_swift_does

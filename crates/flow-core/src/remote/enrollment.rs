@@ -750,6 +750,7 @@ mod tests {
         assert_eq!(item(&f, "refresh-token"), None);
     }
 
+    // parity: SET-068
     #[test]
     fn enroll_failures() {
         let f = fx(vec![Reply::ready()]);
@@ -837,6 +838,7 @@ mod tests {
         assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::WrongServer), "the channel, unlike the identity route, proves who holds the key");
     }
 
+    // parity: SET-099
     #[test]
     fn access_token_ages_on_the_clock() {
         let f = approved(vec![Reply::ready(), Reply::tokens("a1", "r1"), Reply::ready(), Reply::tokens("a2", "r2")]);
@@ -852,6 +854,7 @@ mod tests {
         assert_eq!(item(&f, "refresh-token").unwrap(), b"r2");
     }
 
+    // parity: SET-099
     #[test]
     fn concurrent_refreshes_share_one() {
         let f = approved(vec![Reply::ready(), Reply::tokens("a1", "r1")]);
@@ -864,6 +867,7 @@ mod tests {
         assert_eq!(item(&f, "refresh-token").unwrap(), b"r1");
     }
 
+    // parity: SET-097
     #[test]
     fn server_answers_change_state_and_credentials() {
         let case = |code: &str| {
@@ -881,6 +885,8 @@ mod tests {
         let f = case("unauthorized");
         assert_eq!((f.e.settings().state.as_str(), f.e.settings().notice.as_deref()), ("pinned", Some("sign_in_again")));
         assert_eq!(item(&f, "refresh-token"), None);
+        let f = case("unsupported_version");
+        assert_eq!(f.e.settings().notice.as_deref(), Some("update_required"));
         let f = case("busy");
         assert_eq!(f.e.settings().state, "approved");
         assert_eq!(item(&f, "refresh-token").unwrap(), b"lfr_old");
@@ -996,6 +1002,7 @@ mod tests {
         }
     }
 
+    // parity: SET-098
     #[test]
     fn device_key_loss_and_keychain_failure_differ() {
         let f = approved(vec![]);
@@ -1009,6 +1016,7 @@ mod tests {
         assert_eq!(f.counters.opened(), 0);
     }
 
+    // parity: SET-068
     #[test]
     fn a_pin_mismatch_on_refresh_blocks_and_keeps_the_pin() {
         let f = approved(vec![Reply::Close(4001)]);
@@ -1175,6 +1183,7 @@ pub(crate) mod flowd_tests {
         s.read(account).unwrap()
     }
 
+    // parity: SET-099
     #[test]
     fn pair_refresh_rotation_and_a_spent_token() {
         let f = Arc::new(Flowd::start());

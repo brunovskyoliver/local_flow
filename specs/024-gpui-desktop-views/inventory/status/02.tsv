@@ -19,7 +19,7 @@ ONB-018	auto	test:reopening_keeps_the_setup_step
 ONB-019	auto	test:idle_menu_lists_swifts_items
 ONB-020	auto	test:readiness_follows_swift_order
 ONB-021	auto	test:step_change_animates_a_quarter_second_unless_reduce_motion
-ONB-022	service	service:recorder cleanup needs the global shortcut recorder, Feature 025
+ONB-022	service	service:recorder cleanup needs the global shortcut recorder, Feature 026
 ONB-023	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
 ONB-024	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
 ONB-025	recorded	recorded:Swift note; kept as Swift behaves or outside this page, see row
@@ -104,7 +104,7 @@ ONB-103	auto	test:advance_walks_steps_and_requests_models
 ONB-104	auto	test:advance_walks_steps_and_requests_models
 ONB-105	auto	test:skip_abandon_and_back
 ONB-106	auto	test:skip_abandon_and_back
-ONB-107	service	service:mac-service: Keychain removal and the channel pool have no Rust service yet (Feature 026) ; test:turning_off_removes_every_credential_and_closes_the_parked_channel ; note:the Rust Mac Services returns Unavailable for Keychain removal and has no channel pool yet (Feature 026), so the test proves the calls are made through Services, not a real Keychain delete or channel close
+ONB-107	auto	test:turning_off_removes_every_credential_and_closes_the_parked_channel
 ONB-108	auto	test:skip_abandon_and_back
 ONB-109	auto	test:skip_abandon_and_back
 ONB-110	auto	test:set_up_dictation_keeps_the_server_choice
@@ -195,10 +195,10 @@ ONB-194	auto	test:server_step_consent_trust_sign_in_and_turn_off ; test:server_t
 ONB-195	auto	live:audit/mac/onboarding/server-light-ref.png ; live:audit/mac/onboarding/server-light-rust.png ; live:audit/mac/onboarding/server-dark-ref.png ; live:audit/mac/onboarding/server-dark-rust.png ; live:audit/mac/onboarding/fingerprint-light-rust.png ; live:audit/mac/onboarding/signin-light-rust.png ; live:audit/mac/onboarding/signin-light-ref.png ; live:audit/mac/onboarding/mismatch-light-rust.png ; live:audit/mac/onboarding/mismatch-light-ref.png ; live:audit/mac/onboarding/fingerprint-dark-rust.png ; live:audit/mac/onboarding/signin-dark-rust.png ; live:audit/mac/onboarding/signin-dark-ref.png ; live:audit/mac/onboarding/mismatch-dark-rust.png ; live:audit/mac/onboarding/mismatch-dark-ref.png ; rust-only:needs an https identity with a trusted certificate in the reference ; rust-only:needs an https identity with a trusted certificate in the reference ; test:server_step_consent_trust_sign_in_and_turn_off ; test:server_type_keys_prefill_and_trust_failure
 ONB-196	live	live:audit/mac/onboarding/server-compact-dark-rust.png ; live:audit/mac/onboarding/server-compact-dark-ref.png ; live:audit/mac/onboarding/server-light-ref.png ; live:audit/mac/onboarding/server-light-rust.png ; live:audit/mac/onboarding/server-dark-ref.png ; live:audit/mac/onboarding/server-dark-rust.png ; live:audit/mac/onboarding/fingerprint-light-rust.png ; live:audit/mac/onboarding/signin-light-rust.png ; live:audit/mac/onboarding/signin-light-ref.png ; live:audit/mac/onboarding/mismatch-light-rust.png ; live:audit/mac/onboarding/mismatch-light-ref.png ; live:audit/mac/onboarding/fingerprint-dark-rust.png ; live:audit/mac/onboarding/signin-dark-rust.png ; live:audit/mac/onboarding/signin-dark-ref.png ; live:audit/mac/onboarding/mismatch-dark-rust.png ; live:audit/mac/onboarding/mismatch-dark-ref.png ; rust-only:needs an https identity with a trusted certificate in the reference ; rust-only:needs an https identity with a trusted certificate in the reference ; test:server_step_consent_trust_sign_in_and_turn_off ; test:sign_in_buttons_are_native_sized
 ONB-197	auto	test:server_step_consent_trust_sign_in_and_turn_off
-ONB-198	service	service:real enrollment needs the Secure Enclave key and the pinned channel, Feature 025; the press, busy and result handling are tested by server_step_consent_trust_sign_in_and_turn_off
+ONB-198	service	service:the enrollment flow is real in flow_core (enroll_binds_the_nonce_and_stores_the_answer) and Google works on a build with a client ID, but Apple sign-in has no ASAuthorization in Rust and a Secure Enclave key needs a signed build (hardware.md 1, 3); Feature 028 ; test:server_step_consent_trust_sign_in_and_turn_off
 ONB-199	auto	test:server_step_consent_trust_sign_in_and_turn_off ; test:server_type_keys_prefill_and_trust_failure
-ONB-200	service	service:the enrollment client that raises these errors is Feature 025; the mapping of its two failures to Swift text is tested
-ONB-201	service	service:pin_mismatch result comes from the enrollment client, Feature 025; the state itself is tested ; test:sign_in_pin_mismatch_is_a_state_not_an_error
+ONB-200	auto	test:server_step_consent_trust_sign_in_and_turn_off
+ONB-201	auto	test:sign_in_pin_mismatch_is_a_state_not_an_error
 ONB-202	auto	live:audit/mac/onboarding/server-light-ref.png ; live:audit/mac/onboarding/server-light-rust.png ; live:audit/mac/onboarding/server-dark-ref.png ; live:audit/mac/onboarding/server-dark-rust.png ; live:audit/mac/onboarding/fingerprint-light-rust.png ; live:audit/mac/onboarding/signin-light-rust.png ; live:audit/mac/onboarding/signin-light-ref.png ; live:audit/mac/onboarding/mismatch-light-rust.png ; live:audit/mac/onboarding/mismatch-light-ref.png ; live:audit/mac/onboarding/fingerprint-dark-rust.png ; live:audit/mac/onboarding/signin-dark-rust.png ; live:audit/mac/onboarding/signin-dark-ref.png ; live:audit/mac/onboarding/mismatch-dark-rust.png ; live:audit/mac/onboarding/mismatch-dark-ref.png ; rust-only:needs an https identity with a trusted certificate in the reference ; rust-only:needs an https identity with a trusted certificate in the reference ; test:server_step_consent_trust_sign_in_and_turn_off
 ONB-203	auto	test:server_step_consent_trust_sign_in_and_turn_off
 ONB-204	auto	test:server_step_consent_trust_sign_in_and_turn_off
@@ -293,17 +293,17 @@ ONB-292	auto	test:ai_row_states
 ONB-293	auto	test:ai_row_states
 ONB-294	auto	test:ai_row_states
 ONB-295	auto	test:ai_row_states
-ONB-296	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
-ONB-297	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
-ONB-298	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
-ONB-299	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
-ONB-300	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
-ONB-301	service	service:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
-ONB-302	service	service:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
-ONB-303	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
-ONB-304	service	service:resume runs in refresh, but needs real background-service approval, Feature 025 ; test:polling_picks_up_a_new_permission
+ONB-296	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-297	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-298	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-299	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-300	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-301	service	service:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-302	service	service:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-303	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
+ONB-304	service	service:resume runs in refresh, but needs real background-service approval, Feature 028 ; test:polling_picks_up_a_new_permission
 ONB-305	recorded	recorded:swift-note: LocalAISetup.cancel() has no caller in the app, so nothing can reach this outcome
-ONB-306	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 025 adds it. Only the constant is tested
+ONB-306	recorded	recorded:not wired: no installer reports this to the page yet (local_ai_finished has no production caller; install_local_ai is Unavailable), Feature 026 adds it. Only the constant is tested
 ONB-307	auto	test:meeting_row_states
 ONB-308	auto	test:meeting_row_states
 ONB-309	auto	test:meeting_row_states

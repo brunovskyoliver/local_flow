@@ -79,11 +79,11 @@ SHELL-078	auto	test:pages_show_unavailable_until_stores_exist
 SHELL-079	auto	test:recovery_states_render_and_disable_while_busy ; note:no reference pair; an unsaved dictation on the reference needs capture. Rust capture audit/mac/shell/unsaved-light-rust.png viewed only
 SHELL-080	auto	test:pages_show_unavailable_until_stores_exist
 SHELL-081	auto	test:recovery_states_render_and_disable_while_busy ; note:native-style buttons through native_button
-SHELL-082	auto	test:recovery_actions_retry_copy_and_discard ; note:command path checked through the Fake service; the production dictation session arrives with Feature 025
+SHELL-082	auto	test:recovery_actions_retry_copy_and_discard ; note:command path checked through the Fake service; the production dictation session arrives with Feature 026
 SHELL-083	auto	test:recovery_states_render_and_disable_while_busy
 SHELL-084	auto	test:recovery_states_render_and_disable_while_busy
 SHELL-085	auto	test:recovery_states_render_and_disable_while_busy ; note:selectable set in source, a test can't drag a selection
-SHELL-086	auto	test:recovery_actions_retry_copy_and_discard ; note:command path checked through the Fake service; the production dictation session arrives with Feature 025
+SHELL-086	auto	test:recovery_actions_retry_copy_and_discard ; note:command path checked through the Fake service; the production dictation session arrives with Feature 026
 SHELL-087	auto	test:recovery_actions_retry_copy_and_discard
 SHELL-088	auto	test:recovery_actions_retry_copy_and_discard ; note:native-style button in the destructive colour
 SHELL-089	auto	test:recovery_states_render_and_disable_while_busy
@@ -111,11 +111,11 @@ SHELL-110	recorded	recorded:not working yet; the setup status copy has no produc
 SHELL-111	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-112	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-113	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
-SHELL-114	service	service:CGEvent shortcut arrives with the capture service, Feature 025; copy not posted yet
+SHELL-114	service	service:CGEvent shortcut arrives with the capture service, Feature 026; copy not posted yet
 SHELL-115	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-116	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
-SHELL-117	service	service:microphone authorization arrives with Feature 025; copy not posted yet
-SHELL-118	service	service:Accessibility prompt arrives with Feature 025; copy not posted yet
+SHELL-117	service	service:microphone authorization arrives with Feature 026; copy not posted yet
+SHELL-118	service	service:Accessibility prompt arrives with Feature 026; copy not posted yet
 SHELL-119	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-120	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-121	auto	test:quit_refuses_in_swifts_order
@@ -125,10 +125,10 @@ SHELL-124	auto	test:quit_refuses_in_swifts_order
 SHELL-125	auto	test:quit_refuses_in_swifts_order
 SHELL-126	auto	test:quit_refuses_in_swifts_order
 SHELL-127	auto	test:quit_refuses_in_swifts_order
-SHELL-128	auto	test:quit_stops_an_active_meeting_then_terminates ; note:partial: the shortcut, input catalog and recorder steps don't exist in Rust yet, they arrive with Feature 025
+SHELL-128	auto	test:quit_stops_an_active_meeting_then_terminates ; note:partial: the shortcut, input catalog and recorder steps don't exist in Rust yet, they arrive with Feature 026
 SHELL-129	auto	test:busy_model_shutdown_refuses_the_quit
 SHELL-130	auto	test:incomplete_export_reports_and_quits_anyway
-SHELL-131	service	service:the native alert copy shows under scenario shell.recording-cant-wait; its trigger needs flowd capture, Feature 025 ; live:audit/mac/shell/recording-cant-wait-light-rust.png
+SHELL-131	service	service:the native alert copy shows under scenario shell.recording-cant-wait; its trigger needs Mac meeting capture, microphone in Feature 026 and system audio in Feature 028 ; live:audit/mac/shell/recording-cant-wait-light-rust.png
 SHELL-132	service	service:Services::choose_save_path returns Unavailable until the platform phase
 SHELL-133	auto	test:recording_alert_discard_writes_nothing
 SHELL-134	service	service:UserNotifications arrives with the platform phase
@@ -155,20 +155,20 @@ MENU-010	auto	test:open_keeps_the_selection_and_settings_selects
 MENU-011	auto	test:idle_menu_lists_swifts_items
 MENU-012	auto	test:open_keeps_the_selection_and_settings_selects
 MENU-013	auto	test:attention_and_busy_add_their_items
-MENU-014	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
+MENU-014	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 026
 MENU-015	auto	test:idle_menu_lists_swifts_items
 MENU-016	auto	test:meeting_items_follow_its_state
-MENU-017	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
-MENU-018	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
+MENU-017	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 026
+MENU-018	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 026
 MENU-019	auto	test:meeting_items_follow_its_state
-MENU-020	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
-MENU-021	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 025
+MENU-020	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 026
+MENU-021	auto	test:meeting_and_cancel_items_send_their_commands ; note:command path checked through the Fake service; the production session arrives with Feature 026
 MENU-022	auto	test:meeting_items_follow_its_state
 MENU-023	auto	test:meeting_items_follow_its_state
 MENU-024	auto	test:meeting_items_follow_its_state
 MENU-025	auto	test:idle_menu_lists_swifts_items
 MENU-026	auto	test:idle_menu_lists_swifts_items
-MENU-027	auto	test:start_opens_notetaker_and_starts_only_when_allowed ; note:command path checked through the Fake service; the production session arrives with Feature 025
+MENU-027	auto	test:start_opens_notetaker_and_starts_only_when_allowed ; note:command path checked through the Fake service; the production session arrives with Feature 026
 MENU-028	auto	test:idle_menu_lists_swifts_items
 MENU-029	auto	test:idle_menu_lists_swifts_items
 MENU-030	auto	test:quit_item_runs_the_quit_sequence
@@ -243,8 +243,8 @@ PILL-068	auto	test:learned_notice_copy_actions_and_timer
 PILL-069	auto	test:learned_notice_copy_actions_and_timer
 PILL-070	auto	test:learned_notice_copy_actions_and_timer
 PILL-071	auto	test:learned_message_truncates_its_middle_at_the_maximum ; test:learned_notice_copy_actions_and_timer ; note:found and fixed: middle truncation and the spacer were missing
-PILL-072	recorded	recorded:not working yet. Production session_command returns Unavailable and no learner exists until Feature 025; the button path through the fake is tested in learned_notice_copy_actions_and_timer
-PILL-073	recorded	recorded:not working yet. Production session_command returns Unavailable and no dictionary usage store write exists until Feature 025; the button path through the fake is tested in learned_notice_copy_actions_and_timer
+PILL-072	recorded	recorded:not working yet. Production session_command returns Unavailable and no learner exists until Feature 026; the button path through the fake is tested in learned_notice_copy_actions_and_timer
+PILL-073	recorded	recorded:not working yet. Production session_command returns Unavailable and no dictionary usage store write exists until Feature 026; the button path through the fake is tested in learned_notice_copy_actions_and_timer
 PILL-074	auto	test:learned_notice_copy_actions_and_timer
 PILL-075	auto	test:microphone_notice
 PILL-076	auto	test:microphone_notice
@@ -257,7 +257,7 @@ PILL-082	auto	test:clipboard_notice
 PILL-083	auto	test:clipboard_notice
 PILL-084	auto	test:action_notice_retry_chip_and_timer ; note:no reference pair
 PILL-085	auto	test:notices_lay_out_swifts_padding_and_chips ; test:action_notice_retry_chip_and_timer
-PILL-086	recorded	recorded:not working yet. Production session_command returns Unavailable and no rewrite client exists until Feature 025; the button path through the fake is tested in action_notice_retry_chip_and_timer
+PILL-086	recorded	recorded:not working yet. Production session_command returns Unavailable and no rewrite client exists until Feature 026; the button path through the fake is tested in action_notice_retry_chip_and_timer
 PILL-087	auto	test:action_notice_retry_chip_and_timer
 PILL-088	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
 PILL-089	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
@@ -267,20 +267,20 @@ PILL-092	service	service:the rewrite client that posts this arrives with flowd, 
 PILL-093	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
 PILL-094	service	service:the rewrite client that posts this arrives with flowd, Feature 026. The wording is local, not from flowd: flow_core rewrite_notice plus the live suffix ; test:rewrite_failure_categories_map_to_the_live_words
 PILL-095	service	service:Keychain and the rewrite client that post this arrive with Feature 026; the wording is local ; test:rewrite_failure_categories_map_to_the_live_words
-PILL-096	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-097	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-098	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-099	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-100	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-101	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-102	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-103	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-104	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-105	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-106	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-107	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-108	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
-PILL-109	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Features 025 and 026; dictationAdmissionReason is not ported
+PILL-096	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-097	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-098	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-099	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-100	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-101	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-102	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-103	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-104	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-105	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-106	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-107	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-108	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
+PILL-109	recorded	recorded:not working yet. The words are held in pill REWRITE_NOTICES, but nothing in production posts them until the rewrite client and capture admission of Feature 026; dictationAdmissionReason is not ported
 PILL-110	auto	test:launch_recovery_notices_reach_the_pill
 PILL-111	recorded	recorded:debug-only Swift strings, out of scope
 PILL-112	auto	test:background_capsule_and_hide_button ; test:background_notice ; note:difference: pulse is a drawn opacity approximation, no replace effect on the symbol and no numeric text transition. No reference pair

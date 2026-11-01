@@ -432,7 +432,7 @@ async fn approved_server_shows_routing_and_turns_off(cx: &mut TestAppContext) {
     assert!(!saw("Use this server for everything"));
 }
 
-// parity: SET-060 SET-061 SET-062 SET-066 SET-069 SET-073
+// parity: SET-060 SET-061 SET-062 SET-066 SET-069 SET-073 SET-068
 #[flow_ui::gpui::test]
 async fn remote_status_lines_and_their_controls(cx: &mut TestAppContext) {
     for (scenario, status, enroll, sign_in) in [("pinned", "Sign in to finish", false, true), ("sign-in-again", "Sign in again", false, true), ("pending", "Waiting for approval", false, false), ("rejected", "Rejected", true, false), ("revoked", "Removed from the server", true, false), ("pin-mismatch", "Server identity changed", true, false), ("update-required", "Update LocalFlow or the server", false, false)] {
