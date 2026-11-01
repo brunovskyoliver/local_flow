@@ -131,7 +131,7 @@ pub fn finish_quit(cx: &mut App) {
                 let _ = cx.global::<Core>().services.session_command(flow_platform::SessionCommand::StopMeeting);
             }
         }
-        if !cx.global::<Core>().services.shutdown_models_if_idle() {
+        if !crate::dictation::shutdown_if_idle(cx) || !cx.global::<Core>().services.shutdown_models_if_idle() {
             update_session(cx, |s| {
                 s.quitting = false;
                 s.setup_status = "Model shutdown is still busy. Wait for it to finish before quitting.".into();

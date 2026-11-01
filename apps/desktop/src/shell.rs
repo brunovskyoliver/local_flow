@@ -440,6 +440,7 @@ pub fn flush_notes(cx: &mut App) {
 /// `AppServices`' history observer: the selected Insights page re-reads when dictations change.
 pub fn history_changed(cx: &mut App) {
     update_session(cx, |s| s.history_revision += 1);
+    crate::dictation::recheck_capacity(cx);
 }
 
 /// Closing keeps the app in the menu bar; the policy drops back so the Dock icon goes.
@@ -478,13 +479,13 @@ pub fn cancel_dictation(cx: &mut App) {
         (_, true) => SessionCommand::CancelDictation,
         _ => return,
     };
-    if cx.global::<Core>().services.session_command(command).is_err() {
+    if crate::dictation::session_command(command, cx).is_err() {
         update_session(cx, |s| s.dictation.as_mut().unwrap().status = "Could not cancel: dictation isn't available in this build.".into());
     }
 }
 
 fn retry_storage(cx: &mut App) {
-    let ok = cx.global::<Core>().services.session_command(SessionCommand::RetryStorage).is_ok();
+    let ok = crate::dictation::session_command(SessionCommand::RetryStorage, cx).is_ok();
     update_session(cx, |s| {
         let d = s.dictation.as_mut().unwrap();
         if ok {
@@ -497,7 +498,7 @@ fn retry_storage(cx: &mut App) {
 }
 
 fn retry_save(cx: &mut App) {
-    let ok = cx.global::<Core>().services.session_command(SessionCommand::RetrySave).is_ok();
+    let ok = crate::dictation::session_command(SessionCommand::RetrySave, cx).is_ok();
     update_session(cx, |s| {
         let d = s.dictation.as_mut().unwrap();
         if ok {

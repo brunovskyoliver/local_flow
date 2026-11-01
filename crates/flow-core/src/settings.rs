@@ -1724,6 +1724,26 @@ pub fn save_inputs(p: &mut Prefs, entries: Vec<InputEntry>) {
     p.set(INPUTS_KEY, StoredInputs { version: 1, entries: validated_inputs(entries) });
 }
 /// Rules M1 to M3: for each entry, the input it matched.
+/// `InputDeviceResolver.candidates`: availability and rank at one key-down.
+pub fn input_candidates(entries: &[InputEntry], inputs: &[ConnectedInput], default_input: Option<u32>, clamshell: bool) -> Vec<crate::dictation::session::Candidate> {
+    use crate::dictation::session::Candidate;
+    let matches = match_inputs(entries, inputs);
+    let mut out = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        if entry.is_system_default() {
+            let Some(default) = default_input else { continue };
+            let name = inputs.iter().find(|x| x.device_id == default).map_or(entry.name.clone(), |x| x.name.clone());
+            out.push(Candidate { device_id: None, uid: None, name, kind: entry.kind.clone() });
+            continue;
+        }
+        let Some(input) = matches[i].map(|m| &inputs[m]) else { continue };
+        if input.alive && !(input.kind == "builtIn" && clamshell) {
+            out.push(Candidate { device_id: Some(input.device_id), uid: Some(input.uid.clone()), name: input.name.clone(), kind: input.kind.clone() });
+        }
+    }
+    out
+}
+
 pub fn match_inputs(entries: &[InputEntry], inputs: &[ConnectedInput]) -> Vec<Option<usize>> {
     let mut result = vec![None; entries.len()];
     let mut taken = BTreeSet::new();

@@ -154,6 +154,45 @@ pub(crate) fn app_is_active() -> bool {
     }
 }
 
+/// What `Services` doesn't reach off the main thread.
+pub(crate) fn mic_granted() -> bool {
+    microphone_state() == PermissionState::Granted
+}
+pub(crate) fn catalog() -> InputCatalog {
+    core_audio::catalog()
+}
+pub(crate) fn input_device_name(device: u32) -> Option<String> {
+    core_audio::catalog().devices.into_iter().find(|d| d.device_id == device).map(|d| d.name)
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct StatVfs {
+    bsize: std::ffi::c_ulong,
+    frsize: std::ffi::c_ulong,
+    blocks: u32,
+    bfree: u32,
+    bavail: u32,
+    files: u32,
+    ffree: u32,
+    favail: u32,
+    fsid: std::ffi::c_ulong,
+    flag: std::ffi::c_ulong,
+    namemax: std::ffi::c_ulong,
+}
+unsafe extern "C" {
+    fn statvfs(path: *const std::ffi::c_char, out: *mut StatVfs) -> i32;
+}
+
+/// Bytes an unprivileged process may use on the volume of `path`.
+fn free_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut out = StatVfs::default();
+    // SAFETY: `c` is a live C string and `out` is the Darwin struct this function fills.
+    (unsafe { statvfs(c.as_ptr(), &mut out) } == 0).then(|| out.frsize as u64 * out.bavail as u64)
+}
+
 fn microphone_state() -> PermissionState {
     // SAFETY: `authorizationStatusForMediaType:` only reads the status; it never prompts.
     let status = unsafe {
@@ -560,7 +599,14 @@ impl Services for Mac {
         Err(Unavailable("SMAppService"))
     }
     fn free_disk_bytes(&self) -> Option<u64> {
-        None
+        free_bytes(&self.app_data_dir())
+    }
+    fn free_bytes_probe(&self) -> Box<dyn Fn() -> Option<u64> + Send> {
+        let dir = self.app_data_dir();
+        Box::new(move || free_bytes(&dir))
+    }
+    fn microphone(&self) -> Option<std::sync::Arc<dyn flow_core::dictation::session::Mic>> {
+        Some(std::sync::Arc::new(crate::mic_mac::MacMic))
     }
     fn secret(&self, name: &str) -> Result<Option<String>, Unavailable> {
         crate::keychain_mac::read(name)?.map(|v| String::from_utf8(v).map_err(|_| Unavailable("Keychain"))).transpose()
@@ -762,6 +808,13 @@ mod core_audio {
         use super::super::microphone_usage_declared;
 
         /// An unbundled binary has no usage string, so the prompt path refuses instead of being killed.
+        #[test]
+        fn free_space_reads_the_volume() {
+            let free = super::super::free_bytes(&std::env::temp_dir()).unwrap();
+            assert!(free > 0);
+            assert_eq!(super::super::free_bytes(std::path::Path::new("/no/such/place")), None);
+        }
+
         #[test]
         fn a_test_binary_declares_no_microphone_use() {
             assert!(!microphone_usage_declared());

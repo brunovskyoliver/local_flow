@@ -537,7 +537,10 @@ impl SettingsPage {
             self.error = None;
             let json = value.json();
             match cx.global::<Core>().services.install_shortcut(&json) {
-                Ok(()) => value.save(prefs_mut(cx)),
+                Ok(()) => {
+                    value.save(prefs_mut(cx));
+                    crate::dictation::shortcut_configured(value.enabled, cx);
+                }
                 Err(e) => self.error = Some(shortcut_error(&e)),
             }
         }

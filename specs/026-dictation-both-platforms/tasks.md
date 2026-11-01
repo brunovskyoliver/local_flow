@@ -16,9 +16,9 @@ Same check rules as Feature 025. Swift references are under `apps/macos/LocalFlo
 - [X] T009 Permissions: Mac Input Monitoring, Accessibility, and Microphone requests; refresh on change; onboarding and Settings wiring (ONB-013, ONB-022, ONB-369, ONB-370, SET-018, SET-155..164, SHELL-114..118, SHELL-141..144).
 
 ## Phase 3: Session (US1)
-- [ ] T010 `flow-core::dictation::session`: states and stop reasons per `DictationCoordinator`; traits Mic, Recognizer, Rewriter, Inserter, History; bounded spool; assembly; Dictionary; waiting dictations; cleanup on restart. Tests for each stop reason.
-- [ ] T011 Mac microphone by AudioUnit FFI plus device priority and `free_disk_bytes`. Windows microphone from 025's source.
-- [ ] T012 `apps/desktop/src/dictation.rs`: composition, `session_command`, `load_speech_model`, pill and tray from real state, notices (PILL-021, PILL-075, PILL-088..095 when reached).
+- [X] T010 `flow-core::dictation::session`: states and stop reasons per `DictationCoordinator`; traits Mic, Recognizer, Rewriter, Inserter, History; bounded spool; assembly; Dictionary; waiting dictations; cleanup on restart. Tests for each stop reason.
+- [X] T011 Mac microphone by AudioUnit FFI plus device priority and `free_disk_bytes`. Windows microphone from 025's source.
+- [X] T012 `apps/desktop/src/dictation.rs`: composition, `session_command`, `load_speech_model`, pill and tray from real state, notices (PILL-021, PILL-075, PILL-088..095 when reached).
 
 ## Phase 4: Insertion (US1)
 - [ ] T013 Mac `capture_insertion_target` and `insert_once` by AX and paste, per `CapturedTarget.swift`; restore clipboard; `running_apps`, `app_name`. Outcome logic pure and tested.

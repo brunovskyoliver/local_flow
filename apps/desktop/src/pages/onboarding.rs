@@ -545,7 +545,7 @@ impl OnboardingPage {
         }
         let core = cx.global::<Core>();
         // No model load when the server serves dictation.
-        let prepared = if server::routing(&core.prefs).served(server::Service::Dictation) { Ok(()) } else { core.services.load_speech_model().map_err(missing) };
+        let prepared = if server::routing(&core.prefs).served(server::Service::Dictation) { Ok(()) } else { crate::dictation::load_speech_model(cx).map_err(missing) };
         self.setup.finish_arming(prepared, &self.snap);
         cx.notify();
     }
@@ -881,7 +881,7 @@ impl Render for OnboardingPage {
                 "escape" if this.remote.consent_open => this.cancel_consent(cx),
                 // `onExitCommand`: cancels a dictation. It does not go Back.
                 "escape" => {
-                    let _ = cx.global::<Core>().services.session_command(SessionCommand::CancelDictation);
+                    let _ = crate::dictation::session_command(SessionCommand::CancelDictation, cx);
                 }
                 _ => {}
             }))

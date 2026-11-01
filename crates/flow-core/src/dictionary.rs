@@ -186,8 +186,13 @@ pub fn fold(term: &str) -> String {
     nfc(term).chars().flat_map(char::to_lowercase).collect()
 }
 
+/// Combining marks. // ponytail: the common blocks, not all of Mn/Mc/Me; only term boundaries read it.
+pub(crate) fn is_mark(c: char) -> bool {
+    matches!(c as u32, 0x300..=0x36F | 0x483..=0x489 | 0x591..=0x5BD | 0x610..=0x61A | 0x64B..=0x65F | 0x900..=0x903 | 0x93A..=0x94F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE00..=0xFE0F | 0xFE20..=0xFE2F)
+}
+
 /// General category Cf.
-fn is_format(c: char) -> bool {
+pub(crate) fn is_format(c: char) -> bool {
     matches!(c as u32, 0xAD | 0x600..=0x605 | 0x61C | 0x6DD | 0x70F | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB | 0xE0001 | 0xE0020..=0xE007F)
 }
 
@@ -586,6 +591,26 @@ pub struct KeyUsage {
     pub kept: i64,
     pub reverted: i64,
     pub last_used_at: Option<i64>,
+}
+
+/// `DictionaryUsageStore.recordApplied`.
+pub fn record_applied(db: &Db, dictation: &str, changes: &[crate::dictation::normalize::Change]) -> rusqlite::Result<()> {
+    if changes.is_empty() {
+        return Ok(());
+    }
+    let now = now_ms();
+    let tx = db.conn.unchecked_transaction()?;
+    for change in changes {
+        let n = tx.execute(
+            "INSERT INTO dictionary_key_usage (entry_id, key_id, state, applied, last_used_at) SELECT id, ?1, CASE WHEN learned_at IS NULL THEN 'established' ELSE 'provisional' END, 1, ?2 FROM vocabulary_entries WHERE id = ?3 ON CONFLICT(entry_id, key_id) DO UPDATE SET applied = applied + 1, last_used_at = excluded.last_used_at",
+            params![change.key_id, now, change.entry_id],
+        )?;
+        if n > 0 {
+            tx.execute("INSERT OR IGNORE INTO dictionary_usage_events (dictation_id, entry_id, key_id, outcome, at) VALUES (?, ?, ?, 'applied', ?)", params![dictation, change.entry_id, change.key_id, now])?;
+        }
+    }
+    tx.execute("DELETE FROM dictionary_usage_events WHERE id <= (SELECT max(id) FROM dictionary_usage_events) - 5000", [])?;
+    tx.commit()
 }
 
 pub fn usage(db: &Db) -> rusqlite::Result<HashMap<String, Vec<KeyUsage>>> {

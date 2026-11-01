@@ -78,7 +78,7 @@ pub fn entries(s: &Session, readiness: String) -> Vec<Entry> {
 pub fn run(command: Command, cx: &mut App) {
     let session = |command, cx: &mut App| {
         if !crate::capture::command(command, cx) {
-            let _ = cx.global::<Core>().services.session_command(command);
+            let _ = crate::dictation::session_command(command, cx);
         }
     };
     match command {

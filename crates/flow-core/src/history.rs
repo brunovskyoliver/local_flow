@@ -438,6 +438,11 @@ fn decode_detail(json: &str, schema: i64, stored_hash: &str, text: &str) -> Opti
     Some(content)
 }
 
+#[cfg(test)]
+pub fn decode_detail_for_test(json: &str, schema: i64, hash: &str, text: &str) -> Option<Value> {
+    decode_detail(json, schema, hash, text)
+}
+
 pub fn part_label(part: &str) -> &'static str {
     match part {
         "window_title" | "windowTitle" => "Window title",
@@ -1438,7 +1443,53 @@ pub fn record_outcome(db: &Db, id: &str, revision: i64, attempt: &str, outcome: 
     get(db, id)?.ok_or(StoreError::Missing)
 }
 
+// ---- New dictations ----
+
+/// `TranscriptionStore.commit`: the row and its evidence in one step. Returns the revision.
+pub fn commit_dictation(db: &Db, d: &crate::dictation::session::NewDictation) -> Result<i64, StoreError> {
+    let (rows, bytes): (i64, i64) = db.conn.query_row("SELECT row_count,payload_bytes FROM history_usage WHERE id=1", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let added = (d.text.len() + d.detail_json.len()) as i64;
+    if rows >= MAX_ROWS || bytes + added > MAX_PAYLOAD_BYTES {
+        return Err(StoreError::Refused("capacity"));
+    }
+    let tx = db.conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO transcriptions (id,text,created_at,delivery_state,recovery_state,quality,stop_reason,target_bundle_id,revision,recognition_path,server_failure,input_device_name,input_device_kind) VALUES (?,?,?,'not_attempted','needs_review',?,?,?,1,?,?,?,?)",
+        params![d.id, d.text, now_ms(), d.quality, d.stop_reason, d.target_bundle_id, d.recognition_path, d.server_failure, d.device_name, d.device_kind],
+    )?;
+    tx.execute("INSERT INTO transcription_quality (transcription_id,schema_version,detail_json,content_hash) VALUES (?,1,?,?)", params![d.id, d.detail_json, d.content_hash])?;
+    tx.execute("UPDATE history_usage SET row_count=row_count+1,payload_bytes=payload_bytes+? WHERE id=1", [added])?;
+    tx.commit()?;
+    Ok(1)
+}
+
 // ---- Dictations waiting for the server ----
+
+const PENDING_MAX_ROWS: i64 = 20;
+const PENDING_FIRST_RETRY_MS: i64 = 10_000;
+
+/// `PendingRemoteDictationStore.add`: the audio moves in the same step as its row.
+pub fn keep_waiting(db: &Db, dir: &Path, w: &crate::dictation::session::Waiting) -> Result<(), StoreError> {
+    let count: i64 = db.conn.query_row("SELECT count(*) FROM pending_remote_dictations", [], |r| r.get(0))?;
+    if count >= PENDING_MAX_ROWS || w.samples == 0 || w.samples > crate::dictation::spool::MAX_SAMPLES {
+        return Err(StoreError::Refused("waiting_full"));
+    }
+    let file = format!("{}.f32", w.id);
+    std::fs::create_dir_all(dir).map_err(|e| StoreError::Sql(e.to_string()))?;
+    let destination = dir.join(&file);
+    std::fs::rename(w.audio, &destination).map_err(|e| StoreError::Sql(e.to_string()))?;
+    let now = now_ms();
+    let inserted = db.conn.execute(
+        "INSERT INTO pending_remote_dictations (id,audio_file,sample_count,created_at,attempts,next_attempt_at,last_failure,target_bundle_id,input_device_name,input_device_kind) VALUES (?,?,?,?,0,?,?,?,?,?)",
+        params![w.id, file, w.samples as i64, now, now + PENDING_FIRST_RETRY_MS, w.failure, w.target_bundle_id, w.device_name, w.device_kind],
+    );
+    if let Err(e) = inserted {
+        // The row did not commit: give the audio back to its owner.
+        let _ = std::fs::rename(&destination, w.audio);
+        return Err(e.into());
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingItem {

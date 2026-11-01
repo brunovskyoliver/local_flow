@@ -111,7 +111,7 @@ SHELL-110	recorded	recorded:not working yet; the setup status copy has no produc
 SHELL-111	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-112	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-113	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
-SHELL-114	service	service:the tap and install exist (026 T007) and onboarding posts this copy; the shell's own setup status poster arrives with the session, T012 (mac-service: CGEvent tap)
+SHELL-114	auto	test:configuring_the_shortcut_posts_the_setup_status
 SHELL-115	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-116	recorded	recorded:not working yet; the setup status copy has no production poster until the model lifecycle feature, so nothing can show it
 SHELL-117	not-run	not-run:the prompt exists (026 T009); no test may trigger TCC, acceptance/hardware.md row 7
@@ -140,8 +140,8 @@ SHELL-139	service	service:reveal in Finder arrives with the model phase
 SHELL-140	service	service:privacy pane link exists in flow-platform settings links; this call site arrives with capture
 SHELL-141	not-run	not-run:the prompt exists (026 T009); no test may trigger TCC, acceptance/hardware.md row 7
 SHELL-142	not-run	not-run:the prompt and reinstall exist (026 T009); no test may trigger TCC, acceptance/hardware.md row 7
-SHELL-143	service	service:the shortcut events exist (026 T007); the press gate needs the session, Feature 026 T012
-SHELL-144	service	service:Released and Cancelled exist (026 T006); the coordinator calls need the session, Feature 026 T012
+SHELL-143	auto	test:presses_are_gated_and_release_and_cancel_reach_the_session
+SHELL-144	auto	test:presses_are_gated_and_release_and_cancel_reach_the_session
 MENU-001	service	service:tray-icon status item seen in axctl dump with its menu items; template glyph look was not captured
 MENU-002	auto	test:glyph_prefers_meeting_over_attention
 MENU-003	auto	test:glyph_prefers_meeting_over_attention

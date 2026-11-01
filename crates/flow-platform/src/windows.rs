@@ -81,6 +81,13 @@ impl Services for Win {
     fn free_disk_bytes(&self) -> Option<u64> {
         crate::win::system::free_disk_bytes(&self.app_data_dir())
     }
+    fn free_bytes_probe(&self) -> Box<dyn Fn() -> Option<u64> + Send> {
+        let dir = self.app_data_dir();
+        Box::new(move || crate::win::system::free_disk_bytes(&dir))
+    }
+    fn microphone(&self) -> Option<std::sync::Arc<dyn flow_core::dictation::session::Mic>> {
+        Some(std::sync::Arc::new(crate::win::mic::WinMic))
+    }
     fn input_catalog(&self) -> Option<crate::InputCatalog> {
         crate::win::system::input_catalog()
     }

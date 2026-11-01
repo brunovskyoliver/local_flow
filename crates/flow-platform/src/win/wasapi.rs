@@ -33,7 +33,7 @@ impl MeetingAudio for Wasapi {
         let stop = Arc::new(AtomicBool::new(false));
         let (ready, is_ready) = sync_channel(1);
         let flag = stop.clone();
-        let thread = std::thread::spawn(move || run(system, flag, on_packet, on_event, ready));
+        let thread = std::thread::spawn(move || run(system, None, flag, on_packet, on_event, ready));
         match is_ready.recv() {
             Ok(Ok(device_name)) => Ok(Box::new(Capture { stop, thread, device_name })),
             Ok(Err(reason)) => {
@@ -50,6 +50,22 @@ impl MeetingAudio for Wasapi {
     /// The encoder's lowest rate, for both tracks. Swift gives the microphone 64 kbit/s, which it lacks.
     fn bitrate(&self, _: bool) -> i64 {
         96_000
+    }
+}
+
+/// A microphone for dictation: `endpoint` pins a ranked device, `None` follows the default.
+pub fn start_microphone(endpoint: Option<String>, on_packet: Box<dyn FnMut(AudioPacket) + Send>, on_event: Box<dyn Fn(AudioEvent) + Send>) -> std::result::Result<Box<dyn AudioStream>, AudioFailure> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (ready, is_ready) = sync_channel(1);
+    let flag = stop.clone();
+    let thread = std::thread::spawn(move || run(false, endpoint, flag, on_packet, on_event, ready));
+    match is_ready.recv() {
+        Ok(Ok(device_name)) => Ok(Box::new(Capture { stop, thread, device_name })),
+        Ok(Err(reason)) => {
+            let _ = thread.join();
+            Err(reason)
+        }
+        Err(_) => Err("stream_stopped"),
     }
 }
 
@@ -141,9 +157,11 @@ struct Opened {
     event: HANDLE,
     device_name: Option<String>,
     endpoint: Option<String>,
+    /// A ranked device stays itself when the default changes.
+    pinned: bool,
 }
 
-fn open(system: bool) -> std::result::Result<Opened, AudioFailure> {
+fn open(system: bool, pinned: Option<&str>) -> std::result::Result<Opened, AudioFailure> {
     unsafe {
         let (client, flags, device_name, endpoint) = if system {
             (process_loopback().map_err(|e| reason_for(&e))?, AUDCLNT_STREAMFLAGS_LOOPBACK, None, None)
@@ -151,7 +169,14 @@ fn open(system: bool) -> std::result::Result<Opened, AudioFailure> {
             if microphone_consent_denied() {
                 return Err("permission_revoked");
             }
-            let device = default_microphone().map_err(|_| "device_lost")?;
+            let device = match pinned {
+                Some(id) => {
+                    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|_| "device_lost")?;
+                    let wide: Vec<u16> = id.encode_utf16().chain(Some(0)).collect();
+                    enumerator.GetDevice(::windows::core::PCWSTR(wide.as_ptr())).map_err(|_| "device_lost")?
+                }
+                None => default_microphone().map_err(|_| "device_lost")?,
+            };
             let name = device.OpenPropertyStore(STGM_READ).and_then(|s| s.GetValue(&PKEY_Device_FriendlyName)).map(|v| v.to_string()).ok();
             let id = endpoint_id(&device).ok();
             (device.Activate(CLSCTX_ALL, None).map_err(|e| reason_for(&e))?, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, name, id)
@@ -163,7 +188,7 @@ fn open(system: bool) -> std::result::Result<Opened, AudioFailure> {
         client.SetEventHandle(event).map_err(|e| reason_for(&e))?;
         let capture: IAudioCaptureClient = client.GetService().map_err(|e| reason_for(&e))?;
         client.Start().map_err(|e| reason_for(&e))?;
-        Ok(Opened { client, capture, event, device_name, endpoint })
+        Ok(Opened { client, capture, event, device_name, endpoint, pinned: pinned.is_some() })
     }
 }
 const E_ACCESSDENIED_CODE: HRESULT = ::windows::Win32::Foundation::E_ACCESSDENIED;
@@ -213,7 +238,7 @@ fn capture_loop(system: bool, opened: &Opened, stop: &AtomicBool, on_packet: &mu
                     event = Some(AudioEvent::Failed("permission_revoked"));
                 } else {
                     let current = default_microphone().and_then(|d| endpoint_id(&d)).ok();
-                    if current != opened.endpoint {
+                    if !opened.pinned && current != opened.endpoint {
                         event = Some(AudioEvent::DeviceChanged);
                     }
                 }
@@ -226,12 +251,12 @@ fn capture_loop(system: bool, opened: &Opened, stop: &AtomicBool, on_packet: &mu
     }
 }
 
-fn run(system: bool, stop: Arc<AtomicBool>, mut on_packet: Box<dyn FnMut(AudioPacket) + Send>, on_event: Box<dyn Fn(AudioEvent) + Send>, ready: SyncSender<std::result::Result<Option<String>, AudioFailure>>) {
+fn run(system: bool, pinned: Option<String>, stop: Arc<AtomicBool>, mut on_packet: Box<dyn FnMut(AudioPacket) + Send>, on_event: Box<dyn Fn(AudioEvent) + Send>, ready: SyncSender<std::result::Result<Option<String>, AudioFailure>>) {
     if unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_err() {
         let _ = ready.send(Err("stream_stopped"));
         return;
     }
-    match open(system) {
+    match open(system, pinned.as_deref()) {
         Err(reason) => {
             let _ = ready.send(Err(reason));
         }

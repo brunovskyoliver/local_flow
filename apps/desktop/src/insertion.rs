@@ -438,7 +438,7 @@ mod tests {
     }
 
     fn field() -> CapturedTarget {
-        CapturedTarget { bundle_id: "com.example.app".into(), own_process: false, delivery: InsertDelivery::Accessibility, selection_location: 4 }
+        CapturedTarget { bundle_id: "com.example.app".into(), own_process: false, delivery: InsertDelivery::Accessibility, selection_location: 4, token: 0 }
     }
 
     // parity: SHELL-157 SHELL-159

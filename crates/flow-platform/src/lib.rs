@@ -107,28 +107,7 @@ pub struct InputCatalog {
     pub clamshell: bool,
 }
 
-/// How a captured field takes text: a direct Accessibility write or a pasted Command-V.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InsertDelivery {
-    Accessibility,
-    Paste,
-}
-
-/// The field the user picked for an explicit insertion (Swift's `CapturedTarget`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CapturedTarget {
-    pub bundle_id: String,
-    pub own_process: bool,
-    pub delivery: InsertDelivery,
-    pub selection_location: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InsertOutcome {
-    Confirmed,
-    NotInserted,
-    Uncertain,
-}
+pub use flow_core::dictation::session::{CapturedTarget, InsertDelivery, InsertOutcome};
 
 /// Commands to the dictation session and meeting coordinator, built with capture in a later feature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +219,18 @@ pub trait Services: 'static {
     /// provisioner has one. `settings_action("download")` returns at once and this takes over.
     fn speech_install(&self) -> Option<(u64, u64, bool)> {
         None
+    }
+    /// The dictation microphone. None here means no dictation; a test double never opens one.
+    fn microphone(&self) -> Option<std::sync::Arc<dyn flow_core::dictation::session::Mic>> {
+        None
+    }
+    /// The field and clipboard side of a dictation, for the session's thread.
+    fn inserter(&self) -> Option<std::sync::Arc<dyn flow_core::dictation::session::Inserter>> {
+        None
+    }
+    /// `free_disk_bytes` for the session's thread.
+    fn free_bytes_probe(&self) -> Box<dyn Fn() -> Option<u64> + Send> {
+        Box::new(|| None)
     }
     /// The input devices, or `None` where this platform has no catalog yet.
     fn input_catalog(&self) -> Option<InputCatalog> {
@@ -418,11 +409,14 @@ mod keys_mac;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
+mod mic_mac;
+#[cfg(target_os = "macos")]
 mod region_mac;
 #[cfg(target_os = "windows")]
 mod win {
     pub mod aac;
     pub mod hotkey;
+    pub mod mic;
     pub mod secrets;
     pub mod system;
     pub mod tpm;
@@ -432,6 +426,12 @@ mod win {
 mod windows;
 #[cfg(any(target_os = "windows", test))]
 mod win_rules;
+
+/// `InputDeviceResolver.candidates` against a catalog read at this key-down.
+pub fn ranked_candidates(entries: &[flow_core::settings::InputEntry], catalog: &InputCatalog) -> Vec<flow_core::dictation::session::Candidate> {
+    let inputs: Vec<flow_core::settings::ConnectedInput> = catalog.devices.iter().map(|d| flow_core::settings::ConnectedInput { device_id: d.device_id, uid: d.uid.clone(), model_uid: d.model_uid.clone(), name: d.name.clone(), kind: d.kind.into(), alive: d.alive }).collect();
+    flow_core::settings::input_candidates(entries, &inputs, catalog.default_input, catalog.clamshell)
+}
 
 pub fn native() -> Box<dyn Services> {
     #[cfg(target_os = "macos")]
