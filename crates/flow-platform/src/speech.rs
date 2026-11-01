@@ -73,16 +73,22 @@ pub struct WorkerLauncher {
     pub args: Vec<String>,
 }
 
+/// In an app bundle the pinned descriptors live in `Resources/Models`: code signing refuses plain
+/// files in `Helpers`. Elsewhere the worker finds them beside itself.
+fn descriptor_args(worker: &Path) -> Vec<String> {
+    let bundled = worker.parent().map(|d| d.join("../Resources/Models")).filter(|d| d.is_dir());
+    bundled.map_or(vec![], |d| vec!["--descriptors".into(), d.to_string_lossy().into_owned()])
+}
+
 impl WorkerLauncher {
     pub fn serve(path: PathBuf, models: &Path) -> WorkerLauncher {
-        WorkerLauncher {
-            path,
-            args: vec![
-                "serve".into(),
-                "--models".into(),
-                models.to_string_lossy().into_owned(),
-            ],
-        }
+        let mut args = vec![
+            "serve".to_string(),
+            "--models".into(),
+            models.to_string_lossy().into_owned(),
+        ];
+        args.extend(descriptor_args(&path));
+        WorkerLauncher { path, args }
     }
 }
 
@@ -109,7 +115,7 @@ impl Launcher for WorkerLauncher {
 /// `provision model=… state=…` lines for progress and the exit status for the outcome.
 pub fn spawn_provision(path: &Path, models: &Path, args: &[&str]) -> io::Result<Child> {
     let mut command = command(path);
-    command.arg("provision").arg("--models").arg(models).args(args);
+    command.arg("provision").arg("--models").arg(models).args(args).args(descriptor_args(path));
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
